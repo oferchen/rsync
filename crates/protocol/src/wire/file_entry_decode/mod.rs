@@ -43,6 +43,7 @@ pub use self::flags::{decode_end_marker, decode_flags, is_io_error_end_marker};
 pub use self::hardlink::{decode_hardlink_dev_ino, decode_hardlink_idx};
 pub use self::mode::decode_mode;
 pub use self::name::decode_name;
+pub(crate) use self::name::{MAXPATHLEN, name_overflow_error};
 pub use self::ownership::{decode_gid, decode_uid};
 pub use self::size::decode_size;
 pub use self::symlink::{MAX_SYMLINK_TARGET_LEN, decode_symlink_target};

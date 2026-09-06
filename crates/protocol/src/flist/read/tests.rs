@@ -1379,9 +1379,13 @@ fn read_entry_rejects_name_exceeding_maxpathlen() {
     assert!(result.is_err(), "name at MAXPATHLEN should be rejected");
     let err = result.unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    assert!(
-        err.to_string().contains("exceeds maximum"),
-        "error should mention exceeds maximum, got: {err}"
+    // upstream: flist.c:820-822 - the diagnostic names the operands that made
+    // the entry unreadable, and `overflow:` is the token an operator (and
+    // testsuite/proto-sender-selftest_test.py) greps the daemon log for.
+    assert_eq!(
+        err.to_string(),
+        "overflow: xflags=0x41 l1=0 l2=4096 lastname=",
+        "the refusal must be worded as upstream words it"
     );
 }
 

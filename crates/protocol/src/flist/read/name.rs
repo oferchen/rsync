@@ -16,16 +16,9 @@ use logging::debug_log;
 
 use crate::codec::ProtocolCodec;
 use crate::flist::flags::FileFlags;
+use crate::wire::file_entry_decode::{MAXPATHLEN, name_overflow_error};
 
 use super::FileListReader;
-
-/// Maximum total file name length on the wire.
-///
-/// Matches upstream rsync's `MAXPATHLEN` (4096). Upstream checks
-/// `l2 >= MAXPATHLEN - l1` before allocating the name buffer.
-///
-/// upstream: rsync.h `MAXPATHLEN`, flist.c:recv_file_entry()
-const MAXPATHLEN: usize = 4096;
 
 impl FileListReader {
     /// Reads the file name with path compression.
@@ -84,25 +77,17 @@ impl FileListReader {
             ));
         }
 
-        // upstream: flist.c `l2 >= MAXPATHLEN - l1` overflow exit
-        // Defence-in-depth: reject names that exceed MAXPATHLEN to prevent
-        // unbounded allocation from a malicious sender. checked_add guards
-        // against arithmetic overflow when a malicious sender supplies a
-        // wire-encoded suffix length near usize::MAX.
-        let total_len = same_len.checked_add(suffix_len).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("filename length overflow: same_len={same_len} suffix_len={suffix_len}"),
-            )
-        })?;
-        if total_len >= MAXPATHLEN {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "filename length {} exceeds maximum {}",
-                    total_len,
-                    MAXPATHLEN - 1,
-                ),
+        // upstream: flist.c:819 `l2 >= MAXPATHLEN - l1` overflow exit. Phrased
+        // as upstream phrases it rather than as a sum: `same_len` came from one
+        // wire byte, so `MAXPATHLEN - same_len` cannot underflow and the sum of
+        // a byte and a varint cannot wrap - the separate checked_add arm this
+        // replaces was unreachable, and it spoke with a second voice.
+        if suffix_len >= MAXPATHLEN - same_len {
+            return Err(name_overflow_error(
+                flags.to_u32(),
+                same_len,
+                suffix_len,
+                self.state.prev_name(),
             ));
         }
 

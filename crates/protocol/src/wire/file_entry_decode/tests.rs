@@ -636,7 +636,15 @@ fn decode_name_exceeds_maxpathlen() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    assert!(err.to_string().contains("exceeds maximum"));
+    // upstream: flist.c:820-822 - same wording as the file-list reader, because
+    // both decoders share one owner for it.
+    assert_eq!(
+        err.to_string(),
+        format!(
+            "overflow: xflags=0x60 l1=200 l2=3900 lastname={}",
+            "a".repeat(200)
+        )
+    );
 }
 
 #[test]
@@ -671,5 +679,8 @@ fn decode_name_exactly_at_maxpathlen_rejected() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    assert!(err.to_string().contains("exceeds maximum"));
+    assert_eq!(
+        err.to_string(),
+        "overflow: xflags=0x40 l1=0 l2=4096 lastname="
+    );
 }
