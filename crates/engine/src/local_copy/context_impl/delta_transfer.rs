@@ -582,6 +582,26 @@ impl<'a> CopyContext<'a> {
             })?;
         }
 
+        // The loop stops at whatever EOF the source presented, so a source that
+        // shrank after it was sized leaves `total_bytes` below the length this
+        // transfer was sized from. That is upstream's `map_ptr()` read returning
+        // 0 with the window unfilled (fileio.c:359-365), which `unmap_file()`
+        // hands back as `ENODATA` and the sender reports as one
+        // `read errors mapping %s` line plus `io_error |= IOERR_GENERAL`
+        // (sender.c:787-795) - `RERR_PARTIAL` (23) at the end of the run.
+        //
+        // Upstream has a single mover for every transfer, so the diagnosis is
+        // unconditional there. Here it is the fourth content path to need the
+        // call: the kernel tier, the dense loop and the sparse loop already make
+        // it. Without it a `--no-whole-file` copy over a destination that
+        // already exists - the one input that routes here - wrote a short file,
+        // printed nothing and exited 0.
+        self.note_short_source_read(
+            source,
+            total_bytes,
+            total_size.saturating_sub(initial_bytes),
+        );
+
         // upstream: match.c:433-435 folds the per-file counters into the run
         // totals after match_sums() returns; do the same so the end-of-run
         // `-vv` `total:` line reports cumulative figures.
