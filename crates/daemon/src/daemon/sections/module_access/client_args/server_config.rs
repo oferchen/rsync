@@ -193,8 +193,8 @@ fn build_server_config(
     // capability letter can never be misread as `-R`. A malformed string is
     // reported by `from_flag_string_and_args` below; treat it as non-relative
     // here rather than duplicating the diagnostic.
-    let relative_paths = core::server::ParsedServerFlags::parse(&flag_string)
-        .is_ok_and(|parsed| parsed.relative);
+    let relative_paths =
+        core::server::ParsedServerFlags::parse(&flag_string).is_ok_and(|parsed| parsed.relative);
     let positional_args: Vec<OsString> = if role == ServerRole::Receiver {
         let dest = resolve_receiver_dest(
             std::path::Path::new(&module.path),
