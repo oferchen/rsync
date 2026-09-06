@@ -311,7 +311,8 @@ fn handle_accepted_connection(
     // worker keeps its slot until a reap. Without this call the next reap is
     // the following iteration's, and a session that ended during the poll
     // would refuse a connection the daemon has room for. Under a forked
-    // backing this is also where `reap_finished_children` belongs.
+    // backing this is also where the per-pid `session_fork::try_reap`
+    // belongs - one call per worker the parent owns, never a bulk sweep.
     reap_finished_workers(&mut state.workers, state.log_sink.as_ref());
 
     if refuse_if_at_capacity(&mut stream, raw_peer_addr, state) {

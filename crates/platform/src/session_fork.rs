@@ -29,7 +29,7 @@ use std::io;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForkSide {
     /// The original daemon process, holding the child's pid so it can be
-    /// reaped by [`reap_finished_children`].
+    /// reaped by [`try_reap`] or [`wait_for_child`].
     Parent {
         /// Pid of the child now serving the connection.
         child_pid: i32,
@@ -76,24 +76,91 @@ pub fn exit_child(code: i32) -> ! {
     unsafe { libc::_exit(code) }
 }
 
-/// Reaps every child that has already exited, without blocking.
+/// How a forked child ended.
 ///
-/// Returns how many were reaped. A daemon that forks per connection and never
-/// waits accumulates zombies, so the accept loop must call this; `WNOHANG`
-/// keeps it off the latency path.
+/// This is deliberately the *process* vocabulary, not the session's: what a
+/// non-zero exit or a fatal signal means for a connection is a decision for
+/// the daemon, which owns the session model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChildEnd {
+    /// Returned this status from `main`, or passed it to [`exit_child`].
+    Exited(i32),
+    /// Killed by this signal.
+    Signalled(i32),
+}
+
+impl ChildEnd {
+    /// Classifies a raw `wait`-family status word.
+    fn from_status(status: libc::c_int) -> Self {
+        if libc::WIFSIGNALED(status) {
+            Self::Signalled(libc::WTERMSIG(status))
+        } else {
+            // WIFEXITED is the only other outcome `waitpid` reports without
+            // WUNTRACED/WCONTINUED, neither of which is requested here.
+            Self::Exited(libc::WEXITSTATUS(status))
+        }
+    }
+}
+
+/// Reaps one specific child if it has already ended, without blocking.
+///
+/// `Ok(None)` means the child is still running - the caller keeps it and asks
+/// again later.
+///
+/// # Why per-pid, and never `waitpid(-1, ..)`
+///
+/// A bulk "reap anything that exited" sweep is the obvious shape and it is
+/// **wrong here**. This daemon forks children that are *not* sessions: the
+/// `name converter` helper, the pre-/post-transfer `exec` hooks, and the
+/// authentication helper. Those are owned by `std::process::Child`, which
+/// reaps them through its own `wait`. A bulk reaper racing in the accept loop
+/// would consume their statuses first and leave `Child::wait` to fail with
+/// `ECHILD` - a helper whose exit code the daemon needs would silently become
+/// unobservable.
+///
+/// Taking the pid as a parameter makes that impossible to get wrong: this
+/// call can only ever collect the child the caller already owns.
+///
+/// upstream: `socket.c:676-684` `sigchld_handler()` does use
+/// `waitpid(-1, NULL, WNOHANG)`, but it can afford to - it discards the status
+/// (a NULL status pointer) and upstream's helper children are waited for in
+/// contexts that tolerate it. oc reports session outcomes, so it needs the
+/// status, and therefore needs the narrower call.
 #[allow(unsafe_code)]
-pub fn reap_finished_children() -> usize {
-    let mut reaped = 0;
+pub fn try_reap(child_pid: i32) -> io::Result<Option<ChildEnd>> {
+    let mut status: libc::c_int = 0;
+    // SAFETY: `waitpid` writes only through `status`, a live local. The pid is
+    // a specific child, so this cannot consume another child's status, and
+    // `WNOHANG` makes it return 0 instead of blocking while that child runs.
+    let waited = unsafe { libc::waitpid(child_pid, &mut status, libc::WNOHANG) };
+    match waited {
+        0 => Ok(None),
+        -1 => Err(io::Error::last_os_error()),
+        _ => Ok(Some(ChildEnd::from_status(status))),
+    }
+}
+
+/// Blocks until one specific child ends, and reports how.
+///
+/// The shutdown counterpart to [`try_reap`]: a draining daemon must not leave
+/// a session half-served, so it waits rather than polling.
+#[allow(unsafe_code)]
+pub fn wait_for_child(child_pid: i32) -> io::Result<ChildEnd> {
     loop {
         let mut status: libc::c_int = 0;
-        // SAFETY: `waitpid` writes only through `status`, a live local. `-1`
-        // means "any child"; `WNOHANG` makes it return 0 instead of blocking
-        // when no child has exited.
-        let pid = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
-        if pid <= 0 {
-            return reaped;
+        // SAFETY: as `try_reap`, minus `WNOHANG` so the call blocks.
+        let waited = unsafe { libc::waitpid(child_pid, &mut status, 0) };
+        if waited == -1 {
+            let error = io::Error::last_os_error();
+            // Resuming a syscall the kernel never completed is not a retry
+            // policy - no work was done and nothing is being backed off. A
+            // daemon with signal handlers installed sees EINTR here routinely.
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
         }
-        reaped += 1;
+        return Ok(ChildEnd::from_status(status));
     }
 }
 
@@ -112,55 +179,92 @@ mod tests {
             ForkSide::Child => exit_child(CHILD_EXIT_CODE),
             ForkSide::Parent { child_pid } => {
                 assert!(child_pid > 0, "parent must learn a real child pid");
-                let status = wait_for(child_pid);
-                assert!(libc::WIFEXITED(status), "child did not exit normally");
-                assert_eq!(libc::WEXITSTATUS(status), CHILD_EXIT_CODE);
+                assert_eq!(
+                    wait_for_child(child_pid).expect("wait failed"),
+                    ChildEnd::Exited(CHILD_EXIT_CODE)
+                );
             }
         }
     }
 
-    /// Non-vacuity: without this, a `reap_finished_children` that always
-    /// returned 0 would pass every other assertion here.
+    /// The exit code survives the round trip through `try_reap`, so the
+    /// parent can tell a clean session from a failed one.
     #[test]
-    fn reap_finished_children_counts_an_exited_child() {
+    fn try_reap_reports_the_childs_exit_code() {
+        const CHILD_EXIT_CODE: i32 = 7;
+
         match fork_session().expect("fork failed") {
-            ForkSide::Child => exit_child(0),
-            ForkSide::Parent { .. } => assert_eq!(reap_until_a_child_is_reaped(), 1),
+            ForkSide::Child => exit_child(CHILD_EXIT_CODE),
+            ForkSide::Parent { child_pid } => {
+                assert_eq!(
+                    poll_until_reaped(child_pid),
+                    ChildEnd::Exited(CHILD_EXIT_CODE)
+                );
+            }
         }
     }
 
-    /// With no children at all the sweep must report zero rather than block.
+    /// NON-VACUITY, and it carries two claims a single-outcome stub would
+    /// fail: a child that has not ended is reported as still running, and a
+    /// killed one is reported as SIGNALLED rather than as a clean exit.
+    ///
+    /// Without this, a `try_reap` hard-wired to `Some(ChildEnd::Exited(0))`
+    /// would satisfy every other assertion in this module.
     #[test]
-    fn reap_finished_children_is_zero_without_children() {
-        assert_eq!(reap_finished_children(), 0);
+    fn a_running_child_is_not_reaped_and_a_killed_one_reports_its_signal() {
+        match fork_session().expect("fork failed") {
+            // Outlive the parent's observation without exiting. The parent
+            // kills this child, so the sleep is an upper bound, not a wait.
+            ForkSide::Child => {
+                std::thread::sleep(Duration::from_secs(30));
+                exit_child(0);
+            }
+            ForkSide::Parent { child_pid } => {
+                assert_eq!(
+                    try_reap(child_pid).expect("try_reap failed"),
+                    None,
+                    "a child that has not ended must not be reaped"
+                );
+                kill_child(child_pid, libc::SIGKILL);
+                assert_eq!(
+                    wait_for_child(child_pid).expect("wait failed"),
+                    ChildEnd::Signalled(libc::SIGKILL)
+                );
+            }
+        }
+    }
+
+    /// The pid parameter is the whole safety argument: reaping is scoped to a
+    /// child the caller owns, so it can never consume the status of the
+    /// daemon's name-converter, `exec` hook or auth helper. A pid that is not
+    /// ours is an error, not a silently fabricated outcome.
+    #[test]
+    fn try_reap_refuses_a_pid_that_is_not_our_child() {
+        // pid 1 is never a child of the test process.
+        let error = try_reap(1).expect_err("reaping a non-child must fail");
+        assert_eq!(error.raw_os_error(), Some(libc::ECHILD));
+    }
+
+    /// Drives `try_reap` until it collects the child, and reports what it
+    /// said. The deadline means a reaper that never reports a child fails the
+    /// test instead of hanging the suite.
+    fn poll_until_reaped(child_pid: i32) -> ChildEnd {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match try_reap(child_pid).expect("try_reap failed") {
+                Some(end) => return end,
+                None => {
+                    assert!(Instant::now() < deadline, "child was never reaped");
+                    std::thread::yield_now();
+                }
+            }
+        }
     }
 
     #[allow(unsafe_code)]
-    fn wait_for(child_pid: i32) -> libc::c_int {
-        let mut status: libc::c_int = 0;
-        // SAFETY: blocking wait on a pid this process just forked.
-        let waited = unsafe { libc::waitpid(child_pid, &mut status, 0) };
-        assert_ne!(waited, -1, "waitpid failed: {}", io::Error::last_os_error());
-        status
-    }
-
-    /// Drives the function under test until it reaps the child, and reports
-    /// what that call returned.
-    ///
-    /// Polling the reaper itself, rather than peeking with `WNOWAIT` first,
-    /// keeps this portable: `WNOWAIT` is a `waitid` option and macOS
-    /// `waitpid` rejects it with `EINVAL`, which spun this helper forever.
-    /// The deadline means a reaper that never reports a child fails the test
-    /// instead of hanging the suite.
-    fn reap_until_a_child_is_reaped() -> usize {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            let reaped = reap_finished_children();
-            if reaped > 0 {
-                return reaped;
-            }
-            assert!(Instant::now() < deadline, "child was never reaped");
-            std::thread::yield_now();
-        }
+    fn kill_child(child_pid: i32, signal: libc::c_int) {
+        // SAFETY: signals a pid this process just forked and has not reaped.
+        let sent = unsafe { libc::kill(child_pid, signal) };
+        assert_ne!(sent, -1, "kill failed: {}", io::Error::last_os_error());
     }
 }
