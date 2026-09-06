@@ -164,6 +164,17 @@ impl<'a> CopyContext<'a> {
         let mut read_buffer = vec![0u8; buffer.len().max(index.block_length())];
         let mut buffer_len = 0usize;
         let mut buffer_pos = 0usize;
+        // How many source bytes this loop may still read. upstream sizes its one
+        // mover from the fstat of the OPENED handle - `do_fstat(fd, &st)`
+        // (sender.c:728) feeding `map_file(fd, st.st_size, ...)` (sender.c:757)
+        // - so a tail appended after that stat is never mapped and never sent.
+        //
+        // `total_bytes` cannot serve as the counter here: it tallies bytes
+        // *emitted*, and the rolling window holds up to a block that has been
+        // read but not yet emitted, so it lags the reader. Count what the reader
+        // consumed instead.
+        let expected_remaining = total_size.saturating_sub(initial_bytes);
+        let mut source_bytes_read = 0u64;
         // Inplace mode seeks to this position before each literal write.
         let mut output_position = 0u64;
         // 256KB interval - smaller than regular copy since delta is more
@@ -178,13 +189,29 @@ impl<'a> CopyContext<'a> {
                 bytes_since_timeout_check = 0;
             }
             if buffer_pos == buffer_len {
+                // Stop at the length the transfer was sized from rather than at
+                // whatever EOF the source now presents. Clamping the read itself
+                // - not just breaking between chunks - is what bounds a source
+                // that grew: the read buffer is larger than one block, so an
+                // unclamped final read pulls in the whole appended tail before
+                // any loop guard could look at it. The dense and sparse loops
+                // carry the same `min(remaining)` clamp, and the kernel tier
+                // takes the bound as an explicit length argument.
+                let remaining = expected_remaining.saturating_sub(source_bytes_read);
+                if remaining == 0 {
+                    break;
+                }
+                let chunk_len = read_buffer
+                    .len()
+                    .min(usize::try_from(remaining).unwrap_or(usize::MAX));
                 buffer_len = reader
-                    .read(&mut read_buffer)
+                    .read(&mut read_buffer[..chunk_len])
                     .map_err(|error| LocalCopyError::io("copy file", source, error))?;
                 buffer_pos = 0;
                 if buffer_len == 0 {
                     break;
                 }
+                source_bytes_read = source_bytes_read.saturating_add(buffer_len as u64);
             }
 
             let byte = read_buffer[buffer_pos];
