@@ -94,9 +94,15 @@ pub(crate) struct RuntimeOptions {
     /// Number of SO_REUSEPORT listener replicas to bind per address family.
     ///
     /// When set above 1, the daemon binds N kernel-load-balanced listener
-    /// sockets per family (each with its own acceptor thread) instead of one,
-    /// distributing inbound connection load across CPUs on platforms that
-    /// support SO_REUSEPORT. `None` preserves the single-listener default.
+    /// sockets per family instead of one, on platforms that support
+    /// SO_REUSEPORT. `None` preserves the single-listener default.
+    ///
+    /// The replicas do **not** buy CPU parallelism: every listener fd is polled
+    /// from the one accept thread (`PollAcceptEngine`), so the kernel chooses
+    /// which socket receives a connection but a single thread accepts them all.
+    /// The engine is single-threaded on purpose - `platform::session_fork` may
+    /// only be called from a single-threaded accept path - so this directive
+    /// spreads accept queues, not work.
     ///
     /// This is an oc-rsync perf extension with no upstream equivalent
     /// (upstream forks one child per accepted connection from a single
