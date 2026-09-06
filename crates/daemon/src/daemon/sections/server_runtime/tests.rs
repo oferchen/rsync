@@ -196,29 +196,29 @@ fn describe_panic_payload_handles_non_string_payload() {
 }
 
 #[test]
-fn join_worker_handles_successful_thread() {
+fn a_successful_session_reports_nothing() {
     let handle = thread::spawn(|| Ok(()));
-    join_worker(handle, None);
+    report_worker_outcome(join_backing(handle), None);
 }
 
 #[test]
-fn join_worker_handles_connection_closed_error() {
+fn a_closed_connection_reports_nothing() {
     let handle = thread::spawn(|| {
         Err((
             Some("127.0.0.1:12345".parse().unwrap()),
             io::Error::new(io::ErrorKind::BrokenPipe, "connection closed"),
         ))
     });
-    join_worker(handle, None);
+    report_worker_outcome(join_backing(handle), None);
 }
 
 #[test]
-fn join_worker_swallows_panicking_thread() {
+fn a_panicking_session_is_reported_not_propagated() {
     let handle = thread::spawn(|| -> WorkerResult {
         panic!("simulated handler crash");
     });
-    // join_worker blocks until the thread completes - no sleep needed
-    join_worker(handle, None);
+    // `join_backing` blocks until the thread completes - no sleep needed.
+    report_worker_outcome(join_backing(handle), None);
 }
 
 /// The classification this fix rests on: a worker carries the outcome of one
@@ -250,7 +250,9 @@ fn reap_finished_workers_drains_session_failures_without_a_fatal_channel() {
         });
     }
     for worker in &workers {
-        while !worker.is_finished() {
+        // Read the backing directly: `try_reap` consumes the worker, so there
+        // is deliberately no borrowing readiness predicate on `SessionWorker`.
+        while !worker.handle.is_finished() {
             thread::yield_now();
         }
     }
@@ -279,7 +281,7 @@ fn a_finished_worker_holds_its_slot_until_reaped() {
         handle: thread::spawn(|| -> WorkerResult { Ok(()) }),
         _slot: counter.acquire(),
     }];
-    while !workers[0].is_finished() {
+    while !workers[0].handle.is_finished() {
         thread::yield_now();
     }
     assert_eq!(
@@ -1289,7 +1291,7 @@ fn admission_reaps_before_consulting_the_connection_cap() {
         handle: thread::spawn(|| -> WorkerResult { Ok(()) }),
         _slot: counter.acquire(),
     });
-    while !state.workers[0].is_finished() {
+    while !state.workers[0].handle.is_finished() {
         thread::yield_now();
     }
     assert_eq!(
