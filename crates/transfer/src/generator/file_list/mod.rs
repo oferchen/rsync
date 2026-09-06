@@ -83,6 +83,20 @@ impl GeneratorContext {
         self.source_bases.reserve(FLIST_START);
 
         let relative_paths = self.config.flags.relative;
+        // upstream: clientserver.c:1059 - `change_dir(module_chdir, CD_NORMAL)`
+        // puts a daemon server's `curr_dir` at the module root before a single
+        // positional is read, and `glob_expand_module()` (util1.c:881) plus
+        // `sanitize_path(NULL, argv[i], "", 0, ..)` (options.c:2405) hand the
+        // sender module-RELATIVE positionals. oc-rsync never `chdir()`s and
+        // resolves each positional to an absolute on-disk path instead, so the
+        // module root is the base `--relative` must name against. Without it the
+        // walk base is `/` and the daemon's real filesystem prefix goes out on
+        // the wire as the transmitted name.
+        let daemon_module_root = self
+            .config
+            .connection
+            .served_module_root()
+            .map(Path::to_path_buf);
         // upstream: flist.c:send_implied_dirs() - every parent directory of a
         // --relative source must be present in the file list so the receiver
         // can find it via flist_find_name() (generator.c:1313). We track
@@ -105,7 +119,7 @@ impl GeneratorContext {
             // upstream: flist.c:2316 - --relative additionally honours the
             // `/./` anchor and emits implied parent directories.
             let (base, path) = if relative_paths {
-                relative_walk_base(base_path)
+                relative_walk_base(base_path, daemon_module_root.as_deref())
             } else {
                 non_relative_walk_base(base_path)
             };
@@ -652,7 +666,29 @@ fn clean_relative_name(path: &Path) -> PathBuf {
 ///
 /// The returned `base` is what `walk_path` strips from each child path to
 /// compute its wire-side relative name.
-fn relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
+///
+/// # The daemon module root
+///
+/// `module_root` is upstream's `module_dir`, present only in a daemon server
+/// process that has selected a module. Upstream's sender never sees an
+/// absolute operand there: `glob_expand_module()` (`util1.c:881`) strips the
+/// `MODULE/` prefix the client sent and `sanitize_path(NULL, argv[i], "", 0,
+/// SP_KEEP_DOT_DIRS)` (`options.c:2405`) re-roots whatever is left at the
+/// module, so the positional reaching `flist.c:2610` is already
+/// module-relative and the `curr_dir` it is named against is the module root
+/// the server `chdir()`ed into (`clientserver.c:1059`).
+///
+/// oc-rsync resolves each positional to an absolute on-disk path instead of
+/// `chdir()`ing, so the module root has to be re-supplied here. Without it the
+/// no-anchor branch below falls to `base = "/"`, the transmitted name becomes
+/// the daemon's own filesystem path, and every `--relative` daemon pull either
+/// materialises that path at the client or is refused by the receiver's
+/// `rejecting unrequested file-list name` check (`flist.c:1144-1145`).
+///
+/// The anchor branch needs no such treatment: a `/./` operand already carries
+/// its own base, which is upstream's `dir` half and the directory upstream
+/// `change_pathname()`s into (`flist.c:2678`).
+fn relative_walk_base(path: &Path, module_root: Option<&Path>) -> (PathBuf, PathBuf) {
     // upstream: flist.c:2623 - `if ((p = strstr(fbuf, "/./")) != NULL)`
     if let Some(anchor) = find_dot_dir_anchor(path) {
         let path_str = path.as_os_str().to_string_lossy();
@@ -674,6 +710,15 @@ fn relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
             clean_relative_name(&base.join(rest))
         };
         return (base, full);
+    }
+
+    // upstream: clientserver.c:1059 - a daemon server serves from the module
+    // root, so that root is the `curr_dir` the operand is named against and the
+    // transmitted name is the module-relative tail, never the server's path.
+    if let Some(root) = module_root {
+        if path.starts_with(root) {
+            return (root.to_path_buf(), path.to_path_buf());
+        }
     }
 
     // upstream: flist.c:2329 - no "/./" anchor: the entire path is the
