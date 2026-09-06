@@ -2854,7 +2854,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_joins_subpath_with_module_root() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/realdir/".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         assert_eq!(dest, std::path::Path::new("/srv/upload/realdir/"));
     }
 
@@ -2879,7 +2879,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_preserves_a_trailing_slash() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/realdir/".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         assert_eq!(
             dest.as_os_str(),
             std::ffi::OsStr::new("/srv/upload/realdir/")
@@ -2889,18 +2889,19 @@ mod module_access_tests {
     // Non-vacuity companion: the SAME tail without the slash must NOT gain one,
     // or the fix would just be appending a slash unconditionally.
     //
-    // The expectation is built with `join` rather than spelled out, because this
-    // arm returns `module_path.join(collapsed)` and `join` inserts the PLATFORM
-    // separator - a literal "/srv/upload/realdir" would be right on Unix and
-    // wrong on Windows, where `join` yields a backslash. Comparing against the
-    // same construction keeps the assertion about the trailing separator, which
-    // is what the test is for.
+    // Spelled out rather than built with `join`, for the same reason the arm
+    // itself uses `join_module_relative`: a module-relative path joins with a
+    // literal `/` on every host, matching upstream `pathjoin()`. `PathBuf::join`
+    // would emit a backslash on Windows and so could not express the contract.
     #[test]
     fn resolve_receiver_dest_does_not_invent_a_trailing_slash() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/realdir".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
-        assert_eq!(dest.as_os_str(), module_path.join("realdir").as_os_str());
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
+        assert_eq!(
+            dest.as_os_str(),
+            std::ffi::OsStr::new("/srv/upload/realdir")
+        );
     }
 
     // The slash must survive `..` collapsing, which is what strips it.
@@ -2908,7 +2909,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_keeps_the_slash_through_a_dotdot_collapse() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/x/../y/".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         assert_eq!(dest.as_os_str(), std::ffi::OsStr::new("/srv/upload/y/"));
     }
 
@@ -2916,7 +2917,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_keeps_a_backslash_as_a_filename_byte() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/a\\b".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         // The whole `a\b` is ONE component. Splitting would give `/srv/upload/a/b`.
         assert_eq!(dest, std::path::Path::new("/srv/upload/a\\b"));
     }
@@ -2925,7 +2926,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_keeps_a_trailing_backslash() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/sub\\".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         // Treating the trailing `\` as a separator silently stripped it,
         // yielding `/srv/upload/sub` for a peer that asked for `sub\`.
         assert_eq!(dest, std::path::Path::new("/srv/upload/sub\\"));
@@ -2938,7 +2939,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_still_splits_and_collapses_on_slash() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/x/../y/z".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         assert_eq!(dest, std::path::Path::new("/srv/upload/y/z"));
     }
 
@@ -2949,7 +2950,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_backslash_does_not_form_a_dotdot_component() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/..\\..\\etc".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         assert_eq!(dest, std::path::Path::new("/srv/upload/..\\..\\etc"));
         assert!(dest.starts_with(module_path));
     }
@@ -2958,7 +2959,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_falls_back_to_module_root_for_bare_module() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         assert_eq!(dest, std::path::Path::new("/srv/upload"));
     }
 
@@ -2966,7 +2967,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_falls_back_to_module_root_when_no_positional() {
         let module_path = std::path::Path::new("/srv/upload");
         let args: Vec<String> = vec![];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         assert_eq!(dest, std::path::Path::new("/srv/upload"));
     }
 
@@ -2981,7 +2982,7 @@ mod module_access_tests {
             "upload/srcB/".to_owned(),
             "upload/destdir/".to_owned(),
         ];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         assert_eq!(dest, std::path::Path::new("/srv/upload/destdir/"));
     }
 
@@ -2989,7 +2990,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_rejoins_absolute_path_under_module_root() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "/etc/passwd".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         // Absolute path is forced under the module root - no escape.
         assert_eq!(dest, std::path::Path::new("/srv/upload/etc/passwd"));
     }
@@ -3002,7 +3003,7 @@ mod module_access_tests {
         // accept.
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/../../etc/passwd".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         assert_eq!(dest, std::path::Path::new("/srv/upload/etc/passwd"));
     }
 
@@ -3012,7 +3013,7 @@ mod module_access_tests {
         // ordinary in-tree path that never leaves the module.
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/a/../b".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         assert_eq!(dest, std::path::Path::new("/srv/upload/b"));
     }
 
@@ -3022,7 +3023,7 @@ mod module_access_tests {
         // (util1.c:1205) yields the module root itself.
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/a/../..".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         assert_eq!(dest, module_path);
     }
 
@@ -3378,7 +3379,7 @@ mod module_access_tests {
         // instead of `./...`.
         let module_path = std::path::Path::new("/srv/upload");
         let args: Vec<String> = vec![];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload/")]);
     }
 
@@ -3390,8 +3391,96 @@ mod module_access_tests {
         // engine-side `DOTDIR_NAME` signal (see the bare-module test).
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload/")]);
+    }
+
+    /// The `/./` pivot survives the daemon's argv sanitize under `--relative`.
+    ///
+    /// upstream: `options.c:2405` sanitizes every daemon positional with
+    /// `SP_KEEP_DOT_DIRS`, and `util1.c:1143` turns that into
+    /// `drop_dot_dirs = !relative_paths`. Under `--relative` the `.` component
+    /// therefore survives all the way to `flist.c:2623`'s
+    /// `strstr(fbuf, "/./")`, which splits the operand into `dir = sub` and
+    /// `fn = file.txt` - so the wire name is `file.txt`.
+    ///
+    /// Dropping it here shipped `sub/file.txt` instead, and the receiver's
+    /// `flist.c:1145` "rejecting unrequested file-list name: sub" killed the
+    /// transfer with exit 4. Measured against the 3.5.0 daemon over
+    /// `rsync://host/mod/sub/./file.txt`.
+    #[test]
+    fn resolve_sender_sources_keeps_the_dot_pivot_under_relative() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/sub/./file.txt".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload", true);
+        // Compared as raw bytes, NOT as `Path`: `Path::eq` walks `components()`,
+        // which silently skips a `.`, so `sub/./file.txt` and `sub/file.txt`
+        // compare EQUAL and the assertion could not fail. The kept dot is the
+        // entire subject of this cell.
+        let rendered: Vec<&std::ffi::OsStr> = sources.iter().map(|p| p.as_os_str()).collect();
+        assert_eq!(
+            rendered,
+            vec![std::ffi::OsStr::new("/srv/upload/sub/./file.txt")]
+        );
+    }
+
+    /// Without `--relative` the same operand loses the pivot, because
+    /// upstream's `drop_dot_dirs` is `!relative_paths` and nothing downstream
+    /// reads a `/./` split when `relative_paths` is off (`flist.c:2608` takes
+    /// the `strrchr(fbuf, '/')` arm instead).
+    #[test]
+    fn resolve_sender_sources_drops_the_dot_pivot_without_relative() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/sub/./file.txt".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
+        // Raw bytes for the same reason as the `--relative` cell above.
+        let rendered: Vec<&std::ffi::OsStr> = sources.iter().map(|p| p.as_os_str()).collect();
+        assert_eq!(
+            rendered,
+            vec![std::ffi::OsStr::new("/srv/upload/sub/file.txt")]
+        );
+    }
+
+    /// The axis is `--relative`, never the module root: a `..` is still
+    /// collapsed under `--relative`, so `SP_KEEP_DOT_DIRS` cannot be read as
+    /// "sanitize less". upstream: `util1.c:1183` - the `..` arm sits outside
+    /// the `drop_dot_dirs` guard entirely.
+    #[test]
+    fn resolve_sender_sources_still_collapses_dotdot_under_relative() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/../../etc/passwd".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload", true);
+        assert_eq!(
+            sources,
+            vec![std::path::PathBuf::from("/srv/upload/etc/passwd")]
+        );
+    }
+
+    /// A bare module root still resolves to the root under `--relative`; the
+    /// kept `.` must not turn `mod` into a `mod/.` operand that the engine
+    /// would walk through a different branch.
+    #[test]
+    fn resolve_sender_sources_module_root_unchanged_under_relative() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload", true);
+        // Raw bytes: `components()` also drops a TRAILING separator, and that
+        // slash is the DOTDIR marker the engine reads (flist.c:2589-2594).
+        let rendered: Vec<&std::ffi::OsStr> = sources.iter().map(|p| p.as_os_str()).collect();
+        assert_eq!(rendered, vec![std::ffi::OsStr::new("/srv/upload/")]);
+    }
+
+    /// The receiver's destination rides the same axis - upstream sanitizes
+    /// EVERY positional at `options.c:2402-2405`, dest included, so a
+    /// `--relative` push keeps the dot component that `main.c:725`
+    /// (`get_local_name`) then re-reads with `SP_KEEP_DOT_DIRS` as well.
+    #[test]
+    fn resolve_receiver_dest_keeps_the_dot_component_under_relative() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/dest/.".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload", true);
+        // Raw bytes: as a `Path`, `dest/.` and `dest` compare equal.
+        assert_eq!(dest.as_os_str(), std::ffi::OsStr::new("/srv/upload/dest/."));
     }
 
     #[test]
@@ -3401,7 +3490,7 @@ mod module_access_tests {
         // and the per-positional dir/fn split emits the basename.
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/d1/d2/f2".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         assert_eq!(
             sources,
             vec![std::path::PathBuf::from("/srv/upload/d1/d2/f2")]
@@ -3415,7 +3504,7 @@ mod module_access_tests {
         // emits "." with FLAG_TOP_DIR for the sub-directory's contents.
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/d1/d2/".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         let lossy: Vec<String> = sources
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
@@ -3442,7 +3531,7 @@ mod module_access_tests {
     fn resolve_sender_sources_keeps_the_dotdir_marker_on_a_trailing_dot() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/d1/d2/.".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         let lossy: Vec<String> = sources
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
@@ -3457,7 +3546,7 @@ mod module_access_tests {
     fn resolve_sender_sources_keeps_the_dotdir_marker_through_a_dotdot_collapse() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/d1/d2/..".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         let lossy: Vec<String> = sources
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
@@ -3473,7 +3562,7 @@ mod module_access_tests {
     fn resolve_sender_sources_does_not_invent_a_dotdir_marker() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/d1/d2".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         let lossy: Vec<String> = sources
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
@@ -3490,7 +3579,7 @@ mod module_access_tests {
         let module_path = std::path::Path::new("/srv/upload");
         for tail in ["upload/.", "upload/./", "upload/./."] {
             let args = vec![".".to_owned(), tail.to_owned()];
-            let sources = resolve_sender_sources(module_path, &args, "upload");
+            let sources = resolve_sender_sources(module_path, &args, "upload", false);
             let lossy: Vec<String> = sources
                 .iter()
                 .map(|p| p.to_string_lossy().into_owned())
@@ -3513,7 +3602,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_keeps_the_slash_through_a_trailing_dot_dir() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/realdir/.".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         assert_eq!(
             dest.as_os_str(),
             std::ffi::OsStr::new("/srv/upload/realdir/")
@@ -3527,7 +3616,7 @@ mod module_access_tests {
         // is inside `/srv/upload`, so a chroot-less daemon leaks nothing.
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/../etc/passwd".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         assert_eq!(
             sources,
             vec![std::path::PathBuf::from("/srv/upload/etc/passwd")]
@@ -3540,7 +3629,7 @@ mod module_access_tests {
         // nothing to pop and is discarded - upstream util1.c:1183-1191.
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/d1/../../secret".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         assert_eq!(
             sources,
             vec![std::path::PathBuf::from("/srv/upload/secret")]
@@ -3561,7 +3650,7 @@ mod module_access_tests {
             "upload/./../.././x",
         ] {
             let args = vec![".".to_owned(), tail.to_owned()];
-            for src in resolve_sender_sources(module_path, &args, "upload") {
+            for src in resolve_sender_sources(module_path, &args, "upload", false) {
                 assert!(
                     src.starts_with(module_path),
                     "{tail} resolved to {src:?}, which escapes {module_path:?}"
@@ -3574,7 +3663,7 @@ mod module_access_tests {
     fn resolve_sender_sources_strips_leading_slash_before_join() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload//d1/d2/f2".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         assert_eq!(
             sources,
             vec![std::path::PathBuf::from("/srv/upload/d1/d2/f2")]
@@ -3600,7 +3689,7 @@ mod module_access_tests {
         std::fs::write(module_path.join("foo").join("one"), b"one\n").expect("foo/one");
 
         let args = vec![".".to_owned(), "mod/f*".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "mod");
+        let sources = resolve_sender_sources(module_path, &args, "mod", false);
         assert_eq!(sources, vec![module_path.join("foo")]);
     }
 
@@ -3614,7 +3703,7 @@ mod module_access_tests {
         std::fs::create_dir(module_path.join("bar")).expect("bar dir");
 
         let args = vec![".".to_owned(), "mod/z*".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "mod");
+        let sources = resolve_sender_sources(module_path, &args, "mod", false);
         assert_eq!(sources, vec![module_path.join("z*")]);
     }
 
@@ -3628,7 +3717,7 @@ mod module_access_tests {
 
         // `?` matches exactly one character; `?b` must match only `ab`.
         let args = vec![".".to_owned(), "mod/?b".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "mod");
+        let sources = resolve_sender_sources(module_path, &args, "mod", false);
         assert_eq!(sources, vec![module_path.join("ab")]);
     }
 
@@ -3642,7 +3731,7 @@ mod module_access_tests {
 
         // `[ab]` matches `a` or `b` but not `c`.
         let args = vec![".".to_owned(), "mod/[ab]".to_owned()];
-        let mut sources = resolve_sender_sources(module_path, &args, "mod");
+        let mut sources = resolve_sender_sources(module_path, &args, "mod", false);
         sources.sort();
         assert_eq!(sources, vec![module_path.join("a"), module_path.join("b")]);
     }
@@ -3657,7 +3746,7 @@ mod module_access_tests {
         std::fs::write(module_path.join("visible"), b"visible").expect("visible");
 
         let args = vec![".".to_owned(), "mod/*".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "mod");
+        let sources = resolve_sender_sources(module_path, &args, "mod", false);
         assert_eq!(sources, vec![module_path.join("visible")]);
     }
 
@@ -3670,7 +3759,7 @@ mod module_access_tests {
         let module_path = tmp.path();
 
         let args = vec![".".to_owned(), "mod/missing/file".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "mod");
+        let sources = resolve_sender_sources(module_path, &args, "mod", false);
         assert_eq!(sources, vec![module_path.join("missing/file")]);
     }
 
@@ -3706,7 +3795,7 @@ mod module_access_tests {
         // correctly without per-host separator translation.
         let module_path = std::path::Path::new(r"C:\srv\upload");
         let args = vec![".".to_owned(), "upload/d1/d2/f2".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         assert_eq!(
             sources,
             vec![std::path::PathBuf::from(r"C:\srv\upload/d1/d2/f2")]
@@ -3723,7 +3812,7 @@ mod module_access_tests {
         // `rsync://h/mod/d1/d2/` round-trips with the slash intact.
         let module_path = std::path::Path::new(r"C:\srv\upload");
         let args = vec![".".to_owned(), "upload/d1/d2/".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         let lossy: Vec<String> = sources
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
@@ -3742,7 +3831,7 @@ mod module_access_tests {
         // to the no-trailing-slash form rather than producing `C:\srv\upload\\d1`.
         let module_path = std::path::Path::new(r"C:\srv\upload\");
         let args = vec![".".to_owned(), "upload/d1/d2/f2".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         // The exact emitted bytes are `C:\srv\upload\` + `d1/d2/f2` because
         // the resolver detects the trailing `\` as an existing separator and
         // suppresses its own `/` insertion. The result is still a valid
@@ -3761,7 +3850,7 @@ mod module_access_tests {
         // the result is compared against module-relative wire names.
         let module_path = std::path::Path::new(r"C:\srv\upload");
         let args = vec![".".to_owned(), "upload/../etc/passwd".to_owned()];
-        let sources = resolve_sender_sources(module_path, &args, "upload");
+        let sources = resolve_sender_sources(module_path, &args, "upload", false);
         assert_eq!(
             sources,
             vec![std::path::PathBuf::from(r"C:\srv\upload/etc/passwd")]
@@ -3777,7 +3866,7 @@ mod module_access_tests {
         // the same way they do on Linux.
         let module_path = std::path::Path::new(r"C:\srv\upload");
         let args = vec![".".to_owned(), "upload/realdir/".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         // Path::join uses the host separator on Windows, so a trailing
         // slash on the positional collapses into a backslash-terminated
         // PathBuf. The assertion compares via Path equality so the
@@ -3796,7 +3885,7 @@ mod module_access_tests {
         // containment guarantee on Windows hosts.
         let module_path = std::path::Path::new(r"C:\srv\upload");
         let args = vec![".".to_owned(), "/etc/passwd".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload", false);
         // After stripping the leading `/`, the resolver hands the bare
         // string `etc/passwd` to Path::join, which prepends the host
         // separator (`\` on Windows) but does not rewrite the embedded

@@ -47,6 +47,21 @@ test-group = "daemon-spawn-serial"
 filter = "package(daemon) & (test(daemon_negotiation) | test(daemon_protocol_28_forced) | test(run_daemon_records_log_file_entries))"
 test-group = "daemon-spawn-serial"
 
+# The daemon `--relative` name cells each spawn their own daemon and drive it
+# over loopback. Measured on macOS under saturating CPU load: the 3-cell form of
+# this binary failed 0/8 runs, the 8-cell form 2/8, and the SAME 8 cells forced
+# single-threaded failed 0/8 - so the trigger is concurrent spawn/accept, not
+# any one cell. The client sees the daemon reset the connection while reading
+# the greeting. Same mechanism, and same remedy, as the daemon-package cells
+# grouped above.
+[[profile.ci.overrides]]
+filter = "package(transfer) & binary(daemon_pull_relative_names_are_module_relative)"
+test-group = "daemon-spawn-serial"
+
+[[profile.default.overrides]]
+filter = "package(transfer) & binary(daemon_pull_relative_names_are_module_relative)"
+test-group = "daemon-spawn-serial"
+
 [test-groups.daemon-spawn-serial]
 max-threads = 1
 
