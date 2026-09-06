@@ -152,6 +152,16 @@ struct Fixture {
 }
 
 impl Fixture {
+    /// The daemon's own `log file`, for failure messages.
+    ///
+    /// A client exit status names the outcome but not the cause: the daemon
+    /// decides the destination and reports its own refusals here, so a cell
+    /// that asserts only on the client status cannot say which side broke.
+    fn daemon_log(&self) -> String {
+        fs::read_to_string(self.root.join("rsyncd.log"))
+            .unwrap_or_else(|e| format!("<unreadable: {e}>"))
+    }
+
     fn new() -> Option<Self> {
         let tmp = tempdir().ok()?;
         // macOS resolves `/tmp -> /private/tmp`; canonicalise so the ambient
@@ -542,8 +552,11 @@ fn a_non_relative_push_to_a_dot_dir_destination_still_collapses_it() {
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     assert!(
         output.status.success(),
-        "push into `{WR_MODULE}/dest/.` exited {:?}\nstderr:\n{stderr}",
+        "push into `{WR_MODULE}/dest/.` exited {:?}\nstderr:\n{stderr}\n\
+         daemon log:\n{log}\nmodule tree: {tree:?}",
         output.status,
+        log = fixture.daemon_log(),
+        tree = collect_tree(&fixture.wr_root, &fixture.wr_root),
     );
     assert_eq!(
         collect_tree(&fixture.wr_root, &fixture.wr_root),
