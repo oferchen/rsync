@@ -2898,7 +2898,10 @@ mod module_access_tests {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/realdir".to_owned()];
         let dest = resolve_receiver_dest(module_path, &args, "upload", false);
-        assert_eq!(dest.as_os_str(), std::ffi::OsStr::new("/srv/upload/realdir"));
+        assert_eq!(
+            dest.as_os_str(),
+            std::ffi::OsStr::new("/srv/upload/realdir")
+        );
     }
 
     // The slash must survive `..` collapsing, which is what strips it.
