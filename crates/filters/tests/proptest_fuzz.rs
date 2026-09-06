@@ -192,8 +192,13 @@ proptest! {
     }
 
     /// Comment-only inputs produce no rules.
+    ///
+    /// `rest` excludes BOTH record terminators. `.` already excludes `\n`, but
+    /// a `\r` ends a record too (upstream exclude.c:1774), so leaving it in
+    /// generates a second record - a rule, not a comment - and the property
+    /// under test would no longer be the one named.
     #[test]
-    fn parse_rules_comment_only(comment_char in "[#;]", rest in ".{0,80}") {
+    fn parse_rules_comment_only(comment_char in "[#;]", rest in "[^\n\r]{0,80}") {
         let input = format!("{comment_char}{rest}");
         let result = parse_rules(&input, Path::new("<fuzz>"));
         prop_assert!(result.is_ok());

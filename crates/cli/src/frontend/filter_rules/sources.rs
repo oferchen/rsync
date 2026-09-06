@@ -261,9 +261,10 @@ pub(crate) fn read_filter_patterns_from_standard_input(
 /// Splits a reader into filter pattern records, skipping EMPTY records and
 /// those whose FIRST BYTE is `#`/`;` - the test
 /// [`filters::filter_file_line_is_rule`] owns. Nothing is trimmed, so a
-/// whitespace-only record and an indented `#` are patterns. Records split on
-/// newline, or on NUL when `eol_nulls` is set (`--from0`), in which case
-/// embedded newlines are literal pattern bytes.
+/// whitespace-only record and an indented `#` are patterns. Records split at
+/// `\n`, at `\r`, or at `\r\n` - the boundary
+/// [`filters::filter_file_records`] owns - or on NUL when `eol_nulls` is set
+/// (`--from0`), in which case embedded newlines are literal pattern bytes.
 pub(super) fn read_filter_patterns<R: BufRead>(
     reader: &mut R,
     eol_nulls: bool,
@@ -285,13 +286,6 @@ pub(super) fn read_filter_patterns<R: BufRead>(
             break;
         }
 
-        if buffer.last() == Some(&delimiter) {
-            buffer.pop();
-        }
-        if !eol_nulls && buffer.last() == Some(&b'\r') {
-            buffer.pop();
-        }
-
         // upstream: exclude.c:1806. `filters::filter_file_line_is_rule` is the
         // single owner of that test; it looks at the FIRST BYTE and does not
         // trim. `--*clude-from` files are always line-parsed, never word-split.
@@ -301,12 +295,27 @@ pub(super) fn read_filter_patterns<R: BufRead>(
         // only line is `   `, upstream excludes the file named `   ` and oc
         // transferred it; with `  #a`, upstream excludes `  #a` and oc
         // transferred it. Both at exit 0 - silent data selection divergence.
-        let line = String::from_utf8_lossy(&buffer);
-        if !filters::filter_file_line_is_rule(&line, true) {
+        let chunk = String::from_utf8_lossy(&buffer);
+
+        if eol_nulls {
+            let mut line = chunk.into_owned();
+            if line.as_bytes().last() == Some(&b'\0') {
+                line.pop();
+            }
+            if filters::filter_file_line_is_rule(&line, true) {
+                patterns.push(line);
+            }
             continue;
         }
 
-        patterns.push(line.into_owned());
+        // `read_until(b'\n')` is only a buffering boundary: a lone `\r` also
+        // ends a record (exclude.c:1774-1793), so the chunk is re-split by the
+        // single owner `filters::filter_file_records`, terminator and all.
+        patterns.extend(
+            filters::filter_file_records(&chunk)
+                .filter(|line| filters::filter_file_line_is_rule(line, true))
+                .map(str::to_owned),
+        );
     }
 
     Ok(patterns)
