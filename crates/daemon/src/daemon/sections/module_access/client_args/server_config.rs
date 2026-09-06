@@ -99,6 +99,16 @@ fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerC
     // and let the transfer layer strip it.
     cfg.connection.daemon_module_root = Some(module.path.clone());
 
+    // upstream: syscall.c:122-127 `symlink_optout_allowed()` - the `am_daemon`
+    // arm is `module_id >= 0 && lp_insecure_links(module_id)`, so the opt-out
+    // is a property of the SERVED MODULE and never of the forwarded argv.
+    // Recording it on the connection is what makes it per-connection: upstream
+    // forks a child per connection, so its global is already private, while oc
+    // serves every connection on a worker thread of one process. Left in a
+    // global, a module with `insecure links = yes` switches off the
+    // confinement of a concurrent connection to a module that never opted out.
+    cfg.connection.daemon_insecure_links = module.insecure_links;
+
     // upstream: clientserver.c:1111-1112
     if module.ignore_errors {
         cfg.deletion.ignore_errors = true;
