@@ -198,13 +198,18 @@ pub(crate) fn log_max_connections_rejection(
 /// session, so the accept loop's reap is what releases it. See
 /// [`SessionWorker`] for why that placement is load-bearing.
 ///
-/// upstream: clientserver.c - fork per connection; we use threads with
-/// `catch_unwind` for equivalent crash isolation.
+/// Returns `None` when no session could be started at all - only a failed
+/// `fork` does that, and upstream treats it the same way, by continuing the
+/// accept loop rather than ending the daemon.
+///
+/// upstream: `socket.c:753-772` `start_accept_loop()` forks per connection;
+/// oc does the same on Unix and keeps a thread backing on Windows, which has
+/// no `fork`. See [`SessionBacking`].
 fn spawn_connection_worker(
     stream: DaemonStream,
     raw_peer_addr: SocketAddr,
     state: &AcceptLoopState<'_>,
-) -> SessionWorker {
+) -> Option<SessionWorker> {
     let peer_addr = normalize_peer_address(raw_peer_addr);
     // Build the shareable per-connection context once; the same context type
     // and `serve_session` core drive the async accept path, keeping the wire
@@ -221,19 +226,108 @@ fn spawn_connection_worker(
     );
     let slot = state.connection_counter.acquire();
 
-    let handle = thread::spawn(move || {
-        // upstream rsync forks per connection, so a crash only kills that
-        // child. `serve_session` isolates panics via `catch_unwind` so a
-        // faulting connection cannot tear down the daemon.
-        match context.serve_session(stream, raw_peer_addr) {
-            Ok(()) => Ok(()),
-            Err(error) => Err((Some(peer_addr), error)),
+    #[cfg(not(unix))]
+    let backing = {
+        let handle = thread::spawn(move || {
+            // `serve_session` isolates panics via `catch_unwind` so a faulting
+            // connection cannot tear down the daemon - the thread-backed
+            // stand-in for the crash isolation a forked child gets for free.
+            match context.serve_session(stream, raw_peer_addr) {
+                Ok(()) => Ok(()),
+                Err(error) => Err((Some(peer_addr), error)),
+            }
+        });
+        SessionBacking {
+            handle: Some(handle),
         }
-    });
+    };
 
-    SessionWorker {
-        handle,
+    #[cfg(unix)]
+    let backing = fork_session_backing(context, stream, raw_peer_addr, peer_addr, state)?;
+
+    Some(SessionWorker {
+        backing,
         _slot: slot,
+    })
+}
+
+/// Forks a child to serve one connection, mirroring upstream's accept loop.
+///
+/// The child owns the accepted stream and the session; the parent keeps only
+/// the pid. A `chroot()` or working-directory change the session makes is then
+/// confined to that child, which is the whole point - both are process-wide,
+/// so a thread-backed session leaks them into every later connection.
+///
+/// upstream: `socket.c:753-765` `start_accept_loop()`.
+#[cfg(unix)]
+fn fork_session_backing(
+    context: ConnectionContext,
+    stream: DaemonStream,
+    raw_peer_addr: SocketAddr,
+    peer_addr: SocketAddr,
+    state: &AcceptLoopState<'_>,
+) -> Option<SessionBacking> {
+    match platform::session_fork::fork_session() {
+        Ok(platform::session_fork::ForkSide::Child) => {
+            let code = serve_forked_session(&context, stream, raw_peer_addr, peer_addr);
+            // `_exit`, never a return: the child shares the parent's buffered
+            // stdio and its `Drop`s (the pid-file guard above all), so
+            // unwinding would flush and remove state the parent still owns.
+            platform::session_fork::exit_child(code);
+        }
+        Ok(platform::session_fork::ForkSide::Parent { child_pid }) => {
+            // The parent must not hold the accepted socket: while it stays
+            // open the peer cannot observe the child's close.
+            // upstream: `socket.c:772` `close(fd)` in the parent arm.
+            drop(stream);
+            Some(SessionBacking { child_pid })
+        }
+        Err(error) => {
+            // upstream: `socket.c:766-770` reports the failure, closes the
+            // socket and KEEPS ACCEPTING - a fork failure ends one connection,
+            // never the daemon.
+            report_fork_failure(&error, peer_addr, state.log_sink.as_ref());
+            drop(stream);
+            None
+        }
+    }
+}
+
+/// Runs one session in the forked child and reduces it to an exit status.
+///
+/// The child owns the log sink, so it reports its own failure here rather than
+/// handing an error back across a process boundary it cannot cross. That is
+/// why the parent's [`SessionOutcome::EndedWithStatus`] carries no message: it
+/// would only repeat this line.
+#[cfg(unix)]
+fn serve_forked_session(
+    context: &ConnectionContext,
+    stream: DaemonStream,
+    raw_peer_addr: SocketAddr,
+    peer_addr: SocketAddr,
+) -> i32 {
+    match context.serve_session(stream, raw_peer_addr) {
+        Ok(()) => 0,
+        Err(error) => {
+            report_session_failure(Some(peer_addr), &error, context.log_sink());
+            SOCKET_IO_EXIT_CODE
+        }
+    }
+}
+
+/// Reports a `fork` that failed, against the peer whose connection it ends.
+///
+/// upstream: `socket.c:766-770` `rsyserr(FERROR, errno, "could not create
+/// child server process")`.
+#[cfg(unix)]
+fn report_fork_failure(error: &io::Error, peer: SocketAddr, log_sink: Option<&SharedLogSink>) {
+    let text = format!("could not create child server process for {peer}: {error}");
+    match log_sink {
+        Some(log) => {
+            let message = rsync_error!(SOCKET_IO_EXIT_CODE, text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
+        None => eprintln!("{text} [daemon={}]", env!("CARGO_PKG_VERSION")),
     }
 }
 
@@ -320,7 +414,12 @@ fn handle_accepted_connection(
         return false;
     }
 
-    let worker = spawn_connection_worker(stream, raw_peer_addr, state);
+    let Some(worker) = spawn_connection_worker(stream, raw_peer_addr, state) else {
+        // The session never started, so there is no worker to track and
+        // nothing was served. The slot guard went with the worker that was
+        // never built, releasing capacity for the next connection.
+        return false;
+    };
     state.workers.push(worker);
     state.served = state.served.saturating_add(1);
 
