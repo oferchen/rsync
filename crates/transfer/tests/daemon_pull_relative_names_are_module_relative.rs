@@ -72,12 +72,16 @@ use std::process::{Child, Command, Stdio};
 use tempfile::{TempDir, tempdir};
 
 const MODULE: &str = "relmod";
+/// A writable twin of [`MODULE`], for the push cells that exercise the
+/// destination half of the same `relative_paths` axis.
+const WR_MODULE: &str = "relmodwr";
 
 fn write_daemon_config(
     config_path: &Path,
     pid_path: &Path,
     log_path: &Path,
     module_root: &Path,
+    wr_module_root: &Path,
 ) -> io::Result<()> {
     let body = format!(
         "pid file = {pid}\n\
@@ -89,10 +93,17 @@ fn write_daemon_config(
          path = {root}\n\
          comment = relative daemon pull names\n\
          read only = true\n\
+         list = true\n\
+         \n\
+         [{WR_MODULE}]\n\
+         path = {wr_root}\n\
+         comment = relative daemon push destinations\n\
+         read only = false\n\
          list = true\n",
         pid = pid_path.display(),
         log = log_path.display(),
         root = module_root.display(),
+        wr_root = wr_module_root.display(),
     );
     fs::write(config_path, body)
 }
@@ -137,6 +148,7 @@ struct Fixture {
     _tmp: TempDir,
     config: PathBuf,
     root: PathBuf,
+    wr_root: PathBuf,
 }
 
 impl Fixture {
@@ -150,17 +162,21 @@ impl Fixture {
         fs::write(module_root.join("top.txt"), b"top\n").ok()?;
         fs::write(module_root.join("a/c.txt"), b"c\n").ok()?;
         fs::write(module_root.join("a/b/file.txt"), b"f\n").ok()?;
+        let wr_module_root = root.join("wrmodule");
+        fs::create_dir_all(&wr_module_root).ok()?;
         let config = root.join("rsyncd.conf");
         write_daemon_config(
             &config,
             &root.join("rsyncd.pid"),
             &root.join("rsyncd.log"),
             &module_root,
+            &wr_module_root,
         )
         .ok()?;
         Some(Self {
             config,
             root,
+            wr_root: wr_module_root,
             _tmp: tmp,
         })
     }
@@ -480,4 +496,66 @@ fn concurrent_connections_do_not_share_the_relative_pivot() {
              names; a shared pivot would make both connections agree on one",
         );
     }
+}
+
+/// Negative control for the DESTINATION half of the axis: a non-`--relative`
+/// push into a `/.`-terminated daemon destination must still collapse the dot.
+///
+/// Upstream sanitizes the dest positional through the same `options.c:2405`
+/// call as the sources, so `util1.c:1143` applies there too: with
+/// `relative_paths` off the `.` is dropped and `wrmod/dest/.` becomes
+/// `dest/`, which `get_local_name()` (main.c:794) reads as the
+/// make-a-directory form and the tree lands inside. Keeping the dot instead
+/// pushes `dest/.` into the single-file arm at main.c:852, whose
+/// `change_dir#3` on the not-yet-existing `dest` fails.
+///
+/// Measured against the 3.5.0 daemon: `rsync -r <src>/a
+/// rsync://host/wrmod/dest/.` lands `dest/a/b/file.txt` and `dest/a/c.txt`.
+/// This is the cell that discriminates "axis pinned ON" - none of the pull
+/// shapes do, because the sender's non-relative walk splits on the last `/`
+/// and absorbs a dot component either way.
+#[test]
+fn a_non_relative_push_to_a_dot_dir_destination_still_collapses_it() {
+    let oc_bin = test_support::oc_rsync_bin();
+    let Some(fixture) = Fixture::new() else {
+        eprintln!("skipping: tempdir allocation failed");
+        return;
+    };
+    let (_daemon, port) = match spawn_oc_daemon(&oc_bin, &fixture.config) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("skipping: could not start oc-rsync --daemon: {e}");
+            return;
+        }
+    };
+
+    // The read-only module's tree doubles as the push source.
+    let src = fixture.root.join("module").join("a");
+    let dest_url = OsString::from(format!("rsync://127.0.0.1:{port}/{WR_MODULE}/dest/."));
+    let output = Command::new(&oc_bin)
+        .args([OsStr::new("-r"), src.as_os_str(), dest_url.as_os_str()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("spawn oc-rsync client (daemon push)");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        output.status.success(),
+        "push into `{WR_MODULE}/dest/.` exited {:?}\nstderr:\n{stderr}",
+        output.status,
+    );
+    assert_eq!(
+        collect_tree(&fixture.wr_root, &fixture.wr_root),
+        vec![
+            "dest".to_owned(),
+            "dest/a".to_owned(),
+            "dest/a/b".to_owned(),
+            "dest/a/b/file.txt".to_owned(),
+            "dest/a/c.txt".to_owned(),
+        ],
+        "without `--relative` the dest `dest/.` sanitizes to `dest/`, so the \
+         source directory lands inside it; a kept dot takes upstream's \
+         single-file arm and lands nothing",
+    );
 }
