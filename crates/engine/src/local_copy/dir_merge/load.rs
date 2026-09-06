@@ -584,7 +584,10 @@ pub(crate) fn load_dir_merge_rules_recursive(
             let allow_comments = *allow_comments;
             // upstream: exclude.c:1759-1760 - rule_src_line counts EVERY
             // physical line, so blanks and comments still advance it.
-            for (index, line) in contents.lines().enumerate() {
+            // Records split via the single owner `filters::filter_file_records`
+            // (exclude.c:1774-1793): a lone `\r` ends a record, CRLF ends
+            // exactly one.
+            for (index, line) in filters::filter_file_records(&contents).enumerate() {
                 let line_number = index + 1;
                 // upstream: exclude.c:1806. `filters::filter_file_line_is_rule`
                 // is the single owner of that test - it does NOT trim, so

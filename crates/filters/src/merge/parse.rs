@@ -41,7 +41,9 @@ use super::error::MergeFileError;
 pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>, MergeFileError> {
     let mut rules = Vec::new();
 
-    for (line_num, line) in content.lines().enumerate() {
+    // `filter_file_records` is the single owner of the record split; see
+    // `merge::records` for why `str::lines` is the wrong boundary.
+    for (line_num, line) in crate::filter_file_records(content).enumerate() {
         let line_num = line_num + 1; // 1-indexed for error messages
 
         // upstream: exclude.c:1806 parse_filter_file. `filter_file_line_is_rule`
@@ -121,7 +123,9 @@ pub(crate) fn parse_rules_no_prefixes(
             push_token(token);
         }
     } else {
-        for line in content.lines() {
+        // Records split via the single owner `filter_file_records`
+        // (exclude.c:1774-1793), so a lone `\r` ends a rule here too.
+        for line in crate::filter_file_records(content) {
             // upstream: exclude.c:1806 parse_filter_file, via the single owner
             // `filter_file_line_is_rule`. The surviving line becomes a literal
             // pattern verbatim (FILTRULE_NO_PREFIXES takes strlen with no

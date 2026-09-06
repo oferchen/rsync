@@ -169,6 +169,34 @@ fn parse_comments_and_empty_lines() {
     assert_eq!(rules[0].pattern(), "*.txt");
 }
 
+/// A lone `\r` ends a rule here too, and CRLF ends exactly one.
+///
+/// upstream: exclude.c:1774-1793 - the read loop breaks on `\n` OR `\r`, and
+/// on `\r` it swallows a following `\n`. `str::lines` breaks only on `\n`, so
+/// a `\r`-separated file used to collapse into one unmatched pattern; the
+/// trailing space below is what makes the boundary decide the pattern.
+#[test]
+fn parse_splits_records_at_a_carriage_return() {
+    let rules = parse_rules("- a \r- b\r", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 2);
+    assert_eq!(rules[0].pattern(), "a ");
+    assert_eq!(rules[1].pattern(), "b");
+
+    let crlf = parse_rules("- a \r\n- b\r\n", Path::new("test")).unwrap();
+    assert_eq!(crlf.len(), 2);
+    assert_eq!(crlf[0].pattern(), "a ");
+    assert_eq!(crlf[1].pattern(), "b");
+}
+
+/// The no-prefixes reader (`:-`/`:+` dir-merge) shares the boundary.
+#[test]
+fn parse_no_prefixes_splits_records_at_a_carriage_return() {
+    let rules = parse_rules_no_prefixes("a \rb\r", Path::new("test"), false, false, false);
+    assert_eq!(rules.len(), 2);
+    assert_eq!(rules[0].pattern(), "a ");
+    assert_eq!(rules[1].pattern(), "b");
+}
+
 #[test]
 fn parse_multiple_rules() {
     let content = "+ *.txt\n- *.bak\nP /important\n";

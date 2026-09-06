@@ -239,7 +239,10 @@ fn parse_merge_contents(
     // upstream counts PHYSICAL lines: rule_src_line increments once per read
     // iteration (exclude.c:1759-1760), before the comment and empty-token
     // filter at :1806, so comments and blank lines advance the count.
-    for (index, line) in contents.lines().enumerate() {
+    // Records split via the single owner `filters::filter_file_records`
+    // (exclude.c:1774-1793): a lone `\r` ends a record and CRLF ends exactly
+    // one, which `str::lines` gets wrong for the former.
+    for (index, line) in filters::filter_file_records(contents).enumerate() {
         let line_number = index + 1;
         // upstream: exclude.c:1806 parse_filter_file. `filter_file_line_is_rule`
         // is the single owner of that test: whitespace is never stripped, so
