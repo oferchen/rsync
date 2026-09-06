@@ -707,7 +707,7 @@ fn delete_leaf(
 /// Whether an `rmdir` error means the directory was left non-empty (upstream
 /// `DR_NOT_EMPTY`). ENOTEMPTY is 39 on Linux and 66 on BSD/macOS; the raw errno
 /// check keeps this platform-independent without a libc dependency.
-fn is_dir_not_empty(error: &io::Error) -> bool {
+pub(super) fn is_dir_not_empty(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::DirectoryNotEmpty
         || matches!(error.raw_os_error(), Some(39) | Some(66))
 }

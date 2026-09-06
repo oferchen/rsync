@@ -70,6 +70,7 @@ impl<'a> CopyContext<'a> {
             iconv_conversion_error: false,
             unsupported_operation_skipped: false,
             sender_remove_error: false,
+            make_way_error: false,
             delete_io_error: false,
             multi_source: false,
             verified_parents: HashMap::new(),
@@ -533,6 +534,25 @@ impl<'a> CopyContext<'a> {
     /// even though every other entry was copied.
     pub(super) const fn sender_remove_error_occurred(&self) -> bool {
         self.sender_remove_error
+    }
+
+    /// Records that a directory obstacle survived the `rmdir` that had to make
+    /// way for an incoming regular file, symlink, or special. The entry is
+    /// skipped, the rest of the transfer continues, and the run finishes
+    /// `RERR_PARTIAL` (23).
+    ///
+    /// upstream: `delete.c:283-285` emits `could not make way for %s %s` at
+    /// `FERROR_XFER`, `log.c:310-311` sets `got_xfer_error`, and
+    /// `cleanup.c:217-218` lifts a zero exit to `RERR_PARTIAL`.
+    pub(crate) fn record_make_way_error(&mut self) {
+        self.make_way_error = true;
+    }
+
+    /// Reports whether any obstacle removal was refused, so the transfer can
+    /// finish with exit code 23 (`RERR_PARTIAL`) even though every other entry
+    /// was copied.
+    pub(super) const fn make_way_error_occurred(&self) -> bool {
+        self.make_way_error
     }
 
     /// Records that a source file ended before the length this transfer was

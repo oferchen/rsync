@@ -1613,8 +1613,20 @@ fn backup_dir_with_inplace_no_whole_file_copies_matched_blocks() {
     );
 }
 
+// upstream: `--backup` turns the DEL_RECURSE peel into a set of in-place
+// renames. `delete_dir_contents()` (delete.c:141-163) calls `delete_item()` per
+// child, and a non-directory child takes the `make_backup` arm
+// (delete.c:227-232); with a plain `~` suffix and no --backup-dir that renames
+// `inner.txt` to `inner.txt~` INSIDE the directory being cleared. The directory
+// never empties, the rmdir fails ENOTEMPTY, and upstream refuses the entry at
+// 23 with both diagnostics - even though --force was given.
+//
+// Measured against rsync 3.5.0 on this exact fixture: rc=23, `dest/source/item`
+// still a directory holding `inner.txt~`, `cannot delete non-empty directory:
+// source/item` on stdout and `could not make way for new regular file:
+// source/item` on stderr. This cell used to assert `item` had become a file.
 #[test]
-fn backup_with_force_directory_replaced_by_file() {
+fn backup_with_force_leaves_the_backed_up_child_and_refuses() {
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
 
@@ -1636,16 +1648,18 @@ fn backup_with_force_directory_replaced_by_file() {
         .force_replacements(true)
         .backup(true);
 
-    plan.execute_with_options(LocalCopyExecution::Apply, options)
-        .expect("copy succeeds");
+    let error = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect_err("the in-place backup refills the directory, so the rmdir fails");
+    assert_eq!(error.exit_code(), 23, "upstream finishes RERR_PARTIAL here");
 
     assert!(
-        dest_root.join("item").is_file(),
-        "item should be a file now"
+        dest_root.join("item").is_dir(),
+        "the directory survives its own rmdir"
     );
     assert_eq!(
-        fs::read(dest_root.join("item")).expect("read dest"),
-        b"file content"
+        fs::read(dest_root.join("item/inner.txt~")).expect("the child is backed up IN PLACE"),
+        b"inner",
     );
 }
 

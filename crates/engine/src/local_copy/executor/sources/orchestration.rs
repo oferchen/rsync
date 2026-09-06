@@ -601,6 +601,15 @@ pub(crate) fn copy_sources(
             if context.sender_remove_error_occurred() {
                 return Err(LocalCopyError::partial_transfer());
             }
+            // upstream: delete.c:283-285 - a directory obstacle that survived
+            // its rmdir logs `could not make way for new %s: %s` at
+            // FERROR_XFER, which sets got_xfer_error (log.c:310-311) without
+            // aborting; cleanup.c:217-218 then lifts the exit to RERR_PARTIAL
+            // (23). The per-entry diagnostics were already printed at the
+            // refusal site, so surface only the summary error here.
+            if context.make_way_error_occurred() {
+                return Err(LocalCopyError::partial_transfer());
+            }
             // upstream: sender.c:787-795 - a source that shrank mid-transfer
             // sets `io_error |= IOERR_GENERAL` and logs one `read errors
             // mapping %s` at FERROR_XFER without aborting; main.c then exits

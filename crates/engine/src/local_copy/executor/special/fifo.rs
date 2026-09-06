@@ -17,9 +17,9 @@ use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyChangeSet,
-    LocalCopyError, LocalCopyMetadata, LocalCopyRecord, map_metadata_error,
-    overrides::create_hard_link, remove_source_entry_if_requested,
+    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
+    LocalCopyMetadata, LocalCopyRecord, map_metadata_error, overrides::create_hard_link,
+    remove_source_entry_if_requested,
 };
 #[cfg(unix)]
 use ::metadata::create_fifo_with_fake_super;
@@ -98,20 +98,46 @@ pub(crate) fn copy_fifo(
 
     let destination_previously_existed = existing_metadata.is_some();
 
-    if let Some(existing) = existing_metadata.as_ref()
-        && existing.file_type().is_dir()
+    if existing_metadata
+        .as_ref()
+        .is_some_and(|existing| existing.file_type().is_dir())
     {
-        if context.force_replacements_enabled() {
-            context.force_remove_destination(destination, relative, existing)?;
-            existing_metadata = None;
-        } else {
-            return Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::ReplaceDirectoryWithSpecial,
-            ));
+        // upstream: generator.c:1780-1804 - the `ignore_existing` skip is tested
+        // at `statret == 0` and `goto cleanup`s BEFORE either make-way removal
+        // (generator.c:2149 / 2477-2483), so `--ignore-existing` leaves the
+        // directory standing rather than clearing it.
+        if context.ignore_existing_enabled() {
+            return Ok(());
         }
+        // upstream: generator.c:2469-2483 atomic_create() - `dir_in_the_way`
+        // forces `skip_atomic`, so a directory obstacle takes the
+        // `delete_item()` arm whether or not --backup is set, and `del_opts`
+        // carries DEL_RECURSE only under --delete/--force. That flag selects
+        // the RECURSION, not the removal: an empty directory is rmdir'd and the
+        // FIFO or socket placed with no options at all, and a populated one is
+        // refused out loud at exit 23. Upstream never aborts the run for an
+        // obstacle, so there is no argument error here.
+        let recurse = context.force_replacements_enabled() || context.options().delete_extraneous();
+        if !crate::local_copy::clear_directory_obstacle(
+            context,
+            destination,
+            relative,
+            recurse,
+            crate::local_copy::MakeWayFor::Special,
+        )? {
+            // upstream: generator.c:2482 `return 0` - atomic_create() creates
+            // nothing, the caller skips this entry, and the run finishes 23.
+            return Ok(());
+        }
+        existing_metadata = None;
     }
 
-    if context.existing_only_enabled() && existing_metadata.is_none() {
+    // upstream: generator.c:1758-1766 - `ignore_non_existing` (`--existing`)
+    // is tested at `statret == -1 && stat_errno == ENOENT`, so it asks whether
+    // the destination existed BEFORE the make-way removal. Reading the
+    // post-removal `None` instead would skip the very entry the removal just
+    // cleared the way for, leaving neither the directory nor the file.
+    if context.existing_only_enabled() && !destination_previously_existed {
         if let Some(path) = &record_path {
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
             context.record(LocalCopyRecord::new(
