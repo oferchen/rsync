@@ -541,6 +541,33 @@ const DELTA_BASIS_LEN: usize = 64 * 1024;
 /// Bytes the shrunken source still holds by the time the copy reads it.
 const DELTA_SHRUNK_LEN: usize = 4096;
 
+/// Bytes the source grew by after it was sized - larger than the read buffer,
+/// so an unclamped loop overshoots by more than one chunk.
+const DELTA_APPENDED_LEN: usize = 256 * 1024;
+
+/// Offset at which the source stops reproducing the basis. Bytes before it
+/// match the basis block for block, bytes after it can only be emitted as
+/// literals, so one delta copy of this source drives both branches of the loop,
+/// and a destination that merely reproduced the basis fails the content
+/// assertion instead of passing by coincidence.
+const DELTA_DIVERGE_AT: usize = DELTA_BASIS_LEN / 2;
+
+/// Writes a source that reproduces the basis up to `DELTA_DIVERGE_AT` and
+/// diverges from it after that.
+fn write_partly_divergent_bytes(path: &Path, len: usize) {
+    let mut file = File::create(path).expect("create source");
+    let block: Vec<u8> = (0..len)
+        .map(|i| {
+            if i < DELTA_DIVERGE_AT {
+                (i.wrapping_mul(31) % 251) as u8
+            } else {
+                (i.wrapping_mul(17) % 241) as u8
+            }
+        })
+        .collect();
+    file.write_all(&block).expect("write source");
+}
+
 /// What one delta copy produced: whether the run recorded a short source, what
 /// the writer ended up holding, and what the source actually contained.
 struct DeltaCopyOutcome {
@@ -558,6 +585,21 @@ struct DeltaCopyOutcome {
 /// it" without racing a real truncation, the same technique the three sibling
 /// movers are pinned with.
 fn delta_copy_outcome(source_len: usize, declared_len: u64) -> DeltaCopyOutcome {
+    delta_copy_outcome_with(source_len, declared_len, write_bytes)
+}
+
+/// `delta_copy_outcome` with control over how the source is laid out, so a cell
+/// that asserts on destination CONTENT can seed a source the basis does not
+/// already supply.
+///
+/// A `declared_len` above `source_len` is "the source shrank after it was
+/// sized"; one below it is "the source grew". Neither races a real change to
+/// the file.
+fn delta_copy_outcome_with(
+    source_len: usize,
+    declared_len: u64,
+    write_source: fn(&Path, usize),
+) -> DeltaCopyOutcome {
     let temp = TempDir::new().expect("tempdir");
     let source = temp.path().join("src.bin");
     let basis = temp.path().join("dst.bin");
@@ -567,7 +609,7 @@ fn delta_copy_outcome(source_len: usize, declared_len: u64) -> DeltaCopyOutcome 
     // delta mover: `build_delta_signature` returns `None` for an empty one and
     // the executor then falls back to a straight copy.
     write_bytes(&basis, DELTA_BASIS_LEN);
-    write_bytes(&source, source_len);
+    write_source(&source, source_len);
 
     let basis_metadata = fs::metadata(&basis).expect("stat basis");
     let index =
@@ -669,5 +711,89 @@ fn delta_copy_of_a_complete_source_records_no_read_error() {
     assert_eq!(
         outcome.written, outcome.source,
         "the delta copy did not reproduce a complete {DELTA_BASIS_LEN}-byte source"
+    );
+}
+
+/// A delta copy must move exactly the length the transfer was sized from, even
+/// when the file on disk has grown past it.
+///
+/// This is the fourth content mover and the only one that read to EOF. The
+/// kernel tier takes `total_size - initial_bytes` as an explicit length, and
+/// the dense and sparse loops each carry a per-read
+/// `chunk_len.min(expected_remaining - total_bytes)` clamp -
+/// `dense_copy_moves_exactly_the_length_it_was_sized_from` and its sparse twin
+/// pin both. The delta loop read `reader.read(&mut read_buffer)` unbounded and
+/// stopped only at EOF, so a source appended to after it was sized had the
+/// appended tail copied on this path and dropped on the other three.
+///
+/// upstream has one mover and sizes it from the OPENED handle:
+/// `do_fstat(fd, &st)` (sender.c:728) then
+/// `mbuf = map_file(fd, st.st_size, read_size, s->blength)` (sender.c:757), so
+/// a tail appended after that fstat is never mapped and never sent. Nothing
+/// diagnoses it - `map_ptr()` records a status only when a read returns 0 with
+/// the mapped window still unfilled
+/// (`map->status = nread ? errno : ENODATA`, fileio.c:359-363), which is the
+/// SHRINK case. Measured on rsync 3.5.0 with `-a --no-whole-file` over a
+/// pre-seeded destination and a source appended to between the fstat and the
+/// read: upstream exits 0, prints nothing, and leaves the destination at the
+/// fstat length. So the rule is stop silently, not report.
+///
+/// A `--no-whole-file` copy over a destination that already exists is the one
+/// input that routes here: `build_delta_signature` returns `None` for an empty
+/// destination and the executor then falls back to a straight copy, which is
+/// why the sibling grow cells above - which copy into a fresh destination -
+/// could not see this.
+#[test]
+fn delta_copy_moves_exactly_the_length_it_was_sized_from() {
+    let outcome = delta_copy_outcome_with(
+        DELTA_BASIS_LEN + DELTA_APPENDED_LEN,
+        DELTA_BASIS_LEN as u64,
+        write_partly_divergent_bytes,
+    );
+
+    assert_eq!(
+        outcome.written.len(),
+        DELTA_BASIS_LEN,
+        "the delta copy overshot the length it was sized from by {} bytes",
+        outcome.written.len().saturating_sub(DELTA_BASIS_LEN),
+    );
+    assert_eq!(
+        outcome.written,
+        outcome.source[..DELTA_BASIS_LEN],
+        "the delta copy did not reproduce the declared prefix of the source"
+    );
+    assert!(
+        !outcome.recorded_short_read,
+        "a source that grew was reported as a short read; upstream sizes the map from the \
+         fstat and drops the appended tail silently, exit 0"
+    );
+}
+
+/// Negative control for the cell above: the same divergent source through the
+/// same mover, at exactly the length it was sized from. It differs in one
+/// variable - whether any bytes sit past the declared length - so a clamp that
+/// fired when it should not, or one that truncated what it was given, shows up
+/// here rather than being absorbed.
+#[test]
+fn delta_copy_of_a_source_at_its_declared_length_moves_all_of_it() {
+    let outcome = delta_copy_outcome_with(
+        DELTA_BASIS_LEN,
+        DELTA_BASIS_LEN as u64,
+        write_partly_divergent_bytes,
+    );
+
+    assert_eq!(
+        outcome.written.len(),
+        DELTA_BASIS_LEN,
+        "the delta copy of an unchanged source wrote {} bytes for a {DELTA_BASIS_LEN}-byte source",
+        outcome.written.len(),
+    );
+    assert_eq!(
+        outcome.written, outcome.source,
+        "the delta copy did not reproduce an unchanged source byte for byte"
+    );
+    assert!(
+        !outcome.recorded_short_read,
+        "a delta copy of a source that matched its declared length was reported as short"
     );
 }
