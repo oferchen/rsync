@@ -1575,14 +1575,23 @@ mod device_guard_tests {
 ///   (`options.c:2382-2386` nulls it out for a daemon before it is read).
 /// - `syscall.c:123-127` - `symlink_optout_allowed()`.
 fn confinement_root(connection: &crate::config::ConnectionConfig) -> Option<PathBuf> {
+    // The opt-out is read on the SAME axis as the root, because upstream's two
+    // arms read disjoint state: a daemon consults `lp_insecure_links(module_id)`
+    // and a non-daemon consults the `insecure_links` flag. Splitting them - a
+    // per-connection root but a process-global opt-out - is what let a
+    // concurrent connection answer this question for a module that never opted
+    // out, since oc serves connections on worker threads of one process rather
+    // than forking as upstream does.
+    if connection.is_daemon_connection {
+        if connection.daemon_insecure_links {
+            return None;
+        }
+        return connection.daemon_module_root.clone();
+    }
     if fast_io::confinement::session_optout_allowed() {
         return None;
     }
-    if connection.is_daemon_connection {
-        connection.daemon_module_root.clone()
-    } else {
-        connection.confine_root.clone()
-    }
+    connection.confine_root.clone()
 }
 
 #[cfg(test)]
@@ -1595,14 +1604,22 @@ mod confinement_root_tests {
     };
     use std::path::PathBuf;
 
-    /// Safe against the process-global session opt-out because this workspace
-    /// runs under cargo-nextest, which executes each test in its own process.
-    fn daemon_serving(root: &str) -> ConnectionConfig {
+    /// A daemon connection serving `root`, carrying its OWN module's opt-out.
+    ///
+    /// The opt-out is a field rather than an ambient global because oc serves
+    /// concurrent connections on worker threads of one process; see
+    /// `ConnectionConfig::daemon_insecure_links`.
+    fn daemon_serving_with_optout(root: &str, insecure_links: bool) -> ConnectionConfig {
         ConnectionConfig {
             is_daemon_connection: true,
             daemon_module_root: Some(PathBuf::from(root)),
+            daemon_insecure_links: insecure_links,
             ..Default::default()
         }
+    }
+
+    fn daemon_serving(root: &str) -> ConnectionConfig {
+        daemon_serving_with_optout(root, false)
     }
 
     fn serve_module(insecure_links: bool) {
@@ -1624,9 +1641,30 @@ mod confinement_root_tests {
     fn module_optout_releases_the_daemon_confinement_root() {
         serve_module(true);
         assert_eq!(
-            confinement_root(&daemon_serving("/srv/mod")),
+            confinement_root(&daemon_serving_with_optout("/srv/mod", true)),
             None,
             "`insecure links = yes` must release the sender's confinement root"
+        );
+    }
+
+    /// The race, at unit scale: another connection published `insecure links =
+    /// yes` into the process-global, but THIS connection's module never opted
+    /// out, so its root must survive.
+    ///
+    /// Upstream can read that answer from a global because it forks a child per
+    /// connection; oc serves connections on worker threads of one process, so
+    /// the global names whichever module published last. Measured end to end,
+    /// reading it here leaked a module out of its own root in 47 of 80
+    /// concurrent rounds (`tests/daemon_concurrent_module_confinement.rs`).
+    #[test]
+    fn another_connections_optout_does_not_release_this_ones_root() {
+        // Stand in for a concurrent worker thread serving an opted-out module.
+        serve_module(true);
+        assert_eq!(
+            confinement_root(&daemon_serving_with_optout("/srv/strict", false)),
+            Some(PathBuf::from("/srv/strict")),
+            "a concurrent module's `insecure links = yes` must not unconfine \
+             a connection whose own module never opted out"
         );
     }
 

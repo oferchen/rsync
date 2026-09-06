@@ -202,6 +202,29 @@ pub struct ConnectionConfig {
     /// - `clientserver.c:993` - `change_dir(module_chdir, CD_NORMAL)`
     /// - `util1.c:1285` - `p1 = curr_dir + module_dirlen`
     pub daemon_module_root: Option<PathBuf>,
+    /// The served module's `insecure links` setting, carried per connection.
+    ///
+    /// This is the daemon arm of upstream's `symlink_optout_allowed()`:
+    /// `module_id >= 0 && lp_insecure_links(module_id)`. A peer-supplied
+    /// `--insecure-links` can never reach it - a client cannot switch off a
+    /// daemon's confinement - so it is read from the module, never from the
+    /// forwarded argv.
+    ///
+    /// It lives on the connection rather than in a process-global because oc
+    /// serves each daemon connection on a worker thread of ONE process, while
+    /// upstream forks a child per connection. A global answers whichever module
+    /// published last, so a module with `insecure links = yes` would switch off
+    /// the confinement of a *concurrent* connection to a module that never
+    /// opted out - measured at 47 of 80 concurrent rounds before this field
+    /// existed. `false` outside a daemon server process, which is the safe
+    /// default and upstream's own (`options.c:134` `int insecure_links = 0;`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `syscall.c:122-127` - `symlink_optout_allowed()`; the `am_daemon` arm
+    ///   is `module_id >= 0 && lp_insecure_links(module_id)`.
+    /// - `syscall.c:116-121` - why a forwarded `--insecure-links` is inert here.
+    pub daemon_insecure_links: bool,
     /// `--confine-root=DIR`: the confinement root for a NON-daemon server.
     ///
     /// Upstream keeps one `confinement_root()` accessor and picks the root by

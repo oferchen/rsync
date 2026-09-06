@@ -131,15 +131,23 @@ impl GeneratorContext {
     /// it reads.
     ///
     /// The root is passed to `fast_io` rather than left ambient. `read_dir`'s
-    /// own anchor is the process-global session pin, which oc never installs
-    /// for a daemon, so this walk silently degraded to an ordinary
+    /// own anchor is the process-global session pin, which at the time was not
+    /// installed for a daemon, so this walk silently degraded to an ordinary
     /// absolute-path read, while [`Self::confine_root`] (already
     /// daemon-correct) was consulted only by the CONTENT open. That split is
     /// exactly what let a module symlink be enumerated but not read.
-    /// Installing the global per
-    /// connection is not the alternative: oc serves each connection on a worker
-    /// thread of one process, so a per-connection value in a global would race
-    /// between concurrent connections on different modules.
+    ///
+    /// The daemon DOES publish that global today - `publish_module_confinement`
+    /// (daemon/sections/module_access/transfer/sandbox.rs) calls
+    /// `install_daemon_session` on every served connection - which is precisely
+    /// why the anchor still must not be read from it here. oc serves each
+    /// connection on a worker thread of one process, so a per-connection value
+    /// in a global answers whichever module published LAST. That is not
+    /// theoretical: the sibling opt-out bit in the same global let a module
+    /// with `insecure links = yes` switch off the confinement of a concurrent
+    /// connection to a module that never opted out, measured at 47 of 80
+    /// concurrent rounds (see `tests/daemon_concurrent_module_confinement.rs`).
+    /// Passing the root in is what keeps this call correct under threads.
     ///
     /// # Upstream Reference
     ///
