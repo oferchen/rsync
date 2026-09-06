@@ -1,5 +1,5 @@
 use super::{
-    modifiers::{parse_merge_modifiers, split_short_merge_modifiers},
+    modifiers::{parse_merge_modifiers, split_long_keyword_tail, split_short_merge_modifiers},
     types::{FilterParseError, ParsedFilterDirective},
 };
 use std::path::PathBuf;
@@ -28,16 +28,11 @@ pub(super) fn parse_merge_directive(
         return Ok(None);
     }
 
-    let mut remainder = rest.trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-    let mut modifiers = "";
-    if let Some(next) = remainder.strip_prefix(',') {
-        let mut split = next.splitn(2, |ch: char| ch.is_ascii_whitespace() || ch == '_');
-        modifiers = split.next().unwrap_or("");
-        remainder = split
-            .next()
-            .unwrap_or("")
-            .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
-    }
+    // upstream: exclude.c:1218-1227 `rule_strcmp` requires a separator after the
+    // keyword and exclude.c:1444-1445 consumes exactly ONE of them.
+    let Some((modifiers, remainder)) = split_long_keyword_tail(rest) else {
+        return Ok(None);
+    };
 
     let (options, assume_cvsignore) = parse_merge_modifiers(modifiers, text, false)?;
 
@@ -302,6 +297,53 @@ mod tests {
     /// 3.5.0, `--filter=':  '` transfers a file literally named `  ` and
     /// `--filter='.  '` fails to open the merge file named ` `; both prove the
     /// whitespace survives.
+    fn merge_path(text: &str) -> PathBuf {
+        match parse_merge_directive(text)
+            .expect("not a parse error")
+            .expect("the merge keyword matches")
+        {
+            ParsedFilterDirective::Merge { path, .. } => path,
+            other => panic!("expected a Merge directive, got {other:?}"),
+        }
+    }
+
+    /// upstream: exclude.c:1444-1445 `if (*s) s++` consumes exactly ONE
+    /// separator after the keyword, and exclude.c:1465 then takes
+    /// `len = strlen(s)`. MEASURED against rsync 3.5.0: `--filter='merge  X'`
+    /// exits 11 on a merge file named ` X`, and `--filter='merge__X'` on `_X`;
+    /// oc trimmed the whole run and opened `X`.
+    #[test]
+    fn parse_merge_directive_consumes_exactly_one_separator() {
+        assert_eq!(merge_path("merge  X"), PathBuf::from(" X"));
+        assert_eq!(merge_path("merge   X"), PathBuf::from("  X"));
+        assert_eq!(merge_path("merge__X"), PathBuf::from("_X"));
+        assert_eq!(merge_path("merge,C  X"), PathBuf::from(" X"));
+    }
+
+    /// upstream: exclude.c:1218-1227 `rule_strcmp` returns NULL unless the
+    /// keyword is followed by whitespace, `_`, `,` or the end of the string, so
+    /// `ch` stays 0 and the rule dies with `Unknown filter rule`
+    /// (exclude.c:1363). MEASURED: rsync 3.5.0 exits 1 on `--filter='mergeX'`;
+    /// oc merged a file called `X`.
+    #[test]
+    fn parse_merge_directive_requires_a_separator_after_the_keyword() {
+        assert!(
+            parse_merge_directive("mergeX")
+                .expect("declining is not a parse error")
+                .is_none()
+        );
+    }
+
+    /// Non-vacuity companion for the two tests above: every separator upstream
+    /// accepts must still reach the parser, or they would pass on a parser that
+    /// recognises no merge spelling at all.
+    #[test]
+    fn parse_merge_directive_accepts_every_upstream_separator() {
+        assert_eq!(merge_path("merge X"), PathBuf::from("X"));
+        assert_eq!(merge_path("merge_X"), PathBuf::from("X"));
+        assert_eq!(merge_path("merge,C"), PathBuf::from(".cvsignore"));
+    }
+
     #[test]
     fn parse_short_merge_keeps_the_whitespace_around_its_name() {
         let result = parse_short_merge_directive_line(".   .rsync-filter   ");

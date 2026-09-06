@@ -22,6 +22,57 @@ pub(super) fn consume_rule_separator(remainder: &str) -> &str {
     }
 }
 
+/// Splits the text that follows a long-form filter keyword into
+/// `(modifiers, pattern)`, or returns `None` when the keyword is not terminated
+/// by a separator and is therefore not this keyword at all.
+///
+/// upstream: exclude.c:1218-1227 `rule_strcmp` - the keyword matches only when
+/// the byte after it is whitespace, `_`, `,`, or the end of the string. Any
+/// other byte returns NULL, `ch` stays 0, and the rule falls to the inner
+/// switch's `default:` and dies with `Unknown filter rule` (exclude.c:1363), so
+/// `mergeX` is a syntax error rather than a merge of `X`.
+///
+/// A `,` returns `str + rule_len` (exclude.c:1225-1226), which puts the modifier
+/// loop's `*++s` on the first modifier byte. Every other separator returns
+/// `str + rule_len - 1` (exclude.c:1223), so `*++s` lands ON the separator and
+/// the loop stops at once: a long keyword only ever carries modifiers after a
+/// comma. Either way exactly ONE separator is then consumed by `if (*s) s++`
+/// (exclude.c:1444-1445) and the pattern is the remainder verbatim
+/// (`len = strlen(s)`, exclude.c:1465) - never a whole run of whitespace.
+///
+/// MEASURED against rsync 3.5.0: `--filter='dir-merge  '` (two trailing spaces)
+/// merges a per-directory file literally named ` `, and `--filter='merge  X'`
+/// tries to open ` X`; oc trimmed the run and merged `X`. `--filter='mergeX'`
+/// exits 1 with `Unknown filter rule`; oc merged `X`.
+pub(super) fn split_long_keyword_tail(after: &str) -> Option<(&str, &str)> {
+    let mut chars = after.chars();
+    match chars.next() {
+        None => Some(("", "")),
+        Some(',') => {
+            let body = chars.as_str();
+            Some(match body.find(is_rule_separator) {
+                // The separator is ASCII, so `idx + 1` stays on a char boundary.
+                Some(idx) => (&body[..idx], &body[idx + 1..]),
+                None => (body, ""),
+            })
+        }
+        Some(ch) if is_rule_separator(ch) => Some(("", &after[ch.len_utf8()..])),
+        Some(_) => None,
+    }
+}
+
+/// The bytes that end a rule keyword or modifier run in this parser.
+///
+/// upstream's modifier loop terminates on `' '`/`'_'` alone (exclude.c:1365),
+/// while `rule_strcmp` accepts any `isspace` (exclude.c:1222); a tab therefore
+/// reaches upstream's `default:` arm as an invalid modifier. oc has treated the
+/// whole ASCII whitespace class as a separator throughout this module since
+/// before these parsers existed, and this helper keeps that one convention
+/// rather than introducing a second.
+fn is_rule_separator(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_whitespace()
+}
+
 /// An unrecognised modifier byte, located by its offset within the scanned
 /// slice. Callers add the offset of that slice within the whole rule to
 /// reproduce upstream's absolute position.
