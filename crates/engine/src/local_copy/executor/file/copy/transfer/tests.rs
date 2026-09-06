@@ -533,3 +533,141 @@ fn no_whole_file_copy_of_a_complete_source_records_no_read_error() {
         "the --no-whole-file copy did not reproduce the source"
     );
 }
+
+/// Length of the basis a `--no-whole-file` copy matches against, and the length
+/// the file list recorded for the source that then shrank.
+const DELTA_BASIS_LEN: usize = 64 * 1024;
+
+/// Bytes the shrunken source still holds by the time the copy reads it.
+const DELTA_SHRUNK_LEN: usize = 4096;
+
+/// What one delta copy produced: whether the run recorded a short source, what
+/// the writer ended up holding, and what the source actually contained.
+struct DeltaCopyOutcome {
+    recorded_short_read: bool,
+    written: Vec<u8>,
+    source: Vec<u8>,
+}
+
+/// Drives one delta copy - the mover a `--no-whole-file` transfer reaches
+/// whenever the destination already exists - against a basis of
+/// `DELTA_BASIS_LEN` bytes.
+///
+/// The source is written at `source_len` while the copy is told it was sized
+/// from `declared_len`. That is "the source shrank after the file list recorded
+/// it" without racing a real truncation, the same technique the three sibling
+/// movers are pinned with.
+fn delta_copy_outcome(source_len: usize, declared_len: u64) -> DeltaCopyOutcome {
+    let temp = TempDir::new().expect("tempdir");
+    let source = temp.path().join("src.bin");
+    let basis = temp.path().join("dst.bin");
+    let staging = temp.path().join(".dst.bin.tmp");
+
+    // A non-empty destination is the only input that routes a copy through the
+    // delta mover: `build_delta_signature` returns `None` for an empty one and
+    // the executor then falls back to a straight copy.
+    write_bytes(&basis, DELTA_BASIS_LEN);
+    write_bytes(&source, source_len);
+
+    let basis_metadata = fs::metadata(&basis).expect("stat basis");
+    let index =
+        super::super::super::comparison::build_delta_signature(&basis, &basis_metadata, None)
+            .expect("build the basis signature")
+            .expect("a non-empty basis always yields an index");
+
+    let mut reader = File::open(&source).expect("open source");
+    let mut writer = File::create(&staging).expect("create staging file");
+    let mut buffer = vec![0u8; 128 * 1024];
+
+    let mut context = CopyContext::new(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default(),
+        None,
+        temp.path().to_path_buf(),
+    );
+
+    context
+        .copy_file_contents(
+            &mut reader,
+            &mut writer,
+            &mut buffer,
+            false,
+            false,
+            false,
+            &source,
+            &basis,
+            Path::new("src.bin"),
+            Some(&index),
+            declared_len,
+            0,
+            0,
+            Instant::now(),
+            false,
+        )
+        .expect("a short source must not abort the copy");
+    drop(writer);
+
+    DeltaCopyOutcome {
+        recorded_short_read: context.source_read_error_occurred(),
+        written: fs::read(&staging).expect("read staging file"),
+        source: fs::read(&source).expect("read source"),
+    }
+}
+
+/// A source that ends before the length it was sized from must be diagnosed on
+/// the delta mover too, not reported as a complete copy.
+///
+/// This is the fourth content path and the last one that skipped the call. The
+/// kernel tier, the dense loop and the sparse loop each record a short source;
+/// the delta loop stopped at whatever EOF the source presented, wrote a short
+/// destination, printed nothing and let the run exit 0 - data loss reported as
+/// success. It is reached by exactly the transfer the other three are not: a
+/// `--no-whole-file` copy over a destination that already exists, which is why
+/// upstream's `source-change-size-continues` cell - which copies into an empty
+/// destination - never saw it.
+///
+/// upstream has one mover. `map_ptr()` records `ENODATA` when a read returns 0
+/// before the mapped window is filled (fileio.c:359-365), `unmap_file()` hands
+/// that status back (fileio.c:385), and the sender logs one
+/// `read errors mapping %s` at `FERROR_XFER` with `io_error |= IOERR_GENERAL`
+/// before moving to the next entry (sender.c:787-795), which main.c reports as
+/// `RERR_PARTIAL` (23). Measured against rsync 3.5.0 on that shape - a
+/// pre-seeded destination, `-a --no-whole-file`, the source truncated at the
+/// first read of its own fd - upstream exits 23 with that line while oc exited
+/// 0 and printed nothing.
+#[test]
+fn delta_copy_records_a_source_that_ended_early() {
+    let outcome = delta_copy_outcome(DELTA_SHRUNK_LEN, DELTA_BASIS_LEN as u64);
+
+    assert!(
+        outcome.recorded_short_read,
+        "a delta copy of a source that ended {} bytes early was not recorded, so the run \
+         would exit 0 on a short destination",
+        DELTA_BASIS_LEN - DELTA_SHRUNK_LEN
+    );
+    assert_eq!(
+        outcome.written,
+        outcome.source,
+        "the delta copy wrote {} bytes for a source that held {}",
+        outcome.written.len(),
+        outcome.source.len()
+    );
+}
+
+/// Non-vacuity companion: the same delta mover, a source that matches the
+/// length it was sized from. The flag must stay clear and the writer must hold
+/// the source byte for byte. Without this, a delta loop that reported a short
+/// read unconditionally would satisfy the cell above.
+#[test]
+fn delta_copy_of_a_complete_source_records_no_read_error() {
+    let outcome = delta_copy_outcome(DELTA_BASIS_LEN, DELTA_BASIS_LEN as u64);
+
+    assert!(
+        !outcome.recorded_short_read,
+        "a delta copy of a source that matched its recorded length was reported as short"
+    );
+    assert_eq!(
+        outcome.written, outcome.source,
+        "the delta copy did not reproduce a complete {DELTA_BASIS_LEN}-byte source"
+    );
+}
