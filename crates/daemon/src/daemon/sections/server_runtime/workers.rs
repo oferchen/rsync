@@ -1,18 +1,46 @@
 type WorkerResult = Result<(), (Option<SocketAddr>, io::Error)>;
+/// One in-flight connection, owned by the accept loop.
+///
+/// Pairs the session's backing handle with the `max connections` slot that
+/// connection occupies. The slot guard lives here, in the parent, rather than
+/// inside the session, so the slot's lifetime is decided by the accept loop's
+/// reap rather than by the session's own exit.
+///
+/// That placement is what lets the backing change from a thread to a forked
+/// child without the cap quietly stopping being enforced: a child inherits a
+/// COPY of everything the session owns, so a guard moved into the session
+/// would be released by the child's copy and never by the parent, leaving the
+/// parent's count raised for the life of the daemon.
+///
+/// upstream: socket.c:753-765 `start_accept_loop()` keeps the forked child's
+/// pid and reaps it later; the connection slot belongs to the parent, not to
+/// the session running inside it.
+struct SessionWorker {
+    handle: thread::JoinHandle<WorkerResult>,
+    /// The `max connections` slot, released when the accept loop reaps this
+    /// worker. Held for its `Drop`, never read.
+    _slot: ConnectionGuard,
+}
+impl SessionWorker {
+    /// Whether the session has ended, so the worker is ready to be reaped.
+    fn is_finished(&self) -> bool {
+        self.handle.is_finished()
+    }
+}
 
 /// Joins finished worker threads.
 ///
 /// Iterates through the worker list, joining any that have completed. This
 /// prevents unbounded thread handle accumulation in long-running daemons.
-fn reap_finished_workers(
-    workers: &mut Vec<thread::JoinHandle<WorkerResult>>,
-    log_sink: Option<&SharedLogSink>,
-) {
+fn reap_finished_workers(workers: &mut Vec<SessionWorker>, log_sink: Option<&SharedLogSink>) {
     let mut index = 0;
     while index < workers.len() {
         if workers[index].is_finished() {
-            let handle = workers.remove(index);
-            join_worker(handle, log_sink);
+            // Removing the worker drops its slot guard, which is the only
+            // thing that releases the `max connections` slot now that the
+            // guard is parent-owned.
+            let worker = workers.remove(index);
+            join_worker(worker.handle, log_sink);
         } else {
             index += 1;
         }
@@ -20,12 +48,9 @@ fn reap_finished_workers(
 }
 
 /// Waits for all remaining worker threads to complete.
-fn drain_workers(
-    workers: &mut Vec<thread::JoinHandle<WorkerResult>>,
-    log_sink: Option<&SharedLogSink>,
-) {
-    while let Some(handle) = workers.pop() {
-        join_worker(handle, log_sink);
+fn drain_workers(workers: &mut Vec<SessionWorker>, log_sink: Option<&SharedLogSink>) {
+    while let Some(worker) = workers.pop() {
+        join_worker(worker.handle, log_sink);
     }
 }
 
