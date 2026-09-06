@@ -22,9 +22,69 @@ struct SessionWorker {
     _slot: ConnectionGuard,
 }
 impl SessionWorker {
-    /// Whether the session has ended, so the worker is ready to be reaped.
-    fn is_finished(&self) -> bool {
-        self.handle.is_finished()
+    /// Reaps this worker if its session has ended, yielding how it ended;
+    /// hands the worker back untouched if the session is still running.
+    ///
+    /// Observing that a session ended and collecting its outcome are ONE
+    /// step, not two. A thread backing could split them into an
+    /// `is_finished()` predicate plus a later join, but a forked child cannot:
+    /// `waitpid(pid, .., WNOHANG)` reports the child's exit AND consumes its
+    /// status in the same call, so a predicate would discard the outcome it
+    /// had just collected. Keeping them together is what lets the backing
+    /// change without every caller changing with it.
+    ///
+    /// Consuming `self` is the other half of the contract: reaping a worker
+    /// drops its `max connections` slot guard, and that drop is the only
+    /// thing that releases the slot (see [`SessionWorker`]).
+    fn try_reap(self) -> Result<SessionOutcome, Self> {
+        if self.handle.is_finished() {
+            // `is_finished` already reported the thread has ended, so this
+            // join returns without blocking.
+            Ok(join_backing(self.handle))
+        } else {
+            Err(self)
+        }
+    }
+
+    /// Waits for the session to end, however long that takes, and reports how.
+    fn wait(self) -> SessionOutcome {
+        join_backing(self.handle)
+    }
+}
+
+/// How one session ended, independent of what backed it.
+///
+/// The accept loop needs to report a session's fate without knowing whether a
+/// thread or a forked child ran it, so the three ways a session can end are
+/// named here rather than left as a `thread::Result`, whose shape is a
+/// property of the thread backing alone.
+///
+/// upstream: socket.c:676-684 `sigchld_handler()` reaps with
+/// `waitpid(-1, NULL, WNOHANG)` - a NULL status pointer, so upstream's parent
+/// discards the session's fate entirely. oc reports it instead; see
+/// [`report_worker_outcome`] for why that is never fatal to the loop.
+enum SessionOutcome {
+    /// The session returned normally.
+    Ok,
+    /// The session failed, against this peer where one is known.
+    Failed(Option<SocketAddr>, io::Error),
+    /// The session died abnormally: a panic that escaped `catch_unwind`
+    /// today, or a fatal signal once a forked child backs it.
+    Died(String),
+}
+
+/// Collects a finished thread's outcome.
+///
+/// The only site that knows the backing is a thread. A fork-backed worker
+/// resolves its own `waitpid` status into the same [`SessionOutcome`].
+fn join_backing(handle: thread::JoinHandle<WorkerResult>) -> SessionOutcome {
+    match handle.join() {
+        Ok(Ok(())) => SessionOutcome::Ok,
+        Ok(Err((peer, error))) => SessionOutcome::Failed(peer, error),
+        Err(payload) => SessionOutcome::Died(format!(
+            "worker thread panicked (unwind escaped catch_unwind): {}",
+            describe_panic_payload(payload)
+        )),
     }
 }
 
@@ -33,24 +93,23 @@ impl SessionWorker {
 /// Iterates through the worker list, joining any that have completed. This
 /// prevents unbounded thread handle accumulation in long-running daemons.
 fn reap_finished_workers(workers: &mut Vec<SessionWorker>, log_sink: Option<&SharedLogSink>) {
-    let mut index = 0;
-    while index < workers.len() {
-        if workers[index].is_finished() {
-            // Removing the worker drops its slot guard, which is the only
-            // thing that releases the `max connections` slot now that the
-            // guard is parent-owned.
-            let worker = workers.remove(index);
-            join_worker(worker.handle, log_sink);
-        } else {
-            index += 1;
+    let mut still_running = Vec::with_capacity(workers.len());
+    for worker in workers.drain(..) {
+        match worker.try_reap() {
+            // The reaped worker is dropped here, and with it the slot guard -
+            // the only thing that releases the `max connections` slot now
+            // that the guard is parent-owned.
+            Ok(outcome) => report_worker_outcome(outcome, log_sink),
+            Err(worker) => still_running.push(worker),
         }
     }
+    *workers = still_running;
 }
 
 /// Waits for all remaining worker threads to complete.
 fn drain_workers(workers: &mut Vec<SessionWorker>, log_sink: Option<&SharedLogSink>) {
     while let Some(worker) = workers.pop() {
-        join_worker(worker.handle, log_sink);
+        report_worker_outcome(worker.wait(), log_sink);
     }
 }
 
@@ -75,16 +134,12 @@ fn drain_workers(workers: &mut Vec<SessionWorker>, log_sink: Option<&SharedLogSi
 /// `poll` failure (:738), `accept` failure (:748) and even `fork` failure
 /// (:766) each keep the loop running. Only listener setup is fatal, via
 /// `exit_cleanup(RERR_SOCKETIO)` at socket.c:699 and socket.c:715.
-fn join_worker(handle: thread::JoinHandle<WorkerResult>, log_sink: Option<&SharedLogSink>) {
-    match handle.join() {
-        Ok(Ok(())) => {}
-        Ok(Err((peer, error))) => report_session_failure(peer, &error, log_sink),
-        Err(payload) => {
-            let description = describe_panic_payload(payload);
-            let error = io::Error::other(format!(
-                "worker thread panicked (unwind escaped catch_unwind): {description}"
-            ));
-            eprintln!("{error} [daemon={}]", env!("CARGO_PKG_VERSION"));
+fn report_worker_outcome(outcome: SessionOutcome, log_sink: Option<&SharedLogSink>) {
+    match outcome {
+        SessionOutcome::Ok => {}
+        SessionOutcome::Failed(peer, error) => report_session_failure(peer, &error, log_sink),
+        SessionOutcome::Died(description) => {
+            eprintln!("{description} [daemon={}]", env!("CARGO_PKG_VERSION"));
         }
     }
 }
