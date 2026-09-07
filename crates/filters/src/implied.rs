@@ -129,6 +129,11 @@ impl ImpliedIncludes {
             arg = "";
         }
 
+        // upstream: exclude.c:509-516 - `strpbrk(arg, "*[?")` decides whether
+        // the arg builds FILTRULE_WILD rules; the check runs on the arg AFTER
+        // the module/basename strip and BEFORE the escaping transform.
+        let saw_wild = arg.contains(['*', '[', '?']);
+
         // upstream: exclude.c:412-491 - normalise the arg into an anchored
         // pattern, collapsing "//", "/./" and trailing "/" the way the C loop
         // does. Empty and "." segments are dropped.
@@ -138,26 +143,58 @@ impl ImpliedIncludes {
             .collect();
 
         if !segments.is_empty() {
-            let base = format!("/{}", segments.join("/"));
+            let joined = segments.join("/");
+            // upstream: exclude.c:521-533 - the char loop rewrites backslashes:
+            // in a wild arg, a `\` that does not escape a wildcard char is
+            // doubled so wildmatch keeps it literal; in a non-wild arg, a `\]`
+            // drops the `\` ("a \] in a non-wild filter causes a problem").
+            // Rules whose text carries no live wildcard are matched literally
+            // (FILTRULE_WILD unset upstream, compile-time literalisation here),
+            // so the raw single-backslash spelling is the literal form.
+            let base = if saw_wild {
+                format!("/{}", escape_backslashes_for_wild(&joined))
+            } else {
+                format!("/{}", drop_nonwild_bracket_escapes(&joined))
+            };
             self.push_rule(&base, false)?;
 
-            // upstream: exclude.c:497-527 - with --relative every parent
+            // upstream: exclude.c:592-624 - with --relative every parent
             // directory of the arg is implied as a directory-only include.
+            // A parent rule is FILTRULE_WILD only for a wild arg whose
+            // sub-path holds `*[?\` (exclude.c:612); a parent without a live
+            // wildcard is matched literally either way, and its literal name
+            // keeps single backslashes (with `\]` reduced to `]`).
             if self.opts.relative {
                 for depth in 1..segments.len() {
-                    let parent = format!("/{}/", segments[..depth].join("/"));
+                    let raw = segments[..depth].join("/");
+                    let parent = if saw_wild && raw.contains(['*', '[', '?']) {
+                        format!("/{}/", escape_backslashes_for_wild(&raw))
+                    } else {
+                        format!("/{}/", drop_nonwild_bracket_escapes(&raw))
+                    };
                     self.push_rule(&parent, true)?;
                 }
             }
         }
 
-        // upstream: exclude.c:531-567 - --recursive adds "arg/**" and --dirs
+        // upstream: exclude.c:633-667 - --recursive adds "arg/**" and --dirs
         // adds "arg/*" (an empty arg yields "/**" or "/*", accepting the tree).
+        // Appending the wildcard suffix makes the rule wild, so a non-wild
+        // base's backslashes are doubled first (exclude.c:640-647) to stay
+        // literal under wildmatch.
         if self.opts.recurse || self.opts.dirs {
             let base = if segments.is_empty() {
                 String::new()
             } else {
-                format!("/{}", segments.join("/"))
+                let joined = segments.join("/");
+                if saw_wild {
+                    format!("/{}", escape_backslashes_for_wild(&joined))
+                } else {
+                    format!(
+                        "/{}",
+                        drop_nonwild_bracket_escapes(&joined).replace('\\', "\\\\")
+                    )
+                }
             };
             let suffix = if self.opts.recurse { "**" } else { "*" };
             let pattern = format!("{base}/{suffix}");
@@ -263,6 +300,59 @@ impl ImpliedIncludes {
         }
         Ok(())
     }
+}
+
+/// Rewrites a wild arg's backslashes the way upstream's implied-include char
+/// loop does: a `\` escaping a wildcard char (`*`, `[`, `?`) is kept as the
+/// escape, a `\]` pair is kept verbatim, and every other `\` (including a
+/// trailing one) is doubled so wildmatch treats it as a literal backslash.
+///
+/// upstream: `exclude.c:521-533` - `case '\\'` inside `add_implied_include()`
+/// with `saw_wild` set.
+fn escape_backslashes_for_wild(arg: &str) -> String {
+    let bytes = arg.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() + 4);
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' {
+            match bytes.get(i + 1) {
+                Some(b']') => {
+                    out.extend_from_slice(b"\\]");
+                    i += 2;
+                    continue;
+                }
+                Some(b'*' | b'[' | b'?') => out.push(b'\\'),
+                _ => out.extend_from_slice(b"\\\\"),
+            }
+        } else {
+            out.push(bytes[i]);
+        }
+        i += 1;
+    }
+    debug_assert!(std::str::from_utf8(&out).is_ok());
+    String::from_utf8(out).unwrap_or_else(|_| arg.to_owned())
+}
+
+/// Reduces every `\]` pair in a non-wild arg to a bare `]`.
+///
+/// upstream: `exclude.c:524-526` - "A `\]` in a non-wild filter causes a
+/// problem, so drop the `\`". All other backslashes stay single: a non-wild
+/// rule is matched literally, so they mean themselves.
+fn drop_nonwild_bracket_escapes(arg: &str) -> String {
+    let bytes = arg.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && bytes.get(i + 1) == Some(&b']') {
+            out.push(b']');
+            i += 2;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    debug_assert!(std::str::from_utf8(&out).is_ok());
+    String::from_utf8(out).unwrap_or_else(|_| arg.to_owned())
 }
 
 /// Escapes every live (unescaped) `[` in `pattern` as `\[`, returning `None`
@@ -545,6 +635,93 @@ mod tests {
         // The literal-backslash rule stays anchored: it must not admit an
         // unrelated injected name (CVE-2022-29154 teeth preserved).
         assert!(!covers(&implied, "evil", false));
+    }
+
+    #[test]
+    fn wild_arg_backslash_is_doubled_to_stay_literal() {
+        // upstream: exclude.c:527-530 - in a wildcard arg, a `\` that does not
+        // escape a wildcard char is DOUBLED (`a\b*` -> `/a\\b*`), so wildmatch
+        // treats it as a literal backslash. The rule therefore matches the
+        // literal-backslash name and rejects the escape-interpreted one -
+        // measured against upstream 3.5.0: a daemon pull of `mod/a\b*` where
+        // the daemon serves `ab.txt` exits 4 with "rejecting unrequested
+        // file-list name: ab.txt".
+        let opts = ImpliedIncludeOptions {
+            recurse: true,
+            ..Default::default()
+        };
+        let implied = ImpliedIncludes::from_args(opts, ["a\\b*"]).unwrap();
+        assert!(covers(&implied, "a\\b.txt", false));
+        assert!(!covers(&implied, "ab.txt", false));
+        // The doubled backslash also reaches the trailing `/**` rule.
+        assert!(covers(&implied, "a\\bdir/inner", false));
+        assert!(!covers(&implied, "abdir/inner", false));
+    }
+
+    #[test]
+    fn wild_arg_backslash_before_wildcard_keeps_escape() {
+        // upstream: exclude.c:527 - a `\` that escapes a wildcard char
+        // (`*`, `[`, `?`) is NOT doubled: `a\*` stays `/a\*`, matching only
+        // the literal name `a*`.
+        let opts = ImpliedIncludeOptions {
+            recurse: true,
+            ..Default::default()
+        };
+        let implied = ImpliedIncludes::from_args(opts, ["a\\*"]).unwrap();
+        assert!(covers(&implied, "a*", false));
+        assert!(!covers(&implied, "ab.txt", false));
+        assert!(!covers(&implied, "a\\b.txt", false));
+    }
+
+    #[test]
+    fn nonwild_arg_backslash_bracket_drops_the_backslash() {
+        // upstream: exclude.c:524-526 - "A \] in a non-wild filter causes a
+        // problem, so drop the \". The non-wild rule text becomes `/a]b`,
+        // matched literally.
+        let opts = ImpliedIncludeOptions {
+            recurse: true,
+            ..Default::default()
+        };
+        let implied = ImpliedIncludes::from_args(opts, ["a\\]b"]).unwrap();
+        assert!(covers(&implied, "a]b", true));
+        assert!(!covers(&implied, "a\\]b", true));
+    }
+
+    #[test]
+    fn nonwild_backslash_arg_recurse_rule_stays_literal() {
+        // upstream: exclude.c:640-647 - appending `/**` to a non-wild arg
+        // that contains backslashes doubles them first, so the wild rule
+        // still means a LITERAL backslash.
+        let opts = ImpliedIncludeOptions {
+            recurse: true,
+            ..Default::default()
+        };
+        let implied = ImpliedIncludes::from_args(opts, ["a\\b"]).unwrap();
+        assert!(covers(&implied, "a\\b", true));
+        assert!(covers(&implied, "a\\b/inner", false));
+        assert!(!covers(&implied, "ab", true));
+        assert!(!covers(&implied, "ab/inner", false));
+    }
+
+    #[test]
+    fn relative_wild_arg_parent_with_bracket_escape_matches_literal_bracket() {
+        // upstream: exclude.c:592-624 - parent-dir rules derive from the
+        // TRANSFORMED pattern and are FILTRULE_WILD when the sub-path holds
+        // `*[?\` (exclude.c:612), so `\]` in a wild arg's parent matches the
+        // literal `]` name.
+        let opts = ImpliedIncludeOptions {
+            relative: true,
+            recurse: true,
+            ..Default::default()
+        };
+        let implied = ImpliedIncludes::from_args(opts, ["p\\]q/leaf*"]).unwrap();
+        assert!(covers(&implied, "p]q", true));
+        assert!(covers(&implied, "p]q/leafy", true));
+        assert!(!covers(&implied, "p\\]q", true));
+        // Parent with a plain backslash stays a literal backslash.
+        let implied = ImpliedIncludes::from_args(opts, ["dir\\x/leaf*"]).unwrap();
+        assert!(covers(&implied, "dir\\x", true));
+        assert!(!covers(&implied, "dirx", true));
     }
 
     #[test]
