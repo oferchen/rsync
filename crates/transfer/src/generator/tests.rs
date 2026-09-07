@@ -6198,9 +6198,25 @@ fn open_failure_frames(
 /// that is just the working directory. Building the expectation from
 /// `current_dir()` here keeps it an independent oracle - it never consults
 /// the renderer under test.
+///
+/// The prefix is re-rendered with `/` separators on Windows. `Display` emits
+/// the platform separator, so joining it to a `/`-prefixed relative name built
+/// a MIXED expectation - `D:\a\...\transfer/src/gone.txt` - that agreed with
+/// the renderer only where the platform separator already was `/`. Upstream
+/// joins `curr_dir` and the name with a literal `/` (`util1.c:1445-1452`) and
+/// `full_fname` mirrors that by rendering every component with `/`, so `/` is
+/// the expectation on both platforms. Rewriting the separator here keeps the
+/// oracle independent - it still never calls the renderer - while letting it
+/// agree on Windows. The rewrite is Windows-only because `\` is a legal byte
+/// in a POSIX component name and must survive there.
 fn anchored(relative: &str) -> String {
-    let cwd = std::env::current_dir().unwrap();
-    format!("{}/{relative}", cwd.display())
+    let cwd = std::env::current_dir().unwrap().display().to_string();
+    let cwd = if cfg!(windows) {
+        cwd.replace('\\', "/")
+    } else {
+        cwd
+    };
+    format!("{cwd}/{relative}")
 }
 
 /// A daemon or SSH server has no stderr the client reads, so upstream's
