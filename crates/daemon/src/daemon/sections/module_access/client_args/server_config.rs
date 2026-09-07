@@ -337,7 +337,19 @@ fn build_server_config(
                 // upstream never rewrites. Collapsing them either re-opens the
                 // escape or resurrects the silent-drop the testsuite cell
                 // daemon-link-dest-escape exists to detect.
-                if basis_resolves_outside_module(&clamped, &module_root_canonical) {
+                //
+                // ⚠ Opted out of by `insecure links = yes`. upstream:
+                // `generator.c:1004` and `:1046` - BOTH confining arms of
+                // `basis_link_stat()` carry `&& !symlink_optout_allowed()`, so
+                // an opted-out module falls through to the plain `link_stat()`
+                // at `generator.c:1064` and FOLLOWS a basis that resolves out
+                // of the module tree. The lexical clamp above is
+                // `sanitize_path()` and stays unconditional - upstream applies
+                // it whatever the opt-out says (`util1.c:1145-1152`); only this
+                // symlink-escape refusal is opted out of.
+                if !module.insecure_links
+                    && basis_resolves_outside_module(&clamped, &module_root_canonical)
+                {
                     return false;
                 }
 
