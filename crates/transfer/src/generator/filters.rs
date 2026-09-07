@@ -498,10 +498,19 @@ impl GeneratorContext {
                 RuleType::Protect => FilterRule::protect(reconstructed_pattern),
                 RuleType::Risk => FilterRule::risk(reconstructed_pattern),
                 RuleType::Clear => {
-                    rules.push(
-                        FilterRule::clear()
-                            .with_sides(wire_rule.sender_side, wire_rule.receiver_side),
-                    );
+                    // upstream: exclude.c:1542 - a `!` with no side modifier
+                    // pops the WHOLE active list, both sides. `FilterRule::clear`
+                    // already carries that (sender and receiver both true), and
+                    // `apply_clear_rule` returns without clearing anything when
+                    // neither side is set - so narrowing unconditionally made an
+                    // unsided clear a silent no-op. Apply the sides only when the
+                    // wire rule actually named one, exactly as the include /
+                    // exclude / protect / risk arms below do.
+                    let mut rule = FilterRule::clear();
+                    if wire_rule.sender_side || wire_rule.receiver_side {
+                        rule = rule.with_sides(wire_rule.sender_side, wire_rule.receiver_side);
+                    }
+                    rules.push(rule);
                     continue;
                 }
                 RuleType::DirMerge => {
