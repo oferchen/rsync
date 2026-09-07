@@ -85,6 +85,49 @@ last_wins_setters! {
     set_syslog_facility => syslog_facility: String,
 }
 
+/// Generates the setters for the filter-rule slots, which hold `Vec<String>`
+/// rather than `Option<String>`.
+///
+/// These three are the only P_LOCAL slots on the builder that are not
+/// `Option`-shaped, so they are the only ones whose type can express
+/// accumulation at all. That is exactly why they need saying out loud: for
+/// every `Option` field above, "a repeat replaces" is true by construction
+/// and no code has to enforce it, while here it has to be written down.
+///
+/// The `Vec` holds ONE entry, the directive's whole value with its whitespace
+/// intact, rather than one entry per directive occurrence. Upstream keeps a
+/// single string per slot and `string_set()` frees the previous one
+/// (loadparm.c:379-470), so a second occurrence replaces the first rather than
+/// extending it. Splitting a value into individual rules happens later, at
+/// rule-parse time, not here.
+macro_rules! last_wins_rule_setters {
+    ($( $(#[$attr:meta])* $setter:ident => $field:ident ),+ $(,)?) => {
+        impl ModuleDefinitionBuilder {
+            $(
+                $(#[$attr])*
+                fn $setter(&mut self, value: Vec<String>) {
+                    self.$field = value;
+                }
+            )+
+        }
+    };
+}
+
+last_wins_rule_setters! {
+    /// Sets the module's `filter` rules.
+    ///
+    /// upstream: daemon-parm.h - `filter` STRING, P_LOCAL.
+    set_filter => filter,
+    /// Sets the module's `exclude` rules.
+    ///
+    /// upstream: daemon-parm.h - `exclude` STRING, P_LOCAL.
+    set_exclude => exclude,
+    /// Sets the module's `include` rules.
+    ///
+    /// upstream: daemon-parm.h - `include` STRING, P_LOCAL.
+    set_include => include,
+}
+
 impl ModuleDefinitionBuilder {
     /// Stores the module `comment`, where an empty directive value means "no
     /// comment" and is represented by `None` rather than by an unset field.

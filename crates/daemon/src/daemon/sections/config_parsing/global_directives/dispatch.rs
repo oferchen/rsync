@@ -538,9 +538,16 @@ fn apply_global_directive(
         // When bInGlobalSection is true, parm_ptr = def_ptr, so the value
         // written becomes the default for all subsequent module sections
         // (via init_section -> copy_section).
+        //
+        // Last-wins here too: `do_parameter()` resolves the same parameter
+        // pointer whether the section is global or a module and assigns it
+        // through `string_set()` (loadparm.c:379-470), so a repeated global
+        // `exclude` REPLACES the default rather than extending it. These three
+        // are the only `Vec`-shaped fields on `GlobalModuleDefaults`; every
+        // other field is an `Option`, which is last-wins by construction.
         "exclude" => {
             if !value.is_empty() {
-                state.module_defaults.exclude.push(value.to_owned());
+                state.module_defaults.exclude = vec![value.to_owned()];
             }
         }
         // upstream: daemon-parm.txt `Locals:` `include` is P_STRING/P_LOCAL
@@ -550,12 +557,12 @@ fn apply_global_directive(
         // default, mirroring `exclude` above.
         "include" => {
             if !value.is_empty() {
-                state.module_defaults.include.push(value.to_owned());
+                state.module_defaults.include = vec![value.to_owned()];
             }
         }
         "filter" => {
             if !value.is_empty() {
-                state.module_defaults.filter.push(value.to_owned());
+                state.module_defaults.filter = vec![value.to_owned()];
             }
         }
         "maxverbosity" => {

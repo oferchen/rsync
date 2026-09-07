@@ -9275,8 +9275,7 @@ path = ${sf_src}
 comment = server-side filter test
 read only = true
 numeric ids = yes
-exclude = *.tmp
-exclude = *.log
+exclude = *.tmp *.log
 filter = exclude *.bak
 CONF
 
@@ -9330,8 +9329,7 @@ path = ${sf_dest_push}
 comment = server-side filter push test
 read only = false
 numeric ids = yes
-exclude = *.tmp
-exclude = *.log
+exclude = *.tmp *.log
 filter = exclude *.bak
 CONF
 
