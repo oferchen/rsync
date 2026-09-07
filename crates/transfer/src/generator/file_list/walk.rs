@@ -336,7 +336,7 @@ impl GeneratorContext {
                         // upstream: flist.c:2433 - rsyserr(FERROR_XFER, ...)
                         let text = format!(
                             "rsync: [sender] link_stat {} failed: {}\n",
-                            full_fname_path(path, self.daemon_paths()),
+                            full_fname_path(path, self.full_fname_paths()),
                             engine::local_copy::upstream_io_error(&e),
                         );
                         self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
@@ -566,7 +566,7 @@ impl GeneratorContext {
                     // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                     let text = format!(
                         "rsync: [sender] opendir {} failed: {}\n",
-                        full_fname_path(&path, self.daemon_paths()),
+                        full_fname_path(&path, self.full_fname_paths()),
                         engine::local_copy::upstream_io_error(&e),
                     );
                     self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
@@ -739,7 +739,7 @@ impl GeneratorContext {
                     // upstream: flist.c:1878 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                     let text = format!(
                         "rsync: [sender] opendir {} failed: {}\n",
-                        full_fname_path(dir_path, self.daemon_paths()),
+                        full_fname_path(dir_path, self.full_fname_paths()),
                         engine::local_copy::upstream_io_error(&e),
                     );
                     self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
@@ -776,7 +776,7 @@ impl GeneratorContext {
                     // upstream: flist.c:2195 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
                     let text = format!(
                         "rsync: [sender] readdir({}): {}\n",
-                        full_fname_path(dir_path, self.daemon_paths()),
+                        full_fname_path(dir_path, self.full_fname_paths()),
                         engine::local_copy::upstream_io_error(&e),
                     );
                     self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
@@ -885,7 +885,7 @@ impl GeneratorContext {
     /// types: the vanished notice is an `FWARNING`, the stat failure an
     /// `FERROR_XFER`.
     fn log_stat_error(&mut self, path: &Path, e: &io::Error) {
-        let fname = full_fname_path(path, self.daemon_paths());
+        let fname = full_fname_path(path, self.full_fname_paths());
         let (kind, text) = if e.kind() == io::ErrorKind::NotFound {
             // upstream: flist.c:1463-1467 - rprintf(FWARNING, "file has vanished: %s\n", ...)
             (
@@ -1160,15 +1160,11 @@ mod rsyserr_wording_tests {
     /// `rsync: [sender] opendir "denied" (in mod) failed: Permission denied (13)`.
     #[test]
     fn rsyserr_wording_carries_daemon_module_suffix() {
-        use crate::full_fname::{DaemonPaths, full_fname_path};
+        use crate::full_fname::{FullFnamePaths, full_fname_path};
         use std::path::Path;
 
-        let daemon = DaemonPaths {
-            module: "mymod",
-            module_root: Path::new("/srv/mod"),
-            curr_dir: Path::new("/srv/mod"),
-        };
-        let quoted = full_fname_path(Path::new("/srv/mod/p"), Some(daemon));
+        let daemon = FullFnamePaths::daemon("mymod", Path::new("/srv/mod"), Path::new("/srv/mod"));
+        let quoted = full_fname_path(Path::new("/srv/mod/p"), daemon);
         assert_eq!(quoted, "\"p\" (in mymod)");
         assert_eq!(
             format!("rsync: [sender] link_stat {quoted} failed: No such file or directory (2)"),
@@ -1189,10 +1185,10 @@ mod rsyserr_wording_tests {
     /// appends a suffix there, so a local or SSH run's stderr is unchanged.
     #[test]
     fn rsyserr_wording_outside_a_daemon_stays_absolute() {
-        use crate::full_fname::full_fname_path;
+        use crate::full_fname::{FullFnamePaths, full_fname_path};
         use std::path::Path;
 
-        let quoted = full_fname_path(Path::new("/srv/mod/p"), None);
+        let quoted = full_fname_path(Path::new("/srv/mod/p"), FullFnamePaths::non_daemon());
         assert_eq!(quoted, "\"/srv/mod/p\"");
         assert_eq!(
             format!("rsync: [sender] opendir {quoted} failed: Permission denied (13)"),

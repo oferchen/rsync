@@ -450,7 +450,7 @@ impl GeneratorContext {
         error: &io::Error,
         path_display: &str,
     ) -> io::Result<()> {
-        let fname = crate::full_fname::full_fname(path_display, self.daemon_paths());
+        let fname = crate::full_fname::full_fname(path_display, self.full_fname_paths());
         if error.kind() == io::ErrorKind::NotFound {
             self.io_error |= super::io_error_flags::IOERR_VANISHED;
             // upstream: sender.c:713-716 - rprintf(c, "file has vanished: %s\n", full_fname(...)).
@@ -498,7 +498,7 @@ impl GeneratorContext {
         self.io_error |= super::io_error_flags::IOERR_GENERAL;
         let text = format!(
             "rsync: [sender] read errors mapping {}: {}\n",
-            crate::full_fname::full_fname(path_display, self.daemon_paths()),
+            crate::full_fname::full_fname(path_display, self.full_fname_paths()),
             engine::local_copy::upstream_io_error(error),
         );
         self.emit_sender_diagnostic(writer, SenderDiagnostic::ErrorXfer, &text)
@@ -532,7 +532,7 @@ impl GeneratorContext {
             SenderDiagnostic::Warning,
             &format!(
                 "skipped diminished file: {}\n",
-                crate::full_fname::full_fname(path_display, self.daemon_paths()),
+                crate::full_fname::full_fname(path_display, self.full_fname_paths()),
             ),
         )?;
         if self.protocol.supports_generator_messages() {

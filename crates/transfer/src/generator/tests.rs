@@ -6191,6 +6191,18 @@ fn open_failure_frames(
     decode_mux_frames(&buf)
 }
 
+/// The name `full_fname()` renders for a non-daemon server process.
+///
+/// upstream keeps `curr_dir` unconditionally and prefixes every diagnostic
+/// path with it (`util1.c:1445-1452`); for a process that selected no module
+/// that is just the working directory. Building the expectation from
+/// `current_dir()` here keeps it an independent oracle - it never consults
+/// the renderer under test.
+fn anchored(relative: &str) -> String {
+    let cwd = std::env::current_dir().unwrap();
+    format!("{}/{relative}", cwd.display())
+}
+
 /// A daemon or SSH server has no stderr the client reads, so upstream's
 /// `rwrite()` (log.c:330-346) sends the vanished warning as a MSG frame
 /// *instead of* writing it locally. Without the frame the client never learns
@@ -6205,7 +6217,8 @@ fn vanished_open_failure_frames_a_warning_in_server_mode() {
     );
     assert_eq!(frames[0].0, protocol::MessageCode::Warning);
     assert_eq!(
-        frames[0].1, b"file has vanished: \"src/gone.txt\"\n",
+        frames[0].1,
+        format!("file has vanished: \"{}\"\n", anchored("src/gone.txt")).as_bytes(),
         "payload must be the upstream text including its trailing newline"
     );
     assert_eq!(
@@ -6227,7 +6240,10 @@ fn vanished_open_failure_downgrades_to_info_below_protocol_30() {
         "protocol 29 has no generator messages, so no MSG_NO_SEND: {frames:?}"
     );
     assert_eq!(frames[0].0, protocol::MessageCode::Info);
-    assert_eq!(frames[0].1, b"file has vanished: \"src/gone.txt\"\n");
+    assert_eq!(
+        frames[0].1,
+        format!("file has vanished: \"{}\"\n", anchored("src/gone.txt")).as_bytes()
+    );
 }
 
 /// upstream sender.c:393 uses `rsyserr(FERROR_XFER, ...)`, which the peer's
@@ -6239,7 +6255,8 @@ fn general_open_failure_frames_an_error_xfer_in_server_mode() {
     assert_eq!(frames.len(), 2, "error frame then MSG_NO_SEND: {frames:?}");
     assert_eq!(frames[0].0, protocol::MessageCode::ErrorXfer);
     let expected = format!(
-        "rsync: [sender] send_files failed to open \"src/gone.txt\": {}\n",
+        "rsync: [sender] send_files failed to open \"{}\": {}\n",
+        anchored("src/gone.txt"),
         engine::local_copy::upstream_io_error(&io::Error::from(io::ErrorKind::PermissionDenied)),
     );
     assert_eq!(
@@ -6291,7 +6308,11 @@ fn diminished_skip_frames_a_warning_in_server_mode() {
     assert_eq!(frames[0].0, protocol::MessageCode::Warning);
     assert_eq!(
         frames[0].1,
-        b"skipped diminished file: \"src/shrunk.bin\"\n"
+        format!(
+            "skipped diminished file: \"{}\"\n",
+            anchored("src/shrunk.bin")
+        )
+        .as_bytes()
     );
     assert_eq!(frames[1].0, protocol::MessageCode::NoSend);
     assert_eq!(
