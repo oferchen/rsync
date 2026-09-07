@@ -433,6 +433,55 @@ fn push_old_prefix_token_rules(
     }
 }
 
+/// Reads a daemon filter file through the ownership walk.
+///
+/// upstream: `exclude.c:1680-1684` calls `open_no_attacker_symlinks()`
+/// UNCONDITIONALLY for every filter file and toggles only
+/// `operator_path_resolve` around it:
+///
+/// ```text
+/// int save_opr = operator_path_resolve;
+/// if (!daemon_config_filter_file)
+///         operator_path_resolve = 1;
+/// fd = open_no_attacker_symlinks(open_path, O_RDONLY, 0);
+/// operator_path_resolve = save_opr;
+/// ```
+///
+/// ⚠ THE EXEMPTION UPSTREAM GRANTS `filter` / `include from` / `exclude from`
+/// IS FROM MODULE CONFINEMENT, NOT FROM THE WALK. Its comment
+/// (`exclude.c:1677-1679`) says those parameters "are operator-configured and
+/// legitimately live outside the module (/etc/rsync/excludes and the like)" -
+/// which is why this takes the OPERATOR arm rather than the confined one, and
+/// why confining these reads to the module root would refuse configurations
+/// upstream serves. It is NOT a statement that the path is trusted: the walk
+/// still runs. Reading the plain [`fs::read_to_string`] this replaced as
+/// "operator files are trusted" is exactly the misreading that left the hole.
+///
+/// The content becomes filter rules, and a rule the parser cannot read comes
+/// back to the peer in the refusal text, so a redirected read both reshapes
+/// the transfer and can disclose the target file.
+///
+/// MEASURED on Linux as root (module `mod` holding `bar` + `keep`;
+/// `exclude from` naming a symlink owned by a NON-root uid whose target holds
+/// the pattern `keep`): upstream REFUSES the module at exit 5, oc FOLLOWED the
+/// link and applied the planted rule, serving only `bar`. With the same
+/// symlink owned by ROOT both implementations follow it - that companion is
+/// what makes the refusal a statement about OWNERSHIP rather than about
+/// symlinks in general.
+///
+/// Windows has no ownership-walk equivalent, so it keeps the plain read - the
+/// same split [`open_log_file`] makes.
+fn read_filter_file_contents(path: &Path) -> io::Result<String> {
+    #[cfg(unix)]
+    {
+        fast_io::operator_read_to_string(path)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::read_to_string(path)
+    }
+}
+
 /// Reads patterns from a filter file, one per record.
 ///
 /// upstream: `exclude.c:1601 parse_filter_file()`, which is what
@@ -455,7 +504,7 @@ fn push_old_prefix_token_rules(
 /// and served `a `. Both at exit 0, with no diagnostic - a silent divergence
 /// in which files the daemon exposes.
 fn read_patterns_from_file(path: &Path) -> Result<Vec<String>, io::Error> {
-    let content = fs::read_to_string(path).map_err(|e| {
+    let content = read_filter_file_contents(path).map_err(|e| {
         io::Error::new(
             e.kind(),
             format!("failed to read filter file '{}': {e}", path.display()),
