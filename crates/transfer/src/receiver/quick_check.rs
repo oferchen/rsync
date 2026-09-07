@@ -296,7 +296,14 @@ pub(super) enum BasisTrust {
 ///
 /// Separate from [`BasisTrust`] because upstream's arm choice is not a pure
 /// session property: arm 2 additionally requires `path[0] == '/'`.
+///
+/// Unix-only, matching its sole consumer. Two of the three arms name the
+/// ownership walk, which is a dirfd construction with no Windows analogue, so
+/// the `cfg(not(unix))` `basis_stat` below takes the plain stat for every
+/// `BasisTrust` and never asks which arm applies. Selecting an arm is
+/// therefore not a question that can be posed off Unix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(unix)]
 pub(super) enum BasisArm {
     /// Resolve the parent through the ownership walk (arm 1).
     OwnerWalk,
@@ -366,6 +373,7 @@ impl BasisTrust {
     /// upstream: `generator.c:997-1001` - the comment that spells out exactly
     /// this split, and the `path[0] == '/'` term at `generator.c:1004`.
     #[must_use]
+    #[cfg(unix)]
     pub(super) fn arm_for(self, path: &Path) -> BasisArm {
         match self {
             Self::LocalReceiver => BasisArm::OwnerWalk,
@@ -375,6 +383,9 @@ impl BasisTrust {
     }
 }
 
+// Every case asserts an `arm_for` answer, so the module follows that method's
+// gate rather than carrying a second, weaker copy for Windows.
+#[cfg(unix)]
 #[cfg(test)]
 mod basis_trust_tests {
     use std::path::{Path, PathBuf};
