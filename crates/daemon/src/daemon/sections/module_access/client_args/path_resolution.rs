@@ -432,11 +432,11 @@ fn expand_relative_glob(base: &std::path::Path, rel: &std::path::Path) -> Vec<st
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     if let Some(name_str) = name.to_str() {
-                        // Skip dotfiles unless the pattern starts with `.`,
-                        // matching POSIX glob default behaviour.
-                        if name_str.starts_with('.') && !pattern.starts_with('.') {
-                            continue;
-                        }
+                        // upstream: util1.c:760-764 - the readdir() loop skips
+                        // only `.` and `..`; other dotfiles are matched like
+                        // any name (this is wildmatch, not POSIX glob(3), so
+                        // there is no leading-dot special case). read_dir()
+                        // never yields `.`/`..`, so no explicit skip is needed.
                         if glob_match_segment(pattern, name_str) {
                             next.push(dir.join(&name));
                         }

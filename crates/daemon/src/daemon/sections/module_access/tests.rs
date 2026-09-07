@@ -4153,9 +4153,11 @@ mod module_access_tests {
     }
 
     #[test]
-    fn resolve_sender_sources_glob_skips_dotfiles_by_default() {
-        // POSIX glob default: a leading `.` is only matched when the pattern
-        // itself starts with `.`. `*` must not match `.hidden`.
+    fn resolve_sender_sources_glob_matches_dotfiles_like_upstream() {
+        // upstream: util1.c:760-766 - the daemon glob is wildmatch() over a
+        // readdir() loop that skips ONLY `.` and `..`, never other dotfiles
+        // (it is not POSIX glob(3)). Measured against upstream 3.5.0: a
+        // daemon pull of `mod/*` serves `.hidden` alongside `visible`.
         let tmp = tempfile::tempdir().expect("tempdir");
         let module_path = tmp.path();
         std::fs::write(module_path.join(".hidden"), b"hidden").expect(".hidden");
@@ -4163,7 +4165,10 @@ mod module_access_tests {
 
         let args = vec![".".to_owned(), "mod/*".to_owned()];
         let sources = resolve_sender_sources(module_path, &args, "mod", false);
-        assert_eq!(sources, vec![module_path.join("visible")]);
+        assert_eq!(
+            sources,
+            vec![module_path.join(".hidden"), module_path.join("visible")]
+        );
     }
 
     #[test]
