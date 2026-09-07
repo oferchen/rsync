@@ -1164,6 +1164,22 @@ mod confined_partial_basis_cleanup {
         });
     }
 
+    /// A non-daemon client with NO `--confine-root`, which is what the
+    /// `malicious-server-partial-basis-symlink-overwrite` cell runs. Installed
+    /// explicitly rather than left to the process default so the cell states
+    /// the variable it holds at zero instead of inheriting it.
+    ///
+    /// upstream: `syscall.c:142-143` - `confinement_root()` returns NULL for a
+    /// non-daemon caller, so nothing here is a divergence to work around.
+    fn confine_to_nothing() {
+        install_session(&Activation {
+            role: Role::Receiver,
+            daemon: DaemonState::NotDaemon,
+            insecure_links: LocalInsecureLinks::default(),
+            confine_root: None,
+        });
+    }
+
     fn config_for(module: &Path) -> DiskCommitConfig {
         let sandbox = Arc::new(fast_io::DirSandbox::open_root(module).expect("open sandbox"));
         DiskCommitConfig {
@@ -1194,6 +1210,84 @@ mod confined_partial_basis_cleanup {
             "partial-basis cleanup must not delete a file outside the destination tree",
         );
         assert_eq!(std::fs::read(&victim).expect("victim readable"), b"OUTSIDE");
+    }
+
+    /// A NON-DAEMON CLIENT PULL HAS NO CONFINEMENT ROOT, and must refuse the
+    /// escape anyway.
+    ///
+    /// This is the `malicious-server-partial-basis-symlink-overwrite` fixture
+    /// as the cell actually plants it: the malicious server forges
+    /// `ITEM_BASIS_TYPE_FOLLOWS` + `FNAMECMP_PARTIAL_DIR`, the client runs with
+    /// `--partial-dir=.rsync-partial` and NO `--confine-root`, and the planted
+    /// `--partial-dir` symlink is ABSOLUTE and owned by the receiver's own euid
+    /// so that any policy trusting euid-owned symlinks follows it.
+    ///
+    /// The cell above installs a confinement root, so it cannot see this: with
+    /// `SESSION_ROOT` unset, `ConfinedFallback`'s ownership walk trusts the
+    /// euid-owned link and `outside_session_root` has nothing to judge against.
+    /// What refuses here is the sandbox ANCHOR, not a root - upstream reaches
+    /// the same refusal the same way, by anchoring
+    /// `secure_relative_open(NULL, fnamecmp, ...)` on `AT_FDCWD` after the
+    /// receiver `change_dir()`d onto the destination (`receiver.c:1065-1071`),
+    /// with `confine_root` left NULL for a non-daemon client
+    /// (`syscall.c:142-143`).
+    ///
+    /// ⚠ The escaping component is the PREFIX `.rsync-partial`, not the leaf.
+    /// `unlink(2)` never follows a terminal symlink, so a leaf-symlink fixture
+    /// would measure nothing.
+    #[test]
+    fn partial_basis_cleanup_refuses_an_absolute_partial_dir_without_a_confine_root() {
+        let (_keep, root) = canonical_tempdir();
+        let module = root.join("module");
+        std::fs::create_dir_all(module.join("escape")).expect("escape dir");
+        std::fs::create_dir(root.join("outside")).expect("outside");
+        let victim = root.join("outside/victim");
+        std::fs::write(&victim, b"OUTSIDE").expect("victim");
+        // Absolute target, euid-owned: the ownership walk trusts it.
+        symlink(root.join("outside"), module.join("escape/.rsync-partial"))
+            .expect("absolute partial-dir symlink");
+        confine_to_nothing();
+
+        remove_partial_basis_confined(
+            &config_for(&module),
+            &module.join("escape/.rsync-partial/victim"),
+        );
+
+        assert!(
+            victim.exists(),
+            "with no confinement root the sandbox anchor is the only thing \
+             standing between a peer-planted absolute --partial-dir symlink \
+             and an arbitrary client-local file",
+        );
+        assert_eq!(std::fs::read(&victim).expect("victim readable"), b"OUTSIDE");
+    }
+
+    /// Non-vacuity companion for the ROOTLESS cell above: on a session with no
+    /// confinement root, a nested in-tree basis reached through a legitimate
+    /// RELATIVE directory symlink is still removed.
+    ///
+    /// Without this, "refuse every nested removal" passes the cell above and
+    /// ships an availability regression: a plain `oc-rsync -a --partial-dir=...
+    /// src/ dst/` into a `dst/` whose subdirectory is a symlink would stop
+    /// cleaning up its own partial basis. upstream splices a relative in-tree
+    /// target back into the walk (`syscall.c:2961`) rather than refusing it.
+    #[test]
+    fn partial_basis_cleanup_follows_a_relative_in_tree_partial_dir_without_a_confine_root() {
+        let (_keep, root) = canonical_tempdir();
+        let module = root.join("module");
+        std::fs::create_dir_all(module.join("real")).expect("real dir");
+        symlink("real", module.join("sub")).expect("in-tree relative symlink");
+        let basis = module.join("real/payload.bin");
+        std::fs::write(&basis, b"stale partial basis").expect("basis");
+        confine_to_nothing();
+
+        remove_partial_basis_confined(&config_for(&module), &module.join("sub/payload.bin"));
+
+        assert!(
+            !basis.exists(),
+            "an in-tree basis behind a relative directory symlink must still \
+             be removed; refusing it is an availability regression, not a fix"
+        );
     }
 
     /// Non-vacuity companion: on the SAME confined session, a genuine in-tree

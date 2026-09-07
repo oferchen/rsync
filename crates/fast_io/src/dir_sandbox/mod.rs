@@ -978,4 +978,47 @@ impl DirSandbox {
             secondaries: DashMap::new(),
         })
     }
+
+    /// Walk `relative` beneath [`current_dirfd`](Self::current_dirfd) one
+    /// component at a time and hand back the directory the walk finished on.
+    ///
+    /// This is the portable sibling of `openat2(RESOLVE_BENEATH)`: same
+    /// admissions, same refusals, no kernel support required. A relative
+    /// in-tree directory symlink is FOLLOWED (upstream `syscall.c:2961`), an
+    /// absolute symlink target is REFUSED (`syscall.c:2953-2956`), and a `..`
+    /// that would rise above the anchor is refused (`syscall.c:2896-2899`).
+    ///
+    /// No confinement root is consulted and none is needed: the anchor
+    /// descriptor IS the confinement, exactly as upstream's
+    /// `secure_relative_open(NULL, ...)` anchors on `AT_FDCWD` for a receiver
+    /// that has already `change_dir()`d onto its destination
+    /// (`receiver.c:1065-1071`). `abspath` is left unseeded, which makes the
+    /// exclude oracle inert - upstream's own note that a non-daemon caller
+    /// "pays nothing" (`syscall.c:2989-2991`).
+    ///
+    /// # Errors
+    ///
+    /// - `ELOOP` - an absolute or empty symlink target, a `..` above the
+    ///   anchor, or an exhausted symlink-hop budget.
+    /// - `ENOMEM` - deeper than `DS_MAXDEPTH`.
+    /// - Otherwise the underlying `openat`/`readlinkat` errno (`ENOENT`,
+    ///   `ENOTDIR`, `EACCES`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/syscall.c:2891-2965` `ds_descend()`
+    /// - `rsync-3.5.0/syscall.c:2966-2977` `ds_walk_path()`
+    #[cfg(unix)]
+    pub fn open_subdir_confined(&self, relative: &Path) -> io::Result<OwnedFd> {
+        let exclude = NoExclude;
+        let mut walk = ConfinedWalk {
+            anchor: self.current_dirfd().try_clone_to_owned()?,
+            pushed: Vec::new(),
+            abspath: PathBuf::new(),
+            exclude: &exclude,
+            hops: SECURE_OPEN_MAXSYMLINKS,
+        };
+        walk.walk_relative(relative)?;
+        Ok(walk.into_leaf())
+    }
 }
