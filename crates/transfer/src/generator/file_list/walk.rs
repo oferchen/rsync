@@ -999,8 +999,29 @@ impl GeneratorContext {
         // upstream: `rsync-3.5.0/syscall.c:406` - a symlink owned by uid 0 or
         // our euid is the operator's own layout and is followed; any other uid
         // is an attacker's plant and is refused.
-        let follow_dirlinks = self.config.flags.copy_dirlinks
-            || (is_dotdir && symlink_target_is_operator_owned(&meta));
+        //
+        // ⚠ The ownership rule is opted out of, not merely relaxed. upstream:
+        // `syscall.c:300-302` - `ona_open()` returns a plain symlink-following
+        // `open()` when `symlink_optout_allowed()`, ABOVE the ownership test,
+        // so `change_dir()`'s `open_no_attacker_symlinks()` (util1.c:1216)
+        // follows ANY symlink for a module that opted out. Without this term
+        // the opt-out reached the sender's confinement root but never this
+        // gate, and a daemon with `insecure links = yes` still refused
+        // `<module>/link/`.
+        //
+        // `symlink_optout_allowed()`'s daemon arm is `module_id >= 0 &&
+        // lp_insecure_links(module_id)` (`syscall.c:122-127`) - exactly
+        // `daemon_insecure_links`, which a peer-supplied `--insecure-links`
+        // cannot reach. The non-daemon arm is deliberately not read here: the
+        // measured divergence is daemon-only, and a local
+        // `oc-rsync -r <dir>/link/ dest/` already follows a foreign-owned
+        // symlinked operand today.
+        let follow_dirlinks = dotdir_follow_allowed(
+            self.config.flags.copy_dirlinks,
+            is_dotdir,
+            self.config.connection.daemon_insecure_links,
+            symlink_target_is_operator_owned(&meta),
+        );
         if follow_dirlinks && meta.file_type().is_symlink() {
             if let Ok(followed) = fast_io::pinned_root::metadata(path) {
                 if followed.file_type().is_dir() {
@@ -1064,6 +1085,35 @@ fn symlink_target_is_operator_owned(meta: &fast_io::pinned_root::SourceMetadata)
     }
 }
 
+/// Whether a symlinked operand is followed to the directory it names.
+///
+/// The three disjuncts are upstream's, and they are NOT interchangeable:
+///
+/// - `copy_dirlinks` is an explicit client request over a client-named tree
+///   (`flist.c:2697` `copy_dirlinks || name_type != NORMAL_NAME`).
+/// - `is_dotdir` is upstream's `name_type != NORMAL_NAME`: asking for the
+///   CONTENTS of `current/` is only meaningful once `current` has been resolved.
+/// - `optout` is the served module's `insecure links = yes`
+///   (`syscall.c:122-127` `symlink_optout_allowed()`), which
+///   `ona_open()` reads ABOVE the ownership test (`syscall.c:300-302`), so a
+///   module that opted out follows any symlink - the whole point of the
+///   directive.
+/// - `owner_is_operator` is upstream's ownership rule (`syscall.c:406`): uid 0
+///   or our euid is the operator's own layout, any other uid is a plant.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/flist.c:2697` - the `copy_dirlinks || name_type` disjunction.
+/// - `rsync-3.5.0/syscall.c:300-302` - the opt-out short-circuit.
+/// - `rsync-3.5.0/syscall.c:406` - the ownership rule.
+fn dotdir_follow_allowed(
+    copy_dirlinks: bool,
+    is_dotdir: bool,
+    optout: bool,
+    owner_is_operator: bool,
+) -> bool {
+    copy_dirlinks || (is_dotdir && (optout || owner_is_operator))
+}
 #[cfg(all(test, unix))]
 mod dotdir_follow_trust_tests {
     /// The DOTDIR follow is gated on upstream's ownership rule, not on
@@ -1094,6 +1144,50 @@ mod dotdir_follow_trust_tests {
         assert!(
             !fast_io::symlink_owner_is_trusted(foreign),
             "uid {foreign} is neither root nor our euid, so it is a plant"
+        );
+    }
+    /// `insecure links = yes` restores the legacy follow for a FOREIGN-owned
+    /// symlinked operand, which is the whole content of the directive:
+    /// `ona_open()` returns a plain symlink-following `open()` before the
+    /// ownership test ever runs.
+    ///
+    /// Measured on the upstream 3.5.0 cell `daemon-symlink-escape-matrix`,
+    /// `read-plain` vector: before this term the opted-out daemon refused
+    /// `<module>/link/` for all five link types.
+    ///
+    /// upstream: `rsync-3.5.0/syscall.c:300-302`.
+    #[test]
+    fn the_module_optout_follows_a_symlinked_operand_the_ownership_rule_refuses() {
+        assert!(
+            super::dotdir_follow_allowed(false, true, true, false),
+            "insecure links = yes must follow a foreign-owned symlinked operand"
+        );
+        assert!(
+            !super::dotdir_follow_allowed(false, true, false, false),
+            "the secure default must still refuse it"
+        );
+    }
+    /// Non-vacuity companions for the two terms the opt-out must NOT change.
+    ///
+    /// Without these a predicate that simply returned `true` would satisfy the
+    /// test above. The `is_dotdir` term is upstream's `name_type !=
+    /// NORMAL_NAME`: a plain (non-operand) symlink is transmitted as a symlink
+    /// whatever the module says, and the opt-out does not widen that.
+    ///
+    /// upstream: `rsync-3.5.0/flist.c:2697`.
+    #[test]
+    fn the_optout_does_not_widen_the_non_dotdir_or_trusted_arms() {
+        assert!(
+            !super::dotdir_follow_allowed(false, false, true, true),
+            "a non-DOTDIR name is not followed even under the opt-out"
+        );
+        assert!(
+            super::dotdir_follow_allowed(false, true, false, true),
+            "an operator-owned symlinked operand is followed without the opt-out"
+        );
+        assert!(
+            super::dotdir_follow_allowed(true, false, false, false),
+            "--copy-dirlinks is unconditional and untouched by this change"
         );
     }
 }
