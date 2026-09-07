@@ -360,14 +360,18 @@ fn old_prefix_record_rule(
     // upstream: exclude.c:1474-1475 - `filter_rule_err("unexpected end of
     // filter rule")`, fatal under XFLG_FATAL_ERRORS.
     //
-    // ⚠ REVERSION GUARD, not a live refusal: `read_patterns_from_file` trims
-    // each record, so a `"- "` line arrives here as `"-"` and never reaches an
-    // empty pattern. Upstream's `parse_filter_file` line loop breaks only on
-    // the newline for a non-word-split template (exclude.c:1772-1774), so it
-    // keeps the trailing space and does refuse it; the trim is pre-existing
-    // divergence. The reachable refusal is the string-parameter one in
-    // `push_old_prefix_token_rules`, pinned by
-    // `exclude_string_empty_after_the_prefix_is_refused`.
+    // This is LIVE, and it is live because of the ORDER these two changes
+    // compose in. `read_patterns_from_file` hands the record over untrimmed
+    // (exclude.c:1772-1774 breaks a non-word-split line only on the newline,
+    // so trailing whitespace is pattern text), and the prefix strip above then
+    // consumes two bytes of it. A `"- "` line therefore arrives here as `""`
+    // and upstream refuses it. Reverse the order - split or trim before
+    // stripping - and this becomes unreachable, which is what it was while the
+    // reader trimmed.
+    //
+    // Pinned by `exclude_from_empty_after_the_prefix_is_refused`; the
+    // string-parameter twin lives in `push_old_prefix_token_rules` and is
+    // pinned by `exclude_string_empty_after_the_prefix_is_refused`.
     if pattern.is_empty() {
         return Err(unexpected_end_of_filter_rule(record));
     }
