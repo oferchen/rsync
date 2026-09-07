@@ -280,6 +280,18 @@ fn map_server_transfer_error(error: std::io::Error, role: Role) -> ClientError {
         let exit = ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer);
         return remote_exit_error(exit, role);
     }
+    // upstream: flist.c:1140-1146 - the receiver's own file-list validation
+    // (excluded / unrequested name, offset overflow) exits
+    // RERR_UNSUPPORTED, not the generic partial-transfer code. Those local
+    // rejects surface here as `ErrorKind::Unsupported` (filter_recheck.rs,
+    // sanitize.rs, restrictions.rs all mirror an upstream
+    // `exit_cleanup(RERR_UNSUPPORTED)` site), so keep upstream's exit code.
+    if error.kind() == std::io::ErrorKind::Unsupported {
+        return invalid_argument_error(
+            &format!("transfer failed: {error}"),
+            ExitCode::Unsupported.as_i32(),
+        );
+    }
     invalid_argument_error(&format!("transfer failed: {error}"), 23)
 }
 
@@ -456,6 +468,25 @@ mod map_server_transfer_error_tests {
         let err = map_server_transfer_error(remote_exit_io(1), Role::Receiver);
         assert_eq!(err.exit_code(), 1);
         assert!(err.to_string().contains("[receiver="), "{err}");
+    }
+
+    /// A receiver-side file-list validation rejection (implied-include or
+    /// daemon-filter recheck, offset overflow) mirrors upstream
+    /// `exit_cleanup(RERR_UNSUPPORTED)` (flist.c:1141,1145): the client exits
+    /// 4, not the generic 23. Measured against upstream 3.5.0: pulling
+    /// `mod/a\b*` from a daemon whose glob serves `ab.txt` prints "rejecting
+    /// unrequested file-list name: ab.txt" and exits 4.
+    #[test]
+    fn maps_unsupported_rejection_to_rerr_unsupported() {
+        let err = map_server_transfer_error(
+            std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "ERROR: rejecting unrequested file-list name: ab.txt",
+            ),
+            Role::Receiver,
+        );
+        assert_eq!(err.exit_code(), 4);
+        assert_eq!(err.code(), ExitCode::Unsupported);
     }
 
     /// Failures with no embedded remote code keep the prior generic
