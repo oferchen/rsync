@@ -34,11 +34,8 @@ impl GeneratorContext {
         &self,
         full_path: &Path,
         relative_path: PathBuf,
-        metadata: &std::fs::Metadata,
+        metadata: &fast_io::pinned_root::SourceMetadata,
     ) -> io::Result<FileEntry> {
-        #[cfg(unix)]
-        use std::os::unix::fs::MetadataExt;
-
         // upstream: flist.c:1396-1398 DEBUG_GTE(FLIST, 2)
         // ALL_FILTERS = 2 is the common filter_level for send_file_list paths.
         logging::debug_log!(
@@ -65,7 +62,6 @@ impl GeneratorContext {
         // output compatible without losing the classifier's distinction.
         #[cfg(windows)]
         let is_reparse_point = {
-            use std::os::windows::fs::MetadataExt;
             const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
             metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
         };
@@ -102,7 +98,6 @@ impl GeneratorContext {
         // builds the sender's file list, so `am_sender` is implicit here.
         #[cfg(unix)]
         let copy_device_override: Option<(u64, u32)> = {
-            use std::os::unix::fs::FileTypeExt;
             if self.config.flags.copy_devices
                 && (file_type.is_block_device() || file_type.is_char_device())
             {
@@ -110,10 +105,10 @@ impl GeneratorContext {
                 // upstream: flist.c:1421-1424 - open the device and size it when
                 // st_size is 0 (block devices report 0). `device_readable_size`
                 // mirrors get_device_size() with a macOS ioctl fallback.
-                let size = if metadata.len() != 0 {
-                    metadata.len()
-                } else {
+                let size = if metadata.is_empty() {
                     ::metadata::device_readable_size(full_path).unwrap_or(0)
+                } else {
+                    metadata.len()
                 };
                 Some((size, mode))
             } else {
@@ -224,7 +219,6 @@ impl GeneratorContext {
             // Device and special file types (Unix only)
             #[cfg(unix)]
             {
-                use std::os::unix::fs::FileTypeExt;
                 let mode = metadata.mode() & 0o7777;
                 if file_type.is_block_device() {
                     let (major, minor) = rdev_to_major_minor(metadata.rdev());
@@ -429,7 +423,7 @@ impl GeneratorContext {
             .into_iter()
             .flatten()
             {
-                let rewritten = modifiers.apply(entry.mode(), file_type);
+                let rewritten = modifiers.apply(entry.mode(), file_type.is_dir());
                 entry.set_mode(rewritten);
             }
         }
@@ -504,14 +498,13 @@ impl GeneratorContext {
     fn fake_super_override(
         &self,
         full_path: &Path,
-        metadata: &std::fs::Metadata,
+        metadata: &fast_io::pinned_root::SourceMetadata,
     ) -> Option<metadata::FakeSuperStat> {
         if !self.config.fake_super {
             return None;
         }
         // upstream: xattrs.c:1133 - skip when the on-disk file is already a
         // device or special; the xattr only applies to regular placeholders.
-        use std::os::unix::fs::FileTypeExt;
         let ft = metadata.file_type();
         if ft.is_block_device() || ft.is_char_device() || ft.is_fifo() || ft.is_socket() {
             return None;
@@ -599,7 +592,11 @@ mod fake_super_round_trip_tests {
 
         let ctx = make_generator(false, true, true);
         let entry = ctx
-            .create_entry(&path, PathBuf::from("placeholder"), &meta)
+            .create_entry(
+                &path,
+                PathBuf::from("placeholder"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .unwrap();
         // Without --fake-super, the on-disk uid/gid (the test user) is sent.
         use std::os::unix::fs::MetadataExt;
@@ -622,7 +619,11 @@ mod fake_super_round_trip_tests {
 
         let ctx = make_generator(true, true, true);
         let entry = ctx
-            .create_entry(&path, PathBuf::from("placeholder"), &meta)
+            .create_entry(
+                &path,
+                PathBuf::from("placeholder"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .unwrap();
         assert_eq!(entry.uid(), Some(4321), "uid must come from %stat xattr");
         assert_eq!(entry.gid(), Some(8765), "gid must come from %stat xattr");
@@ -643,7 +644,11 @@ mod fake_super_round_trip_tests {
 
         let ctx = make_generator(true, true, true);
         let entry = ctx
-            .create_entry(&path, PathBuf::from("sda"), &meta)
+            .create_entry(
+                &path,
+                PathBuf::from("sda"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .unwrap();
         assert_eq!(entry.file_type(), FileType::BlockDevice);
         assert_eq!(entry.uid(), Some(0));
@@ -698,7 +703,13 @@ mod fake_super_round_trip_tests {
         }
 
         let ctx = make_copy_devices_generator();
-        let entry = ctx.create_entry(dev, PathBuf::from("zero"), &meta).unwrap();
+        let entry = ctx
+            .create_entry(
+                dev,
+                PathBuf::from("zero"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
+            .unwrap();
 
         // The device is presented as a regular file, not a device node.
         assert_eq!(
@@ -734,7 +745,13 @@ mod fake_super_round_trip_tests {
 
         // make_generator has --devices (D) but not --copy-devices.
         let ctx = make_generator(false, false, false);
-        let entry = ctx.create_entry(dev, PathBuf::from("zero"), &meta).unwrap();
+        let entry = ctx
+            .create_entry(
+                dev,
+                PathBuf::from("zero"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
+            .unwrap();
         assert_eq!(
             entry.file_type(),
             FileType::CharDevice,
@@ -751,7 +768,11 @@ mod fake_super_round_trip_tests {
 
         let ctx = make_generator(true, true, true);
         let entry = ctx
-            .create_entry(&path, PathBuf::from("plain"), &meta)
+            .create_entry(
+                &path,
+                PathBuf::from("plain"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .unwrap();
         use std::os::unix::fs::MetadataExt;
         assert_eq!(entry.uid(), Some(meta.uid()));
@@ -829,7 +850,11 @@ mod daemon_outgoing_chmod_tests {
         let ctx = make_generator(Some(modifiers));
         let meta = std::fs::symlink_metadata(&path).expect("metadata");
         let entry = ctx
-            .create_entry(&path, PathBuf::from("source.txt"), &meta)
+            .create_entry(
+                &path,
+                PathBuf::from("source.txt"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .expect("create_entry");
 
         // Group-read (0o040) must be cleared; other bits left intact.
@@ -851,7 +876,11 @@ mod daemon_outgoing_chmod_tests {
         let ctx = make_generator(None);
         let meta = std::fs::symlink_metadata(&path).expect("metadata");
         let entry = ctx
-            .create_entry(&path, PathBuf::from("source.txt"), &meta)
+            .create_entry(
+                &path,
+                PathBuf::from("source.txt"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .expect("create_entry");
 
         assert_eq!(entry.permissions() & 0o7777, 0o664);
@@ -924,7 +953,11 @@ mod client_chmod_tests {
 
         let fmeta = std::fs::symlink_metadata(&file).expect("metadata");
         let fentry = ctx
-            .create_entry(&file, PathBuf::from("f644"), &fmeta)
+            .create_entry(
+                &file,
+                PathBuf::from("f644"),
+                &fast_io::pinned_root::SourceMetadata::from(fmeta.clone()),
+            )
             .expect("create_entry file");
         assert_eq!(
             fentry.permissions() & 0o7777,
@@ -934,7 +967,11 @@ mod client_chmod_tests {
 
         let dmeta = std::fs::symlink_metadata(&dir).expect("metadata");
         let dentry = ctx
-            .create_entry(&dir, PathBuf::from("sub"), &dmeta)
+            .create_entry(
+                &dir,
+                PathBuf::from("sub"),
+                &fast_io::pinned_root::SourceMetadata::from(dmeta.clone()),
+            )
             .expect("create_entry dir");
         assert_eq!(
             dentry.permissions() & 0o7777,
@@ -961,7 +998,11 @@ mod client_chmod_tests {
 
         let fmeta = std::fs::symlink_metadata(&file).expect("metadata");
         let fentry = ctx
-            .create_entry(&file, PathBuf::from("f"), &fmeta)
+            .create_entry(
+                &file,
+                PathBuf::from("f"),
+                &fast_io::pinned_root::SourceMetadata::from(fmeta.clone()),
+            )
             .expect("create_entry file");
         assert_eq!(
             fentry.permissions() & 0o7777,
@@ -971,7 +1012,11 @@ mod client_chmod_tests {
 
         let dmeta = std::fs::symlink_metadata(&dir).expect("metadata");
         let dentry = ctx
-            .create_entry(&dir, PathBuf::from("d"), &dmeta)
+            .create_entry(
+                &dir,
+                PathBuf::from("d"),
+                &fast_io::pinned_root::SourceMetadata::from(dmeta.clone()),
+            )
             .expect("create_entry dir");
         assert_eq!(
             dentry.permissions() & 0o7777,
@@ -993,10 +1038,18 @@ mod client_chmod_tests {
         let ctx = make_generator(Some(modifiers));
         let meta = std::fs::symlink_metadata(&link).expect("metadata");
         let before = ctx
-            .create_entry(&link, PathBuf::from("link"), &meta)
+            .create_entry(
+                &link,
+                PathBuf::from("link"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .expect("create_entry");
         let unmodified = make_generator(None)
-            .create_entry(&link, PathBuf::from("link"), &meta)
+            .create_entry(
+                &link,
+                PathBuf::from("link"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .expect("create_entry");
 
         assert_eq!(
@@ -1017,7 +1070,11 @@ mod client_chmod_tests {
         let ctx = make_generator(None);
         let meta = std::fs::symlink_metadata(&path).expect("metadata");
         let entry = ctx
-            .create_entry(&path, PathBuf::from("f"), &meta)
+            .create_entry(
+                &path,
+                PathBuf::from("f"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .expect("create_entry");
 
         assert_eq!(entry.permissions() & 0o7777, 0o644);
@@ -1078,7 +1135,11 @@ mod munge_symlinks_tests {
 
         let ctx = generator_with_munge(true);
         let entry = ctx
-            .create_entry(&link, PathBuf::from("escape"), &meta)
+            .create_entry(
+                &link,
+                PathBuf::from("escape"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .unwrap();
 
         assert_eq!(
@@ -1101,7 +1162,11 @@ mod munge_symlinks_tests {
 
         let ctx = generator_with_munge(false);
         let entry = ctx
-            .create_entry(&link, PathBuf::from("escape"), &meta)
+            .create_entry(
+                &link,
+                PathBuf::from("escape"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .unwrap();
 
         assert_eq!(
@@ -1187,7 +1252,11 @@ mod windows_reparse_tests {
 
         let ctx = windows_generator();
         let entry = ctx
-            .create_entry(&path, PathBuf::from("plain.txt"), &meta)
+            .create_entry(
+                &path,
+                PathBuf::from("plain.txt"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .expect("create_entry");
 
         assert_eq!(entry.file_type(), FileType::Regular);
@@ -1224,7 +1293,11 @@ mod windows_reparse_tests {
         let meta = std::fs::symlink_metadata(&junction).expect("symlink_metadata");
         let ctx = windows_generator();
         let entry = ctx
-            .create_entry(&junction, PathBuf::from("link"), &meta)
+            .create_entry(
+                &junction,
+                PathBuf::from("link"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .expect("create_entry");
 
         assert_eq!(
@@ -1267,7 +1340,11 @@ mod windows_reparse_tests {
         let meta = std::fs::symlink_metadata(&link).expect("symlink_metadata");
         let ctx = windows_generator();
         let entry = ctx
-            .create_entry(&link, PathBuf::from("link"), &meta)
+            .create_entry(
+                &link,
+                PathBuf::from("link"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .expect("create_entry");
 
         assert_eq!(entry.file_type(), FileType::Symlink);
@@ -1333,7 +1410,11 @@ mod entry_length_tests {
 
         let ctx = generator();
         let entry = ctx
-            .create_entry(&dir, PathBuf::from("subdir"), &meta)
+            .create_entry(
+                &dir,
+                PathBuf::from("subdir"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .expect("create_entry");
 
         assert_eq!(entry.file_type(), FileType::Directory);
@@ -1360,7 +1441,11 @@ mod entry_length_tests {
 
         let ctx = generator();
         let entry = ctx
-            .create_entry(&link, PathBuf::from("link"), &meta)
+            .create_entry(
+                &link,
+                PathBuf::from("link"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .expect("create_entry");
 
         assert_eq!(entry.file_type(), FileType::Symlink);
@@ -1450,7 +1535,11 @@ mod flist_checksum_tests {
 
         let ctx = generator(true);
         let entry = ctx
-            .create_entry(&path, PathBuf::from("payload.bin"), &meta)
+            .create_entry(
+                &path,
+                PathBuf::from("payload.bin"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .unwrap();
 
         assert_eq!(
@@ -1471,7 +1560,11 @@ mod flist_checksum_tests {
 
         let ctx = generator(true);
         let entry = ctx
-            .create_entry(&path, PathBuf::from("empty"), &meta)
+            .create_entry(
+                &path,
+                PathBuf::from("empty"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .unwrap();
 
         assert_eq!(
@@ -1490,7 +1583,11 @@ mod flist_checksum_tests {
 
         let ctx = generator(false);
         let entry = ctx
-            .create_entry(&path, PathBuf::from("payload.bin"), &meta)
+            .create_entry(
+                &path,
+                PathBuf::from("payload.bin"),
+                &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+            )
             .unwrap();
 
         assert_eq!(

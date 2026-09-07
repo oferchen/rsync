@@ -474,7 +474,7 @@ pub fn metadata_unchanged(
         } else {
             cached_meta.mode()
         };
-        let new_mode = chmod.apply(base_mode, cached_meta.file_type());
+        let new_mode = chmod.apply(base_mode, cached_meta.is_dir());
         if (cached_meta.mode() & 0o7777) != (new_mode & 0o7777) {
             return false;
         }

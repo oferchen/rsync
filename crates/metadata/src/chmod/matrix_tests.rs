@@ -467,35 +467,14 @@ const REJECTED_RHS: &[&str] = &[
     "ua", "ug", "uo", "ur", "us", "ut", "uu", "uw", "ux", "wa", "wg", "wo", "wu", "xa", "xg", "xo",
     "xu",
 ];
-/// Real `FileType` values for the file and directory probes; `tweak_mode()`
-/// branches on `S_ISDIR` for both the `D`/`F` selector and the conditional `X`.
-fn probe_file_types() -> (std::fs::FileType, std::fs::FileType) {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let file_path = temp.path().join("f");
-    let dir_path = temp.path().join("d");
-    std::fs::write(&file_path, b"payload").expect("write file");
-    std::fs::create_dir(&dir_path).expect("create dir");
-    (
-        std::fs::metadata(&file_path)
-            .expect("file metadata")
-            .file_type(),
-        std::fs::metadata(&dir_path)
-            .expect("dir metadata")
-            .file_type(),
-    )
-}
-
 /// Evaluates every `(spec, probe)` cell of `matrix` and asserts it reproduces
 /// upstream's value.
 fn assert_matrix(matrix: &[(&str, [u32; 4])], probes: &[(u32, bool); 4]) {
-    let (file_type, dir_type) = probe_file_types();
-
     for (spec, expected) in matrix {
         let clauses = parse_with_umask(spec, UMASK).unwrap_or_else(|e| panic!("`{spec}`: {e}"));
         for (probe, want) in probes.iter().zip(expected) {
             let (mode, is_dir) = *probe;
-            let file_type = if is_dir { dir_type } else { file_type };
-            let got = apply_clauses(&clauses, mode, file_type) & 0o7777;
+            let got = apply_clauses(&clauses, mode, is_dir) & 0o7777;
             assert_eq!(
                 got,
                 *want,
@@ -546,16 +525,9 @@ fn chmod_matrix_covers_the_full_grid() {
 /// upstream's own testsuite/chmod-setid_test.py.
 #[test]
 fn a_plus_s_sets_both_setid_bits() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let file_path = temp.path().join("f");
-    std::fs::write(&file_path, b"payload").expect("write file");
-    let file_type = std::fs::metadata(&file_path)
-        .expect("file metadata")
-        .file_type();
-
     let apply = |spec: &str| {
         let clauses = parse_with_umask(spec, UMASK).expect("parses");
-        apply_clauses(&clauses, 0o644, file_type) & 0o7777
+        apply_clauses(&clauses, 0o644, false) & 0o7777
     };
 
     assert_eq!(apply("a+s"), 0o6644);

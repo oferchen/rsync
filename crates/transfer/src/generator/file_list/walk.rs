@@ -39,7 +39,7 @@ enum WalkStep {
     /// metadata before they call in.
     Visit {
         path: PathBuf,
-        metadata: std::fs::Metadata,
+        metadata: fast_io::pinned_root::SourceMetadata,
         is_top_level: bool,
     },
     /// A directory child straight out of the batch stat.
@@ -390,7 +390,7 @@ impl GeneratorContext {
         &mut self,
         base: &Path,
         path: PathBuf,
-        metadata: std::fs::Metadata,
+        metadata: fast_io::pinned_root::SourceMetadata,
         is_top_level: bool,
     ) -> io::Result<()> {
         let mut stack = vec![WalkStep::Visit {
@@ -439,7 +439,7 @@ impl GeneratorContext {
         &mut self,
         scope: WalkScope<'_>,
         path: PathBuf,
-        metadata: std::fs::Metadata,
+        metadata: fast_io::pinned_root::SourceMetadata,
         is_top_level: bool,
         stack: &mut Vec<WalkStep>,
     ) -> io::Result<()> {
@@ -492,7 +492,6 @@ impl GeneratorContext {
         // upstream: flist.c:send_file_name() - skip unsupported file types
         #[cfg(unix)]
         {
-            use std::os::unix::fs::FileTypeExt;
             let ft = metadata.file_type();
             // upstream: flist.c:1419 - `--copy-devices` makes make_file() emit a
             // block/char device as a regular file, so it is included on the wire
@@ -815,7 +814,7 @@ impl GeneratorContext {
         &mut self,
         base: &Path,
         result: StatResult,
-    ) -> Option<(PathBuf, std::fs::Metadata)> {
+    ) -> Option<(PathBuf, fast_io::pinned_root::SourceMetadata)> {
         let StatResult { path, metadata } = result;
         let mut meta = match metadata {
             Ok(meta) => meta,
@@ -938,7 +937,7 @@ impl GeneratorContext {
         path: &Path,
         base: &Path,
         is_dotdir: bool,
-    ) -> io::Result<std::fs::Metadata> {
+    ) -> io::Result<fast_io::pinned_root::SourceMetadata> {
         // upstream: flist.c:readlink_stat() operates on paths without the
         // DOTDIR marker. On Linux, lstat("path/") follows symlinks because the
         // kernel resolves the trailing slash, making a symlink appear as its
@@ -1053,10 +1052,9 @@ impl GeneratorContext {
 /// - `rsync-3.5.0/util1.c:1216` `change_dir()` - the daemon resolves the module
 ///   root through this same rule BEFORE the file list is walked, which is why
 ///   upstream never reaches this stat with an unresolved operand.
-fn symlink_target_is_operator_owned(meta: &std::fs::Metadata) -> bool {
+fn symlink_target_is_operator_owned(meta: &fast_io::pinned_root::SourceMetadata) -> bool {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt as _;
         fast_io::symlink_owner_is_trusted(meta.uid())
     }
     #[cfg(not(unix))]

@@ -30,6 +30,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use fast_io::pinned_root::SourceMetadata;
+
 use logging::{PhaseTimer, debug_log};
 use protocol::flist::FileEntry;
 
@@ -188,7 +190,7 @@ impl GeneratorContext {
             self.config.flags.recursive || self.config.flags.dirs || self.config.flags.list_only;
         if implied_dot_dir && xfer_dirs {
             let dot_root = Path::new(".");
-            if let Ok(meta) = std::fs::symlink_metadata(dot_root) {
+            if let Ok(meta) = std::fs::symlink_metadata(dot_root).map(SourceMetadata::from) {
                 if meta.is_dir() {
                     let mut dot_entry = self.create_entry(dot_root, PathBuf::from("."), &meta)?;
                     mark_implied_dir(&mut dot_entry);
@@ -299,7 +301,7 @@ impl GeneratorContext {
         let emit_implied_root_dot =
             self.config.flags.relative && entries.iter().any(|e| e.implied_dot);
         if emit_implied_root_dot {
-            if let Ok(meta) = std::fs::symlink_metadata(base_dir) {
+            if let Ok(meta) = std::fs::symlink_metadata(base_dir).map(SourceMetadata::from) {
                 if meta.is_dir() {
                     let mut dot_entry = self.create_entry(base_dir, PathBuf::from("."), &meta)?;
                     mark_implied_dir(&mut dot_entry);
@@ -394,7 +396,7 @@ impl GeneratorContext {
                         // it, leaving the receiver with `link/file` and no `link`;
                         // an upstream receiver rejects that with "ABORTING due to
                         // invalid path from sender" (flist.c:2691, exit 4).
-                        let meta = match std::fs::metadata(&full) {
+                        let meta = match std::fs::metadata(&full).map(SourceMetadata::from) {
                             Ok(m) if m.is_dir() => m,
                             _ => continue,
                         };
@@ -568,7 +570,7 @@ impl GeneratorContext {
             // macOS /var is a symlink to /private/var; using
             // symlink_metadata would skip it (is_dir() false for a
             // symlink), breaking the ancestor chain.
-            let meta = match std::fs::metadata(&full) {
+            let meta = match std::fs::metadata(&full).map(SourceMetadata::from) {
                 Ok(m) if m.is_dir() => m,
                 _ => continue,
             };

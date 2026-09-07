@@ -5,6 +5,14 @@
 //! match [`std::os::unix::fs::MetadataExt`] widths, and
 //! [`fstatat_nofollow`] which fills the struct without following a
 //! terminal symlink.
+//!
+//! The SEC-1.f callers pass a single leaf name, because a sandbox decision has
+//! to be made one component at a time. The primitives themselves do not
+//! require that: `name` is handed to `fstatat(2)` as written, so a caller whose
+//! anchor is not the leaf's immediate parent - [`crate::pinned_root`], anchored
+//! on the module root - may pass a deeper relative path, which resolves exactly
+//! as a path-based `lstat` of the same operand would. That caller is not making
+//! a confinement decision with it; see its docs.
 
 use std::ffi::{CString, OsStr};
 use std::io;
@@ -14,9 +22,14 @@ use std::os::unix::ffi::OsStrExt;
 /// Metadata returned by [`fstatat_nofollow`].
 ///
 /// Owns the raw `libc::stat` filled by the kernel and exposes typed
-/// accessors for the fields the SEC-1.f cutover sites consume
-/// (`is_symlink` / `is_dir` / `is_file` / `dev` / `ino` / `mode` /
-/// `size`). The fields are kept private so future kernels can grow
+/// accessors named and widened after
+/// [`std::os::unix::fs::MetadataExt`], so a caller can read the same
+/// fields off either. Two populations consume it: the lstat-class
+/// SEC-1.f cutover sites (`is_symlink` / `is_dir` / `is_file` / `dev` /
+/// `ino` / `mode` / `size`), and the sender's file-list builder, which
+/// needs every field `make_file()` puts on the wire (`gid` / `nlink` /
+/// `rdev` / `atime` / `birthtime` and the device/special predicates).
+/// The fields are kept private so future kernels can grow
 /// `struct stat` without breaking the wire of this type.
 ///
 /// `AtMetadata` is constructed only through [`fstatat_nofollow`]; there
@@ -112,6 +125,109 @@ impl AtMetadata {
     pub fn mtime_nsec(&self) -> i64 {
         widen_time(self.stat.st_mtime_nsec)
     }
+
+    /// Owning group id (`st_gid`). `gid_t` is `u32` on every supported target.
+    #[must_use]
+    pub fn gid(&self) -> u32 {
+        self.stat.st_gid
+    }
+
+    /// Hard link count, widened to `u64` to match
+    /// [`std::os::unix::fs::MetadataExt::nlink`].
+    ///
+    /// `nlink_t` is `u16` on macOS, `u32` on aarch64 Linux and `u64` on x86_64
+    /// Linux, so the widening is a cast rather than a `From`.
+    #[must_use]
+    pub fn nlink(&self) -> u64 {
+        widen_nlink(self.stat.st_nlink)
+    }
+
+    /// Device id this entry *is*, for block and character devices (`st_rdev`).
+    ///
+    /// Widened to `u64` to match [`std::os::unix::fs::MetadataExt::rdev`]; the
+    /// widening is platform-conditional for the same reason [`dev`](Self::dev)
+    /// is.
+    #[must_use]
+    pub fn rdev(&self) -> u64 {
+        widen_dev(self.stat.st_rdev)
+    }
+
+    /// Whole-second access time (`st_atime`), matching
+    /// [`std::os::unix::fs::MetadataExt::atime`].
+    #[must_use]
+    pub fn atime(&self) -> i64 {
+        widen_time(self.stat.st_atime)
+    }
+
+    /// Creation ("birth") time, when the platform's `struct stat` carries one.
+    ///
+    /// `st_birthtime` is a BSD field: Apple and the BSDs fill it, Linux's
+    /// `struct stat` has no such member at all - a birth time is reachable
+    /// there only through `statx(STATX_BTIME)`, which `fstatat` is not. The
+    /// `None` arm is therefore a statement about the syscall, not about the
+    /// filesystem, and callers must treat it the way they already treat
+    /// [`std::fs::Metadata::created`] returning `Err` on a filesystem that does
+    /// not record one.
+    ///
+    /// upstream: `rsync-3.5.0/rsync.h:1013` - `ST_CRTIME` is defined only where
+    /// configure found `st_birthtime`, which is what gates `--crtimes`.
+    #[must_use]
+    pub fn birthtime(&self) -> Option<(i64, i64)> {
+        birthtime_of(&self.stat)
+    }
+
+    /// Returns `true` when the entry is a block device.
+    #[must_use]
+    pub fn is_block_device(&self) -> bool {
+        (self.stat.st_mode & libc::S_IFMT) == libc::S_IFBLK
+    }
+
+    /// Returns `true` when the entry is a character device.
+    #[must_use]
+    pub fn is_char_device(&self) -> bool {
+        (self.stat.st_mode & libc::S_IFMT) == libc::S_IFCHR
+    }
+
+    /// Returns `true` when the entry is a FIFO.
+    #[must_use]
+    pub fn is_fifo(&self) -> bool {
+        (self.stat.st_mode & libc::S_IFMT) == libc::S_IFIFO
+    }
+
+    /// Returns `true` when the entry is a unix-domain socket.
+    #[must_use]
+    pub fn is_socket(&self) -> bool {
+        (self.stat.st_mode & libc::S_IFMT) == libc::S_IFSOCK
+    }
+}
+
+/// Apple's `struct stat` carries `st_birthtime`; read it.
+///
+/// The BSDs carry the same member and would be a mechanical addition to this
+/// `cfg`; they are left out because oc does not ship them, and `None` is the
+/// safe answer for a target nobody has measured.
+#[cfg(target_vendor = "apple")]
+fn birthtime_of(stat: &libc::stat) -> Option<(i64, i64)> {
+    Some((
+        widen_time(stat.st_birthtime),
+        widen_time(stat.st_birthtime_nsec),
+    ))
+}
+
+/// Everywhere else `struct stat` has no birth-time member, so `fstatat` cannot
+/// report one. See [`AtMetadata::birthtime`].
+#[cfg(not(target_vendor = "apple"))]
+fn birthtime_of(_stat: &libc::stat) -> Option<(i64, i64)> {
+    None
+}
+
+/// Widen `st_nlink` to `u64`. `nlink_t` is `u16` on macOS, `u32` on aarch64
+/// Linux and `u64` on x86_64 Linux, so a `From` impl does not exist on every
+/// target and the cast is required for portability; it only looks redundant on
+/// x86_64 Linux.
+#[allow(clippy::unnecessary_cast)]
+fn widen_nlink(value: libc::nlink_t) -> u64 {
+    value as u64
 }
 
 /// Widen `st_dev` to `u64`. `dev_t` is `i32` on macOS and `u64` on
