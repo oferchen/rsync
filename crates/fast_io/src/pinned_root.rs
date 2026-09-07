@@ -54,15 +54,17 @@
 //! Keeping `O_PATH` also means the platform where the anchored stat already
 //! works issues the same syscall it did before, so this change cannot move it.
 //!
-//! [`open_o_path`] stays Linux-only regardless: a Landlock rule needs the
-//! directory as a descriptor, and there is no portable stand-in for that.
+//! [`open_o_path`](crate::pinned_root::open_o_path) stays Linux-only
+//! regardless: a Landlock rule needs the directory as a descriptor, and
+//! there is no portable stand-in for that.
 //!
 //! # Why the return type is not [`std::fs::Metadata`]
 //!
 //! [`std::fs::Metadata`] has no public constructor, so an `fstatat` answer
 //! cannot be spelled as one - the same wall that produced
 //! [`AtMetadata`](crate::dir_sandbox::AtMetadata) and
-//! [`LstatOutcome`](crate::dir_sandbox::LstatOutcome). [`SourceMetadata`]
+//! [`LstatOutcome`](crate::dir_sandbox::LstatOutcome).
+//! [`SourceMetadata`](crate::pinned_root::SourceMetadata)
 //! is that pattern applied to the source-scan lookups: one arm per syscall
 //! shape, one accessor surface over both, named and widened after
 //! [`std::os::unix::fs::MetadataExt`] so a caller reads the same field names
