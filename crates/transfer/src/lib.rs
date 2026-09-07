@@ -499,9 +499,41 @@ fn requires_multiplex_output(
 /// ⚠ That names the blocking sites; it does NOT say what makes the throttle
 /// safe. Removing this restriction is the INC_RECURSE-on-pull work: it needs an
 /// index-driven transfer walk over a growing list rather than the up-front
-/// drain, and it needs whatever releases the sender's backlog per consumed
-/// sub-list. Neither is a one-line change, and sufficiency is not settled by
+/// drain. Neither is a one-line change, and sufficiency is not settled by
 /// reading source - re-run the A/B above.
+///
+/// # The backlog release is NOT missing on the sender - measured
+///
+/// An earlier revision of this block also required "whatever releases the
+/// sender's backlog per consumed sub-list". Against an upstream peer that half
+/// already works, so do not build it again.
+///
+/// MEASURED 2026-09-07 (upstream rsync 3.4.4 protocol 32 as the peer, oc as the
+/// remote server-sender, INC_RECURSE confirmed negotiated by upstream's
+/// `receiving flist for dir N` debug line): a 50000-entry tree carried entirely
+/// in sub-lists - five times `MAX_FILECNT_LOOKAHEAD` - completes in 4s on an
+/// unpatched sender. `SegmentScheduler::retire_current_flist` releases the
+/// window on the peer's per-sub-list `NDX_DONE`, which upstream's generator
+/// emits from `check_for_finished_files` (`generator.c:2698`) inside its
+/// per-file loop (`generator.c:2820`).
+///
+/// A port of `rsync.c:394-402` into oc's sender was built, mutation-proved and
+/// then reverted: it would double-release against the path above, fixing
+/// nothing measurable while weakening a working throttle. What oc lacks is the
+/// RECEIVER half - it emits its per-segment `NDX_DONE`s only after the walk, in
+/// `exchange_phase_done` - so an oc receiver opposite an *oc* sender has
+/// neither release even though the upstream-peer case is covered.
+///
+/// # ⚠⚠ Removing the up-front drain DESTROYS DATA on its own
+///
+/// Both delete passes build their keep-set from a full `file_list` walk. With
+/// the drain removed the list is incomplete by construction, so every entry not
+/// yet materialised is classified extraneous and UNLINKED. The delete passes
+/// need a completeness predicate before the drain can go; `build_files_to_transfer`
+/// also hands back borrows of the whole context, so this is not a local edit.
+///
+/// Order: completeness predicate, then per-segment `NDX_DONE` during the walk,
+/// then the drain conversion, then re-run the A/B. Not a flag flip.
 ///
 /// upstream: compat.c:161-179 set_allow_inc_recurse,
 /// rsync.h:151-152 (`MIN_FILECNT_LOOKAHEAD` / `MAX_FILECNT_LOOKAHEAD`),
