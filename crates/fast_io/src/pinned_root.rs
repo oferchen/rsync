@@ -34,24 +34,54 @@
 //!
 //! # Platform
 //!
-//! The directory scan anchors on every Unix - `openat(O_RDONLY|O_DIRECTORY)`
-//! plus `fdopendir` is portable. The *stat* is Linux-only, because anchoring
-//! it needs an open that reports a directory entry's metadata without
-//! requiring read access to it and without following a symlinked leaf, and
-//! `O_PATH` is the only open that does both. Elsewhere the stat takes the
-//! ordinary path-based arm, which is what it did before this module existed -
-//! the anchoring is an added capability, never a weakened one, so a target
-//! without it is exactly as confined as it was.
+//! Every lookup here anchors on every Unix; only the syscall the *stat* uses
+//! differs between platforms, and neither arm has to open the entry.
+//!
+//! Off Linux the stat is `fstatat`, which is what upstream itself issues:
+//! `do_lstat_atfd()` and `do_stat_atfd()` (`syscall.c:3951-3972`) are plain
+//! `fstatat(dfd, name, &st, AT_SYMLINK_NOFOLLOW)` / `fstatat(dfd, name, &st,
+//! 0)`, chosen between by `link_stat_at()` at `flist.c:310-315` on the same
+//! `copy_links` this module's `follow` argument carries. The scan is
+//! `openat(O_RDONLY|O_DIRECTORY)` plus `fdopendir` everywhere.
+//!
+//! On Linux and Android the stat stays on `O_PATH` + `fstat`. That is not
+//! inertia: `fstat` on a real descriptor yields a [`std::fs::Metadata`], and a
+//! `std::fs::Metadata` on Linux carries a *creation* time, which `struct stat`
+//! there has no member for at all - a birth time lives behind
+//! `statx(STATX_BTIME)`, which `fstatat` is not. The sender's file-list builder
+//! reads that field whenever `--crtimes` is on, so answering with `fstatat`
+//! would quietly drop a wire field for exactly the paths this module anchors.
+//! Keeping `O_PATH` also means the platform where the anchored stat already
+//! works issues the same syscall it did before, so this change cannot move it.
+//!
+//! [`open_o_path`] stays Linux-only regardless: a Landlock rule needs the
+//! directory as a descriptor, and there is no portable stand-in for that.
+//!
+//! # Why the return type is not [`std::fs::Metadata`]
+//!
+//! [`std::fs::Metadata`] has no public constructor, so an `fstatat` answer
+//! cannot be spelled as one - the same wall that produced
+//! [`AtMetadata`](crate::dir_sandbox::AtMetadata) and
+//! [`LstatOutcome`](crate::dir_sandbox::LstatOutcome). [`SourceMetadata`]
+//! is that pattern applied to the source-scan lookups: one arm per syscall
+//! shape, one accessor surface over both, named and widened after
+//! [`std::os::unix::fs::MetadataExt`] so a caller reads the same field names
+//! off either.
 //!
 //! # Upstream Reference
 //!
 //! - `clientserver.c:1059-1065` - the pin, taken before the privilege drop.
 //! - `flist.c:2028-2059` `secure_opendir()` - the scan anchored on it.
 //! - `flist.c:1362-1370` `link_stat()` - the per-entry stat the scan drives.
+//! - `flist.c:310` `link_stat_at()`, `syscall.c:3950-3974`
+//!   `do_lstat_atfd()`/`do_stat_atfd()` - the anchored stat itself.
 
-use std::fs::Metadata;
 use std::io;
 use std::path::{Path, PathBuf};
+
+mod source_metadata;
+
+pub use source_metadata::{SourceFileType, SourceMetadata};
 
 /// `lstat` for a source path, anchored on the pinned root when it applies.
 ///
@@ -60,11 +90,11 @@ use std::path::{Path, PathBuf};
 ///
 /// # Errors
 ///
-/// The underlying `lstat`/`openat` error.
-pub fn symlink_metadata(path: &Path) -> io::Result<Metadata> {
+/// The underlying `lstat`/`fstatat`/`openat` error.
+pub fn symlink_metadata(path: &Path) -> io::Result<SourceMetadata> {
     match anchored_metadata(path, false) {
         Some(result) => result,
-        None => std::fs::symlink_metadata(path),
+        None => std::fs::symlink_metadata(path).map(SourceMetadata::Std),
     }
 }
 
@@ -74,11 +104,11 @@ pub fn symlink_metadata(path: &Path) -> io::Result<Metadata> {
 ///
 /// # Errors
 ///
-/// The underlying `stat`/`openat` error.
-pub fn metadata(path: &Path) -> io::Result<Metadata> {
+/// The underlying `stat`/`fstatat`/`openat` error.
+pub fn metadata(path: &Path) -> io::Result<SourceMetadata> {
     match anchored_metadata(path, true) {
         Some(result) => result,
-        None => std::fs::metadata(path),
+        None => std::fs::metadata(path).map(SourceMetadata::Std),
     }
 }
 
@@ -219,16 +249,28 @@ impl Iterator for ReadDir {
 
 /// `Some(result)` when the lookup was anchored, `None` when the caller should
 /// issue the ordinary path-based call.
+///
+/// `O_PATH` + `fstat` on Linux, `fstatat` on every other Unix; see the module
+/// docs for why the two platforms answer with different syscalls.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-fn anchored_metadata(path: &Path, follow: bool) -> Option<io::Result<Metadata>> {
+fn anchored_metadata(path: &Path, follow: bool) -> Option<io::Result<SourceMetadata>> {
     use std::os::fd::AsFd;
     let (fd, relative) = crate::confinement::pinned_root_relative(path)?;
-    Some(imp::metadata_at(fd.as_fd(), &relative, follow))
+    Some(imp::metadata_at(fd.as_fd(), &relative, follow).map(SourceMetadata::Std))
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-fn anchored_metadata(_path: &Path, _follow: bool) -> Option<io::Result<Metadata>> {
-    // No `O_PATH`: see the module docs. The caller takes the path-based arm.
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+fn anchored_metadata(path: &Path, follow: bool) -> Option<io::Result<SourceMetadata>> {
+    use std::os::fd::AsFd;
+    let (fd, relative) = crate::confinement::pinned_root_relative(path)?;
+    Some(imp::fstatat_relative(fd.as_fd(), &relative, follow).map(SourceMetadata::At))
+}
+
+/// No pinned descriptor to anchor on: Windows has neither the `setuid` drop
+/// this exists to survive nor a dirfd to survive it with, and
+/// [`crate::confinement::pinned_root_relative`] is itself `#[cfg(unix)]`.
+#[cfg(not(unix))]
+fn anchored_metadata(_path: &Path, _follow: bool) -> Option<io::Result<SourceMetadata>> {
     None
 }
 
@@ -256,13 +298,52 @@ mod imp {
         dirfd: BorrowedFd<'_>,
         relative: &Path,
         follow: bool,
-    ) -> io::Result<Metadata> {
+    ) -> io::Result<std::fs::Metadata> {
         let mut flags = libc::O_PATH | libc::O_CLOEXEC;
         if !follow {
             flags |= libc::O_NOFOLLOW;
         }
         let fd = openat(dirfd, relative, flags)?;
         File::from(fd).metadata()
+    }
+
+    /// `stat`/`lstat` `relative` beneath `dirfd` the way upstream does it, on
+    /// the Unixes that have no `O_PATH`.
+    ///
+    /// One `fstatat(2)`, no open: the kernel resolves the name from the pinned
+    /// descriptor and fills a `struct stat`, so an unreadable file, a FIFO with
+    /// no writer and a device all report their metadata without the call
+    /// acquiring - or needing - any access to the entry. `AT_SYMLINK_NOFOLLOW`
+    /// names the symlink itself, which is `lstat`; without it the leaf is
+    /// followed, which is `stat`.
+    ///
+    /// `relative` may name a descendant several components deep, which
+    /// `fstatat` resolves exactly as a path-based `lstat` would. That is not a
+    /// confinement decision and no `AT_` resolve flag is passed: upstream is
+    /// explicit that the anchored stat is reach, not policy - "Pure
+    /// performance and sender-side only ... no confinement is implied or
+    /// needed" (`flist.c:223-228`). Refusing here would make an availability
+    /// fix into a behaviour change.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.0/syscall.c:3950-3974` `do_lstat_atfd()` / `do_stat_atfd()`.
+    /// - `rsync-3.5.0/flist.c:310` `link_stat_at()` - the caller that picks
+    ///   between them.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    pub(super) fn fstatat_relative(
+        dirfd: BorrowedFd<'_>,
+        relative: &Path,
+        follow: bool,
+    ) -> io::Result<crate::dir_sandbox::AtMetadata> {
+        // `pinned_root_relative` already spells "the root itself" as `.`, which
+        // is the name upstream uses for that same directory (`flist.c:2059`).
+        let name = relative.as_os_str();
+        if follow {
+            crate::dir_sandbox::fstatat_follow(dirfd, name)
+        } else {
+            crate::dir_sandbox::fstatat_nofollow(dirfd, name)
+        }
     }
 
     /// Open `relative` beneath `dirfd` as a directory for enumeration.

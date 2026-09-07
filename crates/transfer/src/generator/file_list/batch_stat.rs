@@ -9,8 +9,9 @@
 //!
 //! - `flist.c:send_directory()` - iterates `readdir()` results and stats each
 
-use std::fs;
 use std::path::PathBuf;
+
+use fast_io::pinned_root::SourceMetadata;
 
 use crate::parallel_io::{ParallelOp, ParallelThresholds, map_blocking};
 
@@ -22,7 +23,11 @@ pub(in crate::generator) struct StatResult {
     /// Full filesystem path of the entry.
     pub path: PathBuf,
     /// Resolved metadata, or the error from the stat call.
-    pub metadata: Result<fs::Metadata, std::io::Error>,
+    ///
+    /// A [`SourceMetadata`] rather than a [`std::fs::Metadata`] because the
+    /// anchored arm answers with `fstatat`, whose `struct stat` cannot be
+    /// spelled as the latter - see [`fast_io::pinned_root`].
+    pub metadata: Result<SourceMetadata, std::io::Error>,
 }
 
 /// Collects `read_dir()` entries into paths and batch-resolves their metadata.

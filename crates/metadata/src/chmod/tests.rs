@@ -73,17 +73,15 @@ fn apply_numeric_and_symbolic_modifiers() {
     std::fs::create_dir(&dir_path).expect("create dir");
     std::fs::set_permissions(&file_path, PermissionsExt::from_mode(0o666)).expect("set perms");
 
-    let file_type = std::fs::metadata(&file_path)
+    let file_is_dir = std::fs::metadata(&file_path)
         .expect("file metadata")
-        .file_type();
-    let dir_type = std::fs::metadata(&dir_path)
-        .expect("dir metadata")
-        .file_type();
+        .is_dir();
+    let dir_is_dir = std::fs::metadata(&dir_path).expect("dir metadata").is_dir();
 
     let modifiers = ChmodModifiers::parse("Fgo-w,D755").expect("parse");
-    let file_mode = modifiers.apply(0o666, file_type);
+    let file_mode = modifiers.apply(0o666, file_is_dir);
     assert_eq!(file_mode & 0o777, 0o644);
-    let dir_mode = modifiers.apply(0o600, dir_type);
+    let dir_mode = modifiers.apply(0o600, dir_is_dir);
     assert_eq!(dir_mode & 0o777, 0o755);
 }
 
@@ -96,17 +94,15 @@ fn conditional_execute_bit_behaviour_matches_rsync() {
     std::fs::write(&file_path, b"#!/bin/sh").expect("write file");
     std::fs::create_dir(&dir_path).expect("create dir");
 
-    let file_type = std::fs::metadata(&file_path)
+    let file_is_dir = std::fs::metadata(&file_path)
         .expect("file metadata")
-        .file_type();
-    let dir_type = std::fs::metadata(&dir_path)
-        .expect("dir metadata")
-        .file_type();
+        .is_dir();
+    let dir_is_dir = std::fs::metadata(&dir_path).expect("dir metadata").is_dir();
 
     let modifiers = ChmodModifiers::parse("a+X").expect("parse");
-    let file_mode = modifiers.apply(0o644, file_type);
+    let file_mode = modifiers.apply(0o644, file_is_dir);
     assert_eq!(file_mode & 0o777, 0o644);
-    let dir_mode = modifiers.apply(0o600, dir_type);
+    let dir_mode = modifiers.apply(0o600, dir_is_dir);
     assert_eq!(dir_mode & 0o777, 0o711);
 }
 
@@ -143,14 +139,12 @@ fn implied_who_applies_umask_masking() {
     let temp = tempfile::tempdir().expect("tempdir");
     let dir_path = temp.path().join("testdir");
     std::fs::create_dir(&dir_path).expect("create dir");
-    let dir_type = std::fs::metadata(&dir_path)
-        .expect("dir metadata")
-        .file_type();
+    let dir_is_dir = std::fs::metadata(&dir_path).expect("dir metadata").is_dir();
 
     // Parse the upstream testsuite spec: ug-s,a+rX,D+w
     let modifiers = ChmodModifiers::parse("ug-s,a+rX,D+w").expect("parse");
     // Starting from 0775 (rwxrwxr-x) which is a common directory default
-    let mode = modifiers.apply(0o2775, dir_type);
+    let mode = modifiers.apply(0o2775, dir_is_dir);
     // After ug-s: clears setuid+setgid -> 0o775
     // After a+rX: adds read+exec for all (dirs always get exec) -> 0o775
     // After D+w: adds write, but masked by ~umask

@@ -517,7 +517,7 @@ pub(super) fn apply_permissions_with_chmod(
     {
         if let Some(modifiers) = options.chmod() {
             let mut mode = base_mode_for_permissions(destination, metadata, options, existing)?;
-            mode = modifiers.apply(mode, metadata.file_type());
+            mode = modifiers.apply(mode, metadata.is_dir());
             mode = tweak_directory_transfer_mode(mode, metadata.file_type());
 
             if let Some(existing) = existing {
@@ -601,7 +601,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
 
     if let Some(modifiers) = options.chmod() {
         let mut mode = base_mode_for_permissions(destination, metadata, options, existing)?;
-        mode = modifiers.apply(mode, metadata.file_type());
+        mode = modifiers.apply(mode, metadata.is_dir());
         mode = tweak_directory_transfer_mode(mode, metadata.file_type());
 
         if let Some(existing) = existing {
@@ -795,7 +795,7 @@ pub(super) fn apply_symlink_permissions_like(
         let target = match options.chmod() {
             Some(modifiers) => {
                 let start = base.unwrap_or(current);
-                Some(modifiers.apply(start, source_metadata.file_type()) & 0o7777)
+                Some(modifiers.apply(start, source_metadata.is_dir()) & 0o7777)
             }
             None => base,
         };
@@ -844,7 +844,7 @@ fn intended_fake_super_mode(
     };
 
     let mode = match options.chmod() {
-        Some(modifiers) => modifiers.apply(base, metadata.file_type()),
+        Some(modifiers) => modifiers.apply(base, metadata.is_dir()),
         None => base,
     };
     Ok(mode)
@@ -869,7 +869,7 @@ pub(super) fn chmod_directory_target_mode(
         return Ok(None);
     };
     let base = base_mode_for_permissions(destination, metadata, options, existing)?;
-    Ok(Some(modifiers.apply(base, metadata.file_type()) & 0o7777))
+    Ok(Some(modifiers.apply(base, metadata.is_dir()) & 0o7777))
 }
 
 /// Determines the base mode before chmod modifiers are applied.
@@ -1200,7 +1200,7 @@ pub(super) fn apply_permissions_from_entry(
                 }
             };
 
-            let new_mode = chmod.apply(base_mode, current_meta.file_type());
+            let new_mode = chmod.apply(base_mode, current_meta.is_dir());
             if new_mode != current_mode {
                 // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
                 // Helper follows symlinked parents under `--keep-dirlinks` to
