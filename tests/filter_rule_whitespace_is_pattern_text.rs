@@ -16,14 +16,20 @@
 //! or whitespace-only line reaches the prefix switch's `default:` arm and dies
 //! at `exclude.c:1363` with `Unknown filter rule`.
 //!
-//! TWO oc readers trimmed. The engine dir-merge parser trimmed both ends of
-//! every line, and the CLI `--exclude-from`/`--include-from` reader trimmed
-//! before testing for a blank or a comment. Because a filter pattern is
-//! matched literally, both changed WHICH FILES TRANSFER at exit 0 - silent
-//! data selection divergence, not cosmetics. The third reader, the CLI
-//! `--filter='merge FILE'` loop (`crates/cli/.../filter_rules/merge.rs`),
-//! already mirrored upstream, which is what made this a one-of-three lag
-//! rather than a uniform choice.
+//! THREE oc readers trimmed. The engine dir-merge parser trimmed both ends of
+//! every line; the CLI `--exclude-from`/`--include-from` reader trimmed before
+//! testing for a blank or a comment; and the DAEMON's `exclude from`/`include
+//! from` reader
+//! (`crates/daemon/.../module_access/helpers.rs::read_patterns_from_file`) did
+//! both, and was missed when the first two were fixed. Because a filter
+//! pattern is matched literally, all three changed WHICH FILES TRANSFER at
+//! exit 0 - silent data selection divergence, not cosmetics. The fourth
+//! reader, the CLI `--filter='merge FILE'` loop
+//! (`crates/cli/.../filter_rules/merge.rs`), already mirrored upstream, which
+//! is what made this a lag in some readers rather than a uniform choice.
+//!
+//! The daemon reader is pinned separately, because only a running daemon
+//! exercises it: `tests/daemon_filter_file_whitespace_is_pattern_text.rs`.
 //!
 //! MEASURED against rsync 3.5.0 with a source holding `a` and `a ` (trailing
 //! space) and a `.rsync-filter` of `- a `: upstream excludes `a ` and copies

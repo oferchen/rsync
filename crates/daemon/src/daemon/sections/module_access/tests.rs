@@ -2125,6 +2125,33 @@ mod module_access_tests {
         assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Include);
     }
 
+    /// The whitespace reaches the RULE, not merely the reader.
+    ///
+    /// `read_patterns_from_file` is the reader; `build_pattern_rule` then
+    /// decides anchoring and the `DIR2WILD3` suffix from the pattern text. This
+    /// pins the composed result, so a later "tidy the pattern up" inside the
+    /// builder cannot silently undo the fix while the reader test stays green.
+    ///
+    /// MEASURED against a real rsync 3.5.0 daemon (module holding `a` and `a `,
+    /// `exclude from` file holding the one line `a `): upstream served `a` and
+    /// hid `a `; oc at f054c633b served `a ` and hid `a`.
+    #[test]
+    fn build_daemon_filter_rules_exclude_from_keeps_trailing_whitespace() {
+        let dir = tempfile::tempdir().unwrap();
+        let exclude_file = dir.path().join("excludes.txt");
+        fs::write(&exclude_file, "a \n  #kept\n").unwrap();
+
+        let module = ModuleRuntime::from(ModuleDefinition {
+            exclude_from: Some(exclude_file),
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern, "a ");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[1].pattern, "  #kept");
+    }
+
     #[test]
     fn build_daemon_filter_rules_missing_file_returns_error() {
         let module = ModuleRuntime::from(ModuleDefinition {
@@ -2243,6 +2270,14 @@ mod module_access_tests {
         }
     }
 
+    /// Comments and EMPTY records are skipped - a whitespace-only record is
+    /// neither.
+    ///
+    /// upstream: `exclude.c:1806` tests `*line` and `line[0]` on the untrimmed
+    /// record, so `  ` is not empty and becomes a pattern matching a file
+    /// literally named `  `. MEASURED against an rsync 3.5.0 daemon whose
+    /// `exclude from` file holds the single line `   `: the module's file named
+    /// `   ` is hidden.
     #[test]
     fn build_daemon_filter_rules_from_file_skips_comments_and_blanks() {
         let dir = tempfile::tempdir().unwrap();
@@ -2258,9 +2293,10 @@ mod module_access_tests {
             ..Default::default()
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
-        assert_eq!(rules.len(), 2);
-        assert_eq!(rules[0].pattern, "*.tmp");
-        assert_eq!(rules[1].pattern, "*.bak");
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].pattern, "  ");
+        assert_eq!(rules[1].pattern, "*.tmp");
+        assert_eq!(rules[2].pattern, "*.bak");
     }
 
     #[test]
@@ -2535,10 +2571,78 @@ mod module_access_tests {
     fn read_patterns_from_file_skips_empty_lines() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("patterns.txt");
-        fs::write(&file, "\n*.tmp\n  \n\n*.bak\n").unwrap();
+        fs::write(&file, "\n*.tmp\n\n*.bak\n").unwrap();
 
         let patterns = read_patterns_from_file(&file).unwrap();
         assert_eq!(patterns, vec!["*.tmp", "*.bak"]);
+    }
+
+    /// A rule's trailing whitespace is PATTERN TEXT, not decoration.
+    ///
+    /// upstream: `clientserver.c:947` reads `exclude from` with
+    /// `parse_filter_file()`, whose reader stops at the terminator and hands the
+    /// record over verbatim (`exclude.c:1794-1808`); `parse_rule_tok` then takes
+    /// `len = strlen(s)` (`exclude.c:1465`). No end is trimmed.
+    ///
+    /// MEASURED against rsync 3.5.0: a module whose `exclude from` file holds
+    /// the single line `a ` over a directory holding `a` and `a ` serves `a` and
+    /// hides `a `. oc trimmed the rule, so it hid `a` and SERVED `a ` - a
+    /// different set of files, at exit 0, with no diagnostic.
+    #[test]
+    fn read_patterns_from_file_keeps_trailing_whitespace() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("patterns.txt");
+        fs::write(&file, "a \nb\t\n *.log\n").unwrap();
+
+        let patterns = read_patterns_from_file(&file).unwrap();
+        assert_eq!(patterns, vec!["a ", "b\t", " *.log"]);
+    }
+
+    /// A whitespace-only record is a PATTERN, not a blank line.
+    ///
+    /// upstream: `exclude.c:1806` tests `*line` - the FIRST BYTE - so `   ` is
+    /// not empty and becomes a rule matching a file literally named `   `.
+    /// Trimming first collapsed it to `""` and dropped it.
+    #[test]
+    fn read_patterns_from_file_keeps_a_whitespace_only_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("patterns.txt");
+        fs::write(&file, "   \n*.tmp\n").unwrap();
+
+        let patterns = read_patterns_from_file(&file).unwrap();
+        assert_eq!(patterns, vec!["   ", "*.tmp"]);
+    }
+
+    /// `#`/`;` open a comment only in COLUMN ZERO.
+    ///
+    /// upstream: `exclude.c:1806` tests `*line != ';' && *line != '#'` on the
+    /// untrimmed record, so ` #a` is a pattern. oc trimmed before the test and
+    /// dropped it, which SERVED a file the operator had asked the daemon to
+    /// hide.
+    #[test]
+    fn read_patterns_from_file_comment_marker_counts_only_in_column_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("patterns.txt");
+        fs::write(&file, "#dropped\n  #kept\n ;kept\n;dropped\n").unwrap();
+
+        let patterns = read_patterns_from_file(&file).unwrap();
+        assert_eq!(patterns, vec!["  #kept", " ;kept"]);
+    }
+
+    /// A lone `\r` ends a record, and `\r\n` ends exactly one.
+    ///
+    /// upstream: `exclude.c:1774-1793`. `str::lines` breaks only on `\n`, so a
+    /// `\r`-separated filter file collapsed into ONE pattern carrying the `\r`
+    /// and every later rule as literal bytes - it matched nothing and the files
+    /// those rules named all transferred.
+    #[test]
+    fn read_patterns_from_file_splits_on_a_lone_carriage_return() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("patterns.txt");
+        fs::write(&file, "a \r*.tmp\r\n*.bak\n").unwrap();
+
+        let patterns = read_patterns_from_file(&file).unwrap();
+        assert_eq!(patterns, vec!["a ", "*.tmp", "*.bak"]);
     }
 
     #[test]
