@@ -55,6 +55,7 @@ pub use metadata_ops::{
     secure_chmod_at, secure_chown_at, secure_utimes_at, utimensat,
     utimensat_via_sandbox_or_fallback,
 };
+pub use nested::nested_parent_anchoring_supported;
 pub use open::{
     openat, openat_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,
 };

@@ -1640,7 +1640,7 @@ fn read_dir_view_via_sandbox_matches_std_for_subdir_listing() {
 /// without `openat2(RESOLVE_BENEATH)`. Off implies that fallback is
 /// exercised.
 fn nested_anchor_live() -> bool {
-    !cfg!(target_os = "linux") || crate::linux_capabilities::openat2_supported()
+    super::nested_parent_anchoring_supported()
 }
 
 #[test]

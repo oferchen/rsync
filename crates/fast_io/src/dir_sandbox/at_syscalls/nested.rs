@@ -175,6 +175,29 @@ pub(super) fn anchor_parent<'a>(
     }
 }
 
+/// Returns `true` when [`anchor_parent`] resolves a multi-component path's
+/// parent beneath the sandbox root on this host, and `false` when it degrades
+/// to the caller's path-based fallback.
+///
+/// This is the capability the `*_via_sandbox_or_fallback` family branches on,
+/// and it is **not** the same question as
+/// [`openat2_supported`](crate::openat2_supported):
+///
+/// - **Off Linux** anchoring is always available: the parent resolves through
+///   [`DirSandbox::open_subdir_confined`](crate::dir_sandbox::DirSandbox::open_subdir_confined),
+///   oc's port of upstream's portable `ds_descend()` (`syscall.c:2891-2965`),
+///   which needs no kernel support.
+/// - **On Linux** anchoring uses `openat2(RESOLVE_BENEATH)`, so it tracks
+///   `openat2_supported()`. A kernel below 5.6 is the one state that degrades.
+///
+/// Ask this rather than re-deriving it from `openat2_supported()`. The two
+/// predicates agreed until the portable arm landed, so a site still spelling
+/// the old formula asserts the pre-change contract while looking correct.
+#[must_use]
+pub fn nested_parent_anchoring_supported() -> bool {
+    !cfg!(target_os = "linux") || crate::linux_capabilities::openat2_supported()
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
     use std::ffi::CString;

@@ -409,12 +409,13 @@ pub use dir_sandbox::{
     confined_rename, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
     fchownat_via_sandbox_or_fallback, fstatat_follow, fstatat_nofollow, linkat,
     linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback, mkdirat,
-    mkdirat_via_sandbox_or_fallback, openat, openat_via_sandbox_or_fallback,
-    read_dir_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,
-    recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback, renameat,
-    renameat_via_sandbox_or_fallback, secure_chmod_at, secure_chown_at, secure_utimes_at,
-    symlinkat, symlinkat_via_sandbox_or_fallback, unlink_path, unlink_via_sandbox_or_fallback,
-    unlinkat, utimensat, utimensat_via_sandbox_or_fallback,
+    mkdirat_via_sandbox_or_fallback, nested_parent_anchoring_supported, openat,
+    openat_via_sandbox_or_fallback, read_dir_via_sandbox_or_fallback, readlinkat,
+    readlinkat_via_sandbox_or_fallback, recursive_unlinkat,
+    recursive_unlinkat_via_sandbox_or_fallback, renameat, renameat_via_sandbox_or_fallback,
+    secure_chmod_at, secure_chown_at, secure_utimes_at, symlinkat,
+    symlinkat_via_sandbox_or_fallback, unlink_path, unlink_via_sandbox_or_fallback, unlinkat,
+    utimensat, utimensat_via_sandbox_or_fallback,
 };
 pub use inplace_open::{InplaceResolution, open_inplace_output};
 pub use kernel_version::{
