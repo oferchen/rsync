@@ -175,6 +175,49 @@ pub fn try_reap(child_pid: i32) -> io::Result<Option<ChildEnd>> {
     }
 }
 
+/// Blocks until one specific child has ended, leaving its status collectable.
+///
+/// `WNOWAIT` reports the end without consuming it, so a later [`try_reap`]
+/// still returns the outcome. That is the whole point: this answers "has the
+/// session ended yet" for a caller that must not also decide "and here is how
+/// it ended".
+///
+/// # Why an out-of-band liveness signal will not do
+///
+/// A pipe whose write end only the child holds looks like an equivalent
+/// "child is gone" edge, and it is not. The kernel closes a dying child's
+/// descriptors before it makes the child reapable - `exit_files()` runs ahead
+/// of `exit_notify()` on Linux - so the reader can observe EOF during a window
+/// in which [`try_reap`] still correctly reports the child as running. Any
+/// caller that treats EOF as "reapable" is racing that window.
+#[allow(unsafe_code)]
+pub fn await_child_end(child_pid: i32) -> io::Result<()> {
+    loop {
+        // SAFETY: `waitid` writes only through `info`, a live local zeroed to
+        // a valid `siginfo_t`. `WNOWAIT` leaves the child waitable, so this
+        // cannot consume the status `try_reap` is expected to collect.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let waited = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child_pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        if waited == -1 {
+            let error = io::Error::last_os_error();
+            // Not a retry policy: `EINTR` means the kernel never ran the wait,
+            // so nothing is being re-attempted and nothing is backed off.
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        return Ok(());
+    }
+}
+
 /// Blocks until one specific child ends, and reports how.
 ///
 /// The shutdown counterpart to [`try_reap`]: a draining daemon must not leave

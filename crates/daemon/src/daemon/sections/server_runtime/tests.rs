@@ -254,16 +254,18 @@ fn a_child_end_is_classified_by_how_the_process_ended() {
 /// until that is true.
 ///
 /// The proof matters more than the fixture. On Unix a session is a forked
-/// child, so the only honest way to know it ended is to observe the *process*
-/// end: the child inherits a pipe write end, and the kernel closes it at
-/// `_exit`, so the parent's read hits EOF exactly then. A byte written by the
-/// child before exiting would prove only that it got close.
+/// child, so "ended" has to mean *reapable*: a single-shot reap assertion is
+/// only meaningful if `try_reap` is guaranteed to collect this child on its
+/// first call.
 ///
-/// Without that, every reap assertion below would race the child and pass or
-/// fail on scheduling.
+/// An inherited pipe closed at `_exit` looks like that guarantee and is not.
+/// The kernel closes the child's descriptors before it makes the child
+/// reapable, so EOF can arrive inside a window where `try_reap` still
+/// correctly reports the session as running - measured at 15% of runs on a
+/// loaded 4-core host. `await_child_end` waits for the state the reap
+/// actually consumes, and `WNOWAIT` leaves the status for it to collect.
 #[cfg(unix)]
 fn ended_session_worker(counter: &ConnectionCounter, exit_code: i32) -> SessionWorker {
-    let (mut ended, exited_marker) = std::io::pipe().expect("pipe");
     // Acquired before the fork, exactly as production does: the guard is
     // parent-owned, and the child's inherited copy dies unrun with `_exit`.
     let slot = counter.acquire();
@@ -274,10 +276,8 @@ fn ended_session_worker(counter: &ConnectionCounter, exit_code: i32) -> SessionW
             _slot: slot,
         },
     };
-    // The parent must not hold a write end of its own, or the read never ends.
-    drop(exited_marker);
-    let mut discard = Vec::new();
-    std::io::Read::read_to_end(&mut ended, &mut discard).expect("await the child's exit");
+    platform::session_fork::await_child_end(worker.backing.child_pid)
+        .expect("await the child becoming reapable");
     worker
 }
 
