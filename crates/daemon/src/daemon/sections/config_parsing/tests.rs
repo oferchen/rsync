@@ -2666,8 +2666,15 @@ mod config_parsing_tests {
         assert_eq!(result.modules[0].filter, vec!["- *.tmp"]);
     }
 
+    /// A repeated `filter` directive REPLACES the earlier one.
+    ///
+    /// upstream: loadparm.c:379-470 do_parameter() assigns every P_STRING
+    /// through `string_set()`, which frees the old value first, so the last
+    /// occurrence is the one that survives. Measured against the real 3.5.0
+    /// daemon: with `filter = - foo` then `filter = - bar`, upstream serves
+    /// `foo` and hides only `bar`.
     #[test]
-    fn parse_module_filter_multiple_rules_accumulate() {
+    fn parse_module_filter_last_directive_wins() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
@@ -2678,7 +2685,26 @@ mod config_parsing_tests {
         );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.modules[0].filter, vec!["- *.tmp", "+ *.rs"]);
+        assert_eq!(result.modules[0].filter, vec!["+ *.rs"]);
+    }
+
+    /// The non-vacuity companion to the last-wins cells: several rules inside
+    /// ONE directive value are all kept. Without this, "last wins" could be
+    /// satisfied by a parser that simply dropped rules, and the two cells
+    /// would not distinguish replacement from loss.
+    #[test]
+    fn parse_module_filter_one_directive_keeps_its_whole_value() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nfilter = - *.tmp + *.rs\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].filter, vec!["- *.tmp + *.rs"]);
     }
 
     #[test]
@@ -2705,8 +2731,10 @@ mod config_parsing_tests {
         assert_eq!(result.modules[0].include, vec!["*.rs"]);
     }
 
+    /// Three `exclude` directives leave only the third, for the same
+    /// `string_set()` reason as the `filter` cell above.
     #[test]
-    fn parse_module_exclude_multiple_rules_accumulate() {
+    fn parse_module_exclude_last_directive_wins() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
         fs::create_dir(&path).expect("create dir");
@@ -2717,7 +2745,130 @@ mod config_parsing_tests {
         );
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.modules[0].exclude, vec!["*.log", "*.tmp", "/cache/"]);
+        assert_eq!(result.modules[0].exclude, vec!["/cache/"]);
+    }
+
+    /// `include` takes the same rule; kept separate because the three
+    /// directives are three independent arms and a fix to one need not reach
+    /// the others.
+    #[test]
+    fn parse_module_include_last_directive_wins() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\ninclude = *.rs\ninclude = *.toml\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].include, vec!["*.toml"]);
+    }
+
+    /// The GLOBAL-section arms are a separate three, in a separate file
+    /// (`global_directives/dispatch.rs`), and they had the same defect. A
+    /// module that overrides nothing inherits the default, so the last global
+    /// `exclude` is the one every module sees.
+    ///
+    /// upstream: loadparm.c - a P_LOCAL parameter in the global section writes
+    /// the default that `init_section()`/`copy_section()` hand to every module.
+    /// The assignment is the same `string_set()`, so repeats replace here too.
+    #[test]
+    fn parse_global_exclude_last_directive_wins() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "exclude = *.log\nexclude = *.tmp\n[mod]\npath = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].exclude, vec!["*.tmp"]);
+    }
+
+    #[test]
+    fn parse_global_filter_last_directive_wins() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "filter = - *.log\nfilter = - *.tmp\n[mod]\npath = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].filter, vec!["- *.tmp"]);
+    }
+
+    #[test]
+    fn parse_global_include_last_directive_wins() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "include = *.rs\ninclude = *.toml\n[mod]\npath = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].include, vec!["*.toml"]);
+    }
+
+    /// SCOPE BOUNDARY, and a negative control for the whole change: a module's
+    /// own value REPLACES the inherited global default, and that was already
+    /// correct before this fix. Measured against the real 3.5.0 daemon with
+    /// `exclude = foo` global + `exclude = bar` in the module: both upstream
+    /// and oc serve `foo` and hide only `bar`.
+    ///
+    /// If a future edit made the module arm extend the inherited default
+    /// instead of replacing it, this cell fails while the last-wins cells above
+    /// stay green - which is the distinction they cannot draw on their own.
+    #[test]
+    fn parse_module_exclude_replaces_the_inherited_global_default() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "exclude = *.log\n[mod]\npath = {}\nexclude = *.tmp\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].exclude, vec!["*.tmp"]);
+    }
+
+    /// The SECOND negative control: last-wins binds PER DIRECTIVE NAME. One
+    /// name does not clear another's slot.
+    ///
+    /// Every last-wins cell above repeats the SAME directive, so none of them
+    /// can see a cross-name effect. If `filter` overwrote what `exclude` had
+    /// stored, a per-arm assignment would be wrong in a way the rest of the
+    /// table is blind to - so this is measured, not assumed.
+    ///
+    /// Measured against the real 3.5.0 daemon, both orders and in the global
+    /// section too: with `exclude = foo` and `filter = - bar` on one module,
+    /// upstream hides BOTH and serves only the third file. `string_set()` keys
+    /// on the parameter (loadparm.c:379-470), so each name owns its own slot.
+    #[test]
+    fn parse_module_directives_of_different_names_keep_separate_slots() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "[mod]\npath = {}\nexclude = *.log\nfilter = - *.tmp\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].exclude, vec!["*.log"]);
+        assert_eq!(result.modules[0].filter, vec!["- *.tmp"]);
     }
 
     #[test]

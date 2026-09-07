@@ -364,23 +364,27 @@ fn apply_module_directive(
             let resolved = resolve_config_relative_path(canonical, value);
             builder.set_include_from(resolved);
         }
-        // upstream: daemon-parm.h - `filter` STRING, P_LOCAL.
-        // Repeatable: multiple directives accumulate rules.
+        // upstream: daemon-parm.h - `filter` STRING, P_LOCAL. Last-wins like
+        // every other directive: `do_parameter()` reaches `string_set()`, which
+        // frees the previous value before storing the new one
+        // (loadparm.c:379-470), so a second `filter` line REPLACES the first.
+        // It does not extend it - a value carrying several rules says so with
+        // whitespace inside that one value.
         "filter" => {
             if !value.is_empty() {
-                builder.filter.push(value.to_owned());
+                builder.set_filter(vec![value.to_owned()]);
             }
         }
         // upstream: daemon-parm.h - `exclude` STRING, P_LOCAL.
         "exclude" => {
             if !value.is_empty() {
-                builder.exclude.push(value.to_owned());
+                builder.set_exclude(vec![value.to_owned()]);
             }
         }
         // upstream: daemon-parm.h - `include` STRING, P_LOCAL.
         "include" => {
             if !value.is_empty() {
-                builder.include.push(value.to_owned());
+                builder.set_include(vec![value.to_owned()]);
             }
         }
         // upstream: daemon-parm.h:78 `reverse_lookup` BOOL, P_LOCAL. Consumed
