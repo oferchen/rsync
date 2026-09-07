@@ -160,6 +160,14 @@ enum SessionOutcome {
     )]
     Failed(Option<SocketAddr>, io::Error),
     /// The session's own process exited non-zero, having already said why.
+    ///
+    /// Only a forked child can end this way, so this is the exact mirror of
+    /// [`SessionOutcome::Failed`]: each backing constructs one of the two, and
+    /// the variant the other backing cannot reach is dead on that platform.
+    #[cfg_attr(
+        not(unix),
+        expect(dead_code, reason = "fork backing only; see SessionBacking")
+    )]
     EndedWithStatus(i32),
     /// The session died abnormally: a panic that escaped `catch_unwind` under
     /// a thread backing, or a fatal signal under a forked one.
