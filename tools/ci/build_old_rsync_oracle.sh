@@ -50,18 +50,44 @@ WORKDIR="${3:-${DEST_DIR}/.build}"
 TARGET_BIN="${DEST_DIR}/rsync_${VERSION}"
 TARBALL_BASE_URL="${RSYNC_TARBALL_BASE_URL:-https://rsync.samba.org/ftp/rsync/src}"
 
+# The banner's first line, or non-zero if the binary would not run at all.
+#
+# Captured in ONE command substitution rather than piped through `head -1`,
+# and that is a correctness requirement, not a style choice. This script runs
+# under `set -o pipefail` and rsync does not buffer its version banner: MEASURED
+# on 3.2.7, `--version` is 20 separate write(2) calls totalling 793 bytes. So
+# `head -1` can exit - closing the read end - while rsync is still writing, rsync
+# dies of SIGPIPE, and the pipeline reports 141 even though the text matched.
+#
+# The consequence was not a bad diagnostic, it was destruction: oracle_is_usable
+# then called a working, freshly built oracle unusable, and the tail of this
+# script `rm -f`s the binary and exits 1 - which ensure_legacy_oracles treats as
+# fatal, failing the whole leg. MEASURED 10/10 on an 8-core Linux host, and
+# MEASURED not to fire on the GitHub runner (nightly run 34031044215 installed
+# all three oracles), so it was a host-dependent failure, which is worse than a
+# constant one: CI stayed green while the same command could not be reproduced
+# locally. A command substitution reads to EOF, so there is no early close and
+# no race.
+oracle_version_line() {
+    local banner
+    banner=$("$TARGET_BIN" --version 2>/dev/null) || return 1
+    printf '%s\n' "${banner%%$'\n'*}"
+}
+
 # `--version` is the acceptance test, not `-x`: a binary that cannot run on
 # this host (wrong arch, missing shared library) is still present and
 # executable, and would be handed to the testsuite as a working oracle. The
 # consuming test runs the same probe for the same reason.
 oracle_is_usable() {
+    local line
     [[ -x "$TARGET_BIN" ]] || return 1
-    "$TARGET_BIN" --version 2>/dev/null | head -1 | grep -q "version ${VERSION}"
+    line=$(oracle_version_line) || return 1
+    [[ $line == *"version ${VERSION}"* ]]
 }
 
 if oracle_is_usable; then
     echo "==> rsync ${VERSION} oracle already present: ${TARGET_BIN}" >&2
-    "$TARGET_BIN" --version | head -1 >&2
+    oracle_version_line >&2
     exit 0
 fi
 
@@ -155,10 +181,14 @@ install -m 0755 "${srcdir}/rsync" "$TARGET_BIN"
 
 if ! oracle_is_usable; then
     echo "ERROR: built oracle at ${TARGET_BIN} does not report version ${VERSION}." >&2
-    "$TARGET_BIN" --version 2>&1 | head -1 >&2 || true
+    # stderr folded in, so a binary that fails with a message (missing shared
+    # library, wrong arch) names its own reason here. Same no-pipe shape as
+    # oracle_version_line, for the same reason.
+    diag=$("$TARGET_BIN" --version 2>&1) || true
+    printf '%s\n' "${diag%%$'\n'*}" >&2
     rm -f "$TARGET_BIN"
     exit 1
 fi
 
 echo "==> Installed rsync ${VERSION} oracle: ${TARGET_BIN}" >&2
-"$TARGET_BIN" --version | head -1 >&2
+oracle_version_line >&2
