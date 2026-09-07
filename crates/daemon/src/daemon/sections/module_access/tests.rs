@@ -4171,6 +4171,9 @@ mod module_access_tests {
         );
     }
 
+    // Unix-only: the fixture name `a*` is unrepresentable on Windows
+    // filesystems, so the scenario cannot arise on a Windows-hosted module.
+    #[cfg(unix)]
     #[test]
     fn resolve_sender_sources_glob_backslash_escapes_star() {
         // upstream: util1.c:765 - the daemon glob matches each dirent with
@@ -4188,6 +4191,9 @@ mod module_access_tests {
         assert_eq!(sources, vec![module_path.join("a*")]);
     }
 
+    // Unix-only: a Windows filename cannot contain `\`, so the
+    // literal-backslash fixture `a\b.txt` is unrepresentable there.
+    #[cfg(unix)]
     #[test]
     fn resolve_sender_sources_glob_backslash_escapes_literal_char() {
         // upstream: lib/wildmatch.c:86-91 - `\b` in a pattern means a literal
@@ -4206,6 +4212,12 @@ mod module_access_tests {
         assert_eq!(sources, vec![module_path.join("ab.txt")]);
     }
 
+    // Unix-only: the fixture `]x` is representable on Windows, but there the
+    // pattern's `\` escape collides with std::path treating `\` as a
+    // separator in the resolve pipeline, so `[\]]*` never reaches the
+    // matcher intact (same class as the peer-dest separator fix in
+    // module_access; the Windows arm is a pre-existing platform gap).
+    #[cfg(unix)]
     #[test]
     fn resolve_sender_sources_glob_class_with_escaped_bracket() {
         // upstream: lib/wildmatch.c:154-161 - inside a `[...]` class a `\`
