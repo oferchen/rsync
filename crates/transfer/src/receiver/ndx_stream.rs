@@ -57,8 +57,14 @@
 //!   negotiates down to protocol 28, so the frame is reachable. Because the
 //!   branch re-enters the loop *after* `iflags` is decoded, [`read_ndx_and_attrs`]
 //!   keeps the attribute read inside its loop and marks the insertion point.
-//! - **The non-regular-file guard** (`rsync.c:420-428`) and the xname
-//!   `sanitize_path()` pass (`rsync.c:407-417`) stay with their current owners.
+//! - **The xname `sanitize_path()` pass** (`rsync.c:408-429`) stays with its
+//!   current owner, [`SenderAttrs::read_attrs_after_ndx`]'s basis-xname
+//!   sanitizer. The non-regular-file guard (`rsync.c:436-444`) is **not** an
+//!   omission: it lives in [`read_ndx_and_attrs`] via
+//!   [`FlistMarkerSink::ndx_is_regular_file`], and the sender's open-coded
+//!   request loop applies the same guard at its own attrs read
+//!   (`generator/transfer/transfer_loop.rs`), sharing
+//!   [`non_regular_transfer_request`] so the diagnostic has one owner.
 
 use std::io::{self, Read};
 
@@ -133,6 +139,24 @@ pub(crate) trait FlistMarkerSink {
     /// - `receiver.c:871-881` - `recv_files()` refuses the inactive entry.
     /// - `sender.c:558-563` - `send_files()` refuses it identically.
     fn ndx_is_active(&self, ndx: i32) -> bool;
+
+    /// Whether `ndx` names a *regular file* - upstream's `S_ISREG` term in the
+    /// `ITEM_TRANSFER` guard.
+    ///
+    /// Consulted by [`read_ndx_and_attrs`] only once the attribute tail has
+    /// decoded `ITEM_TRANSFER`; a frame that fails it is a hard protocol error
+    /// ([`non_regular_transfer_request`]), never a skip. Like
+    /// [`Self::ndx_is_active`], this is deliberately **not** defaulted so a
+    /// future sink cannot silently carry the guard past a list it owns. A sink
+    /// that cannot resolve the entry - no list of its own, or an index outside
+    /// every segment - reports `true`, deferring to the guard that owns range
+    /// faults rather than claiming them with the non-regular diagnostic.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:436-444` - `if (iflags & ITEM_TRANSFER)` refuses
+    ///   `i < 0 || !S_ISREG(cur_flist->files[i]->mode)`.
+    fn ndx_is_regular_file(&self, ndx: i32) -> bool;
 
     /// Captures [`Self::FrameMark`] before the NDX is read.
     fn begin_frame(&mut self) -> Self::FrameMark;
@@ -226,6 +250,12 @@ impl FlistMarkerSink for NoLazyFlist {
         true
     }
 
+    fn ndx_is_regular_file(&self, _ndx: i32) -> bool {
+        // Same as `ndx_is_active`: with no list there is no mode to test, so
+        // the guard defers to the owners of what this sink can see.
+        true
+    }
+
     fn begin_frame(&mut self) {}
 
     fn on_del_stats(&mut self, _stats: &DeleteStats) -> io::Result<()> {
@@ -291,6 +321,26 @@ pub(crate) fn invalid_file_index(ndx: i32, last: i32, role: StreamRole) -> io::E
 pub(crate) fn cleared_file_index(ndx: i32, role: StreamRole) -> io::Error {
     protocol::protocol_violation(format!(
         "rsync: refusing transfer of cleared file index {ndx} {}{}",
+        crate::role_trailer::error_location!(),
+        role.trailer()
+    ))
+}
+
+/// Builds upstream's `rsync.c:439-441` rejection of an `ITEM_TRANSFER` frame
+/// that does not name a regular file.
+///
+/// Keeps upstream's wording - `received request to transfer non-regular file:
+/// %d` - and appends oc's source location plus the `[role=VERSION]` trailer
+/// that stands in for `who_am_i()`, as every other diagnostic in this module
+/// does. Tagged as a protocol violation so the exit-code mapper yields
+/// `RERR_PROTOCOL` (2), matching `exit_cleanup(RERR_PROTOCOL)` at
+/// `rsync.c:442`.
+///
+/// Shared by [`read_ndx_and_attrs`] and the sender's open-coded request read
+/// (`generator/transfer/transfer_loop.rs`) so the message has a single owner.
+pub(crate) fn non_regular_transfer_request(ndx: i32, role: StreamRole) -> io::Error {
+    protocol::protocol_violation(format!(
+        "received request to transfer non-regular file: {ndx} {}{}",
         crate::role_trailer::error_location!(),
         role.trailer()
     ))
@@ -447,6 +497,17 @@ where
         // A `continue` here re-enters the loop above. Deliberately absent; see
         // the module docs for why it is tracked separately.
 
+        // upstream: rsync.c:436-444 - an ITEM_TRANSFER frame must name a
+        // regular file: `i = ndx - cur_flist->ndx_start; if (i < 0 ||
+        // !S_ISREG(cur_flist->files[i]->mode))` is a hard protocol error on
+        // whichever end read the frame, never a skip. The `i < 0` half is a
+        // gap/stale index, which no sink resolves to a regular entry; a range
+        // fault the sink cannot resolve at all is deferred to the guard that
+        // owns it (see `FlistMarkerSink::ndx_is_regular_file`).
+        if attrs.iflags & SenderAttrs::ITEM_TRANSFER != 0 && !sink.ndx_is_regular_file(ndx) {
+            return Err(non_regular_transfer_request(ndx, sink.role()));
+        }
+
         return Ok(Some((ndx, attrs)));
     }
 }
@@ -483,6 +544,16 @@ impl FlistMarkerSink for ReceiverContext {
         self.wire_to_flat_ndx(ndx)
             .and_then(|flat| self.file_list.get(flat))
             .is_none_or(protocol::flist::FileEntry::is_active)
+    }
+
+    fn ndx_is_regular_file(&self, ndx: i32) -> bool {
+        // upstream: rsync.c:436-444 - the receiver's half of the ITEM_TRANSFER
+        // guard. An index outside every segment is a range fault owned by the
+        // caller's echo-ordering check, so only an entry that resolves and is
+        // not S_ISREG is reported through the non-regular diagnostic.
+        self.wire_to_flat_ndx(ndx)
+            .and_then(|flat| self.file_list.get(flat))
+            .is_none_or(protocol::flist::FileEntry::is_file)
     }
 
     fn begin_frame(&mut self) -> u64 {
