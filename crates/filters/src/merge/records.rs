@@ -25,10 +25,10 @@
 //! That is file selection, not formatting. MEASURED against rsync 3.5.0 over a
 //! source holding `a.txt` and `a.txt ` (trailing space), with a merge file
 //! holding `- a.txt \r`: upstream excluded `a.txt ` and oc transferred it, both
-//! at exit 0. The same divergence reproduced through `--exclude-from` and
-//! through a `.rsync-filter` dir-merge, because each of oc's four readers
-//! spelled the split for itself. Routing them all through one iterator is what
-//! stops the next reader from drifting again.
+//! at exit 0. The same divergence reproduced through `--exclude-from`, through
+//! a `.rsync-filter` dir-merge, and through a daemon module's `exclude from`,
+//! because each of oc's FIVE readers spelled the split for itself. Routing them
+//! all through one iterator is what stops the next reader from drifting again.
 
 /// Splits filter-file content into records the way upstream's reader does.
 ///

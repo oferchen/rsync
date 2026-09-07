@@ -19,10 +19,12 @@
 //!    are ordinary pattern bytes.
 //!
 //! Both matter to file selection, not to formatting: whatever survives this
-//! test becomes a pattern matched literally against names. oc had four readers
-//! spelling it four ways, and two of them trimmed, which changed which files
-//! transferred at exit 0. Routing them all through one predicate is what stops
-//! the next reader from drifting again.
+//! test becomes a pattern matched literally against names. oc had FIVE readers
+//! spelling it five ways, and three of them trimmed, which changed which files
+//! transferred at exit 0. The fifth - the daemon's `exclude from`/`include
+//! from` reader, which only a running daemon exercises - was still trimming
+//! after the other four were converged here. Routing them all through one
+//! predicate is what stops the next reader from drifting again.
 
 /// Reports whether a filter-file record should be handed to the rule parser.
 ///

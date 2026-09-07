@@ -252,11 +252,27 @@ fn build_daemon_filter_rules(
     Ok(rules)
 }
 
-/// Reads patterns from a file, one per line.
+/// Reads patterns from a filter file, one per record.
 ///
-/// Skips empty lines and comment lines (starting with `#` or `;`).
-/// This matches upstream rsync's `parse_filter_file()` behavior for
-/// `exclude_from` and `include_from` daemon parameters.
+/// upstream: `exclude.c:1601 parse_filter_file()`, which is what
+/// `clientserver.c:938,947` calls for the `include from` and `exclude from`
+/// module parameters. Both templates are line-parsed - `rule_template(...)`
+/// carries no `FILTRULE_WORD_SPLIT` - so the two decisions this reader makes
+/// are exactly the ones the shared owners hold:
+///
+/// * where a record ends - [`filters::filter_file_records`]
+///   (`exclude.c:1774-1793`): `\n`, a lone `\r`, or `\r\n` as one terminator.
+/// * whether it carries a rule - [`filters::filter_file_line_is_rule`]
+///   (`exclude.c:1806`): the FIRST BYTE is tested, with no trimming.
+///
+/// Nothing is trimmed. The pattern length upstream takes is `strlen(s)`
+/// (`exclude.c:1465`), so trailing whitespace is pattern text.
+///
+/// MEASURED against rsync 3.5.0 with a module whose `exclude from` file holds
+/// the single line `a ` (trailing space), over a module directory holding `a`
+/// and `a `: upstream hides `a ` and serves `a`; oc trimmed the rule, hid `a`
+/// and served `a `. Both at exit 0, with no diagnostic - a silent divergence
+/// in which files the daemon exposes.
 fn read_patterns_from_file(path: &Path) -> Result<Vec<String>, io::Error> {
     let content = fs::read_to_string(path).map_err(|e| {
         io::Error::new(
@@ -265,11 +281,11 @@ fn read_patterns_from_file(path: &Path) -> Result<Vec<String>, io::Error> {
         )
     })?;
 
-    let patterns = content
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#') && !line.starts_with(';'))
-        .map(str::to_string)
+    let patterns = filters::filter_file_records(&content)
+        // `true`: these two parameters are the non-word-split templates, so a
+        // leading `;`/`#` is a comment (`exclude.c:1806`, `word_split ||`).
+        .filter(|line| filters::filter_file_line_is_rule(line, true))
+        .map(str::to_owned)
         .collect();
 
     Ok(patterns)
