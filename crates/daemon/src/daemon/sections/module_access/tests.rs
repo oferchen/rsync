@@ -3136,6 +3136,51 @@ mod module_access_tests {
         assert!(err.to_string().contains("failed to read filter file"));
     }
 
+    /// The reader takes the OPERATOR arm of the ownership walk, not the
+    /// CONFINED one, so an operator file reached through a symlink this uid
+    /// owns is still read.
+    ///
+    /// ⚠ THIS IS THE NON-VACUITY COMPANION FOR THE OWNERSHIP-WALK ROUTING, AND
+    /// IT IS THE ONLY HALF THAT IS PORTABLE. The walk refuses a symlink
+    /// component owned by neither uid 0 nor the euid, so the ESCAPE it now
+    /// blocks needs root plus a second uid and cannot be reproduced in a
+    /// single-uid test process - a `#[test]` that planted its own symlink would
+    /// own it, the walk would trust it, and the cell would pass while being
+    /// structurally unable to observe the defect. The escape is measured
+    /// instead by `probe_1170_red.sh` on a Linux host as root (recorded on task
+    /// 1170); what this cell pins is the half that a single uid CAN decide:
+    /// that routing through the walk did NOT become a blanket symlink refusal,
+    /// which is the realistic regression the change could introduce.
+    #[cfg(unix)]
+    #[test]
+    fn read_patterns_from_file_follows_a_trusted_owner_symlink() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("real-excludes");
+        std::fs::write(&target, "keep\n").expect("write target");
+
+        let link = dir.path().join("link-excludes");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+
+        let patterns = read_patterns_from_file(&link).expect("trusted-owner symlink is followed");
+        assert_eq!(patterns, vec!["keep".to_string()]);
+    }
+
+    /// A plain file still reads identically after the routing change.
+    ///
+    /// Guards the happy path the swap could have broken: `operator_read_to_string`
+    /// resolves per component where `fs::read_to_string` did not, so a
+    /// regression here would be a total outage of both `include from` and
+    /// `exclude from` rather than a subtle one.
+    #[test]
+    fn read_patterns_from_file_reads_a_plain_file_unchanged() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("excludes");
+        std::fs::write(&file, "first\n; comment\nsecond\n").expect("write");
+
+        let patterns = read_patterns_from_file(&file).expect("plain file reads");
+        assert_eq!(patterns, vec!["first".to_string(), "second".to_string()]);
+    }
+
     #[test]
     fn secluded_args_flag_standalone() {
         let args: Vec<String> = vec!["--server", "-s", "."]
