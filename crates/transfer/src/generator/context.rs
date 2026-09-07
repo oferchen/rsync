@@ -160,7 +160,13 @@ pub struct GeneratorContext {
     /// `full_fname()` renders every diagnostic path relative to that directory.
     /// oc-rsync never `chdir()`s, so the same directory - the walk `base` - is
     /// recorded here as each source entry is walked and consumed by
-    /// [`daemon_paths`](Self::daemon_paths).
+    /// [`full_fname_paths`](Self::full_fname_paths).
+    ///
+    /// Only a daemon server reads it. Outside a module the walk `base` may be
+    /// the operand spelling the user typed, which is not upstream's absolute
+    /// `curr_dir`; that case uses the process working directory instead, which
+    /// is what upstream's `getcwd()`-seeded global holds for a process that
+    /// never `chdir()`s.
     pub(crate) curr_dir: Option<PathBuf>,
     /// Transfer pipeline FSM tracking the current protocol phase.
     ///
@@ -222,27 +228,34 @@ impl std::fmt::Debug for BatchStatsSink {
 }
 
 impl GeneratorContext {
-    /// Returns the daemon path context that makes
-    /// [`crate::full_fname::full_fname`] render a quoted path the way upstream
-    /// does - module-relative, with the ` (in MODULE)` suffix - or `None`
-    /// outside a daemon server process.
+    /// Returns the path context [`crate::full_fname::full_fname`] renders
+    /// against.
     ///
-    /// The module root falls back to the module itself as `curr_dir` until the
-    /// walk records one, matching a server that has only `chdir()`ed into the
-    /// module root (`clientserver.c:993`) and not yet into a source argument.
+    /// Both of upstream's axes are answered here, and they are answered
+    /// separately. The ` (in MODULE)` suffix needs a selected module
+    /// (`module_id >= 0`); the `curr_dir + module_dirlen` prefix does not, so a
+    /// process serving no module still renders against its working directory
+    /// rather than dropping the anchor with the module name.
+    ///
+    /// The module root doubles as `curr_dir` until the walk records one,
+    /// matching a server that has only `chdir()`ed into the module root
+    /// (`clientserver.c:1059`) and not yet into a source argument.
     ///
     /// # Upstream Reference
     ///
-    /// - `util1.c:1285-1290` - `p1 = curr_dir + module_dirlen` and
-    ///   `if (module_id >= 0)` in `full_fname()`.
-    pub(crate) fn daemon_paths(&self) -> Option<crate::full_fname::DaemonPaths<'_>> {
-        let module = self.config.connection.daemon_module.as_deref()?;
-        let module_root = self.config.connection.daemon_module_root.as_deref()?;
-        Some(crate::full_fname::DaemonPaths {
-            module,
-            module_root,
-            curr_dir: self.curr_dir.as_deref().unwrap_or(module_root),
-        })
+    /// - `util1.c:1445-1452` - `p1 = curr_dir + module_dirlen` computed
+    ///   unconditionally; `util1.c:1453` - `if (module_id >= 0)` gating only
+    ///   the suffix.
+    pub(crate) fn full_fname_paths(&self) -> crate::full_fname::FullFnamePaths<'_> {
+        let module_root = self.config.connection.daemon_module_root.as_deref();
+        match (self.config.connection.daemon_module.as_deref(), module_root) {
+            (Some(module), Some(root)) => crate::full_fname::FullFnamePaths::daemon(
+                module,
+                root,
+                self.curr_dir.as_deref().unwrap_or(root),
+            ),
+            _ => crate::full_fname::FullFnamePaths::non_daemon(),
+        }
     }
 
     /// Creates a new generator context from a completed handshake and server config.

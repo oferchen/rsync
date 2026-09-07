@@ -276,16 +276,23 @@ impl PipelinedReceiver {
         self
     }
 
-    /// Returns the daemon path context `full_fname()` renders against, or
-    /// `None` outside a daemon server process (upstream `module_id < 0`).
-    fn daemon_paths(&self) -> Option<crate::full_fname::DaemonPaths<'_>> {
-        let module = self.daemon_module.as_deref()?;
-        let module_root = self.daemon_module_root.as_deref()?;
-        Some(crate::full_fname::DaemonPaths {
-            module,
-            module_root,
-            curr_dir: self.dest_dir.as_deref().unwrap_or(module_root),
-        })
+    /// Returns the path context `full_fname()` renders against.
+    ///
+    /// Only the ` (in MODULE)` suffix is gated on a selected module (upstream
+    /// `module_id < 0`); the `curr_dir` prefix applies to every process, so a
+    /// non-daemon receiver still anchors at its working directory.
+    fn full_fname_paths(&self) -> crate::full_fname::FullFnamePaths<'_> {
+        match (
+            self.daemon_module.as_deref(),
+            self.daemon_module_root.as_deref(),
+        ) {
+            (Some(module), Some(root)) => crate::full_fname::FullFnamePaths::daemon(
+                module,
+                root,
+                self.dest_dir.as_deref().unwrap_or(root),
+            ),
+            _ => crate::full_fname::FullFnamePaths::non_daemon(),
+        }
     }
 
     /// Formats the receiver's temp-file creation failure the way upstream does.
@@ -306,7 +313,7 @@ impl PipelinedReceiver {
             Some((op, path)) => (Some(op), path),
             None => (None, dest),
         };
-        let name = full_fname_path(named, self.daemon_paths());
+        let name = full_fname_path(named, self.full_fname_paths());
         let reason = logging::upstream_errno_text(error);
         match op {
             // upstream: rsync-3.5.0/receiver.c:452-453
