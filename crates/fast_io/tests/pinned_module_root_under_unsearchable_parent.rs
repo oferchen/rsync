@@ -235,14 +235,14 @@ fn sealed_assertions(module: &Path, sub_file: &Path) {
     sealed_stat_mutation(module);
 }
 
-/// The stat half of the anchoring, which exists only where `O_PATH` does.
+/// The stat half of the anchoring.
 ///
-/// `O_PATH` is the only open that reports a directory entry's metadata without
-/// requiring access to it and without following a symlinked leaf, so the
-/// anchored stat is Linux-only by construction; elsewhere it is the ordinary
-/// path-based `lstat`/`stat` it has always been, and the sealed parent stops
-/// it exactly as it always did. See `fast_io::pinned_root`'s Platform section.
-#[cfg(any(target_os = "linux", target_os = "android"))]
+/// Runs on every Unix. Linux answers from `O_PATH` + `fstat` and everywhere
+/// else from `fstatat`, which is the syscall upstream itself issues
+/// (`syscall.c:3950-3974` `do_lstat_atfd()`/`do_stat_atfd()`), so both arms
+/// have to satisfy the same assertions: reach the entry through the pin, and
+/// keep `lstat` and `stat` telling different stories about a symlink. See
+/// `fast_io::pinned_root`'s Platform section.
 fn sealed_stat_assertions(module: &Path, sub_file: &Path) {
     let meta = fast_io::pinned_root::symlink_metadata(module)
         .expect("the pinned lstat of the module root must not re-walk the sealed parent");
@@ -252,8 +252,9 @@ fn sealed_stat_assertions(module: &Path, sub_file: &Path) {
     assert_eq!(meta.len(), b"served\n".len() as u64);
 
     // A symlink must be lstat'ed as a symlink and stat'ed as its target: the
-    // anchored arm must not collapse the two, which is the one way an
-    // `O_PATH`-based stat could silently change meaning.
+    // anchored arm must not collapse the two. That is the one way either
+    // anchored shape can silently change meaning - dropping `O_NOFOLLOW` from
+    // the `O_PATH` open, or `AT_SYMLINK_NOFOLLOW` from the `fstatat`.
     let link = module.join("link");
     assert!(
         fast_io::pinned_root::symlink_metadata(&link)
@@ -271,7 +272,6 @@ fn sealed_stat_assertions(module: &Path, sub_file: &Path) {
 }
 
 /// The stat half of the mutation. Runs with the pin already dropped.
-#[cfg(any(target_os = "linux", target_os = "android"))]
 fn sealed_stat_mutation(module: &Path) {
     let regressed = fast_io::pinned_root::symlink_metadata(module)
         .expect_err("without the pin the lstat must re-walk the sealed parent and fail");
@@ -280,14 +280,6 @@ fn sealed_stat_mutation(module: &Path) {
         "expected EACCES without the pin, got {regressed}"
     );
 }
-
-/// No `O_PATH` here, so there is no anchored stat to assert on.
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-fn sealed_stat_assertions(_module: &Path, _sub_file: &Path) {}
-
-/// No `O_PATH` here, so there is no anchored stat to mutate away.
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-fn sealed_stat_mutation(_module: &Path) {}
 
 /// A module root the operator reached through their OWN symlink still pins.
 ///

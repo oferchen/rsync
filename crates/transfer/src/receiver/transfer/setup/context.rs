@@ -1151,15 +1151,6 @@ mod merge_chmod_tests {
     use super::merge_chmod;
     use metadata::ChmodModifiers;
 
-    /// A regular-file `FileType`, needed because `ChmodModifiers::apply` selects
-    /// the `F` (files-only) clauses by file type on Unix.
-    fn regular_file_type() -> std::fs::FileType {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("f");
-        std::fs::write(&path, b"x").expect("write");
-        std::fs::metadata(&path).expect("stat").file_type()
-    }
-
     /// On a pull `daemon_incoming_chmod` is always None, so only the client
     /// `--chmod` survives the merge - the exact case the remote pull receivers
     /// rely on to force the destination mode.
@@ -1167,7 +1158,7 @@ mod merge_chmod_tests {
     fn client_only_survives() {
         let client = ChmodModifiers::parse("F640").expect("parse");
         let merged = merge_chmod(None, Some(client)).expect("some");
-        assert_eq!(merged.apply(0o600, regular_file_type()) & 0o777, 0o640);
+        assert_eq!(merged.apply(0o600, false) & 0o777, 0o640);
     }
 
     /// With no chmod on either side the merge yields None so the receiver leaves
@@ -1186,7 +1177,7 @@ mod merge_chmod_tests {
         let daemon = ChmodModifiers::parse("Fg-r").expect("parse");
         let client = ChmodModifiers::parse("F640").expect("parse");
         let merged = merge_chmod(Some(daemon), Some(client)).expect("some");
-        assert_eq!(merged.apply(0o600, regular_file_type()) & 0o777, 0o640);
+        assert_eq!(merged.apply(0o600, false) & 0o777, 0o640);
     }
 }
 

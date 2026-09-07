@@ -16,13 +16,13 @@ use super::spec::CHMOD_BITS;
 
 /// Applies the clause list to `mode`, mirroring `chmod.c:tweak_mode()`.
 #[cfg(unix)]
-pub(crate) fn apply_clauses(clauses: &[Clause], mode: u32, file_type: std::fs::FileType) -> u32 {
-    tweak_mode(clauses, mode, file_type.is_dir())
+pub(crate) fn apply_clauses(clauses: &[Clause], mode: u32, is_dir: bool) -> u32 {
+    tweak_mode(clauses, mode, is_dir)
 }
 
 #[cfg(not(unix))]
 #[allow(dead_code)] // REASON: used on unix; stub on other platforms
-pub(crate) fn apply_clauses(_clauses: &[Clause], mode: u32, _file_type: std::fs::FileType) -> u32 {
+pub(crate) fn apply_clauses(_clauses: &[Clause], mode: u32, _is_dir: bool) -> u32 {
     mode
 }
 

@@ -64,16 +64,23 @@ impl ChmodModifiers {
     }
 
     /// Applies the modifiers to the provided mode, returning the updated value.
+    ///
+    /// `is_dir` selects the `D`/`F` clauses and drives the `X`
+    /// conditional-execute rule; it is the whole of what upstream's
+    /// `chmod.c:tweak_mode()` reads about the entry's type. Taking the bool
+    /// rather than a [`std::fs::FileType`] lets a caller holding a raw
+    /// `struct stat` answer without inventing a `FileType`, which has no
+    /// public constructor.
     #[cfg(unix)]
     #[must_use]
-    pub fn apply(&self, mode: u32, file_type: std::fs::FileType) -> u32 {
-        apply_clauses(&self.clauses, mode, file_type)
+    pub fn apply(&self, mode: u32, is_dir: bool) -> u32 {
+        apply_clauses(&self.clauses, mode, is_dir)
     }
 
     /// Applies the modifiers on non-Unix platforms.
     #[cfg(not(unix))]
     #[must_use]
-    pub fn apply(&self, mode: u32, _file_type: std::fs::FileType) -> u32 {
+    pub fn apply(&self, mode: u32, _is_dir: bool) -> u32 {
         let _ = mode;
         mode
     }
