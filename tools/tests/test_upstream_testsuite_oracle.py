@@ -295,14 +295,21 @@ class BuildOldRsyncOracleTests(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
-    def _plant_source(self, version: str, reports: str) -> None:
-        """A fake rsync-<version>.tar.gz whose build reports `reports`."""
+    def _plant_source(self, version: str, reports: str,
+                      banner: str | None = None) -> None:
+        """A fake rsync-<version>.tar.gz whose build reports `reports`.
+
+        `banner` overrides the whole shell body of the fake binary, for cases
+        that need the banner emitted in more than one write.
+        """
         src = self.tmp / "src" / f"rsync-{version}"
         src.mkdir(parents=True)
+        if banner is None:
+            banner = f'echo "rsync  version {reports}  protocol version 31"\n'
+        (src / "rsync.template").write_text("#!/bin/sh\n" + banner)
         (src / "configure").write_text(
             "#!/bin/sh\n"
-            "printf 'all:\\n\\tprintf \"#!/bin/sh\\\\necho \\\\\"rsync  version "
-            f"{reports}  protocol version 31\\\\\"\\\\n\" > rsync\\n"
+            "printf 'all:\\n\\tcp rsync.template rsync\\n"
             "\\tchmod +x rsync\\n' > Makefile\n"
             "touch configured.marker\n"
         )
@@ -335,6 +342,34 @@ class BuildOldRsyncOracleTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("does not report version 3.2.7", result.stderr)
         self.assertFalse((self.dest / "rsync_3.2.7").exists())
+
+    def test_a_binary_that_writes_its_banner_in_stages_is_still_accepted(self) -> None:
+        # REGRESSION. The usability probe used to read
+        #     "$TARGET_BIN" --version 2>/dev/null | head -1 | grep -q ...
+        # inside a script running under `set -o pipefail`. Real rsync does not
+        # buffer its banner - MEASURED on a 3.2.7 build, `--version` is 20
+        # separate write(2) calls - so `head -1` closes the read end while rsync
+        # is still writing, rsync dies of SIGPIPE, and the PIPELINE yields 141
+        # even though the version text matched. The script then treats the
+        # oracle it has just built as unusable, `rm -f`s it and exits 1, which
+        # ensure_legacy_oracles escalates to failing the whole leg.
+        #
+        # MEASURED 10/10 against a real 3.2.7 build on an 8-core Linux host, and
+        # MEASURED not to fire on the GitHub runner (nightly 34031044215
+        # installed all three oracles) - a host-dependent failure, so CI green
+        # was no evidence.
+        #
+        # The single-line stub the other cases use CANNOT show this: its writer
+        # is finished before `head -1` exits, so no close is ever early. Two
+        # writes with a pause between them reproduce it deterministically.
+        self._plant_source("3.2.7", "3.2.7", banner=(
+            'echo "rsync  version 3.2.7  protocol version 31"\n'
+            "sleep 1\n"
+            'echo "Copyright (C) 1996-2022 by Andrew Tridgell and others"\n'
+        ))
+        result = self._run("3.2.7")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.dest / "rsync_3.2.7").is_file())
 
     def test_an_unfetchable_version_fails(self) -> None:
         # No tarball planted and no network reachable for a version that does
