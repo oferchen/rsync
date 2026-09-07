@@ -2429,16 +2429,29 @@ mod module_access_tests {
         assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
     }
 
-    /// A record left empty by the strip is upstream's fatal syntax error.
+    /// A token left empty by the strip is upstream's fatal syntax error.
     ///
     /// upstream: `exclude.c:1474-1475` calls `filter_rule_err()`, which exits
-    /// with `RERR_SYNTAX`; `clientserver.c:944` additionally passes
-    /// `XFLG_FATAL_ERRORS`. The caller turns this error into a module abort -
-    /// dropping the rule instead would serve everything it named.
+    /// with `RERR_SYNTAX`; `clientserver.c:950-952` additionally passes
+    /// `XFLG_FATAL_ERRORS` on the file spellings. The caller turns this error
+    /// into a module abort - dropping the rule instead would serve everything
+    /// it named.
+    ///
+    /// ⚠ This is pinned on the STRING parameter, not on `exclude from`. oc's
+    /// `read_patterns_from_file` trims each record (`helpers.rs`), so a `"- "`
+    /// LINE reaches the prefix strip as `"-"` and becomes the literal pattern
+    /// `-` instead - the empty-after-prefix state is unreachable through the
+    /// file spellings today. Upstream's `parse_filter_file` (`exclude.c:1774`)
+    /// only stops at the newline and keeps the trailing space, so it does
+    /// refuse that line; that trim is a separate, pre-existing divergence and
+    /// is deliberately not changed here.
     #[test]
-    fn exclude_from_empty_after_the_prefix_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let error = exclude_from_rules(&dir, "- \n").unwrap_err();
+    fn exclude_string_empty_after_the_prefix_is_refused() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            exclude: vec!["- ".to_string()],
+            ..Default::default()
+        });
+        let error = build_daemon_filter_rules(&module).unwrap_err();
         assert!(
             error.to_string().contains("unexpected end of filter rule"),
             "unexpected message: {error}"

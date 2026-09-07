@@ -208,10 +208,15 @@ fn build_daemon_filter_rules(
     let mut rules = Vec::new();
 
     // 1. filter rules - full filter syntax (e.g., "- *.tmp", "+ *.rs")
-    // upstream: clientserver.c:874 - parse_filter_str(&daemon_filter_list, lp_filter(i),
+    // upstream: clientserver.c:933-935 - parse_filter_str(&daemon_filter_list, lp_filter(i),
     //           rule_template(FILTRULE_WORD_SPLIT), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3)
     // FILTRULE_WORD_SPLIT means a single filter line can contain multiple
     // space-separated rules: "+ *.txt + *.rs - *" is three rules.
+    //
+    // This is the ONE module filter parameter upstream does NOT give
+    // XFLG_OLD_PREFIXES: `filter` takes the modern rule syntax, where `- ` and
+    // `+ ` are rule prefixes already, so `old_prefix_*` below deliberately does
+    // not apply here.
     for filter_str in &module.filter {
         for token in split_filter_tokens(filter_str.trim()) {
             if let Some(rule) = parse_daemon_filter_token(&token) {
@@ -221,8 +226,9 @@ fn build_daemon_filter_rules(
     }
 
     // 2. include_from - read patterns from file, one per line
-    // upstream: clientserver.c:878 - parse_filter_file(&daemon_filter_list, lp_include_from(i),
-    //           rule_template(FILTRULE_INCLUDE), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | ...)
+    // upstream: clientserver.c:937-939 - parse_filter_file(&daemon_filter_list,
+    //           lp_include_from(i), rule_template(FILTRULE_INCLUDE),
+    //           XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | XFLG_OLD_PREFIXES | XFLG_FATAL_ERRORS)
     if let Some(ref path) = module.include_from {
         let patterns = read_patterns_from_file(path)?;
         for pattern in patterns {
@@ -231,7 +237,7 @@ fn build_daemon_filter_rules(
     }
 
     // 3. include rules - bare patterns, word-split on whitespace
-    // upstream: clientserver.c:941-943 - parse_filter_str(&daemon_filter_list, lp_include(i),
+    // upstream: clientserver.c:941-944 - parse_filter_str(&daemon_filter_list, lp_include(i),
     //           rule_template(FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT),
     //           XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | XFLG_OLD_PREFIXES)
     for include_str in &module.include {
@@ -330,8 +336,8 @@ fn unexpected_end_of_filter_rule(rule: &str) -> io::Error {
 /// Builds one rule from a whole filter-file record under `XFLG_OLD_PREFIXES`.
 ///
 /// `template_include` is the template's `FILTRULE_INCLUDE` bit:
-/// `rule_template(FILTRULE_INCLUDE)` for `include from` (clientserver.c:936-937)
-/// and `rule_template(0)` for `exclude from` (clientserver.c:943-944).
+/// `rule_template(FILTRULE_INCLUDE)` for `include from` (clientserver.c:937-939)
+/// and `rule_template(0)` for `exclude from` (clientserver.c:946-948).
 ///
 /// Neither template carries `FILTRULE_WORD_SPLIT`, so the pattern runs to the
 /// end of the record: `len = strlen(s)` (`exclude.c:1465`). That is why the
@@ -350,6 +356,16 @@ fn old_prefix_record_rule(
         OldPrefix::MaybeClear if record.len() == 1 => return Ok(clear_list_rule()),
         OldPrefix::MaybeClear | OldPrefix::Inherit => (record, template_include),
     };
+    // upstream: exclude.c:1474-1475 - `filter_rule_err("unexpected end of
+    // filter rule")`, fatal under XFLG_FATAL_ERRORS.
+    //
+    // ⚠ REVERSION GUARD, not a live refusal: `read_patterns_from_file` trims
+    // each record, so a `"- "` line arrives here as `"-"` and never reaches an
+    // empty pattern. Upstream's `parse_filter_file` (exclude.c:1774) keeps the
+    // trailing space and does refuse it; the trim is a separate pre-existing
+    // divergence. The reachable refusal is the string-parameter one in
+    // `push_old_prefix_token_rules`, pinned by
+    // `exclude_string_empty_after_the_prefix_is_refused`.
     if pattern.is_empty() {
         return Err(unexpected_end_of_filter_rule(record));
     }
