@@ -475,18 +475,37 @@ fn requires_multiplex_output(
 /// |    1296 | pass           | deadlock          |
 ///
 /// So oc-rsync's receiver cannot keep up with an upstream-shaped sender that
-/// paces sub-lists on that window. Which receiver-side site blocks is NOT yet
-/// attributed to a named function - do not restate the mechanism more
-/// precisely than that. In particular `receive_extra_file_lists` is *not* the
-/// culprit: every one of its call sites is inside a `#[cfg(test)]` module, so
-/// it is unreachable on the live path and cannot drain anything in production.
+/// paces sub-lists on that window. In particular `receive_extra_file_lists` is
+/// *not* the culprit: every one of its call sites is inside a `#[cfg(test)]`
+/// module, so it is unreachable on the live path and cannot drain anything in
+/// production.
 ///
-/// Removing this restriction is the INC_RECURSE-on-pull work, and it needs the
-/// receiver's sub-list consumption to become throttle-safe first. It is not a
-/// one-line change.
+/// The two blocking sites ARE now attributed, by reading both ends:
+///
+/// - Receiver: `ReceiverContext::ensure_all_segments_loaded` loops
+///   `while !self.flist_eof`, and both live drivers call it UP FRONT - before
+///   a single NDX request is written - so the batched candidate build below it
+///   sees a complete `file_list`
+///   (`receiver/transfer/pipelined.rs:76`, `pipelined_incremental.rs:73`).
+/// - Sender: `next_to_send` returns `None` once the backlog reaches
+///   `MIN_FILECNT_LOOKAHEAD` (`generator/segments.rs:174-177`), and
+///   `send_flist_eof_if_exhausted` emits `NDX_FLIST_EOF` only once the
+///   scheduler is exhausted (`generator/transfer/transfer_loop.rs:318-327`).
+///
+/// Above 1000 entries the scheduler therefore never exhausts, `NDX_FLIST_EOF`
+/// is never written, the receiver's `flist_eof` is never set, and its up-front
+/// drain cannot terminate. Both peers park on a read.
+///
+/// ⚠ That names the blocking sites; it does NOT say what makes the throttle
+/// safe. Removing this restriction is the INC_RECURSE-on-pull work: it needs an
+/// index-driven transfer walk over a growing list rather than the up-front
+/// drain, and it needs whatever releases the sender's backlog per consumed
+/// sub-list. Neither is a one-line change, and sufficiency is not settled by
+/// reading source - re-run the A/B above.
 ///
 /// upstream: compat.c:161-179 set_allow_inc_recurse,
-/// sender.c:228-232 (send_extra_file_list throttle).
+/// rsync.h:151-152 (`MIN_FILECNT_LOOKAHEAD` / `MAX_FILECNT_LOOKAHEAD`),
+/// sender.c:515,549 (send loop tops the window up to the minimum).
 pub(crate) fn compute_allow_inc_recurse(recursive: bool, qsort: bool, role: ServerRole) -> bool {
     recursive && !qsort && role == ServerRole::Generator
 }
