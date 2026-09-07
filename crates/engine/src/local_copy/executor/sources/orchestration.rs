@@ -746,8 +746,12 @@ fn process_single_source(
             // RERR_PARTIAL), and the transfer continues with the remaining
             // sources. Distinct from a file that vanishes mid-transfer (exit
             // 24, "file has vanished").
+            //
+            // The name upstream prints is the operand anchored to the working
+            // directory, not the operand as typed: `full_fname()` puts
+            // `curr_dir` in front of every relative `fn` (util1.c:1445-1452).
             return Err(LocalCopyError::link_stat_failed(
-                source_path.to_path_buf(),
+                crate::local_copy::operand_diagnostic_name(source_path),
                 error,
             ));
         }
