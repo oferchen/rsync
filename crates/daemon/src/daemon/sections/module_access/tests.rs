@@ -2712,41 +2712,73 @@ mod module_access_tests {
         assert!(rule.anchored);
     }
 
+    /// A token the parser accepts and turns into a rule.
+    ///
+    /// Panics on a refusal AND on an empty token, so a cell using this can
+    /// never pass by silently skipping the token it means to assert about.
+    fn accepted_rule(token: &str) -> FilterRuleWireFormat {
+        parse_daemon_filter_token(token)
+            .expect("token refused")
+            .expect("token produced no rule")
+    }
+
+    /// A token the parser accepts and skips - `Ok(None)`, not a refusal.
+    fn is_skipped(token: &str) -> bool {
+        matches!(parse_daemon_filter_token(token), Ok(None))
+    }
+
     #[test]
     fn parse_daemon_filter_token_exclude() {
-        let rule = parse_daemon_filter_token("- *.tmp").unwrap();
+        let rule = accepted_rule("- *.tmp");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
         assert_eq!(rule.pattern, "*.tmp");
     }
 
     #[test]
     fn parse_daemon_filter_token_include() {
-        let rule = parse_daemon_filter_token("+ *.rs").unwrap();
+        let rule = accepted_rule("+ *.rs");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
         assert_eq!(rule.pattern, "*.rs");
     }
 
     #[test]
     fn parse_daemon_filter_token_bare_pattern_defaults_to_exclude() {
-        let rule = parse_daemon_filter_token("*.bak").unwrap();
+        let rule = accepted_rule("*.bak");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
         assert_eq!(rule.pattern, "*.bak");
     }
 
     #[test]
     fn parse_daemon_filter_token_empty_returns_none() {
-        assert!(parse_daemon_filter_token("").is_none());
+        assert!(is_skipped(""));
     }
 
     #[test]
-    fn parse_daemon_filter_token_prefix_only_returns_none() {
-        assert!(parse_daemon_filter_token("-").is_none());
-        assert!(parse_daemon_filter_token("+").is_none());
+    fn a_bare_rule_character_with_no_pattern_is_refused() {
+        // RENAMED from `parse_daemon_filter_token_prefix_only_returns_none`,
+        // which pinned oc's old `Ok(None)`. That was NOT upstream's behaviour:
+        // the modifier scan ends immediately on an empty remainder, leaving
+        // `len == 0`, and `else if (!len && !CVS_IGNORE)` refuses
+        // (exclude.c:1474-1476).
+        //
+        // ⚠ This row is read from the C, not from the differential oracle -
+        // the oracle for this change covered `-foo`, `+foo` and `!name`. It is
+        // in scope anyway because removing the separator-less fallback moved
+        // this token off its old path regardless; leaving it would have made
+        // a bare `-` an EXCLUDE OF THE LITERAL STRING `-`, which is neither
+        // the old behaviour nor upstream's.
+        for token in ["-", "+"] {
+            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            assert!(
+                err.to_string().starts_with("unexpected end of filter rule"),
+                "{token}: {err}"
+            );
+        }
     }
 
     #[test]
     fn parse_daemon_filter_token_exclude_keyword() {
-        let rule = parse_daemon_filter_token("exclude *.bak").unwrap();
+        let rule = accepted_rule("exclude *.bak");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
         assert_eq!(rule.pattern, "*.bak");
     }
@@ -2754,14 +2786,14 @@ mod module_access_tests {
     #[test]
     fn parse_daemon_filter_token_exclude_keyword_comma_sep() {
         // upstream: RULE_STRCMP accepts comma as separator
-        let rule = parse_daemon_filter_token("exclude,*.bak").unwrap();
+        let rule = accepted_rule("exclude,*.bak");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
         assert_eq!(rule.pattern, "*.bak");
     }
 
     #[test]
     fn parse_daemon_filter_token_include_keyword() {
-        let rule = parse_daemon_filter_token("include *.rs").unwrap();
+        let rule = accepted_rule("include *.rs");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
         assert_eq!(rule.pattern, "*.rs");
     }
@@ -2769,7 +2801,7 @@ mod module_access_tests {
     #[test]
     fn parse_daemon_filter_token_hide_keyword() {
         // upstream: hide -> sender-side exclude
-        let rule = parse_daemon_filter_token("hide *.secret").unwrap();
+        let rule = accepted_rule("hide *.secret");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
         assert_eq!(rule.pattern, "*.secret");
         assert!(rule.sender_side);
@@ -2779,7 +2811,7 @@ mod module_access_tests {
     #[test]
     fn parse_daemon_filter_token_show_keyword() {
         // upstream: show -> sender-side include
-        let rule = parse_daemon_filter_token("show *.pub").unwrap();
+        let rule = accepted_rule("show *.pub");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
         assert_eq!(rule.pattern, "*.pub");
         assert!(rule.sender_side);
@@ -2789,7 +2821,7 @@ mod module_access_tests {
     #[test]
     fn parse_daemon_filter_token_protect_keyword() {
         // upstream: protect -> receiver-side exclude
-        let rule = parse_daemon_filter_token("protect *.conf").unwrap();
+        let rule = accepted_rule("protect *.conf");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
         assert_eq!(rule.pattern, "*.conf");
         assert!(!rule.sender_side);
@@ -2799,7 +2831,7 @@ mod module_access_tests {
     #[test]
     fn parse_daemon_filter_token_risk_keyword() {
         // upstream: risk -> receiver-side include
-        let rule = parse_daemon_filter_token("risk *.tmp").unwrap();
+        let rule = accepted_rule("risk *.tmp");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
         assert_eq!(rule.pattern, "*.tmp");
         assert!(!rule.sender_side);
@@ -2808,7 +2840,7 @@ mod module_access_tests {
 
     #[test]
     fn parse_daemon_filter_token_clear_keyword() {
-        let rule = parse_daemon_filter_token("clear").unwrap();
+        let rule = accepted_rule("clear");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Clear);
         assert!(rule.pattern.is_empty());
     }
@@ -2816,15 +2848,123 @@ mod module_access_tests {
     #[test]
     fn parse_daemon_filter_token_keyword_not_partial_match() {
         // "excluder" should NOT match "exclude" keyword - treated as bare pattern
-        let rule = parse_daemon_filter_token("excluder *.tmp").unwrap();
+        let rule = accepted_rule("excluder *.tmp");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
         assert_eq!(rule.pattern, "excluder *.tmp");
     }
 
     #[test]
     fn parse_daemon_filter_token_keyword_empty_pattern_returns_none() {
-        assert!(parse_daemon_filter_token("exclude").is_none());
-        assert!(parse_daemon_filter_token("include ").is_none());
+        assert!(is_skipped("exclude"));
+        assert!(is_skipped("include "));
+    }
+
+    // ---------------------------------------------------------------------
+    // Separator-less rule prefixes. Upstream's `parse_rule_tok` reads the
+    // rule character, then scans MODIFIER characters up to the first space
+    // and refuses any byte that is not a known modifier
+    // (`exclude.c:1096-1131`), so `-foo` refuses on `f`.
+    //
+    // MEASURED against the real rsync 3.5.0 binary, oc's daemon serving the
+    // same module against the same client: upstream exits 5 and serves
+    // nothing; oc exited 0, served the module, and silently applied the rule.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn a_minus_prefix_without_a_separator_is_refused() {
+        // The severe row: oc SILENTLY EXCLUDED `foo` from a module that
+        // upstream refuses to serve at all, so the operator saw a successful
+        // transfer with a file missing from it.
+        //
+        // The message names the offending BYTE and its offset, as upstream's
+        // modifier arm does - a bare "invalid rule" would not tell an
+        // operator which character of their config is wrong.
+        let err = parse_daemon_filter_token("-foo").expect_err("must refuse");
+        assert_eq!(
+            err.to_string(),
+            "invalid modifier 'f' at position 1 in filter rule: -foo"
+        );
+    }
+
+    #[test]
+    fn a_plus_prefix_without_a_separator_is_refused() {
+        let err = parse_daemon_filter_token("+foo").expect_err("must refuse");
+        assert_eq!(
+            err.to_string(),
+            "invalid modifier 'f' at position 1 in filter rule: +foo"
+        );
+    }
+
+    #[test]
+    fn a_bang_carrying_a_pattern_is_refused() {
+        // `!` takes no pattern. oc fell through to the bare-pattern arm, so
+        // `!name` became an exclude of `name` and the module was served.
+        //
+        // ⚠ This reports the TRAILING-CHARACTERS text, not the modifier text:
+        // upstream's modifier scan is `while (ch != '!' && ...)` and so never
+        // runs for `!`. The two arms are distinct, and asserting the wrong
+        // one here would pin a message upstream cannot produce for this token.
+        let err = parse_daemon_filter_token("!name").expect_err("must refuse");
+        assert_eq!(err.to_string(), "'!' rule has trailing characters: !name");
+    }
+
+    #[test]
+    fn a_bare_bang_keeps_its_existing_behaviour() {
+        // SCOPE BOUNDARY, pinned rather than asserted as correct.
+        //
+        // The guard above fires only past length 1, so a bare `!` still
+        // reaches the bare-pattern arm and becomes an exclude of the literal
+        // `!`. Upstream instead treats it as a CLEAR rule.
+        //
+        // ⚠ That divergence is REAL and is task 1155's, deliberately NOT
+        // fixed here - oc has no clear-rule implementation on this path at
+        // all, so "fixing" it would mean building one, well outside a change
+        // scoped to three measured refusal rows.
+        //
+        // ⚠ This cell exists because the `token.len() > 1` term was otherwise
+        // UNPROTECTED: mutating it away killed nothing, so the comment
+        // claiming bare `!` is untouched had no evidence behind it. Dropping
+        // the term now reddens this cell.
+        let rule = accepted_rule("!");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "!");
+    }
+
+    #[test]
+    fn the_separator_spelling_is_still_accepted() {
+        // The non-vacuity companion for the three cells above: without it
+        // they would also pass if the parser refused EVERY `+`/`-`/`!` token.
+        assert_eq!(accepted_rule("- foo").pattern, "foo");
+        assert_eq!(accepted_rule("+ foo").pattern, "foo");
+    }
+
+    #[test]
+    fn a_malformed_filter_rule_refuses_the_whole_module() {
+        // The refusal has to reach the CALLER to matter - a rule the parser
+        // rejects while `build_daemon_filter_rules` returns `Ok` would leave
+        // the module served with the rule merely dropped, which is the
+        // pre-fix behaviour wearing a new error type.
+        let module = ModuleRuntime::from(ModuleDefinition {
+            filter: vec!["-foo".to_string()],
+            ..Default::default()
+        });
+        let err = build_daemon_filter_rules(&module).expect_err("must refuse");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            err.to_string(),
+            "invalid modifier 'f' at position 1 in filter rule: -foo"
+        );
+    }
+
+    #[test]
+    fn a_well_formed_filter_rule_still_builds() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            filter: vec!["- *.tmp".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).expect("must accept");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "*.tmp");
     }
 
     #[test]
