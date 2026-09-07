@@ -238,6 +238,70 @@ pub(crate) fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf 
     filters::collapse_dot_dot_dirs(path)
 }
 
+/// Names a source operand the way upstream's sender diagnostics name it: with
+/// the working directory in front, so a relative operand is reported by its
+/// absolute path.
+///
+/// Upstream arrives at that string in two steps. `send_file_list()` splits each
+/// operand into a `dir`/`fn` pair and `push_dir()`s into `dir` before the
+/// `link_stat()` at `flist.c:2697`, which appends onto the `curr_dir` *string*
+/// and cleans it lexically - it never re-reads the path from the kernel, so a
+/// symlinked component keeps the spelling the operator typed. `full_fname()`
+/// then prefixes the surviving relative `fn` with `curr_dir` before quoting it:
+///
+/// ```text
+/// if (*fn == '/')
+///         p1 = p2 = "";
+/// else {
+///         p1 = curr_dir + module_dirlen;
+///         for (p2 = p1; *p2 == '/'; p2++) {}
+///         if (*p2)
+///                 p2 = "/";
+/// }
+/// ```
+///
+/// `fn` is a single component, so joining the working directory onto the whole
+/// operand and collapsing `.`/`..` lexically reproduces both steps at once. A
+/// local copy is never a daemon server, so `module_dirlen` is 0 and the prefix
+/// is the whole working directory.
+///
+/// An operand that already carries a root is returned unchanged, which is what
+/// upstream's `*fn == '/'` branch and its `p1`/`p2` branch both produce for it.
+///
+/// ⚠ That arm must be spelled explicitly and must use
+/// [`Path::has_root`](std::path::Path::has_root), NOT `Path::is_absolute` and
+/// NOT the join alone. Upstream tests a leading BYTE (`*fn == '/'`,
+/// `util1.c:1445`), a question about the spelling. `is_absolute()` asks a
+/// different question - "is this absolute on THIS host" - and on Windows a
+/// rooted but prefixless `/no/such/entry` has no drive, so it answers `false`.
+/// Relying on `join` to leave such an operand alone has the same defect from
+/// the other side: `Path::join` keeps the working directory's DRIVE and
+/// replaces only the root, yielding `D:\no\such\entry` for an operand upstream
+/// would have printed verbatim. `has_root()` is `is_absolute()` on Unix and is
+/// true for `/no/such/entry` on Windows, so it says only what the C says.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/util1.c:1433-1464` - `full_fname()`; `:1445` is the
+///   leading-slash test this arm mirrors.
+/// - `rsync-3.5.0/flist.c:2688-2697` - the `dir`/`fn` split and the `push_dir()`
+///   that makes `curr_dir` the operand's parent before `link_stat()` runs.
+pub(crate) fn operand_diagnostic_name(path: &std::path::Path) -> std::path::PathBuf {
+    if path.has_root() {
+        // Still collapsed, never re-anchored. On Unix this is exactly what the
+        // join below already produced for a rooted operand, so the arm changes
+        // nothing there; it exists to keep Windows from prefixing a drive.
+        return lexically_normalize(path);
+    }
+    let Ok(working_dir) = std::env::current_dir() else {
+        // upstream keeps `curr_dir` in a global it can always read; with no
+        // working directory to anchor against, the operand as given is the only
+        // name left to report.
+        return path.to_path_buf();
+    };
+    lexically_normalize(&working_dir.join(path))
+}
+
 #[cfg(test)]
 pub(crate) fn with_hard_link_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
 where
