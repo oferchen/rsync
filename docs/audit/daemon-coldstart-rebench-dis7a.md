@@ -162,6 +162,13 @@ between median (1.04x) and mean (1.26x).
 **Fix:** DIS-4.a R1 - replace sleep-based polling with event-driven
 accept (`epoll`/`kqueue`/`mio::Poll`).
 
+Follow-up: R1 has since landed. PR #5908 lowered the sleep to 50 ms and
+deleted `SIGNAL_CHECK_INTERVAL`; PR #7681 replaced accept-side
+sleep-polling with a readiness wait (`poll(2)`, or `kevent(2)` behind
+the opt-in `macos-kqueue` feature) in
+`crates/daemon/src/daemon/sections/server_runtime/accept_engine.rs`.
+The bimodal tail measured here predates that work.
+
 ### 7.2 Per-connection allocation overhead (~5-15 ms)
 
 The warm-daemon 1.28x ratio with low variance confirms a structural

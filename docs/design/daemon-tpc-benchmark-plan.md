@@ -189,7 +189,7 @@ Per run, per waypoint, per arrival shape:
 | Daemon fd count peak | `/proc/$pid/fd` count on Linux, `lsof -p` on macOS, `GetProcessHandleCount` on Windows | Hard ceiling against `RLIMIT_NOFILE`. |
 | CPU utilisation, sender side | `getrusage` on the daemon at run end | Identifies CPU-bound vs IO-bound regimes. |
 | `accept(2)` failures | Daemon log sink lines containing "accept" | Direct evidence of listen-backlog overrun or fd exhaustion. |
-| SIGTERM-to-drain latency | Harness wall clock from signal sent to `wait()` return | Worst-case operator visibility, dominated by `SIGNAL_CHECK_INTERVAL = 500 ms` (`crates/daemon/src/daemon/sections/server_runtime/listener.rs:45`). |
+| SIGTERM-to-drain latency | Harness wall clock from signal sent to `wait()` return | Worst-case operator visibility, bounded by the accept engine's signal-check cadence: 50 ms (`READINESS_WAIT_MILLIS`) in the portable `poll(2)` engine, 100 ms in the opt-in kqueue engine (`crates/daemon/src/daemon/sections/server_runtime/accept_engine.rs`). |
 | Lock-contention sample | Per-mutex hit / wait counters from `parking_lot` if compiled with the `deadlock_detection` feature, otherwise `perf lock` on Linux | Quantifies the audit's Section 7 hot spots. |
 
 Raw outputs land in `target/bench/daemon-tpc/$RUNID/`. The harness
@@ -455,6 +455,7 @@ existing tracker.
   #1675 (epoll / kqueue evaluation, completed),
   #1933 (this plan), #1934 (RFC, completed),
   #1935 (async listener implementation, pending),
-  #1683 (lower `SIGNAL_CHECK_INTERVAL`),
+  #1683 (lower `SIGNAL_CHECK_INTERVAL`, completed - PR #5908 removed
+  the constant, PR #7681 made the accept wait readiness-driven),
   #1682 (Windows accept semantics),
   #1751 (rayon via `spawn_blocking`).
