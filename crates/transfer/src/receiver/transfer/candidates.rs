@@ -504,7 +504,7 @@ impl ReceiverContext {
                         metadata_errors,
                         acl_cache,
                         acl_id_map,
-                        BasisTrust::for_receiver(self.config.connection.is_daemon_connection),
+                        BasisTrust::for_connection(&self.config.connection),
                     )
                 {
                     continue;

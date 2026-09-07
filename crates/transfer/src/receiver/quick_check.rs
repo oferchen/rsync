@@ -255,70 +255,248 @@ struct ReferenceMatch<'a> {
     level: MatchLevel,
 }
 
-/// Which of upstream's `basis_link_stat()` arms resolves an alt-dest basis entry.
+/// The receiver-side facts upstream's `basis_link_stat()` branches on,
+/// evaluated once per transfer.
 ///
-/// Upstream selects between an ownership-walked stat and a plain `link_stat()`
-/// from `am_daemon`; a daemon receiver deliberately keeps the plain stat because
-/// its confinement comes from elsewhere (chroot, the module-root resolver, and
-/// the `../` clamp `sanitize_path` already applied to a dest-relative basis).
-/// The distinction is spelled as a type rather than a `bool` so neither arm can
-/// be selected by accident at a call site.
+/// Upstream picks between four arms using `am_daemon`, `am_chrooted`, whether
+/// the basis path is absolute, and the symlink opt-out. The first two are
+/// session facts and are answered here; the third is per-path and is answered
+/// by [`BasisTrust::arm_for`]; the fourth is answered inside the walk itself,
+/// exactly where upstream answers it (`syscall.c:300-302`, at the top of
+/// `ona_open()`), so it is deliberately not restated at this predicate.
+///
+/// Spelled as a three-state type rather than a `bool` because the middle state
+/// is neither of the other two: a non-chrooted daemon neither walks by
+/// ownership alone nor stats by plain path.
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/generator.c:962` `basis_link_stat()` - the arm selection.
+/// - `rsync-3.5.0/generator.c:962-1065` `basis_link_stat()` - the arm selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BasisTrust {
-    /// Non-daemon receiver: resolve the parent through the ownership walk.
+    /// Not a daemon: a local, SSH-server, or `rsync://`-CLIENT receiver.
     ///
-    /// upstream: `generator.c:978` - the `!am_daemon && am_root >= 0 &&
+    /// upstream: `generator.c:979` - the `!am_daemon && am_root >= 0 &&
     /// !symlink_optout_allowed()` arm.
-    OwnerWalk,
-    /// Daemon receiver: stat the basis by path, as upstream's fall-through does.
+    LocalReceiver,
+    /// A daemon serving a module WITHOUT a per-module `chroot()`.
     ///
-    /// upstream: `generator.c:1010` - the trailing plain `link_stat()`.
+    /// upstream: `generator.c:1004` - `am_daemon && !am_chrooted && path[0] ==
+    /// '/' && !symlink_optout_allowed()`.
+    NonChrootedDaemon,
+    /// A daemon serving a module inside a per-module `chroot()`.
+    ///
+    /// upstream: `generator.c:1046` selects `secure_relative_open()` for a
+    /// RELATIVE basis here, and `generator.c:1064` the plain `link_stat()` for
+    /// an absolute one. oc models only the latter; see [`BasisArm::PlainStat`].
+    ChrootedDaemon,
+}
+
+/// Which of upstream's `basis_link_stat()` arms resolves ONE basis path.
+///
+/// Separate from [`BasisTrust`] because upstream's arm choice is not a pure
+/// session property: arm 2 additionally requires `path[0] == '/'`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BasisArm {
+    /// Resolve the parent through the ownership walk (arm 1).
+    OwnerWalk,
+    /// Resolve the parent through the ownership walk AND judge the resolved
+    /// leaf against the module root (arm 2, `operator_path_resolve = 1`).
+    ModuleConfinedWalk,
+    /// Stat the basis by path (arm 4, the trailing plain `link_stat()`).
+    ///
+    /// oc reaches this for a chrooted daemon on BOTH an absolute and a relative
+    /// basis. Upstream's arm 3 (`generator.c:1046` - a chrooted daemon with an
+    /// inner `/./` module boundary resolving a RELATIVE basis through
+    /// `secure_relative_open()`) has no oc counterpart yet; that gap is a
+    /// separate, named one and is not what this type papers over.
     PlainStat,
 }
 
 impl BasisTrust {
-    /// Picks the arm for a receiver, from the one fact upstream branches on.
+    /// Records the two session facts upstream branches on.
     ///
-    /// upstream: `generator.c:978` - `!am_daemon` selects the ownership walk.
+    /// `am_daemon` must be "this process serves a daemon module", NOT
+    /// `ConnectionConfig::is_daemon_connection` - the latter is set on BOTH
+    /// ends of an `rsync://` transfer while upstream's `am_daemon` is true only
+    /// in the serving process, so reading it would apply a daemon's confinement
+    /// to a CLIENT's own local destination. [`BasisTrust::for_connection`]
+    /// supplies `ConnectionConfig::served_module_root().is_some()`, oc's
+    /// designated spelling of `am_daemon`.
+    ///
+    /// `am_chrooted` is read from the process-wide session state rather than
+    /// from the connection, because a `chroot()` changes the process's root
+    /// directory and so is a property of the process - unlike a module's
+    /// `insecure links` directive, which is per-connection policy.
+    ///
+    /// upstream: `generator.c:979` / `:1004` / `:1046` - the three guarded arms.
     #[must_use]
-    pub(super) const fn for_receiver(is_daemon_connection: bool) -> Self {
-        if is_daemon_connection {
-            Self::PlainStat
+    pub(super) const fn for_receiver(am_daemon: bool, am_chrooted: bool) -> Self {
+        if !am_daemon {
+            Self::LocalReceiver
+        } else if am_chrooted {
+            Self::ChrootedDaemon
         } else {
-            Self::OwnerWalk
+            Self::NonChrootedDaemon
+        }
+    }
+
+    /// Reads both facts off one connection, so the call site states no policy.
+    ///
+    /// Sole owner of the mapping from oc's connection state onto upstream's two
+    /// globals; see [`BasisTrust::for_receiver`] for why each fact is read from
+    /// where it is.
+    #[must_use]
+    pub(super) fn for_connection(connection: &crate::config::ConnectionConfig) -> Self {
+        Self::for_receiver(
+            connection.served_module_root().is_some(),
+            fast_io::confinement::session_is_chrooted(),
+        )
+    }
+
+    /// Applies upstream's per-path `path[0] == '/'` term and yields the arm.
+    ///
+    /// Only an ABSOLUTE basis is module-confined. A RELATIVE basis
+    /// (`--link-dest=../01`) is a dest-relative sibling whose `../` upstream's
+    /// `sanitize_path` has already clamped to the module root, and it must keep
+    /// the plain stat below (#915/#930) - confining it re-opens the
+    /// `link-dest-relative-basis` regression, whose manifest row passes on both
+    /// pipe legs.
+    ///
+    /// upstream: `generator.c:997-1001` - the comment that spells out exactly
+    /// this split, and the `path[0] == '/'` term at `generator.c:1004`.
+    #[must_use]
+    pub(super) fn arm_for(self, path: &Path) -> BasisArm {
+        match self {
+            Self::LocalReceiver => BasisArm::OwnerWalk,
+            Self::NonChrootedDaemon if path.is_absolute() => BasisArm::ModuleConfinedWalk,
+            Self::NonChrootedDaemon | Self::ChrootedDaemon => BasisArm::PlainStat,
         }
     }
 }
 
 #[cfg(test)]
 mod basis_trust_tests {
-    use super::BasisTrust;
+    use std::path::{Path, PathBuf};
 
-    /// A daemon receiver must NOT take the ownership walk.
-    ///
-    /// This is the arm upstream selects, and taking the other one is not merely
-    /// stricter - the walk opens every component from `/` downward, which a
-    /// confined daemon worker cannot do, so the basis vanishes and every file
-    /// is re-transferred. That is the `link-dest-relative-basis` cell
-    /// (upstream #915/#930), whose manifest row is `pass` on both pipe legs.
-    ///
-    /// upstream: `rsync-3.5.0/generator.c:978` - the ownership-walk arm is
-    /// guarded by `!am_daemon`; `generator.c:1010` is the plain `link_stat()`
-    /// a daemon receiver falls through to.
-    #[test]
-    fn a_daemon_receiver_stats_the_basis_by_path() {
-        assert_eq!(BasisTrust::for_receiver(true), BasisTrust::PlainStat);
-    }
+    use fast_io::confinement::{
+        LocalInsecureLinks, ModuleInsecureLinks, ModuleState, install_daemon_session,
+        install_local_session,
+    };
 
-    /// Non-vacuity companion: the walk is still selected off the daemon path,
-    /// so the mapping is a real branch and not a constant.
+    use super::{BasisArm, BasisTrust};
+    use crate::config::ConnectionConfig;
+
+    /// A non-daemon receiver takes upstream's arm 1, whatever the basis looks
+    /// like. This covers the `rsync://` CLIENT too: `am_daemon` is false there,
+    /// even though the transfer is a daemon connection.
+    ///
+    /// upstream: `rsync-3.5.0/generator.c:979` - `!am_daemon` selects the
+    /// ownership walk.
     #[test]
     fn a_non_daemon_receiver_walks_the_basis_parent() {
-        assert_eq!(BasisTrust::for_receiver(false), BasisTrust::OwnerWalk);
+        let trust = BasisTrust::for_receiver(false, false);
+        assert_eq!(trust, BasisTrust::LocalReceiver);
+        assert_eq!(trust.arm_for(Path::new("/backup/01")), BasisArm::OwnerWalk);
+        assert_eq!(trust.arm_for(Path::new("../01")), BasisArm::OwnerWalk);
+    }
+
+    /// A non-chrooted daemon with an ABSOLUTE basis takes upstream's arm 2: the
+    /// ownership walk WITH module-root confinement. This is the arm that closes
+    /// the `--compare-dest=/evil` read oracle, where `evil` is an in-module
+    /// symlink pointing out of the module and so is trusted-OWNED - the
+    /// ownership rule alone cannot refuse it.
+    ///
+    /// upstream: `rsync-3.5.0/generator.c:1004-1018`.
+    #[test]
+    fn a_non_chrooted_daemon_confines_an_absolute_basis_to_the_module() {
+        let trust = BasisTrust::for_receiver(true, false);
+        assert_eq!(trust, BasisTrust::NonChrootedDaemon);
+        assert_eq!(
+            trust.arm_for(Path::new("/srv/mod/evil/tgtfile")),
+            BasisArm::ModuleConfinedWalk
+        );
+    }
+
+    /// Non-vacuity companion, and the regression this must NOT re-open: the
+    /// SAME non-chrooted daemon keeps the plain stat for a RELATIVE basis. A
+    /// "confine everything" predicate would pass the test above and break
+    /// `--link-dest=../01` (#915/#930).
+    ///
+    /// upstream: `rsync-3.5.0/generator.c:1004` - the `path[0] == '/'` term.
+    #[test]
+    fn a_non_chrooted_daemon_keeps_the_plain_stat_for_a_relative_basis() {
+        let trust = BasisTrust::for_receiver(true, false);
+        assert_eq!(trust.arm_for(Path::new("../01")), BasisArm::PlainStat);
+        assert_eq!(trust.arm_for(Path::new("prev/01")), BasisArm::PlainStat);
+    }
+
+    /// A CHROOTED daemon falls through to the plain stat even for an absolute
+    /// basis: upstream's arm 2 is guarded by `!am_chrooted`, and the kernel
+    /// chroot is the confinement there. Without this the ownership walk would
+    /// start applying to a shape upstream leaves alone.
+    ///
+    /// upstream: `rsync-3.5.0/generator.c:1004` (`!am_chrooted`) and
+    /// `generator.c:1064` (the fall-through).
+    #[test]
+    fn a_chrooted_daemon_falls_through_to_the_plain_stat() {
+        let trust = BasisTrust::for_receiver(true, true);
+        assert_eq!(trust, BasisTrust::ChrootedDaemon);
+        assert_eq!(trust.arm_for(Path::new("/01")), BasisArm::PlainStat);
+        assert_eq!(trust.arm_for(Path::new("../01")), BasisArm::PlainStat);
+    }
+
+    /// The CLIENT end of an `rsync://` transfer is not a daemon.
+    ///
+    /// `ConnectionConfig::is_daemon_connection` is set on BOTH ends, so reading
+    /// it as `am_daemon` applies a daemon's confinement to a client's own local
+    /// destination - a shape upstream leaves on arm 1, and which the client
+    /// (unlike a daemon worker) can be running from anywhere on the filesystem.
+    /// `served_module_root()` is the fact that distinguishes them: `None` on the
+    /// client, `Some(root)` in the serving process.
+    ///
+    /// upstream: `clientserver.c:1093` - `am_daemon` is the serving process
+    /// only; `rsync-3.5.0/generator.c:979` reads that same global.
+    #[test]
+    fn an_rsync_client_is_not_a_daemon_receiver() {
+        install_local_session(LocalInsecureLinks::from_local_flag(false), None);
+        let client = ConnectionConfig {
+            is_daemon_connection: true,
+            daemon_module_root: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            BasisTrust::for_connection(&client),
+            BasisTrust::LocalReceiver
+        );
+    }
+
+    /// Non-vacuity companion: the SERVING process, which differs from the
+    /// client above only by carrying the module root, does take the daemon arm.
+    /// Also pins that `for_connection` reads `am_chrooted` off the session.
+    #[test]
+    fn the_serving_daemon_takes_the_daemon_arm() {
+        let serving = ConnectionConfig {
+            is_daemon_connection: true,
+            daemon_module_root: Some(PathBuf::from("/srv/mod")),
+            ..Default::default()
+        };
+
+        let module = |chrooted: bool| ModuleState {
+            root: Some(PathBuf::from("/srv/mod")),
+            chrooted,
+            selected: true,
+            insecure_links: ModuleInsecureLinks::from_module_config(false),
+        };
+
+        install_daemon_session(module(false));
+        let not_chrooted = BasisTrust::for_connection(&serving);
+        install_daemon_session(module(true));
+        let chrooted = BasisTrust::for_connection(&serving);
+        install_local_session(LocalInsecureLinks::from_local_flag(false), None);
+
+        assert_eq!(not_chrooted, BasisTrust::NonChrootedDaemon);
+        assert_eq!(chrooted, BasisTrust::ChrootedDaemon);
     }
 }
 
@@ -350,30 +528,46 @@ mod basis_trust_tests {
 /// Any failure is reported as "no basis here", the same outcome upstream
 /// produces when `link_stat` fails: the file transfers normally.
 ///
-/// [`BasisTrust::PlainStat`] takes the path-based stat instead. That is not a
-/// weakening: it is the arm upstream itself takes for a daemon receiver, whose
-/// basis is confined by the module resolver rather than by ownership. Walking
-/// there would also be actively wrong - the walk opens every component starting
-/// at `/`, and a daemon worker is confined (chroot, or a Landlock ruleset rooted
-/// at the module) precisely so that the ancestors of the module are *not*
-/// openable, so the walk fails with `EACCES` and the basis silently disappears.
+/// [`BasisArm::ModuleConfinedWalk`] adds the module-root boundary to that walk.
+/// The ownership rule alone is not enough for a daemon: the module tree belongs
+/// to the daemon uid, so an in-module symlink whose target lands OUTSIDE the
+/// module is trusted-owned and would be followed. That is the
+/// `--compare-dest=/evil` read oracle - the daemon roots the peer's absolute
+/// basis under the module, so the escaping component is a PARENT of the basis
+/// leaf, and `fs::symlink_metadata` refuses to follow a symlink at the LEAF
+/// only. Confining the resolved leaf is what refuses it, and it is upstream's
+/// `operator_path_resolve = 1`.
+///
+/// [`BasisArm::PlainStat`] takes the path-based stat. That is not a weakening:
+/// it is upstream's own fall-through, taken for a dest-relative basis
+/// (`--link-dest=../01`), whose `../` `sanitize_path` has already clamped to
+/// the module root, and for a chrooted daemon, where the kernel chroot is the
+/// confinement.
+///
+/// The symlink opt-out (`insecure links = yes` / `--insecure-links`) is not
+/// tested here. Upstream tests it at each arm, but it reads the same global the
+/// walk itself reads: `ona_open()` short-circuits to a legacy symlink-following
+/// open before any root is consulted (`syscall.c:300-302`), which
+/// `fast_io::owner_walk` mirrors. Under an opt-out every walking arm therefore
+/// already degenerates to the plain resolution arm 4 performs, and restating
+/// the test here would be a second copy of one policy.
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/generator.c:979-990` `basis_link_stat()` - the non-daemon
-///   receiver arm: `owner_walk_parent()` for the parent components, then
+/// - `rsync-3.5.0/generator.c:979-990` `basis_link_stat()` arm 1 - the
+///   non-daemon receiver: `owner_walk_parent()` for the parent components, then
 ///   `link_stat_at()` on the leaf through the returned descriptor.
-/// - `rsync-3.5.0/generator.c:1010` - the plain `link_stat()` fall-through a
-///   daemon receiver reaches for a dest-relative basis (`--link-dest=../01`),
-///   whose `../` `sanitize_path` has already clamped to the module root.
+/// - `rsync-3.5.0/generator.c:1004-1018` arm 2 - the same walk with
+///   `operator_path_resolve = 1`, for a non-chrooted daemon's ABSOLUTE basis.
+/// - `rsync-3.5.0/generator.c:1064` - the trailing plain `link_stat()`.
 /// - `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - the walk itself.
 #[cfg(unix)]
 fn basis_stat(path: &Path, trust: BasisTrust) -> Option<fs::Metadata> {
-    if trust == BasisTrust::PlainStat {
-        return fs::symlink_metadata(path).ok();
+    match trust.arm_for(path) {
+        BasisArm::OwnerWalk => fast_io::operator_symlink_metadata(path).ok(),
+        BasisArm::ModuleConfinedWalk => fast_io::operator_symlink_metadata_confined(path).ok(),
+        BasisArm::PlainStat => fs::symlink_metadata(path).ok(),
     }
-
-    fast_io::operator_symlink_metadata(path).ok()
 }
 
 /// Non-Unix fallback: the ownership walk is a dirfd construction with no
@@ -1074,7 +1268,7 @@ mod info_copy_emission_tests {
             &mut metadata_errors,
             None,
             None,
-            BasisTrust::OwnerWalk,
+            BasisTrust::LocalReceiver,
         );
 
         // Restore writable permissions so tempdir cleanup succeeds.
@@ -1132,7 +1326,7 @@ mod info_copy_emission_tests {
             &mut metadata_errors,
             None,
             None,
-            BasisTrust::OwnerWalk,
+            BasisTrust::LocalReceiver,
         );
 
         let mut restore = fs::metadata(&dest_dir).expect("dest meta").permissions();
@@ -1238,7 +1432,7 @@ mod symlink_basis_tests {
             &mut metadata_errors,
             None,
             None,
-            BasisTrust::OwnerWalk,
+            BasisTrust::LocalReceiver,
         )
     }
 
@@ -1385,6 +1579,200 @@ mod symlink_basis_tests {
         assert_eq!(
             fs::read(dest_dir.join("payload.bin")).expect("dest file"),
             b"basis payload"
+        );
+    }
+}
+
+/// Regression tests for upstream's SECOND `basis_link_stat()` arm: a daemon
+/// receiver serving a module WITHOUT chroot must resolve an ABSOLUTE alt-dest
+/// basis through the ownership walk with MODULE-ROOT confinement.
+///
+/// The mechanism this closes, in the shape the
+/// `daemon-symlink-escape-matrix` cell builds it: the daemon roots a peer's
+/// `--compare-dest=/evil` under the module, so the basis path is
+/// `<module>/evil/tgtfile` and the escaping symlink `evil` is a PARENT
+/// component. `fs::symlink_metadata` refuses to follow a symlink at the LEAF
+/// only, so the kernel resolves `evil` and the stat lands outside the module -
+/// a read oracle. The ownership walk alone does not close it either: the module
+/// tree belongs to the daemon uid, so `evil` is trusted-OWNED and is followed.
+/// Only the module-root judgement on the resolved leaf refuses it.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/generator.c:991-1003` - the comment naming this exact cell.
+/// - `rsync-3.5.0/generator.c:1004-1018` - the arm itself.
+#[cfg(unix)]
+#[cfg(test)]
+mod daemon_module_confined_basis_tests {
+    use std::fs;
+    use std::os::unix;
+    use std::path::{Path, PathBuf};
+
+    use fast_io::confinement::{
+        LocalInsecureLinks, ModuleInsecureLinks, ModuleState, install_daemon_session,
+        install_local_session,
+    };
+    use metadata::MetadataOptions;
+    use protocol::flist::FileEntry;
+
+    use super::{BasisTrust, ModifyWindow, try_reference_dest};
+    use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
+
+    const PAYLOAD: &[u8] = b"module payload";
+
+    /// Builds the module tree the daemon serves, publishes it as the session's
+    /// confinement root, and returns `(temp, module_root, dest_dir)`.
+    ///
+    /// Inside the module: `escape -> ../outside`, a symlink THIS test owns, so
+    /// the ownership rule trusts it. `outside/payload.bin` is the file that must
+    /// stay unreachable.
+    fn serve_module_with_an_escaping_symlink() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        // The module root is published PHYSICAL (`install_session` canonicalises
+        // it), and the walk resolves physically too, so build the fixture from
+        // the canonical temp path or the two namespaces disagree on macOS,
+        // where `/var` is a symlink to `/private/var`.
+        let base = temp.path().canonicalize().expect("canonicalise tempdir");
+
+        let outside = base.join("outside");
+        fs::create_dir_all(&outside).expect("create outside dir");
+        fs::write(outside.join("payload.bin"), PAYLOAD).expect("write outside file");
+
+        let module_root = base.join("module");
+        fs::create_dir_all(&module_root).expect("create module root");
+        unix::fs::symlink("../outside", module_root.join("escape")).expect("create escape link");
+
+        let dest_dir = base.join("dest");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+
+        install_daemon_session(ModuleState {
+            root: Some(module_root.clone()),
+            chrooted: false,
+            selected: true,
+            insecure_links: ModuleInsecureLinks::from_module_config(false),
+        });
+
+        (temp, module_root, dest_dir)
+    }
+
+    /// Restores the process default so a `cargo test` run (one process, many
+    /// threads) does not leave a module root installed for unrelated cells.
+    fn clear_session() {
+        install_local_session(LocalInsecureLinks::from_local_flag(false), None);
+    }
+
+    fn try_basis(basis: &Path, dest_dir: &Path, trust: BasisTrust) -> bool {
+        let entry = FileEntry::new_file(PathBuf::from("payload.bin"), PAYLOAD.len() as u64, 0o644);
+        let reference = ReferenceDirectory::new(ReferenceDirectoryKind::Copy, basis.to_path_buf());
+        let metadata_opts = MetadataOptions::default();
+        let mut metadata_errors = Vec::new();
+
+        try_reference_dest(
+            &entry,
+            dest_dir,
+            std::slice::from_ref(&reference),
+            false,
+            true,
+            None,
+            ModifyWindow::from_secs(0),
+            &metadata_opts,
+            &mut metadata_errors,
+            None,
+            None,
+            trust,
+        )
+    }
+
+    /// THE FIX: a non-chrooted daemon receiver must not reach a basis whose
+    /// parent component leaves the module. Asserted on the OBSERVED outcome -
+    /// the basis is not consumed and nothing is written to the destination -
+    /// not on any message.
+    #[test]
+    fn a_daemon_refuses_a_basis_whose_parent_escapes_the_module() {
+        let (_tmp, module_root, dest_dir) = serve_module_with_an_escaping_symlink();
+
+        let handled = try_basis(
+            &module_root.join("escape"),
+            &dest_dir,
+            BasisTrust::for_receiver(true, false),
+        );
+
+        clear_session();
+
+        assert!(
+            !handled,
+            "an escaping basis must look absent so the file transfers normally"
+        );
+        assert!(
+            !dest_dir.join("payload.bin").exists(),
+            "nothing may be copied through a basis parent that leaves the module"
+        );
+    }
+
+    /// Non-vacuity, and the reason arm 2 exists at all: on the SAME fixture the
+    /// non-daemon arm FOLLOWS the escaping link, because the ownership rule
+    /// trusts a symlink this uid owns. So the refusal above comes from the
+    /// module-root judgement and from nothing else - and the previous
+    /// `PlainStat` routing, which followed it via the kernel, was worse still.
+    #[test]
+    fn the_non_daemon_arm_still_follows_the_same_self_owned_link() {
+        let (_tmp, module_root, dest_dir) = serve_module_with_an_escaping_symlink();
+
+        let handled = try_basis(
+            &module_root.join("escape"),
+            &dest_dir,
+            BasisTrust::for_receiver(false, false),
+        );
+
+        clear_session();
+
+        assert!(
+            handled,
+            "the ownership walk alone trusts a self-owned symlink; arm 2's \
+             module-root judgement is what refuses it"
+        );
+    }
+
+    /// Non-vacuity: the confined arm is not "refuse everything". An absolute
+    /// basis that stays INSIDE the module is still consumed, byte for byte.
+    #[test]
+    fn a_daemon_still_consumes_a_basis_inside_the_module() {
+        let (_tmp, module_root, dest_dir) = serve_module_with_an_escaping_symlink();
+
+        let inside = module_root.join("inside");
+        fs::create_dir_all(&inside).expect("create in-module basis dir");
+        fs::write(inside.join("payload.bin"), PAYLOAD).expect("write in-module basis");
+
+        let handled = try_basis(&inside, &dest_dir, BasisTrust::for_receiver(true, false));
+
+        clear_session();
+
+        assert!(handled, "an in-module basis must still match");
+        assert_eq!(
+            fs::read(dest_dir.join("payload.bin")).expect("dest file"),
+            PAYLOAD
+        );
+    }
+
+    /// A CHROOTED daemon keeps upstream's fall-through on the same fixture:
+    /// arm 2 is guarded by `!am_chrooted`. Pins that `am_chrooted` is a real
+    /// input and not decoration.
+    #[test]
+    fn a_chrooted_daemon_keeps_the_fall_through_on_the_same_fixture() {
+        let (_tmp, module_root, dest_dir) = serve_module_with_an_escaping_symlink();
+
+        let handled = try_basis(
+            &module_root.join("escape"),
+            &dest_dir,
+            BasisTrust::for_receiver(true, true),
+        );
+
+        clear_session();
+
+        assert!(
+            handled,
+            "upstream's `!am_chrooted` guard leaves a chrooted daemon on the \
+             plain link_stat fall-through"
         );
     }
 }
@@ -1779,7 +2167,7 @@ mod alt_dest_match_level_tests {
             &mut errs,
             None,
             None,
-            BasisTrust::OwnerWalk,
+            BasisTrust::LocalReceiver,
         )
     }
 
