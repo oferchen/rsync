@@ -400,12 +400,20 @@ fn serve_connections(
         reverse_lookup,
         proxy_policy,
         daemon_timeout,
+        #[cfg(unix)]
+        listener_fds: Vec::new(),
     };
 
     // Select the accept engine once from the bound listener topology, then run
     // the shared accept loop. The engine hides the readiness mechanism
     // (non-blocking accept vs acceptor-thread fan-in) behind a uniform poll.
     let mut engine = build_accept_engine(listeners, &bound_addresses, &state)?;
+    // The engine now owns the listeners, so only it can name them. Record them
+    // for the forked session children, which must close every one.
+    #[cfg(unix)]
+    {
+        state.listener_fds = engine.listener_fds();
+    }
     run_accept_loop(engine.as_mut(), &mut state)?;
 
     drain_workers(&mut state.workers, log_sink.as_ref());

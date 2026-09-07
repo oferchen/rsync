@@ -116,8 +116,8 @@ fn process_approved_module(
 ) -> io::Result<()> {
     let _connection_guard = match module.try_acquire_connection() {
         Ok(guard) => guard,
-        Err(ModuleConnectionError::Limit(limit)) => {
-            return handle_max_connections_exceeded(ctx, module, limit);
+        Err(ModuleConnectionError::Limit { configured, active }) => {
+            return handle_max_connections_exceeded(ctx, configured, active);
         }
         Err(ModuleConnectionError::Io(error)) => {
             return handle_lock_error(ctx, &error);

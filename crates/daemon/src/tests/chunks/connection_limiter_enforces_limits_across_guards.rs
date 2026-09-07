@@ -20,7 +20,9 @@ fn connection_limiter_enforces_limits_across_guards() {
         .expect("second connection allowed");
     assert!(matches!(
         limiter.acquire("docs", MaxConnections::Limited(limit)),
-        Err(ModuleConnectionError::Limit(l)) if l == MaxConnections::Limited(limit).display_value()
+        Err(ModuleConnectionError::Limit { configured, active })
+            if configured == MaxConnections::Limited(limit).display_value()
+                && active == limit.get()
     ));
 
     drop(second);

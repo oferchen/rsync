@@ -76,6 +76,41 @@ pub fn exit_child(code: i32) -> ! {
     unsafe { libc::_exit(code) }
 }
 
+/// Closes listener descriptors a forked child inherited but must not keep.
+///
+/// A child serves exactly one already-accepted connection, so every *listening*
+/// socket it inherited is dead weight. Keeping them open is not merely untidy:
+/// the port stays bound for as long as any child lives, so a daemon restart
+/// races its own outgoing sessions for the address.
+///
+/// upstream: `socket.c:753-760` `start_accept_loop()` closes each listener in
+/// the child, immediately after the fork and before serving.
+///
+/// # Which descriptors this must NOT be given
+///
+/// Only listeners. The accepted stream is the session, and oc's log sink is
+/// opened once at startup and inherited deliberately - upstream reopens the log
+/// in the child precisely because it *did* close it, and oc has no
+/// `logfile_close` counterpart to mirror. A blanket close-all sweep would
+/// silence the child's own diagnostics.
+///
+/// # Errors are unrecoverable, not ignorable
+///
+/// `close(2)` on a descriptor this process owns fails only on `EBADF`, which
+/// means the caller passed a descriptor that was already closed - a bug in the
+/// caller, not a runtime condition. There is no corrective action, and the
+/// child has not yet started the session it would report through. Upstream
+/// likewise checks no status here.
+#[allow(unsafe_code)]
+pub fn close_inherited_listeners(listener_fds: &[i32]) {
+    for &fd in listener_fds {
+        // SAFETY: `close` takes an integer and touches no caller memory. Each
+        // fd is a listener the parent owned and the child inherited across
+        // `fork`, so closing it in the child affects only this process's table.
+        unsafe { libc::close(fd) };
+    }
+}
+
 /// How a forked child ended.
 ///
 /// This is deliberately the *process* vocabulary, not the session's: what a
