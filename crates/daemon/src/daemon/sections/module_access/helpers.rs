@@ -217,9 +217,17 @@ fn build_daemon_filter_rules(
     // XFLG_OLD_PREFIXES: `filter` takes the modern rule syntax, where `- ` and
     // `+ ` are rule prefixes already, so `old_prefix_*` below deliberately does
     // not apply here.
+    //
+    // A malformed rule is REFUSED, not skipped: upstream's `parse_rule_tok`
+    // exits `RERR_SYNTAX` (`exclude.c:1130`), so the module is never served.
+    // This function already returns `Result`, and its caller already refuses
+    // the connection on the file-reading arms below - the refusal PATH is
+    // unchanged here; only which tokens enter it is new.
     for filter_str in &module.filter {
         for token in split_filter_tokens(filter_str.trim()) {
-            if let Some(rule) = parse_daemon_filter_token(&token) {
+            if let Some(rule) =
+                parse_daemon_filter_token(&token).map_err(MalformedRule::into_io_error)?
+            {
                 rules.push(rule);
             }
         }
@@ -548,19 +556,82 @@ fn split_filter_tokens(s: &str) -> Vec<String> {
 /// `clear`, `dir-merge`, `merge`). The pattern follows the prefix after
 /// optional whitespace.
 ///
-/// Returns `None` for unrecognised tokens (silently skipped, matching
-/// upstream's lenient parsing of daemon filter strings).
+/// `Ok(None)` is an EMPTY token - nothing to add, no error. `Err` is a
+/// MALFORMED rule, which upstream refuses: `parse_rule_tok` calls
+/// `rprintf(FERROR, "Invalid... rule: %s\n", ..)` then
+/// `exit_cleanup(RERR_SYNTAX)` (`exclude.c:1130`, `:1170`).
+///
+/// ⚠ This doc block previously claimed the opposite - *"Returns `None` for
+/// unrecognised tokens (silently skipped, matching upstream's lenient parsing
+/// of daemon filter strings)"*. There is no lenient parsing to match.
+/// MEASURED against rsync 3.5.0: a module with `filter = -foo` is refused with
+/// exit 5, while oc served the module and silently excluded `foo`. The comment
+/// is what made the fallback below read as deliberate.
 ///
 /// # Upstream Reference
 ///
+/// - `exclude.c:1096-1131` - the modifier scan that rejects `-foo` on `f`
 /// - `exclude.c:1134-1178` - long-form keyword to short-form char mapping
-fn parse_daemon_filter_token(token: &str) -> Option<FilterRuleWireFormat> {
-    // Short-form prefixes: +, -
-    if let Some(pattern) = token.strip_prefix("+ ").or_else(|| token.strip_prefix('+')) {
-        return non_empty_pattern_rule(pattern, true);
+fn parse_daemon_filter_token(token: &str) -> Result<Option<FilterRuleWireFormat>, MalformedRule> {
+    // Short-form prefixes: `+` and `-` are RULE CHARACTERS, and upstream's
+    // parser requires a separator after them. `parse_rule_tok` reads the
+    // prefix, then `while (*s && *s != ' ')` scans modifier characters and
+    // rejects any byte that is not a known modifier (exclude.c:1096-1131) -
+    // so `-foo` refuses on `f`, it does not silently become an exclude of
+    // `foo`.
+    //
+    // ⚠ The `.or_else(|| strip_prefix('+'))` fallback this replaces accepted
+    // the separator-less spelling and, for `-foo`, SILENTLY EXCLUDED `foo`
+    // from a module whose config upstream refuses to serve at all.
+    if let Some(pattern) = token.strip_prefix("+ ") {
+        return Ok(non_empty_pattern_rule(pattern, true));
     }
-    if let Some(pattern) = token.strip_prefix("- ").or_else(|| token.strip_prefix('-')) {
-        return non_empty_pattern_rule(pattern, false);
+    if let Some(pattern) = token.strip_prefix("- ") {
+        return Ok(non_empty_pattern_rule(pattern, false));
+    }
+    // The `+ `/`- ` arms above consumed the separator spelling, so a `+`/`-`
+    // reaching here is one upstream does NOT read as a bare include/exclude.
+    // Two upstream arms split on what follows it.
+    if let Some(rest) = token.strip_prefix(['+', '-']) {
+        return Err(match rest.chars().next() {
+            // `-foo`: upstream reads the rule character, then scans MODIFIER
+            // characters up to the first space and rejects any byte that is
+            // not a known modifier (exclude.c:1364-1379). `f` is not one, so
+            // it refuses at position 1.
+            //
+            // ⚠ oc accepted this spelling and SILENTLY EXCLUDED `foo` from a
+            // module upstream refuses to serve at all.
+            Some(c) => MalformedRule::InvalidModifier {
+                modifier: c,
+                position: 1,
+                token: token.to_owned(),
+            },
+            // A BARE `-` or `+`: the modifier scan ends immediately, leaving
+            // an empty pattern, and upstream's `else if (!len ...)` arm
+            // refuses (exclude.c:1474-1476).
+            None => MalformedRule::UnexpectedEnd {
+                token: token.to_owned(),
+            },
+        });
+    }
+
+    // `!` is upstream's clear rule. It takes no pattern, and because a daemon
+    // `filter` directive carries neither FILTRULE_NO_PREFIXES nor
+    // XFLG_OLD_PREFIXES, both conjuncts of the guard at exclude.c:1468-1470
+    // hold and a non-empty remainder refuses.
+    //
+    // ⚠ Upstream's modifier scan is `while (ch != '!' && ...)`, so it is
+    // SKIPPED for `!` - this refusal comes from the trailing-characters check
+    // AFTER the loop, not from the modifier arm above. The two arms report
+    // different things and are not interchangeable.
+    //
+    // ⚠ A BARE `!` is deliberately left on its existing path: oc does not
+    // implement it as a clear at all, so no cell measured here can
+    // discriminate what oc does with it. That is task 1155's question.
+    if token.len() > 1 && token.starts_with('!') {
+        return Err(MalformedRule::ClearWithTrailingCharacters {
+            token: token.to_owned(),
+        });
     }
 
     // upstream: exclude.c:1134-1178 - keyword-to-short-form mapping.
@@ -578,24 +649,96 @@ fn parse_daemon_filter_token(token: &str) -> Option<FilterRuleWireFormat> {
         if let Some(pattern) = strip_keyword_prefix(token, keyword) {
             let pattern = pattern.trim();
             if pattern.is_empty() {
-                return None;
+                return Ok(None);
             }
             let mut rule = build_pattern_rule(pattern, is_include);
             rule.sender_side = sender;
             rule.receiver_side = receiver;
-            return Some(rule);
+            return Ok(Some(rule));
         }
     }
 
     if strip_keyword_prefix(token, "clear").is_some() {
-        return Some(clear_list_rule());
+        return Ok(Some(clear_list_rule()));
     }
 
     // Bare pattern defaults to exclude (upstream behaviour)
     if token.is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(build_pattern_rule(token, false))
+    Ok(Some(build_pattern_rule(token, false)))
+}
+
+/// A daemon filter token upstream's parser refuses.
+///
+/// Carries the offending token so the refusal names it, as upstream's
+/// `"Invalid filter rule: %s"` does (`exclude.c:1130`).
+/// A daemon filter token upstream's parser refuses.
+///
+/// ⚠ THREE variants, not one, because upstream reports three DIFFERENT things
+/// and reaches them by three different routes. Collapsing them to a single
+/// "invalid rule" message would lose the distinction upstream draws.
+#[derive(Debug)]
+enum MalformedRule {
+    /// A rule character followed by a byte that is not a known modifier.
+    ///
+    /// upstream: `exclude.c:1373-1378` - the `default: invalid` arm of the
+    /// modifier scan.
+    InvalidModifier {
+        modifier: char,
+        position: usize,
+        token: String,
+    },
+    /// A rule character with no pattern after it.
+    ///
+    /// upstream: `exclude.c:1474-1476` - `else if (!len && !CVS_IGNORE)`.
+    UnexpectedEnd { token: String },
+    /// A `!` clear rule carrying a pattern it cannot take.
+    ///
+    /// upstream: `exclude.c:1468-1470`.
+    ClearWithTrailingCharacters { token: String },
+}
+
+impl MalformedRule {
+    fn into_io_error(self) -> io::Error {
+        io::Error::new(io::ErrorKind::InvalidData, self.to_string())
+    }
+}
+
+/// Renders upstream's diagnostic text.
+///
+/// `Display` is the SINGLE owner of the wording so the message a test reads
+/// and the message [`MalformedRule::into_io_error`] delivers cannot drift
+/// apart.
+///
+/// Two of the three go through upstream's `filter_rule_err`, which renders
+/// `"{msg}: {rule text}"` and then `exit_cleanup(RERR_SYNTAX)`
+/// (`exclude.c:133-137`); the modifier arm builds its own line at
+/// `exclude.c:1373-1378`.
+///
+/// ⚠ SCOPE: what this change was measured on is the REFUSAL - whether the
+/// module is served - not the wording. The daemon's filter diagnostics also
+/// lack upstream's `<rule from FILE line N>` provenance envelope, which is
+/// task 1156 and deliberately NOT attempted here.
+impl std::fmt::Display for MalformedRule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidModifier {
+                modifier,
+                position,
+                token,
+            } => write!(
+                f,
+                "invalid modifier '{modifier}' at position {position} in filter rule: {token}"
+            ),
+            Self::UnexpectedEnd { token } => {
+                write!(f, "unexpected end of filter rule: {token}")
+            }
+            Self::ClearWithTrailingCharacters { token } => {
+                write!(f, "'!' rule has trailing characters: {token}")
+            }
+        }
+    }
 }
 
 /// Returns a rule if the trimmed pattern is non-empty, `None` otherwise.
