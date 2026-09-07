@@ -2180,7 +2180,7 @@ mod module_access_tests {
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
 
-        // upstream: clientserver.c:874-893 - order is:
+        // upstream: clientserver.c:933-952 - order is:
         // filter, include_from, include, exclude_from, exclude
         assert_eq!(rules.len(), 5);
         assert_eq!(rules[0].pattern, "*.tmp");
@@ -2259,9 +2259,9 @@ mod module_access_tests {
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
         assert_eq!(rules.len(), 3);
-        // filter rules are processed first (upstream: clientserver.c:874)
+        // filter rules are processed first (upstream: clientserver.c:933)
         assert_eq!(rules[0].pattern, "*.bak");
-        // then excludes (upstream: clientserver.c:891)
+        // then excludes (upstream: clientserver.c:950)
         assert_eq!(rules[1].pattern, "*.tmp");
         assert_eq!(rules[2].pattern, "*.log");
         // All should be excludes
@@ -2329,7 +2329,7 @@ mod module_access_tests {
 
     /// A leading `- ` in an `exclude from` file is an ACTION PREFIX.
     ///
-    /// upstream: `clientserver.c:943-944` reads `exclude from` with
+    /// upstream: `clientserver.c:946-948` reads `exclude from` with
     /// `XFLG_OLD_PREFIXES`, and `exclude.c:1277-1279` strips the two bytes.
     ///
     /// MEASURED against real rsync 3.5.0 and oc daemons on loopback (module
@@ -2360,7 +2360,7 @@ mod module_access_tests {
     /// The prefix OVERRIDES the template, it does not merely decorate it.
     ///
     /// upstream: `exclude.c:1278` clears `FILTRULE_INCLUDE` on the rule even
-    /// though `include from`'s template (`clientserver.c:936-937`) sets it.
+    /// though `include from`'s template (`clientserver.c:937-939`) sets it.
     #[test]
     fn include_from_dash_prefix_overrides_the_include_template() {
         let dir = tempfile::tempdir().unwrap();
@@ -2402,7 +2402,7 @@ mod module_access_tests {
     /// A record that is exactly `!` clears the list.
     ///
     /// upstream: `exclude.c:1283-1284` sets `FILTRULE_CLEAR_LIST`, and
-    /// `exclude.c:1471-1472` keeps it only when the measured length is 1.
+    /// `exclude.c:1472-1473` keeps it only when the measured length is 1.
     #[test]
     fn exclude_from_bare_bang_clears_the_list() {
         let dir = tempfile::tempdir().unwrap();
@@ -2416,7 +2416,7 @@ mod module_access_tests {
     /// `!` with anything after it is a PATTERN, and it keeps the `!`.
     ///
     /// upstream: `exclude.c:1283` does NOT advance the cursor, so
-    /// `exclude.c:1465`'s `strlen(s)` counts the `!` itself; `exclude.c:1472`
+    /// `exclude.c:1465`'s `strlen(s)` counts the `!` itself; `exclude.c:1472-1473`
     /// then clears the tentative flag because the length exceeds 1. The `!` is
     /// therefore part of the pattern, which is what makes this the companion
     /// that stops the clear arm from swallowing every `!`-prefixed name.
@@ -2432,8 +2432,9 @@ mod module_access_tests {
     /// A token left empty by the strip is upstream's fatal syntax error.
     ///
     /// upstream: `exclude.c:1474-1475` calls `filter_rule_err()`, which exits
-    /// with `RERR_SYNTAX`; `clientserver.c:950-952` additionally passes
-    /// `XFLG_FATAL_ERRORS` on the file spellings. The caller turns this error
+    /// with `RERR_SYNTAX`; the two FILE spellings additionally pass
+    /// `XFLG_FATAL_ERRORS` (`clientserver.c:937-939` and `:946-948`), which the
+    /// string parameters do not. The caller turns this error
     /// into a module abort - dropping the rule instead would serve everything
     /// it named.
     ///
@@ -2462,7 +2463,7 @@ mod module_access_tests {
     /// word-split, so the prefix binds to the next token only.
     ///
     /// upstream: `clientserver.c:950-952` passes both `FILTRULE_WORD_SPLIT`
-    /// (via the template) and `XFLG_OLD_PREFIXES`; `exclude.c:1457-1462` ends
+    /// (via the template) and `XFLG_OLD_PREFIXES`; `exclude.c:1458-1462` ends
     /// the pattern at the next whitespace, so `bar` falls back to the template.
     #[test]
     fn exclude_string_prefix_binds_to_one_token_only() {
@@ -2480,8 +2481,8 @@ mod module_access_tests {
 
     /// A `!` token in a word-split `include` value clears the list.
     ///
-    /// upstream: `exclude.c:1457-1462` measures the token to the next
-    /// whitespace, so this `!` has length 1 and `exclude.c:1472` leaves
+    /// upstream: `exclude.c:1458-1462` measures the token to the next
+    /// whitespace, so this `!` has length 1 and `exclude.c:1472-1473` leaves
     /// `FILTRULE_CLEAR_LIST` set.
     #[test]
     fn include_string_bare_bang_token_clears_the_list() {

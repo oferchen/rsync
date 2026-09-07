@@ -308,8 +308,9 @@ fn old_prefix(rule: &str) -> OldPrefix {
 
 /// A list-clear rule.
 ///
-/// upstream: `exclude.c:1284` sets `FILTRULE_CLEAR_LIST`; `exclude.c:1542`
-/// makes the receiving list drop every rule accumulated so far.
+/// upstream: `exclude.c:1284` sets `FILTRULE_CLEAR_LIST`; `exclude.c:1542-1549`
+/// makes the receiving list drop every rule accumulated so far
+/// (`pop_filter_list(listp)` at `exclude.c:1548`).
 fn clear_list_rule() -> FilterRuleWireFormat {
     FilterRuleWireFormat {
         rule_type: protocol::filters::RuleType::Clear,
@@ -361,8 +362,9 @@ fn old_prefix_record_rule(
     //
     // ⚠ REVERSION GUARD, not a live refusal: `read_patterns_from_file` trims
     // each record, so a `"- "` line arrives here as `"-"` and never reaches an
-    // empty pattern. Upstream's `parse_filter_file` (exclude.c:1774) keeps the
-    // trailing space and does refuse it; the trim is a separate pre-existing
+    // empty pattern. Upstream's `parse_filter_file` line loop breaks only on
+    // the newline for a non-word-split template (exclude.c:1772-1774), so it
+    // keeps the trailing space and does refuse it; the trim is pre-existing
     // divergence. The reachable refusal is the string-parameter one in
     // `push_old_prefix_token_rules`, pinned by
     // `exclude_string_empty_after_the_prefix_is_refused`.
@@ -378,7 +380,7 @@ fn old_prefix_record_rule(
 /// until the string is consumed. With `FILTRULE_WORD_SPLIT` each iteration
 /// skips leading whitespace (`exclude.c:1250-1255`), applies the
 /// `XFLG_OLD_PREFIXES` decision, then takes the pattern up to the next
-/// whitespace (`exclude.c:1457-1462`). So `exclude = - foo bar` is two rules:
+/// whitespace (`exclude.c:1458-1462`). So `exclude = - foo bar` is two rules:
 /// an exclude of `foo` and - from the template - an exclude of `bar`.
 ///
 /// The scan is on ASCII whitespace because upstream's is `isspace()` over the
