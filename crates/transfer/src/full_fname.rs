@@ -165,7 +165,7 @@ impl<'a> FullFnamePaths<'a> {
         // helper either an absolute path (the daemon and every wire-side
         // caller) or the operand spelling the user typed, which is already
         // relative to the working directory - so recover `fn` from both.
-        let tail = if path.is_absolute() {
+        let tail = if is_rooted(path) {
             slash_path(path.strip_prefix(self.curr_dir).ok()?)
         } else {
             slash_path(path)
@@ -200,6 +200,28 @@ impl<'a> FullFnamePaths<'a> {
         };
         Some(format!("{p1}{p2}{tail}"))
     }
+}
+
+/// Upstream's `*fn == '/'` test, on the leading byte.
+///
+/// upstream: `util1.c:1445` - `if (*fn == '/') p1 = p2 = "";`. The names that
+/// reach this module are rsync's own `/`-separated wire names, never
+/// host-native paths, so the question is literally "does this name begin with
+/// a slash" and the answer must not depend on the platform.
+///
+/// [`Path::is_absolute`] answers a DIFFERENT question. On Unix the two agree
+/// for every input, because there `is_absolute()` is defined as "begins with
+/// `/`". On Windows it additionally demands a drive prefix, so `/srv/mod/f`
+/// is NOT absolute there: the `else` arm would run, the whole server-side
+/// path would survive as `tail`, and it would then be spliced AFTER the
+/// `curr_dir` prefix instead of being stripped from the front -
+/// `"/sub" + "/" + "/srv/mod/sub/denied2"`.
+///
+/// `as_encoded_bytes` keeps the test allocation-free and byte-faithful for a
+/// non-UTF-8 name; inspecting a leading ASCII byte is exactly what its
+/// contract permits.
+fn is_rooted(path: &Path) -> bool {
+    path.as_os_str().as_encoded_bytes().first() == Some(&b'/')
 }
 
 /// Upstream's `curr_dir[]` for a process that never selected a module.
