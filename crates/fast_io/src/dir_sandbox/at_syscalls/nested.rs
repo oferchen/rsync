@@ -25,6 +25,15 @@
 //! `RESOLVE_NO_SYMLINKS`) is the deliberate choice: legitimate in-tree
 //! symlinks along the path stay resolvable, only escapes beneath the
 //! anchor are refused with `EXDEV`.
+//!
+//! Off Linux there is no `openat2`, so the anchor is resolved by
+//! [`DirSandbox::open_subdir_confined`](crate::dir_sandbox::DirSandbox::open_subdir_confined),
+//! oc's port of upstream's own portable resolver `ds_descend()`
+//! (`syscall.c:2891-2965`). It reaches the same decision on the same
+//! inputs and refuses with `ELOOP` rather than `EXDEV`. The confinement
+//! is the anchor descriptor itself, so it needs no confinement root -
+//! which is why it works for a non-daemon client, where upstream also
+//! leaves `confine_root` NULL (`syscall.c:142-143`).
 
 use std::ffi::OsStr;
 use std::io;
@@ -37,15 +46,15 @@ use std::path::{Component, Path};
 /// single-component fast path and the graceful-degradation contract stay
 /// byte-identical to today's behaviour.
 pub(super) enum ParentAnchor<'a> {
-    /// The parent was resolved under `RESOLVE_BENEATH`. The caller
+    /// The parent was resolved beneath the sandbox anchor. The caller
     /// issues the terminal `*at` op against `dirfd` with the leaf
     /// `name`.
     ///
-    /// Only constructed on Linux (via `openat2`); on other Unix targets
-    /// [`anchor_parent`] always returns [`ParentAnchor::Fallback`], so
-    /// the variant is dead there but still referenced by the callers'
-    /// `match` arms.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    /// Built by `openat2(RESOLVE_BENEATH)` on Linux and by the portable
+    /// per-component walk
+    /// ([`DirSandbox::open_subdir_confined`](crate::dir_sandbox::DirSandbox::open_subdir_confined))
+    /// elsewhere. Both admit a relative in-tree directory symlink and
+    /// refuse anything that leaves the anchor.
     Anchored {
         /// Owned parent dirfd; kept alive by the caller for the
         /// duration of the leaf op.
@@ -53,11 +62,10 @@ pub(super) enum ParentAnchor<'a> {
         /// Leaf component to pass to the terminal `*at` op.
         name: &'a OsStr,
     },
-    /// Nested anchoring is unavailable on this platform/kernel (no
-    /// `openat2`, or `RESOLVE_BENEATH` unsupported) or does not apply
-    /// (single-component path, no sandbox, path mismatch). The caller
-    /// takes its current single-component-or-path-based behaviour
-    /// unchanged.
+    /// Nested anchoring does not apply (single-component path, no
+    /// sandbox, path mismatch) or the Linux kernel lacks `openat2` /
+    /// `RESOLVE_BENEATH`. The caller takes its current
+    /// single-component-or-path-based behaviour unchanged.
     Fallback,
 }
 
@@ -67,24 +75,25 @@ pub(super) enum ParentAnchor<'a> {
 /// Returns:
 /// - [`ParentAnchor::Anchored`] with the parent dirfd + leaf name when
 ///   `sandbox` is `Some`, `full_path == dest_dir.join(relative_path)`,
-///   `relative_path` has two or more `Normal` components, and the kernel
-///   resolved the parent beneath the root.
+///   `relative_path` has two or more `Normal` components, and the parent
+///   resolved beneath the root.
 /// - [`ParentAnchor::Fallback`] when there is no sandbox, the path is a
 ///   single component, the reconstructed path does not match, the
 ///   relative path contains a non-`Normal` component (`..`, `.`,
-///   absolute prefix), or `openat2` / `RESOLVE_BENEATH` is unavailable
-///   on the running kernel. In every `Fallback` case the caller keeps
-///   its existing behaviour exactly.
+///   absolute prefix), or - on Linux only - `openat2` /
+///   `RESOLVE_BENEATH` is unavailable on the running kernel. In every
+///   `Fallback` case the caller keeps its existing behaviour exactly.
 ///
 /// # Errors
 ///
-/// Propagates the `openat2(2)` error when the parent open reaches the
+/// Propagates the resolver's error when the parent open reaches the
 /// kernel and is refused for a *security* reason: `EXDEV` (a `..` or
-/// symlink escape beneath the anchor), `ELOOP`, `ENOENT` (missing
-/// interior component), `ENOTDIR`. These are deliberate refusals - the
-/// caller must **not** fall back to a path-based syscall on this error,
-/// because doing so would re-open the TOCTOU window the anchor closes.
-/// Only `ENOSYS` / `EINVAL` on the resolve flags are folded into
+/// symlink escape beneath the anchor, Linux) or `ELOOP` (the same
+/// refusals off Linux), plus `ENOENT` (missing interior component) and
+/// `ENOTDIR`. These are deliberate refusals - the caller must **not**
+/// fall back to a path-based syscall on this error, because doing so
+/// would re-open the TOCTOU window the anchor closes. Only `ENOSYS` /
+/// `EINVAL` on the Linux resolve flags are folded into
 /// [`ParentAnchor::Fallback`] (kernel lacks the capability).
 pub(super) fn anchor_parent<'a>(
     sandbox: Option<&crate::dir_sandbox::DirSandbox>,
@@ -140,11 +149,53 @@ pub(super) fn anchor_parent<'a>(
 
     #[cfg(not(target_os = "linux"))]
     {
-        // No kernel-supported beneath-confinement on non-Linux Unix;
-        // keep today's path-based behaviour.
-        let _ = (sandbox, leaf, parent_rel);
-        Ok(ParentAnchor::Fallback)
+        // No `openat2` here, but confinement does not require it: upstream's
+        // own resolver is a portable per-component walk, and oc already ports
+        // it as `DirSandbox::open_subdir_confined` (upstream `ds_descend`,
+        // `syscall.c:2891-2965`). It admits and refuses exactly what
+        // `RESOLVE_BENEATH` does - a relative in-tree directory symlink is
+        // followed, an absolute target or a `..` above the anchor is refused -
+        // so the two arms agree on policy and differ only in errno (`ELOOP`
+        // here, `EXDEV` there).
+        //
+        // Returning `Fallback` instead sent the caller to
+        // `ConfinedFallback::confined()`, whose ownership walk TRUSTS a
+        // euid-owned symlink and whose escape check is inert without a
+        // `SESSION_ROOT`. A non-daemon client pull has no confinement root, so
+        // a peer-planted `--partial-dir` symlink was followed straight out of
+        // the destination tree - the
+        // `malicious-server-partial-basis-symlink-overwrite` cell.
+        match sandbox.open_subdir_confined(&parent_rel) {
+            Ok(dirfd) => Ok(ParentAnchor::Anchored { dirfd, name: leaf }),
+            // A refusal must stay a refusal. Degrading to a path-based syscall
+            // here would re-resolve every component through the ambient
+            // namespace and undo the walk that just said no.
+            Err(err) => Err(err),
+        }
     }
+}
+
+/// Returns `true` when [`anchor_parent`] resolves a multi-component path's
+/// parent beneath the sandbox root on this host, and `false` when it degrades
+/// to the caller's path-based fallback.
+///
+/// This is the capability the `*_via_sandbox_or_fallback` family branches on,
+/// and it is **not** the same question as
+/// [`openat2_supported`](crate::openat2_supported):
+///
+/// - **Off Linux** anchoring is always available: the parent resolves through
+///   [`DirSandbox::open_subdir_confined`](crate::dir_sandbox::DirSandbox::open_subdir_confined),
+///   oc's port of upstream's portable `ds_descend()` (`syscall.c:2891-2965`),
+///   which needs no kernel support.
+/// - **On Linux** anchoring uses `openat2(RESOLVE_BENEATH)`, so it tracks
+///   `openat2_supported()`. A kernel below 5.6 is the one state that degrades.
+///
+/// Ask this rather than re-deriving it from `openat2_supported()`. The two
+/// predicates agreed until the portable arm landed, so a site still spelling
+/// the old formula asserts the pre-change contract while looking correct.
+#[must_use]
+pub fn nested_parent_anchoring_supported() -> bool {
+    !cfg!(target_os = "linux") || crate::linux_capabilities::openat2_supported()
 }
 
 #[cfg(target_os = "linux")]

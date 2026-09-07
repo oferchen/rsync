@@ -100,11 +100,13 @@ fn lstat_via_sandbox_takes_at_path_for_single_component() {
 
 #[test]
 fn lstat_via_sandbox_multi_component_anchors_or_falls_back() {
-    // A multi-component relative path now resolves its parent under
-    // openat2(RESOLVE_BENEATH) where the kernel supports it, and only
-    // degrades to the path-based fallback where it does not. Assert the
-    // correct outcome variant for each capability state and confirm the
-    // reported dev/ino matches the real entry either way.
+    // A multi-component relative path resolves its parent beneath the
+    // sandbox anchor wherever anchoring is available - via
+    // openat2(RESOLVE_BENEATH) on Linux, via the portable per-component
+    // walk elsewhere - and degrades to the path-based fallback only on a
+    // Linux kernel without openat2. Assert the correct outcome variant
+    // for each state and confirm the reported dev/ino matches the real
+    // entry either way.
     let (_keep, root) = canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     std::fs::write(root.join("sub/file"), b"hello").expect("write");
@@ -114,15 +116,15 @@ fn lstat_via_sandbox_multi_component_anchors_or_falls_back() {
     let link = root.join(rel);
     let outcome = lstat_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &link).expect("lstat");
 
-    if crate::linux_capabilities::openat2_supported() {
+    if nested_anchor_live() {
         assert!(
             matches!(outcome, LstatOutcome::At(_)),
-            "multi-component paths must anchor via openat2(RESOLVE_BENEATH) when supported"
+            "multi-component paths must anchor beneath the sandbox root wherever anchoring is available"
         );
     } else {
         assert!(
             matches!(outcome, LstatOutcome::Std(_)),
-            "multi-component paths degrade to the path-based fallback without openat2"
+            "multi-component paths degrade to the path-based fallback on a Linux kernel without openat2"
         );
     }
 
@@ -1625,13 +1627,20 @@ fn read_dir_view_via_sandbox_matches_std_for_subdir_listing() {
 // confined to a parent resolved beneath the sandbox root, so a swapped
 // interior symlink (`a/b -> outside`) cannot redirect the op. On Linux
 // 5.6+ the anchor refuses the escape in-kernel (EXDEV/ELOOP/ENOTDIR);
-// on kernels/platforms without openat2 the helper degrades to today's
-// path-based behaviour, which these tests account for.
+// off Linux the portable per-component walk refuses it with ELOOP. Only
+// a Linux kernel lacking `openat2` degrades to the path-based
+// behaviour, which these tests account for.
 
-/// Returns whether `openat2(RESOLVE_BENEATH)` anchoring is live on this
-/// host. Off implies the graceful path-based fallback is exercised.
+/// Returns whether parent anchoring is live on this host.
+///
+/// Anchoring needs no kernel support off Linux: `anchor_parent` resolves
+/// the parent with `DirSandbox::open_subdir_confined`, oc's port of
+/// upstream's portable `ds_descend()` (`syscall.c:2891-2965`). So the one
+/// state that degrades to the path-based fallback is a Linux kernel
+/// without `openat2(RESOLVE_BENEATH)`. Off implies that fallback is
+/// exercised.
 fn nested_anchor_live() -> bool {
-    cfg!(target_os = "linux") && crate::linux_capabilities::openat2_supported()
+    super::nested_parent_anchoring_supported()
 }
 
 #[test]

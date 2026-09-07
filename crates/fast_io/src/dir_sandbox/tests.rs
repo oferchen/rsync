@@ -1450,3 +1450,112 @@ fn the_anchor_walk_cannot_exhaust_but_the_entered_walk_can() {
          succeeded, and one from the descent that exhausted; got: {emitted:?}"
     );
 }
+
+/// The portable parent-anchoring resolver: same admissions and refusals as
+/// `openat2(RESOLVE_BENEATH)`, and available on every Unix.
+///
+/// [`DirSandbox::open_subdir_confined`](super::DirSandbox::open_subdir_confined)
+/// is what `anchor_parent` walks on off Linux, so these cells are the only
+/// place a Linux CI leg can measure that arm's policy at all - the arm itself
+/// sits behind `#[cfg(not(target_os = "linux"))]` and cannot be entered here.
+///
+/// They deliberately install no confinement session: the anchor descriptor IS
+/// the confinement, exactly as upstream's `secure_relative_open(NULL, ...)`
+/// anchors on `AT_FDCWD` with a NULL `confine_root` for a non-daemon client
+/// (`receiver.c:1065-1071`, `syscall.c:142-143`).
+mod open_subdir_confined {
+    use super::{DirSandbox, canonical_tempdir, symlink};
+    use crate::dir_sandbox::fstatat_nofollow;
+    use std::ffi::OsStr;
+    use std::os::fd::AsFd;
+    use std::path::Path;
+
+    /// The `malicious-server-partial-basis-symlink-overwrite` fixture, reduced
+    /// to the one decision it turns on: the ESCAPING COMPONENT IS THE PREFIX.
+    /// A euid-owned ABSOLUTE symlink standing in for `--partial-dir` must be
+    /// refused, and refused for being absolute rather than for merely being a
+    /// symlink (the companion below proves the latter is still followed).
+    ///
+    /// upstream: `syscall.c:2953-2956` - `ds_descend()` sets `errno = ELOOP`
+    /// for an absolute `readlink` target without consulting any root.
+    #[test]
+    fn an_absolute_symlink_prefix_is_refused() {
+        let (_keep, root) = canonical_tempdir();
+        let dest = root.join("dest");
+        std::fs::create_dir_all(dest.join("escape")).expect("escape dir");
+        std::fs::create_dir(root.join("outside")).expect("outside");
+
+        // Absolute, and owned by this euid - the ownership walk would trust it.
+        symlink(root.join("outside"), dest.join("escape/.rsync-partial"))
+            .expect("absolute partial-dir symlink");
+
+        let sandbox = DirSandbox::open_root(&dest).expect("open dest");
+        let err = sandbox
+            .open_subdir_confined(Path::new("escape/.rsync-partial"))
+            .expect_err("an absolute symlink target leaves the anchor and must be refused");
+        assert_eq!(
+            err.raw_os_error(),
+            Some(libc::ELOOP),
+            "upstream refuses an absolute target with ELOOP; got {err:?}"
+        );
+    }
+
+    /// A `..` prefix cannot rise above the anchor either.
+    ///
+    /// upstream: `syscall.c:2896-2899` - popping an empty stack is `ELOOP`.
+    #[test]
+    fn a_relative_symlink_prefix_climbing_out_is_refused() {
+        let (_keep, root) = canonical_tempdir();
+        let dest = root.join("dest");
+        std::fs::create_dir_all(dest.join("escape")).expect("escape dir");
+        std::fs::create_dir(root.join("outside")).expect("outside");
+        symlink("../../outside", dest.join("escape/.rsync-partial"))
+            .expect("climbing partial-dir symlink");
+
+        let sandbox = DirSandbox::open_root(&dest).expect("open dest");
+        let err = sandbox
+            .open_subdir_confined(Path::new("escape/.rsync-partial"))
+            .expect_err("a `..` chain above the anchor must be refused");
+        assert_eq!(err.raw_os_error(), Some(libc::ELOOP), "got {err:?}");
+    }
+
+    /// Non-vacuity companion. "Refuse every symlink" would satisfy both cells
+    /// above while breaking a plain `oc-rsync -a src/ dst/` into a `dst/` whose
+    /// subdirectory is a symlink. upstream splices a RELATIVE in-tree target
+    /// back into the walk (`syscall.c:2961`) rather than refusing it.
+    #[test]
+    fn a_relative_in_tree_directory_symlink_is_still_followed() {
+        let (_keep, root) = canonical_tempdir();
+        let dest = root.join("dest");
+        std::fs::create_dir_all(dest.join("real/inner")).expect("real dir");
+        std::fs::write(dest.join("real/inner/marker"), b"in tree").expect("marker");
+        symlink("real", dest.join("link")).expect("in-tree symlink");
+
+        let sandbox = DirSandbox::open_root(&dest).expect("open dest");
+        let dirfd = sandbox
+            .open_subdir_confined(Path::new("link/inner"))
+            .expect("a relative in-tree directory symlink is ordinary content");
+
+        // Assert on WHERE the walk landed, not merely that it returned a fd:
+        // the marker exists only under real/inner.
+        fstatat_nofollow(dirfd.as_fd(), OsStr::new("marker"))
+            .expect("the walk must land in real/inner");
+    }
+
+    /// A plain multi-component path with no symlink at all must resolve, or
+    /// the anchoring arm would have turned every nested receiver op into an
+    /// error on the platforms that take it.
+    #[test]
+    fn a_plain_nested_path_resolves() {
+        let (_keep, root) = canonical_tempdir();
+        let dest = root.join("dest");
+        std::fs::create_dir_all(dest.join("a/b")).expect("nested dirs");
+        std::fs::write(dest.join("a/b/marker"), b"plain").expect("marker");
+
+        let sandbox = DirSandbox::open_root(&dest).expect("open dest");
+        let dirfd = sandbox
+            .open_subdir_confined(Path::new("a/b"))
+            .expect("a plain nested path must resolve");
+        fstatat_nofollow(dirfd.as_fd(), OsStr::new("marker")).expect("the walk must land in a/b");
+    }
+}
