@@ -101,7 +101,7 @@ link-dest-relative-basis pass
 malicious-dot-dir-delete-scope pass
 malicious-dot-file-delete-scope pass
 malicious-sender-delete-scope pass
-malicious-server-partial-basis-symlink-overwrite fail
+malicious-server-partial-basis-symlink-overwrite pass
 match-append-empty-nullmap skip
 match-want-i-nolen skip
 misc-coverage pass
