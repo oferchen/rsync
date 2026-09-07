@@ -62,6 +62,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// answer it produced.
 static SESSION_OPTOUT: AtomicBool = AtomicBool::new(false);
 
+/// The session's answer to [`Activation::chrooted`], published for code that
+/// must mirror an upstream decision branching on `am_chrooted`.
+///
+/// Stored for the same reason as [`SESSION_OPTOUT`]: upstream reads
+/// `am_chrooted` as a process global, and a chroot IS a process-wide fact -
+/// unlike a module's `insecure links` directive, which is per-connection
+/// policy and is therefore carried on the connection rather than here.
+///
+/// Only the derived bit is stored, never the whole [`DaemonState`]:
+/// [`Activation`] stays the single place the rule is written down.
+static SESSION_CHROOTED: AtomicBool = AtomicBool::new(false);
+
 /// Publish `activation`'s opt-out answer for the ownership walk.
 ///
 /// Call once, as early as the flag and the daemon/module state are both known.
@@ -73,6 +85,7 @@ static SESSION_OPTOUT: AtomicBool = AtomicBool::new(false);
 /// caller is without making it invent values for fields its arm ignores.
 pub fn install_session(activation: &Activation) {
     SESSION_OPTOUT.store(activation.optout_allowed(), Ordering::Relaxed);
+    SESSION_CHROOTED.store(activation.chrooted(), Ordering::Relaxed);
     // The pinned descriptor names the PREVIOUS root, so it stops being an
     // answer the moment the root changes. Dropping it here keeps one
     // invariant - the pin, when present, is always this root's - instead of
@@ -388,6 +401,20 @@ pub fn session_optout_allowed() -> bool {
     SESSION_OPTOUT.load(Ordering::Relaxed)
 }
 
+/// Whether this session runs inside a per-module `chroot()`.
+///
+/// This is upstream's `am_chrooted`, and it is the one fact in
+/// [`ModuleState`] that no per-connection config can answer: a chroot changes
+/// the process's root directory, so it is a property of the process and not of
+/// the connection.
+///
+/// upstream: `clientserver.c:1055` - the sole assignment of `am_chrooted`,
+/// inside `rsync_module()`'s per-module `use chroot` handling.
+#[must_use]
+pub fn session_is_chrooted() -> bool {
+    SESSION_CHROOTED.load(Ordering::Relaxed)
+}
+
 /// Which end of the transfer this process is.
 ///
 /// Upstream spells this `am_sender`. The generator is part of the receiving
@@ -610,7 +637,11 @@ impl Activation {
         matches!(self.daemon, DaemonState::Daemon(_))
     }
 
-    fn chrooted(&self) -> bool {
+    /// Whether this session runs inside a per-module `chroot()` - upstream's
+    /// `am_chrooted`. Always false off the daemon path, matching upstream's
+    /// single assignment site (`clientserver.c:1055`).
+    #[must_use]
+    pub fn chrooted(&self) -> bool {
         match &self.daemon {
             DaemonState::Daemon(module) => module.chrooted,
             DaemonState::NotDaemon => false,
@@ -655,6 +686,37 @@ mod tests {
             selected: true,
             insecure_links: ModuleInsecureLinks::default(),
         }
+    }
+
+    /// [`install_session`] must publish `am_chrooted`, not merely accept it.
+    /// A caller that branches on `session_is_chrooted()` reads a stale answer
+    /// otherwise, and a stale `false` silently applies a confinement upstream
+    /// stands down for a chrooted daemon.
+    ///
+    /// upstream: `clientserver.c:1055` - the sole assignment of `am_chrooted`.
+    #[test]
+    fn install_session_publishes_the_chroot_state() {
+        let mut chrooted_module = module_at("/srv/mod");
+        chrooted_module.chrooted = true;
+        install_session(&daemon(Role::Receiver, chrooted_module));
+        assert!(
+            session_is_chrooted(),
+            "a chrooted daemon session must report am_chrooted"
+        );
+
+        // Non-vacuity: the same installer clears it again, so the bit tracks
+        // the session rather than latching on first use.
+        install_session(&daemon(Role::Receiver, module_at("/srv/mod")));
+        assert!(
+            !session_is_chrooted(),
+            "a non-chrooted daemon session must clear am_chrooted"
+        );
+
+        install_session(&not_daemon(Role::Receiver));
+        assert!(
+            !session_is_chrooted(),
+            "upstream never sets am_chrooted off the daemon path"
+        );
     }
 
     /// One reachable combination of upstream's five inputs, with the value

@@ -1253,9 +1253,45 @@ pub fn operator_read_to_string_confined(path: &Path) -> io::Result<String> {
 /// leaf, and `io::ErrorKind::NotFound` when the path-based stat disagrees with
 /// the confined one about which inode the leaf names.
 pub fn operator_symlink_metadata(path: &Path) -> io::Result<std::fs::Metadata> {
+    operator_symlink_metadata_kind(path, crate::confinement::PathKind::Ancillary)
+}
+
+/// [`operator_symlink_metadata`] with the leaf additionally judged against the
+/// session's confinement root.
+///
+/// The ownership rule alone answers *who planted this symlink*; it does not
+/// answer *where following it lands*. A daemon's own module tree is owned by
+/// the daemon uid, so an in-module symlink pointing OUTSIDE the module is
+/// trusted-owned and the plain walk follows it. Confining the leaf is what
+/// turns that into a refusal, and it is the whole of upstream's second
+/// `basis_link_stat()` arm.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/generator.c:1004-1018` `basis_link_stat()` arm 2 - it sets
+///   `operator_path_resolve = 1` around `owner_walk_parent()` and then
+///   `do_lstat_atfd()`s the leaf through the returned descriptor, so the walk
+///   applies the module-root boundary that the unflagged arm 1 does not.
+///
+/// # Errors
+///
+/// As [`operator_symlink_metadata`], plus the `ELOOP` that
+/// [`owner_trusted_parent_kind`] reports when the resolved leaf lands outside
+/// the confinement root.
+pub fn operator_symlink_metadata_confined(path: &Path) -> io::Result<std::fs::Metadata> {
+    operator_symlink_metadata_kind(path, crate::confinement::PathKind::Confined)
+}
+
+/// The shared body of the two `operator_symlink_metadata*` spellings: one
+/// implementation, with the confinement decision handed in rather than
+/// duplicated.
+fn operator_symlink_metadata_kind(
+    path: &Path,
+    kind: crate::confinement::PathKind,
+) -> io::Result<std::fs::Metadata> {
     use std::os::unix::fs::MetadataExt as _;
 
-    let (parent, leaf) = owner_trusted_parent(path)?;
+    let (parent, leaf) = owner_trusted_parent_kind(path, kind)?;
     let confined = crate::fstatat_nofollow(parent.as_fd(), &leaf)?;
     let meta = std::fs::symlink_metadata(path)?;
     if meta.dev() == confined.dev() && meta.ino() == confined.ino() {
@@ -1312,7 +1348,7 @@ mod tests {
             "motd line\n"
         );
     }
-    use super::operator_symlink_metadata;
+    use super::{operator_symlink_metadata, operator_symlink_metadata_confined};
     use std::io::{Read, Write};
     use std::os::unix::fs::symlink;
     use tempfile::TempDir;
@@ -1371,6 +1407,94 @@ mod tests {
     fn operator_symlink_metadata_reports_a_missing_leaf_as_an_error() {
         let temp = TempDir::new().expect("tempdir");
         assert!(operator_symlink_metadata(&temp.path().join("absent")).is_err());
+    }
+
+    /// The confined spelling refuses a parent symlink that leaves the session
+    /// root, and the unconfined one - on the SAME fixture, in the SAME session -
+    /// still follows it.
+    ///
+    /// The pair is the point. The link is owned by this euid, so the ownership
+    /// rule trusts it; only the module-root judgement on the resolved leaf
+    /// refuses it. A `operator_symlink_metadata_confined` that merely delegated
+    /// to the ancillary walk would pass every "does it work" test and close
+    /// nothing.
+    ///
+    /// upstream: `rsync-3.5.0/generator.c:1004-1018` `basis_link_stat()` arm 2 -
+    /// the `operator_path_resolve = 1` that the ancillary arm 1 leaves clear.
+    #[test]
+    fn the_confined_stat_refuses_a_parent_that_leaves_the_module() {
+        use crate::confinement::{
+            LocalInsecureLinks, ModuleInsecureLinks, ModuleState, install_daemon_session,
+            install_local_session,
+        };
+
+        let temp = TempDir::new().expect("tempdir");
+        // The session root is stored PHYSICAL, and the walk resolves
+        // physically, so build the fixture from the canonical path.
+        let base = temp.path().canonicalize().expect("canonicalise tempdir");
+
+        let outside = base.join("outside");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        std::fs::write(outside.join("tgtfile"), b"secret").expect("write");
+
+        let module = base.join("module");
+        std::fs::create_dir(&module).expect("mkdir module");
+        symlink("../outside", module.join("evil")).expect("symlink");
+
+        install_daemon_session(ModuleState {
+            root: Some(module.clone()),
+            chrooted: false,
+            selected: true,
+            insecure_links: ModuleInsecureLinks::from_module_config(false),
+        });
+
+        let basis = module.join("evil/tgtfile");
+        let confined = operator_symlink_metadata_confined(&basis);
+        let ancillary = operator_symlink_metadata(&basis);
+
+        install_local_session(LocalInsecureLinks::from_local_flag(false), None);
+
+        assert!(
+            confined.is_err(),
+            "a leaf resolving outside the module root must be refused"
+        );
+        assert!(
+            ancillary.is_ok(),
+            "the ownership walk alone trusts this self-owned link, which is \
+             why the confined spelling has to exist"
+        );
+    }
+
+    /// Non-vacuity companion: inside the same module, the confined stat still
+    /// answers. Without it, "refuse everything" would satisfy the test above.
+    #[test]
+    fn the_confined_stat_still_answers_inside_the_module() {
+        use crate::confinement::{
+            LocalInsecureLinks, ModuleInsecureLinks, ModuleState, install_daemon_session,
+            install_local_session,
+        };
+
+        let temp = TempDir::new().expect("tempdir");
+        let base = temp.path().canonicalize().expect("canonicalise tempdir");
+        let module = base.join("module");
+        std::fs::create_dir(&module).expect("mkdir module");
+        std::fs::write(module.join("tgtfile"), b"payload").expect("write");
+
+        install_daemon_session(ModuleState {
+            root: Some(module.clone()),
+            chrooted: false,
+            selected: true,
+            insecure_links: ModuleInsecureLinks::from_module_config(false),
+        });
+
+        let meta = operator_symlink_metadata_confined(&module.join("tgtfile"));
+
+        install_local_session(LocalInsecureLinks::from_local_flag(false), None);
+
+        assert_eq!(
+            meta.expect("an in-module basis must still stat").len(),
+            b"payload".len() as u64
+        );
     }
 
     /// A plain path with no symlink anywhere resolves and opens normally - the
