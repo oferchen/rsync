@@ -2859,6 +2859,37 @@ mod module_access_tests {
         assert_eq!(strip_keyword_prefix("include *.tmp", "exclude"), None);
     }
 
+    /// upstream: `exclude.c:1222` - `rule_strcmp` accepts `_` as a keyword
+    /// separator. The set this replaced was `' '` or `','` alone, so `_` made
+    /// the token not-a-keyword and it fell through to the bare-pattern arm.
+    #[test]
+    fn strip_keyword_prefix_underscore_separator() {
+        assert_eq!(strip_keyword_prefix("hide_bar", "hide"), Some("bar"));
+    }
+
+    /// upstream: `exclude.c:1222` - `rule_strcmp` tests `isspace`, so a TAB is
+    /// in the terminator set this function shares with the tokenizer. Keeping
+    /// one terminator set with one owner is why the arm exists.
+    ///
+    /// ⚠ THE PREMISE IS UPSTREAM'S, THE CONCLUSION IS NOT UPSTREAM'S FOR THIS
+    /// DIRECTIVE, and the distinction is measured rather than reasoned. Against
+    /// a real rsync 3.5.0 daemon, `filter = exclude\tbar` REFUSES the module
+    /// (`unexpected end of filter rule`), because the word-split loop
+    /// (`exclude.c:1250-1255`) consumes the tab BEFORE `rule_strcmp` is ever
+    /// reached, leaving the keyword patternless. Upstream therefore never
+    /// exercises its own tab branch here; `_` behaves differently and IS
+    /// faithful, since it is not whitespace and survives the split.
+    ///
+    /// So this cell pins oc's terminator set, NOT a shape upstream accepts.
+    /// oc builds a rule where upstream refuses the module - the same
+    /// accept-where-upstream-refuses class the doubled-separator shapes fall
+    /// into, tracked separately. Do NOT read it as "upstream parses
+    /// `exclude\tbar` as an exclude of `bar`" - it does not.
+    #[test]
+    fn strip_keyword_prefix_tab_separator() {
+        assert_eq!(strip_keyword_prefix("hide\tbar", "hide"), Some("bar"));
+    }
+
     #[test]
     fn read_patterns_from_file_basic() {
         let dir = tempfile::tempdir().unwrap();
@@ -3161,6 +3192,76 @@ mod module_access_tests {
     fn split_filter_tokens_bare_pattern() {
         let tokens = split_filter_tokens("*.bak");
         assert_eq!(tokens, vec!["*.bak"]);
+    }
+
+    /// A keyword at END OF STRING terminates and opens its own token.
+    ///
+    /// upstream: `exclude.c:1218-1227` `rule_strcmp` accepts the end of the
+    /// string as a terminator. The prefix table this replaced required a
+    /// trailing SPACE on every keyword, so a line-final `clear` matched
+    /// nothing, no boundary opened, and the whole line collapsed into ONE rule
+    /// whose pattern was the literal text `foo clear`.
+    #[test]
+    fn split_filter_tokens_line_final_keyword_opens_its_own_token() {
+        let tokens = split_filter_tokens("- foo clear");
+        assert_eq!(tokens, vec!["- foo", "clear"]);
+    }
+
+    /// `_` terminates a keyword exactly as whitespace does.
+    ///
+    /// upstream: `exclude.c:1222` - `rule_strcmp` accepts `_` as a separator.
+    #[test]
+    fn split_filter_tokens_underscore_terminated_keyword_opens_its_own_token() {
+        let tokens = split_filter_tokens("- foo hide_bar");
+        assert_eq!(tokens, vec!["- foo", "hide_bar"]);
+    }
+
+    /// NON-VACUITY COMPANION for the two cells above.
+    ///
+    /// Without this, both would also pass if the split had been loosened to
+    /// "any token STARTING WITH a keyword", which is the obvious wrong fix and
+    /// is what upstream's terminator rule exists to prevent: `hideout` is NOT a
+    /// `hide` rule, because `o` is not a separator - `rule_strcmp`
+    /// (`exclude.c:1218-1227`) returns NULL and no keyword matches.
+    ///
+    /// ⚠ THIS CELL PINS THE TOKENIZER ONLY, AND UPSTREAM AND oc PART COMPANY
+    /// IMMEDIATELY AFTER IT. MEASURED against a real rsync 3.5.0 daemon:
+    /// `filter = hideout` and `filter = - foo hideout` both make upstream
+    /// REFUSE the module - `Unknown filter rule: hideout`, exit 1 at
+    /// `exclude.c:136` - because a token matching no keyword falls to
+    /// upstream's `default:` arm. oc instead falls through to its bare-pattern
+    /// arm and builds an exclude of the literal text, so it serves where
+    /// upstream refuses.
+    ///
+    /// That over-acceptance is a SEPARATE defect from this commit's terminator
+    /// rule and is tracked on its own; the same measurement shows `mergeX`
+    /// refused identically, so it is the whole unrecognised-word class, not one
+    /// spelling. Do NOT read this assertion as "upstream treats `hideout` as a
+    /// pattern" - it does not.
+    #[test]
+    fn split_filter_tokens_unterminated_keyword_opens_no_token() {
+        let tokens = split_filter_tokens("- foo hideout");
+        assert_eq!(tokens, vec!["- foo hideout"]);
+    }
+
+    /// The END-TO-END cell: a line-final `clear` must reach the rule list as a
+    /// CLEAR rule, not as pattern text.
+    ///
+    /// The tokenizer cells above cannot show this on their own - splitting the
+    /// token is necessary but not sufficient, since the token still has to
+    /// parse into a rule. This is the assertion that would have caught the
+    /// defect from the outside.
+    #[test]
+    fn build_daemon_filter_rules_line_final_clear_builds_a_clear_rule() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            filter: vec!["- foo clear".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 2, "expected an exclude and a clear: {rules:?}");
+        assert_eq!(rules[0].pattern, "foo");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Clear);
     }
 
     #[test]
