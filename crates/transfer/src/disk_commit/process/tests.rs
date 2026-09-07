@@ -953,9 +953,12 @@ fn commit_rename_refuses_parent_symlink_escape() {
 /// upstream: `syscall.c:910` `do_rename_at()` opens each slashed path's parent
 /// via `secure_relative_open()` before `renameat()`.
 ///
-/// Linux + openat2 only: `RESOLVE_BENEATH` is the confinement primitive and has
-/// no portable equivalent; other targets keep the path-based fallback, matching
-/// upstream's `am_daemon && !am_chrooted` Linux gate.
+/// Linux + openat2 only, by test scope rather than by capability: off Linux the
+/// anchor now resolves through `DirSandbox::open_subdir_confined`, the portable
+/// port of upstream's `ds_descend()`, so the refusal this pins is available
+/// there too (reported with `ELOOP` instead of `EXDEV`). Extending the cell to
+/// macOS/BSD is a coverage gap, not a capability gap - it needs its own run on
+/// those targets before the `cfg` comes off.
 #[cfg(target_os = "linux")]
 #[test]
 fn commit_rename_subdir_refuses_interior_symlink_escape() {

@@ -95,12 +95,15 @@ fn sandbox_anchored_lstat_dev_ino_matches_path_lstat() {
 
 #[test]
 fn multi_component_path_anchors_or_falls_back_lstat() {
-    // A multi-component relative path now resolves its parent under
-    // openat2(RESOLVE_BENEATH) where the kernel supports it (Linux 5.6+,
-    // the CI runners) and only degrades to the path-based fallback where
-    // it does not (macOS, older kernels). Gate the expected outcome on
-    // the capability probe and confirm dev/ino match the real entry in
-    // both states.
+    // A multi-component relative path resolves its parent beneath the
+    // sandbox anchor wherever anchoring is available - via
+    // openat2(RESOLVE_BENEATH) on Linux, via the portable per-component
+    // walk (upstream `ds_descend`, syscall.c:2891-2965) elsewhere - and
+    // degrades to the path-based fallback only on a Linux kernel without
+    // openat2. Gate on fast_io's own predicate rather than re-deriving it
+    // from openat2_supported(): anchoring off Linux does not follow from
+    // that probe, and a site spelling the old formula would assert the
+    // pre-change contract while looking correct.
     let (_keep, root) = canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let file_path = root.join("sub/file");
@@ -112,15 +115,15 @@ fn multi_component_path_anchors_or_falls_back_lstat() {
     let outcome = lstat_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &file_path)
         .expect("multi-comp lstat");
 
-    if fast_io::openat2_supported() {
+    if fast_io::nested_parent_anchoring_supported() {
         assert!(
             matches!(outcome, LstatOutcome::At(_)),
-            "multi-component paths must anchor via openat2(RESOLVE_BENEATH) when supported"
+            "multi-component paths must anchor beneath the sandbox root wherever anchoring is available"
         );
     } else {
         assert!(
             matches!(outcome, LstatOutcome::Std(_)),
-            "multi-component paths degrade to the path-based fallback without openat2"
+            "multi-component paths degrade to the path-based fallback on a Linux kernel without openat2"
         );
     }
 
