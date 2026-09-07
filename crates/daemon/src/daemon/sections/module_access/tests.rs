@@ -4167,6 +4167,57 @@ mod module_access_tests {
     }
 
     #[test]
+    fn resolve_sender_sources_glob_backslash_escapes_star() {
+        // upstream: util1.c:765 - the daemon glob matches each dirent with
+        // wildmatch(), where a pattern `\` escapes the next char
+        // (lib/wildmatch.c:86). `a\*` must match only the literal name `a*`.
+        // Measured against upstream 3.5.0: a daemon pull of `mod/a\*` serves
+        // the file literally named `a*` and nothing else.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let module_path = tmp.path();
+        std::fs::write(module_path.join("a*"), b"star").expect("a*");
+        std::fs::write(module_path.join("ab.txt"), b"ab").expect("ab.txt");
+
+        let args = vec![".".to_owned(), "mod/a\\*".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "mod", false);
+        assert_eq!(sources, vec![module_path.join("a*")]);
+    }
+
+    #[test]
+    fn resolve_sender_sources_glob_backslash_escapes_literal_char() {
+        // upstream: lib/wildmatch.c:86-91 - `\b` in a pattern means a literal
+        // `b`, NOT a literal backslash. `a\b*` therefore matches `ab.txt` and
+        // must NOT match the literal-backslash name `a\b.txt`. Measured
+        // against upstream 3.5.0: the daemon serves `ab.txt` for `mod/a\b*`
+        // (the client's own implied-include rule then rejects it - that side
+        // is pinned in the filters crate).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let module_path = tmp.path();
+        std::fs::write(module_path.join("a\\b.txt"), b"bs").expect("a\\b.txt");
+        std::fs::write(module_path.join("ab.txt"), b"ab").expect("ab.txt");
+
+        let args = vec![".".to_owned(), "mod/a\\b*".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "mod", false);
+        assert_eq!(sources, vec![module_path.join("ab.txt")]);
+    }
+
+    #[test]
+    fn resolve_sender_sources_glob_class_with_escaped_bracket() {
+        // upstream: lib/wildmatch.c:154-161 - inside a `[...]` class a `\`
+        // escapes the next char, so `[\]]*` is a class holding `]`. Measured
+        // against upstream 3.5.0: a daemon pull of `mod/[\]]*` serves the
+        // file named `]x`.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let module_path = tmp.path();
+        std::fs::write(module_path.join("]x"), b"bracket").expect("]x");
+        std::fs::write(module_path.join("ax"), b"ax").expect("ax");
+
+        let args = vec![".".to_owned(), "mod/[\\]]*".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "mod", false);
+        assert_eq!(sources, vec![module_path.join("]x")]);
+    }
+
+    #[test]
     fn resolve_sender_sources_non_glob_paths_bypass_expansion() {
         // Plain paths without glob metachars must fall through unchanged,
         // even when the file does not exist on disk - upstream defers the

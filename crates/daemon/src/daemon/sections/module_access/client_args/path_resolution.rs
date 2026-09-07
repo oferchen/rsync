@@ -457,80 +457,18 @@ fn expand_relative_glob(base: &std::path::Path, rel: &std::path::Path) -> Vec<st
     current
 }
 
-/// Single-segment glob matcher: `*` matches any run, `?` matches one byte,
-/// `[abc]` / `[!abc]` matches a character class. Mirrors `glob(3)` for the
-/// subset of patterns rsync emits.
+/// Single-segment glob matcher, delegated to the same `wildmatch()` port the
+/// filter engine uses.
+///
+/// upstream: `util1.c:765` - the daemon glob matches each dirent with
+/// `wildmatch(arg, dname)`, NOT with POSIX `glob(3)`. That gives the segment
+/// upstream's full pattern grammar: `\` escapes the next char both outside
+/// and inside a `[...]` class (lib/wildmatch.c:86, 154-161), so `a\*` matches
+/// only the literal name `a*` and `[\]]` is a class holding `]`. A segment
+/// never contains `/`, so wildmatch's slash-restricted `*`/`?` semantics
+/// reduce to plain single-segment globbing here.
 fn glob_match_segment(pattern: &str, name: &str) -> bool {
-    let pat = pattern.as_bytes();
-    let s = name.as_bytes();
-    fn go(p: &[u8], s: &[u8]) -> bool {
-        let mut pi = 0;
-        let mut si = 0;
-        let mut star: Option<(usize, usize)> = None;
-        while si < s.len() {
-            if pi < p.len() {
-                match p[pi] {
-                    b'?' => {
-                        pi += 1;
-                        si += 1;
-                        continue;
-                    }
-                    b'*' => {
-                        star = Some((pi + 1, si));
-                        pi += 1;
-                        continue;
-                    }
-                    b'[' => {
-                        // Find matching `]`.
-                        let mut end = pi + 1;
-                        let negate = end < p.len() && p[end] == b'!';
-                        if negate {
-                            end += 1;
-                        }
-                        let class_start = end;
-                        while end < p.len() && p[end] != b']' {
-                            end += 1;
-                        }
-                        if end >= p.len() {
-                            // Malformed class - treat `[` as literal.
-                            if p[pi] == s[si] {
-                                pi += 1;
-                                si += 1;
-                                continue;
-                            }
-                        } else {
-                            let class = &p[class_start..end];
-                            let matched = class.contains(&s[si]);
-                            if matched != negate {
-                                pi = end + 1;
-                                si += 1;
-                                continue;
-                            }
-                        }
-                    }
-                    c => {
-                        if c == s[si] {
-                            pi += 1;
-                            si += 1;
-                            continue;
-                        }
-                    }
-                }
-            }
-            if let Some((ps, ss)) = star {
-                pi = ps;
-                si = ss + 1;
-                star = Some((ps, ss + 1));
-            } else {
-                return false;
-            }
-        }
-        while pi < p.len() && p[pi] == b'*' {
-            pi += 1;
-        }
-        pi == p.len()
-    }
-    go(pat, s)
+    filters::wildmatch(pattern.as_bytes(), name.as_bytes())
 }
 
 /// Collapses `.` and `..` in a module-relative tail, the `Path`-typed
