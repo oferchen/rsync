@@ -88,10 +88,18 @@ pub(crate) struct ModuleRuntime {
 /// Error returned when a module connection cannot be established.
 #[derive(Debug)]
 pub(crate) enum ModuleConnectionError {
-    /// The module's connection limit has been reached. Carries the configured
-    /// number verbatim, so a module disabled with a negative `max connections`
-    /// reports its minus sign exactly as upstream's `%d` does.
-    Limit(i32),
+    /// The module's connection limit has been reached.
+    ///
+    /// `configured` carries the configured number verbatim, so a module
+    /// disabled with a negative `max connections` reports its minus sign
+    /// exactly as upstream's `%d` does. `active` is the number of connections
+    /// observed by the mechanism that actually refused - the lock file when one
+    /// is configured, otherwise the process-local counter. Carrying it on the
+    /// refusal is what keeps the diagnostic truthful once each session runs in
+    /// its own process: a forked child's counter starts at zero and can never
+    /// see its siblings, so reading it back at the logging site would report a
+    /// count no mechanism ever decided on.
+    Limit { configured: i32, active: u32 },
     /// An I/O error occurred while managing connection state.
     Io(io::Error),
 }
@@ -100,6 +108,15 @@ impl ModuleConnectionError {
     /// Creates an `Io` variant from the given error.
     pub(in crate::daemon) const fn io(error: io::Error) -> Self {
         Self::Io(error)
+    }
+
+    /// Creates a `Limit` refusal from the mechanism that observed `active`
+    /// connections while enforcing `configured`.
+    pub(in crate::daemon) const fn limit(configured: MaxConnections, active: u32) -> Self {
+        Self::Limit {
+            configured: configured.display_value(),
+            active,
+        }
     }
 }
 
@@ -152,7 +169,9 @@ impl ModuleRuntime {
                 self.acquire_local_slot(limit)?;
                 Ok(ModuleConnectionGuard::limited(self, lock_guard))
             }
-            None => Err(ModuleConnectionError::Limit(configured.display_value())),
+            // A disabling limit holds no slots, so nothing is active: the
+            // module is refused by its own configuration, not by capacity.
+            None => Err(ModuleConnectionError::limit(configured, 0)),
         }
     }
 
@@ -162,8 +181,9 @@ impl ModuleRuntime {
         let mut current = self.active_connections.load(Ordering::Acquire);
         loop {
             if current >= limit_value {
-                return Err(ModuleConnectionError::Limit(
-                    MaxConnections::Limited(limit).display_value(),
+                return Err(ModuleConnectionError::limit(
+                    MaxConnections::Limited(limit),
+                    current,
                 ));
             }
 

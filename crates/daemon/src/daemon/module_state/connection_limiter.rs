@@ -175,7 +175,10 @@ impl ConnectionLimiter {
             }
         }
 
-        Err(ModuleConnectionError::Limit(limit.display_value()))
+        // Every slot in `[0, slot_count)` was held, so that count is exactly
+        // how many connections the lock file - the cross-process owner of the
+        // decision - observes.
+        Err(ModuleConnectionError::limit(limit, limit.slot_count()))
     }
 }
 
@@ -273,7 +276,7 @@ impl ConnectionLimiter {
         let mut counts = self.read_counts(file)?;
         let current = counts.get(module).copied().unwrap_or(0);
         if current >= limit.slot_count() {
-            return Err(ModuleConnectionError::Limit(limit.display_value()));
+            return Err(ModuleConnectionError::limit(limit, current));
         }
 
         counts.insert(module.to_owned(), current.saturating_add(1));

@@ -27,7 +27,9 @@ fn connection_limiter_reclaims_slot_on_close_without_decrement() {
     // At capacity: the sole slot's byte range is locked.
     assert!(matches!(
         limiter.acquire("docs", MaxConnections::Limited(limit)),
-        Err(ModuleConnectionError::Limit(l)) if l == MaxConnections::Limited(limit).display_value()
+        Err(ModuleConnectionError::Limit { configured, active })
+            if configured == MaxConnections::Limited(limit).display_value()
+                && active == limit.get()
     ));
 
     // No count is persisted, so a crash here would leave nothing to inflate the

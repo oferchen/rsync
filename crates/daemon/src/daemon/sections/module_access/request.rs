@@ -229,10 +229,15 @@ fn send_daemon_ok(
 /// the event. `limit` is the configured number rendered verbatim, so a module
 /// disabled with a negative `max connections` keeps its minus sign, matching
 /// upstream's `%d` in clientserver.c:746-757.
+///
+/// `active` arrives on the refusal itself rather than being read back from the
+/// module, because the mechanism that refused is the only one that knows it:
+/// once each session runs in its own process, the module's own counter sees
+/// only that process's connections.
 fn handle_max_connections_exceeded(
     ctx: &mut ModuleRequestContext<'_>,
-    module: &ModuleRuntime,
     limit: i32,
+    active: u32,
 ) -> io::Result<()> {
     send_error(
         ctx.reader.get_mut(),
@@ -242,16 +247,13 @@ fn handle_max_connections_exceeded(
         },
     )?;
     if let Some(log) = ctx.log_sink {
-        let current = module
-            .active_connections
-            .load(std::sync::atomic::Ordering::Acquire);
         log_module_limit(
             log,
             ctx.host_display(),
             ctx.peer_ip,
             ctx.request,
             limit,
-            current,
+            active,
         );
     }
     Ok(())
