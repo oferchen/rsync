@@ -192,7 +192,16 @@ fn dont_compress_is_match_all(value: &str) -> bool {
 ///
 /// The order matches upstream: filter, include_from, include, exclude_from, exclude.
 ///
-/// upstream: clientserver.c:874-893 - `rsync_module()` builds `daemon_filter_list`.
+/// upstream: clientserver.c:933-952 - `rsync_module()` builds `daemon_filter_list`.
+///
+/// Four of the five carry `XFLG_OLD_PREFIXES` - every one except `filter`,
+/// which gets the full filter-rule grammar instead. Under that flag a leading
+/// `- ` or `+ ` is an ACTION PREFIX that is stripped from the pattern, and a
+/// token that is exactly `!` clears the list. Taking the record verbatim
+/// instead turns `- foo` into a pattern that matches a file literally named
+/// `- foo`, so the entry the operator wrote it to hide is served.
+/// [`old_prefix_record_rule`] and [`push_old_prefix_token_rules`] own that
+/// decision for the file and string spellings respectively.
 fn build_daemon_filter_rules(
     module: &ModuleRuntime,
 ) -> Result<Vec<FilterRuleWireFormat>, io::Error> {
@@ -217,39 +226,181 @@ fn build_daemon_filter_rules(
     if let Some(ref path) = module.include_from {
         let patterns = read_patterns_from_file(path)?;
         for pattern in patterns {
-            rules.push(build_pattern_rule(&pattern, true));
+            rules.push(old_prefix_record_rule(&pattern, true)?);
         }
     }
 
     // 3. include rules - bare patterns, word-split on whitespace
-    // upstream: clientserver.c:882 - parse_filter_str(&daemon_filter_list, lp_include(i),
-    //           rule_template(FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT), XFLG_ABS_IF_SLASH | ...)
+    // upstream: clientserver.c:941-943 - parse_filter_str(&daemon_filter_list, lp_include(i),
+    //           rule_template(FILTRULE_INCLUDE | FILTRULE_WORD_SPLIT),
+    //           XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | XFLG_OLD_PREFIXES)
     for include_str in &module.include {
-        for pattern in include_str.split_whitespace() {
-            rules.push(build_pattern_rule(pattern, true));
-        }
+        push_old_prefix_token_rules(&mut rules, include_str, true)?;
     }
 
     // 4. exclude_from - read patterns from file, one per line
-    // upstream: clientserver.c:887 - parse_filter_file(&daemon_filter_list, lp_exclude_from(i),
+    // upstream: clientserver.c:946-948 - parse_filter_file(&daemon_filter_list, lp_exclude_from(i),
     //           rule_template(0), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | ...)
     if let Some(ref path) = module.exclude_from {
         let patterns = read_patterns_from_file(path)?;
         for pattern in patterns {
-            rules.push(build_pattern_rule(&pattern, false));
+            rules.push(old_prefix_record_rule(&pattern, false)?);
         }
     }
 
     // 5. exclude rules - bare patterns, word-split on whitespace
-    // upstream: clientserver.c:891 - parse_filter_str(&daemon_filter_list, lp_exclude(i),
-    //           rule_template(FILTRULE_WORD_SPLIT), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | ...)
+    // upstream: clientserver.c:950-952 - parse_filter_str(&daemon_filter_list, lp_exclude(i),
+    //           rule_template(FILTRULE_WORD_SPLIT),
+    //           XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | XFLG_OLD_PREFIXES)
     for exclude_str in &module.exclude {
-        for pattern in exclude_str.split_whitespace() {
-            rules.push(build_pattern_rule(pattern, false));
-        }
+        push_old_prefix_token_rules(&mut rules, exclude_str, false)?;
     }
 
     Ok(rules)
+}
+
+/// The prefix `XFLG_OLD_PREFIXES` recognises at the head of a filter rule.
+///
+/// upstream: `exclude.c:1276-1284`. Under `XFLG_OLD_PREFIXES` exactly three
+/// forms are special, and nothing else is: a literal `- ` (dash, space) makes
+/// the rule an exclude, a literal `+ ` makes it an include, and a leading `!`
+/// *tentatively* marks a list-clear. Only the first two consume bytes - the
+/// `!` arm leaves the cursor where it is, which is why `Clear` carries no
+/// remainder here and the caller measures the token including the `!`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum OldPrefix {
+    /// `- ` - override the template to exclude, consuming two bytes.
+    Exclude,
+    /// `+ ` - override the template to include, consuming two bytes.
+    Include,
+    /// A leading `!` - a list-clear only if the whole token is exactly `!`.
+    MaybeClear,
+    /// No recognised prefix: the rule inherits the template's include flag.
+    Inherit,
+}
+
+/// Classifies the head of one rule under `XFLG_OLD_PREFIXES`.
+///
+/// upstream: `exclude.c:1277-1284`. The tests are on raw bytes with no
+/// whitespace skipping of their own: under `FILTRULE_WORD_SPLIT` the caller has
+/// already advanced past the leading whitespace (`exclude.c:1250-1255`), and the
+/// two file-read parameters are *not* word-split, so their record starts at
+/// column zero. A `-` or `+` not followed by a space is therefore ordinary
+/// pattern text, which is what makes `- - foo` an exclude of the literal
+/// pattern `- foo`: exactly one strip happens, never two.
+fn old_prefix(rule: &str) -> OldPrefix {
+    if rule.starts_with("- ") {
+        OldPrefix::Exclude
+    } else if rule.starts_with("+ ") {
+        OldPrefix::Include
+    } else if rule.starts_with('!') {
+        OldPrefix::MaybeClear
+    } else {
+        OldPrefix::Inherit
+    }
+}
+
+/// A list-clear rule.
+///
+/// upstream: `exclude.c:1284` sets `FILTRULE_CLEAR_LIST`; `exclude.c:1542`
+/// makes the receiving list drop every rule accumulated so far.
+fn clear_list_rule() -> FilterRuleWireFormat {
+    FilterRuleWireFormat {
+        rule_type: protocol::filters::RuleType::Clear,
+        ..FilterRuleWireFormat::default()
+    }
+}
+
+/// Upstream's fatal "unexpected end of filter rule" refusal.
+///
+/// upstream: `exclude.c:1474-1475` - a rule that is empty once its prefix has
+/// been consumed calls `filter_rule_err()`, which is `rprintf(FERROR, ...)`
+/// followed by `exit_cleanup(RERR_SYNTAX)` (`exclude.c:133-137`). Both file
+/// parameters additionally carry `XFLG_FATAL_ERRORS`. Returning an error here
+/// reaches the caller's existing abort path, which refuses the module rather
+/// than silently dropping the rule - dropping it would serve every file the
+/// operator wrote that line to hide.
+fn unexpected_end_of_filter_rule(rule: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("unexpected end of filter rule: {rule}"),
+    )
+}
+
+/// Builds one rule from a whole filter-file record under `XFLG_OLD_PREFIXES`.
+///
+/// `template_include` is the template's `FILTRULE_INCLUDE` bit:
+/// `rule_template(FILTRULE_INCLUDE)` for `include from` (clientserver.c:936-937)
+/// and `rule_template(0)` for `exclude from` (clientserver.c:943-944).
+///
+/// Neither template carries `FILTRULE_WORD_SPLIT`, so the pattern runs to the
+/// end of the record: `len = strlen(s)` (`exclude.c:1465`). That is why the
+/// whole record is handed to [`build_pattern_rule`] rather than a first word.
+fn old_prefix_record_rule(
+    record: &str,
+    template_include: bool,
+) -> Result<FilterRuleWireFormat, io::Error> {
+    let (pattern, is_include) = match old_prefix(record) {
+        OldPrefix::Exclude => (&record[2..], false),
+        OldPrefix::Include => (&record[2..], true),
+        // upstream: exclude.c:1467-1473 - the `!` is tentative. `len` is
+        // measured from the UNADVANCED cursor, so it counts the `!` itself;
+        // `len > 1` clears the flag again and the rule keeps `!...` as literal
+        // pattern text. `len == 1` is the bare `!` that really clears the list.
+        OldPrefix::MaybeClear if record.len() == 1 => return Ok(clear_list_rule()),
+        OldPrefix::MaybeClear | OldPrefix::Inherit => (record, template_include),
+    };
+    if pattern.is_empty() {
+        return Err(unexpected_end_of_filter_rule(record));
+    }
+    Ok(build_pattern_rule(pattern, is_include))
+}
+
+/// Appends the rules a word-split `include` / `exclude` value expands to.
+///
+/// upstream: `parse_filter_str()` (`exclude.c:1516`) loops `parse_rule_tok()`
+/// until the string is consumed. With `FILTRULE_WORD_SPLIT` each iteration
+/// skips leading whitespace (`exclude.c:1250-1255`), applies the
+/// `XFLG_OLD_PREFIXES` decision, then takes the pattern up to the next
+/// whitespace (`exclude.c:1457-1462`). So `exclude = - foo bar` is two rules:
+/// an exclude of `foo` and - from the template - an exclude of `bar`.
+///
+/// The scan is on ASCII whitespace because upstream's is `isspace()` over the
+/// raw bytes, which no byte of a multi-byte UTF-8 sequence can satisfy.
+fn push_old_prefix_token_rules(
+    rules: &mut Vec<FilterRuleWireFormat>,
+    value: &str,
+    template_include: bool,
+) -> Result<(), io::Error> {
+    let mut rest = value;
+    loop {
+        rest = rest.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
+        if rest.is_empty() {
+            return Ok(());
+        }
+        let prefix = old_prefix(rest);
+        let after_prefix = match prefix {
+            OldPrefix::Exclude | OldPrefix::Include => &rest[2..],
+            OldPrefix::MaybeClear | OldPrefix::Inherit => rest,
+        };
+        let end = after_prefix
+            .find(|ch: char| ch.is_ascii_whitespace())
+            .unwrap_or(after_prefix.len());
+        let (token, tail) = after_prefix.split_at(end);
+        if prefix == OldPrefix::MaybeClear && token.len() == 1 {
+            rules.push(clear_list_rule());
+        } else if token.is_empty() {
+            return Err(unexpected_end_of_filter_rule(rest));
+        } else {
+            let is_include = match prefix {
+                OldPrefix::Exclude => false,
+                OldPrefix::Include => true,
+                OldPrefix::MaybeClear | OldPrefix::Inherit => template_include,
+            };
+            rules.push(build_pattern_rule(token, is_include));
+        }
+        rest = tail;
+    }
 }
 
 /// Reads patterns from a filter file, one per record.
@@ -415,10 +566,7 @@ fn parse_daemon_filter_token(token: &str) -> Option<FilterRuleWireFormat> {
     }
 
     if strip_keyword_prefix(token, "clear").is_some() {
-        return Some(FilterRuleWireFormat {
-            rule_type: protocol::filters::RuleType::Clear,
-            ..FilterRuleWireFormat::default()
-        });
+        return Some(clear_list_rule());
     }
 
     // Bare pattern defaults to exclude (upstream behaviour)

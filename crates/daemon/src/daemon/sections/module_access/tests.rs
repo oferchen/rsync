@@ -2299,6 +2299,191 @@ mod module_access_tests {
         assert_eq!(rules[2].pattern, "*.bak");
     }
 
+    /// Helper: build the rules for a module whose `exclude from` file holds
+    /// exactly `contents`.
+    fn exclude_from_rules(
+        dir: &tempfile::TempDir,
+        contents: &str,
+    ) -> Result<Vec<FilterRuleWireFormat>, std::io::Error> {
+        let file = dir.path().join("excludes.txt");
+        fs::write(&file, contents).unwrap();
+        build_daemon_filter_rules(&ModuleRuntime::from(ModuleDefinition {
+            exclude_from: Some(file),
+            ..Default::default()
+        }))
+    }
+
+    /// Helper: build the rules for a module whose `include from` file holds
+    /// exactly `contents`.
+    fn include_from_rules(
+        dir: &tempfile::TempDir,
+        contents: &str,
+    ) -> Result<Vec<FilterRuleWireFormat>, std::io::Error> {
+        let file = dir.path().join("includes.txt");
+        fs::write(&file, contents).unwrap();
+        build_daemon_filter_rules(&ModuleRuntime::from(ModuleDefinition {
+            include_from: Some(file),
+            ..Default::default()
+        }))
+    }
+
+    /// A leading `- ` in an `exclude from` file is an ACTION PREFIX.
+    ///
+    /// upstream: `clientserver.c:943-944` reads `exclude from` with
+    /// `XFLG_OLD_PREFIXES`, and `exclude.c:1277-1279` strips the two bytes.
+    ///
+    /// MEASURED against real rsync 3.5.0 and oc daemons on loopback (module
+    /// holding `foo` and `keep`, `exclude from` file holding the one line
+    /// `- foo`): upstream served only `keep`; oc served `foo` AND `keep`, at
+    /// exit 0 with no diagnostic - a file the operator told the daemon to hide.
+    #[test]
+    fn exclude_from_strips_the_old_dash_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = exclude_from_rules(&dir, "- foo\n").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "foo");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+    }
+
+    /// A leading `+ ` in an `include from` file is an ACTION PREFIX.
+    ///
+    /// upstream: `exclude.c:1280-1282`.
+    #[test]
+    fn include_from_strips_the_old_plus_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = include_from_rules(&dir, "+ foo\n").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "foo");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Include);
+    }
+
+    /// The prefix OVERRIDES the template, it does not merely decorate it.
+    ///
+    /// upstream: `exclude.c:1278` clears `FILTRULE_INCLUDE` on the rule even
+    /// though `include from`'s template (`clientserver.c:936-937`) sets it.
+    #[test]
+    fn include_from_dash_prefix_overrides_the_include_template() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = include_from_rules(&dir, "- foo\n").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "foo");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+    }
+
+    /// NEGATIVE CONTROL: exactly ONE strip happens, never two.
+    ///
+    /// upstream spells a pattern that legitimately begins with a literal `-` as
+    /// `- - foo`: `exclude.c:1277-1279` consumes the first `- ` and
+    /// `exclude.c:1465` then takes `strlen(s)` over the remainder without
+    /// re-testing for a prefix. Without this row a suite that only asserts
+    /// stripping would also pass for an over-eager parser that strips twice and
+    /// silently stops hiding the file.
+    #[test]
+    fn exclude_from_strips_the_prefix_exactly_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = exclude_from_rules(&dir, "- - foo\n").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "- foo");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+    }
+
+    /// A `-` NOT followed by a space is ordinary pattern text.
+    ///
+    /// upstream: `exclude.c:1277` tests `*s == '-' && s[1] == ' '`, both bytes.
+    #[test]
+    fn exclude_from_dash_without_a_space_is_pattern_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = exclude_from_rules(&dir, "-foo\n").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "-foo");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+    }
+
+    /// A record that is exactly `!` clears the list.
+    ///
+    /// upstream: `exclude.c:1283-1284` sets `FILTRULE_CLEAR_LIST`, and
+    /// `exclude.c:1471-1472` keeps it only when the measured length is 1.
+    #[test]
+    fn exclude_from_bare_bang_clears_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = exclude_from_rules(&dir, "*.tmp\n!\n*.bak\n").unwrap();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].pattern, "*.tmp");
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Clear);
+        assert_eq!(rules[2].pattern, "*.bak");
+    }
+
+    /// `!` with anything after it is a PATTERN, and it keeps the `!`.
+    ///
+    /// upstream: `exclude.c:1283` does NOT advance the cursor, so
+    /// `exclude.c:1465`'s `strlen(s)` counts the `!` itself; `exclude.c:1472`
+    /// then clears the tentative flag because the length exceeds 1. The `!` is
+    /// therefore part of the pattern, which is what makes this the companion
+    /// that stops the clear arm from swallowing every `!`-prefixed name.
+    #[test]
+    fn exclude_from_bang_with_trailing_text_is_a_pattern() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = exclude_from_rules(&dir, "!foo\n").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "!foo");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+    }
+
+    /// A record left empty by the strip is upstream's fatal syntax error.
+    ///
+    /// upstream: `exclude.c:1474-1475` calls `filter_rule_err()`, which exits
+    /// with `RERR_SYNTAX`; `clientserver.c:944` additionally passes
+    /// `XFLG_FATAL_ERRORS`. The caller turns this error into a module abort -
+    /// dropping the rule instead would serve everything it named.
+    #[test]
+    fn exclude_from_empty_after_the_prefix_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = exclude_from_rules(&dir, "- \n").unwrap_err();
+        assert!(
+            error.to_string().contains("unexpected end of filter rule"),
+            "unexpected message: {error}"
+        );
+    }
+
+    /// The STRING parameters carry `XFLG_OLD_PREFIXES` too - and they are
+    /// word-split, so the prefix binds to the next token only.
+    ///
+    /// upstream: `clientserver.c:950-952` passes both `FILTRULE_WORD_SPLIT`
+    /// (via the template) and `XFLG_OLD_PREFIXES`; `exclude.c:1457-1462` ends
+    /// the pattern at the next whitespace, so `bar` falls back to the template.
+    #[test]
+    fn exclude_string_prefix_binds_to_one_token_only() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            exclude: vec!["+ foo bar".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].pattern, "foo");
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rules[1].pattern, "bar");
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Exclude);
+    }
+
+    /// A `!` token in a word-split `include` value clears the list.
+    ///
+    /// upstream: `exclude.c:1457-1462` measures the token to the next
+    /// whitespace, so this `!` has length 1 and `exclude.c:1472` leaves
+    /// `FILTRULE_CLEAR_LIST` set.
+    #[test]
+    fn include_string_bare_bang_token_clears_the_list() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            include: vec!["*.rs ! *.toml".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].pattern, "*.rs");
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Clear);
+        assert_eq!(rules[2].pattern, "*.toml");
+        assert_eq!(rules[2].rule_type, protocol::filters::RuleType::Include);
+    }
+
     #[test]
     fn build_pattern_rule_exclude() {
         let rule = build_pattern_rule("*.tmp", false);
