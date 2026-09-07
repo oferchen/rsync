@@ -15,13 +15,10 @@
 //! `not creating new %s "%s"` at `generator.c:1380`) never gain it, so they must
 //! keep formatting their own quotes.
 //!
-//! # Module-relative rendering
+//! # The two independent axes
 //!
-//! A daemon server `chdir()`s into the module root (`clientserver.c:993`
-//! `change_dir(module_chdir, CD_NORMAL)`), so every path it later handles is
-//! *relative* to that root and the absolute server-side location never reaches
-//! the client. `full_fname()` re-attaches only the part of `curr_dir` that lies
-//! below the module root:
+//! `full_fname()` makes **two** decisions, and they are gated on two different
+//! globals:
 //!
 //! ```c
 //! if (*fn == '/')
@@ -32,133 +29,282 @@
 //!         if (*p2)
 //!                 p2 = "/";
 //! }
+//! if (module_id >= 0) {
+//!         m1 = " (in "; m2 = lp_name(module_id); m3 = ")";
+//! } else
+//!         m1 = m2 = m3 = "";
 //! ```
 //!
-//! With `curr_dir` at the module root `p1` is empty and the rendered name is
-//! the bare relative path (`"denied"`); with `curr_dir` one level down `p1` is
-//! `/sub`, `p2` collapses to `/`, and the render is module-root anchored
-//! (`"/sub/denied2"`). Both forms were captured from rsync 3.4.4 serving a
-//! module; neither ever contains the daemon's real filesystem prefix.
+//! The **prefix** `p1 + p2` is computed unconditionally: every process has a
+//! `curr_dir`, and `module_dirlen` is simply `0` when there is no module to
+//! strip (`clientserver.c:106` initialises it to `0`). Only the **suffix** is
+//! conditional on `module_id >= 0`. So a plain local or SSH run still prefixes
+//! its working directory, which is why upstream reports an absolute name for a
+//! relative operand:
 //!
-//! oc-rsync never `chdir()`s - it carries absolute paths throughout - so
-//! [`DaemonPaths`] supplies the two directories upstream keeps in globals and
-//! the helper recovers upstream's relative `fn` by stripping `curr_dir`.
+//! ```text
+//! $ cd /tmp/work && rsync -r nope dst/
+//! rsync: [sender] link_stat "/tmp/work/nope" failed: No such file or directory (2)
+//! ```
+//!
+//! [`FullFnamePaths`] keeps the two axes separate for exactly that reason:
+//! [`module`](FullFnamePaths::module) is the suffix axis and is `None` outside a
+//! daemon module, while [`module_root`](FullFnamePaths::module_root) is the
+//! strip axis and is `None` whenever `module_dirlen` would be `0`.
+//!
+//! # Module-relative rendering
+//!
+//! A daemon server `chdir()`s into the module root (`clientserver.c:1059`
+//! `change_dir(module_chdir, CD_NORMAL)`), so every path it later handles is
+//! *relative* to that root and the absolute server-side location never reaches
+//! the client. With `curr_dir` at the module root `p1` is empty and the
+//! rendered name is the bare relative path (`"denied"`); with `curr_dir` one
+//! level down `p1` is `/sub`, `p2` collapses to `/`, and the render is
+//! module-root anchored (`"/sub/denied2"`). Both forms were captured from
+//! rsync 3.4.4 serving a module; neither ever contains the daemon's real
+//! filesystem prefix.
+//!
+//! A module whose `path` is `/` is the exception, and it is upstream's own:
+//! `clientserver.c:922-923` forces `module_dirlen` back to `0`, so nothing is
+//! stripped and the absolute name is what upstream prints.
+//!
+//! oc-rsync never `chdir()`s - it carries the operand spelling it was given -
+//! so [`FullFnamePaths`] supplies the directories upstream keeps in globals and
+//! the helper recovers upstream's `curr_dir`-relative `fn` before re-attaching
+//! the prefix.
 //!
 //! # Upstream Reference
 //!
-//! - `util1.c:1273` - `full_fname()`; the `module_id >= 0` branch selects
+//! - `util1.c:1433` - `full_fname()`; the `module_id >= 0` branch selects
 //!   `" (in "`, `lp_name(module_id)`, `")"`.
-//! - `clientserver.c:769` - `module_id = i` is the only assignment that makes
+//! - `util1.c:1445-1452` - the `*fn == '/'` test and `p1 = curr_dir +
+//!   module_dirlen` (`util1.c:1448`), computed with no reference to
+//!   `module_id`.
+//! - `clientserver.c:821` - `module_id = i` is the only assignment that makes
 //!   `module_id >= 0`, so the suffix appears exactly when the process is a
 //!   daemon server that has selected a module.
-//! - `clientserver.c:864,993` - `module_dirlen` is the length of the
-//!   normalized module path and the server `chdir()`s there before serving.
-//! - `clientserver.c:922-923` - `if (module_dirlen == 1) module_dirlen = 0;`.
-//!   A module rooted at `/` has length 0, so `p1` keeps `curr_dir`'s leading
+//! - `clientserver.c:106` - `unsigned int module_dirlen = 0;` - the strip
+//!   length outside a daemon module.
+//! - `clientserver.c:864,993` - inside a module `module_dirlen` is the length
+//!   of the normalized module path, and the server `chdir()`s there before
+//!   serving.
+//! - `clientserver.c:922-923` - `if (module_dirlen == 1) module_dirlen = 0;` -
+//!   a module rooted at `/` strips nothing, so `p1` keeps `curr_dir`'s leading
 //!   slash and the rendered name stays absolute.
+//! - `util1.c:1224` - `getcwd(curr_dir, ...)` seeds the working directory once.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 
-/// The daemon path context upstream keeps in globals, as seen by
-/// [`full_fname`].
+/// The path context upstream keeps in globals, as seen by [`full_fname`].
 ///
-/// `module` is upstream's `lp_name(module_id)`, `module_root` is `module_dir`
-/// (whose length is `module_dirlen`), and `curr_dir` is the directory upstream
-/// has `chdir()`ed into - the receiver's destination, or the sender's per-arg
-/// `dir` from the `flist.c:2338-2349` split. Absent for client and non-daemon
-/// server processes, mirroring upstream's `module_id < 0`.
+/// The three fields are upstream's three independent pieces of state, and each
+/// is conditional on its own terms:
+///
+/// - `module` is `lp_name(module_id)`, present exactly when `module_id >= 0`.
+/// - `module_root` is `module_dir`, whose length is `module_dirlen`; `None`
+///   expresses `module_dirlen == 0`.
+/// - `curr_dir` is the directory names are rendered against, and upstream
+///   always has one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct DaemonPaths<'a> {
-    /// Module name appended as ` (in MODULE)`. upstream: `lp_name(module_id)`.
-    pub module: &'a str,
-    /// Absolute module root. upstream: `module_dir` / `module_dirlen`.
-    pub module_root: &'a Path,
-    /// Absolute directory the server is serving from. upstream: `curr_dir`.
+pub(crate) struct FullFnamePaths<'a> {
+    /// Module name appended as ` (in MODULE)`. upstream: `lp_name(module_id)`,
+    /// selected by `module_id >= 0`. `None` for clients and for non-daemon
+    /// (SSH) server processes, mirroring upstream's `module_id < 0`.
+    pub module: Option<&'a str>,
+    /// Prefix stripped from `curr_dir` before rendering. upstream:
+    /// `module_dir` / `module_dirlen`.
+    ///
+    /// `None` is upstream's `module_dirlen == 0`, which covers three cases:
+    /// a process serving no module at all (`clientserver.c:106`), a module
+    /// whose `path` is `/` (`clientserver.c:922-923`), and a chrooted module,
+    /// whose root becomes `/` inside the jail (`clientserver.c:912-913`).
+    pub module_root: Option<&'a Path>,
+    /// Absolute directory names are rendered against. upstream: `curr_dir` -
+    /// the receiver's destination, the sender's per-arg `dir` from the
+    /// `flist.c:2608-2637` split, or the process working directory.
     pub curr_dir: &'a Path,
 }
 
-impl DaemonPaths<'_> {
-    /// Rewrites an absolute server-side path into the module-relative form
-    /// upstream renders, or returns `None` when the path lies outside the
-    /// served tree.
+impl<'a> FullFnamePaths<'a> {
+    /// The context a process that is not serving a daemon module renders
+    /// against: no suffix, nothing stripped, and the process working directory
+    /// as `curr_dir`.
+    #[must_use]
+    pub(crate) fn non_daemon() -> Self {
+        Self {
+            module: None,
+            module_root: None,
+            curr_dir: process_curr_dir(),
+        }
+    }
+
+    /// The context a daemon server renders against.
+    ///
+    /// `module_root` is dropped when it is `/`, because upstream forces
+    /// `module_dirlen` to `0` for that module (`clientserver.c:922-923`) and
+    /// then prints the absolute name.
+    #[must_use]
+    pub(crate) fn daemon(module: &'a str, module_root: &'a Path, curr_dir: &'a Path) -> Self {
+        Self {
+            module: Some(module),
+            module_root: strip_prefix_root(module_root),
+            curr_dir,
+        }
+    }
+
+    /// Rewrites a server-side path into the form upstream renders, or returns
+    /// `None` when the path lies outside the tree `curr_dir` anchors.
     ///
     /// `None` makes the caller fall back to the path as given, matching
     /// upstream's `*fn == '/'` branch: an absolute `fn` gets no prefix and is
     /// printed verbatim.
-    fn relativize(&self, path: &Path) -> Option<String> {
-        // upstream's `fn` is relative to `curr_dir`, so recover it first.
-        let tail = slash_join(path.strip_prefix(self.curr_dir).ok()?);
-        // upstream: `p1 = curr_dir + module_dirlen` - the part of the working
-        // directory below the module root.
-        let p1 = slash_join(self.curr_dir.strip_prefix(self.module_root).ok()?);
-        // A DOTDIR source arg leaves `fn` as ".", never empty.
+    fn render(&self, path: &Path) -> Option<String> {
+        // upstream's `fn` is relative to `curr_dir`. oc-rsync hands this
+        // helper either an absolute path (the daemon and every wire-side
+        // caller) or the operand spelling the user typed, which is already
+        // relative to the working directory - so recover `fn` from both.
+        let tail = if is_rooted(path) {
+            slash_path(path.strip_prefix(self.curr_dir).ok()?)
+        } else {
+            slash_path(path)
+        };
+        // A DOTDIR source arg leaves `fn` as ".", never empty
+        // (`flist.c:2672-2673`).
         let tail = if tail.is_empty() {
             ".".to_owned()
         } else {
             tail
         };
-        if p1.is_empty() {
-            // upstream: `module_dirlen` is a BYTE COUNT into `curr_dir`, not a
-            // path, and `clientserver.c:922-923` forces it to 0 - never 1 - for
-            // a module whose `module_dir` is `/`. `p1 = curr_dir + 0` is then
-            // `curr_dir` itself, so a server whose `curr_dir` is `/` renders
-            // `"/" + fn`, keeping the leading slash. Stripping `/` as a *path*
-            // prefix loses that byte and silently turns the absolute name into
-            // a relative one. Every other module root leaves `p1` genuinely
-            // empty and the bare relative name is correct.
-            if self.module_root == Path::new("/") {
-                return Some(format!("/{tail}"));
+        // upstream: `p1 = curr_dir + module_dirlen` - a byte offset into
+        // `curr_dir`, so `module_dirlen == 0` leaves the whole of it.
+        let p1 = match self.module_root {
+            Some(root) => {
+                let below = slash_path(self.curr_dir.strip_prefix(root).ok()?);
+                if below.is_empty() {
+                    String::new()
+                } else {
+                    format!("/{below}")
+                }
             }
-            // upstream: p1 == "" and p2 == "" - the bare relative name.
-            return Some(tail);
-        }
-        // upstream: p1 == "/sub" and p2 == "/" - module-root anchored.
-        Some(format!("/{p1}/{tail}"))
+            None => slash_path(self.curr_dir),
+        };
+        // upstream: `for (p2 = p1; *p2 == '/'; p2++) {}` then
+        // `if (*p2) p2 = "/";` - a separator only when something survives the
+        // leading slashes.
+        let p2 = if p1.trim_start_matches('/').is_empty() {
+            ""
+        } else {
+            "/"
+        };
+        Some(format!("{p1}{p2}{tail}"))
     }
 }
 
-/// Renders a relative path with `/` separators.
+/// Upstream's `*fn == '/'` test, on the leading byte.
 ///
-/// The module-relative name upstream prints is the same `/`-separated name it
-/// puts on the wire, never a host-native one, so the separator must not follow
-/// the platform the daemon happens to run on.
-fn slash_join(relative: &Path) -> String {
+/// upstream: `util1.c:1445` - `if (*fn == '/') p1 = p2 = "";`. The names that
+/// reach this module are rsync's own `/`-separated wire names, never
+/// host-native paths, so the question is literally "does this name begin with
+/// a slash" and the answer must not depend on the platform.
+///
+/// [`Path::is_absolute`] answers a DIFFERENT question. On Unix the two agree
+/// for every input, because there `is_absolute()` is defined as "begins with
+/// `/`". On Windows it additionally demands a drive prefix, so `/srv/mod/f`
+/// is NOT absolute there: the `else` arm would run, the whole server-side
+/// path would survive as `tail`, and it would then be spliced AFTER the
+/// `curr_dir` prefix instead of being stripped from the front -
+/// `"/sub" + "/" + "/srv/mod/sub/denied2"`.
+///
+/// `as_encoded_bytes` keeps the test allocation-free and byte-faithful for a
+/// non-UTF-8 name; inspecting a leading ASCII byte is exactly what its
+/// contract permits.
+fn is_rooted(path: &Path) -> bool {
+    path.as_os_str().as_encoded_bytes().first() == Some(&b'/')
+}
+
+/// Upstream's `curr_dir[]` for a process that never selected a module.
+///
+/// Upstream seeds the global once with `getcwd()` (`util1.c:1224`) and moves it
+/// with `change_dir()`. oc-rsync never `chdir()`s, so the process working
+/// directory is that value for the whole run.
+///
+/// A failed `getcwd()` yields an empty path, which renders `p1` and `p2` empty
+/// and prints the bare name - the same output as before this prefix existed,
+/// rather than a panic inside a diagnostic.
+fn process_curr_dir() -> &'static Path {
+    static CWD: OnceLock<PathBuf> = OnceLock::new();
+    CWD.get_or_init(|| std::env::current_dir().unwrap_or_default())
+}
+
+/// Maps a module root of `/` to "strip nothing".
+///
+/// upstream: `clientserver.c:922-923` - `if (module_dirlen == 1)
+/// module_dirlen = 0;`. A module rooted at `/` has `module_dir == "/"`, whose
+/// length is 1, so upstream deliberately consumes no byte of `curr_dir` and the
+/// rendered name stays absolute.
+fn strip_prefix_root(module_root: &Path) -> Option<&Path> {
+    if module_root == Path::new("/") {
+        None
+    } else {
+        Some(module_root)
+    }
+}
+
+/// Renders a path with `/` separators, dropping `.` components.
+///
+/// The name upstream prints is the same `/`-separated name it puts on the wire,
+/// never a host-native one, so the separator must not follow the platform the
+/// process happens to run on. A leading root component contributes exactly one
+/// `/`.
+///
+/// `.` components are dropped because upstream never carries one into a
+/// diagnostic: the sender cleans every flist name with `clean_fname(thisname,
+/// 0)` (`flist.c:1424`), and with `CFN_KEEP_DOT_DIRS` unset that discards
+/// interior `"."` dirs (`util1.c:1068-1071`). An operand of `./sub/` therefore
+/// prints as `<curr_dir>/sub/...`, not `<curr_dir>/./sub/...`.
+///
+/// A path that is nothing but `.` components renders empty; [`FullFnamePaths::render`]
+/// turns that back into `"."`, which is upstream's DOTDIR name
+/// (`flist.c:2672-2673`).
+fn slash_path(path: &Path) -> String {
     let mut out = String::new();
-    for component in relative.components() {
-        if !out.is_empty() {
-            out.push('/');
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::RootDir => out.push('/'),
+            other => {
+                if !out.is_empty() && !out.ends_with('/') {
+                    out.push('/');
+                }
+                out.push_str(&other.as_os_str().to_string_lossy());
+            }
         }
-        out.push_str(&component.as_os_str().to_string_lossy());
     }
     out
 }
 
 /// Renders `fname` the way upstream `full_fname()` does: double quoted,
-/// rewritten relative to the daemon module root, and with ` (in MODULE)`
-/// appended after the closing quote when serving a daemon module.
+/// prefixed with the part of `curr_dir` that survives `module_dirlen`, and with
+/// ` (in MODULE)` appended after the closing quote when serving a daemon
+/// module.
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1296` - `asprintf(&result, "\"%s%s%s\"%s%s%s", ...)`
-pub(crate) fn full_fname(fname: &str, daemon: Option<DaemonPaths<'_>>) -> String {
-    match daemon {
-        Some(paths) => match paths.relativize(Path::new(fname)) {
-            Some(rendered) => quote(&rendered, Some(paths.module)),
-            None => quote(fname, Some(paths.module)),
-        },
-        None => quote(fname, None),
+/// - `util1.c:1460` - `asprintf(&result, "\"%s%s%s\"%s%s%s", ...)`
+pub(crate) fn full_fname(fname: &str, paths: FullFnamePaths<'_>) -> String {
+    match paths.render(Path::new(fname)) {
+        Some(rendered) => quote(&rendered, paths.module),
+        None => quote(fname, paths.module),
     }
 }
 
 /// [`full_fname`] for a [`Path`], using the platform's lossy display form.
-pub(crate) fn full_fname_path(path: &Path, daemon: Option<DaemonPaths<'_>>) -> String {
-    match daemon {
-        Some(paths) => match paths.relativize(path) {
-            Some(rendered) => quote(&rendered, Some(paths.module)),
-            None => quote(&path.display().to_string(), Some(paths.module)),
-        },
-        None => quote(&path.display().to_string(), None),
+pub(crate) fn full_fname_path(path: &Path, paths: FullFnamePaths<'_>) -> String {
+    match paths.render(path) {
+        Some(rendered) => quote(&rendered, paths.module),
+        None => quote(&path.display().to_string(), paths.module),
     }
 }
 
@@ -176,31 +322,22 @@ fn quote(fname: &str, module: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{DaemonPaths, full_fname, full_fname_path};
+    use super::{FullFnamePaths, full_fname, full_fname_path};
     use std::path::Path;
 
-    fn paths<'a>(module_root: &'a str, curr_dir: &'a str) -> DaemonPaths<'a> {
-        DaemonPaths {
-            module: "mymod",
-            module_root: Path::new(module_root),
+    fn paths<'a>(module_root: &'a str, curr_dir: &'a str) -> FullFnamePaths<'a> {
+        FullFnamePaths::daemon("mymod", Path::new(module_root), Path::new(curr_dir))
+    }
+
+    /// A context with no module and an explicit `curr_dir`, so the non-daemon
+    /// prefix rule can be asserted without depending on the test process's own
+    /// working directory.
+    fn no_module(curr_dir: &str) -> FullFnamePaths<'_> {
+        FullFnamePaths {
+            module: None,
+            module_root: None,
             curr_dir: Path::new(curr_dir),
         }
-    }
-
-    #[test]
-    fn quotes_without_module_outside_daemon() {
-        assert_eq!(full_fname("sub/denied.txt", None), "\"sub/denied.txt\"");
-    }
-
-    #[test]
-    fn non_daemon_path_is_left_absolute() {
-        // A client or SSH server process has `module_id < 0`: upstream neither
-        // strips a prefix nor appends a suffix, so the absolute path a local
-        // or SSH run reports must stay byte-identical.
-        assert_eq!(
-            full_fname_path(Path::new("/tmp/src/denied.txt"), None),
-            "\"/tmp/src/denied.txt\""
-        );
     }
 
     #[test]
@@ -210,7 +347,7 @@ mod tests {
         assert_eq!(
             full_fname_path(
                 Path::new("/srv/mod/sub/denied.txt"),
-                Some(paths("/srv/mod", "/srv/mod"))
+                paths("/srv/mod", "/srv/mod")
             ),
             "\"sub/denied.txt\" (in mymod)"
         );
@@ -224,7 +361,7 @@ mod tests {
         assert_eq!(
             full_fname_path(
                 Path::new("/srv/mod/sub/denied2"),
-                Some(paths("/srv/mod", "/srv/mod/sub"))
+                paths("/srv/mod", "/srv/mod/sub")
             ),
             "\"/sub/denied2\" (in mymod)"
         );
@@ -233,9 +370,9 @@ mod tests {
     #[test]
     fn path_at_curr_dir_renders_as_dot() {
         // upstream's DOTDIR_NAME arg leaves `fn` as ".", never the empty
-        // string (flist.c:2312-2322).
+        // string (flist.c:2672-2673).
         assert_eq!(
-            full_fname_path(Path::new("/srv/mod"), Some(paths("/srv/mod", "/srv/mod"))),
+            full_fname_path(Path::new("/srv/mod"), paths("/srv/mod", "/srv/mod")),
             "\".\" (in mymod)"
         );
     }
@@ -245,10 +382,7 @@ mod tests {
         // upstream: `*fn == '/'` selects `p1 = p2 = ""`, so an absolute name
         // is printed as-is with the module suffix still attached.
         assert_eq!(
-            full_fname_path(
-                Path::new("/etc/passwd"),
-                Some(paths("/srv/mod", "/srv/mod"))
-            ),
+            full_fname_path(Path::new("/etc/passwd"), paths("/srv/mod", "/srv/mod")),
             "\"/etc/passwd\" (in mymod)"
         );
     }
@@ -267,8 +401,23 @@ mod tests {
     /// relative, which is what oc emitted before this pin.
     #[test]
     fn module_rooted_at_slash_keeps_the_leading_slash() {
+        // The case #7728 pinned: a module rooted at `/` with `curr_dir` also
+        // `/`. `module_dirlen` is forced from 1 to 0, so nothing is stripped
+        // and the whole name survives.
         assert_eq!(
-            full_fname_path(Path::new("/tmp/srv/mod/nope"), Some(paths("/", "/"))),
+            full_fname_path(Path::new("/tmp/srv/mod/nope"), paths("/", "/")),
+            "\"/tmp/srv/mod/nope\" (in mymod)"
+        );
+        // Measured against a real 3.5.0 daemon serving `path = /`:
+        // `link_stat "/nope" (in root)`.
+        assert_eq!(
+            full_fname_path(Path::new("/nope"), paths("/", "/")),
+            "\"/nope\" (in mymod)"
+        );
+        // A deeper module root still renders the absolute name, so the rule is
+        // not "always keep the slash" - it is `p1 = curr_dir + module_dirlen`.
+        assert_eq!(
+            full_fname_path(Path::new("/tmp/srv/mod/nope"), paths("/", "/tmp/srv/mod")),
             "\"/tmp/srv/mod/nope\" (in mymod)"
         );
     }
@@ -280,7 +429,7 @@ mod tests {
     #[test]
     fn module_rooted_at_slash_below_the_root_is_unchanged() {
         assert_eq!(
-            full_fname_path(Path::new("/tmp/srv/nope"), Some(paths("/", "/tmp/srv"))),
+            full_fname_path(Path::new("/tmp/srv/nope"), paths("/", "/tmp/srv")),
             "\"/tmp/srv/nope\" (in mymod)"
         );
     }
@@ -292,19 +441,15 @@ mod tests {
         assert_eq!(
             full_fname(
                 "/srv/mod/f",
-                Some(DaemonPaths {
-                    module: "",
-                    module_root: Path::new("/srv/mod"),
-                    curr_dir: Path::new("/srv/mod"),
-                })
+                FullFnamePaths::daemon("", Path::new("/srv/mod"), Path::new("/srv/mod"))
             ),
             "\"f\" (in )"
         );
     }
 
-    /// The module-relative name is the same `/`-separated name rsync puts on
-    /// the wire, so it must not pick up the host separator when the daemon
-    /// runs on Windows. Built with `PathBuf::join` so the input carries the
+    /// The rendered name is the same `/`-separated name rsync puts on the
+    /// wire, so it must not pick up the host separator when the process runs
+    /// on Windows. Built with `PathBuf::join` so the input carries the
     /// platform's own separator.
     #[test]
     fn rendered_name_uses_slash_separators_on_every_platform() {
@@ -314,14 +459,7 @@ mod tests {
         let curr = root.join("sub");
         let path = curr.join("deep").join("denied.txt");
         assert_eq!(
-            full_fname_path(
-                &path,
-                Some(DaemonPaths {
-                    module: "mymod",
-                    module_root: &root,
-                    curr_dir: &curr,
-                })
-            ),
+            full_fname_path(&path, FullFnamePaths::daemon("mymod", &root, &curr)),
             "\"/sub/deep/denied.txt\" (in mymod)"
         );
     }
@@ -329,11 +467,97 @@ mod tests {
     #[test]
     fn path_variant_matches_string_variant() {
         assert_eq!(
-            full_fname_path(
-                Path::new("/srv/mod/a/b"),
-                Some(paths("/srv/mod", "/srv/mod"))
-            ),
-            full_fname("/srv/mod/a/b", Some(paths("/srv/mod", "/srv/mod")))
+            full_fname_path(Path::new("/srv/mod/a/b"), paths("/srv/mod", "/srv/mod")),
+            full_fname("/srv/mod/a/b", paths("/srv/mod", "/srv/mod"))
         );
+    }
+
+    /// The two axes are independent upstream: the prefix comes from `curr_dir`
+    /// and `module_dirlen`, the suffix from `module_id`. Outside a daemon
+    /// module `module_dirlen` is 0, so the whole working directory is
+    /// prefixed onto a relative name while no suffix is appended.
+    ///
+    /// Ground truth, rsync 3.5.0, `cd /tmp/work && rsync -r nope dst/`:
+    ///   rsync: [sender] link_stat "/tmp/work/nope" failed: ...
+    #[test]
+    fn non_daemon_relative_name_is_anchored_at_curr_dir() {
+        assert_eq!(
+            full_fname_path(Path::new("nope"), no_module("/tmp/work")),
+            "\"/tmp/work/nope\""
+        );
+        assert_eq!(
+            full_fname_path(Path::new("sub/nope"), no_module("/tmp/work")),
+            "\"/tmp/work/sub/nope\""
+        );
+    }
+
+    /// A `./` in the operand must not survive into the rendered name.
+    ///
+    /// Upstream cleans every flist name with `clean_fname(thisname, 0)`
+    /// (`flist.c:1424`); with `CFN_KEEP_DOT_DIRS` unset that discards interior
+    /// `"."` dirs (`util1.c:1068-1071`). Ground truth captured from rsync
+    /// 3.5.0 pushing `./sub/` from `/tmp/t1141P/work` over a local remote
+    /// shell: `send_files failed to open "/tmp/t1141P/work/sub/denied.txt"` -
+    /// no `/./` anywhere in the name.
+    #[test]
+    fn a_dot_component_is_collapsed_out_of_the_rendered_name() {
+        assert_eq!(
+            full_fname_path(Path::new("./sub/nope"), no_module("/tmp/work")),
+            "\"/tmp/work/sub/nope\""
+        );
+        assert_eq!(
+            full_fname_path(Path::new("sub/./nope"), no_module("/tmp/work")),
+            "\"/tmp/work/sub/nope\""
+        );
+        // A name that is nothing but "." is upstream's DOTDIR name and must
+        // survive as "." rather than collapsing to the bare directory.
+        assert_eq!(
+            full_fname_path(Path::new("."), no_module("/tmp/work")),
+            "\"/tmp/work/.\""
+        );
+    }
+
+    #[test]
+    fn non_daemon_absolute_path_is_left_absolute() {
+        // A client or SSH server process has `module_id < 0`: no suffix, and
+        // an absolute name already under `curr_dir` renders to the same
+        // absolute string, so a local or SSH run stays byte-identical.
+        assert_eq!(
+            full_fname_path(
+                Path::new("/tmp/work/src/denied.txt"),
+                no_module("/tmp/work")
+            ),
+            "\"/tmp/work/src/denied.txt\""
+        );
+        // upstream's `*fn == '/'` branch: an absolute name outside `curr_dir`
+        // is printed verbatim with no prefix.
+        assert_eq!(
+            full_fname_path(Path::new("/elsewhere/denied.txt"), no_module("/tmp/work")),
+            "\"/elsewhere/denied.txt\""
+        );
+    }
+
+    /// The non-vacuity companion to the `path = /` case: an ordinary module
+    /// root still strips, so the arm above is not simply disabling the strip
+    /// for everyone.
+    #[test]
+    fn module_rooted_below_slash_still_strips() {
+        assert_eq!(
+            full_fname_path(
+                Path::new("/tmp/srv/mod/nope"),
+                paths("/tmp/srv/mod", "/tmp/srv/mod")
+            ),
+            "\"nope\" (in mymod)"
+        );
+    }
+
+    /// The suffix axis alone: the same prefix rule with and without a module
+    /// name produces the same quoted path, differing only in the suffix.
+    #[test]
+    fn the_module_suffix_is_independent_of_the_prefix() {
+        let with_module = full_fname_path(Path::new("/tmp/work/f"), paths("/", "/tmp/work"));
+        let without = full_fname_path(Path::new("/tmp/work/f"), no_module("/tmp/work"));
+        assert_eq!(with_module, "\"/tmp/work/f\" (in mymod)");
+        assert_eq!(without, "\"/tmp/work/f\"");
     }
 }
