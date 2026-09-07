@@ -125,7 +125,31 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
                 RuleType::Exclude => FilterRule::exclude(pat),
                 RuleType::Protect => FilterRule::protect(pat),
                 RuleType::Risk => FilterRule::risk(pat),
-                RuleType::Clear | RuleType::DirMerge | RuleType::Merge => return None,
+                // A clear pops the rules accumulated before it, so it must
+                // survive into the compiled set rather than being discarded
+                // here. `FilterSet::from_rules` already honours
+                // `FilterAction::Clear` on both chains, so this arm only has to
+                // stop dropping the rule.
+                //
+                // The sides are applied only when the wire rule names one:
+                // `FilterRule::clear()` pre-sets both, and `apply_clear_rule`
+                // returns without clearing anything when neither side is set,
+                // so narrowing an unsided clear to `with_sides(false, false)`
+                // would silently reinstate the drop.
+                //
+                // upstream: receiver.c:711-716 checks each file against
+                // `daemon_filter_list`, which `clientserver.c:874-893` builds
+                // from the module's filter directives - a `clear` among them
+                // pops the earlier rules for the receiver exactly as it does
+                // for the sender.
+                RuleType::Clear => {
+                    let mut rule = FilterRule::clear();
+                    if wire_rule.sender_side || wire_rule.receiver_side {
+                        rule = rule.with_sides(wire_rule.sender_side, wire_rule.receiver_side);
+                    }
+                    return Some(rule);
+                }
+                RuleType::DirMerge | RuleType::Merge => return None,
             };
 
             if wire_rule.sender_side || wire_rule.receiver_side {
@@ -178,4 +202,79 @@ pub(in crate::receiver) fn daemon_filter_refuses_ancestor(filters: &FilterSet, n
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compile_daemon_filter_set;
+    use protocol::filters::{FilterRuleWireFormat, RuleType};
+    use std::path::Path;
+
+    fn exclude(pattern: &str) -> FilterRuleWireFormat {
+        FilterRuleWireFormat::exclude(pattern)
+    }
+
+    /// An unsided `clear`, as a module's `filter = clear` directive produces.
+    fn clear() -> FilterRuleWireFormat {
+        FilterRuleWireFormat {
+            rule_type: RuleType::Clear,
+            ..FilterRuleWireFormat::default()
+        }
+    }
+
+    /// The discriminating cell.
+    ///
+    /// Ground truth, MEASURED 2026-09-07 against a real rsync 3.5.0 daemon on
+    /// loopback with `read only = no`, pushing `foo` and `keep` into a module
+    /// declaring `filter = - foo` then `filter = clear`: BOTH files land.
+    /// oc refused `foo` and exited 23, because the clear was dropped here and
+    /// the exclude survived.
+    #[test]
+    fn a_clear_pops_the_exclude_that_precedes_it() {
+        let filters = compile_daemon_filter_set(&[exclude("foo"), clear()])
+            .expect("two rules compile to a filter set");
+        assert!(
+            filters.allows(Path::new("foo"), false),
+            "the clear must pop the preceding exclude"
+        );
+    }
+
+    /// Non-vacuity companion for
+    /// [`a_clear_pops_the_exclude_that_precedes_it`].
+    ///
+    /// Without this, that test would also pass if the compiled set simply
+    /// allowed everything - which is exactly what a filter set built from zero
+    /// surviving rules does. This one proves the exclude bites when no clear
+    /// follows it, so the pin above is measuring the clear and not the absence
+    /// of a filter.
+    #[test]
+    fn an_exclude_alone_still_refuses() {
+        let filters = compile_daemon_filter_set(&[exclude("foo")])
+            .expect("one rule compiles to a filter set");
+        assert!(
+            !filters.allows(Path::new("foo"), false),
+            "an exclude with no clear after it must still refuse"
+        );
+    }
+
+    /// A clear pops what PRECEDED it and nothing more, so a rule written after
+    /// it still applies. Distinguishes "the clear emptied the list" from "the
+    /// clear disabled filtering", which the first two tests alone cannot tell
+    /// apart.
+    ///
+    /// Same fixture measured against rsync 3.5.0 with a third directive
+    /// `filter = - keep`: `foo` lands, `keep` is refused.
+    #[test]
+    fn a_rule_after_the_clear_still_applies() {
+        let filters = compile_daemon_filter_set(&[exclude("foo"), clear(), exclude("keep")])
+            .expect("three rules compile to a filter set");
+        assert!(
+            filters.allows(Path::new("foo"), false),
+            "the clear must pop the exclude written before it"
+        );
+        assert!(
+            !filters.allows(Path::new("keep"), false),
+            "a rule written after the clear must survive it"
+        );
+    }
 }
