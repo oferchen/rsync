@@ -798,6 +798,67 @@ fn parse_received_filters_multiple_rules() {
     assert!(!filter_set.is_empty());
 }
 
+/// An UNSIDED `!` clears the whole list.
+///
+/// upstream: `exclude.c:1542` - a clear rule with no side modifier pops the
+/// entire active section. The wire format leaves `sender_side` and
+/// `receiver_side` false for that spelling, and `apply_clear_rule`
+/// (`compiled/clear.rs:9-11`) refuses to clear anything when neither side is
+/// set, so narrowing the rule to `(false, false)` made the clear a silent
+/// no-op.
+///
+/// MEASURED on loopback daemons: a module whose `exclude from` file holds
+/// `foo` / `!` / `keep` served NOTHING from oc while rsync 3.5.0 served `foo`.
+/// The `clear_rule()` helper above pre-sets BOTH sides, which is why no
+/// existing row here discriminated.
+#[test]
+fn parse_received_filters_unsided_clear_empties_the_set() {
+    use protocol::filters::RuleType;
+    let (_handshake, ctx) = test_generator();
+
+    let wire_rules = vec![
+        FilterRuleWireFormat::exclude("*.log".to_owned()),
+        FilterRuleWireFormat {
+            rule_type: RuleType::Clear,
+            ..FilterRuleWireFormat::default()
+        },
+    ];
+
+    let (filter_set, _) = ctx.parse_received_filters(&wire_rules).unwrap();
+    assert!(
+        filter_set.is_empty(),
+        "an unsided clear must drop the preceding exclude"
+    );
+}
+
+/// A SIDED `!` still clears only the side it names.
+///
+/// Companion to the row above: without it a "force both sides on" fix would
+/// also pass, and the sided spelling would silently over-clear.
+#[test]
+fn parse_received_filters_sender_sided_clear_keeps_a_receiver_rule() {
+    use protocol::filters::RuleType;
+    let (_handshake, ctx) = test_generator();
+
+    let mut receiver_only = FilterRuleWireFormat::exclude("*.log".to_owned());
+    receiver_only.receiver_side = true;
+
+    let wire_rules = vec![
+        receiver_only,
+        FilterRuleWireFormat {
+            rule_type: RuleType::Clear,
+            sender_side: true,
+            ..FilterRuleWireFormat::default()
+        },
+    ];
+
+    let (filter_set, _) = ctx.parse_received_filters(&wire_rules).unwrap();
+    assert!(
+        !filter_set.is_empty(),
+        "a sender-sided clear must not drop a receiver-only rule"
+    );
+}
+
 #[test]
 fn parse_received_filters_with_modifiers() {
     let (_handshake, ctx) = test_generator();
