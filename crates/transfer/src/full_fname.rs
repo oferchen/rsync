@@ -53,6 +53,9 @@
 //!   daemon server that has selected a module.
 //! - `clientserver.c:864,993` - `module_dirlen` is the length of the
 //!   normalized module path and the server `chdir()`s there before serving.
+//! - `clientserver.c:922-923` - `if (module_dirlen == 1) module_dirlen = 0;`.
+//!   A module rooted at `/` has length 0, so `p1` keeps `curr_dir`'s leading
+//!   slash and the rendered name stays absolute.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -96,6 +99,17 @@ impl DaemonPaths<'_> {
             tail
         };
         if p1.is_empty() {
+            // upstream: `module_dirlen` is a BYTE COUNT into `curr_dir`, not a
+            // path, and `clientserver.c:922-923` forces it to 0 - never 1 - for
+            // a module whose `module_dir` is `/`. `p1 = curr_dir + 0` is then
+            // `curr_dir` itself, so a server whose `curr_dir` is `/` renders
+            // `"/" + fn`, keeping the leading slash. Stripping `/` as a *path*
+            // prefix loses that byte and silently turns the absolute name into
+            // a relative one. Every other module root leaves `p1` genuinely
+            // empty and the bare relative name is correct.
+            if self.module_root == Path::new("/") {
+                return Some(format!("/{tail}"));
+            }
             // upstream: p1 == "" and p2 == "" - the bare relative name.
             return Some(tail);
         }
@@ -236,6 +250,38 @@ mod tests {
                 Some(paths("/srv/mod", "/srv/mod"))
             ),
             "\"/etc/passwd\" (in mymod)"
+        );
+    }
+
+    /// Ground truth, MEASURED 2026-09-07 against rsync 3.5.0 serving a module
+    /// declared `path = /`, pulled with `-r -R` for a name that does not exist:
+    ///
+    /// ```text
+    /// rsync: [sender] link_stat "/tmp/t1141/msg/srv/mod/nope" (in root) failed: ...
+    /// ```
+    ///
+    /// The `--relative` walk base is the module root, so `curr_dir` is `/` and
+    /// upstream's `p1 = curr_dir + module_dirlen` is `/` - `module_dirlen` is
+    /// forced to 0, not 1, at `clientserver.c:922-923`. Treating `/` as a path
+    /// prefix instead of a byte count drops that slash and renders the name
+    /// relative, which is what oc emitted before this pin.
+    #[test]
+    fn module_rooted_at_slash_keeps_the_leading_slash() {
+        assert_eq!(
+            full_fname_path(Path::new("/tmp/srv/mod/nope"), Some(paths("/", "/"))),
+            "\"/tmp/srv/mod/nope\" (in mymod)"
+        );
+    }
+
+    /// The same module root one directory down: `p1` is non-empty here, so the
+    /// pre-existing `/{p1}/{tail}` arm already reproduced upstream. Negative
+    /// control for [`module_rooted_at_slash_keeps_the_leading_slash`] - it must
+    /// stay green when that pin's branch is mutated out.
+    #[test]
+    fn module_rooted_at_slash_below_the_root_is_unchanged() {
+        assert_eq!(
+            full_fname_path(Path::new("/tmp/srv/nope"), Some(paths("/", "/tmp/srv"))),
+            "\"/tmp/srv/nope\" (in mymod)"
         );
     }
 
