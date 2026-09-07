@@ -100,7 +100,7 @@ daemon-link-dest-escape pass
 daemon-max-alloc-zero skip
 daemon-module-chdir-symlink pass
 daemon-module-options skip
-daemon-module-private-parent fail
+daemon-module-private-parent pass
 daemon-munge pass
 daemon-namecvt-empty-response skip
 daemon-namecvt-newline-token skip
