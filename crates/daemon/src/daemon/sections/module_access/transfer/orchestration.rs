@@ -261,14 +261,76 @@ fn process_approved_module(
         }
     }
 
-    // upstream: clientserver.c:983-1053 - chroot + setgid + setuid run BEFORE
-    // `@RSYNCD: OK` (1071), so their `@ERROR: chroot/setgid/setuid failed`
+    // upstream: clientserver.c:930-951 - the five daemon filter parameters
+    // (`filter`, `include from`, `include`, `exclude from`, `exclude`) are
+    // parsed HERE, and the ordering is the substance of this placement:
+    //
+    //   :934-951  parse_filter_str / parse_filter_file  <- the reads
+    //   :1050     chroot(module_chdir)
+    //   :1059     change_dir(module_chdir)
+    //   :1098     setgid
+    //   :1123     setuid
+    //   :1152     `@RSYNCD: OK`
+    //
+    // ⚠ ALL THREE OF chroot, THE UID DROP AND THE CWD CHANGE LAND AFTER THE
+    // PARSE UPSTREAM, AND EACH ONE BREAKS A DIFFERENT CONFIGURATION IF THE
+    // PARSE IS MOVED BELOW IT:
+    //
+    // - after `chroot`, an absolute path outside the module - the documented
+    //   `exclude from = /etc/rsync/excludes` shape - no longer names a file
+    //   this process can reach, so the whole connection is refused on a
+    //   DEFAULT config (`use chroot` defaults on);
+    // - after `setuid`, an operator file readable only by root (mode 0600)
+    //   becomes unreadable, which breaks it with no chroot involved at all;
+    // - after `change_dir`, a RELATIVE path resolves against the module root
+    //   rather than the daemon's launch directory, which is where upstream
+    //   resolves it because :1059 has not run yet.
+    //
+    // Reading them here reproduces all three. The rules are enforced
+    // server-side regardless of what filters the client later sends.
+    //
+    // ⚠ The parse is SPLIT from its assignment deliberately: `config` does not
+    // exist until the client's argv has been read, which is necessarily after
+    // `@RSYNCD: OK` and therefore after the privilege drop. Only the READ has
+    // to happen early, so only the read moves; the rules are parked in this
+    // local and installed into `config` at its construction site below. Upstream
+    // has no analogue of that assignment - it parses straight into the global
+    // `daemon_filter_list` - so the split is an oc structural artefact, not a
+    // behavioural difference.
+    //
+    // Client args are not available yet (the client blocks on OK before
+    // sending its argv), so a refusal here hooks post-xfer-exec with an empty
+    // arg list, exactly as the sibling pre-OK refusals below do.
+    let daemon_filter_rules = match build_daemon_filter_rules(module) {
+        Ok(rules) => rules,
+        Err(err) => {
+            let error = AtError::message(format!("failed to load module filter rules: {err}"));
+            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+            let host_owned = ctx.host_display().to_owned();
+            run_post_xfer_finalizer(
+                ctx,
+                module,
+                &host_owned,
+                auth_user.as_deref(),
+                &[],
+                MODULE_ABORT_EXIT_CODE,
+            );
+            return Ok(());
+        }
+    };
+
+    // upstream: clientserver.c:1050-1123 - chroot + setgid + setuid run BEFORE
+    // `@RSYNCD: OK` (:1152), so their `@ERROR: chroot/setgid/setuid failed`
     // replies are raw pre-OK lines the client reads before it switches to the
     // multiplexed input stream. Run them here, then emit OK, so a failure can
     // never desync the client's multiplex decoder. Client args are not yet
     // available (the client blocks on OK before sending its argv), so the
     // post-xfer-exec hook fires with an empty arg list - matching upstream's
     // pre-read_args fork position (clientserver.c:908).
+    //
+    // ⚠ The daemon filter parameters are read ABOVE this point, not below it -
+    // see the ordering table there for why each of the three steps in this
+    // block would break a different working configuration.
     if !validate_module_path(ctx, module)? {
         // upstream: clientserver.c:992-993 - the change_dir() into the module
         // path is post-fork, so a missing/unreachable path still hooks.
@@ -548,26 +610,11 @@ fn process_approved_module(
             }
         };
 
-    // upstream: clientserver.c:rsync_module() - build daemon_filter_list from
-    // module filter/exclude/include/exclude_from/include_from parameters.
-    // These rules are enforced server-side regardless of client-sent filters.
-    match build_daemon_filter_rules(module) {
-        Ok(rules) => config.daemon_filter_rules = rules,
-        Err(err) => {
-            let error = AtError::message(format!("failed to load module filter rules: {err}"));
-            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-            let host_owned = ctx.host_display().to_owned();
-            run_post_xfer_finalizer(
-                ctx,
-                module,
-                &host_owned,
-                auth_user.as_deref(),
-                &client_args,
-                MODULE_ABORT_EXIT_CODE,
-            );
-            return Ok(());
-        }
-    }
+    // Install the rules parsed before the chroot and the privilege drop. This
+    // is the assignment half of the split described at the parse site; no file
+    // is read here, so nothing in this statement depends on paths the chroot
+    // or the uid drop has since taken away.
+    config.daemon_filter_rules = daemon_filter_rules;
 
     // LSM-CAP.3: drop every Linux capability not required by this module
     // before Landlock engages. The worker process inherits the resulting
@@ -580,8 +627,16 @@ fn process_approved_module(
     // SEC-1.p: engage the Landlock LSM allowlist now that chroot, the
     // uid/gid drop, and daemon-config filter-rule loading have completed.
     // Filter rules referencing files outside module.path (e.g.
-    // `exclude from = <abs-path>`) are read into memory above; once
-    // Landlock engages, those external paths become unreadable. Stub on
+    // `exclude from = <abs-path>`) are read into memory well above this point;
+    // once Landlock engages, those external paths become unreadable.
+    //
+    // ⚠ LANDLOCK IS NOT WHAT DECIDES WHERE THE PARSE GOES, and reading this
+    // comment as if it were is how the parse came to sit below the chroot.
+    // Landlock is only the LAST of four steps that each independently require
+    // the read to have already happened - chroot, the cwd change and the uid
+    // drop all land earlier and each breaks a different working config. The
+    // ordering constraint is stated in full at the parse site; this block is
+    // downstream of it, not the reason for it. Stub on
     // non-Linux short-circuits to `Unavailable`. Failure to engage is
     // logged but does not abort the connection: SEC-1 *at* helpers still
     // provide the primary defense. The validated client-supplied paths
