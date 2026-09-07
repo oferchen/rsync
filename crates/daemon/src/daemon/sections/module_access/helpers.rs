@@ -472,6 +472,51 @@ fn read_patterns_from_file(path: &Path) -> Result<Vec<String>, io::Error> {
     Ok(patterns)
 }
 
+/// Every long-form filter keyword the daemon `filter` directive recognises.
+///
+/// upstream: `exclude.c:1134-1178` maps each of these to a short-form rule
+/// character. The list is shared by the tokenizer and, through
+/// [`is_rule_keyword`], uses one terminator rule rather than a second copy.
+///
+/// ⚠ `merge`/`dir-merge` open a token here but `parse_daemon_filter_token` has
+/// no arm for them, so such a token falls through to its bare-pattern arm. That
+/// is a separate defect, tracked on its own; this list deliberately keeps them
+/// so the tokenizer's behaviour on them is unchanged by this commit.
+const RULE_KEYWORDS: &[&str] = &[
+    "include",
+    "exclude",
+    "hide",
+    "show",
+    "protect",
+    "risk",
+    "clear",
+    "merge",
+    "dir-merge",
+];
+
+/// The bytes that terminate a filter-rule keyword.
+///
+/// upstream: `exclude.c:1218-1227` `rule_strcmp` - a keyword matches only when
+/// the byte after it is whitespace, `_`, `,`, or the end of the string. Any
+/// other byte makes the token not that keyword at all.
+///
+/// oc's CLI parser states the same rule in
+/// `crates/cli/src/frontend/filter_rules/parsing/helpers.rs`, whose
+/// `is_rule_separator` records why oc treats the whole ASCII whitespace class
+/// as a separator where upstream's `rule_strcmp` calls `isspace`. This is the
+/// daemon-side statement of that one convention, not a second one.
+fn is_keyword_terminator(ch: char) -> bool {
+    ch == '_' || ch == ',' || ch.is_ascii_whitespace()
+}
+
+/// Returns true when `s` opens with `keyword` AND the keyword is terminated.
+fn is_rule_keyword(s: &str, keyword: &str) -> bool {
+    match s.strip_prefix(keyword) {
+        Some(rest) => rest.chars().next().is_none_or(is_keyword_terminator),
+        None => false,
+    }
+}
+
 /// Splits a filter string with `FILTRULE_WORD_SPLIT` semantics into individual
 /// rule tokens.
 ///
@@ -492,31 +537,18 @@ fn split_filter_tokens(s: &str) -> Vec<String> {
 
     // Prefixes that start a new rule token when found after whitespace.
     const SHORT_PREFIXES: &[&str] = &["+ ", "- ", "+/", "-/"];
-    const KEYWORD_PREFIXES: &[&str] = &[
-        "include ",
-        "exclude ",
-        "hide ",
-        "show ",
-        "protect ",
-        "risk ",
-        "clear ",
-        "merge ",
-        "dir-merge ",
-    ];
 
     /// Returns true if `s` starts with a filter rule prefix.
+    ///
+    /// The keyword arm asks `is_rule_keyword`, so a keyword terminated by any
+    /// separator upstream accepts opens a new token. The table this replaced
+    /// carried a MANDATORY TRAILING SPACE on every entry, so `hide_bar` and a
+    /// line-final `clear` matched nothing, no token boundary opened, and the
+    /// whole remainder collapsed into one rule whose pattern was the literal
+    /// compound string.
     fn starts_with_rule_prefix(s: &str) -> bool {
-        for &p in SHORT_PREFIXES {
-            if s.starts_with(p) {
-                return true;
-            }
-        }
-        for &kw in KEYWORD_PREFIXES {
-            if s.starts_with(kw) {
-                return true;
-            }
-        }
-        false
+        SHORT_PREFIXES.iter().any(|p| s.starts_with(p))
+            || RULE_KEYWORDS.iter().any(|kw| is_rule_keyword(s, kw))
     }
 
     let mut tokens = Vec::new();
@@ -752,21 +784,45 @@ fn non_empty_pattern_rule(pattern: &str, is_include: bool) -> Option<FilterRuleW
 
 /// Strips a keyword prefix from a token, returning the remainder.
 ///
-/// The keyword must be followed by whitespace or a comma separator.
-/// Returns `None` if the token doesn't start with the keyword.
+/// Returns `None` when the token does not start with the keyword, or starts
+/// with it but is not TERMINATED by it - `hideout` is not a `hide` rule.
 ///
-/// upstream: exclude.c:1134 - RULE_STRCMP advances past the keyword and
-/// any following separator (space, comma).
+/// upstream: `exclude.c:1218-1227` `rule_strcmp`, via [`is_keyword_terminator`].
+/// The set this replaced was `' '` or `','` alone, so `_` and tab - both
+/// separators upstream accepts - made the token not-a-keyword and it fell
+/// through to the bare-pattern arm.
+///
+/// ⚠ The trailing `trim_start` consumes a whole RUN of whitespace, where
+/// upstream consumes exactly ONE separator (`if (*s) s++`,
+/// `exclude.c:1444-1445`) and takes the remainder verbatim - a rule oc's CLI
+/// parser measured against rsync 3.5.0 for the NON-word-split `--filter`.
+///
+/// MEASURED for THIS directive against a real rsync 3.5.0 daemon, and the
+/// question turns out to be UNASKABLE here rather than answered either way:
+///
+/// - `filter = exclude bar` (ONE space) builds the pattern `bar`, NOT ` bar`.
+///   Discriminated with a module holding both `bar` and ` bar`: upstream hides
+///   `bar` and serves ` bar`, and oc agrees. So on the only shape where the
+///   two readings differ observably, oc is faithful.
+/// - `filter = exclude  bar` (TWO spaces) and `filter = exclude\tbar` make
+///   upstream REFUSE the module - `unexpected end of filter rule` - because
+///   the word-split loop (`exclude.c:1250-1255`) splits on the whitespace RUN
+///   first, leaving the keyword with no pattern at all. Neither candidate
+///   pattern is ever built.
+///
+/// So a doubled separator cannot produce a divergent PATTERN in this mode; it
+/// produces a refusal upstream and an accepted rule in oc. That gap belongs to
+/// the daemon's broader accept-where-upstream-refuses class, which is tracked
+/// separately, not to this function's run-vs-one-separator behaviour. The
+/// `trim_start` is therefore left as it is, now on measurement rather than on
+/// the absence of one.
 fn strip_keyword_prefix<'a>(token: &'a str, keyword: &str) -> Option<&'a str> {
     let rest = token.strip_prefix(keyword)?;
-    if rest.is_empty() {
-        return Some(rest);
-    }
-    let first = rest.as_bytes()[0];
-    if first == b' ' || first == b',' {
-        Some(rest[1..].trim_start())
-    } else {
-        None
+    let mut chars = rest.chars();
+    match chars.next() {
+        None => Some(rest),
+        Some(ch) if is_keyword_terminator(ch) => Some(chars.as_str().trim_start()),
+        Some(_) => None,
     }
 }
 
