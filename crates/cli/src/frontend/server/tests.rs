@@ -391,6 +391,27 @@ fn long_flags_default_confine_root_is_absent() {
     assert!(flags.confine_root.is_none());
 }
 
+/// upstream: options.c:696 binds `safe_symlinks` via the one popt table both
+/// sides parse, and server_options() forwards the bare `--safe-links` long
+/// flag (options.c:3073-3074). Only the receiving side consumes it
+/// (generator.c:1951); dropping it here left a push's server receiver
+/// creating the unsafe symlinks the client asked it to skip.
+#[test]
+fn long_flags_capture_safe_links() {
+    let args = vec![OsString::from("--server"), OsString::from("--safe-links")];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.safe_links);
+}
+
+/// Absent by default: a server that never receives `--safe-links` must not
+/// skip any symlink.
+#[test]
+fn long_flags_default_safe_links_is_off() {
+    let args = vec![OsString::from("--server")];
+    let flags = parse_server_long_flags(&args);
+    assert!(!flags.safe_links);
+}
+
 #[test]
 fn parse_server_args_skips_secluded_flag() {
     let args = vec![
