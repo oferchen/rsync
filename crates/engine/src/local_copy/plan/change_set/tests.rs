@@ -1112,3 +1112,76 @@ fn for_file_atimes_differing_access_time_sets_u_glyph() {
     assert!(!change_set.access_time_changed());
     assert!(!change_set.has_any_change());
 }
+
+/// A `--chmod` spec must not raise the `p` column for a SYMLINK.
+///
+/// Upstream gates every `tweak_mode()` call on `!S_ISLNK`
+/// (flist.c:1741-1742 `send_file_name`, flist.c:996-997 `recv_file_entry`,
+/// rsync.c:647-648 the daemon `outgoing chmod`), so a link's mode reaches
+/// `itemize()` untweaked and the `p` decision there is the plain `-p` / `-E`
+/// compare (generator.c:424-433 `perms_differ`, inlined at
+/// generator.c:548-558). Reporting `p` here would be a report with no apply
+/// behind it, because `metadata::apply_symlink_permissions_like` ignores
+/// `--chmod` for exactly the same reason.
+///
+/// The regular-file arm is the non-vacuity control: the SAME options object
+/// must still raise `p` there, or this test would pass on a dead `--chmod`.
+///
+/// Unix-only: the fixture creates real symlinks via `std::os::unix`, and the
+/// `p` decision it pins reads a link's lstat permission bits, which only the
+/// unix `MetadataExt` surface exposes.
+#[cfg(unix)]
+#[test]
+fn for_file_chmod_does_not_report_perms_for_a_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let target = temp.path().join("target.txt");
+    fs::write(&target, b"content").expect("write target");
+
+    let src_link = temp.path().join("src-link");
+    let dst_link = temp.path().join("dst-link");
+    symlink("target.txt", &src_link).expect("create src link");
+    symlink("target.txt", &dst_link).expect("create dst link");
+    let src_link_meta = fs::symlink_metadata(&src_link).expect("src link meta");
+    let dst_link_meta = fs::symlink_metadata(&dst_link).expect("dst link meta");
+
+    let file_meta = fs::metadata(&target).expect("file meta");
+
+    let chmod = ::metadata::ChmodModifiers::parse("go-rwx").expect("parse chmod");
+    let options = MetadataOptions::new()
+        .preserve_permissions(false)
+        .with_chmod(Some(chmod));
+
+    let link_change_set = LocalCopyChangeSet::for_file(
+        &src_link_meta,
+        Some(&dst_link_meta),
+        &options,
+        true,
+        false,
+        false,
+        false,
+        ModifyWindow::ZERO,
+    );
+    assert!(
+        !link_change_set.permissions_changed(),
+        "--chmod must not raise `p` for a symlink: upstream never tweaks a \
+         link's mode, so nothing would be applied"
+    );
+
+    let file_change_set = LocalCopyChangeSet::for_file(
+        &file_meta,
+        Some(&file_meta),
+        &options,
+        true,
+        false,
+        false,
+        false,
+        ModifyWindow::ZERO,
+    );
+    assert!(
+        file_change_set.permissions_changed(),
+        "non-vacuity control: the same --chmod spec DOES raise `p` for a \
+         regular file"
+    );
+}

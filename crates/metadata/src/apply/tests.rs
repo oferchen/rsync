@@ -3015,6 +3015,163 @@ fn symlink_own_mode_applied_from_source_metadata_local_copy() {
     );
 }
 
+// A `--chmod` spec must never reach a symlink's own mode. Upstream tweaks a
+// mode with `tweak_mode()` at exactly three sites and every one is gated on
+// `!S_ISLNK`:
+//
+//   flist.c:1741-1742  send_file_name()   - the sender's flist rewrite
+//   flist.c:996-997    recv_file_entry()  - the receiver's flist read
+//   rsync.c:647-648    set_file_attrs()   - the daemon `outgoing chmod`
+//
+// so `set_file_attrs()` (rsync.c:510 `mode_t new_mode = file->mode;`) chmods a
+// link to the mode the `-p` / `-E` compare produced and nothing else. Measured
+// against the pinned 3.5.0 binary on macOS: `-a --chmod=go-rwx` over a
+// `link -> file.txt` seeded at 0755 leaves the destination link at 0755, while
+// the same run drops the regular file to 0600 and the directory to 0700.
+//
+// These tests only have a subject where the OS can chmod a link at all
+// (`CAN_CHMOD_SYMLINK` = macOS/BSD); on Linux the whole arm is compiled out and
+// this surface does not exist.
+#[cfg(target_os = "macos")]
+#[test]
+fn symlink_chmod_spec_is_ignored_without_preserve_perms_local_copy() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let temp = tempdir().expect("tempdir");
+    let target = temp.path().join("t.txt");
+    let src = temp.path().join("src");
+    let dst = temp.path().join("dst");
+    fs::write(&target, b"data").expect("write target");
+    symlink(&target, &src).expect("create src link");
+    symlink(&target, &dst).expect("create dst link");
+
+    fast_io::secure_chmod_at(&src, 0o714, false).expect("seed src mode");
+    fast_io::secure_chmod_at(&dst, 0o777, false).expect("seed dst mode");
+
+    let chmod = crate::ChmodModifiers::parse("go-rwx").expect("parse chmod");
+    let src_meta = fs::symlink_metadata(&src).expect("src link metadata");
+    super::apply_symlink_metadata_with_options(
+        &dst,
+        &src_meta,
+        &MetadataOptions::new()
+            .preserve_permissions(false)
+            .with_chmod(Some(chmod)),
+    )
+    .expect("apply symlink metadata");
+
+    assert_eq!(
+        fs::symlink_metadata(&dst).unwrap().permissions().mode() & 0o7777,
+        0o777,
+        "--chmod alone must not touch a link's mode (upstream flist.c:1741-1742 \
+         gates the tweak on !S_ISLNK); the link must keep its own 0o777"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn symlink_chmod_spec_does_not_compose_with_preserve_perms_local_copy() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let temp = tempdir().expect("tempdir");
+    let target = temp.path().join("t.txt");
+    let src = temp.path().join("src");
+    let dst = temp.path().join("dst");
+    fs::write(&target, b"data").expect("write target");
+    symlink(&target, &src).expect("create src link");
+    symlink(&target, &dst).expect("create dst link");
+
+    fast_io::secure_chmod_at(&src, 0o714, false).expect("seed src mode");
+    fast_io::secure_chmod_at(&dst, 0o777, false).expect("seed dst mode");
+
+    let chmod = crate::ChmodModifiers::parse("go-rwx").expect("parse chmod");
+    let src_meta = fs::symlink_metadata(&src).expect("src link metadata");
+    super::apply_symlink_metadata_with_options(
+        &dst,
+        &src_meta,
+        &MetadataOptions::new()
+            .preserve_permissions(true)
+            .with_chmod(Some(chmod)),
+    )
+    .expect("apply symlink metadata");
+
+    assert_eq!(
+        fs::symlink_metadata(&dst).unwrap().permissions().mode() & 0o7777,
+        0o714,
+        "under -p the link takes the SOURCE link's bits verbatim; layering \
+         go-rwx on top would have produced 0o700"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn symlink_chmod_spec_does_not_compose_with_preserve_perms_from_entry() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    // The receiver path already ignores `--chmod` for a link; pin it so the two
+    // paths keep sharing the one rule in `permissions::symlink_target_mode`.
+    let temp = tempdir().expect("tempdir");
+    let target = temp.path().join("target.txt");
+    let link = temp.path().join("link");
+    fs::write(&target, b"data").expect("write target");
+    symlink(&target, &link).expect("create link");
+    fast_io::secure_chmod_at(&link, 0o777, false).expect("seed link mode");
+
+    let mut entry = FileEntry::new_symlink("link".into(), "target.txt".into());
+    entry.set_mode(0o120741);
+
+    let chmod = crate::ChmodModifiers::parse("go-rwx").expect("parse chmod");
+    super::apply_symlink_metadata_from_entry(
+        &link,
+        &entry,
+        &MetadataOptions::new()
+            .preserve_permissions(true)
+            .with_chmod(Some(chmod)),
+    )
+    .expect("apply symlink metadata");
+
+    assert_eq!(
+        fs::symlink_metadata(&link).unwrap().permissions().mode() & 0o7777,
+        0o741,
+        "the receiver path must chmod the link to the sender's bits, untweaked"
+    );
+}
+
+/// Non-vacuity control for the two `--chmod`-on-a-link tests above: the very
+/// same `go-rwx` spec, on a REGULAR file, MUST still strip the group/other
+/// bits. Without this a broken `ChmodModifiers::parse` would make the symlink
+/// pins pass for the wrong reason.
+#[cfg(unix)]
+#[test]
+fn chmod_spec_used_by_the_symlink_pins_still_tweaks_a_regular_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let src = temp.path().join("src.txt");
+    let dst = temp.path().join("dst.txt");
+    fs::write(&src, b"data").expect("write src");
+    fs::write(&dst, b"data").expect("write dst");
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o714)).expect("chmod src");
+    fs::set_permissions(&dst, fs::Permissions::from_mode(0o777)).expect("chmod dst");
+
+    let chmod = crate::ChmodModifiers::parse("go-rwx").expect("parse chmod");
+    let src_meta = fs::metadata(&src).expect("src metadata");
+    super::apply_file_metadata_with_options(
+        &dst,
+        &src_meta,
+        &MetadataOptions::new()
+            .preserve_permissions(true)
+            .with_chmod(Some(chmod)),
+    )
+    .expect("apply file metadata");
+
+    assert_eq!(
+        fs::metadata(&dst).unwrap().permissions().mode() & 0o7777,
+        0o700,
+        "the go-rwx spec must be live: a regular file DOES get tweaked"
+    );
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn symlink_own_mode_is_noop_on_linux() {
