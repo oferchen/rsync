@@ -367,6 +367,11 @@ where
     // upstream: receiver.c:320 - a server receiver that was passed --preallocate
     // fallocate()s each destination file to its eventual length before writing.
     config.flags.preallocate = long_flags.preallocate;
+    // upstream: options.c:3073-3074 - `--safe-links` arrives as a bare long
+    // flag. Only the receiving side consumes it (generator.c:1951); the sender
+    // transmits every symlink. Mirrors the daemon long-form parser
+    // (long_form_args.rs).
+    config.flags.safe_links = long_flags.safe_links;
     apply_fake_super(&mut config, long_flags.fake_super);
     config.file_selection.size_only = long_flags.size_only;
     // upstream: options.c:2993-2994 - `--open-noatime` forwarded to the sender so
