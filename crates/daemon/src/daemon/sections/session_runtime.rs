@@ -478,6 +478,22 @@ fn handle_legacy_session(
             }
             // A banner arriving after the version exchange is the request line.
             Ok(LegacyDaemonMessage::Version(_)) => {}
+            // ⚠ oc-only: upstream has no `OPTION` handshake line. `grep '"@RSYNCD'
+            // *.c *.h` over 3.5.0 yields only the greeting (compat.c:853),
+            // `AUTHREQD` (clientserver.c:809), `OK` (clientserver.c:1152) and
+            // `EXIT` (clientserver.c:1385), and `start_daemon` reads exactly one
+            // request line after the greeting (clientserver.c:1537-1571), so an
+            // upstream daemon answers this line `@ERROR: Unknown module
+            // '@RSYNCD: OPTION ...'`.
+            //
+            // What survives here is deliberately one-way: the payload is kept
+            // ONLY as a refuse-options hint, which can refuse a request and can
+            // never grant anything. It is NOT a configuration channel - a
+            // peer-supplied `key=value` used to reach a module-definition
+            // override evaluator, which let an unauthenticated client relax
+            // `read only`/`use chroot` before the module's own auth ran. See
+            // `process_approved_module` for why upstream's `--dparam` cannot
+            // reach the wire at all.
             Ok(LegacyDaemonMessage::Other(payload)) => {
                 if let Some(option) = parse_daemon_option(payload) {
                     refused_options.push(option.to_owned());

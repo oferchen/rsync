@@ -209,6 +209,7 @@ include!("tests/chunks/run_daemon_lists_host_denied_module.rs");
 include!("tests/chunks/run_daemon_handles_binary_negotiation.rs");
 include!("tests/chunks/run_daemon_handles_parallel_sessions.rs");
 include!("tests/chunks/run_daemon_honours_max_sessions.rs");
+include!("tests/chunks/run_daemon_ignores_a_client_supplied_daemon_param_override.rs");
 include!("tests/chunks/run_daemon_lists_modules_on_request.rs");
 include!("tests/chunks/run_daemon_config_flag_overrides_default_path.rs");
 include!("tests/chunks/run_daemon_loads_modules_from_config_file.rs");
