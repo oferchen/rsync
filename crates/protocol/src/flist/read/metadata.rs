@@ -9,8 +9,6 @@
 
 use std::io::{self, Read};
 
-use logging::debug_log;
-
 use crate::codec::ProtocolCodec;
 use crate::flist::flags::{FileFlags, XMIT_NO_CONTENT_DIR};
 use crate::varint::read_varint;
@@ -209,17 +207,6 @@ impl FileListReader {
             true
         };
 
-        debug_log!(
-            Flist,
-            3,
-            "read_metadata: mtime={} nsec={} mode={:o} uid={:?} gid={:?}",
-            mtime,
-            nsec,
-            mode,
-            uid,
-            gid
-        );
-
         Ok(MetadataResult {
             mtime,
             nsec,
@@ -242,7 +229,6 @@ impl FileListReader {
     /// - Protocol 30+: Variable-length encoding (varlong30)
     pub(super) fn read_size<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<u64> {
         let size = self.codec.read_file_size(reader)?;
-        debug_log!(Flist, 4, "read_size: size={}", size);
         Ok(size as u64)
     }
 }

@@ -65,6 +65,9 @@ impl ReceiverContext {
             count += 1;
         }
 
+        // upstream: flist.c:3019 - `received %d names` after the entry loop.
+        protocol::flist::trace_received_names(count);
+
         // The reader's accumulated bits are NOT folded in here. They are read
         // through `ReceiverContext::flist_reader_io_error`, which is the single
         // place upstream's two rules are applied - the peer trailer gated on
@@ -98,6 +101,10 @@ impl ReceiverContext {
             // upstream: uidlist.c:483-494 recv_id_list() remaps the whole flist
             // from sender ids to local ids right after reading the name lists.
             self.remap_flist_ownership_from_id_lists();
+            // upstream: flist.c:3055-3060 - the non-incremental receiver sets
+            // flist_eof right after recv_id_list(); who_am_i() still reports
+            // the pre-forked "Receiver" here (rsync.c:994).
+            protocol::flist::trace_flist_eof(protocol::flist::ProcessRole::PreForkReceiver);
         }
 
         // upstream: flist.c:3068-3072 - read io_error flag for protocol < 30.
@@ -189,6 +196,17 @@ impl ReceiverContext {
             prune_empty_dirs_pass(&mut self.file_list, &self.filter_chain);
         }
 
+        // upstream: flist.c:3085 - dump the received flist at
+        // DEBUG_GTE(FLIST, 3), after flist_sort_and_clean(). uid only shows
+        // for a root receiver (flist.c:3502 `(am_root || am_sender)`).
+        protocol::flist::output_flist(
+            protocol::flist::ProcessRole::PreForkReceiver,
+            &self.file_list[seg_start..],
+            initial_ndx_start,
+            None,
+            metadata::am_root(),
+        );
+
         match_hard_links(&mut self.file_list, &mut self.prior_hlinks);
 
         // For protocol < 30, normalize (dev, ino) pairs into hardlink_idx and
@@ -203,6 +221,9 @@ impl ReceiverContext {
         // upstream: flist.c:recv_file_entry() uses static variables that persist
         // across recv_file_list() calls - cache the reader to preserve that state.
         self.flist_reader_cache = Some(flist_reader);
+
+        // upstream: flist.c:3088 - `recv_file_list done` at DEBUG_GTE(FLIST, 2).
+        protocol::flist::trace_recv_file_list_done();
 
         // upstream: flist.c:3091 - `stats.flist_size += stats.total_read - start_read;`
         self.flist_span_end(span_start);
@@ -249,15 +270,7 @@ impl ReceiverContext {
         // branch order. Sub-list slots are tombstoned, never compacted, so the
         // length delta is the entry count the wire carried.
         self.ensure_all_segments_loaded(reader, &mut ndx_codec)?;
-        let total_extra = self.file_list.len() - start_len;
-
-        debug_log!(
-            Flist,
-            2,
-            "received {} extra entries across all sub-lists",
-            total_extra
-        );
-        Ok(total_extra)
+        Ok(self.file_list.len() - start_len)
     }
 
     /// Receives one INC_RECURSE sub-list segment framed by a `NDX_FLIST_OFFSET`
@@ -303,6 +316,16 @@ impl ReceiverContext {
         let dir_ndx = NDX_FLIST_OFFSET - ndx;
         self.validate_extra_segment_dir_ndx(dir_ndx)?;
 
+        // upstream: rsync.c:373 - `[%s] receiving flist for dir %d` at
+        // DEBUG_GTE(FLIST, 2). Upstream's forked receiver and generator each
+        // print their own copy (the second from io.c:1943); oc reads the
+        // stream once, so exactly one line appears.
+        protocol::flist::trace_receiving_flist_for_dir(
+            protocol::flist::ProcessRole::Receiver,
+            dir_ndx,
+            2,
+        );
+
         // upstream: flist.c:recv_file_entry() - reuse cached reader to preserve
         // compression state (prev_name, prev_mode, prev_uid, prev_gid).
         let mut flist_reader = self
@@ -330,6 +353,10 @@ impl ReceiverContext {
             self.file_list.push(entry);
             segment_count += 1;
         }
+
+        // upstream: flist.c:3019 - `received %d names` per recv_file_list()
+        // call, sub-lists included.
+        protocol::flist::trace_received_names(segment_count);
 
         // upstream: flist.c:2993-2999 - snapshot this sub-list's directories at
         // the read loop, before the per-segment sort/clean below tombstones any
@@ -408,19 +435,20 @@ impl ReceiverContext {
         // upstream: flist.c:2966 - ndx_start = prev->ndx_start + prev->used + 1
         self.ndx_segments.push((flat_start, seg_ndx_start));
 
-        // Counterpart to `reclaim_oldest_segment`'s "reclaiming segment" line:
-        // the receiver logged segment RELEASE but never segment ARRIVAL, so
-        // `ndx_segments.len()` - which is `pub(in crate::receiver)` - had no
-        // observable surface outside this crate. Without it a harness driving the
-        // real binary cannot tell one segment from many, which is what makes an
-        // end-to-end multi-segment assertion vacuous.
-        debug_log!(
-            Flist,
-            2,
-            "received segment {} entries [{flat_start}..{}) ndx_start {seg_ndx_start}",
-            self.ndx_segments.len() - 1,
-            self.file_list.len()
+        // upstream: flist.c:3085/3088 - each recv_file_list() call (sub-lists
+        // included) dumps the list at DEBUG_GTE(FLIST, 3) and prints
+        // `recv_file_list done` at level 2. Together with the segment's
+        // `receiving flist for dir` / `received %d names` lines above this is
+        // also the external surface that lets a harness driving the real
+        // binary tell one segment from many.
+        protocol::flist::output_flist(
+            protocol::flist::ProcessRole::Receiver,
+            &self.file_list[flat_start..],
+            seg_ndx_start,
+            None,
+            metadata::am_root(),
         );
+        protocol::flist::trace_recv_file_list_done();
 
         // Restore the cached reader so the next segment continues the same
         // compression state (upstream's static recv_file_entry() variables).
@@ -433,15 +461,6 @@ impl ReceiverContext {
         // remains the active delete driver until the emitter wiring
         // lands (tasks DDP-E1-E5).
         self.publish_segment_to_delete_pipeline(dir_ndx, flat_start);
-
-        debug_log!(
-            Flist,
-            2,
-            "received sub-list for dir_ndx={}, {} entries (ndx_start={})",
-            dir_ndx,
-            segment_count,
-            seg_ndx_start
-        );
 
         // upstream: flist.c:2789 - each sub-list's raw wire bytes accumulate
         // into stats.flist_size via `+=` on every recv_file_list() call.

@@ -14,7 +14,7 @@ use std::io::{self, IoSlice, Read, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use logging::{InfoFlag, PhaseTimer, debug_log, info_gte};
+use logging::{InfoFlag, PhaseTimer, info_gte};
 use protocol::CompatibilityFlags;
 use protocol::ProtocolVersion;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
@@ -805,6 +805,25 @@ impl GeneratorContext {
         flist_writer.write_end(&mut probed, io_error_for_end)?;
         probed.flush()?;
 
+        // upstream: flist.c:2835-2838 - dump the (initial) flist at
+        // DEBUG_GTE(FLIST, 3), then `send_file_list done` at level 2. The
+        // bases slice is clamped rather than indexed: tests seed `file_list`
+        // without the parallel `source_bases`, and a dump must never panic.
+        protocol::flist::output_flist(
+            protocol::flist::ProcessRole::Sender,
+            &self.file_list.as_slice()[..count],
+            self.incremental.ndx_map.first_ndx_start(),
+            Some(&self.source_bases[..count.min(self.source_bases.len())]),
+            true,
+        );
+        protocol::flist::trace_send_file_list_done();
+        // upstream: flist.c:2858-2864 - without INC_RECURSE the whole list is
+        // now sent, so the sender sets flist_eof here; under INC_RECURSE the
+        // marker is only set when `send_flist_eof` writes NDX_FLIST_EOF.
+        if self.incremental.initial_segment_count.is_none() {
+            protocol::flist::trace_flist_eof(protocol::flist::ProcessRole::Sender);
+        }
+
         let first_byte_latency = probed.first_byte_latency();
 
         // upstream: flist.c:send_file_entry() uses static variables - cache writer
@@ -896,13 +915,20 @@ impl GeneratorContext {
         // upstream: flist.c:2174-2181 - always sends write_end_of_flist()
         flist_writer.write_end(writer, None)?;
 
-        debug_log!(
-            Flist,
-            2,
-            "sent sub-list for dir_ndx={}, {} entries (ndx_start={})",
-            segment.parent_dir_ndx,
-            segment.count,
-            seg_ndx_start
+        // upstream: flist.c:2470 - send_extra_file_list() dumps each sub-list
+        // at DEBUG_GTE(FLIST, 3). The bases slice is clamped rather than
+        // indexed: tests seed `file_list` without the parallel `source_bases`,
+        // and a dump must never panic.
+        protocol::flist::output_flist(
+            protocol::flist::ProcessRole::Sender,
+            &self.file_list.as_slice()[segment.flist_start..end],
+            seg_ndx_start,
+            Some(
+                self.source_bases
+                    .get(segment.flist_start..end)
+                    .unwrap_or(&[]),
+            ),
+            true,
         );
 
         Ok(())
@@ -1014,17 +1040,13 @@ impl GeneratorContext {
         &mut self,
         writer: &mut W,
         ndx_codec: &mut NdxCodecEnum,
-        segments_sent: usize,
     ) -> io::Result<()> {
         ndx_codec.write_ndx(writer, NDX_FLIST_EOF)?;
         writer.flush()?;
         self.incremental.flist_eof_sent = true;
-        debug_log!(
-            Flist,
-            2,
-            "sent NDX_FLIST_EOF, all {} sub-lists dispatched",
-            segments_sent
-        );
+        // upstream: flist.c:2481 - the sender prints `[sender] flist_eof=1` at
+        // DEBUG_GTE(FLIST, 3) as it writes NDX_FLIST_EOF.
+        protocol::flist::trace_flist_eof(protocol::flist::ProcessRole::Sender);
         Ok(())
     }
 }
