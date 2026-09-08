@@ -106,6 +106,22 @@ fn dispatch_copy_action(
     ensure_directory: &mut impl FnMut(&mut CopyContext) -> Result<(), LocalCopyError>,
     root_device: Option<u64>,
 ) -> Result<bool, LocalCopyError> {
+    // upstream: flist.c:3364-3382 flist_sort_and_clean() - a later duplicate
+    // name in the merged multi-source list is dropped ("Otherwise keep the
+    // first one"): the first operand's copy wins and the duplicate is neither
+    // transferred, itemized, counted, nor batch-captured. oc walks each
+    // operand separately, so a later operand's non-directory entry landing on
+    // an already-produced destination is skipped here. Same-named directories
+    // are NOT skipped: their contents merge, exactly as upstream keeps the
+    // one merged directory entry. Returns kept=true - the destination entry
+    // exists (the first operand's copy), so the parent is not empty for
+    // `--prune-empty-dirs`.
+    if !matches!(planned.action, EntryAction::CopyDirectory)
+        && !context.claim_destination(target_buf)
+    {
+        return Ok(true);
+    }
+
     // All copy actions share: ensure parent directory exists + capture to batch
     ensure_directory(context)?;
     let source = planned.entry.path.as_path();
