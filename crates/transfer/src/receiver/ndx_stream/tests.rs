@@ -271,6 +271,12 @@ fn sender_drains_del_stats_and_receives_the_counters() {
             true
         }
 
+        fn ndx_is_regular_file(&self, _ndx: i32) -> bool {
+            // No file list here; the non-regular guard is exercised by the
+            // sinks that own one.
+            true
+        }
+
         fn begin_frame(&mut self) {}
 
         fn on_del_stats(&mut self, stats: &DeleteStats) -> io::Result<()> {
@@ -394,6 +400,12 @@ fn marker_rejected_by_sender_with_upstream_text() {
             true
         }
 
+        fn ndx_is_regular_file(&self, _ndx: i32) -> bool {
+            // No file list here; the non-regular guard is exercised by the
+            // sinks that own one.
+            true
+        }
+
         fn begin_frame(&mut self) {}
 
         fn on_del_stats(&mut self, _stats: &DeleteStats) -> io::Result<()> {
@@ -510,4 +522,98 @@ fn receiver_without_negotiated_inc_recurse_rejects_markers() {
     );
     assert!(err.to_string().contains("[receiver="), "message: {err}");
     assert!(ctx.file_list().is_empty(), "no segment may be absorbed");
+}
+
+/// An INC_RECURSE receiver whose file list holds one symlink (wire NDX 1) and
+/// one regular file (wire NDX 2).
+fn receiver_with_symlink_then_file() -> ReceiverContext {
+    let mut ctx = inc_recurse_receiver(&["d0"]);
+    ctx.file_list.push(FileEntry::new_symlink(
+        PathBuf::from("link"),
+        PathBuf::from("target"),
+    ));
+    ctx.file_list
+        .push(FileEntry::new_file(PathBuf::from("f.txt"), 1, 0o100644));
+    ctx
+}
+
+/// An `ITEM_TRANSFER` frame naming a non-regular entry is a hard protocol
+/// error with upstream's wording.
+///
+/// WHY: upstream `rsync.c:436-444` - once the attribute tail has decoded
+/// `ITEM_TRANSFER`, `i < 0 || !S_ISREG(cur_flist->files[i]->mode)` prints
+/// `received request to transfer non-regular file: %d [%s]` and aborts with
+/// `exit_cleanup(RERR_PROTOCOL)`. A reader that surfaced the frame instead
+/// would let a hostile sender steer the transfer machinery at a symlink or
+/// directory entry.
+#[test]
+fn item_transfer_frame_for_non_regular_entry_is_refused_with_upstream_wording() {
+    let mut wire = Vec::new();
+    let mut codec = create_ndx_codec(PROTOCOL);
+    push_file_echo(&mut wire, &mut codec, 1, SenderAttrs::ITEM_TRANSFER);
+
+    let mut ctx = receiver_with_symlink_then_file();
+    let mut reader = Cursor::new(wire);
+    let mut read_codec = create_ndx_codec(PROTOCOL);
+
+    let err = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut ctx, false, false)
+        .expect_err("an ITEM_TRANSFER frame naming a symlink must be refused");
+    assert!(
+        err.to_string()
+            .starts_with("received request to transfer non-regular file: 1"),
+        "unexpected message: {err}"
+    );
+    assert!(
+        err.to_string().contains("[receiver="),
+        "the who_am_i() tag must name the receiver: {err}"
+    );
+    assert!(
+        err.get_ref()
+            .and_then(|e| e.downcast_ref::<protocol::ProtocolViolation>())
+            .is_some(),
+        "rejection must map to RERR_PROTOCOL, got {err:?}"
+    );
+}
+
+/// NON-VACUITY COMPANION: the same frame naming the REGULAR entry passes the
+/// guard and surfaces normally.
+#[test]
+fn item_transfer_frame_for_regular_entry_passes_the_guard() {
+    let mut wire = Vec::new();
+    let mut codec = create_ndx_codec(PROTOCOL);
+    push_file_echo(&mut wire, &mut codec, 2, SenderAttrs::ITEM_TRANSFER);
+
+    let mut ctx = receiver_with_symlink_then_file();
+    let mut reader = Cursor::new(wire);
+    let mut read_codec = create_ndx_codec(PROTOCOL);
+
+    let (ndx, attrs) = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut ctx, false, false)
+        .expect("a regular-file frame decodes")
+        .expect("a per-file index, not NDX_DONE");
+    assert_eq!(ndx, 2);
+    assert_eq!(attrs.iflags, SenderAttrs::ITEM_TRANSFER);
+}
+
+/// The guard is gated on `ITEM_TRANSFER`: an itemize-only frame naming the
+/// symlink is NOT refused.
+///
+/// WHY: upstream's `rsync.c:436` predicate is `iflags & ITEM_TRANSFER`.
+/// Non-transfer echoes legitimately name directories and symlinks (attribute
+/// rows, hardlink followers); refusing them would abort every `-i` run over a
+/// tree with non-regular entries.
+#[test]
+fn non_transfer_frame_for_non_regular_entry_is_not_refused() {
+    let mut wire = Vec::new();
+    let mut codec = create_ndx_codec(PROTOCOL);
+    push_file_echo(&mut wire, &mut codec, 1, 0);
+
+    let mut ctx = receiver_with_symlink_then_file();
+    let mut reader = Cursor::new(wire);
+    let mut read_codec = create_ndx_codec(PROTOCOL);
+
+    let (ndx, attrs) = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut ctx, false, false)
+        .expect("an itemize-only frame naming a symlink decodes")
+        .expect("a per-file index, not NDX_DONE");
+    assert_eq!(ndx, 1);
+    assert_eq!(attrs.iflags, 0);
 }

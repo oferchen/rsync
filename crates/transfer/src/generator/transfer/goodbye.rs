@@ -72,6 +72,18 @@ impl FlistMarkerSink for GoodbyeNdxSink<'_> {
             .is_none_or(protocol::flist::FileEntry::is_active)
     }
 
+    fn ndx_is_regular_file(&self, ndx: i32) -> bool {
+        // upstream: rsync.c:436-444 - unreachable through the goodbye read
+        // (`read_marker_aware_ndx` decodes no attribute tail, so ITEM_TRANSFER
+        // is never seen here), but answered faithfully from the sender's own
+        // list, mirroring `ndx_is_active` above. Out of range defers to the
+        // guard that owns range faults.
+        usize::try_from(ndx)
+            .ok()
+            .and_then(|flat| self.0.file_list().get(flat))
+            .is_none_or(protocol::flist::FileEntry::is_file)
+    }
+
     fn begin_frame(&mut self) {}
 
     fn on_del_stats(&mut self, stats: &DeleteStats) -> io::Result<()> {

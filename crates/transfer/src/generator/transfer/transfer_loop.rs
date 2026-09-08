@@ -728,6 +728,27 @@ impl GeneratorContext {
             // exact wire bytes consumed so this count never drifts from the wire.
             self.timing.total_bytes_read += trailing_bytes;
 
+            // upstream: rsync.c:436-444 - read_ndx_and_attrs() refuses an
+            // ITEM_TRANSFER frame whose index does not name a regular file
+            // ("received request to transfer non-regular file") with
+            // exit_cleanup(RERR_PROTOCOL), on the sender as much as on the
+            // receiver, before send_files() ever sees the request. The `i < 0`
+            // half of upstream's test is a gap NDX, which resolve_itemize_ndx
+            // maps to the owning *directory* entry, so the S_ISREG half below
+            // refuses it identically. An index past the end of the list is a
+            // different fault owned by validate_file_index (upstream's
+            // flist_for_ndx abort, which runs first), so it is deferred, not
+            // claimed with this diagnostic.
+            if iflags.needs_transfer()
+                && ndx < self.file_list.len()
+                && !self.file_list[ndx].is_file()
+            {
+                return Err(crate::receiver::ndx_stream::non_regular_transfer_request(
+                    wire_ndx,
+                    crate::receiver::ndx_stream::StreamRole::Sender,
+                ));
+            }
+
             // upstream: sender.c:286-290 - drain the generator's xattr request
             // when preserve_xattrs && ITEM_REPORT_XATTR is set. The generator
             // always emits at least a 0 terminator (varint) under this gate, so
@@ -2481,6 +2502,144 @@ mod phase2_guard_tests {
         ndx.write_ndx_done(&mut wire).unwrap();
 
         drive(&mut ctx, wire).expect("clean phase completion");
+    }
+}
+
+#[cfg(test)]
+mod non_regular_request_guard_tests {
+    //! The sender's half of upstream's `ITEM_TRANSFER` non-regular guard.
+    //!
+    //! upstream: rsync.c:436-444 - inside `read_ndx_and_attrs()`, once the
+    //! attribute tail has decoded `ITEM_TRANSFER`, an index that does not name
+    //! a regular file (`i < 0 || !S_ISREG(cur_flist->files[i]->mode)`) prints
+    //! `received request to transfer non-regular file: %d [%s]` and aborts with
+    //! `exit_cleanup(RERR_PROTOCOL)`. The guard runs on BOTH ends that read a
+    //! request/echo; these tests pin the sender's request-read site, whose
+    //! pre-fix behaviour would have serviced the frame up to the silent
+    //! `!file_entry.is_file()` skip - no diagnostic, no exit code.
+
+    use std::ffi::OsString;
+    use std::io::{self, Cursor};
+    use std::path::PathBuf;
+
+    use protocol::ProtocolVersion;
+    use protocol::codec::{MonotonicNdxWriter, NdxCodec};
+
+    use crate::config::ServerConfig;
+    use crate::generator::GeneratorContext;
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::SumHead;
+    use crate::role::ServerRole;
+    use crate::writer::ServerWriter;
+
+    /// `ITEM_TRANSFER` (0x8000) as its 2-byte little-endian wire encoding.
+    const ITEM_TRANSFER_LE: [u8; 2] = [0x00, 0x80];
+
+    fn test_handshake() -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    /// Builds a sender over a single source file so wire NDX 0 is a valid,
+    /// in-range request.
+    fn generator_with_one_file() -> (tempfile::TempDir, GeneratorContext) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("only.txt");
+        std::fs::write(&file, b"payload").expect("write source");
+
+        let handshake = test_handshake();
+        let config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(&file)],
+            ..Default::default()
+        };
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        ctx.build_file_list(&[PathBuf::from(&file)])
+            .expect("build file list");
+        (dir, ctx)
+    }
+
+    /// Drives the sender loop over a crafted receiver stream.
+    fn drive(ctx: &mut GeneratorContext, incoming: Vec<u8>) -> io::Result<usize> {
+        let mut reader = Cursor::new(incoming);
+        let mut writer = ServerWriter::new_plain(Vec::new());
+        let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
+        let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
+        ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
+            .map(|result| result.files_transferred)
+    }
+
+    /// An `ITEM_TRANSFER` request naming an entry whose mode is `S_IFLNK` (or
+    /// any other non-`S_IFREG` type) must abort with upstream's diagnostic and
+    /// `RERR_PROTOCOL` - never fall through to the silent skip.
+    fn assert_sender_refuses_mode(mode: u32, case: &str) {
+        let (_dir, mut ctx) = generator_with_one_file();
+        ctx.file_list[0].set_mode(mode);
+
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        ndx.write_ndx(&mut wire, 0).expect("write request ndx");
+        wire.extend_from_slice(&ITEM_TRANSFER_LE);
+
+        let err = drive(&mut ctx, wire).expect_err(case);
+        assert!(
+            err.to_string()
+                .contains("received request to transfer non-regular file: 0"),
+            "{case}: expected upstream's rejection text, got {err}"
+        );
+        assert!(
+            err.to_string().contains("[sender="),
+            "{case}: the who_am_i() tag must name the sender: {err}"
+        );
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<protocol::ProtocolViolation>()),
+            "{case}: the abort must map to RERR_PROTOCOL"
+        );
+    }
+
+    #[test]
+    fn sender_refuses_transfer_request_for_a_symlink_entry() {
+        assert_sender_refuses_mode(0o120777, "a symlink is not transferable");
+    }
+
+    #[test]
+    fn sender_refuses_transfer_request_for_a_directory_entry() {
+        assert_sender_refuses_mode(0o040755, "a directory is not transferable");
+    }
+
+    /// NON-VACUITY COMPANION: the same request against the entry's real
+    /// regular-file mode passes the guard and completes a whole-file transfer.
+    ///
+    /// Without this, the guard could be written to refuse every ITEM_TRANSFER
+    /// frame and the refusal tests above would still pass.
+    #[test]
+    fn regular_entry_request_passes_the_guard_and_transfers() {
+        let (_dir, mut ctx) = generator_with_one_file();
+
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        ndx.write_ndx(&mut wire, 0).expect("write request ndx");
+        wire.extend_from_slice(&ITEM_TRANSFER_LE);
+        // An empty sum_head: no basis, whole-file send.
+        SumHead::new(0, 0, 0, 0).write(&mut wire).expect("sum_head");
+        // Three NDX_DONEs drain phases 0 -> 1 -> 2 -> break past max_phase.
+        ndx.write_ndx_done(&mut wire).expect("done");
+        ndx.write_ndx_done(&mut wire).expect("done");
+        ndx.write_ndx_done(&mut wire).expect("done");
+
+        let files = drive(&mut ctx, wire).expect("a regular file must still transfer");
+        assert_eq!(files, 1, "the guard must not swallow a legitimate request");
     }
 }
 

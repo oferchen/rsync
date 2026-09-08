@@ -803,9 +803,25 @@ mod tests {
         names: &[&str],
         cleared_ndx: Option<usize>,
     ) -> crate::receiver::ReceiverContext {
+        use protocol::flist::FileEntry;
+
+        let mut entries: Vec<FileEntry> = names
+            .iter()
+            .map(|name| FileEntry::new_file(std::path::PathBuf::from(*name), 0, 0o100644))
+            .collect();
+        if let Some(ndx) = cleared_ndx {
+            entries[ndx].tombstone();
+        }
+        receiver_with_entries(entries)
+    }
+
+    /// Builds a protocol-31 receiver over an arbitrary pre-built file list, for
+    /// fixtures that need non-regular entry modes.
+    fn receiver_with_entries(
+        entries: Vec<protocol::flist::FileEntry>,
+    ) -> crate::receiver::ReceiverContext {
         use crate::config::ServerConfig;
         use crate::handshake::HandshakeResult;
-        use protocol::flist::FileEntry;
 
         let protocol = ProtocolVersion::from_supported(31).expect("31 is supported");
         let handshake = HandshakeResult {
@@ -825,30 +841,28 @@ mod tests {
             args: vec![std::ffi::OsString::from(".")],
             ..Default::default()
         };
-        let mut entries: Vec<FileEntry> = names
-            .iter()
-            .map(|name| FileEntry::new_file(std::path::PathBuf::from(*name), 0, 0o100644))
-            .collect();
-        if let Some(ndx) = cleared_ndx {
-            entries[ndx].tombstone();
-        }
         let mut ctx = crate::receiver::ReceiverContext::new_for_test(&handshake, config);
         ctx.set_file_list_for_test(entries);
         ctx
     }
 
-    /// Encodes one per-file echo (NDX + iflags + an all-zero `sum_head`) as the
-    /// sender writes it, so `read_response_header` reads a complete frame.
-    fn echo_bytes(ndx: i32) -> Vec<u8> {
+    /// Encodes one per-file echo (NDX + `iflags` + an all-zero `sum_head`) as
+    /// the sender writes it, so `read_response_header` reads a complete frame.
+    fn echo_bytes_with_iflags(ndx: i32, iflags: u16) -> Vec<u8> {
         use protocol::codec::{MonotonicNdxWriter, NdxCodec};
         let mut wire = Vec::new();
         let mut codec = MonotonicNdxWriter::new(31);
         codec.write_ndx(&mut wire, ndx).expect("ndx encodes");
-        wire.extend_from_slice(&0x8000_u16.to_le_bytes());
+        wire.extend_from_slice(&iflags.to_le_bytes());
         crate::receiver::SumHead::new(0, 0, 0, 0)
             .write(&mut wire)
             .expect("sum_head encodes");
         wire
+    }
+
+    /// [`echo_bytes_with_iflags`] carrying `ITEM_TRANSFER`, the common case.
+    fn echo_bytes(ndx: i32) -> Vec<u8> {
+        echo_bytes_with_iflags(ndx, SenderAttrs::ITEM_TRANSFER)
     }
 
     /// Drives `read_response_header` over `wire` with `expected_ndx` outstanding.
@@ -891,11 +905,18 @@ mod tests {
     /// point: it isolates the new guard from the pre-existing ordering check, so
     /// a pass cannot be produced by the wrong error.
     ///
+    /// The frame deliberately carries NO `ITEM_TRANSFER`: a cleared slot's
+    /// zeroed mode is not `S_ISREG`, so an ITEM_TRANSFER frame naming it is
+    /// refused earlier, by `read_ndx_and_attrs()`'s non-regular guard
+    /// (`rsync.c:436-444`) - exactly as upstream, where that guard runs before
+    /// `recv_files()` ever tests `F_IS_ACTIVE`. The cleared-entry diagnostic
+    /// therefore owns the non-transfer frames.
+    ///
     /// upstream: receiver.c:871-881 - `recv_files()` `!F_IS_ACTIVE(file)`.
     #[test]
     fn cleared_file_index_is_refused_with_upstream_wording() {
         let mut receiver = receiver_with_file_list(&["a.txt", "dup.txt"], Some(1));
-        let Err(err) = read_header_for(&mut receiver, echo_bytes(1), 1) else {
+        let Err(err) = read_header_for(&mut receiver, echo_bytes_with_iflags(1, 0), 1) else {
             panic!("a cleared slot must be refused");
         };
         assert!(
@@ -903,6 +924,79 @@ mod tests {
                 .contains("refusing transfer of cleared file index 1"),
             "unexpected diagnostic: {err}"
         );
+    }
+
+    /// An ITEM_TRANSFER frame naming the same cleared slot is refused by the
+    /// EARLIER guard, with the non-regular diagnostic.
+    ///
+    /// upstream ordering: `read_ndx_and_attrs()`'s `rsync.c:436-444` guard runs
+    /// inside the attrs read, before `recv_files()`'s `F_IS_ACTIVE` test - and a
+    /// cleared slot's zeroed mode fails `S_ISREG`. Pinning the ordering keeps
+    /// the two refusals from swapping owners.
+    #[test]
+    fn cleared_slot_under_item_transfer_reports_the_non_regular_guard() {
+        let mut receiver = receiver_with_file_list(&["a.txt", "dup.txt"], Some(1));
+        let Err(err) = read_header_for(&mut receiver, echo_bytes(1), 1) else {
+            panic!("a cleared slot under ITEM_TRANSFER must be refused");
+        };
+        let text = err.to_string();
+        assert!(
+            text.contains("received request to transfer non-regular file: 1"),
+            "unexpected diagnostic: {text}"
+        );
+        assert!(
+            !text.contains("cleared file index"),
+            "the earlier guard owns the ITEM_TRANSFER frame: {text}"
+        );
+    }
+
+    /// A sender that echoes ITEM_TRANSFER for an entry whose mode is not
+    /// `S_IFREG` is refused with upstream's diagnostic, even though the echo
+    /// arrives in the expected order.
+    ///
+    /// upstream: rsync.c:436-444 - `read_ndx_and_attrs()` refuses
+    /// `!S_ISREG(cur_flist->files[i]->mode)` under `ITEM_TRANSFER` with
+    /// `received request to transfer non-regular file: %d [%s]` and
+    /// `exit_cleanup(RERR_PROTOCOL)`, on the receiving end of the echo as much
+    /// as on the sender's request read. Keeping `echoed_ndx == expected_ndx`
+    /// isolates the guard from the pre-existing ordering check, so a pass
+    /// cannot be produced by the wrong error.
+    #[test]
+    fn non_regular_transfer_echo_is_refused_with_upstream_wording() {
+        use protocol::flist::FileEntry;
+        let mut receiver = receiver_with_entries(vec![
+            FileEntry::new_file(std::path::PathBuf::from("a.txt"), 0, 0o100644),
+            FileEntry::new_symlink(
+                std::path::PathBuf::from("link"),
+                std::path::PathBuf::from("a.txt"),
+            ),
+        ]);
+        let Err(err) = read_header_for(&mut receiver, echo_bytes(1), 1) else {
+            panic!("a non-regular ITEM_TRANSFER echo must be refused");
+        };
+        let text = err.to_string();
+        assert!(
+            text.contains("received request to transfer non-regular file: 1"),
+            "unexpected diagnostic: {text}"
+        );
+        assert!(
+            text.contains("[receiver="),
+            "the who_am_i() tag must name the receiver: {text}"
+        );
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<protocol::ProtocolViolation>()),
+            "the refusal must map to RERR_PROTOCOL"
+        );
+    }
+
+    /// NON-VACUITY COMPANION: the same echo for a REGULAR entry passes the
+    /// non-regular guard and yields a parsed response header.
+    #[test]
+    fn regular_file_echo_passes_the_non_regular_guard() {
+        let mut receiver = receiver_with_file_list(&["a.txt", "b.txt"], None);
+        read_header_for(&mut receiver, echo_bytes(0), 0)
+            .expect("a regular-file echo must not trip the non-regular guard");
     }
 
     /// NON-VACUITY COMPANION: a LIVE entry echoed out of order still produces the
