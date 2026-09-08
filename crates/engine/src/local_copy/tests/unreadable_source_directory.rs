@@ -88,9 +88,15 @@ fn unreadable_source_directory_still_applies_its_own_metadata() {
         & 0o777;
     restore_fixture_modes(&[source.join("dropbox"), dest.join("dropbox")]);
 
+    // 0o300 is applied, then the during-transfer raise lands 0o700
+    // (generator.c:1904-1912) and touch_up_dirs never restores it because
+    // fix_dir_perms requires `!(file->mode & S_IWUSR)` (generator.c:2594) and
+    // 0o300 has the owner-write bit. Measured against rsync 3.5.0: -rp with a
+    // 0o300 source directory lands the destination directory at 0o700.
     assert_eq!(
-        dest_mode, 0o300,
-        "the unreadable source directory's own mode must reach the destination"
+        dest_mode, 0o700,
+        "the unreadable source directory's mode must reach the destination \
+         with upstream's owner-rwx raise residue"
     );
     // Its readable sibling still transfers: the failure is scoped to the frame
     // that could not be enumerated.

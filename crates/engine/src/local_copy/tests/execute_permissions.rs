@@ -680,3 +680,222 @@ fn dir_no_setgid_when_parent_lacks_it() {
         "copied directory should NOT have setgid (mode {copied_mode:#o})"
     );
 }
+
+/// A fresh directory must land upstream's `dest_mode()` result, not the
+/// `create_dir` umask default.
+///
+/// Source mode 0o500 discriminates under every sane umask: `dest_mode()` gives
+/// `0o500 & (~CHMOD_BITS | dflt_perms)` = 0o500 (dflt_perms always carries the
+/// owner bits), while the pre-fix behaviour left the mkdir default
+/// (`0o777 & ~umask`, owner-writable). The file inside proves the transfer
+/// ordering: the strict 0o500 lands only after the contents are written, the
+/// during-transfer raise (generator.c:1904-1912) makes 0o700 of it, and
+/// touch_up_dirs restores 0o500 last because the owner-write bit is absent
+/// (generator.c:2594 fix_dir_perms).
+// upstream: generator.c:1856 - file->mode = dest_mode(...) runs for
+// directories even when !preserve_perms; rsync.c:481-485 masks the fresh arm.
+#[cfg(unix)]
+#[test]
+fn fresh_directory_without_perms_lands_dest_mode_not_umask_default() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if ::metadata::am_root() {
+        return; // root skips the raise/restore dance; the cells differ there.
+    }
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("src");
+    let sub = source.join("sub");
+    fs::create_dir_all(&sub).expect("create source tree");
+    fs::write(sub.join("file.txt"), b"payload").expect("write file");
+    fs::set_permissions(&sub, fs::Permissions::from_mode(0o500)).expect("chmod source sub");
+
+    // Non-vacuity guard: the fixture only discriminates while the mkdir
+    // default differs from the expected dest_mode() result.
+    let probe = temp.path().join("probe");
+    fs::create_dir(&probe).expect("create probe");
+    let probe_mode = fs::metadata(&probe)
+        .expect("probe meta")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_ne!(probe_mode, 0o500, "umask makes this fixture vacuous");
+
+    let dest = temp.path().join("dst");
+    let mut source_operand = source.clone().into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().recursive(true),
+        )
+        .expect("copy succeeds");
+    assert_eq!(summary.files_copied(), 1, "the file inside must transfer");
+
+    let sub_mode = fs::metadata(dest.join("sub"))
+        .expect("dest sub meta")
+        .permissions()
+        .mode()
+        & 0o7777;
+    // Unlock before asserting so tempdir cleanup works even on failure paths.
+    let _ = fs::set_permissions(dest.join("sub"), fs::Permissions::from_mode(0o755));
+    let _ = fs::set_permissions(&sub, fs::Permissions::from_mode(0o755));
+    assert_eq!(
+        sub_mode, 0o500,
+        "a fresh dir takes dest_mode(source), not the mkdir umask default"
+    );
+}
+
+/// A pre-existing read-only destination directory must be raised to owner-rwx
+/// for the transfer and restored afterwards - without `--perms`.
+///
+/// `dest_mode()`'s exists arm keeps the directory's own 0o555
+/// (rsync.c:470-480); the raise (generator.c:1904-1912) is what lets the file
+/// land, and fix_dir_perms restores 0o555 because owner-write is absent
+/// (generator.c:2594). Measured against rsync 3.5.0: rc 0, file transferred,
+/// directory back at 0o555; the pre-fix behaviour failed the write with
+/// EACCES (exit 23) and transferred nothing.
+#[cfg(unix)]
+#[test]
+fn preexisting_readonly_subdir_without_perms_transfers_and_is_restored() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if ::metadata::am_root() {
+        return; // root writes into 0o555 regardless; the fixture cannot fail.
+    }
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("src");
+    fs::create_dir_all(source.join("sub")).expect("create source tree");
+    fs::write(source.join("sub/file.txt"), b"payload").expect("write file");
+
+    let dest = temp.path().join("dst");
+    fs::create_dir_all(dest.join("sub")).expect("create dest tree");
+    fs::set_permissions(dest.join("sub"), fs::Permissions::from_mode(0o555))
+        .expect("chmod dest sub");
+
+    let mut source_operand = source.clone().into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let result = plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().recursive(true),
+    );
+
+    let sub_mode = fs::metadata(dest.join("sub"))
+        .expect("dest sub meta")
+        .permissions()
+        .mode()
+        & 0o7777;
+    let payload = fs::read(dest.join("sub/file.txt"));
+    let _ = fs::set_permissions(dest.join("sub"), fs::Permissions::from_mode(0o755));
+
+    let summary = result.expect("copy into a read-only pre-existing dir succeeds");
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(payload.expect("file landed").as_slice(), b"payload");
+    assert_eq!(
+        sub_mode, 0o555,
+        "the restrictive pre-existing mode must be restored after the transfer"
+    );
+}
+
+/// The transfer ROOT variant: a pre-existing 0o555 destination root must not
+/// fail the copy. Measured against rsync 3.5.0 (`-r`, fresh files): rc 0, both
+/// files land, the root is restored to 0o555.
+#[cfg(unix)]
+#[test]
+fn preexisting_readonly_dest_root_without_perms_transfers_and_is_restored() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if ::metadata::am_root() {
+        return;
+    }
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("src");
+    fs::create_dir_all(&source).expect("create source");
+    fs::write(source.join("f1"), b"one").expect("write f1");
+    fs::write(source.join("f2"), b"two").expect("write f2");
+
+    let dest = temp.path().join("dst");
+    fs::create_dir_all(&dest).expect("create dest");
+    fs::set_permissions(&dest, fs::Permissions::from_mode(0o555)).expect("chmod dest root");
+
+    let mut source_operand = source.clone().into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let result = plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().recursive(true),
+    );
+
+    let root_mode = fs::metadata(&dest).expect("dest meta").permissions().mode() & 0o7777;
+    let f1 = fs::read(dest.join("f1"));
+    let f2 = fs::read(dest.join("f2"));
+    let _ = fs::set_permissions(&dest, fs::Permissions::from_mode(0o755));
+
+    let summary = result.expect("copy into a read-only pre-existing root succeeds");
+    assert_eq!(summary.files_copied(), 2);
+    assert!(f1.is_ok() && f2.is_ok(), "both files must land");
+    assert_eq!(
+        root_mode, 0o555,
+        "the restrictive pre-existing root mode must be restored last"
+    );
+}
+
+/// Upstream's raise residue: an owner-writable-but-not-executable directory
+/// keeps the transient owner-rwx bits on disk, because fix_dir_perms restores
+/// only when `!(file->mode & S_IWUSR)` (generator.c:2594) and 0o644 has the
+/// owner-write bit. Measured against rsync 3.5.0: source dir 0o644 under
+/// `-rp` lands 0o744 on a fresh destination (umask 022 / 077 / 002 alike).
+/// The pre-fix behaviour restored the strict 0o644 and diverged.
+// upstream: generator.c:1904-1912 raise + generator.c:2594 restore condition.
+#[cfg(unix)]
+#[test]
+fn owner_writable_nonexec_dir_keeps_the_raise_residue_under_perms() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if ::metadata::am_root() {
+        return; // the raise is gated on !am_root; root lands 0o644 verbatim.
+    }
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("src");
+    // The 0o644 dir stays EMPTY: without owner-x even its own entries could
+    // not be stat'd on the source side, which would add an unrelated failure.
+    fs::create_dir_all(source.join("sub")).expect("create source tree");
+    fs::set_permissions(source.join("sub"), fs::Permissions::from_mode(0o644))
+        .expect("chmod source sub");
+
+    let dest = temp.path().join("dst");
+    let mut source_operand = source.clone().into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .recursive(true)
+            .permissions(true),
+    )
+    .expect("copy succeeds");
+
+    let sub_mode = fs::metadata(dest.join("sub"))
+        .expect("dest sub meta")
+        .permissions()
+        .mode()
+        & 0o7777;
+    let _ = fs::set_permissions(source.join("sub"), fs::Permissions::from_mode(0o755));
+    assert_eq!(
+        sub_mode, 0o744,
+        "0o644 | S_IRWXU raise sticks: owner-write blocks the touch-up restore"
+    );
+}

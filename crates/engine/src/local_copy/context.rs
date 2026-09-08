@@ -551,14 +551,14 @@ pub(crate) struct DeferredOperationQueue {
     /// directory is kept temporarily writable during the transfer so the
     /// deferred deletions/updates can still write into it.
     ///
-    /// upstream: generator.c:2093 `touch_up_dirs()`; generator.c:2271
-    /// `need_retouch_dir_times`; generator.c:2122-2127 `fix_dir_perms`.
+    /// upstream: generator.c:2565 `touch_up_dirs()`; generator.c:2744
+    /// `need_retouch_dir_times`; generator.c:2594 `fix_dir_perms`.
     pub(crate) finalized_dirs: Vec<FinalizedDir>,
 }
 
 /// A directory recorded during traversal for the final `touch_up_dirs` pass.
 ///
-/// upstream: generator.c:2089-2136 `touch_up_dirs()` restores the real mode
+/// upstream: generator.c:2565-2611 `touch_up_dirs()` restores the real mode
 /// (`fix_dir_perms`) and re-sets tweaked mtimes after the delayed-update and
 /// deletion phases complete.
 pub(crate) struct FinalizedDir {

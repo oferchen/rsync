@@ -33,7 +33,7 @@ use deletion::{
 use destination::{check_destination_state, record_skipped_missing_destination};
 use dir_metadata::{
     DirectoryFinalize, apply_final_directory_metadata, enforce_transfer_root_self_lock,
-    record_directory_completion,
+    keep_preexisting_directory_writable, record_directory_completion,
 };
 use entry::process_planned_entry;
 
@@ -546,7 +546,7 @@ fn copy_directory_recursive_inner(
         ensure_directory(context)?;
     }
 
-    // upstream: generator.c:1503-1520 - the generator applies a directory's
+    // upstream: generator.c:1895-1912 - the generator applies a directory's
     // tweaked mode and re-adds owner-rwx BEFORE writing its contents. For the
     // transfer root ("dst/.") a --chmod that strips owner-execute makes that
     // re-add chmod fail (EACCES) and the root can no longer be entered, so none
@@ -559,6 +559,17 @@ fn copy_directory_recursive_inner(
             enforce_transfer_root_self_lock(context, destination, metadata, dir_pre_transfer)?
     {
         return Err(error);
+    }
+
+    // upstream: generator.c:1895-1912 - the strict dest_mode() chmod
+    // (set_file_attrs) and the owner-rwx raise land at the directory's FIRST
+    // visit, before any of its contents transfer. A pre-existing destination
+    // directory whose on-disk bits deny owner rwx (e.g. 0555) must be raised
+    // here or every write into it fails EACCES; apply_final_directory_metadata
+    // re-lands the strict mode after the contents and touch_up_dirs restores
+    // it last (generator.c:2594).
+    if !context.mode().is_dry_run() {
+        keep_preexisting_directory_writable(context, destination, metadata, dir_pre_transfer);
     }
 
     let mut plan = plan_directory_entries(context, &entries, relative, root_device)?;
