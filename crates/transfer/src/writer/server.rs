@@ -212,6 +212,21 @@ impl<W: Write> ServerWriter<W> {
         }
     }
 
+    /// Answers a peer's protocol-29 keep-alive frame (`rsync.c:389-390`).
+    ///
+    /// Unlike [`Self::maybe_send_keepalive`], an unset lull counts as zero
+    /// rather than "disabled": upstream's reply goes through
+    /// `maybe_send_keepalive()` whose `allowed_lull` is 0 without `--timeout`
+    /// (io.c:83, io.c:1281), so the reply is immediate. A no-op in plain mode -
+    /// the frame only exists on a multiplexed stream.
+    pub fn answer_keepalive(&mut self) -> io::Result<bool> {
+        match self {
+            Self::Multiplex(mux) => mux.answer_keepalive(),
+            Self::Compressed(compressed) => compressed.inner_mut().answer_keepalive(),
+            Self::Plain(_) | Self::Taken => Ok(false),
+        }
+    }
+
     /// Returns the configured keep-alive lull interval, or `None` when no
     /// `--timeout` is set or the stream is not multiplexed.
     ///
