@@ -45,16 +45,32 @@ fn start_iouring_data_write() -> Instant {
 }
 
 /// Returns whether the current transfer is eligible for the io_uring path.
+///
+/// Reads the gate flags off [`TransferFlags`] like `clonefile::eligible`,
+/// `ficlone::eligible` and `wincopy::eligible` do, so every whole-file mover
+/// consumes the one owner of `whole_file_enabled` instead of re-deriving it.
+/// Without that conjunct `--no-whole-file` was honoured by the other movers
+/// and ignored here whenever no basis existed to build a delta signature
+/// from (`delta_signature_present` only covers the existing-destination
+/// case), so the operator's request landed in this mover's unobserved
+/// whole-file path instead of the read loop.
 pub(super) fn eligible(
     context: &CopyContext,
     strategy: WriteStrategy,
     delta_signature_present: bool,
-    use_sparse_writes: bool,
-    compress_enabled: bool,
+    flags: TransferFlags,
     append_offset: u64,
     file_size: u64,
 ) -> bool {
+    let TransferFlags {
+        whole_file_enabled,
+        use_sparse_writes,
+        compress_enabled,
+        ..
+    } = flags;
+
     matches!(strategy, WriteStrategy::Direct)
+        && whole_file_enabled
         && !delta_signature_present
         && !use_sparse_writes
         && !compress_enabled
@@ -204,6 +220,12 @@ fn dispatch_iouring_data_write(
 
     match fast_io::write_file_with_io_uring(destination, &buf) {
         Ok(()) => {
+            // The `read_to_end` above is this mover's only look at the
+            // source; a byte count short of the length the transfer was
+            // sized from is the same source-shrank-mid-transfer condition
+            // the standard read loop reports, so funnel it through the one
+            // owner of that diagnostic instead of claiming the full length.
+            context.note_short_source_read(copy_source, buf.len() as u64, file_size);
             context.register_progress();
             Ok(Some(IoUringDataWriteOutcome {
                 elapsed: start.elapsed(),
@@ -211,5 +233,169 @@ fn dispatch_iouring_data_write(
         }
         Err(error) if error.kind() == std::io::ErrorKind::Unsupported => Ok(None),
         Err(error) => Err(LocalCopyError::io("copy file", destination, error)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::{self, File};
+    use std::io::Write;
+    use std::path::Path;
+
+    use tempfile::TempDir;
+
+    use super::super::super::TransferFlags;
+    use super::*;
+    use crate::local_copy::{LocalCopyExecution, LocalCopyOptions};
+
+    /// Flags that satisfy every conjunct of [`eligible`].
+    fn eligible_flags() -> TransferFlags {
+        TransferFlags {
+            append_allowed: false,
+            append_verify: false,
+            whole_file_enabled: true,
+            inplace_enabled: false,
+            partial_enabled: false,
+            use_sparse_writes: false,
+            compress_enabled: false,
+            size_only_enabled: false,
+            ignore_times_enabled: false,
+            checksum_enabled: false,
+            #[cfg(all(any(unix, windows), feature = "xattr"))]
+            preserve_xattrs: false,
+            xattrs_changed: false,
+            #[cfg(all(any(unix, windows), feature = "acl"))]
+            preserve_acls: false,
+        }
+    }
+
+    fn test_context(root: &Path) -> CopyContext<'_> {
+        CopyContext::new(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default(),
+            None,
+            root.to_path_buf(),
+        )
+    }
+
+    /// `--no-whole-file` must refuse this mover exactly like it refuses the
+    /// other whole-file movers, including when no basis exists and therefore
+    /// no delta signature was built.
+    #[test]
+    fn eligible_requires_whole_file() {
+        let temp = TempDir::new().expect("tempdir");
+        let context = test_context(temp.path());
+        let mut flags = eligible_flags();
+
+        assert!(
+            eligible(
+                &context,
+                WriteStrategy::Direct,
+                false,
+                flags,
+                0,
+                IOURING_DATA_WRITES_MIN_BYTES,
+            ),
+            "control: fully eligible flags must pass the gate",
+        );
+
+        flags.whole_file_enabled = false;
+        assert!(
+            !eligible(
+                &context,
+                WriteStrategy::Direct,
+                false,
+                flags,
+                0,
+                IOURING_DATA_WRITES_MIN_BYTES,
+            ),
+            "--no-whole-file must disqualify the io_uring data-write mover",
+        );
+    }
+
+    /// A source that ended before the length the transfer was sized from must
+    /// be reported through `note_short_source_read` (forcing exit 23), not
+    /// recorded as a full-length success.
+    #[test]
+    fn dispatch_reports_short_source_read() {
+        if !fast_io::is_io_uring_available() {
+            eprintln!("skipping: io_uring unavailable in this environment");
+            return;
+        }
+
+        let temp = TempDir::new().expect("tempdir");
+        let source = temp.path().join("src.bin");
+        let destination = temp.path().join("dst.bin");
+        const ACTUAL_LEN: usize = 1024;
+        File::create(&source)
+            .expect("create source")
+            .write_all(&[0x5a; ACTUAL_LEN])
+            .expect("write source");
+        // The file list recorded more bytes than the opened file holds.
+        let declared_len = ACTUAL_LEN as u64 + 4096;
+
+        let mut context = test_context(temp.path());
+        let mut reader = File::open(&source).expect("open source");
+        let outcome = dispatch_iouring_data_write(
+            &mut context,
+            &mut reader,
+            &source,
+            &destination,
+            declared_len,
+            start_iouring_data_write(),
+        )
+        .expect("dispatch");
+        assert!(
+            outcome.is_some(),
+            "io_uring probe passed but the dispatch fell back",
+        );
+        assert!(
+            context.source_read_error_occurred(),
+            "a short source read must be recorded for RERR_PARTIAL (23)",
+        );
+        assert_eq!(
+            fs::metadata(&destination).expect("stat destination").len(),
+            ACTUAL_LEN as u64,
+            "the destination holds exactly the bytes the source still had",
+        );
+    }
+
+    /// Control for the short-read pin: a source that still holds every
+    /// declared byte must not be flagged.
+    #[test]
+    fn dispatch_full_source_records_no_read_error() {
+        if !fast_io::is_io_uring_available() {
+            eprintln!("skipping: io_uring unavailable in this environment");
+            return;
+        }
+
+        let temp = TempDir::new().expect("tempdir");
+        let source = temp.path().join("src.bin");
+        let destination = temp.path().join("dst.bin");
+        const ACTUAL_LEN: usize = 1024;
+        File::create(&source)
+            .expect("create source")
+            .write_all(&[0x5a; ACTUAL_LEN])
+            .expect("write source");
+
+        let mut context = test_context(temp.path());
+        let mut reader = File::open(&source).expect("open source");
+        let outcome = dispatch_iouring_data_write(
+            &mut context,
+            &mut reader,
+            &source,
+            &destination,
+            ACTUAL_LEN as u64,
+            start_iouring_data_write(),
+        )
+        .expect("dispatch");
+        assert!(
+            outcome.is_some(),
+            "io_uring probe passed but the dispatch fell back",
+        );
+        assert!(
+            !context.source_read_error_occurred(),
+            "a full-length read must not be flagged as a short source read",
+        );
     }
 }
