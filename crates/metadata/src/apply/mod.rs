@@ -610,6 +610,31 @@ pub fn apply_symlink_metadata_from_entry(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
+    apply_symlink_metadata_from_entry_with_pre_transfer(destination, entry, options, None)
+}
+
+/// Applies symlink metadata using the destination's PRE-transfer `lstat`.
+///
+/// Identical to [`apply_symlink_metadata_from_entry`] except that the caller
+/// supplies the `lstat` the destination had before the link was written. Every
+/// symlink apply runs after `symlinkat(2)`, so the link's own stat cannot
+/// distinguish "was already here" from "we just made it, and destroyed what
+/// was"; upstream reads `sx.st` at generator.c:1937-1940, BEFORE
+/// `atomic_create` deletes the obstacle, and feeds that to `dest_mode()`. A
+/// destination that was replaced - a symlink to a different target, or a
+/// non-symlink obstacle - therefore keeps contributing its OLD permission bits
+/// to the `exists` arm.
+///
+/// `pre_transfer_meta` is `None` when the caller did not replace anything, in
+/// which case the link's current stat is its own pre-transfer stat. It is
+/// ignored entirely when `options.destination_is_new()` says the destination
+/// was absent.
+pub fn apply_symlink_metadata_from_entry_with_pre_transfer(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+    pre_transfer_meta: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
     let cached_meta = fs::symlink_metadata(destination).ok();
 
     #[cfg(unix)]
@@ -631,6 +656,7 @@ pub fn apply_symlink_metadata_from_entry(
         entry,
         options,
         cached_meta.as_ref(),
+        pre_transfer_meta,
     )?;
 
     if options.times() {
