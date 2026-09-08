@@ -43,8 +43,9 @@ pub(crate) struct DebugFlagSettings {
 }
 
 impl DebugFlagSettings {
-    /// Returns an iterator over all flag (name, level) pairs that are set.
-    pub(crate) fn iter_enabled_flags(&self) -> impl Iterator<Item = (&'static str, u8)> + '_ {
+    /// Every flag slot as `(name, level)` in upstream `debug_words[]` order
+    /// (options.c:305-331), the four oc extensions last, set or not.
+    fn entries(&self) -> [(&'static str, Option<u8>); 28] {
         [
             ("acl", self.acl),
             ("backup", self.backup),
@@ -75,8 +76,30 @@ impl DebugFlagSettings {
             ("sockopt", self.sockopt),
             ("iocp", self.iocp),
         ]
-        .into_iter()
-        .filter_map(|(name, level)| level.filter(|&l| l > 0).map(|l| (name, l)))
+    }
+
+    /// Returns an iterator over all flag (name, level) pairs that are set.
+    pub(crate) fn iter_enabled_flags(&self) -> impl Iterator<Item = (&'static str, u8)> + '_ {
+        self.entries()
+            .into_iter()
+            .filter_map(|(name, level)| level.filter(|&l| l > 0).map(|l| (name, l)))
+    }
+
+    /// Applies every explicitly-set level - including an explicit 0, which
+    /// must be able to lower a `-v`-derived base - to the thread-local
+    /// verbosity config so `debug_log!` callsites honour the request.
+    ///
+    /// Resolving through the parser first is what lets composite tokens like
+    /// `all` and `none` take effect: the raw tokens cannot express the
+    /// fan-out, and the logging applier only understands single words.
+    ///
+    /// upstream: options.c set_output_verbosity / parse_output_words
+    pub(crate) fn apply_to_thread_local(&self) {
+        for (name, level) in self.entries() {
+            if let Some(level) = level {
+                let _ = logging::apply_debug_flag(&format!("{name}{level}"));
+            }
+        }
     }
 
     /// Sets all debug flags to the given level.
@@ -112,12 +135,30 @@ impl DebugFlagSettings {
         self.iocp = Some(level);
     }
 
-    /// Applies one `--debug=` token.
+    #[cfg(test)]
+    pub(super) fn apply(&mut self, token: &str) -> Result<TokenFlow, Message> {
+        self.apply_with_mode(token, false)
+    }
+
+    /// Applies a single `--debug` token.
     ///
     /// Returns [`TokenFlow::Stop`] for a `help` token: upstream prints the
     /// word table and calls `exit_cleanup(0)` right there (options.c:465-468),
     /// so every later token in the list is never examined.
-    pub(super) fn apply(&mut self, token: &str) -> Result<TokenFlow, Message> {
+    ///
+    /// When `am_server` is `true`, an unrecognised token is silently accepted
+    /// instead of producing an error, mirroring upstream rsync's
+    /// `parse_output_words()` (options.c:484) where the
+    /// `if (len && !words[j].name && !am_server)` guard skips the
+    /// `RERR_SYNTAX` exit. This preserves cross-version compatibility when a
+    /// newer client forwards debug tokens this server build does not know.
+    ///
+    /// upstream: options.c:443-490 parse_output_words
+    pub(super) fn apply_with_mode(
+        &mut self,
+        token: &str,
+        am_server: bool,
+    ) -> Result<TokenFlow, Message> {
         let (name, level) = match output_words::classify(token) {
             OutputWord::Help => {
                 self.help_requested = true;
@@ -159,7 +200,18 @@ impl DebugFlagSettings {
             "clone" => self.clone = Some(level),
             "sockopt" => self.sockopt = Some(level),
             "iocp" => self.iocp = Some(level),
-            _ => return Err(debug_flag_error(name)),
+            // The `am_server` branch mirrors upstream's
+            // `if (len && !words[j].name && !am_server)` guard: a newer client
+            // may forward debug words this build does not know, and the server
+            // must accept them so the connection survives the version skew.
+            // The client still rejects, so a typo surfaces at the source.
+            _ => {
+                return if am_server {
+                    Ok(TokenFlow::Continue)
+                } else {
+                    Err(debug_flag_error(name))
+                };
+            }
         }
 
         Ok(TokenFlow::Continue)
@@ -181,6 +233,27 @@ fn debug_flag_error(name: &str) -> Message {
 
 /// Parses `--debug` flag values into resolved settings.
 pub(crate) fn parse_debug_flags(values: &[OsString]) -> Result<DebugFlagSettings, Message> {
+    parse_debug_flags_inner(values, false)
+}
+
+/// Parses `--debug` flag values in server mode, silently ignoring unknown
+/// tokens.
+///
+/// Upstream rsync's `parse_output_words()` checks `!am_server` before raising
+/// `Unknown --debug item` (`options.c:484`). The server side accepts whatever
+/// the (possibly newer) client forwards so the connection survives across
+/// version skew. The client-side parser still rejects unknown tokens via
+/// [`parse_debug_flags`] so typos surface at the source.
+///
+/// upstream: options.c parse_output_words
+pub(crate) fn parse_debug_flags_server(values: &[OsString]) -> Result<DebugFlagSettings, Message> {
+    parse_debug_flags_inner(values, true)
+}
+
+fn parse_debug_flags_inner(
+    values: &[OsString],
+    am_server: bool,
+) -> Result<DebugFlagSettings, Message> {
     let mut settings = DebugFlagSettings::default();
 
     for value in values {
@@ -188,7 +261,9 @@ pub(crate) fn parse_debug_flags(values: &[OsString]) -> Result<DebugFlagSettings
         // A `help` token stops the walk here as well as inside the value:
         // upstream exits from `parse_output_words` itself, so a later
         // `--debug=` argument is never parsed.
-        let flow = output_words::for_each_token(&text, |token| settings.apply(token))?;
+        let flow = output_words::for_each_token(&text, |token| {
+            settings.apply_with_mode(token, am_server)
+        })?;
         if matches!(flow, TokenFlow::Stop) {
             break;
         }

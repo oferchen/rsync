@@ -6,7 +6,6 @@
 //! - `--itemize-changes` file change indicators
 //! - `--progress` transfer progress display
 //! - `--dry-run` dry-run mode output
-//! - `--info=FLAGS` informational flag parsing
 //!
 //! Each test validates specific format strings, field positions, and
 //! formatting conventions to ensure compatibility with tools and scripts
@@ -15,7 +14,6 @@
 use cli::{
     DryRunAction, DryRunFormatter, DryRunSummary, FileType, ItemizeChange, UpdateType,
     format_number_with_commas,
-    info_output::{InfoFlags, parse_info_flags},
     progress_format::{
         OverallProgress, PerFileProgress, calculate_rate, format_eta, format_number, format_rate,
     },
@@ -680,107 +678,6 @@ fn dry_run_number_formatting() {
         "1,234,567",
         "dry-run numbers should have comma separators"
     );
-}
-
-#[test]
-fn info_flags_verbosity_zero_silent() {
-    // Verbosity 0 (-q) should disable all info output
-    let flags = InfoFlags::from_verbosity(0);
-    assert!(!flags.should_show_name(), "verbosity 0 should hide names");
-    assert!(!flags.should_show_stats(), "verbosity 0 should hide stats");
-    assert!(
-        !flags.should_show_del(),
-        "verbosity 0 should hide deletions"
-    );
-}
-
-#[test]
-fn info_flags_verbosity_one_normal() {
-    // Verbosity 1 (-v) shows names, stats, deletions
-    let flags = InfoFlags::from_verbosity(1);
-    assert!(flags.should_show_name(), "verbosity 1 should show names");
-    assert!(flags.should_show_stats(), "verbosity 1 should show stats");
-    assert!(flags.should_show_del(), "verbosity 1 should show deletions");
-}
-
-#[test]
-fn info_flags_verbosity_two_verbose() {
-    // Verbosity 2 (-vv) increases info levels
-    let flags = InfoFlags::from_verbosity(2);
-    assert!(flags.should_show_name(), "verbosity 2 should show names");
-    assert!(flags.should_show_stats(), "verbosity 2 should show stats");
-    assert_eq!(
-        flags.levels().get(logging::InfoFlag::Name),
-        2,
-        "verbosity 2 should set name level to 2"
-    );
-}
-
-#[test]
-fn info_flags_parse_single_flag() {
-    // Parse single flag: "name2"
-    let flags = parse_info_flags("name2").unwrap();
-    assert_eq!(
-        flags.levels().get(logging::InfoFlag::Name),
-        2,
-        "should parse name2 as level 2"
-    );
-}
-
-#[test]
-fn info_flags_parse_multiple_flags() {
-    // Parse comma-separated flags: "name2,del1,stats2"
-    let flags = parse_info_flags("name2,del1,stats2").unwrap();
-    assert_eq!(flags.levels().get(logging::InfoFlag::Name), 2);
-    assert_eq!(flags.levels().get(logging::InfoFlag::Del), 1);
-    assert_eq!(flags.levels().get(logging::InfoFlag::Stats), 2);
-}
-
-#[test]
-fn info_flags_parse_all_keyword() {
-    // ALL keyword sets all flags to 1
-    let flags = parse_info_flags("ALL").unwrap();
-    assert!(flags.should_show_name(), "ALL should enable name");
-    assert!(flags.should_show_stats(), "ALL should enable stats");
-    assert!(flags.should_show_del(), "ALL should enable del");
-}
-
-#[test]
-fn info_flags_parse_all_with_level() {
-    // ALL2 sets all flags to level 2
-    let flags = parse_info_flags("ALL2").unwrap();
-    assert_eq!(flags.levels().get(logging::InfoFlag::Name), 2);
-    assert_eq!(flags.levels().get(logging::InfoFlag::Stats), 2);
-}
-
-#[test]
-fn info_flags_parse_none_keyword() {
-    // NONE keyword sets all flags to 0
-    let flags = parse_info_flags("NONE").unwrap();
-    assert!(!flags.should_show_name(), "NONE should disable name");
-    assert!(!flags.should_show_stats(), "NONE should disable stats");
-    assert!(!flags.should_show_del(), "NONE should disable del");
-}
-
-#[test]
-fn info_flags_parse_case_insensitive() {
-    // Flag names should be case-insensitive
-    let flags1 = parse_info_flags("name2").unwrap();
-    let flags2 = parse_info_flags("NAME2").unwrap();
-    let flags3 = parse_info_flags("Name2").unwrap();
-
-    assert_eq!(flags1.levels().get(logging::InfoFlag::Name), 2);
-    assert_eq!(flags2.levels().get(logging::InfoFlag::Name), 2);
-    assert_eq!(flags3.levels().get(logging::InfoFlag::Name), 2);
-}
-
-#[test]
-fn info_flags_default_level_one() {
-    // Flags without explicit level default to 1
-    let flags = parse_info_flags("name,stats,del").unwrap();
-    assert_eq!(flags.levels().get(logging::InfoFlag::Name), 1);
-    assert_eq!(flags.levels().get(logging::InfoFlag::Stats), 1);
-    assert_eq!(flags.levels().get(logging::InfoFlag::Del), 1);
 }
 
 #[test]

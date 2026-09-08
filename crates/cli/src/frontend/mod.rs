@@ -115,8 +115,6 @@ mod defaults;
 pub mod dry_run;
 mod filter_rules;
 mod help;
-/// Info output flags controlling informational message display.
-pub mod info_output;
 /// Upstream rsync `--itemize-changes` (`-i`) output format.
 pub mod itemize;
 mod local_time;
