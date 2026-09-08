@@ -10,7 +10,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `util1.c:1329` - `unsafe_symlink(dest, src)`
+//! - `util1.c:1569` - `unsafe_symlink(dest, src)`
 
 use std::ffi::OsStr;
 
@@ -28,7 +28,7 @@ use std::ffi::OsStr;
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1329` - `unsafe_symlink(dest, src)`
+/// - `util1.c:1569` - `unsafe_symlink(dest, src)`
 /// - Comment: "reject names such as a/b/../x/y. This needs to be done as
 ///   the leading subpaths 'a' or 'b' could later be replaced with symlinks
 ///   such as a link to '.' resulting in the link being transferred now
@@ -48,7 +48,7 @@ pub fn is_unsafe_symlink(target: &OsStr, link_path: &std::path::Path) -> bool {
         return true;
     }
 
-    // upstream: util1.c:1356-1383
+    // upstream: util1.c:1595-1622
     let depth = compute_link_depth(link_path);
     !is_target_within_depth(&target_bytes, depth)
 }
@@ -60,7 +60,7 @@ pub fn is_unsafe_symlink(target: &OsStr, link_path: &std::path::Path) -> bool {
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1356-1366` - source path depth computation
+/// - `util1.c:1595-1606` - source path depth computation
 fn compute_link_depth(link_path: &std::path::Path) -> i64 {
     use std::path::Component;
 
@@ -84,7 +84,7 @@ fn compute_link_depth(link_path: &std::path::Path) -> i64 {
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1368-1383` - destination path depth check
+/// - `util1.c:1608-1622` - destination path depth check
 fn is_target_within_depth(target: &[u8], mut depth: i64) -> bool {
     for segment in ByteSegments::new(target) {
         if segment == b".." {
@@ -107,7 +107,7 @@ fn is_target_within_depth(target: &[u8], mut depth: i64) -> bool {
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1338-1353` - mid-path dotdot rejection
+/// - `util1.c:1578-1593` - mid-path dotdot rejection
 fn has_mid_path_dotdot(target: &[u8]) -> bool {
     // Skip leading ../ segments (and redundant slashes between them).
     let mut pos = 0;
