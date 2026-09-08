@@ -307,6 +307,12 @@ where
     // exits with the rsync signal code instead of terminating abruptly.
     // upstream: main.c installs sig handlers; cleanup.c:exit_cleanup finalises
     // the partial and exits with RERR_SIGNAL.
+    //
+    // Each top-level client invocation opens a fresh latch epoch. Upstream
+    // gets this for free because `_exit_cleanup`'s statics live and die with
+    // the process (cleanup.c:105-108); `run` is a reentrant library entry
+    // point, so the epoch must be reset explicitly.
+    core::exit_code::process_latch().reset();
     install_client_signal_handling();
 
     let mut stderr_sink = MessageSink::with_brand(stderr, brand);
@@ -398,18 +404,55 @@ where
     };
 
     // upstream: cleanup.c:exit_cleanup exits with RERR_SIGNAL after finalising
-    // partials when an interrupt signal was received. Override whatever the
-    // interrupted transfer returned with the signal's exit code. Restricted to
+    // partials when an interrupt signal was received. Restricted to
     // SIGINT/SIGTERM/SIGHUP so a broken output pipe (SIGPIPE) does not rewrite
     // an otherwise-successful exit code.
-    match core::signal::shutdown_reason() {
+    let signal_code = match core::signal::shutdown_reason() {
         Some(
             reason @ (core::signal::ShutdownReason::Interrupted
             | core::signal::ShutdownReason::Terminated
             | core::signal::ShutdownReason::HangUp),
-        ) => i32::from(reason.exit_code()),
-        _ => exit_code,
+        ) => Some(i32::from(reason.exit_code())),
+        _ => None,
+    };
+    latched_run_exit(core::exit_code::process_latch(), exit_code, signal_code)
+}
+
+/// Resolves the run's final exit code through the process latch and claims
+/// the exit for the normal return path.
+///
+/// The signal's code is recorded before the transfer's code because the
+/// signal fired earlier in time: upstream's signal path enters
+/// `_exit_cleanup(RERR_SIGNAL)` before the interrupted transfer's own exit
+/// call, so RERR_SIGNAL is the first writer (upstream: cleanup.c:113-117).
+/// Claiming the exit tells the signal watcher to stand down - once the run
+/// has produced its final code, an abort must not `process::exit` mid-way
+/// through the remaining output (upstream: cleanup.c:105 - the cleanup body
+/// is single-entrant).
+fn latched_run_exit(
+    latch: &core::exit_code::ExitCodeLatch,
+    exit_code: i32,
+    signal_code: Option<i32>,
+) -> i32 {
+    if let Some(code) = signal_code {
+        latch.record(code);
     }
+    let code = latch.resolve(exit_code);
+    latch.claim_exit();
+    code
+}
+
+/// Decides the abort path's fate against the process exit latch.
+///
+/// Returns `Some(code)` when the watcher wins the claim and must terminate
+/// the process, `None` when the normal return path already claimed the exit -
+/// the watcher's code is latched either way, so a deferring watcher loses
+/// nothing but the right to truncate the winner's output.
+/// upstream: cleanup.c:113-117 (first writer wins) + cleanup.c:105 (the
+/// cleanup body runs once no matter how many entrants arrive).
+fn abort_exit(latch: &core::exit_code::ExitCodeLatch, code: i32) -> Option<i32> {
+    let code = latch.resolve(code);
+    latch.claim_exit().then_some(code)
 }
 
 /// Renders a `clap` parse failure into the detail text used to compose an
@@ -481,12 +524,19 @@ fn install_client_signal_handling() {
     std::thread::spawn(|| {
         loop {
             if core::signal::is_abort_requested() {
-                engine::CleanupManager::global().finalize_partials();
                 let code = core::signal::shutdown_reason()
                     .map_or(i32::from(core::exit_code::ExitCode::Signal), |r| {
                         i32::from(r.exit_code())
                     });
-                std::process::exit(code);
+                if let Some(code) = abort_exit(core::exit_code::process_latch(), code) {
+                    engine::CleanupManager::global().finalize_partials();
+                    std::process::exit(code);
+                }
+                // The normal return path already claimed the exit with a
+                // final code (which now includes this abort's code if the
+                // latch was empty). Exiting here would cut that thread's
+                // remaining output off mid-write, so the watcher stands down.
+                return;
             }
             if core::signal::is_shutdown_requested() {
                 // Repeated deliberately: a transfer that registers its socket
@@ -503,4 +553,102 @@ fn install_client_signal_handling() {
 pub fn exit_code_from(status: i32) -> std::process::ExitCode {
     let clamped = status.clamp(0, MAX_EXIT_CODE);
     std::process::ExitCode::from(clamped as u8)
+}
+
+/// Deterministic race harness for the signal watcher vs the normal return
+/// path. Both arms call the exact functions the live sites call
+/// ([`abort_exit`] for the watcher, [`latched_run_exit`] for `run`'s tail),
+/// and each ordering is forced with a channel handoff - no sleeps, no timing
+/// luck. upstream: cleanup.c:113-117 + cleanup.c:105.
+#[cfg(test)]
+mod exit_latch_race_tests {
+    use super::{abort_exit, latched_run_exit};
+    use core::exit_code::ExitCodeLatch;
+    use std::sync::Arc;
+    use std::sync::mpsc;
+    use std::thread;
+
+    /// RERR_SIGNAL, the watcher's code for an interrupt-driven abort.
+    const SIGNAL: i32 = 20;
+    /// RERR_PARTIAL, standing in for a transfer that failed on its own.
+    const PARTIAL: i32 = 23;
+
+    /// Watcher first: it wins the claim and owns termination; the normal
+    /// return then repeats the latched signal code instead of its own 0.
+    #[test]
+    fn watcher_first_normal_return_repeats_the_latched_code() {
+        let latch = Arc::new(ExitCodeLatch::new());
+        let (done_tx, done_rx) = mpsc::channel();
+        let watcher = {
+            let latch = Arc::clone(&latch);
+            thread::spawn(move || {
+                let decision = abort_exit(&latch, SIGNAL);
+                done_tx.send(()).expect("main thread waits on the channel");
+                decision
+            })
+        };
+        // The channel handoff forces the watcher's step to complete first.
+        done_rx.recv().expect("watcher completes its step");
+        let main_code = latched_run_exit(&latch, 0, None);
+
+        let decision = watcher.join().expect("watcher thread");
+        assert_eq!(decision, Some(SIGNAL), "first claimant owns termination");
+        assert_eq!(main_code, SIGNAL, "normal return repeats the latched code");
+    }
+
+    /// Normal return first with an error: the watcher must defer (it would
+    /// otherwise cut the final output off mid-write) and the first writer's
+    /// code survives the abort's competing code.
+    #[test]
+    fn normal_return_first_watcher_defers_and_first_code_survives() {
+        let latch = Arc::new(ExitCodeLatch::new());
+        let main_code = latched_run_exit(&latch, PARTIAL, None);
+        assert_eq!(main_code, PARTIAL);
+
+        let watcher = {
+            let latch = Arc::clone(&latch);
+            thread::spawn(move || abort_exit(&latch, SIGNAL))
+        };
+        let decision = watcher.join().expect("watcher thread");
+        assert_eq!(decision, None, "the watcher must not exit the process");
+        assert_eq!(
+            latch.resolve(0),
+            PARTIAL,
+            "first-writer-wins: the abort's code cannot overwrite the error"
+        );
+    }
+
+    /// Normal return first with success: an abort arriving afterwards defers,
+    /// so a completed run's output (e.g. --stats) cannot be truncated by the
+    /// watcher's `process::exit`.
+    #[test]
+    fn completed_successful_run_is_not_truncated_by_a_late_abort() {
+        let latch = Arc::new(ExitCodeLatch::new());
+        assert_eq!(latched_run_exit(&latch, 0, None), 0);
+
+        let watcher = {
+            let latch = Arc::clone(&latch);
+            thread::spawn(move || abort_exit(&latch, SIGNAL))
+        };
+        assert_eq!(watcher.join().expect("watcher thread"), None);
+    }
+
+    /// A signal reason observed by the run's tail is recorded before the
+    /// transfer's own code, so RERR_SIGNAL wins as the temporally-first
+    /// writer (upstream's signal path enters `_exit_cleanup` first).
+    #[test]
+    fn signal_reason_is_recorded_before_the_transfer_code() {
+        let latch = ExitCodeLatch::new();
+        assert_eq!(latched_run_exit(&latch, PARTIAL, Some(SIGNAL)), SIGNAL);
+    }
+
+    /// No signal anywhere: the run's own code passes through unchanged.
+    #[test]
+    fn plain_run_exit_codes_pass_through() {
+        assert_eq!(latched_run_exit(&ExitCodeLatch::new(), 0, None), 0);
+        assert_eq!(
+            latched_run_exit(&ExitCodeLatch::new(), PARTIAL, None),
+            PARTIAL
+        );
+    }
 }
