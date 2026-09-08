@@ -364,8 +364,25 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
         .flush()
         .map_err(|e| socket_error("flush to", request.address.socket_addr_display(), e))?;
 
-    // upstream: clientserver.c:send_daemon_args() - each --dparam key=value is
-    // sent as "OPTION key=value\n" before the module name.
+    // ⚠ oc-only, and BROKEN in both directions - do not read the loop below as
+    // upstream behaviour. Upstream has no `send_daemon_args()` and no `OPTION`
+    // handshake line at all: `grep '"@RSYNCD' *.c *.h` over 3.5.0 yields only
+    // the greeting (compat.c:853), `AUTHREQD` (clientserver.c:809), `OK`
+    // (clientserver.c:1152) and `EXIT` (clientserver.c:1385). `--dparam`/`-M` is
+    // a DAEMON-side, process-local option (`options.c:875` in
+    // `long_daemon_options[]` -> `dparam_list` -> `loadparm.c:667 set_dparams()`,
+    // called only from `loadparm.c:621` and `clientserver.c:1745`), and a client
+    // that passes it is refused by `options.c:1584-1589` with "Daemon option(s)
+    // used without --daemon." Client-mode `-M` is `--remote-option`
+    // (`options.c:859`).
+    //
+    // Measured against 3.5.0: an upstream daemon reads exactly one request line
+    // after the greeting (clientserver.c:1537-1571), so this line is taken as the
+    // module name and answered `@ERROR: Unknown module 'OPTION key=value'`. oc's
+    // own daemon answers identically, because it only recognises the
+    // `@RSYNCD: OPTION ...` spelling - so `--dparam` on a client fails against
+    // every daemon. Filed for removal alongside the client-mode option itself;
+    // left in place here so the failure stays loud rather than silent.
     for param in daemon_params {
         let option_line = format!("OPTION {param}\n");
         writer.write_all(option_line.as_bytes()).map_err(|e| {

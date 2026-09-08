@@ -132,24 +132,30 @@ fn process_approved_module(
         return handle_refused_option(ctx, refused);
     }
 
-    // Apply client-sent daemon parameter overrides to a session-local copy
-    // of the module definition. This avoids mutating the shared module state
-    // while honouring per-connection --dparam values.
-    // After overrides, expand %-variables (e.g. %MODULE%, %ADDR%) in path-type
-    // fields using the connection's client address and hostname.
+    // The module's effective configuration is the operator's, never the peer's.
+    //
+    // upstream: `--dparam`/`-M` is a DAEMON-side, process-local option and has
+    // no wire representation at all. `options.c:867` maps the client-mode
+    // `--dparam` to `OPT_DAEMON`, i.e. "you meant --daemon", and `options.c:1532`
+    // re-parses argv with `long_daemon_options[]`, where `options.c:875` collects
+    // it into `dparam_list` (`options.c:1552-1562`). That list is applied by
+    // `loadparm.c:667 set_dparams()` from exactly two places, both reading the
+    // daemon's OWN argv: `loadparm.c:618-621` at the end of the global section
+    // during `lp_load()`, and `clientserver.c:1745` in `daemon_main()`. A client
+    // that passes `--dparam` is refused outright by `options.c:1584-1589`
+    // ("Daemon option(s) used without --daemon.", RERR_SYNTAX). Short `-M` in
+    // client mode is `--remote-option` (`options.c:859`), a different option.
+    //
+    // Honouring a peer-supplied override here let an UNAUTHENTICATED client
+    // relax `read only`, `use chroot`, `max connections` and the chmod
+    // directives before the module's own auth ran, because
+    // `process_approved_module` is reached before `handle_authentication`.
+    //
+    // Expand %-variables (e.g. %MODULE%, %ADDR%) in path-type fields using the
+    // connection's client address and hostname.
     // upstream: loadparm.c:lp_string() - variable substitution at access time.
     let effective_module = {
         let mut definition = module.definition.clone();
-        if !options.is_empty() {
-            match apply_daemon_param_overrides(options, &mut definition) {
-                Ok(()) => {}
-                Err(err) => {
-                    let error = AtError::message(format!("invalid daemon param: {err}"));
-                    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                    return Ok(());
-                }
-            }
-        }
         let client_addr = ctx.peer_ip.to_string();
         let client_host = ctx.host_display();
         expand_module_vars(&mut definition, &client_addr, client_host);
