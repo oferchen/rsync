@@ -663,8 +663,8 @@ mod tests {
     }
 
     /// Builds a citation at run time so this file's own fixtures are not
-    /// flagged by the scanner it tests. `no_placeholders` splits its marker
-    /// literals for the same reason.
+    /// flagged by the scanner it tests. `no_placeholders` exempts its own
+    /// source file for the same reason.
     fn cite(file: &str, span: &str) -> String {
         format!(
             "// upstream: {file}{}{span} (`dest_mode()` invocation)",

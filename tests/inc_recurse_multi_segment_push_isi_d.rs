@@ -60,9 +60,10 @@
 //! walking each `NDX_*` token, which is a larger surface than the
 //! surgical-changes rule allows for a single new test file.
 //!
-//! TODO: ISI.e asserts wire-byte parity (count `NDX_FLIST_OFFSET`
-//! sentinels in the sender's outbound stream and confirm it equals
-//! the number of sub-list segments the partitioner produced).
+//! That stronger assertion lives in ISI.e
+//! (`tests/inc_recurse_sender_wire_parity_isi_e.rs`), which pins the
+//! sender's outbound wire stream byte-for-byte rather than counting
+//! `NDX_FLIST_OFFSET` sentinels.
 
 #![cfg(all(unix, not(target_os = "macos")))]
 
