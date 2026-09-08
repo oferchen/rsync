@@ -371,6 +371,13 @@ entire 0-500 ms latency tail at zero protocol cost.
 Expected saving: **200-500 ms off p99**, ~50-250 ms off median.
 This alone halves the gap.
 
+Resolved since: PR #5908 lowered the sleep to 50 ms and deleted
+`SIGNAL_CHECK_INTERVAL`; PR #7681 then removed accept-side
+sleep-polling entirely - the accept loop parks in `poll(2)` over every
+listener fd (or `kevent(2)` behind the opt-in `macos-kqueue` feature)
+in `crates/daemon/src/daemon/sections/server_runtime/accept_engine.rs`.
+The latency tail described above no longer exists.
+
 ### Tier 2: reduces the steady-state gap (20-50 ms off median)
 
 **6.2 Arena allocator for `FileEntry` (flist build)** (DIS-4.d /
@@ -615,7 +622,9 @@ worktree root):
 - `crates/daemon/src/daemon/sections/server_runtime/connection.rs` -
   accept loops (single + dual-stack)
 - `crates/daemon/src/daemon/sections/server_runtime/listener.rs` -
-  `SIGNAL_CHECK_INTERVAL`, `bind_with_backlog`, `configure_stream`
+  `bind_with_backlog` (the `SIGNAL_CHECK_INTERVAL` constant profiled
+  here was deleted by PR #5908; the accept wait now lives in
+  `accept_engine.rs` as `READINESS_WAIT_MILLIS`, see section 6.1)
 - `crates/daemon/src/daemon/sections/session_runtime.rs` -
   `handle_session`, `handle_legacy_session`
 - `crates/daemon/src/daemon/sections/greeting.rs` -

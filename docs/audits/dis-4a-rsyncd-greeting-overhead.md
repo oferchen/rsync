@@ -327,3 +327,15 @@ process-wide `OnceLock<LegacyMessageCache>` so the `@RSYNCD: OK\n` /
 every subsequent connection. The no-op `reader.get_mut().flush()?` call (R6)
 is dropped on the same hot path. Wire-byte parity is held by a test that
 compares the cached bytes against the per-call greeting builder.
+
+## 9. R1 follow-up (post-DIS-6)
+
+R1 landed after DIS-6, in two steps. PR #5908 lowered the single-listener
+`WouldBlock` sleep from 500 ms to 50 ms and deleted the
+`SIGNAL_CHECK_INTERVAL` constant. PR #7681 then removed accept-side
+sleep-polling entirely: the accept loop parks in a readiness wait - one
+`poll(2)` over every listener fd (`PollAcceptEngine`), or `kevent(2)`
+behind the opt-in `macos-kqueue` feature (`KqueueAcceptEngine`) - defined
+in `crates/daemon/src/daemon/sections/server_runtime/accept_engine.rs`.
+The 0-500 ms accept-latency tail this audit ranks first is gone; signal
+flags are re-checked at the engine's 50 ms / 100 ms wait cadence.

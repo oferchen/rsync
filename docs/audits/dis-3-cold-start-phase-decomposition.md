@@ -109,6 +109,12 @@ signal pipe added as a poll target, or to drop the timer to
 something like 5-10 ms while we are still on the sync path. Either
 removes the entire latency tail at zero protocol cost.
 
+Since landed: PR #5908 lowered the sleep to 50 ms and deleted
+`SIGNAL_CHECK_INTERVAL`; PR #7681 replaced accept-side sleep-polling
+with exactly this readiness wait (`poll(2)`, or `kevent(2)` behind the
+opt-in `macos-kqueue` feature) in
+`crates/daemon/src/daemon/sections/server_runtime/accept_engine.rs`.
+
 ### 2. File-list build cost (~500 files * (stat + entry alloc))
 
 Source: `crates/transfer/src/generator/file_list/mod.rs:52`

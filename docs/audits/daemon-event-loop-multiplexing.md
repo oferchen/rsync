@@ -450,6 +450,18 @@ benchmark validates the win.
 
 ## Follow-up tasks
 
+> Status (2026-09): the accept-side `SIGNAL_CHECK_INTERVAL` poll that
+> #1677 and #1683 target no longer exists. PR #5908 lowered the
+> single-listener `WouldBlock` sleep to 50 ms and deleted the constant;
+> PR #7681 then removed accept-side sleep-polling entirely - the accept
+> loop parks in a readiness wait (one `poll(2)` over every listener fd
+> in `PollAcceptEngine`, or `kevent(2)` behind the opt-in
+> `macos-kqueue` feature in `KqueueAcceptEngine`), defined in
+> `crates/daemon/src/daemon/sections/server_runtime/accept_engine.rs`.
+> Signal flags are re-checked at that engine's 50 ms / 100 ms wait
+> cadence. #1683 is closed by that work; #1677 remains open only as
+> part of the option (b) tokio port, which has not landed.
+
 - [ ] #1676 inventory every `serve_connections` setup step in
   `crates/daemon/src/daemon/sections/server_runtime/accept_loop.rs`
   and design parity coverage on the async path (signal handling, syslog,
@@ -478,7 +490,7 @@ benchmark validates the win.
   reactor returns the same `accept` semantics as Unix epoll/kqueue
   for `socket2`-built listeners
   (`crates/daemon/src/daemon/sections/server_runtime/listener.rs:87`).
-- [ ] #1683 if option (b) cannot be funded, lower
+- [x] #1683 if option (b) cannot be funded, lower
   `SIGNAL_CHECK_INTERVAL`
   (`crates/daemon/src/daemon/sections/server_runtime/listener.rs:45`)
   from 500 ms to 100 ms to match the dual-stack path's cadence.
