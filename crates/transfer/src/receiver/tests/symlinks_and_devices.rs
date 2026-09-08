@@ -704,3 +704,164 @@ fn non_symlink_obstacle_replacement_itemizes_as_all_new() {
         "an obstacle replacement is ITEM_IS_NEW and counts as created"
     );
 }
+
+/// The receiver must decide a symlink's mode from the REAL `-p` flag.
+///
+/// `MetadataOptions::new()` defaults `preserve_permissions` to true, so a call
+/// site that omits it gives every link `-p` semantics no matter what the
+/// operator asked for. Upstream has no such default: when `-p` is off it
+/// rewrites `file->mode` through `dest_mode()` at generator.c:1937-1940, and
+/// that line sits ABOVE the `preserve_links && ftype == FT_SYMLINK` branch at
+/// generator.c:1948, so a link takes the collapse exactly like every other
+/// type. `dest_mode()` (rsync.c:464-486) then has two arms, and this pins both:
+///
+/// * destination ABSENT -> `flist_mode & (~CHMOD_BITS | dflt_perms)`, i.e. the
+///   sender's bits masked by `0777 & ~umask`.
+/// * destination EXISTED -> `(flist_mode & ~CHMOD_BITS) | (stat_mode &
+///   CHMOD_BITS)`, i.e. keep whatever was already on the destination. Upstream
+///   reads that `sx.st` BEFORE `atomic_create` removes the obstacle, so a
+///   REPLACED destination still contributes its old bits - and `exists` is
+///   `statret == 0 && stype != FT_DIR`, which a non-symlink obstacle satisfies.
+///
+/// Measured against the real 3.5.0 binary over an rsh pair: source link 0700
+/// onto a 0644 destination link gives 644 without `-p` and 700 with it; onto a
+/// 0600 regular-file obstacle, 600 without `-p` and 700 with it.
+///
+/// Gated on `metadata::CAN_CHMOD_SYMLINK` because a link's mode is not writable
+/// on Linux (`fchmodat` rejects `AT_SYMLINK_NOFOLLOW`) and every link there
+/// reads back a fixed 0777; the assertions below would be vacuous.
+#[test]
+#[cfg(unix)]
+fn symlink_mode_follows_the_perms_flag_not_the_options_default() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !metadata::CAN_CHMOD_SYMLINK {
+        return;
+    }
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+
+    // Upstream's `dflt_perms` is `ACCESSPERMS & ~orig_umask` (main.c), which is
+    // exactly the mode `mkdir(2)` leaves on a fresh directory. Probing for it
+    // beats hardcoding a umask the test process does not control.
+    let probe = tmp.path().join("dflt-perms-probe");
+    std::fs::create_dir(&probe).expect("probe dir");
+    let dflt_perms = std::fs::metadata(&probe)
+        .expect("probe stat")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_ne!(
+        dflt_perms, 0o777,
+        "a zero umask would make the absent-destination cell non-discriminating"
+    );
+
+    let run = |perms: bool, src_mode: u32, seed: Option<&dyn Fn(&std::path::Path)>| -> u32 {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest = tmp.path();
+        if let Some(seed) = seed {
+            seed(&dest.join("mylink"));
+        }
+
+        let mut config = test_config();
+        config.flags.links = true;
+        config.flags.perms = perms;
+        // Only the directory-obstacle cell needs it, and upstream's rmdir of a
+        // directory obstacle is likewise gated on it.
+        config.flags.force = true;
+        config.connection.client_mode = false;
+
+        let handshake = test_handshake();
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+        // The sender's real lstat bits are what upstream puts on the wire.
+        let entry = FileEntry::new_symlink("mylink".into(), src_mode, "new-target".into());
+        ctx.file_list = vec![entry];
+
+        let mut writer = MockMsgInfoWriter::new();
+        ctx.create_symlinks(dest, None, &mut writer)
+            .expect("create_symlinks must succeed");
+
+        let meta = std::fs::symlink_metadata(dest.join("mylink")).expect("link must exist");
+        assert!(meta.file_type().is_symlink(), "destination must be a link");
+        meta.permissions().mode() & 0o7777
+    };
+
+    // Chmod the LINK itself, not its (absent) target - the same helper the
+    // receiver uses, so the seed cannot drift from the code under test.
+    let seed_link = |p: &std::path::Path| {
+        std::os::unix::fs::symlink("old-target", p).expect("seed old symlink");
+        fast_io::secure_chmod_at(p, 0o644, false).expect("seed the link's own mode");
+    };
+    let seed_file = |p: &std::path::Path| {
+        std::fs::write(p, b"obstacle").expect("seed obstacle");
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+    };
+    let seed_dir = |p: &std::path::Path| {
+        std::fs::create_dir(p).expect("seed dir obstacle");
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+    };
+
+    // NON-VACUITY: with `-p` every cell must land on the sender's own bits.
+    // This is the companion that proves the fixture actually reaches the chmod
+    // - a receiver that never chmodded a link would leave the `symlink(2)`
+    // umask default (`dflt_perms`) behind, which the probe above pins != 0777.
+    assert_eq!(run(true, 0o777, None), 0o777, "-p, absent destination");
+    assert_eq!(
+        run(true, 0o700, None),
+        0o700,
+        "-p, absent destination, non-default source bits"
+    );
+    assert_eq!(
+        run(true, 0o777, Some(&seed_link)),
+        0o777,
+        "-p, replaced destination link"
+    );
+    assert_eq!(
+        run(true, 0o777, Some(&seed_file)),
+        0o777,
+        "-p, replaced file obstacle"
+    );
+
+    // Without `-p` each cell must take its `dest_mode()` arm instead. Before
+    // the call sites passed `config.flags.perms` all of these read the source
+    // bits, because `MetadataOptions::new()` had already answered "preserve
+    // permissions" on the operator's behalf.
+    assert_eq!(
+        run(false, 0o777, None),
+        dflt_perms,
+        "no -p, absent destination: the sender's bits masked by 0777 & ~umask"
+    );
+    // A 0700 source separates dest_mode()'s two ARMS, which a 0777 source
+    // cannot: `0777 & dflt_perms` and "keep the fresh link's own bits" both
+    // equal `dflt_perms`, so only a source whose bits are not a superset of
+    // `dflt_perms` can tell "destination was absent" from "destination
+    // existed". Without this cell, hardcoding `destination_is_new` to false
+    // changes no observable output.
+    assert_eq!(
+        run(false, 0o700, None),
+        0o700 & dflt_perms,
+        "no -p, absent destination takes dest_mode()'s absent arm, not the \
+         fresh link's own umask-default bits"
+    );
+    assert_eq!(
+        run(false, 0o777, Some(&seed_link)),
+        0o644,
+        "no -p, replaced destination link: upstream keeps the OLD link's bits"
+    );
+    assert_eq!(
+        run(false, 0o777, Some(&seed_file)),
+        0o600,
+        "no -p, replaced file obstacle: dest_mode()'s `exists` is true for any \
+         non-directory, so the obstacle's bits carry over"
+    );
+    // ...and a DIRECTORY obstacle is the one that does not: `exists` is
+    // `statret == 0 && stype != FT_DIR`, so the rmdir'd directory's 0700
+    // contributes nothing and the absent arm applies. Measured the same way
+    // against 3.5.0 (`-rl --force`, source 0777 over a 0700 directory -> 755).
+    assert_eq!(
+        run(false, 0o777, Some(&seed_dir)),
+        dflt_perms,
+        "no -p, replaced DIRECTORY obstacle takes the absent arm, not the \
+         directory's own bits"
+    );
+}
