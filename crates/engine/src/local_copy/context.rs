@@ -198,6 +198,13 @@ pub(crate) struct CopyContext<'a> {
     // `map_ptr()` recorded, and the sender sets `io_error |= IOERR_GENERAL`
     // plus one `read errors mapping %s` line before continuing.
     source_read_error: bool,
+    /// Monotonic count of `record_source_read_error` calls. The sticky flag
+    /// above cannot tell one file's short read from an earlier file's, so the
+    /// transfer executor snapshots this counter around a copy pass to decide
+    /// whether THIS pass read a source that shrank and must be redone.
+    // upstream: the per-file equivalent is `mbuf->status` handed back by
+    // `unmap_file()` (fileio.c:385) - per-map, not global.
+    source_read_events: u64,
     /// Set when an `--iconv` filename could not be strictly transcoded to the
     /// remote charset and its entry was skipped. Drives the final
     /// `RERR_PARTIAL` (exit 23) exit code, mirroring upstream's

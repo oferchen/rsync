@@ -78,42 +78,151 @@ pub(in crate::local_copy) fn execute_transfer(
         reference_basis.clone(),
     )?;
 
-    if outcome == TransferOutcome::Complete {
-        return Ok(());
+    let redo_outcome = match outcome {
+        TransferOutcome::Complete => return Ok(()),
+        TransferOutcome::VerificationFailed => {
+            warn_verification_failed(context, record_path);
+
+            // The first pass appended in place, so the destination now holds
+            // the full source length with a wrong prefix. Re-stat it: that
+            // partial is the delta basis for the redo, exactly as upstream's
+            // `generate_and_send_sums()` reads the retained file. Losing it
+            // between the passes means there is nothing to re-delta, so a stat
+            // failure is a hard error rather than a fall-back to a whole-file
+            // copy.
+            let retained = fs::symlink_metadata(destination).map_err(|error| {
+                LocalCopyError::io("inspect retained partial", destination.to_path_buf(), error)
+            })?;
+
+            execute_transfer_once(
+                context,
+                source,
+                destination,
+                metadata,
+                metadata_options,
+                record_path,
+                Some(&retained),
+                // The destination existed before this pass: upstream counts
+                // `stats.created_files++` only on the non-redo leg
+                // (receiver.c:778).
+                true,
+                file_type,
+                relative,
+                redo_flags(flags, context.sparse_enabled()),
+                mode,
+                copy_source_override,
+                reference_basis,
+            )?
+        }
+        TransferOutcome::SourceChanged => {
+            // The source shrank while the first pass was reading it, so the
+            // staged result carried a stale tail and was discarded. Warn the
+            // way upstream's receiver does when the deliberately corrupted
+            // checksum fails verification (receiver.c:1325-1354), then rerun
+            // the file once. The retry re-opens the source and sizes itself
+            // from a fresh `fstat`, exactly as upstream's phase-2 resend does
+            // (sender.c:728-760), so it lands bytes consistent with the file
+            // as it is now. `metadata` is deliberately NOT refreshed: upstream
+            // stamps the redone destination with the attributes the file list
+            // recorded (`set_file_attrs` reads the flist entry), not with a
+            // re-stat.
+            warn_source_changed(context, record_path, &flags);
+
+            execute_transfer_once(
+                context,
+                source,
+                destination,
+                metadata,
+                metadata_options,
+                record_path,
+                existing_metadata,
+                destination_previously_existed,
+                file_type,
+                relative,
+                source_changed_redo_flags(flags),
+                mode,
+                copy_source_override,
+                reference_basis,
+            )?
+        }
+    };
+
+    // Upstream bounds the redo to ONE retry: the resend arrives with
+    // `FLAG_FILE_SENT` already set, so the receiver runs it with `redoing = 1`
+    // (receiver.c:933-942) and a second failure logs `FERROR_XFER` with no
+    // further `MSG_REDO` (receiver.c:1333,1355-1358 - the request is guarded
+    // by `if (!redoing)`). Mirror that: report the discarded update and stop.
+    // The exit-23 flags from `note_short_source_read` are already recorded.
+    if redo_outcome != TransferOutcome::Complete {
+        note_redo_discarded(context, record_path, &flags);
     }
 
-    warn_verification_failed(context, record_path);
-
-    // The first pass appended in place, so the destination now holds the full
-    // source length with a wrong prefix. Re-stat it: that partial is the delta
-    // basis for the redo, exactly as upstream's `generate_and_send_sums()` reads
-    // the retained file. Losing it between the passes means there is nothing to
-    // re-delta, so a stat failure is a hard error rather than a fall-back to a
-    // whole-file copy.
-    let retained = fs::symlink_metadata(destination).map_err(|error| {
-        LocalCopyError::io("inspect retained partial", destination.to_path_buf(), error)
-    })?;
-
-    execute_transfer_once(
-        context,
-        source,
-        destination,
-        metadata,
-        metadata_options,
-        record_path,
-        Some(&retained),
-        // The destination existed before this pass: upstream counts
-        // `stats.created_files++` only on the non-redo leg (receiver.c:778).
-        true,
-        file_type,
-        relative,
-        redo_flags(flags, context.sparse_enabled()),
-        mode,
-        copy_source_override,
-        reference_basis,
-    )?;
-
     Ok(())
+}
+
+/// The flag set for the shrink redo pass.
+///
+/// upstream: generator.c:2647-2689 - the redo dispatch in
+/// `check_for_finished_files` negates `append_mode` and bumps `ignore_times`
+/// around `recv_generator()`, so the resend can never resume-append and can
+/// never be quick-check skipped (the discarded pass may have left a
+/// destination whose size and mtime already look current). `whole_file` is NOT
+/// touched: it stays whatever the session selected.
+fn source_changed_redo_flags(flags: TransferFlags) -> TransferFlags {
+    TransferFlags {
+        append_allowed: false,
+        append_verify: false,
+        ignore_times_enabled: true,
+        ..flags
+    }
+}
+
+/// The disposition noun upstream's verification-failure lines carry.
+///
+/// upstream: receiver.c:1337-1343 - `"discarded"` unless the update was kept
+/// (`keep_partial` with a partial path, or `inplace`), in which case it is
+/// `"put into partial-dir"` under `--partial-dir` and `"retained"` otherwise.
+fn kept_description(context: &CopyContext, flags: &TransferFlags) -> &'static str {
+    if !flags.partial_enabled && !flags.inplace_enabled {
+        "discarded"
+    } else if context.options().partial_directory_path().is_some() {
+        "put into partial-dir"
+    } else {
+        "retained"
+    }
+}
+
+/// Emits upstream's first-failure warning for a source that shrank mid-read.
+///
+/// upstream: receiver.c:1333-1354 - `redoing` is still 0, so the message is
+/// `FWARNING` with `redostr = " (will try again)"`, gated behind
+/// `INFO_GTE(NAME, 1) || stdout_format_has_i` (receiver.c:1334). The wording
+/// is upstream's verbatim: on the wire this failure IS a checksum-verification
+/// failure, because the sender corrupted the whole-file checksum on the read
+/// error (match.c:454-463).
+fn warn_source_changed(context: &CopyContext, record_path: &Path, flags: &TransferFlags) {
+    if !logging::info_gte(logging::InfoFlag::Name, 1) && !context.options().is_itemize_active() {
+        return;
+    }
+    eprintln!(
+        "WARNING: {} failed verification -- update {} (will try again).",
+        record_path.display(),
+        kept_description(context, flags),
+    );
+}
+
+/// Emits upstream's second-failure error when the bounded redo also fails.
+///
+/// upstream: receiver.c:1333 - `enum logcode msgtype = redoing ? FERROR_XFER : FWARNING;`
+/// picks the error form on the second failure, and receiver.c:1344-1353 sets
+/// `errstr = "ERROR"` with an empty `redostr`. `FERROR_XFER` short-circuits the
+/// name gate at receiver.c:1334, so the line is unconditional.
+fn note_redo_discarded(context: &CopyContext, record_path: &Path, flags: &TransferFlags) {
+    eprintln!(
+        "ERROR: {} failed verification -- update {}.",
+        record_path.display(),
+        kept_description(context, flags),
+    );
 }
 
 /// The flag set upstream's generator installs around the phase-2 redo.
