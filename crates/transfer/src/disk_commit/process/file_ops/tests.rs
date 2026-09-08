@@ -86,3 +86,83 @@ fn the_prior_mode_is_restored_before_the_descriptor_is_returned() {
     assert_eq!(mode_of(&path), READ_ONLY);
     assert_eq!(fs::read(&path).unwrap(), b"old");
 }
+
+/// `--inplace --backup` delta path: when the generator already created the
+/// backup and selected it as the delta basis (`FNAMECMP_BACKUP`, upstream
+/// generator.c:2328-2356; carried here as `xattr_basis`), the disk thread must
+/// NOT copy again - re-copying would `O_TRUNC` the very file the network
+/// thread is resolving matched blocks from mid-transfer.
+#[test]
+fn make_inplace_backup_skips_when_the_delta_basis_is_the_backup() {
+    use std::ffi::OsString;
+
+    use super::super::super::config::BackupConfig;
+    use super::make_inplace_backup;
+
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("file.bin");
+    fs::write(&dest, b"pre-image").unwrap();
+    let backup_path = dir.path().join("file.bin~");
+
+    let config = DiskCommitConfig {
+        backup: Some(BackupConfig {
+            dest_dir: dir.path().to_path_buf(),
+            backup_dir: None,
+            suffix: OsString::from("~"),
+        }),
+        ..DiskCommitConfig::default()
+    };
+    let mut begin = inplace_begin(&dest);
+    begin.xattr_basis = Some(backup_path.clone());
+
+    // The generator's copy, standing in for find_basis_file_with_config. The
+    // sentinel content makes a wrongful re-copy observable: it would clobber
+    // this with the destination's current bytes.
+    fs::write(&backup_path, b"sentinel: do not truncate").unwrap();
+
+    let notice = make_inplace_backup(&begin, &config).expect("gate must not fail");
+    assert!(
+        notice.is_none(),
+        "no second notice for the generator's backup"
+    );
+    assert_eq!(
+        fs::read(&backup_path).unwrap(),
+        b"sentinel: do not truncate",
+        "the delta basis must never be rewritten by the disk thread"
+    );
+}
+
+/// Sibling control: with no delta basis carried (whole-file transfer, or a
+/// basis that IS the destination), the disk thread still owns the pre-image
+/// copy - upstream's whole-file/read-batch branch (generator.c:2280-2301).
+#[test]
+fn make_inplace_backup_still_copies_when_no_backup_basis_is_carried() {
+    use std::ffi::OsString;
+
+    use super::super::super::config::BackupConfig;
+    use super::make_inplace_backup;
+
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("file.bin");
+    fs::write(&dest, b"pre-image").unwrap();
+
+    let config = DiskCommitConfig {
+        backup: Some(BackupConfig {
+            dest_dir: dir.path().to_path_buf(),
+            backup_dir: None,
+            suffix: OsString::from("~"),
+        }),
+        ..DiskCommitConfig::default()
+    };
+    let begin = inplace_begin(&dest);
+
+    let notice = make_inplace_backup(&begin, &config)
+        .expect("copy must succeed")
+        .expect("a notice is produced");
+    assert_eq!(notice.original, PathBuf::from("file.bin"));
+    assert_eq!(
+        fs::read(dir.path().join("file.bin~")).unwrap(),
+        b"pre-image",
+        "the whole-file inplace backup still comes from the disk thread"
+    );
+}

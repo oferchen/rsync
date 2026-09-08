@@ -799,11 +799,19 @@ fn discard_file_on_open_failure(
 ///
 /// Under `--inplace` the destination is rewritten in place (same inode), so the
 /// backup cannot be a rename of the destination - it must be a COPY of the
-/// pre-transfer contents taken before the first write. Upstream does this in the
-/// generator (`generator.c:1862,1898` `copy_file(fname, backupptr, ...)`) while
-/// keeping `fnamecmp_type == FNAMECMP_FNAME`. Because oc refuses
-/// `--inplace --partial-dir` (config validation), an inplace basis is always the
-/// destination itself, so `begin.is_inplace` here matches upstream's
+/// pre-transfer contents taken before the first write. Upstream does this in
+/// the generator, on its whole-file/read-batch branch
+/// (`generator.c:2280-2301` `copy_file(fname, backupptr, ...)`, keeping
+/// `fnamecmp_type == FNAMECMP_FNAME`); this function is oc's mirror of that
+/// branch. Upstream's DELTA branch (`generator.c:2328-2356`) instead makes the
+/// copy at basis-selection time and retags the basis `FNAMECMP_BACKUP`; oc
+/// mirrors that in `find_basis_file_with_config`, which selects the fresh
+/// backup as the delta basis - carried here as `begin.xattr_basis` - so this
+/// function must NOT run again for that case: re-copying would `O_TRUNC` the
+/// very file the network thread is resolving matched blocks from mid-transfer.
+/// Because oc refuses `--inplace --partial-dir` (config validation), an
+/// inplace basis is otherwise always the destination itself, so
+/// `begin.is_inplace` here matches upstream's
 /// `inplace && fnamecmp_type == FNAMECMP_FNAME` condition exactly.
 ///
 /// Returns `Ok(None)` (no backup) unless the target is inplace, backup is
@@ -819,7 +827,23 @@ fn make_inplace_backup(
     let Some(ref backup_config) = config.backup else {
         return Ok(None);
     };
+    // upstream: generator.c:2328-2356 - a delta basis that IS the backup file
+    // means the generator already wrote the pre-image copy (FNAMECMP_BACKUP)
+    // and the "backed up X to Y" notice was already emitted by the request
+    // loop. Skip so the backup the delta is being resolved against is never
+    // truncated underneath the reader.
+    let backup_path = engine::compute_backup_path(
+        &backup_config.dest_dir,
+        &begin.file_path,
+        None,
+        backup_config.backup_dir.as_deref(),
+        &backup_config.suffix,
+    );
+    if begin.xattr_basis.as_deref() == Some(backup_path.as_path()) {
+        return Ok(None);
+    }
     make_backup_copy(&begin.file_path, backup_config, config.backup_env())
+        .map(|made| made.map(|(_, notice)| notice))
 }
 
 /// Stats the destination before an inplace write so `dest_mode()` keeps its

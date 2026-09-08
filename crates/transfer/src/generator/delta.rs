@@ -579,11 +579,18 @@ fn consecutive_match_needed(config: &DeltaGeneratorConfig<'_>) -> u8 {
 ///                                            : make_backups <= 0));
 /// ```
 ///
-/// A missing basis-type byte defaults to `FNAMECMP_FNAME` (`rsync.c:326`). Note
-/// that at protocol >= 29 `--inplace --backup` still qualifies: the generator
-/// makes a side backup copy but keeps `fnamecmp_type == FNAMECMP_FNAME` and
-/// rewrites the destination in place (`generator.c:1862,1898`); the
-/// `make_backups <= 0` clause only applies to the legacy protocol < 29 path.
+/// A missing basis-type byte defaults to `FNAMECMP_FNAME` (`rsync.c:326`).
+///
+/// `--inplace --backup` splits by generator branch. On the whole-file /
+/// read-batch branch the generator backs up via `copy_file()` and keeps
+/// `fnamecmp_type == FNAMECMP_FNAME` (`generator.c:2280-2301`) - no delta, so
+/// this flag never matters there. On the DELTA branch the generator writes the
+/// backup while sending sums and retags `fnamecmp_type = FNAMECMP_BACKUP`
+/// (`generator.c:2328-2356`), so at protocol >= 29 the `FNAMECMP_FNAME` test
+/// here goes FALSE: matched blocks are read from the pristine backup copy, and
+/// the sender is free to match them in any order. The `make_backups <= 0`
+/// clause carries the same rule for the legacy protocol < 29 path, which has
+/// no basis-type byte on the wire.
 ///
 /// upstream: sender.c:337 `updating_basis_file`.
 pub(crate) fn updating_basis_file(

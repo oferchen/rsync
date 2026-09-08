@@ -52,8 +52,8 @@ pub(crate) use crate::parallel_io::ParallelThresholds;
 use signature;
 
 pub use self::basis::{
-    BasisFileConfig, BasisFileResult, ChecksumThreadsPolicy, find_basis_file_with_config,
-    set_checksum_threads_policy,
+    BasisFileConfig, BasisFileResult, ChecksumThreadsPolicy, InplaceBackupSpec,
+    find_basis_file_with_config, set_checksum_threads_policy,
 };
 pub use self::context::ReceiverContext;
 pub(in crate::receiver) use self::dest_root::dest_arg_has_trailing_slash;
