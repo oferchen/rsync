@@ -24,6 +24,9 @@
 #                             # remote-shell --rsync-path. Pointing it at a real
 #                             # upstream build is what makes the run a VERSION-
 #                             # MIXING run; without it the suite is oc vs oc.
+#                             # Refused on a leg where a test would adopt it as
+#                             # a legacy-version ORACLE it does not match - see
+#                             # ensure_legacy_oracles().
 #   EXPECT_RESULT=<file>      # --expect-result: expected-outcome manifest.
 #   EMIT_EXPECT_RESULT=<file> # write an EXPECT_RESULT manifest from this run,
 #                             # so the ledger is generated, never hand-typed.
@@ -818,6 +821,35 @@ python_suite_available() {
 # daemon-max-alloc-zero, i.e. it MOVES expect-manifest rows. Those rows may
 # only be re-baselined from a measured run (EMIT_EXPECT_RESULT), so a leg opts
 # in when someone is ready to measure the move - never as a side effect.
+#
+# THE ORACLE SLOT IS HIJACKABLE, AND THE LABEL DOES NOT FOLLOW THE BINARY.
+#
+# daemon-symlink-escape-matrix does not only read old_versions/. It prefers the
+# --rsync-bin2 peer whenever one differs from the binary under test
+# (3.5.0 testsuite/daemon-symlink-escape-matrix_test.py:75-79):
+#
+#     ORACLE_BIN = None
+#     if RSYNC_PEER != RSYNC:
+#         ORACLE_BIN = RSYNC_PEER
+#     elif (_repo / 'old_versions' / 'rsync_3.2.7').is_file():
+#         ORACLE_BIN = str(_repo / 'old_versions' / 'rsync_3.2.7')
+#
+# and its only acceptance test is that `--version` EXITS ZERO (:87-94) - the
+# banner it prints is read by nobody. The grid then labels the column with a
+# hardcoded '327' (:256-257) whatever answered. Note the `elif`: a peer WINS
+# over a real rsync_3.2.7 this script just built, so building the right oracle
+# does not rescue a hijacked slot.
+#
+# MEASURED by executing that file's own oracle-selection block with
+# RSYNC_PEER=<a 3.5.0 build>: the oracle daemon starts from the 3.5.0 binary
+# and all 100 `insecure links = yes` cells print `want=N(327)`. So the grid can
+# say "3.2.7 says X" over a release that is not 3.2.7 and never says otherwise.
+#
+# That code is upstream's, inside a tarball this script re-extracts, so it
+# cannot be fixed here. What CAN be fixed is the hand-off: this script is what
+# puts UPSTREAM_PEER_BIN into --rsync-bin2, and it now refuses to do so when a
+# consumer that would take that binary as its version-N oracle is reachable on
+# this leg and the binary does not report version N. See ensure_legacy_oracles.
 # --------------------------------------------------------------------------
 
 # on: build every oracle a consumer on this leg can reach. off: build none and
@@ -844,8 +876,38 @@ gha_annotate_warn() {
         "$title" "$sanitized"
 }
 
+# The version an rsync binary reports for ITSELF, or non-zero if it will not
+# say. The binary is the only authority on which release it is: a path, a flag
+# name and a CI variable are all just labels somebody typed.
+#
+# One command substitution, never `--version | head -1`. rsync does not buffer
+# its banner - MEASURED on 3.2.7, 20 separate write(2) calls - so under
+# `set -o pipefail` head can close the pipe first and the pipeline reports 141
+# for a binary that answered perfectly. build_old_rsync_oracle.sh carries the
+# same shape and the same note at oracle_version_line().
+#
+# The match is leftmost, which is what makes it right on rsync's own banner:
+# "rsync  version 3.5.0  protocol version 32" contains the word twice and the
+# first one carries the release.
+rsync_reported_version() {
+    local banner first
+    banner=$("$1" --version 2>/dev/null) || return 1
+    first=${banner%%$'\n'*}
+    [[ $first =~ version[[:space:]]+([0-9]+(\.[0-9]+)*) ]] || return 1
+    printf '%s' "${BASH_REMATCH[1]}"
+}
+
+# The binary's first banner line verbatim, stderr folded in so a binary that
+# fails to run (wrong arch, missing library) names its own reason.
+rsync_version_banner() {
+    local banner
+    banner=$("$1" --version 2>&1) || true
+    printf '%s' "${banner%%$'\n'*}"
+}
+
 # One TSV row per (oracle version, consuming test): version, test base name,
-# whether that test needs the TCP transport, whether it needs root.
+# whether that test needs the TCP transport, whether it needs root, and whether
+# the test will take the --rsync-bin2 peer as its oracle.
 #
 # DISCOVERED from the tests, never listed here. A second copy of "3.2.7" in
 # this file would drift the moment upstream retargets the oracle, and the drift
@@ -913,9 +975,17 @@ for path in sorted(glob.glob(os.path.join('testsuite', '*_test.py'))):
                  'the oracle it wants cannot be derived from its source' % path)
     needs_tcp = 'yes' if 'require_tcp(' in text else 'no'
     needs_root = 'yes' if 'geteuid()' in text else 'no'
+    # Whether the --rsync-bin2 peer can OCCUPY this test's oracle slot. Read
+    # from the test for the same reason the version is: a test that reads
+    # RSYNC_PEER in CODE can substitute it for the archive binary, and no
+    # amount of building the right oracle changes that. An `ast.Name` node,
+    # so the `from rsyncfns import (..., RSYNC_PEER, ...)` alias every test in
+    # the suite carries does not count as use - only evaluating it does.
+    peer_slot = 'yes' if any(isinstance(n, ast.Name) and n.id == 'RSYNC_PEER'
+                             for n in ast.walk(tree)) else 'no'
     base = os.path.basename(path)[:-len('_test.py')]
     for version in versions:
-        rows.append('\t'.join((version, base, needs_tcp, needs_root)))
+        rows.append('\t'.join((version, base, needs_tcp, needs_root, peer_slot)))
 print('\n'.join(rows))
 PY
     )
@@ -945,10 +1015,11 @@ ensure_legacy_oracles() {
     local old_versions_dir="${upstream_src_dir}/old_versions"
     local oracle_workdir="${workspace_root}/target/interop/old-versions-build"
     local euid=${EUID:-$(id -u)}
-    local built=0 unreachable=0 degraded=0
+    local built=0 unreachable=0 degraded=0 from_peer=0
     local degraded_names=""
-    local version test_name needs_tcp needs_root reason
-    while IFS=$'\t' read -r version test_name needs_tcp needs_root; do
+    local version test_name needs_tcp needs_root peer_slot reason
+    local peer_version peer_banner
+    while IFS=$'\t' read -r version test_name needs_tcp needs_root peer_slot; do
         [[ -n "$version" ]] || continue
         reason=""
         if [[ "$needs_tcp" == "yes" && "${USE_TCP:-no}" != "yes" ]]; then
@@ -962,6 +1033,33 @@ ensure_legacy_oracles() {
         if [[ -n "$reason" ]]; then
             echo "==> Legacy oracle rsync ${version}: not needed - ${test_name} cannot run on this leg (${reason})." >&2
             unreachable=$((unreachable + 1))
+            continue
+        fi
+        # PROVENANCE. This consumer reads RSYNC_PEER, so a --rsync-bin2 binary
+        # takes the oracle slot ahead of anything in old_versions/ - and the
+        # grid still labels the column with the version it ASKED for. Make the
+        # binary prove it is that version before we hand it over.
+        if [[ "$peer_slot" == "yes" && -n "$upstream_peer_bin" ]]; then
+            peer_version=$(rsync_reported_version "$upstream_peer_bin") \
+                || peer_version=""
+            if [[ "$peer_version" != "$version" ]]; then
+                peer_banner=$(rsync_version_banner "$upstream_peer_bin")
+                echo "ERROR: UPSTREAM_PEER_BIN would become ${test_name}'s rsync ${version} oracle, and it is not rsync ${version}." >&2
+                echo "       peer: ${upstream_peer_bin}" >&2
+                echo "       says: ${peer_banner:-<no --version output>}" >&2
+                echo "       ${test_name} prefers the --rsync-bin2 peer over old_versions/rsync_${version}" >&2
+                echo "       and labels the resulting column with a hardcoded '${version//./}'. Run this" >&2
+                echo "       way and the grid reports what rsync ${version} says about cells rsync" >&2
+                echo "       ${peer_version:-?} answered - a confident, wrong differential result, and" >&2
+                echo "       building the real oracle does not help because the peer wins the tie." >&2
+                echo "       Either unset UPSTREAM_PEER_BIN on this leg (LEGACY_ORACLES=on then" >&2
+                echo "       supplies a real rsync ${version}), or point it at an actual rsync ${version}." >&2
+                gha_annotate_fail "legacy rsync oracle slot hijacked" \
+                    "UPSTREAM_PEER_BIN (${upstream_peer_bin}, ${peer_banner:-unknown version}) would fill ${test_name}'s rsync ${version} oracle slot, which the test labels '${version//./}' whatever answers it."
+                exit 1
+            fi
+            echo "==> Legacy oracle rsync ${version}: supplied by the --rsync-bin2 peer ${upstream_peer_bin}, which reports ${peer_version}." >&2
+            from_peer=$((from_peer + 1))
             continue
         fi
         if [[ "$legacy_oracles_mode" == "off" ]]; then
@@ -988,7 +1086,7 @@ ensure_legacy_oracles() {
         gha_annotate_warn "legacy rsync oracles not built" \
             "LEGACY_ORACLES=off on this leg, so ${degraded} test(s) assert against a static fallback rather than the release they name: ${degraded_names}. Set legacy_oracles: 'on' for this leg once its expect manifest can be re-measured."
     fi
-    echo "==> Legacy oracles: ${built} on disk, ${degraded} consumer(s) running degraded, ${unreachable} not needed on this leg." >&2
+    echo "==> Legacy oracles: ${built} on disk, ${from_peer} from the --rsync-bin2 peer, ${degraded} consumer(s) running degraded, ${unreachable} not needed on this leg." >&2
 }
 
 # Drive upstream's own runtests.py against oc-rsync.
@@ -1094,6 +1192,10 @@ run_python_suite_mode() {
     # the wire and upstream on the other: this, not the wire-format interop
     # cells, is what actually tests compatibility with a given release. Absent,
     # the suite runs oc against oc and proves only self-consistency.
+    #
+    # ensure_legacy_oracles() has already refused this binary if a test on this
+    # leg would take it as an oracle for a version it does not report; see the
+    # provenance block there.
     if [[ -n "$upstream_peer_bin" ]]; then
         if [[ ! -x "$upstream_peer_bin" ]]; then
             echo "ERROR: UPSTREAM_PEER_BIN is set but not executable: ${upstream_peer_bin}" >&2
@@ -1102,7 +1204,10 @@ run_python_suite_mode() {
             exit 1
         fi
         echo "==> Peer (--rsync-bin2): ${upstream_peer_bin}" >&2
-        "$upstream_peer_bin" --version 2>&1 | head -n1 | sed 's/^/    /' >&2
+        # Not `--version | head -1`: rsync writes the banner unbuffered, so
+        # under `set -o pipefail` an early close reports 141 and `set -e` kills
+        # the run. rsync_version_banner() reads to EOF instead.
+        echo "    $(rsync_version_banner "$upstream_peer_bin")" >&2
         runtests_argv+=(--rsync-bin2="$upstream_peer_bin")
     fi
     # An expected-outcome manifest runs ONLY the tests it lists, so a truncated
