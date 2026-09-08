@@ -299,6 +299,15 @@ jobs:
       - name: Run tools/tests
         run: bash tools/ci/run_tools_tests.sh
 
+      # Blocking gate over the strictest dead-code tier: a pub fn with zero
+      # production callers AND zero test references must carry an allowlist
+      # row with a reason and an unexpired expiry date. Only that tier is
+      # gated - the wider zero-caller tier is hundreds of rows, and a frozen
+      # baseline that large would hide the one new dead function that
+      # matters inside it.
+      - name: Dead-code census gate
+        run: python3 tools/ci/dead_code_census.py gate
+
   # ===========================================================================
   # Test Job - Full test suite on Linux with toolchain matrix
   # ===========================================================================
