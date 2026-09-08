@@ -15,7 +15,6 @@ enumerating files, directories, and symlinks with deterministic ordering.
 
 - `batched_stat` - parallel `fstatat`/`statx` batching for high file counts (Unix)
 - `parallel` - rayon-based parallel traversal
-- `symlink_safety` - cycle detection when following directory symlinks
 
 ## Dependencies
 

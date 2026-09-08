@@ -1398,3 +1398,116 @@ fn the_server_side_decoder_still_ignores_an_unknown_item() {
     assert_eq!(settings.progress, ProgressSetting::PerFile);
     assert_eq!(settings.stats, Some(1));
 }
+
+// ---------------------------------------------------------------------------
+// Single-owner drift pins.
+//
+// The parser tables in info.rs/debug.rs are THE owner of the accepted word
+// sets; the help text stays hand-written for the grouped-help format, and the
+// logging crate keeps its own name -> enum match. Each copy is pinned to the
+// owner THROUGH THE LIVE PARSE PATH so a word added or removed in one place
+// fails here instead of drifting silently.
+// ---------------------------------------------------------------------------
+
+/// Extracts the word-table names from a `--info=help`/`--debug=help` body.
+///
+/// Word rows render as `"%-10s %s\n"` (options.c:478) with an ALL-CAPS name in
+/// column 0; prose lines start with mixed case and the per-verbosity summary
+/// lines start with a digit, so neither survives the all-caps filter. The
+/// `ALL`/`NONE`/`HELP` keywords are grammar, not table words
+/// (options.c:469-472), and are excluded.
+fn help_text_words(help: &str) -> Vec<String> {
+    help.lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .filter(|word| {
+            word.len() > 1
+                && word
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        })
+        .filter(|word| !matches!(*word, "ALL" | "NONE" | "HELP"))
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+// The hand-written DEBUG_HELP_TEXT must name exactly the words the live
+// parser accepts, in the same order: `all1` fans out through the applying
+// table, so the enumeration is the real accepted set rather than a copy.
+#[test]
+fn debug_help_text_names_exactly_the_live_accepted_words() {
+    let mut settings = DebugFlagSettings::default();
+    settings.apply("all1").unwrap();
+    let accepted: Vec<&str> = settings
+        .iter_enabled_flags()
+        .map(|(name, _)| name)
+        .collect();
+
+    let help_words = help_text_words(DEBUG_HELP_TEXT);
+    assert_eq!(
+        help_words, accepted,
+        "DEBUG_HELP_TEXT and the live --debug parser disagree; the parser \
+         table in debug.rs is the owner - update the help text to match it"
+    );
+
+    // Non-vacuity: the extraction really found the table rows.
+    assert_eq!(help_words.len(), 28);
+}
+
+// The hand-written INFO_HELP_TEXT must name exactly the words the live parser
+// accepts. `iter_enabled_flags` deliberately omits `stats` (forwarded via the
+// standalone `--stats` flag), so the owner here is INFO_FLAG_SPECS - the
+// table `spec_for()` consults on every parse - with each help word also pushed
+// through the live parse path as the non-vacuity check.
+#[test]
+fn info_help_text_names_exactly_the_live_accepted_words() {
+    let spec_names: Vec<&str> = INFO_FLAG_SPECS.iter().map(|spec| spec.name).collect();
+
+    let help_words = help_text_words(INFO_HELP_TEXT);
+    assert_eq!(
+        help_words, spec_names,
+        "INFO_HELP_TEXT and the live --info parser disagree; INFO_FLAG_SPECS \
+         in info.rs is the owner - update the help text to match it"
+    );
+    assert_eq!(help_words.len(), 13);
+
+    for word in &help_words {
+        parse_info_flags(&[OsString::from(word.clone())])
+            .unwrap_or_else(|e| panic!("help word `{word}` must parse via the live path: {e}"));
+    }
+}
+
+// Every word the live parsers accept must also be known to the logging
+// appliers (`apply_info_flag`/`apply_debug_flag`), or the parse succeeds but
+// the level silently never reaches a `debug_log!`/`info_log!` callsite.
+#[test]
+fn every_live_word_is_known_to_the_logging_applier() {
+    let mut settings = DebugFlagSettings::default();
+    settings.apply("all1").unwrap();
+    let mut config = logging::VerbosityConfig::default();
+    for (name, _) in settings.iter_enabled_flags() {
+        config
+            .apply_debug_flag(name)
+            .unwrap_or_else(|e| panic!("debug word `{name}` unknown to logging: {e}"));
+    }
+
+    for spec in INFO_FLAG_SPECS {
+        config
+            .apply_info_flag(spec.name)
+            .unwrap_or_else(|e| panic!("info word `{}` unknown to logging: {e}", spec.name));
+    }
+}
+
+// The server-side --debug decoder is the same live parser in `am_server` mode:
+// unknown words are tolerated (upstream's `!am_server` guard, options.c:484)
+// while known words still resolve, including through `all`/`none` fan-out.
+#[test]
+fn the_server_side_debug_decoder_still_ignores_an_unknown_item() {
+    let settings = parse_debug_flags_server(&[OsString::from("flist2,bogus,proto")])
+        .expect("the server side ignores an unknown item");
+    assert_eq!(settings.flist, Some(2));
+    assert_eq!(settings.proto, Some(1));
+
+    let settings = parse_debug_flags_server(&[OsString::from("all3")])
+        .expect("composite tokens resolve server-side");
+    assert_eq!(settings.deltasum, Some(3));
+}
