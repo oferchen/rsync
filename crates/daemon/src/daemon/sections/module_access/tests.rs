@@ -2877,26 +2877,37 @@ mod module_access_tests {
         assert_eq!(rule.pattern, "*.bak");
     }
 
+    /// FLIPPED from `parse_daemon_filter_token_exclude_keyword_comma_sep`,
+    /// which pinned `exclude,*.bak` as an exclude of `*.bak` on the claim
+    /// "RULE_STRCMP accepts comma as separator". The premise is upstream's;
+    /// the conclusion is not. `rule_strcmp` returns the COMMA's OWN address
+    /// for that terminator (`exclude.c:1224-1225`), one byte further along
+    /// than the `- 1` it returns for a space, so the scan at
+    /// `exclude.c:1365-1443` reads what follows as MODIFIER characters.
+    ///
+    /// MEASURED against a real rsync 3.5.0 daemon (module `foo`+`bar`+`keep`
+    /// +`ctl`, 3.5.0 client, loopback TCP, list and push): `filter =
+    /// exclude,*.bak` and `filter = exclude,foo` are BOTH rc 5, serving
+    /// nothing, in both directions.
+    ///
+    /// ⚠ This refusal is a by-product: separating the modifier run from the
+    /// pattern is what task 1178 needed, and an invalid modifier character
+    /// cannot then be anything but a refusal. The same cell is the subject of
+    /// PR #7750, which reaches it deliberately.
     #[test]
     fn a_comma_joined_word_after_a_keyword_is_refused() {
-        // FLIPPED from `parse_daemon_filter_token_exclude_keyword_comma_sep`,
-        // which pinned `exclude,*.bak` as an exclude of `*.bak` on the claim
-        // "RULE_STRCMP accepts comma as separator". The premise is upstream's;
-        // the conclusion is not: `rule_strcmp` returns the COMMA's own address
-        // for that terminator (exclude.c:1224-1225), so what follows it is
-        // read as MODIFIER characters, not a pattern.
-        //
-        // MEASURED against rsync 3.5.0 (module foo+keep+bar, 3.5.0 client):
-        //   filter = exclude,*.bak     -> rc 5, serves nothing
-        //   filter = - foo hide,keep   -> rc 5, serves nothing
-        //   filter = protect,keep      -> rc 5, serves nothing
-        // oc served all three modules (rc 0) - including, for the hide cell,
-        // the file `foo` the operator's own rule names. The messages below are
-        // the daemon-log lines the real binary produced, byte for byte.
+        // The messages below are the daemon-log lines the real 3.5.0 binary
+        // produced, byte for byte. oc served every one of these modules (rc 0)
+        // - including, for the `hide` cell, the file the operator's own rule
+        // names.
         for (token, msg) in [
             (
                 "exclude,*.bak",
                 "invalid modifier '*' at position 8 in filter rule: exclude,*.bak",
+            ),
+            (
+                "exclude,foo",
+                "invalid modifier 'f' at position 8 in filter rule: exclude,foo",
             ),
             (
                 "hide,keep",
@@ -2927,8 +2938,8 @@ mod module_access_tests {
     #[test]
     fn a_side_modifier_on_a_side_keyword_is_refused() {
         // upstream: the `r`/`s` modifier arms refuse when the keyword already
-        // names a side (`prefix_specifies_side`, exclude.c:1423-1430); `C`
-        // refuses likewise (exclude.c:1403-1404). MEASURED:
+        // names a side (`prefix_specifies_side`, exclude.c:1424-1425,
+        // :1429-1430); `C` refuses likewise (exclude.c:1403-1404). MEASURED:
         //   filter = hide,r keep  -> rc 5 "invalid modifier 'r' at position 5..."
         //   filter = hide,C keep  -> rc 5 "invalid modifier 'C' at position 5..."
         let err = parse_daemon_filter_token("hide,r keep").expect_err("must refuse");
@@ -2952,21 +2963,273 @@ mod module_access_tests {
         //   filter = hide,x keep   (xattr)
         //   filter = hide,/ keep   (abs-path)
         // upstream drops the hide at add time and serves everything; oc's
-        // `Ok(None)` drop is the same observable. The modifier SEMANTICS stay
-        // unimplemented on this path - these cells pin acceptance, nothing
-        // more.
+        // `Ok(None)` drop is the same observable.
         for token in ["hide, keep", "hide,p keep", "hide,x keep", "hide,/ keep"] {
             assert!(is_skipped(token), "{token}");
         }
         // `r`/`s`/`C` stay legal where no side is pre-named. MEASURED:
         // `filter = exclude,r keep` is accepted (rc 0) and upstream keeps the
-        // rule side-blind. oc's pattern still glues the modifier run into the
-        // pattern text (`r keep` matches nothing) - a pre-existing divergence
-        // on an accepted config, pinned as-is because changing what a valid
-        // modifier MEANS is a different change from refusing invalid ones.
+        // rule side-blind, excluding `keep`.
+        //
+        // ⚠ This assertion previously read `"r keep"` - the modifier run glued
+        // into the pattern text, which matches no file at all - and was pinned
+        // as a known divergence pending the run/pattern split. That split is
+        // this change; the pattern is now what follows the ONE separator
+        // upstream consumes (`if (*s) s++`, exclude.c:1444-1445).
         let rule = accepted_rule("exclude,r keep");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
-        assert_eq!(rule.pattern, "r keep");
+        assert_eq!(rule.pattern, "keep");
+    }
+
+    /// ARM 1: a one-character side prefix is the keyword it abbreviates.
+    ///
+    /// upstream: `parse_rule_tok`'s `default:` arm (`exclude.c:1325-1329`)
+    /// takes ANY single character as `ch`, and the second switch
+    /// (`exclude.c:1345-1358`) gives `H`/`S` FILTRULE_SENDER_SIDE and
+    /// `P`/`R` FILTRULE_RECEIVER_SIDE - exactly what `hide`/`show` and
+    /// `protect`/`risk` set. oc recognised NEITHER character, so all four fell
+    /// through to the bare-pattern arm and became a literal exclude of e.g.
+    /// `P bar`, a pattern no file can match.
+    ///
+    /// ⚠ NON-VACUITY: `P` is the discriminating one, because the daemon list
+    /// keeps receiver-side rules and matches them SIDE-BLIND (see
+    /// `build_prefixed_rule`). MEASURED against rsync 3.5.0, module holding
+    /// BAIT `bar` and CONTROL `ctl`:
+    ///   filter = P bar  -> list rc 0 serving foo,keep,ctl (bar HIDDEN);
+    ///                      push rc 23, `bar` refused, ctl written
+    /// oc served `bar` in both directions. `H`/`S` are the opposite arm - they
+    /// are DROPPED at add time - so their own served set cannot discriminate;
+    /// the `R bar - b*` and `S bar - b*` cells below do it instead.
+    #[test]
+    fn a_short_side_prefix_is_the_keyword_it_abbreviates() {
+        let rule = accepted_rule("P bar");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "bar");
+        assert_eq!(accepted_rule("protect bar").pattern, rule.pattern);
+
+        let rule = accepted_rule("R keep");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rule.pattern, "keep");
+
+        // `H`/`S` name the SENDER side, which the daemon parse drops at add
+        // time because `am_sender` is still 0 (exclude.c:279-285). MEASURED:
+        // `filter = H bar` and `filter = S bar` serve every file, and
+        // `filter = H bar - b*` hides `bar` through the `- b*` rule alone.
+        assert!(is_skipped("H bar"), "H");
+        assert!(is_skipped("S bar"), "S");
+        assert!(is_skipped("hide bar"), "hide control");
+
+        // The `_` terminator reaches the same arm.
+        assert_eq!(accepted_rule("P_bar").pattern, "bar");
+    }
+
+    /// The bare-word fall-through survives arm 1.
+    ///
+    /// Refusing an uppercase-initial bare word would be upstream-correct
+    /// (`filter = Pictures` is rc 5 upstream, MEASURED) but it is the
+    /// bare-word change, not this one, and the same arm carries `merge FILE`,
+    /// a config upstream SERVES. A one-character prefix is therefore only
+    /// taken when its modifier run validates.
+    #[test]
+    fn an_uppercase_bare_word_is_still_a_literal_pattern() {
+        for token in ["Pictures", "README", "Series7", "Home"] {
+            let rule = accepted_rule(token);
+            assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+            assert_eq!(rule.pattern, token, "{token}");
+        }
+    }
+
+    /// ARM 2: a modifier run after a SHORT prefix is accepted, with or
+    /// without the comma.
+    ///
+    /// upstream: `default:` leaves `s` ON the rule character (or on the `,`
+    /// after it), so the scan's first `*++s` (`exclude.c:1365`) reads the very
+    /// next byte as a modifier. oc refused every such spelling.
+    ///
+    /// ⚠ NON-VACUITY: these are cells upstream ACCEPTS, so the pin is that the
+    /// BAIT is hidden and the CONTROL is served - not merely that nothing
+    /// errors. MEASURED against rsync 3.5.0:
+    ///   filter = -p foo   -> list rc 0 serving bar,keep,ctl (BAIT `foo` hidden)
+    ///   filter = -,p foo  -> identical
+    ///   filter = +p foo   -> list rc 0 serving all four (an include alone
+    ///                        hides nothing; the pin here is rc 0, not a set)
+    ///   filter = -/ keep  -> list rc 0 serving foo,bar,ctl (BAIT `keep` hidden)
+    /// oc answered rc 5 - a module REFUSAL - on all four.
+    #[test]
+    fn a_modifier_run_after_a_short_prefix_is_accepted() {
+        let rule = accepted_rule("-p foo");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "foo");
+
+        let rule = accepted_rule("-,p foo");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, "foo");
+
+        let rule = accepted_rule("+p foo");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rule.pattern, "foo");
+
+        // `/` presets FILTRULE_ABS_PATH (exclude.c:1392-1394), anchoring the
+        // pattern at the module root.
+        let rule = accepted_rule("-/ keep");
+        assert_eq!(rule.pattern, "keep");
+        assert!(rule.anchored, "-/ keep must anchor");
+
+        // A side-naming short prefix takes a modifier run too.
+        assert_eq!(accepted_rule("P,p bar").pattern, "bar");
+        assert_eq!(accepted_rule("P/ bar").pattern, "bar");
+    }
+
+    /// The refusals arm 2 must NOT swallow.
+    ///
+    /// `-foo` and `-,foo` stay refusals, at upstream's own byte offsets:
+    /// `s - *rulestr_ptr` is 1 without the comma and 2 with it, because
+    /// `if (s[1] == ',') s++` consumed the comma as part of the prefix.
+    /// MEASURED: both are rc 5 upstream. A bare `-`/`+`/`P` and a modifier run
+    /// that never reaches a pattern (`-p`, `P,`) are the empty-pattern refusal
+    /// instead (`exclude.c:1474-1476`), also rc 5 upstream.
+    #[test]
+    fn a_short_prefix_with_an_invalid_modifier_is_still_refused() {
+        for (token, msg) in [
+            (
+                "-foo",
+                "invalid modifier 'f' at position 1 in filter rule: -foo",
+            ),
+            (
+                "-,foo",
+                "invalid modifier 'f' at position 2 in filter rule: -,foo",
+            ),
+            (
+                "-p!e foo",
+                "invalid modifier 'e' at position 3 in filter rule: -p!e foo",
+            ),
+        ] {
+            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            assert_eq!(err.to_string(), msg, "{token}");
+        }
+        for token in ["-", "+", "P", "-p", "P,"] {
+            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            assert_eq!(
+                err.to_string(),
+                format!("unexpected end of filter rule: {token}"),
+                "{token}"
+            );
+        }
+    }
+
+    /// A side modifier on a prefix that ALREADY names a side is refused.
+    ///
+    /// upstream: `prefix_specifies_side` gates `r`, `s` (`exclude.c:1424-1425`, `:1429-1430`)
+    /// and `C` (`exclude.c:1403-1404`). MEASURED: `filter = P,r bar` and
+    /// `filter = hide,r keep` are both rc 5 upstream.
+    ///
+    /// ⚠ The `P,r bar` cell is why the failed-scan fall-through checks for a
+    /// leading `,`: a comma TERMINATES the prefix, so there is no bare word to
+    /// fall back to, and taking the fall-through served a module upstream
+    /// refuses.
+    #[test]
+    fn a_side_modifier_on_a_side_naming_prefix_is_refused() {
+        for (token, msg) in [
+            (
+                "P,r bar",
+                "invalid modifier 'r' at position 2 in filter rule: P,r bar",
+            ),
+            (
+                "hide,r keep",
+                "invalid modifier 'r' at position 5 in filter rule: hide,r keep",
+            ),
+            (
+                "S,s bar",
+                "invalid modifier 's' at position 2 in filter rule: S,s bar",
+            ),
+        ] {
+            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            assert_eq!(err.to_string(), msg, "{token}");
+        }
+    }
+
+    /// ARM 3: the modifier run is not part of the pattern.
+    ///
+    /// upstream consumes the run, then ONE separator (`if (*s) s++`,
+    /// `exclude.c:1444-1445`), and the PATTERN is what is left. oc glued the
+    /// whole remainder in, so `exclude,r keep` became an exclude of the literal
+    /// text `r keep` - a pattern no file matches.
+    ///
+    /// ⚠ NON-VACUITY: `keep` is the BAIT and `foo`/`bar`/`ctl` the controls.
+    /// MEASURED against rsync 3.5.0:
+    ///   filter = exclude,r keep  -> list rc 0 serving foo,bar,ctl; push rc 23
+    ///                               with `keep` refused    (BAIT hidden)
+    ///   filter = exclude,p keep  -> same
+    ///   filter = exclude,/ keep  -> same
+    ///   filter = exclude,rp keep -> same
+    /// oc served `keep` on every one of them.
+    #[test]
+    fn a_comma_modifier_run_is_not_part_of_the_pattern() {
+        for token in [
+            "exclude,r keep",
+            "exclude,p keep",
+            "exclude,rp keep",
+            "exclude, keep",
+        ] {
+            let rule = accepted_rule(token);
+            assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+            assert_eq!(rule.pattern, "keep", "{token}");
+        }
+        let rule = accepted_rule("exclude,/ keep");
+        assert_eq!(rule.pattern, "keep");
+        assert!(rule.anchored, "exclude,/ keep must anchor");
+    }
+
+    /// The `s` modifier is the add-time DROP, and `r` is not.
+    ///
+    /// upstream: `add_rule` drops a rule whose sides equal
+    /// `am_sender ? RECEIVER : SENDER` (`exclude.c:279-285`), and the daemon
+    /// parse runs with `am_sender == 0` whatever the transfer later does.
+    ///
+    /// ⚠ This is the CONTROL for the row above, and it is the pair that makes
+    /// the split observable rather than cosmetic: with the modifier glued into
+    /// the pattern BOTH tokens served `keep`. MEASURED:
+    ///   filter = exclude,s keep -> serves all four, BOTH directions
+    ///   filter = exclude,r keep -> hides `keep`, BOTH directions
+    #[test]
+    fn the_sender_side_modifier_drops_the_rule_and_the_receiver_one_keeps_it() {
+        assert!(is_skipped("exclude,s keep"), "s drops");
+        assert!(is_skipped("-,s keep"), "s drops on a short prefix too");
+        assert_eq!(accepted_rule("exclude,r keep").pattern, "keep");
+    }
+
+    /// `!`, `x` and `C` are ACCEPTED by upstream and dropped here.
+    ///
+    /// Splitting the run off the pattern makes each modifier's meaning
+    /// observable for the first time, and these three have meanings the daemon
+    /// rule cannot carry: `xattr_only` and `negate` are read on oc's SENDER
+    /// path and dropped on its RECEIVER path, so setting either would give the
+    /// two directions different answers.
+    ///
+    /// MEASURED against rsync 3.5.0, both directions:
+    ///   filter = exclude,x keep -> rc 0, ALL FOUR served (an xattr rule never
+    ///                              matches the file name)
+    ///   filter = exclude,C keep -> rc 0, ALL FOUR served (`check_filter`
+    ///                              short-circuits FILTRULE_CVS_IGNORE and
+    ///                              never matches the rule's own pattern)
+    ///   filter = -x keep        -> rc 0, ALL FOUR served
+    /// Dropping the rule reproduces all three EXACTLY.
+    ///
+    /// ⚠ `!` is the one it does NOT reproduce: `filter = exclude,! keep` serves
+    /// ONLY `keep` upstream, where dropping serves everything. Left open rather
+    /// than half-closed - a `negate` bit honoured on the sender path alone
+    /// would INVERT the served set on a push. RESIDUAL.
+    #[test]
+    fn an_inexpressible_modifier_drops_the_rule_rather_than_refusing_it() {
+        for token in [
+            "exclude,x keep",
+            "exclude,C keep",
+            "-x keep",
+            "exclude,! keep",
+            "-,! keep",
+        ] {
+            assert!(is_skipped(token), "{token}");
+        }
     }
 
     #[test]
@@ -3223,10 +3486,13 @@ mod module_access_tests {
         assert_eq!(rules[0].pattern, "*.tmp");
     }
 
+    /// The remainder now keeps its TERMINATOR, because `rule_strcmp` returns
+    /// two different addresses for the two terminator classes
+    /// (`exclude.c:1222-1226`) and the callers act on the difference: a `,`
+    /// opens upstream's modifier scan, a space or `_` leads straight to the
+    /// pattern.
     #[test]
     fn strip_matched_keyword_space_separator() {
-        // The terminator STAYS in the remainder: the caller's arms diverge on
-        // whether it is a `,` (modifier scan) or whitespace/`_` (pattern).
         assert_eq!(
             strip_matched_keyword("exclude *.tmp", "exclude"),
             Some(" *.tmp")
@@ -3672,6 +3938,63 @@ mod module_access_tests {
     fn split_filter_tokens_bare_pattern() {
         let tokens = split_filter_tokens("*.bak");
         assert_eq!(tokens, vec!["*.bak"]);
+    }
+
+    /// A one-character side prefix opens its own token.
+    ///
+    /// upstream: the `default:` arm of `parse_rule_tok` (`exclude.c:1325-1329`)
+    /// makes `P` a rule character, and `parse_filter_str`'s word-split loop
+    /// hands it to that arm as its own token.
+    ///
+    /// ⚠ NON-VACUITY: `- foo P bar` is the shape where the boundary is
+    /// OBSERVABLE. MEASURED against rsync 3.5.0 (module `foo`+`bar`+`keep`
+    /// +`ctl`): upstream serves `keep` and `ctl` only, hiding BOTH named files.
+    /// With the old `["+ ", "- ", "+/", "-/"]` table this line collapsed into
+    /// one rule whose pattern was the literal `foo P bar`, and oc served all
+    /// four - including `foo`, which even the `- foo` half names.
+    #[test]
+    fn split_filter_tokens_short_side_prefix_opens_its_own_token() {
+        assert_eq!(
+            split_filter_tokens("- foo P bar"),
+            vec!["- foo", "P bar"],
+            "P"
+        );
+        assert_eq!(
+            split_filter_tokens("P bar H foo"),
+            vec!["P bar", "H foo"],
+            "H"
+        );
+        assert_eq!(
+            split_filter_tokens("- foo R keep - k*"),
+            vec!["- foo", "R keep", "- k*"],
+            "R"
+        );
+        assert_eq!(
+            split_filter_tokens("S bar - b*"),
+            vec!["S bar", "- b*"],
+            "S"
+        );
+    }
+
+    /// The splitter must NOT take an uppercase-initial bare word for a rule.
+    ///
+    /// This is the control for the cell above: the same character opens a rule
+    /// token only when what follows it is a valid modifier run. `Pictures` is
+    /// `P` plus the invalid modifier `i`, which upstream refuses outright
+    /// (rc 5, MEASURED) and oc still serves as a literal bare pattern - the
+    /// deliberately preserved fall-through.
+    #[test]
+    fn split_filter_tokens_bare_word_after_a_rule_is_not_a_short_prefix() {
+        assert_eq!(
+            split_filter_tokens("- foo Pictures"),
+            vec!["- foo Pictures"],
+            "Pictures"
+        );
+        assert_eq!(
+            split_filter_tokens("- foo README"),
+            vec!["- foo README"],
+            "README"
+        );
     }
 
     /// A keyword at END OF STRING terminates and opens its own token.
