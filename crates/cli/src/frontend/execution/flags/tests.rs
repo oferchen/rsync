@@ -537,6 +537,70 @@ fn info_flag_all_keywords_accepted() {
     }
 }
 
+/// The `--debug` table is upstream's 24 words plus exactly four oc-only
+/// extensions, and that over-accept is a DELIBERATE, recorded decision.
+///
+/// upstream: `debug_words[]` (options.c:305-331) holds exactly 24 entries,
+/// `ACL` through `TIME`, terminated by the NULL sentinel at options.c:331.
+/// Anything the table does not name exits `RERR_SYNTAX` at options.c:483-487,
+/// and oc mirrors that refusal exactly (`debug_flag_apply_invalid`). So every
+/// word oc accepts that upstream does not is a measured divergence:
+/// `--debug=IOURING` is rc 0 here and rc 1 `Unknown --debug item: "IOURING"`
+/// on the real 3.5.0 binary.
+///
+/// The four extras are accepted on purpose. They name accelerated-I/O
+/// dispatch-vs-fallback categories upstream has no equivalent of, each has a
+/// wired consumer, and `DEBUG_HELP_TEXT` advertises them under their own
+/// `oc-rsync extensions` heading. This test exists so the divergence stays a
+/// decision rather than reading as drift: a 25th upstream word, a dropped
+/// upstream word, or a fifth oc extension each fail here and force the
+/// question to be answered again rather than absorbed silently.
+///
+/// `--info` deliberately has no counterpart to this: its table matches
+/// upstream's `info_words[]` exactly.
+#[test]
+fn the_debug_table_is_upstream_plus_exactly_four_named_oc_extensions() {
+    // Upstream's debug_words[] in table order (options.c:306-330).
+    const UPSTREAM: [&str; 24] = [
+        "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
+        "filter", "flist", "fuzzy", "genr", "hash", "hlink", "iconv", "io", "nstr", "own", "proto",
+        "recv", "send", "time",
+    ];
+    // Accepted by oc, refused by upstream. See DEBUG_HELP_TEXT's extensions block.
+    const OC_EXTENSIONS: [&str; 4] = ["iouring", "clone", "sockopt", "iocp"];
+
+    // `all1` routes through the live parse path to set every word the applying
+    // table knows, so this enumerates the real accepted set rather than a copy.
+    let mut settings = DebugFlagSettings::default();
+    settings.apply("all1").unwrap();
+    let accepted: Vec<&str> = settings
+        .iter_enabled_flags()
+        .map(|(name, _)| name)
+        .collect();
+
+    let expected: Vec<&str> = UPSTREAM
+        .iter()
+        .chain(OC_EXTENSIONS.iter())
+        .copied()
+        .collect();
+    assert_eq!(
+        accepted, expected,
+        "the --debug word set changed; if a word was added, decide whether it is an \
+         upstream word (mirror options.c:306-330) or a fifth oc extension (document it \
+         in DEBUG_HELP_TEXT's extensions block) before updating this test"
+    );
+
+    // Non-vacuity: the four really are accepted, so this pins the over-accept
+    // itself and not merely the table's contents.
+    for extension in &OC_EXTENSIONS {
+        let mut settings = DebugFlagSettings::default();
+        assert!(
+            settings.apply(extension).is_ok(),
+            "oc extension '{extension}' must stay accepted"
+        );
+    }
+}
+
 #[test]
 fn debug_flag_all_keywords_accepted() {
     let keywords = [
