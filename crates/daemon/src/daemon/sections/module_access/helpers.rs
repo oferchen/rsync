@@ -738,24 +738,63 @@ fn parse_daemon_filter_token(token: &str) -> Result<Option<FilterRuleWireFormat>
         });
     }
 
-    // upstream: exclude.c:1134-1178 - keyword-to-short-form mapping;
+    // upstream: exclude.c:1289-1327 - keyword-to-short-form mapping;
     // `hide`/`show` set FILTRULE_SENDER_SIDE (exclude.c:1345-1350),
-    // `protect`/`risk` FILTRULE_RECEIVER_SIDE (exclude.c:1351-1357).
-    // (keyword, is_include, sender_side)
-    const KEYWORDS: &[(&str, bool, bool)] = &[
-        ("exclude", false, false),
-        ("include", true, false),
-        ("hide", false, true),
-        ("show", true, true),
-        ("protect", false, false), // receiver-side upstream; see the drop below
-        ("risk", true, false),     // receiver-side upstream; see the drop below
+    // `protect`/`risk` FILTRULE_RECEIVER_SIDE (exclude.c:1351-1357). All four
+    // side keywords set `prefix_specifies_side` (exclude.c:1350, :1357), which
+    // narrows the modifier alphabet their `,` form accepts.
+    // (keyword, is_include, sender_side, specifies_side)
+    const KEYWORDS: &[(&str, bool, bool, bool)] = &[
+        ("exclude", false, false, false),
+        ("include", true, false, false),
+        ("hide", false, true, true),
+        ("show", true, true, true),
+        ("protect", false, false, true), // receiver-side upstream; see the drop below
+        ("risk", true, false, true),     // receiver-side upstream; see the drop below
     ];
 
-    for &(keyword, is_include, sender_side) in KEYWORDS {
-        if let Some(pattern) = strip_keyword_prefix(token, keyword) {
-            let pattern = pattern.trim();
+    for &(keyword, is_include, sender_side, specifies_side) in KEYWORDS {
+        if let Some(rest) = strip_matched_keyword(token, keyword) {
+            // upstream refuses a keyword that never reaches a pattern:
+            // `rule_strcmp` returns the comma's own address for a `,`
+            // terminator (exclude.c:1224-1225), so the scan loop reads every
+            // byte after it - up to the first space, `_`, or end of token
+            // (exclude.c:1364) - as a MODIFIER character, and any byte outside
+            // the alphabet exits RERR_SYNTAX (exclude.c:1369-1380).
+            //
+            // MEASURED against a real rsync 3.5.0 daemon (module holding
+            // `foo` + `keep` + `bar`, pinned 3.5.0 client, loopback TCP):
+            //   filter = - foo hide       -> rc 5 "unexpected end of filter rule: hide"
+            //   filter = - foo hide,keep  -> rc 5 "invalid modifier 'k' at position 5 in filter rule: hide,keep"
+            //   filter = protect,keep     -> rc 5 "invalid modifier 'k' at position 8 in filter rule: protect,keep"
+            //   filter = hide,r keep      -> rc 5 "invalid modifier 'r' at position 5 in filter rule: hide,r keep"
+            //   filter = hide,p keep      -> rc 0 (valid modifier; rule then dropped at add time)
+            //   filter = hide, keep       -> rc 0 (empty modifier run is valid)
+            //   filter = exclude          -> rc 5 "unexpected end of filter rule: exclude"
+            // oc served every refused config above (rc 0), handing out the
+            // very files the operator's filter names - the fail-open this arm
+            // closes. A token that PASSES the modifier scan keeps its previous
+            // handling here: the modifier semantics themselves (`p`, `x`, ...)
+            // are not implemented on this path, and growing them is a separate
+            // change from refusing what upstream refuses.
+            let pattern = if let Some(modifier_run) = rest.strip_prefix(',') {
+                validate_comma_modifiers(modifier_run, keyword.len(), specifies_side, token)?;
+                modifier_run
+            } else {
+                // Whitespace or `_` terminator: one separator consumed, the
+                // remainder is the pattern (see `strip_matched_keyword` on the
+                // run-vs-one question).
+                rest.strip_prefix('_').unwrap_or(rest)
+            }
+            .trim();
             if pattern.is_empty() {
-                return Ok(None);
+                // upstream: exclude.c:1474-1476 - `else if (!len && !CVS_IGNORE)`
+                // refuses a rule whose pattern token is empty. This covers the
+                // line-final keyword (`- foo hide`), the bare keyword
+                // (`filter = exclude`), and the patternless `,` form (`hide,`).
+                return Err(MalformedRule::UnexpectedEnd {
+                    token: token.to_owned(),
+                });
             }
             // The side test happens HERE, at add time, never at match time.
             // upstream: `add_rule` drops a rule whose side flags equal
@@ -785,15 +824,86 @@ fn parse_daemon_filter_token(token: &str) -> Result<Option<FilterRuleWireFormat>
         }
     }
 
-    if strip_keyword_prefix(token, "clear").is_some() {
-        return Ok(Some(clear_list_rule()));
+    if let Some(rest) = strip_matched_keyword(token, "clear") {
+        // `clear` maps to `!` (exclude.c:1290-1291), and `!` SKIPS the
+        // modifier scan (`while (ch != '!' && ...)`, exclude.c:1364). The
+        // refusal comes from the check AFTER it: with neither
+        // FILTRULE_NO_PREFIXES nor XFLG_OLD_PREFIXES in play here, any
+        // non-empty trailing text refuses (exclude.c:1467-1470).
+        //
+        // The accepted spellings are exactly `clear` and `clear,`: a `,`
+        // terminator leaves `s` on the comma and the `if (*s) s++` step
+        // (exclude.c:1444-1445) consumes it, so the token ends with `len == 0`.
+        // MEASURED against rsync 3.5.0:
+        //   filter = - foo clear,      -> rc 0, list cleared, all files served
+        //   filter = - foo clear,- keep -> rc 5 "'!' rule has trailing characters: clear,- keep"
+        //   filter = clear,x           -> rc 5 "'!' rule has trailing characters: clear,x"
+        //   filter = clear_            -> rc 5 "'!' rule has trailing characters: clear_"
+        // oc built the clear rule and IGNORED the trailer, so `- foo clear,- keep`
+        // wiped the exclude and served every file of a module upstream refuses.
+        //
+        // Only the token's FIRST whitespace-delimited word decides: upstream's
+        // word-split loop hands later words to parse_rule_tok as fresh tokens
+        // (`clear P keep` is a clear plus a valid `P keep` rule, measured
+        // rc 0), and oc's splitter glues such words onto this token - that
+        // gluing is the tracked bare-word/merge gap, not this refusal's.
+        let trailer = rest
+            .split(|c: char| c.is_ascii_whitespace())
+            .next()
+            .unwrap_or("");
+        if trailer.is_empty() || trailer == "," {
+            return Ok(Some(clear_list_rule()));
+        }
+        return Err(MalformedRule::ClearWithTrailingCharacters {
+            token: token.to_owned(),
+        });
     }
 
-    // Bare pattern defaults to exclude (upstream behaviour)
+    // A bare token falls through to a literal exclude. ⚠ NOT upstream
+    // behaviour: upstream refuses an unrecognised word ("Unknown filter rule",
+    // exclude.c:1363) and honours `merge`/`dir-merge`, both of which land here
+    // today. That gap is tracked on its own; refusing bare words before the
+    // merge keywords grow an arm would turn `filter = merge FILE` - a config
+    // upstream serves - into a refusal, which is why this arm must outlive
+    // this commit unchanged.
     if token.is_empty() {
         return Ok(None);
     }
     Ok(Some(build_pattern_rule(token, false)))
+}
+
+/// Validates the modifier run a `,`-terminated keyword carries.
+///
+/// upstream: `rule_strcmp` returns the comma's own address (exclude.c:1224-1225),
+/// so the scan loop at exclude.c:1364-1443 reads every byte after the comma -
+/// up to the first space, `_`, or end of token - as a modifier character. The
+/// daemon `filter` directive never reaches this scan with FILTRULE_MERGE_FILE,
+/// so the merge-only modifiers (`-`, `+`, `e`, `n`, `w`, exclude.c:1381-1417)
+/// refuse, `C`/`r`/`s` refuse when the keyword already names a side
+/// (`prefix_specifies_side`, exclude.c:1403-1404, :1423-1430), and any other
+/// byte hits `default: invalid` (exclude.c:1369-1380). All exits are
+/// RERR_SYNTAX with the byte and its offset from the token start named.
+fn validate_comma_modifiers(
+    modifier_run: &str,
+    keyword_len: usize,
+    specifies_side: bool,
+    token: &str,
+) -> Result<(), MalformedRule> {
+    for (offset, ch) in modifier_run.char_indices() {
+        if ch == '_' || ch.is_ascii_whitespace() {
+            break;
+        }
+        let valid = matches!(ch, '/' | '!' | 'p' | 'x')
+            || (!specifies_side && matches!(ch, 'C' | 'r' | 's'));
+        if !valid {
+            return Err(MalformedRule::InvalidModifier {
+                modifier: ch,
+                position: keyword_len + 1 + offset,
+                token: token.to_owned(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// A daemon filter token upstream's parser refuses.
@@ -881,22 +991,22 @@ fn non_empty_pattern_rule(pattern: &str, is_include: bool) -> Option<FilterRuleW
     Some(build_pattern_rule(pattern, is_include))
 }
 
-/// Strips a keyword prefix from a token, returning the remainder.
+/// Strips a keyword from a token, returning the remainder WITH its terminator.
 ///
 /// Returns `None` when the token does not start with the keyword, or starts
 /// with it but is not TERMINATED by it - `hideout` is not a `hide` rule.
+/// The terminator itself stays in the returned remainder because the callers
+/// diverge on it: a `,` opens upstream's modifier scan, while whitespace and
+/// `_` lead straight to the pattern.
 ///
 /// upstream: `exclude.c:1218-1227` `rule_strcmp`, via [`is_keyword_terminator`].
-/// The set this replaced was `' '` or `','` alone, so `_` and tab - both
-/// separators upstream accepts - made the token not-a-keyword and it fell
+/// The set an earlier version used was `' '` or `','` alone, so `_` and tab -
+/// both separators upstream accepts - made the token not-a-keyword and it fell
 /// through to the bare-pattern arm.
 ///
-/// ⚠ The trailing `trim_start` consumes a whole RUN of whitespace, where
-/// upstream consumes exactly ONE separator (`if (*s) s++`,
-/// `exclude.c:1444-1445`) and takes the remainder verbatim - a rule oc's CLI
-/// parser measured against rsync 3.5.0 for the NON-word-split `--filter`.
-///
-/// MEASURED for THIS directive against a real rsync 3.5.0 daemon, and the
+/// ⚠ The callers trim a whole RUN of separators off the pattern, where
+/// upstream consumes exactly ONE (`if (*s) s++`, `exclude.c:1444-1445`).
+/// MEASURED for this directive against a real rsync 3.5.0 daemon, and the
 /// question turns out to be UNASKABLE here rather than answered either way:
 ///
 /// - `filter = exclude bar` (ONE space) builds the pattern `bar`, NOT ` bar`.
@@ -910,17 +1020,14 @@ fn non_empty_pattern_rule(pattern: &str, is_include: bool) -> Option<FilterRuleW
 ///   pattern is ever built.
 ///
 /// So a doubled separator cannot produce a divergent PATTERN in this mode; it
-/// produces a refusal upstream and an accepted rule in oc. That gap belongs to
-/// the daemon's broader accept-where-upstream-refuses class, which is tracked
-/// separately, not to this function's run-vs-one-separator behaviour. The
-/// `trim_start` is therefore left as it is, now on measurement rather than on
-/// the absence of one.
-fn strip_keyword_prefix<'a>(token: &'a str, keyword: &str) -> Option<&'a str> {
+/// produces a refusal upstream and an accepted rule in oc. That residual gap
+/// belongs to the gluing splitter above, which is tracked with the bare-word
+/// class, not to this function's run-vs-one-separator behaviour.
+fn strip_matched_keyword<'a>(token: &'a str, keyword: &str) -> Option<&'a str> {
     let rest = token.strip_prefix(keyword)?;
-    let mut chars = rest.chars();
-    match chars.next() {
+    match rest.chars().next() {
         None => Some(rest),
-        Some(ch) if is_keyword_terminator(ch) => Some(chars.as_str().trim_start()),
+        Some(ch) if is_keyword_terminator(ch) => Some(rest),
         Some(_) => None,
     }
 }
