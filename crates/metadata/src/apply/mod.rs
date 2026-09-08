@@ -531,12 +531,16 @@ pub fn apply_symlink_metadata(
 /// elsewhere the chmod is a no-op, matching upstream where `CAN_CHMOD_SYMLINK`
 /// is undefined and a symlink's `st_mode` is a fixed `0o777`.
 ///
-/// `rsync.c:658-668` calls `do_chmod_at()` for every file type with no
-/// `S_ISLNK` gate (the comment at `rsync.c:667`, "ret == 1 if symlink could
+/// `rsync.c:806-822` calls `do_chmod_at()` for every file type with no
+/// `S_ISLNK` gate (the comment at `rsync.c:819`, "ret == 1 if symlink could
 /// not be set", shows a failed symlink chmod is a soft outcome). All the
-/// portability lives in `syscall.c:761 do_chmod()`, which tries `lchmod()`,
-/// falls through to `setattrlist(FSOPT_NOFOLLOW)` for `S_ISLNK`, and only then
-/// gives up.
+/// portability lives in `syscall.c:1566-1604 do_chmod()`, which tries
+/// `lchmod()`, falls through to `setattrlist(FSOPT_NOFOLLOW)` for `S_ISLNK`,
+/// and only then gives up.
+///
+/// The mode itself never carries a `--chmod` tweak for a link: upstream gates
+/// all three `tweak_mode()` sites on `!S_ISLNK` (flist.c:1741-1742,
+/// flist.c:996-997, rsync.c:647-648).
 pub fn apply_symlink_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -566,10 +570,12 @@ pub fn apply_symlink_metadata_with_options(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync.c:658-668` - upstream chmods every file type with no `S_ISLNK`
+/// - `rsync.c:806-822` - upstream chmods every file type with no `S_ISLNK`
 ///   gate; oc mirrors this on platforms where [`crate::CAN_CHMOD_SYMLINK`]
-///   holds. Symlink portability lives in `syscall.c:761 do_chmod()`
-///   (`lchmod()`, then `setattrlist(FSOPT_NOFOLLOW)`).
+///   holds. Symlink portability lives in `syscall.c:1566-1604 do_chmod()`
+///   (`lchmod()`, then `setattrlist(FSOPT_NOFOLLOW)`). The mode reaching that
+///   chmod is never `--chmod`-tweaked for a link (flist.c:1741-1742,
+///   flist.c:996-997 and rsync.c:647-648 all gate on `!S_ISLNK`).
 /// - `rsync.c:set_times()` - uses `lutimes` when the target is a symlink
 /// - `generator.c:1604` - `set_file_attrs(fname, file, NULL, NULL, 0)` runs
 ///   after `atomic_create` -> `do_symlink` so the new symlink's mtime matches

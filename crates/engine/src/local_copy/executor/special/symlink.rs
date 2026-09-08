@@ -742,6 +742,15 @@ pub(crate) fn copy_symlink(
     } else {
         metadata_options.clone()
     };
+    // upstream: generator.c:1937-1940 - with `-p` off the generator rewrites
+    // `file->mode = dest_mode(file->mode, sx.st.st_mode, dflt_perms, exists)`
+    // for every type, symlinks included (the rewrite sits above the
+    // `preserve_links && ftype == FT_SYMLINK` branch at generator.c:1948).
+    // `exists` is `statret == 0 && stype != FT_DIR`, i.e. whether the
+    // destination was there BEFORE this transfer - so the freshly created link
+    // must take the new-file arm and be chmod'd to `source & dflt_perms`
+    // instead of keeping the umask default `symlink(2)` gave it.
+    let symlink_options = symlink_options.with_destination_is_new(!destination_previously_existed);
     apply_symlink_metadata_with_options(destination, metadata, &symlink_options)
         .map_err(map_metadata_error)?;
 

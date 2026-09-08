@@ -720,22 +720,103 @@ fn chmod_path_honoring_keep_dirlinks(
     Ok(())
 }
 
+/// Maps a symlink apply into [`chmod_tweaked_dest_mode`]'s `pre_transfer`
+/// argument, i.e. `dest_mode()`'s `exists` input.
+///
+/// Both symlink apply paths run AFTER the link is on disk, so their own lstat
+/// cannot tell "was here before" from "we just made it". `destination_is_new`
+/// carries that answer down from the executor, which knows it: upstream's
+/// `exists` is `statret == 0 && stype != FT_DIR` (generator.c:1938), the
+/// generator's lstat from BEFORE `do_symlink` ran.
+///
+/// When the link is not new, its current stat IS the pre-transfer stat - except
+/// for a destination that existed as a NON-symlink and was replaced, where
+/// upstream still holds the obstacle's old `st_mode` and this hands back the
+/// fresh link's instead. That single cell is a known gap, tracked with the rest
+/// of the symlink-obstacle mode work rather than papered over here.
+#[cfg(unix)]
+fn symlink_pre_transfer_stat<'a>(
+    options: &MetadataOptions,
+    current: &'a fs::Metadata,
+) -> Option<&'a fs::Metadata> {
+    if options.destination_is_new() {
+        None
+    } else {
+        Some(current)
+    }
+}
+
+/// The single owner of "which permission bits does a symlink end up with".
+///
+/// A link is not a special case in upstream: it walks the SAME
+/// `tweak_mode()`-then-`dest_mode()` pipeline every other type walks, and the
+/// only two symlink-specific facts are which gates it fails. So this is a thin
+/// adapter over [`chmod_tweaked_dest_mode`] that supplies those two facts as
+/// arguments rather than restating the pipeline:
+///
+/// * **`modifiers = None` - the `!S_ISLNK` gate.** `--chmod` reaches
+///   `tweak_mode()` at exactly three places and every one of them excludes a
+///   link, so a link's mode is never tweaked:
+///   - `flist.c:1741-1742` `send_file_name()` -
+///     `if (chmod_modes && !S_ISLNK(file->mode) && file->mode)`
+///   - `flist.c:996-997` `recv_file_entry()` -
+///     `if (chmod_modes && !S_ISLNK(mode) && mode)`
+///   - `rsync.c:647-648` `set_file_attrs()` (daemon `outgoing chmod`) -
+///     `if (daemon_chmod_modes && !S_ISLNK(new_mode))`
+/// * **`source_is_regular = false` - the `S_ISREG` gate.** `dest_mode()`'s
+///   `-E` tweak is `if (preserve_executability && S_ISREG(flist_mode))`
+///   (rsync.c:472), so `-E` contributes NOTHING to a link's mode. (`-E` still
+///   drives the `p` COLUMN through `perms_differ()`; that is the caller's
+///   business, not this one's.)
+///
+/// The `dest_mode()` collapse itself is not symlink-specific either:
+/// `generator.c:1937-1940` runs
+/// `file->mode = dest_mode(file->mode, sx.st.st_mode, dflt_perms, exists)` for
+/// every type, sitting ABOVE the `preserve_links && ftype == FT_SYMLINK` branch
+/// at generator.c:1948, so a link takes the same two arms as a file - keep the
+/// destination's own bits when it already existed (rsync.c:470-480), else mask
+/// the sender's bits with `dflt_perms` and drop the special bits
+/// (rsync.c:481-485).
+///
+/// `pre_transfer` is the destination's PRE-transfer stat, exactly as
+/// [`chmod_tweaked_dest_mode`] means it: `None` says the link is new.
+///
+/// The result is the full `CHMOD_BITS` the link should end up with; when it
+/// already matches, the caller's `current != target` test turns the whole thing
+/// into the no-op `BITS_EQUAL(sxp->st.st_mode, new_mode, CHMOD_BITS)` produces
+/// upstream (rsync.c:807).
+#[cfg(unix)]
+fn symlink_target_mode(
+    destination: &Path,
+    source_mode: u32,
+    options: &MetadataOptions,
+    pre_transfer: Option<&fs::Metadata>,
+) -> u32 {
+    chmod_tweaked_dest_mode(
+        None, // !S_ISLNK: --chmod never reaches a link
+        destination,
+        source_mode,
+        false, // a link is never S_ISDIR
+        false, // !S_ISREG: dest_mode()'s -E tweak never fires for a link
+        options,
+        pre_transfer,
+    ) & 0o7777
+}
+
 /// Chmods a symbolic link's own permission bits, matching the itemize `p`
 /// decision the receiver reports from a `FileEntry`.
 ///
-/// Only runs where [`crate::CAN_CHMOD_SYMLINK`] holds (macOS/BSD). Reproduces
-/// upstream `generator.c:546-552`: under `-p` the link is chmod'd to the
-/// sender's mode bits; under `-E` (without `-p`) only the execute bits track
-/// the source. The chmod uses `fchmodat(AT_SYMLINK_NOFOLLOW)` via
-/// [`fast_io::secure_chmod_at`] (`follow_symlinks = false`) so the link
-/// itself, not its target, is modified.
+/// Only runs where [`crate::CAN_CHMOD_SYMLINK`] holds (macOS/BSD). The mode is
+/// decided by [`symlink_target_mode`]. The chmod uses
+/// `fchmodat(AT_SYMLINK_NOFOLLOW)` via [`fast_io::secure_chmod_at`]
+/// (`follow_symlinks = false`) so the link itself, not its target, is modified.
 ///
-/// upstream: rsync.c:658-668 (`set_file_attrs()` chmods every file type with
-/// no `S_ISLNK` gate) + syscall.c:761 `do_chmod()`. The symlink chmod is a
-/// SOFT outcome (`rsync.c:667`, `ret == 1`), so any failure is swallowed and
-/// never propagated - exactly as an unsupported symlink chmod is on any
-/// platform that compiled the const to `true` but hit a filesystem that
-/// refuses it at runtime.
+/// upstream: rsync.c:806-822 (`set_file_attrs()` chmods every file type with
+/// no `S_ISLNK` gate) + syscall.c `do_chmod_at()`. The symlink chmod is a SOFT
+/// outcome (`rsync.c:819`, `ret == 1`), so any failure is swallowed and never
+/// propagated - exactly as an unsupported symlink chmod is on any platform
+/// that compiled the const to `true` but hit a filesystem that refuses it at
+/// runtime.
 pub(super) fn apply_symlink_permissions_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
@@ -746,24 +827,25 @@ pub(super) fn apply_symlink_permissions_from_entry(
     if crate::CAN_CHMOD_SYMLINK {
         use std::os::unix::fs::PermissionsExt;
 
-        let current_mode = match cached_meta {
-            Some(meta) => meta.permissions().mode(),
+        let owned_meta;
+        let meta = match cached_meta {
+            Some(meta) => meta,
             None => match fs::symlink_metadata(destination) {
-                Ok(meta) => meta.permissions().mode(),
+                Ok(meta) => {
+                    owned_meta = meta;
+                    &owned_meta
+                }
                 Err(_) => return Ok(()),
             },
         };
-        let current = current_mode & 0o7777;
-        let target = if options.permissions() {
-            Some(entry.mode() & 0o7777)
-        } else if options.executability() {
-            Some((current & !0o111) | (entry.mode() & 0o111))
-        } else {
-            None
-        };
-        if let Some(target) = target
-            && current != target
-        {
+        let current = meta.permissions().mode() & 0o7777;
+        let target = symlink_target_mode(
+            destination,
+            entry.mode(),
+            options,
+            symlink_pre_transfer_stat(options, meta),
+        );
+        if current != target {
             let _ = fast_io::secure_chmod_at(destination, target, false);
         }
     }
@@ -775,13 +857,15 @@ pub(super) fn apply_symlink_permissions_from_entry(
 /// Chmods a symbolic link's own permission bits from a source [`fs::Metadata`],
 /// matching the local-copy change-set `p` decision.
 ///
-/// The local-copy counterpart to [`apply_symlink_permissions_from_entry`].
-/// Reproduces the change-set detection compare (`-p` full-bits, `-E`
-/// exec-bits) plus the `--chmod` tweak that upstream `tweak_mode()` layers on
-/// every file type. Only runs where [`crate::CAN_CHMOD_SYMLINK`] holds; the
-/// chmod is a SOFT outcome and any error is swallowed.
+/// The local-copy counterpart to [`apply_symlink_permissions_from_entry`];
+/// both defer to [`symlink_target_mode`], so the local and receiver paths can
+/// never drift. In particular `--chmod` is NOT layered on here, and without
+/// `-p` the mode is upstream's `dest_mode()` result rather than the umask
+/// default the `symlink(2)` call left behind - see [`symlink_target_mode`] for
+/// both halves. Only runs where [`crate::CAN_CHMOD_SYMLINK`] holds; the chmod
+/// is a SOFT outcome and any error is swallowed.
 ///
-/// upstream: rsync.c:658-668 + syscall.c:761 `do_chmod()`.
+/// upstream: rsync.c:806-822 + syscall.c `do_chmod_at()`.
 pub(super) fn apply_symlink_permissions_like(
     destination: &Path,
     source_metadata: &fs::Metadata,
@@ -791,28 +875,19 @@ pub(super) fn apply_symlink_permissions_like(
     if crate::CAN_CHMOD_SYMLINK {
         use std::os::unix::fs::PermissionsExt;
 
-        let current = match fs::symlink_metadata(destination) {
-            Ok(meta) => meta.permissions().mode() & 0o7777,
+        let meta = match fs::symlink_metadata(destination) {
+            Ok(meta) => meta,
             Err(_) => return Ok(()),
         };
+        let current = meta.permissions().mode() & 0o7777;
         let source = source_metadata.permissions().mode();
-        let base = if options.permissions() {
-            Some(source & 0o7777)
-        } else if options.executability() {
-            Some((current & !0o111) | (source & 0o111))
-        } else {
-            None
-        };
-        let target = match options.chmod() {
-            Some(modifiers) => {
-                let start = base.unwrap_or(current);
-                Some(modifiers.apply(start, source_metadata.is_dir()) & 0o7777)
-            }
-            None => base,
-        };
-        if let Some(target) = target
-            && current != target
-        {
+        let target = symlink_target_mode(
+            destination,
+            source,
+            options,
+            symlink_pre_transfer_stat(options, &meta),
+        );
+        if current != target {
             let _ = fast_io::secure_chmod_at(destination, target, false);
         }
     }
@@ -1396,5 +1471,139 @@ mod tests {
         );
         // Any value with bits above the 9 umask bits is equally impossible.
         assert_eq!(super::sanitize_umask(0o1000), super::FALLBACK_UMASK);
+    }
+
+    /// `symlink_target_mode()` table pins.
+    ///
+    /// The absolute mode a NEW link ends up with depends on the process umask,
+    /// and that dependence is proven against the real 3.5.0 binary at the CLI
+    /// level (source 0o777 under umask 022 / 077 / 000 gives 755 / 700 / 777 in
+    /// both). What is pinned here is the structure upstream fixes regardless of
+    /// umask: which `dest_mode()` arm a link takes, that `--chmod` never
+    /// reaches it, and that `-E` never reaches it.
+    fn symlink_opts(perms: bool, exec: bool, is_new: bool) -> MetadataOptions {
+        MetadataOptions::new()
+            .preserve_permissions(perms)
+            .preserve_executability(exec)
+            .preserve_times(false)
+            .with_destination_is_new(is_new)
+    }
+
+    /// upstream: `dest_mode()` only runs under `!preserve_perms`
+    /// (generator.c:1937), so with `-p` the link takes the sender's bits
+    /// verbatim - no umask reduction, and no `--chmod`.
+    #[test]
+    fn symlink_target_mode_under_preserve_perms_is_the_source_bits_verbatim() {
+        let dir = tempdir().expect("tempdir");
+        let link = dir.path().join("l");
+        let chmod = crate::ChmodModifiers::parse("go-rwx").expect("parse chmod");
+
+        for source in [0o777u32, 0o700, 0o644, 0o711] {
+            let plain = symlink_opts(true, false, true);
+            assert_eq!(
+                symlink_target_mode(&link, 0o120000 | source, &plain, None),
+                source,
+                "-p must hand back the source bits {source:o} untouched"
+            );
+            let with_chmod = symlink_opts(true, false, true).with_chmod(Some(chmod.clone()));
+            assert_eq!(
+                symlink_target_mode(&link, 0o120000 | source, &with_chmod, None),
+                source,
+                "--chmod must not reach a link (upstream gates tweak_mode on \
+                 !S_ISLNK at flist.c:1741-1742); go-rwx would have given {:o}",
+                source & 0o700
+            );
+        }
+    }
+
+    /// upstream: rsync.c:470-480 - `dest_mode()`'s `exists` arm returns
+    /// `(flist_mode & ~CHMOD_BITS) | (stat_mode & CHMOD_BITS)`, so a link that
+    /// was already there keeps its own bits and `BITS_EQUAL` at rsync.c:807
+    /// makes the chmod a no-op. `-E` cannot change that: its tweak is nested
+    /// under `S_ISREG(flist_mode)` (rsync.c:472).
+    ///
+    /// Both `-E` directions are exercised, because each fires only one of
+    /// upstream's two branches and a fixture that trips neither would pass
+    /// with the `S_ISREG` gate removed:
+    ///   * dest has NO exec, source HAS exec -> `new_mode |= (new_mode & 0444) >> 2`
+    ///     would grant 0o644 -> 0o755;
+    ///   * dest HAS exec, source has NO exec -> `new_mode &= ~0111` would strip
+    ///     0o755 -> 0o644.
+    ///
+    /// A link must show neither.
+    #[test]
+    fn symlink_target_mode_existing_link_keeps_its_own_bits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().expect("tempdir");
+        let chmod = crate::ChmodModifiers::parse("a=rw").expect("parse chmod");
+
+        // (dest bits, source mode, what the S_ISREG-gated -E tweak would do)
+        let cases = [(0o644u32, 0o120777u32, 0o755u32), (0o755, 0o120600, 0o644)];
+
+        for (dest_bits, source_mode, would_be) in cases {
+            let link = dir.path().join(format!("l{dest_bits:o}"));
+            std::fs::write(&link, b"x").expect("write");
+            std::fs::set_permissions(&link, std::fs::Permissions::from_mode(dest_bits))
+                .expect("seed dest bits");
+            let on_disk = std::fs::metadata(&link).expect("meta");
+
+            for (exec, label) in [(false, "no -p, no -E"), (true, "-E, no -p")] {
+                let opts = symlink_opts(false, exec, false);
+                assert_eq!(
+                    symlink_target_mode(&link, source_mode, &opts, Some(&on_disk)),
+                    dest_bits,
+                    "{label}: an existing link keeps its own {dest_bits:o}; the \
+                     S_ISREG-gated -E tweak would have made it {would_be:o}"
+                );
+                let opts = opts.with_chmod(Some(chmod.clone()));
+                assert_eq!(
+                    symlink_target_mode(&link, source_mode, &opts, Some(&on_disk)),
+                    dest_bits,
+                    "{label} + --chmod=a=rw: still {dest_bits:o}, never 0o666"
+                );
+            }
+        }
+    }
+
+    /// upstream: rsync.c:481-485 - the new arm is
+    /// `flist_mode & (~CHMOD_BITS | dflt_perms)`. Two umask-independent
+    /// consequences are pinned here: the mask can only remove bits the source
+    /// had, and the special bits always drop out ("turn off special
+    /// permissions", rsync.c:482-483).
+    #[test]
+    fn symlink_target_mode_new_link_masks_the_source_and_drops_special_bits() {
+        let dir = tempdir().expect("tempdir");
+        let link = dir.path().join("l");
+        let dflt = default_perms_seed(link.parent());
+        let opts = symlink_opts(false, false, true);
+
+        for source in [0o777u32, 0o700, 0o644, 0o711, 0o755] {
+            let got = symlink_target_mode(&link, 0o120000 | source, &opts, None);
+            assert_eq!(got, source & dflt, "new link takes source & dflt_perms");
+            assert_eq!(got & !source, 0, "the mask can only remove bits");
+        }
+
+        let got = symlink_target_mode(&link, 0o120000 | 0o4755, &opts, None);
+        assert_eq!(got & 0o7000, 0, "suid/sgid/sticky must not survive");
+    }
+
+    /// `-E` alone must not synthesise a mode for a link: upstream's `-E` tweak
+    /// lives inside `dest_mode()` under `S_ISREG(flist_mode)` (rsync.c:472), so
+    /// a link under `-E` takes the plain arm, never an exec blend of the
+    /// destination's bits with the source's.
+    #[test]
+    fn symlink_target_mode_executability_never_blends_a_link() {
+        let dir = tempdir().expect("tempdir");
+        let link = dir.path().join("l");
+        let dflt = default_perms_seed(link.parent());
+
+        let opts = symlink_opts(false, true, true);
+        assert_eq!(
+            symlink_target_mode(&link, 0o120700, &opts, None),
+            0o700 & dflt,
+            "-E on a new link is the plain dest_mode() arm; an exec blend from \
+             a 0o755 link would have produced 0o744"
+        );
     }
 }

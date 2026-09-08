@@ -94,9 +94,9 @@ impl LocalCopyChangeSet {
         // link (`metadata::CAN_CHMOD_SYMLINK` = macOS/BSD), so report and
         // action never drift: a reported `p` is always backed by the matching
         // apply in metadata::apply_symlink_permissions_like. Upstream skips the
-        // compare only where `CAN_CHMOD_SYMLINK` is undefined (rsync.h:438-440,
-        // HAVE_LCHMOD or HAVE_SETATTRLIST, probed at configure.ac:911,918); the
-        // `#ifndef` block at generator.c:542-544 then compiles out. On Linux
+        // compare only where `CAN_CHMOD_SYMLINK` is undefined (rsync.h:455-456,
+        // HAVE_LCHMOD or HAVE_SETATTRLIST, probed at configure.ac:942,950); the
+        // `#ifndef` block at generator.c:548-552 then compiles out. On Linux
         // the const is false and a link's `st_mode` is a fixed 0777, so nothing
         // is reported or applied. Mirrors the receiver itemize guard.
         let is_symlink = metadata.file_type().is_symlink();
@@ -132,7 +132,16 @@ impl LocalCopyChangeSet {
             change_set = change_set.with_permissions_changed(true);
         }
 
-        if symlink_perms_ok && metadata_options.chmod().is_some() {
+        // A `--chmod` spec never reaches a symlink's mode: upstream gates every
+        // `tweak_mode()` call on `!S_ISLNK` (flist.c:1741-1742 send_file_name,
+        // flist.c:996-997 recv_file_entry, rsync.c:647-648 the daemon
+        // `outgoing chmod`), so a link's mode arrives at itemize() untweaked and
+        // the `p` column stays driven by the plain `-p` / `-E` compare
+        // (generator.c:424-433 `perms_differ`). Reporting `p` here would be a
+        // report with no apply behind it, since
+        // metadata::apply_symlink_permissions_like ignores `--chmod` for the
+        // same reason.
+        if !is_symlink && metadata_options.chmod().is_some() {
             change_set = change_set.with_permissions_changed(true);
         }
 

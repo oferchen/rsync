@@ -1533,3 +1533,119 @@ fn execute_symlink_tree_stats_match_upstream() {
         "an unchanged symlink must not be counted as created (upstream reports 0)"
     );
 }
+
+/// A NEW symlink copied WITHOUT `-p` must land on upstream's `dest_mode()`
+/// result, not on the umask default that `symlink(2)` leaves behind.
+///
+/// upstream: generator.c:1937-1940 rewrites `file->mode = dest_mode(file->mode,
+/// sx.st.st_mode, dflt_perms, exists)` for EVERY type - the rewrite sits above
+/// the `preserve_links && ftype == FT_SYMLINK` branch at generator.c:1948 - and
+/// `set_file_attrs()` then chmods the link to it (rsync.c:510 + 806-822). This
+/// covers the `with_destination_is_new` plumbing at the local-copy symlink
+/// create site, which the `symlink_target_mode()` unit pins cannot reach.
+///
+/// Only meaningful where the OS can chmod a link at all; on Linux
+/// `CAN_CHMOD_SYMLINK` is false, `st_mode` is a fixed 0o777, and there is
+/// nothing to assert.
+#[cfg(target_os = "macos")]
+#[test]
+fn execute_new_symlink_without_perms_takes_the_dest_mode_reduction() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let temp = tempdir().expect("tempdir");
+    let src_dir = temp.path().join("src");
+    let dst_dir = temp.path().join("dst");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::write(src_dir.join("target.txt"), b"data").expect("write target");
+    let src_link = src_dir.join("link");
+    symlink("target.txt", &src_link).expect("create src link");
+    // A source link mode that no umask can produce by accident.
+    fast_io::secure_chmod_at(&src_link, 0o711, false).expect("seed src link mode");
+
+    let operands = vec![
+        src_dir.join("").into_os_string(),
+        dst_dir.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .links(true)
+        .permissions(false);
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_link = dst_dir.join("link");
+    let got = fs::symlink_metadata(&dest_link)
+        .expect("dest link metadata")
+        .permissions()
+        .mode()
+        & 0o7777;
+
+    // Derive `dflt_perms` from the OS rather than from the implementation:
+    // mkdir(2) applies exactly `0o777 & ~umask`, which is upstream's
+    // `ACCESSPERMS & ~orig_umask` (generator.c:2770). A fresh symlink gets the
+    // same bits, so this doubles as the mode the link would have kept had the
+    // dest_mode() chmod never run.
+    let probe = temp.path().join("umask-probe");
+    fs::create_dir(&probe).expect("mkdir probe");
+    let dflt = fs::metadata(&probe)
+        .expect("probe metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        got,
+        0o711 & dflt,
+        "a new link must be chmod'd to `source & dflt_perms`, not left at the \
+         {dflt:o} that symlink(2) produced"
+    );
+}
+
+/// An EXISTING symlink re-synced WITHOUT `-p` must keep its own bits:
+/// `dest_mode()`'s `exists` arm returns `(flist_mode & ~CHMOD_BITS) |
+/// (stat_mode & CHMOD_BITS)` (rsync.c:470-480), so `BITS_EQUAL` at rsync.c:807
+/// holds and upstream issues no chmod at all. This is the control for the test
+/// above: the same source link, the same flags, opposite arm.
+#[cfg(target_os = "macos")]
+#[test]
+fn execute_existing_symlink_without_perms_keeps_its_own_mode() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let temp = tempdir().expect("tempdir");
+    let src_dir = temp.path().join("src");
+    let dst_dir = temp.path().join("dst");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::create_dir_all(&dst_dir).expect("mkdir dst");
+    fs::write(src_dir.join("target.txt"), b"data").expect("write src target");
+    fs::write(dst_dir.join("target.txt"), b"data").expect("write dst target");
+    let src_link = src_dir.join("link");
+    symlink("target.txt", &src_link).expect("create src link");
+    fast_io::secure_chmod_at(&src_link, 0o711, false).expect("seed src link mode");
+
+    let dest_link = dst_dir.join("link");
+    symlink("target.txt", &dest_link).expect("create dst link");
+    fast_io::secure_chmod_at(&dest_link, 0o700, false).expect("seed dst link mode");
+
+    let operands = vec![
+        src_dir.join("").into_os_string(),
+        dst_dir.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .links(true)
+        .permissions(false);
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let got = fs::symlink_metadata(&dest_link)
+        .expect("dest link metadata")
+        .permissions()
+        .mode()
+        & 0o7777;
+    assert_eq!(
+        got, 0o700,
+        "an existing link keeps its own 0o700 without -p; the source's 0o711 \
+         must not reach it"
+    );
+}
