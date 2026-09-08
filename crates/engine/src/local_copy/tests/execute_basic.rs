@@ -1089,6 +1089,93 @@ fn execute_does_not_preserve_permissions_by_default() {
     );
 }
 
+// upstream: generator.c:2148-2153 deletes a non-regular obstacle and sets
+// statret = -1, and receiver.c:1176-1191 opens the basis O_NOFOLLOW and drops
+// any non-regular fd, so a symlink obstacle takes the exists == 0 dest_mode()
+// rule: the new file lands `source_mode & ~umask`, never the symlink's own
+// lstat mode (0o755/0o777 depending on platform).
+#[cfg(unix)]
+#[test]
+fn execute_symlink_obstacle_takes_new_file_mode_without_perms() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = create_tempdir();
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+    let target = temp.path().join("target.txt");
+
+    fs::write(&source, b"fresh").expect("write source");
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).expect("set source perms");
+    fs::write(&target, b"unrelated").expect("write target");
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).expect("set target perms");
+    std::os::unix::fs::symlink(&target, &destination).expect("create obstacle symlink");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("copy succeeds");
+    assert_eq!(summary.files_copied(), 1);
+
+    let dest_meta = fs::symlink_metadata(&destination).expect("dest metadata");
+    assert!(
+        dest_meta.file_type().is_file(),
+        "the symlink obstacle must be replaced by a regular file"
+    );
+    assert_eq!(
+        dest_meta.permissions().mode() & 0o7777,
+        ::test_support::umask_masked(0o644),
+        "a symlink obstacle must not donate its lstat mode to the new file"
+    );
+
+    // The symlink was replaced, not followed: its target keeps mode and content.
+    let target_meta = fs::metadata(&target).expect("target metadata");
+    assert_eq!(target_meta.permissions().mode() & 0o7777, 0o755);
+    assert_eq!(fs::read(&target).expect("read target"), b"unrelated");
+}
+
+// Non-vacuity companion: with --perms the same obstacle yields the exact
+// source mode, proving the fixture reaches the transfer path and that the
+// no-perms pin above is asserting the dest_mode() rule rather than a mode
+// both arms would produce.
+#[cfg(unix)]
+#[test]
+fn execute_symlink_obstacle_takes_source_mode_with_perms() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = create_tempdir();
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+    let target = temp.path().join("target.txt");
+
+    fs::write(&source, b"fresh").expect("write source");
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o707)).expect("set source perms");
+    fs::write(&target, b"unrelated").expect("write target");
+    std::os::unix::fs::symlink(&target, &destination).expect("create obstacle symlink");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().permissions(true),
+        )
+        .expect("copy succeeds");
+    assert_eq!(summary.files_copied(), 1);
+
+    let dest_meta = fs::symlink_metadata(&destination).expect("dest metadata");
+    assert!(dest_meta.file_type().is_file());
+    assert_eq!(dest_meta.permissions().mode() & 0o7777, 0o707);
+}
+
 #[cfg(unix)]
 #[test]
 fn execute_preserves_executable_bit() {
