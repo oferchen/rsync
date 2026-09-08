@@ -2,9 +2,19 @@ use std::io;
 
 /// Supported checksum algorithms in preference order.
 ///
-/// This list matches upstream rsync 3.4.4's default order.
-/// The client will select the first algorithm in this list that it also supports.
-/// Upstream order: xxh128 xxh3 xxh64 md5 md4 sha1 none
+/// This list mirrors upstream rsync 3.5.0's `valid_checksums_items[]`
+/// (checksum.c:49-65) verbatim - names AND order - as a full-featured
+/// upstream build compiles it. `get_default_nno_list()` (compat.c:462-504)
+/// renders the default advertisement from it: the client drops the trailing
+/// "none", the server keeps it, and the "xxhash" alias never appears because
+/// upstream marks it a duplicate of "xxh64". The default wire bytes must
+/// stay byte-identical to upstream's; an oc-only name here (e.g. blake3)
+/// would change the negotiated choice against upstream peers, so extensions
+/// ride an affirmative oc-peer negotiation instead, never this list. An
+/// upstream binary compiled without SUPPORT_XXH3 / SUPPORT_XXHASH / OpenSSL
+/// advertises a shorter list (e.g. "md5 md4 none") - that is compile-time
+/// gating on its side, not a divergence here: both sides still converge on
+/// the strongest mutual name.
 pub(super) const SUPPORTED_CHECKSUMS: &[&str] =
     &["xxh128", "xxh3", "xxh64", "md5", "md4", "sha1", "none"];
 
@@ -86,7 +96,7 @@ pub(super) fn resolve_compression_name(name: &str) -> Option<&'static str> {
 /// and each side selects the first mutually supported entry. For protocol
 /// versions below 30, [`MD4`](Self::MD4) is always used. The variants are
 /// ordered from strongest/newest to weakest/oldest, matching upstream rsync
-/// 3.4.4's preference order.
+/// 3.5.0's preference order (checksum.c:49-65).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ChecksumAlgorithm {
