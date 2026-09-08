@@ -87,7 +87,16 @@ impl ReceiverContext {
             if self.filter_chain.has_per_dir_merge() {
                 return Ok(());
             }
-            self.filter_chain.global()
+            // upstream: flist.c:1022 - `check_server_filter(&filter_list, ...)`
+            // consults the CLIENT's rules only. A server-receiver whose chain
+            // had daemon rules prepended re-checks against the client-only
+            // view captured before that merge; the daemon rules keep their own
+            // per-file refusal (`ERROR: daemon refused to receive file`,
+            // generator.c:1662-1670) instead of aborting the session here.
+            match &self.recheck_client_filter {
+                Some(client_set) => client_set,
+                None => self.filter_chain.global(),
+            }
         } else if self.config.connection.client_mode
             && !self.config.connection.filter_rules.is_empty()
         {

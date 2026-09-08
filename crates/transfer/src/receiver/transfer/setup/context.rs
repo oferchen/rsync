@@ -846,11 +846,27 @@ impl ReceiverContext {
     ///
     /// upstream: clientserver.c:rsync_module() - daemon_filter_list is applied
     /// on top of client filters. Daemon rules take precedence (prepended).
-    fn apply_received_filter_rules(
+    pub(in crate::receiver) fn apply_received_filter_rules(
         &mut self,
         wire_rules: Vec<FilterRuleWireFormat>,
     ) -> io::Result<()> {
         let daemon_rules = &self.config.daemon_filter_rules;
+        // upstream: flist.c:1019-1024 - the received-name re-check runs
+        // `check_server_filter(&filter_list, ...)` against the CLIENT's rules
+        // only; `daemon_filter_list` never joins that list and is enforced by
+        // its own consumers (`generator.c:1662-1670` refuses the one file at
+        // FERROR_XFER, `exclude.c:1111` screens deletions). oc prepends the
+        // daemon rules to the same chain, so the re-check's client-only view
+        // must be captured BEFORE the merge - re-checking the merged chain
+        // aborted the whole session with RERR_UNSUPPORTED for any pushed name
+        // a daemon rule excludes, where upstream refuses that file alone and
+        // exits 23.
+        self.recheck_client_filter = if daemon_rules.is_empty() {
+            None
+        } else {
+            let (client_set, _merge_configs) = parse_wire_filters_for_receiver(&wire_rules)?;
+            Some(client_set)
+        };
         let combined = if daemon_rules.is_empty() {
             wire_rules
         } else if wire_rules.is_empty() {

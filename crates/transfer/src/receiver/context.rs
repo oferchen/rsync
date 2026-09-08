@@ -124,6 +124,22 @@ pub struct ReceiverContext {
     /// - `flist.c:266-284` - `path_is_daemon_excluded()` checks each path
     ///   component against the daemon filter list
     pub(in crate::receiver) daemon_filter_set: Option<FilterSet>,
+    /// Client-only view of the wire filter rules for the file-list re-check.
+    ///
+    /// `Some` only on a server-receiver whose `filter_chain` had daemon rules
+    /// prepended: the re-check must evaluate the CLIENT's rules alone, so the
+    /// view is compiled from the wire list before the merge. `None` means the
+    /// chain carries nothing but the client's own rules and the re-check may
+    /// read it directly.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:1019-1024` - `check_server_filter(&filter_list, ...)`
+    ///   consults only the client-transferred list; `daemon_filter_list` is
+    ///   enforced by its own consumers (`generator.c:1662-1670` per-file
+    ///   refusal, `exclude.c:1111` deletion, the option screens) and never
+    ///   aborts the session here.
+    pub(in crate::receiver) recheck_client_filter: Option<FilterSet>,
     /// Per-directory scoped filter chain for deletion protection.
     ///
     /// Used by `delete_extraneous_files()` to check `allows_deletion()` before
@@ -498,6 +514,7 @@ impl ReceiverContext {
             uid_list: IdList::new(),
             gid_list: IdList::new(),
             daemon_filter_set,
+            recheck_client_filter: None,
             filter_chain: FilterChain::empty(),
             deletion_filter_chain: FilterChain::empty(),
             hardlink_tracker,
