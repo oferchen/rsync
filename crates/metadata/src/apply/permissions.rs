@@ -730,19 +730,23 @@ fn chmod_path_honoring_keep_dirlinks(
 /// generator's lstat from BEFORE `do_symlink` ran.
 ///
 /// When the link is not new, its current stat IS the pre-transfer stat - except
-/// for a destination that existed as a NON-symlink and was replaced, where
-/// upstream still holds the obstacle's old `st_mode` and this hands back the
-/// fresh link's instead. That single cell is a known gap, tracked with the rest
-/// of the symlink-obstacle mode work rather than papered over here.
+/// for a destination that was REPLACED, where the fresh link's stat says
+/// nothing about what upstream measured. `explicit` carries the caller's
+/// pre-replace lstat for that case; upstream's `statret`/`sx.st` pair at
+/// generator.c:1937-1940 is taken before `atomic_create` deletes the obstacle,
+/// so a replaced destination - symlink or not - still feeds `dest_mode()` the
+/// OLD mode. Callers that never replace anything pass `None` and get the
+/// current stat.
 #[cfg(unix)]
 fn symlink_pre_transfer_stat<'a>(
     options: &MetadataOptions,
     current: &'a fs::Metadata,
+    explicit: Option<&'a fs::Metadata>,
 ) -> Option<&'a fs::Metadata> {
     if options.destination_is_new() {
         None
     } else {
-        Some(current)
+        explicit.or(Some(current))
     }
 }
 
@@ -822,6 +826,7 @@ pub(super) fn apply_symlink_permissions_from_entry(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
     cached_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     if crate::CAN_CHMOD_SYMLINK {
@@ -843,14 +848,14 @@ pub(super) fn apply_symlink_permissions_from_entry(
             destination,
             entry.mode(),
             options,
-            symlink_pre_transfer_stat(options, meta),
+            symlink_pre_transfer_stat(options, meta, pre_transfer_meta),
         );
         if current != target {
             let _ = fast_io::secure_chmod_at(destination, target, false);
         }
     }
     #[cfg(not(unix))]
-    let _ = (destination, entry, options, cached_meta);
+    let _ = (destination, entry, options, cached_meta, pre_transfer_meta);
     Ok(())
 }
 
@@ -885,7 +890,9 @@ pub(super) fn apply_symlink_permissions_like(
             destination,
             source,
             options,
-            symlink_pre_transfer_stat(options, &meta),
+            // The local-copy executor never replaces through this path, so the
+            // link's current stat is its own pre-transfer stat.
+            symlink_pre_transfer_stat(options, &meta, None),
         );
         if current != target {
             let _ = fast_io::secure_chmod_at(destination, target, false);

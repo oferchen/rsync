@@ -10,7 +10,10 @@ use std::path::{Path, PathBuf};
 
 use logging::{debug_log, info_log};
 #[cfg(any(unix, windows))]
-use metadata::{MetadataOptions, apply_symlink_metadata_from_entry};
+use metadata::{
+    MetadataOptions, apply_symlink_metadata_from_entry,
+    apply_symlink_metadata_from_entry_with_pre_transfer,
+};
 use protocol::flist::{trace_leader_is, trace_looking_for_leader, trace_virtual_first};
 
 use crate::generator::ItemFlags;
@@ -151,6 +154,12 @@ impl ReceiverContext {
             // destination arrives with it, so both render ITEM_IS_NEW.
             // Capture the old lstat before the obstacle is backed up/unlinked.
             let mut pre_replace_symlink_meta: Option<fs::Metadata> = None;
+            // Distinct from `pre_replace_symlink_meta` above, which stays
+            // symlink-only because the post-create itemize must render a
+            // non-symlink obstacle as ITEM_IS_NEW. `dest_mode()` makes no such
+            // distinction: its `exists` is `statret == 0 && stype != FT_DIR`
+            // (generator.c:1938), true for ANY non-directory that was here.
+            let mut pre_replace_meta: Option<fs::Metadata> = None;
 
             // upstream: generator.c:1573 - quick_check_ok(FT_SYMLINK, ...)
             if let Ok(existing_target) = std::fs::read_link(&link_path) {
@@ -166,7 +175,15 @@ impl ReceiverContext {
                     // upstream: generator.c:1575 - even on the up-to-date branch
                     // `set_file_attrs(fname, file, &sx, NULL, maybe_ATTRS_REPORT)`
                     // still runs so a stale on-disk mtime is corrected.
+                    // `MetadataOptions::new()` defaults `preserve_permissions`
+                    // to true, so these two must be set from the real flags or
+                    // every link silently takes `-p` semantics: upstream
+                    // collapses the mode through `dest_mode()` at
+                    // generator.c:1937-1940 whenever `-p` is off, and that runs
+                    // for a link exactly as for any other type.
                     let symlink_options = MetadataOptions::new()
+                        .preserve_permissions(self.config.flags.perms)
+                        .preserve_executability(self.config.flags.preserve_executability)
                         .preserve_owner(self.config.flags.owner)
                         .preserve_group(self.config.flags.group)
                         .preserve_times(self.preserve_symlink_times())
@@ -192,6 +209,7 @@ impl ReceiverContext {
                     continue;
                 }
                 pre_replace_symlink_meta = fs::symlink_metadata(&link_path).ok();
+                pre_replace_meta = pre_replace_symlink_meta.clone();
                 // upstream: generator.c:2002 atomic_create(..., DEL_FOR_SYMLINK)
                 // - one decision for the obstacle: rmdir a directory, back up
                 // or unlink anything else. The refusal is reported inside.
@@ -208,18 +226,21 @@ impl ReceiverContext {
                 {
                     continue;
                 }
-            } else if fast_io::lstat_via_sandbox_or_fallback(
-                sandbox,
-                dest_dir,
-                relative_path,
-                &link_path,
-            )
-            .is_ok()
+            } else if let Ok(obstacle) =
+                fast_io::lstat_via_sandbox_or_fallback(sandbox, dest_dir, relative_path, &link_path)
             {
                 // upstream: generator.c:2002 atomic_create(..., DEL_FOR_SYMLINK)
                 // for a non-symlink obstacle. The stat above only selects this
                 // arm; `make_way_for_replacement` re-reads the type through the
                 // same sandbox dirfd to decide between rmdir and backup/unlink.
+                //
+                // `dest_mode()`'s `exists` is `statret == 0 && stype != FT_DIR`
+                // (generator.c:1938), so an obstacle of any non-directory type
+                // still hands its own permission bits to the link that replaces
+                // it; a directory obstacle takes the absent arm instead.
+                if !obstacle.is_dir() {
+                    pre_replace_meta = fs::symlink_metadata(&link_path).ok();
+                }
                 if self
                     .make_way_for_replacement(
                         writer,
@@ -309,16 +330,29 @@ impl ReceiverContext {
             // step the receiver-created symlink wears the wall-clock time from
             // `symlinkat(2)`, breaking the `--copy-dest` parity that
             // `testsuite/alt-dest.test` enforces over SSH.
+            // `preserve_permissions` defaults to true, so it must be set from
+            // the real flags: without `-p` upstream feeds the link through
+            // `dest_mode()` (generator.c:1937-1940) like every other type.
+            // `pre_replace_meta` is that call's `sx.st` - read BEFORE
+            // `atomic_create` unlinked whatever was here - so a replaced
+            // destination still contributes its old bits to the `exists` arm,
+            // and `None` marks the absent destination as new.
             let symlink_options = MetadataOptions::new()
+                .preserve_permissions(self.config.flags.perms)
+                .preserve_executability(self.config.flags.preserve_executability)
                 .preserve_owner(self.config.flags.owner)
                 .preserve_group(self.config.flags.group)
                 .preserve_times(self.preserve_symlink_times())
                 .preserve_atimes(self.config.flags.atimes)
                 .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
-                .fake_super(self.config.fake_super);
-            if let Err(error) =
-                apply_symlink_metadata_from_entry(&link_path, entry, &symlink_options)
-            {
+                .fake_super(self.config.fake_super)
+                .with_destination_is_new(pre_replace_meta.is_none());
+            if let Err(error) = apply_symlink_metadata_from_entry_with_pre_transfer(
+                &link_path,
+                entry,
+                &symlink_options,
+                pre_replace_meta.as_ref(),
+            ) {
                 debug_log!(
                     Recv,
                     1,
@@ -429,6 +463,12 @@ impl ReceiverContext {
             // non-symlink obstacle has `statret` forced to -1 and an absent
             // destination arrives with it, so both render ITEM_IS_NEW.
             let mut pre_replace_symlink_meta: Option<fs::Metadata> = None;
+            // Distinct from `pre_replace_symlink_meta` above, which stays
+            // symlink-only because the post-create itemize must render a
+            // non-symlink obstacle as ITEM_IS_NEW. `dest_mode()` makes no such
+            // distinction: its `exists` is `statret == 0 && stype != FT_DIR`
+            // (generator.c:1938), true for ANY non-directory that was here.
+            let mut pre_replace_meta: Option<fs::Metadata> = None;
 
             // upstream: generator.c:1573 - quick_check_ok(FT_SYMLINK, ...)
             if let Ok(existing_target) = std::fs::read_link(&link_path) {
@@ -443,7 +483,15 @@ impl ReceiverContext {
                         ItemFlags::from_raw(self.existing_symlink_iflags(entry, &link_path));
                     // upstream: generator.c:1563 - refresh metadata even when the
                     // link is already up-to-date so a stale mtime is corrected.
+                    // `MetadataOptions::new()` defaults `preserve_permissions`
+                    // to true, so these two must be set from the real flags or
+                    // every link silently takes `-p` semantics: upstream
+                    // collapses the mode through `dest_mode()` at
+                    // generator.c:1937-1940 whenever `-p` is off, and that runs
+                    // for a link exactly as for any other type.
                     let symlink_options = MetadataOptions::new()
+                        .preserve_permissions(self.config.flags.perms)
+                        .preserve_executability(self.config.flags.preserve_executability)
                         .preserve_owner(self.config.flags.owner)
                         .preserve_group(self.config.flags.group)
                         .preserve_times(self.preserve_symlink_times())
@@ -468,6 +516,7 @@ impl ReceiverContext {
                     continue;
                 }
                 pre_replace_symlink_meta = fs::symlink_metadata(&link_path).ok();
+                pre_replace_meta = pre_replace_symlink_meta.clone();
                 // upstream: generator.c:2002 atomic_create(..., DEL_FOR_SYMLINK).
                 if self
                     .make_way_for_replacement(
@@ -481,9 +530,15 @@ impl ReceiverContext {
                 {
                     continue;
                 }
-            } else if fs::symlink_metadata(&link_path).is_ok() {
+            } else if let Ok(obstacle) = fs::symlink_metadata(&link_path) {
                 // upstream: generator.c:2002 atomic_create(..., DEL_FOR_SYMLINK)
-                // for a non-symlink obstacle.
+                // for a non-symlink obstacle. `dest_mode()`'s `exists` is
+                // `statret == 0 && stype != FT_DIR` (generator.c:1938), so a
+                // non-directory obstacle still supplies the replacement link's
+                // permission bits.
+                if !obstacle.is_dir() {
+                    pre_replace_meta = Some(obstacle);
+                }
                 if self
                     .make_way_for_replacement(
                         writer,
@@ -536,16 +591,29 @@ impl ReceiverContext {
             // upstream: generator.c:1604 - set_file_attrs() runs immediately
             // after atomic_create -> do_symlink so the new link's mtime matches
             // the sender-supplied value.
+            // `preserve_permissions` defaults to true, so it must be set from
+            // the real flags: without `-p` upstream feeds the link through
+            // `dest_mode()` (generator.c:1937-1940) like every other type.
+            // `pre_replace_meta` is that call's `sx.st` - read BEFORE
+            // `atomic_create` unlinked whatever was here - so a replaced
+            // destination still contributes its old bits to the `exists` arm,
+            // and `None` marks the absent destination as new.
             let symlink_options = MetadataOptions::new()
+                .preserve_permissions(self.config.flags.perms)
+                .preserve_executability(self.config.flags.preserve_executability)
                 .preserve_owner(self.config.flags.owner)
                 .preserve_group(self.config.flags.group)
                 .preserve_times(self.preserve_symlink_times())
                 .preserve_atimes(self.config.flags.atimes)
                 .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
-                .fake_super(self.config.fake_super);
-            if let Err(error) =
-                apply_symlink_metadata_from_entry(&link_path, entry, &symlink_options)
-            {
+                .fake_super(self.config.fake_super)
+                .with_destination_is_new(pre_replace_meta.is_none());
+            if let Err(error) = apply_symlink_metadata_from_entry_with_pre_transfer(
+                &link_path,
+                entry,
+                &symlink_options,
+                pre_replace_meta.as_ref(),
+            ) {
                 debug_log!(
                     Recv,
                     1,
