@@ -103,8 +103,11 @@ pub(super) fn commit_file(
     // inode is rewritten in place, so a rename-to-backup here would move the very
     // file we already overwrote (its pre-transfer contents are gone by commit).
     // Upstream instead COPIES the pre-image aside BEFORE the inplace rewrite
-    // (generator.c:2281,2328); oc mirrors that in `process_file` /
-    // `process_whole_file` via `make_backup_copy` prior to the first write.
+    // (generator.c:2281 on the whole-file branch, generator.c:2328-2356 on the
+    // delta branch, which also retags the basis FNAMECMP_BACKUP); oc mirrors
+    // the delta branch in `find_basis_file_with_config` and the whole-file
+    // branch in `process_file` / `process_whole_file` via `make_backup_copy`
+    // prior to the first write.
     let backup_notice = if !config.delay_updates && !begin.is_inplace {
         if let Some(ref backup_config) = config.backup {
             // `make_backup` tags its own failures with CommitOp::Backup AND the
@@ -1050,25 +1053,33 @@ fn backup_notice(
 /// used for the `--inplace --backup` case where the destination inode is
 /// rewritten in place rather than replaced by a temp+rename.
 ///
-/// upstream: backup.c make_backup() inplace copy path - the generator makes the
-/// backup a COPY (`generator.c:2281` `copy_file(fname, backupptr, ...)`, and the
-/// delta twin at `generator.c:2328`) BEFORE the receiver rewrites the
-/// destination in place, keeping `fnamecmp_type == FNAMECMP_FNAME`. A plain
+/// upstream: the generator makes the inplace backup a COPY, on both of its
+/// branches: the whole-file/read-batch branch copies via `copy_file()` and
+/// keeps `fnamecmp_type == FNAMECMP_FNAME` (`generator.c:2280-2301`), while the
+/// delta branch opens the backup for writing, streams the pre-image into it
+/// during `generate_and_send_sums()`, and retags the basis
+/// `fnamecmp_type = FNAMECMP_BACKUP` (`generator.c:2328-2356`). Either way the
+/// copy is taken BEFORE the receiver rewrites the destination in place: a plain
 /// rename-to-backup would move the very inode we are about to update, so the
-/// pre-image must be duplicated first. Unlike the rename path this does NOT emit
-/// the `make_backup: RENAME` debug line (upstream's inplace copy bypasses
-/// `make_backup()` and so emits no `DEBUG_GTE(BACKUP, 1)` trace), but it still
-/// returns a [`BackupNotice`] so the main thread emits the same
-/// `INFO_GTE(BACKUP, 1)` "backed up X to Y" line (`generator.c:2448-2450`).
+/// pre-image must be duplicated first. oc calls this from both mirrors of those
+/// branches: `find_basis_file_with_config` for the delta path (which then
+/// selects the returned backup path as the delta basis) and
+/// `make_inplace_backup` on the disk thread for the whole-file path. Unlike the
+/// rename path this does NOT emit the `make_backup: RENAME` debug line
+/// (upstream's inplace copy bypasses `make_backup()` and so emits no
+/// `DEBUG_GTE(BACKUP, 1)` trace), but it still returns a [`BackupNotice`] so
+/// the session thread emits the same `INFO_GTE(BACKUP, 1)` "backed up X to Y"
+/// line (`generator.c:2448-2450`).
 ///
-/// Called before the first inplace write; the caller has already confirmed
-/// `begin.is_inplace`. Returns `Ok(None)` when the destination does not yet
-/// exist (nothing to back up), matching upstream's `x_lstat` guard.
-pub(super) fn make_backup_copy(
+/// Called before the first inplace write. Returns `Ok(None)` when the
+/// destination does not yet exist (nothing to back up), matching upstream's
+/// `x_lstat` guard; on success returns the absolute backup path (so the delta
+/// path can select it as the basis) alongside the notice.
+pub(crate) fn make_backup_copy(
     file_path: &Path,
     backup_config: &BackupConfig,
     env: BackupEnv<'_>,
-) -> io::Result<Option<BackupNotice>> {
+) -> io::Result<Option<(PathBuf, BackupNotice)>> {
     if !file_path.exists() {
         return Ok(None);
     }
@@ -1102,8 +1113,9 @@ pub(super) fn make_backup_copy(
 
     // upstream: generator.c:2448-2450 - INFO_GTE(BACKUP, 1) "backed up X to Y".
     // Paths are relative to the destination root to match test assertions; the
-    // `info_log!` emission happens on the main thread (see
-    // `crate::pipeline::receiver::emit_backup_notice`).
+    // `info_log!` emission happens on the session thread (see
+    // `crate::pipeline::receiver::emit_backup_notice` for the disk-thread
+    // caller and the request loop for the delta-basis caller).
     let file_rel = file_path
         .strip_prefix(&backup_config.dest_dir)
         .unwrap_or(file_path)
@@ -1112,10 +1124,11 @@ pub(super) fn make_backup_copy(
         .strip_prefix(&backup_config.dest_dir)
         .unwrap_or(&backup_path)
         .to_path_buf();
-    Ok(Some(BackupNotice {
+    let notice = BackupNotice {
         original: file_rel,
         backup: backup_rel,
-    }))
+    };
+    Ok(Some((backup_path, notice)))
 }
 
 /// The partial-basis cleanup must not delete a file outside the destination

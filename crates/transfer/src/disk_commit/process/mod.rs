@@ -22,6 +22,7 @@ mod metadata;
 mod tests;
 
 pub(crate) use self::commit::make_backup;
+pub(crate) use self::commit::make_backup_copy;
 pub(super) use self::file_ops::{process_file, process_whole_file};
 
 /// Forces the backup ladder's link and rename tiers onto `EXDEV` for the
@@ -34,9 +35,7 @@ pub(crate) use self::commit::ForceExdev;
 #[cfg(all(test, unix))]
 use self::commit::{commit_file, rename_config_sandboxed};
 #[cfg(test)]
-use self::commit::{
-    delay_updates_staging_path, is_cross_device, make_backup_copy, rename_with_io_uring_fallback,
-};
+use self::commit::{delay_updates_staging_path, is_cross_device, rename_with_io_uring_fallback};
 #[cfg(all(test, target_os = "macos"))]
 use self::file_ops::make_writer;
 #[cfg(test)]

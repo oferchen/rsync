@@ -149,8 +149,10 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         }
         // upstream: generator.c:1942-1943 - a non-FNAME basis sets
         // ITEM_BASIS_TYPE_FOLLOWS so the sender reads the trailing fnamecmp_type
-        // byte and echoes it back to the receiver (rsync.c:403-405). Only the
-        // --partial-dir resume basis is emitted here (FNAMECMP_PARTIAL_DIR);
+        // byte and echoes it back to the receiver (rsync.c:403-405). The
+        // --partial-dir resume basis (FNAMECMP_PARTIAL_DIR) and the
+        // `--inplace --backup` delta basis (FNAMECMP_BACKUP, which clears the
+        // sender's `updating_basis_file`, sender.c:628-629) are emitted here;
         // FNAME carries no byte, matching the ordinary request encoding.
         let emit_basis_type = fnamecmp_type != protocol::FnameCmpType::Fname;
         if emit_basis_type {

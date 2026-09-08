@@ -50,3 +50,4 @@ pub(crate) use self::config::BackupEnv;
 #[cfg(test)]
 pub(crate) use self::process::ForceExdev;
 pub(crate) use self::process::make_backup;
+pub(crate) use self::process::make_backup_copy;
