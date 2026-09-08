@@ -78,14 +78,29 @@ print(ORACLE)
 '''
 
 
-def consumer_needing(tcp: bool, root: bool) -> str:
+def consumer_needing(tcp: bool, root: bool, peer_slot: bool = False) -> str:
     """A consuming test carrying the preconditions the harness reads."""
     body = CONSUMER
     if tcp:
         body += "require_tcp('needs a real TCP peer')\n"
     if root:
         body += "import os\nif os.geteuid() != 0:\n    raise SystemExit(0)\n"
+    if peer_slot:
+        # daemon-symlink-escape-matrix_test.py:75-79 verbatim in shape: the
+        # peer WINS over the archive binary, so a wrong peer is not merely an
+        # extra oracle, it is a substitute one.
+        body += (
+            "from rsyncfns import RSYNC, RSYNC_PEER\n"
+            "if RSYNC_PEER != RSYNC:\n"
+            "    ORACLE = RSYNC_PEER\n"
+        )
     return body
+
+
+# A consumer that only IMPORTS RSYNC_PEER without evaluating it. The import
+# alias is not an ast.Name, so the scan must not read this as a hijackable
+# slot - every test in the 3.5.0 suite imports from rsyncfns.
+PEER_IMPORTED_UNUSED = CONSUMER + "from rsyncfns import RSYNC, RSYNC_PEER\n"
 
 
 class LegacyOracleDiscoveryTests(unittest.TestCase):
@@ -119,13 +134,48 @@ class LegacyOracleDiscoveryTests(unittest.TestCase):
         self._test("matrix", consumer_needing(tcp=True, root=True))
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "3.2.7\tmatrix\tyes\tyes")
+        self.assertEqual(result.stdout.strip(), "3.2.7\tmatrix\tyes\tyes\tno")
 
     def test_preconditions_are_read_from_the_test_not_assumed(self) -> None:
         self._test("plain", consumer_needing(tcp=False, root=False))
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "3.2.7\tplain\tno\tno")
+        self.assertEqual(result.stdout.strip(), "3.2.7\tplain\tno\tno\tno")
+
+    def test_a_peer_readable_oracle_slot_is_discovered(self) -> None:
+        # The hijackable slot. A test that evaluates RSYNC_PEER takes the
+        # --rsync-bin2 binary as its oracle IN PREFERENCE to old_versions/,
+        # and labels the column with the version it asked for either way.
+        self._test("matrix", consumer_needing(tcp=False, root=False, peer_slot=True))
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "3.2.7\tmatrix\tno\tno\tyes")
+
+    def test_importing_the_peer_name_is_not_using_it(self) -> None:
+        # Every test in the suite imports from rsyncfns. Counting the import
+        # would mark all 345 as hijackable and make the gate below fire on
+        # legs where no oracle slot exists at all.
+        self._test("plain", PEER_IMPORTED_UNUSED)
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "3.2.7\tplain\tno\tno\tno")
+
+    def test_the_real_matrix_test_is_classified_as_peer_readable(self) -> None:
+        # The population this gate exists for, read from the real tree rather
+        # than from a fixture shaped like it. Skipped, never faked, when the
+        # tarball is not extracted here.
+        tree = REPO / "target" / "interop" / "upstream-src" / "rsync-3.5.0"
+        consumer = tree / "testsuite" / "daemon-symlink-escape-matrix_test.py"
+        if not consumer.is_file():
+            self.skipTest(f"{consumer} is not extracted here")
+        self.tree = tree
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows = [line.split("\t") for line in result.stdout.splitlines()]
+        matrix = [r for r in rows if r[1] == "daemon-symlink-escape-matrix"]
+        self.assertEqual(len(matrix), 1, result.stdout)
+        self.assertEqual(matrix[0][0], "3.2.7")
+        self.assertEqual(matrix[0][4], "yes", result.stdout)
 
     def test_docstring_mention_is_not_a_consumer(self) -> None:
         # The whole reason the scan is over the AST. A text scan reports this
@@ -156,15 +206,20 @@ class LegacyOracleDiscoveryTests(unittest.TestCase):
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
         for line in result.stdout.splitlines():
-            version, name, needs_tcp, needs_root = line.split("\t")
+            version, name, needs_tcp, needs_root, peer_slot = line.split("\t")
             self.assertRegex(version, r"^\d+\.\d+(\.\d+)?$")
             self.assertTrue(name)
             self.assertIn(needs_tcp, ("yes", "no"))
             self.assertIn(needs_root, ("yes", "no"))
+            self.assertIn(peer_slot, ("yes", "no"))
 
 
-class EnsureLegacyOraclesTests(unittest.TestCase):
-    """ensure_legacy_oracles(): builds, refuses, or names the degradation."""
+class LegacyOracleHarnessFixture:
+    """A synthetic upstream tree, a stub builder, and a sourced-harness runner.
+
+    A mixin rather than a TestCase base so the classes below do not inherit one
+    another's cases: shared fixture, disjoint populations.
+    """
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -191,11 +246,27 @@ class EnsureLegacyOraclesTests(unittest.TestCase):
         )
         stub.chmod(0o755)
 
+    def _peer(self, banner: str | None) -> str:
+        """A stand-in --rsync-bin2 binary. `banner` None => --version fails."""
+        peer = self.tmp / "peer-rsync"
+        if banner is None:
+            peer.write_text("#!/usr/bin/env bash\nexit 1\n")
+        else:
+            # Upstream's banner shape, "version" twice, release token first.
+            peer.write_text(
+                "#!/usr/bin/env bash\n"
+                f'printf "%s\\n" {shlex.quote(banner)}\n'
+                'printf "%s\\n" "Copyright (C) 1996-2024 by Andrew Tridgell"\n'
+            )
+        peer.chmod(0o755)
+        return str(peer)
+
     def _run(self, env_overrides: dict, extra: str = "") -> subprocess.CompletedProcess[str]:
         env = dict(os.environ)
         env.pop("LEGACY_ORACLES", None)
         env.pop("USE_TCP", None)
         env.pop("EXPECT_RESULT", None)
+        env.pop("UPSTREAM_PEER_BIN", None)
         env.update(env_overrides)
         program = textwrap.dedent(
             f"""
@@ -210,6 +281,10 @@ class EnsureLegacyOraclesTests(unittest.TestCase):
             ["bash", "-c", program], capture_output=True, text=True,
             check=False, env=env,
         )
+
+
+class EnsureLegacyOraclesTests(LegacyOracleHarnessFixture, unittest.TestCase):
+    """ensure_legacy_oracles(): builds, refuses, or names the degradation."""
 
     def test_on_builds_the_oracle_the_consumer_names(self) -> None:
         self._builder(0)
@@ -275,6 +350,174 @@ class EnsureLegacyOraclesTests(unittest.TestCase):
         result = self._run({"LEGACY_ORACLES": "yes"})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must be 'on' or 'off'", result.stderr)
+
+
+class OracleSlotProvenanceTests(LegacyOracleHarnessFixture, unittest.TestCase):
+    """The --rsync-bin2 peer may only fill an oracle slot it matches.
+
+    MEASURED on the real 3.5.0 tree before this gate existed: running
+    daemon-symlink-escape-matrix_test.py with RSYNC_PEER pointed at the 3.5.0
+    build started the oracle daemon FROM 3.5.0 and printed all 100
+    `insecure links = yes` cells as `want=N(327)`. The label is a hardcoded
+    string in upstream's test (:256-257) and the slot's only acceptance test
+    is that `--version` exits zero (:87-94), so nothing downstream can tell a
+    3.2.7 answer from any other binary's.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        (self.tree / "testsuite" / "matrix_test.py").write_text(
+            consumer_needing(tcp=False, root=False, peer_slot=True)
+        )
+
+    def test_a_peer_that_is_not_the_named_version_is_refused(self) -> None:
+        self._builder(0)
+        peer = self._peer("rsync  version 3.5.0  protocol version 32")
+        result = self._run({"LEGACY_ORACLES": "on", "UPSTREAM_PEER_BIN": peer})
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn("is not rsync 3.2.7", result.stderr)
+        self.assertIn("3.5.0", result.stderr)
+        self.assertIn("matrix", result.stderr)
+
+    def test_the_refusal_survives_a_built_oracle(self) -> None:
+        # The peer wins the `elif`, so building the real 3.2.7 does not rescue
+        # the slot - refusing is the only truthful outcome, and it must not be
+        # softened into "we built one too".
+        self._builder(0)
+        peer = self._peer("rsync  version 3.4.1  protocol version 32")
+        result = self._run({"LEGACY_ORACLES": "on", "UPSTREAM_PEER_BIN": peer})
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn("the peer wins the tie", result.stderr)
+
+    def test_the_refusal_is_annotated_on_github(self) -> None:
+        self._builder(0)
+        peer = self._peer("rsync  version 3.5.0  protocol version 32")
+        result = self._run(
+            {"LEGACY_ORACLES": "on", "UPSTREAM_PEER_BIN": peer,
+             "GITHUB_ACTIONS": "true"}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("::error ", result.stdout + result.stderr)
+
+    def test_a_peer_that_will_not_say_its_version_is_refused(self) -> None:
+        # Unreadable provenance is not "probably fine". The pre-existing probe
+        # in the test only checks the exit status, so a binary that answers
+        # nothing intelligible still fills the slot.
+        self._builder(0)
+        peer = self._peer(None)
+        result = self._run({"LEGACY_ORACLES": "on", "UPSTREAM_PEER_BIN": peer})
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn("is not rsync 3.2.7", result.stderr)
+
+    def test_a_matching_peer_supplies_the_oracle(self) -> None:
+        self._builder(0)
+        peer = self._peer("rsync  version 3.2.7  protocol version 31")
+        result = self._run({"LEGACY_ORACLES": "on", "UPSTREAM_PEER_BIN": peer})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("supplied by the --rsync-bin2 peer", result.stderr)
+        self.assertIn("1 from the --rsync-bin2 peer", result.stderr)
+        # It is the oracle, so it is neither built nor degraded - reporting it
+        # as degraded would be the same lie pointed the other way.
+        self.assertFalse(self.calls.exists())
+        self.assertIn("0 consumer(s) running degraded", result.stderr)
+
+    def test_a_matching_peer_is_the_oracle_even_with_oracles_off(self) -> None:
+        self._builder(0)
+        peer = self._peer("rsync  version 3.2.7  protocol version 31")
+        result = self._run({"LEGACY_ORACLES": "off", "UPSTREAM_PEER_BIN": peer})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("supplied by the --rsync-bin2 peer", result.stderr)
+        self.assertIn("0 consumer(s) running degraded", result.stderr)
+
+    def test_a_consumer_that_cannot_run_here_does_not_gate_the_peer(self) -> None:
+        # The narrow scope is the whole point: UPSTREAM_PEER_BIN's job is
+        # version MIXING, and on a leg where no test can adopt it as an oracle
+        # a 3.5.0 peer is exactly what it should be. Refusing there would break
+        # the knob's documented purpose to fix a problem that is not present.
+        (self.tree / "testsuite" / "matrix_test.py").write_text(
+            consumer_needing(tcp=True, root=False, peer_slot=True)
+        )
+        self._builder(0)
+        peer = self._peer("rsync  version 3.5.0  protocol version 32")
+        result = self._run(
+            {"LEGACY_ORACLES": "on", "USE_TCP": "no", "UPSTREAM_PEER_BIN": peer}
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("not needed", result.stderr)
+
+    def test_a_consumer_that_ignores_the_peer_does_not_gate_it(self) -> None:
+        (self.tree / "testsuite" / "matrix_test.py").write_text(
+            consumer_needing(tcp=False, root=False, peer_slot=False)
+        )
+        self._builder(0)
+        peer = self._peer("rsync  version 3.5.0  protocol version 32")
+        result = self._run({"LEGACY_ORACLES": "on", "UPSTREAM_PEER_BIN": peer})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("1 on disk", result.stderr)
+
+
+class RsyncReportedVersionTests(unittest.TestCase):
+    """rsync_reported_version(): the binary is the authority, not the path."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _probe(self, script: str) -> subprocess.CompletedProcess[str]:
+        # Named for a version it is NOT, so a reading that trusts the filename
+        # rather than the banner cannot pass.
+        binary = self.tmp / "rsync_3.2.7"
+        binary.write_text("#!/usr/bin/env bash\n" + script)
+        binary.chmod(0o755)
+        program = textwrap.dedent(
+            f"""
+            source {shlex.quote(str(HARNESS))}
+            rsync_reported_version {shlex.quote(str(binary))}
+            """
+        )
+        return subprocess.run(
+            ["bash", "-c", program], capture_output=True, text=True, check=False
+        )
+
+    def test_the_release_token_wins_over_the_protocol_one(self) -> None:
+        # "rsync  version 3.5.0  protocol version 32" says "version" twice.
+        result = self._probe(
+            'printf "%s\\n" "rsync  version 3.5.0  protocol version 32"\n'
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "3.5.0")
+
+    def test_a_banner_still_being_written_is_read_whole(self) -> None:
+        # rsync writes its banner in ~20 unbuffered write(2)s - MEASURED, 793
+        # bytes on 3.2.7 - so a reader that closes the pipe after line 1 kills
+        # the producer with SIGPIPE and, under `set -o pipefail`, the whole
+        # pipeline reports 141 for a binary that answered perfectly.
+        #
+        # The sleep is what makes that DETERMINISTIC. Without it the outcome is
+        # a race the producer usually wins: 20 small writes fit in the pipe
+        # buffer and complete before the reader exits, so a `| head -1` spelling
+        # passes this cell most of the time. MEASURED: mutating
+        # rsync_reported_version() to pipe through `head -n1` killed nothing
+        # until the producer was made to still be writing when the reader left.
+        script = 'printf "%s\\n" "rsync  version 3.2.7  protocol version 31"\n'
+        script += "sleep 0.5\n"
+        script += 'printf "%s\\n" "Copyright (C) 1996-2024 by Andrew Tridgell"\n'
+        result = self._probe(script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "3.2.7")
+
+    def test_a_binary_that_fails_reports_failure(self) -> None:
+        result = self._probe("exit 1\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+
+    def test_an_unparseable_banner_reports_failure(self) -> None:
+        result = self._probe('printf "%s\\n" "some other program"\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
 
 
 class BuildOldRsyncOracleTests(unittest.TestCase):
