@@ -2449,6 +2449,66 @@ mod module_access_tests {
         );
     }
 
+    /// A FILE refusal carries upstream's provenance envelope, not the rule.
+    ///
+    /// upstream: `filter_rule_err` renders through the `rule_text()` chokepoint
+    /// (`exclude.c:133-136`), and while `parse_filter_file` reads an
+    /// `exclude from` file `rule_src_file` is the file's GIVEN name and
+    /// `rule_src_line` counts PHYSICAL lines, comments and blanks included
+    /// (`exclude.c:1749-1761`). MEASURED against rsync 3.5.0 (task 1153): a
+    /// module whose `exclude from` file holds `- ` is refused with
+    /// `unexpected end of filter rule: <rule from FILE line 1>` at
+    /// `RERR_SYNTAX`. Only the TEXT is in scope here; the delivery shape
+    /// (@ERROR framing, exit 5 vs 12) is the iobuf work, tracked separately.
+    ///
+    /// The comment and blank line ahead of the bad rule are the counter's
+    /// probe: number the KEPT rules instead of the records and this reports
+    /// line 2, so the operator opens the wrong line of the file.
+    #[test]
+    fn exclude_from_refusal_names_the_file_and_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("excludes.txt");
+        fs::write(&file, "# comment\n\n+ good\n- \n").unwrap();
+        let error = build_daemon_filter_rules(&ModuleRuntime::from(ModuleDefinition {
+            exclude_from: Some(file.clone()),
+            ..Default::default()
+        }))
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "unexpected end of filter rule: <rule from {} line 4>",
+                file.display()
+            ),
+        );
+    }
+
+    /// The `include from` twin: both file parameters share the one provenance
+    /// path, and the envelope replaces the rule's text entirely.
+    #[test]
+    fn include_from_refusal_names_the_file_and_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("includes.txt");
+        fs::write(&file, "+ \n").unwrap();
+        let error = build_daemon_filter_rules(&ModuleRuntime::from(ModuleDefinition {
+            include_from: Some(file.clone()),
+            ..Default::default()
+        }))
+        .unwrap_err();
+        let message = error.to_string();
+        assert_eq!(
+            message,
+            format!(
+                "unexpected end of filter rule: <rule from {} line 1>",
+                file.display()
+            ),
+        );
+        assert!(
+            !message.contains("+ "),
+            "a file's contents must not be echoed: {message}"
+        );
+    }
+
     /// A LATER record carries its own prefix - the strip is re-run per record.
     ///
     /// upstream: `parse_filter_file` calls `parse_rule_tok` once per line
@@ -2570,6 +2630,38 @@ mod module_access_tests {
             error.to_string().contains("unexpected end of filter rule"),
             "unexpected message: {error}"
         );
+    }
+
+    /// A STRING parameter's refusal shows the operator's own text VERBATIM.
+    ///
+    /// upstream: `rule_text()` redacts only text that came out of a file's
+    /// contents (`TEXT_FROM_FILE`, `exclude.c:67-69,110-117`);
+    /// `rule_src_in_file` is 0 while `parse_filter_str` runs on the daemon's
+    /// string parameters (clientserver.c:933-952), so a bad `filter =` value
+    /// is echoed as typed with no `<rule from ...>` envelope. This is the
+    /// non-vacuity companion to the file cells above: a blanket "wrap
+    /// everything" implementation passes those and fails here.
+    #[test]
+    fn filter_string_refusal_shows_the_rule_verbatim() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            filter: vec!["-".to_string()],
+            ..Default::default()
+        });
+        let error = build_daemon_filter_rules(&module).unwrap_err();
+        assert_eq!(error.to_string(), "unexpected end of filter rule: -");
+    }
+
+    /// The same property on the old-prefix string path, which shares
+    /// `unexpected_end_of_filter_rule` with the file readers: its
+    /// [`filters::RuleSource::Argument`] arm is what keeps this verbatim.
+    #[test]
+    fn exclude_string_refusal_shows_the_token_verbatim() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            exclude: vec!["- ".to_string()],
+            ..Default::default()
+        });
+        let error = build_daemon_filter_rules(&module).unwrap_err();
+        assert_eq!(error.to_string(), "unexpected end of filter rule: - ");
     }
 
     /// The STRING parameters carry `XFLG_OLD_PREFIXES` too - and they are
@@ -3037,7 +3129,10 @@ mod module_access_tests {
         fs::write(&file, "*.tmp\n*.bak\n").unwrap();
 
         let patterns = read_patterns_from_file(&file).unwrap();
-        assert_eq!(patterns, vec!["*.tmp", "*.bak"]);
+        assert_eq!(
+            patterns,
+            vec![("*.tmp".to_owned(), 1), ("*.bak".to_owned(), 2)]
+        );
     }
 
     #[test]
@@ -3046,8 +3141,13 @@ mod module_access_tests {
         let file = dir.path().join("patterns.txt");
         fs::write(&file, "# comment\n*.tmp\n; another\n*.bak\n").unwrap();
 
+        // Comments keep their line slot: `rule_src_line` counts every record
+        // read (`exclude.c:1760-1761`), not every rule kept.
         let patterns = read_patterns_from_file(&file).unwrap();
-        assert_eq!(patterns, vec!["*.tmp", "*.bak"]);
+        assert_eq!(
+            patterns,
+            vec![("*.tmp".to_owned(), 2), ("*.bak".to_owned(), 4)]
+        );
     }
 
     #[test]
@@ -3057,7 +3157,10 @@ mod module_access_tests {
         fs::write(&file, "\n*.tmp\n\n*.bak\n").unwrap();
 
         let patterns = read_patterns_from_file(&file).unwrap();
-        assert_eq!(patterns, vec!["*.tmp", "*.bak"]);
+        assert_eq!(
+            patterns,
+            vec![("*.tmp".to_owned(), 2), ("*.bak".to_owned(), 4)]
+        );
     }
 
     /// A rule's trailing whitespace is PATTERN TEXT, not decoration.
@@ -3078,7 +3181,14 @@ mod module_access_tests {
         fs::write(&file, "a \nb\t\n *.log\n").unwrap();
 
         let patterns = read_patterns_from_file(&file).unwrap();
-        assert_eq!(patterns, vec!["a ", "b\t", " *.log"]);
+        assert_eq!(
+            patterns,
+            vec![
+                ("a ".to_owned(), 1),
+                ("b\t".to_owned(), 2),
+                (" *.log".to_owned(), 3)
+            ]
+        );
     }
 
     /// A whitespace-only record is a PATTERN, not a blank line.
@@ -3093,7 +3203,10 @@ mod module_access_tests {
         fs::write(&file, "   \n*.tmp\n").unwrap();
 
         let patterns = read_patterns_from_file(&file).unwrap();
-        assert_eq!(patterns, vec!["   ", "*.tmp"]);
+        assert_eq!(
+            patterns,
+            vec![("   ".to_owned(), 1), ("*.tmp".to_owned(), 2)]
+        );
     }
 
     /// `#`/`;` open a comment only in COLUMN ZERO.
@@ -3109,7 +3222,10 @@ mod module_access_tests {
         fs::write(&file, "#dropped\n  #kept\n ;kept\n;dropped\n").unwrap();
 
         let patterns = read_patterns_from_file(&file).unwrap();
-        assert_eq!(patterns, vec!["  #kept", " ;kept"]);
+        assert_eq!(
+            patterns,
+            vec![("  #kept".to_owned(), 2), (" ;kept".to_owned(), 3)]
+        );
     }
 
     /// A lone `\r` ends a record, and `\r\n` ends exactly one.
@@ -3124,8 +3240,18 @@ mod module_access_tests {
         let file = dir.path().join("patterns.txt");
         fs::write(&file, "a \r*.tmp\r\n*.bak\n").unwrap();
 
+        // Every terminator ends one record and one LINE: upstream bumps
+        // `rule_src_line` per record read, and a lone `\r` ends a record
+        // (`exclude.c:1760-1761,1774-1793`).
         let patterns = read_patterns_from_file(&file).unwrap();
-        assert_eq!(patterns, vec!["a ", "*.tmp", "*.bak"]);
+        assert_eq!(
+            patterns,
+            vec![
+                ("a ".to_owned(), 1),
+                ("*.tmp".to_owned(), 2),
+                ("*.bak".to_owned(), 3)
+            ]
+        );
     }
 
     #[test]
@@ -3162,7 +3288,7 @@ mod module_access_tests {
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
 
         let patterns = read_patterns_from_file(&link).expect("trusted-owner symlink is followed");
-        assert_eq!(patterns, vec!["keep".to_string()]);
+        assert_eq!(patterns, vec![("keep".to_string(), 1)]);
     }
 
     /// A plain file still reads identically after the routing change.
@@ -3178,7 +3304,10 @@ mod module_access_tests {
         std::fs::write(&file, "first\n; comment\nsecond\n").expect("write");
 
         let patterns = read_patterns_from_file(&file).expect("plain file reads");
-        assert_eq!(patterns, vec!["first".to_string(), "second".to_string()]);
+        assert_eq!(
+            patterns,
+            vec![("first".to_string(), 1), ("second".to_string(), 3)]
+        );
     }
 
     #[test]

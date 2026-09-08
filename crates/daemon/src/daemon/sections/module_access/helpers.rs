@@ -238,9 +238,10 @@ fn build_daemon_filter_rules(
     //           lp_include_from(i), rule_template(FILTRULE_INCLUDE),
     //           XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | XFLG_OLD_PREFIXES | XFLG_FATAL_ERRORS)
     if let Some(ref path) = module.include_from {
-        let patterns = read_patterns_from_file(path)?;
-        for pattern in patterns {
-            rules.push(old_prefix_record_rule(&pattern, true)?);
+        let name = path.display().to_string();
+        for (pattern, line) in read_patterns_from_file(path)? {
+            let source = filters::RuleSource::File { name: &name, line };
+            rules.push(old_prefix_record_rule(&pattern, true, &source)?);
         }
     }
 
@@ -256,9 +257,10 @@ fn build_daemon_filter_rules(
     // upstream: clientserver.c:946-948 - parse_filter_file(&daemon_filter_list, lp_exclude_from(i),
     //           rule_template(0), XFLG_ABS_IF_SLASH | XFLG_DIR2WILD3 | ...)
     if let Some(ref path) = module.exclude_from {
-        let patterns = read_patterns_from_file(path)?;
-        for pattern in patterns {
-            rules.push(old_prefix_record_rule(&pattern, false)?);
+        let name = path.display().to_string();
+        for (pattern, line) in read_patterns_from_file(path)? {
+            let source = filters::RuleSource::File { name: &name, line };
+            rules.push(old_prefix_record_rule(&pattern, false, &source)?);
         }
     }
 
@@ -335,10 +337,19 @@ fn clear_list_rule() -> FilterRuleWireFormat {
 /// reaches the caller's existing abort path, which refuses the module rather
 /// than silently dropping the rule - dropping it would serve every file the
 /// operator wrote that line to hide.
-fn unexpected_end_of_filter_rule(rule: &str) -> io::Error {
+///
+/// The rule text goes through [`filters::RuleSource::rule_text`], upstream's
+/// `rule_text()` chokepoint (`exclude.c:134`): text from a STRING parameter is
+/// the operator's own and stays verbatim (`rule_src_in_file == 0` while
+/// `parse_filter_str` runs on `lp_filter`/`lp_include`/`lp_exclude`,
+/// clientserver.c:933-952), while a record read out of an `include from` /
+/// `exclude from` FILE is replaced by `<rule from FILE line N>`
+/// (`exclude.c:1749-1754` sets `rule_src_file`/`rule_src_line`;
+/// `exclude.c:71-86` renders the description).
+fn unexpected_end_of_filter_rule(rule: &str, source: &filters::RuleSource<'_>) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
-        format!("unexpected end of filter rule: {rule}"),
+        format!("unexpected end of filter rule: {}", source.rule_text(rule)),
     )
 }
 
@@ -354,6 +365,7 @@ fn unexpected_end_of_filter_rule(rule: &str) -> io::Error {
 fn old_prefix_record_rule(
     record: &str,
     template_include: bool,
+    source: &filters::RuleSource<'_>,
 ) -> Result<FilterRuleWireFormat, io::Error> {
     let (pattern, is_include) = match old_prefix(record) {
         OldPrefix::Exclude => (&record[2..], false),
@@ -381,7 +393,7 @@ fn old_prefix_record_rule(
     // string-parameter twin lives in `push_old_prefix_token_rules` and is
     // pinned by `exclude_string_empty_after_the_prefix_is_refused`.
     if pattern.is_empty() {
-        return Err(unexpected_end_of_filter_rule(record));
+        return Err(unexpected_end_of_filter_rule(record, source));
     }
     Ok(build_pattern_rule(pattern, is_include))
 }
@@ -420,7 +432,12 @@ fn push_old_prefix_token_rules(
         if prefix == OldPrefix::MaybeClear && token.len() == 1 {
             rules.push(clear_list_rule());
         } else if token.is_empty() {
-            return Err(unexpected_end_of_filter_rule(rest));
+            // A STRING parameter is the operator's own text: upstream shows it
+            // verbatim (`TEXT_FROM_FILE` is false, `exclude.c:67-69,110-117`).
+            return Err(unexpected_end_of_filter_rule(
+                rest,
+                &filters::RuleSource::Argument,
+            ));
         } else {
             let is_include = match prefix {
                 OldPrefix::Exclude => false,
@@ -503,7 +520,12 @@ fn read_filter_file_contents(path: &Path) -> io::Result<String> {
 /// and `a `: upstream hides `a ` and serves `a`; oc trimmed the rule, hid `a`
 /// and served `a `. Both at exit 0, with no diagnostic - a silent divergence
 /// in which files the daemon exposes.
-fn read_patterns_from_file(path: &Path) -> Result<Vec<String>, io::Error> {
+/// Each pattern is paired with its 1-indexed PHYSICAL line: upstream's
+/// `rule_src_line` increments once per record read (`exclude.c:1760-1761`),
+/// before the comment/blank test, so comments and blank lines keep their slot
+/// and a bad rule after them is reported at the line the operator sees in an
+/// editor. That number feeds the `<rule from FILE line N>` provenance.
+fn read_patterns_from_file(path: &Path) -> Result<Vec<(String, usize)>, io::Error> {
     let content = read_filter_file_contents(path).map_err(|e| {
         io::Error::new(
             e.kind(),
@@ -512,10 +534,11 @@ fn read_patterns_from_file(path: &Path) -> Result<Vec<String>, io::Error> {
     })?;
 
     let patterns = filters::filter_file_records(&content)
+        .enumerate()
         // `true`: these two parameters are the non-word-split templates, so a
         // leading `;`/`#` is a comment (`exclude.c:1806`, `word_split ||`).
-        .filter(|line| filters::filter_file_line_is_rule(line, true))
-        .map(str::to_owned)
+        .filter(|(_, line)| filters::filter_file_line_is_rule(line, true))
+        .map(|(index, line)| (line.to_owned(), index + 1))
         .collect();
 
     Ok(patterns)
@@ -797,10 +820,14 @@ impl MalformedRule {
 /// (`exclude.c:133-137`); the modifier arm builds its own line at
 /// `exclude.c:1373-1378`.
 ///
-/// ⚠ SCOPE: what this change was measured on is the REFUSAL - whether the
-/// module is served - not the wording. The daemon's filter diagnostics also
-/// lack upstream's `<rule from FILE line N>` provenance envelope, which is
-/// task 1156 and deliberately NOT attempted here.
+/// These variants render the token VERBATIM, and that matches upstream: they
+/// are reached only from the `filter` STRING parameter, whose text is the
+/// operator's own configuration. Upstream's `rule_text()` chokepoint redacts
+/// only text that came out of a file's contents (`TEXT_FROM_FILE`,
+/// `exclude.c:67-69`), and `rule_src_in_file` is 0 while `parse_filter_str`
+/// runs on `lp_filter` (clientserver.c:933-935) - so no `<rule from ...>`
+/// envelope applies here. The FILE parameters' provenance lives in
+/// `unexpected_end_of_filter_rule` via [`filters::RuleSource`].
 impl std::fmt::Display for MalformedRule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
