@@ -504,8 +504,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         context,
         strategy,
         delta_signature.is_some(),
-        use_sparse_writes,
-        compress_enabled,
+        flags,
         append_offset,
         file_size,
     ) && iouring::try_dispatch(
