@@ -225,6 +225,82 @@ fn directory_only_wire_rule_still_rejects_a_smuggled_directory() {
 }
 
 #[test]
+fn daemon_rules_merged_into_the_chain_are_screened_out_of_the_recheck() {
+    // upstream: flist.c:1022 - `check_server_filter(&filter_list, ...)` runs
+    // the CLIENT's rules only; `daemon_filter_list` never joins that list. oc
+    // prepends the daemon rules to `filter_chain`, so the re-check must use
+    // the client-only view captured before the merge.
+    //
+    // MEASURED against rsync 3.5.0 (task 1167, p-risk-protect): a module with
+    // `filter = risk bar protect *` receiving a push of `src1` refuses that
+    // one file (`ERROR: daemon refused to receive file "src1"`, exit 23).
+    // Re-checking the merged chain instead aborted the whole session with
+    // RERR_UNSUPPORTED (exit 4) and skipped the deletion pass.
+    use protocol::filters::RuleType;
+
+    let mut config = test_config();
+    config.daemon_filter_rules = vec![
+        FilterRuleWireFormat {
+            rule_type: RuleType::Include,
+            pattern: "bar".into(),
+            ..FilterRuleWireFormat::default()
+        },
+        FilterRuleWireFormat {
+            rule_type: RuleType::Exclude,
+            pattern: "*".into(),
+            ..FilterRuleWireFormat::default()
+        },
+    ];
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+    ctx.apply_received_filter_rules(Vec::new())
+        .expect("daemon-only rules compile");
+    assert!(
+        !ctx.filter_chain.is_empty(),
+        "fixture must exercise the merged-chain branch, or the pin is vacuous"
+    );
+
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("src1".into(), 10, 0o644));
+
+    ctx.recheck_received_filter().expect(
+        "a daemon rule must not reject a received name here - its refusal is \
+         the per-file `daemon refused to receive file` check, not a session abort",
+    );
+}
+
+#[test]
+fn client_rules_still_reject_alongside_daemon_rules() {
+    // Non-vacuity companion: the client-only view is a real rule set, not a
+    // disabled re-check. With daemon rules present AND a client exclude, a
+    // smuggled client-excluded name still aborts.
+    use protocol::filters::RuleType;
+
+    let mut config = test_config();
+    config.daemon_filter_rules = vec![FilterRuleWireFormat {
+        rule_type: RuleType::Exclude,
+        pattern: "keepout".into(),
+        ..FilterRuleWireFormat::default()
+    }];
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+    ctx.apply_received_filter_rules(vec![FilterRuleWireFormat::exclude("*.log".to_owned())])
+        .expect("combined rules compile");
+
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("debug.log".into(), 20, 0o644));
+
+    let err = ctx.recheck_received_filter().unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    assert_eq!(
+        err.to_string(),
+        "ERROR: rejecting excluded file-list name: debug.log"
+    );
+}
+
+#[test]
 fn transfer_root_never_rejected() {
     // upstream: flist.c:1019 - the transfer root (`.`) is exempt from the
     // re-check even when a catch-all exclude would otherwise match it.

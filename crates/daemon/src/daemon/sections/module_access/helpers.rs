@@ -738,27 +738,50 @@ fn parse_daemon_filter_token(token: &str) -> Result<Option<FilterRuleWireFormat>
         });
     }
 
-    // upstream: exclude.c:1134-1178 - keyword-to-short-form mapping.
-    // (keyword, is_include, sender_side, receiver_side)
-    const KEYWORDS: &[(&str, bool, bool, bool)] = &[
-        ("exclude", false, false, false),
-        ("include", true, false, false),
-        ("hide", false, true, false),    // sender-side exclude
-        ("show", true, true, false),     // sender-side include
-        ("protect", false, false, true), // receiver-side exclude
-        ("risk", true, false, true),     // receiver-side include
+    // upstream: exclude.c:1134-1178 - keyword-to-short-form mapping;
+    // `hide`/`show` set FILTRULE_SENDER_SIDE (exclude.c:1345-1350),
+    // `protect`/`risk` FILTRULE_RECEIVER_SIDE (exclude.c:1351-1357).
+    // (keyword, is_include, sender_side)
+    const KEYWORDS: &[(&str, bool, bool)] = &[
+        ("exclude", false, false),
+        ("include", true, false),
+        ("hide", false, true),
+        ("show", true, true),
+        ("protect", false, false), // receiver-side upstream; see the drop below
+        ("risk", true, false),     // receiver-side upstream; see the drop below
     ];
 
-    for &(keyword, is_include, sender, receiver) in KEYWORDS {
+    for &(keyword, is_include, sender_side) in KEYWORDS {
         if let Some(pattern) = strip_keyword_prefix(token, keyword) {
             let pattern = pattern.trim();
             if pattern.is_empty() {
                 return Ok(None);
             }
-            let mut rule = build_pattern_rule(pattern, is_include);
-            rule.sender_side = sender;
-            rule.receiver_side = receiver;
-            return Ok(Some(rule));
+            // The side test happens HERE, at add time, never at match time.
+            // upstream: `add_rule` drops a rule whose side flags equal
+            // `am_sender ? FILTRULE_RECEIVER_SIDE : FILTRULE_SENDER_SIDE` when
+            // the parse passes XFLG_ANCHORED2ABS/XFLG_ABS_IF_SLASH
+            // (exclude.c:279-285), and every daemon module directive passes
+            // XFLG_ABS_IF_SLASH (clientserver.c:933-952). Those directives
+            // parse before `parse_arguments` runs (clientserver.c:933 vs
+            // :1160), so `am_sender` is still its static 0 (options.c:97)
+            // WHATEVER role the transfer later takes: `hide`/`show` are
+            // dropped, `protect`/`risk` are kept.
+            //
+            // The kept rules then match SIDE-BLIND. The only match-time side
+            // mechanism upstream has is `elide` (exclude.c:1010), and it is
+            // armed exclusively by `send_rules` (exclude.c:1912) - the daemon
+            // list is never transmitted, so its rules keep `elide = 0`
+            // (exclude.c:324) forever. A kept `protect` therefore hides files
+            // from a pulling client and refuses incoming writes alike, which
+            // is why no side flag goes on the wire rule here: copying the
+            // receiver-side bit made the match-time DecisionContext test skip
+            // the rule wherever the role disagreed, serving what upstream
+            // hides.
+            if sender_side {
+                return Ok(None);
+            }
+            return Ok(Some(build_pattern_rule(pattern, is_include)));
         }
     }
 

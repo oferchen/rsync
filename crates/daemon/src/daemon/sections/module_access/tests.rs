@@ -2591,15 +2591,17 @@ mod module_access_tests {
             ..Default::default()
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
-        assert_eq!(rules.len(), 2);
-        assert_eq!(rules[0].pattern, "*.log");
+        // Mis-routed through the old-prefix stripper, BOTH lines would survive
+        // as literal excludes of `hide *.log` / `protect secret`. Parsed as
+        // keywords, `hide` is dropped at add time (exclude.c:279-285 with
+        // am_sender still 0) and `protect` is kept side-blind.
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].pattern, "secret");
         assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
-        assert!(rules[0].sender_side, "hide must be sender-side");
-        assert!(!rules[0].receiver_side);
-        assert_eq!(rules[1].pattern, "secret");
-        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Exclude);
-        assert!(rules[1].receiver_side, "protect must be receiver-side");
-        assert!(!rules[1].sender_side);
+        assert!(
+            !rules[0].sender_side && !rules[0].receiver_side,
+            "a kept daemon rule matches side-blind"
+        );
     }
 
     /// A token left empty by the strip is upstream's fatal syntax error.
@@ -2890,44 +2892,53 @@ mod module_access_tests {
         assert_eq!(rule.pattern, "*.rs");
     }
 
+    /// `hide`/`show` are dropped when the daemon list is BUILT, not kept for a
+    /// match-time side test: `add_rule` frees a sender-side rule under
+    /// XFLG_ABS_IF_SLASH with `am_sender` still 0 (exclude.c:279-285;
+    /// clientserver.c:933 parses the directives 227 lines before
+    /// parse_arguments at :1160 can set `am_sender`).
+    ///
+    /// MEASURED against rsync 3.5.0: `filter = hide bar` on a module holding
+    /// `bar` + `keep` serves BOTH files upstream; oc served only `keep` while
+    /// it kept the rule and applied it at match time.
     #[test]
-    fn parse_daemon_filter_token_hide_keyword() {
-        // upstream: hide -> sender-side exclude
-        let rule = accepted_rule("hide *.secret");
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
-        assert_eq!(rule.pattern, "*.secret");
-        assert!(rule.sender_side);
-        assert!(!rule.receiver_side);
+    fn parse_daemon_filter_token_hide_keyword_dropped_at_add_time() {
+        assert!(is_skipped("hide *.secret"));
     }
 
     #[test]
-    fn parse_daemon_filter_token_show_keyword() {
-        // upstream: show -> sender-side include
-        let rule = accepted_rule("show *.pub");
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
-        assert_eq!(rule.pattern, "*.pub");
-        assert!(rule.sender_side);
-        assert!(!rule.receiver_side);
+    fn parse_daemon_filter_token_show_keyword_dropped_at_add_time() {
+        assert!(is_skipped("show *.pub"));
     }
 
+    /// `protect`/`risk` are KEPT and side-BLIND. upstream keeps a
+    /// receiver-side rule at add time (exclude.c:279-285 drops only the
+    /// sender side) and never side-tests the daemon list at match time - the
+    /// only match-time side mechanism, `elide` (exclude.c:1010), is armed
+    /// exclusively by `send_rules` (exclude.c:1912) and the daemon list is
+    /// never transmitted.
+    ///
+    /// MEASURED against rsync 3.5.0: `filter = protect bar` HIDES `bar` from
+    /// a pulling client's listing - a receiver-side rule enforced while the
+    /// daemon is the SENDER. Copying the receiver-side bit onto the wire rule
+    /// made oc's match-time DecisionContext skip it there and serve the file
+    /// the operator wrote the rule to protect.
     #[test]
-    fn parse_daemon_filter_token_protect_keyword() {
-        // upstream: protect -> receiver-side exclude
+    fn parse_daemon_filter_token_protect_keyword_is_side_blind() {
         let rule = accepted_rule("protect *.conf");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
         assert_eq!(rule.pattern, "*.conf");
         assert!(!rule.sender_side);
-        assert!(rule.receiver_side);
+        assert!(!rule.receiver_side);
     }
 
     #[test]
-    fn parse_daemon_filter_token_risk_keyword() {
-        // upstream: risk -> receiver-side include
+    fn parse_daemon_filter_token_risk_keyword_is_side_blind() {
         let rule = accepted_rule("risk *.tmp");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
         assert_eq!(rule.pattern, "*.tmp");
         assert!(!rule.sender_side);
-        assert!(rule.receiver_side);
+        assert!(!rule.receiver_side);
     }
 
     #[test]
