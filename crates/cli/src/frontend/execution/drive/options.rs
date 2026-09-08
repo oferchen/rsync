@@ -252,21 +252,17 @@ where
                 return Err(0);
             }
 
+            // Apply the fully-resolved per-flag levels to the thread-local
+            // VerbosityConfig. Resolving first is what lets composite tokens
+            // like "all" and "none" take effect; a token-by-token apply
+            // cannot decode them.
+            // upstream: options.c set_output_verbosity / parse_output_words
+            settings.apply_to_thread_local();
+
             let flags: Vec<OsString> = settings
                 .iter_enabled_flags()
                 .map(|(name, level)| OsString::from(format!("{name}{level}")))
                 .collect();
-
-            for debug_arg in debug_args {
-                if let Some(s) = debug_arg.to_str() {
-                    for token in s.split(',') {
-                        let token = token.trim();
-                        if !token.is_empty() && token != "help" {
-                            let _ = logging::apply_debug_flag(token);
-                        }
-                    }
-                }
-            }
 
             Ok(flags)
         }
