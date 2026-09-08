@@ -42,6 +42,79 @@ fn landlock_root_for_dest(dest: &std::path::Path) -> Option<std::path::PathBuf> 
         .or_else(|| dest.parent().and_then(|parent| parent.canonicalize().ok()))
 }
 
+/// Surfaces the outcome of the `--server` receiver's Landlock install through
+/// the existing logging funnel; the transfer continues in every case.
+///
+/// Landlock is oc-only defence-in-depth (upstream rsync has no counterpart),
+/// so there is no upstream message to mirror - but the routing rides the
+/// funnel every other diagnostic uses. The classes, and why each sits at its
+/// gate (task 1154 decided degrade-gracefully-but-visibly; the abort arm this
+/// call site used to take was explicitly rejected):
+///
+/// - **Genuine install failure** (`Error`, and `Enforced(NotEnforced)`, which
+///   is an install the kernel accepted and then applied nothing of): a
+///   defence layer silently vanished on a host that advertised it, so it is a
+///   [`logging::warn_log!`] - upstream's `FWARNING` class, dispatched by
+///   `rwrite()` (upstream: log.c:341) at every verbosity, exactly like the
+///   receiver's lost-anchor warning
+///   (`transfer/src/receiver/transfer/setup/sandbox.rs`).
+/// - **Availability degradation** (`Enforced(PartiallyEnforced)`): the normal
+///   state on 5.13-6.6 kernels, where BestEffort drops the rights the ABI
+///   lacks. Warning on every transfer would be noise, so it is
+///   [`logging::debug_log!`] at `Recv` 1, which `-vvv` reaches
+///   (`debug_verbosity[3]` sets RECV to 1, upstream: options.c:248) - the
+///   same gate the receiver sandbox's expected soft-failures use.
+/// - **Availability race** (`Unavailable` after a positive [`is_supported`]
+///   probe - the stub never gets here because its probe returns `false`):
+///   anomalous like a failed install, warned like one; matches the daemon
+///   site's arm in `daemon/src/daemon/sections/module_access/transfer/sandbox.rs`.
+/// - **Success** (`Enforced(FullyEnforced)`): debug at the same `Recv` 1
+///   gate, so `-vvv` can tell "engaged" from "skipped" without adding noise
+///   at lower verbosity.
+///
+/// [`is_supported`]: fast_io::landlock::is_supported
+fn surface_landlock_outcome(
+    outcome: &fast_io::landlock::LandlockOutcome,
+    root: &std::path::Path,
+    root_count: usize,
+) {
+    use fast_io::landlock::{EnforcementStatus, LandlockOutcome};
+
+    match outcome {
+        LandlockOutcome::Enforced(EnforcementStatus::FullyEnforced) => {
+            logging::debug_log!(
+                Recv,
+                1,
+                "landlock: fully enforced over {root_count} root(s)"
+            );
+        }
+        LandlockOutcome::Enforced(EnforcementStatus::PartiallyEnforced) => {
+            logging::debug_log!(
+                Recv,
+                1,
+                "landlock: partially enforced over {root_count} root(s) - this kernel's Landlock ABI lacks some requested rights; SEC-1 *at* helpers back the rest"
+            );
+        }
+        LandlockOutcome::Enforced(EnforcementStatus::NotEnforced) => {
+            logging::warn_log!(
+                "landlock: ruleset accepted but NOT enforced for root {}; continuing with SEC-1 *at* helpers as the sole defense",
+                root.display()
+            );
+        }
+        LandlockOutcome::Unavailable => {
+            logging::warn_log!(
+                "landlock: probe positive but the kernel reported it unavailable; continuing with SEC-1 *at* helpers as the sole defense"
+            );
+        }
+        LandlockOutcome::Error(err) => {
+            logging::warn_log!(
+                "landlock: setup failed for root {}: {err}; continuing with SEC-1 *at* helpers as the sole defense",
+                root.display()
+            );
+        }
+    }
+}
+
 /// Converts the client's forwarded `--timeout=N` into this server process's
 /// effective I/O timeout in seconds, or `None` for "no timeout".
 ///
@@ -560,11 +633,12 @@ where
     //
     // Apply only when the receiver actually has a destination root to confine
     // to: the sender role and stat-only invocations have no write target, and
-    // engaging an empty allowlist would deny their reads. Sandbox failures
-    // surface as Unavailable on pre-5.13 kernels (SEC-1 *at* helpers remain
-    // the sole defense) and Error on a kernel that advertised support but
-    // returned an unexpected status; the latter is treated as a hard refusal
-    // because the intended sandbox did not engage.
+    // engaging an empty allowlist would deny their reads. Landlock is
+    // defence-in-depth here: every outcome degrades gracefully to the SEC-1
+    // *at* helpers, but a failed or weakened install is surfaced through
+    // `surface_landlock_outcome` rather than silently dropped or (as an
+    // earlier revision did) escalated into a hard refusal - the abort arm
+    // was explicitly rejected in favour of degrade-visibly (task 1154).
     if role == ServerRole::Receiver {
         // upstream: main.c:1241 - the SERVER receiver runs `check_alt_basis_dirs()`
         // once the destination is known. This is the push direction: the client
@@ -582,8 +656,20 @@ where
         if let Some(dest) = config.args.last() {
             let dest_path = std::path::PathBuf::from(dest);
             if let Some(root) = landlock_root_for_dest(&dest_path) {
-                use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
-                if is_supported() {
+                use fast_io::landlock::{is_supported, restrict_to_module_paths};
+                if !is_supported() {
+                    // AVAILABILITY, not failure: pre-5.13 kernels, a build
+                    // without the `landlock` feature, and every non-Linux
+                    // target land here. It is the normal state on those
+                    // hosts, so a warning would be noise - debug only, at
+                    // the level `-vvv` (debug_verbosity[3] sets RECV to 1)
+                    // or `--debug=recv` reaches.
+                    logging::debug_log!(
+                        Recv,
+                        1,
+                        "landlock: unavailable on this kernel or build; SEC-1 *at* helpers remain the sole defense"
+                    );
+                } else {
                     let canonical_root = root.clone();
                     let mut allowed = vec![root];
 
@@ -625,17 +711,8 @@ where
 
                     let allowed_refs: Vec<&std::path::Path> =
                         allowed.iter().map(|p| p.as_path()).collect();
-                    match restrict_to_module_paths(&allowed_refs) {
-                        LandlockOutcome::Enforced(_) | LandlockOutcome::Unavailable => {}
-                        LandlockOutcome::Error(e) => {
-                            write_server_error(
-                                stderr,
-                                program_brand,
-                                format!("landlock sandbox engage failed: {e}"),
-                            );
-                            return 1;
-                        }
-                    }
+                    let outcome = restrict_to_module_paths(&allowed_refs);
+                    surface_landlock_outcome(&outcome, &canonical_root, allowed_refs.len());
                 }
             }
         }
@@ -1161,6 +1238,161 @@ mod keep_dirlink_target_tests {
         assert!(
             out.contains(&canon_outside),
             "a nested kept-dirlink target must be allowlisted: {out:?}"
+        );
+    }
+}
+
+// task 1154: a failed Landlock install degrades gracefully but VISIBLY. Each
+// class below asserts its message at the intended gate AND its absence below
+// it, by exact event count rather than substring presence - a `contains()`
+// over a joined log cannot tell one emission from two, and cannot prove the
+// below-gate arm emitted nothing at all.
+//
+// Soundness: `logging` state is thread-local and nextest runs one process per
+// test, so each test's `init` + `drain_events` cannot observe a sibling.
+#[cfg(test)]
+mod landlock_surfacing_tests {
+    use std::io;
+    use std::path::Path;
+
+    use fast_io::landlock::{EnforcementStatus, LandlockOutcome};
+    use logging::{DebugFlag, DiagnosticEvent, LogCode, VerbosityConfig, drain_events, init};
+
+    use super::surface_landlock_outcome;
+
+    fn landlock_events(verbose_level: u8, outcome: &LandlockOutcome) -> Vec<DiagnosticEvent> {
+        init(VerbosityConfig::from_verbose_level(verbose_level));
+        drain_events();
+        surface_landlock_outcome(outcome, Path::new("/srv/dest"), 1);
+        drain_events()
+    }
+
+    fn count_warnings(events: &[DiagnosticEvent], needle: &str) -> usize {
+        events
+            .iter()
+            .filter(|event| match event {
+                DiagnosticEvent::Info { code, message, .. } => {
+                    *code == LogCode::Warning && message.contains(needle)
+                }
+                DiagnosticEvent::Debug { .. } => false,
+            })
+            .count()
+    }
+
+    fn count_recv1_debug(events: &[DiagnosticEvent], needle: &str) -> usize {
+        events
+            .iter()
+            .filter(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag,
+                    level,
+                    message,
+                    ..
+                } => *flag == DebugFlag::Recv && *level == 1 && message.contains(needle),
+                DiagnosticEvent::Info { .. } => false,
+            })
+            .count()
+    }
+
+    /// ERROR class: a genuine install failure is a warning, and a warning is
+    /// not verbosity-gated - it must appear exactly once at verbosity 0, the
+    /// level the pre-fix abort arm never let the operator see anything at.
+    #[test]
+    fn a_failed_install_warns_once_at_zero_verbosity() {
+        let outcome = LandlockOutcome::Error(io::Error::other("planted failure"));
+        let events = landlock_events(0, &outcome);
+
+        assert_eq!(
+            count_warnings(&events, "landlock: setup failed for root /srv/dest"),
+            1,
+            "a failed Landlock install must warn exactly once, got: {events:?}"
+        );
+        assert_eq!(
+            events.len(),
+            1,
+            "the failure arm must emit nothing besides its warning: {events:?}"
+        );
+    }
+
+    /// ERROR class, sibling producer: a ruleset the kernel accepted but did
+    /// not enforce is a vanished defence layer, warned like a failed install.
+    #[test]
+    fn a_not_enforced_ruleset_warns_once_at_zero_verbosity() {
+        let outcome = LandlockOutcome::Enforced(EnforcementStatus::NotEnforced);
+        let events = landlock_events(0, &outcome);
+
+        assert_eq!(
+            count_warnings(&events, "NOT enforced for root /srv/dest"),
+            1,
+            "an unenforced ruleset must warn exactly once, got: {events:?}"
+        );
+    }
+
+    /// ERROR-adjacent: `Unavailable` here means the probe said yes and the
+    /// install then said no - an anomaly, not the normal old-kernel state
+    /// (which never reaches the install; see the `!is_supported()` arm).
+    #[test]
+    fn an_unavailable_race_warns_once_at_zero_verbosity() {
+        let events = landlock_events(0, &LandlockOutcome::Unavailable);
+
+        assert_eq!(
+            count_warnings(&events, "probe positive"),
+            1,
+            "the probe/install race must warn exactly once, got: {events:?}"
+        );
+    }
+
+    /// AVAILABILITY class: partial enforcement is the expected state on a
+    /// 5.13-6.6 kernel, so it must be silent below the debug gate and appear
+    /// exactly once at it (`-vvv` sets RECV to 1; `-vv` does not).
+    #[test]
+    fn partial_enforcement_is_debug_gated() {
+        let outcome = LandlockOutcome::Enforced(EnforcementStatus::PartiallyEnforced);
+
+        let below = landlock_events(2, &outcome);
+        assert!(
+            below.is_empty(),
+            "partial enforcement is availability, not failure - it must emit \
+             nothing below the recv debug gate, got: {below:?}"
+        );
+
+        let at_gate = landlock_events(3, &outcome);
+        assert_eq!(
+            count_recv1_debug(&at_gate, "partially enforced over 1 root(s)"),
+            1,
+            "partial enforcement must surface exactly once at -vvv, got: {at_gate:?}"
+        );
+        assert_eq!(
+            count_warnings(&at_gate, "landlock"),
+            0,
+            "partial enforcement must never escalate to a warning: {at_gate:?}"
+        );
+    }
+
+    /// Success control: full enforcement warns nowhere and rides the same
+    /// debug gate, so the warning assertions above cannot be satisfied by an
+    /// unconditional emitter.
+    #[test]
+    fn full_enforcement_never_warns_and_is_debug_gated() {
+        let outcome = LandlockOutcome::Enforced(EnforcementStatus::FullyEnforced);
+
+        let below = landlock_events(2, &outcome);
+        assert!(
+            below.is_empty(),
+            "success must be silent below the recv debug gate, got: {below:?}"
+        );
+
+        let at_gate = landlock_events(3, &outcome);
+        assert_eq!(
+            count_recv1_debug(&at_gate, "fully enforced over 1 root(s)"),
+            1,
+            "success must be visible at -vvv so 'engaged' and 'skipped' are \
+             distinguishable, got: {at_gate:?}"
+        );
+        assert_eq!(
+            count_warnings(&at_gate, "landlock"),
+            0,
+            "success must never warn: {at_gate:?}"
         );
     }
 }
