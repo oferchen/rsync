@@ -67,6 +67,7 @@ impl<'a> CopyContext<'a> {
             io_errors_occurred: false,
             io_error_delete_warning_emitted: false,
             source_read_error: false,
+            source_read_events: 0,
             iconv_conversion_error: false,
             unsupported_operation_skipped: false,
             sender_remove_error: false,
@@ -582,6 +583,17 @@ impl<'a> CopyContext<'a> {
     pub(super) fn record_source_read_error(&mut self) {
         self.source_read_error = true;
         self.io_errors_occurred = true;
+        self.source_read_events += 1;
+    }
+
+    /// Monotonic count of short-source-read reports. A transfer pass snapshots
+    /// it before copying and compares after: a difference means THIS pass read
+    /// a source that ended early, so its staged result is inconsistent and the
+    /// pass must be discarded and redone. The sticky
+    /// [`source_read_error_occurred`](Self::source_read_error_occurred) flag
+    /// cannot carry that per-pass signal once any earlier file has set it.
+    pub(in crate::local_copy) const fn source_read_events(&self) -> u64 {
+        self.source_read_events
     }
 
     /// Reports whether a short source read must force `RERR_PARTIAL` (23).

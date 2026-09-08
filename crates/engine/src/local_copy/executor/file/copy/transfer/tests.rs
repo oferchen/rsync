@@ -797,3 +797,229 @@ fn delta_copy_of_a_source_at_its_declared_length_moves_all_of_it() {
         "a delta copy of a source that matched its declared length was reported as short"
     );
 }
+
+/// Observer that rewrites the source file mid-copy, from inside the copy
+/// loop's own progress callback.
+///
+/// The loop notifies progress between chunk reads, so a rewrite fired from
+/// the callback lands exactly where a concurrent writer's truncation would:
+/// after some pre-change bytes have already been staged, before the reader
+/// reaches the (now missing) rest. This pins the shrink-mid-read race with no
+/// threads, no sleeps, and no timing window.
+///
+/// Each schedule step is `(threshold, replacement)`: when a pass's progress
+/// reaches the threshold, the source is atomically replaced (truncate +
+/// rewrite) and the schedule advances, so consecutive transfer passes can be
+/// made to shrink the source once each. The step count consumed is therefore
+/// a direct count of how many passes read far enough to trigger a shrink.
+struct ShrinkingSourceObserver {
+    source: std::path::PathBuf,
+    steps: Vec<(u64, Vec<u8>)>,
+    fired: usize,
+    records: Vec<LocalCopyRecord>,
+}
+
+impl LocalCopyRecordHandler for ShrinkingSourceObserver {
+    fn handle(&mut self, record: LocalCopyRecord) {
+        self.records.push(record);
+    }
+
+    fn handle_progress(&mut self, progress: LocalCopyProgress<'_>) {
+        if let Some((threshold, replacement)) = self.steps.get(self.fired)
+            && progress.bytes_transferred() >= *threshold
+        {
+            fs::write(&self.source, replacement).expect("shrink source mid-copy");
+            self.fired += 1;
+        }
+    }
+}
+
+/// Deterministic content for the shrink fixtures: `tag` keeps the pre- and
+/// post-shrink generations byte-distinguishable at every offset.
+fn patterned(len: usize, tag: u8) -> Vec<u8> {
+    (0..len)
+        .map(|i| (i.wrapping_mul(31) % 251) as u8 ^ tag)
+        .collect()
+}
+
+/// Drives `execute_transfer` (the redo-owning wrapper) over a fresh
+/// destination with the given shrink schedule and returns
+/// `(result, fired, records, read_error_flag)`.
+fn run_shrinking_transfer(
+    temp: &TempDir,
+    initial: &[u8],
+    steps: Vec<(u64, Vec<u8>)>,
+) -> (
+    Result<(), crate::local_copy::LocalCopyError>,
+    usize,
+    Vec<LocalCopyRecord>,
+    bool,
+) {
+    let source = temp.path().join("src.bin");
+    let destination = temp.path().join("dst.bin");
+    fs::write(&source, initial).expect("write source");
+    let recorded = fs::metadata(&source).expect("stat source");
+
+    let mut observer = ShrinkingSourceObserver {
+        source: source.clone(),
+        steps,
+        fired: 0,
+        records: Vec::new(),
+    };
+
+    let mode = LocalCopyExecution::Apply;
+    let mut context = CopyContext::new(
+        mode,
+        LocalCopyOptions::default(),
+        Some(&mut observer),
+        temp.path().to_path_buf(),
+    );
+
+    // `--no-whole-file`, the measured arm: the userspace read loop is the
+    // mover, exactly as in the live harness (the kernel `copy_file_range`
+    // tier is gated on `whole_file_enabled`).
+    let flags = TransferFlags {
+        whole_file_enabled: false,
+        ..plain_flags()
+    };
+
+    let result = super::execute_transfer(
+        &mut context,
+        &source,
+        &destination,
+        &recorded,
+        MetadataOptions::default(),
+        Path::new("src.bin"),
+        None,
+        false,
+        recorded.file_type(),
+        None,
+        flags,
+        mode,
+        None,
+        None,
+    );
+
+    let read_error = context.source_read_error_occurred();
+    drop(context);
+    (result, observer.fired, observer.records, read_error)
+}
+
+/// Sizes for the shrink-redo fixtures. The copy buffer is 128 KiB
+/// (`COPY_BUFFER_SIZE`), so a 4 MiB source crosses the 1 MiB shrink threshold
+/// mid-loop with plenty of chunks on either side.
+const SHRINK_INITIAL_LEN: usize = 4 * 1024 * 1024;
+const SHRINK_TRIGGER: u64 = 1024 * 1024;
+const SHRINK_NEW_LEN: usize = 512 * 1024;
+
+/// A source that shrinks mid-read must land a destination consistent with the
+/// post-shrink source, not the staged prefix of the pre-shrink content.
+///
+/// upstream: a source read error corrupts the whole-file checksum
+/// (match.c:454-463), the receiver discards the temp file and queues a
+/// phase-2 resend (receiver.c:1318,1355-1358 MSG_REDO), and the resend
+/// re-opens and re-fstats the shrunken file (sender.c:728-760), landing a
+/// consistent copy. Measured on rsync 3.5.0: dest == post-shrink source,
+/// exit 23, one `read errors mapping` line. Without the redo the local
+/// executor published the staged partial: a consistent prefix plus a stale
+/// tail of pre-shrink bytes past the new EOF.
+#[test]
+fn shrink_mid_read_redo_lands_a_consistent_destination() {
+    let temp = TempDir::new().expect("tempdir");
+    let initial = patterned(SHRINK_INITIAL_LEN, 0);
+    let replacement = patterned(SHRINK_NEW_LEN, 0x5a);
+
+    let (result, fired, records, read_error) =
+        run_shrinking_transfer(&temp, &initial, vec![(SHRINK_TRIGGER, replacement.clone())]);
+
+    result.expect("a shrinking source must not abort the transfer");
+    assert_eq!(fired, 1, "the shrink schedule fired more than once");
+
+    let dest_bytes = fs::read(temp.path().join("dst.bin")).expect("read destination");
+    assert_eq!(
+        dest_bytes.len(),
+        replacement.len(),
+        "destination length disagrees with the post-shrink source: a stale tail of \
+         pre-shrink bytes was published instead of being discarded and redone"
+    );
+    assert_eq!(
+        dest_bytes, replacement,
+        "destination bytes disagree with the post-shrink source"
+    );
+    assert!(
+        read_error,
+        "the short source read must still force RERR_PARTIAL (23) even though the redo landed"
+    );
+    // Only the redo pass commits, so exactly one record is emitted; the
+    // discarded pass records nothing.
+    assert_eq!(
+        records.len(),
+        1,
+        "expected exactly one committed record: {records:?}"
+    );
+}
+
+/// The redo is bounded to ONE retry, like upstream's `redoing` flag: a source
+/// that shrinks again during the retry is reported and discarded, never
+/// re-queued.
+///
+/// upstream: the resend arrives with `FLAG_FILE_SENT` set so the receiver
+/// runs it with `redoing = 1` (receiver.c:933-942); a second verification
+/// failure logs `FERROR_XFER` and the `MSG_REDO` request is guarded by
+/// `if (!redoing)` (receiver.c:1333,1355-1358), so nothing retries a third
+/// time and the unlinked temp file leaves the destination untouched.
+///
+/// The schedule holds exactly two shrink steps. A third pass would find no
+/// step, complete cleanly, and CREATE the destination - so the
+/// destination-absence assertion fails if the bound is ever removed, and the
+/// step count fails if fewer than two passes ran.
+#[test]
+fn shrink_redo_is_bounded_to_one_retry() {
+    let temp = TempDir::new().expect("tempdir");
+    let initial = patterned(SHRINK_INITIAL_LEN, 0);
+    let second = patterned(SHRINK_NEW_LEN, 0x5a);
+    let third = patterned(64 * 1024, 0xc3);
+
+    let (result, fired, records, read_error) = run_shrinking_transfer(
+        &temp,
+        &initial,
+        vec![(SHRINK_TRIGGER, second), (128 * 1024, third)],
+    );
+
+    result.expect("a doubly-shrinking source must not abort the transfer");
+    assert_eq!(fired, 2, "expected exactly two passes to read the source");
+    assert!(
+        !temp.path().join("dst.bin").exists(),
+        "the second failed pass must discard its staged result, not publish it \
+         (and a third pass must never run)"
+    );
+    assert!(read_error, "the short reads must force RERR_PARTIAL (23)");
+    assert!(
+        records.is_empty(),
+        "no pass committed, so no record may be emitted: {records:?}"
+    );
+}
+
+/// Non-vacuity companion: the identical fixture with a schedule that never
+/// fires must run a single clean pass - no redo, no read-error flag, one
+/// committed record, destination byte-identical to the source. The grow arm's
+/// companion is `copy_is_bounded_by_the_opened_file_not_the_recorded_length`
+/// above: growth never trips the short-read counter, so it never redoes.
+#[test]
+fn a_stable_source_copies_in_one_pass_with_no_redo() {
+    let temp = TempDir::new().expect("tempdir");
+    let initial = patterned(SHRINK_INITIAL_LEN, 0);
+
+    let (result, fired, records, read_error) = run_shrinking_transfer(&temp, &initial, Vec::new());
+
+    result.expect("clean transfer");
+    assert_eq!(fired, 0);
+    assert!(!read_error, "a stable source recorded a read error");
+    let dest_bytes = fs::read(temp.path().join("dst.bin")).expect("read destination");
+    assert_eq!(dest_bytes, initial, "clean copy is not byte-identical");
+    assert_eq!(
+        records.len(),
+        1,
+        "clean copy must commit exactly one record"
+    );
+}

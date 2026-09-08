@@ -622,6 +622,9 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // non-inplace here keeps matched-block bytes flowing to the writer instead of
     // being skipped against an empty file.
     let basis_separate_from_writer = delta_basis_override.is_some();
+    // Snapshot the short-read counter so the check below sees only THIS
+    // pass's report, not one an earlier file already recorded.
+    let source_read_events_before = context.source_read_events();
     let copy_result = context.copy_file_contents(
         &mut reader,
         &mut writer,
@@ -657,6 +660,34 @@ pub(in crate::local_copy) fn execute_transfer_once(
 
     let outcome = match copy_result {
         Ok(outcome) => {
+            // A short source read during this pass means the staged bytes end
+            // in a stale tail: the copy stopped at the shrunken source's new
+            // EOF but everything already written came from the longer
+            // pre-shrink content. Committing that publishes an inconsistent
+            // destination, so discard the staged result exactly like the
+            // error path below and hand the file back to `execute_transfer`
+            // for one bounded redo. The diagnostic and the exit-23 flags were
+            // already recorded by `note_short_source_read`, and they stay
+            // recorded whether or not the redo lands.
+            //
+            // upstream: the sender corrupts the whole-file checksum on a read
+            // error (match.c:454-463), so the receiver fails verification,
+            // unlinks the temp file (receiver.c:1318 `do_unlink_at(fnametmp)`)
+            // and requests the phase-2 resend (receiver.c:1355-1358).
+            if context.source_read_events() != source_read_events_before {
+                drop(writer_for_metadata.take());
+                if let Some(guard) = guard.take() {
+                    guard.discard();
+                }
+                // Mirror the error path: a partial-mode discard() finalised
+                // the temp onto its partial destination (upstream's retained
+                // partial, receiver.c:1301-1316); a plain new file is removed.
+                if existing_metadata.is_none() && !partial_enabled {
+                    remove_incomplete_destination(destination);
+                }
+                return Ok(TransferOutcome::SourceChanged);
+            }
+
             if let Err(timeout_error) = context.enforce_timeout() {
                 drop(writer_for_metadata.take());
                 if let Some(guard) = guard.take() {

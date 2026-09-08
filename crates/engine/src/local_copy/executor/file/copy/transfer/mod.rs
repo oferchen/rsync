@@ -42,6 +42,18 @@ pub(in crate::local_copy) enum TransferOutcome {
     /// must rerun the file as an ordinary delta transfer.
     /// upstream: receiver.c:1358 `send_msg_int(MSG_REDO, ndx)`.
     VerificationFailed,
+    /// The source ended before the length this pass was sized from - it
+    /// shrank mid-read - so the staged result carries a stale tail and was
+    /// discarded instead of committed. The caller must rerun the file once
+    /// against the source as it is now.
+    ///
+    /// upstream reaches the same redo through the checksum: a source read
+    /// error makes the sender deliberately corrupt the whole-file checksum
+    /// (match.c:454-463), the receiver fails verification, unlinks the temp
+    /// file and queues the file for the phase-2 resend
+    /// (receiver.c:1318,1325-1362 `send_msg_int(MSG_REDO, ndx)`), and the
+    /// resend re-opens and re-fstats the shrunken file (sender.c:728-760).
+    SourceChanged,
 }
 
 /// Boolean flags controlling file transfer behavior.
