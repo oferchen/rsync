@@ -6955,3 +6955,71 @@ fn the_recursive_walk_still_expands_the_same_fixture() {
         ]
     );
 }
+
+#[test]
+fn consecutive_entries_in_one_directory_share_a_dirname_allocation() {
+    // Non-vacuity guard for the sender-side `lastdir` cache
+    // (upstream: flist.c:1547-1557, flist.c:1683-1684). `FileEntry::new_file`
+    // derives a FRESH `Arc<Path>` per entry, so without the cache in
+    // `push_file_item` each of these three entries would own a separate copy
+    // of "a/b" and the pointer-equality assertions below would fail.
+    let handshake = test_handshake();
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
+
+    for name in ["a/b/one", "a/b/two", "a/b/three"] {
+        ctx.push_file_item(
+            protocol::flist::FileEntry::new_file(name.into(), 1, 0o644),
+            PathBuf::from(name),
+        );
+    }
+
+    let first = ctx.file_list[0].dirname();
+    for i in 1..3 {
+        assert!(
+            std::sync::Arc::ptr_eq(first, ctx.file_list[i].dirname()),
+            "entry {i} must alias the cached dirname allocation, not its own"
+        );
+    }
+    // The shared value must still be the correct dirname, not merely shared.
+    assert_eq!(first.as_ref(), std::path::Path::new("a/b"));
+}
+
+#[test]
+fn a_new_directory_replaces_the_cached_dirname_rather_than_aliasing_it() {
+    // The complement of the guard above: the cache must MISS on a directory
+    // change, or entries would inherit the previous directory's name. This is
+    // what makes the sharing safe rather than merely cheap.
+    let handshake = test_handshake();
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
+
+    for name in ["a/one", "a/two", "b/three", "b/four", "a/five"] {
+        ctx.push_file_item(
+            protocol::flist::FileEntry::new_file(name.into(), 1, 0o644),
+            PathBuf::from(name),
+        );
+    }
+
+    let dirs: Vec<&std::path::Path> = (0..5)
+        .map(|i| ctx.file_list[i].dirname().as_ref())
+        .collect();
+    assert_eq!(
+        dirs,
+        vec![
+            std::path::Path::new("a"),
+            std::path::Path::new("a"),
+            std::path::Path::new("b"),
+            std::path::Path::new("b"),
+            std::path::Path::new("a"),
+        ]
+    );
+    // Same directory, non-adjacent: a one-slot cache correctly does NOT share
+    // these, which is why the value check above is the load-bearing assertion.
+    assert!(std::sync::Arc::ptr_eq(
+        ctx.file_list[0].dirname(),
+        ctx.file_list[1].dirname()
+    ));
+    assert!(!std::sync::Arc::ptr_eq(
+        ctx.file_list[0].dirname(),
+        ctx.file_list[4].dirname()
+    ));
+}
