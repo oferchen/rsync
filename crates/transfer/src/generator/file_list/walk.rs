@@ -514,20 +514,9 @@ impl GeneratorContext {
             return Ok(());
         }
 
-        // upstream: generator.c:1547 - skip unsafe symlinks when --safe-links.
-        // Sender-side filtering ensures unsafe symlinks never reach the receiver,
-        // matching the belt-and-suspenders approach for daemon push interop.
-        if self.config.flags.safe_links && metadata.file_type().is_symlink() {
-            if let Ok(target) = self.read_source_link(&path) {
-                if super::super::super::symlink_safety::is_unsafe_symlink(
-                    target.as_os_str(),
-                    &relative,
-                ) {
-                    return Ok(());
-                }
-            }
-        }
-
+        // No --safe-links check here: upstream's sender transmits every
+        // symlink. The option is evaluated on the receiving side only
+        // (generator.c:1951 `safe_symlinks && unsafe_symlink(sl, fname)`).
         let mut entry = match self.create_entry(&path, relative, &metadata) {
             Ok(e) => e,
             Err(e) => {

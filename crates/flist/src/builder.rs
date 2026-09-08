@@ -6,15 +6,14 @@ use std::path::PathBuf;
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2192` - `send_file_list()` - Recursive directory scanning
-/// - `flist.c:1080` - `send_file_name()` - Per-entry traversal
+/// - `flist.c:2499` - `send_file_list()` - Recursive directory scanning
+/// - `flist.c:1731` - `send_file_name()` - Per-entry traversal
 #[derive(Clone, Debug)]
 pub struct FileListBuilder {
     root: PathBuf,
     follow_symlinks: bool,
     copy_links: bool,
     include_root: bool,
-    safe_links: bool,
 }
 
 impl FileListBuilder {
@@ -26,7 +25,6 @@ impl FileListBuilder {
             follow_symlinks: false,
             copy_links: false,
             include_root: true,
-            safe_links: false,
         }
     }
 
@@ -70,31 +68,17 @@ impl FileListBuilder {
         self
     }
 
-    /// Enables safe-links filtering during file list construction.
-    ///
-    /// When enabled, symlinks whose targets resolve outside the source tree
-    /// are silently excluded from the file list. This mirrors upstream
-    /// rsync's `--safe-links` behaviour applied at send time, preventing
-    /// the daemon from creating symlinks that escape the module root.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `flist.c:1080` - `send_file_name()` skips unsafe symlinks
-    /// - `util1.c:1329` - `unsafe_symlink(dest, src)`
-    #[must_use]
-    pub const fn safe_links(mut self, safe: bool) -> Self {
-        self.safe_links = safe;
-        self
-    }
-
     /// Builds a [`FileListWalker`] using the configured options.
+    ///
+    /// Note there is no `--safe-links` option here: upstream's sender
+    /// transmits every symlink, and the option is evaluated on the
+    /// receiving side only (generator.c:1951).
     pub fn build(self) -> Result<FileListWalker, FileListError> {
         FileListWalker::new(
             self.root,
             self.follow_symlinks,
             self.copy_links,
             self.include_root,
-            self.safe_links,
         )
     }
 }

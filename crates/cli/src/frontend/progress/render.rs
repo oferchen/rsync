@@ -1270,11 +1270,14 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 let mut rendered = b"ignoring unsafe symlink \"".to_vec();
                 rendered.extend_from_slice(&escape_path(event.relative_path(), escape));
                 rendered.push(b'"');
+                // upstream: generator.c:1958-1960 - both names are quoted:
+                // `ignoring unsafe symlink "%s" -> "%s"`.
                 if let Some(metadata) = event.metadata()
                     && let Some(target) = metadata.symlink_target()
                 {
-                    rendered.extend_from_slice(b" -> ");
+                    rendered.extend_from_slice(b" -> \"");
                     rendered.extend_from_slice(&escape_path(target, escape));
+                    rendered.push(b'"');
                 }
                 stdout.write_all(&rendered)?;
                 stdout.write_all(b"\n")?;

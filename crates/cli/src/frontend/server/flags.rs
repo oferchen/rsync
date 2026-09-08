@@ -256,6 +256,15 @@ pub(super) struct ServerLongFlags {
     /// convert each block/char device into a regular file whose contents are
     /// streamed (`flist.c:1419`).
     pub(super) copy_devices: bool,
+    /// Skip symlinks that point outside the transfer tree (upstream:
+    /// `--safe-links`, long-form only).
+    ///
+    /// upstream: options.c:696 - the popt entry binds `safe_symlinks`, and
+    /// server_options() forwards the bare long flag (options.c:3073-3074).
+    /// Only the receiving side consumes it (generator.c:1951
+    /// `safe_symlinks && unsafe_symlink(sl, fname)`); the sender transmits
+    /// every symlink.
+    pub(super) safe_links: bool,
     /// Whether `--stats` was forwarded by the client.
     ///
     /// upstream: options.c:2838-2839 - `server_options()` emits `--stats` whenever
@@ -532,6 +541,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         delete_excluded: false,
         remove_source_files: false,
         copy_devices: false,
+        safe_links: false,
         stats: false,
         ignore_existing: false,
         existing_only: false,
@@ -734,6 +744,10 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // remote sender (pull) so it streams device contents as a regular
             // file (flist.c:1419). Long-form only.
             "--copy-devices" => flags.copy_devices = true,
+            // upstream: options.c:3073-3074 - `--safe-links` forwarded as a bare
+            // long flag; the receiving side's generator consumes it
+            // (generator.c:1951).
+            "--safe-links" => flags.safe_links = true,
             // upstream: options.c:2838-2839 - --stats forwarded by server_options()
             // when do_stats was set. The server-side flag drives NDX_DEL_STATS
             // emission in the goodbye phase (generator.c:2377,2422).

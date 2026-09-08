@@ -12,7 +12,6 @@ pub struct FileListWalker {
     pub(crate) root: PathBuf,
     pub(crate) follow_symlinks: bool,
     pub(crate) copy_links: bool,
-    pub(crate) safe_links: bool,
     pub(crate) yielded_root: bool,
     pub(crate) root_metadata: Option<fs::Metadata>,
     pub(crate) stack: Vec<DirectoryState>,
@@ -26,7 +25,6 @@ impl FileListWalker {
         follow_symlinks: bool,
         copy_links: bool,
         include_root: bool,
-        safe_links: bool,
     ) -> Result<Self, FileListError> {
         let root = absolutize(root)?;
         // The walk root is deliberately not announced: upstream's counterpart
@@ -49,7 +47,6 @@ impl FileListWalker {
             root,
             follow_symlinks,
             copy_links,
-            safe_links,
             yielded_root: !include_root,
             root_metadata: Some(metadata),
             stack: Vec::new(),
@@ -115,27 +112,9 @@ impl FileListWalker {
         }
         .map_err(|error| FileListError::metadata(full_path.clone(), error))?;
 
-        // upstream: flist.c:send_file_name() - skip unsafe symlinks when
-        // --safe-links is active, excluding them from the file list before
-        // sending to prevent symlinks that escape the module root.
-        if self.safe_links && metadata.file_type().is_symlink() {
-            if let Ok(target) = fs::read_link(&full_path) {
-                if crate::symlink_safety::is_unsafe_symlink(target.as_os_str(), &relative_path) {
-                    debug_log!(
-                        Flist,
-                        1,
-                        "skipping unsafe symlink: {:?} -> {:?}",
-                        relative_path,
-                        target
-                    );
-                    return Ok(None);
-                }
-            } else {
-                debug_log!(Flist, 1, "skipping unreadable symlink: {:?}", relative_path);
-                return Ok(None);
-            }
-        }
-
+        // No --safe-links filtering here: upstream's sender transmits every
+        // symlink and the option is evaluated on the receiving side only
+        // (generator.c:1951 `safe_symlinks && unsafe_symlink(sl, fname)`).
         let mut next_state = None;
 
         if metadata.file_type().is_dir() {
@@ -429,7 +408,7 @@ mod tests {
         let file_path = temp.path().join("test.txt");
         std::fs::write(&file_path, b"content").expect("write");
 
-        let walker = FileListWalker::new(temp.path().to_path_buf(), false, false, true, false)
+        let walker = FileListWalker::new(temp.path().to_path_buf(), false, false, true)
             .expect("create walker");
 
         let entries: Vec<_> = walker.collect();
@@ -448,7 +427,7 @@ mod tests {
     #[test]
     fn file_list_walker_empty_directory() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let walker = FileListWalker::new(temp.path().to_path_buf(), false, false, true, false)
+        let walker = FileListWalker::new(temp.path().to_path_buf(), false, false, true)
             .expect("create walker");
 
         let entries: Vec<_> = walker.collect();
@@ -463,8 +442,8 @@ mod tests {
         let file_path = temp.path().join("single.txt");
         std::fs::write(&file_path, b"content").expect("write");
 
-        let walker = FileListWalker::new(file_path.clone(), false, false, true, false)
-            .expect("create walker");
+        let walker =
+            FileListWalker::new(file_path.clone(), false, false, true).expect("create walker");
 
         let entries: Vec<_> = walker.collect();
         assert_eq!(entries.len(), 1);

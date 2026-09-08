@@ -3477,6 +3477,42 @@ mod files_from {
         );
     }
 
+    /// upstream: the sender has no `--safe-links` check. options.c:696 binds
+    /// `safe_symlinks`, and its only transfer-time consumers sit on the
+    /// receiving side: the generator (generator.c:1951 `safe_symlinks &&
+    /// unsafe_symlink(sl, fname)`) and the backup path (backup.c:289, :370).
+    /// flist.c never reads it, so every symlink - unsafe ones included - is
+    /// transmitted and the receiver decides what to skip.
+    #[cfg(unix)]
+    #[test]
+    fn safe_links_does_not_filter_the_sender_file_list() {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path();
+        std::fs::write(src.join("file.txt"), "data").unwrap();
+        std::os::unix::fs::symlink("file.txt", src.join("safe_link")).unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", src.join("unsafe_abs")).unwrap();
+        std::os::unix::fs::symlink("../../escape.txt", src.join("unsafe_rel")).unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(src)];
+        config.flags.recursive = true;
+        config.flags.links = true;
+        config.flags.safe_links = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        build_file_list_for_contents(&mut ctx, src);
+
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        for expected in ["safe_link", "unsafe_abs", "unsafe_rel"] {
+            assert!(
+                names.contains(&expected),
+                "--safe-links must not drop {expected} from the sender's file \
+                 list; the receiving side owns the skip: {names:?}"
+            );
+        }
+    }
+
     /// upstream: flist.c:1650-1674 send_file1() - a name that cannot be
     /// strictly transcoded under --iconv is dropped (io_error |= IOERR_GENERAL,
     /// "cannot convert filename", return NULL) so it never enters the file list.
