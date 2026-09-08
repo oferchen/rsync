@@ -826,6 +826,7 @@ pub(super) fn apply_symlink_permissions_from_entry(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
     cached_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     if crate::CAN_CHMOD_SYMLINK {
@@ -847,16 +848,14 @@ pub(super) fn apply_symlink_permissions_from_entry(
             destination,
             entry.mode(),
             options,
-            // The receiver path has no replace-an-obstacle caller yet; when it
-            // grows one it must pass the obstacle's pre-replace lstat here.
-            symlink_pre_transfer_stat(options, meta, None),
+            symlink_pre_transfer_stat(options, meta, pre_transfer_meta),
         );
         if current != target {
             let _ = fast_io::secure_chmod_at(destination, target, false);
         }
     }
     #[cfg(not(unix))]
-    let _ = (destination, entry, options, cached_meta);
+    let _ = (destination, entry, options, cached_meta, pre_transfer_meta);
     Ok(())
 }
 
