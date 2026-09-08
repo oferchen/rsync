@@ -39,6 +39,41 @@ impl ReceiverContext {
         self.config.flags.times && !self.config.flags.omit_link_times
     }
 
+    /// Reports a symlink skipped by `--safe-links`.
+    ///
+    /// upstream: generator.c:1952-1959 - `if (INFO_GTE(NAME, 1))` gates the
+    /// notice at the first -v level, worded `ignoring unsafe symlink "%s" ->
+    /// "%s"`. On a server the FINFO text travels to the client as `MSG_INFO`
+    /// (log.c:330-340 `rwrite()` when `am_server`); a client receiver prints
+    /// it locally.
+    #[cfg(any(unix, windows))]
+    fn report_ignored_unsafe_symlink<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        relative_path: &Path,
+        wire_target: &Path,
+    ) {
+        if !logging::info_gte(logging::InfoFlag::Name, 1) {
+            return;
+        }
+        if self.config.connection.client_mode {
+            info_log!(
+                Name,
+                1,
+                "ignoring unsafe symlink \"{}\" -> \"{}\"",
+                relative_path.display(),
+                wire_target.display()
+            );
+        } else {
+            let line = format!(
+                "ignoring unsafe symlink \"{}\" -> \"{}\"\n",
+                relative_path.display(),
+                wire_target.display()
+            );
+            let _ = writer.send_msg_info(line.as_bytes());
+        }
+    }
+
     /// Creates symbolic links from the file list entries.
     ///
     /// Iterates through the received file list, finds symlink entries with
@@ -51,8 +86,8 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1556` - `if (preserve_links && ftype == FT_SYMLINK)`
-    /// - `generator.c:1603` - `atomic_create(file, fname, sl, ...)`
+    /// - `generator.c:1948` - `if (preserve_links && ftype == FT_SYMLINK)`
+    /// - `generator.c:2002` - `atomic_create(file, fname, sl, ...)`
     #[cfg(unix)]
     pub(in crate::receiver) fn create_symlinks<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
@@ -117,15 +152,7 @@ impl ReceiverContext {
             if self.config.flags.safe_links
                 && crate::symlink_safety::is_unsafe_symlink(wire_target.as_os_str(), relative_path)
             {
-                // upstream: generator.c:1952 - `if (INFO_GTE(NAME, 1))` gates the
-                // skipped-symlink report at the first -v level.
-                info_log!(
-                    Name,
-                    1,
-                    "skipping unsafe symlink \"{}\" -> \"{}\"",
-                    relative_path.display(),
-                    wire_target.display()
-                );
+                self.report_ignored_unsafe_symlink(writer, relative_path, wire_target);
                 continue;
             }
 
@@ -265,7 +292,7 @@ impl ReceiverContext {
                 let _ = fs::create_dir_all(parent);
             }
 
-            // upstream: generator.c:1603 - atomic_create() -> do_symlink()
+            // upstream: generator.c:2002 - atomic_create() -> do_symlink()
             //
             // SEC-1.h: when the sandbox is plumbed and the destination
             // parent is the sandbox root, the create goes through
@@ -364,8 +391,8 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1556` - `if (preserve_links && ftype == FT_SYMLINK)`
-    /// - `generator.c:1603` - `atomic_create(file, fname, sl, ...)`
+    /// - `generator.c:1948` - `if (preserve_links && ftype == FT_SYMLINK)`
+    /// - `generator.c:2002` - `atomic_create(file, fname, sl, ...)`
     #[cfg(windows)]
     pub(in crate::receiver) fn create_symlinks<W: crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
@@ -393,18 +420,11 @@ impl ReceiverContext {
 
             let relative_path = entry.path();
 
-            // upstream: generator.c:1547 - skip unsafe symlinks when --safe-links.
+            // upstream: generator.c:1951 - skip unsafe symlinks when --safe-links.
             if self.config.flags.safe_links
                 && crate::symlink_safety::is_unsafe_symlink(wire_target.as_os_str(), relative_path)
             {
-                // upstream: generator.c:1554 - log skipped unsafe symlinks
-                info_log!(
-                    Name,
-                    1,
-                    "skipping unsafe symlink \"{}\" -> \"{}\"",
-                    relative_path.display(),
-                    wire_target.display()
-                );
+                self.report_ignored_unsafe_symlink(writer, relative_path, wire_target);
                 continue;
             }
 
@@ -504,7 +524,7 @@ impl ReceiverContext {
                 let _ = fs::create_dir_all(parent);
             }
 
-            // upstream: generator.c:1603 - atomic_create() -> do_symlink().
+            // upstream: generator.c:2002 - atomic_create() -> do_symlink().
             if let Err(e) = create_windows_symlink(target, &link_path) {
                 // A Windows file symbolic link cannot be created without
                 // privilege and has no junction fallback (directory links do
