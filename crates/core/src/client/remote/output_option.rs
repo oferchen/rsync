@@ -27,8 +27,8 @@ pub(crate) enum OutputWordKind {
     Debug,
 }
 
-// upstream: options.c:280-294 info_words[] - `(name, where)` in upstream table
-// order. `stats` is deliberately not forwarded from here: oc conflates
+// upstream: options.c:286-301 info_words[] (rsync-3.5.0) - `(name, where)` in
+// upstream table order. `stats` is deliberately not forwarded from here: oc conflates
 // `--stats` with `--info=stats` into a single stats level and forwards it via
 // the standalone `--stats` flag (mirroring upstream `if (do_stats) --stats` at
 // options.c:2856), so the caller filters `stats` out of the enabled list to
@@ -44,13 +44,13 @@ const INFO_WORDS: &[(&str, u8)] = &[
     ("nonreg", W_REC),
     ("progress", W_CLI),
     ("remove", W_SND),
-    ("stats", W_CLI | W_SRV),
     ("skip", W_REC),
+    ("stats", W_CLI | W_SRV),
     ("symsafe", W_SND | W_REC),
 ];
 
-// upstream: options.c:297-322 debug_words[] - `(name, where)` in upstream
-// table order. Categories oc adds beyond upstream (the accelerated-I/O
+// upstream: options.c:305-331 debug_words[] (rsync-3.5.0) - `(name, where)` in
+// upstream table order. Categories oc adds beyond upstream (the accelerated-I/O
 // diagnostics `iouring`/`clone`/`sockopt`/`iocp`) are absent here and fall to
 // the unconditional-forward path in `make_output_option`.
 const DEBUG_WORDS: &[(&str, u8)] = &[
@@ -154,6 +154,33 @@ mod tests {
 
     fn os(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
+    }
+
+    // WHY: this role-mask table is a deliberate copy of upstream's word names
+    // (the masks are the payload the parser tables do not carry); pin the
+    // names to upstream rsync 3.5.0 so a word added or renamed in one place
+    // fails here instead of silently forwarding or dropping a category. The
+    // accepted-word owner is the cli parser (crates/cli/.../flags/), whose own
+    // pin holds the same upstream lists plus the four oc debug extensions.
+    #[test]
+    fn word_tables_name_exactly_the_upstream_words() {
+        // upstream: options.c:286-301 info_words[] (rsync-3.5.0), table order.
+        const UPSTREAM_INFO: [&str; 13] = [
+            "backup", "copy", "del", "flist", "misc", "mount", "name", "nonreg", "progress",
+            "remove", "skip", "stats", "symsafe",
+        ];
+        // upstream: options.c:305-331 debug_words[] (rsync-3.5.0), table order.
+        const UPSTREAM_DEBUG: [&str; 24] = [
+            "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
+            "filter", "flist", "fuzzy", "genr", "hash", "hlink", "iconv", "io", "nstr", "own",
+            "proto", "recv", "send", "time",
+        ];
+
+        let info_names: Vec<&str> = INFO_WORDS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(info_names, UPSTREAM_INFO);
+
+        let debug_names: Vec<&str> = DEBUG_WORDS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(debug_names, UPSTREAM_DEBUG);
     }
 
     // WHY: a level-1 flag must be emitted bare so the peer parses it to the
