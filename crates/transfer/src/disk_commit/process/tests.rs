@@ -804,7 +804,7 @@ fn make_backup_copy_duplicates_and_keeps_original() {
         backup_dir: None,
         suffix: OsString::from("~"),
     };
-    let notice = make_backup_copy(
+    let (returned_backup_path, notice) = make_backup_copy(
         &file_path,
         &config,
         DiskCommitConfig::default().backup_env(),
@@ -813,6 +813,11 @@ fn make_backup_copy_duplicates_and_keeps_original() {
     .expect("notice produced when an existing file is copied");
 
     let backup_path = file_path.with_extension("bin~");
+    assert_eq!(
+        returned_backup_path, backup_path,
+        "the returned absolute backup path names the copy (the delta path \
+         selects it as the basis)"
+    );
     assert!(backup_path.exists(), "backup copy must exist");
     assert!(
         file_path.exists(),

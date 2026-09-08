@@ -39,7 +39,10 @@ pub struct BasisFileResult {
     /// came from reference dir `j` (`--compare-dest`/`--copy-dest`/`--link-dest`)
     /// while the destination was absent (upstream: generator.c:1054),
     /// [`protocol::FnameCmpType::PartialDir`] (`0x81`) when the basis was recovered
-    /// from `--partial-dir` on a resume (upstream: generator.c:1759-1765,1853), and
+    /// from `--partial-dir` on a resume (upstream: generator.c:1759-1765,1853),
+    /// [`protocol::FnameCmpType::Backup`] (`0x82`) when `--inplace --backup`
+    /// selected the freshly written pre-image copy as the basis (upstream:
+    /// generator.c:2328-2356), and
     /// `FnameCmpType::Fuzzy(i)` (`FNAMECMP_FUZZY + i`) for a `--fuzzy` match, where
     /// `i` is 0 for the destination directory and `k + 1` for reference dir `k`
     /// (upstream: generator.c:861,903,1945).
@@ -49,6 +52,12 @@ pub struct BasisFileResult {
     /// basename, resolved by the receiver relative to the target's directory
     /// (upstream: generator.c:1948, receiver.c:838-841).
     pub xname: Option<Vec<u8>>,
+    /// The `INFO_GTE(BACKUP, 1)` "backed up X to Y" notice for the
+    /// `--inplace --backup` delta-path pre-image copy made while selecting the
+    /// basis (`fnamecmp_type == FNAMECMP_BACKUP`). The caller emits it on the
+    /// session thread, whose thread-local verbosity is actually seeded - a
+    /// rayon signature worker's is not (upstream: generator.c:2448-2450).
+    pub backup_notice: Option<crate::pipeline::messages::BackupNotice>,
 }
 
 impl BasisFileResult {
@@ -58,6 +67,7 @@ impl BasisFileResult {
         basis_path: None,
         fnamecmp_type: protocol::FnameCmpType::Fname,
         xname: None,
+        backup_notice: None,
     };
 
     /// Returns true if no basis file was found.
@@ -122,6 +132,54 @@ pub struct BasisFileConfig<'a> {
     /// the heuristic. The receiving side owns it: the generator sizes the
     /// blocks it checksums, so the sender never consults the value.
     pub block_size: Option<NonZeroU32>,
+    /// `--inplace --backup` delta-path backup inputs. `Some` exactly when
+    /// upstream's `inplace && make_backups > 0` holds (generator.c:2328) - the
+    /// caller passes `None` on the redo pass, mirroring the
+    /// `make_backups = -make_backups` negation at generator.c:2659, and on
+    /// paths upstream never takes to that branch (`--only-write-batch` has
+    /// `do_xfers == 0`, generator.c:2277).
+    ///
+    /// When set and the exact destination basis opens (`FNAMECMP_FNAME`), the
+    /// pre-image is copied to the backup path RIGHT HERE and the backup - not
+    /// the destination - is selected as the delta basis, tagged
+    /// [`protocol::FnameCmpType::Backup`] (generator.c:2328-2356). The tag
+    /// clears the sender's `updating_basis_file` (sender.c:628-629), letting
+    /// it match blocks in any order because matched data is later read from
+    /// the pristine copy while the destination is overwritten in place.
+    pub inplace_backup: Option<InplaceBackupSpec<'a>>,
+}
+
+/// Inputs for the `--inplace --backup` delta-path pre-image copy: the backup
+/// naming configuration plus the sandbox environment the copy is confined by.
+///
+/// Constructed only inside the crate (the fields feed
+/// [`crate::disk_commit::make_backup_copy`], whose environment type is
+/// crate-private); external callers of [`find_basis_file_with_config`] pass
+/// `None`.
+#[derive(Clone, Copy)]
+pub struct InplaceBackupSpec<'a> {
+    /// `--backup` / `--backup-dir` / `--suffix` naming inputs.
+    pub(crate) backup_config: &'a crate::disk_commit::BackupConfig,
+    /// Sandbox anchoring for the copy and any `--backup-dir` parents it makes.
+    pub(crate) env: crate::disk_commit::BackupEnv<'a>,
+}
+
+impl<'a> InplaceBackupSpec<'a> {
+    /// Bundles the backup naming config with its sandbox environment.
+    pub(crate) fn new(
+        backup_config: &'a crate::disk_commit::BackupConfig,
+        env: crate::disk_commit::BackupEnv<'a>,
+    ) -> Self {
+        Self { backup_config, env }
+    }
+}
+
+impl std::fmt::Debug for InplaceBackupSpec<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InplaceBackupSpec")
+            .field("backup_config", &self.backup_config)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Configuration for generating a signature from a basis file.
@@ -482,6 +540,7 @@ fn generate_basis_signature(
             basis_path: Some(basis_path),
             fnamecmp_type,
             xname,
+            backup_notice: None,
         },
         Err(_) => BasisFileResult::EMPTY,
     }
@@ -585,7 +644,11 @@ fn compute_basis_signature<R: std::io::Read>(
 /// - `generator.c:1400` - Reference directory checking
 pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileResult {
     // Upstream `generator.c:1962`: when `whole_file` is set, no basis file
-    // is used - the entire file is sent as literals.
+    // is used - the entire file is sent as literals. This wins over
+    // `inplace_backup`: upstream's whole-file/read-batch branch backs up via
+    // `copy_file()` but deliberately keeps `fnamecmp_type == FNAMECMP_FNAME`
+    // (generator.c:2280-2301); oc's mirror of that copy is the disk thread's
+    // `make_inplace_backup`, not this function.
     if config.whole_file {
         return BasisFileResult::EMPTY;
     }
@@ -596,6 +659,22 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
     // partial-dir. The exact destination basis is reported to the sender as
     // FNAMECMP_FNAME (no basis-type byte).
     if let Some((file, size, path)) = try_open_file(config.file_path) {
+        // upstream: generator.c:2328-2356 - on the delta path, once the
+        // destination basis has opened (`inplace && make_backups > 0 &&
+        // fnamecmp_type == FNAMECMP_FNAME`), the generator creates the backup
+        // copy of the pre-image and retags `fnamecmp_type = FNAMECMP_BACKUP`.
+        // Upstream streams the copy during `generate_and_send_sums()`
+        // (generator.c:809-810); oc copies first, then signs the copy - the
+        // same bytes, taken at the same point, strictly before the receiver's
+        // first in-place write. Selecting the copy as `basis_path` is what
+        // lets matched blocks be read from the pristine pre-image while the
+        // destination is overwritten in place, in any order (the BACKUP tag
+        // clears the sender's `updating_basis_file`, sender.c:628-629).
+        if let Some(spec) = &config.inplace_backup
+            && let Some(backup_basis) = try_inplace_backup_basis(config, spec, sig_config)
+        {
+            return backup_basis;
+        }
         return generate_basis_signature(
             file,
             size,
@@ -668,6 +747,45 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
     }
 
     BasisFileResult::EMPTY
+}
+
+/// Creates the `--inplace --backup` pre-image copy and selects it as the delta
+/// basis, tagged `FNAMECMP_BACKUP` (upstream: generator.c:2328-2356).
+///
+/// Returns `None` - falling back to the plain `FNAMECMP_FNAME` destination
+/// basis - when the copy or its signature fails. The destination is still
+/// untouched at that point, so the disk thread's `make_inplace_backup` then
+/// retries the copy before the first in-place write and surfaces any error
+/// through its existing (fatal) path; nothing is reported from here because a
+/// rayon signature worker's thread-local verbosity is never seeded.
+fn try_inplace_backup_basis(
+    config: &BasisFileConfig<'_>,
+    spec: &InplaceBackupSpec<'_>,
+    sig_config: SignatureGenerationConfig,
+) -> Option<BasisFileResult> {
+    let (backup_path, notice) =
+        crate::disk_commit::make_backup_copy(config.file_path, spec.backup_config, spec.env)
+            .ok()
+            .flatten()?;
+    // Sign the COPY, not the destination: the receiver resolves matched blocks
+    // against `basis_path`, so the signature must describe those exact bytes
+    // even if the destination changes underneath us. Upstream reaches the same
+    // guarantee from the other side, writing the backup from the very bytes it
+    // checksums (generate_and_send_sums, generator.c:809-810).
+    let (file, size, path) = try_open_file(&backup_path)?;
+    let mut result = generate_basis_signature(
+        file,
+        size,
+        path,
+        protocol::FnameCmpType::Backup,
+        None,
+        sig_config,
+    );
+    if result.is_empty() {
+        return None;
+    }
+    result.backup_notice = Some(notice);
+    Some(result)
 }
 
 #[cfg(test)]
@@ -1105,6 +1223,7 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
+            inplace_backup: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1159,6 +1278,7 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
+            inplace_backup: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1202,6 +1322,7 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
+            inplace_backup: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1279,6 +1400,7 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
+            inplace_backup: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1351,6 +1473,7 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
+            inplace_backup: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1412,6 +1535,7 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
+            inplace_backup: None,
         };
 
         let result = find_basis_file_with_config(&config);
@@ -1473,6 +1597,7 @@ mod tests {
             whole_file: false,
             compat_flags: None,
             block_size: None,
+            inplace_backup: None,
         };
 
         let strong_len = |result: &BasisFileResult| -> u8 {
@@ -1747,6 +1872,193 @@ mod tests {
             requested.blocks().len(),
             2,
             "4096 bytes at 2048 is exactly two blocks",
+        );
+    }
+
+    /// Builds a `BasisFileConfig` targeting `dest_dir/file.bin` with an
+    /// optional `--inplace --backup` spec, for the delta-backup pin tests.
+    fn inplace_backup_test_config<'a>(
+        dest_file: &'a std::path::Path,
+        dest_dir: &'a std::path::Path,
+        rel: &'a std::path::Path,
+        target_size: u64,
+        whole_file: bool,
+        inplace_backup: Option<InplaceBackupSpec<'a>>,
+    ) -> BasisFileConfig<'a> {
+        BasisFileConfig {
+            file_path: dest_file,
+            dest_dir,
+            relative_path: rel,
+            target_size,
+            target_mtime: 0,
+            fuzzy_level: 0,
+            reference_directories: &[],
+            partial_dir: None,
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+            whole_file,
+            compat_flags: None,
+            block_size: None,
+            inplace_backup,
+        }
+    }
+
+    /// `--inplace --backup` delta path (upstream: generator.c:2328-2356): with
+    /// the spec set and the destination present, the basis selection must
+    /// create the pre-image copy, select IT as the basis, and tag the result
+    /// `FNAMECMP_BACKUP` (0x82) so the sender clears `updating_basis_file`
+    /// (sender.c:628-629) and may match blocks in any order.
+    #[test]
+    fn inplace_backup_spec_retags_fname_basis_as_backup_and_creates_the_copy() {
+        use std::ffi::OsString;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path();
+        let dest_file = dest_dir.join("file.bin");
+        let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+        fs::write(&dest_file, &data).expect("write dest");
+
+        let backup_config = crate::disk_commit::BackupConfig {
+            dest_dir: dest_dir.to_path_buf(),
+            backup_dir: None,
+            suffix: OsString::from("~"),
+        };
+        let spec =
+            InplaceBackupSpec::new(&backup_config, crate::disk_commit::BackupEnv::default());
+        let rel = std::path::Path::new("file.bin");
+        let config = inplace_backup_test_config(
+            &dest_file,
+            dest_dir,
+            rel,
+            data.len() as u64,
+            false,
+            Some(spec),
+        );
+
+        let result = find_basis_file_with_config(&config);
+
+        let backup_path = dest_dir.join("file.bin~");
+        assert_eq!(
+            result.fnamecmp_type,
+            protocol::FnameCmpType::Backup,
+            "the delta basis must be tagged FNAMECMP_BACKUP (0x82 on the wire)"
+        );
+        assert_eq!(
+            result.basis_path.as_deref(),
+            Some(backup_path.as_path()),
+            "the basis must be the backup copy, not the destination being rewritten"
+        );
+        assert!(result.signature.is_some(), "a real signature must be sent");
+        assert!(result.xname.is_none(), "FNAMECMP_BACKUP carries no xname");
+        assert_eq!(
+            fs::read(&backup_path).expect("backup exists"),
+            data,
+            "the backup must hold the pristine pre-image"
+        );
+        let notice = result.backup_notice.expect("notice for the INFO line");
+        assert_eq!(notice.original, PathBuf::from("file.bin"));
+        assert_eq!(notice.backup, PathBuf::from("file.bin~"));
+
+        // The basis stays pristine even after the destination is rewritten -
+        // exactly why matched blocks may be read in any order mid-overwrite.
+        fs::write(&dest_file, b"overwritten in place").expect("rewrite dest");
+        assert_eq!(
+            fs::read(&backup_path).expect("backup still readable"),
+            data,
+            "rewriting the destination must not disturb the selected basis"
+        );
+    }
+
+    /// Negative control: without the spec (plain `--inplace`, or `--backup`
+    /// without `--inplace`, or the redo pass), the destination basis keeps
+    /// `FNAMECMP_FNAME` and no backup file appears - matching upstream, where
+    /// the branch is gated on `inplace && make_backups > 0` (generator.c:2328).
+    #[test]
+    fn without_the_spec_the_dest_basis_stays_fname_and_no_backup_is_made() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path();
+        let dest_file = dest_dir.join("file.bin");
+        let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+        fs::write(&dest_file, &data).expect("write dest");
+
+        let rel = std::path::Path::new("file.bin");
+        let config =
+            inplace_backup_test_config(&dest_file, dest_dir, rel, data.len() as u64, false, None);
+
+        let result = find_basis_file_with_config(&config);
+
+        assert_eq!(result.fnamecmp_type, protocol::FnameCmpType::Fname);
+        assert_eq!(result.basis_path.as_deref(), Some(dest_file.as_path()));
+        assert!(result.backup_notice.is_none());
+        assert!(
+            !dest_dir.join("file.bin~").exists(),
+            "no backup may be created without the inplace-backup spec"
+        );
+    }
+
+    /// `--whole-file` wins over the spec: upstream's whole-file/read-batch
+    /// branch backs up via `copy_file()` on the RECEIVE side of oc's split
+    /// (the disk thread's `make_inplace_backup`) and keeps `FNAMECMP_FNAME`
+    /// (generator.c:2280-2301), so basis selection must return EMPTY and must
+    /// not create the copy here.
+    #[test]
+    fn whole_file_short_circuit_wins_over_inplace_backup_spec() {
+        use std::ffi::OsString;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path();
+        let dest_file = dest_dir.join("file.bin");
+        fs::write(&dest_file, b"whole-file pre-image").expect("write dest");
+
+        let backup_config = crate::disk_commit::BackupConfig {
+            dest_dir: dest_dir.to_path_buf(),
+            backup_dir: None,
+            suffix: OsString::from("~"),
+        };
+        let spec =
+            InplaceBackupSpec::new(&backup_config, crate::disk_commit::BackupEnv::default());
+        let rel = std::path::Path::new("file.bin");
+        let config = inplace_backup_test_config(&dest_file, dest_dir, rel, 20, true, Some(spec));
+
+        let result = find_basis_file_with_config(&config);
+
+        assert!(result.is_empty(), "whole_file must yield no basis at all");
+        assert_eq!(result.fnamecmp_type, protocol::FnameCmpType::Fname);
+        assert!(
+            !dest_dir.join("file.bin~").exists(),
+            "the whole-file backup belongs to the disk thread, not basis selection"
+        );
+    }
+
+    /// A missing destination never reaches the delta-backup branch: upstream's
+    /// condition sits after `do_open_checklinks(fnamecmp)` succeeded, and a
+    /// missing dest takes `pretend_missing` (generator.c:2313-2326). No backup
+    /// file may appear.
+    #[test]
+    fn missing_dest_with_spec_yields_empty_and_no_backup() {
+        use std::ffi::OsString;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dest_dir = tmp.path();
+        let dest_file = dest_dir.join("absent.bin");
+
+        let backup_config = crate::disk_commit::BackupConfig {
+            dest_dir: dest_dir.to_path_buf(),
+            backup_dir: None,
+            suffix: OsString::from("~"),
+        };
+        let spec =
+            InplaceBackupSpec::new(&backup_config, crate::disk_commit::BackupEnv::default());
+        let rel = std::path::Path::new("absent.bin");
+        let config = inplace_backup_test_config(&dest_file, dest_dir, rel, 16, false, Some(spec));
+
+        let result = find_basis_file_with_config(&config);
+
+        assert!(result.is_empty());
+        assert!(
+            !dest_dir.join("absent.bin~").exists(),
+            "nothing to back up when the destination does not exist"
         );
     }
 }

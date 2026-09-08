@@ -495,6 +495,18 @@ impl ReceiverContext {
         } else {
             None
         };
+        // upstream: generator.c:2328-2356 - with `--inplace --backup` the DELTA
+        // path's pre-image backup is made by the generator at basis-selection
+        // time and selected as the basis (FNAMECMP_BACKUP), so thread the same
+        // backup config into the basis search. The redo pass is excluded,
+        // mirroring generator.c:2659 `make_backups = -make_backups` ("avoid
+        // dup backup w/inplace") - the phase-1 backup must not be overwritten
+        // with the now-partial destination.
+        let inplace_backup_config = if self.config.write.inplace && !is_redo_pass {
+            backup.clone()
+        } else {
+            None
+        };
         // upstream: cleanup.c - compute partial mode from --partial / --partial-dir flags.
         //
         // `--delay-updates` with no explicit `--partial-dir` stages through the
@@ -567,6 +579,21 @@ impl ReceiverContext {
             // `self` mutably, so the borrow cannot be held across it.
             let wire_basis_dirs = self.config.reference_directories.clone();
             let wire_basis_fuzzy_level = self.config.flags.fuzzy_level;
+            // The `--inplace --backup` delta-basis backup spec borrows `setup`
+            // (not `self`), so it can live across the response half of the
+            // loop. `Copy`, so the rayon signature closure captures it whole.
+            let inplace_backup = inplace_backup_config.as_ref().map(|backup_config| {
+                crate::receiver::InplaceBackupSpec::new(
+                    backup_config,
+                    crate::disk_commit::BackupEnv {
+                        #[cfg(unix)]
+                        sandbox: setup.sandbox.as_deref(),
+                        #[cfg(unix)]
+                        dest_dir: Some(setup.dest_dir.as_path()),
+                        metadata_opts: Some(&setup.metadata_opts),
+                    },
+                )
+            });
             let mut flushed_pending: usize = 0;
 
             loop {
@@ -652,6 +679,7 @@ impl ReceiverContext {
                                         whole_file,
                                         compat_flags,
                                         block_size,
+                                        inplace_backup,
                                     };
                                     find_basis_file_with_config(&basis_config)
                                 })
@@ -679,6 +707,7 @@ impl ReceiverContext {
                                         whole_file,
                                         compat_flags,
                                         block_size,
+                                        inplace_backup,
                                     };
                                     find_basis_file_with_config(&basis_config)
                                 })
@@ -686,7 +715,7 @@ impl ReceiverContext {
                         };
 
                         // Send requests sequentially (wire order matters).
-                        for ((file_idx, file_entry, file_path, base_iflags), basis_result) in
+                        for ((file_idx, file_entry, file_path, base_iflags), mut basis_result) in
                             batch.into_iter().zip(sig_results)
                         {
                             if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
@@ -708,6 +737,22 @@ impl ReceiverContext {
                             // the same basis the delta selected so --fuzzy /
                             // --link-dest / --compare-dest / --partial-dir bases
                             // drive the resolution in upstream's priority order.
+                            // upstream: generator.c:2448-2450 - INFO_GTE(BACKUP, 1)
+                            // "backed up X to Y" for the `--inplace --backup`
+                            // delta-path pre-image copy made during basis
+                            // selection. Emitted here, on the session thread,
+                            // because a rayon signature worker's thread-local
+                            // verbosity is never seeded (same reason as
+                            // `emit_backup_notice` for the disk thread).
+                            if let Some(notice) = basis_result.backup_notice.take() {
+                                info_log!(
+                                    Backup,
+                                    1,
+                                    "backed up {} to {}",
+                                    notice.original.display(),
+                                    notice.backup.display()
+                                );
+                            }
                             let xattr_request = self.build_xattr_request(
                                 &file_entry,
                                 basis_result.basis_path.as_deref(),
@@ -1255,6 +1300,11 @@ impl ReceiverContext {
                 whole_file: self.config.flags.whole_file,
                 compat_flags: self.compat_flags,
                 block_size: self.config.block_size,
+                // upstream: `--only-write-batch` clears do_xfers, so the
+                // generator bails to notify_others before the delta-path
+                // backup branch (generator.c:2277 vs :2328) - no pre-image
+                // copy is made and the basis stays FNAMECMP_FNAME.
+                inplace_backup: None,
             };
             let basis = find_basis_file_with_config(&basis_config);
 
