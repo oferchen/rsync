@@ -182,6 +182,12 @@ All of these must pass before a PR can merge:
 | upstream-testsuite-tcp / upstream testsuite | Upstream's own testsuite over a TCP daemon, unprivileged |
 | upstream-testsuite-tcp / upstream testsuite (root) | Upstream's own testsuite over a TCP daemon, privileged |
 
+Note on a failing `fmt + clippy`: the seven test-suite cells above depend on it,
+so when it fails they are reported as **absent** on the PR - not "skipped", they
+simply never appear. An absent required context blocks the merge exactly like a
+failure, so this fail-fast shape is safe; it just looks confusing when a PR
+shows only one red check. Fix the lint failure and the dependent cells run.
+
 Master is protected, so every change lands through a pull request. No approving
 review is required - the checks above are the gate. The branch ruleset is the
 authority for this list; [TESTING.md](TESTING.md) carries the command to
