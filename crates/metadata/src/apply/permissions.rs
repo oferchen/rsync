@@ -262,6 +262,12 @@ pub fn apply_dest_mode_pre_transfer(
     }
 
     let source_mode = source_metadata.permissions().mode();
+    // upstream: receiver.c:1176-1191 - the basis file is opened with O_NOFOLLOW
+    // and the fd is dropped again unless it is a regular file, so a symlink /
+    // fifo / device obstacle leaves `exists = fd1 != -1` false and the incoming
+    // file takes the new-destination rule (its lstat mode - 0o755 for a symlink
+    // on some platforms - must never become the file's permissions).
+    let pre_transfer_meta = pre_transfer_meta.filter(|existing| existing.file_type().is_file());
     let base_mode = if let Some(existing) = pre_transfer_meta {
         // Existing destination: keep its prior permission bits.
         let stat_mode = existing.permissions().mode();
