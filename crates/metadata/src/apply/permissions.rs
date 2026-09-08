@@ -730,19 +730,23 @@ fn chmod_path_honoring_keep_dirlinks(
 /// generator's lstat from BEFORE `do_symlink` ran.
 ///
 /// When the link is not new, its current stat IS the pre-transfer stat - except
-/// for a destination that existed as a NON-symlink and was replaced, where
-/// upstream still holds the obstacle's old `st_mode` and this hands back the
-/// fresh link's instead. That single cell is a known gap, tracked with the rest
-/// of the symlink-obstacle mode work rather than papered over here.
+/// for a destination that was REPLACED, where the fresh link's stat says
+/// nothing about what upstream measured. `explicit` carries the caller's
+/// pre-replace lstat for that case; upstream's `statret`/`sx.st` pair at
+/// generator.c:1937-1940 is taken before `atomic_create` deletes the obstacle,
+/// so a replaced destination - symlink or not - still feeds `dest_mode()` the
+/// OLD mode. Callers that never replace anything pass `None` and get the
+/// current stat.
 #[cfg(unix)]
 fn symlink_pre_transfer_stat<'a>(
     options: &MetadataOptions,
     current: &'a fs::Metadata,
+    explicit: Option<&'a fs::Metadata>,
 ) -> Option<&'a fs::Metadata> {
     if options.destination_is_new() {
         None
     } else {
-        Some(current)
+        explicit.or(Some(current))
     }
 }
 
@@ -843,7 +847,9 @@ pub(super) fn apply_symlink_permissions_from_entry(
             destination,
             entry.mode(),
             options,
-            symlink_pre_transfer_stat(options, meta),
+            // The receiver path has no replace-an-obstacle caller yet; when it
+            // grows one it must pass the obstacle's pre-replace lstat here.
+            symlink_pre_transfer_stat(options, meta, None),
         );
         if current != target {
             let _ = fast_io::secure_chmod_at(destination, target, false);
@@ -865,11 +871,17 @@ pub(super) fn apply_symlink_permissions_from_entry(
 /// both halves. Only runs where [`crate::CAN_CHMOD_SYMLINK`] holds; the chmod
 /// is a SOFT outcome and any error is swallowed.
 ///
+/// `pre_transfer_meta` is the destination's lstat from BEFORE the executor
+/// replaced an obstacle with the link, or `None` when nothing was replaced -
+/// see [`symlink_pre_transfer_stat`] for why the fresh link's own stat cannot
+/// stand in for it.
+///
 /// upstream: rsync.c:806-822 + syscall.c `do_chmod_at()`.
 pub(super) fn apply_symlink_permissions_like(
     destination: &Path,
     source_metadata: &fs::Metadata,
     options: &MetadataOptions,
+    pre_transfer_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     if crate::CAN_CHMOD_SYMLINK {
@@ -885,14 +897,14 @@ pub(super) fn apply_symlink_permissions_like(
             destination,
             source,
             options,
-            symlink_pre_transfer_stat(options, &meta),
+            symlink_pre_transfer_stat(options, &meta, pre_transfer_meta),
         );
         if current != target {
             let _ = fast_io::secure_chmod_at(destination, target, false);
         }
     }
     #[cfg(not(unix))]
-    let _ = (destination, source_metadata, options);
+    let _ = (destination, source_metadata, options, pre_transfer_meta);
     Ok(())
 }
 
@@ -1604,6 +1616,51 @@ mod tests {
             0o700 & dflt,
             "-E on a new link is the plain dest_mode() arm; an exec blend from \
              a 0o755 link would have produced 0o744"
+        );
+    }
+
+    /// upstream: generator.c:1937-1940 reads `sx.st.st_mode` BEFORE
+    /// `atomic_create` (generator.c:2002) deletes an obstacle, so a link that
+    /// replaced one must feed `dest_mode()` the OBSTACLE's old bits, not the
+    /// umask default the fresh `symlink(2)` left behind. `explicit` carries
+    /// that pre-replace lstat; absent it, the current stat stands in; and a
+    /// NEW destination takes no pre-transfer stat at all.
+    #[test]
+    fn symlink_pre_transfer_stat_prefers_the_explicit_obstacle_stat() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().expect("tempdir");
+        let current_path = dir.path().join("current");
+        let obstacle_path = dir.path().join("obstacle");
+        std::fs::write(&current_path, b"x").expect("write current");
+        std::fs::write(&obstacle_path, b"x").expect("write obstacle");
+        std::fs::set_permissions(&current_path, std::fs::Permissions::from_mode(0o755))
+            .expect("seed current");
+        std::fs::set_permissions(&obstacle_path, std::fs::Permissions::from_mode(0o600))
+            .expect("seed obstacle");
+        let current = std::fs::metadata(&current_path).expect("current meta");
+        let obstacle = std::fs::metadata(&obstacle_path).expect("obstacle meta");
+
+        let existing = symlink_opts(false, false, false);
+        let got = symlink_pre_transfer_stat(&existing, &current, Some(&obstacle))
+            .expect("existing destination has a pre-transfer stat");
+        assert_eq!(
+            got.permissions().mode() & 0o7777,
+            0o600,
+            "a replaced destination must hand dest_mode() the obstacle's bits"
+        );
+        let got = symlink_pre_transfer_stat(&existing, &current, None)
+            .expect("existing destination has a pre-transfer stat");
+        assert_eq!(
+            got.permissions().mode() & 0o7777,
+            0o755,
+            "with nothing replaced, the current stat is its own pre-transfer stat"
+        );
+        let new = symlink_opts(false, false, true);
+        assert!(
+            symlink_pre_transfer_stat(&new, &current, Some(&obstacle)).is_none(),
+            "destination_is_new wins: a brand-new destination has no \
+             pre-transfer stat, whatever the caller passes"
         );
     }
 }
