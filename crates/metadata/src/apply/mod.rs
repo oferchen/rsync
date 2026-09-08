@@ -35,21 +35,29 @@ pub fn apply_directory_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
-    apply_directory_metadata_with_options(destination, metadata, MetadataOptions::default())
+    apply_directory_metadata_with_options(destination, metadata, MetadataOptions::default(), None)
 }
 
 /// Applies metadata from `metadata` to the destination directory using explicit options.
 ///
 /// Applies ownership, permissions, and timestamps in the same order as
 /// upstream rsync's `set_file_attrs()`: chown, chmod, then utimensat.
+///
+/// `pre_transfer_meta` is the directory's stat from BEFORE this transfer
+/// materialised it - `dest_mode()`'s `stat_mode`/`exists` inputs
+/// (generator.c:1856 judges `exists` by the pre-mkdir `statret`). `None`
+/// means the directory is new to this transfer, so a `--chmod` without
+/// `--perms` takes the fresh-destination arm instead of rewriting bits an
+/// existing directory would keep.
 /// upstream: rsync.c:set_file_attrs() - order: chown → chmod → utimensat
 pub fn apply_directory_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
     options: MetadataOptions,
+    pre_transfer_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, true, &options, None)?;
-    permissions::apply_permissions_with_chmod(destination, metadata, &options, None)?;
+    permissions::apply_permissions_with_chmod(destination, metadata, &options, pre_transfer_meta)?;
     if options.times() {
         timestamps::set_timestamp_like(metadata, destination, true, None, Some(&options))?;
     }
@@ -463,20 +471,19 @@ pub fn metadata_unchanged(
         }
     }
 
-    // upstream: generator.c:495-502 - chmod modifiers applied on top of the
-    // entry's mode. Evaluate the modifier against the current stat and only
-    // fall through to the full apply path when the result would differ.
+    // upstream: flist.c:996-997 - the `--chmod` tweak rides the flist mode,
+    // and dest_mode() (rsync.c:470-471) then keeps an EXISTING destination's
+    // own permission bits when `!preserve_perms`. On this quick-check path
+    // the destination exists by definition, so only the `--perms` compare
+    // can report a chmod-driven difference.
     #[cfg(unix)]
     if let Some(chmod) = options.chmod() {
         use std::os::unix::fs::MetadataExt;
-        let base_mode = if options.permissions() {
-            entry.permissions()
-        } else {
-            cached_meta.mode()
-        };
-        let new_mode = chmod.apply(base_mode, cached_meta.is_dir());
-        if (cached_meta.mode() & 0o7777) != (new_mode & 0o7777) {
-            return false;
+        if options.permissions() {
+            let new_mode = chmod.apply(entry.permissions(), cached_meta.is_dir());
+            if (cached_meta.mode() & 0o7777) != (new_mode & 0o7777) {
+                return false;
+            }
         }
     }
     #[cfg(not(unix))]

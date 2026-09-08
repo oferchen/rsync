@@ -266,9 +266,10 @@ impl<'a> CopyContext<'a> {
         // transfer; `set_file_attrs()` then chmods the freshly-renamed
         // temp file to that mode. Reproduce that chmod here so a re-
         // transferred regular file holds its pre-transfer permission bits
-        // and a new regular file lands at `source_mode & dflt_perms`. The
-        // call short-circuits when `-p`/`--chmod` are active so the
-        // existing chmod chain owns the syscall.
+        // and a new regular file lands at `source_mode & dflt_perms`. A
+        // `--chmod` without `--perms` rides this call too (the tweak feeds
+        // the exists split, per flist.c:1741-1742 + rsync.c:464-486); only
+        // `-p` short-circuits, since that path owns the chmod outright.
         #[cfg(unix)]
         ::metadata::apply_dest_mode_pre_transfer(
             destination,
@@ -303,6 +304,20 @@ impl<'a> CopyContext<'a> {
                     )
                     .map_err(map_metadata_error)?;
                 }
+            } else if let Ok(existing) = std::fs::metadata(destination) {
+                // Mirror the fd branch: hand the chain the destination's
+                // current stat. The `--chmod` dest_mode() composition (which
+                // `apply_dest_mode_pre_transfer` above already stamped) then
+                // takes its exists arm and keeps those bits, where a `None`
+                // would re-run the fresh-destination arm against a
+                // pre-existing file.
+                ::metadata::apply_file_metadata_if_changed(
+                    destination,
+                    metadata,
+                    &existing,
+                    &metadata_options,
+                )
+                .map_err(map_metadata_error)?;
             } else {
                 apply_file_metadata_with_options(destination, metadata, &metadata_options)
                     .map_err(map_metadata_error)?;

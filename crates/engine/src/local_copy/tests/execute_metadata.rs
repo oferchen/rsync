@@ -228,6 +228,77 @@ fn execute_applies_chmod_modifiers() {
     assert_eq!(summary.files_copied(), 1);
 }
 
+/// The octal-all escalation cell: `--chmod=644 -r` into an EXISTING
+/// destination root must succeed. Upstream tweaks the flist mode first
+/// (flist.c:1741-1742) and `dest_mode()` (rsync.c:470-471) then keeps every
+/// existing entry's own bits - the root directory is never rewritten to
+/// 0o644, so it never self-locks. A directory this transfer creates lands
+/// the composed 0o644 plus the during-transfer owner-`rwx` grant
+/// (generator.c:1904-1905), which persists because 0o644 keeps owner write.
+// upstream: rsync.c:464-486 dest_mode() + generator.c:1904-1920.
+#[cfg(unix)]
+#[test]
+fn execute_octal_chmod_without_perms_keeps_existing_dirs_and_succeeds() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Pin the umask; the metadata crate caches it on first read and nextest
+    // runs each test in its own process.
+    let prev = rustix::process::umask(rustix::fs::Mode::from_bits_truncate(0o022));
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("sub")).expect("create source tree");
+    fs::write(source_root.join("f"), b"new content").expect("write f");
+    fs::set_permissions(source_root.join("f"), PermissionsExt::from_mode(0o644)).expect("chmod f");
+    fs::write(source_root.join("sub").join("g"), b"nested").expect("write g");
+    fs::set_permissions(
+        source_root.join("sub").join("g"),
+        PermissionsExt::from_mode(0o644),
+    )
+    .expect("chmod g");
+    fs::set_permissions(source_root.join("sub"), PermissionsExt::from_mode(0o755))
+        .expect("chmod sub");
+
+    // Existing destination root with an existing file at a different mode.
+    let dest_root = temp.path().join("dest");
+    fs::create_dir(&dest_root).expect("create dest root");
+    fs::set_permissions(&dest_root, PermissionsExt::from_mode(0o755)).expect("chmod dest root");
+    fs::write(dest_root.join("f"), b"old content!").expect("write dest f");
+    fs::set_permissions(dest_root.join("f"), PermissionsExt::from_mode(0o600))
+        .expect("chmod dest f");
+
+    let mut source_operand = source_root.into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let modifiers = ChmodModifiers::parse("644").expect("chmod parses");
+    let options = LocalCopyOptions::default().with_chmod(Some(modifiers));
+    let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
+
+    let mode_of = |p: &std::path::Path| fs::metadata(p).map(|m| m.permissions().mode() & 0o7777);
+    let root_mode = mode_of(&dest_root);
+    let f_mode = mode_of(&dest_root.join("f"));
+    let sub_mode = mode_of(&dest_root.join("sub"));
+    let g_mode = mode_of(&dest_root.join("sub").join("g"));
+    rustix::process::umask(prev);
+
+    result.expect("octal --chmod without --perms must not self-lock an existing root");
+    assert_eq!(root_mode.expect("root"), 0o755, "existing root untouched");
+    assert_eq!(f_mode.expect("f"), 0o600, "existing file keeps its bits");
+    let sub_want = if rustix::process::geteuid().is_root() {
+        0o644
+    } else {
+        0o744 // 0o644 | owner-rwx grant, kept because owner write is present
+    };
+    assert_eq!(sub_mode.expect("sub"), sub_want, "fresh dir composed mode");
+    assert_eq!(g_mode.expect("g"), 0o644, "fresh file masked tweak");
+    assert_eq!(
+        fs::read(dest_root.join("f")).expect("read f"),
+        b"new content",
+        "the transfer must actually copy into the existing root"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn execute_preserves_ownership_when_requested() {

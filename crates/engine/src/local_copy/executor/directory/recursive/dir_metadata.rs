@@ -29,12 +29,18 @@ use ::metadata::apply_directory_metadata_with_options;
 /// component, propagates the source's directory mtime onto each intermediate
 /// component materialized by `--relative` so they do not carry wall-clock
 /// timestamps from `create_dir_all`.
+///
+/// `pre_transfer_meta` is the destination directory's stat from BEFORE this
+/// transfer materialised it (`None` when this run created it), feeding the
+/// `dest_mode()` exists split - upstream generator.c:1856 judges `exists` by
+/// the pre-mkdir `statret`.
 pub(super) fn apply_final_directory_metadata(
     context: &mut CopyContext,
     source: &Path,
     destination: &Path,
     metadata: &fs::Metadata,
     relative: Option<&Path>,
+    pre_transfer_meta: Option<&fs::Metadata>,
     #[cfg(any(
         all(unix, any(feature = "acl", feature = "xattr")),
         all(windows, feature = "acl")
@@ -48,8 +54,13 @@ pub(super) fn apply_final_directory_metadata(
     } else {
         context.metadata_options()
     };
-    apply_directory_metadata_with_options(destination, metadata, metadata_options.clone())
-        .map_err(map_metadata_error)?;
+    apply_directory_metadata_with_options(
+        destination,
+        metadata,
+        metadata_options.clone(),
+        pre_transfer_meta,
+    )
+    .map_err(map_metadata_error)?;
 
     // upstream: generator.c:1508-1521 - a directory whose real mode lacks owner
     // rwx is kept writable during the transfer so its contents, and the deferred
@@ -175,11 +186,17 @@ fn keep_directory_writable(
 /// skips the root's contents and its metadata finalization. Returns `Ok(None)`
 /// when no `--chmod` is active, the tweak keeps owner execute, or the root has
 /// not been materialised yet.
+///
+/// `pre_transfer_meta` is the root's stat from BEFORE this transfer
+/// materialised it (`None` when this run created it): without `--perms`,
+/// `dest_mode()` (rsync.c:470-471) keeps an existing root's own bits, so only
+/// a fresh root (or a `--perms` transfer) can self-lock on the tweaked mode.
 #[cfg(unix)]
 pub(super) fn enforce_transfer_root_self_lock(
     context: &mut CopyContext,
     destination: &Path,
     metadata: &fs::Metadata,
+    pre_transfer_meta: Option<&fs::Metadata>,
 ) -> Result<Option<LocalCopyError>, LocalCopyError> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -194,17 +211,21 @@ pub(super) fn enforce_transfer_root_self_lock(
         return Ok(None);
     }
 
+    // Materialisation gate only: the strict-mode chmod below needs a root
+    // directory on disk. The `dest_mode()` exists split runs on the caller's
+    // PRE-transfer stat instead - this post-mkdir stat would make a root this
+    // run just created look pre-existing and mask the fresh-root self-lock.
     let existing = fs::symlink_metadata(destination).ok();
-    let Some(existing_meta) = existing.as_ref().filter(|meta| meta.is_dir()) else {
+    if !existing.as_ref().is_some_and(|meta| meta.is_dir()) {
         return Ok(None);
-    };
+    }
 
     let options = context.metadata_options();
     let Some((tweaked, self_locks)) = ::metadata::transfer_root_chmod_self_lock(
         destination,
         metadata,
         &options,
-        Some(existing_meta),
+        pre_transfer_meta,
     )
     .map_err(map_metadata_error)?
     else {
@@ -242,6 +263,7 @@ pub(super) fn enforce_transfer_root_self_lock(
     _context: &mut CopyContext,
     _destination: &Path,
     _metadata: &fs::Metadata,
+    _pre_transfer_meta: Option<&fs::Metadata>,
 ) -> Result<Option<LocalCopyError>, LocalCopyError> {
     Ok(None)
 }
@@ -305,12 +327,24 @@ fn apply_relative_intermediate_dir_mtimes(
             _ => continue,
         };
 
-        if !dst_dir.is_dir() {
+        let Ok(dst_meta) = fs::symlink_metadata(&dst_dir) else {
+            continue;
+        };
+        if !dst_meta.file_type().is_dir() {
             continue;
         }
 
-        apply_directory_metadata_with_options(&dst_dir, &src_meta, metadata_options.clone())
-            .map_err(map_metadata_error)?;
+        // The intermediate already exists on disk here (whether pre-existing
+        // or just materialized by `create_dir_all`), so its current stat is
+        // the best available `dest_mode()` exists input: a `--chmod` without
+        // `--perms` keeps its bits rather than rewriting them.
+        apply_directory_metadata_with_options(
+            &dst_dir,
+            &src_meta,
+            metadata_options.clone(),
+            Some(&dst_meta),
+        )
+        .map_err(map_metadata_error)?;
     }
 
     Ok(())
