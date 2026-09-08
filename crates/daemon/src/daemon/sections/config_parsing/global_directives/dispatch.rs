@@ -733,16 +733,18 @@ fn apply_global_directive(
                 state.module_defaults.open_noatime = Some(parsed);
             }
         }
+        // Same storage rule as the module-scoped arms in module_directives.rs:
+        // parse_filter_file() (clientserver.c:934-951) opens the stored value
+        // as given, so a relative path resolves against the daemon's cwd at
+        // read time - never against the config file's directory.
         "excludefrom" => {
             if !value.is_empty() {
-                let resolved = resolve_config_relative_path(canonical, value);
-                state.module_defaults.exclude_from = Some(resolved);
+                state.module_defaults.exclude_from = Some(daemon_parameter_path(value));
             }
         }
         "includefrom" => {
             if !value.is_empty() {
-                let resolved = resolve_config_relative_path(canonical, value);
-                state.module_defaults.include_from = Some(resolved);
+                state.module_defaults.include_from = Some(daemon_parameter_path(value));
             }
         }
         "comment" => {

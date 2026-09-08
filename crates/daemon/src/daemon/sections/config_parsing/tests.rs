@@ -2015,8 +2015,14 @@ mod config_parsing_tests {
         );
     }
 
+    /// upstream: loadparm.c stores every parameter value verbatim, and
+    /// parse_filter_file() (clientserver.c:934-951) opens the stored string as
+    /// given - so a relative value must survive parsing UNCHANGED, resolving
+    /// against the daemon's cwd only at read time. Rebasing it onto the config
+    /// file's directory here would point the later read at a file the
+    /// operator never named.
     #[test]
-    fn exclude_from_relative_path_resolved_against_config_dir() {
+    fn exclude_from_relative_path_is_stored_verbatim() {
         let dir = TempDir::new().expect("create temp dir");
         let module_path = dir.path().join("data");
         fs::create_dir(&module_path).expect("create dir");
@@ -2033,13 +2039,12 @@ mod config_parsing_tests {
             .exclude_from
             .as_ref()
             .expect("exclude_from set");
-        let config_dir = file.path().canonicalize().unwrap();
-        let expected = config_dir.parent().unwrap().join("excludes.txt");
-        assert_eq!(*exclude_from, expected);
+        assert_eq!(*exclude_from, PathBuf::from("excludes.txt"));
     }
 
+    /// Same storage rule as `exclude_from_relative_path_is_stored_verbatim`.
     #[test]
-    fn include_from_relative_path_resolved_against_config_dir() {
+    fn include_from_relative_path_is_stored_verbatim() {
         let dir = TempDir::new().expect("create temp dir");
         let module_path = dir.path().join("data");
         fs::create_dir(&module_path).expect("create dir");
@@ -2056,9 +2061,7 @@ mod config_parsing_tests {
             .include_from
             .as_ref()
             .expect("include_from set");
-        let config_dir = file.path().canonicalize().unwrap();
-        let expected = config_dir.parent().unwrap().join("includes.txt");
-        assert_eq!(*include_from, expected);
+        assert_eq!(*include_from, PathBuf::from("includes.txt"));
     }
 
     #[test]

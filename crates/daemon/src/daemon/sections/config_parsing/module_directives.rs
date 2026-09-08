@@ -339,7 +339,11 @@ fn apply_module_directive(
             }
         }
         // upstream: daemon-parm.txt - `exclude_from` STRING, default NULL.
-        // Loaded via parse_filter_file() in clientserver.c.
+        // Loaded via parse_filter_file() in clientserver.c:934-951, which opens
+        // the stored value as given: a relative path resolves against the
+        // daemon's working directory at read time (pre-change_dir, so the
+        // launch cwd), never against the config file's directory. See
+        // `daemon_parameter_path` for the storage rule.
         "excludefrom" => {
             if value.is_empty() {
                 return Err(config_parse_error(
@@ -348,11 +352,11 @@ fn apply_module_directive(
                     "'exclude from' directive must not be empty",
                 ));
             }
-            let resolved = resolve_config_relative_path(canonical, value);
-            builder.set_exclude_from(resolved);
+            builder.set_exclude_from(daemon_parameter_path(value));
         }
         // upstream: daemon-parm.txt - `include_from` STRING, default NULL.
-        // Loaded via parse_filter_file() in clientserver.c.
+        // Same storage rule as `exclude from` above: the value is kept
+        // verbatim and resolved at read time against the daemon's cwd.
         "includefrom" => {
             if value.is_empty() {
                 return Err(config_parse_error(
@@ -361,8 +365,7 @@ fn apply_module_directive(
                     "'include from' directive must not be empty",
                 ));
             }
-            let resolved = resolve_config_relative_path(canonical, value);
-            builder.set_include_from(resolved);
+            builder.set_include_from(daemon_parameter_path(value));
         }
         // upstream: daemon-parm.h - `filter` STRING, P_LOCAL. Last-wins like
         // every other directive: `do_parameter()` reaches `string_set()`, which
