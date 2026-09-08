@@ -4,8 +4,8 @@
 //! PR #4846) proved an oc-rsync `--server --sender` instance can drive
 //! an upstream 3.4.1 receiver to a byte-identical destination tree.
 //! Both deferred the stronger assertion - byte-by-byte parity on the
-//! sender's outbound wire stream - to this file (`TODO: ISI.e asserts
-//! wire-byte parity`).
+//! sender's outbound wire stream - to this file, which discharges that
+//! deferral.
 //!
 //! ## What this proves
 //!
