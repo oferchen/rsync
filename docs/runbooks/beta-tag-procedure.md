@@ -36,11 +36,12 @@ Confirm by inspection:
   master" and both PRs are merged on `origin/master`.
 - `SECURITY.md` SEC-1 row reads "MOSTLY FIXED" (or "FIXED" if the
   receiver-wiring follow-ups landed). SEC-2 and SEC-3 must read "FIXED".
-- `tools/no_placeholders.sh` is clean on master (no `todo!`,
-  `unimplemented!`, `FIXME` on live code paths).
+- `cargo xtask no-placeholders` is clean on master (no `todo!`/
+  `unimplemented!` macros or `TODO:`/`FIXME:` annotations on live
+  code paths).
 
 ```bash
-bash tools/no_placeholders.sh
+cargo xtask no-placeholders
 ```
 
 ## 2. Version bump

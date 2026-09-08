@@ -1,0 +1,94 @@
+# Allowlist for the dead-code census gate (tools/ci/dead_code_census.py).
+#
+# Every row is a pub fn with ZERO production callers and ZERO test references
+# that is deliberately being kept for now.  Four tab-separated fields:
+#
+#   name<TAB>file<TAB>expiry (YYYY-MM-DD)<TAB>reason
+#
+# The gate fails when a row EXPIRES, and when a row goes STALE (the function
+# was wired, tested, or deleted) - remove the row in the change that made it
+# stale.  To renew an expiry, do it deliberately, with a reason that still
+# holds.  Baseline generated 2026-09-08 from the tree; rows not tied to a
+# ledger task are marked "unreviewed baseline row" and expire together.
+standard_id	crates/apple-fs/src/apple_double.rs	2026-11-07	unreviewed baseline row
+read_all_delta_ops	crates/batch/src/reader/delta.rs	2026-11-07	unreviewed baseline row
+compute_digests_auto	crates/checksums/src/parallel/blocks.rs	2026-11-07	unreviewed baseline row
+compute_block_signatures_auto	crates/checksums/src/parallel/blocks.rs	2026-11-07	unreviewed baseline row
+with_dir_merge_options	crates/core/src/client/config/filters.rs	2026-11-07	unreviewed baseline row
+is_enabled_by_env	crates/core/src/client/remote/async_ssh_transport.rs	2026-11-07	unreviewed baseline row
+registered_waker_count	crates/core/src/signal/io_wake.rs	2026-11-07	unreviewed baseline row
+serve	crates/daemon/src/daemon/async_session/listener.rs	2026-11-07	unreviewed baseline row
+run_stdio_session	crates/daemon/src/daemon/sections/stdio_session.rs	2026-11-07	unreviewed baseline row
+update_bytes	crates/daemon/src/daemon/session_registry.rs	2026-11-07	unreviewed baseline row
+all_sessions	crates/daemon/src/daemon/session_registry.rs	2026-11-07	unreviewed baseline row
+set_reclaim	crates/engine/src/concurrent_delta/spill/buffer/lifecycle.rs	2026-11-07	unreviewed baseline row
+plan_directory_entries_parallel	crates/engine/src/local_copy/executor/directory/planner.rs	2026-11-07	unreviewed baseline row
+reference_directory	crates/engine/src/local_copy/options/builder/setters_staging.rs	2026-11-07	unreviewed baseline row
+drop_devices_enabled	crates/engine/src/local_copy/options/path_behavior.rs	2026-11-07	unreviewed baseline row
+current_ceiling	crates/engine/src/throughput/rope.rs	2026-11-07	unreviewed baseline row
+into_parts_with_rope	crates/engine/src/throughput/work_queue.rs	2026-11-07	unreviewed baseline row
+pick	crates/fast_io/src/adaptive_dispatch.rs	2026-11-07	unreviewed baseline row
+cached_sort_by_cmp	crates/fast_io/src/cached_sort.rs	2026-11-07	unreviewed baseline row
+unlinkat_at	crates/fast_io/src/dir_sandbox/mod.rs	2026-11-07	unreviewed baseline row
+buffer_slice	crates/fast_io/src/io_uring/buffer_ring/mod.rs	2026-11-07	unreviewed baseline row
+read_into	crates/fast_io/src/io_uring/data_reader.rs	2026-11-07	unreviewed baseline row
+as_rio_buf	crates/fast_io/src/iocp/rio.rs	2026-11-07	unreviewed baseline row
+as_rio_buf_with_len	crates/fast_io/src/iocp/rio.rs	2026-11-07	unreviewed baseline row
+rio_send	crates/fast_io/src/iocp/rio.rs	2026-11-07	unreviewed baseline row
+rio_recv	crates/fast_io/src/iocp/rio.rs	2026-11-07	unreviewed baseline row
+rio_create_request_queue	crates/fast_io/src/iocp/rio.rs	2026-11-07	unreviewed baseline row
+rio_notify	crates/fast_io/src/iocp/rio.rs	2026-11-07	unreviewed baseline row
+operator_link	crates/fast_io/src/owner_walk.rs	2026-11-07	unreviewed baseline row
+with_thread_count	crates/fast_io/src/parallel.rs	2026-11-07	unreviewed baseline row
+process_files	crates/fast_io/src/parallel.rs	2026-11-07	unreviewed baseline row
+collect_parallel	crates/flist/src/parallel.rs	2026-11-07	unreviewed baseline row
+init_tracing_with_filter	crates/logging/src/tracing_bridge.rs	2026-11-07	unreviewed baseline row
+set_role	crates/matching/src/index/mod.rs	2026-11-07	unreviewed baseline row
+read_sddl_with_sacl	crates/metadata/src/acl_windows/sddl.rs	2026-11-07	SACL read half awaiting the wire-or-delete decision (task 953)
+read_ndx_from_carry_async	crates/protocol/src/codec/ndx/codec.rs	2026-11-07	unreviewed baseline row
+flist_stats	crates/protocol/src/flist/batched_writer/writer.rs	2026-11-07	unreviewed baseline row
+with_am_root	crates/protocol/src/flist/read/mod.rs	2026-11-07	unreviewed baseline row
+xattr_cache_mut	crates/protocol/src/flist/read/mod.rs	2026-11-07	unreviewed baseline row
+trace_flist_expand	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_flist_eof	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_send_file_list_done	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_received_names	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_recv_file_list_done	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_receiving_flist_for_dir	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_struct_sizes	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+output_flist	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_read_entry	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_write_entry	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_file_list_stats	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_file_count_progress	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_files_to_consider	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_sort_start	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_clean_result	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_hardlink	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+trace_hardlink_dev_ino	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
+is_io_error_end_marker	crates/protocol/src/wire/file_entry_decode/flags.rs	2026-11-07	unreviewed baseline row
+take_stdin	crates/rsync_io/src/ssh/async_transport.rs	2026-11-07	unreviewed baseline row
+take_stdout	crates/rsync_io/src/ssh/async_transport.rs	2026-11-07	unreviewed baseline row
+into_sync_halves	crates/rsync_io/src/ssh/embedded/sync_bridge.rs	2026-11-07	unreviewed baseline row
+strong_digest	crates/signature/src/block.rs	2026-11-07	unreviewed baseline row
+apply_literal	crates/transfer/src/delta_apply/applicator.rs	2026-11-07	unreviewed baseline row
+with_remainder	crates/transfer/src/delta_config.rs	2026-11-07	unreviewed baseline row
+with_negotiated_algorithms	crates/transfer/src/delta_config.rs	2026-11-07	unreviewed baseline row
+wire_bits	crates/transfer/src/generator/item_flags.rs	2026-11-07	unreviewed baseline row
+drain_new_redo_indices	crates/transfer/src/pipeline/receiver.rs	2026-11-07	unreviewed baseline row
+match_uid	crates/transfer/src/receiver/context.rs	2026-11-07	unreviewed baseline row
+match_gid	crates/transfer/src/receiver/context.rs	2026-11-07	unreviewed baseline row
+set_deletion_filter_chain	crates/transfer/src/receiver/context.rs	2026-11-07	unreviewed baseline row
+run_sync	crates/transfer/src/receiver/transfer/sync.rs	2026-11-07	staged for the lazy-flist / INC_RECURSE-on-pull epic (tasks 297-300)
+exchange_compat_flags_direct	crates/transfer/src/setup/compat.rs	2026-11-07	unreviewed baseline row
+with_flag_string	crates/transfer/src/setup/types.rs	2026-11-07	unreviewed baseline row
+with_crtimes	crates/transfer/src/setup/types.rs	2026-11-07	unreviewed baseline row
+as_full_mut_slice	crates/transfer/src/token_buffer.rs	2026-11-07	unreviewed baseline row
+process_file_response	crates/transfer/src/transfer_ops/response.rs	2026-11-07	unreviewed baseline row
+is_throttled	crates/transfer/src/writer/throttle.rs	2026-11-07	unreviewed baseline row
+print_summary	xtask/src/commands/interop/exit_codes/runner.rs	2026-11-07	unreviewed baseline row
+run_and_extract_messages	xtask/src/commands/interop/messages/extractor.rs	2026-11-07	unreviewed baseline row
+get_messages_for_scenario	xtask/src/commands/interop/messages/golden.rs	2026-11-07	unreviewed baseline row
+get_groups_for_scenario	xtask/src/commands/interop/messages/golden.rs	2026-11-07	unreviewed baseline row
+version_string	xtask/src/commands/interop/shared/upstream.rs	2026-11-07	unreviewed baseline row
+get_oc_rsync_binary	xtask/src/commands/interop/shared/util.rs	2026-11-07	unreviewed baseline row

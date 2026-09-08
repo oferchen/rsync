@@ -278,8 +278,28 @@
 //!
 //! ```rust
 //! # use protocol::wire::DeltaOp;
-//! # fn wire_delta_to_script(ops: Vec<DeltaOp>) -> engine::delta::DeltaScript {
-//! #     unimplemented!()
+//! # use engine::delta::{DeltaScript, DeltaToken};
+//! # fn wire_delta_to_script(ops: Vec<DeltaOp>) -> DeltaScript {
+//! #     let mut tokens = Vec::with_capacity(ops.len());
+//! #     let mut total_bytes = 0u64;
+//! #     let mut literal_bytes = 0u64;
+//! #     for op in ops {
+//! #         match op {
+//! #             DeltaOp::Literal(data) => {
+//! #                 total_bytes += data.len() as u64;
+//! #                 literal_bytes += data.len() as u64;
+//! #                 tokens.push(DeltaToken::Literal(data));
+//! #             }
+//! #             DeltaOp::Copy { block_index, length } => {
+//! #                 total_bytes += length as u64;
+//! #                 tokens.push(DeltaToken::Copy {
+//! #                     index: block_index as u64,
+//! #                     len: length as usize,
+//! #                 });
+//! #             }
+//! #         }
+//! #     }
+//! #     DeltaScript::new(tokens, total_bytes, literal_bytes)
 //! # }
 //! #[test]
 //! fn wire_delta_to_script_converts_literals() {

@@ -130,6 +130,13 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features --no-deps
 
+      # Placeholder gate: no todo!/unimplemented! macros and no
+      # TODO:/FIXME:/XXX-style annotations in tracked Rust sources. Blocking
+      # here because this job is a required context; the same scan runs
+      # locally through the xtask `preflight` and `release` task trees.
+      - name: Placeholder gate
+        run: cargo run --locked -p xtask -- no-placeholders
+
       # BPF-5: Detects BufferPool cap-touching tests that mutate
       # `OC_RSYNC_BUFFER_POOL_*` env vars without `platform::env::EnvGuard`.
       # Runs in warn-only mode until BPF-3 (#2821) closes the existing
@@ -298,6 +305,15 @@ jobs:
 
       - name: Run tools/tests
         run: bash tools/ci/run_tools_tests.sh
+
+      # Blocking gate over the strictest dead-code tier: a pub fn with zero
+      # production callers AND zero test references must carry an allowlist
+      # row with a reason and an unexpired expiry date. Only that tier is
+      # gated - the wider zero-caller tier is hundreds of rows, and a frozen
+      # baseline that large would hide the one new dead function that
+      # matters inside it.
+      - name: Dead-code census gate
+        run: python3 tools/ci/dead_code_census.py gate
 
   # ===========================================================================
   # Test Job - Full test suite on Linux with toolchain matrix
