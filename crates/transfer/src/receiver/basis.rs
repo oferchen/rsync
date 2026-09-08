@@ -1924,8 +1924,7 @@ mod tests {
             backup_dir: None,
             suffix: OsString::from("~"),
         };
-        let spec =
-            InplaceBackupSpec::new(&backup_config, crate::disk_commit::BackupEnv::default());
+        let spec = InplaceBackupSpec::new(&backup_config, crate::disk_commit::BackupEnv::default());
         let rel = std::path::Path::new("file.bin");
         let config = inplace_backup_test_config(
             &dest_file,
@@ -2016,8 +2015,7 @@ mod tests {
             backup_dir: None,
             suffix: OsString::from("~"),
         };
-        let spec =
-            InplaceBackupSpec::new(&backup_config, crate::disk_commit::BackupEnv::default());
+        let spec = InplaceBackupSpec::new(&backup_config, crate::disk_commit::BackupEnv::default());
         let rel = std::path::Path::new("file.bin");
         let config = inplace_backup_test_config(&dest_file, dest_dir, rel, 20, true, Some(spec));
 
@@ -2048,8 +2046,7 @@ mod tests {
             backup_dir: None,
             suffix: OsString::from("~"),
         };
-        let spec =
-            InplaceBackupSpec::new(&backup_config, crate::disk_commit::BackupEnv::default());
+        let spec = InplaceBackupSpec::new(&backup_config, crate::disk_commit::BackupEnv::default());
         let rel = std::path::Path::new("absent.bin");
         let config = inplace_backup_test_config(&dest_file, dest_dir, rel, 16, false, Some(spec));
 

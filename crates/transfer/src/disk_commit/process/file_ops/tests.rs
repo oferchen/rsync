@@ -121,7 +121,10 @@ fn make_inplace_backup_skips_when_the_delta_basis_is_the_backup() {
     fs::write(&backup_path, b"sentinel: do not truncate").unwrap();
 
     let notice = make_inplace_backup(&begin, &config).expect("gate must not fail");
-    assert!(notice.is_none(), "no second notice for the generator's backup");
+    assert!(
+        notice.is_none(),
+        "no second notice for the generator's backup"
+    );
     assert_eq!(
         fs::read(&backup_path).unwrap(),
         b"sentinel: do not truncate",
