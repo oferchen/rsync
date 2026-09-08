@@ -22,25 +22,32 @@ use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{CopyContext, LocalCopyError, LocalCopyRecord, map_metadata_error};
 use ::metadata::apply_directory_metadata_with_options;
 
+/// The directory frame being finalized, with the stats the metadata apply reads.
+pub(super) struct DirectoryFinalize<'a> {
+    /// Source directory supplying the metadata to propagate.
+    pub source: &'a Path,
+    /// Destination directory receiving it.
+    pub destination: &'a Path,
+    /// Source stat carrying mode, ownership and timestamps.
+    pub metadata: &'a fs::Metadata,
+    /// `--relative` path when the operand materialized implied parents.
+    pub relative: Option<&'a Path>,
+    /// The destination's stat from BEFORE this transfer materialised it (`None`
+    /// when this run created it), feeding the `dest_mode()` exists split -
+    /// upstream generator.c:1856 judges `exists` by the pre-mkdir `statret`.
+    pub pre_transfer_meta: Option<&'a fs::Metadata>,
+}
+
 /// Applies final metadata to a directory after all contents have been processed.
 ///
 /// This includes permissions, timestamps (unless omit_dir_times is enabled),
-/// extended attributes, and ACLs. When `relative` covers more than one
+/// extended attributes, and ACLs. When `dir.relative` covers more than one
 /// component, propagates the source's directory mtime onto each intermediate
 /// component materialized by `--relative` so they do not carry wall-clock
 /// timestamps from `create_dir_all`.
-///
-/// `pre_transfer_meta` is the destination directory's stat from BEFORE this
-/// transfer materialised it (`None` when this run created it), feeding the
-/// `dest_mode()` exists split - upstream generator.c:1856 judges `exists` by
-/// the pre-mkdir `statret`.
 pub(super) fn apply_final_directory_metadata(
     context: &mut CopyContext,
-    source: &Path,
-    destination: &Path,
-    metadata: &fs::Metadata,
-    relative: Option<&Path>,
-    pre_transfer_meta: Option<&fs::Metadata>,
+    dir: &DirectoryFinalize<'_>,
     #[cfg(any(
         all(unix, any(feature = "acl", feature = "xattr")),
         all(windows, feature = "acl")
@@ -49,6 +56,13 @@ pub(super) fn apply_final_directory_metadata(
     #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
     #[cfg(all(any(unix, windows), feature = "acl"))] preserve_acls: bool,
 ) -> Result<(), LocalCopyError> {
+    let &DirectoryFinalize {
+        source,
+        destination,
+        metadata,
+        relative,
+        pre_transfer_meta,
+    } = dir;
     let metadata_options = if context.omit_dir_times_enabled() {
         context.metadata_options().preserve_times(false)
     } else {

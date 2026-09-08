@@ -32,7 +32,8 @@ use deletion::{
 };
 use destination::{check_destination_state, record_skipped_missing_destination};
 use dir_metadata::{
-    apply_final_directory_metadata, enforce_transfer_root_self_lock, record_directory_completion,
+    DirectoryFinalize, apply_final_directory_metadata, enforce_transfer_root_self_lock,
+    record_directory_completion,
 };
 use entry::process_planned_entry;
 
@@ -511,11 +512,13 @@ fn copy_directory_recursive_inner(
         if !context.mode().is_dry_run() {
             apply_final_directory_metadata(
                 context,
-                source,
-                destination,
-                metadata,
-                relative,
-                dir_pre_transfer,
+                &DirectoryFinalize {
+                    source,
+                    destination,
+                    metadata,
+                    relative,
+                    pre_transfer_meta: dir_pre_transfer,
+                },
                 #[cfg(any(
                     all(unix, any(feature = "acl", feature = "xattr")),
                     all(windows, feature = "acl")
@@ -697,11 +700,13 @@ fn copy_directory_recursive_inner(
     if !context.mode().is_dry_run() {
         apply_final_directory_metadata(
             context,
-            source,
-            destination,
-            metadata,
-            relative,
-            dir_pre_transfer,
+            &DirectoryFinalize {
+                source,
+                destination,
+                metadata,
+                relative,
+                pre_transfer_meta: dir_pre_transfer,
+            },
             #[cfg(any(
                 all(unix, any(feature = "acl", feature = "xattr")),
                 all(windows, feature = "acl")
