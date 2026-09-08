@@ -26,9 +26,11 @@
 
 mod codes;
 mod convert;
+mod latch;
 mod traits;
 
 pub use codes::ExitCode;
+pub use latch::{ExitCodeLatch, process_latch};
 pub use traits::{ErrorCodification, HasExitCode};
 
 #[cfg(test)]
