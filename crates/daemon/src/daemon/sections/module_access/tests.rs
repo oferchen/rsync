@@ -2878,11 +2878,95 @@ mod module_access_tests {
     }
 
     #[test]
-    fn parse_daemon_filter_token_exclude_keyword_comma_sep() {
-        // upstream: RULE_STRCMP accepts comma as separator
-        let rule = accepted_rule("exclude,*.bak");
+    fn a_comma_joined_word_after_a_keyword_is_refused() {
+        // FLIPPED from `parse_daemon_filter_token_exclude_keyword_comma_sep`,
+        // which pinned `exclude,*.bak` as an exclude of `*.bak` on the claim
+        // "RULE_STRCMP accepts comma as separator". The premise is upstream's;
+        // the conclusion is not: `rule_strcmp` returns the COMMA's own address
+        // for that terminator (exclude.c:1224-1225), so what follows it is
+        // read as MODIFIER characters, not a pattern.
+        //
+        // MEASURED against rsync 3.5.0 (module foo+keep+bar, 3.5.0 client):
+        //   filter = exclude,*.bak     -> rc 5, serves nothing
+        //   filter = - foo hide,keep   -> rc 5, serves nothing
+        //   filter = protect,keep      -> rc 5, serves nothing
+        // oc served all three modules (rc 0) - including, for the hide cell,
+        // the file `foo` the operator's own rule names. The messages below are
+        // the daemon-log lines the real binary produced, byte for byte.
+        for (token, msg) in [
+            (
+                "exclude,*.bak",
+                "invalid modifier '*' at position 8 in filter rule: exclude,*.bak",
+            ),
+            (
+                "hide,keep",
+                "invalid modifier 'k' at position 5 in filter rule: hide,keep",
+            ),
+            (
+                "show,keep",
+                "invalid modifier 'k' at position 5 in filter rule: show,keep",
+            ),
+            (
+                "protect,keep",
+                "invalid modifier 'k' at position 8 in filter rule: protect,keep",
+            ),
+            (
+                "risk,keep",
+                "invalid modifier 'k' at position 5 in filter rule: risk,keep",
+            ),
+            (
+                "include,bar",
+                "invalid modifier 'b' at position 8 in filter rule: include,bar",
+            ),
+        ] {
+            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            assert_eq!(err.to_string(), msg, "{token}");
+        }
+    }
+
+    #[test]
+    fn a_side_modifier_on_a_side_keyword_is_refused() {
+        // upstream: the `r`/`s` modifier arms refuse when the keyword already
+        // names a side (`prefix_specifies_side`, exclude.c:1423-1430); `C`
+        // refuses likewise (exclude.c:1403-1404). MEASURED:
+        //   filter = hide,r keep  -> rc 5 "invalid modifier 'r' at position 5..."
+        //   filter = hide,C keep  -> rc 5 "invalid modifier 'C' at position 5..."
+        let err = parse_daemon_filter_token("hide,r keep").expect_err("must refuse");
+        assert_eq!(
+            err.to_string(),
+            "invalid modifier 'r' at position 5 in filter rule: hide,r keep"
+        );
+        let err = parse_daemon_filter_token("hide,C keep").expect_err("must refuse");
+        assert_eq!(
+            err.to_string(),
+            "invalid modifier 'C' at position 5 in filter rule: hide,C keep"
+        );
+    }
+
+    #[test]
+    fn a_valid_modifier_run_after_a_comma_stays_accepted() {
+        // NON-VACUITY for the refusals above: the modifier scan must not
+        // become a blanket comma ban. MEASURED against rsync 3.5.0, all rc 0:
+        //   filter = hide, keep    (empty modifier run)
+        //   filter = hide,p keep   (perishable)
+        //   filter = hide,x keep   (xattr)
+        //   filter = hide,/ keep   (abs-path)
+        // upstream drops the hide at add time and serves everything; oc's
+        // `Ok(None)` drop is the same observable. The modifier SEMANTICS stay
+        // unimplemented on this path - these cells pin acceptance, nothing
+        // more.
+        for token in ["hide, keep", "hide,p keep", "hide,x keep", "hide,/ keep"] {
+            assert!(is_skipped(token), "{token}");
+        }
+        // `r`/`s`/`C` stay legal where no side is pre-named. MEASURED:
+        // `filter = exclude,r keep` is accepted (rc 0) and upstream keeps the
+        // rule side-blind. oc's pattern still glues the modifier run into the
+        // pattern text (`r keep` matches nothing) - a pre-existing divergence
+        // on an accepted config, pinned as-is because changing what a valid
+        // modifier MEANS is a different change from refusing invalid ones.
+        let rule = accepted_rule("exclude,r keep");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
-        assert_eq!(rule.pattern, "*.bak");
+        assert_eq!(rule.pattern, "r keep");
     }
 
     #[test]
@@ -2949,6 +3033,48 @@ mod module_access_tests {
     }
 
     #[test]
+    fn a_clear_with_a_comma_joined_trailer_is_refused() {
+        // upstream: `clear` maps to `!`, the modifier scan is SKIPPED
+        // (`while (ch != '!' && ...)`, exclude.c:1364), and the trailing-text
+        // check after it refuses any non-empty remainder (exclude.c:1467-1470).
+        //
+        // MEASURED against rsync 3.5.0 (module foo+keep+bar, 3.5.0 client):
+        //   filter = - foo clear,- keep -> rc 5 "'!' rule has trailing characters: clear,- keep"
+        //   filter = clear,x            -> rc 5 "'!' rule has trailing characters: clear,x"
+        //   filter = clear_             -> rc 5 "'!' rule has trailing characters: clear_"
+        // On the first cell oc built the clear, WIPED the operator's `- foo`
+        // exclude, and served every file of a module upstream refuses.
+        for (token, msg) in [
+            (
+                "clear,- keep",
+                "'!' rule has trailing characters: clear,- keep",
+            ),
+            ("clear,x", "'!' rule has trailing characters: clear,x"),
+            ("clear_", "'!' rule has trailing characters: clear_"),
+        ] {
+            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            assert_eq!(err.to_string(), msg, "{token}");
+        }
+    }
+
+    #[test]
+    fn a_clear_with_a_bare_comma_stays_a_clear_rule() {
+        // NON-VACUITY for the trailer refusal: `clear,` is upstream-VALID -
+        // `rule_strcmp` leaves `s` on the comma and `if (*s) s++`
+        // (exclude.c:1444-1445) consumes it, ending the token at `len == 0`.
+        // MEASURED: `filter = - foo clear,` is rc 0 with every file served.
+        let rule = accepted_rule("clear,");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Clear);
+        // A glued FOLLOWING word is upstream's next token, not this rule's
+        // trailer - `filter = clear P keep` is accepted upstream (a clear plus
+        // a `P keep` protect). oc's splitter glues it here; only the first
+        // word may decide the refusal. The tail stays ignored - that gluing
+        // gap is tracked with the bare-word class.
+        let rule = accepted_rule("clear P keep");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Clear);
+    }
+
+    #[test]
     fn parse_daemon_filter_token_keyword_not_partial_match() {
         // "excluder" should NOT match "exclude" keyword - treated as bare pattern
         let rule = accepted_rule("excluder *.tmp");
@@ -2957,9 +3083,36 @@ mod module_access_tests {
     }
 
     #[test]
-    fn parse_daemon_filter_token_keyword_empty_pattern_returns_none() {
-        assert!(is_skipped("exclude"));
-        assert!(is_skipped("include "));
+    fn a_patternless_keyword_is_refused() {
+        // FLIPPED from `parse_daemon_filter_token_keyword_empty_pattern_returns_none`,
+        // which pinned the fail-open: a keyword that never reaches a pattern
+        // was silently skipped and the module served. upstream refuses it -
+        // `else if (!len && !CVS_IGNORE)` (exclude.c:1474-1476).
+        //
+        // MEASURED against rsync 3.5.0 (module foo+keep+bar, 3.5.0 client):
+        //   filter = - foo hide  -> rc 5 "unexpected end of filter rule: hide"
+        //   filter = exclude     -> rc 5 "unexpected end of filter rule: exclude"
+        //   filter = protect     -> rc 5 "unexpected end of filter rule: protect"
+        //   filter = hide,       -> rc 5 "unexpected end of filter rule: hide,"
+        // On the first cell oc served `keep` AND `bar` with `foo` silently
+        // hidden - a successful-looking transfer of a module upstream refuses
+        // to serve at all.
+        for token in ["hide", "exclude", "include", "protect", "hide,"] {
+            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            assert_eq!(
+                err.to_string(),
+                format!("unexpected end of filter rule: {token}"),
+                "{token:?}"
+            );
+        }
+        // The old pin's second row, kept refusing: a keyword whose "pattern"
+        // is only whitespace. (Real tokens are trimmed by the splitter; this
+        // spelling reaches the parser only through direct calls.)
+        let err = parse_daemon_filter_token("include ").expect_err("must refuse");
+        assert!(
+            err.to_string().starts_with("unexpected end of filter rule"),
+            "{err}"
+        );
     }
 
     // ---------------------------------------------------------------------
@@ -3071,43 +3224,45 @@ mod module_access_tests {
     }
 
     #[test]
-    fn strip_keyword_prefix_space_separator() {
+    fn strip_matched_keyword_space_separator() {
+        // The terminator STAYS in the remainder: the caller's arms diverge on
+        // whether it is a `,` (modifier scan) or whitespace/`_` (pattern).
         assert_eq!(
-            strip_keyword_prefix("exclude *.tmp", "exclude"),
-            Some("*.tmp")
+            strip_matched_keyword("exclude *.tmp", "exclude"),
+            Some(" *.tmp")
         );
     }
 
     #[test]
-    fn strip_keyword_prefix_comma_separator() {
+    fn strip_matched_keyword_comma_separator() {
         assert_eq!(
-            strip_keyword_prefix("exclude,*.tmp", "exclude"),
-            Some("*.tmp")
+            strip_matched_keyword("exclude,*.tmp", "exclude"),
+            Some(",*.tmp")
         );
     }
 
     #[test]
-    fn strip_keyword_prefix_no_separator() {
+    fn strip_matched_keyword_no_separator() {
         // "excluder" should not match "exclude"
-        assert_eq!(strip_keyword_prefix("excluder *.tmp", "exclude"), None);
+        assert_eq!(strip_matched_keyword("excluder *.tmp", "exclude"), None);
     }
 
     #[test]
-    fn strip_keyword_prefix_exact_keyword_no_pattern() {
-        assert_eq!(strip_keyword_prefix("exclude", "exclude"), Some(""));
+    fn strip_matched_keyword_exact_keyword_no_pattern() {
+        assert_eq!(strip_matched_keyword("exclude", "exclude"), Some(""));
     }
 
     #[test]
-    fn strip_keyword_prefix_no_match() {
-        assert_eq!(strip_keyword_prefix("include *.tmp", "exclude"), None);
+    fn strip_matched_keyword_no_match() {
+        assert_eq!(strip_matched_keyword("include *.tmp", "exclude"), None);
     }
 
     /// upstream: `exclude.c:1222` - `rule_strcmp` accepts `_` as a keyword
     /// separator. The set this replaced was `' '` or `','` alone, so `_` made
     /// the token not-a-keyword and it fell through to the bare-pattern arm.
     #[test]
-    fn strip_keyword_prefix_underscore_separator() {
-        assert_eq!(strip_keyword_prefix("hide_bar", "hide"), Some("bar"));
+    fn strip_matched_keyword_underscore_separator() {
+        assert_eq!(strip_matched_keyword("hide_bar", "hide"), Some("_bar"));
     }
 
     /// upstream: `exclude.c:1222` - `rule_strcmp` tests `isspace`, so a TAB is
@@ -3129,8 +3284,8 @@ mod module_access_tests {
     /// into, tracked separately. Do NOT read it as "upstream parses
     /// `exclude\tbar` as an exclude of `bar`" - it does not.
     #[test]
-    fn strip_keyword_prefix_tab_separator() {
-        assert_eq!(strip_keyword_prefix("hide\tbar", "hide"), Some("bar"));
+    fn strip_matched_keyword_tab_separator() {
+        assert_eq!(strip_matched_keyword("hide\tbar", "hide"), Some("\tbar"));
     }
 
     #[test]
