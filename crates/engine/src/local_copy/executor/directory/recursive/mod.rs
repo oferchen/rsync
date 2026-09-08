@@ -32,7 +32,8 @@ use deletion::{
 };
 use destination::{check_destination_state, record_skipped_missing_destination};
 use dir_metadata::{
-    apply_final_directory_metadata, enforce_transfer_root_self_lock, record_directory_completion,
+    DirectoryFinalize, apply_final_directory_metadata, enforce_transfer_root_self_lock,
+    record_directory_completion,
 };
 use entry::process_planned_entry;
 
@@ -198,6 +199,19 @@ fn copy_directory_recursive_inner(
         record_skipped_missing_destination(context, metadata, relative);
         return Ok(false);
     }
+
+    // The `dest_mode()` exists input for this directory: its stat from before
+    // the transfer materialised it. A root the orchestrator just created
+    // (`root_just_created`) and a replaced non-directory obstacle both count
+    // as fresh - upstream generator.c:1841-1856 resets `statret` to -1 for a
+    // deleted obstacle and judges `exists` before its own mkdir.
+    let dir_pre_transfer: Option<&fs::Metadata> = if root_just_created {
+        None
+    } else {
+        existing_destination_metadata
+            .as_deref()
+            .filter(|meta| meta.file_type().is_dir())
+    };
 
     let list_start = Instant::now();
     let (readdir_buf, source_anchor) = context.readdir_buf_with_confined_anchor();
@@ -498,10 +512,13 @@ fn copy_directory_recursive_inner(
         if !context.mode().is_dry_run() {
             apply_final_directory_metadata(
                 context,
-                source,
-                destination,
-                metadata,
-                relative,
+                &DirectoryFinalize {
+                    source,
+                    destination,
+                    metadata,
+                    relative,
+                    pre_transfer_meta: dir_pre_transfer,
+                },
                 #[cfg(any(
                     all(unix, any(feature = "acl", feature = "xattr")),
                     all(windows, feature = "acl")
@@ -538,7 +555,8 @@ fn copy_directory_recursive_inner(
     // are addressed by name and never take this path.
     if relative.is_none()
         && !context.mode().is_dry_run()
-        && let Some(error) = enforce_transfer_root_self_lock(context, destination, metadata)?
+        && let Some(error) =
+            enforce_transfer_root_self_lock(context, destination, metadata, dir_pre_transfer)?
     {
         return Err(error);
     }
@@ -682,10 +700,13 @@ fn copy_directory_recursive_inner(
     if !context.mode().is_dry_run() {
         apply_final_directory_metadata(
             context,
-            source,
-            destination,
-            metadata,
-            relative,
+            &DirectoryFinalize {
+                source,
+                destination,
+                metadata,
+                relative,
+                pre_transfer_meta: dir_pre_transfer,
+            },
             #[cfg(any(
                 all(unix, any(feature = "acl", feature = "xattr")),
                 all(windows, feature = "acl")
