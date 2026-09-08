@@ -809,7 +809,8 @@ The harness lives at `crates/daemon/benches/daemon_benchmark.rs`
   `docs/design/adaptive-thread-pool-sizing.md`.
 - Related trackers: #1933 (benchmark), #1934 (RFC, completed),
   #1935 (implement async listener), #1683 (lower
-  `SIGNAL_CHECK_INTERVAL`), #1595 (io_uring async),
+  `SIGNAL_CHECK_INTERVAL`, completed - PR #5908 removed the constant,
+  PR #7681 made the accept wait readiness-driven), #1595 (io_uring async),
   #1593 (cross-runtime SSH), #1751 (rayon via
   `spawn_blocking`), #1329 (lock-free buffer pool, completed),
   #1354 (accept-loop decomposition, completed),
