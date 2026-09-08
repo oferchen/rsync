@@ -413,8 +413,11 @@ fn continuation_offset(line: &str) -> Option<usize> {
 ///   to `open_no_attacker_symlinks()`.
 /// - `pid file`: clientserver.c:1584 `create_pid_file()` opens
 ///   `lp_pid_file()`'s value directly.
+/// - `exclude from` / `include from`: clientserver.c:934-951
+///   `parse_filter_file()` opens the stored value before change_dir runs, so
+///   a relative path resolves against the daemon's launch cwd.
 ///
-/// The three sites share this function because they must agree. `log file`'s
+/// These sites share this function because they must agree. `log file`'s
 /// module and global halves are read through one `lp_log_file()` accessor, so
 /// a rule applied to one and not the other would open two different files for
 /// one config line; `pid file` obeys the same storage rule, and rebasing it
