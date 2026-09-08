@@ -237,4 +237,115 @@ mod permission_denied {
             );
         });
     }
+
+    /// A pre-existing destination directory the user cannot traverse (owner-x
+    /// absent, e.g. 0o644) fails upstream's receiver chdir BEFORE any transfer
+    /// runs: `change_dir#1 %s failed` and RERR_FILESELECT (3), with the
+    /// destination left untouched - even under `-p`, since nothing gets far
+    /// enough to repair the mode.
+    ///
+    /// Measured against rsync 3.5.0: dest root 0o644, `-r` and `-rp` both give
+    /// rc 3, zero files, root still 0o644. A read-based probe cannot pin this:
+    /// 0o644 IS readable, so the pre-fix probe passed and the run limped to a
+    /// divergent exit 23.
+    ///
+    /// upstream: main.c:763-768 get_local_name() ->
+    /// `change_dir(dest_path, CD_NORMAL)` -> exit_cleanup(RERR_FILESELECT).
+    #[test]
+    fn untraversable_destination_root_fails_file_selection() {
+        run_with_timeout(LOCAL_TIMEOUT, || {
+            if nix_is_root() {
+                return; // root traverses any directory; the fixture cannot fire.
+            }
+
+            let temp = tempdir().expect("tempdir");
+            let source_root = temp.path().join("source");
+            let dest_root = temp.path().join("dest");
+            fs::create_dir_all(&source_root).expect("create source root");
+            fs::create_dir_all(&dest_root).expect("create dest root");
+            touch(&source_root.join("f1.txt"), b"one");
+            touch(&source_root.join("f2.txt"), b"two");
+
+            // Readable but not searchable: r would satisfy a read_dir probe,
+            // the missing x fails chdir.
+            fs::set_permissions(&dest_root, fs::Permissions::from_mode(0o644))
+                .expect("chmod dest root");
+
+            let mut source_arg = source_root.into_os_string();
+            source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+            let config = ClientConfig::builder()
+                .transfer_args([source_arg, dest_root.clone().into_os_string()])
+                .build();
+
+            let result = run_client(config);
+
+            let mode = fs::metadata(&dest_root)
+                .expect("dest meta")
+                .permissions()
+                .mode()
+                & 0o777;
+            let _ = fs::set_permissions(&dest_root, fs::Permissions::from_mode(0o755));
+
+            let error = result.expect_err("an untraversable destination must fail");
+            assert_eq!(
+                error.exit_code(),
+                3,
+                "exit code should be 3 (RERR_FILESELECT), got {}",
+                error.exit_code()
+            );
+            assert_eq!(mode, 0o644, "the destination root must be left untouched");
+            assert!(
+                !dest_root.join("f1.txt").exists() && !dest_root.join("f2.txt").exists(),
+                "nothing may transfer into an untraversable destination"
+            );
+        });
+    }
+
+    /// Non-vacuity companion: an unreadable-but-searchable destination root
+    /// (0o333) passes upstream's chdir - search permission is what `chdir`
+    /// checks, not read - so the transfer must proceed and land the files.
+    /// A probe that read the directory instead of traversing it would fail
+    /// this cell with a spurious exit 3.
+    #[test]
+    fn unreadable_but_searchable_destination_root_still_transfers() {
+        run_with_timeout(LOCAL_TIMEOUT, || {
+            if nix_is_root() {
+                return;
+            }
+
+            let temp = tempdir().expect("tempdir");
+            let source_root = temp.path().join("source");
+            let dest_root = temp.path().join("dest");
+            fs::create_dir_all(&source_root).expect("create source root");
+            fs::create_dir_all(&dest_root).expect("create dest root");
+            touch(&source_root.join("f1.txt"), b"one");
+
+            // wx but no r: chdir succeeds, read_dir would EACCES.
+            fs::set_permissions(&dest_root, fs::Permissions::from_mode(0o333))
+                .expect("chmod dest root");
+
+            let mut source_arg = source_root.into_os_string();
+            source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+            let config = ClientConfig::builder()
+                .transfer_args([source_arg, dest_root.clone().into_os_string()])
+                .build();
+
+            let result = run_client(config);
+            let _ = fs::set_permissions(&dest_root, fs::Permissions::from_mode(0o755));
+
+            result.expect("a searchable destination must not fail file selection");
+            assert_eq!(
+                fs::read(dest_root.join("f1.txt")).expect("f1 landed"),
+                b"one"
+            );
+        });
+    }
+
+    /// `geteuid() == 0` probe for the fixtures above, without adding a nix
+    /// dependency to the test crate.
+    fn nix_is_root() -> bool {
+        rustix::process::geteuid().is_root()
+    }
 }

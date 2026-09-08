@@ -76,11 +76,11 @@ pub(super) fn apply_final_directory_metadata(
     )
     .map_err(map_metadata_error)?;
 
-    // upstream: generator.c:1508-1521 - a directory whose real mode lacks owner
+    // upstream: generator.c:1904-1912 - a directory whose real mode lacks owner
     // rwx is kept writable during the transfer so its contents, and the deferred
     // deletions/updates that run in the final flush, can still write into it;
     // the real (restricted) mode is reinstated LAST in touch_up_dirs
-    // (generator.c:2122-2127 fix_dir_perms). Applying the restricted mode (e.g.
+    // (generator.c:2594 fix_dir_perms). Applying the restricted mode (e.g.
     // 0555) now, before the deferred flush, makes a local --delete-after /
     // --delay-updates / in-place --backup copy fail EACCES when the deferred
     // rename/unlink tries to write into the now read-only directory.
@@ -94,8 +94,8 @@ pub(super) fn apply_final_directory_metadata(
     // directory's mtime after we set it here, so a single final pass re-applies
     // the recorded source mtime and reinstates the restricted mode once
     // everything else is done.
-    // upstream: generator.c:2089 touch_up_dirs() re-touches directory perms and
-    // mtimes after the delayed-update and deletion phases complete.
+    // upstream: generator.c:2565-2611 touch_up_dirs() re-touches directory perms
+    // and mtimes after the delayed-update and deletion phases complete.
     let mtime = metadata_options
         .times()
         .then(|| filetime::FileTime::from_last_modification_time(metadata));
@@ -142,15 +142,24 @@ pub(super) fn apply_final_directory_metadata(
 /// Keeps a directory whose applied mode lacks full owner `rwx` temporarily
 /// writable so the deferred deletions/updates in the final flush can still
 /// write into it, returning the restricted mode for `touch_up_dirs` to
-/// reinstate last (or `None` when no tweak is needed).
+/// reinstate last (or `None` when no restore is due).
 ///
-/// Mirrors upstream `generator.c:1508-1521`: when not root, not `--fake-super`,
-/// preserving perms, and the applied mode lacks full owner `rwx`
-/// (`(file->mode & S_IRWXU) != S_IRWXU`), the generator chmods the directory to
-/// `mode | S_IRWXU` and sets `need_retouch_dir_perms` so the real mode is
-/// restored (`generator.c:2122-2127` `fix_dir_perms`) after the delayed-update
-/// and deletion phases. The applied mode is read back from the destination so a
-/// `--chmod` tweak is reflected exactly.
+/// Mirrors upstream `generator.c:1904-1912`: when not root, not `--fake-super`
+/// (upstream's `am_root = -1` makes `!am_root` false), and the applied mode
+/// lacks full owner `rwx` (`(file->mode & S_IRWXU) != S_IRWXU`), the generator
+/// chmods the directory to `mode | S_IRWXU` and sets `need_retouch_dir_perms`.
+/// The gate carries NO `--perms` condition - it is `!am_root && (file->mode &
+/// S_IRWXU) != S_IRWXU && dir_tweaking`, and `dir_tweaking = !(list_only ||
+/// solo_file || dry_run)` (generator.c:2743), all of which hold on this apply
+/// path. The applied mode is read back from the destination so a `--chmod`
+/// tweak and the `!preserve_perms` `dest_mode()` collapse are both reflected
+/// exactly.
+///
+/// The restore is narrower than the raise: `touch_up_dirs` reinstates the
+/// strict mode only when `fix_dir_perms = !am_root && !(file->mode & S_IWUSR)`
+/// (generator.c:2594). An owner-writable-but-not-executable mode therefore
+/// keeps the transient owner-`rwx` bits on disk (e.g. source 0644 lands 0744),
+/// which is upstream's observed residue.
 #[cfg(unix)]
 fn keep_directory_writable(
     destination: &Path,
@@ -158,38 +167,110 @@ fn keep_directory_writable(
 ) -> Result<Option<u32>, LocalCopyError> {
     use std::os::unix::fs::PermissionsExt;
 
-    // upstream: generator.c:1512 gate - !am_root && ... && dir_tweaking, plus we
-    // only manage the mode when preserving perms and not under --fake-super
-    // (which stashes the intended mode in an xattr instead of the inode).
-    if !metadata_options.permissions()
-        || metadata_options.fake_super_enabled()
-        || ::metadata::am_root()
-    {
+    // upstream: generator.c:1904 gate - !am_root (false under --fake-super,
+    // which stashes the intended mode in an xattr instead of the inode).
+    if metadata_options.fake_super_enabled() || ::metadata::am_root() {
         return Ok(None);
     }
 
     let applied = fs::symlink_metadata(destination)
         .map_err(|error| LocalCopyError::io("stat", destination, error))?;
     let mode = applied.permissions().mode() & 0o7777;
-    // upstream: generator.c:1512 - (file->mode & S_IRWXU) != S_IRWXU.
+    // upstream: generator.c:1904 - (file->mode & S_IRWXU) != S_IRWXU.
     if mode & 0o700 == 0o700 {
         return Ok(None);
     }
 
-    // upstream: generator.c:1513-1514 - do_chmod_at(fname, mode | S_IRWXU).
+    // upstream: generator.c:1905-1906 - gen_entry_chmod(fname, file, mode | S_IRWXU).
     fs::set_permissions(destination, fs::Permissions::from_mode(mode | 0o700))
         .map_err(|error| LocalCopyError::io("modify permissions on", destination, error))?;
-    Ok(Some(mode))
+    // upstream: generator.c:2594 - fix_dir_perms = !am_root && !(file->mode &
+    // S_IWUSR): only an owner-non-writable mode is reinstated last.
+    Ok((mode & 0o200 == 0).then_some(mode))
+}
+
+/// Chmods a pre-existing directory to its during-transfer mode BEFORE its
+/// contents are written, so a restrictive destination mode (e.g. 0555) cannot
+/// fail every write into it with `EACCES`.
+///
+/// Mirrors the first-visit ordering of upstream `recv_generator()`: the
+/// directory arm rewrites `file->mode = dest_mode(...)` (generator.c:1856,
+/// `exists` judged by the pre-mkdir `statret`), `set_file_attrs()` chmods the
+/// directory to it (generator.c:1895), and the owner-`rwx` raise follows
+/// immediately (generator.c:1904-1912) - all before any of the directory's
+/// contents transfer. oc defers the strict `set_file_attrs()` chmod to
+/// [`apply_final_directory_metadata`], which is unobservable for a freshly
+/// created directory (its `create_dir` mode is already owner-writable), but a
+/// PRE-EXISTING directory keeps its on-disk bits until then, so the
+/// during-transfer mode must land here.
+///
+/// A raise failure is non-fatal, exactly as upstream's is: generator.c:1907-1910
+/// reports `failed to modify permissions on %s` at `FERROR_XFER` severity and
+/// the transfer continues (exit 23 at the end).
+#[cfg(unix)]
+pub(super) fn keep_preexisting_directory_writable(
+    context: &mut CopyContext,
+    destination: &Path,
+    metadata: &fs::Metadata,
+    pre_transfer_meta: Option<&fs::Metadata>,
+) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some(pre_transfer) = pre_transfer_meta else {
+        return;
+    };
+    let metadata_options = context.metadata_options();
+    // upstream: generator.c:1904 gate - !am_root (false under --fake-super).
+    if metadata_options.fake_super_enabled() || ::metadata::am_root() {
+        return;
+    }
+    let target = ::metadata::directory_dest_mode(
+        destination,
+        metadata.permissions().mode(),
+        &metadata_options,
+        Some(pre_transfer),
+    );
+    // upstream: generator.c:1904-1906 - raise to mode | S_IRWXU when the
+    // target lacks full owner rwx; otherwise the first-visit chmod lands the
+    // target itself (set_file_attrs at generator.c:1896).
+    let during = if target & 0o700 == 0o700 {
+        target
+    } else {
+        target | 0o700
+    };
+    if pre_transfer.permissions().mode() & 0o7777 == during {
+        return;
+    }
+    if let Err(error) = fs::set_permissions(destination, fs::Permissions::from_mode(during)) {
+        // upstream: generator.c:1907-1910 - rsyserr(FERROR_XFER, ...) and the
+        // transfer continues.
+        eprintln!(
+            "rsync: failed to modify permissions on \"{}\": {}",
+            destination.display(),
+            crate::local_copy::upstream_io_error(&error)
+        );
+        context.record_io_error();
+    }
+}
+
+/// Non-Unix stub: POSIX directory write/traversal bits do not apply.
+#[cfg(not(unix))]
+pub(super) fn keep_preexisting_directory_writable(
+    _context: &mut CopyContext,
+    _destination: &Path,
+    _metadata: &fs::Metadata,
+    _pre_transfer_meta: Option<&fs::Metadata>,
+) {
 }
 
 /// Reproduces upstream's transfer-root self-lock when a `--chmod` strips the
 /// root directory's owner-execute bit.
 ///
-/// upstream: generator.c:1515-1532 - the generator chmods a directory to its
+/// upstream: generator.c:1895-1912 - the generator chmods a directory to its
 /// tweaked mode and then re-adds owner-`rwx` (`do_chmod_at(fname, mode | S_IRWXU)`)
 /// so it can write the directory's contents. The transfer root is addressed as
 /// `dst/.`, so that re-add chmod must resolve `.` *inside* `dst`; a tweak that
-/// removed owner-execute makes it fail with `EACCES` (generator.c:1514 "failed
+/// removed owner-execute makes it fail with `EACCES` (generator.c:1907-1909 "failed
 /// to modify permissions on %s") and the generator can no longer stat or create
 /// the root's contents. Nothing under it transfers and rsync exits 23.
 /// Non-root directories are addressed by name and never take this path, so the
@@ -214,7 +295,7 @@ pub(super) fn enforce_transfer_root_self_lock(
 ) -> Result<Option<LocalCopyError>, LocalCopyError> {
     use std::os::unix::fs::PermissionsExt;
 
-    // upstream: generator.c:1512 - the transfer-root owner-rwx re-add (whose
+    // upstream: generator.c:1904 - the transfer-root owner-rwx re-add (whose
     // failure is the self-lock) is guarded by `!am_root`. Under --fake-super
     // upstream sets am_root = -1, so `!am_root` is false and the strict tweaked
     // mode is never applied to the real inode: set_stat_xattr() (rsync.c:577-578)
@@ -254,7 +335,7 @@ pub(super) fn enforce_transfer_root_self_lock(
     fs::set_permissions(destination, fs::Permissions::from_mode(tweaked))
         .map_err(|error| LocalCopyError::io("modify permissions on", destination, error))?;
 
-    // upstream: generator.c:1514 do_chmod_at("dst/.", mode | S_IRWXU) - fails
+    // upstream: generator.c:1905-1906 gen_entry_chmod("dst/.", mode | S_IRWXU) - fails
     // with EACCES because `.` can no longer be resolved inside the now
     // owner-non-executable root. Trigger the identical OS error to report it.
     let dot = destination.join(".");
