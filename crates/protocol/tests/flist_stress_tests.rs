@@ -79,6 +79,7 @@ fn generate_mixed_tree(num_dirs: usize, files_per_dir: usize) -> Vec<FileEntry> 
         let link_path = PathBuf::from(format!("{dir_str}/latest"));
         entries.push(FileEntry::new_symlink(
             link_path,
+            0o777,
             PathBuf::from(format!("impl_{:04}.rs", files_per_dir.saturating_sub(1))),
         ));
     }
@@ -94,6 +95,7 @@ fn generate_varied_types(count: usize) -> Vec<FileEntry> {
             1 => FileEntry::new_directory(format!("dir_{i:06}").into(), 0o755),
             2 => FileEntry::new_symlink(
                 format!("link_{i:06}").into(),
+                0o777,
                 format!("../target_{i:06}").into(),
             ),
             3 => FileEntry::new_fifo(format!("fifo_{i:06}").into(), 0o644),

@@ -6672,7 +6672,7 @@ fn server_sender_symlink_time_glyph(
             | super::item_flags::ItemFlags::ITEM_REPORT_TIME,
     );
     let entry =
-        protocol::flist::FileEntry::new_symlink(PathBuf::from("link"), PathBuf::from("dst"));
+        protocol::flist::FileEntry::new_symlink(PathBuf::from("link"), 0o777, PathBuf::from("dst"));
     let row = super::itemize::format_iflags(&iflags, &entry, true, &ctx.itemize_context());
     // "<L..t......" - position 4 is the time glyph.
     row.chars().nth(4).unwrap()

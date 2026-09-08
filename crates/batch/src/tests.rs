@@ -1981,11 +1981,15 @@ mod integration {
             e.set_mtime(1_700_000_000, 0);
             e
         };
-        // Symlink "nolf-symlink -> nolf". new_symlink() sets mode to 0o777
-        // unconditionally, matching the kernel default that `ln -s` produces.
+        // Symlink "nolf-symlink -> nolf". The fixture pins mode 0o777, the
+        // value Linux's kernel gives every link; the wire encoding under test
+        // is indifferent to which permission bits the entry carries.
         let link_entry = {
-            let mut e =
-                FileEntry::new_symlink("nolf-symlink".into(), std::path::PathBuf::from("nolf"));
+            let mut e = FileEntry::new_symlink(
+                "nolf-symlink".into(),
+                0o777,
+                std::path::PathBuf::from("nolf"),
+            );
             e.set_mtime(1_700_000_000, 0);
             e
         };

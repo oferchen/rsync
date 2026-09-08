@@ -88,6 +88,7 @@ fn receiver_prepends_munge_prefix_to_on_disk_symlink() {
     let mut ctx = ReceiverContext::new_for_test(&handshake, munge_receiver_config());
     ctx.file_list = vec![FileEntry::new_symlink(
         "escape".into(),
+        0o777,
         "/etc/passwd".into(),
     )];
 
@@ -154,6 +155,7 @@ fn create_symlinks_surfaces_non_eacces_error() {
     let mut ctx = ReceiverContext::new_for_test(&handshake, plain_receiver_config());
     ctx.file_list = vec![FileEntry::new_symlink(
         "blocked/link".into(),
+        0o777,
         "/etc/passwd".into(),
     )];
 
@@ -225,7 +227,7 @@ fn receiver_preserves_symlink_mtime_on_creation() {
     // exact and the test never races against the wall clock the way the
     // pre-fix receiver did.
     const SOURCE_MTIME_SECS: i64 = 7_200;
-    let mut entry = FileEntry::new_symlink("nolf-symlink".into(), "nolf".into());
+    let mut entry = FileEntry::new_symlink("nolf-symlink".into(), 0o777, "nolf".into());
     entry.set_mtime(SOURCE_MTIME_SECS, 0);
     ctx.file_list = vec![entry];
 
@@ -256,6 +258,7 @@ fn receiver_writes_unmunged_target_when_disabled() {
     let mut ctx = ReceiverContext::new_for_test(&handshake, plain_receiver_config());
     ctx.file_list = vec![FileEntry::new_symlink(
         "escape".into(),
+        0o777,
         "/etc/passwd".into(),
     )];
 

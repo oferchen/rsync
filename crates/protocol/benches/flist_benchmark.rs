@@ -105,6 +105,7 @@ fn bench_file_entry_creation(c: &mut Criterion) {
                 .map(|i| {
                     FileEntry::new_symlink(
                         black_box(format!("link_{i}").into()),
+                        0o777,
                         black_box(format!("../target_{i}").into()),
                     )
                 })

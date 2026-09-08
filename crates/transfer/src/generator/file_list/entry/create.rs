@@ -208,11 +208,26 @@ impl GeneratorContext {
             // re-applies the prefix when the link is materialized on disk.
             let target = strip_symlink_munge_prefix(self.config.munge_symlinks, raw_target);
 
+            // upstream: flist.c:1669 - `file->mode = st.st_mode` runs verbatim
+            // for every type, symlinks included; there is no symlink special
+            // case at the flist layer. On Linux a link's permission bits are
+            // pinned to 0o777 by the kernel so this reads back as 0o777 anyway,
+            // but on the platforms where `CAN_CHMOD_SYMLINK` holds
+            // (rsync.h:455-456: `HAVE_LCHMOD || HAVE_SETATTRLIST`, i.e. macOS
+            // and the BSDs) a link carries a real, settable mode that the
+            // receiver's `-p` apply must be able to reproduce.
+            #[cfg(unix)]
+            let link_mode = metadata.mode() & 0o7777;
+            // No settable symlink mode exists on Windows; keep the historical
+            // 0o777 so the wire value stays stable there.
+            #[cfg(not(unix))]
+            let link_mode = 0o777;
+
             // upstream: flist.c:1501 - symlinks carry `st_size`, which lstat
             // reports as the byte length of the link target. The receiver gets
             // the target separately, so this length is purely the size shown by
             // `--list-only`/`%l` and summed into the `--stats` total.
-            let mut entry = FileEntry::new_symlink(relative_path, target);
+            let mut entry = FileEntry::new_symlink(relative_path, link_mode, target);
             entry.set_size(metadata.len());
             entry
         } else {
@@ -1175,6 +1190,153 @@ mod munge_symlinks_tests {
             "without `munge symlinks`, the prefix is part of the target and \
              must round-trip verbatim",
         );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod symlink_mode_tests {
+    //! Sender-side symlink mode fidelity.
+    //!
+    //! upstream: flist.c:1669 - `file->mode = st.st_mode` is one assignment
+    //! covering every file type; there is no symlink special case at the flist
+    //! layer. Whether that mode carries information is a platform property:
+    //! rsync.h:455-456 defines `CAN_CHMOD_SYMLINK` when
+    //! `HAVE_LCHMOD || HAVE_SETATTRLIST` (configure.ac:942,950), which holds on
+    //! macOS and the BSDs. On Linux the kernel pins a link's permission bits to
+    //! 0o777, so forwarding the stat mode is value-identical there; the
+    //! invariant "the entry's mode is the lstat mode" is what both platforms
+    //! share, and it is what these tests assert.
+
+    use crate::config::ServerConfig;
+    use crate::generator::GeneratorContext;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use protocol::ProtocolVersion;
+    use std::ffi::OsString;
+    use std::os::unix::fs::{MetadataExt, symlink};
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn generator() -> GeneratorContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        GeneratorContext::new_for_test(&handshake, config)
+    }
+
+    /// Builds the flist entry for `link` and returns
+    /// `(entry permission bits, on-disk lstat permission bits)`.
+    fn entry_and_disk_perms(link: &std::path::Path) -> (u32, u32) {
+        let meta = std::fs::symlink_metadata(link).expect("lstat");
+        let disk = meta.mode() & 0o7777;
+        let entry = generator()
+            .create_entry(
+                link,
+                PathBuf::from("link"),
+                &fast_io::pinned_root::SourceMetadata::from(meta),
+            )
+            .expect("create_entry");
+        assert!(entry.is_symlink(), "the fixture must route through S_IFLNK");
+        (entry.permissions() & 0o7777, disk)
+    }
+
+    #[test]
+    fn symlink_entry_mode_is_the_lstat_mode() {
+        // The platform-neutral half: whatever lstat reports for the link is
+        // what the flist entry must carry. On Linux both sides are 0o777; on
+        // macOS/BSD `chmod_symlink` below moves them together off 0o777.
+        let tmp = TempDir::new().unwrap();
+        let link = tmp.path().join("link");
+        symlink("target", &link).expect("symlink");
+
+        let (entry_perms, disk_perms) = entry_and_disk_perms(&link);
+        assert_eq!(
+            entry_perms, disk_perms,
+            "upstream flist.c:1669 assigns st_mode verbatim for symlinks too",
+        );
+    }
+
+    /// Sets a symlink's own mode, returning false when the platform has no
+    /// settable symlink mode (`CAN_CHMOD_SYMLINK` unset, e.g. Linux).
+    ///
+    /// `chmod -h` is the shell spelling of `lchmod`; going through the tool
+    /// keeps this crate free of `unsafe` (`generator/mod.rs` is
+    /// `#![deny(unsafe_code)]`).
+    fn chmod_symlink(link: &std::path::Path, mode: u32) -> bool {
+        if !cfg!(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "freebsd",
+            target_os = "netbsd",
+        )) {
+            return false;
+        }
+        let status = std::process::Command::new("/bin/chmod")
+            .arg("-h")
+            .arg(format!("{mode:o}"))
+            .arg(link)
+            .status()
+            .expect("spawn chmod");
+        assert!(
+            status.success(),
+            "chmod -h must succeed where CAN_CHMOD_SYMLINK holds: {status}",
+        );
+        true
+    }
+
+    #[test]
+    fn a_non_0777_symlink_mode_reaches_the_flist_entry() {
+        // The behaviour-moving half. On a CAN_CHMOD_SYMLINK platform a link
+        // carries a real mode; hardcoding 0o777 in the constructor loses it.
+        let tmp = TempDir::new().unwrap();
+        let link = tmp.path().join("link");
+        symlink("target", &link).expect("symlink");
+        if !chmod_symlink(&link, 0o700) {
+            // Linux: no settable symlink mode exists, so there is no non-0o777
+            // input to lose. The lstat-equality test above still covers it.
+            return;
+        }
+
+        let (entry_perms, disk_perms) = entry_and_disk_perms(&link);
+        // Non-vacuity: the fixture only discriminates if lchmod actually moved
+        // the on-disk mode off 0o777.
+        assert_eq!(
+            disk_perms, 0o700,
+            "the fixture link must really be 0o700 on disk",
+        );
+        assert_eq!(
+            entry_perms, 0o700,
+            "a 0o700 symlink must not be flattened to 0o777 on the wire",
+        );
+    }
+
+    #[test]
+    fn a_genuinely_0777_symlink_stays_0777() {
+        // Non-vacuity control for the pair above: forwarding the stat mode must
+        // not perturb the case the old hardcoded constant happened to get
+        // right, on either platform.
+        let tmp = TempDir::new().unwrap();
+        let link = tmp.path().join("link");
+        symlink("target", &link).expect("symlink");
+        chmod_symlink(&link, 0o777);
+
+        let (entry_perms, disk_perms) = entry_and_disk_perms(&link);
+        assert_eq!(disk_perms, 0o777, "the control fixture must be 0o777");
+        assert_eq!(entry_perms, 0o777, "a 0o777 symlink must stay 0o777");
     }
 }
 

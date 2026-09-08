@@ -275,7 +275,7 @@ fn stats_tracking() {
     let file1 = FileEntry::new_file("file1.txt".into(), 100, 0o644);
     let file2 = FileEntry::new_file("file2.txt".into(), 200, 0o644);
     let dir = FileEntry::new_directory("mydir".into(), 0o755);
-    let link = FileEntry::new_symlink("mylink".into(), "/target".into());
+    let link = FileEntry::new_symlink("mylink".into(), 0o777, "/target".into());
     let dev = FileEntry::new_block_device("sda".into(), 0o660, 8, 0);
 
     writer.write_entry(&mut buf, &file1).unwrap();

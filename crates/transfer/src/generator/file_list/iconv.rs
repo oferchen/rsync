@@ -161,7 +161,7 @@ mod drop_decision_tests {
     #[test]
     fn symlink_with_unconvertible_target_dropped_when_negotiated() {
         let conv = latin1_converter();
-        let entry = FileEntry::new_symlink("link".into(), "あ".into());
+        let entry = FileEntry::new_symlink("link".into(), 0o777, "あ".into());
         assert!(!GeneratorContext::entry_is_convertible(&conv, true, &entry));
     }
 
@@ -172,7 +172,7 @@ mod drop_decision_tests {
     #[test]
     fn symlink_with_unconvertible_target_kept_when_not_negotiated() {
         let conv = latin1_converter();
-        let entry = FileEntry::new_symlink("link".into(), "あ".into());
+        let entry = FileEntry::new_symlink("link".into(), 0o777, "あ".into());
         assert!(GeneratorContext::entry_is_convertible(&conv, false, &entry));
     }
 
@@ -191,7 +191,7 @@ mod drop_decision_tests {
     #[test]
     fn convertible_symlink_survives_with_gate_on() {
         let conv = latin1_converter();
-        let entry = FileEntry::new_symlink("link".into(), "sub/target".into());
+        let entry = FileEntry::new_symlink("link".into(), 0o777, "sub/target".into());
         assert!(GeneratorContext::entry_is_convertible(&conv, true, &entry));
     }
 }

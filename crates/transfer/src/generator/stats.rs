@@ -247,7 +247,7 @@ mod tests {
         s.record(&FileEntry::new_directory(PathBuf::from("d"), 0o755));
         // The wire flist stores a symlink's size as its target string length;
         // set it explicitly so the test reflects the on-wire entry.
-        let mut link = FileEntry::new_symlink(PathBuf::from("l"), PathBuf::from("abc"));
+        let mut link = FileEntry::new_symlink(PathBuf::from("l"), 0o777, PathBuf::from("abc"));
         link.set_size(3);
         s.record(&link);
         s.record(&FileEntry::new_fifo(PathBuf::from("f"), 0o644));
