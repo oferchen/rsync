@@ -87,14 +87,9 @@ impl FlistMarkerSink for GoodbyeNdxSink<'_> {
     fn begin_frame(&mut self) {}
 
     fn on_del_stats(&mut self, stats: &DeleteStats) -> io::Result<()> {
-        // upstream: main.c:238-247 read_del_stats() adds to the global counters.
+        // upstream: main.c:238-247 read_del_stats() adds to the global
+        // counters, with no debug line of its own.
         self.0.accumulate_delete_stats(stats);
-        debug_log!(
-            Flist,
-            2,
-            "consumed NDX_DEL_STATS during goodbye: {} deletions",
-            stats.total()
-        );
         Ok(())
     }
 

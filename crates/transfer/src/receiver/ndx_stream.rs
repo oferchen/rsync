@@ -579,7 +579,11 @@ impl FlistMarkerSink for ReceiverContext {
     }
 
     fn set_flist_eof(&mut self, mark: u64) {
-        logging::debug_log!(Flist, 2, "received NDX_FLIST_EOF, file list complete");
+        // upstream: rsync.c:357 - `[%s] flist_eof=1` at DEBUG_GTE(FLIST, 3)
+        // when the marker-aware read consumes NDX_FLIST_EOF. Upstream's forked
+        // receiver and generator each print a copy (the generator's from
+        // io.c:1931); oc reads the stream once, so one line appears.
+        protocol::flist::trace_flist_eof(protocol::flist::ProcessRole::Receiver);
         self.flist_eof = true;
         self.flist_span_end(mark);
     }

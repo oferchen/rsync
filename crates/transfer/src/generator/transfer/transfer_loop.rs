@@ -322,7 +322,7 @@ impl GeneratorContext {
         ndx_codec: &mut protocol::codec::NdxCodecEnum,
     ) -> io::Result<()> {
         if !self.incremental.flist_eof_sent && scheduler.is_exhausted() {
-            self.send_flist_eof(writer, ndx_codec, scheduler.dispatched_count())?;
+            self.send_flist_eof(writer, ndx_codec)?;
         }
         Ok(())
     }
@@ -1374,11 +1374,7 @@ impl GeneratorContext {
                     ndx_write_codec.inner_mut(),
                 )?;
             }
-            self.send_flist_eof(
-                &mut *writer,
-                ndx_write_codec.inner_mut(),
-                scheduler.dispatched_count(),
-            )?;
+            self.send_flist_eof(&mut *writer, ndx_write_codec.inner_mut())?;
         }
 
         // Cache flist_writer back for potential reuse (e.g., phase 2).
