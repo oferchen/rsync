@@ -1649,3 +1649,151 @@ fn execute_existing_symlink_without_perms_keeps_its_own_mode() {
          must not reach it"
     );
 }
+
+/// Shared driver for the obstacle-replacement pins below: sync a source link
+/// (mode `src_mode`) over whatever `seed_obstacle` planted at `dst/link`, with
+/// or without `-p`, and return the landed link's permission bits.
+#[cfg(target_os = "macos")]
+fn landed_symlink_mode_over_obstacle(
+    src_mode: u32,
+    perms: bool,
+    seed_obstacle: impl FnOnce(&std::path::Path),
+) -> (u32, u32) {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let temp = tempdir().expect("tempdir");
+    let src_dir = temp.path().join("src");
+    let dst_dir = temp.path().join("dst");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::create_dir_all(&dst_dir).expect("mkdir dst");
+    fs::write(src_dir.join("target.txt"), b"data").expect("write target");
+    let src_link = src_dir.join("link");
+    symlink("target.txt", &src_link).expect("create src link");
+    fast_io::secure_chmod_at(&src_link, src_mode, false).expect("seed src link mode");
+
+    seed_obstacle(&dst_dir.join("link"));
+
+    let operands = vec![
+        src_dir.join("").into_os_string(),
+        dst_dir.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .links(true)
+        .permissions(perms);
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_link = dst_dir.join("link");
+    assert!(
+        fs::symlink_metadata(&dest_link)
+            .expect("dest link metadata")
+            .file_type()
+            .is_symlink(),
+        "the obstacle must have been replaced by the link"
+    );
+    let got = fs::symlink_metadata(&dest_link)
+        .expect("dest link metadata")
+        .permissions()
+        .mode()
+        & 0o7777;
+
+    // upstream's `dflt_perms` = `ACCESSPERMS & ~orig_umask` (generator.c:2770),
+    // recovered from the OS via mkdir(2) exactly as the fresh-dest test above.
+    let probe = temp.path().join("umask-probe");
+    fs::create_dir(&probe).expect("mkdir probe");
+    let dflt = fs::metadata(&probe)
+        .expect("probe metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    (got, dflt)
+}
+
+/// The formerly-diverging cell of the obstacle matrix: dest holds a REGULAR
+/// FILE (0o600), source is a symlink (0o711), `-rl` and no `-p`.
+///
+/// upstream: generator.c:1938 - `exists = statret == 0 && stype != FT_DIR` on
+/// the lstat taken BEFORE `atomic_create` (generator.c:2002) removes the
+/// obstacle, so `dest_mode()`'s exists arm (rsync.c:470-471) keeps the
+/// OBSTACLE's 0o600. Reading the fresh link's own stat instead lands the
+/// umask default `symlink(2)` produced (0o755 under 022) - the divergence this
+/// pins shut. Only meaningful where `CAN_CHMOD_SYMLINK` holds; on Linux a
+/// link's mode is a fixed 0o777 and the arm is inert.
+#[cfg(target_os = "macos")]
+#[test]
+fn execute_symlink_over_regular_file_obstacle_without_perms_keeps_the_obstacles_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (got, _dflt) = landed_symlink_mode_over_obstacle(0o711, false, |obstacle| {
+        fs::write(obstacle, b"old").expect("write obstacle");
+        fs::set_permissions(obstacle, fs::Permissions::from_mode(0o600)).expect("seed obstacle");
+    });
+    assert_eq!(
+        got, 0o600,
+        "without -p the link that replaced a 0o600 file must keep the \
+         obstacle's bits, not the fresh symlink(2) default"
+    );
+}
+
+/// Same replacement, dest was a SYMLINK to a different target (0o600): still
+/// `stype != FT_DIR`, so the exists arm keeps the OLD link's bits.
+#[cfg(target_os = "macos")]
+#[test]
+fn execute_symlink_over_different_target_link_obstacle_without_perms_keeps_the_old_mode() {
+    use std::os::unix::fs::symlink;
+
+    let (got, _dflt) = landed_symlink_mode_over_obstacle(0o711, false, |obstacle| {
+        symlink("elsewhere.txt", obstacle).expect("create obstacle link");
+        fast_io::secure_chmod_at(obstacle, 0o600, false).expect("seed obstacle mode");
+    });
+    assert_eq!(
+        got, 0o600,
+        "a replaced different-target link still feeds dest_mode() its OLD \
+         0o600, exactly like any other non-directory obstacle"
+    );
+}
+
+/// A DIRECTORY obstacle is the one replacement upstream excludes from the
+/// exists arm: `exists = statret == 0 && stype != FT_DIR` (generator.c:1938)
+/// is false, so the link takes the new-destination reduction
+/// `source & dflt_perms` (rsync.c:481-485) even though something WAS there.
+/// This pins the `destination_is_new` decision to "was a non-directory there",
+/// not "was anything there".
+#[cfg(target_os = "macos")]
+#[test]
+fn execute_symlink_over_directory_obstacle_without_perms_takes_the_dest_mode_reduction() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (got, dflt) = landed_symlink_mode_over_obstacle(0o711, false, |obstacle| {
+        fs::create_dir(obstacle).expect("mkdir obstacle");
+        fs::set_permissions(obstacle, fs::Permissions::from_mode(0o710)).expect("seed obstacle");
+    });
+    assert_eq!(
+        got,
+        0o711 & dflt,
+        "a rmdir'd directory obstacle takes dest_mode()'s NEW arm; neither its \
+         0o710 nor the bare symlink(2) default may survive"
+    );
+}
+
+/// Non-vacuity companion: the SAME regular-file obstacle under `-rlp` was
+/// correct before the pre-transfer plumbing and must stay so - with `-p`,
+/// `dest_mode()` never runs (generator.c:1936 gates on `!preserve_perms`), so
+/// the obstacle's stat must not leak into the landed mode.
+#[cfg(target_os = "macos")]
+#[test]
+fn execute_symlink_over_regular_file_obstacle_with_perms_takes_the_source_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (got, _dflt) = landed_symlink_mode_over_obstacle(0o711, true, |obstacle| {
+        fs::write(obstacle, b"old").expect("write obstacle");
+        fs::set_permissions(obstacle, fs::Permissions::from_mode(0o600)).expect("seed obstacle");
+    });
+    assert_eq!(
+        got, 0o711,
+        "-p hands the link the source's bits verbatim; the obstacle's 0o600 \
+         must not reach it"
+    );
+}

@@ -3117,7 +3117,7 @@ fn symlink_chmod_spec_does_not_compose_with_preserve_perms_from_entry() {
     symlink(&target, &link).expect("create link");
     fast_io::secure_chmod_at(&link, 0o777, false).expect("seed link mode");
 
-    let mut entry = FileEntry::new_symlink("link".into(), "target.txt".into());
+    let mut entry = FileEntry::new_symlink("link".into(), 0o777, "target.txt".into());
     entry.set_mode(0o120741);
 
     let chmod = crate::ChmodModifiers::parse("go-rwx").expect("parse chmod");

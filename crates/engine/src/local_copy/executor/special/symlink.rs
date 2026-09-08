@@ -24,7 +24,10 @@ use crate::local_copy::{
     follow_symlink_metadata, map_metadata_error, overrides::create_hard_link,
     remove_source_entry_if_requested,
 };
-use ::metadata::{MetadataOptions, apply_symlink_metadata_with_options};
+use ::metadata::{
+    MetadataOptions, apply_symlink_metadata_with_options,
+    apply_symlink_metadata_with_options_and_pre_transfer,
+};
 
 use super::super::{is_device, is_fifo};
 use super::{device::copy_device, fifo::copy_fifo, try_hard_link_basis};
@@ -469,6 +472,18 @@ pub(crate) fn copy_symlink(
         .filter(|existing| existing.file_type().is_symlink())
         .cloned();
 
+    // upstream: generator.c:1938 - `exists = statret == 0 && stype != FT_DIR`,
+    // measured on the `sx.st` lstat taken BEFORE atomic_create()
+    // (generator.c:2002) removes the obstacle. dest_mode()'s `exists` arm
+    // (rsync.c:470-471) keeps that OLD stat's permission bits, so the obstacle
+    // lstat must be captured here, ahead of the backup/removal below - the
+    // fresh link's own stat only carries the umask default `symlink(2)` left.
+    // Unlike `pre_replace_symlink_metadata` above (kept symlink-only so the
+    // itemize renders a non-symlink replacement as ITEM_IS_NEW), this keeps
+    // ANY remaining obstacle: a directory obstacle was already collapsed to
+    // `None` when it was cleared, exactly the `stype != FT_DIR` exclusion.
+    let pre_transfer_metadata = destination_metadata.clone();
+
     if !mode.is_dry_run()
         && let Some(existing) = destination_metadata.take()
     {
@@ -746,13 +761,20 @@ pub(crate) fn copy_symlink(
     // `file->mode = dest_mode(file->mode, sx.st.st_mode, dflt_perms, exists)`
     // for every type, symlinks included (the rewrite sits above the
     // `preserve_links && ftype == FT_SYMLINK` branch at generator.c:1948).
-    // `exists` is `statret == 0 && stype != FT_DIR`, i.e. whether the
-    // destination was there BEFORE this transfer - so the freshly created link
-    // must take the new-file arm and be chmod'd to `source & dflt_perms`
-    // instead of keeping the umask default `symlink(2)` gave it.
-    let symlink_options = symlink_options.with_destination_is_new(!destination_previously_existed);
-    apply_symlink_metadata_with_options(destination, metadata, &symlink_options)
-        .map_err(map_metadata_error)?;
+    // `exists` is `statret == 0 && stype != FT_DIR`, i.e. whether a
+    // NON-DIRECTORY destination was there BEFORE this transfer - a fresh link
+    // and one that replaced a directory obstacle both take the new-file arm
+    // and are chmod'd to `source & dflt_perms` instead of keeping the umask
+    // default `symlink(2)` gave it, while one that replaced any other obstacle
+    // keeps the OBSTACLE's old bits via `pre_transfer_metadata`.
+    let symlink_options = symlink_options.with_destination_is_new(pre_transfer_metadata.is_none());
+    apply_symlink_metadata_with_options_and_pre_transfer(
+        destination,
+        metadata,
+        &symlink_options,
+        pre_transfer_metadata.as_ref(),
+    )
+    .map_err(map_metadata_error)?;
 
     #[cfg(all(unix, feature = "xattr"))]
     sync_xattrs_if_requested(

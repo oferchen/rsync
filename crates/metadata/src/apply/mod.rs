@@ -546,8 +546,33 @@ pub fn apply_symlink_metadata_with_options(
     metadata: &fs::Metadata,
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
+    apply_symlink_metadata_with_options_and_pre_transfer(destination, metadata, options, None)
+}
+
+/// Applies symlink metadata using the destination's PRE-transfer `lstat`.
+///
+/// Identical to [`apply_symlink_metadata_with_options`] except that the caller
+/// supplies the `lstat` the destination had before the link was written. Every
+/// symlink apply runs after `symlink(2)`, so the link's own stat cannot
+/// distinguish "was already here" from "we just made it, and destroyed what
+/// was"; upstream reads `sx.st` at generator.c:1937-1940, BEFORE
+/// `atomic_create` (generator.c:2002) deletes the obstacle, and feeds that to
+/// `dest_mode()`. A destination that was replaced - a symlink to a different
+/// target, or a non-symlink obstacle - therefore keeps contributing its OLD
+/// permission bits to the `exists` arm (rsync.c:470-471).
+///
+/// `pre_transfer_meta` is `None` when the caller did not replace anything, in
+/// which case the link's current stat is its own pre-transfer stat. It is
+/// ignored entirely when `options.destination_is_new()` says the destination
+/// was absent.
+pub fn apply_symlink_metadata_with_options_and_pre_transfer(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: &MetadataOptions,
+    pre_transfer_meta: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, false, options, None)?;
-    permissions::apply_symlink_permissions_like(destination, metadata, options)?;
+    permissions::apply_symlink_permissions_like(destination, metadata, options, pre_transfer_meta)?;
     if options.times() {
         timestamps::set_timestamp_like(metadata, destination, false, None, Some(options))?;
     }
