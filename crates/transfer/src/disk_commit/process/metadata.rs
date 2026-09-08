@@ -56,11 +56,17 @@ pub(super) fn apply_file_metadata(
         //
         // upstream: rsync.c:449-472 dest_mode() is called (receiver.c:964) with
         // `statret == 0` for an inplace write, because the destination exists.
+        // upstream: receiver.c:1174-1177 - the basis fd is dropped again
+        // unless it is a regular file, so a symlink / fifo / device obstacle
+        // leaves `exists = fd1 != -1` false and dest_mode() takes the
+        // new-destination arm (its lstat mode - 0o755 for a symlink on some
+        // platforms - must never become the file's permissions).
         let pre_transfer_meta = if target_path != begin.file_path {
             std::fs::symlink_metadata(&begin.file_path).ok()
         } else {
             inplace_pre_transfer.cloned()
-        };
+        }
+        .filter(|existing| existing.file_type().is_file());
         apply_metadata_acls_and_xattrs(
             target_path,
             MetadataApplyInputs {
@@ -290,6 +296,57 @@ mod tests {
         assert_eq!(
             mtime, 1_600_000_000,
             "mtime must come from the begin-message entry"
+        );
+    }
+
+    /// A non-regular obstacle at the final destination (here a symlink) must
+    /// NOT count as an existing destination for `dest_mode()`: upstream drops
+    /// the basis fd unless it is a regular file (receiver.c:1174-1177), so
+    /// the staged file takes the new-destination arm - the entry mode masked
+    /// by the umask - never the obstacle's lstat permission bits (0o755 for a
+    /// symlink on some platforms).
+    #[cfg(unix)]
+    #[test]
+    fn non_regular_basis_takes_the_new_destination_arm() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Pin the umask; metadata caches it on first read and nextest runs
+        // each test in its own process.
+        let prev = rustix::process::umask(rustix::fs::Mode::from_bits_truncate(0o022));
+
+        let dir = test_support::create_tempdir();
+        // The final destination currently holds a symlink obstacle.
+        let final_path = dir.path().join("dest.dat");
+        let pointee = dir.path().join("pointee.dat");
+        std::fs::write(&pointee, b"pointee").unwrap();
+        std::os::unix::fs::symlink(&pointee, &final_path).unwrap();
+        // The staged temp file carries the O_TMPFILE-style creation mode.
+        let staged = dir.path().join("staged.tmp");
+        std::fs::write(&staged, b"payload").unwrap();
+        std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let entry =
+            protocol::flist::FileEntry::new_file(std::path::PathBuf::from("dest.dat"), 7, 0o666);
+        let config = DiskCommitConfig {
+            metadata_opts: Some(
+                metadata::MetadataOptions::new()
+                    .preserve_permissions(false)
+                    .preserve_times(false),
+            ),
+            ..DiskCommitConfig::default()
+        };
+
+        let mut begin = begin_for(&final_path, Some(entry));
+        begin.file_path = final_path.clone();
+        let err = apply_file_metadata(&staged, &begin, &config, None);
+        let got = std::fs::metadata(&staged).unwrap().permissions().mode() & 0o7777;
+        rustix::process::umask(prev);
+
+        assert!(err.is_none(), "metadata apply reported an error: {err:?}");
+        assert_eq!(
+            got, 0o644,
+            "staged file must land entry-mode & dflt_perms (0o666 & 0o755), \
+             not the symlink obstacle's lstat bits"
         );
     }
 

@@ -351,6 +351,7 @@ fn directory_metadata_with_options_no_times() {
         &dest,
         &metadata,
         MetadataOptions::new().preserve_times(false),
+        None,
     )
     .expect("apply dir metadata");
 
@@ -912,6 +913,223 @@ fn no_perms_existing_file_from_entry_keeps_prior_mode() {
         current_mode(&dest) & 0o7777,
         0o755,
         "no-perms existing file must keep its prior 0o755 mode, not adopt temp 0o600 or source 0o644",
+    );
+}
+
+/// `--chmod` without `--perms` over an EXISTING destination: upstream tweaks
+/// the flist mode at build time (flist.c:996-997) and `dest_mode()`
+/// (rsync.c:470-471) then discards the tweak in favour of the destination's
+/// own permission bits. Applying the tweak to the destination is the inverted
+/// composition this pin guards against.
+// upstream: flist.c:996-997 tweak_mode + rsync.c:464-486 dest_mode().
+#[cfg(unix)]
+#[test]
+fn chmod_without_perms_existing_file_from_entry_keeps_prior_mode() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("existing.bin");
+    fs::write(&dest, b"payload").expect("write dest");
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o620)).expect("seed temp mode");
+
+    // The destination existed pre-transfer at 0o600.
+    let pre = temp.path().join("pre.bin");
+    fs::write(&pre, b"old").expect("write pre");
+    fs::set_permissions(&pre, PermissionsExt::from_mode(0o600)).expect("seed pre mode");
+    let pre_meta = fs::metadata(&pre).expect("pre metadata");
+
+    let entry = FileEntry::new_file("existing.bin".into(), 7, 0o644);
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false)
+        .with_chmod(Some(crate::ChmodModifiers::parse("F604").expect("parse")));
+
+    apply_metadata_with_pre_transfer_stat(&dest, &entry, &opts, None, Some(pre_meta))
+        .expect("apply from entry");
+
+    assert_eq!(
+        current_mode(&dest) & 0o7777,
+        0o600,
+        "an existing destination keeps its own bits; the F604 tweak is discarded",
+    );
+}
+
+/// `--chmod` without `--perms` on a NEW destination: the tweak lands first
+/// and `dest_mode()`'s fresh arm then masks it by `dflt_perms` (umask 022 ->
+/// 0o755), so `F666` yields 0o644 - never the unmasked 0o666 the inverted
+/// composition (tweak after collapse) produces.
+// upstream: flist.c:996-997 tweak_mode + rsync.c:483-485 dest_mode() fresh arm.
+#[cfg(unix)]
+#[test]
+fn chmod_without_perms_new_file_from_entry_masks_tweak_by_umask() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    // Pin the umask so the expected dest_mode is deterministic under nextest's
+    // process-per-test isolation (the crate caches the umask on first read).
+    let prev = nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o022));
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("newfile.bin");
+    fs::write(&dest, b"payload").expect("write dest");
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o600)).expect("seed temp mode");
+
+    let entry = FileEntry::new_file("newfile.bin".into(), 7, 0o644);
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false)
+        .with_chmod(Some(crate::ChmodModifiers::parse("F666").expect("parse")));
+
+    // cached_meta = None (fresh commit), pre_transfer_meta = None (new file).
+    apply_metadata_with_cached_stat(&dest, &entry, &opts, None).expect("apply from entry");
+
+    let got = current_mode(&dest) & 0o7777;
+    nix::sys::stat::umask(prev);
+    assert_eq!(
+        got, 0o644,
+        "a new destination masks the F666 tweak by dflt_perms (0o666 & 0o755)",
+    );
+}
+
+/// Local-copy analogue of the two entry-path pins, through
+/// `apply_dest_mode_pre_transfer`: a `--chmod` without `--perms` must ride
+/// the exists split (existing keeps its bits) instead of bypassing it.
+// upstream: receiver.c:964 dest_mode() invocation + rsync.c:464-486.
+#[cfg(unix)]
+#[test]
+fn chmod_without_perms_pre_transfer_rides_the_exists_split() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let prev = nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o022));
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.bin");
+    fs::write(&source, b"payload").expect("write source");
+    fs::set_permissions(&source, PermissionsExt::from_mode(0o644)).expect("chmod source");
+    let source_meta = fs::metadata(&source).expect("source metadata");
+
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false)
+        .with_chmod(Some(crate::ChmodModifiers::parse("F604").expect("parse")));
+
+    // Existing destination (pre-transfer 0o600): the tweak is discarded.
+    let dest = temp.path().join("existing.bin");
+    fs::write(&dest, b"payload").expect("write dest");
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o620)).expect("seed temp mode");
+    let pre = temp.path().join("pre.bin");
+    fs::write(&pre, b"old").expect("write pre");
+    fs::set_permissions(&pre, PermissionsExt::from_mode(0o600)).expect("seed pre mode");
+    let pre_meta = fs::metadata(&pre).expect("pre metadata");
+    apply_dest_mode_pre_transfer(&dest, &source_meta, &opts, Some(&pre_meta))
+        .expect("apply dest_mode");
+    let existing_got = current_mode(&dest) & 0o7777;
+
+    // Fresh destination: the tweak is masked by dflt_perms (0o604 & 0o755).
+    let fresh = temp.path().join("fresh.bin");
+    fs::write(&fresh, b"payload").expect("write fresh");
+    fs::set_permissions(&fresh, PermissionsExt::from_mode(0o600)).expect("seed temp mode");
+    apply_dest_mode_pre_transfer(&fresh, &source_meta, &opts, None).expect("apply dest_mode");
+    let fresh_got = current_mode(&fresh) & 0o7777;
+
+    nix::sys::stat::umask(prev);
+    assert_eq!(
+        existing_got, 0o600,
+        "existing destination keeps its pre-transfer bits under --chmod without --perms",
+    );
+    assert_eq!(
+        fresh_got, 0o604,
+        "fresh destination lands the tweaked mode masked by dflt_perms",
+    );
+}
+
+/// Directory arm of the composition: an existing directory keeps its own
+/// bits under `--chmod` without `--perms` (upstream never rewrites it),
+/// while a directory this transfer created composes tweak-then-collapse and
+/// then keeps the during-transfer owner-`rwx` grant when the owner can
+/// write (generator.c:1904-1905 fixup; touch_up_dirs only restores a mode
+/// lacking owner write).
+// upstream: generator.c:1856 dest_mode() for dirs + generator.c:1904-1920.
+#[cfg(unix)]
+#[test]
+fn chmod_without_perms_directory_rides_the_exists_split() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let prev = nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o022));
+
+    let temp = tempdir().expect("tempdir");
+    let src = temp.path().join("src_dir");
+    fs::create_dir(&src).expect("create src dir");
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).expect("chmod src");
+    let src_meta = fs::symlink_metadata(&src).expect("stat src");
+
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false)
+        .with_chmod(Some(crate::ChmodModifiers::parse("644").expect("parse")));
+
+    // Existing directory (pre-transfer 0o711): untouched.
+    let existing = temp.path().join("existing_dir");
+    fs::create_dir(&existing).expect("create existing dir");
+    fs::set_permissions(&existing, fs::Permissions::from_mode(0o711)).expect("chmod existing");
+    let pre_meta = fs::symlink_metadata(&existing).expect("stat existing");
+    apply_directory_metadata_with_options(&existing, &src_meta, opts.clone(), Some(&pre_meta))
+        .expect("apply dir metadata");
+    let existing_got = fs::symlink_metadata(&existing).expect("restat").mode() & 0o7777;
+
+    // Fresh directory: 0o755 tweaked to 0o644, masked by dflt (no-op), then
+    // the owner-rwx transfer grant sticks because 0o644 keeps owner write.
+    let fresh = temp.path().join("fresh_dir");
+    fs::create_dir(&fresh).expect("create fresh dir");
+    apply_directory_metadata_with_options(&fresh, &src_meta, opts, None)
+        .expect("apply dir metadata");
+    let fresh_got = fs::symlink_metadata(&fresh).expect("restat").mode() & 0o7777;
+    let fresh_want = crate::directory_transfer_mode(0o644, crate::am_root());
+
+    nix::sys::stat::umask(prev);
+    assert_eq!(
+        existing_got, 0o711,
+        "an existing directory keeps its own bits under --chmod without --perms",
+    );
+    assert_eq!(
+        fresh_got, fresh_want,
+        "a fresh directory lands the composed mode plus the owner-rwx grant",
+    );
+}
+
+/// Non-vacuity companion: with `--perms` the tweak applies to the source
+/// mode EXACTLY - `dest_mode()` never runs (receiver.c:1181) - so the
+/// exists split above cannot be satisfied by simply never chmodding.
+// upstream: flist.c:996-997 tweak_mode; preserve_perms skips dest_mode().
+#[cfg(unix)]
+#[test]
+fn chmod_with_perms_applies_tweaked_source_mode_exactly() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("existing.bin");
+    fs::write(&dest, b"payload").expect("write dest");
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o600)).expect("seed dest mode");
+
+    let pre = temp.path().join("pre.bin");
+    fs::write(&pre, b"old").expect("write pre");
+    fs::set_permissions(&pre, PermissionsExt::from_mode(0o600)).expect("seed pre mode");
+    let pre_meta = fs::metadata(&pre).expect("pre metadata");
+
+    let entry = FileEntry::new_file("existing.bin".into(), 7, 0o644);
+    let opts = MetadataOptions::new()
+        .preserve_times(false)
+        .with_chmod(Some(crate::ChmodModifiers::parse("F604").expect("parse")));
+
+    apply_metadata_with_pre_transfer_stat(&dest, &entry, &opts, None, Some(pre_meta))
+        .expect("apply from entry");
+
+    assert_eq!(
+        current_mode(&dest) & 0o7777,
+        0o604,
+        "--perms + --chmod applies the tweaked source mode, existing dest notwithstanding",
     );
 }
 
@@ -1542,7 +1760,7 @@ fn fake_super_chmod_deflects_directory_real_mode() {
         .preserve_permissions(true)
         .with_chmod(Some(ChmodModifiers::parse("a=").expect("parse a=")));
 
-    apply_directory_metadata_with_options(&dst, &src_meta, opts).expect("apply dir metadata");
+    apply_directory_metadata_with_options(&dst, &src_meta, opts, None).expect("apply dir metadata");
 
     // The real directory mode must stay self-accessible (0700), never 000.
     let real = fs::metadata(&dst).expect("stat dst").mode() & 0o777;
@@ -1618,7 +1836,7 @@ fn fake_super_faithful_directory_writes_no_stat_xattr() {
         .preserve_group(true)
         .preserve_permissions(true);
 
-    apply_directory_metadata_with_options(&dst, &src_meta, opts).expect("apply dir metadata");
+    apply_directory_metadata_with_options(&dst, &src_meta, opts, None).expect("apply dir metadata");
 
     // Same-owner 0755 dir: the real 0755 mode already conveys the intent, so no
     // %stat shim is written (matching upstream's write-or-remove rule).
@@ -2080,22 +2298,58 @@ fn metadata_unchanged_executability_ignores_matching_presence_and_non_files() {
 #[test]
 fn metadata_unchanged_returns_false_when_chmod_would_change_mode() {
     use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
     let dest = temp.path().join("chmod-changes.txt");
     fs::write(&dest, b"data").expect("write dest");
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o644)).expect("set perms");
 
     let meta = fs::metadata(&dest).expect("metadata");
 
     let entry = FileEntry::new_file("chmod-changes.txt".into(), 4, 0o644);
 
-    // u+x would change 0o644 to 0o744
+    // With --perms, u+x tweaks the flist mode 0o644 to 0o744 (flist.c:1741),
+    // which differs from the destination's 0o644.
     let chmod = crate::ChmodModifiers::parse("u+x").expect("parse chmod");
-    let opts = MetadataOptions::new().with_chmod(Some(chmod));
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .with_chmod(Some(chmod));
 
     assert!(
         !metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
-        "should return false when chmod would change mode"
+        "should return false when the tweaked flist mode differs under --perms"
+    );
+}
+
+/// Without `--perms`, `dest_mode()` (rsync.c:470-471) keeps an existing
+/// destination's own permission bits - the `--chmod` tweak is discarded - so
+/// the quick-check must report the metadata unchanged even though the tweak
+/// would alter the mode.
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_ignores_chmod_without_perms_on_existing_dest() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("chmod-no-perms.txt");
+    fs::write(&dest, b"data").expect("write dest");
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o600)).expect("set perms");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+
+    let entry = FileEntry::new_file("chmod-no-perms.txt".into(), 4, 0o644);
+
+    let chmod = crate::ChmodModifiers::parse("u+x").expect("parse chmod");
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false)
+        .with_chmod(Some(chmod));
+
+    assert!(
+        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        "an existing destination keeps its own bits when --perms is off"
     );
 }
 

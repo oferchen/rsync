@@ -1252,14 +1252,18 @@ fn stamp_directory_from_source(
         Ok(meta) if meta.file_type().is_dir() => meta,
         _ => return Ok(()),
     };
-    match fs::symlink_metadata(dest_dir) {
-        Ok(meta) if meta.file_type().is_dir() => {}
+    let dest_meta = match fs::symlink_metadata(dest_dir) {
+        Ok(meta) if meta.file_type().is_dir() => meta,
         _ => return Ok(()),
-    }
+    };
+    // The implied parent already exists on disk here, so its current stat is
+    // the `dest_mode()` exists input: a `--chmod` without `--perms` keeps
+    // its bits rather than rewriting them.
     ::metadata::apply_directory_metadata_with_options(
         dest_dir,
         &source_meta,
         metadata_options.clone(),
+        Some(&dest_meta),
     )
     .map_err(crate::local_copy::map_metadata_error)?;
     Ok(())
