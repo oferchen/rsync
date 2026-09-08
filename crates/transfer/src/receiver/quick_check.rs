@@ -1850,7 +1850,7 @@ mod update_type_guard_tests {
         symlink(&target, &dest).expect("create dest symlink");
 
         // Source is also a symlink -> same type, guard matches.
-        let sym_entry = FileEntry::new_symlink("item".into(), target.clone());
+        let sym_entry = FileEntry::new_symlink("item".into(), 0o777, target.clone());
         assert!(
             dest_type_matches_source(&dest, &sym_entry),
             "symlink dest vs symlink source must match (lstat, not followed)"
@@ -2453,7 +2453,7 @@ mod non_regular_alt_dest_tests {
     fn compare_dest_identical_symlink_skips_creation() {
         let (_tmp, basis, dest) = dirs();
         symlink("target", basis.join("link")).expect("basis symlink");
-        let entry = FileEntry::new_symlink("link".into(), "target".into());
+        let entry = FileEntry::new_symlink("link".into(), 0o777, "target".into());
 
         let handled = try_reference_dest_non(
             &entry,
@@ -2481,7 +2481,7 @@ mod non_regular_alt_dest_tests {
     fn copy_dest_identical_symlink_is_not_handled() {
         let (_tmp, basis, dest) = dirs();
         symlink("target", basis.join("link")).expect("basis symlink");
-        let entry = FileEntry::new_symlink("link".into(), "target".into());
+        let entry = FileEntry::new_symlink("link".into(), 0o777, "target".into());
 
         let handled = try_reference_dest_non(
             &entry,
@@ -2509,7 +2509,7 @@ mod non_regular_alt_dest_tests {
         let (_tmp, basis, dest) = dirs();
         let basis_link = basis.join("link");
         symlink("target", &basis_link).expect("basis symlink");
-        let entry = FileEntry::new_symlink("link".into(), "target".into());
+        let entry = FileEntry::new_symlink("link".into(), 0o777, "target".into());
 
         let handled = try_reference_dest_non(
             &entry,
@@ -2575,7 +2575,7 @@ mod non_regular_alt_dest_tests {
         let (_tmp, basis, dest) = dirs();
         symlink("OTHER", basis.join("link")).expect("basis symlink");
         // The source link points elsewhere than the basis link.
-        let entry = FileEntry::new_symlink("link".into(), "target".into());
+        let entry = FileEntry::new_symlink("link".into(), 0o777, "target".into());
 
         let handled = try_reference_dest_non(
             &entry,
@@ -2638,7 +2638,7 @@ mod non_regular_alt_dest_tests {
         )
         .expect("set basis symlink times");
 
-        let mut entry = FileEntry::new_symlink("link".into(), "target".into());
+        let mut entry = FileEntry::new_symlink("link".into(), 0o777, "target".into());
         entry.set_mtime(1_700_000_000, 0);
 
         let opts = MetadataOptions::new().preserve_times(true);

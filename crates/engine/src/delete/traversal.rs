@@ -270,7 +270,7 @@ mod tests {
             &[
                 dir_entry("root/sub"),
                 file_entry("root/file.txt"),
-                FileEntry::new_symlink(PathBuf::from("root/link"), PathBuf::from("target")),
+                FileEntry::new_symlink(PathBuf::from("root/link"), 0o777, PathBuf::from("target")),
             ],
         );
         let seq: Vec<PathBuf> = std::iter::from_fn(|| cursor.next_ready()).collect();

@@ -272,7 +272,7 @@ fn out_format_collects_symlink() {
     let ctx = ReceiverContext::new_for_test(&handshake, config);
     let mut writer = MockMsgInfoWriter::new();
 
-    let entry = FileEntry::new_symlink("mylink".into(), "target".into());
+    let entry = FileEntry::new_symlink("mylink".into(), 0o777, "target".into());
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
 
     ctx.emit_or_record_itemize(&mut writer, 5, &iflags, &entry)
@@ -429,7 +429,7 @@ fn default_i_symlink_defers_into_flist_order_on_pull() {
     ctx.defer_itemize = true;
     let mut writer = MockMsgInfoWriter::new();
 
-    let entry = FileEntry::new_symlink("blink".into(), "afile.txt".into());
+    let entry = FileEntry::new_symlink("blink".into(), 0o777, "afile.txt".into());
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
 
     ctx.emit_or_record_itemize(&mut writer, 7, &iflags, &entry)
@@ -473,7 +473,7 @@ fn render_itemize_symlink_with_target() {
     let config = receiver_config_with_itemize();
     let ctx = ReceiverContext::new_for_test(&handshake, config);
 
-    let entry = FileEntry::new_symlink("mylink".into(), "target".into());
+    let entry = FileEntry::new_symlink("mylink".into(), 0o777, "target".into());
     let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
 
     assert_eq!(
@@ -552,7 +552,11 @@ fn receiver_backs_up_existing_symlink_before_replacing() {
 
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = vec![FileEntry::new_symlink("mylink".into(), "new-target".into())];
+    ctx.file_list = vec![FileEntry::new_symlink(
+        "mylink".into(),
+        0o777,
+        "new-target".into(),
+    )];
 
     let mut writer = MockMsgInfoWriter::new();
     ctx.create_symlinks(dest, None, &mut writer)
@@ -607,7 +611,7 @@ fn replaced_symlink_itemizes_as_change_not_create() {
     std::os::unix::fs::symlink("old-target", dest.join("mylink")).expect("seed old symlink");
     let old_meta = std::fs::symlink_metadata(dest.join("mylink")).expect("lstat old symlink");
 
-    let mut entry = FileEntry::new_symlink("mylink".into(), "new-target".into());
+    let mut entry = FileEntry::new_symlink("mylink".into(), 0o777, "new-target".into());
     // Same whole second as the on-disk link: `t` must stay dark (same_time()
     // compares whole seconds at modify_window 0, util1.c:1478).
     entry.set_mtime(old_meta.mtime(), 0);
@@ -648,7 +652,7 @@ fn absent_symlink_still_itemizes_as_all_new() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dest = tmp.path();
 
-    let entry = FileEntry::new_symlink("mylink".into(), "new-target".into());
+    let entry = FileEntry::new_symlink("mylink".into(), 0o777, "new-target".into());
     let ctx = repointed_symlink_ctx(vec![entry]);
 
     let mut writer = MockMsgInfoWriter::new();
@@ -676,7 +680,7 @@ fn non_symlink_obstacle_replacement_itemizes_as_all_new() {
     let dest = tmp.path();
     std::fs::write(dest.join("mylink"), b"obstacle").expect("seed obstacle file");
 
-    let entry = FileEntry::new_symlink("mylink".into(), "new-target".into());
+    let entry = FileEntry::new_symlink("mylink".into(), 0o777, "new-target".into());
     let ctx = repointed_symlink_ctx(vec![entry]);
 
     let mut writer = MockMsgInfoWriter::new();

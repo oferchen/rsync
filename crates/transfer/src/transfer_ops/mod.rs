@@ -968,6 +968,7 @@ mod tests {
             FileEntry::new_file(std::path::PathBuf::from("a.txt"), 0, 0o100644),
             FileEntry::new_symlink(
                 std::path::PathBuf::from("link"),
+                0o777,
                 std::path::PathBuf::from("a.txt"),
             ),
         ]);

@@ -623,7 +623,7 @@ fn symlink_owner_override_non_root_chown_is_skipped_not_fatal() {
     let cached_meta = fs::symlink_metadata(&dest_link).ok();
 
     // owner_override bypasses the entry's own uid, so the entry is a placeholder.
-    let entry = FileEntry::new_symlink("dest-link".into(), "target.txt".into());
+    let entry = FileEntry::new_symlink("dest-link".into(), 0o777, "target.txt".into());
 
     // Explicit `--chown=root:...` (uid 0) as non-root: upstream never attempts
     // the do_lchown (change_uid requires am_root), so oc-rsync must complete
@@ -675,7 +675,7 @@ fn symlink_group_override_non_root_chown_to_foreign_group_is_skipped_not_fatal()
         .gid();
     let cached_meta = fs::symlink_metadata(&dest_link).ok();
 
-    let entry = FileEntry::new_symlink("dest-link-grp".into(), "target-grp.txt".into());
+    let entry = FileEntry::new_symlink("dest-link-grp".into(), 0o777, "target-grp.txt".into());
 
     // Explicit `--chown=:<foreign-group>` as non-root: FLAG_SKIP_GROUP drops the
     // do_lchown before it runs, so the link's group must be left untouched.
@@ -2961,7 +2961,7 @@ fn symlink_own_mode_applied_from_entry_under_preserve_perms() {
         0o777
     );
 
-    let mut entry = FileEntry::new_symlink("link".into(), "target.txt".into());
+    let mut entry = FileEntry::new_symlink("link".into(), 0o777, "target.txt".into());
     entry.set_mode(0o120741);
 
     super::apply_symlink_metadata_from_entry(

@@ -618,7 +618,7 @@ fn golden_v28_symlink_target_length_fixed_int() {
     let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
 
     let target = "/very/long/symlink/target/path";
-    let mut entry = FileEntry::new_symlink("link".into(), target.into());
+    let mut entry = FileEntry::new_symlink("link".into(), 0o777, target.into());
     entry.set_mtime(1_700_000_000, 0);
 
     writer.write_entry(&mut buf, &entry).unwrap();

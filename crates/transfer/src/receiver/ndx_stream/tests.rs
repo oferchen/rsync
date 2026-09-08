@@ -530,6 +530,7 @@ fn receiver_with_symlink_then_file() -> ReceiverContext {
     let mut ctx = inc_recurse_receiver(&["d0"]);
     ctx.file_list.push(FileEntry::new_symlink(
         PathBuf::from("link"),
+        0o777,
         PathBuf::from("target"),
     ));
     ctx.file_list

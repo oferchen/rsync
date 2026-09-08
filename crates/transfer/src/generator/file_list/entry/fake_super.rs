@@ -42,7 +42,7 @@ pub(super) fn build_entry_from_fake_super(
             // upstream: fake-super symlinks stash the target separately;
             // when the xattr alone is the source of truth, we emit an empty
             // target to match the placeholder content.
-            FileEntry::new_symlink(relative_path, PathBuf::new())
+            FileEntry::new_symlink(relative_path, perm_bits, PathBuf::new())
         }
         Some(FileType::BlockDevice) => {
             FileEntry::new_block_device(relative_path, perm_bits, rdev_major, rdev_minor)
@@ -158,6 +158,31 @@ mod fake_super_tests {
         };
         let entry = build_entry_from_fake_super(PathBuf::from("link"), 0, &stat);
         assert_eq!(entry.file_type(), FileType::Symlink);
+        // Non-vacuity control for the test below: a genuinely 0o777 xattr mode
+        // must still read back as 0o777.
+        assert_eq!(entry.permissions() & 0o7777, 0o777);
+    }
+
+    #[test]
+    fn build_from_fake_super_symlink_keeps_the_xattr_permission_bits() {
+        // upstream: xattrs.c:1172 `from_wire_mode()` - the stashed mode
+        // replaces st_mode wholesale, permission bits included. The symlink arm
+        // has the same `perm_bits` in hand as every sibling arm and must not
+        // substitute a constant for it.
+        let stat = FakeSuperStat {
+            mode: 0o120700,
+            uid: 1000,
+            gid: 1000,
+            rdev: None,
+        };
+        let entry = build_entry_from_fake_super(PathBuf::from("link"), 0, &stat);
+        assert_eq!(entry.file_type(), FileType::Symlink);
+        assert_eq!(
+            entry.permissions() & 0o7777,
+            0o700,
+            "the fake-super symlink arm must forward the xattr's permission \
+             bits, not a hardcoded 0o777",
+        );
     }
 
     #[test]

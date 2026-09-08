@@ -74,7 +74,7 @@ fn test_dir(name: &str) -> FileEntry {
 
 /// Creates a test symlink entry with the given name and target.
 fn test_symlink(name: &str, target: &str) -> FileEntry {
-    let mut entry = FileEntry::new_symlink(PathBuf::from(name), PathBuf::from(target));
+    let mut entry = FileEntry::new_symlink(PathBuf::from(name), 0o777, PathBuf::from(target));
     entry.set_mtime(1700000000, 0);
     entry
 }

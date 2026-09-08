@@ -159,7 +159,7 @@ fn build_entry(fields: &EntryFields) -> Option<FileEntry> {
         FileTypeSelector::Directory => FileEntry::new_directory(path, permissions),
         FileTypeSelector::Symlink => {
             let target = sanitise_target(&fields.symlink_target_bytes)?;
-            FileEntry::new_symlink(path, PathBuf::from(target))
+            FileEntry::new_symlink(path, 0o777, PathBuf::from(target))
         }
     };
 

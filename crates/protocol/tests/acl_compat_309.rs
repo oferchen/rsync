@@ -177,7 +177,8 @@ fn reader_with_acls_fails_on_stream_without_acl_data() {
 fn symlink_entries_skip_acl_data() {
     let (protocol, compat) = proto30_setup();
 
-    let mut symlink = FileEntry::new_symlink(PathBuf::from("link"), PathBuf::from("/target"));
+    let mut symlink =
+        FileEntry::new_symlink(PathBuf::from("link"), 0o777, PathBuf::from("/target"));
     symlink.set_mtime(1_700_000_000, 0);
 
     // Write with ACLs enabled.
@@ -210,7 +211,8 @@ fn symlink_entries_skip_acl_data() {
 fn symlink_roundtrip_no_acl_indices() {
     let (protocol, compat) = proto30_setup();
 
-    let mut symlink = FileEntry::new_symlink(PathBuf::from("link"), PathBuf::from("/target"));
+    let mut symlink =
+        FileEntry::new_symlink(PathBuf::from("link"), 0o777, PathBuf::from("/target"));
     symlink.set_mtime(1_700_000_000, 0);
 
     let mut buf = Vec::new();

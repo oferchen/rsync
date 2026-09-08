@@ -501,7 +501,7 @@ fn test_finalization_stats_predicates() {
 #[test]
 fn test_finalize_symlink_orphan() {
     let mut incremental = IncrementalFileList::new();
-    let symlink = FileEntry::new_symlink("missing_dir/link".into(), "target".into());
+    let symlink = FileEntry::new_symlink("missing_dir/link".into(), 0o777, "target".into());
     incremental.push(symlink);
 
     let result = incremental.finalize();
@@ -546,7 +546,7 @@ fn test_finalize_with_builder_pre_created_dirs() {
 }
 
 fn make_symlink(name: &str, target: &str) -> FileEntry {
-    FileEntry::new_symlink(name.into(), target.into())
+    FileEntry::new_symlink(name.into(), 0o777, target.into())
 }
 
 fn make_block_device(name: &str) -> FileEntry {

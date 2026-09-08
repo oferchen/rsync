@@ -287,7 +287,7 @@ proptest! {
         target in symlink_target_strategy(),
     ) {
         let protocol = ProtocolVersion::try_from(proto).unwrap();
-        let entry = FileEntry::new_symlink(name, target.clone());
+        let entry = FileEntry::new_symlink(name, 0o777, target.clone());
 
         let mut writer = FileListWriter::new(protocol)
             .with_preserve_links(true);
@@ -471,7 +471,7 @@ proptest! {
         file_entry.set_mtime(mtime, 0);
         let mut dir_entry = FileEntry::new_directory("beta".into(), perms);
         dir_entry.set_mtime(mtime, 0);
-        let symlink_entry = FileEntry::new_symlink("gamma".into(), "alpha.txt".into());
+        let symlink_entry = FileEntry::new_symlink("gamma".into(), 0o777, "alpha.txt".into());
         let mut file2_entry = FileEntry::new_file("delta.bin".into(), 1000, perms);
         file2_entry.set_mtime(mtime, 0);
 

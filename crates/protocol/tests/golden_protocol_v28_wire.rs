@@ -235,7 +235,7 @@ fn golden_v28_symlink_entry() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(proto28()).with_preserve_links(true);
 
-    let mut entry = FileEntry::new_symlink("link".into(), "target".into());
+    let mut entry = FileEntry::new_symlink("link".into(), 0o777, "target".into());
     entry.set_mtime(1_700_000_000, 0);
 
     writer.write_entry(&mut buf, &entry).unwrap();
@@ -269,7 +269,7 @@ fn golden_v28_symlink_roundtrip() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
 
-    let entry = FileEntry::new_symlink("mylink".into(), "/usr/bin/foo".into());
+    let entry = FileEntry::new_symlink("mylink".into(), 0o777, "/usr/bin/foo".into());
 
     writer.write_entry(&mut buf, &entry).unwrap();
     writer.write_end(&mut buf, None).unwrap();
@@ -647,7 +647,7 @@ fn golden_v28_multi_entry_roundtrip() {
     let mut f2 = FileEntry::new_file("src/main.rs".into(), 2000, 0o644);
     f2.set_mtime(1_700_000_100, 0);
 
-    let s1 = FileEntry::new_symlink("latest".into(), "src/main.rs".into());
+    let s1 = FileEntry::new_symlink("latest".into(), 0o777, "src/main.rs".into());
 
     writer.write_entry(&mut buf, &f1).unwrap();
     writer.write_entry(&mut buf, &d1).unwrap();
@@ -1301,7 +1301,7 @@ fn golden_v28_mixed_all_preserves_roundtrip() {
     fifo.set_uid(1000);
     fifo.set_gid(1000);
 
-    let s1 = FileEntry::new_symlink("link".into(), "config.yml".into());
+    let s1 = FileEntry::new_symlink("link".into(), 0o777, "config.yml".into());
 
     writer.write_entry(&mut buf, &f1).unwrap();
     writer.write_entry(&mut buf, &d1).unwrap();
