@@ -54,8 +54,6 @@ awk '!/^#/ && NF {c[$NF]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}'
 
 **No test** diverges across the two full-corpus Linux legs, and 21 across all five manifests (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). Every leg carries its own expected-outcome manifest, generated from a real run rather than hand-written, so only a *change* in outcome turns a badge red - and that includes an unexpected **pass**, which is what stops a divergence being quietly re-baselined instead of fixed. A fix flips its manifest rows in the same commit. The divergences are genuine and tracked openly: each was re-run against the real upstream 3.5.0 binary as a negative control, so they are oc-rsync behaviour gaps, not harness artefacts - except where that control shows upstream landing on the same outcome, which is recorded as such rather than counted against oc-rsync.
 
-Separately, [Upstream Testsuite 3.5.0dev](https://github.com/oferchen/rsync/actions/workflows/track-3.5.0dev-testsuite.yml) is a **development** tracker, not a gate and not the 3.5.0 release: it builds RsyncProject git master (`version.h` == `3.5.0dev`), a moving target, and is deliberately non-blocking so an upstream-side break can never fail a PR here.
-
 | Component | Status |
 |-----------|--------|
 | **Transfer** | Local, SSH, daemon push/pull, daemon-over-remote-shell (`host::module`) |
