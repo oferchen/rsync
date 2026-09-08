@@ -155,7 +155,7 @@ fn golden_v29_symlink_entry() {
     let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
     let mut buf = Vec::new();
 
-    let mut entry = FileEntry::new_symlink("link".into(), "/target/path".into());
+    let mut entry = FileEntry::new_symlink("link".into(), 0o777, "/target/path".into());
     entry.set_mtime(1_700_000_000, 0);
 
     writer.write_entry(&mut buf, &entry).unwrap();
@@ -546,7 +546,7 @@ fn golden_v29_symlink_round_trip() {
     let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
     let mut buf = Vec::new();
 
-    let mut entry = FileEntry::new_symlink("mylink".into(), "/usr/bin/target".into());
+    let mut entry = FileEntry::new_symlink("mylink".into(), 0o777, "/usr/bin/target".into());
     entry.set_mtime(1_700_000_000, 0);
 
     writer.write_entry(&mut buf, &entry).unwrap();
@@ -716,7 +716,7 @@ fn golden_v29_mixed_file_list_round_trip() {
     let mut file = FileEntry::new_file("project/main.rs".into(), 2048, 0o644);
     file.set_mtime(1_700_000_001, 0);
 
-    let mut link = FileEntry::new_symlink("project/latest".into(), "main.rs".into());
+    let mut link = FileEntry::new_symlink("project/latest".into(), 0o777, "main.rs".into());
     link.set_mtime(1_700_000_002, 0);
 
     writer.write_entry(&mut buf, &dir).unwrap();

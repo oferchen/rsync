@@ -252,7 +252,9 @@ fn entry_as_file_entry(dir: &std::path::Path, e: &DeleteEntry) -> FileEntry {
     let full = dir.join(&e.name);
     match e.kind {
         DeleteEntryKind::Dir => FileEntry::new_directory(full, 0o755),
-        DeleteEntryKind::Symlink => FileEntry::new_symlink(full, std::path::PathBuf::from("")),
+        DeleteEntryKind::Symlink => {
+            FileEntry::new_symlink(full, 0o777, std::path::PathBuf::from(""))
+        }
         DeleteEntryKind::File | DeleteEntryKind::Device | DeleteEntryKind::Special => {
             FileEntry::new_file(full, 0, 0o644)
         }

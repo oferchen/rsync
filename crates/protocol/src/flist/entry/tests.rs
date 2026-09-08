@@ -110,12 +110,32 @@ fn new_directory_entry() {
 
 #[test]
 fn new_symlink_entry() {
-    let entry = FileEntry::new_symlink("link".into(), "target".into());
+    let entry = FileEntry::new_symlink("link".into(), 0o777, "target".into());
     assert_eq!(entry.name(), "link");
     assert!(entry.is_symlink());
     assert_eq!(
         entry.link_target().map(|p| p.as_path()),
         Some("target".as_ref())
+    );
+    // Non-vacuity control for `new_symlink_keeps_non_0777_permissions`: 0o777
+    // in must still be 0o777 out.
+    assert_eq!(entry.permissions(), 0o777);
+}
+
+#[test]
+fn new_symlink_keeps_non_0777_permissions() {
+    // upstream: flist.c:1669 - `file->mode = st.st_mode` for every type. A
+    // symlink's permission bits are not universally 0o777: rsync.h:455-456
+    // defines `CAN_CHMOD_SYMLINK` on the platforms with `lchmod`/`setattrlist`
+    // (macOS, the BSDs), where a link carries a real, settable mode. The
+    // constructor must therefore store what it is handed, like every sibling.
+    let entry = FileEntry::new_symlink("link".into(), 0o700, "target".into());
+    assert!(entry.is_symlink());
+    assert_eq!(entry.file_type(), FileType::Symlink);
+    assert_eq!(
+        entry.permissions(),
+        0o700,
+        "new_symlink must not flatten its permissions argument to 0o777",
     );
 }
 
@@ -231,7 +251,7 @@ fn entry_file_type_fallback() {
 
 #[test]
 fn symlink_not_file() {
-    let entry = FileEntry::new_symlink("link".into(), "target".into());
+    let entry = FileEntry::new_symlink("link".into(), 0o777, "target".into());
     assert!(!entry.is_file());
     assert!(!entry.is_dir());
     assert!(entry.is_symlink());
@@ -371,7 +391,7 @@ fn regular_file_no_extras() {
 /// Symlink entries should allocate extras for the link target.
 #[test]
 fn symlink_has_extras() {
-    let entry = FileEntry::new_symlink("link".into(), "target".into());
+    let entry = FileEntry::new_symlink("link".into(), 0o777, "target".into());
     assert!(entry.extras.is_some());
     assert_eq!(
         entry.link_target().map(|p| p.as_path()),
@@ -850,7 +870,7 @@ fn socket_no_extras() {
 /// Symlink constructor allocates extras; other extras fields default.
 #[test]
 fn symlink_extras_other_fields_default() {
-    let entry = FileEntry::new_symlink("lnk".into(), "/dest".into());
+    let entry = FileEntry::new_symlink("lnk".into(), 0o777, "/dest".into());
     assert!(entry.extras.is_some());
     assert_eq!(
         entry.link_target().map(|p| p.as_path()),
@@ -1170,7 +1190,7 @@ fn extras_on_directory_entry() {
 
 #[test]
 fn extras_on_symlink_entry() {
-    let mut entry = FileEntry::new_symlink("lnk".into(), "/target".into());
+    let mut entry = FileEntry::new_symlink("lnk".into(), 0o777, "/target".into());
     assert!(entry.extras.is_some());
     entry.set_user_name("owner".to_string());
     assert_eq!(entry.user_name(), Some("owner"));
@@ -1495,7 +1515,7 @@ fn reclaim_heap_data_clears_name_and_extras() {
 
 #[test]
 fn reclaim_heap_data_on_symlink_drops_target() {
-    let mut entry = FileEntry::new_symlink("link".into(), "/usr/lib/target".into());
+    let mut entry = FileEntry::new_symlink("link".into(), 0o777, "/usr/lib/target".into());
     assert!(entry.link_target().is_some());
 
     entry.reclaim_heap_data();

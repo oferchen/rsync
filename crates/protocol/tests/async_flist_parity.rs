@@ -96,8 +96,11 @@ fn build_corpus() -> Vec<FileEntry> {
     entries.push(d1);
 
     // Symlink with a target (exercises the symlink-target read leaf).
-    let mut s1 =
-        FileEntry::new_symlink(PathBuf::from("dir/sub/link"), PathBuf::from("../alpha.txt"));
+    let mut s1 = FileEntry::new_symlink(
+        PathBuf::from("dir/sub/link"),
+        0o777,
+        PathBuf::from("../alpha.txt"),
+    );
     s1.set_mtime(1_700_000_200, 0);
     entries.push(s1);
 

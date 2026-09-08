@@ -125,7 +125,7 @@ fn encode_fixture(protocol: ProtocolVersion) -> (Vec<u8>, [usize; 3]) {
     writer.write_entry(&mut buf, &dir).unwrap();
 
     offsets[2] = buf.len();
-    let link = FileEntry::new_symlink("link".into(), "/target/path".into());
+    let link = FileEntry::new_symlink("link".into(), 0o777, "/target/path".into());
     writer.write_entry(&mut buf, &link).unwrap();
 
     (buf, offsets)

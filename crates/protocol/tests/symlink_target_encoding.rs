@@ -26,7 +26,7 @@ use protocol::wire::file_entry_decode::decode_symlink_target;
 
 /// Roundtrip a single symlink entry through FileListWriter/FileListReader.
 fn roundtrip_symlink(name: &str, target: PathBuf, protocol: ProtocolVersion) -> FileEntry {
-    let mut entry = FileEntry::new_symlink(PathBuf::from(name), target);
+    let mut entry = FileEntry::new_symlink(PathBuf::from(name), 0o777, target);
     entry.set_mtime(1700000000, 0);
 
     let mut buf = Vec::new();
@@ -62,7 +62,7 @@ fn roundtrip_entries(entries: &[FileEntry], protocol: ProtocolVersion) -> Vec<Fi
 
 /// Creates a symlink FileEntry with the given name and target path.
 fn make_symlink(name: &str, target: &str) -> FileEntry {
-    let mut entry = FileEntry::new_symlink(PathBuf::from(name), PathBuf::from(target));
+    let mut entry = FileEntry::new_symlink(PathBuf::from(name), 0o777, PathBuf::from(target));
     entry.set_mtime(1700000000, 0);
     entry
 }
@@ -73,7 +73,7 @@ fn make_symlink_from_bytes(name: &str, target_bytes: &[u8]) -> FileEntry {
     use std::ffi::OsStr;
     use std::os::unix::ffi::OsStrExt;
     let target = PathBuf::from(OsStr::from_bytes(target_bytes));
-    let mut entry = FileEntry::new_symlink(PathBuf::from(name), target);
+    let mut entry = FileEntry::new_symlink(PathBuf::from(name), 0o777, target);
     entry.set_mtime(1700000000, 0);
     entry
 }
@@ -866,9 +866,39 @@ fn wire_format_encode_decode_consistency() {
 fn flist_symlink_mode_preserved() {
     let decoded = roundtrip_symlink("link", PathBuf::from("/target"), ProtocolVersion::NEWEST);
 
-    // Symlinks always have mode 0o120777 (S_IFLNK | 0o777)
+    // The fixture pins 0o777, the mode Linux gives every link.
     assert_eq!(decoded.mode() & 0o170000, 0o120000, "S_IFLNK must be set");
     assert_eq!(decoded.mode() & 0o7777, 0o777, "permissions must be 0o777");
+}
+
+/// A symlink's permission bits are not universally 0o777: on the platforms
+/// where `CAN_CHMOD_SYMLINK` holds (rsync.h:455-456 - `HAVE_LCHMOD ||
+/// HAVE_SETATTRLIST`, i.e. macOS and the BSDs) `lchmod` gives a link a real
+/// mode, which upstream sends verbatim (flist.c:1669). Pin that the wire
+/// encoding carries such a mode instead of flattening it.
+#[test]
+fn flist_symlink_non_0777_mode_preserved() {
+    let mut entry = FileEntry::new_symlink(PathBuf::from("link"), 0o700, PathBuf::from("/target"));
+    entry.set_mtime(1700000000, 0);
+
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(ProtocolVersion::NEWEST).with_preserve_links(true);
+    writer.write_entry(&mut buf, &entry).expect("write failed");
+    writer.write_end(&mut buf, None).expect("write end failed");
+
+    let mut cursor = Cursor::new(&buf);
+    let mut reader = FileListReader::new(ProtocolVersion::NEWEST).with_preserve_links(true);
+    let decoded = reader
+        .read_entry(&mut cursor)
+        .expect("read failed")
+        .expect("entry expected");
+
+    assert_eq!(decoded.mode() & 0o170000, 0o120000, "S_IFLNK must be set");
+    assert_eq!(
+        decoded.mode() & 0o7777,
+        0o700,
+        "a 0o700 symlink mode must survive the wire round-trip",
+    );
 }
 
 /// Tests that symlink entries have zero file size.

@@ -9,7 +9,7 @@ fn write_symlink_entry_with_preserve_links() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
 
-    let entry = FileEntry::new_symlink("link".into(), "/target/path".into());
+    let entry = FileEntry::new_symlink("link".into(), 0o777, "/target/path".into());
 
     writer.write_entry(&mut buf, &entry).unwrap();
     writer.write_end(&mut buf, None).unwrap();
@@ -37,7 +37,7 @@ fn write_symlink_entry_without_preserve_links_omits_target() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol);
 
-    let entry = FileEntry::new_symlink("link".into(), "/target/path".into());
+    let entry = FileEntry::new_symlink("link".into(), 0o777, "/target/path".into());
 
     writer.write_entry(&mut buf, &entry).unwrap();
     writer.write_end(&mut buf, None).unwrap();
@@ -61,7 +61,7 @@ fn write_symlink_round_trip_protocol_30_varint() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
 
-    let entry = FileEntry::new_symlink("mylink".into(), "../relative/path".into());
+    let entry = FileEntry::new_symlink("mylink".into(), 0o777, "../relative/path".into());
 
     writer.write_entry(&mut buf, &entry).unwrap();
     writer.write_end(&mut buf, None).unwrap();
@@ -90,7 +90,7 @@ fn write_symlink_round_trip_protocol_29_fixed_int() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
 
-    let entry = FileEntry::new_symlink("oldlink".into(), "/old/target".into());
+    let entry = FileEntry::new_symlink("oldlink".into(), 0o777, "/old/target".into());
 
     writer.write_entry(&mut buf, &entry).unwrap();
     writer.write_end(&mut buf, None).unwrap();
@@ -120,7 +120,7 @@ fn wire_encoded_symlink_target_never_contains_backslash_byte() {
     let mut target = PathBuf::from("sub");
     target.push("target.txt");
 
-    let mut entry = FileEntry::new_symlink("link".into(), target);
+    let mut entry = FileEntry::new_symlink("link".into(), 0o777, target);
     entry.set_mtime(0, 0);
 
     let mut buf = Vec::new();
@@ -159,7 +159,7 @@ fn write_symlink_target_transcodes_with_iconv_to_remote_charset() {
         .with_iconv(converter)
         .with_symlink_iconv(true);
 
-    let mut entry = FileEntry::new_symlink("link".into(), utf8_target.into());
+    let mut entry = FileEntry::new_symlink("link".into(), 0o777, utf8_target.into());
     entry.set_mtime(1_700_000_000, 0);
     let mut buf = Vec::new();
     writer.write_entry(&mut buf, &entry).unwrap();
@@ -199,7 +199,7 @@ fn write_symlink_target_without_negotiated_flag_passes_raw_local_bytes() {
         .with_preserve_links(true)
         .with_iconv(converter);
 
-    let mut entry = FileEntry::new_symlink("link".into(), utf8_target.into());
+    let mut entry = FileEntry::new_symlink("link".into(), 0o777, utf8_target.into());
     entry.set_mtime(1_700_000_000, 0);
     let mut buf = Vec::new();
     writer.write_entry(&mut buf, &entry).unwrap();
@@ -223,7 +223,7 @@ fn write_symlink_target_without_iconv_emits_raw_bytes() {
     let utf8_bytes = utf8_target.as_bytes();
 
     let mut writer = FileListWriter::new(test_protocol()).with_preserve_links(true);
-    let mut entry = FileEntry::new_symlink("link".into(), utf8_target.into());
+    let mut entry = FileEntry::new_symlink("link".into(), 0o777, utf8_target.into());
     entry.set_mtime(1_700_000_000, 0);
     let mut buf = Vec::new();
     writer.write_entry(&mut buf, &entry).unwrap();

@@ -2354,7 +2354,7 @@ mod itemize_order_tests {
         ctx.file_list = vec![
             FileEntry::new_directory("d".into(), 0o755),  // idx 0
             FileEntry::new_file("d/f1".into(), 5, 0o644), // idx 1
-            FileEntry::new_symlink("d/lnk".into(), "target".into()), // idx 2
+            FileEntry::new_symlink("d/lnk".into(), 0o777, "target".into()), // idx 2
         ];
 
         // Read-only pass against an empty destination: every entry is new.
@@ -2512,7 +2512,7 @@ mod itemize_order_tests {
         config.flags.times = true;
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         ctx.defer_itemize = true;
-        let mut entry = FileEntry::new_symlink("lnk".into(), "newtgt".into());
+        let mut entry = FileEntry::new_symlink("lnk".into(), 0o777, "newtgt".into());
         {
             use std::os::unix::fs::MetadataExt;
             let old_meta = std::fs::symlink_metadata(dest.join("lnk")).expect("lstat");

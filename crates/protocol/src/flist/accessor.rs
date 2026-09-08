@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn file_entry_accessor_symlink() {
         use std::path::PathBuf;
-        let entry = FileEntry::new_symlink("link".into(), PathBuf::from("../target"));
+        let entry = FileEntry::new_symlink("link".into(), 0o777, PathBuf::from("../target"));
         let acc: &dyn FileEntryAccessor = &entry;
         assert!(acc.is_symlink());
         assert_eq!(acc.link_target_bytes(), Some(b"../target" as &[u8]));

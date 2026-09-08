@@ -609,7 +609,7 @@ fn golden_v29_flist_wire_identical_to_v28() {
         let mut buf_28 = Vec::new();
         let mut buf_29 = Vec::new();
 
-        let mut entry = FileEntry::new_symlink("link".into(), "/target".into());
+        let mut entry = FileEntry::new_symlink("link".into(), 0o777, "/target".into());
         entry.set_mtime(1_700_000_000, 0);
 
         writer_28.write_entry(&mut buf_28, &entry).unwrap();
@@ -702,7 +702,7 @@ fn golden_v29_full_session_flist_and_stats() {
     file.set_uid(1000);
     file.set_gid(1000);
 
-    let mut link = FileEntry::new_symlink("src/latest".into(), "lib.rs".into());
+    let mut link = FileEntry::new_symlink("src/latest".into(), 0o777, "lib.rs".into());
     link.set_mtime(1_700_000_200, 0);
 
     writer.write_entry(&mut flist_buf, &dir).unwrap();

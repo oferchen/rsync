@@ -57,12 +57,22 @@ impl FileEntry {
         Self::new_with_type(name, 0, FileType::Directory, permissions, None)
     }
 
-    /// Creates a new symlink entry with `S_IFLNK` mode and 0o777 permissions.
+    /// Creates a new symlink entry with `S_IFLNK` mode and the given permissions.
     ///
-    /// Symlinks always have 0o777 permissions per POSIX convention.
+    /// A symlink's permission bits are *not* universally 0o777. Upstream
+    /// `flist.c:1669` stores `file->mode = st.st_mode` verbatim for every file
+    /// type, symlinks included, and whether that carries a meaningful value is
+    /// a platform property: `rsync.h:455-456` defines `CAN_CHMOD_SYMLINK` when
+    /// `HAVE_LCHMOD || HAVE_SETATTRLIST`, which holds on macOS and the BSDs,
+    /// where `lchmod`/`setattrlist` give a link a real, settable mode. On Linux
+    /// the kernel pins a link's `st_mode` permission bits to 0o777 and nothing
+    /// can change them, so a Linux caller passing the stat mode through yields
+    /// 0o777 anyway. Callers must therefore forward the stat mode rather than
+    /// substitute a constant; only a synthesized entry with no underlying stat
+    /// (a deletion sentinel, a decode fixture) should pass 0o777 literally.
     #[must_use]
-    pub fn new_symlink(name: PathBuf, target: PathBuf) -> Self {
-        Self::new_with_type(name, 0, FileType::Symlink, 0o777, Some(target))
+    pub fn new_symlink(name: PathBuf, permissions: u32, target: PathBuf) -> Self {
+        Self::new_with_type(name, 0, FileType::Symlink, permissions, Some(target))
     }
 
     /// Creates a new block device entry.

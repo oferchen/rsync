@@ -1209,7 +1209,8 @@ mod tests {
         // Sender's view: same target, but an mtime far from the freshly created
         // on-disk link (which carries ~now). Same target routes through the
         // up-to-date branch; the differing mtime is the only change.
-        let mut entry = FileEntry::new_symlink(PathBuf::from("link"), PathBuf::from("target"));
+        let mut entry =
+            FileEntry::new_symlink(PathBuf::from("link"), 0o777, PathBuf::from("target"));
         entry.set_mtime(1_000_000_000, 0);
 
         // -t without -J: keep_time is true, so the mtime difference lights `t`.

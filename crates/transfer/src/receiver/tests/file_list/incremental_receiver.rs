@@ -325,7 +325,7 @@ fn try_read_one_reads_symlink_entry() {
     let mut writer = protocol::flist::FileListWriter::new(protocol);
     writer = writer.with_preserve_links(true);
 
-    let symlink = FileEntry::new_symlink("link.txt".into(), "/target".into());
+    let symlink = FileEntry::new_symlink("link.txt".into(), 0o777, "/target".into());
     writer.write_entry(&mut data, &symlink).unwrap();
     writer.write_end(&mut data, None).unwrap();
 

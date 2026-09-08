@@ -82,7 +82,11 @@ fn windows_receiver_symlink_materializes_directory() {
 
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, links_receiver_config());
-    ctx.file_list = vec![FileEntry::new_symlink("link".into(), target_dir.clone())];
+    ctx.file_list = vec![FileEntry::new_symlink(
+        "link".into(),
+        0o777,
+        target_dir.clone(),
+    )];
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_symlinks(dest, &mut writer)
@@ -120,7 +124,11 @@ fn windows_receiver_symlink_skips_file_on_privilege_refusal() {
 
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, links_receiver_config());
-    ctx.file_list = vec![FileEntry::new_symlink("flink".into(), target_file.clone())];
+    ctx.file_list = vec![FileEntry::new_symlink(
+        "flink".into(),
+        0o777,
+        target_file.clone(),
+    )];
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_symlinks(dest, &mut writer)

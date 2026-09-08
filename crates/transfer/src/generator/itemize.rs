@@ -352,7 +352,7 @@ mod tests {
     }
 
     fn make_symlink_entry(name: &str) -> FileEntry {
-        FileEntry::new_symlink(PathBuf::from(name), PathBuf::from("target"))
+        FileEntry::new_symlink(PathBuf::from(name), 0o777, PathBuf::from("target"))
     }
 
     /// Default context: preserve_mtimes=true, receiver_symlink_times=true.

@@ -1929,7 +1929,7 @@ mod acl_integration {
         let mut data = Vec::new();
 
         let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
-        let mut entry = FileEntry::new_symlink("link".into(), "target".into());
+        let mut entry = FileEntry::new_symlink("link".into(), 0o777, "target".into());
         entry.set_mtime(1700000000, 0);
         writer.write_entry(&mut data, &entry).unwrap();
 
@@ -2292,7 +2292,7 @@ mod acl_integration {
         let mut data = Vec::new();
 
         let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
-        let mut entry = FileEntry::new_symlink("link".into(), "target".into());
+        let mut entry = FileEntry::new_symlink("link".into(), 0o777, "target".into());
         entry.set_mtime(1700000000, 0);
         writer.write_entry(&mut data, &entry).unwrap();
 
@@ -2508,7 +2508,7 @@ mod xattr_integration {
         let mut data = Vec::new();
 
         let mut writer = FileListWriter::new(protocol).with_preserve_links(true);
-        let mut entry = FileEntry::new_symlink("link".into(), "target".into());
+        let mut entry = FileEntry::new_symlink("link".into(), 0o777, "target".into());
         entry.set_mtime(1700000000, 0);
         writer.write_entry(&mut data, &entry).unwrap();
 
@@ -2746,7 +2746,7 @@ mod iconv_integration {
         use std::path::PathBuf;
 
         let target = PathBuf::from(std::ffi::OsStr::from_bytes(target_wire));
-        let mut entry = FileEntry::new_symlink("link".into(), target);
+        let mut entry = FileEntry::new_symlink("link".into(), 0o777, target);
         entry.set_mtime(1_700_000_000, 0);
 
         let protocol = test_protocol();
@@ -2950,7 +2950,7 @@ fn update_stats_saturates_on_symlink_target_overflow() {
     let primer = FileEntry::new_file(PathBuf::from("primer"), u64::MAX, 0o100644);
     reader.update_stats(&primer);
 
-    let link = FileEntry::new_symlink(PathBuf::from("link"), PathBuf::from("target"));
+    let link = FileEntry::new_symlink(PathBuf::from("link"), 0o777, PathBuf::from("target"));
     reader.update_stats(&link);
 
     assert_eq!(reader.stats().num_symlinks, 1);
