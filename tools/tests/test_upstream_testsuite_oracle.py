@@ -490,13 +490,21 @@ class RsyncReportedVersionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "3.5.0")
 
-    def test_an_unbuffered_banner_is_read_whole(self) -> None:
-        # rsync writes its banner in ~20 unbuffered write(2)s. A `| head -1`
-        # reading would SIGPIPE it and, under pipefail, report 141.
+    def test_a_banner_still_being_written_is_read_whole(self) -> None:
+        # rsync writes its banner in ~20 unbuffered write(2)s - MEASURED, 793
+        # bytes on 3.2.7 - so a reader that closes the pipe after line 1 kills
+        # the producer with SIGPIPE and, under `set -o pipefail`, the whole
+        # pipeline reports 141 for a binary that answered perfectly.
+        #
+        # The sleep is what makes that DETERMINISTIC. Without it the outcome is
+        # a race the producer usually wins: 20 small writes fit in the pipe
+        # buffer and complete before the reader exits, so a `| head -1` spelling
+        # passes this cell most of the time. MEASURED: mutating
+        # rsync_reported_version() to pipe through `head -n1` killed nothing
+        # until the producer was made to still be writing when the reader left.
         script = 'printf "%s\\n" "rsync  version 3.2.7  protocol version 31"\n'
-        script += "".join(
-            f'printf "line {i}\\n"\n' for i in range(40)
-        )
+        script += "sleep 0.5\n"
+        script += 'printf "%s\\n" "Copyright (C) 1996-2024 by Andrew Tridgell"\n'
         result = self._probe(script)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "3.2.7")
