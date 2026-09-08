@@ -79,6 +79,26 @@ pub struct GeneratorContext {
     /// base, so caching the last `Arc<Path>` collapses them onto a single shared
     /// allocation without the overhead of a full interning map.
     last_source_base: Option<Arc<Path>>,
+    /// One-entry interning cache for the entry dirname, used by
+    /// [`Self::push_file_item`].
+    ///
+    /// `FileEntry::new_*` derives the dirname from the entry name and gives
+    /// every entry its own `Arc<Path>`, so a sender walking a directory of N
+    /// files allocates the same directory string N times. A recursive walk
+    /// visits a directory's children consecutively, so a single-slot cache
+    /// collapses them onto one allocation - the same reason upstream can get
+    /// away with one cached string rather than a map.
+    ///
+    /// This shares the allocation only; the dirname value is unchanged, and
+    /// the receiver already does the equivalent through its `PathInterner`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:1547-1557` - `make_file()` reallocates `lastdir` only when
+    ///   the directory prefix differs from the previous entry's.
+    /// - `flist.c:1683-1684` - `file->dirname = lastdir` aliases that one
+    ///   string from every entry in the directory.
+    last_dirname: Option<Arc<Path>>,
     /// Per-directory scoped filter chain for file list building and deletion.
     ///
     /// Combines global filter rules (from command-line or wire) with per-directory
@@ -312,6 +332,7 @@ impl GeneratorContext {
             file_list: DualFileList::new(),
             source_bases: Vec::new(),
             last_source_base: None,
+            last_dirname: None,
             filter_chain: FilterChain::empty(),
             negotiated_algorithms: handshake.negotiated_algorithms,
             compat_flags: handshake.compat_flags,
@@ -589,13 +610,14 @@ impl GeneratorContext {
     ///
     /// This method maintains the invariant that `file_list` and `source_bases`
     /// have the same length and corresponding entries at each index.
-    pub(crate) fn push_file_item(&mut self, entry: FileEntry, full_path: PathBuf) {
+    pub(crate) fn push_file_item(&mut self, mut entry: FileEntry, full_path: PathBuf) {
         debug_assert_eq!(
             self.file_list.len(),
             self.source_bases.len(),
             "file_list and source_bases must be kept in sync before push"
         );
         let base = self.intern_source_base(&full_path, entry.path());
+        self.intern_dirname(&mut entry);
         self.file_list.push(entry);
         self.source_bases.push(base);
     }
@@ -610,6 +632,25 @@ impl GeneratorContext {
                 let arc: Arc<Path> = Arc::from(base.as_path());
                 self.last_source_base = Some(Arc::clone(&arc));
                 arc
+            }
+        }
+    }
+
+    /// Points `entry` at the shared `Arc<Path>` for its dirname when that
+    /// dirname equals the previously pushed entry's.
+    ///
+    /// Replaces the pointer only. The dirname bytes are identical either way,
+    /// so no comparison, encoding, or output can observe the difference; the
+    /// per-entry allocation the constructor made is simply dropped.
+    ///
+    /// upstream: flist.c:1547-1557, flist.c:1683-1684 (`lastdir`).
+    fn intern_dirname(&mut self, entry: &mut FileEntry) {
+        match &self.last_dirname {
+            Some(cached) if cached == entry.dirname() => {
+                entry.set_dirname(Arc::clone(cached));
+            }
+            _ => {
+                self.last_dirname = Some(Arc::clone(entry.dirname()));
             }
         }
     }
@@ -781,6 +822,7 @@ impl GeneratorContext {
         self.file_list = DualFileList::new();
         self.source_bases.clear();
         self.last_source_base = None;
+        self.last_dirname = None;
     }
 
     /// Determines if input multiplex should be activated based on mode and protocol.
