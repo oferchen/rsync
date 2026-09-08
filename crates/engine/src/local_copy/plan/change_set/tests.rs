@@ -1126,6 +1126,11 @@ fn for_file_atimes_differing_access_time_sets_u_glyph() {
 ///
 /// The regular-file arm is the non-vacuity control: the SAME options object
 /// must still raise `p` there, or this test would pass on a dead `--chmod`.
+///
+/// Unix-only: the fixture creates real symlinks via `std::os::unix`, and the
+/// `p` decision it pins reads a link's lstat permission bits, which only the
+/// unix `MetadataExt` surface exposes.
+#[cfg(unix)]
 #[test]
 fn for_file_chmod_does_not_report_perms_for_a_symlink() {
     use std::os::unix::fs::symlink;
