@@ -649,11 +649,12 @@ impl<'a> CopyContext<'a> {
     /// from - it shrank after the file list recorded it - and lets the run
     /// continue with the remaining entries.
     ///
-    /// Every content path funnels its byte count through here so the four of
+    /// Every content path funnels its byte count through here so the five of
     /// them cannot drift: a `copy_file_range` that returns short, a dense read
-    /// loop that hits EOF early, the sparse loop, and the delta loop that runs
-    /// whenever `--no-whole-file` finds a basis to match against all describe
-    /// the same upstream condition. Upstream has one mover, `map_ptr()`, so a
+    /// loop that hits EOF early, the sparse loop, the opt-in io_uring
+    /// data-write mover whose `read_to_end` came up short, and the delta loop
+    /// that runs whenever `--no-whole-file` finds a basis to match against all
+    /// describe the same upstream condition. Upstream has one mover, `map_ptr()`, so a
     /// path that skips this call reports data loss as success on exactly the
     /// inputs that reach it - for the delta loop, a destination that already
     /// exists.
