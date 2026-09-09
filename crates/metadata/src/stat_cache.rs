@@ -23,6 +23,32 @@ use std::path::{Path, PathBuf};
 /// This cache is designed for short-lived, sequential metadata operations
 /// where the same paths may be stat'd multiple times in quick succession.
 /// It's particularly effective during permission and ownership updates.
+///
+/// # Confinement constraint
+///
+/// **This type is unreached and must not be wired as written.** It is keyed on
+/// a path *string*, so a hit answers for whatever the path denoted at fill
+/// time. `invalidate()` exists but is caller-driven: nothing here observes
+/// filesystem mutation, so a caller that forgets one `invalidate()` silently
+/// keeps a stale answer.
+///
+/// That matters more here than for a plain lookup cache, because the values
+/// gate privileged syscalls. `mode_matches` and `ownership_matches` are
+/// quick-checks that *skip* a `chmod`/`chown` when the cached mode or owner
+/// already matches. A stale hit therefore turns into a silently omitted
+/// permission fix, and a hit for a path swapped to point elsewhere applies (or
+/// withholds) an ownership decision computed for a different inode.
+///
+/// The live applier does **not** use this type. It threads a plain
+/// `Option<&fs::Metadata>` down the call chain, so the stat it consults belongs
+/// to the operation in flight rather than to a map with an unbounded lifetime.
+/// That mirrors upstream, which passes a `stat_x *` into `set_file_attrs()` and
+/// re-stats where staleness would be dangerous (`sender.c:428`, `failed_op =
+/// "re-lstat"`). Upstream keeps no pathname-keyed metadata cache at all.
+///
+/// Any future wiring must key on a resolved handle - a held fd, or an anchor
+/// plus a single component - not on a path. See
+/// `docs/design/path-confinement-resolver-api.md` section 5.
 #[derive(Debug)]
 pub struct MetadataCache {
     cache: HashMap<PathBuf, CachedMetadata>,

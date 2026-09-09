@@ -10,6 +10,16 @@
 //! - **Modern syscalls** using `statx` on Linux 4.11+ for better performance
 //! - **Caching** to avoid redundant syscalls for already-stat'd paths
 //!
+//! # Confinement
+//!
+//! The two fetchers here have opposite safety properties, and the difference is
+//! load-bearing. `DirectoryStatBatch` holds a directory fd and issues `fstatat`
+//! against it, so it re-resolves a single component under a pinned inode.
+//! `BatchedStatCache` is keyed on a path string and never invalidates, so a hit
+//! can answer for a path that has since been swapped. Nothing reaches either
+//! type today; see the confinement constraint on `BatchedStatCache` before
+//! wiring it anywhere.
+//!
 //! # Performance
 //!
 //! On large directory trees, batched metadata fetching can provide 2-4x speedup
