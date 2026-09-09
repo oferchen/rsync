@@ -276,9 +276,33 @@ confinement decision lives in the *act of resolving*, not in the value returned.
 
 Any cache that survives across a resolution must therefore key on a **resolved
 handle** (an fd, or an anchor plus a single component) rather than on a path string.
-`crates/flist`'s `BatchedStatCache` (`HashMap<PathBuf, Arc<fs::Metadata>>`) is the
-concrete instance to watch: it is currently unreached, and wiring it without
-re-keying would breach this contract (task 656).
+There are **two** concrete instances to watch, both currently unreached, and wiring
+either without re-keying would breach this contract (task 656):
+
+1. `crates/flist`'s `BatchedStatCache` (`HashMap<PathBuf, Arc<fs::Metadata>>`). It
+   has no invalidation hook at all. It sits behind the non-default `parallel`
+   feature in a crate that reaches the product only as an unused `pub use` in
+   `core`, so it is not compiled into a default build.
+2. `crates/metadata`'s `MetadataCache` (`HashMap<PathBuf, CachedMetadata>`,
+   `stat_cache.rs`). This one is the sharper hazard despite being smaller: it is a
+   `pub mod` of a crate that *is* in the default dependency graph, and its
+   `mode_matches`/`ownership_matches` helpers gate whether a `chmod`/`chown` is
+   skipped, so a stale hit becomes an omitted permission fix rather than merely a
+   wrong readback. Its `invalidate()` is caller-driven and so does not satisfy the
+   contract on its own.
+
+The live metadata applier is **not** an instance: it threads an
+`Option<&fs::Metadata>` through a single operation, which is the same shape as
+upstream's `stat_x *` argument to `set_file_attrs()`.
+
+Neither cache has an upstream counterpart. Upstream keeps no pathname-keyed stat
+cache in the file-list build: `flist.c:1547-1556`'s `lastdir` interns a directory
+*name* plus a derived component count, `make_file()` destructures each stat into
+scalar `file_struct` fields and drops it, and every upstream hashtable is keyed on
+integers (`(dev, ino)` in `hlink.c:74-84`, `gnum`, `fs_dev`, an xattr-content
+checksum). The one path-shaped cache, `syscall.c:3540-3548`, holds open **dirfds**;
+upstream's own comment there argues its safety comes from an fd pinning an inode,
+which is exactly the distinction this section draws.
 
 ## 6. Explicitly out of scope
 

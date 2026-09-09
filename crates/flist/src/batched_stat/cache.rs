@@ -23,6 +23,45 @@ type StatShard = Mutex<HashMap<PathBuf, Arc<fs::Metadata>>>;
 /// Uses sharded locking (16 independent `Mutex<HashMap>` shards) to reduce
 /// contention under parallel stat workloads. Paths are routed to shards via
 /// a fast hash of their byte representation.
+///
+/// # Confinement constraint
+///
+/// **This type is unreached, and it must not be wired as written.** It is keyed
+/// on a path *string*, so a hit returns the metadata the path denoted when the
+/// entry was filled, not the metadata it denotes now. There is no invalidation
+/// hook and no generation counter: nothing here observes filesystem mutation,
+/// so an entry stays authoritative for the cache's whole lifetime.
+///
+/// Wiring it into a walk that crosses a confinement boundary would reopen the
+/// TOCTOU window the per-component resolver exists to close. An attacker who
+/// replaces a path component with a symlink between the fill and the hit gets
+/// the pre-swap answer back, and on a miss the re-resolve
+/// (`fs::metadata`/`fs::symlink_metadata` on an absolute path) walks the
+/// mutated path with the process's full authority rather than through the
+/// per-component ownership walk.
+///
+/// Any future wiring must key on a resolved handle - a held directory fd plus a
+/// single component - rather than on a path. The sibling `DirectoryStatBatch`
+/// already has that shape: it holds the directory open and issues `fstatat`
+/// relative to that fd, so a component swapped after the open cannot redirect
+/// the lookup. See `docs/design/path-confinement-resolver-api.md` section 5,
+/// which states the contract this type would breach.
+///
+/// # Upstream
+///
+/// Upstream has no counterpart to re-key against: there is no pathname-keyed
+/// stat cache anywhere in rsync's file-list build. `flist.c:1547-1556`'s
+/// `lastdir` interns a directory *name* (a `char *`) and a derived component
+/// count, never a `STRUCT_STAT`; `make_file()` destructures each stat into
+/// scalar `file_struct` fields and drops it. Every hashtable upstream keeps is
+/// keyed on integers, not paths - `(dev, ino)` in `hlink.c:74-84`, `gnum`,
+/// `fs_dev`, an xattr-content checksum - and the one path-shaped cache
+/// (`syscall.c:3540-3548`) holds open dirfds, which upstream's own comment
+/// argues are race-safe precisely because an fd pins an inode where a resolved
+/// path snapshot does not. Where a stale snapshot would be dangerous upstream
+/// re-stats and diffs against the flist value (`sender.c:428`, `failed_op =
+/// "re-lstat"`). An oc-invented cache with no upstream analogue is a design
+/// decision, not an inherited one.
 #[derive(Debug)]
 pub struct BatchedStatCache {
     shards: Arc<[StatShard; SHARD_COUNT]>,
