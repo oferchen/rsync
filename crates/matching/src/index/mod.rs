@@ -4,12 +4,16 @@
 //! delta generation. It indexes signature blocks by their rolling checksum
 //! components `(sum1, sum2)` for efficient matching.
 //!
-//! The compact bucket index ([`CompactLookup`]) addresses buckets using only
-//! the upper half of the rolling sum (`rsum >> 16`, equal to `sum2`); the
-//! lower half (`sum1`) is stored as an in-bucket discriminator. This is the
-//! ZSO-4 translation of zsync's `librcksum/hash.c:45` `rsum_a_mask` trick:
-//! shrinking the bucket array to at most `2^16` slots keeps the hottest
-//! lookup table cache-line resident across rolling-hash advances.
+//! The bucket index ([`CompactLookup`]) mirrors upstream `match.c`'s two
+//! addressing modes. Below upstream's `TRADITIONAL_TABLESIZE` (`match.c:45`)
+//! it addresses buckets using only the upper half of the rolling sum
+//! (`rsum >> 16`, equal to `sum2`), with the lower half (`sum1`) stored as an
+//! in-bucket discriminator - the ZSO-4 translation of zsync's
+//! `librcksum/hash.c:45` `rsum_a_mask` trick, which keeps the hottest lookup
+//! table cache-line resident across rolling-hash advances. Above it the table
+//! grows on upstream's `(count/8) * 10 + 11` rule (`match.c:84-88`) and
+//! addresses on the full rolling sum (`match.c:74` `BIG_SUM2HASH`), because a
+//! `sum2`-only key carries no entropy past `2^16`.
 
 mod bithash;
 mod builder;
@@ -51,9 +55,16 @@ pub use trace::{
 
 /// Size of the tag table for quick rolling checksum rejection (2^16 entries).
 ///
-/// Upstream rsync uses a boolean array indexed by the low 16 bits (sum1) of the
-/// rolling checksum to reject non-matching positions before probing the hash
-/// table. This constant matches upstream's `TABLESIZE` in `match.c`.
+/// The tag table is a boolean array indexed by the low 16 bits (`sum1`) of the
+/// rolling checksum, rejecting non-matching positions before the bithash and
+/// bucket probes. `2^16` is the entire keyspace of a 16-bit index, so this is
+/// a complete table rather than a sized one: there is nothing to grow it to,
+/// and every entry is addressable.
+///
+/// It is *not* the analogue of upstream's `hash_table`, whose size does track
+/// the block count (`match.c:84-88`); that role belongs to [`CompactLookup`].
+/// rsync 3.5.0 has no tag table of its own - upstream dropped the 2.x-era one
+/// when `match.c` moved to a chained `hash_table`.
 const TAG_TABLE_SIZE: usize = 1 << 16;
 
 /// Maximum number of equal-weak-checksum candidates verified at a single
@@ -107,14 +118,15 @@ pub struct ProbeCounters {
 
 /// Index over a file signature that accelerates delta matching.
 ///
-/// Uses a chained bucket table (`CompactLookup`) addressed by the upper
-/// half of the rolling sum (`sum2`) for O(1) block lookup with excellent
-/// cache locality. The lower half (`sum1`) lives inside each chain entry as
-/// an in-bucket discriminator, mirroring zsync's `librcksum`
-/// `rsum_a_mask` trick (ZSO-4). A tag table indexed by `sum1` still provides
-/// upstream-rsync-style fast-path rejection before the bucket walk, and the
-/// bithash prefilter (ZSO-1) rejects the bulk of post-tag misses before the
-/// chain probe.
+/// Uses a chained bucket table (`CompactLookup`) sized on upstream's
+/// `match.c` rule for O(1) block lookup. Below upstream's
+/// `TRADITIONAL_TABLESIZE` it addresses on the upper half of the rolling sum
+/// (`sum2`) for cache locality, keeping the lower half (`sum1`) inside each
+/// chain entry as an in-bucket discriminator per zsync's `librcksum`
+/// `rsum_a_mask` trick (ZSO-4); above it the table grows and addresses on the
+/// full rolling sum as upstream does. A tag table indexed by `sum1` provides
+/// fast-path rejection before the bucket walk, and the bithash prefilter
+/// (ZSO-1) rejects the bulk of post-tag misses before the chain probe.
 #[derive(Debug)]
 pub struct DeltaSignatureIndex {
     block_length: usize,
@@ -281,13 +293,15 @@ impl SeqMatchCounters {
 }
 
 impl DeltaSignatureIndex {
-    /// Returns the bucket address the compact lookup would use for `rsum`.
+    /// Returns the compact-mode bucket key for `rsum`.
     ///
     /// The compact key is `rsum >> 16` (equal to
     /// [`checksums::RollingDigest::sum2`]); the lower 16 bits become the
     /// in-chain discriminator. Exposed so callers and tests can reason
     /// about bucket collisions without reaching into the private bucket
-    /// table.
+    /// table. Tables grown past upstream's `TRADITIONAL_TABLESIZE` address
+    /// on the full rolling sum instead, so this is the key only while the
+    /// table is in compact mode.
     #[inline]
     #[must_use]
     pub const fn bucket_for(rsum: u32) -> u16 {
@@ -1082,11 +1096,13 @@ impl DeltaSignatureIndex {
         self.tag_table[sum1 as usize]
     }
 
-    /// Bucket-slot count of the underlying compact lookup table.
+    /// Bucket-slot count of the underlying lookup table.
     ///
-    /// Equal to the bucket count, capped at `2^16` per the ZSO-4 compact-key
-    /// design. Bench harnesses use this to bin index sizes against the local
-    /// CPU cache hierarchy (L1 / L2 / LLC / main memory).
+    /// A power of two at or below `2^16` while the ZSO-4 compact key
+    /// addresses the table, and upstream's `(count/8) * 10 + 11`
+    /// (`match.c:84`) once the basis grows past that. Bench harnesses use
+    /// this to bin index sizes against the local CPU cache hierarchy
+    /// (L1 / L2 / LLC / main memory).
     #[must_use]
     pub fn lookup_capacity(&self) -> usize {
         self.lookup.capacity()

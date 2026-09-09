@@ -1,18 +1,26 @@
-//! Compact bucket index keyed on the upper half of the rolling checksum.
+//! Bucket index over the rolling checksum, with two addressing modes.
 //!
-//! Translates zsync's `librcksum/hash.c` `rsum_a_mask` trick into oc-rsync's
-//! delta matcher. The bucket address is derived from the upper 16 bits of the
-//! rolling sum (`rsum >> 16`, equal to [`checksums::RollingDigest::sum2`])
-//! while the lower 16 bits ([`checksums::RollingDigest::sum1`]) become the
-//! in-bucket discriminator. Shrinking the bucket array from a `(sum1, sum2)`
-//! keyspace down to a `sum2`-only space keeps the hottest table cache-line
-//! resident even when the basis runs to tens of thousands of blocks.
+//! Mirrors upstream rsync's `match.c` `build_hash_table()`, which sizes its
+//! bucket array from the basis block count and switches hash function at the
+//! `TRADITIONAL_TABLESIZE` (`match.c:45`, `1<<16`) boundary:
+//!
+//! - **Compact** (at or below the boundary) - the bucket address comes from
+//!   the upper 16 bits of the rolling sum (`rsum >> 16`, equal to
+//!   [`checksums::RollingDigest::sum2`]) while the lower 16 bits
+//!   ([`checksums::RollingDigest::sum1`]) become the in-bucket discriminator.
+//!   This is zsync's `librcksum/hash.c` `rsum_a_mask` trick (ZSO-4);
+//!   upstream's own small-table hash (`match.c:71-72` `SUM2HASH`) is likewise
+//!   a 16-bit function. Below the boundary oc sizes tighter than upstream's
+//!   flat `1<<16` floor, which keeps the hot table cache-line resident for
+//!   the small files that dominate a typical transfer.
+//! - **Wide** (above the boundary) - the address is the full 32-bit rolling
+//!   sum modulo the table size, exactly upstream's `BIG_SUM2HASH`
+//!   (`match.c:74`) over upstream's `(count/8) * 10 + 11` sizing
+//!   (`match.c:82-88`). A `sum2`-only key carries no entropy past `2^16`, so
+//!   growing the table requires widening the key just as upstream does.
 //!
 //! The structure is intentionally chain-based rather than open-addressed:
 //!
-//! - The bucket array is sized at most `2^16` slots, so its working set is
-//!   bounded by 256 KiB regardless of basis size. Adjacent rolling-hash
-//!   probes touch the same cache line with high probability.
 //! - Chain nodes live in a packed `Vec<ChainEntry>`; entries for a single
 //!   bucket are *not* required to be contiguous in memory, but the bucket
 //!   array stays tight.
@@ -20,16 +28,37 @@
 //!   zsync's `e.r.a != (r.a & rsum_a_mask)` filter in `librcksum/rsum.c:205`.
 //!
 //! Wire format is unchanged: full `(sum1, sum2)` digests stay in
-//! [`signature::SignatureBlock`]. The compact key is an in-memory probe
-//! optimisation only and is rebuilt per segment by
+//! [`signature::SignatureBlock`]. Both addressing modes map equal rolling
+//! sums to one bucket and [`CompactLookup::find_all`] filters on the full
+//! `(sum1, sum2)` pair, so the yielded candidate sequence - and therefore
+//! every emitted token - is identical under either mode. The table is an
+//! in-memory probe optimisation only, rebuilt per segment by
 //! [`super::DeltaSignatureIndex::rebuild`].
 
-/// Maximum bucket count exponent (`2^16 = 65 536`).
+/// Maximum bucket count exponent for the compact (`sum2`-keyed) mode.
 ///
-/// Bounds the bucket array footprint at `2^16 * 4 = 256 KiB` and matches
-/// the natural `sum2` keyspace - never grow the table beyond this because
-/// the compact key carries no further entropy.
+/// `2^16 = 65 536` is the natural `sum2` keyspace, so the compact key
+/// carries no entropy beyond it. It is also upstream's
+/// `TRADITIONAL_TABLESIZE` (`match.c:45`) - the point at which upstream
+/// swaps `SUM2HASH` for the full-rsum `BIG_SUM2HASH`. Past this the table
+/// grows under [`BucketAddress::Wide`], never by stretching the compact key.
 const MAX_LOG2_BUCKETS: u32 = 16;
+
+/// Upstream's `TRADITIONAL_TABLESIZE`: the bucket count below which upstream
+/// keeps a flat table and the 16-bit hash.
+///
+/// upstream: match.c:45 `#define TRADITIONAL_TABLESIZE (1<<16)`.
+const TRADITIONAL_TABLESIZE: usize = 1 << MAX_LOG2_BUCKETS;
+
+/// Allocation guard on the wide bucket count.
+///
+/// `2^27 - 1` slots is 1 GiB of [`BucketSlot`], reached only at roughly
+/// 107 million basis blocks (a multi-terabyte basis at upstream's 128 KiB
+/// maximum block length) - about 2 000x past the point where the wide mode
+/// engages. Upstream has no equivalent guard; it simply asks `new_array()`
+/// for the allocation and dies if it fails. The value is odd so the guard
+/// preserves upstream's oddness requirement (`match.c:80-81`).
+const MAX_WIDE_BUCKETS: usize = (1 << 27) - 1;
 
 /// Minimum bucket count exponent (`2^4 = 16`).
 ///
@@ -89,23 +118,100 @@ impl BucketSlot {
     };
 }
 
-/// Compact bucket index keyed on the upper 16 bits of the rolling sum.
+/// Bucket sizing and addressing rule, the single owner of the decision.
 ///
-/// See the module docs for the ZSO-4 design contract and the duplicate-block
-/// correctness rationale shared with [`super::MatchedBlocks`].
+/// Constructed once per table by [`Self::for_entries`]; both
+/// [`CompactLookup::insert`] and [`CompactLookup::find_all`] route through
+/// [`Self::index_of`] so the two paths cannot drift apart, and no call site
+/// re-derives a bucket count of its own.
+#[derive(Clone, Copy, Debug)]
+enum BucketAddress {
+    /// `sum2 & mask` over a power-of-two table at most
+    /// [`TRADITIONAL_TABLESIZE`] slots wide (ZSO-4 compact key).
+    Compact { mask: u16 },
+    /// `rsum % modulus` over upstream's dynamically grown table.
+    ///
+    /// upstream: match.c:74 `#define BIG_SUM2HASH(sum) ((sum)%tablesize)`.
+    Wide { modulus: u32 },
+}
+
+impl BucketAddress {
+    /// Chooses the sizing and addressing rule for `n_entries` indexed blocks.
+    ///
+    /// upstream: match.c:82-88 - `tablesize = (uint32)(s->count/8) * 10 + 11`,
+    /// raised to `TRADITIONAL_TABLESIZE` when it falls below it. The `* 10 / 8`
+    /// factor targets an 80% hash load and the `+ 11` keeps the result odd,
+    /// without which the upper sum half cannot span the whole table
+    /// (`match.c:80-81`). Reproducing the growth is what keeps the per-offset
+    /// chain walk flat as the basis grows: pinning the table at
+    /// `TRADITIONAL_TABLESIZE` instead makes the mean walk scale linearly with
+    /// the block count (measured 9.0x upstream at 1 000 000 blocks).
+    ///
+    /// At or below the boundary oc keeps its own power-of-two sizing rather
+    /// than upstream's flat floor. Upstream allocates and `memset`s 256 KiB
+    /// per file there regardless of how few blocks the basis has; oc's
+    /// tighter table measures within 1% of upstream's mean chain walk from
+    /// 32 768 blocks up to the boundary, so the floor buys nothing it does
+    /// not charge for in cache footprint.
+    fn for_entries(n_entries: usize) -> Self {
+        let wide = (n_entries / 8).saturating_mul(10).saturating_add(11);
+        if wide > TRADITIONAL_TABLESIZE {
+            Self::Wide {
+                modulus: wide.min(MAX_WIDE_BUCKETS) as u32,
+            }
+        } else {
+            let n_buckets = 1usize << log2_buckets_for(n_entries);
+            Self::Compact {
+                mask: (n_buckets - 1) as u16,
+            }
+        }
+    }
+
+    /// Number of bucket slots the rule asks for.
+    const fn bucket_count(self) -> usize {
+        match self {
+            Self::Compact { mask } => mask as usize + 1,
+            Self::Wide { modulus } => modulus as usize,
+        }
+    }
+
+    /// Maps a `(sum1, sum2)` pair onto a bucket slot.
+    ///
+    /// Both modes send equal rolling sums to the same slot, which is the only
+    /// property [`CompactLookup::find_all`] depends on for correctness.
+    #[inline]
+    fn index_of(self, sum1: u16, sum2: u16) -> usize {
+        match self {
+            Self::Compact { mask } => (sum2 & mask) as usize,
+            Self::Wide { modulus } => {
+                let rsum = (u32::from(sum2) << 16) | u32::from(sum1);
+                (rsum % modulus) as usize
+            }
+        }
+    }
+}
+
+/// Bucket index over the rolling checksum.
+///
+/// See the module docs for the two addressing modes, the ZSO-4 design
+/// contract, and the duplicate-block correctness rationale shared with
+/// [`super::MatchedBlocks`].
 #[derive(Clone, Debug)]
 pub(super) struct CompactLookup {
     buckets: Vec<BucketSlot>,
     entries: Vec<ChainEntry>,
-    mask: u16,
+    address: BucketAddress,
 }
 
 impl CompactLookup {
-    /// Derives the bucket address from the packed rolling sum.
+    /// Derives the compact-mode bucket key from the packed rolling sum.
     ///
     /// `rsum >> 16` is the upper half of the wire-format checksum and matches
     /// [`checksums::RollingDigest::sum2`], mirroring zsync's
     /// `r.a & rsum_a_mask` formulation while staying entirely in-memory.
+    /// Tables grown past [`TRADITIONAL_TABLESIZE`] address on the full rolling
+    /// sum instead ([`BucketAddress::Wide`]), so this is the key only while
+    /// the table is in compact mode.
     #[inline]
     #[must_use]
     pub(super) const fn bucket_for(rsum: u32) -> u16 {
@@ -114,21 +220,18 @@ impl CompactLookup {
 
     /// Builds a bucket table sized for the expected number of entries.
     ///
-    /// Bucket count is the smallest power of two `>= 2 * n_entries`, clamped
-    /// to `[2^MIN_LOG2_BUCKETS, 2^MAX_LOG2_BUCKETS]`. The chain backing store
-    /// is reserved at a conservative upper bound (`MAX_RESERVE_ENTRIES`) so
-    /// adversarial inputs cannot trigger an oversized allocation up-front;
-    /// real basis sizes never approach the cap before paging concerns kick
-    /// in elsewhere.
+    /// Sizing is owned entirely by [`BucketAddress::for_entries`]. The chain
+    /// backing store is reserved at a conservative upper bound
+    /// (`MAX_RESERVE_ENTRIES`) so adversarial inputs cannot trigger an
+    /// oversized allocation up-front; real basis sizes never approach the cap
+    /// before paging concerns kick in elsewhere.
     pub(super) fn with_capacity(n_entries: usize) -> Self {
-        let log2_buckets = log2_buckets_for(n_entries);
-        let n_buckets = 1usize << log2_buckets;
-        let mask = (n_buckets - 1) as u16;
+        let address = BucketAddress::for_entries(n_entries);
         let reserve = n_entries.min(MAX_RESERVE_ENTRIES);
         Self {
-            buckets: vec![BucketSlot::EMPTY; n_buckets],
+            buckets: vec![BucketSlot::EMPTY; address.bucket_count()],
             entries: Vec::with_capacity(reserve),
-            mask,
+            address,
         }
     }
 
@@ -144,7 +247,7 @@ impl CompactLookup {
             block_index, CHAIN_END,
             "block_index u32::MAX collides with chain sentinel",
         );
-        let bucket = self.bucket_index(sum2);
+        let bucket = self.address.index_of(sum1, sum2);
         let entry_idx = self.entries.len() as u32;
         self.entries.push(ChainEntry {
             sum1,
@@ -166,28 +269,19 @@ impl CompactLookup {
 
     /// Returns an iterator over all block indices matching `(sum1, sum2)`.
     ///
-    /// Walks the `sum2`-derived bucket chain in insertion order and yields
-    /// entries whose lower-half discriminator equals `sum1`. The
-    /// strong-checksum verify still gates the final caller-visible match -
-    /// this iterator only filters out chain entries that cannot possibly
-    /// match.
+    /// Walks the bucket chain in insertion order and yields entries whose
+    /// lower-half discriminator equals `sum1`. The strong-checksum verify
+    /// still gates the final caller-visible match - this iterator only
+    /// filters out chain entries that cannot possibly match. The yielded
+    /// sequence is independent of the addressing mode.
     #[inline]
     pub(super) fn find_all(&self, sum1: u16, sum2: u16) -> CompactLookupIter<'_> {
-        let bucket = self.bucket_index(sum2);
+        let bucket = self.address.index_of(sum1, sum2);
         CompactLookupIter {
             table: self,
             sum1,
             next: self.buckets[bucket].head,
         }
-    }
-
-    /// Masks `sum2` into the bucket-array address space.
-    ///
-    /// Equivalent to `sum2 & self.mask`, but kept as a single helper so the
-    /// insert and lookup paths cannot drift apart.
-    #[inline]
-    fn bucket_index(&self, sum2: u16) -> usize {
-        (sum2 & self.mask) as usize
     }
 
     /// Resets all bucket heads and chain entries, preserving the backing
@@ -203,12 +297,14 @@ impl CompactLookup {
         self.entries.len() as u32
     }
 
-    /// Returns the number of bucket slots (always a power of two, `<= 2^16`).
+    /// Returns the number of bucket slots.
     ///
-    /// Reported as the bench harnesses' "lookup capacity" - the metric they
-    /// pair against the local CPU cache hierarchy.
+    /// A power of two at or below `2^16` in compact mode, upstream's odd
+    /// `(count/8) * 10 + 11` above it. Reported as the bench harnesses'
+    /// "lookup capacity" - the metric they pair against the local CPU cache
+    /// hierarchy.
     pub(super) fn capacity(&self) -> usize {
-        (self.mask as usize) + 1
+        self.address.bucket_count()
     }
 
     /// Returns the byte footprint of the bucket array allocation.
@@ -346,16 +442,146 @@ mod tests {
     }
 
     #[test]
-    fn bucket_count_is_capped_at_two_to_sixteen() {
-        let table = CompactLookup::with_capacity(usize::MAX);
-        assert_eq!(table.capacity(), 1 << MAX_LOG2_BUCKETS);
-        assert_eq!(table.mask, u16::MAX);
-    }
-
-    #[test]
     fn bucket_count_is_floored_for_tiny_inputs() {
         let table = CompactLookup::with_capacity(0);
         assert_eq!(table.capacity(), 1 << MIN_LOG2_BUCKETS);
+    }
+
+    /// Upstream's table size for `n` blocks: `(n/8) * 10 + 11`, raised to
+    /// `TRADITIONAL_TABLESIZE` when it falls below it.
+    ///
+    /// upstream: match.c:84-88.
+    fn upstream_tablesize(n: usize) -> usize {
+        ((n / 8) * 10 + 11).max(TRADITIONAL_TABLESIZE)
+    }
+
+    /// The bucket count must track upstream's dynamic growth once the basis
+    /// is large enough to leave `TRADITIONAL_TABLESIZE` behind.
+    ///
+    /// Pinning the table at the floor instead is what the measured 9.0x
+    /// chain-walk blow-up at a million blocks comes from: the walk cost is
+    /// `n_entries / n_buckets`, so a fixed bucket count makes it grow without
+    /// bound. Any policy that stops growing fails this at `100_000`.
+    ///
+    /// upstream: match.c:84-88.
+    #[test]
+    fn bucket_count_tracks_upstream_growth_above_the_floor() {
+        // 52 424 is the first block count whose upstream size exceeds
+        // TRADITIONAL_TABLESIZE: 52424/8 = 6553, 6553*10 + 11 = 65 541.
+        // 52 423 truncates to 6552 and still lands on the floor.
+        for &n in &[52_424usize, 100_000, 400_000, 1_000_000, 8_000_000] {
+            let table = CompactLookup::with_capacity(n);
+            assert_eq!(
+                table.capacity(),
+                upstream_tablesize(n),
+                "bucket count for {n} blocks must equal upstream's tablesize"
+            );
+            assert!(
+                table.capacity() > TRADITIONAL_TABLESIZE,
+                "{n} blocks must leave the traditional table size behind"
+            );
+        }
+        assert_eq!(CompactLookup::with_capacity(52_424).capacity(), 65_541);
+    }
+
+    /// Below the boundary the table stays on oc's tighter power-of-two
+    /// sizing, and never exceeds `TRADITIONAL_TABLESIZE`.
+    ///
+    /// Upstream's flat `1<<16` floor would `memset` 256 KiB per file for a
+    /// basis of a handful of blocks; the measured mean chain walk is within
+    /// 1% of upstream's from 32 768 blocks to the boundary, so the floor is
+    /// pure cache footprint there.
+    #[test]
+    fn bucket_count_stays_compact_below_the_boundary() {
+        for &(n, expected) in &[
+            (0usize, 1usize << MIN_LOG2_BUCKETS),
+            (1, 1 << MIN_LOG2_BUCKETS),
+            (1_000, 2_048),
+            (32_768, TRADITIONAL_TABLESIZE),
+            (52_423, TRADITIONAL_TABLESIZE),
+        ] {
+            let table = CompactLookup::with_capacity(n);
+            assert_eq!(table.capacity(), expected, "bucket count for {n} blocks");
+            assert!(table.capacity().is_power_of_two());
+        }
+    }
+
+    /// A grown table must be odd, or the upper sum half cannot span the whole
+    /// set under `rsum % tablesize`.
+    ///
+    /// upstream: match.c:80-81.
+    #[test]
+    fn grown_bucket_count_is_odd() {
+        for &n in &[52_424usize, 100_000, 999_999, 8_000_000, usize::MAX] {
+            let count = BucketAddress::for_entries(n).bucket_count();
+            assert_eq!(count % 2, 1, "grown table for {n} blocks must be odd");
+        }
+    }
+
+    /// The allocation guard bounds the wide bucket count for adversarial
+    /// entry counts without wrapping the `u32` modulus.
+    #[test]
+    fn wide_bucket_count_is_guarded() {
+        assert_eq!(
+            BucketAddress::for_entries(usize::MAX).bucket_count(),
+            MAX_WIDE_BUCKETS
+        );
+        assert_eq!(
+            BucketAddress::for_entries(usize::MAX / 8).bucket_count(),
+            MAX_WIDE_BUCKETS
+        );
+    }
+
+    /// Above the boundary the address must consume the full rolling sum.
+    ///
+    /// Two sums sharing `sum2` collide in every compact table by
+    /// construction; a grown table that still keyed on `sum2` alone would
+    /// keep them colliding and so gain nothing from the extra slots.
+    ///
+    /// upstream: match.c:74 `BIG_SUM2HASH(sum) ((sum)%tablesize)`.
+    #[test]
+    fn wide_address_uses_the_full_rolling_sum() {
+        let address = BucketAddress::for_entries(100_000);
+        assert!(matches!(address, BucketAddress::Wide { .. }));
+        assert_ne!(
+            address.index_of(0x0001, 0xBEEF),
+            address.index_of(0x0002, 0xBEEF),
+            "wide addressing must separate sums that share sum2"
+        );
+
+        let compact = BucketAddress::for_entries(1_000);
+        assert_eq!(
+            compact.index_of(0x0001, 0xBEEF),
+            compact.index_of(0x0002, 0xBEEF),
+            "compact addressing keys on sum2 alone",
+        );
+    }
+
+    /// Growing the table must not change which candidates a probe yields:
+    /// the sizing is an in-memory optimisation with no token-level effect.
+    #[test]
+    fn wide_mode_preserves_lookup_semantics_and_order() {
+        let n = 60_000usize;
+        let mut table = CompactLookup::with_capacity(n);
+        assert!(table.capacity() > TRADITIONAL_TABLESIZE);
+        for i in 0..n {
+            table.insert((i & 0xFFFF) as u16, ((i >> 5) & 0xFFFF) as u16, i as u32);
+        }
+        for i in (0..n).step_by(97) {
+            let found: Vec<usize> = table
+                .find_all((i & 0xFFFF) as u16, ((i >> 5) & 0xFFFF) as u16)
+                .collect();
+            assert!(found.contains(&i), "missing entry {i}");
+        }
+
+        // Duplicate keys must still come back in insertion order: the
+        // MatchedBlocks first-fit contract depends on it.
+        let mut dup = CompactLookup::with_capacity(n);
+        dup.insert(7, 9, 100);
+        dup.insert(7, 9, 5);
+        dup.insert(7, 9, 42);
+        let found: Vec<usize> = dup.find_all(7, 9).collect();
+        assert_eq!(found, vec![100, 5, 42]);
     }
 
     #[test]

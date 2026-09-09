@@ -381,7 +381,9 @@ same index, the atomic consumed array provides the coordination.
 
 The `CompactLookup` (`crates/matching/src/index/compact_lookup.rs`)
 addresses hash-table buckets using only `sum2` (upper 16 bits of the
-rolling sum), with `sum1` as an in-bucket discriminator. This is a
+rolling sum), with `sum1` as an in-bucket discriminator, for tables at or
+below upstream's `TRADITIONAL_TABLESIZE`; larger tables address on the
+full rolling sum as upstream's `BIG_SUM2HASH` does. This is a
 data-structure optimization with no I/O or synchronization concerns.
 
 **Async interaction:** None. Pure computation within `spawn_blocking`.
