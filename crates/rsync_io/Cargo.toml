@@ -59,15 +59,25 @@ async-ssh = ["dep:tokio"]
 # ssh-config-parse:
 #   what:    Extends `SshCommand::has_ssh_compression` to consult
 #            `~/.ssh/config` and `/etc/ssh/ssh_config` for `Compression yes`
-#            at top level or under `Host *`, closing the SSC-3 gap where a
-#            user-configured default would silently double-compress when
-#            paired with rsync's `--compress`.
+#            at top level or under a matching `Host` or `Match` block,
+#            closing the SSC-3 gap where a user-configured default would
+#            silently double-compress when paired with rsync's `--compress`.
 #   why:     SSC-1 (argv warning) misses the case where the user sets
 #            `Compression yes` globally in ssh_config and never passes `-C`
 #            on the rsync command line.
-#   scope:   Top-level and `Host *` directives only. Per-host `Host foo`
-#            blocks and `Match` blocks are deferred because they need
-#            runtime context the warning site does not have.
+#   scope:   Top-level directives, `Host` blocks (SSC-5.b: glob and
+#            negation tokens matched against the connection target, so
+#            `Host foo` and `Host !bad *` both resolve), and `Match`
+#            blocks over the `host`, `originalhost`, `user`, `localuser`
+#            and `all` conditions (SSC-4.c). The warning site supplies
+#            that context from the connection target and user - see
+#            `SshCommand::has_ssh_compression` in `src/ssh/builder.rs`.
+#            `Match exec` is refused by design: evaluating it would run
+#            arbitrary commands from a passive lookup path, so the block
+#            is inert and a `Compression yes` inside one draws a warning
+#            naming the workaround. `canonical`, `final` and `tagged`
+#            likewise render their block inert, as oc neither canonicalises
+#            hostnames nor makes a final pass.
 #   safety:  Pure Rust, no extra dependencies, no unsafe code.
 #   opt out: `cargo build -p rsync_io --no-default-features` (then re-add
 #            any other features you need). Without this feature the
