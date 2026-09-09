@@ -1329,14 +1329,14 @@ impl ReceiverContext {
         // already match. Skip entirely when no preservation flags are active.
         // On a no-change scan this eliminates ownership mapping, permission
         // comparison, and timestamp construction for every file.
-        if needs_metadata_apply
+        let attrs_updated = needs_metadata_apply
             && !metadata_unchanged(
                 entry,
                 metadata_opts,
                 stat_meta,
                 self.config.file_selection.modify_window,
-            )
-        {
+            );
+        if attrs_updated {
             if let Err(e) = apply_metadata_with_cached_stat(
                 file_path,
                 entry,
@@ -1380,6 +1380,32 @@ impl ReceiverContext {
                 ) {
                     metadata_errors.push((file_path.to_path_buf(), e.to_string()));
                 }
+            }
+        }
+
+        // upstream: rsync.c:824-829 set_file_attrs() - at INFO_GTE(NAME, 2)
+        // with ATTRS_REPORT the generator reports every quick-check match:
+        // "%s is uptodate" when nothing changed, the bare name when only
+        // attributes were retouched. ATTRS_REPORT is suppressed while itemize
+        // output is active (generator.c:2727 `stdout_format_has_i ? 0 :
+        // ATTRS_REPORT`). The line is FCLIENT, so a server-side generator
+        // frames it as MSG_INFO for the client to render and count
+        // (log.c rwrite() under am_server).
+        //
+        // A client-side generator (pull) routes the line through the stamped
+        // diagnostic buffer rather than straight to stdout, so it interleaves
+        // in production order with the `delta-transmission` notice the same
+        // generator emitted at setup (upstream prints that first, at
+        // generator.c:2763, before the per-file loop reaches rsync.c:824).
+        // Writing directly to stdout here would jump the queue and invert the
+        // two, since the setup notice is buffered.
+        if !emit_itemize && logging::info_gte(logging::InfoFlag::Name, 2) {
+            let name = entry.path().to_string_lossy();
+            let suffix = if attrs_updated { "" } else { " is uptodate" };
+            if self.config.connection.client_mode {
+                info_log!(Name, 2, "{name}{suffix}");
+            } else {
+                let _ = writer.send_msg_info(format!("{name}{suffix}\n").as_bytes());
             }
         }
     }
@@ -2819,5 +2845,225 @@ mod skip_notice_tests {
 
         let lines = run(cfg(), 2, files(), dest);
         assert_eq!(lines, vec!["typed exists (type change)\n".to_owned()]);
+    }
+}
+
+/// Quick-check "is uptodate" reporting: upstream's generator reports every
+/// quick-check match at `INFO_GTE(NAME, 2)` through `set_file_attrs()`'s
+/// `ATTRS_REPORT` (rsync.c:824-829), and a server-side generator frames the
+/// line as `MSG_INFO` so the far-end client renders it and counts its bytes
+/// in `received` (log.c:330-346). These tests pin the exact text, the NAME
+/// gate, and the itemize suppression (generator.c:2727).
+#[cfg(test)]
+mod uptodate_notice_tests {
+    use std::io;
+    use std::path::Path;
+
+    use logging::{InfoFlag, VerbosityConfig};
+    use metadata::MetadataOptions;
+    use protocol::ProtocolVersion;
+    use protocol::flist::FileEntry;
+
+    use crate::config::ServerConfig;
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::ReceiverContext;
+    use crate::receiver::stats::TransferStats;
+    use crate::role::ServerRole;
+
+    /// Records every `MSG_INFO` frame a server-mode receiver emits.
+    #[derive(Default)]
+    struct CaptureWriter {
+        lines: Vec<String>,
+    }
+
+    impl io::Write for CaptureWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::writer::MsgInfoSender for CaptureWriter {
+        fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
+            self.lines.push(String::from_utf8_lossy(data).into_owned());
+            Ok(())
+        }
+    }
+
+    fn handshake() -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    fn server_config() -> ServerConfig {
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            ..Default::default()
+        };
+        config.connection.client_mode = false;
+        config
+    }
+
+    /// Whole-second mtime pinned on both the seeded destination file and the
+    /// flist entry, so the quick-check matches on every filesystem regardless
+    /// of sub-second timestamp granularity.
+    const SEED_MTIME: i64 = 1_700_000_000;
+
+    /// Seeds `dest/<name>` with `size` bytes and returns a matching flist
+    /// entry whose size and mtime satisfy the quick-check.
+    fn uptodate_entry(dest: &Path, name: &str, size: usize) -> FileEntry {
+        let path = dest.join(name);
+        std::fs::write(&path, vec![b'x'; size]).expect("seed dest file");
+        let stamp = filetime::FileTime::from_unix_time(SEED_MTIME, 0);
+        filetime::set_file_mtime(&path, stamp).expect("pin dest mtime");
+        let mut entry = FileEntry::new_file(name.into(), size as u64, 0o644);
+        entry.set_mtime(SEED_MTIME, 0);
+        entry
+    }
+
+    /// Runs the candidate pass at a given `--info=name` level and returns the
+    /// captured `MSG_INFO` lines.
+    fn run(
+        config: ServerConfig,
+        name_level: u8,
+        files: Vec<FileEntry>,
+        dest: &Path,
+    ) -> Vec<String> {
+        let mut cfg = VerbosityConfig::default();
+        cfg.info.set(InfoFlag::Name, name_level);
+        logging::init(cfg);
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.file_list = files;
+
+        let mut writer = CaptureWriter::default();
+        let opts = MetadataOptions::default();
+        let mut errs = Vec::new();
+        let mut stats = TransferStats::default();
+        let _ = ctx.build_files_to_transfer(
+            &mut writer,
+            dest,
+            #[cfg(unix)]
+            None,
+            &opts,
+            None,
+            &mut errs,
+            &mut stats,
+            None,
+            None,
+        );
+        writer.lines
+    }
+
+    /// upstream: rsync.c:828 - at NAME2 every quick-check match is reported as
+    /// `"%s is uptodate"`, framed as `MSG_INFO` by a server generator so the
+    /// client both prints it and counts its bytes. A stale file (mtime
+    /// mismatch) transfers instead and must NOT be reported uptodate.
+    #[test]
+    fn uptodate_notice_at_name2_frames_msg_info() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let fresh = uptodate_entry(dest, "same", 30);
+        let mut stale = uptodate_entry(dest, "stale", 30);
+        stale.set_mtime(1, 0);
+
+        let lines = run(server_config(), 2, vec![fresh, stale], dest);
+        assert_eq!(lines, vec!["same is uptodate\n".to_owned()]);
+    }
+
+    /// upstream: rsync.c:825-828 - the two arms are distinct: a quick-check
+    /// match whose attributes were retouched reports the bare name (`updated`),
+    /// while an untouched one reports `"is uptodate"`. Reporting "uptodate" for
+    /// a file whose permissions just changed would tell the operator nothing
+    /// happened when something did.
+    #[cfg(unix)]
+    #[test]
+    fn retouched_attrs_report_bare_name_not_uptodate() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let entry = uptodate_entry(dest, "perms", 30);
+        // Source mode is 0o644 (uptodate_entry); make the destination differ so
+        // the metadata apply fires while size and mtime still quick-check.
+        std::fs::set_permissions(dest.join("perms"), std::fs::Permissions::from_mode(0o600))
+            .expect("skew dest permissions");
+
+        let lines = run(server_config(), 2, vec![entry], dest);
+        assert_eq!(lines, vec!["perms\n".to_owned()]);
+    }
+
+    /// upstream: rsync.c:824 - the report is gated on `INFO_GTE(NAME, 2)`;
+    /// at `-v` (NAME1) and below, quiet transfers must stay byte-identical.
+    #[test]
+    fn uptodate_notice_silent_below_name2() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let entry = || vec![uptodate_entry(dest, "same", 30)];
+
+        assert!(run(server_config(), 1, entry(), dest).is_empty());
+        assert!(run(server_config(), 0, entry(), dest).is_empty());
+    }
+
+    /// A client-side generator (pull) must route the line through the stamped
+    /// diagnostic buffer, NOT frame it and NOT write it straight to stdout.
+    /// Framing would send generator chatter to the server; writing directly to
+    /// stdout would jump ahead of the buffered `delta-transmission` notice and
+    /// invert upstream's order (generator.c:2763 before rsync.c:824).
+    #[test]
+    fn client_mode_routes_uptodate_through_event_buffer() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let files = vec![uptodate_entry(dest, "same", 30)];
+
+        let mut config = server_config();
+        config.connection.client_mode = true;
+        let framed = run(config, 2, files, dest);
+        assert!(
+            framed.is_empty(),
+            "a pulling client must not frame the notice: {framed:?}"
+        );
+
+        let buffered: Vec<String> = logging::drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                logging::DiagnosticEvent::Info { message, .. } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            buffered.iter().any(|m| m == "same is uptodate"),
+            "client-side notice must reach the stamped buffer: {buffered:?}"
+        );
+    }
+
+    /// upstream: generator.c:2727 - `maybe_ATTRS_REPORT` is zeroed while
+    /// itemize output is active (`stdout_format_has_i`), so `-i -vv` must not
+    /// add uptodate lines on top of the itemize rows.
+    #[test]
+    fn uptodate_notice_suppressed_by_itemize() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let files = vec![uptodate_entry(dest, "same", 30)];
+
+        let mut config = server_config();
+        config.flags.info_flags.itemize = true;
+        let lines = run(config, 2, files, dest);
+        assert!(
+            !lines.iter().any(|l| l.contains("is uptodate")),
+            "itemize mode must suppress ATTRS_REPORT: {lines:?}"
+        );
     }
 }
