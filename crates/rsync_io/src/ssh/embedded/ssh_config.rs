@@ -177,12 +177,54 @@ fn expand_tilde(path: &str) -> PathBuf {
 }
 
 fn expand_tilde_str(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/")
-        && let Some(home) = home_dir()
-    {
-        return home.join(rest).to_string_lossy().into_owned();
-    }
-    path.to_owned()
+    let home = home_dir();
+    let home = home.as_ref().map(|h| h.to_string_lossy());
+    expand_tilde_with(path, home.as_deref(), std::path::MAIN_SEPARATOR)
+}
+
+/// Expands a leading `~/` in `path` against `home`, emitting `sep` as the only
+/// separator so the result never mixes `\` and `/`.
+///
+/// `home` and `sep` are parameters rather than reads of the environment and of
+/// `MAIN_SEPARATOR` so that the Windows arm is exercisable from a unit test on
+/// any host. Returns `path` unchanged when there is nothing to expand: no `~`
+/// prefix, no home directory, or a `~user` form this parser does not resolve.
+///
+/// Mirrors OpenSSH's `tilde_expand` for the separator run that follows the
+/// tilde - upstream: openssh/misc.c:1281 collapses it with
+/// `copy += strspn(copy, "/")` before concatenating, which is why a value of
+/// `~//probe` must still land under the home directory.
+///
+/// Two behaviours are Windows-specific, where OpenSSH assumes a single
+/// separator character:
+///
+/// * `~\` is accepted as a tilde prefix when `sep` is `\`. This mirrors the
+///   `WINDOWS` arm at openssh/misc.c:1284, which was added to `tilde_expand`
+///   for exactly this reason.
+/// * The remainder's separators are rewritten to `sep`. OpenSSH concatenates
+///   with a literal `/` and leaves the remainder alone (openssh/misc.c:1315),
+///   which on Windows yields a mixed path such as `C:\Users\x/.ssh/id_rsa`;
+///   it gets away with it because the Win32 file APIs accept either character.
+///   oc puts these paths in front of the user in diagnostics, so emitting one
+///   separator kind is a deliberate oc divergence rather than a mirror.
+fn expand_tilde_with(path: &str, home: Option<&str>, sep: char) -> String {
+    let is_sep = |c: char| c == '/' || (sep == '\\' && c == '\\');
+    let Some(rest) = path
+        .strip_prefix('~')
+        .and_then(|after| after.strip_prefix(is_sep))
+    else {
+        return path.to_owned();
+    };
+    let Some(home) = home else {
+        return path.to_owned();
+    };
+    let rest = rest.trim_start_matches(is_sep);
+    let home = home.trim_end_matches(is_sep);
+    let mut out = String::with_capacity(home.len() + 1 + rest.len());
+    out.push_str(home);
+    out.push(sep);
+    out.extend(rest.chars().map(|c| if is_sep(c) { sep } else { c }));
+    out
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -302,6 +344,139 @@ mod tests {
         let text = "Host example\n  Port notanumber\n";
         let resolved = resolve_host_str(text, "example");
         assert!(resolved.port.is_none());
+    }
+
+    /// Renders the resolved identity files as strings. `PathBuf` equality
+    /// compares components, so it collapses separator runs and treats `/` as a
+    /// separator on Windows - both of which would hide exactly the defects the
+    /// pins below exist to catch.
+    fn identity_file_strings(resolved: &ResolvedHost) -> Vec<String> {
+        resolved
+            .identity_files
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// Before the fix the expansion went through `PathBuf::join`, whose
+    /// absolute-path rule replaced the accumulated path outright and dropped
+    /// the home directory, yielding `/probe`.
+    /// upstream: openssh/misc.c:1281 collapses the run instead.
+    #[test]
+    fn tilde_slash_run_keeps_home_prefix() {
+        let home = home_dir().expect("HOME or USERPROFILE must be set");
+        let text = "Host example\n  IdentityFile ~//probe\n";
+        let resolved = resolve_host_str(text, "example");
+        let expected = format!(
+            "{}{}probe",
+            home.to_string_lossy(),
+            std::path::MAIN_SEPARATOR
+        );
+        assert_eq!(identity_file_strings(&resolved), vec![expected]);
+    }
+
+    #[test]
+    fn identity_file_tilde_expands_through_the_directive() {
+        let home = home_dir().expect("HOME or USERPROFILE must be set");
+        let text = "Host example\n  IdentityFile ~/.ssh/id_probe\n";
+        let resolved = resolve_host_str(text, "example");
+        let sep = std::path::MAIN_SEPARATOR;
+        let expected = format!("{}{sep}.ssh{sep}id_probe", home.to_string_lossy());
+        assert_eq!(identity_file_strings(&resolved), vec![expected]);
+    }
+
+    #[test]
+    fn identity_agent_tilde_expands_through_the_directive() {
+        let home = home_dir().expect("HOME or USERPROFILE must be set");
+        let text = "Host example\n  IdentityAgent ~/agent.sock\n";
+        let resolved = resolve_host_str(text, "example");
+        let expected = format!(
+            "{}{}agent.sock",
+            home.to_string_lossy(),
+            std::path::MAIN_SEPARATOR
+        );
+        assert_eq!(resolved.identity_agent.as_deref(), Some(expected.as_str()));
+    }
+
+    /// The reported defect: a `\`-separated home joined to a `/`-separated
+    /// remainder. Pinned by value with `sep` supplied explicitly, because the
+    /// Windows join character is not observable through `PathBuf` on a Unix
+    /// host.
+    #[test]
+    fn windows_expansion_emits_no_forward_slash() {
+        let out = expand_tilde_with("~/.ssh/id_probe", Some(r"C:\Users\x"), '\\');
+        assert_eq!(out, r"C:\Users\x\.ssh\id_probe");
+        assert!(!out.contains('/'), "mixed separators in {out}");
+    }
+
+    /// upstream: openssh/misc.c:1284 - the Win32 fork's `WINDOWS` arm accepts a
+    /// backslash directly after the tilde.
+    #[test]
+    fn windows_accepts_backslash_after_tilde() {
+        let out = expand_tilde_with(r"~\.ssh\id_probe", Some(r"C:\Users\x"), '\\');
+        assert_eq!(out, r"C:\Users\x\.ssh\id_probe");
+    }
+
+    /// On Unix a backslash is an ordinary filename character and must survive
+    /// expansion untouched, so the rewrite above is strictly a Windows arm.
+    #[test]
+    fn unix_expansion_preserves_literal_backslash() {
+        let out = expand_tilde_with(r"~/od\d", Some("/home/u"), '/');
+        assert_eq!(out, r"/home/u/od\d");
+        assert_eq!(expand_tilde_with(r"~\od", Some("/home/u"), '/'), r"~\od");
+    }
+
+    /// upstream: openssh/misc.c:1281 `copy += strspn(copy, "/")`.
+    #[test]
+    fn separator_run_after_tilde_is_collapsed() {
+        assert_eq!(
+            expand_tilde_with("~//probe", Some("/home/u"), '/'),
+            "/home/u/probe"
+        );
+        assert_eq!(
+            expand_tilde_with(r"~\\probe", Some(r"C:\Users\x"), '\\'),
+            r"C:\Users\x\probe"
+        );
+    }
+
+    /// upstream: openssh/misc.c:1309 - the trailing separator on the home
+    /// directory is not doubled.
+    #[test]
+    fn trailing_separator_on_home_is_not_doubled() {
+        assert_eq!(
+            expand_tilde_with("~/probe", Some("/home/u/"), '/'),
+            "/home/u/probe"
+        );
+        assert_eq!(
+            expand_tilde_with("~/probe", Some(r"C:\Users\x\"), '\\'),
+            r"C:\Users\x\probe"
+        );
+    }
+
+    #[test]
+    fn unexpandable_tilde_forms_are_left_alone() {
+        assert_eq!(expand_tilde_with("~", Some("/home/u"), '/'), "~");
+        assert_eq!(
+            expand_tilde_with("~other/k", Some("/home/u"), '/'),
+            "~other/k"
+        );
+        assert_eq!(expand_tilde_with("~/k", None, '/'), "~/k");
+        assert_eq!(expand_tilde_with("/abs/k", Some("/home/u"), '/'), "/abs/k");
+    }
+
+    /// The live wrapper must pick the platform's own separator; this is what
+    /// carries the by-value pins above onto the real path.
+    #[test]
+    fn live_wrapper_uses_the_platform_separator() {
+        let home = home_dir().expect("HOME or USERPROFILE must be set");
+        let expanded = expand_tilde_str("~/a/b");
+        let expected = format!(
+            "{}{}a{}b",
+            home.to_string_lossy(),
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR
+        );
+        assert_eq!(expanded, expected);
     }
 
     #[test]
