@@ -35,14 +35,15 @@ impl GeneratorContext {
         full_path: &Path,
         relative_path: PathBuf,
         metadata: &fast_io::pinned_root::SourceMetadata,
+        filter_level: u8,
     ) -> io::Result<FileEntry> {
-        // upstream: flist.c:1396-1398 DEBUG_GTE(FLIST, 2)
-        // ALL_FILTERS = 2 is the common filter_level for send_file_list paths.
-        logging::debug_log!(
-            Flist,
-            2,
-            "[sender] make_file({},*,2)",
-            relative_path.display()
+        // upstream: flist.c:1542 DEBUG_GTE(FLIST, 2) `[%s] make_file(%s,*,%d)`.
+        // The filter level is NO_FILTERS (0) for named sources and ALL_FILTERS
+        // (2) for recursed/implied entries (rsync.h:212-214).
+        protocol::flist::trace_make_file(
+            protocol::flist::ProcessRole::Sender,
+            &relative_path.display(),
+            filter_level,
         );
 
         let file_type = metadata.file_type();
@@ -611,6 +612,7 @@ mod fake_super_round_trip_tests {
                 &path,
                 PathBuf::from("placeholder"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .unwrap();
         // Without --fake-super, the on-disk uid/gid (the test user) is sent.
@@ -638,6 +640,7 @@ mod fake_super_round_trip_tests {
                 &path,
                 PathBuf::from("placeholder"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .unwrap();
         assert_eq!(entry.uid(), Some(4321), "uid must come from %stat xattr");
@@ -663,6 +666,7 @@ mod fake_super_round_trip_tests {
                 &path,
                 PathBuf::from("sda"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .unwrap();
         assert_eq!(entry.file_type(), FileType::BlockDevice);
@@ -723,6 +727,7 @@ mod fake_super_round_trip_tests {
                 dev,
                 PathBuf::from("zero"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .unwrap();
 
@@ -765,6 +770,7 @@ mod fake_super_round_trip_tests {
                 dev,
                 PathBuf::from("zero"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .unwrap();
         assert_eq!(
@@ -787,6 +793,7 @@ mod fake_super_round_trip_tests {
                 &path,
                 PathBuf::from("plain"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .unwrap();
         use std::os::unix::fs::MetadataExt;
@@ -869,6 +876,7 @@ mod daemon_outgoing_chmod_tests {
                 &path,
                 PathBuf::from("source.txt"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .expect("create_entry");
 
@@ -895,6 +903,7 @@ mod daemon_outgoing_chmod_tests {
                 &path,
                 PathBuf::from("source.txt"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .expect("create_entry");
 
@@ -972,6 +981,7 @@ mod client_chmod_tests {
                 &file,
                 PathBuf::from("f644"),
                 &fast_io::pinned_root::SourceMetadata::from(fmeta.clone()),
+                2,
             )
             .expect("create_entry file");
         assert_eq!(
@@ -986,6 +996,7 @@ mod client_chmod_tests {
                 &dir,
                 PathBuf::from("sub"),
                 &fast_io::pinned_root::SourceMetadata::from(dmeta.clone()),
+                2,
             )
             .expect("create_entry dir");
         assert_eq!(
@@ -1017,6 +1028,7 @@ mod client_chmod_tests {
                 &file,
                 PathBuf::from("f"),
                 &fast_io::pinned_root::SourceMetadata::from(fmeta.clone()),
+                2,
             )
             .expect("create_entry file");
         assert_eq!(
@@ -1031,6 +1043,7 @@ mod client_chmod_tests {
                 &dir,
                 PathBuf::from("d"),
                 &fast_io::pinned_root::SourceMetadata::from(dmeta.clone()),
+                2,
             )
             .expect("create_entry dir");
         assert_eq!(
@@ -1057,6 +1070,7 @@ mod client_chmod_tests {
                 &link,
                 PathBuf::from("link"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .expect("create_entry");
         let unmodified = make_generator(None)
@@ -1064,6 +1078,7 @@ mod client_chmod_tests {
                 &link,
                 PathBuf::from("link"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .expect("create_entry");
 
@@ -1089,6 +1104,7 @@ mod client_chmod_tests {
                 &path,
                 PathBuf::from("f"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .expect("create_entry");
 
@@ -1154,6 +1170,7 @@ mod munge_symlinks_tests {
                 &link,
                 PathBuf::from("escape"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .unwrap();
 
@@ -1181,6 +1198,7 @@ mod munge_symlinks_tests {
                 &link,
                 PathBuf::from("escape"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .unwrap();
 
@@ -1248,6 +1266,7 @@ mod symlink_mode_tests {
                 link,
                 PathBuf::from("link"),
                 &fast_io::pinned_root::SourceMetadata::from(meta),
+                2,
             )
             .expect("create_entry");
         assert!(entry.is_symlink(), "the fixture must route through S_IFLNK");
@@ -1418,6 +1437,7 @@ mod windows_reparse_tests {
                 &path,
                 PathBuf::from("plain.txt"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .expect("create_entry");
 
@@ -1459,6 +1479,7 @@ mod windows_reparse_tests {
                 &junction,
                 PathBuf::from("link"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .expect("create_entry");
 
@@ -1506,6 +1527,7 @@ mod windows_reparse_tests {
                 &link,
                 PathBuf::from("link"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .expect("create_entry");
 
@@ -1576,6 +1598,7 @@ mod entry_length_tests {
                 &dir,
                 PathBuf::from("subdir"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .expect("create_entry");
 
@@ -1607,6 +1630,7 @@ mod entry_length_tests {
                 &link,
                 PathBuf::from("link"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .expect("create_entry");
 
@@ -1701,6 +1725,7 @@ mod flist_checksum_tests {
                 &path,
                 PathBuf::from("payload.bin"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .unwrap();
 
@@ -1726,6 +1751,7 @@ mod flist_checksum_tests {
                 &path,
                 PathBuf::from("empty"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .unwrap();
 
@@ -1749,6 +1775,7 @@ mod flist_checksum_tests {
                 &path,
                 PathBuf::from("payload.bin"),
                 &fast_io::pinned_root::SourceMetadata::from(meta.clone()),
+                2,
             )
             .unwrap();
 

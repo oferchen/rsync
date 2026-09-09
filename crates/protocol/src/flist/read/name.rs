@@ -12,8 +12,6 @@
 
 use std::io::{self, Read};
 
-use logging::debug_log;
-
 use crate::codec::ProtocolCodec;
 use crate::flist::flags::FileFlags;
 use crate::wire::file_entry_decode::{MAXPATHLEN, name_overflow_error};
@@ -57,15 +55,6 @@ impl FileListReader {
             byte[0] as usize
         };
 
-        debug_log!(
-            Flist,
-            4,
-            "read_name: same_len={} suffix_len={} long_name={}",
-            same_len,
-            suffix_len,
-            flags.long_name()
-        );
-
         if same_len > self.state.prev_name().len() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -99,14 +88,6 @@ impl FileListReader {
             name.resize(start + suffix_len, 0);
             reader.read_exact(&mut name[start..])?;
         }
-
-        debug_log!(
-            Flist,
-            3,
-            "read_name: total_len={} name_bytes={:?}",
-            name.len(),
-            &name[..name.len().min(64)]
-        );
 
         self.state.update_name(&name);
 

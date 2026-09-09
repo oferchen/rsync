@@ -32,7 +32,7 @@ use std::time::Instant;
 
 use fast_io::pinned_root::SourceMetadata;
 
-use logging::{PhaseTimer, debug_log};
+use logging::PhaseTimer;
 use protocol::flist::FileEntry;
 
 use super::GeneratorContext;
@@ -192,7 +192,10 @@ impl GeneratorContext {
             let dot_root = Path::new(".");
             if let Ok(meta) = std::fs::symlink_metadata(dot_root).map(SourceMetadata::from) {
                 if meta.is_dir() {
-                    let mut dot_entry = self.create_entry(dot_root, PathBuf::from("."), &meta)?;
+                    // upstream: flist.c:2753 - the implied dot dir is sent with
+                    // NO_FILTERS (0).
+                    let mut dot_entry =
+                        self.create_entry(dot_root, PathBuf::from("."), &meta, 0)?;
                     mark_implied_dir(&mut dot_entry);
                     self.push_file_item(dot_entry, dot_root.to_path_buf());
                 }
@@ -232,14 +235,7 @@ impl GeneratorContext {
         self.timing.flist_build_end = Some(Instant::now());
         self.collect_id_mappings()?;
 
-        let count = self.file_list.len();
-        debug_log!(Flist, 2, "file list entries: {:?}", {
-            let mut names = Vec::with_capacity(count);
-            names.extend(self.file_list.iter().map(FileEntry::name));
-            names
-        });
-
-        Ok(count)
+        Ok(self.file_list.len())
     }
 
     /// Builds a file list from `--files-from` entries.
@@ -303,7 +299,10 @@ impl GeneratorContext {
         if emit_implied_root_dot {
             if let Ok(meta) = std::fs::symlink_metadata(base_dir).map(SourceMetadata::from) {
                 if meta.is_dir() {
-                    let mut dot_entry = self.create_entry(base_dir, PathBuf::from("."), &meta)?;
+                    // upstream: flist.c:2753 - the implied dot dir is sent with
+                    // NO_FILTERS (0).
+                    let mut dot_entry =
+                        self.create_entry(base_dir, PathBuf::from("."), &meta, 0)?;
                     mark_implied_dir(&mut dot_entry);
                     self.push_file_item(dot_entry, base_dir.to_path_buf());
                 }
@@ -400,7 +399,10 @@ impl GeneratorContext {
                             Ok(m) if m.is_dir() => m,
                             _ => continue,
                         };
-                        let Ok(mut file_entry) = self.create_entry(&full, ancestor.clone(), &meta)
+                        // upstream: flist.c:2376 - implied dirs are sent with
+                        // ALL_FILTERS (2).
+                        let Ok(mut file_entry) =
+                            self.create_entry(&full, ancestor.clone(), &meta, 2)
                         else {
                             continue;
                         };
@@ -512,14 +514,7 @@ impl GeneratorContext {
         self.timing.flist_build_end = Some(Instant::now());
         self.collect_id_mappings()?;
 
-        let count = self.file_list.len();
-        debug_log!(Flist, 2, "file list entries: {:?}", {
-            let mut names = Vec::with_capacity(count);
-            names.extend(self.file_list.iter().map(FileEntry::name));
-            names
-        });
-
-        Ok(count)
+        Ok(self.file_list.len())
     }
 
     /// Emits a directory entry for every implied ancestor of a `--relative`
@@ -574,7 +569,8 @@ impl GeneratorContext {
                 Ok(m) if m.is_dir() => m,
                 _ => continue,
             };
-            if let Ok(mut entry) = self.create_entry(&full, relative_ancestor, &meta) {
+            // upstream: flist.c:2376 - implied dirs are sent with ALL_FILTERS (2).
+            if let Ok(mut entry) = self.create_entry(&full, relative_ancestor, &meta, 2) {
                 // upstream: flist.c:1949 - implied parents clear FLAG_CONTENT_DIR
                 // so a real upstream receiver does not scan them for --delete.
                 mark_implied_dir(&mut entry);

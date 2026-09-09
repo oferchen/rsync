@@ -465,7 +465,9 @@ impl GeneratorContext {
         // upstream: flist.c:2287 - always emit "." with XMIT_TOP_DIR for the
         // root transfer directory. Enables delete_in_dir() when --delete is active.
         if relative.as_os_str().is_empty() && metadata.is_dir() {
-            let mut dot_entry = self.create_entry(&path, PathBuf::from("."), &metadata)?;
+            // upstream: flist.c:2767 - a named source argument is stat'ed with
+            // NO_FILTERS (0).
+            let mut dot_entry = self.create_entry(&path, PathBuf::from("."), &metadata, 0)?;
             dot_entry.set_top_dir(true);
             self.push_file_item(dot_entry, path.clone());
 
@@ -517,7 +519,12 @@ impl GeneratorContext {
         // No --safe-links check here: upstream's sender transmits every
         // symlink. The option is evaluated on the receiving side only
         // (generator.c:1951 `safe_symlinks && unsafe_symlink(sl, fname)`).
-        let mut entry = match self.create_entry(&path, relative, &metadata) {
+
+        // upstream: flist.c:2767 sends a named source with NO_FILTERS (0);
+        // recursion goes through send_directory() with ALL_FILTERS (2)
+        // (flist.c:2262-2269).
+        let filter_level = if is_top_level { 0 } else { 2 };
+        let mut entry = match self.create_entry(&path, relative, &metadata, filter_level) {
             Ok(e) => e,
             Err(e) => {
                 // upstream: flist.c - rsyserr for make_file() failures
