@@ -17,7 +17,7 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::asm;
 
-use super::super::Digest;
+use super::super::{Digest, MAX_INPUT_SIZE};
 
 /// MD5 initial state constants (RFC 1321).
 const INIT_A: u32 = 0x6745_2301;
@@ -92,9 +92,6 @@ const K: [u32; 64] = [
     0x2ad7_d2bb,
     0xeb86_d391,
 ];
-
-/// Inputs larger than this fall back to scalar to cap padding allocations.
-const MAX_INPUT_SIZE: usize = 1_024 * 1_024; // 1MB per input
 
 /// 64-byte aligned 16x u32 storage for ZMM register loads/stores.
 ///

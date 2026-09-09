@@ -11,7 +11,7 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use super::super::Digest;
+use super::super::{Digest, MAX_INPUT_SIZE};
 
 /// MD5 initial state constants.
 const INIT_A: u32 = 0x6745_2301;
@@ -86,8 +86,6 @@ const K: [u32; 64] = [
     0x2ad7_d2bb,
     0xeb86_d391,
 ];
-
-const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
 
 /// Rotate left macros for compile-time constants.
 macro_rules! rotl {

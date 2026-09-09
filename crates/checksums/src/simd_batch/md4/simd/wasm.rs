@@ -5,7 +5,7 @@
 #[cfg(target_arch = "wasm32")]
 use std::arch::wasm32::*;
 
-use super::super::super::Digest;
+use super::super::super::{Digest, MAX_INPUT_SIZE};
 
 /// MD4 initial state constants.
 const INIT_A: u32 = 0x6745_2301;
@@ -24,8 +24,6 @@ const K: [u32; 3] = [
 const M2: [usize; 16] = [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15];
 /// Message word indices for round 3.
 const M3: [usize; 16] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
-
-const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
 
 /// 32-bit rotate-left for WASM SIMD; shift may be a runtime value.
 ///

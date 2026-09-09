@@ -7,7 +7,7 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use super::super::super::Digest;
+use super::super::super::{Digest, MAX_INPUT_SIZE};
 
 /// MD4 initial state constants broadcast to 8 lanes.
 const INIT_A: u32 = 0x6745_2301;
@@ -30,9 +30,6 @@ const S3: [i32; 4] = [3, 9, 11, 15];
 /// Message word indices for each round.
 const M2: [usize; 16] = [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15];
 const M3: [usize; 16] = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
-
-/// Maximum input size supported.
-const MAX_INPUT_SIZE: usize = 1_024 * 1_024; // 1MB per input
 
 /// 32-bit rotate-left for AVX2 using variable-shift intrinsics.
 ///
