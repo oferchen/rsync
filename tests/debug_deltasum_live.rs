@@ -27,6 +27,7 @@
 //! map, literal/match application, file_sum receipt).
 
 use std::fs;
+#[cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -105,6 +106,13 @@ fn run_local(root: &Path, word: &str) -> String {
 
 /// A stand-in `ssh` that drops the host argument and execs the rest locally, so
 /// a wire transfer runs over a real pipe pair without needing a daemon or sshd.
+///
+/// Gated to the same platforms as its only caller, `run_wire`. The script it
+/// writes is `#!/bin/sh` and needs the exec bit, so it is unix-only in substance
+/// as well as in reach; leaving it ungated made it a zero-caller function on
+/// Windows, which `-D warnings` turns into a build failure of this whole test
+/// binary rather than a lint.
+#[cfg(unix)]
 fn fake_rsh(root: &Path) -> PathBuf {
     let path = root.join("fake-rsh.sh");
     let mut f = fs::File::create(&path).expect("create rsh");
