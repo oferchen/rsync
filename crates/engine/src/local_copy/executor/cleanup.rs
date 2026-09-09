@@ -736,10 +736,22 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
     // matching upstream, hence the manual's `--delete-after` recommendation.
     context.sync_delete_filter_chain(destination, relative)?;
 
-    let keep: HashSet<OsString> = source_entries
+    let mut keep: HashSet<OsString> = source_entries
         .iter()
         .map(|s| normalize_filename_for_compare(s.as_ref()))
         .collect();
+    // upstream: flist.c:2499 send_file_list() folds EVERY source operand into
+    // one flist, so delete_in_dir() (generator.c:1924-1927) can never remove an
+    // entry a sibling operand supplies. oc walks each source live; the sources
+    // orchestrator pre-computes the sibling contributions per destination
+    // directory, and every plan builder folds them into the keep set here -
+    // the one owner for that predicate.
+    keep.extend(
+        context
+            .cross_source_keep_for(destination)
+            .iter()
+            .map(|name| normalize_filename_for_compare(name)),
+    );
 
     let read_dir = match fs::read_dir(destination) {
         Ok(iter) => iter,

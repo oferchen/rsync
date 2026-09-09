@@ -392,7 +392,7 @@ fn copy_directory_recursive_inner(
     let defer_dir_record_for_delete = context.options().delete_extraneous()
         && match context.delete_timing() {
             Some(DeleteTiming::Before) => true,
-            Some(DeleteTiming::During) => !context.multi_source(),
+            Some(DeleteTiming::During) => context.during_sweep_immediate(),
             _ => false,
         };
     if !record_emitted

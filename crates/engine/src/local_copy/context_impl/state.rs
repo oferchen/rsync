@@ -74,6 +74,10 @@ impl<'a> CopyContext<'a> {
             make_way_error: false,
             delete_io_error: false,
             multi_source: false,
+            cross_source_keep: HashMap::new(),
+            cross_source_ready: false,
+            swept_directories: HashSet::new(),
+            claimed_destinations: HashSet::new(),
             verified_parents: HashMap::new(),
             emitted_implied_dirs: HashSet::new(),
             expanded_source_roots: Vec::new(),
@@ -140,6 +144,60 @@ impl<'a> CopyContext<'a> {
     /// Returns `true` when the plan carries multiple sources.
     pub(super) const fn multi_source(&self) -> bool {
         self.multi_source
+    }
+
+    /// Installs the cross-source keep map built by the sources orchestrator
+    /// and marks cross-source protection ready for this run.
+    pub(super) fn set_cross_source_keep(&mut self, map: HashMap<PathBuf, Vec<OsString>>) {
+        self.cross_source_keep = map;
+        self.cross_source_ready = true;
+    }
+
+    /// Names every other source operand contributes to `destination`, or an
+    /// empty slice when no sibling source touches that directory.
+    pub(super) fn cross_source_keep_for(&self, destination: &Path) -> &[OsString] {
+        self.cross_source_keep
+            .get(destination)
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether an immediate (`--delete-before` / during) sweep may run for a
+    /// directory of a multi-source transfer: the cross-source keep map is in
+    /// place, so a sibling operand's entries are protected. Single-source
+    /// runs need no protection and always sweep immediately.
+    ///
+    /// upstream: the merged flist makes every operand's entries visible to
+    /// every `delete_in_dir()` call, so upstream never needs this distinction;
+    /// oc reads each source directory live and reproduces the shared-flist
+    /// invariant via [`Self::cross_source_keep`].
+    pub(super) const fn during_sweep_immediate(&self) -> bool {
+        !self.multi_source || self.cross_source_ready
+    }
+
+    /// Marks `destination` as swept by an immediate delete pass. Returns
+    /// `true` on the first call for a directory (the sweep should run) and
+    /// `false` on a later operand's revisit (the sweep already ran with the
+    /// full cross-source keep set). Single-source runs visit each directory
+    /// once, so they skip the bookkeeping entirely.
+    pub(super) fn mark_directory_swept(&mut self, destination: &Path) -> bool {
+        if !self.multi_source {
+            return true;
+        }
+        self.swept_directories.insert(destination.to_path_buf())
+    }
+
+    /// Claims a destination path for the current source operand. Returns
+    /// `true` when this run has not yet produced that destination (the entry
+    /// should be processed) and `false` when an earlier operand already
+    /// claimed it - upstream's merged-flist dedup keeps the FIRST operand's
+    /// entry (flist.c:3364-3382), so the later duplicate is skipped silently.
+    /// Only multi-source runs can collide, so single-source runs skip the
+    /// bookkeeping.
+    pub(super) fn claim_destination(&mut self, destination: &Path) -> bool {
+        if !self.multi_source {
+            return true;
+        }
+        self.claimed_destinations.insert(destination.to_path_buf())
     }
 
     /// Returns a reference to the full set of copy options.

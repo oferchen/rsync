@@ -993,6 +993,7 @@ include!("max_size_filter.rs");
 include!("bandwidth.rs");
 include!("filters_runtime.rs");
 include!("delete.rs");
+include!("execute_multi_source_delete.rs");
 include!("delete_incremental_filter_stack.rs");
 include!("execute_delete_excluded.rs");
 include!("backups.rs");
