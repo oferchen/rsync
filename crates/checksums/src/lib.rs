@@ -355,6 +355,7 @@
 //! - [`parallel`] module for concurrent computation (always compiled)
 //! - [`RollingChecksum`] for sliding window checksum details
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![deny(unsafe_code)]
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![cfg_attr(not(test), warn(clippy::unwrap_used))]

@@ -74,6 +74,7 @@ macro_rules! rotl {
 /// Caller must ensure SSE2 is available; SSE2 is part of the x86_64
 /// baseline so this is always satisfied on 64-bit Intel/AMD.
 #[target_feature(enable = "sse2")]
+#[allow(unsafe_code)]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
@@ -275,6 +276,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)]
 mod tests {
     use super::super::super::scalar;
     use super::*;

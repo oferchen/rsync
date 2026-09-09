@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(clippy::undocumented_unsafe_blocks)]
@@ -86,6 +87,7 @@ mod windows_gnu {
     const SYM_DEREGISTER: &[u8] = b"__deregister_frame_info\0";
 
     #[link(name = "kernel32")]
+    #[allow(unsafe_code)]
     unsafe extern "system" {
         fn GetModuleHandleA(lpModuleName: *const c_char) -> *mut c_void;
         fn LoadLibraryA(lpLibFileName: *const c_char) -> *mut c_void;
@@ -93,6 +95,7 @@ mod windows_gnu {
     }
 
     #[inline(always)]
+    #[allow(unsafe_code)]
     unsafe fn ensure_function(cache: &AtomicUsize, symbol: &[u8]) -> Option<*mut ()> {
         let mut state = cache.load(Ordering::Acquire);
         loop {
@@ -127,6 +130,7 @@ mod windows_gnu {
     }
 
     #[inline(always)]
+    #[allow(unsafe_code)]
     unsafe fn resolve_symbol(symbol: &[u8]) -> *mut c_void {
         debug_assert!(!symbol.is_empty() && symbol[symbol.len() - 1] == 0);
 
@@ -142,6 +146,7 @@ mod windows_gnu {
     }
 
     #[inline(always)]
+    #[allow(unsafe_code)]
     unsafe fn load_from_library(library: &[u8], symbol: &[u8]) -> *mut c_void {
         debug_assert!(!library.is_empty() && library[library.len() - 1] == 0);
 
@@ -165,6 +170,7 @@ mod windows_gnu {
     }
 
     #[inline(always)]
+    #[allow(unsafe_code)]
     unsafe fn resolve_register() -> Option<RegisterFrameInfo> {
         // SAFETY: SYM_REGISTER is a static NUL-terminated byte literal satisfying ensure_function's precondition.
         let ptr = match unsafe { ensure_function(&REGISTER_FRAME_INFO, SYM_REGISTER) } {
@@ -176,6 +182,7 @@ mod windows_gnu {
     }
 
     #[inline(always)]
+    #[allow(unsafe_code)]
     unsafe fn resolve_deregister() -> Option<DeregisterFrameInfo> {
         // SAFETY: SYM_DEREGISTER is a static NUL-terminated byte literal satisfying ensure_function's precondition.
         let ptr = match unsafe { ensure_function(&DEREGISTER_FRAME_INFO, SYM_DEREGISTER) } {
@@ -188,6 +195,7 @@ mod windows_gnu {
 
     /// Forwards `rsbegin`'s registration hook to libunwind.
     #[unsafe(no_mangle)]
+    #[allow(unsafe_code)]
     pub unsafe extern "C" fn ___register_frame_info(eh_frame: *const u8, object: *mut c_void) {
         // SAFETY: resolve_register has no preconditions beyond those satisfied by static symbol constants.
         if let Some(register) = unsafe { resolve_register() } {
@@ -200,6 +208,7 @@ mod windows_gnu {
 
     /// Forwards `rsbegin`'s deregistration hook to libunwind.
     #[unsafe(no_mangle)]
+    #[allow(unsafe_code)]
     pub unsafe extern "C" fn ___deregister_frame_info(eh_frame: *const u8) {
         // SAFETY: resolve_deregister has no preconditions beyond those satisfied by static symbol constants.
         if let Some(deregister) = unsafe { resolve_deregister() } {

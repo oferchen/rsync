@@ -57,6 +57,7 @@ macro_rules! rotl_const {
 /// (ARMv8-A baseline), so this is always satisfied on 64-bit ARM.
 #[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]
+#[allow(unsafe_code)]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
@@ -258,6 +259,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)]
 mod tests {
     use super::super::super::scalar;
     use super::*;

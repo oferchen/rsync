@@ -47,6 +47,7 @@ impl DirectoryStatBatch {
     /// # Errors
     ///
     /// Returns an error if the file cannot be stat'd.
+    #[allow(unsafe_code)]
     pub fn stat_relative(&self, name: &OsString, follow_symlinks: bool) -> io::Result<FstatResult> {
         use std::ffi::CString;
         use std::os::unix::ffi::OsStrExt;
@@ -92,6 +93,7 @@ impl DirectoryStatBatch {
     ///
     /// Returns an error if the file cannot be stat'd.
     #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+    #[allow(unsafe_code)]
     pub fn statx_relative(
         &self,
         name: &OsString,

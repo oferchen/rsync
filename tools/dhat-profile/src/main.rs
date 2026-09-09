@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 //! Dhat heap profiling harness for oc-rsync.
 //!
 //! This standalone tool profiles heap allocations using dhat.

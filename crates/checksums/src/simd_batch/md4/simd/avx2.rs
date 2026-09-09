@@ -40,6 +40,7 @@ const MAX_INPUT_SIZE: usize = 1_024 * 1_024; // 1MB per input
 /// `_mm256_srlv_epi32` and OR. Variable shifts let the shift amount be
 /// a runtime value.
 #[target_feature(enable = "avx2")]
+#[allow(unsafe_code)]
 unsafe fn rotl(x: __m256i, n: i32) -> __m256i {
     _mm256_or_si256(
         _mm256_sllv_epi32(x, _mm256_set1_epi32(n)),
@@ -58,6 +59,7 @@ unsafe fn rotl(x: __m256i, n: i32) -> __m256i {
 /// Caller must ensure AVX2 is available; verify at runtime with
 /// `is_x86_feature_detected!("avx2")` before calling.
 #[target_feature(enable = "avx2")]
+#[allow(unsafe_code)]
 pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
@@ -214,6 +216,7 @@ pub unsafe fn digest_x8(inputs: &[&[u8]; 8]) -> [Digest; 8] {
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)]
 mod tests {
     use super::super::super::scalar;
     use super::*;

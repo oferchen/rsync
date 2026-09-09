@@ -318,6 +318,7 @@ impl Dispatcher {
     ///
     /// Processes inputs in batches of 16 using AVX-512 SIMD.
     #[cfg(target_arch = "x86_64")]
+    #[allow(unsafe_code)]
     fn digest_batch_avx512<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
         let chunks = inputs.chunks(16);
@@ -361,6 +362,7 @@ impl Dispatcher {
 
     /// AVX2 batched digest implementation.
     #[cfg(target_arch = "x86_64")]
+    #[allow(unsafe_code)]
     fn digest_batch_avx2<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
         let chunks = inputs.chunks(8);
@@ -398,6 +400,7 @@ impl Dispatcher {
     ///
     /// Processes inputs in batches of 4 using SSE2 SIMD.
     #[cfg(target_arch = "x86_64")]
+    #[allow(unsafe_code)]
     fn digest_batch_sse2<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
         let chunks = inputs.chunks(4);
@@ -431,6 +434,7 @@ impl Dispatcher {
     ///
     /// Processes inputs in batches of 4 using SSSE3 SIMD.
     #[cfg(target_arch = "x86_64")]
+    #[allow(unsafe_code)]
     fn digest_batch_ssse3<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
         let chunks = inputs.chunks(4);
@@ -464,6 +468,7 @@ impl Dispatcher {
     ///
     /// Processes inputs in batches of 4 using SSE4.1 SIMD with blendv optimization.
     #[cfg(target_arch = "x86_64")]
+    #[allow(unsafe_code)]
     fn digest_batch_sse41<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
         let chunks = inputs.chunks(4);
@@ -497,6 +502,7 @@ impl Dispatcher {
     ///
     /// Processes inputs in batches of 4 using NEON SIMD.
     #[cfg(target_arch = "aarch64")]
+    #[allow(unsafe_code)]
     fn digest_batch_neon<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
         let chunks = inputs.chunks(4);
