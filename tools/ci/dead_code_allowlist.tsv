@@ -49,23 +49,6 @@ read_ndx_from_carry_async	crates/protocol/src/codec/ndx/codec.rs	2026-11-07	unre
 flist_stats	crates/protocol/src/flist/batched_writer/writer.rs	2026-11-07	unreviewed baseline row
 with_am_root	crates/protocol/src/flist/read/mod.rs	2026-11-07	unreviewed baseline row
 xattr_cache_mut	crates/protocol/src/flist/read/mod.rs	2026-11-07	unreviewed baseline row
-trace_flist_expand	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_flist_eof	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_send_file_list_done	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_received_names	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_recv_file_list_done	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_receiving_flist_for_dir	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_struct_sizes	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-output_flist	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_read_entry	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_write_entry	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_file_list_stats	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_file_count_progress	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_files_to_consider	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_sort_start	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_clean_result	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_hardlink	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
-trace_hardlink_dev_ino	crates/protocol/src/flist/trace.rs	2026-11-07	staged --debug=flist trace owner; wiring in flight (task 1188)
 is_io_error_end_marker	crates/protocol/src/wire/file_entry_decode/flags.rs	2026-11-07	unreviewed baseline row
 take_stdin	crates/rsync_io/src/ssh/async_transport.rs	2026-11-07	unreviewed baseline row
 take_stdout	crates/rsync_io/src/ssh/async_transport.rs	2026-11-07	unreviewed baseline row

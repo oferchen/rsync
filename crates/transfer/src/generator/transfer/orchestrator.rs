@@ -242,6 +242,12 @@ impl GeneratorContext {
         self.send_id_lists(writer)?;
         self.send_io_error_flag(writer)?;
 
+        // upstream: main.c:1374 - client_run() prints `file list sent` at
+        // DEBUG_GTE(FLIST, 3); the server sender has no such line.
+        if self.config.connection.client_mode {
+            protocol::flist::trace_file_list_sent();
+        }
+
         // FSM: file list sent. Advance to DeltaTransfer.
         self.pipeline
             .advance_to(TransferPhase::DeltaTransfer)

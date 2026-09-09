@@ -238,6 +238,7 @@ impl SegmentScheduler {
     }
 
     /// Number of segments dispatched so far.
+    #[cfg(test)]
     pub(crate) fn dispatched_count(&self) -> usize {
         self.cursor
     }

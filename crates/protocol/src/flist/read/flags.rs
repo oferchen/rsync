@@ -6,8 +6,6 @@
 
 use std::io::{self, Read};
 
-use logging::debug_log;
-
 use crate::CompatibilityFlags;
 use crate::varint::read_varint;
 
@@ -64,29 +62,14 @@ impl FileListReader {
             buf[0] as i32
         };
 
-        debug_log!(
-            Flist,
-            4,
-            "read_flags: raw={:#x} varint={}",
-            flags_value,
-            use_varint
-        );
-
         if flags_value == 0 {
             if use_varint {
                 // In varint mode, error code follows zero flags
                 let io_error = read_varint(reader)?;
                 if io_error != 0 {
-                    debug_log!(
-                        Flist,
-                        4,
-                        "read_flags: end-of-list with io_error={}",
-                        io_error
-                    );
                     return Ok(FlagsResult::IoError(io_error));
                 }
             }
-            debug_log!(Flist, 4, "read_flags: end-of-list marker");
             return Ok(FlagsResult::EndOfList);
         }
 
@@ -106,17 +89,6 @@ impl FileListReader {
         };
 
         let primary_byte = flags_value as u8;
-
-        if ext_byte != 0 || ext16_byte != 0 {
-            debug_log!(
-                Flist,
-                4,
-                "read_flags: primary={:#x} ext={:#x} ext16={:#x}",
-                primary_byte,
-                ext_byte,
-                ext16_byte
-            );
-        }
 
         if let Some(error) = self.check_error_marker(primary_byte, ext_byte, reader)? {
             return Ok(FlagsResult::IoError(error));

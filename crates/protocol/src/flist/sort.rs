@@ -23,7 +23,6 @@
 
 use std::cmp::Ordering;
 
-use logging::debug_log;
 use memchr::memrchr;
 
 use super::FileEntry;
@@ -207,13 +206,6 @@ fn compare_with_keys(bytes_a: &[u8], key_a: &SortKey, bytes_b: &[u8], key_b: &So
 ///   and `recv_file_list()` to sort entries.
 /// - `flist.c:1788` - `if (use_qsort) qsort(...); else merge_sort(...);`
 pub fn sort_file_list(file_list: &mut [FileEntry], use_qsort: bool, protocol_pre29: bool) {
-    debug_log!(
-        Flist,
-        2,
-        "sorting {} entries (pre29={})",
-        file_list.len(),
-        protocol_pre29
-    );
     let n = file_list.len();
     if n <= 1 {
         return;
@@ -496,15 +488,6 @@ pub fn flist_clean(
         }
         i += 1;
     }
-
-    debug_log!(
-        Flist,
-        2,
-        "cleaned file list: {} slots, {} duplicates tombstoned, {} flags merged",
-        len,
-        stats.duplicates_removed,
-        stats.flags_merged
-    );
 
     (file_list, stats)
 }

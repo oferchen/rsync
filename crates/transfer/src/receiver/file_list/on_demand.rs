@@ -460,6 +460,70 @@ mod tests {
         }
     }
 
+    /// `--debug=flist2` emissions across the REAL upstream multi-segment
+    /// stream above: the initial list prints one `recv_file_name(%s)` per
+    /// entry (flist.c:3012), `received %d names` (flist.c:3019) and
+    /// `recv_file_list done` (flist.c:3088); each sub-list adds
+    /// `[receiver] receiving flist for dir %d` (rsync.c:373) plus its own
+    /// name/count/done set. Verbosity is installed through the same
+    /// `apply_debug_flag` funnel the CLI's `--debug=` parser uses. Exact
+    /// sequence, so a silenced or duplicated site cannot pass.
+    #[test]
+    fn upstream_multisegment_sublists_emit_flist2_parity_lines() {
+        logging::init(logging::VerbosityConfig::default());
+        logging::apply_debug_flag("flist2").expect("flist2 parses");
+        let _ = logging::drain_events();
+
+        let mut ctx = archive_inc_recurse_receiver();
+        let mut reader = Cursor::new(UPSTREAM_INC_RECURSE_FRAME.to_vec());
+        ctx.receive_file_list(&mut reader)
+            .expect("initial level-1 flist decodes cleanly");
+        let mut codec = create_ndx_codec(PROTOCOL);
+        ctx.ensure_all_segments_loaded(&mut reader, &mut codec)
+            .expect("sub-list stream drains");
+
+        let messages: Vec<String> = logging::drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                logging::DiagnosticEvent::Debug {
+                    flag: logging::DebugFlag::Flist,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect();
+        let expected: Vec<String> = [
+            // Initial level-1 list, wire (readdir) order.
+            "recv_file_name(.)",
+            "recv_file_name(b)",
+            "recv_file_name(a)",
+            "recv_file_name(c)",
+            "received 4 names",
+            "recv_file_list done",
+            // One sub-list per directory, framed by its dir_ndx.
+            "[receiver] receiving flist for dir 1",
+            "recv_file_name(a/f1.txt)",
+            "recv_file_name(a/f2.txt)",
+            "received 2 names",
+            "recv_file_list done",
+            "[receiver] receiving flist for dir 2",
+            "recv_file_name(b/f1.txt)",
+            "recv_file_name(b/f2.txt)",
+            "received 2 names",
+            "recv_file_list done",
+            "[receiver] receiving flist for dir 3",
+            "recv_file_name(c/f1.txt)",
+            "recv_file_name(c/f2.txt)",
+            "received 2 names",
+            "recv_file_list done",
+        ]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+        assert_eq!(messages, expected);
+    }
+
     #[test]
     fn ensure_flat_idx_is_noop_without_inc_recurse() {
         // A non-INC_RECURSE receiver is already at flist_eof (set by

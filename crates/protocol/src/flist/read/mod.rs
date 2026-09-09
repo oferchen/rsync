@@ -25,8 +25,6 @@ pub use step::EntryStep;
 use std::io::{self, Read};
 use std::path::Path;
 
-use logging::debug_log;
-
 use crate::CompatibilityFlags;
 use crate::ProtocolVersion;
 use crate::acl::{AclCache, receive_acl_cached};
@@ -840,23 +838,10 @@ impl FileListReader {
 
         self.update_stats(&entry);
 
-        debug_log!(
-            Flist,
-            2,
-            "recv_file_entry: {:?} size={} mode={:o}",
-            entry.name(),
-            entry.size(),
-            entry.mode()
-        );
-        debug_log!(
-            Flist,
-            3,
-            "recv_file_entry details: mtime={} uid={:?} gid={:?} flags={:#x}",
-            entry.mtime(),
-            entry.uid(),
-            entry.gid(),
-            flags.primary as u32 | ((flags.extended as u32) << 8)
-        );
+        // upstream: flist.c:3012 - recv_file_list() prints `recv_file_name(%s)`
+        // for each entry as its loop stores it. Every oc receive loop decodes
+        // through here, so this is the one owner for that emission.
+        super::trace::trace_recv_file_name(entry.name());
 
         Ok(Some(entry))
     }

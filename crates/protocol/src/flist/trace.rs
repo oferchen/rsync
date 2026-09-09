@@ -1,30 +1,51 @@
 //! DEBUG_FLIST tracing for file list operations.
 //!
-//! This module provides tracing functionality that matches upstream rsync's
-//! DEBUG_FLIST debug output at levels 1-4.
+//! This module owns the `--debug=flist` emissions that mirror upstream
+//! rsync's `DEBUG_GTE(FLIST, n)` sites. Each function corresponds to one
+//! upstream emission text; the live send/receive paths call these so every
+//! upstream line has exactly one oc owner.
 //!
-//! # Debug Levels
+//! # Debug Levels (as measured on upstream 3.5.0)
 //!
-//! - **Level 1**: Basic file list operations (expand, flist_eof)
-//! - **Level 2**: File list completion messages (send_file_list done, received N names)
-//! - **Level 3**: Full file list dump via output_flist
-//! - **Level 4**: Internal structure information (FILE_STRUCT_LEN, EXTRA_LEN)
+//! - **Level 1**: `delta-transmission %s` (generator.c:2763; owned by the
+//!   receiver-side transfer setup and the local-copy frontend, not here) and
+//!   the `expand file_list pointer array` realloc trace (flist.c:403, no oc
+//!   analogue - see below).
+//! - **Level 2**: `[%s] make_file(%s,*,%d)` (flist.c:1542),
+//!   `send_file_list done` (flist.c:2838), `recv_file_name(%s)`
+//!   (flist.c:3012), `received %d names` (flist.c:3019),
+//!   `recv_file_list done` (flist.c:3088), and
+//!   `[%s] receiving flist for dir %d` (io.c:1943, rsync.c:373).
+//! - **Level 3**: `output_flist()` (flist.c:3489, called from flist.c:2470,
+//!   :2835, :3085, :3756), `[%s] flist_eof=1` (seven sites: flist.c:2481,
+//!   :2850, :2861, :3058, :3105, io.c:1931, rsync.c:357), `file list sent`
+//!   (main.c:1374), the `[%s] receiving flist for dir %d` copy in
+//!   `recv_additional_file_list` (flist.c:3118), and the item-list expand
+//!   trace (util1.c:1956, no oc analogue).
+//! - **Level 4**: `FILE_STRUCT_LEN=%d, EXTRA_LEN=%d` (flist.c:163, no oc
+//!   analogue).
 //!
-//! # Upstream Reference
+//! # Deliberately unowned upstream sites
 //!
-//! See `flist.c` for the canonical debug output format:
-//! - `output_flist()` at DEBUG_GTE(FLIST, 3)
-//! - `init_flist()` at DEBUG_GTE(FLIST, 4)
-//! - Various completion messages at DEBUG_GTE(FLIST, 2)
+//! - flist.c:403 and util1.c:1956 trace `realloc_array()` growth of pointer
+//!   arrays. oc's file lists are `Vec`s of inline entries: there is no
+//!   pointer-array realloc event, and reporting `Vec` doublings would emit
+//!   lines upstream's cells never show (upstream's arrays start large enough
+//!   that small transfers never grow them).
+//! - flist.c:163 reports `FILE_STRUCT_LEN`/`EXTRA_LEN`, the constants of
+//!   upstream's `file_struct` + trailing-extras allocation scheme. oc's
+//!   `FileEntry` has no extras array, so `EXTRA_LEN` has no honest value and
+//!   a partial line would break the format.
+
+use std::path::Path;
+use std::sync::Arc;
 
 use logging::debug_log;
 
 use super::entry::FileEntry;
-use super::state::FileListStats;
 
-/// Process identifier for debug messages (matches upstream's who_am_i()).
-///
-/// In upstream rsync, this is "sender", "receiver", or "generator".
+/// Process identifier for debug messages (matches upstream's `who_am_i()`,
+/// rsync.c:987).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessRole {
     /// The sender process.
@@ -33,6 +54,11 @@ pub enum ProcessRole {
     Receiver,
     /// The generator process.
     Generator,
+    /// The receiving side before upstream forks it into receiver and
+    /// generator; upstream prints this as capitalized `Receiver`
+    /// (rsync.c:994 "pre-forked receiver"). The initial `recv_file_list()`
+    /// runs in this state.
+    PreForkReceiver,
 }
 
 impl ProcessRole {
@@ -43,6 +69,7 @@ impl ProcessRole {
             Self::Sender => "sender",
             Self::Receiver => "receiver",
             Self::Generator => "generator",
+            Self::PreForkReceiver => "Receiver",
         }
     }
 }
@@ -53,30 +80,28 @@ impl std::fmt::Display for ProcessRole {
     }
 }
 
-/// Traces file list pointer array expansion (level 1).
+/// Traces one `make_file()` call (level 2).
 ///
-/// Matches upstream's `flist_expand()` debug output:
-/// ```text
-/// [sender] expand file_list pointer array to 16,384 bytes, did not move
-/// ```
+/// upstream: flist.c:1542 `[%s] make_file(%s,*,%d)`. The third argument is
+/// the filter level: `NO_FILTERS` (0) for named command-line sources,
+/// `SERVER_FILTERS` (1) on the daemon arg path, `ALL_FILTERS` (2) for
+/// entries found by recursion and implied directories (rsync.h:212-214).
 #[inline]
-pub fn trace_flist_expand(role: ProcessRole, new_size_bytes: usize, did_move: bool) {
+pub fn trace_make_file(role: ProcessRole, name: &dyn std::fmt::Display, filter_level: u8) {
     debug_log!(
         Flist,
-        1,
-        "[{}] expand file_list pointer array to {} bytes, did{} move",
+        2,
+        "[{}] make_file({},*,{})",
         role,
-        format_number(new_size_bytes),
-        if did_move { "" } else { " not" }
+        name,
+        filter_level
     );
 }
 
-/// Traces file list EOF marker (level 3).
+/// Traces file list EOF (level 3).
 ///
-/// Matches upstream's `flist_eof` debug output:
-/// ```text
-/// [sender] flist_eof=1
-/// ```
+/// upstream: `[%s] flist_eof=1` - written when a side sets its `flist_eof`
+/// global (flist.c:2481, :2850, :2861, :3058, :3105, io.c:1931, rsync.c:357).
 #[inline]
 pub fn trace_flist_eof(role: ProcessRole) {
     debug_log!(Flist, 3, "[{}] flist_eof=1", role);
@@ -84,21 +109,25 @@ pub fn trace_flist_eof(role: ProcessRole) {
 
 /// Traces send_file_list completion (level 2).
 ///
-/// Matches upstream:
-/// ```text
-/// send_file_list done
-/// ```
+/// upstream: flist.c:2838 `send_file_list done`.
 #[inline]
 pub fn trace_send_file_list_done() {
     debug_log!(Flist, 2, "send_file_list done");
 }
 
+/// Traces one received file-list name (level 2).
+///
+/// upstream: flist.c:3012 `recv_file_name(%s)` - printed for each entry as
+/// the receive loop stores it.
+#[inline]
+pub fn trace_recv_file_name(name: &str) {
+    debug_log!(Flist, 2, "recv_file_name({})", name);
+}
+
 /// Traces received file count (level 2).
 ///
-/// Matches upstream:
-/// ```text
-/// received 42 names
-/// ```
+/// upstream: flist.c:3019 `received %d names` - printed once per
+/// `recv_file_list()` call, after its entry loop.
 #[inline]
 pub fn trace_received_names(count: usize) {
     debug_log!(Flist, 2, "received {} names", count);
@@ -106,248 +135,199 @@ pub fn trace_received_names(count: usize) {
 
 /// Traces recv_file_list completion (level 2).
 ///
-/// Matches upstream:
-/// ```text
-/// recv_file_list done
-/// ```
+/// upstream: flist.c:3088 `recv_file_list done`.
 #[inline]
 pub fn trace_recv_file_list_done() {
     debug_log!(Flist, 2, "recv_file_list done");
 }
 
-/// Traces receiving incremental file list for a directory (level 3).
+/// Traces receiving an incremental file list for a directory.
 ///
-/// Matches upstream:
-/// ```text
-/// [receiver] receiving flist for dir 5
-/// ```
+/// upstream prints the same text from three sites at two levels, so the
+/// level is a per-call-site parameter: level 2 at io.c:1943 (generator) and
+/// rsync.c:373 (receiver), level 3 at flist.c:3118
+/// (`recv_additional_file_list`).
 #[inline]
-pub fn trace_receiving_flist_for_dir(role: ProcessRole, dir_ndx: i32) {
-    debug_log!(Flist, 3, "[{}] receiving flist for dir {}", role, dir_ndx);
-}
-
-/// Traces internal structure sizes (level 4).
-///
-/// Matches upstream's `init_flist()` debug output:
-/// ```text
-/// FILE_STRUCT_LEN=136, EXTRA_LEN=8
-/// ```
-///
-/// In our Rust implementation, we report the size of FileEntry and
-/// additional metadata overhead.
-#[inline]
-pub fn trace_struct_sizes() {
-    let file_entry_size = std::mem::size_of::<FileEntry>();
-    let extra_len = std::mem::size_of::<usize>(); // Pointer size for Vec overhead
+pub fn trace_receiving_flist_for_dir(role: ProcessRole, dir_ndx: i32, level: u8) {
     debug_log!(
         Flist,
-        4,
-        "FILE_STRUCT_LEN={}, EXTRA_LEN={}",
-        file_entry_size,
-        extra_len
+        level,
+        "[{}] receiving flist for dir {}",
+        role,
+        dir_ndx
     );
 }
 
-/// Outputs the complete file list for debugging (level 3).
+/// Traces client-side file list transmission completion (level 3).
 ///
-/// Matches upstream's `output_flist()` function format:
+/// upstream: main.c:1374 `file list sent` - printed by `client_run()` only
+/// (the server sender has no such line).
+#[inline]
+pub fn trace_file_list_sent() {
+    debug_log!(Flist, 3, "file list sent");
+}
+
+/// Dumps a file list (level 3).
+///
+/// upstream: flist.c:3489 `output_flist()` - a header line followed by one
+/// line per slot (tombstoned slots print empty name fields, exactly as
+/// upstream prints a `!F_IS_ACTIVE` slot):
+///
 /// ```text
-/// [sender] i=0 root /path/to/dir/ mode=040755 len=4,096 uid=1000 gid=1000 flags=0
-/// [sender] i=1 /file.txt mode=0100644 len=1,234 uid=1000 gid=1000 flags=0
+/// [sender] flist start=1, used=3, low=0, high=2
+/// [sender] i=1 /src ./ mode=040755 len=128 uid=501 gid=0 flags=1005
 /// ```
 ///
-/// # Arguments
-///
-/// * `role` - The process role (sender, receiver, generator)
-/// * `entries` - Slice of file entries to output
-/// * `first_ndx` - Starting index for the file list (usually 0)
-pub fn output_flist(role: ProcessRole, entries: &[FileEntry], first_ndx: i32) {
+/// `source_bases`, when given (the sender), supplies upstream's
+/// `F_PATHNAME(file)` root column per entry; without it (receiver and
+/// generator) the root column is the entry's depth, as upstream prints
+/// `F_DEPTH(file)`. `show_uid` is upstream's `(am_root || am_sender) &&
+/// uid_ndx` gate. Divergences forced by oc's internals: the `flags` word is
+/// reconstructed from the bits oc tracks (upstream's receiver-only
+/// `FLAG_SKIP_GROUP` is not among them, so the receiver's `gid` column also
+/// never carries upstream's skip-group parentheses), and `low`/`high` are
+/// derived from the active slots rather than kept as running fields.
+pub fn output_flist(
+    role: ProcessRole,
+    entries: &[FileEntry],
+    ndx_start: i32,
+    source_bases: Option<&[Arc<Path>]>,
+    show_uid: bool,
+) {
+    if !logging::debug_gte(logging::DebugFlag::Flist, 3) {
+        return;
+    }
+    // upstream: flist->low/high bracket the active slots.
+    let low = entries.iter().position(FileEntry::is_active).unwrap_or(0);
+    let high = entries
+        .iter()
+        .rposition(FileEntry::is_active)
+        .map_or_else(|| entries.len().max(1) - 1, |h| h);
+    debug_log!(
+        Flist,
+        3,
+        "[{}] flist start={}, used={}, low={}, high={}",
+        role,
+        ndx_start,
+        entries.len(),
+        low,
+        high
+    );
     for (i, entry) in entries.iter().enumerate() {
-        let ndx = first_ndx + i as i32;
-        output_flist_entry(role, ndx, entry);
+        let base = source_bases.and_then(|bases| bases.get(i));
+        output_flist_entry(role, ndx_start + i as i32, entry, base, show_uid);
     }
 }
 
-/// Outputs a single file entry for debugging (level 3).
+/// Formats one `output_flist()` line (level 3).
 ///
-/// Format:
-/// ```text
-/// [sender] i=0 root /path/ mode=040755 len=4,096 uid=1000 gid=1000 flags=0x0
-/// ```
-#[inline]
-pub fn output_flist_entry(role: ProcessRole, ndx: i32, entry: &FileEntry) {
-    let name_str = entry.name();
-    let is_root = name_str.is_empty() || name_str == ".";
-    let root_marker = if is_root { "root " } else { "" };
-    let trailing = if entry.is_dir() && !name_str.ends_with('/') {
-        "/"
+/// upstream: flist.c:3524 `[%s] i=%d %s %s%s%s%s mode=0%o len=%s%s%s flags=%x`.
+fn output_flist_entry(
+    role: ProcessRole,
+    ndx: i32,
+    entry: &FileEntry,
+    source_base: Option<&Arc<Path>>,
+    show_uid: bool,
+) {
+    let (root, name, trail) = if entry.is_active() {
+        let name = entry.name();
+        let root = source_base.map_or_else(
+            || {
+                // upstream: the non-sender root column is F_DEPTH(file); the
+                // implied root "." is depth 0, every path component adds one.
+                let depth = if name == "." {
+                    0
+                } else {
+                    name.split('/').count()
+                };
+                depth.to_string()
+            },
+            |base| {
+                // upstream: F_PATHNAME never carries the operand's trailing
+                // slash (send_file_list strips it before chdir).
+                let shown = base.display().to_string();
+                let trimmed = shown.trim_end_matches('/');
+                if trimmed.is_empty() {
+                    shown
+                } else {
+                    trimmed.to_owned()
+                }
+            },
+        );
+        let trail = if entry.is_dir() && !name.ends_with('/') {
+            "/"
+        } else {
+            ""
+        };
+        (root, name.to_owned(), trail)
     } else {
-        ""
+        (String::new(), String::new(), "")
     };
-    let len_str = format_number(entry.size() as usize);
-    let uid_str = entry
-        .uid()
-        .map_or(String::new(), |uid| format!(" uid={uid}"));
-    let gid_str = entry
+    let uid = if show_uid {
+        entry
+            .uid()
+            .map_or(String::new(), |uid| format!(" uid={uid}"))
+    } else {
+        String::new()
+    };
+    let gid = entry
         .gid()
         .map_or(String::new(), |gid| format!(" gid={gid}"));
-    let flags_value = (entry.top_dir() as u32)
-        | ((entry.hlinked() as u32) << 9)
-        | ((entry.hlink_first() as u32) << 12);
-
     debug_log!(
         Flist,
         3,
-        "[{}] i={} {}{}{} mode=0{:o} len={}{}{}{}",
+        "[{}] i={} {} {}{} mode=0{:o} len={}{}{} flags={:x}",
         role,
         ndx,
-        root_marker,
-        name_str,
-        trailing,
+        root,
+        name,
+        trail,
         entry.mode(),
-        len_str,
-        uid_str,
-        gid_str,
-        format!(" flags={:#x}", flags_value)
+        format_number(entry.size() as usize),
+        uid,
+        gid,
+        upstream_flags_word(entry)
     );
 }
 
-/// Traces file entry being read from wire (level 3).
+/// Reconstructs upstream's in-memory `file->flags` word from the bits oc
+/// tracks.
 ///
-/// This provides detailed per-entry tracing during file list reception.
-#[inline]
-pub fn trace_read_entry(ndx: i32, name: &str, mode: u32, size: u64) {
-    debug_log!(
-        Flist,
-        3,
-        "recv_file_entry: i={} name={} mode=0{:o} size={}",
-        ndx,
-        name,
-        mode,
-        format_number(size as usize)
-    );
-}
-
-/// Traces file entry being written to wire (level 3).
-///
-/// This provides detailed per-entry tracing during file list sending.
-#[inline]
-pub fn trace_write_entry(ndx: i32, name: &str, mode: u32, size: u64) {
-    debug_log!(
-        Flist,
-        3,
-        "send_file_entry: i={} name={} mode=0{:o} size={}",
-        ndx,
-        name,
-        mode,
-        format_number(size as usize)
-    );
-}
-
-/// Traces file list statistics (level 2).
-///
-/// Provides a summary of the file list contents.
-#[inline]
-pub fn trace_file_list_stats(stats: &FileListStats) {
-    debug_log!(
-        Flist,
-        2,
-        "file list stats: files={} dirs={} symlinks={} devices={} specials={} total_size={}",
-        stats.num_files,
-        stats.num_dirs,
-        stats.num_symlinks,
-        stats.num_devices,
-        stats.num_specials,
-        format_number(stats.total_size as usize)
-    );
-}
-
-/// Traces file count for progress (level 1).
-///
-/// Matches upstream's emit_filelist_progress format:
-/// ```text
-/// 42 files...
-/// ```
-#[inline]
-pub fn trace_file_count_progress(count: usize) {
-    debug_log!(Flist, 1, "{} files...", count);
-}
-
-/// Traces file list completion count (level 2, via INFO).
-///
-/// Matches upstream's finish_filelist_progress format:
-/// ```text
-/// 42 files to consider
-/// ```
-///
-/// Note: This uses level 2 to match upstream's INFO_GTE(FLIST, 2).
-#[inline]
-pub fn trace_files_to_consider(count: usize) {
-    let plural = if count == 1 { " " } else { "s " };
-    debug_log!(Flist, 2, "{} file{} to consider", count, plural);
-}
-
-/// Traces sorting operation (level 2).
-#[inline]
-pub fn trace_sort_start(count: usize) {
-    debug_log!(Flist, 2, "sorting {} entries", count);
-}
-
-/// Traces cleaning/deduplication results (level 2).
-#[inline]
-pub fn trace_clean_result(original: usize, cleaned: usize, duplicates: usize) {
-    debug_log!(
-        Flist,
-        2,
-        "cleaned file list: {} -> {} ({} duplicates removed)",
-        original,
-        cleaned,
-        duplicates
-    );
-}
-
-/// Traces hardlink detection (level 3).
-///
-/// Matches upstream's DEBUG_GTE(HLINK, 1) but reported under FLIST:
-/// ```text
-/// [sender] #5 hard-links #2 (abbrev)
-/// ```
-#[inline]
-pub fn trace_hardlink(role: ProcessRole, ndx: i32, target_ndx: i32, is_abbrev: bool) {
-    let abbrev = if is_abbrev { "abbrev" } else { "full" };
-    debug_log!(
-        Flist,
-        3,
-        "[{}] #{} hard-links #{} ({})",
-        role,
-        ndx,
-        target_ndx,
-        abbrev
-    );
-}
-
-/// Traces hardlink dev:inode mapping (level 4).
-///
-/// Matches upstream's DEBUG_GTE(HLINK, 3):
-/// ```text
-/// [sender] dev:inode for #5 is 2049:12345
-/// ```
-#[inline]
-pub fn trace_hardlink_dev_ino(role: ProcessRole, ndx: i32, dev: i64, ino: i64) {
-    debug_log!(
-        Flist,
-        4,
-        "[{}] dev:inode for #{} is {}:{}",
-        role,
-        ndx,
-        dev,
-        ino
-    );
+/// upstream: rsync.h:77-100. oc's `FileEntry` has no single runtime flags
+/// word; the bits with oc state are `FLAG_TOP_DIR` (1<<0),
+/// `FLAG_CONTENT_DIR` (1<<2), `FLAG_DUPLICATE` (1<<4), `FLAG_HLINKED`
+/// (1<<5), `FLAG_HLINK_FIRST` (1<<6), `FLAG_LENGTH64` (1<<9), and
+/// `FLAG_MOD_NSEC` (1<<12). Bits upstream tracks but oc does not (e.g. the
+/// receiver's `FLAG_SKIP_GROUP`, 1<<10) are absent from the output.
+fn upstream_flags_word(entry: &FileEntry) -> u32 {
+    let mut flags = 0u32;
+    if entry.top_dir() {
+        flags |= 1 << 0;
+    }
+    if entry.is_dir() && entry.content_dir() {
+        flags |= 1 << 2;
+    }
+    if entry.duplicate() {
+        flags |= 1 << 4;
+    }
+    if entry.hlinked() {
+        flags |= 1 << 5;
+    }
+    if entry.hlink_first() {
+        flags |= 1 << 6;
+    }
+    if entry.size() > u64::from(u32::MAX) {
+        flags |= 1 << 9;
+    }
+    if entry.mtime_nsec() != 0 {
+        flags |= 1 << 12;
+    }
+    flags
 }
 
 /// Formats a number with comma separators for readability.
 ///
-/// This matches upstream rsync's `big_num()` formatting.
+/// This matches upstream rsync's `comma_num()`/`big_num()` formatting.
 fn format_number(n: usize) -> String {
     let s = n.to_string();
     let mut result = String::with_capacity(s.len() + s.len() / 3);
@@ -386,6 +366,8 @@ mod tests {
         assert_eq!(ProcessRole::Sender.as_str(), "sender");
         assert_eq!(ProcessRole::Receiver.as_str(), "receiver");
         assert_eq!(ProcessRole::Generator.as_str(), "generator");
+        // upstream: rsync.c:994 - the pre-forked receiver capitalizes.
+        assert_eq!(ProcessRole::PreForkReceiver.as_str(), "Receiver");
     }
 
     #[test]
@@ -393,5 +375,21 @@ mod tests {
         assert_eq!(format!("{}", ProcessRole::Sender), "sender");
         assert_eq!(format!("{}", ProcessRole::Receiver), "receiver");
         assert_eq!(format!("{}", ProcessRole::Generator), "generator");
+        assert_eq!(format!("{}", ProcessRole::PreForkReceiver), "Receiver");
+    }
+
+    /// upstream: flist.c:3524 - the entry line for a plain file at depth 1,
+    /// gid shown, uid hidden (receiver without root).
+    #[test]
+    fn flags_word_tracks_top_dir_content_dir_and_nsec() {
+        let mut dir = FileEntry::new_directory(".".into(), 0o755);
+        dir.set_top_dir(true);
+        dir.set_content_dir(true);
+        dir.set_mtime(0, 1);
+        assert_eq!(upstream_flags_word(&dir), 0x1005);
+
+        let mut file = FileEntry::new_file("a.txt".into(), 6, 0o644);
+        file.set_mtime(0, 1);
+        assert_eq!(upstream_flags_word(&file), 0x1000);
     }
 }
