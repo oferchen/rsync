@@ -273,3 +273,104 @@ fn receiver_writes_unmunged_target_when_disabled() {
         "without `munge symlinks`, the receiver writes the wire target verbatim",
     );
 }
+
+/// A munging receiver under `--safe-links` skips every symlink - even one
+/// whose wire target is a safe in-tree relative path - because the munge
+/// prefix is applied at decode time and the safety check reads the munged
+/// value, which is always absolute.
+///
+/// upstream: flist.c:1070,1296-1299 - the receiver prepends `SYMLINK_PREFIX`
+/// while decoding the file list; generator.c:1951 then evaluates
+/// `safe_symlinks && unsafe_symlink(sl, fname)` on that stored value, and
+/// util1.c:1569 rejects every absolute target. Measured against rsync 3.5.0:
+/// a push into a `munge symlinks = yes` module with client `--safe-links`
+/// creates no symlinks at all, and each notice quotes the munged target.
+/// Checking the pre-munge wire target instead would create the safe ones -
+/// links upstream skips.
+#[test]
+fn munging_receiver_with_safe_links_skips_even_a_safe_relative_target() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dest = tmp.path();
+
+    let handshake = test_handshake();
+    let mut config = munge_receiver_config();
+    config.flags.safe_links = true;
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    ctx.file_list = vec![FileEntry::new_symlink(
+        "rel_link".into(),
+        0o777,
+        "real_file.txt".into(),
+    )];
+
+    let mut writer = CapturingMsgInfoWriter;
+    ctx.create_symlinks(dest, None, &mut writer)
+        .expect("create_symlinks must succeed on a writable tempdir");
+
+    assert!(
+        std::fs::symlink_metadata(dest.join("rel_link")).is_err(),
+        "the munged target `/rsyncd-munged/real_file.txt` is absolute, so \
+         --safe-links must skip it exactly as upstream does \
+         (generator.c:1951 reads the post-munge target)",
+    );
+}
+
+/// Non-vacuity control for the skip above: without `--safe-links` the very
+/// same entry is created, munged. Together the pair pins the operand of the
+/// safety check - a check on the pre-munge wire target would create the link
+/// in both tests.
+#[test]
+fn munging_receiver_without_safe_links_still_creates_the_munged_link() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dest = tmp.path();
+
+    let handshake = test_handshake();
+    let mut ctx = ReceiverContext::new_for_test(&handshake, munge_receiver_config());
+    ctx.file_list = vec![FileEntry::new_symlink(
+        "rel_link".into(),
+        0o777,
+        "real_file.txt".into(),
+    )];
+
+    let mut writer = CapturingMsgInfoWriter;
+    ctx.create_symlinks(dest, None, &mut writer)
+        .expect("create_symlinks must succeed on a writable tempdir");
+
+    let on_disk = std::fs::read_link(dest.join("rel_link")).expect("read_link");
+    assert_eq!(
+        on_disk,
+        std::path::Path::new("/rsyncd-munged/real_file.txt"),
+        "without --safe-links the munged link is created \
+         (upstream flist.c:1070,1296-1299; measured against rsync 3.5.0)",
+    );
+}
+
+/// A plain (non-munging) receiver under `--safe-links` still creates a safe
+/// relative link: the blanket skip above is the munge prefix's doing, not a
+/// property of `--safe-links` itself.
+#[test]
+fn plain_receiver_with_safe_links_creates_a_safe_relative_target() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dest = tmp.path();
+
+    let handshake = test_handshake();
+    let mut config = plain_receiver_config();
+    config.flags.safe_links = true;
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    ctx.file_list = vec![FileEntry::new_symlink(
+        "rel_link".into(),
+        0o777,
+        "real_file.txt".into(),
+    )];
+
+    let mut writer = CapturingMsgInfoWriter;
+    ctx.create_symlinks(dest, None, &mut writer)
+        .expect("create_symlinks must succeed on a writable tempdir");
+
+    let on_disk = std::fs::read_link(dest.join("rel_link")).expect("read_link");
+    assert_eq!(
+        on_disk,
+        std::path::Path::new("real_file.txt"),
+        "an in-tree relative target is safe and must be created \
+         (generator.c:1951 / util1.c:1569)",
+    );
+}

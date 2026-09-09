@@ -6,7 +6,13 @@
 //! so the decode path strips the leading `../` that would let the stored link
 //! resolve outside the module root. The two transforms are mutually
 //! exclusive and together they leave no configuration in which a
-//! client-supplied target reaches the disk verbatim.
+//! client-supplied target reaches the daemon's disk verbatim.
+//!
+//! Both transforms belong to the daemon server process. The client end of a
+//! daemon connection stores received targets verbatim: `sanitize_paths` is
+//! never set in an upstream client (clientserver.c:1067-1068 is the only
+//! assignment), so a pull client keeps `abs_link -> /etc/hostname`
+//! byte-for-byte and its own `--safe-links` check reads that raw value.
 //!
 //! The strip is budgeted, not unconditional: upstream passes `lastdir_depth`,
 //! the depth of the entry's own directory, so a target that walks back no
@@ -148,6 +154,49 @@ fn daemon_receiver_sanitizes_an_escaping_symlink_target_when_munging_is_off() {
         "a daemon receiver with `munge symlinks = false` must sanitize the \
          received target (upstream flist.c:1329); storing `../outside` \
          verbatim lets the link resolve outside the module root",
+    );
+}
+
+#[test]
+fn the_client_end_of_a_daemon_pull_stores_the_target_verbatim() {
+    // upstream: `sanitize_paths` is set only in the daemon server process
+    // (clientserver.c:1067-1068); the client end of a daemon connection never
+    // sanitizes a received target. Measured against rsync 3.5.0: a pull
+    // client stores `abs_link -> /etc/hostname` byte-for-byte. Rewriting the
+    // target on the client corrupts the user's data and (below) defeats the
+    // client's own --safe-links evaluation.
+    let mut config = daemon_receiver_without_munging();
+    config.connection.client_mode = true;
+
+    let on_disk = create_one_symlink(config, "../outside");
+
+    assert_eq!(
+        on_disk.as_deref(),
+        Some(std::path::Path::new("../outside")),
+        "the client end of a daemon pull must store the wire target verbatim \
+         (upstream sanitize_paths is daemon-server-side only, \
+         clientserver.c:1067-1068)",
+    );
+}
+
+#[test]
+fn a_pull_clients_safe_links_check_reads_the_verbatim_target() {
+    // Why the verbatim rule above is load-bearing: sanitizing `/etc/passwd`
+    // into `etc/passwd` turns an unsafe absolute target into a safe-looking
+    // relative one, so the client's --safe-links check would pass and create
+    // a link upstream skips. Measured against rsync 3.5.0: the pull client
+    // reports `ignoring unsafe symlink` and creates nothing
+    // (generator.c:1951 / util1.c:1569 "all absolute ... are unsafe").
+    let mut config = daemon_receiver_without_munging();
+    config.connection.client_mode = true;
+    config.flags.safe_links = true;
+
+    let on_disk = create_one_symlink(config, "/etc/passwd");
+
+    assert_eq!(
+        on_disk, None,
+        "an absolute wire target must reach the --safe-links check verbatim \
+         and be skipped; sanitize-then-check created a link upstream skips",
     );
 }
 
