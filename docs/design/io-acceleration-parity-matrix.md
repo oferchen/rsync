@@ -103,7 +103,7 @@ is plain blocking `TcpStream`.
 | io_uring `SEND_ZC` (`ZeroCopySender`) | BUILT-UNWIRED behind feature | n/a | n/a | `iouring-send-zc` | no | no prod caller |
 | splice file->pipe->socket | net-send direction ABSENT (splice module is recv->disk) | n/a | n/a | - | - | recv-side `recv_fd_to_file` is BUILT-UNWIRED |
 | `MSG_ZEROCOPY` | ABSENT | n/a | n/a | - | - | no `SO_ZEROCOPY` anywhere |
-| `TransmitFile` | n/a | n/a | BUILT-UNWIRED | `transmitfile` | no | reachable only via unwired `PlatformSendFile` |
+| `TransmitFile` | n/a | n/a | BUILT-UNWIRED | `transmitfile` | no | no prod caller; the `PlatformSendFile` dispatch seam was removed unwired |
 | kTLS TX | ABSENT | ABSENT | ABSENT | - | - | not applicable - oc has no in-binary TLS |
 
 ## Network recv

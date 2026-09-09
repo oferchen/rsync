@@ -208,9 +208,6 @@ pub mod dontcache_writer;
 pub mod o_tmpfile;
 /// Platform-abstracted file copy trait with automatic optimization selection.
 pub mod platform_copy;
-/// Cross-platform abstraction seam for zero-copy file-to-socket transfer
-/// (`sendfile(2)` / `TransmitFile()`).
-pub mod platform_sendfile;
 /// Destination file preallocation via `fallocate(FALLOC_FL_KEEP_SIZE)`, reserving
 /// blocks for a file's eventual length before writing (upstream `--preallocate`).
 pub mod preallocate;
@@ -383,10 +380,6 @@ pub use platform_copy::{
     CopyMethod, CopyResult, DefaultPlatformCopy, NoCowPlatformCopy, NoZeroCopyPlatformCopy,
     PlatformCopy, RequireCowPlatformCopy, try_clonefile, try_fcopyfile, try_ficlone,
     try_refs_reflink, try_refs_reflink_range,
-};
-pub use platform_sendfile::{
-    LinuxSendFile, MacOsSendFile, PlatformSendFile, SocketHandle, UnsupportedSendFile,
-    WindowsTransmitFile, platform_default,
 };
 pub use preallocate::preallocate;
 pub use punch_hole::punch_hole;
