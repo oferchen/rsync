@@ -557,8 +557,15 @@ mod tests {
         assert_eq!(cell.verdict, Verdict::Mismatch);
         let oc = cell.oc.clone().expect("oc resolved an identity file");
         assert!(
-            oc[0].ends_with("/.ssh/id_probe") && !oc[0].starts_with('~'),
+            !oc[0].starts_with('~'),
             "expected oc to expand the tilde, got {oc:?}"
+        );
+        // Compare components, not bytes: the expansion joins the platform home
+        // with the fixture's literal path, so the separator before `.ssh` is a
+        // backslash on Windows. `Path::ends_with` accepts either separator.
+        assert!(
+            Path::new(&oc[0]).ends_with(Path::new(".ssh/id_probe")),
+            "expected the expansion to still name .ssh/id_probe, got {oc:?}"
         );
     }
 
