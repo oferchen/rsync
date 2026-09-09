@@ -313,10 +313,10 @@ impl<'a> CopyContext<'a> {
     /// destination directory mtimes. The perm repair is independent of that
     /// gating and always runs for the directories that were kept writable.
     ///
-    /// upstream: generator.c:2449-2451 - touch_up_dirs(dir_flist, -1) runs
-    /// after handle_delayed_updates() and the delete phase; generator.c:2089
-    /// touch_up_dirs(); generator.c:2122-2127 fix_dir_perms restores the real
-    /// mode; generator.c:2271 need_retouch_dir_times = preserve_mtimes &&
+    /// upstream: generator.c:2923-2925 - touch_up_dirs(dir_flist, -1) runs
+    /// after handle_delayed_updates() and the delete phase; generator.c:2565
+    /// touch_up_dirs(); generator.c:2594 fix_dir_perms restores the real
+    /// mode; generator.c:2744 need_retouch_dir_times = preserve_mtimes &&
     /// !omit_dir_times.
     pub(super) fn touch_up_dirs(&mut self) {
         let mut dirs = std::mem::take(&mut self.deferred_ops.finalized_dirs);
@@ -330,7 +330,7 @@ impl<'a> CopyContext<'a> {
 
         // Deepest-first, mirroring upstream's reverse flist walk, so a child's
         // perm/mtime change cannot re-clobber a parent handled earlier.
-        // upstream: generator.c:2083 for (i = dir_flist->used - 1; i >= 0; i--).
+        // upstream: generator.c:2581 for (i = dir_flist->used - 1; i >= 0; i--).
         dirs.sort_by(|a, b| {
             b.path
                 .components()
@@ -341,7 +341,7 @@ impl<'a> CopyContext<'a> {
             // Reinstate the real (restricted) directory mode last, after every
             // deferred deletion/update ran while the directory was kept
             // writable. This runs regardless of the mtime gating above.
-            // upstream: generator.c:2124-2126 - fix_dir_perms does
+            // upstream: generator.c:2598-2599 - fix_dir_perms does
             // do_chmod_at(fname, file->mode) before the mtime repair.
             #[cfg(unix)]
             if let Some(mode) = dir.restore_mode {
@@ -355,7 +355,7 @@ impl<'a> CopyContext<'a> {
             let Some(mtime) = dir.mtime else {
                 continue;
             };
-            // upstream: generator.c:2130 - only re-set when mtime_differs(), so
+            // upstream: generator.c:2602 - only re-set when mtime_differs(), so
             // directories untouched by a late mutation are left alone.
             let needs_update = match fs::metadata(&dir.path) {
                 Ok(meta) => filetime::FileTime::from_last_modification_time(&meta) != mtime,

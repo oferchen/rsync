@@ -446,9 +446,15 @@ fn run_client_internal(
             Err(error) => return Err(map_local_copy_error(error)),
         };
 
-    // upstream: main.c:760 validates destination directory access early,
-    // returning FILE_SELECTION (3) for PermissionDenied instead of
-    // PARTIAL_TRANSFER (23). Other errors (e.g. NotFound) proceed normally.
+    // upstream: main.c:763-768 - `get_local_name()` chdirs the receiver into
+    // an existing destination directory before any transfer runs
+    // (`change_dir(dest_path, CD_NORMAL)`), and a failure reports
+    // `change_dir#1 %s failed` and exits with RERR_FILESELECT (3). `chdir`
+    // needs search (`x`) permission, not read: a 0644 destination fails it
+    // (before any mode preservation could repair it) while an unreadable but
+    // searchable one passes, so probe traversability by stat'ing `<dest>/.`
+    // rather than reading the directory. Other errors (e.g. NotFound for a
+    // destination this run will create) proceed normally.
     use std::fs;
     let dest_to_check = if plan.destination().is_dir() {
         plan.destination()
@@ -458,7 +464,7 @@ fn run_client_internal(
         plan.destination()
     };
 
-    if let Err(error) = fs::read_dir(dest_to_check) {
+    if let Err(error) = fs::metadata(dest_to_check.join(".")) {
         if error.kind() == std::io::ErrorKind::PermissionDenied {
             return Err(super::error::destination_access_error(dest_to_check, error));
         }

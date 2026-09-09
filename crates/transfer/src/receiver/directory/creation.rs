@@ -48,16 +48,21 @@ impl DirDestination {
 /// must be granted a temporary `u+rwx` while the receiver writes files into
 /// it, with the real mode restored afterward by `touch_up_dirs`.
 ///
-/// Mirrors upstream `generator.c:1512-1520`: when the receiver is not root,
+/// Mirrors upstream `generator.c:1904-1912`: when the receiver is not root,
 /// is not running `--fake-super`, is preserving permissions, and the target
 /// directory mode lacks full user `rwx` (`(mode & S_IRWXU) != S_IRWXU`), the
 /// generator chmods the directory to `mode | S_IRWXU` so `mkstemp()` can
 /// create temp files inside it, then sets `need_retouch_dir_perms` so the
 /// restrictive mode is reinstated at the end of the transfer
-/// (`generator.c:2122-2127`, `fix_dir_perms`). Without this, a source
+/// (`generator.c:2594`, `fix_dir_perms`). Without this, a source
 /// directory with a read-only mode (for example `0555`) leaves the
 /// destination directory unwritable and every file transfer into it fails
 /// with `mkstemp ... Permission denied`.
+///
+/// This `--perms` arm tweaks the flist entry itself, because the `-p` apply
+/// chmods to the entry's bits; the `!preserve_perms` arm instead raises inside
+/// the `dest_mode()` apply (`metadata::apply_permissions_from_entry`) and its
+/// restore is recorded via [`ReceiverContext::record_dir_perm_restore`].
 #[cfg(unix)]
 fn dir_needs_writable_transfer_mode(
     preserve_perms: bool,
@@ -67,11 +72,53 @@ fn dir_needs_writable_transfer_mode(
     preserve_perms
         && !fake_super
         && !metadata::am_root()
-        // upstream: generator.c:1512 - (file->mode & S_IRWXU) != S_IRWXU
+        // upstream: generator.c:1904 - (file->mode & S_IRWXU) != S_IRWXU
         && (real_mode & 0o700) != 0o700
 }
 
 impl ReceiverContext {
+    /// Records the strict `dest_mode()` permission bits `touch_up_dirs` must
+    /// reinstate on a `!preserve_perms` directory that the metadata apply
+    /// raises to owner-`rwx` for the transfer.
+    ///
+    /// Upstream rewrites `file->mode = dest_mode(...)` in place
+    /// (generator.c:1856), so its `touch_up_dirs` reads the collapsed mode
+    /// straight off the flist. oc's flist keeps the sender's original mode, and
+    /// for a pre-existing directory the collapsed mode (the destination's own
+    /// pre-transfer bits, rsync.c:470-480) is only recoverable now - after the
+    /// raise the on-disk owner bits are gone - so it is recorded at first-visit
+    /// time. The restore condition mirrors `fix_dir_perms = !am_root &&
+    /// !(file->mode & S_IWUSR)` (generator.c:2594); the raise condition mirrors
+    /// `(file->mode & S_IRWXU) != S_IRWXU` (generator.c:1904).
+    ///
+    /// The `--perms` arm does not record: its restore keeps reading the flist
+    /// entry directly in [`Self::touch_up_dirs`].
+    #[cfg(unix)]
+    fn record_dir_perm_restore(
+        &self,
+        dir_path: &Path,
+        entry: &FileEntry,
+        metadata_opts: &MetadataOptions,
+        pre_transfer: Option<&fs::Metadata>,
+    ) {
+        if metadata_opts.permissions() || metadata_opts.fake_super_enabled() || metadata::am_root()
+        {
+            return;
+        }
+        let target = metadata::directory_dest_mode(
+            dir_path,
+            entry.permissions(),
+            metadata_opts,
+            pre_transfer,
+        );
+        if target & 0o700 != 0o700 && target & 0o200 == 0 {
+            self.dir_perm_restores
+                .lock()
+                .expect("dir_perm_restores poisoned")
+                .push((dir_path.to_path_buf(), target));
+        }
+    }
+
     /// Classifies a directory destination, removing a conflicting symlink first
     /// when required.
     ///
@@ -511,7 +558,7 @@ impl ReceiverContext {
         } else {
             metadata_opts.clone()
         };
-        // upstream: generator.c:1512-1520 - grant a transient u+rwx to any
+        // upstream: generator.c:1904-1912 - grant a transient u+rwx to any
         // directory whose final mode is not writable by us so the receiver can
         // create temp files inside it; the real mode is restored in
         // touch_up_dirs. Captured here so the closure below stays Send.
@@ -542,7 +589,7 @@ impl ReceiverContext {
                     ) {
                         entry.set_mode(entry.mode() | 0o700);
                     }
-                    // upstream: generator.c:1465 dest_mode(..., statret == 0) -
+                    // upstream: generator.c:1856 dest_mode(..., statret == 0) -
                     // an existing dir keeps its own perms (exists=true), a new
                     // dir gets the source mode masked by dflt_perms
                     // (exists=false). Supply the pre-transfer stat only for a
@@ -556,6 +603,15 @@ impl ReceiverContext {
                     (dir_path, entry, xattr_list, pre_transfer)
                 })
                 .collect();
+        // upstream: generator.c:1904-1912 + generator.c:2594 - the
+        // !preserve_perms metadata apply raises a directory lacking owner-rwx;
+        // record which strict modes touch_up_dirs must reinstate BEFORE the
+        // raise erases the pre-transfer bits. Serial on purpose: the parallel
+        // phase below only applies, never decides.
+        #[cfg(unix)]
+        for (dir_path, entry, _, pre_transfer) in &entry_snapshots {
+            self.record_dir_perm_restore(dir_path, entry, metadata_opts, pre_transfer.as_ref());
+        }
         let dir_creation_errors: Vec<(PathBuf, String)> = failed_dir_paths
             .into_iter()
             .map(|p| {
@@ -749,7 +805,7 @@ impl ReceiverContext {
     /// for an existing dir, the attribute-diff flags computed against the
     /// pre-apply destination stat (`ITEM_REPORT_{TIME,PERMS,OWNER,GROUP}`),
     /// mirroring upstream's `itemize()` at `generator.c:1481` which runs before
-    /// `set_file_attrs` (`generator.c:1503`). Only returns `Err` for
+    /// `set_file_attrs` (`generator.c:1895`). Only returns `Err` for
     /// unrecoverable errors.
     ///
     /// Under `--dry-run` / `--list-only` the destination is left untouched: no
@@ -862,7 +918,7 @@ impl ReceiverContext {
             return Ok(None);
         }
         // upstream: generator.c:1480-1483 - itemize() runs before set_file_attrs
-        // (generator.c:1503), so compute the itemize flags from the pre-apply
+        // (generator.c:1895), so compute the itemize flags from the pre-apply
         // destination stat here. A new dir reports ITEM_LOCAL_CHANGE|ITEM_IS_NEW
         // (`cd+++++++++`); an existing dir reports the attribute-diff flags
         // (ITEM_REPORT_{TIME,PERMS,OWNER,GROUP}) so a differing root `.` mtime
@@ -946,7 +1002,7 @@ impl ReceiverContext {
         // (`run_pipelined_incremental`) decides it from `verbose_dir_name_lines`
         // against the pre-transfer stat, exactly as `run_pipelined` does, so an
         // unchanged directory stays silent (upstream names a directory only when
-        // `set_file_attrs()` changed it, generator.c:1503-1505) and the name can
+        // `set_file_attrs()` changed it, generator.c:1895-1897) and the name can
         // be interleaved with `--progress` in flist order. Naming it here also
         // ran after this call's own metadata apply, which is too late to observe
         // the pre-transfer state.
@@ -962,10 +1018,10 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1503` - `set_file_attrs()` after the directory mkdir
-    /// - `generator.c:1465` - `dest_mode(..., statret == 0)` keeps an existing
+    /// - `generator.c:1895` - `set_file_attrs()` after the directory mkdir
+    /// - `generator.c:1856` - `dest_mode(..., statret == 0)` keeps an existing
     ///   directory's own permission bits when `--perms` is not in effect
-    /// - `generator.c:1512-1520` - transient `u+rwx` grant, undone by
+    /// - `generator.c:1904-1912` - transient `u+rwx` grant, undone by
     ///   [`Self::touch_up_dirs`]
     /// - `xattrs.c:set_xattr()` - xattrs are applied after metadata
     fn apply_incremental_dir_metadata(
@@ -977,7 +1033,7 @@ impl ReceiverContext {
         acl_cache: Option<&AclCache>,
         acl_id_map: Option<&AclIdMapper>,
     ) {
-        // upstream: generator.c:1512-1520 - grant a transient u+rwx to a
+        // upstream: generator.c:1904-1912 - grant a transient u+rwx to a
         // read-only directory so files can be written into it; the real mode
         // is restored in touch_up_dirs.
         #[cfg(unix)]
@@ -995,7 +1051,7 @@ impl ReceiverContext {
         let apply_entry = tweaked_entry.as_ref().unwrap_or(entry);
         #[cfg(not(unix))]
         let apply_entry = entry;
-        // upstream: generator.c:1465 dest_mode(..., statret == 0) - supply the
+        // upstream: generator.c:1856 dest_mode(..., statret == 0) - supply the
         // pre-transfer stat only for a dir that already existed so the !perms
         // dest_mode() apply keeps its own permission bits (exists=true) instead
         // of rewriting them; a freshly created dir (is_new) uses exists=false.
@@ -1004,6 +1060,11 @@ impl ReceiverContext {
         } else {
             fs::metadata(dir_path).ok()
         };
+        // upstream: generator.c:1904-1912 + generator.c:2594 - record the
+        // strict mode touch_up_dirs must reinstate before the !preserve_perms
+        // apply below raises the directory to owner-rwx.
+        #[cfg(unix)]
+        self.record_dir_perm_restore(dir_path, entry, metadata_opts, pre_transfer.as_ref());
         if let Err(e) = apply_metadata_with_pre_transfer_stat(
             dir_path,
             apply_entry,
@@ -1085,9 +1146,9 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:2093-2146` - `touch_up_dirs(dir_flist, -1)` iterates in
+    /// - `generator.c:2565-2611` - `touch_up_dirs(dir_flist, -1)` iterates in
     ///   reverse order and repairs perms then times.
-    /// - `generator.c:2122-2127` - `fix_dir_perms = !am_root && !(mode &
+    /// - `generator.c:2594` - `fix_dir_perms = !am_root && !(mode &
     ///   S_IWUSR)` restores the real directory mode.
     /// - `generator.c:2398-2399` - `need_retouch_dir_times` gating:
     ///   `preserve_mtimes && !omit_dir_times`.
@@ -1104,16 +1165,47 @@ impl ReceiverContext {
             return;
         }
 
-        // upstream: generator.c:2271 - need_retouch_dir_times =
+        // upstream: generator.c:2744 - need_retouch_dir_times =
         // preserve_mtimes && !omit_dir_times. `effective_omit_dir_times` folds
         // in the implicit `--backup`-without-`--backup-dir` rule
         // (options.c:2342-2343, generator.c:2101), so the same predicate governs
         // both this retouch pass and the creation-time apply above.
         let retouch_times = self.config.flags.times && !self.config.effective_omit_dir_times();
 
-        // upstream: generator.c:2122 - fix_dir_perms = !am_root && !(mode &
-        // S_IWUSR); only meaningful when we preserve perms (otherwise the
-        // directory keeps its umask-derived writable mode).
+        // upstream: generator.c:2594-2599 - restore the strict dest_mode()
+        // result on the !preserve_perms directories the metadata apply raised
+        // to owner-rwx at first visit (recorded then, because the raise erases
+        // a pre-existing directory's own bits). Deepest-first so a parent's
+        // restore cannot strip the search permission a child's restore still
+        // needs.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut recorded = std::mem::take(
+                &mut *self
+                    .dir_perm_restores
+                    .lock()
+                    .expect("dir_perm_restores poisoned"),
+            );
+            recorded.sort_by(|a, b| b.0.components().count().cmp(&a.0.components().count()));
+            for (dir_path, mode) in recorded {
+                let _ = writer.maybe_send_keepalive();
+                if let Err(e) = fs::set_permissions(&dir_path, fs::Permissions::from_mode(mode)) {
+                    debug_log!(
+                        Recv,
+                        1,
+                        "touch_up_dirs: failed to restore perms on {}: {}",
+                        dir_path.display(),
+                        e
+                    );
+                }
+            }
+        }
+
+        // upstream: generator.c:2594 - fix_dir_perms = !am_root && !(mode &
+        // S_IWUSR). This walk reads the flist mode directly, which is only the
+        // applied mode under --perms; the !preserve_perms restores were drained
+        // from the recorded list above.
         #[cfg(unix)]
         let retouch_perms =
             self.config.flags.perms && !self.config.fake_super && !metadata::am_root();
@@ -1125,7 +1217,7 @@ impl ReceiverContext {
         }
 
         // Iterate in reverse so deepest directories are touched first.
-        // upstream: generator.c:2083 - for (i = dir_flist->used - 1; i >= 0; i--)
+        // upstream: generator.c:2581 - for (i = dir_flist->used - 1; i >= 0; i--)
         for entry in self.file_list.iter().rev() {
             // upstream: generator.c:2138-2144 - poke a keepalive once the I/O
             // lull has elapsed so a remote sender does not time out while this
@@ -1143,7 +1235,7 @@ impl ReceiverContext {
                 dest_dir.join(relative_path)
             };
 
-            // upstream: generator.c:2124-2125 - restore the real mode before
+            // upstream: generator.c:2598-2599 - restore the real mode before
             // the mtime repair. Only directories that lack the user write bit
             // were tweaked, so only those are chmod'd back.
             #[cfg(unix)]
@@ -1533,7 +1625,7 @@ mod touch_up_dirs_tests {
     /// mtime with the current time. `touch_up_dirs` must re-apply the
     /// original mtime from the file list entry.
     ///
-    /// upstream: generator.c:2093-2146 - touch_up_dirs()
+    /// upstream: generator.c:2565-2611 - touch_up_dirs()
     #[test]
     fn restores_directory_mtime_after_file_writes() {
         let dir = test_support::create_tempdir();
@@ -1570,7 +1662,7 @@ mod touch_up_dirs_tests {
     /// Under `--omit-dir-times` the retouch pass must NOT re-apply the source
     /// directory mtime, leaving the directory at its (current) on-disk mtime.
     ///
-    /// upstream: generator.c:2271 - `need_retouch_dir_times = preserve_mtimes
+    /// upstream: generator.c:2744 - `need_retouch_dir_times = preserve_mtimes
     /// && !omit_dir_times`. On a remote pull the local client IS the receiver
     /// and `-O` never rides the wire (options.c:2646-2647 gates the compact
     /// 'O' on am_sender), so the receiver config must carry `omit_dir_times`
@@ -1609,7 +1701,7 @@ mod touch_up_dirs_tests {
     }
 
     /// The writable-transfer helper mirrors upstream's `dir_tweaking` gate
-    /// (`generator.c:1512`): only a non-root receiver preserving perms on a
+    /// (`generator.c:1904`): only a non-root receiver preserving perms on a
     /// directory that lacks full user `rwx` needs the transient `u+rwx`.
     #[cfg(unix)]
     #[test]
@@ -1634,7 +1726,7 @@ mod touch_up_dirs_tests {
     /// writable while the receiver creates files inside it, then be restored
     /// to its restrictive mode afterward.
     ///
-    /// upstream: generator.c:1512-1520 (grant `u+rwx`) + generator.c:2122-2127
+    /// upstream: generator.c:1904-1912 (grant `u+rwx`) + generator.c:2594
     /// (`fix_dir_perms` restore in touch_up_dirs).
     #[cfg(unix)]
     #[test]
@@ -1686,6 +1778,177 @@ mod touch_up_dirs_tests {
                 "restrictive directory mode must be restored after transfer"
             );
         }
+    }
+
+    /// The `!preserve_perms` counterpart of the test above: a fresh directory
+    /// must land upstream's `dest_mode()` result, raised to owner-rwx for the
+    /// transfer window and restored by `touch_up_dirs` only when owner-write
+    /// is absent. Entry mode 0o500 pins all three: dest_mode gives 0o500
+    /// (dflt_perms always carries the owner bits), the raise makes 0o700 of
+    /// it (generator.c:1904-1912), and fix_dir_perms restores 0o500
+    /// (generator.c:2594). Measured against rsync 3.5.0 over rsh: `-r` src
+    /// dir 0o555 -> dest 0o555, src 0o400 -> 0o400; the pre-fix receiver left
+    /// the mkdirat(0o777) umask default.
+    #[cfg(unix)]
+    #[test]
+    fn fresh_dir_without_perms_lands_dest_mode_raised_then_restored() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if metadata::am_root() {
+            return; // the raise/restore dance is gated on !am_root.
+        }
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+
+        let config = config_with_times(false);
+        assert!(!config.flags.perms, "fixture must run without --perms");
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o500)];
+
+        let opts = metadata::MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_times(false);
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        ctx.create_directories(
+            dest,
+            &opts,
+            None,
+            None,
+            &mut writer,
+            #[cfg(unix)]
+            None,
+        )
+        .expect("create_directories succeeds");
+
+        let sub = dest.join("sub");
+        let during = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            during, 0o700,
+            "during the transfer the dir carries dest_mode | S_IRWXU"
+        );
+        fs::write(sub.join("file.txt"), b"payload")
+            .expect("must be able to create files inside mid-transfer");
+        fs::remove_file(sub.join("file.txt")).expect("drop probe file");
+
+        ctx.touch_up_dirs(
+            dest,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+        );
+        let mode = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
+        let _ = fs::set_permissions(&sub, fs::Permissions::from_mode(0o755));
+        assert_eq!(
+            mode, 0o500,
+            "touch_up_dirs must reinstate the strict dest_mode() result"
+        );
+    }
+
+    /// Owner-writable-but-not-executable entry under `!preserve_perms`: the
+    /// raise fires but the restore must NOT (fix_dir_perms requires
+    /// `!(file->mode & S_IWUSR)`, generator.c:2594). Measured against rsync
+    /// 3.5.0 over rsh: `-r` src dir 0o644 -> dest 0o744.
+    #[cfg(unix)]
+    #[test]
+    fn owner_writable_dir_without_perms_keeps_the_raise_residue() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if metadata::am_root() {
+            return;
+        }
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config_with_times(false));
+        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o644)];
+
+        let opts = metadata::MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_times(false);
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        ctx.create_directories(
+            dest,
+            &opts,
+            None,
+            None,
+            &mut writer,
+            #[cfg(unix)]
+            None,
+        )
+        .expect("create_directories succeeds");
+        ctx.touch_up_dirs(
+            dest,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+        );
+
+        let mode = fs::metadata(dest.join("sub")).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o744,
+            "owner-write blocks the restore, so the raise residue sticks"
+        );
+    }
+
+    /// A PRE-EXISTING read-only directory under `!preserve_perms`: dest_mode's
+    /// exists arm keeps its own 0o555 (rsync.c:470-480), the raise makes it
+    /// writable for the transfer, and `touch_up_dirs` restores the recorded
+    /// 0o555 - the mode is recoverable only at first-visit time, which is
+    /// what [`ReceiverContext::record_dir_perm_restore`] exists for. Measured
+    /// against rsync 3.5.0 over rsh: pre-existing 0o555 root, `-r` -> rc 0,
+    /// files transferred, root restored to 0o555; the pre-fix receiver failed
+    /// the writes with EACCES.
+    #[cfg(unix)]
+    #[test]
+    fn preexisting_readonly_dir_without_perms_is_raised_then_restored() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if metadata::am_root() {
+            return;
+        }
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let sub = dest.join("sub");
+        fs::create_dir(&sub).expect("pre-create sub");
+        fs::set_permissions(&sub, fs::Permissions::from_mode(0o555)).expect("chmod sub");
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config_with_times(false));
+        // The sender's mode differs on purpose: the exists arm must keep the
+        // destination's own 0o555, not adopt the sender's 0o755.
+        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o755)];
+
+        let opts = metadata::MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_times(false);
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        ctx.create_directories(
+            dest,
+            &opts,
+            None,
+            None,
+            &mut writer,
+            #[cfg(unix)]
+            None,
+        )
+        .expect("create_directories succeeds");
+
+        fs::write(sub.join("file.txt"), b"payload")
+            .expect("the raise must make the read-only dir writable mid-transfer");
+        fs::remove_file(sub.join("file.txt")).expect("drop probe file");
+
+        ctx.touch_up_dirs(
+            dest,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+        );
+        let mode = fs::metadata(&sub).unwrap().permissions().mode() & 0o777;
+        let _ = fs::set_permissions(&sub, fs::Permissions::from_mode(0o755));
+        assert_eq!(
+            mode, 0o555,
+            "the pre-transfer bits must be restored from the recorded strict mode"
+        );
     }
 
     /// When `--times` is not set, `touch_up_dirs` must be a no-op.

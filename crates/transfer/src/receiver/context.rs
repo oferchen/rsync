@@ -459,6 +459,23 @@ pub struct ReceiverContext {
     /// network transfer, so the wire path is byte-identical; set only by
     /// [`run_local_replay`](Self::run_local_replay).
     pub(in crate::receiver) local_replay: bool,
+    /// Directories raised to owner-`rwx` for the transfer whose strict
+    /// `dest_mode()` result must be reinstated by `touch_up_dirs`, as
+    /// `(path, strict permission bits)`.
+    ///
+    /// Only the `!preserve_perms` arm records here: upstream rewrites
+    /// `file->mode = dest_mode(...)` in place (generator.c:1856) so its
+    /// `touch_up_dirs` can read the collapsed mode straight off the flist,
+    /// while oc's flist keeps the sender's original mode - for a pre-existing
+    /// directory the collapsed mode (the destination's own pre-transfer bits,
+    /// rsync.c:470-480) is recoverable ONLY at first-visit time, so it is
+    /// recorded then. The `--perms` restore continues to read the flist
+    /// directly. Guarded by a `Mutex` because directory metadata application
+    /// may run from the parallel batch path.
+    ///
+    /// upstream: generator.c:1904-1912 raise + generator.c:2594 fix_dir_perms.
+    #[cfg(unix)]
+    pub(in crate::receiver) dir_perm_restores: std::sync::Mutex<Vec<(std::path::PathBuf, u32)>>,
 }
 
 impl ReceiverContext {
@@ -548,6 +565,8 @@ impl ReceiverContext {
             io_error_delete_warning_emitted: false,
             // upstream: read_batch defaults off; the network path never sets it.
             local_replay: false,
+            #[cfg(unix)]
+            dir_perm_restores: std::sync::Mutex::new(Vec::new()),
         }
     }
 

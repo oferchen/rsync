@@ -288,7 +288,19 @@ fn apply_backup_dir_attrs(
     if let Ok(meta) = fs::symlink_metadata(&source_dir)
         && meta.is_dir()
     {
-        let _ = ::metadata::apply_file_metadata_with_options(created, &meta, metadata_options);
+        // upstream: backup.c:173 set_file_attrs(backup_dir_buf, file, NULL,
+        // NULL, 0) - the synthesized file_struct carries the destination
+        // directory's stat mode VERBATIM and set_file_attrs chmods to
+        // `file->mode` with no `dest_mode()` collapse: dest_mode() runs only
+        // at generator.c:1856/1939 and receiver.c:1191, none of which sit on
+        // the backup path. A `!preserve_perms` run therefore still copies the
+        // destination directory's exact permission bits onto the backup
+        // subdirectory (measured against rsync 3.5.0: dest dir 0707, -r
+        // without -p, umask 022 -> backup dir 0707), so force the permission
+        // leg on for this one apply while every other leg keeps the caller's
+        // options.
+        let attrs_options = metadata_options.clone().preserve_permissions(true);
+        let _ = ::metadata::apply_file_metadata_with_options(created, &meta, &attrs_options);
     }
 }
 

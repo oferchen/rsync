@@ -163,10 +163,13 @@ mod error_recovery {
         });
     }
 
-    /// When the destination directory is read-only, writing files should fail
-    /// with an appropriate error.
+    /// When the destination directory is read-only, the transfer recovers by
+    /// temporarily raising the directory to mode|S_IRWXU before writing its
+    /// contents, then restoring the original mode afterwards.
     ///
-    /// upstream: rsync reports a write error and exits with code 23.
+    /// upstream: generator.c:1904-1912 chmods a pre-existing unwritable
+    /// directory writable before its contents and restores the final mode
+    /// once the directory is done; the transfer exits 0.
     #[test]
     fn error_recovery_readonly_destination() {
         run_with_timeout(LOCAL_TIMEOUT, || {
@@ -192,22 +195,23 @@ mod error_recovery {
 
             let result = run_client(config);
 
-            // Restore permissions before assertions so tempdir cleanup succeeds.
+            // Capture the directory mode before restoring it for cleanup.
+            let dest_mode = fs::metadata(&dest).expect("stat dest").permissions().mode() & 0o7777;
             let _ = fs::set_permissions(&dest, fs::Permissions::from_mode(0o755));
 
-            // The transfer must fail - either FileSelect (3) or PartialTransfer (23).
-            let error = result.expect_err("write to read-only dest should fail");
-            let code = error.exit_code();
-            assert!(
-                code == PARTIAL_TRANSFER_EXIT_CODE
-                    || code == core::client::FILE_SELECTION_EXIT_CODE,
-                "expected exit code 23 or 3, got {code}"
+            result.expect("transfer into a read-only destination should recover");
+
+            // The file was written through the temporary raise.
+            assert_eq!(
+                fs::read(dest.join("file.txt")).expect("read transferred file"),
+                b"content to write",
+                "file should be written into the raised destination"
             );
 
-            // The file should not have been written.
-            assert!(
-                !dest.join("file.txt").exists(),
-                "file should not be created in read-only destination"
+            // The original read-only mode was restored after the contents.
+            assert_eq!(
+                dest_mode, 0o555,
+                "destination directory mode should be restored to read-only"
             );
         });
     }

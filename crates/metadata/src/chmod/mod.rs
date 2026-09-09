@@ -102,10 +102,10 @@ const S_IWUSR: u32 = 0o200;
 /// Final on-disk permission bits a directory carries after upstream rsync's
 /// during-transfer permission dance, given the `--chmod`-tweaked `mode`.
 ///
-/// upstream: generator.c:1512-1520 raises every directory to owner-`rwx` while
-/// its contents are written (`do_chmod_at(fname, file->mode | S_IRWXU)`), then
-/// generator.c:2107-2145 `touch_up_dirs()` restores the tweaked mode ONLY when
-/// the owner would otherwise lack write
+/// upstream: generator.c:1904-1912 raises every directory to owner-`rwx` while
+/// its contents are written (`gen_entry_chmod(fname, file, file->mode | S_IRWXU)`),
+/// then generator.c:2565-2611 `touch_up_dirs()` restores the tweaked mode ONLY
+/// when the owner would otherwise lack write
 /// (`fix_dir_perms = !am_root && !(file->mode & S_IWUSR)`). The net effect a
 /// synchronous local copy must reproduce: a tweak that leaves an owner-writable
 /// but not fully owner-`rwx` directory keeps the transient owner bits (e.g.
@@ -140,8 +140,8 @@ pub fn directory_transfer_mode(mode: u32, running_as_root: bool) -> u32 {
 /// The transfer root is addressed as `dst/.`, so upstream's during-transfer
 /// fixup `do_chmod_at("dst/.", mode | S_IRWXU)` must resolve `.` *inside* `dst`,
 /// which needs owner-execute on `dst`. When the tweaked mode strips owner
-/// execute the chmod fails with `EACCES` (generator.c:1514 "failed to modify
-/// permissions on %s") and the generator can no longer stat or create the
+/// execute the chmod fails with `EACCES` (generator.c:1907-1909 "failed to
+/// modify permissions on %s") and the generator can no longer stat or create the
 /// directory's contents, so nothing under it transfers and rsync exits 23.
 /// Non-root directories are addressed by name and never take this path.
 #[must_use]

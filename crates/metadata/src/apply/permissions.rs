@@ -23,7 +23,7 @@ use std::os::fd::BorrowedFd;
 /// daemon chmod paths all compute one identical result (DRY). `am_root` is
 /// sampled through the same libc `geteuid` the ownership gate uses so
 /// `fakeroot`'s faked identity is honoured.
-/// upstream: generator.c:1512-1520 fixup + generator.c:2107-2145 touch_up_dirs.
+/// upstream: generator.c:1904-1912 fixup + generator.c:2565-2611 touch_up_dirs.
 #[cfg(unix)]
 fn tweak_directory_transfer_mode(mode: u32, file_type: fs::FileType) -> u32 {
     if !file_type.is_dir() {
@@ -550,7 +550,41 @@ pub(super) fn apply_permissions_with_chmod(
     {
         use std::os::unix::fs::PermissionsExt;
         let source_mode = metadata.permissions().mode();
-        if let Some(new_mode) = compute_dest_mode(
+        if metadata.file_type().is_dir() {
+            // upstream: generator.c:1856 - even when !preserve_perms the
+            // generator rewrites `file->mode = dest_mode(...)` for a
+            // directory, judging `exists` by the pre-mkdir `statret`, and
+            // set_file_attrs() (rsync.c:658) chmods the directory to it. The
+            // caller's `existing` carries that pre-transfer stat: a fresh
+            // directory takes the source mode masked by dflt_perms
+            // (rsync.c:481-485) instead of the mkdir umask default, while a
+            // pre-existing one keeps its own bits (rsync.c:470-480). The
+            // during-transfer owner-rwx raise (generator.c:1904-1912) and its
+            // touch_up_dirs restore (generator.c:2594) belong to the caller
+            // that owns transfer ordering, not to this apply.
+            let mut new_mode = directory_dest_mode(destination, source_mode, options, existing);
+            if let Ok(current_meta) = fs::metadata(destination) {
+                let current_mode = current_meta.permissions().mode();
+                // upstream: rsync.c:512-516 - a freshly-created directory that
+                // inherited S_ISGID from a setgid parent keeps that bit even
+                // though dest_mode() dropped it.
+                if existing.is_none() && current_mode & 0o2000 != 0 {
+                    new_mode |= 0o2000;
+                }
+                if (current_mode & 0o7777) != new_mode {
+                    // upstream: syscall.c:do_chmod():800-802 - when neither
+                    // --perms nor --executability is active, chmod failure is
+                    // non-fatal. upstream returns 0 so set_file_attrs()
+                    // continues.
+                    let _ = chmod_path_honoring_keep_dirlinks(
+                        destination,
+                        new_mode,
+                        options,
+                        "apply dest_mode",
+                    );
+                }
+            }
+        } else if let Some(new_mode) = compute_dest_mode(
             source_mode,
             options.destination_is_new(),
             existing,
@@ -962,7 +996,7 @@ fn intended_fake_super_mode(
 /// executor uses this to detect a transfer-root directory whose tweaked mode
 /// strips owner execute and therefore self-locks (see
 /// [`crate::transfer_root_self_locks`]).
-/// upstream: rsync.c:set_file_attrs() new_mode, pre generator.c:1512 fixup.
+/// upstream: rsync.c:set_file_attrs() new_mode, pre generator.c:1904-1912 fixup.
 #[cfg(unix)]
 pub(super) fn chmod_directory_target_mode(
     destination: &Path,
@@ -984,6 +1018,46 @@ pub(super) fn chmod_directory_target_mode(
         existing,
     );
     Ok(Some(mode & 0o7777))
+}
+
+/// The single owner of "which permission bits does a directory end up with"
+/// BEFORE upstream's during-transfer owner-`rwx` raise.
+///
+/// A directory walks the same `tweak_mode()`-then-`dest_mode()` pipeline every
+/// other type walks, so this is a thin adapter over
+/// [`chmod_tweaked_dest_mode`] supplying the two directory facts: `--chmod`
+/// DOES reach a directory (the `!S_ISLNK` gates at flist.c:1741-1742 and
+/// flist.c:996-997 pass it through, with `is_dir = true` selecting the `D`
+/// clauses), and `dest_mode()`'s `-E` tweak never fires
+/// (`S_ISREG(flist_mode)`, rsync.c:472).
+///
+/// `pre_transfer` is the destination's PRE-transfer stat - upstream judges a
+/// directory's `exists` by the pre-mkdir `statret` (generator.c:1856), so a
+/// fresh directory takes `flist_mode & (~CHMOD_BITS | dflt_perms)`
+/// (rsync.c:481-485) and a pre-existing one keeps its own bits
+/// (rsync.c:470-480). With `--perms` the (tweaked) source bits pass through.
+///
+/// The result deliberately EXCLUDES the during-transfer raise
+/// (generator.c:1904-1912) and its `touch_up_dirs` restore
+/// (generator.c:2594): those belong to the transfer-ordering owner - the
+/// local-copy executor and the network receiver each drive them from this one
+/// target value.
+#[cfg(unix)]
+pub(super) fn directory_dest_mode(
+    destination: &Path,
+    source_mode: u32,
+    options: &MetadataOptions,
+    pre_transfer: Option<&fs::Metadata>,
+) -> u32 {
+    chmod_tweaked_dest_mode(
+        options.chmod(),
+        destination,
+        source_mode,
+        true,  // S_ISDIR: --chmod `D` clauses apply
+        false, // !S_ISREG: dest_mode()'s -E tweak never fires for a dir
+        options,
+        pre_transfer,
+    ) & 0o7777
 }
 
 /// Composes the `--chmod` tweak with upstream's `dest_mode()` collapse:
@@ -1199,16 +1273,21 @@ pub(super) fn apply_permissions_from_entry(
                     );
                 }
             } else if entry.file_type().is_dir() {
-                // upstream: generator.c:1466-1467 - even when !preserve_perms
+                // upstream: generator.c:1856 - even when !preserve_perms
                 // the generator runs `file->mode = dest_mode(...)` for
-                // directories, and set_file_attrs() (rsync.c:659-660) chmods
+                // directories, and set_file_attrs() (rsync.c:658) chmods
                 // the dir to it. A new dir therefore lands the source mode
                 // masked by dflt_perms (so a source 0700 dir stays 0700 rather
                 // than the mkdir umask default); an existing dir keeps its own
                 // permission bits (pre_transfer_meta = Some -> the exists=true
                 // branch). Without this, a network-received dir was created
                 // `mkdirat(0o777)` and never re-chmod'd, landing 0o755.
-                let mut new_mode = dest_mode_for_existing_or_new(entry, pre_transfer_meta);
+                let mut new_mode = directory_dest_mode(
+                    destination,
+                    entry.permissions(),
+                    options,
+                    pre_transfer_meta,
+                );
                 let fresh_meta;
                 let current_meta = if let Some(meta) = cached_meta {
                     meta
@@ -1225,14 +1304,22 @@ pub(super) fn apply_permissions_from_entry(
                 if pre_transfer_meta.is_none() && (current_mode & 0o2000) != 0 {
                     new_mode |= 0o2000;
                 }
-                // A directory whose target mode lacks owner rwx would block the
-                // receiver from writing its contents. Upstream keeps it
-                // writable during the transfer via the dir_tweaking u+rwx grant
-                // (generator.c:1512) and restores the strict mode in
-                // touch_up_dirs; that grant is gated on --perms here, so in the
-                // !perms path leave such a directory at its umask default
-                // (owner-writable) rather than chmod'ing it non-writable.
-                if (new_mode & 0o700) == 0o700 && (current_mode & 0o7777) != (new_mode & 0o7777) {
+                // upstream: generator.c:1904-1912 - a non-root transfer raises
+                // a directory lacking full owner-rwx to `mode | S_IRWXU` at its
+                // first visit so its contents can still be written; the gate is
+                // `!am_root && (file->mode & S_IRWXU) != S_IRWXU &&
+                // dir_tweaking` with NO --perms condition (dir_tweaking =
+                // !(list_only || solo_file || dry_run), generator.c:2743).
+                // touch_up_dirs (generator.c:2594) later restores the strict
+                // mode only when `!(file->mode & S_IWUSR)`; the receiver
+                // records that restore, so the raised mode is what lands here.
+                if !options.fake_super_enabled()
+                    && !nix::unistd::geteuid().is_root()
+                    && (new_mode & 0o700) != 0o700
+                {
+                    new_mode |= 0o700;
+                }
+                if (current_mode & 0o7777) != (new_mode & 0o7777) {
                     // upstream: syscall.c:do_chmod():800-802 - when neither
                     // --perms nor --executability is active, chmod failure is
                     // non-fatal. upstream returns 0 so set_file_attrs() continues.
@@ -1660,6 +1747,90 @@ mod tests {
             symlink_pre_transfer_stat(&new, &current, Some(&obstacle)).is_none(),
             "destination_is_new wins: a brand-new destination has no \
              pre-transfer stat, whatever the caller passes"
+        );
+    }
+
+    /// `directory_dest_mode()` table pins, mirroring the symlink pins above:
+    /// which `dest_mode()` arm a directory takes, that `--chmod`'s `D` clauses
+    /// DO reach it (contrast with a link), and that the result excludes the
+    /// during-transfer owner-rwx raise.
+    ///
+    /// upstream: generator.c:1856 (`exists` judged by the pre-mkdir statret) +
+    /// rsync.c:464-486 dest_mode().
+    #[test]
+    fn directory_dest_mode_new_dir_masks_the_source_and_drops_special_bits() {
+        let dir = tempdir().expect("tempdir");
+        let dest = dir.path().join("d");
+        let dflt = default_perms_seed(dest.parent());
+        let opts = MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_times(false);
+
+        for source in [0o777u32, 0o750, 0o644, 0o500] {
+            let got = directory_dest_mode(&dest, 0o040000 | source, &opts, None);
+            assert_eq!(got, source & dflt, "new dir takes source & dflt_perms");
+            assert_eq!(got & !source, 0, "the mask can only remove bits");
+        }
+
+        // upstream: rsync.c:482-483 - "turn off special permissions".
+        let got = directory_dest_mode(&dest, 0o042755, &opts, None);
+        assert_eq!(got & 0o7000, 0, "setgid/setuid/sticky must not survive");
+    }
+
+    /// upstream: rsync.c:470-480 - the exists arm keeps the destination
+    /// directory's own permission bits; the raise/restore dance is the
+    /// caller's business and must not leak into this value.
+    #[test]
+    fn directory_dest_mode_existing_dir_keeps_its_own_bits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().expect("tempdir");
+        let dest = dir.path().join("d");
+        std::fs::create_dir(&dest).expect("create dir");
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o555))
+            .expect("seed dest bits");
+        let on_disk = std::fs::metadata(&dest).expect("meta");
+        let opts = MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_times(false);
+
+        assert_eq!(
+            directory_dest_mode(&dest, 0o040755, &opts, Some(&on_disk)),
+            0o555,
+            "an existing dir keeps its own bits, not the sender's 0o755"
+        );
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).expect("unlock");
+    }
+
+    /// upstream: flist.c:1741-1742 gates `tweak_mode()` on `!S_ISLNK`, so a
+    /// directory IS tweaked (with `is_dir` selecting the `D` clauses), and with
+    /// `--perms` the tweaked mode passes through with no collapse
+    /// (generator.c:1856 runs only under `!preserve_perms`).
+    #[test]
+    fn directory_dest_mode_chmod_reaches_a_directory() {
+        let dir = tempdir().expect("tempdir");
+        let dest = dir.path().join("d");
+        let chmod = crate::ChmodModifiers::parse("go-rwx").expect("parse chmod");
+
+        let perms = MetadataOptions::new()
+            .preserve_permissions(true)
+            .preserve_times(false)
+            .with_chmod(Some(chmod.clone()));
+        assert_eq!(
+            directory_dest_mode(&dest, 0o040755, &perms, None),
+            0o700,
+            "--chmod=go-rwx must reach a directory under -p"
+        );
+
+        let no_perms = MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_times(false)
+            .with_chmod(Some(chmod));
+        let dflt = default_perms_seed(dest.parent());
+        assert_eq!(
+            directory_dest_mode(&dest, 0o040755, &no_perms, None),
+            0o700 & dflt,
+            "tweak FIRST, dest_mode() collapse SECOND (flist.c:1741-1742)"
         );
     }
 }

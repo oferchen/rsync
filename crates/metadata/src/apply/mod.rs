@@ -145,6 +145,27 @@ pub fn apply_file_metadata_with_options(
     Ok(())
 }
 
+/// Computes the permission bits a directory ends up with BEFORE upstream's
+/// during-transfer owner-`rwx` raise - the `--chmod` tweak composed with the
+/// `dest_mode()` collapse when `!preserve_perms`.
+///
+/// `pre_transfer` is the directory's stat from BEFORE the transfer
+/// materialised it (`None` for a fresh directory). The local-copy executor and
+/// the network receiver both derive the during-transfer raise
+/// (generator.c:1904-1912) and the `touch_up_dirs` restore (generator.c:2594)
+/// from this one target value, so the two paths cannot drift.
+///
+/// See `permissions::directory_dest_mode` for the full upstream mapping.
+#[cfg(unix)]
+pub fn directory_dest_mode(
+    destination: &Path,
+    source_mode: u32,
+    options: &MetadataOptions,
+    pre_transfer: Option<&fs::Metadata>,
+) -> u32 {
+    permissions::directory_dest_mode(destination, source_mode, options, pre_transfer)
+}
+
 /// Pre-applies upstream's `dest_mode()` chmod for callers that have the
 /// pre-transfer destination stat in hand.
 ///
@@ -172,7 +193,7 @@ pub fn apply_dest_mode_pre_transfer(
 /// `am_root` is sampled through the same libc `geteuid` the chmod apply path
 /// uses, so the self-lock decision and the on-disk fixup agree under
 /// `fakeroot`. See [`crate::transfer_root_self_locks`] for the mechanism.
-/// upstream: rsync.c:set_file_attrs() new_mode + generator.c:1512 fixup.
+/// upstream: rsync.c:set_file_attrs() new_mode + generator.c:1904-1912 fixup.
 #[cfg(unix)]
 pub fn transfer_root_chmod_self_lock(
     destination: &Path,
