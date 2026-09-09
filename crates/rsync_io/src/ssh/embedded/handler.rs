@@ -87,7 +87,14 @@ impl SshClientHandler {
             StrictHostKeyChecking::Yes => Err(SshError::UnknownHost {
                 host: self.host.clone(),
             }),
-            StrictHostKeyChecking::No => {
+            // `no` and `accept-new` share the unknown-host arm: both learn
+            // the key without prompting. Upstream reaches this arm the same
+            // way, by testing only for YES and ASK and letting OFF and NEW
+            // fall through together (openssh/sshconnect.c:1169-1181). They diverge
+            // only on a CHANGED key, which never reaches here - that path is
+            // the KeyChanged branch in verify_host_key, which refuses under
+            // every policy.
+            StrictHostKeyChecking::No | StrictHostKeyChecking::AcceptNew => {
                 eprintln!(
                     "Warning: Permanently added '{}' ({}) to the list of known hosts.",
                     self.host,
@@ -392,6 +399,81 @@ mod tests {
         let check = known_hosts::check_known_hosts_path("auto.example", 22, &pubkey, &kh_path);
         assert!(check.is_ok());
         assert!(check.unwrap());
+    }
+
+    /// An unattended run under `accept-new` must learn an unknown key without
+    /// reaching the prompt, and `ask` on the same fixture must not.
+    ///
+    /// The control is what makes this behavioural rather than structural:
+    /// `prompt_user` refuses when stdin is not a terminal (which it never is
+    /// under the test runner), so `Ask` fails on exactly the fixture
+    /// `AcceptNew` succeeds on. Before `AcceptNew` existed, an operator who
+    /// wrote `accept-new` got the `Ask` row - the failure this pins.
+    ///
+    /// upstream: openssh/sshconnect.c:1169-1181 - the unknown-host arm tests only for
+    /// YES and ASK, so NEW and OFF both fall through to learning the key.
+    #[test]
+    fn unknown_host_accept_new_learns_without_prompting() {
+        let pubkey = test_ed25519_pubkey();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kh_path = dir.path().join("known_hosts");
+        std::fs::File::create(&kh_path).expect("create");
+
+        let handler = SshClientHandler::new(
+            "new.example".into(),
+            22,
+            StrictHostKeyChecking::AcceptNew,
+            Some(kh_path.clone()),
+        );
+        assert!(handler.verify_host_key(&pubkey).expect("accepted"));
+        assert!(
+            known_hosts::check_known_hosts_path("new.example", 22, &pubkey, &kh_path)
+                .expect("check"),
+            "accept-new must persist the learned key",
+        );
+
+        // Control: the same unknown host under `ask` cannot be answered.
+        let asking = SshClientHandler::new(
+            "ask.example".into(),
+            22,
+            StrictHostKeyChecking::Ask,
+            Some(kh_path),
+        );
+        assert!(
+            matches!(
+                asking.verify_host_key(&pubkey),
+                Err(SshError::UnknownHost { .. })
+            ),
+            "ask must not silently accept an unknown host unattended",
+        );
+    }
+
+    /// `accept-new` rejects a CHANGED key - that is the whole difference
+    /// between it and `no`.
+    ///
+    /// upstream: openssh/sshconnect.c:1272-1274 / :1329-1331 refuse a changed key for
+    /// every policy except `off`/`no`; oc refuses under all of them, so this
+    /// pins the stricter side for the new variant specifically.
+    #[test]
+    fn accept_new_still_rejects_a_changed_key() {
+        let original_key = test_ed25519_pubkey();
+        let different_key = test_ed25519_pubkey();
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kh_path = dir.path().join("known_hosts");
+        known_hosts::learn_known_hosts_path("changed.example", 22, &original_key, &kh_path)
+            .expect("learn");
+
+        let handler = SshClientHandler::new(
+            "changed.example".into(),
+            22,
+            StrictHostKeyChecking::AcceptNew,
+            Some(kh_path),
+        );
+        assert!(matches!(
+            handler.verify_host_key(&different_key),
+            Err(SshError::HostKeyMismatch { ref host }) if host == "changed.example"
+        ));
     }
 
     /// Mismatched key is always rejected, even with StrictHostKeyChecking::No.
