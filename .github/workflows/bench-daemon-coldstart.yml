@@ -63,7 +63,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
+          bash tools/ci/apt_update.sh
           sudo apt-get install -y rsync hyperfine jq
 
       - name: Build oc-rsync (release)

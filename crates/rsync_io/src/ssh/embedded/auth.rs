@@ -60,13 +60,75 @@ fn classify_identity_agent(identity_agent: Option<&str>) -> AgentSource<'_> {
     }
 }
 
+/// Public keys of the configured identity files, forming the match set that
+/// `IdentitiesOnly` restricts the agent to.
+///
+/// Each path contributes at most one key, derived the way OpenSSH derives it:
+/// the path read as a public key file, else `<path>.pub`, else the cleartext
+/// public half stored inside the private key file. A path that yields nothing
+/// contributes no match, mirroring upstream leaving `identity_keys[i]` NULL -
+/// `sshkey_equal()` then never matches it.
+/// upstream: openssh/authfile.c:263 `sshkey_load_public()`,
+/// openssh/ssh.c:2431 which fills `identity_keys[]` from it.
+///
+/// The private key is never decrypted here: upstream reaches the same set
+/// without a passphrase, and prompting during key selection would be a new
+/// interactive step in the middle of a transfer.
+#[cfg(unix)]
+fn configured_public_keys(
+    identity_files: &[std::path::PathBuf],
+) -> Vec<russh::keys::ssh_key::public::KeyData> {
+    identity_files
+        .iter()
+        .filter_map(|path| {
+            russh::keys::load_public_key(path)
+                .ok()
+                .or_else(|| {
+                    let mut with_suffix = path.clone().into_os_string();
+                    with_suffix.push(".pub");
+                    russh::keys::load_public_key(Path::new(&with_suffix)).ok()
+                })
+                .map(|key| key.key_data().clone())
+                .or_else(|| {
+                    // The OpenSSH private-key format stores the public half in
+                    // cleartext, so an encrypted key still yields its match key.
+                    PrivateKey::read_openssh_file(path)
+                        .ok()
+                        .or_else(|| russh::keys::load_secret_key(path, None).ok())
+                        .map(|key| key.public_key().key_data().clone())
+                })
+        })
+        .collect()
+}
+
+/// Whether an agent identity may be offered to the server.
+///
+/// With `IdentitiesOnly` off - the upstream default - every agent key is
+/// offered. With it on, only an agent key equal to one of the configured
+/// identities is, compared on the public key blob rather than on a filename or
+/// the agent's comment.
+/// upstream: openssh/sshconnect2.c:1745 matches with `sshkey_equal()` and
+/// openssh/sshconnect2.c:1753 keeps an unmatched agent key only when
+/// `!options.identities_only`.
+#[cfg(unix)]
+fn agent_key_is_offered(
+    identities_only: bool,
+    configured: &[russh::keys::ssh_key::public::KeyData],
+    agent_key: &russh::keys::PublicKey,
+) -> bool {
+    !identities_only || configured.iter().any(|key| key == agent_key.key_data())
+}
+
 /// Try authentication via the SSH agent.
 ///
-/// Connects to the agent selected by `identity_agent` (an `IdentityAgent`
-/// directive or `SSH_AUTH_SOCK` when unset), enumerates all identities, and
-/// signs each via `authenticate_publickey_with()` until one succeeds. Returns
-/// `Ok(true)` on success, `Ok(false)` when the agent is disabled, unavailable,
-/// or no identity works.
+/// Connects to the agent selected by `config.identity_agent` (an
+/// `IdentityAgent` directive or `SSH_AUTH_SOCK` when unset), enumerates all
+/// identities, and signs each via `authenticate_publickey_with()` until one
+/// succeeds. Returns `Ok(true)` on success, `Ok(false)` when the agent is
+/// disabled, unavailable, or no identity works.
+///
+/// When `config.identities_only` is set, an agent key is offered only if it
+/// matches one of `config.identity_files`; see [`agent_key_is_offered`].
 ///
 /// `russh::keys::agent::client::AgentClient::connect_env` is gated to
 /// `cfg(unix)` upstream (Pageant / named-pipe support is a separate Windows
@@ -77,11 +139,11 @@ fn classify_identity_agent(identity_agent: Option<&str>) -> AgentSource<'_> {
 async fn try_agent_auth(
     session: &mut russh::client::Handle<SshClientHandler>,
     username: &str,
-    identity_agent: Option<&str>,
+    config: &SshConfig,
 ) -> Result<bool, SshError> {
     use russh::keys::agent::client::AgentClient;
 
-    let connect = match classify_identity_agent(identity_agent) {
+    let connect = match classify_identity_agent(config.identity_agent.as_deref()) {
         AgentSource::Disabled => {
             logging::debug_log!(Io, 1, "IdentityAgent=none: SSH agent disabled");
             return Ok(false);
@@ -110,8 +172,25 @@ async fn try_agent_auth(
         return Ok(false);
     }
 
+    // Built only when the restriction is on, so the default path reads no
+    // identity files at all.
+    let configured = if config.identities_only {
+        configured_public_keys(&config.identity_files)
+    } else {
+        Vec::new()
+    };
+
     for identity in identities {
         let pubkey = identity.public_key().into_owned();
+        if !agent_key_is_offered(config.identities_only, &configured, &pubkey) {
+            logging::debug_log!(
+                Io,
+                1,
+                "IdentitiesOnly=yes: not offering agent key {} (no configured identity matches it)",
+                identity.comment()
+            );
+            continue;
+        }
         match session
             .authenticate_publickey_with(username, pubkey, None, &mut agent)
             .await
@@ -132,7 +211,7 @@ async fn try_agent_auth(
 async fn try_agent_auth(
     _session: &mut russh::client::Handle<SshClientHandler>,
     _username: &str,
-    _identity_agent: Option<&str>,
+    _config: &SshConfig,
 ) -> Result<bool, SshError> {
     logging::debug_log!(Io, 1, "SSH agent auth is not supported on this platform");
     Ok(false)
@@ -304,7 +383,8 @@ async fn try_password_auth(
 ///
 /// Tries methods in OpenSSH order:
 /// 1. SSH agent (if `config.use_agent` is true; `config.identity_agent`
-///    selects the socket, defaulting to `SSH_AUTH_SOCK`)
+///    selects the socket, defaulting to `SSH_AUTH_SOCK`; `identities_only`
+///    restricts which of its keys may be offered)
 /// 2. Identity files (each file in `config.identity_files`)
 /// 3. Password (URL-embedded or interactive prompt)
 ///
@@ -318,7 +398,7 @@ pub async fn authenticate(
     let mut tried = Vec::new();
 
     if config.use_agent {
-        if try_agent_auth(session, &username, config.identity_agent.as_deref()).await? {
+        if try_agent_auth(session, &username, config).await? {
             return Ok(());
         }
         tried.push("agent");
@@ -607,14 +687,35 @@ mod tests {
     #[derive(Clone)]
     struct MockSshServer {
         policy: MockAuthPolicy,
+        offered: OfferLog,
     }
+
+    /// Every public key the client offered, in offer order.
+    type OfferLog = Arc<std::sync::Mutex<Vec<russh::keys::PublicKey>>>;
 
     struct MockServerHandler {
         policy: MockAuthPolicy,
+        offered: OfferLog,
     }
 
     impl russh::server::Handler for MockServerHandler {
         type Error = russh::Error;
+
+        /// Records the `publickey` probe, which the client sends for every key
+        /// it decides to offer before any signature is requested. Returning
+        /// `Accept` reproduces the trait default, so the recorder changes no
+        /// existing test's auth flow.
+        async fn auth_publickey_offered(
+            &mut self,
+            _user: &str,
+            public_key: &russh::keys::PublicKey,
+        ) -> Result<russh::server::Auth, Self::Error> {
+            self.offered
+                .lock()
+                .expect("offer log lock")
+                .push(public_key.clone());
+            Ok(russh::server::Auth::Accept)
+        }
 
         async fn channel_open_session(
             &mut self,
@@ -661,6 +762,7 @@ mod tests {
         fn new_client(&mut self, _peer_addr: Option<std::net::SocketAddr>) -> Self::Handler {
             MockServerHandler {
                 policy: self.policy.clone(),
+                offered: Arc::clone(&self.offered),
             }
         }
     }
@@ -678,19 +780,33 @@ mod tests {
     /// Start a mock SSH server on an ephemeral port and return the port number.
     /// The server runs in the background until the runtime is dropped.
     async fn start_mock_server(policy: MockAuthPolicy) -> (u16, russh::keys::PublicKey) {
+        let (port, host_pubkey, _offered) = start_recording_mock_server(policy).await;
+        (port, host_pubkey)
+    }
+
+    /// Variant of [`start_mock_server`] that also hands back the log of every
+    /// public key the client offers, so a test can assert on which keys were
+    /// put on the wire rather than only on the auth outcome.
+    async fn start_recording_mock_server(
+        policy: MockAuthPolicy,
+    ) -> (u16, russh::keys::PublicKey, OfferLog) {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let port = listener.local_addr().expect("local_addr").port();
 
         let server_config = mock_server_config();
         let host_pubkey = server_config.keys[0].public_key().clone();
 
-        let mut server = MockSshServer { policy };
+        let offered: OfferLog = Arc::default();
+        let mut server = MockSshServer {
+            policy,
+            offered: Arc::clone(&offered),
+        };
 
         tokio::spawn(async move {
             let _ = server.run_on_socket(server_config, &listener).await;
         });
 
-        (port, host_pubkey)
+        (port, host_pubkey, offered)
     }
 
     /// Create an `SshConfig` pointing to 127.0.0.1 at the given port with
@@ -702,6 +818,7 @@ mod tests {
             username: Some("testuser".to_owned()),
             password: None,
             identity_files: Vec::new(),
+            identities_only: false,
             use_agent: false,
             identity_agent: None,
             ciphers: None,
@@ -1057,5 +1174,299 @@ mod tests {
             }
             other => panic!("expected AuthenticationFailed, got: {other:?}"),
         }
+    }
+
+    /// Appends an SSH `string`: a `uint32` length followed by the bytes.
+    #[cfg(unix)]
+    fn put_ssh_string(out: &mut Vec<u8>, bytes: &[u8]) {
+        let len = u32::try_from(bytes.len()).expect("ssh string length");
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(bytes);
+    }
+
+    /// Splits the leading SSH `string` off `buf`, returning it and the remainder.
+    #[cfg(unix)]
+    fn take_ssh_string(buf: &[u8]) -> Option<(&[u8], &[u8])> {
+        let (len_bytes, rest) = buf.split_at_checked(4)?;
+        let len = u32::from_be_bytes(len_bytes.try_into().ok()?) as usize;
+        rest.split_at_checked(len)
+    }
+
+    /// Comment the fake agent reports for every identity.
+    ///
+    /// Deliberately unlike any on-disk filename or `.pub` comment, so a test
+    /// that matches an agent key against a configured identity can only be
+    /// passing on the public key blob.
+    #[cfg(unix)]
+    const FAKE_AGENT_COMMENT: &str = "held-only-by-the-agent";
+
+    /// Starts an in-process ssh-agent on a Unix socket and returns its
+    /// temporary directory (kept alive by the caller) and socket path.
+    ///
+    /// Implements the two requests the embedded transport issues:
+    /// `SSH_AGENTC_REQUEST_IDENTITIES` (11) and `SSH_AGENTC_SIGN_REQUEST`
+    /// (13). Building an agent rather than consulting `$SSH_AUTH_SOCK` keeps
+    /// the agent leg of `authenticate()` exercised on every machine, so these
+    /// cells never degrade into a silent skip.
+    #[cfg(unix)]
+    async fn start_fake_agent(keys: Vec<PrivateKey>) -> (tempfile::TempDir, String) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        const REQUEST_IDENTITIES: u8 = 11;
+        const IDENTITIES_ANSWER: u8 = 12;
+        const SIGN_REQUEST: u8 = 13;
+        const AGENT_FAILURE: u8 = 5;
+
+        let dir = tempfile::tempdir().expect("tempdir for agent socket");
+        let sock_path = dir.path().join("s");
+        let listener = tokio::net::UnixListener::bind(&sock_path).expect("bind agent socket");
+        let sock = sock_path.to_string_lossy().into_owned();
+
+        let mut answer = vec![IDENTITIES_ANSWER];
+        answer.extend_from_slice(&u32::try_from(keys.len()).expect("key count").to_be_bytes());
+        for key in &keys {
+            let blob = key.public_key().to_bytes().expect("agent public key blob");
+            put_ssh_string(&mut answer, &blob);
+            put_ssh_string(&mut answer, FAKE_AGENT_COMMENT.as_bytes());
+        }
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let answer = answer.clone();
+                let keys = keys.clone();
+                tokio::spawn(async move {
+                    loop {
+                        let mut len_buf = [0u8; 4];
+                        if stream.read_exact(&mut len_buf).await.is_err() {
+                            return;
+                        }
+                        let mut request = vec![0u8; u32::from_be_bytes(len_buf) as usize];
+                        if stream.read_exact(&mut request).await.is_err() {
+                            return;
+                        }
+                        let reply = match request.split_first() {
+                            Some((&REQUEST_IDENTITIES, _)) => answer.clone(),
+                            Some((&SIGN_REQUEST, body)) => {
+                                fake_agent_sign(&keys, body).unwrap_or_else(|| vec![AGENT_FAILURE])
+                            }
+                            _ => vec![AGENT_FAILURE],
+                        };
+                        let mut framed = u32::try_from(reply.len())
+                            .expect("reply length")
+                            .to_be_bytes()
+                            .to_vec();
+                        framed.extend_from_slice(&reply);
+                        if stream.write_all(&framed).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+
+        (dir, sock)
+    }
+
+    /// Answers an `SSH_AGENTC_SIGN_REQUEST` body (`string key_blob`,
+    /// `string data`, `uint32 flags`) with an `SSH_AGENT_SIGN_RESPONSE`.
+    #[cfg(unix)]
+    fn fake_agent_sign(keys: &[PrivateKey], body: &[u8]) -> Option<Vec<u8>> {
+        let (blob, rest) = take_ssh_string(body)?;
+        let (data, _) = take_ssh_string(rest)?;
+        let key = keys
+            .iter()
+            .find(|k| k.public_key().to_bytes().is_ok_and(|b| b == blob))?;
+        let signature: russh::keys::ssh_key::Signature =
+            russh::keys::signature::Signer::try_sign(key, data).ok()?;
+        let mut signature_blob = Vec::new();
+        russh::keys::ssh_encoding::Encode::encode(&signature, &mut signature_blob).ok()?;
+        const SIGN_RESPONSE: u8 = 14;
+        let mut reply = vec![SIGN_RESPONSE];
+        put_ssh_string(&mut reply, &signature_blob);
+        Some(reply)
+    }
+
+    /// Writes `key` to `path` as an unencrypted private key file.
+    #[cfg(unix)]
+    fn write_private_key(path: &Path, key: &PrivateKey) {
+        let mut buf = Vec::new();
+        russh::keys::encode_pkcs8_pem(key, &mut buf).expect("encode private key");
+        std::fs::write(path, &buf).expect("write private key");
+    }
+
+    /// Shared fixture for the `IdentitiesOnly` cells: an in-process agent
+    /// holding `agent_key`, a mock server that records every offer and accepts
+    /// nothing, and a config whose `IdentityAgent` points at that agent.
+    ///
+    /// The returned `TempDir` owns the agent socket and must outlive the call
+    /// to `authenticate()`.
+    #[cfg(unix)]
+    async fn identities_only_fixture(
+        agent_key: &PrivateKey,
+    ) -> (
+        russh::client::Handle<SshClientHandler>,
+        SshConfig,
+        OfferLog,
+        tempfile::TempDir,
+    ) {
+        let (agent_dir, agent_sock) = start_fake_agent(vec![agent_key.clone()]).await;
+        let policy = MockAuthPolicy {
+            accepted_keys: Vec::new(),
+            accepted_password: None,
+        };
+        let (port, host_pubkey, offered) = start_recording_mock_server(policy).await;
+        let handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        config.use_agent = true;
+        config.identity_agent = Some(agent_sock);
+
+        (handle, config, offered, agent_dir)
+    }
+
+    /// Whether the client offered `key`, compared on the public key blob so
+    /// the comment the agent attaches cannot influence the answer.
+    #[cfg(unix)]
+    fn offered_contains(log: &OfferLog, key: &russh::keys::PublicKey) -> bool {
+        log.lock()
+            .expect("offer log lock")
+            .iter()
+            .any(|candidate| candidate.key_data() == key.key_data())
+    }
+
+    /// Generates a fresh Ed25519 key.
+    #[cfg(unix)]
+    fn fresh_key() -> PrivateKey {
+        PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen")
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn identities_only_withholds_an_agent_key_outside_the_configured_identities() {
+        // The point of `IdentitiesOnly` is to stop a loaded - often forwarded -
+        // agent from parading every key it holds at a host the operator scoped
+        // to one identity. Clearing the identity-file list does not do that:
+        // the restriction has to reach the agent's key list.
+        // upstream: openssh/sshconnect2.c:1753 appends an agent key that
+        // matched no configured identity only when `!options.identities_only`.
+        let agent_key = fresh_key();
+        let configured = fresh_key();
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let configured_path = dir.path().join("configured_ed25519");
+        write_private_key(&configured_path, &configured);
+
+        let (mut handle, mut config, offered, _agent_dir) =
+            identities_only_fixture(&agent_key).await;
+        config.identity_files = vec![configured_path];
+        config.identities_only = true;
+
+        let _ = authenticate(&mut handle, &config).await;
+
+        assert!(
+            !offered_contains(&offered, agent_key.public_key()),
+            "IdentitiesOnly=yes offered an agent key that is not a configured identity",
+        );
+        // Non-vacuity: the fixture really reached the offer path, and the
+        // restriction is not a blanket refusal to offer anything.
+        assert!(
+            offered_contains(&offered, configured.public_key()),
+            "the configured identity itself was never offered - fixture did not reach the offer path",
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn agent_key_outside_the_configured_identities_is_offered_by_default() {
+        // Control for the cell above. With `IdentitiesOnly` off - the upstream
+        // default (openssh/readconf.c:2905) - the same agent key must still be
+        // offered, so a fix that simply stopped offering agent keys fails here.
+        let agent_key = fresh_key();
+        let configured = fresh_key();
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let configured_path = dir.path().join("configured_ed25519");
+        write_private_key(&configured_path, &configured);
+
+        let (mut handle, mut config, offered, _agent_dir) =
+            identities_only_fixture(&agent_key).await;
+        config.identity_files = vec![configured_path];
+        config.identities_only = false;
+
+        let _ = authenticate(&mut handle, &config).await;
+
+        assert!(
+            offered_contains(&offered, agent_key.public_key()),
+            "IdentitiesOnly is off, so the agent key must still be offered",
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn identities_only_still_offers_an_agent_key_matching_a_configured_identity() {
+        // The match key is the public key blob, not the filename and not the
+        // agent's comment: the agent reports FAKE_AGENT_COMMENT while the
+        // configured identity is a path with no relation to it.
+        // upstream: openssh/sshconnect2.c:1745 `sshkey_equal()`.
+        let agent_key = fresh_key();
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let configured_path = dir.path().join("unrelated_name");
+        write_private_key(&configured_path, &agent_key);
+
+        let (mut handle, mut config, offered, _agent_dir) =
+            identities_only_fixture(&agent_key).await;
+        config.identity_files = vec![configured_path];
+        config.identities_only = true;
+
+        let _ = authenticate(&mut handle, &config).await;
+
+        assert!(
+            offered_contains(&offered, agent_key.public_key()),
+            "an agent key that IS a configured identity must still be offered",
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn identities_only_matches_a_configured_identity_that_is_public_key_only() {
+        // The canonical agent deployment: the private key lives in the agent
+        // and only `<IdentityFile>.pub` is on disk. Deriving the match key from
+        // private key files alone would withhold every key in that setup.
+        // upstream: openssh/authfile.c:263 `sshkey_load_public()` tries the
+        // path, then `<path>.pub`, then the private file's cleartext public
+        // half.
+        let agent_key = fresh_key();
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let configured_path = dir.path().join("agent_only_ed25519");
+        let public_path = dir.path().join("agent_only_ed25519.pub");
+        std::fs::write(
+            &public_path,
+            agent_key
+                .public_key()
+                .to_openssh()
+                .expect("encode public key"),
+        )
+        .expect("write public key");
+        assert!(
+            !configured_path.exists(),
+            "the private key must be absent for this cell to mean anything",
+        );
+
+        let (mut handle, mut config, offered, _agent_dir) =
+            identities_only_fixture(&agent_key).await;
+        config.identity_files = vec![configured_path];
+        config.identities_only = true;
+
+        let _ = authenticate(&mut handle, &config).await;
+
+        assert!(
+            offered_contains(&offered, agent_key.public_key()),
+            "a configured identity present only as a .pub file must still match the agent key",
+        );
     }
 }

@@ -5475,12 +5475,16 @@ mod module_access_tests {
         assert_eq!(sources, vec![module_path.join("ab.txt")]);
     }
 
-    // Unix-only: the fixture `]x` is representable on Windows, but there the
-    // pattern's `\` escape collides with std::path treating `\` as a
-    // separator in the resolve pipeline, so `[\]]*` never reaches the
-    // matcher intact (same class as the peer-dest separator fix in
-    // module_access; the Windows arm is a pre-existing platform gap).
-    #[cfg(unix)]
+    // Runs on EVERY platform, unlike the two escape tests above: `[`, `]` and
+    // `x` are all legal in a Windows filename, so the fixture is
+    // representable there and this is a live Windows assertion rather than a
+    // reasoned one.
+    //
+    // It was `#[cfg(unix)]` while `expand_relative_glob` walked
+    // `std::path::Component`s, because on Windows that split `[\]]*` at the
+    // `\` into the segments `[` and `]]*` and the pattern never reached the
+    // matcher intact. Splitting on `/` alone (upstream util1.c:749) closes
+    // that, so the gate comes off and the Windows CI cell now executes it.
     #[test]
     fn resolve_sender_sources_glob_class_with_escaped_bracket() {
         // upstream: lib/wildmatch.c:154-161 - inside a `[...]` class a `\`
@@ -5508,6 +5512,67 @@ mod module_access_tests {
         let args = vec![".".to_owned(), "mod/missing/file".to_owned()];
         let sources = resolve_sender_sources(module_path, &args, "mod", false);
         assert_eq!(sources, vec![module_path.join("missing/file")]);
+    }
+
+    #[test]
+    fn resolve_sender_sources_glob_expands_a_nested_segment() {
+        // upstream: util1.c:749 - `glob_match()` peels one `/`-separated
+        // segment per recursion, so a metacharacter in a LATER segment expands
+        // against the directory the earlier literal segments reached. Runs on
+        // every platform: `/` is a separator everywhere, so this pins that
+        // moving off `Path::components()` did not cost multi-segment globbing.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let module_path = tmp.path();
+        std::fs::create_dir(module_path.join("d1")).expect("d1");
+        std::fs::write(module_path.join("d1").join("f1"), b"1").expect("f1");
+        std::fs::write(module_path.join("d1").join("other"), b"o").expect("other");
+
+        let args = vec![".".to_owned(), "mod/d1/f*".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "mod", false);
+        assert_eq!(sources, vec![module_path.join("d1").join("f1")]);
+    }
+
+    // The Windows arm of the backslash-escape rule. It needs no odd fixture
+    // name, so unlike the three `#[cfg(unix)]` escape tests above it is
+    // expressible on a Windows filesystem.
+    //
+    // ⚠ This test is compile-checked from the development host via
+    // `cargo check -p daemon --all-targets --target x86_64-pc-windows-msvc`;
+    // it is executed only by the `Windows (stable)` CI cell.
+    #[cfg(windows)]
+    #[test]
+    fn resolve_sender_sources_glob_backslash_is_escape_not_separator_windows() {
+        // upstream: util1.c:749 `glob_match()` finds segment boundaries with
+        // `strchr(arg, '/')` and has no `\` arm on any platform, while
+        // lib/wildmatch.c:86 makes `\` escape the following pattern byte. So
+        // `a\*` is ONE segment denoting the literal name `a*`. A Windows
+        // filesystem cannot hold a file named `a*`, so upstream matches
+        // nothing and `glob_expand()` preserves the literal arg
+        // (util1.c:864, the `glob.argc == save_argc` branch).
+        //
+        // `Path::components()` splits on `\` as well as `/` on Windows, so the
+        // previous implementation read `a\*` as the segments `a` and `*`,
+        // descended into the directory `a` and served every entry it held -
+        // files the client never named. That is the escape/separator
+        // conflation this pins closed.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let module_path = tmp.path();
+        std::fs::create_dir(module_path.join("a")).expect("dir a");
+        std::fs::write(module_path.join("a").join("x"), b"x").expect("a/x");
+
+        let args = vec![".".to_owned(), "mod/a\\*".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "mod", false);
+
+        let literal = std::path::PathBuf::from(format!("{}/a\\*", module_path.display()));
+        assert_eq!(
+            sources,
+            vec![literal],
+            "an unmatched escaped pattern must survive verbatim"
+        );
+        assert!(
+            !sources.contains(&module_path.join("a").join("x")),
+            "the `\\` escape was consumed as a path separator and leaked <mod>/a/x"
+        );
     }
 
     // UTS-3.b.5 - cross-platform parity for daemon sub-path resolution.

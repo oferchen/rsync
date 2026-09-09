@@ -66,26 +66,28 @@ fn distinct_basis(n_blocks: usize) -> Vec<u8> {
     basis
 }
 
-/// The bucket array never grows beyond `2^16` slots, even when the basis
-/// signature would naively suggest a larger table.
+/// The compact key governs the bucket array only up to `2^16` slots; past
+/// that the table grows on upstream's rule instead of pinning at the cap.
+///
+/// upstream: match.c:84-88.
 #[test]
-fn bucket_size_is_capped_at_2_16() {
-    // 70 000 blocks > 2^16 = 65 536, so the naive "next-power-of-two of
-    // 2 * n_entries" expansion would jump past the cap. The compact-key
-    // table must clamp at `2^16` so the bucket array stays at most 256 KiB.
+fn bucket_size_follows_upstream_past_the_compact_key() {
+    // 70 000 blocks: upstream's `(70000/8) * 10 + 11` = 87 511 exceeds
+    // TRADITIONAL_TABLESIZE, so the table must grow to exactly that. A
+    // policy that clamped at `2^16` reports 65 536 here.
     let huge = CompactLookup::with_capacity(70_000);
-    assert_eq!(huge.capacity(), 1 << 16);
+    assert_eq!(huge.capacity(), 87_511);
 
-    // The publicly observable `lookup_capacity` accessor on the index
-    // honours the same cap end-to-end, so callers that bin by cache level
-    // never see an over-budget figure.
+    // A basis small enough to stay under the boundary keeps the compact
+    // power-of-two sizing, so callers that bin by cache level still see a
+    // table far below the `2^16` compact-key limit.
     let basis = distinct_basis(8);
     let index = build_index(&basis).expect("index for tiny basis");
     assert!(index.lookup_capacity() <= 1 << 16);
 
     // `lookup_bytes` traverses `CompactLookup::bucket_bytes` so a regular
     // (non-`--benches`) build sees the call chain and clippy stops marking
-    // `bucket_bytes` as dead code. The 256 KiB cap mirrors the bucket cap.
+    // `bucket_bytes` as dead code.
     assert!(index.lookup_bytes() <= 256 * 1024);
 }
 
