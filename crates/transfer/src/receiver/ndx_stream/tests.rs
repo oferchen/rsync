@@ -618,3 +618,103 @@ fn non_transfer_frame_for_non_regular_entry_is_not_refused() {
     assert_eq!(ndx, 1);
     assert_eq!(attrs.iflags, 0);
 }
+
+/// A protocol-29 keep-alive frame is consumed and the loop re-enters, so only
+/// the following real frame surfaces.
+///
+/// WHY: upstream `rsync.c:386-391` - `if (protocol_version < 30 && ndx ==
+/// cur_flist->used && iflags == ITEM_IS_NEW) goto read_loop`. A <=3.0.x peer
+/// running `--timeout` emits exactly this frame as its keep-alive (3.0.9
+/// io.c:953-968); a reader that surfaced it would hand the caller an
+/// out-of-range index and abort a healthy session.
+#[test]
+fn proto29_keepalive_frame_is_consumed_and_the_stream_continues() {
+    const PROTO29: u8 = 29;
+    // `NoLazyFlist::new(_, 4)` reports last_file_ndx == 4, so the keep-alive
+    // NDX (`cur_flist->used`) is 5.
+    let mut codec = create_ndx_codec(PROTO29);
+    let mut wire = Vec::new();
+    push_file_echo(&mut wire, &mut codec, 5, SenderAttrs::ITEM_IS_NEW);
+    push_file_echo(&mut wire, &mut codec, 2, SenderAttrs::ITEM_TRANSFER);
+
+    let mut sink = NoLazyFlist::new(StreamRole::Receiver, 4);
+    let mut reader = Cursor::new(wire);
+    let mut read_codec = create_ndx_codec(PROTO29);
+
+    let (ndx, attrs) = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut sink, false, false)
+        .expect("the keep-alive is consumed, then the real echo decodes")
+        .expect("a per-file index, not NDX_DONE");
+    assert_eq!(ndx, 2, "only the real frame may surface");
+    assert_eq!(attrs.iflags, SenderAttrs::ITEM_TRANSFER);
+}
+
+/// A keep-alive frame followed by `NDX_DONE` yields `None`: the frame carries
+/// no entry at all.
+#[test]
+fn proto29_keepalive_frame_then_done_yields_none() {
+    const PROTO29: u8 = 29;
+    let mut codec = create_ndx_codec(PROTO29);
+    let mut wire = Vec::new();
+    push_file_echo(&mut wire, &mut codec, 5, SenderAttrs::ITEM_IS_NEW);
+    codec.write_ndx(&mut wire, NDX_DONE).unwrap();
+
+    let mut sink = NoLazyFlist::new(StreamRole::Receiver, 4);
+    let mut reader = Cursor::new(wire);
+    let mut read_codec = create_ndx_codec(PROTO29);
+
+    assert!(
+        read_ndx_and_attrs(&mut reader, &mut read_codec, &mut sink, false, false)
+            .unwrap()
+            .is_none(),
+        "the keep-alive must vanish into the loop, leaving NDX_DONE"
+    );
+}
+
+/// EXACT-EQUALITY CONTROL: upstream's predicate is `iflags == ITEM_IS_NEW`,
+/// not a bit test. The same NDX with any extra flag bit is a real frame and
+/// must surface.
+#[test]
+fn proto29_keepalive_shape_with_extra_flag_bits_is_not_a_keepalive() {
+    const PROTO29: u8 = 29;
+    let mut codec = create_ndx_codec(PROTO29);
+    let mut wire = Vec::new();
+    push_file_echo(
+        &mut wire,
+        &mut codec,
+        5,
+        SenderAttrs::ITEM_IS_NEW | SenderAttrs::ITEM_LOCAL_CHANGE,
+    );
+
+    let mut sink = NoLazyFlist::new(StreamRole::Receiver, 4);
+    let mut reader = Cursor::new(wire);
+    let mut read_codec = create_ndx_codec(PROTO29);
+
+    let (ndx, attrs) = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut sink, false, false)
+        .expect("a non-keep-alive frame decodes")
+        .expect("a per-file index, not NDX_DONE");
+    assert_eq!(ndx, 5);
+    assert_eq!(
+        attrs.iflags,
+        SenderAttrs::ITEM_IS_NEW | SenderAttrs::ITEM_LOCAL_CHANGE
+    );
+}
+
+/// PROTOCOL CONTROL: the branch is gated on `protocol_version < 30`. The
+/// identically shaped frame at protocol 30 is a real frame and must surface.
+#[test]
+fn proto30_frame_with_keepalive_shape_is_not_consumed() {
+    const PROTO30: u8 = 30;
+    let mut codec = create_ndx_codec(PROTO30);
+    let mut wire = Vec::new();
+    push_file_echo(&mut wire, &mut codec, 5, SenderAttrs::ITEM_IS_NEW);
+
+    let mut sink = NoLazyFlist::new(StreamRole::Receiver, 4);
+    let mut reader = Cursor::new(wire);
+    let mut read_codec = create_ndx_codec(PROTO30);
+
+    let (ndx, attrs) = read_ndx_and_attrs(&mut reader, &mut read_codec, &mut sink, false, false)
+        .expect("a protocol-30 frame decodes")
+        .expect("a per-file index, not NDX_DONE");
+    assert_eq!(ndx, 5);
+    assert_eq!(attrs.iflags, SenderAttrs::ITEM_IS_NEW);
+}

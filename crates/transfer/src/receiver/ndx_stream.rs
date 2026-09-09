@@ -47,16 +47,19 @@
 //! - **The `dir_ndx` range check** (`rsync.c:361-369`) is not duplicated here;
 //!   [`ReceiverContext::receive_one_extra_segment`] already performs it
 //!   (mirroring `flist.c:2622-2626`) before appending anything.
-//! - **The protocol-29 keep-alive re-entry** (`rsync.c:386-391`) is not
-//!   implemented. It is a known incompleteness, tracked separately. Note that
-//!   it is *not* dead code: rsync 3.0.9 emits the raw form at exactly protocol
-//!   29 (`io.c:953-968` - `write_int(sock_f_out, cur_flist->used)` followed by
-//!   `write_shortint(sock_f_out, ITEM_IS_NEW)`), and 3.4.4 replaced it with an
-//!   unconditional empty `MSG_DATA` (`io.c:1445-1453`), so the cutoff is rsync
-//!   3.1.0 and the reader branch exists solely for peers <= 3.0.x. oc
-//!   negotiates down to protocol 28, so the frame is reachable. Because the
-//!   branch re-enters the loop *after* `iflags` is decoded, [`read_ndx_and_attrs`]
-//!   keeps the attribute read inside its loop and marks the insertion point.
+//! - **The protocol-29 keep-alive reply** (`rsync.c:389-390`, `if (am_sender)
+//!   maybe_send_keepalive(...)`) is not emitted from here. The tolerance half
+//!   *is* implemented: [`read_ndx_and_attrs`] consumes the frame and re-enters
+//!   its loop. The frame is not dead code: rsync 3.0.9 emits the raw form at
+//!   exactly protocol 29 (`io.c:953-968` - `write_int(sock_f_out,
+//!   cur_flist->used)` followed by `write_shortint(sock_f_out, ITEM_IS_NEW)`),
+//!   and 3.5.0 replaced emission with an unconditional empty `MSG_DATA`
+//!   (`io.c:1606-1612`), so the cutoff is rsync 3.1.0 and the reader branch
+//!   exists solely for peers <= 3.0.x. oc negotiates down to protocol 28, so
+//!   the frame is reachable. Every sink routed here reads as the receiving
+//!   side, which upstream answers with silence; the `am_sender` reply lives at
+//!   the sender's open-coded request loop
+//!   (`generator/transfer/transfer_loop.rs`), which owns a writer.
 //! - **The xname `sanitize_path()` pass** (`rsync.c:408-429`) stays with its
 //!   current owner, [`SenderAttrs::read_attrs_after_ndx`]'s basis-xname
 //!   sanitizer. The non-regular-file guard (`rsync.c:436-444`) is **not** an
@@ -450,9 +453,8 @@ where
 ///
 /// The attribute read sits **inside** the loop on purpose. Upstream's
 /// `read_loop` has a second entry point *after* `iflags` is decoded: the
-/// protocol-29 keep-alive branch (`rsync.c:386-391`) `goto`s back into it. That
-/// branch is not implemented here (see the module docs); the `continue` seam it
-/// needs is marked below so adding it is an insertion, not a restructuring.
+/// protocol-29 keep-alive branch (`rsync.c:386-391`) `goto`s back into it, and
+/// the `continue` below is that re-entry.
 ///
 /// # Upstream Reference
 ///
@@ -489,13 +491,26 @@ where
             want_xattr_optim,
         )?;
 
-        // SEAM - upstream: rsync.c:386-391
-        //   if (protocol_version < 30 && ndx == cur_flist->used && iflags == ITEM_IS_NEW) {
-        //       if (am_sender) maybe_send_keepalive(time(NULL), MSK_ALLOW_FLUSH);
+        // upstream: rsync.c:386-391 - the protocol-29 keep-alive frame:
+        //   if (protocol_version < 30 && ndx == cur_flist->used && iflags == ITEM_IS_NEW)
         //       goto read_loop;
-        //   }
-        // A `continue` here re-enters the loop above. Deliberately absent; see
-        // the module docs for why it is tracked separately.
+        // A <=3.0.x peer running --timeout writes `NDX == cur_flist->used`
+        // followed by `iflags == ITEM_IS_NEW` as its keep-alive (3.0.9
+        // io.c:953-968); the frame names no entry and is consumed by
+        // re-entering the loop. `last_file_ndx() + 1` is `cur_flist->used`:
+        // at protocol < 30 there is no INC_RECURSE, so `ndx_start` is 0 and
+        // the highest valid index is `used - 1`. The `if (am_sender)
+        // maybe_send_keepalive(...)` reply half (rsync.c:389-390) lives with
+        // the sender's open-coded request loop
+        // (`generator/transfer/transfer_loop.rs`), the only `am_sender`
+        // reader; every sink routed here reads as the receiving side, which
+        // upstream answers with silence.
+        if protocol_version < 30
+            && ndx == sink.last_file_ndx() + 1
+            && attrs.iflags == SenderAttrs::ITEM_IS_NEW
+        {
+            continue;
+        }
 
         // upstream: rsync.c:436-444 - an ITEM_TRANSFER frame must name a
         // regular file: `i = ndx - cur_flist->ndx_start; if (i < 0 ||

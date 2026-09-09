@@ -157,6 +157,28 @@ impl<W: Write> MultiplexWriter<W> {
         let Some(lull) = self.allowed_lull else {
             return Ok(false);
         };
+        self.send_keepalive_after_lull(lull)
+    }
+
+    /// Answers a peer's protocol-29 keep-alive frame (`rsync.c:389-390`).
+    ///
+    /// Upstream routes the reply through `maybe_send_keepalive()` even when
+    /// `--timeout` is not set: `allowed_lull` starts at 0 (io.c:83) and
+    /// `set_io_timeout(0)` recomputes it as `(0 + 1) / 2 == 0` (io.c:1281), so
+    /// the `now - last_io_out >= allowed_lull` test (io.c:1626) passes
+    /// unconditionally and the reply goes out immediately. With `--timeout`
+    /// the configured half-interval gates the reply exactly as it gates a
+    /// spontaneous keepalive, so this treats an unset lull as zero rather
+    /// than as "disabled".
+    pub(crate) fn answer_keepalive(&mut self) -> io::Result<bool> {
+        let lull = self.allowed_lull.unwrap_or(Duration::ZERO);
+        self.send_keepalive_after_lull(lull)
+    }
+
+    /// The shared body of [`Self::maybe_send_keepalive`] and
+    /// [`Self::answer_keepalive`]: upstream `io.c:maybe_send_keepalive()`
+    /// (io.c:1613-1641) with `allowed_lull` supplied by the caller.
+    fn send_keepalive_after_lull(&mut self, lull: Duration) -> io::Result<bool> {
         if self.last_io_out.elapsed() < lull {
             return Ok(false);
         }
@@ -449,6 +471,46 @@ mod keepalive_tests {
         assert!(!w.maybe_send_keepalive().unwrap());
 
         // The single frame on the wire carries the real data, not an empty frame.
+        let frame = recv_msg(&mut Cursor::new(&out)).unwrap();
+        assert_eq!(frame.code(), MessageCode::Data);
+        assert_eq!(frame.payload(), b"pending");
+    }
+
+    /// Answering a protocol-29 keep-alive frame without `--timeout` replies
+    /// immediately: upstream's `allowed_lull` is 0 in that case (io.c:83,
+    /// io.c:1281), so `maybe_send_keepalive()` at rsync.c:389-390 always sends.
+    #[test]
+    fn answer_keepalive_without_timeout_replies_immediately() {
+        let mut out: Vec<u8> = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+        assert!(w.answer_keepalive().unwrap());
+
+        let frame = recv_msg(&mut Cursor::new(&out)).unwrap();
+        assert_eq!(frame.code(), MessageCode::Data);
+        assert!(frame.payload().is_empty());
+    }
+
+    /// With `--timeout` configured, the reply is gated on the same lull as a
+    /// spontaneous keepalive (`now - last_io_out >= allowed_lull`, io.c:1626):
+    /// nothing goes out before the half-interval elapses.
+    #[test]
+    fn answer_keepalive_with_unelapsed_lull_stays_silent() {
+        let mut out: Vec<u8> = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+        w.set_allowed_lull(Some(Duration::from_secs(3600)));
+        assert!(!w.answer_keepalive().unwrap());
+        assert!(out.is_empty());
+    }
+
+    /// Like the spontaneous path, an answer with data still buffered flushes
+    /// that data instead of emitting an empty frame (io.c:1636-1639).
+    #[test]
+    fn answer_keepalive_flushes_pending_data_instead_of_empty_frame() {
+        let mut out: Vec<u8> = Vec::new();
+        let mut w = MultiplexWriter::new(&mut out);
+        w.write_all(b"pending").unwrap();
+        assert!(!w.answer_keepalive().unwrap());
+
         let frame = recv_msg(&mut Cursor::new(&out)).unwrap();
         assert_eq!(frame.code(), MessageCode::Data);
         assert_eq!(frame.payload(), b"pending");
