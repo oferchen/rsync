@@ -14,6 +14,7 @@ use super::types::StatxResult;
 /// The result is cached after the first call using a probe syscall.
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
 #[must_use]
+#[allow(unsafe_code)]
 pub fn has_statx_support() -> bool {
     use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -125,6 +126,7 @@ pub fn statx_size_and_mtime<P: AsRef<Path>>(
 /// The `dir_fd` parameter enables directory-relative lookups (AT_FDCWD for
 /// absolute paths, or an open directory fd for relative paths).
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+#[allow(unsafe_code)]
 fn statx_with_mask(
     dir_fd: i32,
     path: &Path,

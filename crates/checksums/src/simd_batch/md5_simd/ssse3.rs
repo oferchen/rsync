@@ -153,6 +153,7 @@ macro_rules! rotl {
 /// `is_x86_feature_detected!("ssse3")` before calling.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "ssse3")]
+#[allow(unsafe_code)]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
@@ -370,6 +371,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)]
 mod tests {
     use super::super::super::md5_scalar;
     use super::*;
