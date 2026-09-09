@@ -3780,15 +3780,38 @@ mod module_access_tests {
     }
 
     #[test]
-    fn a_per_dir_merge_adds_no_rule() {
-        // upstream adds the perdir rule to the daemon list, where it can match
-        // nothing and is never expanded. MEASURED: `filter = dir-merge rules`
-        // and `filter = : rules` both serve every file. oc-base built an
-        // EXCLUDE of the literal pattern `dir-merge rules`, a rule a file of
-        // that name would have matched.
+    fn the_per_dir_spellings_are_not_read_eagerly() {
+        // SCOPE BOUNDARY, and NOT a claim that this is upstream-faithful.
+        //
+        // ⚠ AN EARLIER VERSION OF THIS CELL ASSERTED THE OPPOSITE - that `:`
+        // and `dir-merge` add no rule because upstream's daemon list "never
+        // descends per directory". That is REFUTED. `add_rule` registers every
+        // FILTRULE_PERDIR_MERGE rule into the GLOBAL `mergelist_parents`
+        // (exclude.c:349-391) whatever list it went into, so a rule in
+        // `daemon_filter_list` is registered too; `push_local_filters` then
+        // fills that rule's own `u.mergelist` per directory and `check_filter`
+        // recurses into it. MEASURED against rsync 3.5.0, module holding
+        // `sub/.rsync-filter` = `- bait.txt`: `filter = : .rsync-filter` HIDES
+        // `sub/bait.txt`, and `filter = dir-merge rules` hides it with the merge
+        // file and the bait at the module root too. oc serves it in every one of
+        // those cells - a live divergence, tracked as its own change because it
+        // needs a `RuleType::DirMerge` wire rule rather than an eager read.
+        //
+        // The cell survives so [`merge_rule`] cannot quietly grow a `:` arm that
+        // reads the file EAGERLY: that would answer a per-directory rule with a
+        // root-only one and look like the feature while not being it.
         let dir = tempfile::tempdir().expect("temp dir");
-        assert!(filter_patterns(dir.path(), "dir-merge rules").is_empty());
-        assert!(filter_patterns(dir.path(), ": rules").is_empty());
+        merge_file(dir.path(), "rules", "- bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), ": ./rules"),
+            vec![": ./rules".to_string()],
+            "`:` must not be read eagerly"
+        );
+        assert_eq!(
+            filter_patterns(dir.path(), "dir-merge ./rules"),
+            vec!["dir-merge ./rules".to_string()],
+            "`dir-merge` must not be read eagerly"
+        );
     }
 
     #[test]

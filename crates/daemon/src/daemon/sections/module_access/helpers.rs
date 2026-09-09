@@ -338,12 +338,6 @@ fn push_token_rules(
 struct MergeRule<'a> {
     /// The merge-file name, before [`merge_file_path`] resolves it.
     name: &'a str,
-    /// `:` / `dir-merge` - `FILTRULE_PERDIR_MERGE`. Nothing is read here: with
-    /// `parent_dirscan` false the rule is added to the list as-is
-    /// (exclude.c:1573-1582) and the daemon list never descends per directory,
-    /// so it can match nothing. MEASURED: `filter = dir-merge rules` serves
-    /// every file of the module, as `filter = : rules` does.
-    per_dir: bool,
     /// `-`, `+` or `C` - `FILTRULE_NO_PREFIXES`: every record is a bare pattern.
     no_prefixes: bool,
     /// `+` - `FILTRULE_INCLUDE`, inherited by each record.
@@ -353,30 +347,39 @@ struct MergeRule<'a> {
     exclude_self: bool,
 }
 
-/// Classifies a token as a merge rule, or `None` when it is not one.
+/// Classifies a token as an EAGER merge rule - `merge` / `.` - or `None`.
 ///
-/// upstream: `exclude.c:1292-1297` maps `merge` to `.` and `dir-merge` to `:`;
-/// `exclude.c:1332-1339` gives them `FILTRULE_MERGE_FILE` and, for `:`,
-/// `FILTRULE_PERDIR_MERGE` as well.
+/// upstream: `exclude.c:1292-1294` maps `merge` to `.`, and `exclude.c:1336-1338`
+/// gives it `FILTRULE_MERGE_FILE`. `parse_filter_str` reads such a file once, at
+/// parse time (exclude.c:1581-1590), which is what this function feeds.
 ///
-/// ⚠ `.` and `:` are NOT token-boundary openers in [`split_filter_tokens`], and
+/// ⚠ THE PER-DIRECTORY SPELLINGS `:` / `dir-merge` ARE DELIBERATELY NOT HANDLED
+/// HERE, and they are NOT a no-op in upstream. `add_rule` registers every
+/// `FILTRULE_PERDIR_MERGE` rule into the GLOBAL `mergelist_parents`
+/// (exclude.c:349-391) whatever list it was added to, so a rule in
+/// `daemon_filter_list` is registered too; `push_local_filters` then fills that
+/// rule's own `u.mergelist` per directory and `check_filter` recurses into it.
+/// MEASURED against rsync 3.5.0 (module with `sub/.rsync-filter` holding
+/// `- bait.txt`): `filter = : .rsync-filter` HIDES `sub/bait.txt`, and so does
+/// `filter = dir-merge rules` with the merge file and the bait at the module
+/// root. Expressing that needs a `RuleType::DirMerge` wire rule rather than an
+/// eager read, so it is tracked as its own change; a token opening `:` or
+/// `dir-merge` keeps whatever the single-rule parser already did with it.
+///
+/// ⚠ `.` is NOT a token-boundary opener in [`split_filter_tokens`], and
 /// deliberately so - see [`opens_clear_rule`] for the same reasoning applied to
 /// `!`. `filter = - .git` is ONE rule whose pattern is `.git`; opening a token
 /// on the `.` would leave a patternless `-` and refuse the commonest daemon
 /// filter there is. A `merge` token therefore has to lead its value, or follow
-/// the `merge`/`dir-merge` KEYWORD spelling that [`RULE_KEYWORDS`] does open.
+/// the `merge` KEYWORD spelling that [`RULE_KEYWORDS`] does open.
 fn merge_rule<'a>(
     token: &'a str,
     xflags: RuleXflags,
 ) -> Result<Option<MergeRule<'a>>, MalformedRule> {
-    let (per_dir, rest, base) = if let Some(rest) = token.strip_prefix('.') {
-        (false, rest, 1)
-    } else if let Some(rest) = token.strip_prefix(':') {
-        (true, rest, 1)
+    let (rest, base) = if let Some(rest) = token.strip_prefix('.') {
+        (rest, 1)
     } else if let Some(rest) = strip_matched_keyword(token, "merge") {
-        (false, rest, "merge".len())
-    } else if let Some(rest) = strip_matched_keyword(token, "dir-merge") {
-        (true, rest, "dir-merge".len())
+        (rest, "merge".len())
     } else {
         return Ok(None);
     };
@@ -403,7 +406,6 @@ fn merge_rule<'a>(
 
     Ok(Some(MergeRule {
         name,
-        per_dir,
         no_prefixes: modifiers.no_prefixes,
         include: modifiers.include,
         exclude_self: modifiers.exclude_self,
@@ -530,10 +532,6 @@ fn push_merge_file_rules(
         // which this path does not have.
         let base = merge.name.rsplit('/').next().unwrap_or(merge.name);
         rules.push(build_pattern_rule(base, false, RuleXflags::MergeFile));
-    }
-
-    if merge.per_dir {
-        return Ok(());
     }
 
     // upstream: exclude.c:1619-1628 - the depth check precedes the open, and is
@@ -882,8 +880,10 @@ fn read_patterns_from_file(path: &Path) -> Result<Vec<(String, usize)>, io::Erro
 /// character. The list is shared by the tokenizer and, through
 /// [`is_rule_keyword`], uses one terminator rule rather than a second copy.
 ///
-/// `merge` and `dir-merge` are openers here and are answered by [`merge_rule`],
-/// which [`push_token_rules`] consults before the single-rule parser.
+/// `merge` is an opener here and is answered by [`merge_rule`], which
+/// [`push_token_rules`] consults before the single-rule parser. `dir-merge`
+/// opens a token too and still reaches the single-rule parser's bare-pattern
+/// arm - see [`merge_rule`] for why the per-directory spellings are held back.
 const RULE_KEYWORDS: &[&str] = &[
     "include",
     "exclude",
