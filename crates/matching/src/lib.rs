@@ -26,8 +26,6 @@
 mod fuzzy;
 mod generator;
 mod index;
-/// Two-level block match search mirroring upstream rsync's `match.c`.
-pub mod optimized_search;
 mod ring_buffer;
 mod script;
 pub mod trace_deltasum;
