@@ -52,8 +52,11 @@
 //! neither produces an upstream-shaped resolved config:
 //!
 //! - `ssh::config_lookup` has the `Host`/`Match` matching machinery but
-//!   its single entry point returns a `bool` for `Compression` alone. It
-//!   resolves no values.
+//!   resolves exactly one value: a `bool` for `Compression`. That one
+//!   value is wired into [`oc_resolution`] as the `compression` row (behind
+//!   the `ssh-config-parse` feature that owns the parser), so parser B's
+//!   `Host`-pattern behaviour is measured here rather than only by unit
+//!   tests asserting our own reading of the C.
 //! - `ssh::embedded::ssh_config` (this module's neighbour) is the
 //!   value-carrying resolver - [`ResolvedHost`], six directives - but it
 //!   understands `Host` only, with no `Match`, no `Include`, and no token
@@ -86,6 +89,8 @@ use std::path::Path;
 use std::process::Command;
 
 use super::ssh_config::resolve_host_str;
+#[cfg(feature = "ssh-config-parse")]
+use crate::ssh::config_lookup::{MatchContext, parse_enables_compression};
 
 /// Whether `ssh -G` prints a keyword's value with tokens already expanded.
 ///
@@ -276,6 +281,22 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
         "identityagent".to_owned(),
         resolved.identity_agent.clone().map(|a| vec![a]),
     );
+
+    // Parser B's one resolved value. Its `false` covers both "Compression
+    // no" and "no directive at all", and upstream's default is also `no`
+    // (openssh/readconf.c dumps `compression no`), so the boolean is
+    // comparable end to end. Without the feature the row is absent and
+    // upstream's `compression` line lands in `NotResolvedByOc`, which is
+    // the truth for that build rather than a hidden pass.
+    #[cfg(feature = "ssh-config-parse")]
+    {
+        let ctx = MatchContext::new(alias, alias, "", "");
+        let enabled = parse_enables_compression(config_text, &ctx);
+        map.insert(
+            "compression".to_owned(),
+            Some(vec![if enabled { "yes" } else { "no" }.to_owned()]),
+        );
+    }
 
     map
 }
@@ -524,6 +545,71 @@ mod tests {
                 "{keyword}: upstream {:?} vs oc {:?}",
                 cell.upstream,
                 cell.oc
+            );
+        }
+    }
+
+    /// A COMMA is not a `Host` separator, measured on both parsers at once.
+    ///
+    /// Upstream tokenises the `Host` line with `argv_split`
+    /// (openssh/misc.c:2130-2185), whose only separators are `' '` and
+    /// `'\t'` (openssh/misc.c:2141), then matches each token individually
+    /// with `match_pattern` in the `argv_next` loop
+    /// (openssh/readconf.c:1831-1858, the call at :1844). The `oHost` arm
+    /// never reaches `match_pattern_list`, the function that does cut at a
+    /// comma (openssh/match.c:143), so `a,b` is one pattern matching only
+    /// the literal string `a,b`.
+    ///
+    /// Measured before the fix on `OpenSSH_10.3p1`: upstream reports
+    /// `port 22` and `compression no` for alias `a`, while oc applied the
+    /// block - port 2222 from the value-carrying parser and compression
+    /// yes from the `config_lookup` parser. One fixture, both parsers: the
+    /// `port`/`user` rows are `embedded::ssh_config`, the `compression`
+    /// row is `config_lookup`.
+    ///
+    /// ⚠ The mirror image - alias `a,b`, which upstream DOES match - cannot
+    /// be measured here: `ssh -G a,b` refuses with "hostname contains
+    /// invalid characters" and exits nonzero, so the oracle has no verdict
+    /// to give. That half is pinned by unit tests beside each parser.
+    #[test]
+    fn a_comma_in_a_host_line_is_not_a_separator() {
+        const FIXTURE: &str = "Host a,b\n  Port 2222\n  User alice\n  Compression yes\n";
+
+        let diff = match run(FIXTURE, "a") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("host comma separator", &why);
+                return;
+            }
+        };
+
+        // Upstream declined the block, so its port is the built-in
+        // default. The harness models no defaults, so oc's side must be
+        // unresolved - `OcUnset` is the assertion, and a pre-fix oc would
+        // land on `Mismatch` with 2222.
+        let port = diff.cell("port").expect("dumped");
+        assert_eq!(port.upstream, vec!["22"]);
+        assert_eq!(
+            port.verdict,
+            Verdict::OcUnset,
+            "oc applied a comma-separated Host block: {:?} on {}",
+            port.oc,
+            diff.oracle_version
+        );
+        // `user` is dumped as the local account when no directive matched,
+        // so the value is host-dependent; the verdict is not.
+        assert_eq!(diff.cell("user").expect("dumped").verdict, Verdict::OcUnset);
+
+        #[cfg(feature = "ssh-config-parse")]
+        {
+            let cell = diff.cell("compression").expect("dumped");
+            assert_eq!(cell.upstream, vec!["no".to_owned()]);
+            assert_eq!(
+                cell.verdict,
+                Verdict::Match,
+                "compression parser applied a comma-separated Host block: oc {:?} on {}",
+                cell.oc,
+                diff.oracle_version
             );
         }
     }
