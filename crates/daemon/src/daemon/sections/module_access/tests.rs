@@ -5116,12 +5116,16 @@ mod module_access_tests {
         assert_eq!(sources, vec![module_path.join("ab.txt")]);
     }
 
-    // Unix-only for the FIXTURE, not for the behaviour: a Windows filesystem
-    // cannot hold a file named `]x`. The pattern now reaches the matcher
-    // intact on every platform - `expand_relative_glob` splits segments on `/`
-    // alone (upstream util1.c:749) - and the Windows arm of that is pinned by
-    // `resolve_sender_sources_glob_backslash_is_escape_not_separator_windows`.
-    #[cfg(unix)]
+    // Runs on EVERY platform, unlike the two escape tests above: `[`, `]` and
+    // `x` are all legal in a Windows filename, so the fixture is
+    // representable there and this is a live Windows assertion rather than a
+    // reasoned one.
+    //
+    // It was `#[cfg(unix)]` while `expand_relative_glob` walked
+    // `std::path::Component`s, because on Windows that split `[\]]*` at the
+    // `\` into the segments `[` and `]]*` and the pattern never reached the
+    // matcher intact. Splitting on `/` alone (upstream util1.c:749) closes
+    // that, so the gate comes off and the Windows CI cell now executes it.
     #[test]
     fn resolve_sender_sources_glob_class_with_escaped_bracket() {
         // upstream: lib/wildmatch.c:154-161 - inside a `[...]` class a `\`
