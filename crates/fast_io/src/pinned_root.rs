@@ -54,7 +54,7 @@
 //! Keeping `O_PATH` also means the platform where the anchored stat already
 //! works issues the same syscall it did before, so this change cannot move it.
 //!
-//! [`open_o_path`](crate::pinned_root::open_o_path) stays Linux-only
+//! `open_o_path` stays Linux-only
 //! regardless: a Landlock rule needs the directory as a descriptor, and
 //! there is no portable stand-in for that.
 //!
