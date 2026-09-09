@@ -36,7 +36,7 @@ jobs:
 
       - name: Install upstream rsync
         run: |
-          sudo apt-get update
+          bash tools/ci/apt_update.sh
           sudo apt-get install -y rsync
           /usr/bin/rsync --version | head -n 1
 

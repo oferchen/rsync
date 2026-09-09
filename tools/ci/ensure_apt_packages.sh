@@ -83,7 +83,9 @@ fi
 printf '::warning::APT cache restored without payload; installing %d missing package(s): %s\n' \
     "${#missing[@]}" "${missing[*]}"
 
-sudo apt-get update
+# Index refresh is best effort; the install below plus the dpkg re-check are the
+# gate. See apt_update.sh for which failures it forwards and which it swallows.
+bash "$(dirname "$0")/apt_update.sh"
 sudo apt-get install -y --no-install-recommends "${missing[@]}"
 
 # Re-ask dpkg. `apt-get install` can exit 0 having skipped a package it could

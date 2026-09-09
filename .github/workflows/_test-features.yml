@@ -256,7 +256,7 @@ jobs:
       - name: Install APT packages
         if: matrix.apt != ''
         run: |
-          sudo apt-get update
+          bash tools/ci/apt_update.sh
           sudo apt-get install -y --no-install-recommends ${{ matrix.apt }}
 
       - name: Rust cache

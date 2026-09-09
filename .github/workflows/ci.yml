@@ -717,14 +717,18 @@ jobs:
           # Cold miss only: resolve and download the package set once. There is
           # no retry - a failure here fails the job immediately and loudly, with
           # the apt diagnostics needed to tell a mirror outage from a package
-          # that has been renamed out from under us.
+          # that has been renamed out from under us. The index refresh goes
+          # through apt_update.sh, which forwards every failure except the one
+          # apt itself declares ignorable (a third-party repo's index that was
+          # skipped in favour of the cached copy); the download below is what
+          # decides whether the compiler is actually resolvable.
           if ! compgen -G "$debs/*.deb" >/dev/null; then
             # Empty apt's archive dir first so the copy below picks up only what
             # this install resolves, never leftovers from the image build - an
             # unrelated .deb swept into the cache would be dpkg -i'd on every
             # later hit.
             sudo apt-get clean
-            if ! sudo apt-get update; then
+            if ! bash tools/ci/apt_update.sh; then
               echo "apt-get update failed; mingw-w64 cannot be resolved" >&2
               apt-cache policy gcc-mingw-w64-x86-64 2>&1 | head -30 >&2 || true
               exit 1
@@ -887,7 +891,7 @@ jobs:
         run: rustup target add x86_64-unknown-linux-musl
 
       - name: Install musl toolchain
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        run: bash tools/ci/apt_update.sh && sudo apt-get install -y musl-tools
 
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
