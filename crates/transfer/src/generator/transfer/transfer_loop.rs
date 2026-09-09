@@ -728,6 +728,26 @@ impl GeneratorContext {
             // exact wire bytes consumed so this count never drifts from the wire.
             self.timing.total_bytes_read += trailing_bytes;
 
+            // upstream: rsync.c:387-391 - the protocol-29 keep-alive frame. A
+            // <=3.0.x generator running --timeout writes `NDX ==
+            // cur_flist->used` followed by `iflags == ITEM_IS_NEW` as its
+            // keep-alive (3.0.9 io.c:953-968); rsync >= 3.1.0 sends an empty
+            // MSG_DATA instead, so only old peers emit this frame. It names no
+            // entry: consume it, answer with our own keepalive (`if (am_sender)
+            // maybe_send_keepalive(time(NULL), MSK_ALLOW_FLUSH)`, rsync.c:389-390)
+            // and re-enter the read loop. An exact ITEM_IS_NEW carries no
+            // follows-bits, so read_trailing consumed nothing and checking here
+            // is byte-identical to upstream's placement right after the iflags
+            // read. Protocol < 30 has no INC_RECURSE, so the wire NDX compares
+            // directly against the full list length.
+            if self.protocol.as_u8() < 30
+                && wire_ndx as usize == self.file_list.len()
+                && iflags.raw() == ItemFlags::ITEM_IS_NEW
+            {
+                writer.answer_keepalive()?;
+                continue;
+            }
+
             // upstream: rsync.c:436-444 - read_ndx_and_attrs() refuses an
             // ITEM_TRANSFER frame whose index does not name a regular file
             // ("received request to transfer non-regular file") with
@@ -2640,6 +2660,149 @@ mod non_regular_request_guard_tests {
 
         let files = drive(&mut ctx, wire).expect("a regular file must still transfer");
         assert_eq!(files, 1, "the guard must not swallow a legitimate request");
+    }
+}
+
+#[cfg(test)]
+mod proto29_keepalive_tests {
+    //! The sender's protocol-29 keep-alive branch (rsync.c:387-391).
+    //!
+    //! A <=3.0.x generator running `--timeout` writes `NDX == cur_flist->used`
+    //! followed by `iflags == ITEM_IS_NEW` as its keep-alive (3.0.9
+    //! io.c:953-968). The sender consumes the frame, answers with its own
+    //! keepalive (`if (am_sender) maybe_send_keepalive(time(NULL),
+    //! MSK_ALLOW_FLUSH)`, rsync.c:389-390) and re-enters the read loop.
+
+    use std::ffi::OsString;
+    use std::io::{self, Cursor, Write};
+    use std::path::PathBuf;
+
+    use protocol::ProtocolVersion;
+    use protocol::codec::{MonotonicNdxWriter, NdxCodec};
+
+    use crate::config::ServerConfig;
+    use crate::generator::GeneratorContext;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use crate::writer::ServerWriter;
+
+    /// `ITEM_IS_NEW` (0x2000) as its 2-byte little-endian wire encoding.
+    const ITEM_IS_NEW_LE: [u8; 2] = [0x00, 0x20];
+
+    /// The empty `MSG_DATA` keepalive on the wire: a 4-byte multiplex header
+    /// with payload length 0 and tag `MPLEX_BASE + MSG_DATA` (7). This is the
+    /// exact frame upstream's `maybe_send_keepalive` emits (io.c:1633).
+    const EMPTY_MSG_DATA_FRAME: [u8; 4] = [0x00, 0x00, 0x00, 0x07];
+
+    /// Builds a sender at `protocol` over a single source file, so the
+    /// keep-alive NDX (`cur_flist->used`) is 1.
+    fn generator_at(protocol: u8) -> (tempfile::TempDir, GeneratorContext) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("only.txt");
+        std::fs::write(&file, b"payload").expect("write source");
+
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(protocol).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(protocol).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(&file)],
+            ..Default::default()
+        };
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        ctx.build_file_list(&[PathBuf::from(&file)])
+            .expect("build file list");
+        (dir, ctx)
+    }
+
+    /// Drives the sender loop over a MULTIPLEXED writer (the production shape:
+    /// the server-to-client stream is multiplexed at every supported protocol)
+    /// and returns the exact bytes it wrote.
+    fn drive_multiplexed(ctx: &mut GeneratorContext, incoming: Vec<u8>) -> io::Result<Vec<u8>> {
+        let mut out: Vec<u8> = Vec::new();
+        {
+            let mut reader = Cursor::new(incoming);
+            let mut writer = ServerWriter::new_plain(&mut out).activate_multiplex()?;
+            let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
+            let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
+            ctx.run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)?;
+            writer.flush()?;
+        }
+        Ok(out)
+    }
+
+    /// Three `NDX_DONE`s: enough to drain every phase and end the loop.
+    fn push_phase_dones(ndx: &mut MonotonicNdxWriter, wire: &mut Vec<u8>) {
+        ndx.write_ndx_done(wire).expect("done");
+        ndx.write_ndx_done(wire).expect("done");
+        ndx.write_ndx_done(wire).expect("done");
+    }
+
+    /// At protocol 29 the keep-alive frame is consumed and answered with
+    /// exactly one empty `MSG_DATA` keepalive; the rest of the session is
+    /// byte-identical to one without the frame.
+    ///
+    /// The A/B against the frame-less control pins "nothing else changed": the
+    /// reply may not displace, reorder or duplicate any other output, and the
+    /// control arm doubles as the no-trigger non-vacuity check (no keep-alive
+    /// frame in, no reply bytes out).
+    #[test]
+    fn proto29_sender_answers_the_keepalive_and_stream_is_otherwise_unchanged() {
+        let mut control_ndx = MonotonicNdxWriter::new(29);
+        let mut control = Vec::new();
+        push_phase_dones(&mut control_ndx, &mut control);
+        let (_dir_a, mut ctx_a) = generator_at(29);
+        let without = drive_multiplexed(&mut ctx_a, control).expect("control session completes");
+
+        let mut ndx = MonotonicNdxWriter::new(29);
+        let mut wire = Vec::new();
+        // The keep-alive frame: NDX == cur_flist->used (1) + ITEM_IS_NEW.
+        ndx.write_ndx(&mut wire, 1).expect("keep-alive ndx");
+        wire.extend_from_slice(&ITEM_IS_NEW_LE);
+        push_phase_dones(&mut ndx, &mut wire);
+        let (_dir_b, mut ctx_b) = generator_at(29);
+        let with = drive_multiplexed(&mut ctx_b, wire).expect("keep-alive session completes");
+
+        assert_eq!(
+            &with[..4],
+            &EMPTY_MSG_DATA_FRAME,
+            "the reply must be the empty MSG_DATA keepalive, sent before anything else"
+        );
+        assert_eq!(
+            with[4..],
+            without[..],
+            "apart from the reply, the session must be byte-identical"
+        );
+    }
+
+    /// PROTOCOL CONTROL: at protocol 30 the identically shaped frame is NOT a
+    /// keep-alive - it is handled as a regular non-transfer item, and no empty
+    /// MSG_DATA reply is emitted.
+    #[test]
+    fn proto30_sender_does_not_treat_the_frame_as_a_keepalive() {
+        let mut ndx = MonotonicNdxWriter::new(30);
+        let mut wire = Vec::new();
+        ndx.write_ndx(&mut wire, 1).expect("frame ndx");
+        wire.extend_from_slice(&ITEM_IS_NEW_LE);
+        push_phase_dones(&mut ndx, &mut wire);
+
+        let (_dir, mut ctx) = generator_at(30);
+        let out = drive_multiplexed(&mut ctx, wire).expect("session completes");
+
+        assert_ne!(
+            &out[..4],
+            &EMPTY_MSG_DATA_FRAME,
+            "protocol 30 must not answer the frame with a keepalive"
+        );
     }
 }
 

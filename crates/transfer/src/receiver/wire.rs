@@ -356,6 +356,10 @@ impl SenderAttrs {
     pub const ITEM_REPORT_XATTR: u16 = 1 << 8; // 0x0100
     /// Item flag indicating local change (e.g., hardlink with no transfer).
     pub const ITEM_LOCAL_CHANGE: u16 = 1 << 14; // 0x4000
+    /// Item flag indicating a newly created destination entry. An `iflags`
+    /// that is *exactly* this value, paired with `NDX == cur_flist->used`,
+    /// forms the protocol-29 keep-alive frame (`rsync.c:387-391`).
+    pub const ITEM_IS_NEW: u16 = 1 << 13; // 0x2000
 
     /// Reads sender attributes from the wire using an NDX codec.
     ///
