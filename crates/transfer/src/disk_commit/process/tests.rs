@@ -1180,20 +1180,22 @@ fn dir_mode(path: &Path) -> u32 {
 ///
 /// `create_backup_path_parents` does
 /// `env.metadata_opts.cloned().unwrap_or_default()`, and
-/// `MetadataOptions::default()` preserves permissions - so
-/// [`make_backup_backup_dir_subdir_inherits_source_mode`], which asks for
-/// `preserve_permissions(true)`, passes identically whether the field is
-/// threaded or dropped: the default agrees with it. This cell asks for
-/// `preserve_permissions(false)`, which no default can supply, so the freshly
-/// created backup subdirectory must keep the plain `mkdir` mode instead of the
-/// destination directory's.
+/// `MetadataOptions::default()` preserves times - so
+/// [`make_backup_backup_dir_subdir_inherits_source_mode`] passes identically
+/// whether the field is threaded or dropped: the default agrees with it. This
+/// cell asks for `preserve_times(false)`, which no default can supply, so the
+/// freshly created backup subdirectory must keep its wall-clock mtime instead
+/// of the destination directory's seeded one.
+///
+/// The permission leg cannot discriminate here: upstream's backup.c:173
+/// `set_file_attrs(backup_dir_buf, file, NULL, NULL, 0)` chmods the backup
+/// subdirectory to the destination directory's mode VERBATIM regardless of
+/// `--perms` (no `dest_mode()` collapse sits on the backup path - measured
+/// against rsync 3.5.0: dest dir 0700, `-r` without `-p` -> backup dir 0700),
+/// so that verbatim copy is pinned alongside.
 ///
 /// The two cells are each other's companions: this one proves the caller's
 /// options are consulted, that one proves the attribute copy runs at all.
-///
-/// upstream: `backup.c:173` `set_file_attrs(backup_dir_buf, file, NULL, NULL, 0)`
-/// applies the run's own preserve flags to each new backup subdirectory; it does
-/// not pick its own.
 #[cfg(unix)]
 #[test]
 fn make_backup_backup_dir_parent_honours_the_supplied_metadata_options() {
@@ -1201,13 +1203,23 @@ fn make_backup_backup_dir_parent_honours_the_supplied_metadata_options() {
 
     let (_dir, dest_dir, backup_dir, file_path, inherited_mode) = backup_dir_mode_fixture();
 
+    // Seed a recognisable old mtime on the destination subdirectory; a dropped
+    // metadata_opts (default: preserve_times on) would copy it to the backup
+    // subdirectory.
+    let seeded = filetime::FileTime::from_unix_time(1_000_000_000, 0);
+    filetime::set_file_mtime(dest_dir.join("sub"), seeded).expect("seed dest sub mtime");
+
     let config = BackupConfig {
         dest_dir: dest_dir.clone(),
         backup_dir: Some(backup_dir.clone()),
         suffix: OsString::new(),
     };
     let disk_config = DiskCommitConfig {
-        metadata_opts: Some(::metadata::MetadataOptions::new().preserve_permissions(false)),
+        metadata_opts: Some(
+            ::metadata::MetadataOptions::new()
+                .preserve_permissions(false)
+                .preserve_times(false),
+        ),
         ..DiskCommitConfig::default()
     };
 
@@ -1221,12 +1233,20 @@ fn make_backup_backup_dir_parent_honours_the_supplied_metadata_options() {
         backup_sub.join("payload.bin").exists(),
         "the fixture must actually place a backup under the new subdirectory"
     );
-    let mode = dir_mode(&backup_sub);
+    let backup_mtime = filetime::FileTime::from_last_modification_time(
+        &fs::metadata(&backup_sub).expect("stat backup sub"),
+    );
     assert_ne!(
+        backup_mtime, seeded,
+        "preserve_times(false) must reach the backup-dir attribute copy; a \
+         dropped metadata_opts falls back to a default that DOES preserve times"
+    );
+    // upstream: backup.c:173 - the mode is copied verbatim even without -p.
+    let mode = dir_mode(&backup_sub);
+    assert_eq!(
         mode, inherited_mode,
-        "preserve_permissions(false) must reach the backup-dir attribute copy; \
-         a dropped metadata_opts falls back to a default that DOES preserve \
-         permissions, got {mode:o}"
+        "the backup subdirectory must inherit the destination directory's \
+         permission bits verbatim, --perms or not (backup.c:173)"
     );
 }
 
