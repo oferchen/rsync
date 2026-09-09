@@ -246,7 +246,7 @@ exists in `fast_io` but is not reached directly from the executor.
 | `FSCTL_DUPLICATE_EXTENTS_TO_FILE` | Windows ReFS | YES (`transfer/execute/wincopy.rs::try_copy`, accepts `ReFsReflink`) | `fast_io::try_refs_reflink` | Pre-gated by `refs_detect::is_refs_filesystem`. |
 | `CopyFileExW` | Windows | YES (`wincopy::try_copy`, accepts `CopyFileEx`) | `PlatformCopy::copy_file` -> `dispatch::copy_file_ex_impl` | Kernel-side data copy with `COPY_FILE_NO_BUFFERING` for files > 4 MiB. |
 | `copy_file_range(2)` | Linux | NO direct arm; reached via the generic `copy_file_contents_buffered` loop | `fast_io::copy_file_range::copy_file_contents_buffered` | Last-resort read/write loop fallback after FICLONE/iouring arms decline. |
-| `sendfile(2)` | Linux/macOS (socket-target) | NO (engine local-copy is file-to-file) | `fast_io::platform_sendfile` / `sendfile_macos` | Used in network sender path, not the local-copy executor. |
+| `sendfile(2)` | Linux/macOS (socket-target) | NO (engine local-copy is file-to-file) | `fast_io::sendfile` / `sendfile_macos` | Used in network sender path, not the local-copy executor. |
 | `splice(2)` | Linux (pipe-target) | NO | `fast_io::splice` | Network sender path only. |
 | `vmsplice(2)` | Linux | NO | `fast_io::vmsplice_writer` | Network sender path only. |
 | `io_uring registered-buffer writes` | Linux (`iouring-data-writes` feature) | YES (`transfer/execute/iouring.rs::try_dispatch`) | `fast_io::io_uring_ops` | Not a reflink; routes after the FICLONE arm declines and before the generic write strategy. |
