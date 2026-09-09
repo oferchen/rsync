@@ -123,6 +123,27 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Allows a regular file's contents to be written into an existing device
+    /// node at the destination instead of replacing the node.
+    ///
+    /// The flag is a RECEIVER-side decision keyed on the DESTINATION: the
+    /// source is a regular file by construction, so nothing about the entry
+    /// being sent identifies it. Upstream consults it in exactly two places -
+    /// the make-way removal ahead of a regular-file transfer, and the device
+    /// write itself.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:684` - `{"write-devices", 0, POPT_ARG_VAL, &write_devices, 1, 0, 0}`
+    /// - `generator.c:2148` - `!(stype == FT_REG || (write_devices && stype == FT_DEVICE))`
+    /// - `receiver.c:1170` - `write_to_device = write_devices && IS_DEVICE(st.st_mode)`
+    #[must_use]
+    #[doc(alias = "--write-devices")]
+    pub const fn write_devices(mut self, write_devices: bool) -> Self {
+        self.write_devices = write_devices;
+        self
+    }
+
     /// Enables appending to existing destination files when they are shorter than the source.
     #[must_use]
     #[doc(alias = "--append")]
@@ -209,6 +230,14 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn inplace_enabled(&self) -> bool {
         self.inplace
+    }
+
+    /// Reports whether an existing device destination may be written through.
+    ///
+    /// upstream: `options.c:684` `--write-devices`.
+    #[must_use]
+    pub const fn write_devices_enabled(&self) -> bool {
+        self.write_devices
     }
 
     /// Returns `true` when appending to existing destinations is enabled.
