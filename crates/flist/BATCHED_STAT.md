@@ -136,14 +136,32 @@ The `BatchedStatCache` uses `Arc<fs::Metadata>` to enable cheap cloning while ma
 
 ```rust
 pub struct BatchedStatCache {
-    cache: Arc<Mutex<HashMap<PathBuf, Arc<fs::Metadata>>>>,
+    shards: Arc<[Mutex<HashMap<PathBuf, Arc<fs::Metadata>>>; SHARD_COUNT]>,
 }
 ```
 
 This design:
-- Allows thread-safe sharing via `Arc<Mutex<_>>`
+- Allows thread-safe sharing via a 16-shard array of `Mutex<HashMap<_>>`
 - Avoids cloning large metadata structures via `Arc<fs::Metadata>`
 - Enables reference-counted cleanup when entries are no longer needed
+
+### Cache lifetime and confinement
+
+The cache is keyed on a **path string** and has no invalidation trigger: only
+`clear()` empties it, and nothing here observes filesystem mutation. An entry is
+therefore authoritative for the cache's whole lifetime, and a hit answers for
+whatever the path denoted at fill time.
+
+This type is currently unreached. It must not be wired into any walk that
+crosses a confinement boundary without first being re-keyed onto a resolved
+handle (a held directory fd plus a single component), because a path-keyed hit
+reopens the TOCTOU window that the per-component resolver exists to close.
+`DirectoryStatBatch` already has the safe shape. The contract is stated in
+`docs/design/path-confinement-resolver-api.md` section 5.
+
+Upstream rsync has no counterpart: `flist.c`'s `lastdir` interns a directory
+*name*, not a `STRUCT_STAT`, and every upstream hashtable is keyed on integers
+(`(dev, ino)`, `gnum`, `fs_dev`) rather than on a path.
 
 ### Parallel Execution
 
