@@ -160,7 +160,7 @@ pub struct BasisFileConfig<'a> {
 /// naming configuration plus the sandbox environment the copy is confined by.
 ///
 /// Constructed only inside the crate (the fields feed
-/// [`crate::disk_commit::make_backup_copy`], whose environment type is
+/// `crate::disk_commit::make_backup_copy`, whose environment type is
 /// crate-private); external callers of [`find_basis_file_with_config`] pass
 /// `None`.
 #[derive(Clone, Copy)]

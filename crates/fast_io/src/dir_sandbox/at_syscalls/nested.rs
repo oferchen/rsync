@@ -175,7 +175,7 @@ pub(super) fn anchor_parent<'a>(
     }
 }
 
-/// Returns `true` when [`anchor_parent`] resolves a multi-component path's
+/// Returns `true` when `anchor_parent` resolves a multi-component path's
 /// parent beneath the sandbox root on this host, and `false` when it degrades
 /// to the caller's path-based fallback.
 ///
