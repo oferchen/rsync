@@ -271,7 +271,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .long("ssh-strict-host-key-checking")
                 .help_heading("oc-rsync extensions")
                 .value_name("MODE")
-                .help("Host key verification policy (yes, no, ask) for oc's embedded ssh:// transport (ssh:// URL operands only); standard host:path SSH uses ssh_config StrictHostKeyChecking or the -e/--rsh remote shell.")
+                .help("Host key verification policy (yes, no, ask, accept-new; true/false/off also accepted) for oc's embedded ssh:// transport (ssh:// URL operands only); standard host:path SSH uses ssh_config StrictHostKeyChecking or the -e/--rsh remote shell.")
                 .num_args(1)
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),

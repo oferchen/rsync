@@ -199,7 +199,7 @@ fn parse_ssh_url(url: &str, config: &ClientConfig) -> Result<(SshConfig, String)
     let (mut ssh_config, remote_path) = SshConfig::from_url(url)
         .map_err(|e| invalid_argument_error(&format!("invalid ssh:// URL: {e}"), 1))?;
 
-    apply_cli_overrides(&mut ssh_config, config);
+    apply_cli_overrides(&mut ssh_config, config)?;
 
     Ok((ssh_config, remote_path))
 }
@@ -250,7 +250,10 @@ fn parse_remote_operands_urls(
 /// how the subprocess SSH path handles `TransferTimeout::Disabled`.
 ///
 /// upstream: options.c - `--contimeout` is forwarded as SSH's `-o ConnectTimeout`.
-fn apply_cli_overrides(ssh_config: &mut SshConfig, config: &ClientConfig) {
+fn apply_cli_overrides(
+    ssh_config: &mut SshConfig,
+    config: &ClientConfig,
+) -> Result<(), ClientError> {
     let mut ssh_connect_timeout_set = false;
 
     if let Some(opts) = config.embedded_ssh_config() {
@@ -281,11 +284,23 @@ fn apply_cli_overrides(ssh_config: &mut SshConfig, config: &ClientConfig) {
 
         if let Some(ref policy) = opts.strict_host_key_checking {
             use rsync_io::ssh::embedded::StrictHostKeyChecking;
-            ssh_config.strict_host_key_checking = match policy.as_str() {
-                "yes" => StrictHostKeyChecking::Yes,
-                "no" => StrictHostKeyChecking::No,
-                _ => StrictHostKeyChecking::Ask,
-            };
+            // An unrecognised value is refused rather than silently becoming
+            // `ask`. Upstream reports `unsupported option` and counts a bad
+            // option, terminating the run (readconf.c:1270-1275, :2611-2613);
+            // exit 1 is its RERR_SYNTAX. Falling back to `ask` would swap the
+            // operator's requested policy for a MORE interactive one, which in
+            // an unattended transfer means a prompt nobody can answer.
+            ssh_config.strict_host_key_checking =
+                StrictHostKeyChecking::parse(policy).map_err(|unknown| {
+                    invalid_argument_error(
+                        &format!(
+                            "unsupported --ssh-strict-host-key-checking value \"{}\"; expected one of {}",
+                            unknown.0,
+                            StrictHostKeyChecking::ACCEPTED_VALUES.join(", "),
+                        ),
+                        1,
+                    )
+                })?;
         }
 
         if opts.prefer_ipv6 {
@@ -312,6 +327,8 @@ fn apply_cli_overrides(ssh_config: &mut SshConfig, config: &ClientConfig) {
             ssh_config.connect_timeout = Duration::ZERO;
         }
     }
+
+    Ok(())
 }
 
 /// Connects, authenticates, and runs a transfer over the embedded SSH transport.
@@ -1168,7 +1185,7 @@ mod tests {
             }))
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert_eq!(ssh_config.ciphers, Some(vec!["aes256-ctr".to_owned()]));
     }
 
@@ -1183,7 +1200,7 @@ mod tests {
             }))
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert_eq!(ssh_config.connect_timeout, Duration::from_secs(10));
     }
 
@@ -1199,7 +1216,7 @@ mod tests {
             }))
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert!(ssh_config.keepalive_interval.is_none());
     }
 
@@ -1215,7 +1232,7 @@ mod tests {
             }))
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert!(!ssh_config.use_agent);
     }
 
@@ -1230,10 +1247,75 @@ mod tests {
             }))
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert_eq!(
             ssh_config.strict_host_key_checking,
             rsync_io::ssh::embedded::StrictHostKeyChecking::Yes,
+        );
+    }
+
+    /// Every value upstream accepts survives the CLI override, `accept-new`
+    /// included. It previously fell through to `Ask`, which turns an
+    /// unattended transfer into a prompt nobody can answer.
+    #[test]
+    fn apply_cli_overrides_carries_every_accepted_strict_host_key_value() {
+        use rsync_io::ssh::embedded::StrictHostKeyChecking as Policy;
+
+        for (spelling, expected) in [
+            ("yes", Policy::Yes),
+            ("true", Policy::Yes),
+            ("no", Policy::No),
+            ("false", Policy::No),
+            ("off", Policy::No),
+            ("ask", Policy::Ask),
+            ("accept-new", Policy::AcceptNew),
+            ("ACCEPT-NEW", Policy::AcceptNew),
+        ] {
+            let mut ssh_config = SshConfig::default();
+            let config = ClientConfig::builder()
+                .embedded_ssh_config(Some(EmbeddedSshOptions {
+                    strict_host_key_checking: Some(spelling.to_owned()),
+                    ..Default::default()
+                }))
+                .build();
+
+            apply_cli_overrides(&mut ssh_config, &config)
+                .unwrap_or_else(|e| panic!("{spelling} rejected: {e}"));
+            assert_eq!(
+                ssh_config.strict_host_key_checking, expected,
+                "value {spelling}"
+            );
+        }
+    }
+
+    /// An unrecognised value is a REJECTION carrying a diagnostic, not a
+    /// silent downgrade to `ask`. The message must name the offending value
+    /// so the operator can see which spelling was wrong.
+    #[test]
+    fn apply_cli_overrides_rejects_an_unknown_strict_host_key_value() {
+        let mut ssh_config = SshConfig::default();
+        let config = ClientConfig::builder()
+            .embedded_ssh_config(Some(EmbeddedSshOptions {
+                strict_host_key_checking: Some("accept_new".to_owned()),
+                ..Default::default()
+            }))
+            .build();
+
+        let err = apply_cli_overrides(&mut ssh_config, &config)
+            .expect_err("an unknown policy must be refused");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("accept_new"),
+            "diagnostic must name the rejected value: {rendered}"
+        );
+        assert!(
+            rendered.contains("accept-new"),
+            "diagnostic must list the accepted values: {rendered}"
+        );
+        // The policy is left at its default rather than being downgraded.
+        assert_eq!(
+            ssh_config.strict_host_key_checking,
+            rsync_io::ssh::embedded::StrictHostKeyChecking::Ask,
         );
     }
 
@@ -1248,7 +1330,7 @@ mod tests {
             }))
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert_eq!(ssh_config.port, 2222);
     }
 
@@ -1265,7 +1347,7 @@ mod tests {
             }))
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert_eq!(ssh_config.identity_files.len(), 1);
         assert_eq!(
             ssh_config.identity_files[0],
@@ -1284,7 +1366,7 @@ mod tests {
             }))
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert_eq!(
             ssh_config.ip_preference,
             rsync_io::ssh::embedded::IpPreference::PreferV6,
@@ -1298,7 +1380,7 @@ mod tests {
         let original_timeout = ssh_config.connect_timeout;
 
         let config = ClientConfig::builder().build();
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
 
         assert_eq!(ssh_config.port, original_port);
         assert_eq!(ssh_config.connect_timeout, original_timeout);
@@ -1390,7 +1472,7 @@ mod tests {
             .connect_timeout(TransferTimeout::Seconds(NonZeroU64::new(15).unwrap()))
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert_eq!(ssh_config.connect_timeout, Duration::from_secs(15));
     }
 
@@ -1408,7 +1490,7 @@ mod tests {
             }))
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert_eq!(
             ssh_config.connect_timeout,
             Duration::from_secs(10),
@@ -1432,7 +1514,7 @@ mod tests {
             .connect_timeout(TransferTimeout::Disabled)
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert_eq!(
             ssh_config.connect_timeout,
             Duration::ZERO,
@@ -1451,7 +1533,7 @@ mod tests {
             .connect_timeout(TransferTimeout::Default)
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert_eq!(
             ssh_config.connect_timeout, original_timeout,
             "default --contimeout should preserve SshConfig's default timeout"
@@ -1472,7 +1554,7 @@ mod tests {
             }))
             .build();
 
-        apply_cli_overrides(&mut ssh_config, &config);
+        apply_cli_overrides(&mut ssh_config, &config).expect("overrides apply");
         assert!(!ssh_config.use_agent, "--ssh-no-agent should still apply");
         assert_eq!(
             ssh_config.connect_timeout,

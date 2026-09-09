@@ -667,7 +667,7 @@ pub struct ParsedArgs {
     /// `--ssh-no-agent` - disable SSH agent authentication.
     pub ssh_no_agent: bool,
 
-    /// `--ssh-strict-host-key-checking` - host key verification policy (`yes`, `no`, `ask`).
+    /// `--ssh-strict-host-key-checking` - host key verification policy (`yes`, `no`, `ask`, `accept-new`; `true`/`false`/`off` are upstream aliases).
     pub ssh_strict_host_key_checking: Option<String>,
 
     /// `--ssh-ipv6` - prefer IPv6 for embedded SSH connections.
