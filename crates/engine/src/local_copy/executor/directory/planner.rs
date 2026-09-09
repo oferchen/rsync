@@ -546,7 +546,16 @@ pub(crate) fn apply_pre_transfer_deletions(
     relative: Option<&Path>,
     plan: &DirectoryPlan<'_>,
 ) -> Result<(), LocalCopyError> {
-    if plan.deletion_enabled && matches!(plan.delete_timing, Some(DeleteTiming::Before)) {
+    if plan.deletion_enabled
+        && matches!(plan.delete_timing, Some(DeleteTiming::Before))
+        // A multi-source transfer can walk the same destination directory once
+        // per contributing operand; upstream's --delete-before pass sweeps each
+        // merged-flist directory exactly once (generator.c:364-396
+        // do_delete_pass), and the first visit already folds the sibling
+        // operands' entries into the keep set (cross_source_keep in
+        // build_plan_for_directory), so revisits skip the sweep.
+        && context.mark_directory_swept(destination)
+    {
         delete_extraneous_entries(context, destination, relative, &plan.keep_names)?;
     }
     Ok(())

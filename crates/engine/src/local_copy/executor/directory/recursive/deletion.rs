@@ -16,16 +16,22 @@ use crate::local_copy::{CopyContext, DeleteTiming, LocalCopyError, delete_extran
 /// Resolves the effective delete timing for the current directory.
 ///
 /// upstream: generator.c shares a single flist across sources so
-/// `delete_during` never unlinks an entry that a later source will recreate.
-/// oc-rsync reads each source directory live, so when more than one source is
-/// in play a `--delete-during` sweep is downgraded to a deferred (`After`)
-/// sweep whose keep-lists are merged across sources in `defer_deletion`.
+/// `delete_during` never unlinks an entry that a later source will recreate
+/// (generator.c:1924-1927 sweeps each merged-flist directory as the generator
+/// reaches it). oc-rsync reads each source directory live; when the sources
+/// orchestrator has installed the cross-source keep map
+/// (`CopyContext::during_sweep_immediate`), a multi-source `--delete-during`
+/// sweep runs at the upstream point in the walk with sibling operands'
+/// entries protected. Only when that map is absent (`--relative` operand
+/// shapes the pre-scan does not model) is the sweep downgraded to a deferred
+/// (`After`) sweep whose keep-lists are merged across sources in
+/// `defer_deletion`.
 fn effective_delete_timing(
     context: &CopyContext,
     delete_timing: Option<DeleteTiming>,
 ) -> DeleteTiming {
     let timing = delete_timing.unwrap_or(DeleteTiming::During);
-    if matches!(timing, DeleteTiming::During) && context.multi_source() {
+    if matches!(timing, DeleteTiming::During) && !context.during_sweep_immediate() {
         DeleteTiming::After
     } else {
         timing
@@ -81,7 +87,13 @@ pub(super) fn apply_during_transfer_deletions(
 
     match effective_delete_timing(context, delete_timing) {
         DeleteTiming::During => {
-            delete_extraneous_entries(context, destination, relative, keep_names)?;
+            // A multi-source transfer can walk the same destination directory
+            // once per contributing operand; upstream sweeps each merged-flist
+            // directory exactly once, and the first visit already carries the
+            // full cross-source keep set, so revisits skip the sweep.
+            if context.mark_directory_swept(destination) {
+                delete_extraneous_entries(context, destination, relative, keep_names)?;
+            }
         }
         // upstream: generator.c:351 `delete_during == 2` decides the delete set
         // during the walk (via `delete_in_dir`/`change_local_filter_dir`, while

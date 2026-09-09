@@ -242,10 +242,41 @@ pub(crate) struct CopyContext<'a> {
     /// aborting the pass.
     delete_io_error: bool,
     /// `true` when the active plan carries more than one source operand.
-    /// Used to switch `--delete-during` to a deferred sweep so the per-source
-    /// keep lists can be merged before any extraneous unlink fires; upstream
-    /// achieves the same result by sharing a single flist across sources.
+    /// Gates the cross-source bookkeeping below and, while
+    /// [`Self::cross_source_ready`] is false, switches `--delete-during` to a
+    /// deferred sweep so the per-source keep lists can be merged before any
+    /// extraneous unlink fires; upstream achieves the same result by sharing
+    /// a single flist across sources.
     multi_source: bool,
+    /// Cross-source protection for multi-source delete sweeps, keyed by the
+    /// absolute destination directory: the entry names every OTHER source
+    /// operand contributes to that directory. This is the local-copy stand-in
+    /// for upstream's merged flist, which makes every source's entries visible
+    /// to every `delete_in_dir()` call (flist.c:2499 send_file_list accumulates
+    /// all operands into ONE list; generator.c:1924-1927 sweeps against it).
+    /// Populated by the sources orchestrator before any operand is walked, so
+    /// a sweep can never unlink an entry a sibling source supplies - in either
+    /// operand order.
+    cross_source_keep: HashMap<PathBuf, Vec<OsString>>,
+    /// `true` once [`Self::cross_source_keep`] has been populated for this run.
+    /// While `false` (single-source runs need no protection map; `--relative`
+    /// operand shapes are not modelled by the pre-scan) multi-source
+    /// `--delete-during` keeps its legacy downgrade to a deferred sweep.
+    cross_source_ready: bool,
+    /// Destination directories whose immediate `--delete-before`/`--delete`
+    /// (during) sweep has already run. In a multi-source transfer two operands
+    /// can map to the SAME destination directory (e.g. `srcA/ srcB/ dest/`
+    /// both walk `dest/`); upstream sweeps each merged-flist directory exactly
+    /// once (generator.c:1924-1927), so the second visit must not re-sweep -
+    /// under `--dry-run` a re-sweep would even report the same deletion twice.
+    swept_directories: HashSet<PathBuf>,
+    /// Absolute destination paths already produced by an earlier source
+    /// operand in this multi-source run. upstream: flist.c:3364-3382
+    /// flist_sort_and_clean() drops a later duplicate name from the merged
+    /// list ("Otherwise keep the first one"), so the FIRST operand's copy
+    /// wins and the duplicate is neither transferred nor itemized. A later
+    /// source's same-destination non-directory entry is skipped silently.
+    claimed_destinations: HashSet<PathBuf>,
     /// Cache of parent directories whose existence has been verified, mapping
     /// each verified parent to its filesystem device id once resolved.
     /// Eliminates redundant `statx` syscalls when many files share the same

@@ -407,12 +407,6 @@ pub(super) fn handle_non_directory_source(
     let metadata_options = context.metadata_options();
 
     if effective_type.is_file() {
-        // upstream: batch.c - single-file transfers emit flist entry + delta
-        // data just like recursive directory transfers.
-        if let Some(rel) = record_path {
-            capture_batch_file_entry(context, source_path, rel, &effective_metadata, false)?;
-        }
-        context.begin_batch_file_delta()?;
         let target = compute_target_path(
             proc_ctx.destination_path,
             &proc_ctx.destination_base,
@@ -422,6 +416,19 @@ pub(super) fn handle_non_directory_source(
             false,
             context.options().iconv(),
         );
+        // upstream: flist.c:3364-3382 flist_sort_and_clean() - a later
+        // duplicate name in the merged multi-source list is dropped ("keep
+        // the first one"): the first operand's copy wins and the duplicate is
+        // neither transferred, itemized, nor batch-captured.
+        if !context.claim_destination(&target) {
+            return Ok(());
+        }
+        // upstream: batch.c - single-file transfers emit flist entry + delta
+        // data just like recursive directory transfers.
+        if let Some(rel) = record_path {
+            capture_batch_file_entry(context, source_path, rel, &effective_metadata, false)?;
+        }
+        context.begin_batch_file_delta()?;
         // upstream: a multi-source `--delete-during` sweep keys off the shared
         // flist so a per-source file lands in the keep list for its parent
         // dir's sweep. Register the file as kept under any deferred deletion

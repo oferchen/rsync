@@ -1,7 +1,7 @@
 //! Top-level source processing orchestration and deferred operation flushing.
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -13,13 +13,14 @@ use protocol::flist::{FileEntry, compare_file_entries};
 
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
-    CopyContext, CopyOutcome, LocalCopyAction, LocalCopyArgumentError, LocalCopyChangeSet,
-    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyOptions, LocalCopyPlan,
-    LocalCopyRecord, LocalCopyRecordHandler, SourceSpec,
+    CopyContext, CopyOutcome, DeleteTiming, LocalCopyAction, LocalCopyArgumentError,
+    LocalCopyChangeSet, LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyOptions,
+    LocalCopyPlan, LocalCopyRecord, LocalCopyRecordHandler, SourceSpec, delete_extraneous_entries,
 };
 
 use super::super::file::remove_existing_destination;
 use super::super::non_empty_path;
+use super::super::transcode_filename_component;
 use super::destination::{ensure_destination_directory, query_destination_state};
 use super::handlers::{
     handle_directory_contents_copy, handle_directory_copy, handle_non_directory_source,
@@ -135,13 +136,16 @@ struct MergedRootEntry {
 ///
 /// Scope is deliberately narrow so no other feature's semantics shift: it
 /// engages only for a non-`--relative`, recursive, plain copy of >= 2
-/// copy-contents sources with no `--delete` (whose extraneous-entry sweep keys
-/// off the whole-root walk this path bypasses), no batch writer (whose wire
-/// format is built by the per-source walk), and no `--one-file-system` (whose
-/// mount-point pruning keys off each source root's device). A fresh destination
-/// under `--dry-run` also falls back, since the synthesized `cd ./` root row is
-/// emitted from the on-disk root the dry run never creates. Every excluded shape
-/// keeps command-line order, exactly as before.
+/// copy-contents sources with no batch writer (whose wire format is built by
+/// the per-source walk) and no `--one-file-system` (whose mount-point pruning
+/// keys off each source root's device). A fresh destination under `--dry-run`
+/// also falls back, since the synthesized `cd ./` root row is emitted from the
+/// on-disk root the dry run never creates. Every excluded shape keeps
+/// command-line order, exactly as before. A `--delete` run engages too: the
+/// destination-root sweep the bypassed whole-root walk would have owned is
+/// driven explicitly by [`merged_root_delete_pass`], with the merged entry
+/// names as the keep set - mirroring upstream, where the root's
+/// `delete_in_dir()` keys off the same combined flist the transfer uses.
 fn merged_contents_worklist(
     context: &CopyContext,
     plan: &LocalCopyPlan,
@@ -153,7 +157,6 @@ fn merged_contents_worklist(
         && !context.relative_paths_enabled()
         && context.recursive_enabled()
         && !context.one_file_system_enabled()
-        && context.options().delete_timing().is_none()
         && context.options().get_batch_writer().is_none()
         && !(destination_root_created && context.mode().is_dry_run());
     if !engaged {
@@ -234,6 +237,186 @@ fn merged_sort_entry(entry: &MergedRootEntry) -> FileEntry {
     } else {
         FileEntry::new_file(name, 0, 0o644)
     }
+}
+
+/// Depth bound for the cross-source overlap pre-scan, mirroring the recursive
+/// executor's own nesting cap so a pathological (e.g. bind-mount-looped) tree
+/// cannot recurse unboundedly.
+const CROSS_SCAN_MAX_DEPTH: usize = 1000;
+
+/// Builds the cross-source keep map for a multi-source `--delete` transfer:
+/// for each destination directory that MORE THAN ONE source operand
+/// contributes to, the union of every contributor's entry names.
+///
+/// upstream: flist.c:2499 send_file_list() accumulates every source operand
+/// into ONE flist, so a `delete_in_dir()` sweep (generator.c:1924-1927 during,
+/// generator.c:364-396 do_delete_pass for before/after) can never remove an
+/// entry any operand supplies, in any operand order. oc walks each source
+/// live; this pre-scan reproduces the shared-flist invariant so a sweep run
+/// from one operand's walk protects every sibling operand's entries. Only the
+/// OVERLAP is scanned: the destination root (every operand contributes there)
+/// and destination directories fed by >= 2 source directories (a trailing-
+/// slash operand's subdir shared with another operand's same-named subdir, or
+/// same-named named-directory operands). A directory only one source feeds
+/// needs no cross protection - its own walk's keep list is already complete.
+///
+/// Names are recorded as raw (filter-unaware) enumerations; the sweep still
+/// applies delete filters to each destination candidate, so the map can only
+/// widen protection, never delete more. Unreadable directories are skipped
+/// here - the transfer walk surfaces their errors, and an I/O error blocks
+/// the delete pass anyway (generator.c:304-311).
+fn build_cross_source_keep(
+    context: &CopyContext,
+    plan: &LocalCopyPlan,
+    destination_root: &Path,
+) -> HashMap<PathBuf, Vec<OsString>> {
+    let mut map = HashMap::new();
+    let mut root_names: Vec<OsString> = Vec::new();
+    let mut seen_root: HashSet<OsString> = HashSet::new();
+    // Destination-root child name -> the source DIRECTORIES that feed it.
+    let mut groups: HashMap<OsString, Vec<PathBuf>> = HashMap::new();
+
+    for source in plan.sources() {
+        if source.copy_contents() {
+            let Ok(read_dir) = fs::read_dir(source.path()) else {
+                continue;
+            };
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                if path == destination_root {
+                    continue;
+                }
+                let name =
+                    transcode_filename_component(&entry.file_name(), context.options().iconv())
+                        .into_owned();
+                if seen_root.insert(name.clone()) {
+                    root_names.push(name.clone());
+                }
+                // lstat semantics: a symlink to a directory is not a directory
+                // (its own name is the entry), matching the walker.
+                if fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_dir()) {
+                    groups.entry(name).or_default().push(path);
+                }
+            }
+        } else if let Some(name) = source.path().file_name() {
+            let name = transcode_filename_component(name, context.options().iconv()).into_owned();
+            if seen_root.insert(name.clone()) {
+                root_names.push(name.clone());
+            }
+            if fs::symlink_metadata(source.path()).is_ok_and(|meta| meta.file_type().is_dir()) {
+                groups
+                    .entry(name)
+                    .or_default()
+                    .push(source.path().to_path_buf());
+            }
+        }
+    }
+
+    for (name, contributors) in groups {
+        if contributors.len() >= 2 {
+            scan_overlap_directory(
+                context,
+                &mut map,
+                destination_root.join(Path::new(&name)),
+                &contributors,
+                1,
+            );
+        }
+    }
+    map.insert(destination_root.to_path_buf(), root_names);
+    map
+}
+
+/// Records the union of `contributors`' entry names under `dest_dir` and
+/// recurses into subdirectories that >= 2 contributors share. See
+/// [`build_cross_source_keep`].
+fn scan_overlap_directory(
+    context: &CopyContext,
+    map: &mut HashMap<PathBuf, Vec<OsString>>,
+    dest_dir: PathBuf,
+    contributors: &[PathBuf],
+    depth: usize,
+) {
+    if depth > CROSS_SCAN_MAX_DEPTH {
+        return;
+    }
+    let mut names: Vec<OsString> = Vec::new();
+    let mut seen: HashSet<OsString> = HashSet::new();
+    let mut child_groups: HashMap<OsString, Vec<PathBuf>> = HashMap::new();
+    for dir in contributors {
+        let Ok(read_dir) = fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in read_dir.flatten() {
+            let name = transcode_filename_component(&entry.file_name(), context.options().iconv())
+                .into_owned();
+            if seen.insert(name.clone()) {
+                names.push(name.clone());
+            }
+            let path = entry.path();
+            if fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_dir()) {
+                child_groups.entry(name).or_default().push(path);
+            }
+        }
+    }
+    for (name, group) in child_groups {
+        if group.len() >= 2 {
+            scan_overlap_directory(
+                context,
+                map,
+                dest_dir.join(Path::new(&name)),
+                &group,
+                depth + 1,
+            );
+        }
+    }
+    map.insert(dest_dir, names);
+}
+
+/// Runs (or defers) the destination-root delete sweep for the merged
+/// copy-contents work list, which bypasses the per-source whole-root walk that
+/// would otherwise own it.
+///
+/// upstream: the root directory of a trailing-slash transfer is the flist's
+/// "." entry; `--delete-before` sweeps it in do_delete_pass()
+/// (generator.c:364-396) and `--delete`/`--delete-during` in the generator's
+/// first directory visit (generator.c:1924-1927) - both BEFORE the root's
+/// children transfer, and both keyed off the combined flist. `--delete-after`
+/// and `--delete-delay` sweep it after the transfers (generator.c:2901-2902).
+/// The keep set is the merged work list's entry names - the same names the
+/// combined flist would carry for the root.
+fn merged_root_delete_pass(
+    context: &mut CopyContext,
+    destination_path: &Path,
+    worklist: &[SourceSpec],
+    timing: DeleteTiming,
+) -> Result<(), LocalCopyError> {
+    let mut names: Vec<OsString> = Vec::new();
+    let mut seen: HashSet<OsString> = HashSet::new();
+    for entry in worklist {
+        if let Some(name) = entry.path().file_name() {
+            let name = transcode_filename_component(name, context.options().iconv()).into_owned();
+            if seen.insert(name.clone()) {
+                names.push(name);
+            }
+        }
+    }
+    match timing {
+        DeleteTiming::Before | DeleteTiming::During => {
+            // upstream: generator.c:304-311 - an I/O error suppresses the
+            // delete pass unless --ignore-errors; the sweep marker keeps a
+            // later frame from re-sweeping the root.
+            if !context.delete_pass_blocked_by_io_error()
+                && context.mark_directory_swept(destination_path)
+            {
+                delete_extraneous_entries(context, destination_path, None, &names)?;
+            }
+        }
+        DeleteTiming::After | DeleteTiming::Delay => {
+            context.defer_deletion(destination_path.to_path_buf(), None, names);
+        }
+    }
+    Ok(())
 }
 
 /// Accounts for the transfer root "." of a merged copy-contents transfer: it
@@ -465,6 +648,24 @@ pub(crate) fn copy_sources(
             let destination_behaves_like_directory =
                 destination_state.is_dir || plan.destination_spec().force_directory();
 
+            // upstream: flist.c:2499 send_file_list() folds every operand into
+            // ONE flist before the generator's delete passes run, so no sweep
+            // can remove an entry a sibling operand supplies. Reproduce that
+            // shared-flist invariant for the live-walk engine by installing
+            // the cross-source keep map before any operand is walked. With the
+            // map ready, multi-source `--delete`/`--delete-during` sweeps run
+            // at the upstream point in the walk instead of being downgraded to
+            // a deferred pass (see `effective_delete_timing`). `--relative`
+            // operand shapes carry implied parent directories the pre-scan
+            // does not model; they keep the legacy deferred behaviour.
+            if multiple_sources
+                && context.options().delete_timing().is_some()
+                && !context.relative_paths_enabled()
+            {
+                let cross = build_cross_source_keep(context, plan, destination_path);
+                context.set_cross_source_keep(cross);
+            }
+
             // Build the ordered work list. Upstream accumulates every source into
             // ONE file list and sorts it globally (flist.c:2544
             // flist_sort_and_clean) before the generator itemizes it, so the
@@ -478,8 +679,15 @@ pub(crate) fn copy_sources(
                 match merged_contents_worklist(context, plan, destination_root_created)? {
                     Some(entries) => {
                         // The merged path bypasses the root recursive walk, so
-                        // account for the transfer root "." (count + display row)
-                        // here, ahead of the merged children.
+                        // the root's delete sweep and the transfer root "."
+                        // accounting (count + display row) are driven here.
+                        // The sweep comes first: upstream prints a directory's
+                        // `*deleting` rows ahead of its own row
+                        // (generator.c:1924-1927 delete_in_dir runs while the
+                        // directory entry itself is itemized).
+                        if let Some(timing) = context.options().delete_timing() {
+                            merged_root_delete_pass(context, destination_path, &entries, timing)?;
+                        }
                         emit_merged_transfer_root(
                             context,
                             plan,
