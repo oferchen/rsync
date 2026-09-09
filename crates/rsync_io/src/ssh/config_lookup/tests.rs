@@ -210,6 +210,32 @@ fn host_block_with_a_comma_matches_only_the_literal_alias() {
 }
 
 #[test]
+fn host_block_pattern_is_case_sensitive() {
+    // `oHost` calls `match_pattern` directly
+    // (openssh/readconf.c:1844) and `match_pattern` folds nothing -
+    // `if (*pattern != '?' && *pattern != *s) return 0;`
+    // (openssh/match.c:105-106). Measured on real `ssh -G`: alias `web1`
+    // against `Host WEB1` reports `compression no`.
+    let text = "Host WEB1\n  Compression yes\n";
+    assert!(!parse_enables_compression(text, &host_ctx("web1")));
+    assert!(parse_enables_compression(text, &host_ctx("WEB1")));
+}
+
+#[test]
+fn match_host_pattern_stays_case_insensitive() {
+    // The control for the `Host` case fix. `Match host` and
+    // `Match originalhost` go through `match_hostname`
+    // (openssh/match.c:193-203), which lowercases the host and passes
+    // `dolower=1`, so the fold is CORRECT here. If this reddens, the
+    // shared `case_fold` policy was flipped instead of the `Host` call
+    // site being given its own kind.
+    let text = "Match host WEB1\n  Compression yes\n";
+    assert!(parse_enables_compression(text, &host_ctx("web1")));
+    let original = "Match originalhost WEB1\n  Compression yes\n";
+    assert!(parse_enables_compression(original, &host_ctx("web1")));
+}
+
+#[test]
 fn match_host_still_comma_splits_its_pattern_list() {
     // The control for the `Host` tokeniser split. `Match host` DOES
     // comma-split - `match_pattern_list` cuts each subpattern at a comma

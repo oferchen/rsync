@@ -100,7 +100,7 @@ pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'
                     Block::TopLevel if top_level.is_none() => top_level = parsed,
                     Block::Host(patterns)
                         if host_block.is_none()
-                            && pattern_list_matches(patterns, ctx.host, MatchKind::Host) =>
+                            && pattern_list_matches(patterns, ctx.host, MatchKind::HostBlock) =>
                     {
                         host_block = parsed;
                     }

@@ -614,6 +614,58 @@ mod tests {
         }
     }
 
+    /// A `Host` BLOCK pattern is matched byte-exactly, in the compression
+    /// parser too.
+    ///
+    /// `oHost` calls `match_pattern` directly (openssh/readconf.c:1844) and
+    /// `match_pattern` folds nothing:
+    /// `if (*pattern != '?' && *pattern != *s) return 0;`
+    /// (openssh/match.c:105-106). `Match host` is the case-INSENSITIVE one,
+    /// because it routes through `match_hostname`
+    /// (openssh/match.c:193-203), which lowercases the host and passes
+    /// `dolower=1` - a different keyword with a different rule.
+    ///
+    /// Measured before the fix on `OpenSSH_10.3p1`: alias `web1` against
+    /// `Host WEB1` gives upstream `compression no`, oc `yes`. The
+    /// value-carrying parser already agreed with upstream here - see
+    /// `host_pattern_matching_is_case_sensitive_on_both_sides` - so this
+    /// row exists to cover the second parser.
+    #[cfg(feature = "ssh-config-parse")]
+    #[test]
+    fn host_block_pattern_case_is_significant_for_compression() {
+        const FIXTURE: &str = "Host WEB1\n  Compression yes\n  Port 2222\n";
+
+        let mismatched_case = match run(FIXTURE, "web1") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("compression case-sensitivity", &why);
+                return;
+            }
+        };
+        let cell = mismatched_case.cell("compression").expect("dumped");
+        assert_eq!(cell.upstream, vec!["no".to_owned()]);
+        assert_eq!(
+            cell.verdict,
+            Verdict::Match,
+            "compression parser case-folded a Host pattern: oc {:?} on {}",
+            cell.oc,
+            mismatched_case.oracle_version
+        );
+
+        // Control: the exact-case alias must still fire. Without it, a
+        // parser that answered `no` unconditionally would pass above.
+        let exact_case = match run(FIXTURE, "WEB1") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("compression case-sensitivity control", &why);
+                return;
+            }
+        };
+        let cell = exact_case.cell("compression").expect("dumped");
+        assert_eq!(cell.upstream, vec!["yes".to_owned()]);
+        assert_eq!(cell.verdict, Verdict::Match, "oc {:?}", cell.oc);
+    }
+
     /// SHARP EDGE 2, demonstrated live rather than asserted from the C.
     ///
     /// `IdentityFile` is dumped UNEXPANDED because openssh/ssh.c:2428 expands it

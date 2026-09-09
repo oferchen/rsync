@@ -87,11 +87,25 @@ fn split_tokens(value: &str, is_separator: impl Fn(char) -> bool) -> Vec<Pattern
         .collect()
 }
 
-/// Whether the input is a hostname or a username; controls case
-/// folding per SSC-4.a.
+/// Which keyword's pattern is being matched; controls case folding.
+///
+/// Split by keyword rather than by "hostname vs username": the two
+/// host-carrying keywords differ from each other, so folding cannot be
+/// inferred from the input being a hostname.
 #[derive(Copy, Clone)]
 pub(super) enum MatchKind {
-    Host,
+    /// A `Host` block pattern: compared byte-exactly. The `oHost` arm
+    /// calls `match_pattern` directly (openssh/readconf.c:1844), and
+    /// `match_pattern` folds nothing -
+    /// `if (*pattern != '?' && *pattern != *s) return 0;`
+    /// (openssh/match.c:105-106).
+    HostBlock,
+    /// A `Match host` / `Match originalhost` argument: compared
+    /// case-INSENSITIVELY. These route through `match_hostname`
+    /// (openssh/match.c:193-203), which lowercases the host and passes
+    /// `dolower=1` into `match_pattern_list`.
+    MatchHost,
+    /// A `Match user` / `Match localuser` argument.
     User,
 }
 
@@ -130,11 +144,13 @@ fn pattern_glob_matches(glob: &str, input: &str, kind: MatchKind) -> bool {
 }
 
 /// Returns `true` when comparisons for `kind` should be ASCII
-/// case-folded. Hostnames are always folded; usernames are folded only
-/// on Windows, where account names are inherently case-insensitive.
+/// case-folded. `Host` block patterns are never folded; `Match host`
+/// patterns always are; usernames are folded only on Windows, where
+/// account names are inherently case-insensitive.
 fn case_fold(kind: MatchKind) -> bool {
     match kind {
-        MatchKind::Host => true,
+        MatchKind::HostBlock => false,
+        MatchKind::MatchHost => true,
         MatchKind::User => cfg!(windows),
     }
 }
