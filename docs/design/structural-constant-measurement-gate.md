@@ -130,38 +130,47 @@ their provenance, not an assertion that any value is wrong.
 The peer-facing row is first among equals. For everything else an arbitrary value
 costs throughput; there, it is what an untrusted peer can make the daemon accept.
 
-## Three that look mirrored and are not
+## Three that looked mirrored and were not
 
-Value equality is not provenance. Each of these matches upstream today for a
-reason that does not hold in general.
+Value equality is not provenance. Each of these matched upstream's value while
+resting on a rule that did not hold in general, and all three have since been
+closed. The entries stay, with their closures recorded, because the shape recurs
+and because each fix is the evidence that the reading was right.
 
-**The hash table mirrors a floor and drops the growth.** `TAG_TABLE_SIZE` is
-`1 << 16` in `crates/matching/src/index/mod.rs:57` and again in
-`optimized_search.rs:12`, documented as matching upstream's `TABLESIZE`.
-Upstream's constant is named `TRADITIONAL_TABLESIZE` (`match.c:45`) and is a
-floor, not a size: `build_hash_table` computes `tablesize = (s->count/8) * 10 +
-11` and raises it to the floor only if it comes out smaller (`match.c:86-88`),
-with the stated intent of holding hash load near 80 percent for big files.
-Upstream then runs different insert and probe paths depending on whether it grew
-(`match.c:98`, `match.c:215`). Above roughly 52k blocks upstream's table grows
-and oc's does not, so oc's chains lengthen as block count rises. That is a
-candidate cause for the measured delta-matching gap on large files, and it is
-also a warning: a port of the formula alone would be incomplete, because the
-two-path branch and the odd-number constraint travel with it.
+**The hash table mirrored a floor and dropped the growth.** `TAG_TABLE_SIZE` is
+`1 << 16` at `crates/matching/src/index/mod.rs:68`, documented as matching
+upstream's `TABLESIZE`. Upstream's constant is named `TRADITIONAL_TABLESIZE`
+(`match.c:45`) and is a floor, not a size: `build_hash_table` computes
+`tablesize = (s->count/8) * 10 + 11` and raises it to the floor only if it comes
+out smaller (`match.c:84-88`), with the stated intent of holding hash load near
+80 percent for big files. Upstream then runs different insert and probe paths
+depending on whether it grew (`match.c:98`, `match.c:215`). Above roughly 52k
+blocks upstream's table grew and oc's did not, so oc's chains lengthened as block
+count rose. Closed by #7790: `CompactLookup` grows on upstream's rule and carries
+both addressing modes, and `TAG_TABLE_SIZE` is documented as the tag-array size
+alone, explicitly not the growth-bearing structure. The warning in the original
+entry held - the two-path branch and the odd-number constraint did travel with
+the formula.
 
-**A digest bound is written where upstream derives one.** `MAX_XATTR_DIGEST_LEN`
-is the literal 16 in `crates/protocol/src/xattr/mod.rs:64`; upstream writes
-`#define MAX_XATTR_DIGEST_LEN MD5_DIGEST_LEN` (`xattrs.c:48`). The values agree
-because MD5 is 16 bytes. If the digest ever changes, upstream's bound follows and
-oc's does not, and the symptom would be a wire-length mismatch in a decoder
-rather than a compile error.
+**A digest bound was written where upstream derives one.** `MAX_XATTR_DIGEST_LEN`
+was the literal 16 in `crates/protocol/src/xattr/mod.rs`; upstream writes
+`#define MAX_XATTR_DIGEST_LEN MD5_DIGEST_LEN` (`xattrs.c:48`). The values agreed
+because MD5 is 16 bytes, so a digest change would have moved upstream's bound and
+not oc's, and the symptom would have been a wire-length mismatch in a decoder
+rather than a compile error. Closed by #7786: the bound is derived from the hasher
+that fills the buffer, with a const assertion pinning it to 16 so the derivation
+cannot drift into a wire-format change.
 
-**One bound is copied nine times.** `MAX_INPUT_SIZE` (1 MiB) is defined
+**One bound was copied at every backend.** `MAX_INPUT_SIZE` (1 MiB) was defined
 independently in each SIMD checksum backend under
 `crates/checksums/src/simd_batch/`. Each copy decides whether its backend bails
-to the scalar path. Nine copies means one edit can desynchronise batch
-eligibility across architectures, and parity tests that compare outputs cannot
-see it, because both paths produce correct output.
+to the scalar path, so one edit could desynchronise batch eligibility across
+architectures, and parity tests that compare outputs cannot see that, because
+both paths produce correct output. Closed by #7787: one definition at
+`simd_batch/mod.rs:46`, every backend importing it, and the bound itself tested
+for the first time. The count in the original entry was low - the sweep found
+twelve sites, eleven constants plus one bare literal that no grep for the name
+could reach.
 
 ## What a proposal has to carry
 
