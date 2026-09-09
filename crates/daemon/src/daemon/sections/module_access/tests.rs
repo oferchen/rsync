@@ -3488,11 +3488,21 @@ mod module_access_tests {
             .collect()
     }
 
-    /// Writes a merge file under `dir` and returns its path as a string.
+    /// Writes a merge file under `dir` and returns its path spelled the way a
+    /// daemon parameter spells one: `/`-separated.
+    ///
+    /// `Path::display()` would emit the host separator, and a daemon filter path
+    /// has exactly one separator - upstream's `parse_merge_name` finds the
+    /// basename with `strrchr(name, '/')` (exclude.c:1557-1567) and oc mirrors
+    /// that, so a backslash-spelled path hides the basename from the `e`
+    /// modifier. Only the host separator is rewritten, never a byte that could
+    /// be part of a legitimate name.
     fn merge_file(dir: &Path, name: &str, content: &str) -> String {
         let path = dir.join(name);
         std::fs::write(&path, content).expect("write merge file");
-        path.display().to_string()
+        path.to_str()
+            .expect("utf-8 merge path")
+            .replace(std::path::MAIN_SEPARATOR, "/")
     }
 
     #[test]
@@ -3696,6 +3706,26 @@ mod module_access_tests {
         assert_eq!(
             filter_patterns(dir.path(), &format!(".e {path}")),
             vec!["rules".to_string(), "bait".to_string()]
+        );
+    }
+
+    // A backslash is an ordinary filename byte on this platform, which is the
+    // only place the rule can be exercised: Windows rejects it in a name, and
+    // the daemon refuses to run there at all.
+    #[cfg(unix)]
+    #[test]
+    fn the_exclude_self_basename_does_not_split_on_a_backslash() {
+        // upstream: exclude.c:1557-1567 finds the basename with
+        // `strrchr(name, '/')` - `/` is the ONLY separator, so a backslash is
+        // pattern text. Same rule as the daemon glob expander (util1.c:749).
+        // This is what makes `merge_file`'s `/` spelling load-bearing rather
+        // than cosmetic: split on the host separator instead and a Windows-
+        // spelled path yields no basename at all.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), r"a\b", "- bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!(".e {path}")),
+            vec![r"a\b".to_string(), "bait".to_string()]
         );
     }
 
