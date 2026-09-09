@@ -152,8 +152,9 @@ impl<'a> CopyContext<'a> {
         // which the statement is actually true.
         matching::trace_deltasum::trace_recv_mapped(&relative.display(), total_size);
 
-        // upstream: match.c:126 - `n = offset - last_match`, so the `match at`
-        // line needs the end of the previous match, not the write cursor.
+        // upstream: match.c:135 - the `match at` line reports `n`, the gap since
+        // the previous match, so this tracks the end of that match rather than
+        // the write cursor.
         let mut last_match = 0u64;
 
         let mut destination_reader = Some(fs::File::open(destination).map_err(|error| {
