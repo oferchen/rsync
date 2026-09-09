@@ -213,6 +213,7 @@ impl Md4Dispatcher {
 
     /// AVX-512 batched digest implementation.
     #[cfg(target_arch = "x86_64")]
+    #[allow(unsafe_code)]
     fn digest_batch_avx512<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
         let chunks = inputs.chunks(16);
@@ -256,6 +257,7 @@ impl Md4Dispatcher {
 
     /// AVX2 batched digest implementation.
     #[cfg(target_arch = "x86_64")]
+    #[allow(unsafe_code)]
     fn digest_batch_avx2<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
         let chunks = inputs.chunks(8);
@@ -291,6 +293,7 @@ impl Md4Dispatcher {
 
     /// SSE2 batched digest implementation.
     #[cfg(target_arch = "x86_64")]
+    #[allow(unsafe_code)]
     fn digest_batch_sse2<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
         let chunks = inputs.chunks(4);
@@ -322,6 +325,7 @@ impl Md4Dispatcher {
 
     /// NEON batched digest implementation.
     #[cfg(target_arch = "aarch64")]
+    #[allow(unsafe_code)]
     fn digest_batch_neon<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
         let chunks = inputs.chunks(4);

@@ -115,6 +115,7 @@ macro_rules! rotl_const {
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 #[allow(unsafe_op_in_unsafe_fn)]
+#[allow(unsafe_code)]
 pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
@@ -324,6 +325,7 @@ pub unsafe fn digest_x4(inputs: &[&[u8]; 4]) -> [Digest; 4] {
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)]
 mod tests {
     use super::super::super::md5_scalar;
     use super::*;

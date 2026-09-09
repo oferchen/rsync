@@ -51,6 +51,7 @@ struct Aligned512([u32; 16]);
 /// Invoking this on a CPU without these features triggers an illegal-
 /// instruction fault.
 #[cfg(target_arch = "x86_64")]
+#[allow(unsafe_code)]
 pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
@@ -148,6 +149,7 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
 /// this triggers an illegal-instruction fault.
 #[cfg(target_arch = "x86_64")]
 #[inline(never)]
+#[allow(unsafe_code)]
 unsafe fn process_block_avx512(
     state_a: &mut Aligned512,
     state_b: &mut Aligned512,
@@ -396,6 +398,7 @@ unsafe fn process_block_avx512(
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)]
 mod tests {
     use super::super::super::scalar;
     use super::*;
