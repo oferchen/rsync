@@ -9,9 +9,9 @@
 /// Mirrors the SSH `StrictHostKeyChecking` option semantics.
 ///
 /// The four variants correspond one-to-one with upstream's
-/// `SSH_STRICT_HOSTKEY_*` constants (readconf.h:225-228).
+/// `SSH_STRICT_HOSTKEY_*` constants (openssh/readconf.h:225-228).
 ///
-/// upstream: readconf.c:1019-1028 `multistate_strict_hostkey[]`
+/// upstream: openssh/readconf.c:1019-1028 `multistate_strict_hostkey[]`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrictHostKeyChecking {
     /// Reject connections to hosts with unknown or mismatched keys.
@@ -28,7 +28,7 @@ pub enum StrictHostKeyChecking {
     ///
     /// Upstream's `accept-new`. Distinct from [`Self::No`] only on the
     /// changed-key path, where upstream refuses for every policy except
-    /// `off`/`no` (sshconnect.c:1329-1331). oc refuses a changed key
+    /// `off`/`no` (openssh/sshconnect.c:1329-1331). oc refuses a changed key
     /// under every policy, so the two variants differ here only in that
     /// `No` is documented as the blanket opt-out.
     AcceptNew,
@@ -47,7 +47,7 @@ pub struct UnknownStrictHostKeyChecking(pub String);
 impl StrictHostKeyChecking {
     /// Every spelling upstream accepts, in table order.
     ///
-    /// upstream: readconf.c:1019-1028. Seven spellings collapse onto four
+    /// upstream: openssh/readconf.c:1019-1028. Seven spellings collapse onto four
     /// states: `off`/`no`/`false` all mean [`Self::No`], and `yes`/`true`
     /// both mean [`Self::Yes`].
     pub const ACCEPTED_VALUES: [&'static str; 7] =
@@ -56,11 +56,11 @@ impl StrictHostKeyChecking {
     /// Maps an operator-supplied spelling onto a policy.
     ///
     /// Matching is case-insensitive, mirroring upstream's `strcasecmp`
-    /// (readconf.c:1114). An unrecognised value is an error rather than a
+    /// (openssh/readconf.c:1114). An unrecognised value is an error rather than a
     /// silent fallback: upstream reports `unsupported option` and counts a
-    /// bad option, which terminates the run (readconf.c:1270-1275).
+    /// bad option, which terminates the run (openssh/readconf.c:1270-1275).
     pub fn parse(value: &str) -> Result<Self, UnknownStrictHostKeyChecking> {
-        // upstream: readconf.c:1019-1028 multistate_strict_hostkey[]
+        // upstream: openssh/readconf.c:1019-1028 multistate_strict_hostkey[]
         if value.eq_ignore_ascii_case("yes") || value.eq_ignore_ascii_case("true") {
             Ok(Self::Yes)
         } else if value.eq_ignore_ascii_case("no")
@@ -114,8 +114,8 @@ mod tests {
     /// Every spelling upstream's multistate table accepts, with the state it
     /// maps to. Seven spellings collapse onto four states.
     ///
-    /// upstream: readconf.c:1019-1028 `multistate_strict_hostkey[]`, whose
-    /// values are the `SSH_STRICT_HOSTKEY_*` constants at readconf.h:225-228.
+    /// upstream: openssh/readconf.c:1019-1028 `multistate_strict_hostkey[]`, whose
+    /// values are the `SSH_STRICT_HOSTKEY_*` constants at openssh/readconf.h:225-228.
     #[test]
     fn parse_accepts_every_upstream_spelling() {
         let table = [
@@ -148,7 +148,7 @@ mod tests {
 
     /// Matching is case-insensitive.
     ///
-    /// upstream: readconf.c:1114 `strcasecmp(arg, multistate_ptr[i].key)`.
+    /// upstream: openssh/readconf.c:1114 `strcasecmp(arg, multistate_ptr[i].key)`.
     #[test]
     fn parse_is_case_insensitive() {
         assert_eq!(
@@ -170,7 +170,7 @@ mod tests {
     /// Regression pin for the defect this fixes: the previous mapping had a
     /// `_ => Ask` arm, so `accept-new` and every typo became an interactive
     /// prompt. Upstream reports `unsupported option` and counts a bad option,
-    /// terminating the run (readconf.c:1270-1275, :2611-2613).
+    /// terminating the run (openssh/readconf.c:1270-1275, :2611-2613).
     #[test]
     fn parse_refuses_an_unknown_value_rather_than_defaulting() {
         for bogus in ["accept_new", "acceptnew", "maybe", "", "ask-new", "1"] {

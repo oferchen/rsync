@@ -90,7 +90,7 @@ impl SshClientHandler {
             // `no` and `accept-new` share the unknown-host arm: both learn
             // the key without prompting. Upstream reaches this arm the same
             // way, by testing only for YES and ASK and letting OFF and NEW
-            // fall through together (sshconnect.c:1169-1181). They diverge
+            // fall through together (openssh/sshconnect.c:1169-1181). They diverge
             // only on a CHANGED key, which never reaches here - that path is
             // the KeyChanged branch in verify_host_key, which refuses under
             // every policy.
@@ -410,7 +410,7 @@ mod tests {
     /// `AcceptNew` succeeds on. Before `AcceptNew` existed, an operator who
     /// wrote `accept-new` got the `Ask` row - the failure this pins.
     ///
-    /// upstream: sshconnect.c:1169-1181 - the unknown-host arm tests only for
+    /// upstream: openssh/sshconnect.c:1169-1181 - the unknown-host arm tests only for
     /// YES and ASK, so NEW and OFF both fall through to learning the key.
     #[test]
     fn unknown_host_accept_new_learns_without_prompting() {
@@ -451,7 +451,7 @@ mod tests {
     /// `accept-new` rejects a CHANGED key - that is the whole difference
     /// between it and `no`.
     ///
-    /// upstream: sshconnect.c:1272-1274 / :1329-1331 refuse a changed key for
+    /// upstream: openssh/sshconnect.c:1272-1274 / :1329-1331 refuse a changed key for
     /// every policy except `off`/`no`; oc refuses under all of them, so this
     /// pins the stricter side for the new variant specifically.
     #[test]
