@@ -49,6 +49,17 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
+    /// Allows an existing device destination to be written through instead of
+    /// replaced.
+    ///
+    /// upstream: `options.c:684` `--write-devices`; the decision itself is
+    /// `generator.c:2148`'s `write_devices && stype == FT_DEVICE`.
+    #[must_use]
+    pub fn write_devices(mut self, enabled: bool) -> Self {
+        self.write_devices = enabled;
+        self
+    }
+
     /// Enables append mode.
     #[must_use]
     pub fn append(mut self, enabled: bool) -> Self {

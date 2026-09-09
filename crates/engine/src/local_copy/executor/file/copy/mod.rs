@@ -142,6 +142,50 @@ pub(crate) fn copy_file(
         existing_metadata = None;
     }
 
+    // upstream: generator.c:2148-2153 recv_generator() - the DEVICE arm of the
+    // same make-way condition:
+    //
+    //   if (statret == 0 && !(stype == FT_REG || (write_devices && stype == FT_DEVICE)))
+    //
+    // `--write-devices` is the ONLY thing that keeps a device node standing
+    // under an arriving regular file. Without it the node is cleared and an
+    // ordinary file is created at that name; with it the node survives and the
+    // transfer writes THROUGH it (`receiver.c:1170`).
+    //
+    // The local executor reached the right destination TYPE by accident in its
+    // default shape - temp-file staging renames over whatever is there - but it
+    // had no predicate at all, so every write strategy that opens the final
+    // name instead (`--inplace`, `--append`, and `--write-devices`'s own
+    // implied inplace) wrote through a device the operator never asked to
+    // write through. Deciding it here also restores the itemize/stats view:
+    // upstream sets `statret = -1` after the removal (generator.c:2151), so the
+    // entry reports a creation (`>f+++++++++`, "created files: 1") rather than
+    // an update against the node that is no longer there.
+    //
+    // `--ignore-existing` is tested at generator.c:1780, ahead of the removal,
+    // so it leaves the device standing - the same ordering the directory arm
+    // above relies on.
+    if existing_metadata.as_ref().is_some_and(|existing| {
+        crate::local_copy::device_destination_blocks_regular_file(
+            existing,
+            context.options().write_devices_enabled(),
+        )
+    }) && !context.ignore_existing_enabled()
+    {
+        let device_type = existing_metadata
+            .as_ref()
+            .map(fs::Metadata::file_type)
+            .unwrap_or_else(|| metadata.file_type());
+        if !crate::local_copy::clear_device_obstacle(context, destination, relative, device_type)? {
+            // upstream: generator.c:2150 `goto cleanup` - this entry is skipped,
+            // the rest of the transfer continues, and the run finishes 23.
+            return Ok(true);
+        }
+        // upstream: generator.c:2151-2152 - `statret = -1; stat_errno = ENOENT;`
+        destination_previously_existed = false;
+        existing_metadata = None;
+    }
+
     // upstream: generator.c:1758-1766 - `ignore_non_existing` (`--existing`)
     // is tested at `statret == -1 && stat_errno == ENOENT`, so it asks whether
     // the destination existed BEFORE the make-way removal. Reading the

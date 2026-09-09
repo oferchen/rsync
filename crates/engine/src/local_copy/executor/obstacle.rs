@@ -1,5 +1,12 @@
-//! The local-copy path's single decision site for a DIRECTORY standing where a
-//! regular file, symlink, FIFO, socket, or device node has to be written.
+//! The local-copy path's make-way decisions: a DIRECTORY standing where a
+//! regular file, symlink, FIFO, socket, or device node has to be written, and a
+//! DEVICE node standing where a regular file has to be written.
+//!
+//! Both are the same upstream condition read at different disjuncts. The
+//! directory case is the `stype != FT_REG` half; the device case is the
+//! `write_devices && stype == FT_DEVICE` half, which is the only thing that
+//! keeps a non-regular destination standing at all, and is documented on
+//! [`device_destination_blocks_regular_file`].
 //!
 //! Upstream reaches this decision from two call sites, and neither of them
 //! gates the removal on an option:
@@ -58,6 +65,7 @@
 //! - `log.c:310-311` - `case FERROR_XFER: got_xfer_error = 1;`
 //! - `cleanup.c:217-218` - `got_xfer_error` lifts a zero exit to `RERR_PARTIAL`
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -252,6 +260,122 @@ fn report_make_way_failure(
     context.record_make_way_error();
 }
 
+/// Reports whether an existing DEVICE destination has to be cleared before a
+/// regular file's contents are written over it.
+///
+/// This is the `write_devices && stype == FT_DEVICE` half of upstream's
+/// make-way condition. `--write-devices` is the ONLY thing that keeps a device
+/// node standing under an arriving regular file: without it the node is an
+/// obstacle like any other and `delete_item()` clears it, after which the
+/// transfer creates an ordinary file at that name.
+///
+/// The predicate is keyed on the DESTINATION, never on the entry being sent -
+/// `--write-devices` streams a REGULAR source file into an existing device, so
+/// the entry describes a regular file by construction. That is the same keying
+/// the receiver pipeline uses (`crates/transfer/.../candidates.rs`), and it is
+/// why a `--write-devices` predicate cannot be derived from the source at all.
+///
+/// The metadata handed in is the destination `lstat`, so a symlink is judged as
+/// a symlink and never as the device it points at.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:2148` - `if (statret == 0 && !(stype == FT_REG || (write_devices && stype == FT_DEVICE)))`
+/// - `rsync.h:1394` - `#define IS_DEVICE(mode) (S_ISCHR(mode) || S_ISBLK(mode))`
+#[cfg(unix)]
+pub(crate) fn device_destination_blocks_regular_file(
+    metadata: &fs::Metadata,
+    write_devices: bool,
+) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+
+    let file_type = metadata.file_type();
+    (file_type.is_block_device() || file_type.is_char_device()) && !write_devices
+}
+
+/// Windows variant: there are no device nodes to write through, so this arm of
+/// the make-way condition never fires.
+#[cfg(not(unix))]
+pub(crate) fn device_destination_blocks_regular_file(
+    _metadata: &fs::Metadata,
+    _write_devices: bool,
+) -> bool {
+    false
+}
+
+/// Removes a device node standing where a regular file has to be written.
+///
+/// Returns `Ok(true)` when the path is clear and the caller may create the
+/// replacement, `Ok(false)` when the node survived - the caller then skips that
+/// entry, exactly as upstream's `goto cleanup` does, and the run finishes
+/// `RERR_PARTIAL` (23) with every other entry transferred.
+///
+/// This is `delete_item()`'s NON-directory arm, which differs from the
+/// directory arm in two ways that both matter here: the node is backed up
+/// rather than unlinked when `--backup` is on, and the backup prefers an
+/// outright RENAME (`make_backup(fbuf, True)`) instead of the hard-link tier
+/// the generator's own `make_backup(fname, False)` uses - a hard link would
+/// leave the device standing at the destination and the transfer would write
+/// through it after all.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:2149` - `delete_item(fname, sx.st.st_mode, del_opts | DEL_FOR_FILE)`
+/// - `delete.c:227-238` - the `make_backup(fbuf, True)` / `del_unlink()` split
+/// - `delete.c:264-268` - the `rsyserr` / `ENOENT` outcome split
+/// - `syscall.c` `do_unlink_at()` - `if (dry_run) return 0`
+pub(crate) fn clear_device_obstacle(
+    context: &mut CopyContext,
+    destination: &Path,
+    relative: Option<&Path>,
+    file_type: fs::FileType,
+) -> Result<bool, LocalCopyError> {
+    // upstream: syscall.c do_unlink_at() returns 0 without touching anything
+    // under --dry-run, so delete_item() reports DR_SUCCESS and the generator
+    // still resets `statret` - the node survives the run but is itemized as a
+    // creation.
+    if context.mode().is_dry_run() {
+        context.register_progress();
+        return Ok(true);
+    }
+
+    // upstream: delete.c:228 - `make_backups > 0 && !(flags & DEL_FOR_BACKUP)
+    // && (backup_dir || !is_backup_file(fbuf))`.
+    let name = destination.file_name().map_or_else(
+        || destination.as_os_str().to_os_string(),
+        OsStr::to_os_string,
+    );
+    if context.options().should_backup_before_delete(&name) {
+        context.backup_existing_entry(destination, relative, file_type, true)?;
+    }
+
+    // upstream: delete.c:230-236 - whichever arm ran, the node is gone by the
+    // time delete_item() reports DR_SUCCESS; a rename already removed it, which
+    // is the `ok == 2` fall-through to `del_unlink()` collapsing to ENOENT.
+    match fs::remove_file(destination) {
+        Ok(()) => {
+            context.register_progress();
+            Ok(true)
+        }
+        // upstream: delete.c:267 - `errno == ENOENT` maps to DR_SUCCESS.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            context.register_progress();
+            Ok(true)
+        }
+        Err(error) => {
+            // upstream: delete.c:264-266 - rsyserr(FERROR_XFER, errno,
+            // "delete_file: %s(%s) failed", what, fbuf).
+            eprintln!(
+                "rsync: [receiver] delete_file: unlink({}) failed: {}",
+                display_name(destination, relative),
+                crate::local_copy::upstream_io_error(&error),
+            );
+            report_make_way_failure(context, destination, relative, MakeWayFor::File);
+            Ok(false)
+        }
+    }
+}
+
 /// Renders the transfer-relative name upstream's `f_name()` would print, not
 /// the absolute destination path.
 fn display_name(destination: &Path, relative: Option<&Path>) -> String {
@@ -345,4 +469,57 @@ fn clear_contents(
     }
 
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod device_predicate_tests {
+    use super::device_destination_blocks_regular_file;
+    use std::fs;
+    use std::os::unix::fs::FileTypeExt;
+
+    /// A character device every Unix has, read only for its `Metadata`: the
+    /// predicate is a pure function of the destination's file type.
+    const CHAR_DEVICE: &str = "/dev/null";
+
+    fn char_device_metadata() -> Option<fs::Metadata> {
+        let meta = fs::symlink_metadata(CHAR_DEVICE).ok()?;
+        meta.file_type().is_char_device().then_some(meta)
+    }
+
+    /// upstream: `generator.c:2148` - without `write_devices` an `FT_DEVICE`
+    /// destination fails the keep condition, so `delete_item()` clears it.
+    #[test]
+    fn a_device_destination_is_an_obstacle_without_write_devices() {
+        let Some(meta) = char_device_metadata() else {
+            eprintln!("SKIP: {CHAR_DEVICE} is not a character device on this host");
+            return;
+        };
+        assert!(device_destination_blocks_regular_file(&meta, false));
+    }
+
+    /// The other half of the same line: `write_devices && stype == FT_DEVICE`
+    /// keeps the node so the transfer can write through it.
+    #[test]
+    fn write_devices_stops_a_device_destination_being_an_obstacle() {
+        let Some(meta) = char_device_metadata() else {
+            eprintln!("SKIP: {CHAR_DEVICE} is not a character device on this host");
+            return;
+        };
+        assert!(!device_destination_blocks_regular_file(&meta, true));
+    }
+
+    /// `stype == FT_REG` is the first disjunct, so a regular destination is
+    /// never this arm's obstacle - with or without the flag. Without this cell
+    /// a predicate that always returned `true` would pass the two above while
+    /// deleting every destination it was asked to update.
+    #[test]
+    fn a_regular_destination_is_never_this_arms_obstacle() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("regular");
+        fs::write(&path, b"payload").expect("write regular destination");
+        let meta = fs::symlink_metadata(&path).expect("stat regular destination");
+
+        assert!(!device_destination_blocks_regular_file(&meta, false));
+        assert!(!device_destination_blocks_regular_file(&meta, true));
+    }
 }
