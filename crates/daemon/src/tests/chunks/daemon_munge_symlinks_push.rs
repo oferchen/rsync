@@ -115,8 +115,11 @@ fn daemon_munge_symlinks_push_prepends_prefix() {
     assert_eq!(
         parent_link,
         std::path::Path::new("/rsyncd-munged/../escape"),
-        "parent-escape targets must carry the prefix unmodified, so the \
-         munge guard composes with `--safe-links` rather than substituting it",
+        "parent-escape targets must carry the prefix unmodified so a later \
+         munging sender can strip it and restore the original target \
+         (upstream flist.c:274-278); note `--safe-links` does not evaluate \
+         munged links individually - the prefix is absolute, so a munging \
+         receiver under --safe-links skips every symlink (generator.c:1951)",
     );
 
     let real_content =

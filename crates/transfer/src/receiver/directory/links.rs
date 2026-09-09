@@ -114,26 +114,35 @@ impl ReceiverContext {
 
             let relative_path = entry.path();
 
-            // upstream: flist.c:1329 - `if (sanitize_paths && !munge_symlinks
-            // && *bp) sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`.
-            // `sanitize_paths` is set for a daemon module serving a path
-            // (clientserver.c:1068), so turning munging off does not leave the
-            // received target untouched: it still cannot resolve above the
-            // module root. The two transforms are mutually exclusive upstream,
-            // which is why this runs only when munging is off.
+            // Decode-time target transforms, applied before every consumer
+            // below (the --safe-links evaluation, the quick-check comparison,
+            // and the create syscall) because upstream rewrites the target
+            // while decoding the file list and everything downstream reads the
+            // stored `F_SYMLINK(file)`:
             //
-            // Applied *before* the safe-links evaluation because upstream
-            // sanitizes during the file-list decode, so the `--safe-links`
-            // check at generator.c:1951 reads the already-sanitized
-            // `F_SYMLINK(file)`. Sanitizing after the check instead would skip
-            // entries upstream creates.
-            let sanitized: PathBuf;
-            let wire_target = if !self.config.munge_symlinks
-                && self.config.connection.is_daemon_connection
+            // - upstream: flist.c:1070,1296-1299 - a receiver running with
+            //   `munge_symlinks` (a daemon module with `munge symlinks = yes`,
+            //   or --munge-links) prepends `/rsyncd-munged/` (rsync.h:36) so
+            //   the on-disk link cannot resolve outside the module root when
+            //   followed.
+            // - upstream: flist.c:1328 - `if (sanitize_paths && !munge_symlinks
+            //   && *bp) sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`.
+            //   `sanitize_paths` is live only in the daemon server process
+            //   (clientserver.c:1067-1068; a non-chroot module records its full
+            //   path length as `module_dirlen`), never in the client end of a
+            //   daemon connection, so the client of a pull stores the wire
+            //   target verbatim. Measured against rsync 3.5.0: a pull client
+            //   keeps `abs_link -> /etc/hostname` byte-for-byte.
+            let transformed: PathBuf;
+            let target: &Path = if self.config.munge_symlinks {
+                transformed = apply_symlink_munge_prefix(wire_target);
+                &transformed
+            } else if self.config.connection.is_daemon_connection
+                && !self.config.connection.client_mode
                 && !wire_target.as_os_str().is_empty()
             {
-                sanitized = sanitize_received_symlink_target(wire_target, relative_path);
-                &sanitized
+                transformed = sanitize_received_symlink_target(wire_target, relative_path);
+                &transformed
             } else {
                 wire_target
             };
@@ -141,36 +150,19 @@ impl ReceiverContext {
             // upstream: generator.c:1951 - `if (safe_symlinks && unsafe_symlink(sl, fname))`
             // skips unsafe symlinks when --safe-links is set. The check stays
             // here (not in sanitize_file_list) to preserve protocol index
-            // alignment with the sender.
-            //
-            // Note the operand differs from upstream's. oc evaluates the wire
-            // target (pre-munge); upstream evaluates the already-munged one,
-            // because it applies the prefix during file-list decode and the
-            // generator then reads `F_SYMLINK(file)`. `unsafe_symlink()`
-            // rejects every absolute target, and munging makes every target
-            // absolute, so upstream under `munge symlinks = true` with
-            // --safe-links skips every symlink - safe ones included - while oc
-            // creates the safe ones. Measured against 3.4.4 and 3.5.0.
-            // Reordering to match is a behaviour change, not a comment fix.
+            // alignment with the sender. `sl` is the decoded target, i.e. the
+            // post-munge/post-sanitize value: `unsafe_symlink()` (util1.c:1569)
+            // rejects every absolute target and munging makes every target
+            // absolute, so a munging receiver under --safe-links skips every
+            // symlink - safe ones included - and the notice quotes the munged
+            // target. Measured against rsync 3.5.0 (daemon push with
+            // `munge symlinks = yes`, client --safe-links: every link skipped).
             if self.config.flags.safe_links
-                && crate::symlink_safety::is_unsafe_symlink(wire_target.as_os_str(), relative_path)
+                && crate::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative_path)
             {
-                self.report_ignored_unsafe_symlink(writer, relative_path, wire_target);
+                self.report_ignored_unsafe_symlink(writer, relative_path, target);
                 continue;
             }
-
-            // upstream: flist.c:1122-1126 - receiver prepends `/rsyncd-munged/`
-            // to the symlink target when the daemon enabled `munge symlinks`,
-            // so the on-disk link cannot resolve outside the module root when
-            // followed. Apply once here so both the quick-check comparison and
-            // the create syscall see the prefixed form.
-            let munged: std::path::PathBuf;
-            let target: &std::path::Path = if self.config.munge_symlinks {
-                munged = apply_symlink_munge_prefix(wire_target);
-                munged.as_path()
-            } else {
-                wire_target.as_path()
-            };
 
             let link_path = dest_dir.join(relative_path);
 
@@ -454,17 +446,10 @@ impl ReceiverContext {
 
             let relative_path = entry.path();
 
-            // upstream: generator.c:1951 - skip unsafe symlinks when --safe-links.
-            if self.config.flags.safe_links
-                && crate::symlink_safety::is_unsafe_symlink(wire_target.as_os_str(), relative_path)
-            {
-                self.report_ignored_unsafe_symlink(writer, relative_path, wire_target);
-                continue;
-            }
-
-            // upstream: flist.c:1122-1126 - prepend the `/rsyncd-munged/` prefix
-            // when the daemon enabled `munge symlinks` so the on-disk link
-            // cannot resolve outside the module root when followed.
+            // upstream: flist.c:1070,1296-1299 - prepend the `/rsyncd-munged/`
+            // prefix at decode time when the daemon enabled `munge symlinks`,
+            // so the on-disk link cannot resolve outside the module root when
+            // followed.
             let munged: std::path::PathBuf;
             let target: &std::path::Path = if self.config.munge_symlinks {
                 munged = std::path::PathBuf::from(::metadata::munge_symlink(
@@ -474,6 +459,17 @@ impl ReceiverContext {
             } else {
                 wire_target.as_path()
             };
+
+            // upstream: generator.c:1951 - skip unsafe symlinks when
+            // --safe-links. Mirrors the Unix arm: the operand is the decoded
+            // (post-munge) target, so a munging receiver skips every symlink -
+            // the munge prefix itself is the absolute path the check refuses.
+            if self.config.flags.safe_links
+                && crate::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative_path)
+            {
+                self.report_ignored_unsafe_symlink(writer, relative_path, target);
+                continue;
+            }
 
             let link_path = dest_dir.join(relative_path);
 
@@ -1074,11 +1070,14 @@ impl ReceiverContext {
 /// Sanitizes a received symlink target so it cannot resolve above the module
 /// root, for daemon modules that disabled `munge symlinks`.
 ///
-/// Mirrors upstream `flist.c:1329`, which applies `sanitize_path(...,
+/// Mirrors upstream `flist.c:1328`, which applies `sanitize_path(...,
 /// SP_DEFAULT)` to the target whenever `sanitize_paths && !munge_symlinks`.
 /// `sanitize_paths` is set for a daemon module with a path
-/// (`clientserver.c:1068`), so the two transforms between them leave no daemon
-/// configuration in which a peer-supplied target reaches the disk verbatim.
+/// (`clientserver.c:1067-1068`), so the two transforms between them leave no
+/// daemon configuration in which a peer-supplied target reaches the disk
+/// verbatim. It is never set in the client end of a daemon connection, so the
+/// caller gates this on `!client_mode`: a pull client stores the wire target
+/// byte-for-byte (measured against rsync 3.5.0).
 ///
 /// This rewrite is what makes an absolute target relative, so a link to
 /// `/etc/hostname` becomes the in-tree `etc/hostname` and `--safe-links` no
