@@ -261,6 +261,6 @@ for each technique is recorded in #2054 once benchmarks land.
   - `librcksum/internal.h`, `hash.c`, `rsum.c`, `state.c`, `rcksum.h`
 - Upstream rsync 3.4.1: `target/interop/upstream-src/rsync-3.4.1/`
   - `match.c`, `token.c`, `checksum.c`
-- oc-rsync match crate: `crates/match/src/{generator.rs, optimized_search.rs,
-  script.rs, ring_buffer.rs, index/{builder,mod}.rs}`
+- oc-rsync matching crate: `crates/matching/src/{generator.rs, script.rs,
+  ring_buffer.rs, index/{builder,mod}.rs}`
 - oc-rsync rolling Adler: `crates/checksums/src/rolling/checksum/{mod,x86,neon}.rs`
