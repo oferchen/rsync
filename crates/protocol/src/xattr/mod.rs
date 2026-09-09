@@ -31,6 +31,10 @@
 //!
 //! - Upstream rsync 3.4.4 `xattrs.c`
 
+use md5::Md5;
+use md5::digest::OutputSizeUser;
+use md5::digest::typenum::Unsigned;
+
 mod cache;
 mod diff;
 mod entry;
@@ -60,8 +64,21 @@ pub const MAX_FULL_DATUM: usize = 32;
 
 /// Maximum length of the xattr checksum digest.
 ///
-/// Uses MD5 (16 bytes) for compatibility with upstream rsync.
-pub const MAX_XATTR_DIGEST_LEN: usize = 16;
+/// Derived from the output size of the very hasher [`compute_xattr_checksum`]
+/// runs, so the buffer and the digest can never disagree.
+///
+/// upstream: `xattrs.c:48` defines this as `MAX_XATTR_DIGEST_LEN MD5_DIGEST_LEN`
+/// rather than as a number, and `lib/md-defines.h:12` sets `MD5_DIGEST_LEN` to
+/// 16. Note that upstream pins the xattr digest to MD5's length specifically,
+/// *not* to `MAX_DIGEST_LEN` (`lib/md-defines.h:13-21`, up to SHA-512's 64):
+/// `compat.c:835-836` fixes `xattr_sum_nni` to the implied MD5 choice, above a
+/// comment reserving the right to make the algorithm negotiable later.
+pub const MAX_XATTR_DIGEST_LEN: usize = <Md5 as OutputSizeUser>::OutputSize::USIZE;
+
+/// The derivation must stay value-identical to upstream's `MD5_DIGEST_LEN`
+/// (`lib/md-defines.h:12`): the abbreviated-xattr digest is a wire field, so a
+/// changed length is a protocol break, not an internal detail.
+const _: () = assert!(MAX_XATTR_DIGEST_LEN == 16);
 
 /// Hard ceiling on a single peer-supplied xattr value.
 ///
@@ -135,3 +152,32 @@ pub const USER_PREFIX: &str = "user.";
 
 /// System namespace prefix for xattrs.
 pub const SYSTEM_PREFIX: &str = "system.";
+
+#[cfg(test)]
+mod digest_len_tests {
+    use super::*;
+    use md5::Digest;
+
+    const DATUM: &[u8] = b"an xattr value wider than MAX_FULL_DATUM bytes";
+
+    /// The buffer width and the hasher that fills it must be one decision.
+    /// Driven from the live hasher output rather than a second literal, so a
+    /// digest swap fails here instead of panicking inside `copy_from_slice`
+    /// on the first abbreviated xattr.
+    #[test]
+    fn digest_len_tracks_the_hasher_that_fills_the_buffer() {
+        let hasher_output_len = Md5::digest(DATUM).len();
+        assert_eq!(MAX_XATTR_DIGEST_LEN, hasher_output_len);
+        assert_eq!(compute_xattr_checksum(DATUM, 0).len(), hasher_output_len);
+    }
+
+    /// upstream pins the xattr digest to MD5's length (`xattrs.c:48`,
+    /// `lib/md-defines.h:12`), never to `MAX_DIGEST_LEN`, which reaches
+    /// SHA-512's 64 bytes (`lib/md-defines.h:13-21`). Deriving from the wrong
+    /// constant would still compile and still hold a digest, but would put the
+    /// wrong number of bytes on the wire.
+    #[test]
+    fn digest_len_is_upstream_md5_digest_len_not_max_digest_len() {
+        assert_eq!(MAX_XATTR_DIGEST_LEN, 16);
+    }
+}
