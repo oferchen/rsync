@@ -3171,3 +3171,359 @@ fn checksum_does_override_the_quick_check_on_the_same_fixture() {
         "and the destination must hold the source bytes"
     );
 }
+
+// The local-copy backup ladder's CONFINEMENT wiring.
+//
+// `create_backup_hard_link` and `backup_rename` (local_copy/overrides.rs) call
+// `fast_io::operator_link_confined` / `operator_rename_confined`, and
+// `copy_pre_image_to_backup` (executor/file/backup.rs) calls
+// `operator_open_write_create_confined`, mirroring upstream's
+// `operator_path_resolve = 1` around the whole of `make_backup_inner`
+// (backup.c:437-449) and around the generator's in-place backup copy
+// (generator.c:2279-2300). Those three calls are what stops an operator-named
+// `--backup-dir` from carrying a destination's pre-transfer bytes out of the
+// confinement root that `--confine-root` published.
+//
+// The escape shape is a TRUSTED-owned directory symlink standing where the
+// operator named the backup area. That matters for what these cells can and
+// cannot prove: the ownership half of the walk follows a symlink owned by uid 0
+// or our own euid by design (fast_io/owner_walk.rs, upstream syscall.c:406), and
+// a single-uid test owns every symlink it plants, so it can never make the
+// ownership half REFUSE. What it can exercise is the CONFINEMENT-ROOT half,
+// which is the half that actually defends this shape - upstream's own note on
+// `operator_link_confined` says ownership alone cannot bound it. Each cell below
+// therefore pins the root half and says so; the third-uid ownership refusal
+// stays with the root leg of the upstream testsuite.
+
+/// The session's confinement root is process-global (upstream's `confine_root`),
+/// so cells that install one must not interleave when the harness runs them as
+/// threads.
+#[cfg(unix)]
+static BACKUP_CONFINEMENT_SESSION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Holds the process-global session for one cell and restores the unconfined
+/// default on the way out, so a panicking cell cannot leak a root onto the next.
+#[cfg(unix)]
+struct BackupConfinementSession(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+#[cfg(unix)]
+impl Drop for BackupConfinementSession {
+    fn drop(&mut self) {
+        fast_io::confinement::install_local_session(
+            fast_io::confinement::LocalInsecureLinks::from_local_flag(false),
+            None,
+        );
+    }
+}
+
+/// Publishes the non-daemon session the ownership walk reads, exactly as the
+/// client drive does for `--confine-root`
+/// (`cli::frontend::execution::drive::workflow::run`).
+///
+/// `None` is the ordinary plain-local-client session: the walk still runs but
+/// has no root to measure against, which is what the non-vacuity companions
+/// below use to show the fixture really can escape.
+#[cfg(unix)]
+fn install_backup_confinement(root: Option<&Path>) -> BackupConfinementSession {
+    let guard = BACKUP_CONFINEMENT_SESSION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    fast_io::confinement::install_local_session(
+        fast_io::confinement::LocalInsecureLinks::from_local_flag(false),
+        root.map(Path::to_path_buf),
+    );
+    BackupConfinementSession(guard)
+}
+
+/// A transfer tree inside a confinement root, plus a directory outside it for a
+/// `--backup-dir` symlink to aim at.
+#[cfg(unix)]
+struct BackupConfinementFixture {
+    _temp: tempfile::TempDir,
+    confine_root: PathBuf,
+    source: PathBuf,
+    dest: PathBuf,
+    outside: PathBuf,
+}
+
+#[cfg(unix)]
+impl BackupConfinementFixture {
+    /// The operands for `oc-rsync <source> <dest>`, so the destination root is
+    /// `dest` and the file lands at `dest/source/file.txt`.
+    fn operands(&self) -> Vec<OsString> {
+        vec![
+            self.source.clone().into_os_string(),
+            self.dest.clone().into_os_string(),
+        ]
+    }
+
+    /// The pre-transfer destination file the ladder has to back up.
+    fn existing(&self) -> PathBuf {
+        self.dest.join("source/file.txt")
+    }
+
+    /// Plants a directory symlink at the `--backup-dir` name, pointing at
+    /// `target`.
+    fn plant_backup_dir_link(&self, target: &Path) {
+        std::os::unix::fs::symlink(target, self.dest.join("bak")).expect("plant the dir symlink");
+    }
+}
+
+/// Builds the fixture with both sides of the transfer INSIDE the confinement
+/// root and the escape target outside it.
+///
+/// The root is handed over exactly as the temp dir spells it, which is what a
+/// `--confine-root` operand looks like. It does not need canonicalizing here:
+/// `install_session` resolves the root to a physical path itself
+/// (`fast_io::confinement::physical_root`), which is load-bearing on this repo's
+/// macOS hosts, where a temp dir lives under `/var` - itself a symlink to
+/// `/private/var` - while the walk judges the path it has really RESOLVED. The
+/// negative control below is what keeps that honest: were the root left lexical,
+/// nothing would resolve inside it and the control would fail.
+#[cfg(unix)]
+fn backup_confinement_fixture() -> BackupConfinementFixture {
+    let temp = test_support::create_tempdir();
+    let base = temp.path().to_path_buf();
+    let confine_root = base.join("tree");
+    let source = confine_root.join("source");
+    let dest = confine_root.join("dest");
+    let outside = base.join("outside");
+
+    fs::create_dir_all(&source).expect("create source");
+    fs::create_dir_all(dest.join("source")).expect("create dest tree");
+    fs::create_dir_all(&outside).expect("create the out-of-root directory");
+
+    fs::write(source.join("file.txt"), b"updated").expect("write source");
+    write_stale_dest(dest.join("source/file.txt"), b"original");
+
+    BackupConfinementFixture {
+        _temp: temp,
+        confine_root,
+        source,
+        dest,
+        outside,
+    }
+}
+
+/// WITNESS (confinement-root half). A `--backup-dir` that resolves out of the
+/// confinement root through a trusted-owned directory symlink must not receive
+/// the destination's pre-transfer bytes: the ladder fails closed instead.
+///
+/// Both the hard-link tier and the rename tier have to refuse for this to hold,
+/// and they are separate call sites: the link tier runs FIRST
+/// (`link_or_rename()` with `prefer_rename = 0`, backup.c:230-247), so confining
+/// only the rename leaves the escape wide open on the ordinary same-filesystem
+/// path, and confining only the link leaves it open the moment the link cannot
+/// be made. One cell kills either omission because the tiers are tried in
+/// sequence.
+///
+/// The assertion is a filesystem outcome, not a call shape: nothing named
+/// `file.txt~` may appear under the out-of-root directory, and the pre-image
+/// must still be where it was - a rename MOVES the inode, so a refusal that
+/// fired after the syscall would leave the destination empty.
+///
+/// upstream: `backup.c:443-449` `make_backup()` raises `operator_path_resolve`
+/// around the WHOLE backup; `syscall.c:961` `do_link_at()` and `syscall.c:1891`
+/// `do_rename_at()` each walk their endpoints while it is set.
+#[cfg(unix)]
+#[test]
+fn backup_dir_leaving_the_confinement_root_cannot_receive_the_pre_image() {
+    let fx = backup_confinement_fixture();
+    fx.plant_backup_dir_link(&fx.outside);
+
+    let plan = LocalCopyPlan::from_operands(&fx.operands()).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .with_backup_directory(Some(PathBuf::from("bak")));
+
+    let _session = install_backup_confinement(Some(&fx.confine_root));
+    let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
+
+    assert!(
+        result.is_err(),
+        "a backup that can only land outside the confinement root must fail \
+         closed, not be silently skipped"
+    );
+    let escaped = fx.outside.join("source/file.txt~");
+    assert!(
+        !escaped.exists(),
+        "the pre-transfer bytes reached {} - the backup ladder resolved an \
+         operator-named path out of the confinement root",
+        escaped.display()
+    );
+    assert_eq!(
+        fs::read(fx.existing()).expect("the destination must still exist"),
+        b"original",
+        "the refusal must fire BEFORE the rename; a refusal after it would have \
+         moved the pre-image away and left nothing behind"
+    );
+}
+
+/// NON-VACUITY COMPANION for
+/// [`backup_dir_leaving_the_confinement_root_cannot_receive_the_pre_image`]: the
+/// SAME fixture with no confinement root installed - the plain local client,
+/// upstream's NULL `confine_root` - follows the trusted symlink and really does
+/// deposit the pre-image outside the tree.
+///
+/// Without this cell the witness above would pass just as well on a fixture
+/// where no backup could ever be made: a `--backup-dir` the ladder never
+/// reaches, a destination that was never out of date, a plan that transferred
+/// nothing. This asserts the escape HAPPENS when the root is absent, so the
+/// witness's "must not exist" is a discrimination rather than an accident.
+#[cfg(unix)]
+#[test]
+fn backup_dir_leaving_an_unconfined_session_does_receive_the_pre_image() {
+    let fx = backup_confinement_fixture();
+    fx.plant_backup_dir_link(&fx.outside);
+
+    let plan = LocalCopyPlan::from_operands(&fx.operands()).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .with_backup_directory(Some(PathBuf::from("bak")));
+
+    let _session = install_backup_confinement(None);
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("with nothing to be outside of, the backup must succeed");
+
+    let escaped = fx.outside.join("source/file.txt~");
+    assert_eq!(
+        fs::read(&escaped).expect("the fixture must be able to place a backup at all"),
+        b"original",
+        "unconfined, the ladder follows the trusted symlink and the pre-image \
+         lands outside the tree - so the confined cell's placement assertion is \
+         discriminating, not vacuous"
+    );
+    assert_eq!(
+        fs::read(fx.existing()).expect("read dest"),
+        b"updated",
+        "and the transfer completed, so the fixture exercises the whole ladder"
+    );
+}
+
+/// NEGATIVE CONTROL. A trusted directory symlink at the `--backup-dir` whose
+/// target stays INSIDE the confinement root is still followed and backed up
+/// through - the ordinary operator layout the ownership walk exists to keep
+/// working.
+///
+/// Without this, "refuse every backup through a symlinked parent" - or a
+/// confinement root so mis-anchored that nothing at all resolves inside it -
+/// would satisfy the witness above while breaking a legitimate `--backup-dir`.
+///
+/// upstream: `syscall.c:406` follows a trusted-owned symlink;
+/// `syscall.c:186-240` `abspath_outside_confinement()` refuses only what lands
+/// outside the root.
+#[cfg(unix)]
+#[test]
+fn backup_dir_symlink_staying_inside_the_confinement_root_is_followed() {
+    let fx = backup_confinement_fixture();
+    let real_backup = fx.dest.join("realbak");
+    fs::create_dir(&real_backup).expect("create the real backup dir");
+    fx.plant_backup_dir_link(&real_backup);
+
+    let plan = LocalCopyPlan::from_operands(&fx.operands()).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .with_backup_directory(Some(PathBuf::from("bak")));
+
+    let _session = install_backup_confinement(Some(&fx.confine_root));
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("an in-root landing site must still be backed up through");
+
+    assert_eq!(
+        fs::read(real_backup.join("source/file.txt~")).expect("the backup exists"),
+        b"original",
+        "a trusted symlink resolving inside the root must be followed, not refused"
+    );
+    assert!(
+        fs::symlink_metadata(fx.dest.join("bak"))
+            .expect("the plant survives")
+            .file_type()
+            .is_symlink(),
+        "following the link must not have replaced it with a directory"
+    );
+    assert_eq!(
+        fs::read(fx.existing()).expect("read dest"),
+        b"updated",
+        "and the transfer completed"
+    );
+}
+
+/// WITNESS (confinement-root half) for the `--inplace` tier, which is a
+/// DIFFERENT call site: the in-place update keeps the destination inode and
+/// COPIES the pre-image aside, so it never reaches the link/rename tiers the
+/// cells above pin. Upstream reflects that split too - the in-place backup
+/// bypasses `make_backup()` entirely and the generator raises
+/// `operator_path_resolve` around its own `copy_file()`.
+///
+/// The copy is what makes this worth a separate cell: a refusal here has to stop
+/// an OPEN FOR WRITING from resolving out of the root, and `std::fs::copy` has
+/// exactly the path-following behaviour that would let it.
+///
+/// upstream: `generator.c:2279-2300` and `generator.c:2327-2350` - the in-place
+/// backup raises `operator_path_resolve` around `get_backup_name()` and the
+/// `copy_file()` / `do_open_at()` that follow.
+#[cfg(unix)]
+#[test]
+fn inplace_backup_dir_leaving_the_confinement_root_cannot_receive_the_pre_image() {
+    let fx = backup_confinement_fixture();
+    fx.plant_backup_dir_link(&fx.outside);
+
+    let plan = LocalCopyPlan::from_operands(&fx.operands()).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .inplace(true)
+        .with_backup_directory(Some(PathBuf::from("bak")));
+
+    let _session = install_backup_confinement(Some(&fx.confine_root));
+    let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
+
+    assert!(
+        result.is_err(),
+        "an --inplace backup that can only land outside the confinement root \
+         must fail closed"
+    );
+    let escaped = fx.outside.join("source/file.txt~");
+    assert!(
+        !escaped.exists(),
+        "the pre-image reached {} - the --inplace backup copy opened an \
+         operator-named path out of the confinement root",
+        escaped.display()
+    );
+}
+
+/// NON-VACUITY COMPANION for
+/// [`inplace_backup_dir_leaving_the_confinement_root_cannot_receive_the_pre_image`]:
+/// the same `--inplace` fixture with no confinement root installed really does
+/// write the pre-image outside the tree.
+///
+/// This is the cell that makes the witness's `is_err()` mean "refused" rather
+/// than "this fixture never makes an in-place backup in the first place".
+#[cfg(unix)]
+#[test]
+fn inplace_backup_dir_leaving_an_unconfined_session_does_receive_the_pre_image() {
+    let fx = backup_confinement_fixture();
+    fx.plant_backup_dir_link(&fx.outside);
+
+    let plan = LocalCopyPlan::from_operands(&fx.operands()).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .inplace(true)
+        .with_backup_directory(Some(PathBuf::from("bak")));
+
+    let _session = install_backup_confinement(None);
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("with nothing to be outside of, the in-place backup must succeed");
+
+    let escaped = fx.outside.join("source/file.txt~");
+    assert_eq!(
+        fs::read(&escaped).expect("the fixture must be able to place an --inplace backup at all"),
+        b"original",
+        "unconfined, the in-place backup copy follows the trusted symlink and \
+         writes the pre-image outside the tree"
+    );
+    assert_eq!(
+        fs::read(fx.existing()).expect("read dest"),
+        b"updated",
+        "and the in-place rewrite completed on the original inode"
+    );
+}
