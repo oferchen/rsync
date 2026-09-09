@@ -155,9 +155,23 @@ pub fn process_file_response_streaming<R: Read>(
     });
 
     let mut basis_map = if let Some(ref path) = header.basis_path {
-        Some(MapFile::open(path).map_err(|e| {
+        let map = MapFile::open(path).map_err(|e| {
             io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
-        })?)
+        })?;
+        // upstream: receiver.c:498-501 - `receive_data()` names the basis it
+        // mapped, and its size, before consuming the first token. Upstream's
+        // `fname_r` is the flist-relative name (it chdir'd into the destination
+        // root), so print that spelling rather than the absolute path. The size
+        // is the signature's file length: the basis this delta was built against.
+        let _ = path;
+        matching::trace_deltasum::trace_recv_mapped(
+            &ctx.wire_basis.entry_relative_path.display(),
+            header
+                .signature
+                .as_ref()
+                .map_or(0, |sig| sig.layout().file_size()),
+        );
+        Some(map)
     } else {
         None
     };
@@ -184,9 +198,14 @@ pub fn process_file_response_streaming<R: Read>(
 
             if matches!(next_delta, DeltaToken::End) {
                 total_bytes = len as u64;
+                // upstream: receiver.c:552-555 - the coalesced single-literal
+                // file is still one literal token arriving at offset 0.
+                matching::trace_deltasum::trace_data_recv(len, 0);
                 let checksum_len = checksum_verifier.digest_len();
                 let mut expected_checksum = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
                 reader.read_exact(&mut expected_checksum[..checksum_len])?;
+                // upstream: receiver.c:671-673
+                matching::trace_deltasum::trace_got_file_sum();
 
                 file_tx
                     .send(FileMessage::WholeFile {
@@ -213,6 +232,8 @@ pub fn process_file_response_streaming<R: Read>(
 
             // Not a single-chunk file - send Begin + first Chunk,
             // then continue the regular loop starting with the peeked token.
+            // upstream: receiver.c:552-555 - this first literal lands at 0.
+            matching::trace_deltasum::trace_data_recv(len, 0);
             file_tx.send(FileMessage::Begin(begin_msg)).map_err(|_| {
                 io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
             })?;

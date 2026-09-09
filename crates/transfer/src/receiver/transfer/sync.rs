@@ -203,11 +203,10 @@ impl ReceiverContext {
             // The basis search must precede the iflags write so a
             // --partial-dir resume basis can set ITEM_BASIS_TYPE_FOLLOWS.
             let basis_config = self.build_basis_file_config(
+                ndx,
                 &file_path,
                 &dest_dir,
-                relative_path,
-                file_entry.size(),
-                file_entry.mtime(),
+                file_entry,
                 checksum_length,
                 checksum_algorithm,
             );

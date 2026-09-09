@@ -1096,12 +1096,24 @@ where
     R: Read,
     F: FnMut() -> io::Result<()>,
 {
+    // upstream: sender.c:348-350 - `receive_sums()` reports the header it just
+    // read, before the block loop, and does so even for an empty signature.
+    matching::trace_deltasum::trace_receive_sums_head(
+        u64::from(sum_head.count),
+        sum_head.blength as usize,
+        sum_head.remainder,
+    );
+
     if sum_head.is_empty() {
         // No basis file (count=0), whole-file transfer - no blocks to read
         return Ok(Vec::new());
     }
 
     let mut blocks = Vec::with_capacity(sum_head.count as usize);
+    // upstream: sender.c:377-380 - the per-block offset the trace reports is
+    // the running sum of block lengths, with the remainder applying to the
+    // last block only.
+    let mut block_offset = 0u64;
 
     for i in 0..sum_head.count {
         // Read rolling checksum (4 bytes LE)
@@ -1112,6 +1124,22 @@ where
         // Read strong checksum (s2length bytes)
         let mut strong_sum = vec![0u8; sum_head.s2length as usize];
         reader.read_exact(&mut strong_sum)?;
+
+        // upstream: sender.c:109-110 - the last block takes the remainder when
+        // it is non-zero; every other block spans a full blength.
+        let block_len = if i + 1 == sum_head.count && sum_head.remainder != 0 {
+            sum_head.remainder as usize
+        } else {
+            sum_head.blength as usize
+        };
+        // upstream: sender.c:382-386
+        matching::trace_deltasum::trace_receive_sums_chunk(
+            u64::from(i),
+            block_len,
+            block_offset,
+            rolling_sum,
+        );
+        block_offset += block_len as u64;
 
         blocks.push(SignatureBlock {
             index: i,
