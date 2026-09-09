@@ -17,7 +17,6 @@ rsync delta algorithm by comparing input blocks against file signatures.
 - `generator` - delta generation loop (mirrors upstream `match.c`)
 - `index` - two-level hash table for signature block lookup
 - `script` - delta script types and application
-- `optimized_search` - bithash/sequential-match optimizations
 - `ring_buffer` - circular buffer for streaming delta generation
 - `fuzzy` - fuzzy basis file matching by name similarity and mtime
 
