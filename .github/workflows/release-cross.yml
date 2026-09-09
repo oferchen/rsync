@@ -183,7 +183,7 @@ jobs:
               } > /etc/apt/sources.list.d/ubuntu-ports-arm64.sources
             ' sh "$codename"
 
-            sudo apt-get update
+            bash tools/ci/apt_update.sh
             sudo apt-get -y install \
               pkg-config \
               libssl-dev \
@@ -200,7 +200,7 @@ jobs:
               zlib1g-dev:arm64 \
               libxxhash-dev:arm64
           else
-            sudo apt-get update
+            bash tools/ci/apt_update.sh
             sudo apt-get -y install \
               pkg-config \
               libssl-dev \
