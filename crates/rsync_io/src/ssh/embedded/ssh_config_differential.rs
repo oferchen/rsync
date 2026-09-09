@@ -6,17 +6,17 @@
 //!
 //! # Why `ssh -G` is the sharp instrument
 //!
-//! `config_test` is declared at ssh.c:677, set at ssh.c:790-792, and read
-//! at exactly one place, ssh.c:1630-1633 (`dump_client_config(&options,
+//! `config_test` is declared at openssh/ssh.c:677, set at openssh/ssh.c:790-792, and read
+//! at exactly one place, openssh/ssh.c:1630-1633 (`dump_client_config(&options,
 //! host); exit(0)`). It gates nothing else, so every config-processing
 //! step runs identically with and without `-G`: the first pass
-//! (ssh.c:1221), `fill_default_options_for_canonicalization` (:1225), the
+//! (openssh/ssh.c:1221), `fill_default_options_for_canonicalization` (:1225), the
 //! `HostName` `%h` substitution (:1228-1237), `lowercase(host)` (:1241),
 //! `resolve_canonicalize` (:1247), the `SSHCONF_FINAL` re-parse
 //! (:1286-1298), `fill_default_options` (:1301), the
 //! `ProxyJump`-to-`ProxyCommand` synthesis (:1310-1360), and the percent
 //! and tilde expansion (:1432-1628). The dump itself is
-//! `dump_client_config`, readconf.c:3618-3847.
+//! `dump_client_config`, openssh/readconf.c:3618-3847.
 //!
 //! # Three sharp edges this harness controls for
 //!
@@ -31,16 +31,16 @@
 //! 2. **`-G` output mixes expanded and unexpanded values,** and which is
 //!    which cannot be inferred from the output. `IdentityFile` and
 //!    `CertificateFile` are dumped *unexpanded* because their expansion
-//!    happens at ssh.c:2428 and :2476, after the dump. `ControlPath`,
+//!    happens at openssh/ssh.c:2428 and :2476, after the dump. `ControlPath`,
 //!    `IdentityAgent`, `UserKnownHostsFile`, `RevokedHostKeys`,
 //!    `VersionAddendum`, `SetEnv`, `RemoteCommand`, `User` and the
 //!    forward paths are dumped *expanded*. [`Expansion`] encodes the
 //!    table so a comparison never silently assumes the wrong one.
 //!
-//! 3. **`hostname` is not `o->hostname`.** readconf.c:3639 dumps
+//! 3. **`hostname` is not `o->hostname`.** openssh/readconf.c:3639 dumps
 //!    `dump_cfg_string(oHostname, host)` - the caller's `host` variable.
-//!    When a `HostName` directive matched, ssh.c:1229-1237 has already
-//!    replaced `host` with the `%h`-expanded value; ssh.c:1239-1241 then
+//!    When a `HostName` directive matched, openssh/ssh.c:1229-1237 has already
+//!    replaced `host` with the `%h`-expanded value; openssh/ssh.c:1239-1241 then
 //!    lowercases it unless it is an address literal. So the dumped
 //!    `hostname` is the resolved name *lowercased*, and when no
 //!    `HostName` matched it is the alias, also lowercased. oc stores the
@@ -96,8 +96,8 @@ pub(super) enum Expansion {
     /// Percent tokens and `~` are already resolved in the dumped value.
     Expanded,
     /// The dumped value is the raw config text. `IdentityFile` and
-    /// `CertificateFile` are the two that matter: ssh.c:2428/:2476 expand
-    /// them after ssh.c:1630 has already dumped.
+    /// `CertificateFile` are the two that matter: openssh/ssh.c:2428/:2476 expand
+    /// them after openssh/ssh.c:1630 has already dumped.
     Unexpanded,
 }
 
@@ -106,7 +106,7 @@ pub(super) enum Expansion {
 pub(super) enum Normalization {
     /// Compare byte-for-byte.
     None,
-    /// Upstream lowercases its side (ssh.c:1239-1241) and oc does not, so
+    /// Upstream lowercases its side (openssh/ssh.c:1239-1241) and oc does not, so
     /// oc's value is lowercased before the comparison. Recorded here so
     /// the adjustment is visible rather than hidden inside a helper.
     LowercaseUpstream,
@@ -238,7 +238,7 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
     map.insert(
         "hostname".to_owned(),
         // Upstream always dumps a hostname: the resolved HostName if one
-        // matched, else the alias (ssh.c:1229-1241). oc's `None` means no
+        // matched, else the alias (openssh/ssh.c:1229-1241). oc's `None` means no
         // HostName matched, which is the same fallback.
         Some(vec![
             resolved
@@ -283,12 +283,12 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
 /// The per-keyword comparison rules, for the keywords oc can answer.
 fn rules(keyword: &str) -> (Expansion, Normalization) {
     match keyword {
-        // ssh.c:1239-1241 lowercases the resolved host; oc stores it as
+        // openssh/ssh.c:1239-1241 lowercases the resolved host; oc stores it as
         // written.
         "hostname" => (Expansion::Expanded, Normalization::LowercaseUpstream),
-        // Dumped before ssh.c:2428 expands it.
+        // Dumped before openssh/ssh.c:2428 expands it.
         "identityfile" => (Expansion::Unexpanded, Normalization::None),
-        // Dumped after expansion (ssh.c's IdentityAgent handling).
+        // Dumped after expansion (openssh/ssh.c's IdentityAgent handling).
         "identityagent" => (Expansion::Expanded, Normalization::None),
         _ => (Expansion::Expanded, Normalization::None),
     }
@@ -409,7 +409,7 @@ mod tests {
     ///
     /// oc's embedded resolver performs no token expansion, so a `HostName`
     /// carrying `%h` is stored as written. Upstream expands it during the
-    /// first pass (ssh.c:1228-1237, `%h` -> the alias) and the expanded
+    /// first pass (openssh/ssh.c:1228-1237, `%h` -> the alias) and the expanded
     /// value is what reaches the dump.
     ///
     /// Measured against real ssh before this test was written: alias `t`
@@ -530,8 +530,8 @@ mod tests {
 
     /// SHARP EDGE 2, demonstrated live rather than asserted from the C.
     ///
-    /// `IdentityFile` is dumped UNEXPANDED because ssh.c:2428 expands it
-    /// only after ssh.c:1630 has already dumped and exited. oc expands
+    /// `IdentityFile` is dumped UNEXPANDED because openssh/ssh.c:2428 expands it
+    /// only after openssh/ssh.c:1630 has already dumped and exited. oc expands
     /// `~` at resolve time, so the two sides disagree in REPRESENTATION
     /// while naming the same file.
     ///
