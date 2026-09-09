@@ -30,12 +30,13 @@ mod index;
 pub mod optimized_search;
 mod ring_buffer;
 mod script;
+pub mod trace_deltasum;
 
 pub use fuzzy::{
     FUZZY_LEVEL_1, FUZZY_LEVEL_2, FuzzyMatch, FuzzyMatcher, trace_fuzzy_basis_selected,
     trace_fuzzy_distance, trace_fuzzy_size_mtime_match,
 };
-pub use generator::{DeltaGenerator, generate_delta};
+pub use generator::{DeltaGenerator, ScanCounters, generate_delta};
 pub use index::{
     DeltaSignatureIndex, HASH_KEY_BITS, HashtableRole, MatchedBlocks, ProbeCounters,
     trace_hashtable_created, trace_hashtable_destroyed, trace_hashtable_growing,

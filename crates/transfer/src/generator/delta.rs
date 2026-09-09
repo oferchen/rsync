@@ -335,15 +335,22 @@ impl<R: Read> Read for ScanSource<R> {
 pub fn generate_delta_from_signature<R: Read>(
     source: R,
     config: DeltaGeneratorConfig<'_>,
-) -> io::Result<DeltaScript> {
+    source_len: u64,
+) -> io::Result<(DeltaScript, matching::ScanCounters)> {
     let needed = consecutive_match_needed(&config);
     let updating_basis_file = config.updating_basis_file;
     let index = build_signature_index(config)?;
 
+    // upstream: match.c:436-437 - `match_sums()` announces the table it just
+    // built, immediately before entering `hash_search()`. oc builds the index
+    // here, so this is the equivalent position.
+    matching::trace_deltasum::trace_built_hash_table();
+
     let generator = DeltaGenerator::new()
         .with_consecutive_match_needed(needed)
-        .with_updating_basis_file(updating_basis_file);
-    generator.generate(source, &index).map_err(|e| {
+        .with_updating_basis_file(updating_basis_file)
+        .with_source_len(source_len);
+    generator.generate_counted(source, &index).map_err(|e| {
         io::Error::other(format!(
             "delta generation failed: {e} {}{}",
             error_location!(),
@@ -392,7 +399,7 @@ pub fn generate_delta_from_signature_chunked(
     source: &[u8],
     config: DeltaGeneratorConfig<'_>,
     max_chunks: usize,
-) -> io::Result<DeltaScript> {
+) -> io::Result<(DeltaScript, matching::ScanCounters)> {
     // Carry the negotiated consecutive-match threshold onto the parallel path:
     // when the mutual CAP_CONSECUTIVE_MATCH bit is set the receiver has halved
     // the strong-sum length, so the sender must apply seq_matches=2 gating here
@@ -402,15 +409,19 @@ pub fn generate_delta_from_signature_chunked(
     let updating_basis_file = config.updating_basis_file;
     let index = build_signature_index(config)?;
 
+    // upstream: match.c:436-437
+    matching::trace_deltasum::trace_built_hash_table();
+
     let generator = DeltaGenerator::new()
         .with_consecutive_match_needed(needed)
-        .with_updating_basis_file(updating_basis_file);
+        .with_updating_basis_file(updating_basis_file)
+        .with_source_len(source.len() as u64);
     let result = if index.has_duplicate_blocks() {
         // Duplicate-content basis: the prune-off parallel scan would diverge
         // from the pruned sequential wire bytes, so keep the sequential path.
-        generator.generate(io::Cursor::new(source), &index)
+        generator.generate_counted(io::Cursor::new(source), &index)
     } else {
-        generator.generate_chunked(source, &index, max_chunks)
+        generator.generate_chunked_counted(source, &index, max_chunks)
     };
 
     result.map_err(|e| {
@@ -1789,8 +1800,10 @@ mod tests {
         let mut config = delta_config(sig_blocks, BLOCK_LEN, 16, false);
         config.remainder = REMAINDER;
 
-        let script =
-            generate_delta_from_signature(io::Cursor::new(basis.clone()), config).expect("delta");
+        let basis_len = basis.len() as u64;
+        let (script, _) =
+            generate_delta_from_signature(io::Cursor::new(basis.clone()), config, basis_len)
+                .expect("delta");
 
         let short_copies: Vec<usize> = script
             .tokens()
@@ -1835,7 +1848,8 @@ mod tests {
         source.extend_from_slice(&block0);
 
         // Guard inactive: the backward match survives as a Copy (non-monotonic).
-        let off = generate_delta_from_signature(
+        let source_len = source.len() as u64;
+        let (off, _) = generate_delta_from_signature(
             io::Cursor::new(source.clone()),
             delta_config(
                 wire_signature(&basis, block_len, strong_len),
@@ -1843,6 +1857,7 @@ mod tests {
                 strong_len,
                 false,
             ),
+            source_len,
         )
         .expect("delta (guard off)");
         assert!(
@@ -1851,7 +1866,7 @@ mod tests {
         );
 
         // Guard active: the backward Copy is demoted to a literal (monotonic).
-        let on = generate_delta_from_signature(
+        let (on, _) = generate_delta_from_signature(
             io::Cursor::new(source.clone()),
             delta_config(
                 wire_signature(&basis, block_len, strong_len),
@@ -1859,6 +1874,7 @@ mod tests {
                 strong_len,
                 true,
             ),
+            source_len,
         )
         .expect("delta (guard on)");
         assert!(

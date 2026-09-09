@@ -116,6 +116,8 @@ pub(super) fn process_remaining_tokens<R: Read>(
                     send_abort(file_tx, format!("failed to read checksum: {e}"));
                     return Err(e);
                 }
+                // upstream: receiver.c:671-673
+                matching::trace_deltasum::trace_got_file_sum();
 
                 file_tx
                     .send(FileMessage::Commit {
@@ -149,6 +151,10 @@ pub(super) fn process_remaining_tokens<R: Read>(
                     }
                 };
                 let len = buf.len() as u64;
+
+                // upstream: receiver.c:552-555 - the literal's length and the
+                // output offset it lands at, before it is written.
+                matching::trace_deltasum::trace_data_recv(len as usize, total_bytes);
 
                 file_tx.send(FileMessage::Chunk(buf)).map_err(|_| {
                     io::Error::new(
@@ -210,7 +216,19 @@ pub(super) fn process_remaining_tokens<R: Read>(
                     // (receiver.c:392-403), so a temp holding nothing but basis
                     // copies is unlinked on abort (cleanup.c:159, :199-200)
                     // rather than renamed over a complete destination.
-                    let msg = if updating_basis && offset == total_bytes {
+                    let seek = updating_basis && offset == total_bytes;
+                    // upstream: receiver.c:609-614 - the ` (seek)` suffix marks
+                    // the in-place skip, where the basis bytes are already
+                    // correct at the output offset.
+                    matching::trace_deltasum::trace_recv_chunk(
+                        block_idx as u64,
+                        bytes_to_copy,
+                        offset,
+                        total_bytes,
+                        seek,
+                    );
+
+                    let msg = if seek {
                         FileMessage::SkipMatched(buf)
                     } else {
                         FileMessage::MatchedChunk(buf)

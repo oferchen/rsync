@@ -416,6 +416,11 @@ impl GeneratorContext {
         // another append delta, so track which entries have been sent once.
         let mut sent_files = SentFileTracker::default();
         let mut bytes_sent = 0u64;
+        // upstream: match.c:472-475 - total_matches / total_hash_hits /
+        // total_false_alarms accumulate across every file, and match_report()
+        // (match.c:479-487) prints them once after send_files() returns
+        // (sender.c:815).
+        let mut run_scan_counters = matching::ScanCounters::default();
         // upstream: match.c stats.matched_data / stats.literal_data accumulated
         // per token as the sender emits the delta stream.
         let mut matched_data = 0u64;
@@ -1123,7 +1128,12 @@ impl GeneratorContext {
                 // path has no io::Error to catch - a bad page raises SIGBUS -
                 // so it is left alone.
                 let mut scan_source = source_reader.map(|r| ScanSource::new(r, file_size));
-                let delta_script = match source_mmap.as_ref() {
+                // upstream: sender.c:760-763 then :768-769 - the source map and
+                // the match_sums() entry are announced per file, before the
+                // scan runs.
+                matching::trace_deltasum::trace_send_files_mapped(&source_path_display, file_size);
+                matching::trace_deltasum::trace_calling_match_sums(&source_path_display);
+                let (delta_script, scan_counters) = match source_mmap.as_ref() {
                     Some(mmap) => generate_delta_from_signature_chunked(
                         mmap.as_slice(),
                         config,
@@ -1134,8 +1144,14 @@ impl GeneratorContext {
                             .as_mut()
                             .expect("sequential reader opened when mmap is absent"),
                         config,
+                        file_size,
                     )?,
                 };
+                // upstream: match.c:472-475 - the per-file counters fold into
+                // the run totals that match_report() prints once at the end.
+                run_scan_counters.matches += scan_counters.matches;
+                run_scan_counters.hash_hits += scan_counters.hash_hits;
+                run_scan_counters.false_alarms += scan_counters.false_alarms;
                 read_error = scan_source.and_then(ScanSource::into_read_error);
 
                 self.write_ndx_attrs_and_sum_head(
@@ -1197,7 +1213,18 @@ impl GeneratorContext {
                     if read_error.is_some() {
                         poison_file_checksum(&mut checksum_buf, result.checksum_len);
                     }
+                    // upstream: match.c:465-466 - announced immediately before
+                    // the whole-file checksum trailer goes on the wire, and
+                    // match.c:468-471 - the per-file counters follow it. This
+                    // ordering is why the scan hands its counters back instead
+                    // of printing them itself.
+                    matching::trace_deltasum::trace_sending_file_sum();
                     cw.write_all(&checksum_buf[..result.checksum_len])?;
+                    matching::trace_deltasum::trace_match_counters(
+                        scan_counters.false_alarms,
+                        scan_counters.hash_hits,
+                        scan_counters.matches,
+                    );
                     matched_data += result.matched_data;
                     literal_data += result.literal_data;
                     sent_bytes(cw.bytes_written(), divert_xfer)
@@ -1406,6 +1433,18 @@ impl GeneratorContext {
 
         // upstream: sender.c:485-486 - if (io_error != save_io_error &&
         // protocol_version >= 30) send_msg_int(MSG_IO_ERROR, io_error);
+        // upstream: sender.c:815 match_report() - the once-per-run delta totals,
+        // printed after the send loop has finished every file. `data` is
+        // `stats.literal_data` (match.c:486), the cumulative literal-byte count.
+        // Upstream prints it whether or not any delta ran, leaving the counters
+        // at zero for a whole-file transfer.
+        matching::trace_deltasum::trace_match_totals(
+            run_scan_counters.matches,
+            run_scan_counters.hash_hits,
+            run_scan_counters.false_alarms,
+            literal_data,
+        );
+
         // Emitted immediately before NDX_DONE so a remote receiver learns of
         // vanished/unreadable source files and reports exit 24/23. MSG_NO_SEND
         // only skips the file; it does not carry the exit-code bits.

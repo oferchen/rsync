@@ -165,6 +165,40 @@ pub(crate) fn build_delta_signature(
         Err(_) => return Ok(None),
     };
 
+    // A local copy plays the generator role too, so upstream prints the
+    // generator's DELTASUM lines for the basis it just checksummed. This is the
+    // local counterpart of `receiver::basis::generate_basis_signature`.
+    //
+    // upstream: generator.c:2358-2361 `gen mapped`, :765-770 the geometry
+    // `sum_sizes_sqroot()` chose, :817-822 one line per generated chunk. The
+    // `generating and sending sums for %d` line (generator.c:2363) has NO local
+    // analogue: nothing is sent, and the local executor carries no wire file
+    // index to name - upstream's local run has one only because it really does
+    // drive a generator over a socketpair. Naming a fabricated index here would
+    // be inventing output, so the line is deliberately absent.
+    //
+    // The name is the basis path as this executor holds it. Upstream prints
+    // `fnamecmp`, which is relative because upstream chdir'd into the
+    // destination root; the local executor never chdirs, so the spelling is
+    // whatever the operand resolved to.
+    matching::trace_deltasum::trace_gen_mapped(&destination.display(), length);
+    matching::trace_deltasum::trace_sum_geometry(
+        layout.block_count(),
+        layout.remainder(),
+        layout.block_length().get() as usize,
+        layout.strong_sum_length().get(),
+        length,
+    );
+    let block_length = u64::from(layout.block_length().get());
+    for (position, block) in signature.blocks().iter().enumerate() {
+        matching::trace_deltasum::trace_gen_chunk(
+            position as u64,
+            position as u64 * block_length,
+            block.len(),
+            block.rolling().value(),
+        );
+    }
+
     match DeltaSignatureIndex::from_signature(&signature, SignatureAlgorithm::Md4) {
         Some(index) => Ok(Some(index)),
         None => Ok(None),

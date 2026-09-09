@@ -4264,6 +4264,7 @@ dependencies = [
  "getrandom 0.4.3",
  "libc",
  "logging",
+ "matching",
  "metadata",
  "platform",
  "proptest",

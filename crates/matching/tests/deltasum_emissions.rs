@@ -129,29 +129,58 @@ fn level_1_scan_emits_nothing() {
     );
 }
 
-/// At `-vvv` (DELTASUM level 2) the per-file counter line must survive, with
-/// upstream's exact wording and field order.
+/// At `-vvv` (DELTASUM level 2) the scan reports its milestones but NOT the
+/// per-file counter line.
 ///
-/// upstream: match.c:428-431 - `false_alarms=%d hash_hits=%d matches=%d`, note
-/// the single spaces and the order, which is deliberately the REVERSE of the
-/// `total:` line's `matches / hash_hits / false_alarms`.
+/// upstream orders the three level-2 lines `done hash search` (match.c:441),
+/// `sending file_sum` (match.c:465), `false_alarms=... hash_hits=...
+/// matches=...` (match.c:468) - the counters come AFTER the checksum trailer.
+/// The scan does not write that trailer, so it cannot own the line without
+/// printing it in the wrong place; it hands the numbers back through
+/// `ScanCounters` and the driver that writes the trailer emits them. MEASURED:
+/// emitting the counters from the scan put them one line ahead of
+/// `sending file_sum` on a `--debug=deltasum2` push, against upstream 3.5.0.
 #[test]
-fn level_2_scan_emits_upstream_per_file_counter_line() {
+fn level_2_scan_emits_milestones_but_not_the_counter_line() {
     init_deltasum(2);
     scan();
 
     let msgs = deltasum_messages();
-    let counters = msgs
-        .iter()
-        .find(|m| m.starts_with("false_alarms="))
-        .unwrap_or_else(|| panic!("missing per-file counter line, got: {msgs:?}"));
-    let fields: Vec<&str> = counters.split(' ').collect();
-    assert_eq!(fields.len(), 3, "unexpected field count in {counters:?}");
-    assert!(fields[0].starts_with("false_alarms="), "{counters:?}");
-    assert!(fields[1].starts_with("hash_hits="), "{counters:?}");
-    assert!(fields[2].starts_with("matches="), "{counters:?}");
+    assert!(
+        msgs.iter().any(|m| m == "done hash search"),
+        "missing the scan-complete milestone, got: {msgs:?}"
+    );
+    assert!(
+        !msgs.iter().any(|m| m.starts_with("false_alarms=")),
+        "the per-file counter line must follow `sending file_sum`, which only \
+         the trailer-writing driver can order correctly; got: {msgs:?}"
+    );
     assert!(
         !msgs.iter().any(|m| m.starts_with("total:")),
         "the run-total line is never emitted per file, got: {msgs:?}"
+    );
+}
+
+/// The counters the scan hands back are the ones the driver prints, so a scan
+/// that matched a block and left a literal run must report both.
+///
+/// upstream: match.c:472-475 - the same three values fold into the run totals.
+#[test]
+fn scan_counters_describe_the_work_done() {
+    init_deltasum(0);
+    let basis = basis_bytes();
+    let index = build_index(&basis);
+    let source = source_bytes();
+    let (script, counters) = DeltaGenerator::new()
+        .with_source_len(source.len() as u64)
+        .generate_counted(std::io::Cursor::new(source.as_slice()), &index)
+        .expect("delta scan");
+    assert!(
+        script.literal_bytes() > 0 && script.total_bytes() > script.literal_bytes(),
+        "fixture must produce both a match and a literal run"
+    );
+    assert!(
+        counters.matches > 0,
+        "the confirmed block match must be counted, got {counters:?}"
     );
 }

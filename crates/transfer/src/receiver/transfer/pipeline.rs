@@ -651,13 +651,24 @@ impl ReceiverContext {
                             .parallel_thresholds
                             .for_op(crate::parallel_io::ParallelOp::Signature);
 
+                        // The generator's `generating and sending sums for %d`
+                        // trace names the same wire NDX the request carries.
+                        // Resolve it here, before the parallel map: the closures
+                        // below deliberately capture only locals so they never
+                        // borrow `self` across rayon workers.
+                        let batch_ndxs: Vec<i32> = batch
+                            .iter()
+                            .map(|&(file_idx, ..)| self.flat_to_wire_ndx(file_idx))
+                            .collect();
+
                         // Ordering: wire protocol requires file requests in file-list index order.
                         // Preserved by par_iter().map().collect() + sequential zip/send loop below.
                         // Violation sends signatures for wrong files, corrupting delta transfer.
                         let sig_results: Vec<_> = if batch.len() >= sig_threshold {
                             batch
                                 .par_iter()
-                                .map(|(_, file_entry, file_path, base_iflags)| {
+                                .zip(batch_ndxs.par_iter())
+                                .map(|((_, file_entry, file_path, base_iflags), &ndx)| {
                                     // A metadata-only record transfers no data,
                                     // so no basis search is needed.
                                     if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0
@@ -665,6 +676,7 @@ impl ReceiverContext {
                                         return crate::receiver::basis::BasisFileResult::EMPTY;
                                     }
                                     let basis_config = BasisFileConfig {
+                                        ndx,
                                         file_path,
                                         dest_dir,
                                         relative_path: file_entry.path(),
@@ -687,12 +699,14 @@ impl ReceiverContext {
                         } else {
                             batch
                                 .iter()
-                                .map(|(_, file_entry, file_path, base_iflags)| {
+                                .zip(batch_ndxs.iter())
+                                .map(|((_, file_entry, file_path, base_iflags), &ndx)| {
                                     if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0
                                     {
                                         return crate::receiver::basis::BasisFileResult::EMPTY;
                                     }
                                     let basis_config = BasisFileConfig {
+                                        ndx,
                                         file_path,
                                         dest_dir,
                                         relative_path: file_entry.path(),
@@ -1286,6 +1300,7 @@ impl ReceiverContext {
             // send a real sum head so the sender can diff against the receiver's
             // basis (empty when no basis exists, driving a whole-file batch).
             let basis_config = BasisFileConfig {
+                ndx: self.flat_to_wire_ndx(file_idx),
                 file_path,
                 dest_dir: &setup.dest_dir,
                 relative_path: file_entry.path(),
