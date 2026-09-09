@@ -3305,6 +3305,231 @@ mod module_access_tests {
         assert!(rule.pattern.is_empty());
     }
 
+    /// Both spellings of a per-directory merge produce a `DirMerge` rule whose
+    /// pattern is the merge FILENAME, verbatim.
+    ///
+    /// upstream: `exclude.c:1331-1338` - `case ':'` sets FILTRULE_PERDIR_MERGE
+    /// and falls through to `case '.'` for FILTRULE_MERGE_FILE;
+    /// `exclude.c:1310-1311` maps the `dir-merge` keyword onto `:`.
+    ///
+    /// ⚠ `rule_type` is the load-bearing assertion, not the pattern text. A
+    /// parser that produced an EXCLUDE whose pattern happened to be
+    /// `.rsync-filter` would satisfy every served-file expectation of a module
+    /// that has no file by that name, so asserting only the pattern cannot tell
+    /// a real per-directory merge from a mangled exclude.
+    #[test]
+    fn a_dir_merge_token_produces_a_dir_merge_rule() {
+        for token in [": .rsync-filter", "dir-merge .rsync-filter"] {
+            let rule = accepted_rule(token);
+            assert_eq!(
+                rule.rule_type,
+                protocol::filters::RuleType::DirMerge,
+                "{token} must be a per-directory merge, not an include/exclude"
+            );
+            assert_eq!(rule.pattern, ".rsync-filter", "{token}");
+            // A merge FILENAME is not a match pattern: upstream's
+            // ABS_PATH-from-slash branch skips FILTRULE_MERGE_FILE rules
+            // (exclude.c:297-300), so only the `/` MODIFIER anchors one.
+            assert!(!rule.anchored, "{token}");
+            assert!(!rule.directory_only, "{token}");
+        }
+    }
+
+    /// The merge FILENAME escapes `build_pattern_rule`'s pattern rewrites.
+    ///
+    /// upstream: `add_rule`'s ABS_PATH-from-slash branch tests
+    /// `!(rule->rflags & (FILTRULE_ABS_PATH | FILTRULE_MERGE_FILE))`
+    /// (exclude.c:297-300) and XFLG_DIR2WILD3 applies only to a directory-only
+    /// EXCLUDE (exclude.c:212-213), so neither rewrite can reach a merge rule.
+    /// Routing a merge token through that helper would turn
+    /// `: sub/.rsync-filter` into an anchored rule and `: rules/` into
+    /// `rules/***`, and `setup_merge_file` would then look for a file that does
+    /// not exist.
+    #[test]
+    fn a_dir_merge_filename_is_not_rewritten_as_a_pattern() {
+        let nested = accepted_rule(": sub/.rsync-filter");
+        assert_eq!(nested.pattern, "sub/.rsync-filter");
+        assert!(
+            !nested.anchored,
+            "an embedded slash in a merge filename sets nothing"
+        );
+
+        let trailing = accepted_rule(": rules/");
+        assert_eq!(
+            trailing.pattern, "rules/",
+            "DIR2WILD3 must not append `***` to a merge filename"
+        );
+        assert!(!trailing.directory_only);
+    }
+
+    /// Every modifier upstream's grammar accepts on a `:` rule, and where each
+    /// one lands on the wire rule.
+    ///
+    /// upstream: the merge-gated arms of the modifier switch - `-`/`+`
+    /// (exclude.c:1381-1391), `/` (:1392-1394), `e` (:1411-1414), `n`
+    /// (:1415-1418), `p` (:1421-1423), `r` (:1424-1427), `w` (:1433-1436), `C`
+    /// (:1395-1403).
+    #[test]
+    fn dir_merge_modifiers_map_onto_the_wire_rule() {
+        /// Reads back the one flag the token under test is expected to set.
+        type ModifierSet = fn(&FilterRuleWireFormat) -> bool;
+
+        let cases: &[(&str, ModifierSet)] = &[
+            (":n .filt", |r| r.no_inherit),
+            (":e .filt", |r| r.exclude_from_merge),
+            (":w .filt", |r| r.word_split),
+            (":p .filt", |r| r.perishable),
+            (":r .filt", |r| r.receiver_side),
+            (":C .filt", |r| r.cvs_exclude),
+            (":/ .filt", |r| r.anchored),
+            (":- .filt", |r| r.no_prefixes && !r.no_prefixes_include),
+            (":+ .filt", |r| r.no_prefixes && r.no_prefixes_include),
+        ];
+        for (token, holds) in cases {
+            let rule = accepted_rule(token);
+            assert_eq!(
+                rule.rule_type,
+                protocol::filters::RuleType::DirMerge,
+                "{token}"
+            );
+            assert_eq!(rule.pattern, ".filt", "{token}");
+            assert!(holds(&rule), "{token} did not set its modifier flag");
+        }
+    }
+
+    /// `:s` is dropped at ADD time, not carried as a sender-side rule.
+    ///
+    /// upstream: `add_rule` drops a rule whose side flags equal
+    /// `am_sender ? FILTRULE_RECEIVER_SIDE : FILTRULE_SENDER_SIDE`
+    /// (exclude.c:279-285). Every daemon module directive passes
+    /// XFLG_ABS_IF_SLASH (clientserver.c:933-952) and parses before
+    /// `parse_arguments` runs, so `am_sender` is still its static 0 whatever
+    /// role the transfer later takes - the same drop `hide`/`show` and the `s`
+    /// modifier already take on a non-merge rule.
+    ///
+    /// SOURCE-DERIVED for the `:s` spelling specifically: the 12-cell daemon
+    /// harness was not re-run for it. The mechanism is the one already measured
+    /// for `exclude,s` and `hide`, which share this code path.
+    #[test]
+    fn a_sender_side_dir_merge_is_dropped_at_add_time() {
+        assert!(is_skipped(":s .rsync-filter"));
+        assert!(is_skipped("dir-merge,s .rsync-filter"));
+    }
+
+    /// A `:` whose modifier run is invalid REFUSES; it does not fall through to
+    /// a bare-word exclude.
+    ///
+    /// upstream: the modifier loop sends any unrecognised byte to `invalid:`,
+    /// which reports `"invalid modifier '%c' at position %d"` and exits
+    /// RERR_SYNTAX (exclude.c:1370-1379). `:` therefore joins the `+`/`-` class
+    /// rather than the `P R S H` class that competes with bare words - there is
+    /// no plausible bare pattern beginning with `:`.
+    ///
+    /// `!` is the one character the merge half CLOSES: it is NEGATE on a plain
+    /// rule but `goto invalid` on a merge rule, because "negation really goes
+    /// with the pattern, so it isn't useful as a merge-file default"
+    /// (exclude.c:1404-1410).
+    #[test]
+    fn an_invalid_dir_merge_modifier_is_refused_not_served() {
+        for (token, msg) in [
+            (
+                ":g .filt",
+                "invalid modifier 'g' at position 1 in filter rule: :g .filt",
+            ),
+            (
+                ":! .filt",
+                "invalid modifier '!' at position 1 in filter rule: :! .filt",
+            ),
+        ] {
+            let err =
+                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
+            assert_eq!(err.to_string(), msg, "{token}");
+        }
+        // A patternless merge rule is the same refusal every other prefix gets
+        // (exclude.c:1474-1476).
+        assert!(parse_daemon_filter_token(":", RuleXflags::Daemon).is_err());
+        assert!(parse_daemon_filter_token("dir-merge", RuleXflags::Daemon).is_err());
+    }
+
+    /// The merge-only modifiers stay REFUSED on a non-merge rule.
+    ///
+    /// upstream: `-`/`+`, `e`, `n` and `w` all `goto invalid` unless
+    /// FILTRULE_MERGE_FILE is set (exclude.c:1381-1391, :1411-1418, :1433-1436).
+    /// Opening them for `:` must not open them for `-`/`exclude`, or the daemon
+    /// would serve a module upstream refuses.
+    #[test]
+    fn merge_only_modifiers_are_still_invalid_on_a_plain_rule() {
+        for token in ["-,e keep", "-,n keep", "-,w keep", "exclude,e keep"] {
+            assert!(
+                parse_daemon_filter_token(token, RuleXflags::Daemon).is_err(),
+                "{token} must stay refused on a non-merge rule"
+            );
+        }
+    }
+
+    /// Adding `:` does NOT change how a leading-`.` token is read.
+    ///
+    /// `.` - upstream's EAGER `merge` character - is deliberately still absent
+    /// from `short_rule_prefix`, so `filter = .git` keeps reaching the bare-word
+    /// fall-through and stays a literal exclude. This cell exists to pin that
+    /// the `:` arm did not disturb it.
+    ///
+    /// ⚠ THIS PINS A KNOWN DIVERGENCE, NOT FIDELITY. MEASURED against rsync
+    /// 3.5.0: `filter = .git` is rc 5 UPSTREAM, because `.` is a rule character
+    /// there and `g` is then an invalid modifier (exclude.c:1370-1379); oc
+    /// serves the module with `.git` excluded literally (rc 0). Closing that
+    /// needs the eager `merge` reader, which is tracked separately - so the
+    /// assertion below records today's behaviour deliberately and must be
+    /// FLIPPED, not deleted, when that arm lands.
+    ///
+    /// Note the neighbouring spelling is NOT affected: `filter = - .git` is one
+    /// rule whose pattern is `.git` and is rc 0 on both, because the `.` is
+    /// pattern text there rather than a leading rule character.
+    #[test]
+    fn a_leading_dot_token_is_still_a_literal_exclude() {
+        let rule = accepted_rule(".git");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rule.pattern, ".git");
+
+        let prefixed = accepted_rule("- .git");
+        assert_eq!(prefixed.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(prefixed.pattern, ".git");
+    }
+
+    /// Recognising `:` as a rule PREFIX must not make it a token BOUNDARY.
+    ///
+    /// The two are separate mechanisms and only the first changed here:
+    /// [`short_rule_prefix`] decides what a token that ALREADY begins a rule
+    /// means, while [`RULE_KEYWORDS`] / `split_filter_tokens` decide where a new
+    /// token starts. Upstream keeps them separate the same way - `parse_rule_tok`
+    /// dispatches on the first character of a rule it has already been handed
+    /// (exclude.c:1325-1338), and the word-split loop is what hands rules over.
+    ///
+    /// If `:` became an opener, `filter = - :foo` would split into a patternless
+    /// `-` plus a `:foo` rule and the `-` would be refused
+    /// (`exclude.c:1474-1476`), turning a config upstream serves into an error.
+    /// The `.` spelling is the same hazard and the reason `.` is not an opener
+    /// either.
+    ///
+    /// MEASURED against rsync 3.5.0, module holding `.git`, `:foo`, `keep.txt`:
+    ///
+    /// ```text
+    /// filter = - .git     rc 0, serves `:foo` + `keep.txt`
+    /// filter = - :foo     rc 0, serves `.git` + `keep.txt`
+    /// ```
+    ///
+    /// oc matches on both, before AND after the `:` prefix arm - the pattern
+    /// text is untouched.
+    #[test]
+    fn a_colon_in_pattern_text_is_not_a_token_boundary() {
+        let rule = accepted_rule("- :foo");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(
+            rule.pattern, ":foo",
+            "`:` after a prefix is PATTERN text, not a second rule"
+        );
+    }
+
     #[test]
     fn a_clear_with_a_comma_joined_trailer_is_refused() {
         // upstream: `clear` maps to `!`, the modifier scan is SKIPPED
@@ -3777,41 +4002,6 @@ mod module_access_tests {
                 "modifier {modifier} must not change the merged rule"
             );
         }
-    }
-
-    #[test]
-    fn the_per_dir_spellings_are_not_read_eagerly() {
-        // SCOPE BOUNDARY, and NOT a claim that this is upstream-faithful.
-        //
-        // ⚠ AN EARLIER VERSION OF THIS CELL ASSERTED THE OPPOSITE - that `:`
-        // and `dir-merge` add no rule because upstream's daemon list "never
-        // descends per directory". That is REFUTED. `add_rule` registers every
-        // FILTRULE_PERDIR_MERGE rule into the GLOBAL `mergelist_parents`
-        // (exclude.c:349-391) whatever list it went into, so a rule in
-        // `daemon_filter_list` is registered too; `push_local_filters` then
-        // fills that rule's own `u.mergelist` per directory and `check_filter`
-        // recurses into it. MEASURED against rsync 3.5.0, module holding
-        // `sub/.rsync-filter` = `- bait.txt`: `filter = : .rsync-filter` HIDES
-        // `sub/bait.txt`, and `filter = dir-merge rules` hides it with the merge
-        // file and the bait at the module root too. oc serves it in every one of
-        // those cells - a live divergence, tracked as its own change because it
-        // needs a `RuleType::DirMerge` wire rule rather than an eager read.
-        //
-        // The cell survives so [`merge_rule`] cannot quietly grow a `:` arm that
-        // reads the file EAGERLY: that would answer a per-directory rule with a
-        // root-only one and look like the feature while not being it.
-        let dir = tempfile::tempdir().expect("temp dir");
-        merge_file(dir.path(), "rules", "- bait\n");
-        assert_eq!(
-            filter_patterns(dir.path(), ": ./rules"),
-            vec![": ./rules".to_string()],
-            "`:` must not be read eagerly"
-        );
-        assert_eq!(
-            filter_patterns(dir.path(), "dir-merge ./rules"),
-            vec!["dir-merge ./rules".to_string()],
-            "`dir-merge` must not be read eagerly"
-        );
     }
 
     #[test]
