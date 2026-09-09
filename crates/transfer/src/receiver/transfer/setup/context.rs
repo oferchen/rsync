@@ -50,6 +50,36 @@ fn merge_chmod(
 }
 
 impl ReceiverContext {
+    /// Reports the delta-transmission status once per run, gated on
+    /// `DEBUG_GTE(FLIST, 1)` (first active at `-vv`).
+    ///
+    /// `whole_file` is forced on for local transfers and `--whole-file`;
+    /// otherwise the rolling-checksum delta path is used. A server-side
+    /// generator frames the line as `MSG_INFO` so the client renders it and
+    /// counts its bytes; a client-side generator emits it locally.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2763-2767` - the `DEBUG_GTE(FLIST, 1)` gate and both
+    ///   message texts
+    /// - `log.c:330-346` - `rwrite()` under `am_server` frames FINFO as
+    ///   `MSG_INFO` instead of writing it locally
+    fn emit_delta_transmission_notice<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) {
+        let status = if self.config.flags.whole_file {
+            "disabled for local transfer or --whole-file"
+        } else {
+            "enabled"
+        };
+        if self.config.connection.client_mode {
+            debug_log!(Flist, 1, "delta-transmission {}", status);
+        } else if logging::debug_gte(logging::DebugFlag::Flist, 1) {
+            let _ = writer.send_msg_info(format!("delta-transmission {status}\n").as_bytes());
+        }
+    }
+
     /// Common setup for all transfer modes.
     ///
     /// Activates input multiplex, reads filter list if needed, receives the
@@ -75,20 +105,7 @@ impl ReceiverContext {
         // setup_transfer).
         debug_log!(Genr, 1, "generator starting pid={}", std::process::id());
 
-        // upstream: generator.c:2290-2295 - the generator prints the
-        // delta-transmission status once, gated on DEBUG_GTE(FLIST, 1) (first
-        // active at -vv). whole_file is forced on for local transfers and
-        // --whole-file; otherwise the rolling-checksum delta path is used.
-        debug_log!(
-            Flist,
-            1,
-            "delta-transmission {}",
-            if self.config.flags.whole_file {
-                "disabled for local transfer or --whole-file"
-            } else {
-                "enabled"
-            }
-        );
+        self.emit_delta_transmission_notice(writer);
 
         // Parallel receive-side delta apply is unconditionally compiled (PFF-7).
         debug_log!(Recv, 1, "parallel receive-delta path active");
@@ -1482,5 +1499,127 @@ mod files_from_forwarding_framing_tests {
         assert_eq!(len as usize, expected.len(), "framed length mismatch");
         assert_eq!(bytes[3], MSG_DATA_TAG, "high byte must be the MSG_DATA tag");
         assert_eq!(&bytes[4..], expected.as_slice(), "framed payload mismatch");
+    }
+}
+
+/// Delta-transmission notice routing: upstream prints the line locally on a
+/// client generator but frames it as `MSG_INFO` on a server generator, so the
+/// far-end client both renders it and counts its bytes in `received`
+/// (upstream: generator.c:2763-2767, log.c:330-346).
+#[cfg(test)]
+mod delta_transmission_notice_tests {
+    use std::io;
+
+    use logging::{DiagnosticEvent, VerbosityConfig, drain_events};
+    use protocol::ProtocolVersion;
+
+    use crate::config::ServerConfig;
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::ReceiverContext;
+    use crate::role::ServerRole;
+
+    /// Captures `MSG_INFO` payloads so the tests can assert the framed bytes.
+    #[derive(Default)]
+    struct CaptureWriter {
+        infos: Vec<String>,
+    }
+
+    impl crate::writer::MsgInfoSender for CaptureWriter {
+        fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
+            self.infos.push(String::from_utf8_lossy(data).into_owned());
+            Ok(())
+        }
+    }
+
+    fn handshake() -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    fn context(client_mode: bool, whole_file: bool) -> ReceiverContext {
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            ..Default::default()
+        };
+        config.connection.client_mode = client_mode;
+        config.flags.whole_file = whole_file;
+        ReceiverContext::new_for_test(&handshake(), config)
+    }
+
+    fn init_verbosity(flist_level: u8) {
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.flist = flist_level;
+        logging::init(cfg);
+        let _ = drain_events();
+    }
+
+    /// A server generator at `DEBUG_GTE(FLIST, 1)` must put the notice on the
+    /// wire: the far-end client renders it AND counts its frame in `received`
+    /// (the -vv byte-accounting parity this fix restores).
+    #[test]
+    fn server_mode_frames_notice_as_msg_info() {
+        init_verbosity(1);
+        let mut writer = CaptureWriter::default();
+        context(false, false).emit_delta_transmission_notice(&mut writer);
+        assert_eq!(
+            writer.infos,
+            vec!["delta-transmission enabled\n".to_owned()]
+        );
+
+        let mut writer = CaptureWriter::default();
+        context(false, true).emit_delta_transmission_notice(&mut writer);
+        assert_eq!(
+            writer.infos,
+            vec!["delta-transmission disabled for local transfer or --whole-file\n".to_owned()]
+        );
+    }
+
+    /// Below the gate (default verbosity) nothing crosses the wire - the
+    /// notice must not inflate quiet transfers.
+    #[test]
+    fn server_mode_is_silent_below_flist_gate() {
+        init_verbosity(0);
+        let mut writer = CaptureWriter::default();
+        context(false, false).emit_delta_transmission_notice(&mut writer);
+        assert!(
+            writer.infos.is_empty(),
+            "gated notice leaked: {:?}",
+            writer.infos
+        );
+    }
+
+    /// A client generator (pull) owns its stdout: the notice stays a local
+    /// debug emission and never becomes a frame, since framing it would send
+    /// generator chatter TO the server.
+    #[test]
+    fn client_mode_emits_locally_not_framed() {
+        init_verbosity(1);
+        let mut writer = CaptureWriter::default();
+        context(true, false).emit_delta_transmission_notice(&mut writer);
+        assert!(
+            writer.infos.is_empty(),
+            "client mode must not frame: {:?}",
+            writer.infos
+        );
+        let local: Vec<String> = drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug { message, .. } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            local.iter().any(|m| m == "delta-transmission enabled"),
+            "client-side local emission missing: {local:?}"
+        );
     }
 }
