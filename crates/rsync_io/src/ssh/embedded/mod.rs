@@ -20,6 +20,9 @@ mod handler;
 mod resolve;
 #[cfg(feature = "embedded-ssh")]
 mod ssh_config;
+/// Differential gate: oc's ssh_config resolution against real `ssh -G`.
+#[cfg(all(test, feature = "embedded-ssh"))]
+mod ssh_config_differential;
 /// Sync/async bridge primitives for embedded SSH streams.
 #[cfg(feature = "embedded-ssh")]
 pub mod sync_bridge;

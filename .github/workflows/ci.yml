@@ -366,6 +366,15 @@ jobs:
         continue-on-error: true
 
       - name: Run tests
+        env:
+          # The ssh_config differential harness skips its cells when `ssh -G`
+          # is unreachable, and a skip is indistinguishable from a pass to the
+          # runner - the gate would silently no-op while the job stayed green.
+          # Requiring the oracle turns that skip into a failure. It asserts
+          # only that the oracle EXISTS; the cells encode today's measured
+          # behaviour, divergences included, so this cannot redden on parity.
+          # The "Set up SSH loopback" step below relies on the same client.
+          OC_RSYNC_REQUIRE_SSH_G: "1"
         run: cargo nextest run --locked --profile ci --workspace --all-features
 
       - name: Set up SSH loopback
