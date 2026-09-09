@@ -168,6 +168,7 @@ impl LocalCopyOptionsBuilder {
             temp_dir: self.temp_dir,
             delay_updates: self.delay_updates,
             inplace: self.inplace,
+            write_devices: self.write_devices,
             append: self.append,
             append_verify: self.append_verify,
             collect_events: self.collect_events,

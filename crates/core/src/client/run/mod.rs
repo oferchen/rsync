@@ -1012,6 +1012,12 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .fuzzy_level(config.fuzzy_level())
             .prune_empty_dirs(config.prune_empty_dirs())
             .inplace(config.inplace())
+            // upstream: generator.c:2148 - the local executor needs the flag
+            // itself, not just the `--inplace` it implies (options.c:2555):
+            // whether an existing DEVICE destination is cleared or written
+            // through is decided by `write_devices`, and `--inplace` alone
+            // never authorises writing through a device node.
+            .write_devices(config.write_devices())
             .append(config.append())
             .append_verify(config.append_verify())
             .partial(config.partial())
