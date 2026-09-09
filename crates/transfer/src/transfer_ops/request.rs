@@ -207,6 +207,13 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         Some(ref sig) => SumHead::from_signature(sig),
         None => SumHead::empty(),
     };
+    // The `generating and sending sums for %d` line is NOT emitted here.
+    // Upstream prints it (generator.c:2363) between `gen mapped` and the
+    // geometry line that `sum_sizes_sqroot()` produces, i.e. while the basis is
+    // being checksummed - which in oc is `receiver::basis`, the owner of all
+    // four generator-half DELTASUM lines. Emitting it at this point put it after
+    // every `chunk[..]` line instead of before them (MEASURED against upstream
+    // 3.5.0 on a `--debug=deltasum2` pull).
     sum_head.write(writer)?;
 
     // upstream: generator.c:787-788 - in append mode, generator skips writing

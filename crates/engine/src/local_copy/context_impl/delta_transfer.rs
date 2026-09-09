@@ -128,6 +128,35 @@ impl<'a> CopyContext<'a> {
             let _ = fast_io::mark_file_sparse(writer);
         }
 
+        // A local copy runs both roles in one process, so upstream prints both
+        // role's DELTASUM lines. The generator half (basis geometry and the
+        // per-chunk sums) is emitted where the signature is built
+        // (`executor::file::comparison::build_delta_signature`); these are the
+        // sender-half milestones for this file.
+        // Order matches upstream's local run, which is a real sender talking to
+        // a real receiver over a socketpair: sender.c:760-763, :768-769, then
+        // match.c:436-437, then match.c:180-182, :199-202.
+        matching::trace_deltasum::trace_send_files_mapped(&source.display(), total_size);
+        matching::trace_deltasum::trace_calling_match_sums(&source.display());
+        matching::trace_deltasum::trace_built_hash_table();
+        matching::trace_deltasum::trace_hash_search_start(index.block_length(), total_size);
+        matching::trace_deltasum::trace_hash_search_params(
+            index.block_length(),
+            total_size,
+            index.block_count() as u64,
+        );
+        // upstream: receiver.c:498-501 - the receiver half maps the same basis.
+        // Upstream prints this only once its receiver process reaches
+        // `receive_data()`, i.e. AFTER the sender's counters; oc's fused loop
+        // opens the basis here, before the scan, so this is the position at
+        // which the statement is actually true.
+        matching::trace_deltasum::trace_recv_mapped(&relative.display(), total_size);
+
+        // upstream: match.c:135 - the `match at` line reports `n`, the gap since
+        // the previous match, so this tracks the end of that match rather than
+        // the write cursor.
+        let mut last_match = 0u64;
+
         let mut destination_reader = Some(fs::File::open(destination).map_err(|error| {
             LocalCopyError::io(
                 "read existing destination",
@@ -233,10 +262,27 @@ impl<'a> CopyContext<'a> {
             }
 
             let digest = rolling.digest();
+            // upstream: match.c:210-213 - the per-offset rolling sum.
+            let scan_offset = total_bytes.saturating_add(pending_literals.len() as u64);
+            matching::trace_deltasum::trace_scan_offset(scan_offset, digest.sum2(), digest.sum1());
             if let Some(block_index) =
                 index.find_match_window_counted(digest, &window, &mut scratch, &mut probe)
             {
                 file_matches = file_matches.saturating_add(1);
+                // upstream: match.c:258-262 then :133-138
+                matching::trace_deltasum::trace_potential_match(
+                    scan_offset,
+                    block_index as u64,
+                    digest.value(),
+                );
+                matching::trace_deltasum::trace_match(
+                    scan_offset,
+                    last_match,
+                    index.block(block_index).index(),
+                    index.block(block_index).len(),
+                    scan_offset.saturating_sub(last_match),
+                );
+                last_match = scan_offset + index.block(block_index).len() as u64;
                 if !pending_literals.is_empty() {
                     let flushed_len = pending_literals.len();
                     if inplace_mode {
@@ -259,6 +305,7 @@ impl<'a> CopyContext<'a> {
                         &mut compressed_progress,
                         source,
                         destination,
+                        total_bytes,
                     )?;
                     let literal_written = if sparse {
                         flushed_len as u64
@@ -277,6 +324,20 @@ impl<'a> CopyContext<'a> {
                 let block_len = block.len();
                 let matched = MatchedBlock::new(block, index.block_length());
                 let basis_offset = matched.offset();
+
+                // upstream: receiver.c:609-614 - the receiver half reports
+                // every matched block it applies: the basis offset it reads
+                // from, the output offset it lands at, and ` (seek)` when the
+                // in-place fast path means the bytes are already correct. The
+                // local loop performs exactly this copy, so the line is a
+                // statement about work it really does.
+                matching::trace_deltasum::trace_recv_chunk(
+                    block.index(),
+                    block_len,
+                    basis_offset,
+                    total_bytes,
+                    inplace_mode && basis_offset == output_position,
+                );
 
                 // upstream: receiver.c:624-629. The skip-fast-path only fires
                 // when basis offset == output position. For any other matched
@@ -442,6 +503,30 @@ impl<'a> CopyContext<'a> {
             // counts the shrunk-window tail probe the same as any other.
             file_matches = file_matches.saturating_add(1);
             probe.hash_hits = probe.hash_hits.saturating_add(1);
+            // upstream: match.c:258-262 then :133-138 - the short final block is
+            // reported like any other match, with its own shorter length. Its
+            // source offset is the scan cursor: everything before it has either
+            // been emitted or is sitting in `pending_literals`.
+            {
+                let tail_offset = total_bytes.saturating_add(pending_literals.len() as u64);
+                let tail_block = index.block(block_index);
+                matching::trace_deltasum::trace_potential_match(
+                    tail_offset,
+                    block_index as u64,
+                    rolling.digest().value(),
+                );
+                matching::trace_deltasum::trace_match(
+                    tail_offset,
+                    last_match,
+                    tail_block.index(),
+                    tail_block.len(),
+                    tail_offset.saturating_sub(last_match),
+                );
+                // The tail block is the last match the scan can make, so nothing
+                // reads this again; assigned so the invariant "last_match is the
+                // end of the most recent match" holds at every exit.
+                let _ = last_match;
+            }
             if !pending_literals.is_empty() {
                 let flushed_len = pending_literals.len();
                 if inplace_mode {
@@ -464,6 +549,7 @@ impl<'a> CopyContext<'a> {
                     &mut compressed_progress,
                     source,
                     destination,
+                    total_bytes,
                 )?;
                 let literal_written = if sparse {
                     flushed_len as u64
@@ -480,6 +566,16 @@ impl<'a> CopyContext<'a> {
             let block_len = block.len();
             let matched = MatchedBlock::new(block, index.block_length());
             let basis_offset = matched.offset();
+
+            // upstream: receiver.c:609-614 - as in the main loop, the applied
+            // short final block is reported with its true length.
+            matching::trace_deltasum::trace_recv_chunk(
+                block.index(),
+                block_len,
+                basis_offset,
+                total_bytes,
+                inplace_mode && basis_offset == output_position,
+            );
 
             if inplace_mode && basis_offset == output_position {
                 consume_matched_in_place(
@@ -564,6 +660,7 @@ impl<'a> CopyContext<'a> {
                 &mut compressed_progress,
                 source,
                 destination,
+                total_bytes,
             )?;
             total_bytes = total_bytes.saturating_add(flushed_len as u64);
             let literal_written = if sparse {
@@ -629,6 +726,19 @@ impl<'a> CopyContext<'a> {
             total_size.saturating_sub(initial_bytes),
         );
 
+        // upstream: match.c:441-442, :468-471 - the scan-complete marker and the
+        // per-file counters. The local loop writes the reconstructed file
+        // directly, so it never computes or transfers a whole-file checksum:
+        // upstream's `sending file_sum` (match.c:465) and `got file_sum`
+        // (receiver.c:672) have no analogue here and are deliberately absent
+        // rather than faked.
+        matching::trace_deltasum::trace_done_hash_search();
+        matching::trace_deltasum::trace_match_counters(
+            probe.false_alarms,
+            probe.hash_hits,
+            file_matches,
+        );
+
         // upstream: match.c:433-435 folds the per-file counters into the run
         // totals after match_sums() returns; do the same so the end-of-run
         // `-vv` `total:` line reports cumulative figures.
@@ -666,11 +776,18 @@ impl<'a> CopyContext<'a> {
         compressed_progress: &mut u64,
         source: &Path,
         destination: &Path,
+        output_offset: u64,
     ) -> Result<usize, LocalCopyError> {
         if chunk.is_empty() {
             return Ok(0);
         }
         self.enforce_timeout()?;
+
+        // upstream: receiver.c:552-555 - a local transfer runs a real receiver
+        // over a socketpair, so it reports every literal run it applies. This
+        // fused loop writes the same run at the same output offset, so it is the
+        // one place the local path can say it honestly.
+        matching::trace_deltasum::trace_data_recv(chunk.len(), output_offset);
 
         // Capture LITERAL operation to the batch delta buffer if active.
         // upstream: token.c:simple_send_token() - literals are written as

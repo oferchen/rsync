@@ -84,6 +84,13 @@ impl BasisFileResult {
 /// to generate its signature (protocol version, checksum algorithm, length).
 #[derive(Debug)]
 pub struct BasisFileConfig<'a> {
+    /// Wire file index of the entry being requested.
+    ///
+    /// Diagnostic only: it names the file in the generator's `generating and
+    /// sending sums for %d` trace and never affects the signature or the wire.
+    ///
+    /// upstream: generator.c:2363-2364.
+    pub ndx: i32,
     /// Target file path in destination.
     pub file_path: &'a std::path::Path,
     /// Destination directory base.
@@ -188,7 +195,14 @@ impl std::fmt::Debug for InplaceBackupSpec<'_> {
 /// needed to generate a file signature, reducing parameter count and improving
 /// maintainability.
 #[derive(Debug, Clone, Copy)]
-struct SignatureGenerationConfig {
+struct SignatureGenerationConfig<'a> {
+    /// Wire file index, named by the `generating and sending sums for %d`
+    /// trace. upstream: generator.c:2363-2364.
+    ndx: i32,
+    /// Flist-relative name of the target, the spelling upstream's `gen mapped`
+    /// trace prints (upstream works in `fnamecmp`, relative to the destination
+    /// root it chdir'd into). upstream: generator.c:2358-2361.
+    relative_name: &'a std::path::Path,
     /// Protocol version for signature layout calculation.
     protocol: ProtocolVersion,
     /// Checksum truncation length.
@@ -201,10 +215,12 @@ struct SignatureGenerationConfig {
     block_size: Option<NonZeroU32>,
 }
 
-impl SignatureGenerationConfig {
+impl<'a> SignatureGenerationConfig<'a> {
     /// Extracts signature generation config from a BasisFileConfig.
-    fn from_basis_config(config: &BasisFileConfig<'_>) -> Self {
+    fn from_basis_config(config: &BasisFileConfig<'a>) -> Self {
         Self {
+            ndx: config.ndx,
+            relative_name: config.relative_path,
             protocol: config.protocol,
             checksum_length: config.checksum_length,
             checksum_algorithm: config.checksum_algorithm,
@@ -446,7 +462,7 @@ fn generate_basis_signature(
     basis_path: PathBuf,
     fnamecmp_type: protocol::FnameCmpType,
     xname: Option<Vec<u8>>,
-    config: SignatureGenerationConfig,
+    config: SignatureGenerationConfig<'_>,
 ) -> BasisFileResult {
     // Cap the per-file strong-sum length by the negotiated transfer checksum's
     // digest width. `sum_sizes_sqroot()` clamps s2length to
@@ -525,6 +541,21 @@ fn generate_basis_signature(
     // basis and falls back to a whole-file transfer.
     // upstream: fileio.c:214-217 comment + map_ptr() deliberately use read(2)
     // instead of mmap(2) on basis files for exactly this reason.
+    // upstream: generator.c:2358-2361, :2363-2364, then :765-770 - the generator
+    // names the basis it mapped, announces the file it is producing sums for,
+    // and then reports the geometry `sum_sizes_sqroot()` chose. All three
+    // precede the per-chunk sums below, and that order is the reason this whole
+    // group lives here rather than split across the request writer.
+    matching::trace_deltasum::trace_gen_mapped(&config.relative_name.display(), basis_size);
+    matching::trace_deltasum::trace_generating_sums(config.ndx);
+    matching::trace_deltasum::trace_sum_geometry(
+        layout.block_count(),
+        layout.remainder(),
+        layout.block_length().get() as usize,
+        layout.strong_sum_length().get(),
+        basis_size,
+    );
+
     let reader = std::io::BufReader::with_capacity(MAX_MAP_SIZE, basis_file);
     let signature = compute_basis_signature(
         reader,
@@ -535,13 +566,29 @@ fn generate_basis_signature(
     );
 
     match signature {
-        Ok(sig) => BasisFileResult {
-            signature: Some(sig),
-            basis_path: Some(basis_path),
-            fnamecmp_type,
-            xname,
-            backup_notice: None,
-        },
+        Ok(sig) => {
+            // upstream: generator.c:817-822 - one line per generated chunk,
+            // emitted as `generate_and_send_sums()` walks the basis. oc
+            // computes the whole signature first (possibly in parallel), so the
+            // trace is replayed here in block order rather than interleaved
+            // with the hashing; the values and their order are identical.
+            let block_length = layout.block_length().get() as u64;
+            for (position, block) in sig.blocks().iter().enumerate() {
+                matching::trace_deltasum::trace_gen_chunk(
+                    position as u64,
+                    position as u64 * block_length,
+                    block.len(),
+                    block.rolling().value(),
+                );
+            }
+            BasisFileResult {
+                signature: Some(sig),
+                basis_path: Some(basis_path),
+                fnamecmp_type,
+                xname,
+                backup_notice: None,
+            }
+        }
         Err(_) => BasisFileResult::EMPTY,
     }
 }
@@ -1081,6 +1128,8 @@ mod tests {
         }
 
         let cfg = SignatureGenerationConfig {
+            ndx: 0,
+            relative_name: std::path::Path::new("a.bin"),
             protocol: ProtocolVersion::NEWEST,
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
@@ -1150,6 +1199,8 @@ mod tests {
         }
 
         let cfg = SignatureGenerationConfig {
+            ndx: 0,
+            relative_name: std::path::Path::new("a.bin"),
             protocol: ProtocolVersion::NEWEST,
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
@@ -1209,6 +1260,7 @@ mod tests {
         let rel = std::path::Path::new("file.bin");
         let partial_rel = std::path::Path::new(".rsync-partial");
         let config = BasisFileConfig {
+            ndx: 0,
             file_path: &dest_file,
             dest_dir,
             relative_path: rel,
@@ -1264,6 +1316,7 @@ mod tests {
 
         let dest_file = dest_dir.join("file.bin");
         let config = BasisFileConfig {
+            ndx: 0,
             file_path: &dest_file,
             dest_dir,
             relative_path: std::path::Path::new("file.bin"),
@@ -1308,6 +1361,7 @@ mod tests {
 
         let dest_file = dest_dir.join("data.txt");
         let config = BasisFileConfig {
+            ndx: 0,
             file_path: &dest_file,
             dest_dir,
             relative_path: std::path::Path::new("data.txt"),
@@ -1386,6 +1440,7 @@ mod tests {
             ),
         ];
         let config = BasisFileConfig {
+            ndx: 0,
             file_path: &dest_file,
             dest_dir: &dest_dir,
             relative_path: std::path::Path::new("file.bin"),
@@ -1459,6 +1514,7 @@ mod tests {
             ref_dir.clone(),
         )];
         let config = BasisFileConfig {
+            ndx: 0,
             file_path: &dest_file,
             dest_dir: &dest_dir,
             relative_path: std::path::Path::new("data.txt"),
@@ -1521,6 +1577,7 @@ mod tests {
 
         let dest_file = dest_dir.join("data.txt");
         let config = BasisFileConfig {
+            ndx: 0,
             file_path: &dest_file,
             dest_dir,
             relative_path: std::path::Path::new("data.txt"),
@@ -1582,6 +1639,7 @@ mod tests {
 
         let dest_file = dest_dir.join("file.bin");
         let make_config = |checksum_length: NonZeroU8| BasisFileConfig {
+            ndx: 0,
             file_path: &dest_file,
             dest_dir,
             relative_path: std::path::Path::new("file.bin"),
@@ -1669,6 +1727,8 @@ mod tests {
         };
 
         let base = SignatureGenerationConfig {
+            ndx: 0,
+            relative_name: std::path::Path::new("a.bin"),
             protocol: ProtocolVersion::NEWEST,
             checksum_length: NonZeroU8::new(16).unwrap(),
             checksum_algorithm: SignatureAlgorithm::Md4,
@@ -1686,6 +1746,8 @@ mod tests {
             | protocol::CompatibilityFlags::CHECKSUM_SEED_FIX;
         assert_eq!(
             strong_len(SignatureGenerationConfig {
+                ndx: 0,
+                relative_name: std::path::Path::new("a.bin"),
                 compat_flags: Some(no_cap),
                 block_size: None,
                 ..base
@@ -1699,6 +1761,8 @@ mod tests {
             | protocol::CompatibilityFlags::CONSECUTIVE_MATCH;
         assert_eq!(
             strong_len(SignatureGenerationConfig {
+                ndx: 0,
+                relative_name: std::path::Path::new("a.bin"),
                 compat_flags: Some(with_cap),
                 block_size: None,
                 ..base
@@ -1735,6 +1799,8 @@ mod tests {
                 f.flush().expect("flush");
             }
             let cfg = SignatureGenerationConfig {
+                ndx: 0,
+                relative_name: std::path::Path::new("a.bin"),
                 protocol: ProtocolVersion::NEWEST,
                 checksum_length: NonZeroU8::new(phase_len).unwrap(),
                 checksum_algorithm: algo,
@@ -1837,6 +1903,8 @@ mod tests {
 
         let sign = |block_size: Option<NonZeroU32>| {
             let cfg = SignatureGenerationConfig {
+                ndx: 0,
+                relative_name: std::path::Path::new("a.bin"),
                 protocol: ProtocolVersion::NEWEST,
                 checksum_length: NonZeroU8::new(16).unwrap(),
                 checksum_algorithm: SignatureAlgorithm::Md4,
@@ -1886,6 +1954,7 @@ mod tests {
         inplace_backup: Option<InplaceBackupSpec<'a>>,
     ) -> BasisFileConfig<'a> {
         BasisFileConfig {
+            ndx: 0,
             file_path: dest_file,
             dest_dir,
             relative_path: rel,

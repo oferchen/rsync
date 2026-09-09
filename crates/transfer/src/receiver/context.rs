@@ -852,23 +852,30 @@ impl ReceiverContext {
         }
     }
 
-    /// Builds a [`BasisFileConfig`] for a single file, pulling shared state from `self`.
+    /// Builds a [`BasisFileConfig`] for a single file, pulling shared state from
+    /// `self` and the per-entry fields from `file_entry`.
+    ///
+    /// `relative_path`, `target_size` and `target_mtime` are all read off the
+    /// one flist entry, so the entry is passed instead of its three projections:
+    /// they cannot then disagree, and the signature stays within the argument
+    /// budget now that the wire NDX rides along for the generator's
+    /// `generating and sending sums for %d` trace.
     pub(in crate::receiver) fn build_basis_file_config<'a>(
         &'a self,
+        ndx: i32,
         file_path: &'a std::path::Path,
         dest_dir: &'a std::path::Path,
-        relative_path: &'a std::path::Path,
-        target_size: u64,
-        target_mtime: i64,
+        file_entry: &'a protocol::flist::FileEntry,
         checksum_length: NonZeroU8,
         checksum_algorithm: signature::SignatureAlgorithm,
     ) -> BasisFileConfig<'a> {
         BasisFileConfig {
+            ndx,
             file_path,
             dest_dir,
-            relative_path,
-            target_size,
-            target_mtime,
+            relative_path: file_entry.path(),
+            target_size: file_entry.size(),
+            target_mtime: file_entry.mtime(),
             fuzzy_level: self.config.flags.fuzzy_level,
             reference_directories: &self.config.reference_directories,
             partial_dir: self.config.partial_dir.as_deref(),
