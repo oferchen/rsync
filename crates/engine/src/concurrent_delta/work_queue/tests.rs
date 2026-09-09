@@ -1171,6 +1171,169 @@ fn dynamic_queue_release_refills_admission_past_initial() {
     );
 }
 
+/// `DeltaConsumer` drains through `drain_parallel_into`, not `drain_parallel`,
+/// so that method carries the release for the whole delta pipeline. Sending
+/// exactly `INITIAL` items lets the drain run to completion whether or not it
+/// releases, which makes a missing release surface here as a failed assertion
+/// rather than as a producer deadlock.
+///
+/// The pre-drain check is the non-vacuity half: without it the closing
+/// `in_flight() == 0` would hold just as well on a queue that never admitted
+/// anything.
+#[test]
+fn dynamic_queue_drain_into_returns_every_permit() {
+    const INITIAL: usize = 4;
+    let DynamicWorkQueue {
+        sender,
+        receiver,
+        semaphore,
+    } = bounded_dynamic(INITIAL, 1, 8).expect("valid bounds");
+
+    for i in 0..INITIAL as u32 {
+        sender
+            .send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0))
+            .unwrap();
+    }
+    assert_eq!(
+        semaphore.in_flight(),
+        INITIAL,
+        "admission is saturated before the drain begins"
+    );
+    drop(sender);
+
+    let (results_tx, results_rx) = crossbeam_channel::bounded(INITIAL);
+    receiver.drain_parallel_into(|w| w.ndx().get(), results_tx);
+
+    let mut got: Vec<u32> = results_rx.into_iter().collect();
+    got.sort_unstable();
+    assert_eq!(got, (0..INITIAL as u32).collect::<Vec<_>>());
+    assert_eq!(
+        semaphore.in_flight(),
+        0,
+        "every admission permit was returned at quiescence"
+    );
+}
+
+/// The streaming drain must refill admission as items leave it, so the single
+/// producer can push far past `initial`. Without the per-item release the
+/// producer blocks forever once `initial` items are in flight, so the drain
+/// runs under [`drained_within`] and reports the stall instead of hanging.
+#[test]
+fn dynamic_queue_drain_into_refills_admission_past_initial() {
+    const N: u32 = 100;
+    let DynamicWorkQueue {
+        sender,
+        receiver,
+        semaphore,
+    } = bounded_dynamic(2, 1, 4).expect("valid bounds");
+
+    let producer = thread::spawn(move || {
+        for i in 0..N {
+            sender
+                .send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0))
+                .unwrap();
+        }
+    });
+
+    let mut got = drained_within(move || drain_by(DrainPath::ParallelInto, receiver));
+    producer.join().expect("producer panicked");
+
+    got.sort_unstable();
+    assert_eq!(got, (0..N).collect::<Vec<_>>());
+    assert_eq!(
+        semaphore.in_flight(),
+        0,
+        "the streaming drain balances admission exactly"
+    );
+}
+
+/// The path a drained item takes out of the queue. Each releases at a different
+/// moment - on task completion, after the result is forwarded, or on dequeue -
+/// so the balance invariant has to hold for all three, not just the one the
+/// delta pipeline happens to use.
+#[derive(Debug, Clone, Copy)]
+enum DrainPath {
+    /// Collects into a `Vec`; releases as each rayon task completes.
+    Parallel,
+    /// Streams through a channel; the path `DeltaConsumer` runs.
+    ParallelInto,
+    /// Bare iterator; releases on dequeue rather than on completion.
+    Iter,
+}
+
+/// Drains `receiver` to exhaustion by `path`, yielding the drained indices.
+fn drain_by(path: DrainPath, receiver: WorkQueueReceiver) -> Vec<u32> {
+    match path {
+        DrainPath::Parallel => receiver.drain_parallel(|w| w.ndx().get()),
+        DrainPath::ParallelInto => {
+            // Unbounded so the collector never has to interleave with the
+            // drain, which runs to completion before this thread reads back.
+            let (results_tx, results_rx) = crossbeam_channel::unbounded();
+            receiver.drain_parallel_into(|w| w.ndx().get(), results_tx);
+            results_rx.into_iter().collect()
+        }
+        DrainPath::Iter => receiver.into_iter().map(|w| w.ndx().get()).collect(),
+    }
+}
+
+/// Runs `consume` on its own thread and returns what it drained.
+///
+/// A drain that never returns a permit wedges the producer, and the drain then
+/// blocks waiting for a sender that will never finish. Waiting on a deadline
+/// turns that regression into a named failure rather than a suite that hangs.
+fn drained_within<F>(consume: F) -> Vec<u32>
+where
+    F: FnOnce() -> Vec<u32> + Send + 'static,
+{
+    const DEADLINE: Duration = Duration::from_secs(30);
+    let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+    thread::spawn(move || {
+        let _ = done_tx.send(consume());
+    });
+    done_rx
+        .recv_deadline(Instant::now() + DEADLINE)
+        .expect("drain stalled: admission was never refilled")
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(24))]
+
+    /// Quiescence invariant, across every drain path: a dynamic queue acquires
+    /// exactly one permit per item and must return exactly one per item, so
+    /// once the queue has fully drained `in_flight` is zero - whatever the item
+    /// count or however tight the initial ceiling. Item counts run well past
+    /// `initial`, so a release that only happened at teardown would deadlock
+    /// rather than pass.
+    #[test]
+    fn drained_queue_returns_every_permit_on_every_path(
+        n in 1u32..=40,
+        initial in 1usize..=6,
+        path in prop_oneof![
+            Just(DrainPath::Parallel),
+            Just(DrainPath::ParallelInto),
+            Just(DrainPath::Iter),
+        ],
+    ) {
+        let DynamicWorkQueue { sender, receiver, semaphore } =
+            bounded_dynamic(initial, 1, 8).expect("valid bounds");
+
+        let producer = thread::spawn(move || {
+            for i in 0..n {
+                sender
+                    .send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0))
+                    .unwrap();
+            }
+        });
+
+        let mut got = drained_within(move || drain_by(path, receiver));
+        producer.join().expect("producer panicked");
+
+        got.sort_unstable();
+        prop_assert_eq!(got, (0..n).collect::<Vec<_>>());
+        prop_assert_eq!(semaphore.in_flight(), 0);
+    }
+}
+
 /// The bare-iterator consumption path releases on dequeue rather than on task
 /// completion, but must still balance every admission. Draining past `initial`
 /// via `into_iter` proves that path also refills admission and cannot deadlock.

@@ -976,3 +976,48 @@ fn force_insert_isolated_to_bare_loop_path() {
     );
     consumer.join().unwrap();
 }
+
+/// `DeltaConsumer` drives the streaming drain, so on a dynamic queue its own
+/// pipeline is what returns admission permits. Producing far past the initial
+/// ceiling proves the refill happens as items leave the drain stage rather than
+/// at teardown, and `in_flight() == 0` afterwards proves the acquire/release
+/// pairing is exact.
+///
+/// Without the release the producer wedges after `INITIAL` sends and the
+/// consumer waits on results that never arrive, so the collection runs on its
+/// own thread under a deadline and reports the stall instead of hanging.
+#[test]
+fn dynamic_queue_admission_is_refilled_through_the_consumer() {
+    const N: u32 = 100;
+    const INITIAL: usize = 2;
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+    let work_queue::DynamicWorkQueue {
+        sender,
+        receiver,
+        semaphore,
+    } = work_queue::bounded_dynamic(INITIAL, 1, 4).expect("valid bounds");
+
+    let producer = std::thread::spawn(move || send_items(&sender, N));
+
+    let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+    let collector = std::thread::spawn(move || {
+        let consumer = DeltaConsumer::spawn(receiver, N as usize);
+        let sequences: Vec<u64> = consumer.iter().map(|r| r.sequence()).collect();
+        consumer.join().expect("consumer thread panicked");
+        let _ = done_tx.send(sequences);
+    });
+
+    let sequences = done_rx
+        .recv_deadline(std::time::Instant::now() + DEADLINE)
+        .expect("consumer stalled: admission was never refilled through the drain");
+    producer.join().expect("producer panicked");
+    collector.join().expect("collector panicked");
+
+    assert_eq!(sequences, (0..u64::from(N)).collect::<Vec<_>>());
+    assert_eq!(
+        semaphore.in_flight(),
+        0,
+        "every admission permit returned once the consumer finished draining"
+    );
+}
