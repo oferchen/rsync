@@ -530,7 +530,7 @@ jobs:
 
       # Build fast_io with iocp plus the opt-in `transmitfile` feature. The
       # Windows `TransmitFile()` zero-copy file-to-socket primitive
-      # (fast_io::iocp::transmit_file, WindowsTransmitFile) depends on `iocp`
+      # (fast_io::iocp::transmit_file) depends on `iocp`
       # but is not in the default feature set, so no other CI cell compiles
       # it. Pinning it here keeps the TransmitFile path building on
       # `windows-latest` instead of only ever compiling on a nightly run.
