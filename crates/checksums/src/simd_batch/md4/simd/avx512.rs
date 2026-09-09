@@ -8,7 +8,7 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::asm;
 
-use super::super::super::Digest;
+use super::super::super::{Digest, MAX_INPUT_SIZE};
 
 /// MD4 initial state constants (RFC 1320).
 const INIT_A: u32 = 0x6745_2301;
@@ -56,7 +56,7 @@ pub unsafe fn digest_x16(inputs: &[&[u8]; 16]) -> [Digest; 16] {
     let max_len = inputs.iter().map(|i| i.len()).max().unwrap_or(0);
 
     // Fall back to scalar for inputs that would require excessive padding allocations.
-    if max_len > 1024 * 1024 {
+    if max_len > MAX_INPUT_SIZE {
         return std::array::from_fn(|i| super::super::scalar::digest(inputs[i]));
     }
 
