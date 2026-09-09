@@ -66,6 +66,14 @@ pub struct SshConfig {
     pub password: Option<String>,
     /// Paths to SSH private key files, tried in order.
     pub identity_files: Vec<PathBuf>,
+    /// Whether an `IdentitiesOnly yes` directive restricts the keys that may
+    /// be offered to those derived from `identity_files`.
+    ///
+    /// This gates the SSH agent as well: an agent key is offered only when it
+    /// matches the public key of a configured identity file. It is not a
+    /// directive to discard the identity list.
+    /// upstream: openssh/sshconnect2.c:1753 `pubkey_prepare()`.
+    pub identities_only: bool,
     /// Whether to attempt authentication via an SSH agent.
     pub use_agent: bool,
     /// Explicit SSH agent socket from an `IdentityAgent` directive. `None`
@@ -132,6 +140,9 @@ impl Default for SshConfig {
             username: None,
             password: None,
             identity_files: default_identity_files(),
+            // upstream: openssh/readconf.c:2905 fill_default_options() leaves
+            // `IdentitiesOnly` off unless a directive turns it on.
+            identities_only: false,
             use_agent: true,
             identity_agent: None,
             ciphers: None,
@@ -173,6 +184,15 @@ impl SshConfig {
     /// Sets the identity file paths to try during key-based authentication.
     pub fn identity_files(&mut self, files: Vec<PathBuf>) -> &mut Self {
         self.identity_files = files;
+        self
+    }
+
+    /// Sets whether only the configured identities may be offered.
+    ///
+    /// When enabled, an SSH agent key is offered only if its public key
+    /// matches one of [`Self::identity_files`].
+    pub fn identities_only(&mut self, identities_only: bool) -> &mut Self {
+        self.identities_only = identities_only;
         self
     }
 
@@ -275,7 +295,21 @@ impl SshConfig {
         {
             self.port = port;
         }
+        // `IdentitiesOnly` restricts which keys may be *offered* - agent keys
+        // included - rather than discarding the configured identity list.
+        // upstream: openssh/sshconnect2.c:1753 drops an agent key that matched
+        // no configured identity when `options.identities_only` is set; nothing
+        // upstream empties `options.identity_files` on account of the flag.
         if resolved.identities_only == Some(true) {
+            self.identities_only = true;
+        }
+        // A configured `IdentityFile` replaces the built-in `~/.ssh/id_*`
+        // defaults instead of queueing behind them.
+        // upstream: openssh/readconf.c:2860 fill_default_options() adds the
+        // built-in paths only when no `IdentityFile` was configured. Keeping
+        // them here would also widen the `IdentitiesOnly` match set above to
+        // keys the user never configured.
+        if !resolved.identity_files.is_empty() && self.identity_files == default_identity_files() {
             self.identity_files.clear();
         }
         for ident in &resolved.identity_files {
@@ -891,6 +925,72 @@ mod tests {
         let mut cfg = SshConfig::default();
         cfg.apply_ssh_config_from(&path, "example");
         assert_eq!(cfg.identity_agent.as_deref(), Some("/run/custom.sock"));
+    }
+
+    #[test]
+    fn identities_only_sets_the_flag_and_keeps_the_identity_list() {
+        // `IdentitiesOnly` selects which keys may be offered; it is not an
+        // instruction to forget the configured identities. Discarding them
+        // would leave nothing for the agent restriction to match against.
+        // upstream: openssh/sshconnect2.c:1753.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(
+            &path,
+            "Host example\n  IdentitiesOnly yes\n  IdentityFile /keys/deploy\n",
+        )
+        .expect("write config");
+
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example");
+
+        assert!(cfg.identities_only);
+        assert_eq!(cfg.identity_files, vec![PathBuf::from("/keys/deploy")]);
+    }
+
+    #[test]
+    fn identities_only_alone_keeps_the_built_in_default_identities() {
+        // A bare `IdentitiesOnly yes` configures no identity, so the built-in
+        // `~/.ssh/id_*` defaults stand and remain offerable - upstream adds
+        // them in fill_default_options regardless of the flag
+        // (openssh/readconf.c:2860). Emptying the list here would turn the
+        // directive into "offer nothing at all".
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  IdentitiesOnly yes\n").expect("write config");
+
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example");
+
+        assert!(cfg.identities_only);
+        // Non-vacuity: with no home directory both sides would be empty and
+        // the comparison could not tell a preserved list from a cleared one.
+        assert!(
+            !cfg.identity_files.is_empty(),
+            "no home directory, so this cell cannot distinguish preserved from cleared",
+        );
+        assert_eq!(cfg.identity_files, default_identity_files());
+    }
+
+    #[test]
+    fn configured_identity_file_replaces_the_built_in_defaults() {
+        // upstream: openssh/readconf.c:2860 seeds `~/.ssh/id_*` only when no
+        // `IdentityFile` was configured, so a configured identity replaces the
+        // defaults rather than queueing behind them.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  IdentityFile /keys/deploy\n").expect("write config");
+
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example");
+
+        assert_eq!(cfg.identity_files, vec![PathBuf::from("/keys/deploy")]);
+    }
+
+    #[test]
+    fn identities_only_defaults_to_off() {
+        // upstream: openssh/readconf.c:2905 leaves the flag off unless set.
+        assert!(!SshConfig::default().identities_only);
     }
 
     #[test]

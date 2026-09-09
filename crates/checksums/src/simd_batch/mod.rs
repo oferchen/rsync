@@ -28,6 +28,23 @@ pub use md5_dispatcher::Backend;
 /// Also used for MD4 (same output size).
 pub type Digest = [u8; 16];
 
+/// Largest per-input length any SIMD batch backend will hash in-lane.
+///
+/// Every backend pads each lane into a freshly allocated 64-byte-block
+/// multiple, so the transient allocation is bounded by lanes x this cap
+/// (16 MiB on the widest, AVX-512 16-lane path). Batches whose longest input
+/// exceeds the cap fall back to the scalar digest instead.
+///
+/// This is the single owner for the bound: MD4 and MD5, every architecture.
+/// Upstream rsync has no multi-buffer MD4/MD5, so there is no upstream
+/// counterpart to mirror - the value is an oc-side allocation-tuning choice.
+#[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "wasm32"
+))]
+const MAX_INPUT_SIZE: usize = 1_024 * 1_024;
+
 /// Compute MD5 digests for multiple inputs in parallel.
 ///
 /// Uses SIMD instructions when available to process multiple hashes
@@ -75,4 +92,63 @@ pub fn simd_available() -> bool {
 #[allow(dead_code)] // REASON: public API exercised by simd_parity_tests
 pub fn parallel_lanes() -> usize {
     active_backend().lanes()
+}
+
+#[cfg(all(
+    test,
+    any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        target_arch = "wasm32"
+    )
+))]
+mod max_input_size_tests {
+    use super::{MAX_INPUT_SIZE, digest_batch};
+
+    /// The cap exists to bound the transient padding allocation, so its value
+    /// must stay compatible with how the backends allocate: each lane is padded
+    /// to a whole 64-byte MD4/MD5 block, and the widest backend runs 16 lanes.
+    /// Changing the value changes the worst-case burst these hot paths take.
+    #[test]
+    fn cap_bounds_the_worst_case_padded_allocation() {
+        assert_eq!(MAX_INPUT_SIZE, 1_024 * 1_024);
+        assert_eq!(
+            MAX_INPUT_SIZE % 64,
+            0,
+            "cap must be a whole number of 64-byte hash blocks"
+        );
+        assert_eq!(
+            MAX_INPUT_SIZE * 16,
+            16 * 1_024 * 1_024,
+            "AVX-512 runs 16 lanes, so the worst-case burst is 16x the cap"
+        );
+    }
+
+    /// Both sides of the cap must produce identical digests: below it the SIMD
+    /// kernel runs, above it every backend bails to the scalar reference. A
+    /// backend that read a different bound than the scalar oracle assumes would
+    /// still have to agree here, which is what makes the shared owner safe.
+    #[test]
+    fn digests_agree_with_scalar_on_both_sides_of_the_cap() {
+        for len in [MAX_INPUT_SIZE, MAX_INPUT_SIZE + 1] {
+            let long = vec![0xA5u8; len];
+            let inputs: [&[u8]; 2] = [&long, b"short"];
+
+            let md5_batch = digest_batch(&inputs);
+            let md4_batch = super::md4::digest_batch(&inputs);
+
+            for (i, input) in inputs.iter().enumerate() {
+                assert_eq!(
+                    md5_batch[i],
+                    super::md5_scalar::digest(input),
+                    "md5 lane {i} diverged at len {len}"
+                );
+                assert_eq!(
+                    md4_batch[i],
+                    super::md4::scalar::digest(input),
+                    "md4 lane {i} diverged at len {len}"
+                );
+            }
+        }
+    }
 }
