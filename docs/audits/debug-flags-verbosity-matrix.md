@@ -131,7 +131,7 @@ Producer counts come from
 | HASH       | 1 | u8::MAX | W_SND\|W_REC | Debug hashtable code | `crates/matching/src/index/trace.rs` (created/destroyed/growing helpers) wired into `DeltaSignatureIndex::from_signature_with_role`, `:rebuild`, and `Drop` (3 sites at level 1, upstream-verbatim wording from `hashtable.c:45-53,60-63,100-103`) | impl (G3 partial - HASH RESOLVED) |
 | HLINK      | 3 (help says 1-3) | 3 | W_SND\|W_REC | Debug hard-link actions (levels 1-3) | none | missing |
 | ICONV      | 2 | 2 | W_CLI\|W_SRV | Debug iconv character conversions (levels 1-2) | `crates/core/src/client/config/iconv.rs:resolve_converter` (1 site at level 1, upstream-verbatim wording from `rsync.c:142-145`); helper emissions for the level-2 message-charset probe live in `crates/protocol/src/iconv/trace.rs` (upstream `rsync.c:99-110`). | impl (G3 partial - ICONV RESOLVED) |
-| IO         | 4 | 4 | W_CLI\|W_SRV | Debug I/O routines (levels 1-4) | `crates/transfer/src/disk_commit/thread.rs:117,125,132,149,153,155` plus `tracing::*(target: "rsync::io", ...)` in `crates/protocol/src/debug_io.rs`, `crates/fast_io/src/debug_io.rs`, `crates/rsync_io/src/debug_io.rs` (`debug_io.rs` trace funcs not called from production - see gap G3) | partial (levels 1 and 3 emitted via `debug_log!`; trace-func helpers unwired) |
+| IO         | 4 | 4 | W_CLI\|W_SRV | Debug I/O routines (levels 1-4) | `crates/transfer/src/disk_commit/thread.rs:117,125,132,149,153,155` plus `tracing::*(target: "rsync::io", ...)` in `crates/protocol/src/debug_io.rs` (trace funcs not called from production - see gap G3). Two further modules were listed and neither was real: `crates/rsync_io/src/debug_io.rs` never existed, and `crates/fast_io/src/debug_io.rs` was reachable from no `mod` or `include!`, so no build ever parsed it - it has been removed. | partial (levels 1 and 3 emitted via `debug_log!`; trace-func helpers unwired) |
 | NSTR       | 2 | u8::MAX | W_CLI\|W_SRV | Debug negotiation strings | `crates/protocol/src/negotiation/capabilities/negotiate.rs` (6 sites at levels 1-3 via `protocol::nstr::trace_*` helpers) and `crates/core/src/client/remote/daemon_transfer/connection/mod.rs::perform_daemon_handshake` (2 sites: level 2 `trace_daemon_greeting_auth_list` after parsing `@RSYNCD: %d.%d %s`, level 1 `trace_daemon_auth_negotiated` after `select_daemon_digest`). Helpers live in `crates/protocol/src/nstr/trace.rs` and mirror upstream `compat.c:213-219,373-378,521-525,843-844,865-868` and `checksum.c:206-211` byte-for-byte, including the conditional `" negotiated"` qualifier (gated on whether the algorithm came out of `negotiate_the_strings()` vs being forced via `--checksum-choice` / `--compress-choice`) and the always-rendered `(level <N>)` clause on the compress summary (`do_compression_level == CLVL_NOT_SPECIFIED == INT_MIN` when `--compress-level` is unset). | impl (G3 partial - NSTR RESOLVED) |
 | OWN        | 2 | 2 | W_REC | Debug ownership changes in users & groups (levels 1-2) | `crates/metadata/src/apply/ownership.rs::trace_chown_change` invoked from `set_owner_like`, `set_owner_like_with_fd`, and `apply_ownership_from_entry` (3 sites at level 1, upstream-verbatim wording from `rsync.c:537-540,541-545`); `crates/protocol/src/idlist/mod.rs::IdList::read_with_kind` invoked from `crates/transfer/src/receiver/file_list.rs::receive_id_lists` (level 2, upstream-verbatim wording from `uidlist.c:287-291`). Helper lives in `crates/protocol/src/idlist/trace.rs`. | impl (G3 partial - OWN RESOLVED) |
 | PROTO      | 1 | u8::MAX | W_CLI\|W_SRV | Debug protocol information | `crates/protocol/src/negotiation/capabilities/negotiate.rs`, `crates/protocol/src/multiplex/io/send.rs`, `crates/protocol/src/multiplex/io/recv.rs` (6 sites at levels 1-2) | partial (level 2 not in upstream range) |
@@ -154,10 +154,21 @@ trace helpers remain unwired; production emissions go through
 pattern holds for `crates/engine/src/local_copy/debug_del.rs`,
 `crates/engine/src/local_copy/debug_recv/trace_functions.rs`,
 `crates/engine/src/local_copy/debug_deltasum/{checksum,matching}.rs`,
-and the three `debug_io.rs` modules - the trace functions exist and
+and `crates/protocol/src/debug_io.rs` - the trace functions exist and
 target the right `rsync::*` namespace, but the production code emits
 via direct `debug_log!` calls instead and many subsystems do not emit
 at all.
+
+This section previously named "the three `debug_io.rs` modules". Only one
+of the three was ever real. `crates/rsync_io/src/debug_io.rs` does not
+exist and no commit ever added it. `crates/fast_io/src/debug_io.rs` did
+exist as a file but no `mod` item and no `include!()` reached it, so no
+build ever compiled it - measured by planting a `compile_error!` in it and
+watching `cargo build -p fast_io --all-features` finish clean. Its 39
+functions were additionally gated on `#[cfg(feature = "tracing")]`, a
+feature `crates/fast_io/Cargo.toml` does not declare, so even a wire-in
+would have compiled only the no-op arm. The file has been removed and
+`tools/ci/check_module_reachability.py` now blocks the recurrence.
 
 ## 3. Pseudo-flags and prefixes
 

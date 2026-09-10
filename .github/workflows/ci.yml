@@ -127,6 +127,15 @@ jobs:
       - name: Format check (every tracked .rs file)
         run: python3 tools/ci/check_rustfmt_all.py
 
+      # The step above formats files the compiler never sees; this one reports
+      # them. A `.rs` file that no `mod` item and no `include!()` reaches is
+      # never parsed, so its `#[test]` functions never run and clippy never
+      # inspects it - and nothing in the toolchain says so, because cargo is
+      # silent about files outside the module tree. Blocking: the failure mode
+      # is silent, so an informational gate would not change anything.
+      - name: Module reachability gate
+        run: python3 tools/ci/check_module_reachability.py
+
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features --no-deps
 
