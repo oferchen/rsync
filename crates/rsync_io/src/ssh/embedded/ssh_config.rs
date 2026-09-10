@@ -117,13 +117,21 @@ fn split_directive(line: &str) -> Option<(&str, &str)> {
 }
 
 /// Returns `true` when `host` matches any pattern in `patterns`, after
-/// expanding wildcards and applying negations. OpenSSH treats space- or
-/// comma-separated tokens as alternatives within a single `Host` line; a
-/// leading `!` on any token negates and causes the whole line to fail to
-/// match.
+/// expanding wildcards and applying negations. A leading `!` on any token
+/// negates and causes the whole line to fail to match.
+///
+/// Tokens are separated by spaces and TABs only. Upstream splits a `Host`
+/// line with `argv_split` (openssh/misc.c:2130-2185), whose only
+/// separators are `' '` and `'\t'` (openssh/misc.c:2141), then matches
+/// each token individually with `match_pattern` in the `argv_next` loop
+/// (openssh/readconf.c:1831-1858). The `oHost` arm never calls
+/// `match_pattern_list`, so a comma inside a token is ordinary pattern
+/// text, not a separator: `Host a,b` does not match the alias `a`.
+/// (`Match host` is the comma-splitting case, openssh/match.c:143 - a
+/// different keyword with a different rule.)
 fn host_matches_any_pattern(host: &str, patterns: &str) -> bool {
     let mut any_positive_match = false;
-    for raw in patterns.split(|c: char| c.is_whitespace() || c == ',') {
+    for raw in patterns.split([' ', '\t']) {
         let token = raw.trim();
         if token.is_empty() {
             continue;
@@ -320,6 +328,33 @@ mod tests {
         assert!(resolved.user.is_none());
         let resolved_ok = resolve_host_str(text, "ok.example.com");
         assert_eq!(resolved_ok.user.as_deref(), Some("u"));
+    }
+
+    /// A comma inside a `Host` token is pattern text, not a separator.
+    ///
+    /// Upstream tokenises the line with `argv_split`, whose separators are
+    /// `' '` and `'\t'` only (openssh/misc.c:2141), and matches each token
+    /// with `match_pattern` (openssh/readconf.c:1844). Measured on real
+    /// `ssh -G -F fixture a`: `port 22`, i.e. no match. The differential
+    /// harness pins that half against the oracle; this pins the mirror
+    /// image, which the oracle cannot answer because `ssh -G a,b` refuses
+    /// the alias as an invalid hostname.
+    #[test]
+    fn comma_in_a_host_pattern_is_literal_not_a_separator() {
+        let text = "Host a,b\n  Port 2222\n";
+        assert!(resolve_host_str(text, "a").port.is_none());
+        assert!(resolve_host_str(text, "b").port.is_none());
+        assert_eq!(resolve_host_str(text, "a,b").port, Some(2222));
+    }
+
+    /// A TAB separates `Host` tokens exactly as a space does
+    /// (openssh/misc.c:2141), so narrowing the separator set to space and
+    /// TAB must not have dropped the TAB.
+    #[test]
+    fn tab_separates_host_patterns() {
+        let text = "Host first\tsecond\n  Port 2222\n";
+        assert_eq!(resolve_host_str(text, "first").port, Some(2222));
+        assert_eq!(resolve_host_str(text, "second").port, Some(2222));
     }
 
     #[test]

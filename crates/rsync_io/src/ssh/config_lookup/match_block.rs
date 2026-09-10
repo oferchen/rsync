@@ -210,9 +210,11 @@ pub(super) fn match_line_applies(value: &str, ctx: &MatchContext<'_>, saw_exec: 
 fn evaluate_condition(condition: &MatchCondition, ctx: &MatchContext<'_>) -> bool {
     match condition {
         MatchCondition::All => true,
-        MatchCondition::Host(patterns) => pattern_list_matches(patterns, ctx.host, MatchKind::Host),
+        MatchCondition::Host(patterns) => {
+            pattern_list_matches(patterns, ctx.host, MatchKind::MatchHost)
+        }
         MatchCondition::OriginalHost(patterns) => {
-            pattern_list_matches(patterns, ctx.original_host, MatchKind::Host)
+            pattern_list_matches(patterns, ctx.original_host, MatchKind::MatchHost)
         }
         MatchCondition::User(patterns) => pattern_list_matches(patterns, ctx.user, MatchKind::User),
         MatchCondition::LocalUser(patterns) => {
