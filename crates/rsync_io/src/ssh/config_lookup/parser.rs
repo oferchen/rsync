@@ -2,16 +2,22 @@
 //!
 //! Reads a config file, walks its lines tracking the active [`Block`],
 //! and applies OpenSSH's first-match-wins rule per scope. Holds the
-//! line-level helpers ([`strip_comment`], [`split_directive`],
-//! [`parse_yes_no`]) and the public [`parse_enables_compression`]
-//! entry consumed by tests and the lookup driver.
+//! line-level helpers ([`split_directive`], [`parse_yes_no`]) and the
+//! public [`parse_enables_compression`] entry consumed by tests and the
+//! lookup driver.
+//!
+//! Values are tokenised by the shared [`argv_split`] owner, the same one
+//! the connection-configuring reader uses, so the two cannot disagree
+//! about where a token ends.
 
 use std::path::Path;
 
 use logging::debug_log;
 
+use crate::ssh::argv_split::argv_split;
+
 use super::match_block::{MatchContext, match_line_applies};
-use super::pattern::{MatchKind, Pattern, parse_host_pattern_list, pattern_list_matches};
+use super::pattern::{MatchKind, Pattern, host_patterns_from_tokens, pattern_list_matches};
 
 /// Reads `path` and returns whether it enables compression for `ctx`.
 /// Parse and I/O errors are converted to `false` with a single
@@ -68,8 +74,13 @@ pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'
     let mut exec_block_has_compression = false;
 
     for raw_line in text.lines() {
-        let line = strip_comment(raw_line).trim();
-        if line.is_empty() {
+        let line = raw_line.trim();
+        // The ONLY place a leading `#` is a comment marker: upstream tests
+        // the first non-blank character of the line and skips
+        // (openssh/readconf.c:1181). Anywhere else a `#` is handled by
+        // `argv_split`'s token-boundary rule below, not by cutting the
+        // string here - `HostName x#y` is a hostname containing a `#`.
+        if line.is_empty() || line.starts_with('#') {
             continue;
         }
         let Some((key, value)) = split_directive(line) else {
@@ -80,14 +91,27 @@ pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'
             );
             continue;
         };
+        // A value real `ssh` cannot tokenise aborts its whole config load
+        // (openssh/readconf.c:1196-1199 -> :2667), so there is no
+        // connection left to warn about. Abandoning the scan reports "no
+        // compression", which is this reader's documented degraded answer
+        // - it must not fail, and it must not guess.
+        let Ok(tokens) = argv_split(value, true) else {
+            debug_log!(
+                Io,
+                1,
+                "ssh_config compression detection: abandoning scan, ssh would refuse this file"
+            );
+            return false;
+        };
         let key_lc = key.to_ascii_lowercase();
         match key_lc.as_str() {
             "host" => {
-                block = Block::Host(parse_host_pattern_list(value));
+                block = Block::Host(host_patterns_from_tokens(&tokens));
             }
             "match" => {
                 let mut saw_exec = false;
-                let applies = match_line_applies(value, ctx, &mut saw_exec);
+                let applies = match_line_applies(&tokens, ctx, &mut saw_exec);
                 block = if saw_exec {
                     Block::MatchExecSkipped
                 } else {
@@ -95,7 +119,7 @@ pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'
                 };
             }
             "compression" => {
-                let parsed = parse_yes_no(value);
+                let parsed = tokens.first().and_then(|arg| parse_yes_no(arg));
                 match &block {
                     Block::TopLevel if top_level.is_none() => top_level = parsed,
                     Block::Host(patterns)
@@ -169,11 +193,6 @@ enum Block {
     /// Directives inside this block are not honoured but are inspected
     /// for `Compression yes` to emit a targeted user warning.
     MatchExecSkipped,
-}
-
-/// Strips a trailing `#...` comment from a config line.
-fn strip_comment(line: &str) -> &str {
-    line.find('#').map_or(line, |idx| &line[..idx])
 }
 
 /// Splits `Key Value` (or `Key=Value`) on the first whitespace or `=`

@@ -145,13 +145,28 @@ pub(in crate::ssh) fn evaluate_match(
 /// repeated calls accumulate the signal across multiple `Match exec`
 /// blocks.
 ///
-/// Recognises keys case-insensitively; arguments are split on whitespace
-/// or commas via [`parse_pattern_list`] for the keys that take a
-/// pattern-list. Unknown tokens cause the line to be treated as inert
-/// (conservative: a typo cannot accidentally flip the warning).
-pub(super) fn match_line_applies(value: &str, ctx: &MatchContext<'_>, saw_exec: &mut bool) -> bool {
+/// Recognises keys case-insensitively. Unknown tokens cause the line to
+/// be treated as inert (conservative: a typo cannot accidentally flip the
+/// warning).
+///
+/// Takes `argv_split` tokens rather than the raw value: upstream's
+/// `match_cfg_line` is handed the very `(ac, av)` the line was split into
+/// once at openssh/readconf.c:1196 and walks it with `argv_next`
+/// (openssh/readconf.c:1870), so a `Match` header sees exactly the same
+/// quote, escape and `#` handling as every other keyword. Splitting again
+/// here would be a third tokeniser free to disagree with that one.
+///
+/// The pattern-list argument of a criterion is then split a second time,
+/// on whitespace *and commas*, by [`parse_pattern_list`] - that is
+/// upstream's shape too, since `match_pattern_list`
+/// (openssh/match.c) is applied to one already-extracted argv token.
+pub(super) fn match_line_applies(
+    argv: &[String],
+    ctx: &MatchContext<'_>,
+    saw_exec: &mut bool,
+) -> bool {
     let mut conditions = Vec::new();
-    let mut tokens = value.split_ascii_whitespace();
+    let mut tokens = argv.iter();
     while let Some(keyword) = tokens.next() {
         let keyword_lc = keyword.to_ascii_lowercase();
         match keyword_lc.as_str() {

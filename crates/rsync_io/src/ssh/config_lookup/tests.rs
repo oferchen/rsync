@@ -182,6 +182,48 @@ fn parse_pattern_list_empty_input_yields_no_tokens() {
 }
 
 #[test]
+fn a_hash_inside_a_host_token_is_pattern_text() {
+    // `argv_split` ends the line on a `#` only at a TOKEN BOUNDARY
+    // (openssh/misc.c:2143-2144), so `Host x#y` is a three-character pattern.
+    // This reader used to cut every line at the first `#`, which turned the
+    // pattern into `x` and lost the block for the real alias.
+    assert!(parse_enables_compression(
+        "Host x#y\n  Compression yes\n",
+        &ctx("x#y", "", "")
+    ));
+
+    // Non-vacuity: a `#` that STARTS a token DOES end the line, so the same
+    // spelling with the `#` separated yields the single pattern `x` - which
+    // the alias `x#y` does not match. Without this the first assertion would
+    // also pass for a reader that never terminated on `#` at all.
+    assert!(!parse_enables_compression(
+        "Host x # y\n  Compression yes\n",
+        &ctx("x#y", "", "")
+    ));
+    assert!(parse_enables_compression(
+        "Host x # y\n  Compression yes\n",
+        &ctx("x", "", "")
+    ));
+}
+
+#[test]
+fn a_value_keeps_a_hash_that_sits_inside_its_token() {
+    // Same rule on the value half: `yes#no` is one token, not `yes`, so it
+    // is not a recognised boolean and the bit must stay unset.
+    assert!(!parse_enables_compression(
+        "Host a\n  Compression yes#no\n",
+        &ctx("a", "", "")
+    ));
+
+    // Non-vacuity companion: the same line with the `#` at a token boundary
+    // IS `yes`, and the bit is set.
+    assert!(parse_enables_compression(
+        "Host a\n  Compression yes #no\n",
+        &ctx("a", "", "")
+    ));
+}
+
+#[test]
 fn parse_host_pattern_list_keeps_a_comma_inside_one_token() {
     // A `Host` line is argv-tokenised: upstream splits it with
     // `argv_split` (openssh/misc.c:2130-2185), whose only separators are
@@ -189,7 +231,7 @@ fn parse_host_pattern_list_keeps_a_comma_inside_one_token() {
     // `match_pattern` (openssh/readconf.c:1844). The comma-splitting
     // `match_pattern_list` (openssh/match.c:143) is reachable only from
     // the `Match` criteria, so a comma here is pattern text.
-    let parsed = parse_host_pattern_list("a,b\tc d");
+    let parsed = host_patterns_from_tokens(&match_tokens("a,b\tc d"));
     assert_eq!(parsed.len(), 3);
     assert_eq!(parsed[0].glob(), "a,b");
     assert_eq!(parsed[1].glob(), "c");
@@ -676,6 +718,12 @@ fn match_localuser_miss_keeps_compression_off() {
 }
 
 // MED-2: `Match exec` warning flag tests. These exercise the
+// Tokenises a `Match` header value the way the production caller does,
+// so the tests exercise the same `argv_split` boundaries as the parser.
+fn match_tokens(value: &str) -> Vec<String> {
+    crate::ssh::argv_split::argv_split(value, true).expect("fixture tokenises")
+}
+
 // `saw_exec` output parameter on `match_line_applies` to verify
 // the one-shot warning fires exactly when expected.
 
@@ -684,7 +732,11 @@ fn match_exec_sets_saw_exec_flag() {
     // When the parser encounters `Match exec`, the saw_exec flag
     // must be set to true so the caller can emit a warning.
     let mut saw_exec = false;
-    let result = match_line_applies("exec /bin/true", &ctx("web1", "", ""), &mut saw_exec);
+    let result = match_line_applies(
+        &match_tokens("exec /bin/true"),
+        &ctx("web1", "", ""),
+        &mut saw_exec,
+    );
     assert!(!result, "Match exec must not match");
     assert!(saw_exec, "saw_exec flag must be set");
 }
@@ -693,14 +745,18 @@ fn match_exec_sets_saw_exec_flag() {
 fn match_without_exec_does_not_set_flag() {
     // Normal Match conditions must not set the saw_exec flag.
     let mut saw_exec = false;
-    match_line_applies("host web1", &ctx("web1", "", ""), &mut saw_exec);
+    match_line_applies(
+        &match_tokens("host web1"),
+        &ctx("web1", "", ""),
+        &mut saw_exec,
+    );
     assert!(!saw_exec, "saw_exec should not be set for non-exec Match");
 }
 
 #[test]
 fn match_all_does_not_set_flag() {
     let mut saw_exec = false;
-    match_line_applies("all", &ctx("", "", ""), &mut saw_exec);
+    match_line_applies(&match_tokens("all"), &ctx("", "", ""), &mut saw_exec);
     assert!(!saw_exec, "saw_exec should not be set for Match all");
 }
 
@@ -710,9 +766,17 @@ fn match_exec_flag_set_once_across_multiple_exec_blocks() {
     // first encounter matters for the one-shot warning. Verify the
     // flag stays true after a second exec block.
     let mut saw_exec = false;
-    match_line_applies("exec /bin/true", &ctx("web1", "", ""), &mut saw_exec);
+    match_line_applies(
+        &match_tokens("exec /bin/true"),
+        &ctx("web1", "", ""),
+        &mut saw_exec,
+    );
     assert!(saw_exec);
-    match_line_applies("exec /bin/false", &ctx("web1", "", ""), &mut saw_exec);
+    match_line_applies(
+        &match_tokens("exec /bin/false"),
+        &ctx("web1", "", ""),
+        &mut saw_exec,
+    );
     assert!(saw_exec, "flag should remain true after second exec");
 }
 
@@ -721,9 +785,17 @@ fn match_exec_flag_not_reset_by_non_exec_match() {
     // Once saw_exec is set by a Match exec block, a subsequent
     // non-exec Match must not clear it.
     let mut saw_exec = false;
-    match_line_applies("exec /usr/bin/test", &ctx("web1", "", ""), &mut saw_exec);
+    match_line_applies(
+        &match_tokens("exec /usr/bin/test"),
+        &ctx("web1", "", ""),
+        &mut saw_exec,
+    );
     assert!(saw_exec);
-    match_line_applies("host web1", &ctx("web1", "", ""), &mut saw_exec);
+    match_line_applies(
+        &match_tokens("host web1"),
+        &ctx("web1", "", ""),
+        &mut saw_exec,
+    );
     assert!(saw_exec, "non-exec Match must not clear saw_exec flag");
 }
 
