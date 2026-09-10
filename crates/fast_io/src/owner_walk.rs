@@ -944,6 +944,106 @@ pub fn operator_remove_file_confined(path: &Path) -> io::Result<()> {
     crate::unlinkat(parent.as_fd(), &leaf, crate::UnlinkFlags::File)
 }
 
+/// Re-materialise a device, FIFO or socket node at an operator-supplied path
+/// through the ownership walk, bound to the session's confinement root.
+///
+/// The DEVICE tier of the backup ladder, and the last one that still resolved
+/// its operator path with a path-based syscall. `mode` carries the file-type
+/// bits alongside the permission bits, exactly as upstream passes `file->mode`
+/// through; `dev` is the source node's `rdev` word, ignored for a FIFO or
+/// socket. `fake_super` selects upstream's `am_root < 0` representation - an
+/// inert `0600` regular placeholder whose privileged metadata is carried in a
+/// `%stat` xattr - which is created against the SAME verified parent so the
+/// confinement guarantee does not depend on which representation is in use.
+///
+/// Three arms, mirroring upstream:
+///
+/// - Opted out (`--insecure-links`, or a module with `insecure links = yes`):
+///   the walk itself short-circuits to the legacy symlink-following resolution,
+///   which is upstream's `return do_mknod(...)`.
+/// - The walk succeeds: the node is created with `mknodat` on the held dirfd,
+///   with the `mkfifoat` retry for the platforms whose `mknodat` cannot make a
+///   FIFO, and an `EOPNOTSUPP` refusal for a socket, which has no
+///   dirfd-relative `bind(2)`. That refusal is deliberate - re-resolving the
+///   parent by path to bind a socket would launder the confinement.
+/// - The walk fails: the error is returned. There is no fall-back to the
+///   path-based `mknod`, because a refusal that retries unconfined is not a
+///   refusal.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/backup.c:358-365` `make_backup_inner()` - the DEVICE branch
+///   calls `do_mknod_at(buf, file->mode, sx.st.st_rdev)`.
+/// - `rsync-3.5.0/backup.c:437-449` `make_backup()` - `operator_path_resolve =
+///   1` around the WHOLE backup, so the DEVICE branch runs inside it.
+/// - `rsync-3.5.0/syscall.c:1270-1305` `do_mknod_at()` - the
+///   `operator_path_resolve` arm this mirrors, including the opt-out
+///   short-circuit (1271-1272), the `dfd < 0` bail (1274-1275), the fake-super
+///   placeholder (1276-1284) and the FIFO/socket retry (1288-1300).
+///
+/// # Errors
+///
+/// - `ELOOP` when a component is an untrusted-owner symlink, or when the
+///   resolved leaf lands outside the confinement root.
+/// - `EOPNOTSUPP` for a socket the platform cannot create beneath a dirfd.
+/// - Otherwise the `mknodat(2)`/`mkfifoat(2)`/`openat(2)` errno verbatim.
+pub fn operator_mknod_confined(
+    path: &Path,
+    mode: u32,
+    dev: u64,
+    fake_super: bool,
+) -> io::Result<()> {
+    let (parent, leaf) = owner_trusted_parent_kind(path, crate::confinement::PathKind::Confined)?;
+    if fake_super {
+        return operator_fake_super_placeholder(parent.as_fd(), &leaf);
+    }
+
+    let Err(error) = at_syscalls::mknodat(parent.as_fd(), leaf.as_os_str(), mode, dev) else {
+        return Ok(());
+    };
+
+    // Computed in `mode_t` space so the comparison needs no cast to a concrete
+    // width: `S_IFMT` and friends are `u16` on Apple targets and `u32` on Linux.
+    let node_type = (mode as libc::mode_t) & libc::S_IFMT;
+    if node_type == libc::S_IFIFO {
+        at_syscalls::mkfifoat(parent.as_fd(), leaf.as_os_str(), mode)
+    } else if node_type == libc::S_IFSOCK {
+        Err(io::Error::from_raw_os_error(libc::EOPNOTSUPP))
+    } else {
+        Err(error)
+    }
+}
+
+/// Write the `--fake-super` placeholder for [`operator_mknod_confined`] against
+/// the parent the walk verified.
+///
+/// The leaf is unlinked first and then created `O_EXCL`, which is the shape
+/// this placeholder has always had (`metadata::special`'s
+/// `create_fake_super_placeholder`) and is what upstream's own socket arm does
+/// before `bind(2)` (`syscall.c:1213`). Upstream's operator arm spells it
+/// `O_CREAT | O_TRUNC` instead; on a leaf that is already a FIFO that open
+/// blocks until a reader appears, so the unlink-first form is kept. Both
+/// refuse to follow a symlink standing at the leaf - `unlinkat(2)` never does,
+/// and the create carries `O_NOFOLLOW`.
+///
+/// upstream: `rsync-3.5.0/syscall.c:1276-1284` `do_mknod_at()` - the
+/// `am_root < 0` arm, "created relative to the verified parent so the
+/// confinement guarantee is unchanged".
+fn operator_fake_super_placeholder(parent: BorrowedFd<'_>, leaf: &OsStr) -> io::Result<()> {
+    match at_syscalls::unlinkat(parent, leaf, at_syscalls::UnlinkFlags::File) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    at_syscalls::openat(
+        parent,
+        leaf,
+        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW,
+        0o600,
+    )
+    .map(drop)
+}
+
 /// Open `path` with every component resolved by the ownership walk.
 ///
 /// One policy applies end to end, leaf included: follow a symlink owned by uid
