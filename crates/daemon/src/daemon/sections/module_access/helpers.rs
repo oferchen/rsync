@@ -345,6 +345,11 @@ struct MergeRule<'a> {
     /// `e` - `FILTRULE_EXCLUDE_SELF`: an exclude of the merge file's basename
     /// is added BEFORE the file is read (exclude.c:1553-1568).
     exclude_self: bool,
+    /// `w` - `FILTRULE_WORD_SPLIT`: the file's records are its
+    /// whitespace-delimited WORDS, and a leading `;`/`#` is no longer a comment
+    /// (exclude.c:1772-1773 breaks the record at any space, and the
+    /// `word_split ||` disjunct at exclude.c:1806 skips the comment test).
+    word_split: bool,
 }
 
 /// Classifies a token as an EAGER merge rule - `merge` / `.` - or `None`.
@@ -409,6 +414,7 @@ fn merge_rule<'a>(
         no_prefixes: modifiers.no_prefixes,
         include: modifiers.include,
         exclude_self: modifiers.exclude_self,
+        word_split: modifiers.word_split,
     }))
 }
 
@@ -418,6 +424,7 @@ struct MergeModifiers {
     no_prefixes: bool,
     include: bool,
     exclude_self: bool,
+    word_split: bool,
 }
 
 /// Runs upstream's modifier scan over a merge rule's run.
@@ -447,9 +454,10 @@ struct MergeModifiers {
 ///   module-relative name. MEASURED: `filter = ./ FILE` and `filter = . FILE`
 ///   over a merge file holding `- sub/f` hide the same set - `sub/f` AND
 ///   `deep/sub/f`.
-/// - `w` (`FILTRULE_WORD_SPLIT`) and `e` (`FILTRULE_EXCLUDE_SELF`) are
-///   accepted and NOT reproduced; each has its own measured divergence
-///   recorded at its site in [`push_merge_file_rules`].
+///
+/// `w` (`FILTRULE_WORD_SPLIT`) and `e` (`FILTRULE_EXCLUDE_SELF`) are the two
+/// modifiers that are NOT inert: each changes what [`push_merge_file_rules`]
+/// does with the named file, and both are reproduced there.
 fn scan_merge_modifiers(
     run: &str,
     base: usize,
@@ -483,8 +491,12 @@ fn scan_merge_modifiers(
             // exclude.c:1596-1598); that is NOT reproduced here.
             'C' => modifiers.no_prefixes = true,
             'e' => modifiers.exclude_self = true,
+            // upstream: exclude.c:1433-1437. `w` raises FILTRULE_WORD_SPLIT on
+            // the merge rule, which `parse_filter_file` reads to decide how the
+            // file's records are cut (exclude.c:1606, :1772-1773, :1806).
+            'w' => modifiers.word_split = true,
             // Accepted and inert - see this function's doc block.
-            '/' | 'n' | 'p' | 'w' | 'x' | 'r' | 's' => {}
+            '/' | 'n' | 'p' | 'x' | 'r' | 's' => {}
             _ => {
                 return Err(MalformedRule::InvalidModifier {
                     modifier: ch,
@@ -520,16 +532,9 @@ fn push_merge_file_rules(
 ) -> Result<(), io::Error> {
     if merge.exclude_self {
         // upstream: exclude.c:1557-1567 adds an exclude of the merge file's
-        // BASENAME before the file is read.
-        //
-        // ⚠ MEASURED DIVERGENCE. Upstream's own `parse_filter_file` then tests
-        // the merge file against `daemon_filter_list` (exclude.c:1636-1657) and,
-        // finding it hidden by the rule just added, treats it as non-existent -
-        // so `filter = .e FILE` upstream adds the basename exclude and reads
-        // NOTHING (rc 0, `bait` served). oc adds the exclude and still reads the
-        // file, which hides strictly MORE than upstream. Reproducing the
-        // self-suppression needs the daemon list's own matcher at parse time,
-        // which this path does not have.
+        // BASENAME before the file is read. The rule lands in the SAME list the
+        // gate below consults, which is why `.e` reads nothing - see
+        // [`merge_file_hidden_by_daemon_rules`].
         let base = merge.name.rsplit('/').next().unwrap_or(merge.name);
         rules.push(build_pattern_rule(base, false, RuleXflags::MergeFile));
     }
@@ -548,6 +553,28 @@ fn push_merge_file_rules(
     }
 
     let path = merge_file_path(merge.name, root);
+
+    // upstream: exclude.c:1639-1664. Before the open, `parse_filter_file` tests
+    // the merge file's own name against `daemon_filter_list` and, when a rule
+    // already in that list hides it, returns as if the file did not exist -
+    // WITHOUT opening it and WITHOUT tripping `XFLG_FATAL_ERRORS`, "so it
+    // neither errors out nor leaks a fatal-vs-silent oracle".
+    //
+    // The gate is what makes `filter = .e FILE` read NOTHING: the self-exclude
+    // pushed above is itself the rule that hides the file. MEASURED against
+    // rsync 3.5.0, a module holding `bait` + `keep` and a `MERGEF` file holding
+    // `- bait`:
+    //
+    // * `filter = .e MERGEF` -> rc 0, `MERGEF` hidden, `bait` STILL SERVED.
+    // * `filter = .e NOSUCHFILE` -> rc 0, everything served - the absent file is
+    //   never opened, so the fatal-open arm is unreachable. (`filter = merge
+    //   NOSUCHFILE`, with no self-exclude, is rc 5 on both.)
+    // * `filter = - keep . MERGEF` -> the merge file is NOT hidden by `- keep`,
+    //   so it IS read and `bait` is excluded.
+    if merge_file_hidden_by_daemon_rules(rules, &path, root) {
+        return Ok(());
+    }
+
     let content = read_filter_file_contents(&path).map_err(|err| {
         io::Error::new(
             err.kind(),
@@ -555,19 +582,23 @@ fn push_merge_file_rules(
         )
     })?;
 
-    for record in filters::filter_file_records(&content) {
-        // `true`: a plain merge is line-parsed, so a leading `;`/`#` is a
-        // comment (`exclude.c:1806`, `word_split ||`).
-        //
-        // ⚠ MEASURED DIVERGENCE for the `w` modifier: upstream word-splits such
-        // a file AND stops recognising comments. oc reads a `merge,w` file
-        // line-by-line, so a file holding `- bait - ctl` becomes ONE rule whose
-        // pattern is `bait - ctl` and every file is served, where upstream
-        // refuses the module (`unexpected end of filter rule`, rc 5, because the
-        // word-split leaves a patternless `-`).
-        if !filters::filter_file_line_is_rule(record, true) {
-            continue;
-        }
+    // upstream: exclude.c:1756-1809 cuts the file into records, and
+    // `word_split` (raised by the `w` modifier) changes BOTH halves of that
+    // loop: a record ends at any `isspace` (:1772-1773) instead of at a
+    // newline, and the `word_split ||` disjunct at :1806 stops treating a
+    // leading `;`/`#` as a comment. MEASURED against rsync 3.5.0 on a file
+    // holding `- bait - other`: `filter = merge,w FILE` is rc 5 (`unexpected
+    // end of filter rule`, because the split leaves a patternless `-`) while
+    // `filter = merge FILE` serves everything (the whole line is one pattern).
+    let records: Vec<&str> = if merge.word_split {
+        content.split_ascii_whitespace().collect()
+    } else {
+        filters::filter_file_records(&content)
+            .filter(|record| filters::filter_file_line_is_rule(record, true))
+            .collect()
+    };
+
+    for record in records {
         if merge.no_prefixes {
             rules.push(build_pattern_rule(
                 record,
@@ -580,6 +611,62 @@ fn push_merge_file_rules(
     }
 
     Ok(())
+}
+
+/// Answers upstream's pre-open `check_filter(&daemon_filter_list, ...)` gate.
+///
+/// upstream: `exclude.c:1639-1664`. The name tested is the RESOLVED merge-file
+/// path with the module root stripped when it is absolute (`dir = line +
+/// (*line == '/' ? module_dirlen : 0)`), because the daemon list matches
+/// module-relative names.
+///
+/// Returns `false` when no rules have accumulated yet - upstream guards the
+/// whole block on `if (daemon_filter_list.head)`, so the FIRST merge rule in a
+/// module's configuration is never gated.
+fn merge_file_hidden_by_daemon_rules(
+    rules: &[FilterRuleWireFormat],
+    path: &Path,
+    root: &Path,
+) -> bool {
+    if rules.is_empty() {
+        return false;
+    }
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    let name = relative.strip_prefix("/").unwrap_or(relative);
+    if name.as_os_str().is_empty() {
+        return false;
+    }
+    match daemon_filter_set(rules) {
+        Some(set) => !set.allows(name, false),
+        None => false,
+    }
+}
+
+/// Compiles the rules accumulated so far into the matcher the gate consults.
+///
+/// The wire rules are the daemon list in `FilterRuleWireFormat` form; a `Clear`
+/// among them pops what came before it, exactly as it does for every other
+/// consumer of this list.
+fn daemon_filter_set(rules: &[FilterRuleWireFormat]) -> Option<filters::FilterSet> {
+    use filters::FilterRule;
+    use protocol::filters::RuleType;
+
+    let compiled: Vec<FilterRule> = rules
+        .iter()
+        .filter_map(|wire_rule| {
+            let pat = wire_rule.pattern.to_string_lossy();
+            Some(match wire_rule.rule_type {
+                RuleType::Include => FilterRule::include(pat),
+                RuleType::Exclude => FilterRule::exclude(pat),
+                RuleType::Clear => FilterRule::clear(),
+                // Only include/exclude decide whether a NAME is hidden here:
+                // upstream calls `check_filter` with `name_flags == 0`, and the
+                // sided and per-directory kinds are answered elsewhere.
+                _ => return None,
+            })
+        })
+        .collect();
+    filters::FilterSet::from_rules(compiled).ok()
 }
 
 /// Resolves a merge-file name the way `parse_merge_name()` does.
