@@ -110,8 +110,11 @@ so flame graphs distinguish the hint from actual page-fault stalls. Gated by
   `advise_sequential` consumers we mirror.
 - `crates/engine/src/local_copy/prefetch.rs:23-79` - `posix_fadvise`
   precedent for fd-based hints.
-- `crates/fast_io/src/debug_io.rs:574-593` - `trace_mmap_advise` IO3
-  debug hook for telemetry.
+- IO3 telemetry for the advice call has no hook. This entry named
+  `crates/fast_io/src/debug_io.rs:574-593` (`trace_mmap_advise`), but that
+  file was reachable from no `mod` or `include!` and so was never compiled;
+  it has been removed and `trace_mmap_advise` exists nowhere in the tree.
+  A telemetry hook has to be written before it can be cited.
 - `docs/audits/mmap-iouring-co-usage.md` - companion audit (#1660) listing
   every mmap-to-io_uring crossing.
 - `docs/audits/mmap-map-populate-evaluation.md` (PR #3442 / task #1663) - companion `MAP_POPULATE` evaluation.
