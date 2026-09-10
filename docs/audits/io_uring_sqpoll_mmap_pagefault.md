@@ -222,8 +222,10 @@ they apply at runtime.
    `crates/fast_io/src/mmap_reader.rs:139-143`) exists and is gated
    `#[cfg(unix)]`. Errors are deliberately ignored: the hint is
    advisory and any failure (`EBADF`, `EINVAL` on holes) is
-   non-fatal. Telemetry is via the existing IO3 debug trace
-   (`crates/fast_io/src/debug_io.rs:574-593`).
+   non-fatal. Telemetry: none. This cited an "existing IO3 debug trace"
+   at `crates/fast_io/src/debug_io.rs:574-593`, but no `mod` item and no
+   `include!()` reached that file, so it was never compiled; it has been
+   removed and no `trace_mmap_advise` exists.
 
 3. **Pre-fault loop for io_uring registered buffers backed by mmap
    (#1665, in progress).** When registered-buffer setup is changed
