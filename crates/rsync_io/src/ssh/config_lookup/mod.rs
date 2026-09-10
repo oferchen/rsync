@@ -67,12 +67,16 @@ use paths::candidate_paths;
 // consumes `ssh_config_enables_compression` and `MatchContext`.
 #[cfg(test)]
 use match_block::{MatchCondition, evaluate_match, match_line_applies};
+// `pub(super)` rather than module-private: the `ssh -G` differential
+// harness (`embedded::ssh_config_differential`) reads the compression
+// decision straight out of the parser so its `compression` row is pinned
+// against real ssh instead of against a unit test's own belief.
 #[cfg(test)]
-use parser::parse_enables_compression;
+pub(super) use parser::parse_enables_compression;
 #[cfg(test)]
 use paths::extract_dash_f_path;
 #[cfg(test)]
-use pattern::{Pattern, parse_pattern_list};
+use pattern::{Pattern, parse_host_pattern_list, parse_pattern_list};
 
 /// Returns `true` when `~/.ssh/config` or `/etc/ssh/ssh_config`
 /// configures `Compression yes` for `ctx` at top level or under a

@@ -182,6 +182,73 @@ fn parse_pattern_list_empty_input_yields_no_tokens() {
 }
 
 #[test]
+fn parse_host_pattern_list_keeps_a_comma_inside_one_token() {
+    // A `Host` line is argv-tokenised: upstream splits it with
+    // `argv_split` (openssh/misc.c:2130-2185), whose only separators are
+    // `' '` and `'\t'` (openssh/misc.c:2141), then matches each token with
+    // `match_pattern` (openssh/readconf.c:1844). The comma-splitting
+    // `match_pattern_list` (openssh/match.c:143) is reachable only from
+    // the `Match` criteria, so a comma here is pattern text.
+    let parsed = parse_host_pattern_list("a,b\tc d");
+    assert_eq!(parsed.len(), 3);
+    assert_eq!(parsed[0].glob(), "a,b");
+    assert_eq!(parsed[1].glob(), "c");
+    assert_eq!(parsed[2].glob(), "d");
+}
+
+#[test]
+fn host_block_with_a_comma_matches_only_the_literal_alias() {
+    // Measured on real `ssh -G -F fixture a`: `compression no`, i.e. the
+    // block does not apply. The differential harness pins that half; this
+    // pins the mirror image, which the oracle cannot answer because
+    // `ssh -G a,b` refuses the alias with "hostname contains invalid
+    // characters" and exits nonzero.
+    let text = "Host a,b\n  Compression yes\n";
+    assert!(!parse_enables_compression(text, &host_ctx("a")));
+    assert!(!parse_enables_compression(text, &host_ctx("b")));
+    assert!(parse_enables_compression(text, &host_ctx("a,b")));
+}
+
+#[test]
+fn host_block_pattern_is_case_sensitive() {
+    // `oHost` calls `match_pattern` directly
+    // (openssh/readconf.c:1844) and `match_pattern` folds nothing -
+    // `if (*pattern != '?' && *pattern != *s) return 0;`
+    // (openssh/match.c:105-106). Measured on real `ssh -G`: alias `web1`
+    // against `Host WEB1` reports `compression no`.
+    let text = "Host WEB1\n  Compression yes\n";
+    assert!(!parse_enables_compression(text, &host_ctx("web1")));
+    assert!(parse_enables_compression(text, &host_ctx("WEB1")));
+}
+
+#[test]
+fn match_host_pattern_stays_case_insensitive() {
+    // The control for the `Host` case fix. `Match host` and
+    // `Match originalhost` go through `match_hostname`
+    // (openssh/match.c:193-203), which lowercases the host and passes
+    // `dolower=1`, so the fold is CORRECT here. If this reddens, the
+    // shared `case_fold` policy was flipped instead of the `Host` call
+    // site being given its own kind.
+    let text = "Match host WEB1\n  Compression yes\n";
+    assert!(parse_enables_compression(text, &host_ctx("web1")));
+    let original = "Match originalhost WEB1\n  Compression yes\n";
+    assert!(parse_enables_compression(original, &host_ctx("web1")));
+}
+
+#[test]
+fn match_host_still_comma_splits_its_pattern_list() {
+    // The control for the `Host` tokeniser split. `Match host` DOES
+    // comma-split - `match_pattern_list` cuts each subpattern at a comma
+    // (openssh/match.c:143) - so the very token that must not match under
+    // `Host` must still match here. If this reddens, the shared `Match`
+    // tokeniser was narrowed instead of the `Host` caller being given its
+    // own.
+    let text = "Match host a,b\n  Compression yes\n";
+    assert!(parse_enables_compression(text, &host_ctx("a")));
+    assert!(parse_enables_compression(text, &host_ctx("b")));
+}
+
+#[test]
 fn extracts_split_dash_f() {
     let opts = vec![OsString::from("-F"), OsString::from("/tmp/custom")];
     assert_eq!(

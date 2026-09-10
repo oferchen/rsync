@@ -1,10 +1,12 @@
 //! Host/user pattern matching shared by `Host` blocks and `Match`
 //! lines.
 //!
-//! Holds the [`Pattern`] token type, the tokeniser
-//! ([`parse_pattern_list`]), and the byte-level glob matcher with the
-//! case-folding policy selected by [`MatchKind`]. Mirrors OpenSSH's
-//! `match_pattern_list` semantics.
+//! Holds the [`Pattern`] token type, the two tokenisers
+//! ([`parse_host_pattern_list`] for `Host` lines,
+//! [`parse_pattern_list`] for `Match` criteria), and the byte-level glob
+//! matcher with the case-folding policy selected by [`MatchKind`].
+//! The separator set and the case-folding rule both differ per keyword,
+//! so neither is inferred from "it is a hostname".
 
 /// A single token from an ssh_config `Host` or `Match` pattern-list.
 ///
@@ -44,28 +46,66 @@ impl Pattern {
     }
 }
 
-/// Tokenises a raw pattern-list (the value half of a `Host` line or a
-/// `Match host`/`originalhost`/`user`/`localuser` condition) into
-/// [`Pattern`] entries.
+/// Tokenises a `Match host`/`originalhost`/`user`/`localuser` condition
+/// argument into [`Pattern`] entries.
 ///
-/// Tokens are split on whitespace or commas, matching OpenSSH's
-/// `match_pattern_list`. Empty tokens are dropped. Shared by
-/// `Host`-block resolution (SSC-5.b) and the `Match`-line evaluator
-/// (SSC-4.c) so both callers route through one tokeniser.
+/// Tokens are split on whitespace **or commas**: the `Match` criteria are
+/// pattern-lists, and `match_pattern_list` cuts each subpattern at a comma
+/// (openssh/match.c:143). Empty tokens are dropped.
+///
+/// ⚠ Not for `Host` lines - those are argv-tokenised and a comma is
+/// ordinary pattern text there. Use [`parse_host_pattern_list`].
 pub(in crate::ssh) fn parse_pattern_list(value: &str) -> Vec<Pattern> {
+    split_tokens(value, |c| c.is_whitespace() || c == ',')
+}
+
+/// Tokenises the value half of a `Host` line into [`Pattern`] entries.
+///
+/// Tokens are separated by spaces and TABs only, and a comma is ordinary
+/// pattern text. Upstream splits the line with `argv_split`
+/// (openssh/misc.c:2130-2185), whose only separators are `' '` and `'\t'`
+/// (openssh/misc.c:2141), then matches each token with `match_pattern` in
+/// the `argv_next` loop (openssh/readconf.c:1831-1858); the `oHost` arm
+/// never reaches `match_pattern_list`, so `Host a,b` does not match the
+/// alias `a`.
+///
+/// A separate entry point rather than a widened [`parse_pattern_list`]:
+/// the separator set differs *per keyword*, and the four `Match` criteria
+/// that share the tokeniser need the comma split that `Host` must not
+/// have.
+pub(in crate::ssh) fn parse_host_pattern_list(value: &str) -> Vec<Pattern> {
+    split_tokens(value, |c| c == ' ' || c == '\t')
+}
+
+/// Splits `value` on `is_separator`, dropping empty tokens.
+fn split_tokens(value: &str, is_separator: impl Fn(char) -> bool) -> Vec<Pattern> {
     value
-        .split(|c: char| c.is_whitespace() || c == ',')
+        .split(is_separator)
         .map(str::trim)
         .filter(|tok| !tok.is_empty())
         .map(Pattern::new)
         .collect()
 }
 
-/// Whether the input is a hostname or a username; controls case
-/// folding per SSC-4.a.
+/// Which keyword's pattern is being matched; controls case folding.
+///
+/// Split by keyword rather than by "hostname vs username": the two
+/// host-carrying keywords differ from each other, so folding cannot be
+/// inferred from the input being a hostname.
 #[derive(Copy, Clone)]
 pub(super) enum MatchKind {
-    Host,
+    /// A `Host` block pattern: compared byte-exactly. The `oHost` arm
+    /// calls `match_pattern` directly (openssh/readconf.c:1844), and
+    /// `match_pattern` folds nothing -
+    /// `if (*pattern != '?' && *pattern != *s) return 0;`
+    /// (openssh/match.c:105-106).
+    HostBlock,
+    /// A `Match host` / `Match originalhost` argument: compared
+    /// case-INSENSITIVELY. These route through `match_hostname`
+    /// (openssh/match.c:193-203), which lowercases the host and passes
+    /// `dolower=1` into `match_pattern_list`.
+    MatchHost,
+    /// A `Match user` / `Match localuser` argument.
     User,
 }
 
@@ -104,11 +144,13 @@ fn pattern_glob_matches(glob: &str, input: &str, kind: MatchKind) -> bool {
 }
 
 /// Returns `true` when comparisons for `kind` should be ASCII
-/// case-folded. Hostnames are always folded; usernames are folded only
-/// on Windows, where account names are inherently case-insensitive.
+/// case-folded. `Host` block patterns are never folded; `Match host`
+/// patterns always are; usernames are folded only on Windows, where
+/// account names are inherently case-insensitive.
 fn case_fold(kind: MatchKind) -> bool {
     match kind {
-        MatchKind::Host => true,
+        MatchKind::HostBlock => false,
+        MatchKind::MatchHost => true,
         MatchKind::User => cfg!(windows),
     }
 }

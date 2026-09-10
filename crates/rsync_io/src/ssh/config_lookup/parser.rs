@@ -11,7 +11,7 @@ use std::path::Path;
 use logging::debug_log;
 
 use super::match_block::{MatchContext, match_line_applies};
-use super::pattern::{MatchKind, Pattern, parse_pattern_list, pattern_list_matches};
+use super::pattern::{MatchKind, Pattern, parse_host_pattern_list, pattern_list_matches};
 
 /// Reads `path` and returns whether it enables compression for `ctx`.
 /// Parse and I/O errors are converted to `false` with a single
@@ -83,7 +83,7 @@ pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'
         let key_lc = key.to_ascii_lowercase();
         match key_lc.as_str() {
             "host" => {
-                block = Block::Host(parse_pattern_list(value));
+                block = Block::Host(parse_host_pattern_list(value));
             }
             "match" => {
                 let mut saw_exec = false;
@@ -100,7 +100,7 @@ pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'
                     Block::TopLevel if top_level.is_none() => top_level = parsed,
                     Block::Host(patterns)
                         if host_block.is_none()
-                            && pattern_list_matches(patterns, ctx.host, MatchKind::Host) =>
+                            && pattern_list_matches(patterns, ctx.host, MatchKind::HostBlock) =>
                     {
                         host_block = parsed;
                     }
