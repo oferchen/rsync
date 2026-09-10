@@ -3527,3 +3527,364 @@ fn inplace_backup_dir_leaving_an_unconfined_session_does_receive_the_pre_image()
         "and the in-place rewrite completed on the original inode"
     );
 }
+
+// The two backup-ladder sites the cells above do NOT reach: the `--backup-dir`
+// PARENT CHAIN that `create_backup_parents` builds before any tier runs, and
+// the COPY / SYMLINK tiers that run only once both the hard-link and the rename
+// tier have reported `EXDEV`.
+//
+// Upstream confines both. `make_backup()` raises `operator_path_resolve` around
+// the whole of `make_backup_inner` (backup.c:437-449), which covers
+// `get_backup_name()` -> `copy_valid_path()`'s `do_lstat_at()` /
+// `delete_item()` / `do_mkdir_at()` (backup.c:69-128) and, further down, the
+// `do_symlink_at(sl, buf)` at backup.c:377 and the `copy_file(fname, buf, -1,
+// mode)` at backup.c:401 whose destination open is `do_open_at()`
+// (util1.c:366 `unlink_and_reopen`). Each of those wrappers takes the ownership
+// walk while the flag is set, and `owner_walk_parent()` judges the resolved
+// leaf against the confinement root (syscall.c:581-596).
+//
+// As with the cells above, the escape shape is a symlink the test itself owns,
+// so these pin the CONFINEMENT-ROOT half of the walk, never the ownership half:
+// a single-uid test can never make ownership refuse.
+
+/// WITNESS (confinement-root half). `create_backup_parents` runs BEFORE any
+/// tier, so it is the first thing an out-of-root `--backup-dir` reaches - and
+/// creating the backup subtree is already an escape, whatever the ladder does
+/// afterwards.
+///
+/// The ladder cells above assert only that no `file.txt~` appears outside the
+/// root, which a path-based `create_dir_all` satisfies while still having
+/// created `outside/source/` as a side effect. This asserts the DIRECTORY, so
+/// the parent chain's own resolver is what is measured rather than the tiers
+/// below it.
+///
+/// Non-vacuity is carried by
+/// [`backup_dir_leaving_an_unconfined_session_does_receive_the_pre_image`],
+/// which runs this exact fixture with no confinement root and finds the backup
+/// at `outside/source/file.txt~` - so the subtree the assertion below forbids is
+/// demonstrably creatable when nothing forbids it.
+///
+/// upstream: `backup.c:128` `do_mkdir_at(backup_dir_buf, ACCESSPERMS)` and
+/// `backup.c:69` `do_lstat_at()`, both inside `make_backup()`'s
+/// `operator_path_resolve = 1` window (backup.c:437-449).
+#[cfg(unix)]
+#[test]
+fn backup_dir_parents_cannot_be_created_outside_the_confinement_root() {
+    let fx = backup_confinement_fixture();
+    fx.plant_backup_dir_link(&fx.outside);
+
+    let plan = LocalCopyPlan::from_operands(&fx.operands()).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .with_backup_directory(Some(PathBuf::from("bak")));
+
+    let _session = install_backup_confinement(Some(&fx.confine_root));
+    let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
+
+    assert!(
+        result.is_err(),
+        "a --backup-dir whose parent chain can only be built outside the \
+         confinement root must fail closed"
+    );
+    assert!(
+        !fx.outside.join("source").exists(),
+        "the backup subtree was created at {} - create_backup_parents resolved \
+         an operator-named path out of the confinement root",
+        fx.outside.join("source").display()
+    );
+}
+
+#[cfg(unix)]
+impl BackupConfinementFixture {
+    /// A REAL `--backup-dir` inside the confinement root, so the parent chain
+    /// validates cleanly and the tiers below it are the only thing left to
+    /// refuse.
+    fn real_backup_dir(&self) -> PathBuf {
+        self.dest.join("bak")
+    }
+}
+
+/// Builds the post-validation component swap the COPY and SYMLINK tier cells
+/// share: the `bak/source` directory `create_backup_parents` just accepted is
+/// replaced by a symlink pointing out of the confinement root.
+///
+/// This is upstream's `backup-dir-symlink-race` in deterministic form, and it
+/// is the ONLY shape that reaches those tiers once the parent chain is itself
+/// confined - any escape the chain can see is refused there first. It is also
+/// exactly why upstream confines the tiers rather than trusting
+/// `copy_valid_path()`'s earlier verdict.
+#[cfg(unix)]
+fn flip_validated_parent_outside(backup_dir: PathBuf, outside: PathBuf) -> impl Fn() + Send {
+    move || {
+        let validated = backup_dir.join("source");
+        fs::remove_dir(&validated).expect("the parent chain must have created it");
+        std::os::unix::fs::symlink(&outside, &validated).expect("flip it to a symlink");
+    }
+}
+
+/// Forces both the hard-link and the rename tier to report `EXDEV` so the
+/// copy-tree fallback is what places the backup, running `action` under both
+/// overrides.
+///
+/// `before_rename` runs once the link tier has already failed, which is the
+/// window a component swap has to land in to reach the tiers unvalidated.
+#[cfg(unix)]
+fn with_cross_device_backup_tiers<R>(
+    before_rename: impl Fn() + Send + 'static,
+    action: impl FnOnce() -> R,
+) -> R {
+    with_hard_link_override(
+        |_, _| Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE)),
+        || {
+            with_backup_rename_override(
+                move |_, _| {
+                    before_rename();
+                    Some(Err(io::Error::from_raw_os_error(
+                        super::CROSS_DEVICE_ERROR_CODE,
+                    )))
+                },
+                action,
+            )
+        },
+    )
+}
+
+/// WITNESS (confinement-root half) for the COPY tier, which is a THIRD call
+/// site: it runs only when neither the hard-link nor the rename tier can place
+/// the backup, so the cells above never reach it. A refusal here has to stop an
+/// OPEN FOR WRITING from resolving out of the root, and `std::fs::copy` has
+/// exactly the path-following behaviour that would let it.
+///
+/// upstream: `backup.c:401` `copy_file(fname, buf, -1, file->mode)`, whose
+/// destination goes through `unlink_and_reopen()` -> `do_open_at()`
+/// (util1.c:366, syscall.c:1513) inside `make_backup()`'s
+/// `operator_path_resolve = 1` window.
+#[cfg(unix)]
+#[test]
+fn cross_device_copy_tier_cannot_receive_the_pre_image_outside_the_confinement_root() {
+    let fx = backup_confinement_fixture();
+    fs::create_dir(fx.real_backup_dir()).expect("create the in-root backup dir");
+
+    let plan = LocalCopyPlan::from_operands(&fx.operands()).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .with_backup_directory(Some(PathBuf::from("bak")));
+
+    let _session = install_backup_confinement(Some(&fx.confine_root));
+    let result = with_cross_device_backup_tiers(
+        flip_validated_parent_outside(fx.real_backup_dir(), fx.outside.clone()),
+        || plan.execute_with_options(LocalCopyExecution::Apply, options),
+    );
+
+    assert!(
+        result.is_err(),
+        "a copy-tier backup that can only land outside the confinement root \
+         must fail closed"
+    );
+    let escaped = fx.outside.join("file.txt~");
+    assert!(
+        !escaped.exists(),
+        "the pre-transfer bytes reached {} - the copy tier opened an \
+         operator-named path out of the confinement root",
+        escaped.display()
+    );
+}
+
+/// NON-VACUITY COMPANION for
+/// [`cross_device_copy_tier_cannot_receive_the_pre_image_outside_the_confinement_root`]:
+/// the same fixture and the same post-validation flip with no confinement root
+/// installed - the plain local client, upstream's NULL `confine_root` - really
+/// does write the pre-image outside the tree.
+///
+/// Without it the witness would pass just as well on a fixture that never
+/// reaches the copy tier at all: an override that fired too early, a
+/// destination that was never out of date, a flip that broke the transfer
+/// before the backup.
+#[cfg(unix)]
+#[test]
+fn cross_device_copy_tier_in_an_unconfined_session_does_receive_the_pre_image() {
+    let fx = backup_confinement_fixture();
+    fs::create_dir(fx.real_backup_dir()).expect("create the in-root backup dir");
+
+    let plan = LocalCopyPlan::from_operands(&fx.operands()).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .with_backup_directory(Some(PathBuf::from("bak")));
+
+    let _session = install_backup_confinement(None);
+    with_cross_device_backup_tiers(
+        flip_validated_parent_outside(fx.real_backup_dir(), fx.outside.clone()),
+        || {
+            plan.execute_with_options(LocalCopyExecution::Apply, options)
+                .expect("with nothing to be outside of, the copy tier must succeed")
+        },
+    );
+
+    assert_eq!(
+        fs::read(fx.outside.join("file.txt~")).expect("the copy tier must place a backup at all"),
+        b"original",
+        "unconfined, the copy tier follows the flipped component and writes the \
+         pre-image outside the tree - so the confined cell's placement assertion \
+         is discriminating, not vacuous"
+    );
+    assert_eq!(
+        fs::read(fx.existing()).expect("read dest"),
+        b"updated",
+        "and the transfer completed, so the fixture exercises the whole ladder"
+    );
+}
+
+/// NEGATIVE CONTROL for the COPY tier. With no flip, a confined session must
+/// still place the cross-device backup inside the root.
+///
+/// Without this, "refuse every copy-tier backup" would satisfy the witness
+/// above while breaking every legitimate `--backup-dir` on another filesystem -
+/// the one case the copy tier exists for.
+#[cfg(unix)]
+#[test]
+fn cross_device_copy_tier_inside_the_confinement_root_still_places_the_backup() {
+    let fx = backup_confinement_fixture();
+    fs::create_dir(fx.real_backup_dir()).expect("create the in-root backup dir");
+
+    let plan = LocalCopyPlan::from_operands(&fx.operands()).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .with_backup_directory(Some(PathBuf::from("bak")));
+
+    let _session = install_backup_confinement(Some(&fx.confine_root));
+    with_cross_device_backup_tiers(
+        || {},
+        || {
+            plan.execute_with_options(LocalCopyExecution::Apply, options)
+                .expect("an in-root copy-tier backup must still be placed")
+        },
+    );
+
+    assert_eq!(
+        fs::read(fx.real_backup_dir().join("source/file.txt~")).expect("the backup exists"),
+        b"original",
+        "a copy-tier backup landing inside the root must be placed, not refused"
+    );
+    assert_eq!(fs::read(fx.existing()).expect("read dest"), b"updated");
+}
+
+/// A confinement fixture whose pre-transfer destination entry is a SYMLINK, so
+/// the copy-tree fallback takes its SYMLINK branch rather than its COPY branch.
+#[cfg(unix)]
+fn backup_confinement_symlink_fixture() -> BackupConfinementFixture {
+    let fx = backup_confinement_fixture();
+    std::os::unix::fs::symlink("new_target", fx.source.join("link")).expect("source symlink");
+    let existing = fx.dest.join("source/link");
+    std::os::unix::fs::symlink("old_target", &existing).expect("dest symlink");
+    let stale = FileTime::from_unix_time(1_500_000_000, 0);
+    filetime::set_symlink_file_times(&existing, stale, stale).expect("backdate the dest symlink");
+    fx
+}
+
+/// WITNESS (confinement-root half) for the SYMLINK tier, a FOURTH call site: a
+/// symlink pre-image cannot be copied, so the fallback recreates the link in
+/// the backup area with `symlink(2)`.
+///
+/// `symlink(2)` never follows its own leaf - an occupied name is `EEXIST` - so
+/// unlike the COPY tier the entire exposure is the PARENT chain, and the only
+/// way to reach it past a confined `create_backup_parents` is the
+/// post-validation flip. That is precisely the race upstream confines
+/// `do_symlink_at()` for.
+///
+/// upstream: `backup.c:377` `do_symlink_at(sl, buf)` inside `make_backup()`'s
+/// `operator_path_resolve = 1` window (backup.c:437-449); `syscall.c:780`
+/// resolves the parent with `owner_walk_parent()`.
+#[cfg(unix)]
+#[test]
+fn cross_device_symlink_tier_cannot_recreate_the_link_outside_the_confinement_root() {
+    let fx = backup_confinement_symlink_fixture();
+    fs::create_dir(fx.real_backup_dir()).expect("create the in-root backup dir");
+
+    let plan = LocalCopyPlan::from_operands(&fx.operands()).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .links(true)
+        .with_backup_directory(Some(PathBuf::from("bak")));
+
+    let _session = install_backup_confinement(Some(&fx.confine_root));
+    let result = with_cross_device_backup_tiers(
+        flip_validated_parent_outside(fx.real_backup_dir(), fx.outside.clone()),
+        || plan.execute_with_options(LocalCopyExecution::Apply, options),
+    );
+
+    assert!(
+        result.is_err(),
+        "a symlink-tier backup that can only land outside the confinement root \
+         must fail closed"
+    );
+    let escaped = fx.outside.join("link~");
+    assert!(
+        fs::symlink_metadata(&escaped).is_err(),
+        "the pre-image link was recreated at {} - the symlink tier resolved an \
+         operator-named path out of the confinement root",
+        escaped.display()
+    );
+}
+
+/// NON-VACUITY COMPANION for
+/// [`cross_device_symlink_tier_cannot_recreate_the_link_outside_the_confinement_root`]:
+/// the same fixture and flip with no confinement root really does recreate the
+/// link outside the tree.
+#[cfg(unix)]
+#[test]
+fn cross_device_symlink_tier_in_an_unconfined_session_does_recreate_the_link() {
+    let fx = backup_confinement_symlink_fixture();
+    fs::create_dir(fx.real_backup_dir()).expect("create the in-root backup dir");
+
+    let plan = LocalCopyPlan::from_operands(&fx.operands()).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .links(true)
+        .with_backup_directory(Some(PathBuf::from("bak")));
+
+    let _session = install_backup_confinement(None);
+    with_cross_device_backup_tiers(
+        flip_validated_parent_outside(fx.real_backup_dir(), fx.outside.clone()),
+        || {
+            plan.execute_with_options(LocalCopyExecution::Apply, options)
+                .expect("with nothing to be outside of, the symlink tier must succeed")
+        },
+    );
+
+    assert_eq!(
+        fs::read_link(fx.outside.join("link~")).expect("the symlink tier must place a backup"),
+        PathBuf::from("old_target"),
+        "unconfined, the symlink tier follows the flipped component and \
+         recreates the pre-image link outside the tree"
+    );
+}
+
+/// NEGATIVE CONTROL for the SYMLINK tier. With no flip, a confined session must
+/// still recreate the cross-device symlink backup inside the root.
+#[cfg(unix)]
+#[test]
+fn cross_device_symlink_tier_inside_the_confinement_root_still_places_the_backup() {
+    let fx = backup_confinement_symlink_fixture();
+    fs::create_dir(fx.real_backup_dir()).expect("create the in-root backup dir");
+
+    let plan = LocalCopyPlan::from_operands(&fx.operands()).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .links(true)
+        .with_backup_directory(Some(PathBuf::from("bak")));
+
+    let _session = install_backup_confinement(Some(&fx.confine_root));
+    with_cross_device_backup_tiers(
+        || {},
+        || {
+            plan.execute_with_options(LocalCopyExecution::Apply, options)
+                .expect("an in-root symlink-tier backup must still be placed")
+        },
+    );
+
+    assert_eq!(
+        fs::read_link(fx.real_backup_dir().join("source/link~")).expect("the backup exists"),
+        PathBuf::from("old_target"),
+        "a symlink-tier backup landing inside the root must be placed, not refused"
+    );
+}
