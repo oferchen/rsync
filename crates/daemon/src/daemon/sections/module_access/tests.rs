@@ -3916,21 +3916,93 @@ mod module_access_tests {
     #[test]
     fn the_exclude_self_modifier_hides_the_merge_files_basename() {
         // upstream: exclude.c:1557-1567 - `e` adds an exclude of the merge
-        // file's BASENAME before the file is read.
+        // file's BASENAME before the file is read, and that rule lands in the
+        // SAME list `parse_filter_file`'s pre-open gate consults
+        // (exclude.c:1639-1664). The file is therefore hidden from the very
+        // parse that was about to read it, and `filter = .e FILE` adds the
+        // basename exclude and reads NOTHING.
         //
-        // ⚠ PINNED AS A DIVERGENCE, not asserted as correct. Upstream's
-        // `parse_filter_file` then finds the merge file hidden by the rule it
-        // just added and treats it as non-existent (exclude.c:1636-1657), so
-        // `filter = .e FILE` upstream reads NOTHING: MEASURED rc 0 with `bait`
-        // SERVED. oc adds the basename exclude and still merges, hiding
-        // strictly more. This cell exists so the arm that adds the exclude is
-        // not silently dead, and so the day the self-suppression lands the cell
-        // reddens and names the decision.
+        // MEASURED against a real rsync 3.5.0 daemon (module holding `bait` +
+        // `keep`, merge file holding `- bait`): rc 0 with `bait` SERVED and only
+        // the merge file itself hidden.
         let dir = tempfile::tempdir().expect("temp dir");
         let path = merge_file(dir.path(), "rules", "- bait\n");
         assert_eq!(
             filter_patterns(dir.path(), &format!(".e {path}")),
-            vec!["rules".to_string(), "bait".to_string()]
+            vec!["rules".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_merge_file_the_daemon_rules_do_not_hide_is_still_read() {
+        // NON-VACUITY COMPANION to the cell above: the gate must fire on the
+        // NAME, not on "a merge rule was reached". Rules already in the list
+        // that do NOT match the merge file leave it readable.
+        //
+        // MEASURED: `filter = - keep merge MERGEF` over a merge file holding
+        // `- bait` hides BOTH `keep` and `bait` on rsync 3.5.0.
+        //
+        // ⚠ The `.` spelling of the same value is NOT interchangeable here:
+        // `split_filter_tokens` does not open a token on a bare `.`, so
+        // `- keep . FILE` becomes ONE exclude of the literal pattern
+        // `keep . FILE`. That is a separate, still-open divergence in the
+        // TOKENISER, measured against rsync 3.5.0 and deliberately untouched by
+        // this gate - which is why this cell uses the keyword spelling.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!("- keep merge {path}")),
+            vec!["keep".to_string(), "bait".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_first_merge_rule_in_a_module_is_never_gated() {
+        // upstream guards the whole block on `if (daemon_filter_list.head)`
+        // (exclude.c:1639), so a merge that is the module's FIRST filter rule
+        // has no list to be hidden by and is always opened. Without this row a
+        // gate that fired unconditionally would still pass the `.e` cell.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!("merge {path}")),
+            vec!["bait".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_self_excluded_merge_file_that_does_not_exist_is_not_a_refusal() {
+        // The gate returns BEFORE the open, so `XFLG_FATAL_ERRORS` is never
+        // reached and an absent file cannot refuse the module
+        // (exclude.c:1639-1664 returns as if the file did not exist).
+        //
+        // MEASURED against rsync 3.5.0: `filter = .e NOSUCHFILE` is rc 0 with
+        // every file served, while `filter = merge NOSUCHFILE` is rc 5.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let missing = dir.path().join("nosuchfile");
+        let missing = missing.to_str().expect("utf-8 path");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!(".e {missing}")),
+            vec!["nosuchfile".to_string()]
+        );
+        // NON-VACUITY: without `e` there is no self-exclude, nothing hides the
+        // name, the open happens and it is fatal.
+        filter_rules(dir.path(), &format!("merge {missing}")).expect_err("must refuse");
+    }
+
+    #[test]
+    fn a_rule_after_a_self_excluded_merge_still_lands() {
+        // The gate skips the FILE, not the rest of the directive: upstream
+        // returns from `parse_filter_file` and `parse_filter_str` carries on
+        // with the next token.
+        //
+        // MEASURED: `filter = .e MERGEF - other` on rsync 3.5.0 hides the merge
+        // file and `other`, and serves `bait`.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!(".e {path} - other")),
+            vec!["rules".to_string(), "other".to_string()]
         );
     }
 
@@ -3948,9 +4020,13 @@ mod module_access_tests {
         // spelled path yields no basename at all.
         let dir = tempfile::tempdir().expect("temp dir");
         let path = merge_file(dir.path(), r"a\b", "- bait\n");
+        // The self-exclude is the WHOLE `a\b`, and the pre-open gate then hides
+        // the file by that name - so, as with any `e` merge, nothing is read.
+        // Split on the host separator instead and the basename would be `b`,
+        // which matches neither the file nor this assertion.
         assert_eq!(
             filter_patterns(dir.path(), &format!(".e {path}")),
-            vec![r"a\b".to_string(), "bait".to_string()]
+            vec![r"a\b".to_string()]
         );
     }
 
@@ -3987,6 +4063,84 @@ mod module_access_tests {
                 .starts_with("invalid modifier '!' at position 1"),
             "unexpected refusal: {err}"
         );
+    }
+
+    #[test]
+    fn the_w_modifier_word_splits_the_merge_files_records() {
+        // upstream: `w` raises `FILTRULE_WORD_SPLIT` (exclude.c:1433-1437), and
+        // `parse_filter_file` reads that flag off the merge rule
+        // (exclude.c:1606) to change BOTH halves of its record loop: a record
+        // ends at any `isspace` (exclude.c:1772-1773) instead of at a newline,
+        // and the `word_split ||` disjunct (exclude.c:1806) stops treating a
+        // leading `;`/`#` as a comment.
+        //
+        // `_` is upstream's in-word separator (exclude.c:1218-1227), so
+        // `-_bait` is a complete rule inside one whitespace-delimited word.
+        // Every word must be one: a merge file has no bare-word fall-through,
+        // so a lone `ctl` word is `Unknown filter rule` - which is why BOTH
+        // words here carry their own prefix.
+        // MEASURED against rsync 3.5.0: `filter = merge,w FILE` over a file
+        // holding `-_bait -_ctl` hides `bait` and `ctl`.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "-_bait -_ctl\n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!("merge,w {path}")),
+            vec!["bait".to_string(), "ctl".to_string()]
+        );
+        // The `.` spelling carries the same modifier run.
+        assert_eq!(
+            filter_patterns(dir.path(), &format!(".,w {path}")),
+            vec!["bait".to_string(), "ctl".to_string()]
+        );
+    }
+
+    #[test]
+    fn without_w_a_merge_files_line_is_one_record() {
+        // NON-VACUITY COMPANION: the split must come from the `w` MODIFIER, not
+        // from how oc reads merge files generally. The same file read without
+        // `w` is one rule whose pattern is the whole line.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "-_bait -_ctl\n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!("merge {path}")),
+            vec!["bait -_ctl".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_w_merge_files_word_must_be_a_whole_rule() {
+        // A word-split file whose action prefix is separated from its pattern
+        // by a SPACE leaves a patternless `-`, which upstream refuses
+        // (exclude.c:1474-1476 `unexpected end of filter rule`).
+        //
+        // MEASURED: `filter = merge,w FILE` over a file holding `- bait` is
+        // rc 5 on rsync 3.5.0, while the same file read WITHOUT `w` is rc 0.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait - other\n");
+        let err = filter_rules(dir.path(), &format!("merge,w {path}")).expect_err("must refuse");
+        assert!(
+            err.to_string().contains("unexpected end of filter rule"),
+            "unexpected refusal: {err}"
+        );
+        assert_eq!(
+            filter_patterns(dir.path(), &format!("merge {path}")),
+            vec!["bait - other".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_w_merge_file_has_no_comments() {
+        // upstream: exclude.c:1806 - the comment test is `word_split || (*line
+        // != ';' && *line != '#')`, so under `w` a leading `#` is rule text,
+        // and a bare word in a merge file is `Unknown filter rule`
+        // (exclude.c:1363). The SAME file therefore reads as a comment without
+        // `w` and refuses the module with it, which is what makes this cell a
+        // discriminator for the comment half rather than for the split half.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "#note\n");
+        assert!(filter_patterns(dir.path(), &format!("merge {path}")).is_empty());
+        let err = filter_rules(dir.path(), &format!("merge,w {path}")).expect_err("must refuse");
+        assert_eq!(err.to_string(), "Unknown filter rule: #note");
     }
 
     #[test]
