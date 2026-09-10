@@ -348,7 +348,7 @@ impl DirMergeEntries {
         // withheld from the match trace, as it must - it came out of a file.
         if nested.options.excludes_self() {
             let name = nested.pattern.to_string_lossy();
-            let excluded = filters::merge_self_exclude_name(&name).to_owned();
+            let excluded = filters::merge_file_basename(&name).to_owned();
             self.push_rule(FilterRule::exclude(excluded));
         }
         self.nested_dir_merges.push(nested);

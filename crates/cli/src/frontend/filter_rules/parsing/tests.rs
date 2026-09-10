@@ -269,6 +269,41 @@ fn dir_merge_basic() {
     }
 }
 
+/// WHY: upstream's per-directory scan reads the merge name after the LAST `/`
+/// (`exclude.c:359-361`; `setup_merge_file` at `exclude.c:797-801` rewrites
+/// `ex->pattern` to that basename before the open at `exclude.c:910`). A path
+/// portion steers only upstream's ancestor `parent_dirscan` - it is never
+/// joined onto each scanned directory.
+///
+/// Stripping only a LEADING `/` left `dir/.filt` intact, so every directory
+/// was searched for `<dir>/dir/.filt`, the merge contributed no rules, and
+/// whatever it was meant to hide was SERVED. Measured against real rsync
+/// 3.5.0: `-r --filter=': dir/.filt'` with `- bait` in `src/sub/.filt` and no
+/// directory named `dir` - upstream hides `bait`, oc served it.
+///
+/// Shares `filters::merge_file_basename` with the daemon-side converter in
+/// `transfer/src/generator/filters.rs`, so the two spellings cannot drift.
+#[test]
+fn dir_merge_takes_the_basename_after_the_last_slash() {
+    for (given, want) in [
+        ("dir/.filt", ".filt"),
+        ("a/b/c/.rsync-filter", ".rsync-filter"),
+        ("/.rsync-filter", ".rsync-filter"),
+        (".rsync-filter", ".rsync-filter"),
+    ] {
+        let directive = parse_dir_merge_alias(arg(&format!("dir-merge {given}")))
+            .expect("dir-merge keyword recognised")
+            .expect("directive parses");
+        match directive {
+            FilterDirective::Rule(spec) => {
+                assert_eq!(spec.kind(), FilterRuleKind::DirMerge);
+                assert_eq!(spec.pattern(), want, "merge name for {given:?}");
+            }
+            _ => panic!("expected Rule directive for {given:?}"),
+        }
+    }
+}
+
 #[test]
 fn per_dir_is_not_a_keyword() {
     // upstream: exclude.c recognizes only "dir-merge" (case 'd' RULE_STRCMP);
