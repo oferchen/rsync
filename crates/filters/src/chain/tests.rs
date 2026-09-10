@@ -40,11 +40,19 @@ fn dir_merge_config_receiver_only() {
     assert!(rule.applies_to_receiver());
 }
 
+/// The `/` modifier records `FILTRULE_ABS_PATH` on the config and stops there:
+/// upstream never edits the pattern text for it (`exclude.c:1392-1394` sets the
+/// flag; `exclude.c:297-305` only uses it to skip the merge-directory prefix).
+/// Prepending `/` here would silently anchor every slash-free merge-file rule to
+/// the transfer root, which `exclude.c:1016-1021`'s basename branch never does.
 #[test]
-fn dir_merge_config_anchor_root() {
+fn dir_merge_config_anchor_root_does_not_rewrite_the_pattern() {
     let config = DirMergeConfig::new(".rsync-filter").with_anchor_root(true);
+    assert!(config.is_anchor_root());
     let rule = config.apply_modifiers(FilterRule::exclude("test"));
-    assert_eq!(rule.pattern(), "/test");
+    assert_eq!(rule.pattern(), "test");
+    let anchored = config.apply_modifiers(FilterRule::exclude("/test"));
+    assert_eq!(anchored.pattern(), "/test");
 }
 
 #[test]
