@@ -210,7 +210,25 @@ pub(super) fn parse_short_merge_directive(
     };
 
     if is_dir_merge {
-        let rule = FilterRuleSpec::dir_merge(pattern.to_owned(), options);
+        // upstream: exclude.c:359-361 add_rule takes the merge name after the
+        // LAST '/', and setup_merge_file (exclude.c:797-801) rewrites
+        // `ex->pattern` to that basename, so the per-directory open at
+        // exclude.c:910 scans each directory for the basename. A path portion
+        // only steers upstream's ancestor parent_dirscan; it is never joined
+        // onto each scanned directory. Carrying `dir/.filt` through would make
+        // every directory searched for `<dir>/dir/.filt` - a file that need not
+        // exist, so the merge contributes no rules and whatever it was meant to
+        // hide is served instead.
+        //
+        // Only the dir-merge (`:`) arm takes the basename. A plain merge (`.`)
+        // names ONE file resolved once (exclude.c:696-752 parse_merge_name), so
+        // its path portion is load-bearing and stays intact below.
+        //
+        // Same owner as the long `dir-merge` spelling in `directives.rs`, as the
+        // daemon-side converter in `transfer/src/generator/filters.rs`, and as
+        // the `:e` self-exclude.
+        let name = filters::merge_file_basename(pattern);
+        let rule = FilterRuleSpec::dir_merge(name.to_owned(), options);
         return Some(Ok(FilterDirective::Rule(rule)));
     }
 
@@ -448,6 +466,54 @@ mod tests {
         match result {
             FilterDirective::Merge(directive) => {
                 assert_eq!(directive.source(), OsString::from(" "));
+            }
+            other => panic!("expected a merge directive, got {other:?}"),
+        }
+    }
+
+    /// A dir-merge name is a NAME, so a path portion is dropped: upstream's
+    /// `setup_merge_file` (exclude.c:797-801) rewrites `ex->pattern` to the
+    /// basename `add_rule` took (exclude.c:359-361), and the per-directory open
+    /// at exclude.c:910 reads the rewritten value.
+    ///
+    /// MEASURED against rsync 3.5.0 with `-r --filter=': dir/.filt'` over
+    /// `src/.filt` plus `src/sub/{.filt,bait,keep}` where `src/sub/.filt` reads
+    /// `- bait`: upstream hides `bait`. oc carried `dir/.filt` into `Path::join`,
+    /// searched every directory for `<dir>/dir/.filt`, found nothing, and SERVED
+    /// the file the merge existed to hide.
+    #[test]
+    fn parse_short_dir_merge_takes_the_basename_after_the_last_slash() {
+        for (given, want) in [
+            ("dir/.filt", ".filt"),
+            ("a/b/c/.rsync-filter", ".rsync-filter"),
+            ("/.rsync-filter", ".rsync-filter"),
+            (".rsync-filter", ".rsync-filter"),
+        ] {
+            let result = parse_short_merge_directive(arg(&format!(": {given}")))
+                .expect("`:` is a dir-merge directive")
+                .expect("directive parses");
+            match result {
+                FilterDirective::Rule(rule) => {
+                    assert_eq!(rule.pattern(), want, "merge name for {given:?}");
+                }
+                other => panic!("expected a dir-merge rule for {given:?}, got {other:?}"),
+            }
+        }
+    }
+
+    /// The control that keeps the cell above honest, and the reason the basename
+    /// rule is NOT applied to both arms: a plain `merge` names ONE file resolved
+    /// once (exclude.c:696-752 `parse_merge_name`), never re-opened per
+    /// directory, so its path portion is load-bearing. Taking the basename here
+    /// would read a different file.
+    #[test]
+    fn parse_short_plain_merge_keeps_the_whole_path() {
+        let result = parse_short_merge_directive(arg(". dir/.filt"))
+            .expect("`.` is a merge directive")
+            .expect("directive parses");
+        match result {
+            FilterDirective::Merge(directive) => {
+                assert_eq!(directive.source(), OsString::from("dir/.filt"));
             }
             other => panic!("expected a merge directive, got {other:?}"),
         }

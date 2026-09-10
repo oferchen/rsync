@@ -134,7 +134,7 @@ impl FilterProgram {
                     // LOADED, so a `:e` naming an absent file excluded nothing.
                     if rule.options().excludes_self() {
                         let name = rule.pattern().to_string_lossy();
-                        let excluded = filters::merge_self_exclude_name(&name).to_owned();
+                        let excluded = filters::merge_file_basename(&name).to_owned();
                         let excluded = filters::FilterRule::exclude(excluded);
                         filters::trace_add_rule(
                             excluded.action(),

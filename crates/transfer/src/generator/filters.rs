@@ -688,15 +688,26 @@ fn wire_rule_to_dir_merge_config(
         lossy.as_ref()
     };
 
-    // upstream: exclude.c:696-712 parse_merge_name and exclude.c:348-353
-    // add_rule - a leading '/' on the merge FILENAME only decides where the
-    // file is looked up; the per-directory scan uses the name after the last
-    // '/'. It does NOT anchor the rules read out of that file. Strip it so
-    // Path::join() produces a relative path, and nothing more. This mirrors
-    // the client-side spelling in
-    // `cli/src/frontend/filter_rules/parsing/directives.rs`, which strips the
-    // same slash without touching the anchor.
-    let filename = pattern.strip_prefix('/').unwrap_or(pattern);
+    // upstream: exclude.c:359-361 add_rule takes the merge name after the LAST
+    // '/', and setup_merge_file (exclude.c:797-801) rewrites `ex->pattern` to
+    // that basename, so the per-directory open at exclude.c:910 scans each
+    // directory for the basename - never for the path portion. A path portion
+    // only steers upstream's ancestor `parent_dirscan`; it is NOT joined onto
+    // each scanned directory, and it does NOT anchor the rules read out of the
+    // file.
+    //
+    // Stripping only a LEADING '/' would leave `dir/.filt` intact, and
+    // `Path::join` would then look for `<dir>/dir/.filt` in every directory -
+    // a file that need not exist, so the merge silently contributes no rules
+    // and whatever it was meant to hide is served instead.
+    //
+    // `filters::merge_file_basename` is the same owner the `:e` self-exclude
+    // uses (upstream runs the identical byte scan at exclude.c:1568-1569), and
+    // it is a byte split rather than a path parse for the reasons its own doc
+    // records. The client-side spelling in
+    // `cli/src/frontend/filter_rules/parsing/directives.rs` calls it too, so
+    // the two cannot drift apart.
+    let filename = filters::merge_file_basename(pattern);
 
     // upstream: exclude.c:1392-1394 - the `/` MODIFIER (`:/ NAME`) is the sole
     // source of FILTRULE_ABS_PATH on a merge rule: exclude.c:297-300 skips the
@@ -915,6 +926,34 @@ mod tests {
         let config = wire_rule_to_dir_merge_config(&wire_rule, true);
         assert_eq!(config.filename(), ".rsync-filter");
         assert!(!config.is_anchor_root());
+    }
+
+    /// WHY: an INTERIOR `/` is dropped for the same reason the leading one is -
+    /// upstream's per-directory scan reads the name after the LAST `/`
+    /// (`exclude.c:359-361`, and `setup_merge_file` at `exclude.c:797-801`
+    /// rewrites `ex->pattern` to exactly that before the open at
+    /// `exclude.c:910`). Stripping only the leading slash left `dir/.filt`
+    /// whole, so `Path::join` searched each directory for `<dir>/dir/.filt`.
+    ///
+    /// Measured against real rsync 3.5.0 (local `-r --filter=': dir/.filt'`,
+    /// with `- bait` in `src/sub/.filt` and NO directory named `dir`):
+    /// upstream hides `bait`; oc served it, because the merge file it looked
+    /// for could not exist. A filter that fails to hide is a file served.
+    ///
+    /// ⚠ The fixture deliberately names a directory that does NOT exist. With
+    /// an existing one (`: sub/.filt`) both implementations hide `bait` for
+    /// DIFFERENT reasons - oc's join lands on the real `src/sub/.filt` by
+    /// accident - so that shape converges and cannot discriminate.
+    #[test]
+    fn wire_rule_to_dir_merge_config_takes_the_basename_after_the_last_slash() {
+        let wire_rule = make_dir_merge_wire_rule("dir/.filt");
+        let config = wire_rule_to_dir_merge_config(&wire_rule, true);
+        assert_eq!(config.filename(), ".filt");
+        assert!(!config.is_anchor_root());
+
+        let deep = make_dir_merge_wire_rule("a/b/c/.rsync-filter");
+        let deep_config = wire_rule_to_dir_merge_config(&deep, true);
+        assert_eq!(deep_config.filename(), ".rsync-filter");
     }
 
     /// `:/ .rsync-filter` - the `/` MODIFIER, which `wire.rs:585` decodes into
