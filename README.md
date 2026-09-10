@@ -19,18 +19,21 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 **Release:** 0.6.4 - Wire-compatible drop-in replacement for rsync 3.5.0 and the 3.4.x series (protocols 28-32).
 
-All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against the peer releases enumerated by `versions=` in [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh), plus the build-only peers in `extra_build_versions=`; that script is the source of truth, and re-listing it here is what let the list drift before. Upstream rsync's own testsuite runs in CI against `oc-rsync` as `$RSYNC` on the 3.5.0 corpus, where **1 of 345 tests currently diverges** across the two full-corpus Linux legs (see below).
+All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against the peer releases enumerated by `versions=` in [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh), plus the build-only peers in `extra_build_versions=`; that script is the source of truth, and re-listing it here is what let the list drift before. Upstream rsync's own testsuite runs in CI against `oc-rsync` as `$RSYNC` on the 3.5.0 corpus, where **no test currently diverges** on either full-corpus Linux leg (see below).
 
 **Tracking rsync 3.5.0.** Upstream released 3.5.0 on 13 Aug 2026. It is wire-identical to 3.4.4 - `PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h` - so protocol compatibility carries over unchanged and is what the "wire-compatible" claim above rests on. What 3.5.0 changes is *behaviour*: 33 CVEs concentrated in path handling and the daemon, a rewritten path resolver, five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`), three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`), and a test suite rebuilt from shell scripts into Python. Aligning oc-rsync to those behaviours is in progress and tracked openly.
 
-The 3.5.0 **release** testsuite runs as five flows. Four are the cells of privilege x daemon transport on Linux: `runtests.py` offers two transports - the secure stdio-pipe default, which opens no listening socket, and `--use-tcp`, which binds a real `rsyncd` on 127.0.0.1 - and the root/non-root split decides whether the root-only tests (chown, device nodes, xattrs, dir-sgid, protected-regular) execute or self-skip:
+The 3.5.0 **release** testsuite runs as **eight legs** on every pull request: the cells of platform x daemon transport x privilege. `runtests.py` offers two transports - the secure stdio-pipe default, which opens no listening socket, and `--use-tcp`, which binds a real `rsyncd` on 127.0.0.1 - and the root/non-root split decides whether the root-only tests (chown, device nodes, xattrs, dir-sgid, protected-regular) execute or self-skip. Each of the four [`ci.yml`](./.github/workflows/ci.yml) jobs below runs *both* privilege cells, so the leg count is 4 x 2:
 
-|          | pipe (secure default) | tcp (127.0.0.1) |
-|----------|-----------------------|-----------------|
-| non-root | [nonroot, pipe](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml) | [nonroot, tcp](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml) |
-| root     | [root, pipe](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml) | [root, tcp](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml) |
+|                | pipe (secure default) | tcp (127.0.0.1) |
+|----------------|-----------------------|-----------------|
+| Linux, non-root| [nonroot, pipe](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml) | [nonroot, tcp](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml) |
+| Linux, root    | [root, pipe](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml) | [root, tcp](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml) |
+| macOS          | `upstream-testsuite-macos` | `upstream-testsuite-macos-tcp` |
 
-The fifth is the non-root/pipe corpus on **macOS**, wired in [`ci.yml`](./.github/workflows/ci.yml) as the `upstream-testsuite-macos` job. It has no badge and is not yet a required context - registering one is a repo-admin action - but it carries its own committed manifest, so it gates on drift exactly as the Linux legs do. It is the only leg that observes several divergences at all: three of its cells *skip* on Linux and so had never executed in this repository's CI before it existed.
+The four **Linux** legs are required status checks. The four **macOS** legs run on every PR but are not yet required contexts - registering one is a repo-admin action - and they carry their own committed manifests, so they gate on drift exactly as the Linux legs do. macOS is the only platform that observes several divergences at all: some of its cells *skip* on Linux and so had never executed in this repository's CI before those jobs existed.
+
+The testsuite reads its own `UPSTREAM_TESTSUITE_VERSION` (default `3.5.0`), deliberately **not** the interop matrix's `UPSTREAM_RSYNC_VERSION` - the two want different versions, and sharing one knob would let an interop retarget drag the conformance gate backwards as a side effect.
 
 The pipe legs run the whole 345-test corpus. The tcp legs add `--daemon-tests-only`, which is what upstream ships that option for - the tests it drops never call `start_test_daemon()`, so they cannot observe the transport - and so run the 155 tests that can. All four Linux legs are required status checks on every PR: `upstream-testsuite / upstream testsuite{,(root)}` and `upstream-testsuite-tcp / upstream testsuite{,(root)}`.
 
@@ -38,11 +41,14 @@ Current outcomes, as recorded in each leg's committed manifest:
 
 | leg | pass | fail | skip | corpus |
 |---|---:|---:|---:|---:|
-| non-root, pipe | 259 | 1 | 85 | 345 |
-| root, pipe | 288 | 1 | 56 | 345 |
-| non-root, tcp | 108 | 14 | 33 | 155 |
-| root, tcp | 120 | 20 | 15 | 155 |
-| non-root, pipe (macOS) | 237 | 3 | 105 | 345 |
+| Linux, non-root, pipe | 260 | 0 | 85 | 345 |
+| Linux, root, pipe | 289 | 0 | 56 | 345 |
+| Linux, non-root, tcp | 118 | 4 | 33 | 155 |
+| Linux, root, tcp | 136 | 4 | 15 | 155 |
+| macOS, non-root, pipe | 238 | 2 | 105 | 345 |
+| macOS, root, pipe | 267 | 1 | 77 | 345 |
+| macOS, non-root, tcp | 116 | 4 | 35 | 155 |
+| macOS, root, tcp | 132 | 4 | 19 | 155 |
 
 Every figure above is the outcome column of a committed manifest, not a
 transcribed run log. Re-derive any row with:
@@ -52,7 +58,7 @@ awk '!/^#/ && NF {c[$NF]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}'
   tools/ci/upstream-3.5.0-expect.nonroot.txt
 ```
 
-**No test** diverges across the two full-corpus Linux legs, and 21 across all five manifests (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). Every leg carries its own expected-outcome manifest, generated from a real run rather than hand-written, so only a *change* in outcome turns a badge red - and that includes an unexpected **pass**, which is what stops a divergence being quietly re-baselined instead of fixed. A fix flips its manifest rows in the same commit. The divergences are genuine and tracked openly: each was re-run against the real upstream 3.5.0 binary as a negative control, so they are oc-rsync behaviour gaps, not harness artefacts - except where that control shows upstream landing on the same outcome, which is recorded as such rather than counted against oc-rsync.
+**No test** diverges on either full-corpus Linux leg, and **6 distinct tests** diverge across all nine committed manifests (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). Four of the six are the `proto-*` cluster, which fails identically on every tcp leg on both platforms; the other two (`chmod-setid`, `partial-protected-regular-retry-policy`) appear only on macOS and are recorded as environmental - the real upstream 3.5.0 binary lands on the same outcome there. The ninth manifest, `-expect.root.tcp.legacy-oracles.txt`, is the root/tcp leg re-run with the old-peer oracles built, so it is a variant of an existing leg rather than a leg of its own. Every leg carries its own expected-outcome manifest, generated from a real run rather than hand-written, so only a *change* in outcome turns a badge red - and that includes an unexpected **pass**, which is what stops a divergence being quietly re-baselined instead of fixed. A fix flips its manifest rows in the same commit. The divergences are genuine and tracked openly: each was re-run against the real upstream 3.5.0 binary as a negative control, so they are oc-rsync behaviour gaps, not harness artefacts - except where that control shows upstream landing on the same outcome, which is recorded as such rather than counted against oc-rsync.
 
 | Component | Status |
 |-----------|--------|

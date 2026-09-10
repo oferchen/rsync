@@ -210,6 +210,35 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Reject a modern NDX that overflows a signed file index rather than wrapping
   it (#7630)
 
+**Daemon session isolation and module confinement**
+- A peer can no longer override module configuration by sending an
+  `@RSYNCD: OPTION key=value` line. Upstream has no such line at all - it emits
+  exactly four `@RSYNCD` forms - and oc's acceptance of one let an
+  unauthenticated client land a file in a `read only` module (#7754)
+- The daemon forks per connection, so a `chroot` applied for one session cannot
+  leak into the next (#7719), and a session child is reaped by pid rather than
+  by sweeping every child (#7718)
+- The per-module symlink opt-out is scoped to its own connection instead of
+  persisting process-wide (#7711)
+- A daemon's absolute alternate-basis destination is confined to the module
+  root (#7725), and the module-root stat is anchored on every Unix rather than
+  Linux alone (#7724)
+- `--safe-links` is evaluated on the receiving side only, matching upstream's
+  two consumers. Removing the sender-side checks alone was a measured
+  regression until the `--server` argument path was taught to carry the flag
+  (#7763), and symlink targets are munged before the check rather than after
+  (#7777)
+- Daemon filter side modifiers resolve at add time and the file-list re-check
+  reads the client's rules only, matching `check_server_filter`. A push into a
+  module whose filter excludes the incoming name is now refused with upstream's
+  wording instead of being accepted (#7747)
+- The daemon glob expander splits path segments on `/` only, never on a
+  backslash, so a wildmatch escape byte survives to the matcher (#7788)
+- Module filter rules honour `merge`, `!`, `dir-merge`, the short-form
+  prefixes, `XFLG_OLD_PREFIXES` and a record's leading whitespace as pattern
+  text - each of which previously changed which files a module served
+  (#7795, #7804, #7807, #7757, #7732, #7729)
+
 ### Added
 
 - `--confine-root=DIR`, `--insecure-links` / `--no-insecure-links`, and
@@ -239,6 +268,18 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   `vmsplice` and `send_zc`. `daemon-seccomp` is deliberately still unreported,
   because it is declared on the workspace root and reaches no crate that
   renders `--version` (#7616)
+- `--debug=flist` is wired to upstream's `DEBUG_GTE(FLIST,n)` trace sites: six
+  existing owners wired, three new ones added carrying the real filter level,
+  eleven orphaned helpers deleted and fourteen oc-invented lines removed. The
+  sender's FLIST3 output is byte-identical to upstream's (#7775)
+- `--debug=deltasum` reaches the real delta scans instead of emitting nothing
+  (#7782)
+- A first-writer-wins exit-code latch shared by the signal watcher and the
+  normal return path, mirroring `cleanup.c`'s single-entrant rule, so a signal
+  arriving mid-transfer can no longer overwrite the transfer's own exit code
+  (#7768)
+- `accept-new` is a real `StrictHostKeyChecking` policy rather than a spelling
+  that behaved as `ask`, so unattended first contact succeeds (#7783)
 
 ### Changed
 
@@ -301,6 +342,22 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - The receiver is the response-flist sink, and the backup ladder takes only the
   fields it reads (#7536, #7553)
 - Three source files that nothing compiled were removed (#7543)
+- The four `--debug`/`--info` word-list copies collapsed onto the live parser,
+  deleting a 653-line off-path duplicate that had zero production callers and
+  eight divergent semantics (#7762)
+- One owner for the SIMD batch input cap, replacing eleven constants and one
+  bare literal, with the bound tested for the first time (#7787)
+- `MAX_XATTR_DIGEST_LEN` is derived from the hasher that fills the buffer and
+  pinned to upstream's MD5-specific 16 by a const assert, so the derivation
+  cannot drift into a wire-format break (#7786)
+- The block index table grows like upstream's `match.c` rather than treating
+  its size as a ceiling (#7790); the dead two-level tag-table search and the
+  unwired `PlatformSendFile` dispatch seam were deleted (#7798, #7794)
+- `#![deny(unsafe_code)]` added to the crates that lacked the gate (#7781)
+- The daemon accept loop gained a session-worker seam, parks the connection
+  slot in the parent, and names how a session ended (#7715, #7716)
+- One shared dirname allocation per directory on the sender, mirroring
+  upstream's lastdir cache (#7756)
 
 ### Fixed
 
@@ -577,13 +634,61 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Condense the fake-super access ACL to upstream's stored form (#7502)
 - Answer upstream's `am_root` for the receiver xattr screen (#7562)
 
+**Permissions and destination modes**
+- `--chmod` without `--perms` is recomposed as tweak-first, collapse-second per
+  upstream, through one `chmod_tweaked_dest_mode()` owner shared by six call
+  sites. Five diverging oracle cells closed, including a `--chmod=644 -r`
+  self-lock that had escalated into an error (#7748)
+- A symlink gets upstream's `dest_mode()` and is never tweaked by `--chmod` -
+  both halves of the rule were inverted (#7755) - and the sender's file list
+  now carries the source link's real mode instead of a hardcoded `0o777`
+  (#7760)
+- Replacing a destination symlink with a regular file no longer takes the
+  symlink's own mode: the obstacle's lstat is cloned before backup and removal
+  (#7766), and all four receiver symlink apply sites take `--perms` from the
+  real flags rather than an options default (#7773)
+- Directory modes route through the same `dest_mode()` owner, and an unwritable
+  pre-existing directory is raised on first visit before its contents are
+  written (#7774)
+
+**Transfer and engine**
+- Multi-source `--delete` converges on upstream's merged-flist semantics. Nine
+  of fifteen oracle cells diverged, including data loss where a later source's
+  delete pass removed an earlier source's freshly copied files (#7765)
+- The `--inplace --backup` pre-image copy is selected as the delta basis, so a
+  block-swapped 1.3 MB file sends 1,984 literal bytes rather than 656,352
+  (#7752)
+- A local copy whose source shrank mid-read is discarded and redone (#7751);
+  the delta mover stops at the length it was sized from (#7710); a failed
+  `link_stat` operand is named by its absolute path (#7733)
+- `--write-devices` is keyed on the local-copy destination (#7796)
+- The io_uring data-write mover is gated on whole-file and reports short source
+  reads, joining the other four movers on one owner (#7749)
+- The protocol-29 keep-alive frame is tolerated and answered at both sites
+  instead of being echoed downstream (#7771)
+- A source operand ending in `..` is treated as a DOTDIR (#7709), the DOTDIR
+  marker is kept out of the local-copy operand stat (#7707), and the
+  `--relative` dot pivot survives a module operand (#7714)
+- The leading slash is kept when a daemon module is rooted at `/` (#7728)
+- Server generator `-vv` notices are framed as `MSG_INFO` (#7780)
+- The file-name overflow refusal is worded as upstream words it (#7713)
+- A filter-file record ends at a carriage return (#7712), and one separator is
+  consumed after a long filter keyword (#7708)
+
+**Embedded SSH configuration**
+- A comma is not a `Host` pattern separator, and `Host` matching is
+  case-sensitive (#7803)
+- `IdentitiesOnly` restricts agent keys, not just the identity-file list
+  (#7791)
+- Tilde expansion emits one separator kind rather than mixing them (#7792)
+
 ### Testing and CI
 
-- The rsync 3.5.0 upstream testsuite now runs on **macOS** as a fifth leg
-  (non-root, stdio pipe, full 345-cell corpus), with its own committed
-  expect-manifest. It is the only leg that can observe a platform-conditional
-  divergence: three of its cells *skip* on Linux, so they had never executed in
-  this repository's CI at all (#7638)
+- The rsync 3.5.0 upstream testsuite now runs on **macOS** as well as Linux,
+  across both daemon transports and both privilege levels, with a committed
+  expect-manifest per leg. The macOS legs are the only ones that can observe a
+  platform-conditional divergence: three of their cells *skip* on Linux, so they
+  had never executed in this repository's CI at all (#7638)
 - Build the old-rsync oracle binaries the 3.5.0 testsuite asserts against,
   rather than silently falling back to a weaker substitute (#7636)
 - Bound the interop smoke harness's readiness probe so its deadline is real
@@ -681,17 +786,53 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - The APT package cache verifies the packages are installed rather than
   trusting a cache hit, so a restored-but-empty cache fails its own job instead
   of reddening unrelated pull requests three jobs later (#7632)
+- An unrelated apt repository's index failure no longer fails the job. Every
+  index refresh routes through one owner that exits zero only when apt's own
+  summary declares the failures ignorable, naming the skipped URLs in a warning
+  so the degradation stays visible; a lock conflict, a missing key or a failure
+  arriving alongside a real error still keeps its exit status. This is a
+  reclassification of one self-declared-recoverable failure, not a retry
+  (#7797)
+- The legacy-oracle slot proves which release filled it, so an arbitrary peer
+  binary can no longer occupy the 3.2.7 slot while the grid reports `(327)`,
+  and the probe no longer deletes the binary it has just built (#7758, #7726)
+- The legacy-oracles root/tcp expect-manifest is brought up to date with its
+  sibling so the rows the two legs share cannot drift apart (#7759)
+- The zero-caller-zero-test `pub fn` tier is a blocking gate with an
+  allowlist that carries a reason and an expiry per row. The classifier counts
+  a re-export as what it is rather than as a call site - that error had hidden
+  236 of 827 rows - and the gate fails on an expired, stale or unexplained
+  entry as well as on a new one (#7767)
+- The placeholder scanner is blocking at zero violations, with exemptions
+  keyed on annotation syntax rather than on the marker text, and the three
+  remaining hits resolved rather than exempted (#7770)
+- The rustdoc intra-doc link job is blocking, so a broken link is caught on
+  the pull request that introduces it instead of after it lands (#7776)
+- The privilege-drop ordering is driven through the real daemon path; the
+  previous coverage was a `cfg(test)` shadow copy structurally incapable of
+  reaching the ordering it appeared to pin (#7800)
+- The local-copy backup ladder's confinement is pinned at each tier, and the
+  `--debug` table is pinned as upstream's 24 words plus the four named
+  oc extensions, so neither an addition nor a removal can pass unnoticed
+  (#7802, #7753)
+- A differential harness compares oc's `ssh_config` resolution against
+  `ssh -G`, with the oracle required rather than optional so a missing `ssh`
+  fails the cell instead of silently skipping it (#7784)
+- A daemon session test waits for the session child to be reapable rather than
+  for its pipe to close; an EOF is not a reapability signal, and under load the
+  old wait failed 30 runs in 200 (#7722)
+- `fake_rsh` is gated to Unix so the Windows test build compiles (#7785)
+- The 3.5.0dev testsuite tracker workflow is retired; the committed
+  expect-manifests supersede it as the gate (#7764)
 
 ### Documentation
 
 - The upstream-testsuite figures in `README.md` and `SECURITY.md` were stale in
-  every row. Both files are re-derived from the committed manifests - the pipe
-  legs are at one divergence, not three; the distinct-failure count across all
-  manifests is 23, not 29; all four Linux legs are required contexts, not two;
-  and the macOS leg was missing from both tables entirely. `SECURITY.md` also
-  described `proxy protocol hosts` as unimplemented after it had shipped. The
-  two macOS-leg rationale comments in the workflows carried the same pre-fix
-  figures and are recounted from the same source
+  every row, and the leg count was understated. Both files are re-derived from
+  the committed manifests, and `SECURITY.md` no longer describes
+  `proxy protocol hosts` as unimplemented after it had shipped. The two
+  macOS-leg rationale comments in the workflows carried the same pre-fix figures
+  and are recounted from the same source
 - Replace the INC_RECURSE gate's stale rationale with the measured one. The
   comment named a mechanism that cannot apply - every call site of the function
   it blamed is inside `cfg(test)` - while its conclusion was nonetheless
@@ -773,11 +914,44 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - The `io_uring` feature no longer promises 20-40% faster I/O. Measured on
   kernel 7.1.5 it delivers +1.2% on bulk and -1.2% on fan-out, so the number
   described an expectation rather than the build it was attached to (#7631)
+- `README.md` and `SECURITY.md` are re-derived from the committed manifests
+  again. The upstream testsuite runs in **eight** legs, not five - platform
+  {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege
+  {non-root, root} - and both files described five. Every outcome row is
+  re-measured: no test diverges on either full-corpus Linux leg, and **6**
+  distinct tests diverge across all nine committed manifests. The two version
+  knobs are stated apart, since the testsuite pin and the interop peer version
+  are deliberately separate: retargeting the interop matrix must not be able to
+  drag the conformance gate backwards
+- The exit-cleanup funnel is inventoried against `cleanup.c` step by step, so
+  the sites that decide an exit code are named rather than inferred (#7778)
+- The measurement gate that must precede any buffer or queue sizing work is
+  recorded, along with the three structural-constant closures it produced
+  (#7779, #7801)
+- The checksum advertisement is pinned to upstream 3.5.0's compiled list. oc's
+  default advertisement is already byte-identical to a full-featured upstream
+  build; the shorter list that prompted the investigation was the pinned
+  interop oracle's own compile-time gating (#7769)
+- The confinement rule for path-keyed stat caches is written down, so a cache
+  wired later cannot quietly become an unconfined resolver (#7793)
+- The receiver INC_RECURSE blocking sites are attributed to a measured side
+  rather than to a named function the evidence does not identify, and the
+  drifted citation alongside them is retargeted (#7723, #7730)
+- Two daemon comments that still described the deleted acceptor threads are
+  corrected, and the accept poll's `SIGNAL_CHECK_INTERVAL` is recorded where it
+  now lives (#7717, #7745)
+- A failed `fmt + clippy` makes its seven dependent required cells *absent*
+  rather than failed, and absence blocks a merge exactly as a failure does -
+  stated at the required-checks table so the fail-fast shape reads as
+  deliberate (#7772)
+- The three rustdoc links the doc gate reports are repaired, and the
+  `ssh-config-parse` note no longer calls `Host` and `Match` blocks deferred
+  when `config_lookup` implements both (#7789, #7799)
 
 ### Maintenance
 
 - Dependency and action updates (#7473, #7474, #7568, #7569, #7570, #7571,
-  #7572)
+  #7572, #7720, #7721)
 - Give the in-place open chain a single owner with the resolver injected,
   and the bounded drain-and-wait helper a single owner (#7487, #7504)
 - Update the Homebrew formulas for v0.6.4 (#7492)
