@@ -64,8 +64,7 @@ fn daemon_push_then_pull_roundtrip_preserves_content() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     // Phase 1: Push files to daemon module
@@ -89,7 +88,7 @@ fn daemon_push_then_pull_roundtrip_preserves_content() {
                 );
             }
             Err(e) => {
-                let _ = daemon_handle.join();
+                let _ = finish_daemon(daemon_handle);
                 panic!("push phase failed: {e}");
             }
         }
@@ -134,7 +133,7 @@ fn daemon_push_then_pull_roundtrip_preserves_content() {
                 );
             }
             Err(e) => {
-                let _ = daemon_handle.join();
+                let _ = finish_daemon(daemon_handle);
                 panic!("pull phase failed: {e}");
             }
         }
@@ -157,8 +156,7 @@ fn daemon_push_then_pull_roundtrip_preserves_content() {
         "nested.txt roundtrip content mismatch"
     );
 
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }
 
 /// End-to-end test verifying that a push to a daemon module followed by a
@@ -216,8 +214,7 @@ fn daemon_push_incremental_update_lifecycle() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     // Phase 1: Initial push
@@ -232,7 +229,7 @@ fn daemon_push_incremental_update_lifecycle() {
 
         let result = core::client::run_client(client_config);
         if let Err(e) = &result {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("initial push failed: {e}");
         }
     }
@@ -265,7 +262,7 @@ fn daemon_push_incremental_update_lifecycle() {
 
         let result = core::client::run_client(client_config);
         if let Err(e) = &result {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("incremental push failed: {e}");
         }
     }
@@ -286,8 +283,7 @@ fn daemon_push_incremental_update_lifecycle() {
         "new_file.txt must appear after incremental push"
     );
 
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }
 
 /// End-to-end test for pull from a daemon module with pre-populated content.
@@ -350,8 +346,7 @@ fn daemon_pull_lifecycle_copies_full_tree() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/docs/");
@@ -375,7 +370,7 @@ fn daemon_pull_lifecycle_copies_full_tree() {
             );
         }
         Err(e) => {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("pull failed: {e}");
         }
     }
@@ -402,8 +397,7 @@ fn daemon_pull_lifecycle_copies_full_tree() {
         "empty.txt must be zero-length"
     );
 
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }
 
 /// End-to-end test for push lifecycle with permission preservation.
@@ -466,8 +460,7 @@ fn daemon_push_lifecycle_preserves_permissions() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -490,7 +483,7 @@ fn daemon_push_lifecycle_preserves_permissions() {
             );
         }
         Err(e) => {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("permission push failed: {e}");
         }
     }
@@ -510,8 +503,7 @@ fn daemon_push_lifecycle_preserves_permissions() {
         "settings.conf should have 644 permissions"
     );
 
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }
 
 /// End-to-end test verifying that pushing to a read-only module is rejected.
@@ -563,8 +555,7 @@ fn daemon_push_lifecycle_rejects_read_only_module() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -589,6 +580,5 @@ fn daemon_push_lifecycle_rejects_read_only_module() {
         "file.txt must not be written to read-only module"
     );
 
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }

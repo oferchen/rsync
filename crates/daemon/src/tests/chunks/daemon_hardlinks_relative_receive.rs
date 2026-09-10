@@ -99,8 +99,7 @@ fn daemon_hardlinks_relative_receive_preserves_links() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -124,7 +123,7 @@ fn daemon_hardlinks_relative_receive_preserves_links() {
             );
         }
         Err(e) => {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("hardlinks-relative client push failed: {e}");
         }
     }
@@ -203,6 +202,5 @@ fn daemon_hardlinks_relative_receive_preserves_links() {
     );
 
     // Daemon exits after serving max_sessions connections
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }

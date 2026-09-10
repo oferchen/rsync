@@ -81,8 +81,7 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_push() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
 
     // Drop the probe connection so the daemon worker finishes quickly
     drop(probe_stream);
@@ -102,7 +101,7 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_push() {
     match &result {
         Ok(_summary) => {}
         Err(e) => {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("safe-links client push failed: {e}");
         }
     }
@@ -147,6 +146,5 @@ fn daemon_safe_links_filters_unsafe_symlinks_on_push() {
     assert_eq!(file_content, "hello\n", "file.txt content mismatch");
 
     // Daemon exits after serving max_sessions connections
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }

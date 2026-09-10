@@ -74,8 +74,7 @@ fn daemon_safe_links_push_excludes_unsafe_preserves_safe() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -93,7 +92,7 @@ fn daemon_safe_links_push_excludes_unsafe_preserves_safe() {
     match &result {
         Ok(_summary) => {}
         Err(e) => {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("safe-links client push failed: {e}");
         }
     }
@@ -135,8 +134,7 @@ fn daemon_safe_links_push_excludes_unsafe_preserves_safe() {
         "file.txt content mismatch"
     );
 
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }
 
 /// End-to-end test for `--copy-links` push over daemon protocol.
@@ -209,8 +207,7 @@ fn daemon_copy_links_push_replaces_symlinks_with_file_contents() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -234,7 +231,7 @@ fn daemon_copy_links_push_replaces_symlinks_with_file_contents() {
             );
         }
         Err(e) => {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("copy-links client push failed: {e}");
         }
     }
@@ -288,6 +285,5 @@ fn daemon_copy_links_push_replaces_symlinks_with_file_contents() {
         "subdir/deep.txt content mismatch"
     );
 
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }

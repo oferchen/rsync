@@ -56,8 +56,7 @@ fn daemon_exclude_overrides_client_include() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");
@@ -76,7 +75,7 @@ fn daemon_exclude_overrides_client_include() {
     let result = core::client::run_client(client_config);
 
     if let Err(e) = &result {
-        let _ = daemon_handle.join();
+        let _ = finish_daemon(daemon_handle);
         panic!("transfer failed: {e}");
     }
 
@@ -93,7 +92,7 @@ fn daemon_exclude_overrides_client_include() {
         "daemon `exclude = *.log` must override client --filter='+ *.log' (second file)"
     );
 
-    let _ = daemon_handle.join().expect("daemon thread");
+    let _ = finish_daemon(daemon_handle);
 }
 
 /// Daemon `exclude = secret/` blocks the entire subtree from being reachable.
@@ -144,8 +143,7 @@ fn daemon_exclude_directory_blocks_subtree() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");
@@ -160,7 +158,7 @@ fn daemon_exclude_directory_blocks_subtree() {
     let result = core::client::run_client(client_config);
 
     if let Err(e) = &result {
-        let _ = daemon_handle.join();
+        let _ = finish_daemon(daemon_handle);
         panic!("transfer failed: {e}");
     }
 
@@ -173,7 +171,7 @@ fn daemon_exclude_directory_blocks_subtree() {
         "daemon-excluded directory must not be transferred (entire subtree hidden)"
     );
 
-    let _ = daemon_handle.join().expect("daemon thread");
+    let _ = finish_daemon(daemon_handle);
 }
 
 /// Daemon `include = important/` followed by `exclude = *` keeps only the
@@ -231,8 +229,7 @@ fn daemon_include_then_exclude_all_keeps_only_included() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");
@@ -247,7 +244,7 @@ fn daemon_include_then_exclude_all_keeps_only_included() {
     let result = core::client::run_client(client_config);
 
     if let Err(e) = &result {
-        let _ = daemon_handle.join();
+        let _ = finish_daemon(daemon_handle);
         panic!("transfer failed: {e}");
     }
 
@@ -264,7 +261,7 @@ fn daemon_include_then_exclude_all_keeps_only_included() {
         "non-included sibling file must be excluded by trailing `exclude = *`"
     );
 
-    let _ = daemon_handle.join().expect("daemon thread");
+    let _ = finish_daemon(daemon_handle);
 }
 
 /// Daemon `exclude from = <file>` produces the same effect as inline
@@ -319,8 +316,7 @@ fn daemon_exclude_from_file_matches_inline_exclude() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");
@@ -339,7 +335,7 @@ fn daemon_exclude_from_file_matches_inline_exclude() {
     let result = core::client::run_client(client_config);
 
     if let Err(e) = &result {
-        let _ = daemon_handle.join();
+        let _ = finish_daemon(daemon_handle);
         panic!("transfer failed: {e}");
     }
 
@@ -356,5 +352,5 @@ fn daemon_exclude_from_file_matches_inline_exclude() {
         "exclude-from rule must apply to all listed patterns"
     );
 
-    let _ = daemon_handle.join().expect("daemon thread");
+    let _ = finish_daemon(daemon_handle);
 }

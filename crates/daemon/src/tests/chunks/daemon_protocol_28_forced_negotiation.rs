@@ -33,7 +33,7 @@ fn daemon_protocol_28_forced_client_greeting_accepted() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Read daemon greeting (server speaks newest protocol)
@@ -63,7 +63,7 @@ fn daemon_protocol_28_forced_client_greeting_accepted() {
     );
 
     drop(reader);
-    let _ = handle.join();
+    let _ = finish_daemon(handle);
 }
 
 #[test]
@@ -142,7 +142,7 @@ fn daemon_protocol_28_forced_version_negotiation_downgrade() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     // Daemon sends its greeting (protocol 32 with digest list)
@@ -220,8 +220,7 @@ fn daemon_protocol_28_forced_client_api_push() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let mut source_arg = source_dir.clone().into_os_string();
@@ -245,7 +244,7 @@ fn daemon_protocol_28_forced_client_api_push() {
             );
         }
         Err(e) => {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("Protocol 28 forced push failed: {e}");
         }
     }
@@ -262,8 +261,7 @@ fn daemon_protocol_28_forced_client_api_push() {
         "file content must match after protocol 28 push"
     );
 
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }
 
 /// End-to-end test using the client API with forced protocol 28 against a
@@ -320,8 +318,7 @@ fn daemon_protocol_28_forced_client_api_pull() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/pullmod/");
@@ -346,7 +343,7 @@ fn daemon_protocol_28_forced_client_api_pull() {
             );
         }
         Err(e) => {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("Protocol 28 forced pull failed: {e}");
         }
     }
@@ -368,8 +365,7 @@ fn daemon_protocol_28_forced_client_api_pull() {
         "nested/inner.txt content must match after protocol 28 pull"
     );
 
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }
 
 /// End-to-end roundtrip test combining push and pull at forced protocol 28
@@ -427,8 +423,7 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     // Phase 1: Push at forced protocol 28
@@ -452,7 +447,7 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
                 );
             }
             Err(e) => {
-                let _ = daemon_handle.join();
+                let _ = finish_daemon(daemon_handle);
                 panic!("protocol 28 push phase failed: {e}");
             }
         }
@@ -496,7 +491,7 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
                 );
             }
             Err(e) => {
-                let _ = daemon_handle.join();
+                let _ = finish_daemon(daemon_handle);
                 panic!("protocol 28 pull phase failed: {e}");
             }
         }
@@ -519,8 +514,7 @@ fn daemon_protocol_28_forced_push_then_pull_roundtrip() {
         "subdir/nested.txt roundtrip mismatch at protocol 28"
     );
 
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }
 
 #[test]
@@ -559,7 +553,7 @@ fn daemon_protocol_28_forced_module_listing_works() {
         ])
         .build();
 
-    let (mut stream, handle) = start_daemon_pending_no_detach(config, port, held_listener);
+    let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
     let mut line = String::new();
@@ -596,5 +590,5 @@ fn daemon_protocol_28_forced_module_listing_works() {
     );
 
     drop(reader);
-    let _ = handle.join();
+    let _ = finish_daemon(handle);
 }

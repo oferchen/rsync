@@ -17,10 +17,9 @@
 #      module - the guard itself has not been deleted or defeated.
 #   2. Daemon tests do not spawn `run_daemon` on a thread directly, which
 #      bypasses the support helpers entirely.
-#   3. The population of call sites still using the temporary
-#      `*_pending_no_detach` helpers only ever shrinks. Those tests predate the
-#      foreground requirement and are migrated in separate slices; the ceiling
-#      below must be lowered as they are, never raised.
+#   3. No test uses the `*_pending_no_detach` escape hatches. The migration is
+#      complete and the helpers are deleted, so any reference is a
+#      reintroduction of the silent-pass defect.
 #   4. Root-level integration tests that run the daemon in-process pass
 #      `--no-detach`. They live outside the daemon crate and cannot reach its
 #      test-support helpers, so checks 1-3 are blind to them - and the fork
@@ -42,9 +41,10 @@ TESTS_DIR="${REPO_ROOT}/crates/daemon/src/tests"
 SUPPORT="${TESTS_DIR}/support.rs"
 ROOT_TESTS_DIR="${REPO_ROOT}/tests"
 
-# Lower this when a migration slice converts call sites to the guarded helpers.
-# It must never be raised.
-PENDING_CEILING=77
+# The migration is complete: every call site now goes through start_daemon() /
+# spawn_daemon(), which route through force_no_detach(). The ceiling is 0 and
+# must never be raised.
+PENDING_CEILING=0
 
 # Root-level integration tests that call run_daemon() without --no-detach. Each
 # one is vacuous on Unix: the daemon forks, this test binary is the parent, and
@@ -88,14 +88,17 @@ else
     printf 'OK: no direct run_daemon thread spawns in daemon tests\n'
 fi
 
-# 3. The pending-migration population may only shrink.
-pending="$(grep -ro '\(start\|spawn\)_daemon_pending_no_detach(' "${TESTS_DIR}/chunks" \
-    --include='*.rs' | wc -l | tr -d ' ')"
+# 3. The escape hatches are gone and must not come back. Scan the whole test
+#    module so a reintroduced helper in support.rs is caught too.
+pending="$({ grep -ro '\(start\|spawn\)_daemon_pending_no_detach' "${TESTS_DIR}" \
+    --include='*.rs' || true; } | wc -l | tr -d ' ')"
 printf 'Pending-migration call sites: %s (ceiling %s)\n' "${pending}" "${PENDING_CEILING}"
 if [ "${pending}" -gt "${PENDING_CEILING}" ]; then
-    printf 'FAIL: %s call sites still start a detaching daemon, ceiling is %s.\n' \
+    printf 'FAIL: %s reference(s) to a detaching daemon helper, ceiling is %s.\n' \
         "${pending}" "${PENDING_CEILING}" >&2
-    printf '      New daemon tests must use start_daemon()/spawn_daemon().\n' >&2
+    printf '      Daemon tests must use start_daemon()/spawn_daemon(), which\n' >&2
+    printf '      force --no-detach. A detaching daemon forks and this test\n' >&2
+    printf '      process - the parent - exits 0 before any assertion runs.\n' >&2
     violations=$((violations + 1))
 fi
 

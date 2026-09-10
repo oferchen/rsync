@@ -97,8 +97,7 @@ fn daemon_compress_pull_drains_peer_goodbye_for_uts_v3_cluster_a() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/mod/");
@@ -122,7 +121,7 @@ fn daemon_compress_pull_drains_peer_goodbye_for_uts_v3_cluster_a() {
             );
         }
         Err(e) => {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!(
                 "compressed pull failed - cluster A regression? error: {e}\n\
                  if this is 'connection unexpectedly closed (N bytes received so far)' \
@@ -148,6 +147,5 @@ fn daemon_compress_pull_drains_peer_goodbye_for_uts_v3_cluster_a() {
         "large.txt content mismatch after compressed pull"
     );
 
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }

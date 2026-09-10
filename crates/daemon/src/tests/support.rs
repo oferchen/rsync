@@ -259,25 +259,7 @@ fn force_no_detach(config: crate::DaemonConfig) -> crate::DaemonConfig {
 pub(super) fn spawn_daemon(
     config: crate::DaemonConfig,
 ) -> thread::JoinHandle<Result<(), crate::DaemonError>> {
-    spawn_daemon_thread(force_no_detach(config))
-}
-
-/// Spawns a daemon thread without forcing `--no-detach`.
-///
-/// Temporary: the tests still calling this predate the foreground requirement
-/// and are vacuous on Unix for the reason described on [`force_no_detach`].
-/// They are migrated to [`spawn_daemon`] in separate slices so the assertions
-/// they start executing can be triaged a few at a time. Do not add call sites -
-/// `tools/ci/check_daemon_no_detach.sh` fails when the population grows.
-pub(super) fn spawn_daemon_pending_no_detach(
-    config: crate::DaemonConfig,
-) -> thread::JoinHandle<Result<(), crate::DaemonError>> {
-    spawn_daemon_thread(config)
-}
-
-fn spawn_daemon_thread(
-    config: crate::DaemonConfig,
-) -> thread::JoinHandle<Result<(), crate::DaemonError>> {
+    let config = force_no_detach(config);
     thread::spawn(move || run_daemon(config))
 }
 
@@ -305,29 +287,6 @@ pub(super) fn start_daemon(
 ) {
     connect_started_daemon(
         spawn_daemon(with_pre_bound_listener(config, held_listener)),
-        port,
-    )
-}
-
-/// [`start_daemon`] without the foreground guarantee.
-///
-/// Temporary, for the same reason and with the same migration plan as
-/// [`spawn_daemon_pending_no_detach`]. Every call site is a test whose
-/// assertions do not run on Unix; Windows is the only platform where they do,
-/// because `become_daemon()` is `#[cfg(unix)]` and `detach` defaults to
-/// `cfg!(unix)`. These tests deliberately stay enabled on Windows: the daemon
-/// is supported there, and until the migration lands Windows is the only
-/// platform whose result means anything.
-pub(super) fn start_daemon_pending_no_detach(
-    config: crate::DaemonConfig,
-    port: u16,
-    held_listener: TcpListener,
-) -> (
-    TcpStream,
-    thread::JoinHandle<Result<(), crate::DaemonError>>,
-) {
-    connect_started_daemon(
-        spawn_daemon_pending_no_detach(with_pre_bound_listener(config, held_listener)),
         port,
     )
 }
