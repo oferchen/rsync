@@ -149,28 +149,18 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
                     }
                     return Some(rule);
                 }
-                // ⚠ A KNOWN, MEASURED DIVERGENCE, not a settled choice. This is
-                // a flat `FilterSet`, so it has nowhere to put a per-directory
-                // merge and drops it. Upstream consults ONE `daemon_filter_list`
-                // whose PERDIR_MERGE entries `check_filter` recurses into
-                // (exclude.c:1043-1056), and its mergelist is filled by the
-                // delete pass's `change_local_filter_dir`
-                // (generator.c:1924-1929) - so upstream's per-file receive check
-                // at generator.c:1662-1676 sees the merge file's rules.
+                // A per-directory merge is not a flat rule and has no place in
+                // this set: upstream keeps it as a `FILTRULE_PERDIR_MERGE`
+                // entry that `check_filter` recurses into
+                // (exclude.c:1194-1198), holding whatever the current
+                // directory's merge file last supplied. That state lives in
+                // `DaemonFilterGate`, which takes these rules through
+                // [`compile_daemon_merge_configs`].
                 //
-                // MEASURED, module `filter = : .rsync-filter` with
-                // `sub/.rsync-filter` holding `- bait.txt`, real 3.5.0 client:
-                //   push WITH    --delete: upstream rc 23 `ERROR: daemon refused
-                //                          to receive file "sub/bait.txt"`;
-                //                          oc rc 0, file written
-                //   push WITHOUT --delete: BOTH rc 0, file written - upstream
-                //                          never loads the merge file, so this
-                //                          arm must NOT start refusing outright
-                // Closing the first row needs a per-directory daemon chain here
-                // plus an `enter_directory` driver on the candidates pass
-                // (`receiver/transfer/candidates.rs`); it is tracked separately.
-                // The SENDER half is complete - `generator/filters.rs` builds
-                // the merge configs and the walk drives them.
+                // A `merge` rule is eager: the daemon reads the named file at
+                // parse time (exclude.c:1581-1590), so its contents reach this
+                // function as ordinary rules and the directive itself carries
+                // nothing further.
                 RuleType::DirMerge | RuleType::Merge => return None,
             };
 
@@ -195,45 +185,74 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
     FilterSet::from_rules(filter_rules).ok()
 }
 
-/// Reports whether any ancestor directory of `name` is refused by the daemon
-/// filter list, in which case the entry must be dropped without a diagnostic.
+/// Compiles the per-directory merge directives out of a module's filter rules.
 ///
-/// Upstream refuses the *directory* once, sets `skip_dir` to it, and every
-/// later entry below that directory returns from `recv_generator()` before the
-/// `daemon_filter_list` check is reached - so the contents are dropped in
-/// silence, with no second "daemon refused" line. Recomputing the ancestor
-/// verdict here reproduces that outcome without threading generator state
-/// across oc's separate directory and candidate passes.
-///
-/// `name` is a wire-format relative path, always `/`-separated.
+/// The companion to [`compile_daemon_filter_set`]: that function owns the flat
+/// rules, this one owns the `dir-merge` directives they cannot express. Both
+/// read the same wire list, and
+/// [`DaemonFilterGate`](crate::receiver::DaemonFilterGate) evaluates them
+/// together.
 ///
 /// # Upstream Reference
 ///
-/// - `generator.c:1258-1266` - `if (skip_dir) { if (is_below(file, skip_dir)) ... return; }`
-/// - `generator.c:1284-1285` / `generator.c:1491-1495` - a refused directory
-///   jumps to `skipping_dir_contents`, which assigns `skip_dir = file`
-pub(in crate::receiver) fn daemon_filter_refuses_ancestor(filters: &FilterSet, name: &str) -> bool {
-    let mut cursor = name;
-    while let Some(sep) = cursor.rfind('/') {
-        cursor = &cursor[..sep];
-        if cursor.is_empty() {
-            break;
-        }
-        if !filters.allows(std::path::Path::new(cursor), true) {
-            return true;
-        }
-    }
-    false
+/// `exclude.c:349-391 add_rule()` registers every `FILTRULE_PERDIR_MERGE` rule
+/// in the global `mergelist_parents`, whichever list it was added to - so a
+/// rule from a module's `filter` directive, which lands in
+/// `daemon_filter_list` (`clientserver.c:934`), is registered alongside the
+/// transfer's own and `push_local_filters` fills it per directory.
+pub(in crate::receiver) fn compile_daemon_merge_configs(
+    rules: &[FilterRuleWireFormat],
+) -> Vec<filters::DirMergeConfig> {
+    use protocol::filters::RuleType;
+
+    rules
+        .iter()
+        .filter(|rule| rule.rule_type == RuleType::DirMerge)
+        .map(crate::receiver::transfer::dir_merge_config_from_wire)
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::compile_daemon_filter_set;
+    use super::{compile_daemon_filter_set, compile_daemon_merge_configs};
     use protocol::filters::{FilterRuleWireFormat, RuleType};
     use std::path::Path;
 
     fn exclude(pattern: &str) -> FilterRuleWireFormat {
         FilterRuleWireFormat::exclude(pattern)
+    }
+
+    /// A module's `filter = : NAME` reaches the receiver as a `DirMerge` wire
+    /// rule, and the two compilers split it correctly: the flat set has nothing
+    /// to say about it, and the merge compiler names the file to read per
+    /// directory.
+    ///
+    /// ⚠ Both halves are asserted. A compiler that turned the directive into an
+    /// exclude of `.rsync-filter` would leave the flat set non-empty, and one
+    /// that dropped it entirely would leave the merge list empty - the pair
+    /// tells those apart.
+    #[test]
+    fn a_dir_merge_directive_compiles_to_a_merge_config_and_no_flat_rule() {
+        let rules = vec![FilterRuleWireFormat {
+            rule_type: RuleType::DirMerge,
+            pattern: ".rsync-filter".into(),
+            ..FilterRuleWireFormat::default()
+        }];
+
+        assert!(
+            compile_daemon_filter_set(&rules).is_none(),
+            "a per-directory merge is not a flat rule"
+        );
+        let configs = compile_daemon_merge_configs(&rules);
+        assert_eq!(configs.len(), 1, "the directive must survive as a config");
+        assert_eq!(configs[0].filename(), ".rsync-filter");
+    }
+
+    /// A plain rule contributes nothing to the merge list, so the two
+    /// compilers cannot both be reading the whole wire list indiscriminately.
+    #[test]
+    fn a_plain_rule_contributes_no_merge_config() {
+        assert!(compile_daemon_merge_configs(&[exclude("foo")]).is_empty());
     }
 
     /// An unsided `clear`, as a module's `filter = clear` directive produces.

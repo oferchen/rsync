@@ -748,6 +748,40 @@ impl FilterChain {
         self.current_depth = self.current_depth.saturating_sub(1);
     }
 
+    /// Loads the per-directory merge scopes for `root`/`relative` onto a chain
+    /// that carries no scopes yet, entering `root` and then every component of
+    /// `relative` in turn.
+    ///
+    /// This is the random-access form of the walk's
+    /// [`enter_directory`](Self::enter_directory) /
+    /// [`leave_directory`](Self::leave_directory) stack: a caller that reaches
+    /// directories in no particular order takes a fresh clone of its rule chain
+    /// and rebuilds the ancestor scopes for the one directory it is about to
+    /// judge. `relative` is the directory's path below `root`; an empty path or
+    /// `.` loads `root` alone.
+    ///
+    /// A merge file that does not exist, cannot be read, or is refused is
+    /// skipped, exactly as [`enter_directory`](Self::enter_directory) skips it.
+    ///
+    /// # Upstream Reference
+    ///
+    /// Mirrors `exclude.c:change_local_filter_dir()`, which pops the merge
+    /// state above the requested depth and calls `push_local_filters()` for the
+    /// new directory. Upstream can keep a stack because its callers descend in
+    /// sorted order; rebuilding from `root` reaches the same state for any
+    /// directory without that ordering assumption.
+    pub fn reload_for_directory(&mut self, root: &Path, relative: &Path) {
+        let _ = self.enter_directory(root);
+        if relative.as_os_str().is_empty() || relative == Path::new(".") {
+            return;
+        }
+        let mut cursor = root.to_path_buf();
+        for component in relative.iter() {
+            cursor.push(component);
+            let _ = self.enter_directory(&cursor);
+        }
+    }
+
     /// Returns `true` if the chain has no rules at all (global, per-directory
     /// scopes, or per-directory merge configs).
     ///

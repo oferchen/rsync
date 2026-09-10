@@ -243,23 +243,23 @@ impl ReceiverContext {
         // (generator.c:1281-1283) before the `skipping_dir_contents` jump. A
         // server receiver forwards that frame to the pushing client instead of
         // writing it to the daemon's own stderr.
-        let daemon_filters = self.daemon_filter_set();
+        let mut daemon_filters = self.daemon_filter_gate(dest_dir);
         let dir_entries: Vec<(usize, PathBuf, PathBuf)> = self
             .file_list
             .iter()
             .enumerate()
             .filter(|(_, e)| e.is_dir())
             .filter(|(_, e)| {
-                if let Some(filters) = daemon_filters {
+                if let Some(filters) = daemon_filters.as_mut() {
                     let name = e.name();
                     if name != "." && !name.is_empty() {
                         // upstream: generator.c:1258-1266 - a directory below an
                         // already-refused one is dropped in silence; only the
                         // outermost refusal is reported.
-                        if crate::receiver::daemon_filter_refuses_ancestor(filters, name) {
+                        if filters.refuses_ancestor(name) {
                             return false;
                         }
-                        if !filters.allows(Path::new(name), true) {
+                        if !filters.allows(name, true) {
                             let _ = self.emit_error_xfer_line(
                                 writer,
                                 &format!("ERROR: daemon refused to receive directory \"{name}\"\n"),

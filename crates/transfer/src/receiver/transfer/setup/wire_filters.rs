@@ -64,39 +64,7 @@ pub(in crate::receiver) fn parse_wire_filters_for_receiver(
                 continue;
             }
             RuleType::DirMerge => {
-                // upstream: exclude.c:setup_merge_file() derives the
-                // per-directory merge FILENAME from the basename after the last
-                // '/' in the rule pattern (`ex->pattern = strdup(y+1)` where
-                // `y = strrchr(x, '/')`). A client's `-F` reaches the receiver as
-                // `: /.rsync-filter` (exclude.c:1608), so the wire pattern is
-                // `/.rsync-filter`. Using it verbatim as the merge filename makes
-                // `directory.join("/.rsync-filter")` resolve to the filesystem
-                // root (Rust's `Path::join` discards the base on an absolute
-                // component), so the per-directory merge file is never found and
-                // its protect rules are absent when the --delete pass decides
-                // candidates - deleting dir-merge-protected destination entries.
-                // Split off the basename to mirror setup_merge_file(); oc's own
-                // encoder emits the anchor as a `/` modifier with a bare pattern,
-                // so this is a no-op for the oc<->oc wire and only normalises the
-                // `/`-in-body form a real upstream client sends.
-                let filename = lossy.rsplit('/').next().unwrap_or(lossy.as_ref());
-                let mut config = DirMergeConfig::new(filename);
-                if wire_rule.no_inherit {
-                    config = config.with_inherit(false);
-                }
-                if wire_rule.exclude_from_merge {
-                    config = config.with_exclude_self(true);
-                }
-                if wire_rule.sender_side {
-                    config = config.with_sender_only(true);
-                }
-                if wire_rule.receiver_side {
-                    config = config.with_receiver_only(true);
-                }
-                if wire_rule.perishable {
-                    config = config.with_perishable(true);
-                }
-                merge_configs.push(config);
+                merge_configs.push(dir_merge_config_from_wire(wire_rule));
                 continue;
             }
             RuleType::Merge => continue,
@@ -125,6 +93,53 @@ pub(in crate::receiver) fn parse_wire_filters_for_receiver(
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("filter error: {e}")))?;
 
     Ok((filter_set, merge_configs))
+}
+
+/// Decodes one `DirMerge` wire rule into the receiver's per-directory merge
+/// configuration.
+///
+/// The receiver reaches per-directory merges from two directions - the rules a
+/// client transmits and the rules a daemon module's `filter` directive
+/// contributes - and both must decode the same way, so this is the single
+/// decoder for both.
+///
+/// # Upstream Reference
+///
+/// `exclude.c:setup_merge_file()` derives the per-directory merge FILENAME from
+/// the basename after the last '/' in the rule pattern (`ex->pattern =
+/// strdup(y+1)` where `y = strrchr(x, '/')`). A client's `-F` reaches the
+/// receiver as `: /.rsync-filter` (exclude.c:1608), so the wire pattern is
+/// `/.rsync-filter`. Using it verbatim as the merge filename makes
+/// `directory.join("/.rsync-filter")` resolve to the filesystem root (Rust's
+/// `Path::join` discards the base on an absolute component), so the
+/// per-directory merge file is never found and its protect rules are absent
+/// when the --delete pass decides candidates - deleting dir-merge-protected
+/// destination entries. Splitting off the basename mirrors
+/// `setup_merge_file()`; oc's own encoder emits the anchor as a `/` modifier
+/// with a bare pattern, so this is a no-op for the oc<->oc wire and only
+/// normalises the `/`-in-body form a real upstream client sends.
+pub(in crate::receiver) fn dir_merge_config_from_wire(
+    wire_rule: &FilterRuleWireFormat,
+) -> DirMergeConfig {
+    let lossy = wire_rule.pattern.to_string_lossy();
+    let filename = lossy.rsplit('/').next().unwrap_or(lossy.as_ref());
+    let mut config = DirMergeConfig::new(filename);
+    if wire_rule.no_inherit {
+        config = config.with_inherit(false);
+    }
+    if wire_rule.exclude_from_merge {
+        config = config.with_exclude_self(true);
+    }
+    if wire_rule.sender_side {
+        config = config.with_sender_only(true);
+    }
+    if wire_rule.receiver_side {
+        config = config.with_receiver_only(true);
+    }
+    if wire_rule.perishable {
+        config = config.with_perishable(true);
+    }
+    config
 }
 
 #[cfg(test)]
