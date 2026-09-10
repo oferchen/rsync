@@ -58,9 +58,21 @@ pub(in crate::receiver) fn parse_wire_filters_for_receiver(
             RuleType::Protect => FilterRule::protect(pattern.as_ref()),
             RuleType::Risk => FilterRule::risk(pattern.as_ref()),
             RuleType::Clear => {
-                rules.push(
-                    FilterRule::clear().with_sides(wire_rule.sender_side, wire_rule.receiver_side),
-                );
+                // upstream: exclude.c:1542-1551 parse_filter_str() - a clear
+                // rule pops the WHOLE active list (`pop_filter_list(listp);
+                // listp->head = NULL;`) with no side test at all, so an
+                // unsided `!` wipes both sides. `FilterRule::clear()` already
+                // carries that (sender and receiver both true), while
+                // `apply_clear_rule` returns without clearing anything when
+                // neither side is set - so narrowing unconditionally turned an
+                // unsided clear into a silent no-op. Apply the sides only when
+                // the wire rule actually named one, exactly as the
+                // include/exclude/protect/risk arms below do.
+                let mut rule = FilterRule::clear();
+                if wire_rule.sender_side || wire_rule.receiver_side {
+                    rule = rule.with_sides(wire_rule.sender_side, wire_rule.receiver_side);
+                }
+                rules.push(rule);
                 continue;
             }
             RuleType::DirMerge => {
@@ -145,6 +157,121 @@ pub(in crate::receiver) fn dir_merge_config_from_wire(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::path::Path;
+
+    fn exclude(pattern: &str) -> FilterRuleWireFormat {
+        FilterRuleWireFormat {
+            rule_type: RuleType::Exclude,
+            pattern: pattern.into(),
+            ..FilterRuleWireFormat::default()
+        }
+    }
+
+    /// An unsided `!` must pop every rule that precedes it.
+    ///
+    /// Upstream's `parse_filter_str` (exclude.c:1542-1551) handles a clear rule
+    /// by calling `pop_filter_list(listp)` and nulling the head - there is no
+    /// side test, so an unsided clear wipes the whole list. oc keeps the clear
+    /// as a `RuleType::Clear` wire rule and defers it to this converter, which
+    /// means a converter that drops it leaves the pre-clear rules standing.
+    ///
+    /// This is reachable: a daemon module's `filter` directive
+    /// (clientserver.c:934) reaches the receiver's deletion chain through
+    /// `combine`d daemon rules, so a dropped clear keeps a `- keep.txt` alive
+    /// and shields `keep.txt` from a `--delete` pass that upstream performs.
+    /// Measured against rsync 3.5.0 as a daemon receiver with
+    /// `filter = - keep.txt clear - ctl.txt`: upstream deletes `keep.txt`,
+    /// oc kept it.
+    #[test]
+    fn unsided_clear_pops_the_rules_that_precede_it() {
+        let wire = vec![
+            exclude("keep.txt"),
+            FilterRuleWireFormat {
+                rule_type: RuleType::Clear,
+                ..FilterRuleWireFormat::default()
+            },
+            exclude("ctl.txt"),
+        ];
+
+        let (set, _merge_configs) =
+            parse_wire_filters_for_receiver(&wire).expect("clear rule parses");
+
+        assert!(
+            set.allows(Path::new("keep.txt"), false),
+            "an unsided clear must pop the `- keep.txt` that precedes it, as \
+             upstream's pop_filter_list does; leaving it standing shields \
+             keep.txt from the --delete pass",
+        );
+        assert!(
+            !set.allows(Path::new("ctl.txt"), false),
+            "the rule added after the clear must survive it - this control \
+             stays red-free whether or not the clear is honoured, so a green \
+             run of it proves the fixture compiled rules at all",
+        );
+    }
+
+    /// The same rule list, on the deletion chain the `--delete` pass consults.
+    ///
+    /// `compile_receiver_filter_chains` feeds this converter's `FilterSet` to
+    /// both the transfer chain and the deletion chain, so the clear has to pop
+    /// the deletion view too - that is the view the measured daemon cell
+    /// observed.
+    #[test]
+    fn unsided_clear_pops_the_deletion_view_too() {
+        let wire = vec![
+            exclude("keep.txt"),
+            FilterRuleWireFormat {
+                rule_type: RuleType::Clear,
+                ..FilterRuleWireFormat::default()
+            },
+            exclude("ctl.txt"),
+        ];
+
+        let (set, _merge_configs) =
+            parse_wire_filters_for_receiver(&wire).expect("clear rule parses");
+
+        assert!(
+            set.allows_deletion(Path::new("keep.txt"), false),
+            "with the pre-clear exclude popped, keep.txt is an ordinary \
+             extraneous file and the --delete pass must be free to remove it",
+        );
+        assert!(
+            !set.allows_deletion(Path::new("ctl.txt"), false),
+            "the post-clear exclude still protects ctl.txt from deletion",
+        );
+    }
+
+    /// A clear that names a side must still narrow to that side.
+    ///
+    /// upstream: exclude.c:1423-1432 parse_rule_tok() sets
+    /// `FILTRULE_RECEIVER_SIDE` / `FILTRULE_SENDER_SIDE` from the rule's own
+    /// `r` / `s` modifiers, so honouring an unsided clear must not make every
+    /// clear both-sided. A receiver-side clear leaves a sender-side rule
+    /// untouched.
+    #[test]
+    fn a_sided_clear_narrows_to_the_side_it_names() {
+        let wire = vec![
+            FilterRuleWireFormat {
+                sender_side: true,
+                ..exclude("sender-only.txt")
+            },
+            FilterRuleWireFormat {
+                rule_type: RuleType::Clear,
+                receiver_side: true,
+                ..FilterRuleWireFormat::default()
+            },
+        ];
+
+        let (set, _merge_configs) =
+            parse_wire_filters_for_receiver(&wire).expect("sided clear rule parses");
+
+        assert!(
+            !set.allows(Path::new("sender-only.txt"), false),
+            "a receiver-side clear must leave a sender-side rule standing; \
+             widening every clear to both sides would drop it",
+        );
+    }
 
     /// A real upstream client transmits `-F` as the rule `: /.rsync-filter`
     /// (exclude.c:1608), so the receiver decodes a `DirMerge` wire rule whose
