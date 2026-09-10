@@ -149,6 +149,28 @@ pub(in crate::receiver) fn compile_daemon_filter_set(
                     }
                     return Some(rule);
                 }
+                // ⚠ A KNOWN, MEASURED DIVERGENCE, not a settled choice. This is
+                // a flat `FilterSet`, so it has nowhere to put a per-directory
+                // merge and drops it. Upstream consults ONE `daemon_filter_list`
+                // whose PERDIR_MERGE entries `check_filter` recurses into
+                // (exclude.c:1043-1056), and its mergelist is filled by the
+                // delete pass's `change_local_filter_dir`
+                // (generator.c:1924-1929) - so upstream's per-file receive check
+                // at generator.c:1662-1676 sees the merge file's rules.
+                //
+                // MEASURED, module `filter = : .rsync-filter` with
+                // `sub/.rsync-filter` holding `- bait.txt`, real 3.5.0 client:
+                //   push WITH    --delete: upstream rc 23 `ERROR: daemon refused
+                //                          to receive file "sub/bait.txt"`;
+                //                          oc rc 0, file written
+                //   push WITHOUT --delete: BOTH rc 0, file written - upstream
+                //                          never loads the merge file, so this
+                //                          arm must NOT start refusing outright
+                // Closing the first row needs a per-directory daemon chain here
+                // plus an `enter_directory` driver on the candidates pass
+                // (`receiver/transfer/candidates.rs`); it is tracked separately.
+                // The SENDER half is complete - `generator/filters.rs` builds
+                // the merge configs and the walk drives them.
                 RuleType::DirMerge | RuleType::Merge => return None,
             };
 
