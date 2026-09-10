@@ -259,6 +259,8 @@ include!("tests/chunks/daemon_files_from_push.rs");
 include!("tests/chunks/daemon_files_from_stdin_pull.rs");
 // Daemon module filter rule merging with client-side filters (#1887)
 include!("tests/chunks/daemon_filter_merge_with_client_filters.rs");
+// Daemon `filter = merge FILE` and the `!` clear form
+include!("tests/chunks/daemon_filter_merge_and_clear.rs");
 include!("tests/chunks/daemon_safe_links_filters_unsafe_symlinks_on_push.rs");
 include!("tests/chunks/daemon_safe_links_receive.rs");
 // Daemon `munge symlinks = yes` round-trip tests (push + pull)

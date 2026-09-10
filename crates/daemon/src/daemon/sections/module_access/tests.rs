@@ -2707,7 +2707,7 @@ mod module_access_tests {
 
     #[test]
     fn build_pattern_rule_exclude() {
-        let rule = build_pattern_rule("*.tmp", false);
+        let rule = build_pattern_rule("*.tmp", false, RuleXflags::Daemon);
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
         assert_eq!(rule.pattern, "*.tmp");
         assert!(!rule.anchored);
@@ -2716,14 +2716,14 @@ mod module_access_tests {
 
     #[test]
     fn build_pattern_rule_include() {
-        let rule = build_pattern_rule("*.rs", true);
+        let rule = build_pattern_rule("*.rs", true, RuleXflags::Daemon);
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Include);
         assert_eq!(rule.pattern, "*.rs");
     }
 
     #[test]
     fn build_pattern_rule_anchored() {
-        let rule = build_pattern_rule("/etc", false);
+        let rule = build_pattern_rule("/etc", false, RuleXflags::Daemon);
         assert!(rule.anchored);
         assert_eq!(rule.pattern, "/etc");
     }
@@ -2735,40 +2735,40 @@ mod module_access_tests {
         // anchoring would prepend `/` (-> `/**/*.o`) and stop `**/*.o` from
         // matching a root-level `build.o`. Regression for the
         // daemon-filter-doublestar interop test.
-        let rule = build_pattern_rule("**/*.o", false);
+        let rule = build_pattern_rule("**/*.o", false, RuleXflags::Daemon);
         assert!(!rule.anchored, "`**/*.o` must stay unanchored");
         assert_eq!(rule.pattern, "**/*.o");
 
         // A slash-containing pattern that does NOT start with `**` is still
         // anchored (XFLG_ABS_IF_SLASH).
-        let nested = build_pattern_rule("sub/file.o", false);
+        let nested = build_pattern_rule("sub/file.o", false, RuleXflags::Daemon);
         assert!(nested.anchored, "`sub/file.o` is anchored by ABS_IF_SLASH");
     }
 
     #[test]
     fn build_pattern_rule_directory_only_exclude_dir2wild3() {
         // upstream: exclude.c:211-217 - XFLG_DIR2WILD3 transforms dir/ to dir/***
-        let rule = build_pattern_rule("build/", false);
+        let rule = build_pattern_rule("build/", false, RuleXflags::Daemon);
         assert!(!rule.directory_only);
         assert_eq!(rule.pattern, "build/***");
     }
 
     #[test]
     fn build_pattern_rule_directory_only_include_preserved() {
-        let rule = build_pattern_rule("build/", true);
+        let rule = build_pattern_rule("build/", true, RuleXflags::Daemon);
         assert!(rule.directory_only);
         assert_eq!(rule.pattern, "build/");
     }
 
     #[test]
     fn pattern_leading_slash_is_anchored() {
-        let rule = build_pattern_rule("/foo", false);
+        let rule = build_pattern_rule("/foo", false, RuleXflags::Daemon);
         assert!(rule.anchored);
     }
 
     #[test]
     fn pattern_no_slash_is_not_anchored() {
-        let rule = build_pattern_rule("*.txt", false);
+        let rule = build_pattern_rule("*.txt", false, RuleXflags::Daemon);
         assert!(!rule.anchored);
     }
 
@@ -2776,19 +2776,19 @@ mod module_access_tests {
     fn pattern_embedded_slash_is_anchored() {
         // upstream: exclude.c:200-202 - XFLG_ABS_IF_SLASH anchors patterns
         // with any slash, not just leading slash
-        let rule = build_pattern_rule("subdir/file.txt", false);
+        let rule = build_pattern_rule("subdir/file.txt", false, RuleXflags::Daemon);
         assert!(rule.anchored);
     }
 
     #[test]
     fn pattern_deep_path_is_anchored() {
-        let rule = build_pattern_rule("a/b/c", false);
+        let rule = build_pattern_rule("a/b/c", false, RuleXflags::Daemon);
         assert!(rule.anchored);
     }
 
     #[test]
     fn directory_exclude_gets_wild3() {
-        let rule = build_pattern_rule("foo/", false);
+        let rule = build_pattern_rule("foo/", false, RuleXflags::Daemon);
         assert!(rule.anchored); // has embedded '/'
         assert!(!rule.directory_only); // cleared by DIR2WILD3
         assert!(rule.pattern.to_string_lossy().ends_with("/***"));
@@ -2796,13 +2796,13 @@ mod module_access_tests {
 
     #[test]
     fn directory_include_keeps_directory_flag() {
-        let rule = build_pattern_rule("bar/", true);
+        let rule = build_pattern_rule("bar/", true, RuleXflags::Daemon);
         assert!(rule.directory_only);
     }
 
     #[test]
     fn include_with_embedded_slash_is_anchored() {
-        let rule = build_pattern_rule("src/main.rs", true);
+        let rule = build_pattern_rule("src/main.rs", true, RuleXflags::Daemon);
         assert!(rule.anchored);
     }
 
@@ -2811,14 +2811,17 @@ mod module_access_tests {
     /// Panics on a refusal AND on an empty token, so a cell using this can
     /// never pass by silently skipping the token it means to assert about.
     fn accepted_rule(token: &str) -> FilterRuleWireFormat {
-        parse_daemon_filter_token(token)
+        parse_daemon_filter_token(token, RuleXflags::Daemon)
             .expect("token refused")
             .expect("token produced no rule")
     }
 
     /// A token the parser accepts and skips - `Ok(None)`, not a refusal.
     fn is_skipped(token: &str) -> bool {
-        matches!(parse_daemon_filter_token(token), Ok(None))
+        matches!(
+            parse_daemon_filter_token(token, RuleXflags::Daemon),
+            Ok(None)
+        )
     }
 
     #[test]
@@ -2862,7 +2865,8 @@ mod module_access_tests {
         // a bare `-` an EXCLUDE OF THE LITERAL STRING `-`, which is neither
         // the old behaviour nor upstream's.
         for token in ["-", "+"] {
-            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            let err =
+                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
             assert!(
                 err.to_string().starts_with("unexpected end of filter rule"),
                 "{token}: {err}"
@@ -2930,7 +2934,8 @@ mod module_access_tests {
                 "invalid modifier 'b' at position 8 in filter rule: include,bar",
             ),
         ] {
-            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            let err =
+                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
             assert_eq!(err.to_string(), msg, "{token}");
         }
     }
@@ -2942,12 +2947,14 @@ mod module_access_tests {
         // :1429-1430); `C` refuses likewise (exclude.c:1403-1404). MEASURED:
         //   filter = hide,r keep  -> rc 5 "invalid modifier 'r' at position 5..."
         //   filter = hide,C keep  -> rc 5 "invalid modifier 'C' at position 5..."
-        let err = parse_daemon_filter_token("hide,r keep").expect_err("must refuse");
+        let err =
+            parse_daemon_filter_token("hide,r keep", RuleXflags::Daemon).expect_err("must refuse");
         assert_eq!(
             err.to_string(),
             "invalid modifier 'r' at position 5 in filter rule: hide,r keep"
         );
-        let err = parse_daemon_filter_token("hide,C keep").expect_err("must refuse");
+        let err =
+            parse_daemon_filter_token("hide,C keep", RuleXflags::Daemon).expect_err("must refuse");
         assert_eq!(
             err.to_string(),
             "invalid modifier 'C' at position 5 in filter rule: hide,C keep"
@@ -3104,11 +3111,13 @@ mod module_access_tests {
                 "invalid modifier 'e' at position 3 in filter rule: -p!e foo",
             ),
         ] {
-            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            let err =
+                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
             assert_eq!(err.to_string(), msg, "{token}");
         }
         for token in ["-", "+", "P", "-p", "P,"] {
-            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            let err =
+                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
             assert_eq!(
                 err.to_string(),
                 format!("unexpected end of filter rule: {token}"),
@@ -3143,7 +3152,8 @@ mod module_access_tests {
                 "invalid modifier 's' at position 2 in filter rule: S,s bar",
             ),
         ] {
-            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            let err =
+                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
             assert_eq!(err.to_string(), msg, "{token}");
         }
     }
@@ -3315,7 +3325,8 @@ mod module_access_tests {
             ("clear,x", "'!' rule has trailing characters: clear,x"),
             ("clear_", "'!' rule has trailing characters: clear_"),
         ] {
-            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            let err =
+                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
             assert_eq!(err.to_string(), msg, "{token}");
         }
     }
@@ -3361,7 +3372,8 @@ mod module_access_tests {
         // hidden - a successful-looking transfer of a module upstream refuses
         // to serve at all.
         for token in ["hide", "exclude", "include", "protect", "hide,"] {
-            let err = parse_daemon_filter_token(token).expect_err("must refuse");
+            let err =
+                parse_daemon_filter_token(token, RuleXflags::Daemon).expect_err("must refuse");
             assert_eq!(
                 err.to_string(),
                 format!("unexpected end of filter rule: {token}"),
@@ -3371,7 +3383,8 @@ mod module_access_tests {
         // The old pin's second row, kept refusing: a keyword whose "pattern"
         // is only whitespace. (Real tokens are trimmed by the splitter; this
         // spelling reaches the parser only through direct calls.)
-        let err = parse_daemon_filter_token("include ").expect_err("must refuse");
+        let err =
+            parse_daemon_filter_token("include ", RuleXflags::Daemon).expect_err("must refuse");
         assert!(
             err.to_string().starts_with("unexpected end of filter rule"),
             "{err}"
@@ -3398,7 +3411,7 @@ mod module_access_tests {
         // The message names the offending BYTE and its offset, as upstream's
         // modifier arm does - a bare "invalid rule" would not tell an
         // operator which character of their config is wrong.
-        let err = parse_daemon_filter_token("-foo").expect_err("must refuse");
+        let err = parse_daemon_filter_token("-foo", RuleXflags::Daemon).expect_err("must refuse");
         assert_eq!(
             err.to_string(),
             "invalid modifier 'f' at position 1 in filter rule: -foo"
@@ -3407,7 +3420,7 @@ mod module_access_tests {
 
     #[test]
     fn a_plus_prefix_without_a_separator_is_refused() {
-        let err = parse_daemon_filter_token("+foo").expect_err("must refuse");
+        let err = parse_daemon_filter_token("+foo", RuleXflags::Daemon).expect_err("must refuse");
         assert_eq!(
             err.to_string(),
             "invalid modifier 'f' at position 1 in filter rule: +foo"
@@ -3423,30 +3436,429 @@ mod module_access_tests {
         // upstream's modifier scan is `while (ch != '!' && ...)` and so never
         // runs for `!`. The two arms are distinct, and asserting the wrong
         // one here would pin a message upstream cannot produce for this token.
-        let err = parse_daemon_filter_token("!name").expect_err("must refuse");
+        let err = parse_daemon_filter_token("!name", RuleXflags::Daemon).expect_err("must refuse");
         assert_eq!(err.to_string(), "'!' rule has trailing characters: !name");
     }
 
     #[test]
-    fn a_bare_bang_keeps_its_existing_behaviour() {
-        // SCOPE BOUNDARY, pinned rather than asserted as correct.
+    fn a_bare_bang_is_the_clear_rule() {
+        // WAS `a_bare_bang_keeps_its_existing_behaviour`, which pinned the
+        // divergence as a scope boundary: a bare `!` reached the bare-pattern
+        // arm and became an EXCLUDE of the literal pattern `!`.
         //
-        // The guard above fires only past length 1, so a bare `!` still
-        // reaches the bare-pattern arm and becomes an exclude of the literal
-        // `!`. Upstream instead treats it as a CLEAR rule.
-        //
-        // ⚠ That divergence is REAL and is task 1155's, deliberately NOT
-        // fixed here - oc has no clear-rule implementation on this path at
-        // all, so "fixing" it would mean building one, well outside a change
-        // scoped to three measured refusal rows.
-        //
-        // ⚠ This cell exists because the `token.len() > 1` term was otherwise
-        // UNPROTECTED: mutating it away killed nothing, so the comment
-        // claiming bare `!` is untouched had no evidence behind it. Dropping
-        // the term now reddens this cell.
+        // MEASURED against a real rsync 3.5.0 daemon over loopback TCP, module
+        // holding `bait` + `keep` + `ctl` and a file literally named `!`:
+        // `filter = !` serves every one of them, `!` included. oc hid the file
+        // named `!` - a planted bait the wrong rule matched exactly.
         let rule = accepted_rule("!");
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
-        assert_eq!(rule.pattern, "!");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Clear);
+    }
+
+    #[test]
+    fn the_bang_comma_spelling_is_the_clear_rule() {
+        // The `,` is consumed as part of the prefix (`if (s[1] == ',') s++`,
+        // exclude.c:1327-1328), so `!,` reaches the trailing-characters check
+        // with `len == 0` and clears. MEASURED: `filter = !,` is rc 0 upstream
+        // with every file served; oc REFUSED the module, because the guard this
+        // replaced fired on any token longer than one byte.
+        let rule = accepted_rule("!,");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Clear);
+    }
+
+    /// A module whose `filter` parameter is `value`, rooted at `root`.
+    fn filter_module(root: &Path, value: &str) -> ModuleRuntime {
+        ModuleRuntime::from(ModuleDefinition {
+            path: root.to_path_buf(),
+            filter: vec![value.to_string()],
+            ..Default::default()
+        })
+    }
+
+    /// The rules `filter = <value>` builds, or the refusal it earns.
+    fn filter_rules(root: &Path, value: &str) -> Result<Vec<FilterRuleWireFormat>, io::Error> {
+        build_daemon_filter_rules(&filter_module(root, value))
+    }
+
+    /// The patterns of the rules `filter = <value>` builds, refusal fatal.
+    fn filter_patterns(root: &Path, value: &str) -> Vec<String> {
+        filter_rules(root, value)
+            .expect("filter refused")
+            .into_iter()
+            .map(|rule| rule.pattern.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// Writes a merge file under `dir` and returns its path spelled the way a
+    /// daemon parameter spells one: `/`-separated.
+    ///
+    /// `Path::display()` would emit the host separator, and a daemon filter path
+    /// has exactly one separator - upstream's `parse_merge_name` finds the
+    /// basename with `strrchr(name, '/')` (exclude.c:1557-1567) and oc mirrors
+    /// that, so a backslash-spelled path hides the basename from the `e`
+    /// modifier. Only the host separator is rewritten, never a byte that could
+    /// be part of a legitimate name.
+    fn merge_file(dir: &Path, name: &str, content: &str) -> String {
+        let path = dir.join(name);
+        std::fs::write(&path, content).expect("write merge file");
+        path.to_str()
+            .expect("utf-8 merge path")
+            .replace(std::path::MAIN_SEPARATOR, "/")
+    }
+
+    #[test]
+    fn a_merge_token_expands_to_the_named_files_rules() {
+        // ROW A's red arm. MEASURED against a real rsync 3.5.0 daemon over
+        // loopback TCP, module holding `bait` + `keep` + `ctl` and a merge file
+        // holding `- bait`: upstream hides `bait` and serves the other two. oc
+        // built ONE rule - an exclude of the literal pattern `merge <path>` -
+        // which matches no file at all, so every file the operator's merge file
+        // named was served.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait\n");
+        let rules = filter_rules(dir.path(), &format!("merge {path}")).expect("merge refused");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[0].pattern, "bait");
+    }
+
+    #[test]
+    fn the_dot_spelling_expands_the_same_file() {
+        // upstream: `merge` is a pure alias for `.` (exclude.c:1292-1294).
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!(". {path}")),
+            vec!["bait".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_merge_keeps_the_rules_around_it_and_their_order() {
+        // upstream splices the file's rules in at the merge rule's own
+        // position (exclude.c:1581-1590). MEASURED: `filter = - ctl merge FILE`
+        // over a merge file holding `- bait` hides BOTH.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!("- ctl merge {path} - keep")),
+            vec!["ctl".to_string(), "bait".to_string(), "keep".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_merge_file_carries_the_full_rule_grammar() {
+        // Records are parsed as rules, not as bare patterns: a leading `+` is
+        // an include and a `;`/`#` record is a comment (`exclude.c:1806`).
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "# note\n; note\n\n+ keep\n- *\n");
+        let rules = filter_rules(dir.path(), &format!("merge {path}")).expect("merge refused");
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(rules[0].pattern, "keep");
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Exclude);
+        assert_eq!(rules[1].pattern, "*");
+    }
+
+    #[test]
+    fn a_bang_record_inside_a_merge_file_clears_the_list() {
+        // MEASURED: a merge file holding `- bait`, `!`, `- ctl` serves `bait`
+        // and hides `ctl` - the clear reaches the SAME list the daemon
+        // directive builds.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait\n!\n- ctl\n");
+        let rules = filter_rules(dir.path(), &format!("merge {path}")).expect("merge refused");
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[1].rule_type, protocol::filters::RuleType::Clear);
+        assert_eq!(rules[2].pattern, "ctl");
+    }
+
+    #[test]
+    fn a_merge_files_sender_side_rule_is_kept() {
+        // The add-time side drop needs XFLG_ABS_IF_SLASH (exclude.c:279-285),
+        // which a merge file's records do not carry. MEASURED: `filter = H bait`
+        // SERVES `bait`, while a merge file holding `H bait` HIDES it.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "H bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!("merge {path}")),
+            vec!["bait".to_string()]
+        );
+        // The non-vacuity companion: the same rule written as the DIRECTIVE is
+        // still dropped, so this cell is about the merge context, not about
+        // `H` having stopped being sender-side.
+        assert!(filter_patterns(dir.path(), "H bait").is_empty());
+    }
+
+    #[test]
+    fn a_merge_file_pattern_is_not_slash_anchored_or_wild3_suffixed() {
+        // Both transformations are gated on the daemon directive's xflags
+        // (exclude.c:298-306, :311-317). MEASURED: a merge file holding
+        // `- sub/f` hides `sub/f` AND `deep/sub/f`.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- sub/f\n- d/\n");
+        let rules = filter_rules(dir.path(), &format!("merge {path}")).expect("merge refused");
+        assert!(!rules[0].anchored, "an embedded slash must not anchor");
+        assert_eq!(rules[1].pattern, "d/", "no /*** suffix in a merge file");
+        // Non-vacuity: the DIRECTIVE spelling still does both.
+        let direct = filter_rules(dir.path(), "- sub/f - d/").expect("directive refused");
+        assert!(direct[0].anchored);
+        assert_eq!(direct[1].pattern, "d/***");
+    }
+
+    #[test]
+    fn a_merge_file_pattern_keeps_its_trailing_whitespace() {
+        // upstream takes `strlen(s)` for a line-parsed rule (exclude.c:1465).
+        // MEASURED: a merge file holding `- bait ` over a module holding `bait`
+        // SERVES `bait`.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait \n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!("merge {path}")),
+            vec!["bait ".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_merge_file_that_cannot_be_read_refuses_the_module() {
+        // XFLG_FATAL_ERRORS (exclude.c:1714-1719). MEASURED: rc 5 upstream,
+        // where oc served the module with the operator's rules silently absent.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let missing = dir.path().join("nosuch").display().to_string();
+        let err = filter_rules(dir.path(), &format!("merge {missing}")).expect_err("must refuse");
+        assert!(
+            err.to_string().contains("failed to open exclude file"),
+            "unexpected refusal: {err}"
+        );
+    }
+
+    #[test]
+    fn a_merge_with_no_name_refuses_the_module() {
+        // MEASURED: `filter = merge` and `filter = merge,` are both rc 5,
+        // `unexpected end of filter rule`.
+        let dir = tempfile::tempdir().expect("temp dir");
+        for value in ["merge", "merge,", "."] {
+            let err = filter_rules(dir.path(), value).expect_err("must refuse");
+            assert_eq!(
+                err.to_string(),
+                format!("unexpected end of filter rule: {value}")
+            );
+        }
+    }
+
+    #[test]
+    fn a_self_naming_merge_file_hits_the_depth_limit() {
+        // upstream: exclude.c:1619-1628, fatal under XFLG_FATAL_ERRORS.
+        // MEASURED: rc 5 upstream, where oc-base served the module.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("rules").display().to_string();
+        let path = merge_file(dir.path(), "rules", &format!("merge {path}\n"));
+        let err = filter_rules(dir.path(), &format!("merge {path}")).expect_err("must refuse");
+        assert!(
+            err.to_string().contains("depth limit"),
+            "unexpected refusal: {err}"
+        );
+    }
+
+    #[test]
+    fn a_relative_merge_name_with_a_slash_resolves_against_the_module() {
+        // upstream: parse_merge_name prepends `dirbuf` once the name has a
+        // slash (exclude.c:704-746). MEASURED: `filter = merge ./rules` reads
+        // the module's own `rules`.
+        let dir = tempfile::tempdir().expect("temp dir");
+        merge_file(dir.path(), "rules", "- bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), "merge ./rules"),
+            vec!["bait".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_relative_merge_name_without_a_slash_is_not_module_relative() {
+        // upstream returns such a name UNCHANGED (exclude.c:704-715), so the
+        // open resolves against the daemon's working directory. MEASURED:
+        // `filter = merge rules` is rc 5 `failed to open exclude file rules`
+        // even with a `rules` file sitting in the module root - which is
+        // exactly the fixture this builds.
+        let dir = tempfile::tempdir().expect("temp dir");
+        merge_file(dir.path(), "rules", "- bait\n");
+        let err = filter_rules(dir.path(), "merge rules").expect_err("must refuse");
+        assert!(
+            err.to_string().contains("failed to open exclude file"),
+            "unexpected refusal: {err}"
+        );
+    }
+
+    #[test]
+    fn the_exclude_self_modifier_hides_the_merge_files_basename() {
+        // upstream: exclude.c:1557-1567 - `e` adds an exclude of the merge
+        // file's BASENAME before the file is read.
+        //
+        // ⚠ PINNED AS A DIVERGENCE, not asserted as correct. Upstream's
+        // `parse_filter_file` then finds the merge file hidden by the rule it
+        // just added and treats it as non-existent (exclude.c:1636-1657), so
+        // `filter = .e FILE` upstream reads NOTHING: MEASURED rc 0 with `bait`
+        // SERVED. oc adds the basename exclude and still merges, hiding
+        // strictly more. This cell exists so the arm that adds the exclude is
+        // not silently dead, and so the day the self-suppression lands the cell
+        // reddens and names the decision.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!(".e {path}")),
+            vec!["rules".to_string(), "bait".to_string()]
+        );
+    }
+
+    // A backslash is an ordinary filename byte on this platform, which is the
+    // only place the rule can be exercised: Windows rejects it in a name, and
+    // the daemon refuses to run there at all.
+    #[cfg(unix)]
+    #[test]
+    fn the_exclude_self_basename_does_not_split_on_a_backslash() {
+        // upstream: exclude.c:1557-1567 finds the basename with
+        // `strrchr(name, '/')` - `/` is the ONLY separator, so a backslash is
+        // pattern text. Same rule as the daemon glob expander (util1.c:749).
+        // This is what makes `merge_file`'s `/` spelling load-bearing rather
+        // than cosmetic: split on the host separator instead and a Windows-
+        // spelled path yields no basename at all.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), r"a\b", "- bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!(".e {path}")),
+            vec![r"a\b".to_string(), "bait".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_no_prefix_merge_reads_every_record_as_a_pattern() {
+        // upstream: `-`/`+`/`C` set FILTRULE_NO_PREFIXES (exclude.c:1381-1391,
+        // :1409-1415). MEASURED: `filter = .- FILE` over a file holding
+        // `- bait` serves every file, because the pattern is the whole `- bait`.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), &format!(".- {path}")),
+            vec!["- bait".to_string()]
+        );
+        let bare = merge_file(dir.path(), "bare", "bait\n");
+        let included = filter_rules(dir.path(), &format!(".+ {bare}")).expect("merge refused");
+        assert_eq!(included[0].rule_type, protocol::filters::RuleType::Include);
+        assert_eq!(
+            filter_patterns(dir.path(), &format!("merge,- {path}")),
+            vec!["- bait".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_bang_modifier_on_a_merge_rule_is_refused() {
+        // upstream: exclude.c:1396-1399 - negation "isn't useful as a
+        // merge-file default". MEASURED: rc 5, `invalid modifier '!' at
+        // position 1`.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait\n");
+        let err = filter_rules(dir.path(), &format!(".! {path}")).expect_err("must refuse");
+        assert!(
+            err.to_string()
+                .starts_with("invalid modifier '!' at position 1"),
+            "unexpected refusal: {err}"
+        );
+    }
+
+    #[test]
+    fn the_inert_merge_modifiers_still_merge() {
+        // MEASURED: `.n`, `.p`, `.x`, `.s`, `.r` and `./` are each rc 0 with
+        // `bait` hidden - indistinguishable from a plain merge on this list.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "- bait\n");
+        for modifier in ["n", "p", "x", "s", "r", "/"] {
+            assert_eq!(
+                filter_patterns(dir.path(), &format!(".{modifier} {path}")),
+                vec!["bait".to_string()],
+                "modifier {modifier} must not change the merged rule"
+            );
+        }
+    }
+
+    #[test]
+    fn the_per_dir_spellings_are_not_read_eagerly() {
+        // SCOPE BOUNDARY, and NOT a claim that this is upstream-faithful.
+        //
+        // ⚠ AN EARLIER VERSION OF THIS CELL ASSERTED THE OPPOSITE - that `:`
+        // and `dir-merge` add no rule because upstream's daemon list "never
+        // descends per directory". That is REFUTED. `add_rule` registers every
+        // FILTRULE_PERDIR_MERGE rule into the GLOBAL `mergelist_parents`
+        // (exclude.c:349-391) whatever list it went into, so a rule in
+        // `daemon_filter_list` is registered too; `push_local_filters` then
+        // fills that rule's own `u.mergelist` per directory and `check_filter`
+        // recurses into it. MEASURED against rsync 3.5.0, module holding
+        // `sub/.rsync-filter` = `- bait.txt`: `filter = : .rsync-filter` HIDES
+        // `sub/bait.txt`, and `filter = dir-merge rules` hides it with the merge
+        // file and the bait at the module root too. oc serves it in every one of
+        // those cells - a live divergence, tracked as its own change because it
+        // needs a `RuleType::DirMerge` wire rule rather than an eager read.
+        //
+        // The cell survives so [`merge_rule`] cannot quietly grow a `:` arm that
+        // reads the file EAGERLY: that would answer a per-directory rule with a
+        // root-only one and look like the feature while not being it.
+        let dir = tempfile::tempdir().expect("temp dir");
+        merge_file(dir.path(), "rules", "- bait\n");
+        assert_eq!(
+            filter_patterns(dir.path(), ": ./rules"),
+            vec![": ./rules".to_string()],
+            "`:` must not be read eagerly"
+        );
+        assert_eq!(
+            filter_patterns(dir.path(), "dir-merge ./rules"),
+            vec!["dir-merge ./rules".to_string()],
+            "`dir-merge` must not be read eagerly"
+        );
+    }
+
+    #[test]
+    fn an_unknown_record_inside_a_merge_file_refuses_the_module() {
+        // upstream: "Unknown filter rule" (exclude.c:1363), fatal. MEASURED:
+        // rc 5 for a merge file holding the bare word `bait`, where oc-base
+        // excluded `bait`. The DIRECTIVE keeps its bare-word fall-through,
+        // which the second half of this cell pins.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = merge_file(dir.path(), "rules", "bait\n");
+        let err = filter_rules(dir.path(), &format!("merge {path}")).expect_err("must refuse");
+        assert_eq!(err.to_string(), "Unknown filter rule: bait");
+        assert_eq!(
+            filter_patterns(dir.path(), "bait"),
+            vec!["bait".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_trailing_bang_token_clears_the_rules_before_it() {
+        // ROW B's red arm. MEASURED: `filter = - bait - ctl !` serves every
+        // file upstream. oc-base never opened a token on the `!`, so the whole
+        // value collapsed into `- bait` plus an exclude of the literal pattern
+        // `ctl !` - `bait` stayed hidden.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let rules = filter_rules(dir.path(), "- bait - ctl !").expect("filter refused");
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[2].rule_type, protocol::filters::RuleType::Clear);
+        // MEASURED: `filter = - keep ! - ctl` serves `keep` and hides `ctl`.
+        let after = filter_rules(dir.path(), "- keep ! - ctl").expect("filter refused");
+        assert_eq!(after.len(), 3);
+        assert_eq!(after[1].rule_type, protocol::filters::RuleType::Clear);
+        assert_eq!(after[2].pattern, "ctl");
+    }
+
+    #[test]
+    fn a_bang_that_opens_a_pattern_is_not_a_token_boundary() {
+        // The non-vacuity companion to the cell above, and the reason
+        // `opens_clear_rule` is narrower than upstream's rule character.
+        // MEASURED: `filter = - !bait` is ONE rule whose pattern is `!bait`
+        // (rc 0, every file served). Opening a token on every leading `!` would
+        // leave a patternless `-` and refuse it.
+        let dir = tempfile::tempdir().expect("temp dir");
+        assert_eq!(
+            filter_patterns(dir.path(), "- !bait"),
+            vec!["!bait".to_string()]
+        );
     }
 
     #[test]
