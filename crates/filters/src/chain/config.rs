@@ -288,10 +288,23 @@ impl DirMergeConfig {
     }
 
     /// Applies configured modifiers to a parsed rule.
+    ///
+    /// [`anchor_root`](Self::with_anchor_root) is deliberately absent here.
+    /// Upstream's `FILTRULE_ABS_PATH` never rewrites a pattern: it is inherited
+    /// by every record the merge file yields (it is a member of
+    /// `FILTRULES_FROM_CONTAINER`, copied in `parse_rule_tok`), and its only
+    /// effect on the stored rule is to make `add_rule` skip the merge-directory
+    /// prefix. That skip is the chain's `reanchor_dir`, which reads
+    /// [`is_anchor_root`](Self::is_anchor_root) directly, so anchoring has one
+    /// owner. Prepending `/` here additionally converted every slash-free
+    /// merge-file rule into a transfer-root anchor, which upstream's basename
+    /// branch never does.
+    ///
+    /// upstream: exclude.c:1229-1231 FILTRULES_FROM_CONTAINER
+    /// upstream: exclude.c:1261-1263 parse_rule_tok()
+    /// upstream: exclude.c:297-305 add_rule()
+    /// upstream: exclude.c:1016-1021 rule_matches()
     pub(super) fn apply_modifiers(&self, mut rule: FilterRule) -> FilterRule {
-        if self.anchor_root {
-            rule = rule.anchor_to_root();
-        }
         if self.perishable {
             rule = rule.with_perishable(true);
         }
