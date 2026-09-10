@@ -1,4 +1,5 @@
-//! create-class SEC-1.h cutover: `mkdirat`, `symlinkat`, `linkat`.
+//! create-class SEC-1.h cutover: `mkdirat`, `symlinkat`, `linkat`,
+//! `mknodat`, `mkfifoat`.
 //!
 //! Each primitive anchors the new entry on a parent dirfd so a TOCTOU
 //! swap on a mid-path component cannot redirect the create to an
@@ -156,6 +157,96 @@ pub fn linkat(
             0,
         )
     };
+
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Issue `mknodat(dirfd, name, mode, dev)`.
+///
+/// `mode` carries the file-type bits (`S_IFCHR`, `S_IFBLK`, `S_IFIFO`,
+/// `S_IFSOCK`, `S_IFREG`) alongside the permission bits, exactly as
+/// upstream's `do_mknod_at()` passes `file->mode` through. The leaf is
+/// resolved relative to `dirfd` and `mknodat(2)` never follows a symlink
+/// standing at it, so neither a mid-path swap nor a leaf plant can
+/// redirect the new node.
+///
+/// This calls the platform C library's `mknodat` symbol rather than
+/// issuing the raw syscall, matching the path-based `mknod()` this
+/// module's callers came from: `fakeroot`/`fakeroot-ng` fake `CAP_MKNOD`
+/// by `LD_PRELOAD`-interposing that symbol, and a raw syscall is never
+/// intercepted. Upstream calls libc `mknodat()` for the same reason.
+///
+/// `name` must not contain an interior NUL byte; callers that pull names
+/// from `Path::file_name` cannot trigger this.
+///
+/// # Errors
+///
+/// Surfaces the underlying syscall error verbatim. Notable cases:
+/// - `EEXIST` when `name` already exists beneath `dirfd`.
+/// - `EPERM` when the caller lacks `CAP_MKNOD` for a device node.
+/// - `EINVAL`/`EOPNOTSUPP` when the filesystem cannot materialise this
+///   node type (sockets outside Linux; see [`mkfifoat`] for the FIFO
+///   retry upstream performs on that failure).
+/// - `EINVAL` when `name` contains an interior NUL byte (translated from
+///   [`std::ffi::NulError`]).
+// upstream: syscall.c:1285-1287 do_mknod_at() - mknodat() on the walked parent
+pub fn mknodat(dirfd: BorrowedFd<'_>, name: &OsStr, mode: u32, dev: u64) -> io::Result<()> {
+    let c_name =
+        CString::new(name.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+
+    // SAFETY:
+    // - `dirfd.as_raw_fd()` returns the raw fd of a `BorrowedFd<'_>`
+    //   whose lifetime is bound to the borrow and outlives the syscall.
+    // - `c_name.as_ptr()` is a valid NUL-terminated C string borrowed
+    //   for the duration of the call; the kernel does not retain the
+    //   pointer past return.
+    // - `mode` and `dev` are plain integers the kernel interprets; an
+    //   unsupported combination is rejected with an errno, never UB.
+    #[allow(unsafe_code)]
+    let rc = unsafe {
+        libc::mknodat(
+            dirfd.as_raw_fd(),
+            c_name.as_ptr(),
+            mode as libc::mode_t,
+            dev as libc::dev_t,
+        )
+    };
+
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// Issue `mkfifoat(dirfd, name, mode)`.
+///
+/// The type-specific retry for the one node kind `mknodat(2)` cannot
+/// always make: the BSDs, macOS and Solaris reject `S_IFIFO` there. The
+/// capability is filesystem-dependent, so upstream decides it per call
+/// rather than probing at build time, and the retry stays on the SAME
+/// held dirfd so the confinement guarantee is unchanged.
+///
+/// `name` must not contain an interior NUL byte.
+///
+/// # Errors
+///
+/// Surfaces the underlying syscall error verbatim, plus `EINVAL` when
+/// `name` contains an interior NUL byte.
+// upstream: syscall.c:1288-1300 do_mknod_at() - the mkfifoat() retry
+pub fn mkfifoat(dirfd: BorrowedFd<'_>, name: &OsStr, mode: u32) -> io::Result<()> {
+    let c_name =
+        CString::new(name.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+
+    // SAFETY: same argument shape as `mknodat` above - a borrowed fd that
+    // outlives the call, a NUL-terminated name the kernel does not retain,
+    // and a mode the kernel validates itself.
+    #[allow(unsafe_code)]
+    let rc = unsafe { libc::mkfifoat(dirfd.as_raw_fd(), c_name.as_ptr(), mode as libc::mode_t) };
 
     if rc == 0 {
         Ok(())

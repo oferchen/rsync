@@ -45,8 +45,8 @@ mod tests;
 
 pub use create::{
     CloneAttempt, confined_clone_file, confined_create_new, confined_link_anonymous, linkat,
-    linkat_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback, symlinkat,
-    symlinkat_via_sandbox_or_fallback,
+    linkat_via_sandbox_or_fallback, mkdirat, mkdirat_via_sandbox_or_fallback, mkfifoat, mknodat,
+    symlinkat, symlinkat_via_sandbox_or_fallback,
 };
 pub use lstat::{LstatOutcome, lstat_via_sandbox_or_fallback};
 pub use metadata::{AtMetadata, fstatat_follow, fstatat_nofollow};
