@@ -657,10 +657,16 @@ fn reconstruct_pattern(wire_rule: &FilterRuleWireFormat) -> String {
 /// switching the config to CVS-mode parsing and disabling inheritance, and
 /// mark the rules as perishable when the negotiated protocol is >= 30.
 ///
+/// The `/` modifier (`:/ NAME`) arrives as `wire_rule.anchored` and becomes
+/// [`DirMergeConfig::with_anchor_root`]; a leading `/` on the merge filename
+/// (`: /NAME`, the `-F` spelling) is a lookup path, not an anchor.
+///
 /// # Upstream Reference
 ///
 /// - `exclude.c:parse_filter_str()` - modifier flag parsing for dir-merge rules
 /// - `exclude.c:1248-1254` - `C` modifier implies word-split + no-inherit + CVS-mode
+/// - `exclude.c:1392-1394` - the `/` modifier is the only FILTRULE_ABS_PATH source
+///   on a merge rule (`exclude.c:297-300` skips the from-slash inference)
 fn wire_rule_to_dir_merge_config(
     wire_rule: &FilterRuleWireFormat,
     cvs_perishable: bool,
@@ -682,15 +688,32 @@ fn wire_rule_to_dir_merge_config(
         lossy.as_ref()
     };
 
-    // upstream: exclude.c - a leading '/' on the merge filename means the
-    // file is only looked for in the transfer root directory (anchor_root).
-    // Strip the '/' so Path::join() produces a relative path.
-    let (filename, anchor_root) = match pattern.strip_prefix('/') {
-        Some(stripped) => (stripped, true),
-        None => (pattern, false),
-    };
+    // upstream: exclude.c:696-712 parse_merge_name and exclude.c:348-353
+    // add_rule - a leading '/' on the merge FILENAME only decides where the
+    // file is looked up; the per-directory scan uses the name after the last
+    // '/'. It does NOT anchor the rules read out of that file. Strip it so
+    // Path::join() produces a relative path, and nothing more. This mirrors
+    // the client-side spelling in
+    // `cli/src/frontend/filter_rules/parsing/directives.rs`, which strips the
+    // same slash without touching the anchor.
+    let filename = pattern.strip_prefix('/').unwrap_or(pattern);
+
+    // upstream: exclude.c:1392-1394 - the `/` MODIFIER (`:/ NAME`) is the sole
+    // source of FILTRULE_ABS_PATH on a merge rule: exclude.c:297-300 skips the
+    // ABS_PATH-from-leading-slash inference entirely for FILTRULE_MERGE_FILE.
+    // ABS_PATH is in FILTRULES_FROM_CONTAINER (exclude.c:1229-1231), so it is
+    // inherited by every record the merge file yields, which makes those
+    // records match against the transfer-root path instead of being
+    // re-anchored to the merge file's own directory (exclude.c:279-305 with
+    // XFLG_ANCHORED2ABS, set for per-directory loads at exclude.c:827 and
+    // exclude.c:912-913). `DirMergeConfig::with_anchor_root` is that skip.
+    //
+    // The wire format carries the modifier in `anchored`, never in the pattern
+    // body (`prefix.rs:149` emits it as the `/` prefix byte for merge rules,
+    // `wire.rs:585` parses it back), so reading the pattern alone silently
+    // dropped it.
     let mut config = DirMergeConfig::new(filename);
-    if anchor_root {
+    if wire_rule.anchored {
         config = config.with_anchor_root(true);
     }
 
@@ -869,11 +892,21 @@ mod tests {
         }
     }
 
+    /// `: /.rsync-filter` - the `-F` spelling, which an upstream client sends
+    /// verbatim (`exclude.c:send_rules()` writes `ent->pattern` whole). The
+    /// leading `/` is a lookup path only: `exclude.c:348-353` takes the name
+    /// after the last `/` for the per-directory scan, and `exclude.c:297-300`
+    /// refuses to infer FILTRULE_ABS_PATH from a slash on a FILTRULE_MERGE_FILE
+    /// rule. Measured against a real rsync 3.5.0 daemon over loopback TCP:
+    /// with `- /bait.txt` in `sub/.rsync-filter`, upstream hides
+    /// `sub/bait.txt` under this filter; treating the slash as an anchor
+    /// served it.
     #[test]
-    fn wire_rule_to_dir_merge_config_strips_leading_slash() {
+    fn wire_rule_to_dir_merge_config_leading_slash_is_a_path_not_an_anchor() {
         let wire_rule = make_dir_merge_wire_rule("/.rsync-filter");
         let config = wire_rule_to_dir_merge_config(&wire_rule, true);
         assert_eq!(config.filename(), ".rsync-filter");
+        assert!(!config.is_anchor_root());
     }
 
     #[test]
@@ -881,6 +914,38 @@ mod tests {
         let wire_rule = make_dir_merge_wire_rule(".rsync-filter");
         let config = wire_rule_to_dir_merge_config(&wire_rule, true);
         assert_eq!(config.filename(), ".rsync-filter");
+        assert!(!config.is_anchor_root());
+    }
+
+    /// `:/ .rsync-filter` - the `/` MODIFIER, which `wire.rs:585` decodes into
+    /// `anchored` with a bare pattern body. It is the only FILTRULE_ABS_PATH
+    /// source on a merge rule (`exclude.c:1392-1394`), and ABS_PATH is in
+    /// FILTRULES_FROM_CONTAINER (`exclude.c:1229-1231`), so every record the
+    /// merge file yields skips the re-anchoring to the merge file's own
+    /// directory that `XFLG_ANCHORED2ABS` performs (`exclude.c:279-305`,
+    /// `exclude.c:912-913`). Measured against a real rsync 3.5.0 daemon over
+    /// loopback TCP: with `- /bait.txt` in `sub/.rsync-filter`, upstream
+    /// SERVES `sub/bait.txt` under `:/` and hides it under `:`. Reading only
+    /// the pattern body collapsed both arms onto the hidden reading.
+    #[test]
+    fn wire_rule_to_dir_merge_config_slash_modifier_anchors_to_the_root() {
+        let mut wire_rule = make_dir_merge_wire_rule(".rsync-filter");
+        wire_rule.anchored = true;
+        let config = wire_rule_to_dir_merge_config(&wire_rule, true);
+        assert_eq!(config.filename(), ".rsync-filter");
+        assert!(config.is_anchor_root());
+    }
+
+    /// `:/ /.rsync-filter` - modifier and lookup path together. The filename
+    /// still loses its leading `/`, and the anchor still comes from the
+    /// modifier, so the two spellings compose instead of masking each other.
+    #[test]
+    fn wire_rule_to_dir_merge_config_slash_modifier_and_leading_slash_compose() {
+        let mut wire_rule = make_dir_merge_wire_rule("/.rsync-filter");
+        wire_rule.anchored = true;
+        let config = wire_rule_to_dir_merge_config(&wire_rule, true);
+        assert_eq!(config.filename(), ".rsync-filter");
+        assert!(config.is_anchor_root());
     }
 
     /// A `:w .filt` dir-merge arrives over the wire with `word_split=true`.
