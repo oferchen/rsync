@@ -31,6 +31,7 @@
 
 mod basis;
 mod context;
+mod daemon_filter;
 mod dest_root;
 mod directory;
 mod file_list;
@@ -56,12 +57,13 @@ pub use self::basis::{
     find_basis_file_with_config, set_checksum_threads_policy,
 };
 pub use self::context::ReceiverContext;
+pub(in crate::receiver) use self::daemon_filter::DaemonFilterGate;
 pub(in crate::receiver) use self::dest_root::dest_arg_has_trailing_slash;
 pub use self::dest_root::ensure_dest_root_exists;
 pub use self::file_list::IncrementalFileListReceiver;
 pub(in crate::receiver) use self::pipeline_setup::{
     PipelineSetup, apply_acls_from_receiver_cache, compile_daemon_filter_set,
-    daemon_filter_refuses_ancestor,
+    compile_daemon_merge_configs,
 };
 pub use self::stats::{ListOnlyEntry, SenderStats, TransferStats};
 pub use self::wire::{
