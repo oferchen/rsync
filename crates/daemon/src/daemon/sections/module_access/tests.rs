@@ -3713,8 +3713,7 @@ mod module_access_tests {
             .collect()
     }
 
-    /// Writes a merge file under `dir` and returns its path spelled the way a
-    /// daemon parameter spells one: `/`-separated.
+    /// Spells `path` the way a daemon parameter spells one: `/`-separated.
     ///
     /// `Path::display()` would emit the host separator, and a daemon filter path
     /// has exactly one separator - upstream's `parse_merge_name` finds the
@@ -3722,12 +3721,22 @@ mod module_access_tests {
     /// that, so a backslash-spelled path hides the basename from the `e`
     /// modifier. Only the host separator is rewritten, never a byte that could
     /// be part of a legitimate name.
-    fn merge_file(dir: &Path, name: &str, content: &str) -> String {
-        let path = dir.join(name);
-        std::fs::write(&path, content).expect("write merge file");
+    ///
+    /// Every test that puts a temp-dir path into a filter directive spells it
+    /// through here. On Windows `dir.join(..)` yields backslashes, and a
+    /// directive spelled that way behaves differently from the same directive
+    /// on Unix - which is a property of the fixture, not of the daemon.
+    fn daemon_filter_path(path: &Path) -> String {
         path.to_str()
             .expect("utf-8 merge path")
             .replace(std::path::MAIN_SEPARATOR, "/")
+    }
+
+    /// Writes a merge file under `dir` and returns its daemon-spelled path.
+    fn merge_file(dir: &Path, name: &str, content: &str) -> String {
+        let path = dir.join(name);
+        std::fs::write(&path, content).expect("write merge file");
+        daemon_filter_path(&path)
     }
 
     #[test]
@@ -3979,8 +3988,7 @@ mod module_access_tests {
         // MEASURED against rsync 3.5.0: `filter = .e NOSUCHFILE` is rc 0 with
         // every file served, while `filter = merge NOSUCHFILE` is rc 5.
         let dir = tempfile::tempdir().expect("temp dir");
-        let missing = dir.path().join("nosuchfile");
-        let missing = missing.to_str().expect("utf-8 path");
+        let missing = daemon_filter_path(&dir.path().join("nosuchfile"));
         assert_eq!(
             filter_patterns(dir.path(), &format!(".e {missing}")),
             vec!["nosuchfile".to_string()]
