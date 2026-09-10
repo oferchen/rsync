@@ -151,7 +151,7 @@ pub use error::FilterError;
 pub use implied::{ImpliedIncludeOptions, ImpliedIncludes};
 pub use merge::{
     FilterFileRecords, MAX_MERGE_DEPTH, MergeFileError, depth_limit_exceeded,
-    filter_file_line_is_rule, filter_file_records, merge_name_overflows, merge_self_exclude_name,
+    filter_file_line_is_rule, filter_file_records, merge_file_basename, merge_name_overflows,
     parse_rules, read_rules, read_rules_recursive,
 };
 pub use overlong::{is_over_long, over_long_filter};
