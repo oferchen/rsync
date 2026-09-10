@@ -414,45 +414,6 @@ fn resolve_all_user_groups(_uid: Option<u32>) -> io::Result<Vec<u32>> {
     Ok(Vec::new())
 }
 
-/// Applies chroot and privilege restrictions for a daemon module.
-///
-/// Called from the module access flow after authentication succeeds but before
-/// the transfer begins. The order (chroot then privilege drop) matches
-/// upstream and is required for security: the chroot needs root privileges,
-/// so the uid/gid drop must come after it.
-///
-/// Errors are propagated unchanged so the caller can send an `@ERROR:` reply
-/// to the client and close the connection - the daemon never silently
-/// continues with reduced or escalated privileges.
-///
-/// upstream: `clientserver.c:rsync_module()` lines 978-1044 - chroot, then
-/// `setgid`/`setgroups`, then `setuid`. Default uid/gid is `nobody:nobody`
-/// when running as root and the module config does not override it
-/// (`clientserver.c:779,818`); oc-rsync only drops when the config sets an
-/// explicit numeric `uid`/`gid` and otherwise relies on the daemon-level
-/// `uid`/`gid` directives applied before the accept loop.
-#[cfg(test)]
-fn apply_module_privilege_restrictions(
-    module: &ModuleDefinition,
-    log_sink: &SharedLogSink,
-) -> io::Result<()> {
-    if module.use_chroot {
-        chroot_or_fallback(module, log_sink)?;
-    }
-
-    // Test scaffold only: drop for explicitly-configured uid/gid. The
-    // root-defaults-to-nobody policy (`am_root`) is exercised by the live
-    // `apply_privilege_restrictions_with_upstream_errors` path and by the
-    // `resolve_drop_target` unit tests; performing a real setuid here would
-    // irreversibly mutate the shared test process when the suite runs as root.
-    if module.uid.is_some() || module.gid.is_some() {
-        let target = resolve_drop_target(module, false)?;
-        drop_privileges(target.uid, &target.gids, log_sink)?;
-    }
-
-    Ok(())
-}
-
 /// Creates a fallback [`SharedLogSink`] for privilege operations when no log file
 /// is configured.
 fn open_privilege_fallback_sink() -> SharedLogSink {
@@ -483,32 +444,217 @@ fn test_log_sink() -> SharedLogSink {
 mod privilege_tests {
     use super::*;
 
-    #[test]
-    fn apply_module_privilege_restrictions_noop_when_disabled() {
-        let module = ModuleDefinition {
-            use_chroot: false,
-            uid: None,
-            gid: None,
-            ..Default::default()
-        };
-        let sink = test_log_sink();
-        let result = apply_module_privilege_restrictions(&module, &sink);
-        assert!(result.is_ok());
+    /// Collects everything the daemon writes to the client, so the pre-`OK`
+    /// `@ERROR:` line the connection-setup sequence emits is readable as the
+    /// wire bytes it really is.
+    #[cfg(unix)]
+    struct ReplyCapture(Arc<Mutex<Vec<u8>>>);
+
+    #[cfg(unix)]
+    impl io::Write for ReplyCapture {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .expect("reply capture lock")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 
+    /// Runs the REAL connection-setup sequence
+    /// ([`apply_privilege_restrictions_with_upstream_errors`], the only
+    /// privilege-ordering owner) over a captured stdio connection and returns
+    /// `(outcome_is_some, reply_bytes_as_text)`.
+    ///
+    /// Deliberately no seam of its own: the observable is the `@ERROR:` line the
+    /// production function sends to the client, which is what tells the two
+    /// failure stages apart on the wire, plus the confinement root it publishes
+    /// through `fast_io::confinement` - the same state the ownership walk and
+    /// the receiver's path resolution read in production.
+    #[cfg(unix)]
+    fn run_privilege_setup(module: ModuleDefinition) -> (bool, String) {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let pair = crate::daemon_stream::StdioPair::new(
+            Box::new(io::Cursor::new(Vec::new())),
+            Box::new(ReplyCapture(Arc::clone(&captured))),
+        );
+        let mut reader = BufReader::new(DaemonStream::stdio(pair));
+        let mut limiter: Option<BandwidthLimiter> = None;
+        let mut session_exit_code: Option<ExitCode> = None;
+        let sink = test_log_sink();
+        let runtime = ModuleRuntime::new(module, None);
+        let mut ctx = ModuleRequestContext {
+            reader: &mut reader,
+            limiter: &mut limiter,
+            peer_ip: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            session_peer_host: None,
+            module_peer_host: None,
+            reverse_lookup: false,
+            request: &runtime.name,
+            log_sink: Some(&sink),
+            messages: LegacyMessageCache::shared(),
+            early_input_data: None,
+            client_digests: AdvertisedDigests::Absent,
+            session_exit_code: &mut session_exit_code,
+            conn_state: ConnectionState::Authenticating,
+        };
+
+        let outcome =
+            apply_privilege_restrictions_with_upstream_errors(&mut ctx, &runtime, None, &[])
+                .expect("the setup sequence must not fail at the transport layer");
+
+        let bytes = captured.lock().expect("reply capture lock").clone();
+        (
+            outcome.is_some(),
+            String::from_utf8_lossy(&bytes).into_owned(),
+        )
+    }
+
+    /// A uid with no `passwd` entry, so a `gid = *` group enumeration against it
+    /// cannot resolve. Probed rather than hardcoded: `(uid_t)-2` is a real
+    /// account (`nobody`) on macOS, and any fixed number can collide with a
+    /// site-local account. Panics rather than skipping if every candidate
+    /// resolves - a silent skip would make the ordering test vacuous.
+    #[cfg(unix)]
+    fn unresolvable_uid() -> u32 {
+        const CANDIDATES: [u32; 3] = [4_000_000_001, 3_999_999_991, 2_147_483_601];
+        CANDIDATES
+            .into_iter()
+            .find(|uid| resolve_all_user_groups(Some(*uid)).is_err())
+            .expect("no candidate uid lacks a passwd entry; the fixture cannot discriminate")
+    }
+
+    /// WHY: upstream resolves the drop identity at clientserver.c:851-875
+    /// (`user_to_uid`, `want_all_groups`, `add_a_group`) and does not
+    /// `chroot()` until clientserver.c:1050. Every impure arm of
+    /// `resolve_drop_target` is an NSS lookup, so a jail without
+    /// `/etc/passwd`, `/etc/group` and the NSS modules cannot answer it -
+    /// resolving after the chroot turns the `nobody` default a root daemon
+    /// applies to every module into `@ERROR: invalid uid nobody` and the module
+    /// never serves.
+    ///
+    /// The two stages are told apart by the `@ERROR:` line the daemon puts on
+    /// the wire, so the fixture makes BOTH fail and asserts which one spoke
+    /// first: an unresolvable `uid` under `gid = *` (resolution fails) plus an
+    /// explicit `use chroot = yes` on a path that does not exist (chroot
+    /// fails). Resolution-first replies `@ERROR: setuid failed`;
+    /// chroot-first replies `@ERROR: chroot failed`.
+    ///
+    /// Root-independent: chroot to a missing path fails with `ENOENT` for root
+    /// too, and the resolution failure precedes every syscall, so no `setuid`
+    /// ever runs in the test process.
+    #[cfg(unix)]
     #[test]
-    fn apply_module_privilege_restrictions_noop_when_no_uid_gid_no_chroot() {
+    fn privilege_setup_resolves_the_drop_identity_before_the_chroot() {
         let module = ModuleDefinition {
-            name: "test".to_owned(),
-            path: PathBuf::from("/tmp/test"),
-            use_chroot: false,
-            uid: None,
-            gid: None,
+            name: "ordering".to_owned(),
+            path: PathBuf::from("/nonexistent_oc_rsync_order_xyz_31337"),
+            use_chroot: true,
+            use_chroot_explicit: true,
+            uid: Some(unresolvable_uid()),
+            gid: Some(GidSetting::AllUserGroups { extra: Vec::new() }),
             ..Default::default()
         };
-        let sink = test_log_sink();
-        let result = apply_module_privilege_restrictions(&module, &sink);
-        assert!(result.is_ok());
+
+        let (served, reply) = run_privilege_setup(module);
+        assert!(
+            !served,
+            "both stages fail, so the module must not be served"
+        );
+        assert!(
+            !reply.contains(AtError::ChrootFailed.line().as_ref()),
+            "the chroot ran before the identity was resolved; \
+             identity resolution must precede it (clientserver.c:851-875 vs :1050), got: {reply:?}"
+        );
+        assert_eq!(
+            reply,
+            format!("{}\n", AtError::SetuidFailed.line()),
+            "an unresolvable drop identity must be reported from the resolution \
+             stage, before any chroot is attempted, got: {reply:?}"
+        );
+    }
+
+    /// WHY: upstream opens `module_dirfd` on the served root at
+    /// clientserver.c:1065, AFTER `chroot()` at :1050 - the root it pins is the
+    /// post-chroot one. oc publishes the same root through
+    /// `fast_io::confinement`, so hoisting that publish above the chroot would
+    /// install a pre-chroot absolute path as the session root and would install
+    /// it even for a connection the chroot then refuses to serve.
+    ///
+    /// Reads the published root back through the production accessor
+    /// (`session_confinement_root`, the same one the ownership walk uses), not
+    /// through a test hook.
+    #[cfg(unix)]
+    #[test]
+    fn privilege_setup_publishes_no_confinement_root_when_the_chroot_fails() {
+        let module = ModuleDefinition {
+            name: "chroot-fails".to_owned(),
+            path: PathBuf::from("/nonexistent_oc_rsync_publish_xyz_31337"),
+            use_chroot: true,
+            use_chroot_explicit: true,
+            ..Default::default()
+        };
+
+        let (served, _reply) = run_privilege_setup(module);
+        assert!(
+            !served,
+            "an explicit chroot that fails must refuse the module"
+        );
+        assert_eq!(
+            fast_io::confinement::session_confinement_root(),
+            None,
+            "a refused chroot must leave no session root published; the publish \
+             belongs below the chroot (clientserver.c:1050 then :1065)"
+        );
+    }
+
+    /// WHY: the no-restriction early return - no chroot, no privilege drop - is
+    /// the commonest rootless deployment, and it must still publish the module
+    /// root: it is precisely the path a publish placed after the chroot block
+    /// would skip, leaving the ownership walk with no root at all.
+    ///
+    /// Doubles as the control for the sibling test above: it proves
+    /// `session_confinement_root()` does report a root when the sequence
+    /// reaches the publish, so that test's `None` is a decision and not a
+    /// permanently-empty observable.
+    #[cfg(unix)]
+    #[test]
+    fn privilege_setup_publishes_the_confinement_root_on_the_no_restriction_path() {
+        if platform::privilege::is_effective_root() {
+            // A root daemon defaults to dropping to `nobody`, so this is not the
+            // no-restriction path there - and letting the drop run would
+            // irreversibly change the test process.
+            return;
+        }
+        let root = tempfile::tempdir().expect("create module root");
+        let module = ModuleDefinition {
+            name: "plain".to_owned(),
+            path: root.path().to_path_buf(),
+            use_chroot: false,
+            use_chroot_explicit: true,
+            ..Default::default()
+        };
+
+        let (served, reply) = run_privilege_setup(module);
+        assert!(
+            served,
+            "an unrestricted module must be served, got: {reply:?}"
+        );
+        // The publish canonicalises the root, which on macOS resolves the
+        // `/var` -> `/private/var` symlink the temp directory sits behind.
+        let expected = root
+            .path()
+            .canonicalize()
+            .expect("canonicalise module root");
+        assert_eq!(
+            fast_io::confinement::session_confinement_root(),
+            Some(expected),
+            "the no-restriction early return must still publish the module root"
+        );
     }
 
     /// Chroot failure must propagate so the daemon refuses to serve rather
