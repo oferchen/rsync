@@ -3888,3 +3888,230 @@ fn cross_device_symlink_tier_inside_the_confinement_root_still_places_the_backup
         "a symlink-tier backup landing inside the root must be placed, not refused"
     );
 }
+
+/// A special-file pre-image inside a confinement root, plus an out-of-root
+/// directory a trusted `--backup-dir` symlink aims at.
+///
+/// The DEVICE tier is only reachable through the copy-tree fallback - the link
+/// and rename tiers have to fail with `EXDEV` first (backup.c:316-325 ->
+/// backup.c:358-365) - which a single-filesystem fixture cannot arrange, so
+/// these cells call the tier's entry point directly, as the other
+/// `copy_entry_to_backup` cells do.
+#[cfg(unix)]
+struct DeviceTierFixture {
+    _temp: tempfile::TempDir,
+    confine_root: PathBuf,
+    source: PathBuf,
+    outside: PathBuf,
+    backup_path: PathBuf,
+}
+
+/// Builds a FIFO pre-image inside the root and points the backup area at a
+/// directory through a trusted-owned symlink, outside the root when
+/// `target_outside` is set.
+///
+/// A FIFO rather than a device node on purpose: `mknod(2)` for a character or
+/// block device needs privileges the test suite does not have, while
+/// `--specials` routes a FIFO down the SAME `copy_special_to_backup` call
+/// (backup.c:358 gates devices and specials in one condition and hands both to
+/// the same `do_mknod_at`). The tier is therefore exercised unprivileged.
+#[cfg(unix)]
+fn device_tier_fixture(target_outside: bool) -> DeviceTierFixture {
+    let temp = test_support::create_tempdir();
+    let base = temp.path().to_path_buf();
+    let confine_root = base.join("tree");
+    let dest = confine_root.join("dest");
+    let outside = base.join("outside");
+    let inside = dest.join("realbak");
+
+    fs::create_dir_all(&dest).expect("create dest");
+    fs::create_dir_all(&outside).expect("create the out-of-root directory");
+    fs::create_dir_all(&inside).expect("create the in-root backup dir");
+
+    let source = dest.join("pipe");
+    mkfifo_for_tests(&source, 0o644).expect("mkfifo");
+
+    let link_target = if target_outside { &outside } else { &inside };
+    std::os::unix::fs::symlink(link_target, dest.join("bak")).expect("plant the dir symlink");
+
+    DeviceTierFixture {
+        _temp: temp,
+        confine_root,
+        source,
+        outside,
+        backup_path: dest.join("bak/pipe~"),
+    }
+}
+
+/// WITNESS (confinement-root half). The DEVICE tier must not re-materialise a
+/// special-file pre-image through a `--backup-dir` that resolves out of the
+/// confinement root.
+///
+/// This is the residual tier of the backup ladder: the link, rename, copy and
+/// symlink tiers each resolve their operator path through the ownership walk,
+/// and a node created by a path-based `mknod(2)` here would put a working FIFO -
+/// and, through the metadata reapply that follows, the pre-image's mode, owner
+/// and times - outside the module a daemon serves.
+///
+/// upstream: `backup.c:358-365` `make_backup_inner()` hands the DEVICE branch to
+/// `do_mknod_at()`, inside the `operator_path_resolve = 1` window
+/// `make_backup()` raises around the whole backup (backup.c:437-449);
+/// `syscall.c:1268-1305` `do_mknod_at()` under that flag resolves the parent
+/// with `owner_walk_parent()` and creates the leaf with `mknodat`.
+#[cfg(unix)]
+#[test]
+fn device_backup_leaving_the_confinement_root_is_refused() {
+    let fx = device_tier_fixture(true);
+    let file_type = fs::symlink_metadata(&fx.source)
+        .expect("stat the pre-image")
+        .file_type();
+
+    let _session = install_backup_confinement(Some(&fx.confine_root));
+    let result = copy_entry_to_backup(&fx.source, &fx.backup_path, file_type, true, true, false);
+
+    assert!(
+        result.is_err(),
+        "a special-file backup that can only land outside the confinement root \
+         must fail closed, not be materialised there"
+    );
+    let escaped = fx.outside.join("pipe~");
+    assert!(
+        !escaped.exists(),
+        "the DEVICE tier created a node at {} - it resolved an operator-named \
+         path out of the confinement root",
+        escaped.display()
+    );
+}
+
+/// NON-VACUITY COMPANION for
+/// [`device_backup_leaving_the_confinement_root_is_refused`]: the same fixture
+/// with no confinement root installed - the plain local client, upstream's NULL
+/// `confine_root` - follows the trusted symlink and really does create the node
+/// outside the tree.
+///
+/// Without this the witness would pass just as well on a fixture where no
+/// special-file backup could ever be made: `--specials` off, a source that is
+/// not a special file, a backup path whose parent does not exist. This asserts
+/// the escape HAPPENS when the root is absent, which is what makes the witness
+/// a discrimination.
+#[cfg(unix)]
+#[test]
+fn device_backup_leaving_an_unconfined_session_is_created_outside() {
+    use crate::local_copy::context::BackupStrategy;
+    use std::os::unix::fs::FileTypeExt;
+
+    let fx = device_tier_fixture(true);
+    let file_type = fs::symlink_metadata(&fx.source)
+        .expect("stat the pre-image")
+        .file_type();
+
+    let _session = install_backup_confinement(None);
+    let strategy = copy_entry_to_backup(&fx.source, &fx.backup_path, file_type, true, true, false)
+        .expect("with nothing to be outside of, the special-file backup must succeed");
+
+    assert_eq!(strategy, Some(BackupStrategy::Device));
+    let escaped = fx.outside.join("pipe~");
+    assert!(
+        fs::symlink_metadata(&escaped)
+            .expect("the fixture must be able to place a special-file backup at all")
+            .file_type()
+            .is_fifo(),
+        "unconfined, the DEVICE tier follows the trusted symlink and creates the \
+         node outside the tree - so the confined cell's assertion discriminates"
+    );
+}
+
+/// NEGATIVE CONTROL. A trusted directory symlink at the `--backup-dir` whose
+/// target stays INSIDE the confinement root is still followed, so the ordinary
+/// operator layout keeps working for special files too.
+///
+/// Without it, "refuse every special-file backup through a symlinked parent" -
+/// or a confinement root so mis-anchored that nothing resolves inside it -
+/// would satisfy the witness above while breaking a legitimate `--backup-dir`.
+#[cfg(unix)]
+#[test]
+fn device_backup_staying_inside_the_confinement_root_is_created() {
+    use crate::local_copy::context::BackupStrategy;
+    use std::os::unix::fs::FileTypeExt;
+
+    let fx = device_tier_fixture(false);
+    let file_type = fs::symlink_metadata(&fx.source)
+        .expect("stat the pre-image")
+        .file_type();
+
+    let _session = install_backup_confinement(Some(&fx.confine_root));
+    let strategy = copy_entry_to_backup(&fx.source, &fx.backup_path, file_type, true, true, false)
+        .expect("an in-root landing site must still be backed up through");
+
+    assert_eq!(strategy, Some(BackupStrategy::Device));
+    assert!(
+        fs::symlink_metadata(&fx.backup_path)
+            .expect("the backup node exists")
+            .file_type()
+            .is_fifo(),
+        "a trusted symlink resolving inside the root must be followed, not refused"
+    );
+}
+
+/// WITNESS for the `--fake-super` arm, which is a DIFFERENT syscall: the node is
+/// virtualised as an inert `0600` regular placeholder rather than created with
+/// `mknod(2)`, so confining only the node-creating arm would leave the
+/// placeholder open to exactly the same redirection.
+///
+/// upstream: `syscall.c:1276-1285` `do_mknod_at()` - the `am_root < 0` arm under
+/// `operator_path_resolve` creates the placeholder with `openat()` against the
+/// walked parent "so the confinement guarantee is unchanged".
+#[cfg(unix)]
+#[test]
+fn fake_super_device_backup_leaving_the_confinement_root_is_refused() {
+    let fx = device_tier_fixture(true);
+    let file_type = fs::symlink_metadata(&fx.source)
+        .expect("stat the pre-image")
+        .file_type();
+
+    let _session = install_backup_confinement(Some(&fx.confine_root));
+    let result = copy_entry_to_backup(&fx.source, &fx.backup_path, file_type, true, true, true);
+
+    assert!(
+        result.is_err(),
+        "a --fake-super placeholder that can only land outside the confinement \
+         root must fail closed"
+    );
+    let escaped = fx.outside.join("pipe~");
+    assert!(
+        !escaped.exists(),
+        "the --fake-super arm created a placeholder at {} - it resolved an \
+         operator-named path out of the confinement root",
+        escaped.display()
+    );
+}
+
+/// NON-VACUITY COMPANION for
+/// [`fake_super_device_backup_leaving_the_confinement_root_is_refused`]: with no
+/// root installed the placeholder really is written outside the tree, so the
+/// witness's `is_err()` means "refused" and not "this arm never writes anything".
+#[cfg(unix)]
+#[test]
+fn fake_super_device_backup_leaving_an_unconfined_session_is_created_outside() {
+    use crate::local_copy::context::BackupStrategy;
+
+    let fx = device_tier_fixture(true);
+    let file_type = fs::symlink_metadata(&fx.source)
+        .expect("stat the pre-image")
+        .file_type();
+
+    let _session = install_backup_confinement(None);
+    let strategy = copy_entry_to_backup(&fx.source, &fx.backup_path, file_type, true, true, true)
+        .expect("with nothing to be outside of, the placeholder must be written");
+
+    assert_eq!(strategy, Some(BackupStrategy::Device));
+    let escaped = fx.outside.join("pipe~");
+    assert!(
+        fs::symlink_metadata(&escaped)
+            .expect("the fixture must be able to place a placeholder at all")
+            .file_type()
+            .is_file(),
+        "unconfined, the --fake-super arm follows the trusted symlink and writes \
+         the placeholder outside the tree"
+    );
+}

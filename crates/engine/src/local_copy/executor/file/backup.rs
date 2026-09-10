@@ -14,8 +14,6 @@ use crate::local_copy::LocalCopyError;
 use crate::local_copy::context::BackupStrategy;
 #[cfg(not(unix))]
 use crate::local_copy::create_symlink;
-#[cfg(unix)]
-use crate::local_copy::map_metadata_error;
 
 /// Duplicates a destination's pre-transfer bytes into the operator-named
 /// backup path, resolving that path with the ownership walk and confining the
@@ -464,8 +462,18 @@ fn create_backup_symlink(target: &Path, source: &Path, backup_path: &Path) -> io
 /// emits `make_backup: DEVICE` for both devices and specials), or `None` when
 /// the preserve gates decline it (upstream `make_backup` returns 3 without
 /// placing a backup). Under `--fake-super` the node is virtualised as a `0600`
-/// placeholder carrying the `%stat` xattr, matching `syscall.c:do_mknod()`'s
+/// placeholder carrying the `%stat` xattr, matching `syscall.c:do_mknod_at()`'s
 /// `am_root < 0` branch.
+///
+/// `backup_path` is operator-named - it is `--backup-dir` plus the transfer's
+/// relative path - so the node is created through the ownership walk bound to
+/// the session's confinement root rather than by a path-based `mknod(2)`. A
+/// trusted-owned directory symlink standing where the operator named the backup
+/// area is followed by the ownership half by design (a non-chrooted daemon owns
+/// everything it creates), so without the root check this tier would
+/// re-materialise the destination's pre-transfer node - and, through the
+/// metadata reapply the caller performs afterwards, its mode, owner and times -
+/// outside the module being served.
 /// upstream: backup.c:278 - `(am_root && preserve_devices && IS_DEVICE(mode))
 /// || (preserve_specials && IS_SPECIAL(mode))` gates `do_mknod_at`. am_root is
 /// non-zero for real root, --super, and --fake-super (options.c:90).
@@ -477,7 +485,7 @@ fn copy_special_to_backup(
     specials_enabled: bool,
     fake_super: bool,
 ) -> Result<Option<BackupStrategy>, LocalCopyError> {
-    use std::os::unix::fs::FileTypeExt;
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
     let source_meta = fs::symlink_metadata(source)
         .map_err(|error| LocalCopyError::io("stat backup source", source, error))?;
@@ -495,13 +503,17 @@ fn copy_special_to_backup(
         return Ok(None);
     }
 
-    if is_device {
-        ::metadata::create_device_node_with_fake_super(backup_path, &source_meta, fake_super)
-            .map_err(map_metadata_error)?;
-    } else {
-        ::metadata::create_fifo_with_fake_super(backup_path, &source_meta, fake_super)
-            .map_err(map_metadata_error)?;
-    }
+    // upstream: backup.c:360 `do_mknod_at(buf, file->mode, sx.st.st_rdev)` -
+    // one call for devices and specials alike, handed the source node's FULL
+    // mode (file-type bits included) and its rdev word, which `mknodat` ignores
+    // for a FIFO or socket.
+    fast_io::operator_mknod_confined(
+        backup_path,
+        source_meta.mode(),
+        source_meta.rdev(),
+        fake_super,
+    )
+    .map_err(|error| LocalCopyError::io("create backup", backup_path, error))?;
     Ok(Some(BackupStrategy::Device))
 }
 
