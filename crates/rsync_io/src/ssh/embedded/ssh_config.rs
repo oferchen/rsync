@@ -579,6 +579,20 @@ mod tests {
         assert_eq!(resolve(text, "web 1").port, Some(2222));
     }
 
+    /// Non-vacuity companion for the row above: strip the quotes and the same
+    /// line is THREE patterns, so `web` matches on its own. Without this the
+    /// quoted assertions would also hold for a tokeniser that dropped the
+    /// whole line.
+    /// Oracle: `Host web 1 other` + alias `web` gives `port 2222`, where the
+    /// quoted spelling gives `port 22`.
+    #[test]
+    fn a_bare_space_still_separates_two_host_patterns() {
+        let text = "Host web 1 other\n  Port 2222\n";
+        assert_eq!(resolve(text, "web").port, Some(2222));
+        assert_eq!(resolve(text, "1").port, Some(2222));
+        assert_eq!(resolve(text, "other").port, Some(2222));
+    }
+
     /// An escaped quote is ordinary text, so the token keeps the `"`.
     /// Oracle: `Host \"a` + alias `a` gives `port 22`.
     #[test]
