@@ -17,7 +17,12 @@ mod symlink;
 
 pub(crate) use device::copy_device;
 pub(crate) use fifo::copy_fifo;
-pub(crate) use symlink::{copy_symlink, create_symlink, symlink_target_is_safe};
+pub(crate) use symlink::{copy_symlink, symlink_target_is_safe};
+// Outside this module `create_symlink` serves only the non-Unix backup
+// fallback: on Unix the backup ladder's SYMLINK tier takes the confined
+// operator-path spelling (`fast_io::operator_symlink_confined`) instead.
+#[cfg(not(unix))]
+pub(crate) use symlink::create_symlink;
 
 /// Attempts a `--link-dest` basis hard link, reporting whether it succeeded.
 ///

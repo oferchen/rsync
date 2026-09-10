@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use crate::local_copy::LocalCopyError;
 use crate::local_copy::context::BackupStrategy;
+#[cfg(not(unix))]
 use crate::local_copy::create_symlink;
 #[cfg(unix)]
 use crate::local_copy::map_metadata_error;
@@ -170,17 +171,39 @@ pub(crate) fn create_backup_parents(
             .map_err(|error| LocalCopyError::io("create backup directory", parent, error));
     };
 
-    // Delegate the `--backup-dir` subtree to the shared helper, using a plain
-    // recursive create for each element (the local path has no receiver
-    // sandbox to anchor against).
+    // Delegate the `--backup-dir` subtree to the shared helper. The local path
+    // has no receiver sandbox to anchor against, so each element is created
+    // through the ownership walk bound to the session's confinement root -
+    // upstream's `do_mkdir_at()` under `make_backup()`'s `operator_path_resolve`
+    // (backup.c:128, backup.c:437-449). `ACCESSPERMS` is upstream's mode and
+    // 0o777 is what `create_dir_all` passed before, so the umask still decides
+    // the bits.
     create_backup_dir_parents(
         destination_root,
         backup_dir,
         parent,
         metadata_options,
-        |path| fs::create_dir_all(path),
+        create_backup_dir_confined,
     )
     .map_err(|error| LocalCopyError::io("create backup directory", parent, error))
+}
+
+/// Creates one element of a local `--backup-dir` chain through the ownership
+/// walk, bound to the session's confinement root.
+///
+/// upstream: `backup.c:128` `do_mkdir_at(backup_dir_buf, ACCESSPERMS)` and
+/// `backup.c:206` `make_path()`, both inside the `operator_path_resolve = 1`
+/// window `make_backup()` raises around the whole backup (backup.c:437-449).
+#[cfg(unix)]
+fn create_backup_dir_confined(path: &Path) -> io::Result<()> {
+    fast_io::operator_create_dir_all_confined(path, 0o777)
+}
+
+/// Non-Unix has no ownership walk to run; degrade to a plain recursive create,
+/// as the other operator-path helpers on this file do.
+#[cfg(not(unix))]
+fn create_backup_dir_confined(path: &Path) -> io::Result<()> {
+    fs::create_dir_all(path)
 }
 
 /// Creates the `--backup-dir` parent tree for a backup path, inheriting each
@@ -239,14 +262,14 @@ where
     let mut current = backup_root.clone();
     for component in rel.components() {
         current.push(component.as_os_str());
-        match fs::symlink_metadata(&current) {
+        match backup_dir_element_metadata(&current) {
             Ok(meta) if meta.is_dir() => continue,
             // upstream: backup.c:48-53 - a non-directory (including a symlink) in
             // the way is removed so it can be recreated as a directory. A
             // non-directory is never a recursive tree, so a plain unlink mirrors
-            // `delete_item` for this case (backup.c:50); `remove_file` drops a
+            // `delete_item` for this case (backup.c:50); the unlink drops a
             // symlink without following it, matching the `lstat`-based check.
-            Ok(_) => fs::remove_file(&current)?,
+            Ok(_) => remove_backup_dir_obstruction(&current)?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
         }
@@ -257,6 +280,47 @@ where
     }
 
     Ok(())
+}
+
+/// Stats one element of a `--backup-dir` chain without following it, through
+/// the ownership walk bound to the session's confinement root.
+///
+/// upstream: `backup.c:69` `validate_backup_dir()` calls `do_lstat_at()`, whose
+/// `operator_path_resolve` arm (`syscall.c:2208`, inside the shared
+/// `do_xstat_at()`) resolves the parent with `owner_walk_parent()` and
+/// `fstatat`s the leaf through it. The decision this stat feeds is "delete
+/// whatever is here", so resolving it by path is what lets a flipped component
+/// aim that deletion outside the tree.
+#[cfg(unix)]
+fn backup_dir_element_metadata(path: &Path) -> io::Result<fs::Metadata> {
+    fast_io::operator_symlink_metadata_confined(path)
+}
+
+/// Non-Unix has no ownership walk to run; degrade to a plain `lstat`.
+#[cfg(not(unix))]
+fn backup_dir_element_metadata(path: &Path) -> io::Result<fs::Metadata> {
+    fs::symlink_metadata(path)
+}
+
+/// Removes a non-directory obstruction from a `--backup-dir` chain through the
+/// ownership walk bound to the session's confinement root.
+///
+/// The confined stat above does not cover this: the component can be flipped
+/// between the two, which is upstream's `backup-dir-symlink-race` shape, so the
+/// unlink resolves its own parent chain.
+///
+/// upstream: `backup.c:75-79` `validate_backup_dir()` -
+/// `delete_item(..., DEL_FOR_BACKUP | DEL_RECURSE)`, reaching `do_unlink_at()`
+/// (`syscall.c:673`) inside `make_backup()`'s `operator_path_resolve` window.
+#[cfg(unix)]
+fn remove_backup_dir_obstruction(path: &Path) -> io::Result<()> {
+    fast_io::operator_remove_file_confined(path)
+}
+
+/// Non-Unix has no ownership walk to run; degrade to a plain unlink.
+#[cfg(not(unix))]
+fn remove_backup_dir_obstruction(path: &Path) -> io::Result<()> {
+    fs::remove_file(path)
 }
 
 /// Copies a freshly-created backup subdirectory's attributes from the
@@ -324,14 +388,23 @@ pub(crate) fn copy_entry_to_backup(
     fake_super: bool,
 ) -> Result<Option<BackupStrategy>, LocalCopyError> {
     if file_type.is_file() {
-        fs::copy(source, backup_path)
+        // upstream: backup.c:401 `copy_file(fname, buf, -1, file->mode)`, whose
+        // destination open is `do_open_at()` via `unlink_and_reopen()`
+        // (util1.c:366) and therefore takes the confined ownership walk inside
+        // `make_backup()`'s `operator_path_resolve` window. `fs::copy` resolves
+        // `backup_path` by path instead, so a symlink at the leaf - or at a
+        // component flipped since the parent chain was validated - redirects
+        // the pre-image out of the tree. Shared with the `--inplace` tier: it
+        // is the same upstream `copy_file()` call with the same destination
+        // policy.
+        copy_pre_image_to_backup(source, backup_path)
             .map_err(|error| LocalCopyError::io("create backup", backup_path, error))?;
         return Ok(Some(BackupStrategy::Copy));
     }
     if file_type.is_symlink() {
         let target = fs::read_link(source)
             .map_err(|error| LocalCopyError::io("read symbolic link", source, error))?;
-        create_symlink(&target, source, backup_path)
+        create_backup_symlink(&target, source, backup_path)
             .map_err(|error| LocalCopyError::io("create symbolic link", backup_path, error))?;
         return Ok(Some(BackupStrategy::Symlink));
     }
@@ -358,6 +431,29 @@ pub(crate) fn copy_entry_to_backup(
         );
         Ok(None)
     }
+}
+
+/// Recreates the pre-image symlink in the backup area with its parent chain
+/// resolved by the ownership walk, bound to the session's confinement root.
+///
+/// Deliberately not folded into `create_symlink`: that one also materialises
+/// the transfer's own symlinks, which are receiver paths and take the confined
+/// beneath-walk rather than the ownership one.
+///
+/// upstream: `backup.c:377` `do_symlink_at(sl, buf)` inside `make_backup()`'s
+/// `operator_path_resolve = 1` window (backup.c:437-449); `syscall.c:780`
+/// `do_symlink_at()` resolves the parent with `owner_walk_parent()` and creates
+/// the leaf with `symlinkat`.
+#[cfg(unix)]
+fn create_backup_symlink(target: &Path, _source: &Path, backup_path: &Path) -> io::Result<()> {
+    fast_io::operator_symlink_confined(target, backup_path)
+}
+
+/// Non-Unix has no ownership walk to run; degrade to the platform symlink
+/// creation the transfer path uses.
+#[cfg(not(unix))]
+fn create_backup_symlink(target: &Path, source: &Path, backup_path: &Path) -> io::Result<()> {
+    create_symlink(target, source, backup_path)
 }
 
 /// Re-materialises a device, FIFO, or socket node at `backup_path` from the
