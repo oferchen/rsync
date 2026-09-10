@@ -230,3 +230,190 @@ fn a_daemon_dir_merge_hides_a_name_only_the_merge_file_names() {
         );
     }
 }
+
+/// A push fixture: the module is the DESTINATION and already carries
+/// `sub/.rsync-filter`, while the source carries the bait it names.
+///
+/// The source carries an identical copy of `sub/.rsync-filter` so that
+/// `--delete` has nothing to remove there - the merge file the daemon must read
+/// is the destination's, and a fixture that deleted it out from under the check
+/// would prove nothing.
+struct PushScratch {
+    _tmp: TempDir,
+    config: PathBuf,
+    module: PathBuf,
+    source: PathBuf,
+}
+
+fn push_scratch(directive: Option<&str>) -> io::Result<PushScratch> {
+    let tmp = tempdir()?;
+    let root = tmp.path().to_path_buf();
+
+    let module = root.join("module");
+    fs::create_dir_all(module.join("sub"))?;
+    fs::write(module.join("root.txt"), b"root\n")?;
+    fs::write(module.join("sub/.rsync-filter"), b"- bait.txt\n")?;
+
+    let source = root.join("source");
+    fs::create_dir_all(source.join("sub"))?;
+    fs::write(source.join("root.txt"), b"root\n")?;
+    fs::write(source.join("sub/.rsync-filter"), b"- bait.txt\n")?;
+    fs::write(source.join("sub/bait.txt"), b"bait\n")?;
+    fs::write(source.join("sub/keep.txt"), b"keep\n")?;
+
+    let filter_line = match directive {
+        Some(rule) => format!("    filter = {rule}\n"),
+        None => String::new(),
+    };
+    let config = root.join("rsyncd.conf");
+    fs::write(
+        &config,
+        format!(
+            "pid file = {pid}\n\
+             log file = {log}\n\
+             use chroot = false\n\
+             \n\
+             [m]\n\
+             \x20   path = {module}\n\
+             \x20   read only = false\n\
+             \x20   list = true\n\
+             {filter_line}",
+            pid = root.join("rsyncd.pid").display(),
+            log = root.join("rsyncd.log").display(),
+            module = module.display(),
+        ),
+    )?;
+    Ok(PushScratch {
+        _tmp: tmp,
+        config,
+        module,
+        source,
+    })
+}
+
+/// Pushes the source into the module and returns `(exit code, stderr)`.
+fn push_into_module(
+    bin: &Path,
+    scratch: &PushScratch,
+    delete: bool,
+) -> io::Result<(Option<i32>, String)> {
+    let daemon = spawn_daemon(bin, &scratch.config)?;
+    let src = format!("{}/", scratch.source.display());
+    let dest = format!("rsync://127.0.0.1:{}/m/", daemon.port);
+    let mut command = Command::new(bin);
+    command.arg("-r");
+    if delete {
+        command.arg("--delete");
+    }
+    let output = command
+        .args([&src, &dest])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    Ok((
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    ))
+}
+
+fn landed(scratch: &PushScratch, relative: &str) -> bool {
+    scratch.module.join(relative).exists()
+}
+
+/// A push under `--delete` must be refused for the name the destination's own
+/// `sub/.rsync-filter` excludes.
+///
+/// # Why `--delete` is part of the cell
+///
+/// On the receiving side the ONLY caller of `change_local_filter_dir` is the
+/// delete pass (`generator.c:314` from `delete_in_dir`, `generator.c:1924-1929`
+/// and `generator.c:2799-2801` for the directories it skips), so that is the
+/// only way the module's per-directory mergelist is ever filled. The refusal
+/// itself is `generator.c:1662-1676`, which reports
+/// `ERROR: daemon refused to receive %s "%s"` at `FERROR_XFER` - a frame the
+/// server forwards to the pushing client - and `log.c:338` turns that into
+/// `got_xfer_error`, which `cleanup.c:217-218` lifts to exit 23.
+///
+/// MEASURED against a real rsync 3.5.0 daemon and client over loopback TCP,
+/// with per-cell `lsof` port-ownership asserts, module `filter = : .rsync-filter`
+/// and `sub/.rsync-filter` holding `- bait.txt`:
+///
+/// ```text
+/// push --delete   rc 23, `ERROR: daemon refused to receive file "sub/bait.txt"`,
+///                 sub/bait.txt absent, sub/keep.txt written
+/// push (plain)    rc 0, sub/bait.txt written
+/// ```
+///
+/// ⚠ `sub/keep.txt` is the in-tree control: a receiver that refused everything
+/// under `sub/` would satisfy the bait assertion alone.
+#[test]
+fn a_daemon_dir_merge_refuses_a_pushed_name_under_delete() {
+    let bin = test_support::oc_rsync_bin();
+    for directive in [": .rsync-filter", "dir-merge .rsync-filter"] {
+        let scratch = push_scratch(Some(directive)).expect("scratch");
+        let (code, stderr) = push_into_module(&bin, &scratch, true).expect("push");
+
+        assert_eq!(
+            code,
+            Some(23),
+            "`filter = {directive}` must refuse the excluded name and exit 23; \
+             stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("daemon refused to receive file \"sub/bait.txt\""),
+            "`filter = {directive}` must name the refused file; stderr: {stderr}"
+        );
+        assert!(
+            !landed(&scratch, "sub/bait.txt"),
+            "`filter = {directive}` must not write the refused name"
+        );
+        assert!(
+            landed(&scratch, "sub/keep.txt"),
+            "`filter = {directive}` must not over-refuse the sibling control"
+        );
+    }
+}
+
+/// The same push WITHOUT `--delete` is silent and writes the bait.
+///
+/// This is not a leniency oc chose: upstream reaches
+/// `change_local_filter_dir` only from the delete pass, so a plain push never
+/// opens the merge file and the name it excludes is accepted. MEASURED against
+/// rsync 3.5.0 (rc 0, `sub/bait.txt` written).
+///
+/// It is also the guard that keeps the fix above from being "refuse anything a
+/// dir-merge directive is present for": that shape would fail here.
+#[test]
+fn a_push_without_delete_never_reads_the_merge_file() {
+    let bin = test_support::oc_rsync_bin();
+    let scratch = push_scratch(Some(": .rsync-filter")).expect("scratch");
+    let (code, stderr) = push_into_module(&bin, &scratch, false).expect("push");
+
+    assert_eq!(code, Some(0), "a plain push must succeed; stderr: {stderr}");
+    assert!(stderr.is_empty(), "a plain push must be silent: {stderr}");
+    assert!(
+        landed(&scratch, "sub/bait.txt"),
+        "without --delete the merge file is never read, so the name is accepted"
+    );
+}
+
+/// The control: with no `filter` directive the same `--delete` push writes the
+/// bait, so the refusal above can only come from the directive - not from the
+/// delete pass, the fixture, or an unwritable destination.
+#[test]
+fn without_a_filter_directive_a_delete_push_writes_the_bait() {
+    let bin = test_support::oc_rsync_bin();
+    let scratch = push_scratch(None).expect("scratch");
+    let (code, stderr) = push_into_module(&bin, &scratch, true).expect("push");
+
+    assert_eq!(code, Some(0), "the control push must succeed: {stderr}");
+    assert!(
+        landed(&scratch, "sub/bait.txt"),
+        "the control must write the bait"
+    );
+    assert!(
+        landed(&scratch, "sub/keep.txt"),
+        "the control must write the sibling too"
+    );
+}

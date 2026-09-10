@@ -217,11 +217,10 @@ impl ReceiverContext {
         // Phase A: Filter candidates (cheap, in-memory checks only).
         // Pre-extract config values to avoid repeated field access in the
         // filter closures at 100K scale.
-        let daemon_filters = self.daemon_filter_set();
+        let mut daemon_filters = self.daemon_filter_gate(dest_dir);
         let min_size = self.config.file_selection.min_file_size;
         let max_size = self.config.file_selection.max_file_size;
         let has_size_bounds = min_size.is_some() || max_size.is_some();
-        let has_daemon_filters = daemon_filters.is_some();
         let has_failed_dirs = failed_dirs.is_some();
         let verbose_client = self.config.flags.verbose && self.config.connection.client_mode;
 
@@ -240,19 +239,17 @@ impl ReceiverContext {
                 // than writing to the daemon's own stderr. Dropping the file
                 // without that frame would let a push of module-excluded files
                 // exit 0 with no diagnostic at all.
-                if has_daemon_filters {
-                    let filters =
-                        daemon_filters.expect("daemon_filters is Some when has_daemon_filters");
+                if let Some(filters) = daemon_filters.as_mut() {
                     let name = e.name();
                     if name != "." {
                         // upstream: generator.c:1258-1266 - the `skip_dir` check
                         // runs before the filter check, so a file below an
                         // already-refused directory is dropped in silence.
-                        if crate::receiver::daemon_filter_refuses_ancestor(filters, name) {
+                        if filters.refuses_ancestor(name) {
                             stats.files_skipped += 1;
                             return false;
                         }
-                        if !filters.allows(Path::new(name), false) {
+                        if !filters.allows(name, false) {
                             let _ = self.emit_error_xfer_line(
                                 writer,
                                 &format!("ERROR: daemon refused to receive file \"{name}\"\n"),

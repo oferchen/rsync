@@ -926,19 +926,12 @@ impl ReceiverContext {
                     // so dir-merge self-exclusion and merge-driven excludes are
                     // active while deciding deletions. Only entered when the
                     // deletion chain has per-dir merge configs; otherwise the
-                    // flat global chain is consulted directly. enter_directory
-                    // takes `&mut self`, so each worker reloads onto its own
-                    // clone of the merge chain.
+                    // flat global chain is consulted directly.
+                    // `reload_for_directory` takes `&mut self`, so each worker
+                    // reloads onto its own clone of the merge chain.
                     let local_chain = if needs_perdir_merge {
                         let mut chain = (*merge_chain).clone();
-                        let _ = chain.enter_directory(&dest_dir_owned);
-                        if dir_relative.as_os_str() != "." {
-                            let mut cur = dest_dir_owned.clone();
-                            for comp in dir_relative.iter() {
-                                cur.push(comp);
-                                let _ = chain.enter_directory(&cur);
-                            }
-                        }
+                        chain.reload_for_directory(&dest_dir_owned, &dir_relative);
                         Some(chain)
                     } else {
                         None
@@ -1328,14 +1321,7 @@ impl ReceiverContext {
             let local_chain = if needs_perdir_merge {
                 let mut chain = deletion_chain.clone();
                 chain.set_transfer_root(dest_dir.to_path_buf());
-                let _ = chain.enter_directory(dest_dir);
-                if dir_relative.as_os_str() != "." {
-                    let mut cur = dest_dir.to_path_buf();
-                    for comp in dir_relative.iter() {
-                        cur.push(comp);
-                        let _ = chain.enter_directory(&cur);
-                    }
-                }
+                chain.reload_for_directory(dest_dir, dir_relative);
                 Some(chain)
             } else {
                 None

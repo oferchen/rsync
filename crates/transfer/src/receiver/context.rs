@@ -27,8 +27,8 @@ use crate::transfer_state::TransferPipeline;
 use super::basis::BasisFileConfig;
 use super::file_list::DirFlist;
 use super::{
-    NDX_CONVERT_CALLS, NDX_CONVERT_CMPS, ParallelThresholds, compile_daemon_filter_set,
-    partition_point_depth,
+    DaemonFilterGate, NDX_CONVERT_CALLS, NDX_CONVERT_CMPS, ParallelThresholds,
+    compile_daemon_filter_set, compile_daemon_merge_configs, partition_point_depth,
 };
 
 /// Context for the receiver role during a transfer.
@@ -124,6 +124,20 @@ pub struct ReceiverContext {
     /// - `flist.c:266-284` - `path_is_daemon_excluded()` checks each path
     ///   component against the daemon filter list
     pub(in crate::receiver) daemon_filter_set: Option<FilterSet>,
+    /// The module's `dir-merge` directives, which [`Self::daemon_filter_set`]
+    /// cannot express.
+    ///
+    /// Held apart because they are read per directory rather than matched
+    /// directly: [`Self::daemon_filter_gate`] hands them to a
+    /// [`DaemonFilterGate`] for the passes that judge incoming names.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `exclude.c:349-391` - `add_rule()` registers a `FILTRULE_PERDIR_MERGE`
+    ///   rule in the global `mergelist_parents` whatever list it belongs to
+    /// - `exclude.c:858-925` - `push_local_filters()` fills that mergelist from
+    ///   the directory being processed
+    pub(in crate::receiver) daemon_merge_configs: Vec<filters::DirMergeConfig>,
     /// Client-only view of the wire filter rules for the file-list re-check.
     ///
     /// `Some` only on a server-receiver whose `filter_chain` had daemon rules
@@ -515,6 +529,7 @@ impl ReceiverContext {
         // upstream: clientserver.c:876-895 - daemon_filter_list is built from
         // module filter/exclude/include directives and used by all roles.
         let daemon_filter_set = compile_daemon_filter_set(&config.daemon_filter_rules);
+        let daemon_merge_configs = compile_daemon_merge_configs(&config.daemon_filter_rules);
 
         Self {
             protocol: handshake.protocol,
@@ -531,6 +546,7 @@ impl ReceiverContext {
             uid_list: IdList::new(),
             gid_list: IdList::new(),
             daemon_filter_set,
+            daemon_merge_configs,
             recheck_client_filter: None,
             filter_chain: FilterChain::empty(),
             deletion_filter_chain: FilterChain::empty(),
@@ -1169,6 +1185,35 @@ impl ReceiverContext {
     /// before accepting transfer data.
     pub fn daemon_filter_set(&self) -> Option<&FilterSet> {
         self.daemon_filter_set.as_ref()
+    }
+
+    /// Builds the module's filter list for one pass over incoming names,
+    /// rooted at `dest_dir`.
+    ///
+    /// Returns `None` when the module declares no rules the pass could apply.
+    ///
+    /// The `dir-merge` directives join only when `--delete` is in effect. That
+    /// is not a shortcut: on the receiving side upstream reads a per-directory
+    /// merge file exclusively from the delete pass - `delete_in_dir()` calls
+    /// `change_local_filter_dir()` for every content directory
+    /// (`generator.c:314`) and the `delete_during` branch calls it for the rest
+    /// (`generator.c:1924-1929`; `generator.c:2799-2801` under incremental
+    /// recursion). Without `--delete` none of them runs, the mergelist stays
+    /// empty, and `check_filter` finds nothing to recurse into, so the module's
+    /// per-directory rules do not apply to the incoming names. MEASURED
+    /// against a real rsync 3.5.0 daemon; see `receiver/daemon_filter.rs`.
+    ///
+    /// The module's plain rules always apply, with or without `--delete`.
+    pub(in crate::receiver) fn daemon_filter_gate(
+        &self,
+        dest_dir: &std::path::Path,
+    ) -> Option<DaemonFilterGate> {
+        let merge_configs: &[filters::DirMergeConfig] = if self.config.flags.delete {
+            &self.daemon_merge_configs
+        } else {
+            &[]
+        };
+        DaemonFilterGate::new(self.daemon_filter_set.as_ref(), merge_configs, dest_dir)
     }
 
     /// Reclaims heap data from the oldest unreclaimed INC_RECURSE segment.

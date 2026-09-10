@@ -143,8 +143,6 @@ fn daemon_filter_rules_prepended_to_receiver_deletion_chain() {
 fn refused_directory_swallows_its_contents_without_a_second_report() {
     use protocol::filters::{FilterRuleWireFormat, RuleType};
 
-    use crate::receiver::daemon_filter_refuses_ancestor;
-
     let handshake = test_handshake();
     let mut config = test_config();
     config.daemon_filter_rules = vec![FilterRuleWireFormat {
@@ -153,26 +151,30 @@ fn refused_directory_swallows_its_contents_without_a_second_report() {
         ..FilterRuleWireFormat::default()
     }];
     let ctx = ReceiverContext::new_for_test(&handshake, config);
-    let filters = ctx.daemon_filter_set().unwrap();
+    // The module declares no `dir-merge`, so the gate never touches the
+    // destination and the path it is rooted at is immaterial.
+    let mut filters = ctx
+        .daemon_filter_gate(std::path::Path::new("/nonexistent"))
+        .expect("the module declares a rule");
 
     assert!(
-        daemon_filter_refuses_ancestor(filters, "dir.secret/inner.txt"),
+        filters.refuses_ancestor("dir.secret/inner.txt"),
         "a file under a refused directory is dropped silently, not reported again"
     );
     assert!(
-        daemon_filter_refuses_ancestor(filters, "dir.secret/deep/inner.txt"),
+        filters.refuses_ancestor("dir.secret/deep/inner.txt"),
         "the skip applies at every depth below the refused directory"
     );
     assert!(
-        !daemon_filter_refuses_ancestor(filters, "sub/nested.secret"),
+        !filters.refuses_ancestor("sub/nested.secret"),
         "the entry's own name is the outer refusal's business, not the ancestor probe's"
     );
     assert!(
-        !daemon_filter_refuses_ancestor(filters, "top.secret"),
+        !filters.refuses_ancestor("top.secret"),
         "a top-level entry has no ancestor to inherit a refusal from"
     );
     assert!(
-        !daemon_filter_refuses_ancestor(filters, "sub/fine.txt"),
+        !filters.refuses_ancestor("sub/fine.txt"),
         "an allowed tree must not be swallowed"
     );
 }
