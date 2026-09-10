@@ -52,22 +52,19 @@
 /// return, `SSH_ERR_INVALID_FORMAT` from the ran-out-of-string-looking-
 /// for-a-close-quote branch (openssh/misc.c:2174-2179). Adding a second
 /// variant would mean oc had invented a refusal upstream does not have.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+/// The `Display` text is the reason upstream prints, verbatim, so the
+/// only consumer that needs it reads it off the error rather than from a
+/// second accessor. An inherent method would be dead code in any build
+/// that compiles out the keyword arms (`embedded-ssh` off), which is what
+/// the fuzz workspace does; a trait impl is not.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, thiserror::Error)]
 pub(in crate::ssh) enum ArgvSplitError {
     /// A `"` or `'` was opened and the line ended before it closed.
-    UnterminatedQuote,
-}
-
-impl ArgvSplitError {
-    /// The reason text upstream prints for this failure, verbatim.
     ///
     /// upstream: openssh/readconf.c:1197
     /// `error("%s line %d: invalid quotes", filename, linenum)`.
-    pub(in crate::ssh) fn reason(self) -> &'static str {
-        match self {
-            Self::UnterminatedQuote => "invalid quotes",
-        }
-    }
+    #[error("invalid quotes")]
+    UnterminatedQuote,
 }
 
 /// Splits one ssh_config value into tokens exactly as upstream's
@@ -299,7 +296,10 @@ mod tests {
             argv_split("a 'b", true),
             Err(ArgvSplitError::UnterminatedQuote)
         );
-        assert_eq!(ArgvSplitError::UnterminatedQuote.reason(), "invalid quotes");
+        assert_eq!(
+            ArgvSplitError::UnterminatedQuote.to_string(),
+            "invalid quotes"
+        );
     }
 
     /// A quote closed before the end is not a failure - the control for

@@ -149,7 +149,8 @@ fn resolve_host_in(text: &str, host_alias: &str, path: &str) -> Result<ResolvedH
 
         // One tokenisation per line, exactly as upstream does it
         // (openssh/readconf.c:1196).
-        let tokens = argv_split(value, true).map_err(|err| refuse(path, linenum, err.reason()))?;
+        let tokens =
+            argv_split(value, true).map_err(|err| refuse(path, linenum, err.to_string()))?;
 
         if key_lc == "host" {
             in_matching_block =
