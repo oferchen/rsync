@@ -353,8 +353,8 @@ struct MergeRule<'a> {
 /// gives it `FILTRULE_MERGE_FILE`. `parse_filter_str` reads such a file once, at
 /// parse time (exclude.c:1581-1590), which is what this function feeds.
 ///
-/// ⚠ THE PER-DIRECTORY SPELLINGS `:` / `dir-merge` ARE DELIBERATELY NOT HANDLED
-/// HERE, and they are NOT a no-op in upstream. `add_rule` registers every
+/// ⚠ THE PER-DIRECTORY SPELLINGS `:` / `dir-merge` ARE NOT EAGER, so they are
+/// deliberately not answered here. `add_rule` registers every
 /// `FILTRULE_PERDIR_MERGE` rule into the GLOBAL `mergelist_parents`
 /// (exclude.c:349-391) whatever list it was added to, so a rule in
 /// `daemon_filter_list` is registered too; `push_local_filters` then fills that
@@ -362,9 +362,9 @@ struct MergeRule<'a> {
 /// MEASURED against rsync 3.5.0 (module with `sub/.rsync-filter` holding
 /// `- bait.txt`): `filter = : .rsync-filter` HIDES `sub/bait.txt`, and so does
 /// `filter = dir-merge rules` with the merge file and the bait at the module
-/// root. Expressing that needs a `RuleType::DirMerge` wire rule rather than an
-/// eager read, so it is tracked as its own change; a token opening `:` or
-/// `dir-merge` keeps whatever the single-rule parser already did with it.
+/// root. That is a `RuleType::DirMerge` wire rule carried to the walk, not a
+/// parse-time read, so [`short_rule_prefix`] and [`KEYWORD_PREFIXES`] own those
+/// two spellings and [`build_prefixed_rule`] builds the rule.
 ///
 /// ⚠ `.` is NOT a token-boundary opener in [`split_filter_tokens`], and
 /// deliberately so - see [`opens_clear_rule`] for the same reasoning applied to
@@ -880,10 +880,12 @@ fn read_patterns_from_file(path: &Path) -> Result<Vec<(String, usize)>, io::Erro
 /// character. The list is shared by the tokenizer and, through
 /// [`is_rule_keyword`], uses one terminator rule rather than a second copy.
 ///
-/// `merge` is an opener here and is answered by [`merge_rule`], which
-/// [`push_token_rules`] consults before the single-rule parser. `dir-merge`
-/// opens a token too and still reaches the single-rule parser's bare-pattern
-/// arm - see [`merge_rule`] for why the per-directory spellings are held back.
+/// Both merge spellings are openers here, and each is answered on its own path.
+/// `merge` reaches [`merge_rule`], which [`push_token_rules`] consults before
+/// the single-rule parser, because upstream replaces such a token with the
+/// parsed contents of the file. `dir-merge` reaches [`KEYWORD_PREFIXES`], which
+/// maps it to [`SHORT_DIR_MERGE`]: a per-directory rule is carried on the wire,
+/// not read here.
 const RULE_KEYWORDS: &[&str] = &[
     "include",
     "exclude",
@@ -1039,7 +1041,7 @@ fn parse_daemon_filter_token(
             Some(after_comma) => (after_comma, 2),
             None => (rest, 1),
         };
-        match scan_modifiers(run, prefix.specifies_side, base, token) {
+        match scan_modifiers(run, prefix, base, token) {
             Ok((modifiers, used)) => {
                 return build_prefixed_rule(prefix, modifiers, run, used, token, xflags);
             }
@@ -1143,7 +1145,7 @@ fn parse_daemon_filter_token(
                 Some(after_comma) => (after_comma, keyword.len() + 1),
                 None => (rest, keyword.len()),
             };
-            let (modifiers, used) = scan_modifiers(run, prefix.specifies_side, base, token)?;
+            let (modifiers, used) = scan_modifiers(run, prefix, base, token)?;
             return build_prefixed_rule(prefix, modifiers, run, used, token, xflags);
         }
     }
@@ -1368,6 +1370,11 @@ struct RulePrefix {
     /// True for the SHORT characters that a bare pattern could also start
     /// with. See the failed-scan arm in [`parse_daemon_filter_token`].
     competes_with_bare_words: bool,
+    /// `FILTRULE_MERGE_FILE` (`:`, `dir-merge`), which is what opens the
+    /// merge-only half of the modifier alphabet - `-`, `+`, `e`, `n` and `w`
+    /// are `goto invalid` without it, and `!` is `goto invalid` WITH it
+    /// (`exclude.c:1381-1440`).
+    merge_file: bool,
 }
 
 /// The long-form keywords, in upstream's own mapping order.
@@ -1378,6 +1385,8 @@ const KEYWORD_PREFIXES: &[(&str, RulePrefix)] = &[
     ("show", SHORT_SHOW),
     ("protect", SHORT_PROTECT),
     ("risk", SHORT_RISK),
+    // upstream: `exclude.c:1310-1311` maps `dir-merge` to `:`.
+    ("dir-merge", SHORT_DIR_MERGE),
 ];
 
 const SHORT_EXCLUDE: RulePrefix = RulePrefix {
@@ -1385,6 +1394,7 @@ const SHORT_EXCLUDE: RulePrefix = RulePrefix {
     sender_side: false,
     specifies_side: false,
     competes_with_bare_words: false,
+    merge_file: false,
 };
 const SHORT_INCLUDE: RulePrefix = RulePrefix {
     is_include: true,
@@ -1408,15 +1418,32 @@ const SHORT_RISK: RulePrefix = RulePrefix {
     is_include: true,
     ..SHORT_PROTECT
 };
+/// `:` / `dir-merge` - `FILTRULE_PERDIR_MERGE | FILTRULE_MERGE_FILE`.
+///
+/// upstream: `exclude.c:1331-1338` - `case ':'` sets `FILTRULE_PERDIR_MERGE`
+/// plus `FILTRULE_FINISH_SETUP` and FALLS THROUGH to `case '.'`, which is what
+/// adds `FILTRULE_MERGE_FILE`. It names no side, so `specifies_side` stays
+/// false and the full `r`/`s`/`C` half of the alphabet remains open.
+///
+/// `competes_with_bare_words` is FALSE: a failed modifier scan REFUSES rather
+/// than falling back to a bare-word exclude. Upstream's scan sends any byte
+/// outside the alphabet to `invalid:` -> `"invalid modifier '%c' at position
+/// %d"` and `RERR_SYNTAX` (`exclude.c:1370-1379`), so `:` belongs to the
+/// `+`/`-` class, not to the `P R S H` class that competes with bare words.
+const SHORT_DIR_MERGE: RulePrefix = RulePrefix {
+    merge_file: true,
+    ..SHORT_EXCLUDE
+};
 
 /// Matches the one-character rule prefixes upstream's `default:` arm accepts.
 ///
 /// upstream: `exclude.c:1325-1329` makes any single character a rule
 /// character, and the second switch (`exclude.c:1331-1364`) gives
-/// `+ - S H R P` their meanings. `.`, `:` and `!` are the merge and clear
-/// characters; oc handles `!` on its own arm and does not implement the merge
-/// characters at all, so they are deliberately absent here - adding them would
-/// be the merge change, not this one.
+/// `+ - S H R P :` their meanings. `!` is the clear character and oc handles it
+/// on its own arm. `.` - the EAGER `merge` character - is absent because it is
+/// answered EARLIER: [`push_token_rules`] consults [`merge_rule`] first, which
+/// reads the named file at parse time, so a `.` token never reaches this
+/// function.
 ///
 /// ⚠ `competes_with_bare_words` is what keeps the four UPPERCASE characters
 /// from swallowing the bare-word fall-through; only a token whose modifier run
@@ -1430,6 +1457,8 @@ fn short_rule_prefix(token: &str) -> Option<(RulePrefix, char)> {
         'H' => SHORT_HIDE,
         'R' => SHORT_RISK,
         'P' => SHORT_PROTECT,
+        // upstream: exclude.c:1331-1338.
+        ':' => SHORT_DIR_MERGE,
         _ => return None,
     };
     Some((prefix, ch))
@@ -1469,7 +1498,7 @@ fn opens_short_rule(s: &str) -> bool {
     // A `,` terminates the prefix outright (`rule_strcmp`, exclude.c:1224-1225), so
     // the token IS a rule token even when its modifier run is one upstream
     // refuses - the same split the parser's failed-scan arm makes.
-    rest.starts_with(',') || scan_modifiers(rest, prefix.specifies_side, 1, s).is_ok()
+    rest.starts_with(',') || scan_modifiers(rest, prefix, 1, s).is_ok()
 }
 
 /// The flags upstream's modifier scan can raise on a daemon `filter` rule.
@@ -1482,6 +1511,31 @@ struct RuleModifiers {
     /// `!`, `x` or `C`: upstream ACCEPTS these and gives them meanings this
     /// daemon path cannot express. See [`scan_modifiers`].
     inexpressible: bool,
+    /// `r` - `FILTRULE_RECEIVER_SIDE` (`exclude.c:1424-1427`).
+    ///
+    /// Kept rather than ignored: a `:r` dir-merge is receiver-side, which
+    /// `DirMergeConfig::with_receiver_only` expresses. On a non-merge rule the
+    /// daemon list matches side-blind, so the bit stays unread there.
+    receiver_side: bool,
+    /// `p` - `FILTRULE_PERISHABLE` (`exclude.c:1421-1423`).
+    perishable: bool,
+    /// `-` or `+` - `FILTRULE_NO_PREFIXES`; merge rules only
+    /// (`exclude.c:1381-1391`).
+    no_prefixes: bool,
+    /// The `+` variant of [`Self::no_prefixes`], which also sets
+    /// `FILTRULE_INCLUDE` on each record.
+    no_prefixes_include: bool,
+    /// `n` - `FILTRULE_NO_INHERIT`; merge rules only (`exclude.c:1415-1418`).
+    no_inherit: bool,
+    /// `e` - `FILTRULE_EXCLUDE_SELF`; merge rules only
+    /// (`exclude.c:1411-1414`).
+    exclude_self: bool,
+    /// `w` - `FILTRULE_WORD_SPLIT`; merge rules only (`exclude.c:1433-1436`).
+    word_split: bool,
+    /// `C` - `FILTRULE_CVS_IGNORE` on a MERGE rule, where it is expressible as
+    /// `DirMergeConfig`'s CVS mode. On a non-merge rule the same character sets
+    /// [`Self::inexpressible`] instead; see [`scan_modifiers`].
+    cvs_ignore: bool,
 }
 
 /// Runs upstream's modifier scan over `run` and reports what it raised.
@@ -1522,12 +1576,22 @@ struct RuleModifiers {
 /// residual is left open rather than half-closed, because expressing `!` needs
 /// the receiver-side plumbing this change does not touch, and a half-expressed
 /// `!` would INVERT the served set on a push.
+///
+/// A MERGE prefix (`:`, `dir-merge`) opens the merge-only half of the alphabet
+/// and closes one character. upstream gates each arm on `FILTRULE_MERGE_FILE`:
+/// `-`/`+` (`exclude.c:1381-1391`), `e` (`:1411-1414`), `n` (`:1415-1418`) and
+/// `w` (`:1433-1436`) are `goto invalid` WITHOUT it, and `!` is `goto invalid`
+/// WITH it - "negation really goes with the pattern, so it isn't useful as a
+/// merge-file default" (`exclude.c:1404-1410`). `C` stops being inexpressible
+/// there too, because `DirMergeConfig` has a CVS mode for it.
 fn scan_modifiers(
     run: &str,
-    specifies_side: bool,
+    prefix: RulePrefix,
     base: usize,
     token: &str,
 ) -> Result<(RuleModifiers, usize), MalformedRule> {
+    let specifies_side = prefix.specifies_side;
+    let merge = prefix.merge_file;
     let mut modifiers = RuleModifiers::default();
     for (offset, ch) in run.char_indices() {
         // upstream stops at `' '` or `'_'`, and `FILTRULE_WORD_SPLIT` - which
@@ -1538,15 +1602,44 @@ fn scan_modifiers(
         }
         match ch {
             '/' => modifiers.abs_path = true,
-            // `p` is FILTRULE_PERISHABLE, which steers --delete only and never
-            // the name match this list performs.
-            'p' => {}
+            // `p` is FILTRULE_PERISHABLE. On a non-merge rule it steers
+            // --delete only and never the name match this list performs; a
+            // merge rule passes it down to every record it reads.
+            'p' => modifiers.perishable = true,
+            // `!` is NEGATE on a plain rule and INVALID on a merge rule.
+            '!' if merge => {
+                return Err(MalformedRule::InvalidModifier {
+                    modifier: ch,
+                    position: base + offset,
+                    token: token.to_owned(),
+                });
+            }
+            // `x` is FILTRULE_XATTR. It is NOT in `FILTRULES_FROM_CONTAINER`
+            // (exclude.c:1229-1231), so a merge rule does not pass it down to
+            // the records it reads, and upstream frees the merge rule itself.
+            // The eager `merge` arm therefore accepts it and expresses nothing
+            // (MEASURED: `filter = .x FILE` hides what the file names); a
+            // per-directory merge takes the SAME reading, rather than dropping
+            // the whole rule as `inexpressible` and honouring no merge at all.
+            'x' if merge => {}
             '!' | 'x' => modifiers.inexpressible = true,
+            'C' if merge => modifiers.cvs_ignore = true,
             'C' if !specifies_side => modifiers.inexpressible = true,
-            // `r`/`s` are the SIDE modifiers. `r` (receiver) is kept, matching
-            // side-blind like `protect`; `s` (sender) is dropped at add time.
+            // The merge-only arms. Each is `goto invalid` without
+            // FILTRULE_MERGE_FILE, so they must stay behind the guard.
+            '-' if merge => modifiers.no_prefixes = true,
+            '+' if merge => {
+                modifiers.no_prefixes = true;
+                modifiers.no_prefixes_include = true;
+            }
+            'n' if merge => modifiers.no_inherit = true,
+            'e' if merge => modifiers.exclude_self = true,
+            'w' if merge => modifiers.word_split = true,
+            // `r`/`s` are the SIDE modifiers. `s` (sender) is dropped at add
+            // time. `r` (receiver) is recorded, but only a merge rule reads it:
+            // a kept non-merge daemon rule matches side-blind, like `protect`.
             // Both are invalid once the prefix already named a side.
-            'r' if !specifies_side => {}
+            'r' if !specifies_side => modifiers.receiver_side = true,
             's' if !specifies_side => modifiers.sender_side = true,
             _ => {
                 return Err(MalformedRule::InvalidModifier {
@@ -1620,6 +1713,31 @@ fn build_prefixed_rule(
         xflags == RuleXflags::Daemon && (prefix.sender_side || modifiers.sender_side);
     if side_dropped || modifiers.inexpressible {
         return Ok(None);
+    }
+
+    // A MERGE prefix names a FILE, not a pattern, so it must not go through
+    // `build_pattern_rule`: that helper's anchoring and XFLG_DIR2WILD3 rewrites
+    // are for match patterns and would turn `: sub/.rsync-filter` into an
+    // anchored rule and `: rules/` into `rules/***`. upstream skips both for a
+    // merge rule - `add_rule`'s ABS_PATH-from-slash branch tests
+    // `!(rule->rflags & (FILTRULE_ABS_PATH | FILTRULE_MERGE_FILE))`
+    // (exclude.c:297-300), so an embedded slash in a merge FILENAME sets
+    // nothing, and only the explicit `/` MODIFIER does.
+    if prefix.merge_file {
+        return Ok(Some(FilterRuleWireFormat {
+            rule_type: protocol::filters::RuleType::DirMerge,
+            pattern: pattern.into(),
+            anchored: modifiers.abs_path,
+            no_inherit: modifiers.no_inherit,
+            cvs_exclude: modifiers.cvs_ignore,
+            word_split: modifiers.word_split,
+            exclude_from_merge: modifiers.exclude_self,
+            receiver_side: modifiers.receiver_side,
+            perishable: modifiers.perishable,
+            no_prefixes: modifiers.no_prefixes,
+            no_prefixes_include: modifiers.no_prefixes_include,
+            ..FilterRuleWireFormat::default()
+        }));
     }
 
     let mut rule = build_pattern_rule(pattern, prefix.is_include, xflags);
