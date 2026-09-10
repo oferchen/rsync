@@ -59,22 +59,34 @@ pub(in crate::ssh) fn parse_pattern_list(value: &str) -> Vec<Pattern> {
     split_tokens(value, |c| c.is_whitespace() || c == ',')
 }
 
-/// Tokenises the value half of a `Host` line into [`Pattern`] entries.
+/// Builds the `Host` pattern list from already-split `argv_split` tokens.
 ///
-/// Tokens are separated by spaces and TABs only, and a comma is ordinary
-/// pattern text. Upstream splits the line with `argv_split`
-/// (openssh/misc.c:2130-2185), whose only separators are `' '` and `'\t'`
-/// (openssh/misc.c:2141), then matches each token with `match_pattern` in
-/// the `argv_next` loop (openssh/readconf.c:1831-1858); the `oHost` arm
-/// never reaches `match_pattern_list`, so `Host a,b` does not match the
-/// alias `a`.
+/// Takes tokens rather than the raw value because upstream tokenises the
+/// line exactly once, at openssh/readconf.c:1196, and the `oHost` arm then
+/// consumes that same vector through `argv_next`
+/// (openssh/readconf.c:1831-1858). Re-splitting the value here would be a
+/// second tokeniser that could disagree with the first about quotes,
+/// escapes and `#`.
 ///
-/// A separate entry point rather than a widened [`parse_pattern_list`]:
-/// the separator set differs *per keyword*, and the four `Match` criteria
-/// that share the tokeniser need the comma split that `Host` must not
-/// have.
-pub(in crate::ssh) fn parse_host_pattern_list(value: &str) -> Vec<Pattern> {
-    split_tokens(value, |c| c == ' ' || c == '\t')
+/// Each token becomes one pattern verbatim: the `oHost` arm matches with
+/// `match_pattern` directly (openssh/readconf.c:1844) and never reaches
+/// `match_pattern_list`, so a comma is ordinary pattern text and
+/// `Host a,b` does not match the alias `a`. That is why this is a
+/// separate entry point rather than a widened [`parse_pattern_list`] -
+/// the four `Match` criteria that share the tokeniser need the comma
+/// split that `Host` must not have.
+///
+/// An empty token is kept rather than dropped. Upstream REFUSES the line
+/// outright (openssh/readconf.c:1832-1836), but that refusal is ordered
+/// *inside* the match loop, after a negated token that already matched has
+/// broken out - so `Host !a ""` is accepted for the alias `a` and refused
+/// for any other (measured against `ssh -G`). This reader cannot express
+/// that ordering because it builds the whole list before matching, and its
+/// documented contract is never to fail. An empty pattern matches only the
+/// empty host, so keeping it is inert here; the refusal lives in the
+/// reader that configures the connection (`embedded::ssh_config`).
+pub(in crate::ssh) fn host_patterns_from_tokens(tokens: &[String]) -> Vec<Pattern> {
+    tokens.iter().map(|token| Pattern::new(token)).collect()
 }
 
 /// Splits `value` on `is_separator`, dropping empty tokens.

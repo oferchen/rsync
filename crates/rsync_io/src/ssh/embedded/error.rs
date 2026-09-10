@@ -91,6 +91,31 @@ pub enum SshError {
         reason: String,
     },
 
+    /// An `ssh_config` line was refused while resolving the host alias.
+    ///
+    /// Upstream counts every refused line and then aborts the whole load
+    /// rather than continuing with a partial config
+    /// (openssh/readconf.c:2667 `fatal("%s: terminating, %d bad
+    /// configuration options")`), so the connection never starts. oc
+    /// mirrors that: `SshConfig::apply_ssh_config_from` propagates
+    /// instead of silently treating the file as empty, because a config
+    /// real `ssh` would refuse must not silently resolve to different
+    /// connection parameters here.
+    ///
+    /// The rendered text reproduces upstream's `%s line %d: <reason>`
+    /// shape so an operator comparing the two diagnostics sees the same
+    /// words.
+    #[error("{path} line {line}: {reason}")]
+    SshConfig {
+        /// The config file the refused line came from.
+        path: String,
+        /// 1-based physical line number, as upstream counts them
+        /// (openssh/readconf.c:2654 `linenum++` per `getline`).
+        line: usize,
+        /// Upstream's reason text for this refusal.
+        reason: String,
+    },
+
     /// DNS resolution produced no addresses matching the IP version preference.
     #[error("no {preference} addresses found for {host}")]
     DnsResolution {

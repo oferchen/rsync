@@ -237,8 +237,38 @@ fn upstream_dump(
 /// `None` means "oc has a resolver but this fixture left it unset".
 /// A keyword absent from the returned map means oc has no resolver at all.
 fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<String>>> {
-    let resolved = resolve_host_str(config_text, alias);
     let mut map: BTreeMap<String, Option<Vec<String>>> = BTreeMap::new();
+
+    // Parser B's one resolved value. Inserted BEFORE the parser-A rows so
+    // it still contributes when parser A refuses the file - the two
+    // readers have deliberately different failure policies (see
+    // `config_lookup`'s module docs) and the harness must show both.
+    //
+    // Its `false` covers both "Compression no" and "no directive at all",
+    // and upstream's default is also `no` (openssh/readconf.c dumps
+    // `compression no`), so the boolean is comparable end to end. Without
+    // the feature the row is absent and upstream's `compression` line
+    // lands in `NotResolvedByOc`, which is the truth for that build
+    // rather than a hidden pass.
+    #[cfg(feature = "ssh-config-parse")]
+    {
+        let ctx = MatchContext::new(alias, alias, "", "");
+        let enabled = parse_enables_compression(config_text, &ctx);
+        map.insert(
+            "compression".to_owned(),
+            Some(vec![if enabled { "yes" } else { "no" }.to_owned()]),
+        );
+    }
+
+    // A config parser A REFUSES leaves every one of its rows ABSENT, so
+    // upstream's dumped values land in `NotResolvedByOc` instead of
+    // panicking the harness. The refusal itself is asserted through
+    // [`upstream_refusal`], which is the only instrument that can see it:
+    // `ssh -G` reports these rules as a nonzero exit plus stderr text,
+    // never as a dumped option.
+    let Ok(resolved) = resolve_host_str(config_text, alias) else {
+        return map;
+    };
 
     map.insert(
         "hostname".to_owned(),
@@ -282,23 +312,44 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
         resolved.identity_agent.clone().map(|a| vec![a]),
     );
 
-    // Parser B's one resolved value. Its `false` covers both "Compression
-    // no" and "no directive at all", and upstream's default is also `no`
-    // (openssh/readconf.c dumps `compression no`), so the boolean is
-    // comparable end to end. Without the feature the row is absent and
-    // upstream's `compression` line lands in `NotResolvedByOc`, which is
-    // the truth for that build rather than a hidden pass.
-    #[cfg(feature = "ssh-config-parse")]
-    {
-        let ctx = MatchContext::new(alias, alias, "", "");
-        let enabled = parse_enables_compression(config_text, &ctx);
-        map.insert(
-            "compression".to_owned(),
-            Some(vec![if enabled { "yes" } else { "no" }.to_owned()]),
-        );
-    }
-
     map
+}
+
+/// Whether `ssh -G` REFUSED this fixture, and with what diagnostic.
+///
+/// `Ok(None)` means the oracle accepted it; `Ok(Some(text))` carries the
+/// first stderr line of a refusal.
+///
+/// This exists because [`differential`] can only compare a SUCCESSFUL
+/// dump, and two of upstream's tokeniser rules are observable *only* as a
+/// refusal: the empty-token guard (openssh/readconf.c:1832-1836) and the
+/// unterminated-quote guard (openssh/readconf.c:1196-1199) both abort the
+/// load and print to stderr rather than dumping a different option value.
+/// A harness that could only read accepted dumps would be structurally
+/// blind to exactly that half.
+///
+/// # Errors
+///
+/// [`Skipped::NoSshBinary`] when no `ssh` is on PATH.
+pub(super) fn upstream_refusal(config: &Path, alias: &str) -> Result<Option<String>, Skipped> {
+    let out = Command::new("ssh")
+        .arg("-G")
+        .arg("-F")
+        .arg(config)
+        .arg(alias)
+        .output()
+        .map_err(|_| Skipped::NoSshBinary)?;
+    if out.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(
+        String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
+    ))
 }
 
 /// The per-keyword comparison rules, for the keywords oc can answer.
@@ -786,5 +837,226 @@ mod tests {
             FIXTURES.len()
         );
         assert_eq!(produced + skipped, FIXTURES.len(), "a fixture went missing");
+    }
+
+    /// Materialise a fixture and ask `ssh -G` whether it REFUSES the file.
+    fn refusal(text: &str, alias: &str) -> Result<Option<String>, Skipped> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ssh_config");
+        let mut f = std::fs::File::create(&path).expect("create fixture");
+        f.write_all(text.as_bytes()).expect("write fixture");
+        drop(f);
+        upstream_refusal(&path, alias)
+    }
+
+    /// oc's own verdict on the same text, as the reason line or `None`.
+    fn oc_refusal(text: &str, alias: &str) -> Option<String> {
+        resolve_host_str(text, alias)
+            .err()
+            .map(|err| err.to_string())
+    }
+
+    /// An empty `Host` token is a HARD ERROR on both sides.
+    ///
+    /// `argv_split` PRODUCES the empty token (a quote pair is a state
+    /// toggle that consumes its delimiters, openssh/misc.c:2168-2172), and
+    /// the `oHost` arm is what refuses it - openssh/readconf.c:1832-1836
+    /// `fatal("%s line %d: keyword %s empty argument", ...)`. Splitting the
+    /// rule that way is deliberate: the `Match` criteria consume the same
+    /// tokeniser and have no such guard.
+    ///
+    /// The companion below is not decoration - it pins the ORDER, which is
+    /// the part a plausible-looking implementation gets wrong.
+    #[test]
+    fn an_empty_host_token_is_refused_by_both() {
+        const FIXTURE: &str = "Host a \"\"\n  Port 2222\n";
+
+        let upstream = match refusal(FIXTURE, "a") {
+            Ok(v) => v,
+            Err(why) => {
+                report_skip("empty-host-token refusal", &why);
+                return;
+            }
+        };
+        let upstream = upstream.expect("ssh -G must refuse an empty Host token");
+        assert!(
+            upstream.contains("keyword host empty argument"),
+            "oracle refused with unexpected text: {upstream}"
+        );
+
+        let oc = oc_refusal(FIXTURE, "a").expect("oc must refuse it too");
+        assert!(
+            oc.contains("keyword host empty argument"),
+            "oc refused with unexpected text: {oc}"
+        );
+    }
+
+    /// ORDER CELL: a negated token that MATCHES breaks out of the loop
+    /// before the empty token is ever examined, so the same line is
+    /// ACCEPTED for that alias and refused for every other.
+    ///
+    /// Measured against real `ssh -G` before this test was written:
+    /// `Host !a ""` gives `port 22` for alias `a` (block inactive, no
+    /// refusal) and exits 255 for alias `z`. openssh/readconf.c:1839-1855 -
+    /// the negation `break` at :1849 precedes nothing, but the empty check
+    /// at :1832 sits INSIDE the same per-token loop, so a break skips it.
+    ///
+    /// Without this cell an implementation that validated every token up
+    /// front would look correct: it passes the refusal test above and
+    /// diverges only here.
+    #[test]
+    fn a_negated_match_breaks_before_the_empty_token_is_seen() {
+        const FIXTURE: &str = "Host !a \"\"\n  Port 2222\n";
+
+        let matched = match refusal(FIXTURE, "a") {
+            Ok(v) => v,
+            Err(why) => {
+                report_skip("negated-match ordering", &why);
+                return;
+            }
+        };
+        assert_eq!(
+            matched, None,
+            "the oracle must ACCEPT the line whose negated token already matched"
+        );
+        assert_eq!(
+            oc_refusal(FIXTURE, "a"),
+            None,
+            "oc must accept it too - the empty-token guard is inside the match loop"
+        );
+
+        // Non-vacuity: the SAME line refuses for an alias the negation
+        // does not match, so the acceptance above is the ordering and not
+        // a missing guard.
+        let unmatched = refusal(FIXTURE, "z")
+            .expect("oracle available")
+            .expect("ssh -G must refuse when the walk reaches the empty token");
+        assert!(
+            unmatched.contains("keyword host empty argument"),
+            "oracle refused with unexpected text: {unmatched}"
+        );
+        assert!(
+            oc_refusal(FIXTURE, "z")
+                .expect("oc must refuse it too")
+                .contains("keyword host empty argument"),
+        );
+    }
+
+    /// An unterminated quote is a HARD ERROR on both sides.
+    ///
+    /// `argv_split` returns NULL when it runs off the end of the line with
+    /// a quote still open (openssh/misc.c:2174-2181), and the caller turns
+    /// that into `fatal("%s line %d: invalid quotes", ...)`
+    /// (openssh/readconf.c:1196-1199). It is a property of the TOKENISER,
+    /// so it fires on any keyword - the companion uses a value line, not a
+    /// `Host` line, to show the guard is not the `oHost` arm's.
+    #[test]
+    fn an_unterminated_quote_is_refused_by_both() {
+        const FIXTURE: &str = "Host a\n  HostName \"unclosed\n";
+
+        let upstream = match refusal(FIXTURE, "a") {
+            Ok(v) => v,
+            Err(why) => {
+                report_skip("unterminated-quote refusal", &why);
+                return;
+            }
+        };
+        let upstream = upstream.expect("ssh -G must refuse an unterminated quote");
+        assert!(
+            upstream.contains("invalid quotes"),
+            "oracle refused with unexpected text: {upstream}"
+        );
+        assert!(
+            oc_refusal(FIXTURE, "a")
+                .expect("oc must refuse it too")
+                .contains("invalid quotes"),
+        );
+
+        // Non-vacuity: CLOSING the quote makes the same line load.
+        const CLOSED: &str = "Host a\n  HostName \"closed\"\n";
+        assert_eq!(
+            refusal(CLOSED, "a").expect("oracle available"),
+            None,
+            "the oracle must accept the closed-quote control"
+        );
+        assert_eq!(oc_refusal(CLOSED, "a"), None, "oc must accept it too");
+    }
+
+    /// A `#` inside a token is ORDINARY TEXT, not a comment marker.
+    ///
+    /// `argv_split` only ends the line on a `#` that starts a token
+    /// (openssh/misc.c:2143-2144, tested at the top of the outer loop
+    /// after whitespace is skipped). oc's readers used to cut the line at
+    /// the first `#` anywhere, which truncated this hostname.
+    #[test]
+    fn a_hash_mid_token_is_hostname_text_on_both_sides() {
+        const FIXTURE: &str = "Host t\n  HostName x#y\n";
+
+        let diff = match run(FIXTURE, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("mid-token hash", &why);
+                return;
+            }
+        };
+        let hostname = diff.cell("hostname").expect("upstream dumps hostname");
+        assert_eq!(
+            hostname.verdict,
+            Verdict::Match,
+            "upstream {:?} vs oc {:?} on {}",
+            hostname.upstream,
+            hostname.oc,
+            diff.oracle_version
+        );
+        assert_eq!(hostname.upstream, vec!["x#y".to_owned()]);
+
+        // Non-vacuity: a `#` that STARTS a token still ends the line, so
+        // the value is the one token before it and the default survives
+        // for the rest.
+        const COMMENTED: &str = "Host t\n  HostName real # x#y\n";
+        let diff = run(COMMENTED, "t").expect("oracle available");
+        let hostname = diff.cell("hostname").expect("upstream dumps hostname");
+        assert_eq!(hostname.upstream, vec!["real".to_owned()]);
+        assert_eq!(hostname.verdict, Verdict::Match);
+    }
+
+    /// Quotes GROUP and are CONSUMED, so a quoted `Host` pattern matches
+    /// the bare alias.
+    ///
+    /// openssh/misc.c:2163-2166 toggles the quote state without copying the
+    /// delimiter, so `Host "a"` yields the one-character pattern `a`, and
+    /// the `oHost` arm matches it against the alias with `match_pattern`
+    /// (openssh/readconf.c:1844). A reader that kept the quote bytes would
+    /// fail to match and silently fall through to the defaults.
+    #[test]
+    fn a_quoted_host_pattern_matches_the_bare_alias_on_both_sides() {
+        const FIXTURE: &str = "Host \"a\"\n  HostName inside.example.com\n";
+
+        let diff = match run(FIXTURE, "a") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("quoted host pattern", &why);
+                return;
+            }
+        };
+        let hostname = diff.cell("hostname").expect("upstream dumps hostname");
+        assert_eq!(
+            hostname.verdict,
+            Verdict::Match,
+            "upstream {:?} vs oc {:?} on {}",
+            hostname.upstream,
+            hostname.oc,
+            diff.oracle_version
+        );
+        assert_eq!(hostname.upstream, vec!["inside.example.com".to_owned()]);
+
+        // Non-vacuity: the quotes are not merely tolerated, they are
+        // CONSUMED - a quote opened mid-token splices, so `Host "a"b`
+        // matches the alias `ab` and NOT `a`.
+        const SPLICED: &str = "Host \"a\"b\n  HostName spliced.example.com\n";
+        let diff = run(SPLICED, "ab").expect("oracle available");
+        let hostname = diff.cell("hostname").expect("upstream dumps hostname");
+        assert_eq!(hostname.upstream, vec!["spliced.example.com".to_owned()]);
+        assert_eq!(hostname.verdict, Verdict::Match);
     }
 }

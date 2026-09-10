@@ -76,7 +76,7 @@ pub(super) use parser::parse_enables_compression;
 #[cfg(test)]
 use paths::extract_dash_f_path;
 #[cfg(test)]
-use pattern::{Pattern, parse_host_pattern_list, parse_pattern_list};
+use pattern::{Pattern, host_patterns_from_tokens, parse_pattern_list};
 
 /// Returns `true` when `~/.ssh/config` or `/etc/ssh/ssh_config`
 /// configures `Compression yes` for `ctx` at top level or under a

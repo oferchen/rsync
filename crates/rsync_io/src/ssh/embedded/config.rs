@@ -257,23 +257,38 @@ impl SshConfig {
     /// patterns match against the same string OpenSSH would see.
     ///
     /// Values already explicitly set on the config win over the file:
-    /// only fields left at their URL/default state are overwritten. The
-    /// method never fails - a missing, unreadable, or malformed config
-    /// file is silently treated as empty.
-    pub fn apply_ssh_config(&mut self, host_alias: &str) -> &mut Self {
+    /// only fields left at their URL/default state are overwritten. A
+    /// missing or unreadable config file is treated as empty.
+    ///
+    /// # Errors
+    ///
+    /// [`SshError::SshConfig`] when the file contains a line real `ssh`
+    /// would refuse. Upstream aborts the whole load on a bad line
+    /// (openssh/readconf.c:2667) rather than continuing with a partial
+    /// config, so silently resolving to different connection parameters
+    /// than `ssh` would have used is not an option here either.
+    pub fn apply_ssh_config(&mut self, host_alias: &str) -> Result<&mut Self, SshError> {
         if let Some(path) = default_ssh_config_path() {
-            self.apply_ssh_config_from(&path, host_alias);
+            self.apply_ssh_config_from(&path, host_alias)?;
         }
-        self
+        Ok(self)
     }
 
     /// Variant of [`Self::apply_ssh_config`] that reads from a caller-supplied
     /// path. Exposed for testing and for callers that ship a non-default
     /// config location.
-    pub fn apply_ssh_config_from(&mut self, path: &Path, host_alias: &str) -> &mut Self {
-        let resolved = resolve_ssh_config_host(path, host_alias);
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::apply_ssh_config`].
+    pub fn apply_ssh_config_from(
+        &mut self,
+        path: &Path,
+        host_alias: &str,
+    ) -> Result<&mut Self, SshError> {
+        let resolved = resolve_ssh_config_host(path, host_alias)?;
         self.merge_resolved_host(&resolved);
-        self
+        Ok(self)
     }
 
     fn merge_resolved_host(&mut self, resolved: &ResolvedHost) {
@@ -415,7 +430,7 @@ impl SshConfig {
         // Honor user's ~/.ssh/config Host blocks for the typed alias.
         // URL-supplied fields win over file directives (handled by
         // merge_resolved_host's "only if default" checks below).
-        config.apply_ssh_config(host);
+        config.apply_ssh_config(host)?;
 
         Ok((config, remote_path))
     }
@@ -923,7 +938,8 @@ mod tests {
         std::fs::write(&path, "Host example\n  IdentityAgent /run/custom.sock\n")
             .expect("write config");
         let mut cfg = SshConfig::default();
-        cfg.apply_ssh_config_from(&path, "example");
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
         assert_eq!(cfg.identity_agent.as_deref(), Some("/run/custom.sock"));
     }
 
@@ -942,7 +958,8 @@ mod tests {
         .expect("write config");
 
         let mut cfg = SshConfig::default();
-        cfg.apply_ssh_config_from(&path, "example");
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
 
         assert!(cfg.identities_only);
         assert_eq!(cfg.identity_files, vec![PathBuf::from("/keys/deploy")]);
@@ -960,7 +977,8 @@ mod tests {
         std::fs::write(&path, "Host example\n  IdentitiesOnly yes\n").expect("write config");
 
         let mut cfg = SshConfig::default();
-        cfg.apply_ssh_config_from(&path, "example");
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
 
         assert!(cfg.identities_only);
         // Non-vacuity: with no home directory both sides would be empty and
@@ -982,7 +1000,8 @@ mod tests {
         std::fs::write(&path, "Host example\n  IdentityFile /keys/deploy\n").expect("write config");
 
         let mut cfg = SshConfig::default();
-        cfg.apply_ssh_config_from(&path, "example");
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
 
         assert_eq!(cfg.identity_files, vec![PathBuf::from("/keys/deploy")]);
     }
@@ -1001,7 +1020,8 @@ mod tests {
             .expect("write config");
         let mut cfg = SshConfig::default();
         cfg.identity_agent(Some("/run/explicit.sock".to_owned()));
-        cfg.apply_ssh_config_from(&path, "example");
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
         assert_eq!(cfg.identity_agent.as_deref(), Some("/run/explicit.sock"));
     }
 }
