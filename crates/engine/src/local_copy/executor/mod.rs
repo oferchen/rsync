@@ -50,7 +50,10 @@ pub(crate) use reference::{
     find_copy_dest_symlink, find_reference_action, reference_attrs_unchanged,
 };
 pub(crate) use sources::copy_sources;
-pub(crate) use special::{
-    copy_device, copy_fifo, copy_symlink, create_symlink, symlink_target_is_safe,
-};
+pub(crate) use special::{copy_device, copy_fifo, copy_symlink, symlink_target_is_safe};
+// The backup ladder's SYMLINK tier takes the confined operator-path spelling on
+// Unix (`fast_io::operator_symlink_confined`), so this re-export serves only the
+// non-Unix fallback in `file::backup` and the Windows symlink cells.
+#[cfg(not(unix))]
+pub(crate) use special::create_symlink;
 pub(crate) use util::{follow_symlink_metadata, non_empty_path};

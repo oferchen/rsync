@@ -421,11 +421,12 @@ pub use linux_capabilities::openat2_supported;
 pub use nofollow_open::open_basis_nofollow;
 #[cfg(unix)]
 pub use owner_walk::{
-    operator_create_dir_all, operator_link, operator_link_confined, operator_mkdir,
-    operator_open_append, operator_open_create_new, operator_open_dir, operator_open_read,
-    operator_open_read_confined, operator_open_recv, operator_open_rw_create,
-    operator_open_write_create, operator_open_write_create_confined, operator_read_to_string,
-    operator_read_to_string_confined, operator_rename, operator_rename_confined,
+    operator_create_dir_all, operator_create_dir_all_confined, operator_link,
+    operator_link_confined, operator_mkdir, operator_open_append, operator_open_create_new,
+    operator_open_dir, operator_open_read, operator_open_read_confined, operator_open_recv,
+    operator_open_rw_create, operator_open_write_create, operator_open_write_create_confined,
+    operator_read_to_string, operator_read_to_string_confined, operator_remove_file_confined,
+    operator_rename, operator_rename_confined, operator_symlink_confined,
     operator_symlink_metadata, operator_symlink_metadata_confined, owner_trusted_parent,
     owner_trusted_parent_kind, symlink_owner_is_trusted,
 };

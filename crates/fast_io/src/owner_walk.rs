@@ -643,7 +643,23 @@ pub fn owner_trusted_parent_kind(
 /// Surfaces any walk error (including the refusal of a foreign-owned symlink)
 /// and any `mkdirat` error other than `EEXIST`.
 pub fn operator_mkdir(path: &Path, mode: u32) -> io::Result<()> {
-    let (parent, leaf) = owner_trusted_parent(path)?;
+    operator_mkdir_kind(path, mode, crate::confinement::PathKind::Ancillary)
+}
+
+/// The body behind [`operator_mkdir`] and the per-component step of
+/// [`operator_create_dir_all_kind`], with the confinement decision handed in
+/// rather than duplicated.
+///
+/// There is no public single-component `_confined` spelling: every operator
+/// path oc creates a directory at under a confinement root is a `--backup-dir`
+/// chain, and upstream builds those with `make_path()`, which is the recursive
+/// form.
+fn operator_mkdir_kind(
+    path: &Path,
+    mode: u32,
+    kind: crate::confinement::PathKind,
+) -> io::Result<()> {
+    let (parent, leaf) = owner_trusted_parent_kind(path, kind)?;
     match rustix::fs::mkdirat(
         &parent,
         leaf.as_os_str(),
@@ -676,15 +692,61 @@ pub fn operator_mkdir(path: &Path, mode: u32) -> io::Result<()> {
 /// on; every other failure is reported as-is so a refused component stays
 /// refused rather than being retried unconfined.
 pub fn operator_create_dir_all(path: &Path, mode: u32) -> io::Result<()> {
+    operator_create_dir_all_kind(path, mode, crate::confinement::PathKind::Ancillary)
+}
+
+/// [`operator_create_dir_all`] additionally bound to the session's confinement
+/// root, judging every component and not only the deepest.
+///
+/// The `--backup-dir` parent chain. Upstream builds it with the same
+/// `do_mkdir_at()` as the partial dir, but under `make_backup()`'s
+/// `operator_path_resolve`, where `owner_walk_parent()` also judges the
+/// resolved leaf against the confinement root. That second half is what this
+/// spelling adds, and it is load-bearing for a backup: a non-chrooted daemon
+/// owns everything it creates, so a directory symlink standing where the
+/// operator named `--backup-dir` is TRUSTED-owned by construction and the
+/// ownership half follows it by design. Without the root check the daemon
+/// creates the backup subtree - and, tiers later, deposits an in-module file's
+/// pre-transfer bytes - outside the module it serves.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/backup.c:437-449` `make_backup()` - `operator_path_resolve =
+///   1` around the WHOLE backup, `copy_valid_path()`'s directory creation
+///   included.
+/// - `rsync-3.5.0/backup.c:128` `copy_valid_path()` - `do_mkdir_at(backup_dir_buf,
+///   ACCESSPERMS)` per new element, and `backup.c:206` `make_path()` for the
+///   backup root, which is `do_mkdir_at()` again (`util1.c:238`).
+/// - `rsync-3.5.0/util1.c:207` `make_path()` - the per-component
+///   `do_mkdir_at()` loop this mirrors.
+/// - `rsync-3.5.0/syscall.c:2082-2094` `do_mkdir_at()` under
+///   `operator_path_resolve` - `owner_walk_parent()`, then `mkdirat`.
+/// - `rsync-3.5.0/syscall.c:581-596` - the resolved-leaf confinement judgement
+///   inside `owner_walk_parent()`.
+///
+/// # Errors
+///
+/// As [`operator_create_dir_all`], plus the `ELOOP` reported when a resolved
+/// component lands outside the confinement root.
+pub fn operator_create_dir_all_confined(path: &Path, mode: u32) -> io::Result<()> {
+    operator_create_dir_all_kind(path, mode, crate::confinement::PathKind::Confined)
+}
+
+/// The shared body of the two `operator_create_dir_all*` spellings.
+fn operator_create_dir_all_kind(
+    path: &Path,
+    mode: u32,
+    kind: crate::confinement::PathKind,
+) -> io::Result<()> {
     if path.as_os_str().is_empty() {
         return Ok(());
     }
-    match operator_mkdir(path, mode) {
+    match operator_mkdir_kind(path, mode, kind) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let parent = path.parent().ok_or(error)?;
-            operator_create_dir_all(parent, mode)?;
-            operator_mkdir(path, mode)
+            operator_create_dir_all_kind(parent, mode, kind)?;
+            operator_mkdir_kind(path, mode, kind)
         }
         Err(error) => Err(error),
     }
@@ -812,6 +874,74 @@ pub fn operator_link_confined(old_path: &Path, new_path: &Path) -> io::Result<()
     let (old_dirfd, old_leaf) = owner_trusted_parent_kind(old_path, kind)?;
     let (new_dirfd, new_leaf) = owner_trusted_parent_kind(new_path, kind)?;
     crate::linkat(old_dirfd.as_fd(), &old_leaf, new_dirfd.as_fd(), &new_leaf)
+}
+
+/// Create a symlink at an operator-supplied path through the ownership walk,
+/// bound to the session's confinement root.
+///
+/// The SYMLINK tier of the backup ladder: when the pre-image is itself a
+/// symlink and neither the hard-link nor the rename tier can place it (a
+/// `--backup-dir` on another mount), the ladder recreates the link in the
+/// backup area instead. `symlinkat(2)` never follows its own leaf - an
+/// occupied name is `EEXIST` - so the exposure here is entirely in the PARENT
+/// chain, which is exactly what the walk resolves and what a flipped component
+/// redirects.
+///
+/// There is no `Ancillary` twin: every operator path oc creates a symlink at is
+/// a backup path, and upstream's only `do_symlink_at()` call under
+/// `operator_path_resolve` is the backup one.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/backup.c:377` `make_backup_inner()` - `do_symlink_at(sl, buf)`
+///   for the copy-tier symlink branch, inside `make_backup()`'s
+///   `operator_path_resolve = 1` window (`backup.c:437-449`).
+/// - `rsync-3.5.0/syscall.c:780-791` `do_symlink_at()` under
+///   `operator_path_resolve` - `owner_walk_parent()`, then the shared
+///   `symlinkat` leaf create.
+///
+/// # Errors
+///
+/// - `ELOOP` when a component is an untrusted-owner symlink, or when the
+///   resolved leaf lands outside the confinement root.
+/// - Otherwise the `symlinkat(2)` errno, notably `EEXIST` for an occupied name.
+pub fn operator_symlink_confined(target: &Path, path: &Path) -> io::Result<()> {
+    let (parent, leaf) = owner_trusted_parent_kind(path, crate::confinement::PathKind::Confined)?;
+    crate::symlinkat(target, parent.as_fd(), &leaf)
+}
+
+/// Unlink an operator-supplied path through the ownership walk, bound to the
+/// session's confinement root.
+///
+/// The obstruction clear in the `--backup-dir` parent chain: an element that
+/// exists but is not a directory is removed so the directory can be created in
+/// its place. That removal is the most dangerous step in the chain - it is an
+/// unlink whose target the attacker chose - and the confined `lstat` that
+/// decided it does not protect the unlink itself, because the component can be
+/// flipped in between. Both go through the walk for that reason, exactly as
+/// upstream routes `validate_backup_dir()`'s `do_lstat_at()` and the
+/// `delete_item()` that follows it.
+///
+/// `unlinkat(2)` never follows a terminal symlink, so this removes the link
+/// itself and never its target - matching the `lstat`-based decision that
+/// selected it.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/backup.c:65-80` `validate_backup_dir()` - `do_lstat_at()`,
+///   then `delete_item(..., DEL_FOR_BACKUP | DEL_RECURSE)` for a non-directory.
+/// - `rsync-3.5.0/syscall.c:673-684` `do_unlink_at()` under
+///   `operator_path_resolve` - `owner_walk_parent()`, then `unlinkat`.
+/// - `rsync-3.5.0/backup.c:437-449` `make_backup()` - the window both sit in.
+///
+/// # Errors
+///
+/// - `ELOOP` when a component is an untrusted-owner symlink, or when the
+///   resolved leaf lands outside the confinement root.
+/// - Otherwise the `unlinkat(2)` errno.
+pub fn operator_remove_file_confined(path: &Path) -> io::Result<()> {
+    let (parent, leaf) = owner_trusted_parent_kind(path, crate::confinement::PathKind::Confined)?;
+    crate::unlinkat(parent.as_fd(), &leaf, crate::UnlinkFlags::File)
 }
 
 /// Open `path` with every component resolved by the ownership walk.

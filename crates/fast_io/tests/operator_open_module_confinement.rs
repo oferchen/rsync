@@ -447,3 +447,153 @@ fn an_ancillary_rename_may_still_leave_the_module() {
         "PRE-IMAGE-IN-MODULE"
     );
 }
+
+/// Plants the `--backup-dir` escape shape - a trusted-owned directory symlink
+/// inside the module pointing out of it - and hands back both ends.
+fn plant_out_of_module_backup_dir(fixture: &Fixture) -> (PathBuf, PathBuf) {
+    let outside_dir = fixture.secret.parent().expect("outside dir").to_path_buf();
+    let backup_dir = fixture.module.join("backup/out");
+    symlink(&outside_dir, &backup_dir).expect("plant the out-of-module dir symlink");
+    (backup_dir, outside_dir)
+}
+
+/// THE MKDIR-SIDE PIN. The `--backup-dir` PARENT CHAIN is built before any
+/// backup tier runs, so it is the first thing an out-of-module backup area
+/// reaches - and creating the subtree is already an escape, whatever the tiers
+/// decide afterwards.
+///
+/// upstream: `rsync-3.5.0/backup.c:128` `do_mkdir_at(backup_dir_buf,
+/// ACCESSPERMS)` inside `make_backup()`'s `operator_path_resolve = 1` window
+/// (backup.c:437-449); `syscall.c:2082` `do_mkdir_at()` walks the parent with
+/// `owner_walk_parent()` while it is set.
+#[test]
+fn a_confined_mkdir_through_a_symlinked_dir_leaving_the_module_is_refused() {
+    let fixture = fixture();
+    let (backup_dir, outside_dir) = plant_out_of_module_backup_dir(&fixture);
+
+    let _session = serve_module(&fixture.module);
+    let error = fast_io::operator_create_dir_all_confined(&backup_dir.join("sub/deep"), 0o777)
+        .expect_err("a confined mkdir must not build a subtree outside the module");
+
+    assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+    assert!(
+        !outside_dir.join("sub").exists(),
+        "no part of the backup subtree may have been created outside the module"
+    );
+}
+
+/// NON-VACUITY companion for the mkdir pin: the ANCILLARY spelling on the same
+/// fixture really does build the subtree outside the module, so the refusal
+/// above is the confinement firing rather than a walk that fails for every
+/// input.
+#[test]
+fn an_ancillary_mkdir_may_still_leave_the_module() {
+    let fixture = fixture();
+    let (backup_dir, outside_dir) = plant_out_of_module_backup_dir(&fixture);
+
+    let _session = serve_module(&fixture.module);
+    fast_io::operator_create_dir_all(&backup_dir.join("sub/deep"), 0o777)
+        .expect("an ancillary mkdir is not bound to the module root");
+
+    assert!(
+        outside_dir.join("sub/deep").is_dir(),
+        "the fixture must be able to create the subtree at all"
+    );
+}
+
+/// NEGATIVE CONTROL for the mkdir side: an in-module subtree is still created.
+/// Without this, "refuse every confined mkdir" would satisfy the pin above
+/// while breaking every legitimate `--backup-dir`.
+#[test]
+fn a_confined_mkdir_inside_the_module_still_creates_the_subtree() {
+    let fixture = fixture();
+
+    let _session = serve_module(&fixture.module);
+    fast_io::operator_create_dir_all_confined(&fixture.module.join("bak/a/b"), 0o777)
+        .expect("an in-module subtree must still be created");
+
+    assert!(fixture.module.join("bak/a/b").is_dir());
+}
+
+/// THE SYMLINK-SIDE PIN, the backup ladder's SYMLINK tier. `symlinkat` never
+/// follows its own leaf - an occupied name is `EEXIST` - so the whole exposure
+/// is the PARENT chain, which is what the walk resolves.
+///
+/// upstream: `rsync-3.5.0/backup.c:377` `do_symlink_at(sl, buf)` inside
+/// `make_backup()`'s `operator_path_resolve = 1` window; `syscall.c:780`
+/// `do_symlink_at()` walks the parent while it is set.
+#[test]
+fn a_confined_symlink_through_a_symlinked_dir_leaving_the_module_is_refused() {
+    let fixture = fixture();
+    let (backup_dir, outside_dir) = plant_out_of_module_backup_dir(&fixture);
+
+    let _session = serve_module(&fixture.module);
+    let error = fast_io::operator_symlink_confined(
+        Path::new("pre-image-target"),
+        &backup_dir.join("link~"),
+    )
+    .expect_err("a confined symlink must not be created outside the module");
+
+    assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+    assert!(
+        fs::symlink_metadata(outside_dir.join("link~")).is_err(),
+        "no link may have been created outside the module"
+    );
+}
+
+/// NEGATIVE CONTROL for the symlink side: an in-module backup link is still
+/// created, with its target recorded verbatim as `symlinkat(2)` does.
+#[test]
+fn a_confined_symlink_inside_the_module_is_still_created() {
+    let fixture = fixture();
+
+    let _session = serve_module(&fixture.module);
+    let link = fixture.module.join("backup/sub/link~");
+    fast_io::operator_symlink_confined(Path::new("old_target"), &link)
+        .expect("an in-module backup link must still be created");
+
+    assert_eq!(
+        fs::read_link(&link).expect("read the recreated link"),
+        Path::new("old_target")
+    );
+}
+
+/// THE UNLINK-SIDE PIN. Clearing a non-directory obstruction from the
+/// `--backup-dir` chain is an unlink whose target the attacker chose, and the
+/// confined `lstat` that decided it does not protect the unlink itself: the
+/// component can be flipped in between. Both take the walk for that reason.
+///
+/// upstream: `rsync-3.5.0/backup.c:65-80` `validate_backup_dir()` -
+/// `do_lstat_at()`, then `delete_item(..., DEL_FOR_BACKUP | DEL_RECURSE)`;
+/// `syscall.c:673` `do_unlink_at()` under `operator_path_resolve`.
+#[test]
+fn a_confined_unlink_through_a_symlinked_dir_leaving_the_module_is_refused() {
+    let fixture = fixture();
+    let (backup_dir, _outside_dir) = plant_out_of_module_backup_dir(&fixture);
+
+    let _session = serve_module(&fixture.module);
+    let error = fast_io::operator_remove_file_confined(&backup_dir.join("secret"))
+        .expect_err("a confined unlink must not reach outside the module");
+
+    assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+    assert_eq!(
+        fs::read_to_string(&fixture.secret).expect("the outside file survives"),
+        "SECRET-MARKER",
+        "a refused unlink must not have deleted the out-of-module file"
+    );
+}
+
+/// NEGATIVE CONTROL for the unlink side: an in-module obstruction is still
+/// cleared, which is what lets the chain recreate the element as a directory.
+#[test]
+fn a_confined_unlink_inside_the_module_still_clears_the_obstruction() {
+    let fixture = fixture();
+    let obstruction = fixture.module.join("backup/sub/obstruction");
+    fs::write(&obstruction, "NOT-A-DIRECTORY").expect("plant the obstruction");
+
+    let _session = serve_module(&fixture.module);
+    fast_io::operator_remove_file_confined(&obstruction)
+        .expect("an in-module obstruction must still be cleared");
+
+    assert!(fs::symlink_metadata(&obstruction).is_err());
+}
