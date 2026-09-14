@@ -38,7 +38,7 @@ rustix = { workspace = true, features = ["fs", "param", "process"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, optional = true, features = ["fs", "io-util", "sync", "rt"] }
 filetime = { workspace = true }
-zstd = { version = "0.13", optional = true }
+zstd = { version = "0.14", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-fs = { path = "../apple-fs" }
@@ -185,7 +185,7 @@ xattr = { workspace = true }
 libc = { workspace = true }
 criterion = { workspace = true }
 rand = { workspace = true }
-zstd = "0.13"
+zstd = "0.14"
 
 [[bench]]
 name = "optimizations_benchmark"
