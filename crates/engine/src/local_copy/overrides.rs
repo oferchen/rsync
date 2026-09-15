@@ -85,7 +85,7 @@ pub(super) fn create_hard_link(source: &Path, destination: &Path) -> io::Result<
 /// serves `-H` hardlink materialisation, which is a *transfer* path and takes
 /// the confined resolver, not the ownership one.
 ///
-/// upstream: `rsync-3.5.0/backup.c:200-207` `link_or_rename()`;
+/// upstream: `rsync-3.5.0/backup.c:239-246` `link_or_rename()`;
 /// `syscall.c:676` `do_link_at()` under `operator_path_resolve`.
 pub(super) fn create_backup_hard_link(source: &Path, destination: &Path) -> io::Result<()> {
     #[cfg(test)]
@@ -188,7 +188,7 @@ where
 /// pointed at the instant the kernel resolved it - upstream's
 /// `backup-dir-symlink-race`.
 ///
-/// upstream: `rsync-3.5.0/backup.c:200-219` `make_backup()` sets
+/// upstream: `rsync-3.5.0/backup.c:437-449` `make_backup()` sets
 /// `operator_path_resolve` around the rename; `syscall.c:1894` `do_rename_at()`
 /// then walks each side with `owner_walk_parent()`.
 ///
