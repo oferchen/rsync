@@ -1501,7 +1501,7 @@ dependencies = [
 name = "flist"
 version = "0.6.4"
 dependencies = [
- "libc",
+ "fast_io",
  "logging",
  "rayon",
  "serde",
