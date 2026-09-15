@@ -1052,6 +1052,48 @@ jobs:
       expect_result_root: tools/ci/upstream-3.5.0-expect.root.tcp.txt
 
   # ===========================================================================
+  # Upstream Testsuite skip oracle (3.5.0, nonroot/pipe, full run)
+  # ---------------------------------------------------------------------------
+  # The same corpus as `upstream-testsuite`, run WITHOUT --expect-result so
+  # upstream's own anti-vacuity oracle actually fires. The two flags are
+  # mutually exclusive by construction: --expect-result clears full_run
+  # (3.5.0 runtests.py:850) and the skip oracle is gated on full_run (:998),
+  # so every expect-result leg above runs with the oracle permanently dark -
+  # a test could start skipping only where its manifest row already says
+  # `skip`, but nothing proves the 85 `skip` rows themselves are the whole
+  # story on a bare full run. Here runtests.py compares the run's skip set
+  # against the committed ledger EXACTLY (testsuite/skiplist/README.md: "if a
+  # test starts skipping - a probe regresses, a helper goes missing - the run
+  # fails instead of reporting green"), and an un-skip fails it too, so the
+  # ledger can only shrink deliberately.
+  #
+  # One leg is enough for the oracle's purpose and it must be a pipe leg: the
+  # tcp legs run the --daemon-tests-only subset, which also clears full_run
+  # (:836) - the driver refuses EXPECT_SKIPPED on such a leg. The skip set is
+  # leg-dependent (require_root/require_tcp), so the ledger names its leg:
+  # ubuntu-latest, non-root, stdio-pipe, no --rsync-bin2 peer,
+  # LEGACY_ORACLES=off - the `upstream-testsuite` gate's exact configuration.
+  #
+  # A full run without --expect-result fails on any FAIL outcome, which is
+  # currently equivalent to the pipe gate above (its manifest is 260 pass /
+  # 85 skip: no accepted divergences to re-expect). Not yet a required status
+  # check - registering a context is a repo-admin action - but it fails loud
+  # on every PR either way.
+  #
+  # artifact_suffix disambiguates from `upstream-testsuite`, which uploads
+  # `upstream-testsuite-logs-pipe` in the same run.
+  # ===========================================================================
+  upstream-testsuite-skip-oracle:
+    needs: lint
+    uses: ./.github/workflows/_upstream-testsuite.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
+      variant: 'nonroot'
+      expect_skipped_nonroot: tools/ci/upstream-3.5.0-skiplist.nonroot.txt
+      artifact_suffix: '-skip-oracle'
+
+  # ===========================================================================
   # Upstream testsuite - macOS (3.5.0, nonroot/pipe)
   # ---------------------------------------------------------------------------
   # The four Linux legs ({nonroot,root} x {pipe,tcp}) cannot observe a
