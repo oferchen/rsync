@@ -64,6 +64,7 @@ use std::path::{Path, PathBuf};
 
 use super::error::SshError;
 use crate::ssh::argv_split::argv_split;
+use crate::ssh::config_files::{ConfigFile, check_default_user_config_perms};
 use crate::ssh::config_options::{
     Opcode, glob_matches, parse_flag_value, parse_time_value, parse_token, split_directive,
 };
@@ -107,10 +108,60 @@ pub(super) struct ResolvedHost {
 /// [`SshError::SshConfig`] when a line is one upstream would refuse; see
 /// the module docs for the three cases.
 pub(super) fn resolve_host(path: &Path, host_alias: &str) -> Result<ResolvedHost, SshError> {
-    let Ok(text) = fs::read_to_string(path) else {
-        return Ok(ResolvedHost::default());
-    };
-    resolve_host_in(&text, host_alias, &path.display().to_string())
+    let mut resolved = ResolvedHost::default();
+    if let Ok(text) = fs::read_to_string(path) {
+        resolve_host_into(
+            &mut resolved,
+            &text,
+            host_alias,
+            &path.display().to_string(),
+        )?;
+    }
+    Ok(resolved)
+}
+
+/// Resolves `host_alias` across the ordered config-file load order,
+/// threading ONE [`ResolvedHost`] through every file so the per-keyword
+/// claim state - first-obtained for the scalar slots, accumulating for
+/// `IdentityFile` - carries across the file boundary, exactly as
+/// upstream reads the user file and then the system file into the same
+/// options struct (openssh/ssh.c:561-592 `process_config_files()`).
+/// `Host` block state, by contrast, is per file: each scan starts back
+/// at the top level (openssh/readconf.c `read_config_file_depth()`
+/// re-initialises `active`).
+///
+/// A file flagged `check_perm` (the default `~/.ssh/config`,
+/// openssh/ssh.c:583) is refused when group/world-writable or owned by
+/// neither root nor the caller; a missing or unreadable file is skipped.
+///
+/// # Errors
+///
+/// [`SshError::SshConfigPermissions`] when a `check_perm` file fails
+/// upstream's owner/permission check (openssh/readconf.c:2579-2587);
+/// [`SshError::SshConfig`] when a line is one upstream would refuse.
+/// Either aborts the load - later files are not read.
+pub(super) fn resolve_host_files(
+    files: &[ConfigFile],
+    host_alias: &str,
+) -> Result<ResolvedHost, SshError> {
+    let mut resolved = ResolvedHost::default();
+    for file in files {
+        if file.check_perm && check_default_user_config_perms(&file.path).is_err() {
+            return Err(SshError::SshConfigPermissions {
+                path: file.path.display().to_string(),
+            });
+        }
+        let Ok(text) = fs::read_to_string(&file.path) else {
+            continue;
+        };
+        resolve_host_into(
+            &mut resolved,
+            &text,
+            host_alias,
+            &file.path.display().to_string(),
+        )?;
+    }
+    Ok(resolved)
 }
 
 /// Variant of [`resolve_host`] that takes the config text directly.
@@ -123,7 +174,9 @@ pub(super) fn resolve_host(path: &Path, host_alias: &str) -> Result<ResolvedHost
 /// Same as [`resolve_host`].
 #[cfg(test)]
 pub(super) fn resolve_host_str(text: &str, host_alias: &str) -> Result<ResolvedHost, SshError> {
-    resolve_host_in(text, host_alias, INLINE_CONFIG_NAME)
+    let mut resolved = ResolvedHost::default();
+    resolve_host_into(&mut resolved, text, host_alias, INLINE_CONFIG_NAME)?;
+    Ok(resolved)
 }
 
 /// Builds the refusal upstream would print for `path` line `line`.
@@ -135,8 +188,15 @@ fn refuse(path: &str, line: usize, reason: impl Into<String>) -> SshError {
     }
 }
 
-fn resolve_host_in(text: &str, host_alias: &str, path: &str) -> Result<ResolvedHost, SshError> {
-    let mut resolved = ResolvedHost::default();
+/// Scans one file's text into `resolved`, claiming slots per the option
+/// table's `ResolutionPolicy` - which is what lets a later file's scan
+/// continue the same state. `Host` block activity is local to the call.
+fn resolve_host_into(
+    resolved: &mut ResolvedHost,
+    text: &str,
+    host_alias: &str,
+    path: &str,
+) -> Result<(), SshError> {
     let mut in_matching_block = false;
 
     for (index, raw_line) in text.lines().enumerate() {
@@ -267,7 +327,7 @@ fn resolve_host_in(text: &str, host_alias: &str, path: &str) -> Result<ResolvedH
         }
     }
 
-    Ok(resolved)
+    Ok(())
 }
 
 /// Parses a `ConnectTimeout` value per the `parse_time` arm
@@ -1048,5 +1108,120 @@ mod tests {
         assert!(pattern_matches("a", "?"));
         assert!(!pattern_matches("ab", "?"));
         assert!(pattern_matches("ab", "??"));
+    }
+
+    // -- file load order (task 237e) ----------------------------------
+    //
+    // upstream: openssh/ssh.c:561-592 `process_config_files()` reads the
+    // user file, then the system file, into ONE options struct. The
+    // system path is injected through the `ConfigFile` seam rather than
+    // read from the host's real `/etc/ssh/ssh_config`.
+
+    /// Materialises `text` as a config file and returns its
+    /// [`ConfigFile`] row for a composed-resolve fixture.
+    fn fixture_file(
+        dir: &tempfile::TempDir,
+        name: &str,
+        text: &str,
+        check_perm: bool,
+    ) -> ConfigFile {
+        let path = dir.path().join(name);
+        std::fs::write(&path, text).expect("write fixture");
+        ConfigFile { path, check_perm }
+    }
+
+    /// Cell (a): a scalar keyword set in BOTH files keeps the USER
+    /// file's value - the claim state crosses the file boundary, so the
+    /// system file cannot re-claim a taken slot
+    /// (openssh/readconf.c:1229 over openssh/ssh.c:571-589).
+    #[test]
+    fn user_file_claims_scalar_slots_before_the_system_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let user = fixture_file(&dir, "user", "Host t\n  Port 1111\n  User first\n", false);
+        let system = fixture_file(
+            &dir,
+            "system",
+            "Host *\n  Port 2222\n  User second\n  HostName sys.example.com\n",
+            false,
+        );
+        let resolved = resolve_host_files(&[user, system], "t").expect("accepted");
+        assert_eq!(resolved.port, Some(1111));
+        assert_eq!(resolved.user.as_deref(), Some("first"));
+        // A slot the user file left unclaimed IS the system file's to
+        // claim - cell (b) for this reader, red before this change.
+        assert_eq!(resolved.hostname.as_deref(), Some("sys.example.com"));
+    }
+
+    /// `IdentityFile` keeps its `Accumulate` policy across the boundary:
+    /// both files' identities land, in load order
+    /// (openssh/readconf.c:1394 `add_identity_file` has no unset test).
+    #[test]
+    fn identity_files_accumulate_across_both_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let user = fixture_file(&dir, "user", "Host t\n  IdentityFile /user/key\n", false);
+        let system = fixture_file(
+            &dir,
+            "system",
+            "Host *\n  IdentityFile /system/key\n",
+            false,
+        );
+        let resolved = resolve_host_files(&[user, system], "t").expect("accepted");
+        assert_eq!(
+            resolved.identity_files,
+            vec![PathBuf::from("/user/key"), PathBuf::from("/system/key")]
+        );
+    }
+
+    /// A missing user file is skipped and the system file still applies
+    /// (openssh/ssh.c:580-589 discards the default reads' results).
+    #[test]
+    fn a_missing_user_file_still_reaches_the_system_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let user = ConfigFile {
+            path: dir.path().join("nonexistent"),
+            check_perm: true,
+        };
+        let system = fixture_file(&dir, "system", "Host *\n  Port 2222\n", false);
+        let resolved = resolve_host_files(&[user, system], "t").expect("accepted");
+        assert_eq!(resolved.port, Some(2222));
+    }
+
+    /// A refusal in the user file aborts the whole load: the error names
+    /// the USER file even though the system file carries the same defect
+    /// on a different line, proving the system file was never scanned
+    /// (openssh/readconf.c:2667 fatals before the second read).
+    #[test]
+    fn a_refused_user_file_stops_before_the_system_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let user = fixture_file(&dir, "user", "Host \"broken\n", false);
+        let system = fixture_file(&dir, "system", "ok line\nHost \"broken\n", false);
+        let err = resolve_host_files(&[user.clone(), system], "t").expect_err("refused");
+        assert_eq!(
+            err.to_string(),
+            format!("{} line 1: invalid quotes", user.path.display())
+        );
+    }
+
+    /// Cell (d), embedded half: the world-writable DEFAULT user file is
+    /// refused with upstream's fatal wording, while the SAME mode on an
+    /// explicit (`-F`-shaped, `check_perm: false`) file is accepted -
+    /// CHECKPERM's scope is the flag, not the file
+    /// (openssh/ssh.c:571-583, openssh/readconf.c:2579-2587).
+    #[cfg(unix)]
+    #[test]
+    fn checkperm_refuses_the_default_user_file_but_not_an_explicit_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut file = fixture_file(&dir, "config", "Host t\n  Port 2222\n", true);
+        std::fs::set_permissions(&file.path, std::fs::Permissions::from_mode(0o666))
+            .expect("chmod");
+        let err = resolve_host_files(&[file.clone()], "t").expect_err("refused");
+        assert_eq!(
+            err.to_string(),
+            format!("Bad owner or permissions on {}", file.path.display())
+        );
+        file.check_perm = false;
+        let resolved = resolve_host_files(&[file], "t").expect("explicit file accepted");
+        assert_eq!(resolved.port, Some(2222));
     }
 }

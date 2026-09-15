@@ -256,6 +256,23 @@ pub fn effective_uid() -> u32 {
     0
 }
 
+/// Returns the process's real uid.
+///
+/// Distinct from [`effective_uid`]: OpenSSH's config-file ownership check
+/// compares against `getuid()` (openssh/readconf.c:2579-2587), so callers
+/// mirroring it must use the real uid. Non-Unix platforms have no POSIX
+/// uid and return `0`.
+#[cfg(unix)]
+pub fn real_uid() -> u32 {
+    nix::unistd::getuid().as_raw()
+}
+
+/// Non-Unix stub: there is no POSIX real uid.
+#[cfg(not(unix))]
+pub fn real_uid() -> u32 {
+    0
+}
+
 /// Drops privileges on Windows via user impersonation.
 ///
 /// Uses `LogonUserW` to obtain a token for the specified account, then
