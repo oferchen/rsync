@@ -333,6 +333,18 @@ impl GeneratorContext {
             for config in merge_configs {
                 self.filter_chain.add_merge_config(config);
             }
+            // upstream: exclude.c:1639-1665 - every merge-file open is gated
+            // on daemon_filter_list, so the chain must be able to consult the
+            // daemon's rules ALONE (client rules never gate an open). The
+            // daemon list already carries the basename exclude an `e`-modified
+            // dir-merge plants (exclude.c:1558-1571, materialised by the
+            // daemon config parser), which is why an `:e` merge file is never
+            // read here.
+            if !self.config.daemon_filter_rules.is_empty() {
+                let (daemon_set, _) =
+                    self.parse_received_filters(&self.config.daemon_filter_rules)?;
+                self.filter_chain.set_daemon_filter_gate(daemon_set);
+            }
         }
 
         Ok(())
