@@ -47,8 +47,10 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
 use std::time::{Duration, Instant};
+use test_support::ReapOnDrop;
 
 fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
@@ -164,7 +166,7 @@ impl Fixture {
 
     /// Pulls the whole module and reports the names that arrived.
     fn served(&self, daemon_bin: &Path, client_bin: &Path) -> BTreeSet<String> {
-        let mut daemon = spawn_daemon(daemon_bin, &self.conf(), self.port);
+        let daemon = spawn_daemon(daemon_bin, &self.conf(), self.port);
         let dest = self.root.path().join("dest");
         fs::create_dir_all(&dest).expect("dest dir");
         let status = Command::new(client_bin)
@@ -177,8 +179,7 @@ impl Fixture {
             .stdin(Stdio::null())
             .status()
             .expect("run client");
-        let _ = daemon.kill();
-        let _ = daemon.wait();
+        drop(daemon);
         assert!(status.success(), "the pull itself must succeed: {status:?}");
 
         fs::read_dir(&dest)
@@ -198,16 +199,18 @@ impl Fixture {
 ///
 /// `stdin` is `/dev/null` deliberately: with an inherited terminal or pipe the
 /// daemon takes its single-connection path and never listens.
-fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> Child {
-    let child = Command::new(binary)
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg(format!("--config={}", conf.display()))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn daemon");
+fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> ReapOnDrop {
+    let child = ReapOnDrop::new(
+        Command::new(binary)
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg(format!("--config={}", conf.display()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {

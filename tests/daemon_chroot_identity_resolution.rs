@@ -52,8 +52,10 @@
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
 use std::time::{Duration, Instant};
+use test_support::ReapOnDrop;
 
 fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
@@ -92,16 +94,18 @@ fn id_of(args: &[&str]) -> Option<String> {
 /// daemon takes its single-connection inetd path and never listens, and the
 /// client then reports "connection refused" instead of the behaviour under
 /// test.
-fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> Child {
-    let child = Command::new(binary)
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg(format!("--config={}", conf.display()))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn daemon");
+fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> ReapOnDrop {
+    let child = ReapOnDrop::new(
+        Command::new(binary)
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg(format!("--config={}", conf.display()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
@@ -164,7 +168,7 @@ fn push_into_chrooted_module(identity: &str, drop_uid: &str) -> Option<Outcome> 
     fs::write(&conf_path, conf).expect("config");
 
     let binary = oc_binary();
-    let mut daemon = spawn_daemon(&binary, &conf_path, port);
+    let daemon = spawn_daemon(&binary, &conf_path, port);
     let status = Command::new(&binary)
         .args([
             "-q",
@@ -176,8 +180,7 @@ fn push_into_chrooted_module(identity: &str, drop_uid: &str) -> Option<Outcome> 
         .expect("run client");
 
     let landed = module.join("f.txt").exists();
-    let _ = daemon.kill();
-    let _ = daemon.wait();
+    drop(daemon);
 
     Some(Outcome {
         transferred: status.success(),

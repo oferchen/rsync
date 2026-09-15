@@ -52,8 +52,10 @@ use std::fs;
 use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
 use std::time::{Duration, Instant};
+use test_support::ReapOnDrop;
 
 fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
@@ -182,16 +184,18 @@ fn free_port() -> Option<u16> {
 ///
 /// `stdin` is `/dev/null` deliberately: with an inherited terminal or pipe the
 /// daemon takes its single-connection inetd path and never listens.
-fn spawn_daemon(conf: &Path, port: u16) -> Child {
-    let child = Command::new(oc_binary())
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg(format!("--config={}", conf.display()))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn daemon");
+fn spawn_daemon(conf: &Path, port: u16) -> ReapOnDrop {
+    let child = ReapOnDrop::new(
+        Command::new(oc_binary())
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg(format!("--config={}", conf.display()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
@@ -225,7 +229,7 @@ fn daemon_pull(root: &Path) -> Option<Attempt> {
     )
     .expect("write daemon config");
 
-    let mut daemon = spawn_daemon(&conf_path, port);
+    let daemon = spawn_daemon(&conf_path, port);
     let output = Command::new(oc_binary())
         .args([
             "-r",
@@ -239,8 +243,7 @@ fn daemon_pull(root: &Path) -> Option<Attempt> {
     // removal, so tearing it down first would guarantee the very absence of
     // work this test is trying to detect.
     let attempt = observe(&dir, output);
-    let _ = daemon.kill();
-    let _ = daemon.wait();
+    drop(daemon);
     unseal(&dir);
     Some(attempt)
 }
