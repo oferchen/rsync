@@ -337,6 +337,17 @@ impl SshConfig {
         {
             self.identity_agent = Some(agent.clone());
         }
+        // Same explicit-wins rule as `port`: only a config still at the
+        // built-in default takes the file's value. The consumer is the
+        // russh connect site, which wraps the TCP dial in this timeout
+        // (`tokio::time::timeout` in `embedded::connect`), so a resolved
+        // directive changes real connect behaviour rather than being
+        // parse-and-drop.
+        if self.connect_timeout == Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS)
+            && let Some(secs) = resolved.connect_timeout
+        {
+            self.connect_timeout = Duration::from_secs(u64::from(secs));
+        }
     }
 
     /// Parses an `ssh://` URL into an `SshConfig` and remote path.
@@ -1010,6 +1021,44 @@ mod tests {
     fn identities_only_defaults_to_off() {
         // upstream: openssh/readconf.c:2905 leaves the flag off unless set.
         assert!(!SshConfig::default().identities_only);
+    }
+
+    #[test]
+    fn connect_timeout_from_config_reaches_the_connect_field() {
+        // The behavioural pin for the config -> connector plumbing: the
+        // directive lands in `SshConfig::connect_timeout`, the exact field
+        // the russh connect site wraps the TCP dial with. Unit-level on
+        // the plumbing; the dial itself is exercised by the connect tests.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  ConnectTimeout 7\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.connect_timeout, Duration::from_secs(7));
+    }
+
+    #[test]
+    fn explicit_connect_timeout_wins_over_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  ConnectTimeout 7\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.connect_timeout(Duration::from_secs(3));
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.connect_timeout, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn connect_timeout_under_a_non_matching_host_keeps_the_default() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host other\n  ConnectTimeout 7\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.connect_timeout, SshConfig::default().connect_timeout);
     }
 
     #[test]

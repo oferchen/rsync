@@ -2,7 +2,7 @@
 //!
 //! Recognises the subset of OpenSSH client directives that the embedded
 //! transport can act on: `Host`, `Hostname`, `User`, `Port`, `IdentityFile`,
-//! `IdentitiesOnly`, `IdentityAgent`. Unknown directives are skipped
+//! `IdentitiesOnly`, `IdentityAgent`, `ConnectTimeout`. Unknown directives are skipped
 //! silently. Wildcards in `Host` patterns follow OpenSSH semantics: `*`
 //! matches any sequence, `?` matches any single character, `!pattern`
 //! negates a match for that block.
@@ -35,19 +35,25 @@
 //! Upstream counts bad lines and then aborts the load outright
 //! (openssh/readconf.c:2667), so the connection never happens; resolving
 //! to different connection parameters than `ssh` would have used is the
-//! worse outcome. Three refusals are mirrored, each with upstream's own
-//! wording:
+//! worse outcome. Four refusals are mirrored, each with upstream's own
+//! wording, and each fires whether or not the surrounding `Host` block
+//! matches - upstream parses every line and gates only the ASSIGNMENT on
+//! `*activep`:
 //!
 //! * `invalid quotes` - a quote left open (openssh/readconf.c:1196-1199).
 //! * `keyword host empty argument` - an empty `Host` token
 //!   (openssh/readconf.c:1832-1836).
-//! * `Missing argument.` / `missing argument.` - a directive whose value
-//!   tokenised to nothing, e.g. `Port #comment`. The capitalisation is
-//!   upstream's own and splits by value SHAPE, not by keyword: single-token
-//!   options say `Missing` (openssh/readconf.c:1364), multistate flags say
-//!   `missing` (openssh/readconf.c:1108). Measured against real `ssh -G`
-//!   for every keyword below. The wording now hangs off the option table's
-//!   `ValueKind` so a keyword added later cannot pick the wrong one.
+//! * `Missing argument.` / `missing argument.` / `missing time value.` -
+//!   a directive whose value tokenised to nothing, e.g. `Port #comment`.
+//!   The wording is upstream's own and splits by value SHAPE, not by
+//!   keyword: single-token options say `Missing` (openssh/readconf.c:1364),
+//!   multistate flags say `missing` (openssh/readconf.c:1108), and time
+//!   values have their own line (openssh/readconf.c:1219). Measured
+//!   against real `ssh -G` for every keyword below. The wording hangs off
+//!   the option table's `ValueKind` so a keyword added later cannot pick
+//!   the wrong one.
+//! * `invalid time value.` - a `ConnectTimeout` value `convtime` rejects
+//!   (openssh/readconf.c:1224-1227).
 //!
 //! The caller (`SshConfig::apply_ssh_config`) merges the resolved
 //! directives into the existing config, with the rule that any value
@@ -59,7 +65,7 @@ use std::path::{Path, PathBuf};
 use super::error::SshError;
 use crate::ssh::argv_split::argv_split;
 use crate::ssh::config_options::{
-    Opcode, glob_matches, parse_flag_value, parse_token, split_directive,
+    Opcode, glob_matches, parse_flag_value, parse_time_value, parse_token, split_directive,
 };
 
 /// Placeholder file name used when a caller supplies config text with no
@@ -80,6 +86,11 @@ pub(super) struct ResolvedHost {
     pub identity_files: Vec<PathBuf>,
     pub identities_only: Option<bool>,
     pub identity_agent: Option<String>,
+    /// `ConnectTimeout` in whole seconds. `None` means no directive
+    /// obtained a value - which is also what `ConnectTimeout none`
+    /// resolves to, since upstream maps `none` onto the same -1 the unset
+    /// slot holds (openssh/readconf.c:1222-1223, :2734).
+    pub connect_timeout: Option<u32>,
 }
 
 /// Parses `path` and returns the directives that apply to `host_alias`.
@@ -167,13 +178,16 @@ fn resolve_host_in(text: &str, host_alias: &str, path: &str) -> Result<ResolvedH
                 })?;
             continue;
         }
-        if !in_matching_block {
-            continue;
-        }
 
         // Every directive below is single-valued, so it consumes exactly
         // one token - upstream's `arg = argv_next(&ac, &av)`. A `NULL`
-        // there is fatal, which is how `Port #comment` is refused.
+        // there is fatal, which is how `Port #comment` is refused. The
+        // refusal fires BEFORE the block-activity gate: upstream
+        // processes every line and `*activep` gates only the assignment
+        // (e.g. openssh/readconf.c:1229 `if (*activep && *intptr == -1)`),
+        // so a bad line inside a NON-matching `Host` block still aborts
+        // the load. Measured on `ssh -G`: `Host other` + `Port #x` is
+        // `Missing argument.` even for an alias `other` never matches.
         //
         // The opcode set is this reader's, not the table's: `Compression`
         // is in the table with the same shape but belongs to the other
@@ -185,7 +199,8 @@ fn resolve_host_in(text: &str, host_alias: &str, path: &str) -> Result<ResolvedH
             | Opcode::Port
             | Opcode::IdentityFile
             | Opcode::IdentitiesOnly
-            | Opcode::IdentityAgent => {
+            | Opcode::IdentityAgent
+            | Opcode::ConnectTimeout => {
                 let Some(arg) = tokens.first() else {
                     let Some(reason) = opcode.missing_argument() else {
                         continue;
@@ -199,6 +214,19 @@ fn resolve_host_in(text: &str, host_alias: &str, path: &str) -> Result<ResolvedH
             // row, not this one.
             _ => continue,
         };
+
+        // Value validation that upstream performs before the `*activep`
+        // check, so it too refuses from an inactive block.
+        let connect_timeout = match opcode {
+            Opcode::ConnectTimeout => {
+                parse_connect_timeout(arg).map_err(|reason| refuse(path, linenum, reason))?
+            }
+            _ => None,
+        };
+
+        if !in_matching_block {
+            continue;
+        }
 
         match opcode {
             Opcode::Hostname => set_if_unset(&mut resolved.hostname, arg.to_owned()),
@@ -224,11 +252,41 @@ fn resolve_host_in(text: &str, host_alias: &str, path: &str) -> Result<ResolvedH
             Opcode::IdentityAgent => {
                 set_if_unset(&mut resolved.identity_agent, expand_tilde_str(arg));
             }
+            Opcode::ConnectTimeout => {
+                // `None` here is `ConnectTimeout none`: upstream writes -1,
+                // the unset sentinel, so the slot stays claimable and a
+                // LATER numeric directive still wins (measured on
+                // `ssh -G`: `none` then `5` dumps 5). A plain
+                // first-obtained-wins that let `none` claim the slot
+                // would diverge exactly there.
+                if let Some(secs) = connect_timeout {
+                    set_if_unset(&mut resolved.connect_timeout, secs);
+                }
+            }
             _ => unreachable!("the match above already narrowed the opcode set"),
         }
     }
 
     Ok(resolved)
+}
+
+/// Parses a `ConnectTimeout` value per the `parse_time` arm
+/// (openssh/readconf.c:1215-1233). `Ok(None)` is the case-SENSITIVE
+/// literal `none` (strcmp at openssh/readconf.c:1222), which upstream maps
+/// onto the unset sentinel; everything else must satisfy `convtime` or the
+/// load is refused with upstream's own wording. An empty token shares the
+/// missing-value wording (`!arg || *arg == '\0'`, openssh/readconf.c:1218).
+fn parse_connect_timeout(arg: &str) -> Result<Option<u32>, &'static str> {
+    if arg.is_empty() {
+        return Err("missing time value.");
+    }
+    if arg == "none" {
+        return Ok(None);
+    }
+    match parse_time_value(arg) {
+        Some(secs) => Ok(Some(secs)),
+        None => Err("invalid time value."),
+    }
 }
 
 /// A `Host` line carried a token that tokenised to the empty string.
@@ -732,6 +790,110 @@ mod tests {
         let text = "Host a\n  Port 2222\nHost #x\n  Port 3333\n";
         assert_eq!(resolve(text, "a").port, Some(2222));
         assert!(resolve("Host #x\n  Port 3333\n", "a").port.is_none());
+    }
+
+    // -- ConnectTimeout ---------------------------------------------------
+    //
+    // Every cell below was measured against real `ssh -G` (OpenSSH_10.3p1)
+    // before being written down; the differential harness pins the
+    // oracle-reachable half live.
+
+    #[test]
+    fn connect_timeout_resolves_in_seconds() {
+        assert_eq!(
+            resolve("Host a\n  ConnectTimeout 7\n", "a").connect_timeout,
+            Some(7)
+        );
+        // convtime's qualifier forms reach the directive.
+        assert_eq!(
+            resolve("Host a\n  ConnectTimeout 1m30s\n", "a").connect_timeout,
+            Some(90)
+        );
+        // 0 is a VALUE, not unset (upstream dumps `connecttimeout 0`).
+        assert_eq!(
+            resolve("Host a\n  ConnectTimeout 0\n", "a").connect_timeout,
+            Some(0)
+        );
+    }
+
+    /// First-obtained-wins, the property the whole 237d row hangs on.
+    /// Oracle: `7` then `9` dumps `connecttimeout 7`.
+    #[test]
+    fn connect_timeout_first_obtained_wins() {
+        let text = "Host a\n  ConnectTimeout 7\n  ConnectTimeout 9\n";
+        assert_eq!(resolve(text, "a").connect_timeout, Some(7));
+    }
+
+    /// The `none` SENTINEL quirk: upstream's `none` writes -1, which IS
+    /// the unset sentinel, so `none` never claims the first-obtained slot
+    /// and a LATER value still wins (openssh/readconf.c:1222, :1229).
+    /// Oracle: `none` then `5` dumps `connecttimeout 5`; `5` then `none`
+    /// dumps 5; `none` alone dumps `connecttimeout none`.
+    #[test]
+    fn connect_timeout_none_is_the_unset_sentinel_not_a_value() {
+        assert_eq!(
+            resolve("Host a\n  ConnectTimeout none\n  ConnectTimeout 5\n", "a").connect_timeout,
+            Some(5)
+        );
+        assert_eq!(
+            resolve("Host a\n  ConnectTimeout 5\n  ConnectTimeout none\n", "a").connect_timeout,
+            Some(5)
+        );
+        assert_eq!(
+            resolve("Host a\n  ConnectTimeout none\n", "a").connect_timeout,
+            None
+        );
+    }
+
+    /// A value under a NON-matching `Host` block does not apply.
+    /// Oracle: `Host other` + `ConnectTimeout 9` dumps `connecttimeout
+    /// none` for alias `t`.
+    #[test]
+    fn connect_timeout_is_host_scoped() {
+        let text = "Host other\n  ConnectTimeout 9\nHost t\n  Port 2222\n";
+        let resolved = resolve(text, "t");
+        assert_eq!(resolved.connect_timeout, None);
+        assert_eq!(resolved.port, Some(2222));
+    }
+
+    /// The refusals, upstream's own wording (openssh/readconf.c:1218-1227):
+    /// a missing or empty value says `missing time value.`, anything
+    /// convtime rejects says `invalid time value.` - including `NONE`,
+    /// because the `none` strcmp is case-SENSITIVE.
+    #[test]
+    fn connect_timeout_refusals_use_upstreams_wording() {
+        for (text, reason) in [
+            ("Host a\n  ConnectTimeout #x\n", "missing time value."),
+            ("Host a\n  ConnectTimeout \"\"\n", "missing time value."),
+            ("Host a\n  ConnectTimeout bogus\n", "invalid time value."),
+            ("Host a\n  ConnectTimeout -5\n", "invalid time value."),
+            ("Host a\n  ConnectTimeout NONE\n", "invalid time value."),
+        ] {
+            assert_eq!(
+                refusal(text, "a"),
+                format!("<ssh_config> line 2: {reason}"),
+                "fixture {text:?}"
+            );
+        }
+    }
+
+    /// The exposure-surfaced defect this change fixes: upstream refuses a
+    /// bad line from a NON-matching `Host` block too, because `*activep`
+    /// gates only the assignment (openssh/readconf.c:1229) while the parse
+    /// runs for every line. oc used to skip inactive blocks wholesale.
+    /// Oracle: both fixtures exit 255 for alias `t`, refusing line 2.
+    #[test]
+    fn a_bad_value_in_a_non_matching_block_still_refuses() {
+        assert_eq!(
+            refusal("Host other\n  ConnectTimeout bogus\nHost t\n", "t"),
+            "<ssh_config> line 2: invalid time value."
+        );
+        // The hoisted gate covers the OTHER value options' missing-arg
+        // refusal too - the same upstream rule, same measurement.
+        assert_eq!(
+            refusal("Host other\n  Port #x\nHost t\n", "t"),
+            "<ssh_config> line 2: Missing argument."
+        );
     }
 
     /// A refusal from a real file names that file, not the inline

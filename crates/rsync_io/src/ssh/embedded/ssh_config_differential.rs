@@ -58,7 +58,7 @@
 //!   `Host`-pattern behaviour is measured here rather than only by unit
 //!   tests asserting our own reading of the C.
 //! - `ssh::embedded::ssh_config` (this module's neighbour) is the
-//!   value-carrying resolver - [`ResolvedHost`], six directives - but it
+//!   value-carrying resolver - [`ResolvedHost`], seven directives - but it
 //!   understands `Host` only, with no `Match`, no `Include`, and no token
 //!   expansion.
 //!
@@ -310,6 +310,15 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
     map.insert(
         "identityagent".to_owned(),
         resolved.identity_agent.clone().map(|a| vec![a]),
+    );
+    // `None` covers both "no directive" and `ConnectTimeout none` - the
+    // same collapse upstream performs, since `none` writes the unset
+    // sentinel (openssh/readconf.c:1222). Upstream dumps the unset state
+    // as the string `none` (openssh/readconf.c:3876-3877), which lands in
+    // `OcUnset` here rather than being modelled as a default.
+    map.insert(
+        "connecttimeout".to_owned(),
+        resolved.connect_timeout.map(|secs| vec![secs.to_string()]),
     );
 
     map
@@ -1018,6 +1027,100 @@ mod tests {
         let hostname = diff.cell("hostname").expect("upstream dumps hostname");
         assert_eq!(hostname.upstream, vec!["real".to_owned()]);
         assert_eq!(hostname.verdict, Verdict::Match);
+    }
+
+    /// `ConnectTimeout` parity, including convtime's qualifier grammar:
+    /// upstream resolves `1m30s` to 90 seconds before the dump, and oc's
+    /// port must land on the same number through the live resolver.
+    #[test]
+    fn connecttimeout_matches_through_the_time_grammar() {
+        const FIXTURE: &str = "Host t\n  ConnectTimeout 1m30s\n";
+
+        let diff = match run(FIXTURE, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("connecttimeout parity", &why);
+                return;
+            }
+        };
+        let cell = diff.cell("connecttimeout").expect("dumped");
+        assert_eq!(cell.upstream, vec!["90".to_owned()]);
+        assert_eq!(
+            cell.verdict,
+            Verdict::Match,
+            "upstream {:?} vs oc {:?} on {}",
+            cell.upstream,
+            cell.oc,
+            diff.oracle_version
+        );
+    }
+
+    /// The `none` SENTINEL quirk, against the oracle: `none` writes the
+    /// unset -1 (openssh/readconf.c:1222), so a LATER value still claims
+    /// the first-obtained slot. A reader where `none` were a first-class
+    /// value would dump `none` here and diverge.
+    #[test]
+    fn connecttimeout_none_does_not_claim_the_first_obtained_slot() {
+        const FIXTURE: &str = "Host t\n  ConnectTimeout none\n  ConnectTimeout 5\n";
+
+        let diff = match run(FIXTURE, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("connecttimeout none sentinel", &why);
+                return;
+            }
+        };
+        let cell = diff.cell("connecttimeout").expect("dumped");
+        assert_eq!(cell.upstream, vec!["5".to_owned()]);
+        assert_eq!(
+            cell.verdict,
+            Verdict::Match,
+            "oc {:?} on {}",
+            cell.oc,
+            diff.oracle_version
+        );
+    }
+
+    /// The refusal wordings are upstream's own, measured live: a bad time
+    /// value and a value-less directive abort the load on both sides -
+    /// and the INACTIVE-block arm pins the exposure-surfaced defect that
+    /// oc used to skip non-matching `Host` blocks without validating.
+    #[test]
+    fn connecttimeout_refusals_match_the_oracle() {
+        for (fixture, alias, needle) in [
+            (
+                "Host t\n  ConnectTimeout bogus\n",
+                "t",
+                "invalid time value.",
+            ),
+            ("Host t\n  ConnectTimeout #x\n", "t", "missing time value."),
+            // Non-matching Host block: upstream parses every line and
+            // gates only the assignment, so this refuses for alias `t`
+            // even though the block is for `other`.
+            (
+                "Host other\n  ConnectTimeout bogus\nHost t\n",
+                "t",
+                "invalid time value.",
+            ),
+        ] {
+            let upstream = match refusal(fixture, alias) {
+                Ok(v) => v,
+                Err(why) => {
+                    report_skip("connecttimeout refusal parity", &why);
+                    return;
+                }
+            };
+            let upstream = upstream.expect("ssh -G must refuse this fixture");
+            assert!(
+                upstream.contains(needle),
+                "oracle refused {fixture:?} with unexpected text: {upstream}"
+            );
+            let oc = oc_refusal(fixture, alias).expect("oc must refuse it too");
+            assert!(
+                oc.contains(needle),
+                "oc refused {fixture:?} with unexpected text: {oc}"
+            );
+        }
     }
 
     /// Quotes GROUP and are CONSUMED, so a quoted `Host` pattern matches
