@@ -53,7 +53,6 @@
 mod cache;
 #[cfg(unix)]
 mod dir_stat;
-mod statx_support;
 mod types;
 
 #[cfg(test)]
@@ -62,10 +61,10 @@ mod tests;
 pub use cache::BatchedStatCache;
 #[cfg(unix)]
 pub use dir_stat::DirectoryStatBatch;
-pub use statx_support::has_statx_support;
+// The statx wrappers live in fast_io (the I/O-syscall owner crate) and are
+// re-exported here under their original paths.
+pub use fast_io::statx::has_statx_support;
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
-pub use statx_support::{statx, statx_mtime, statx_size_and_mtime};
+pub use fast_io::statx::{StatxResult, statx, statx_mtime, statx_size_and_mtime};
 #[cfg(unix)]
 pub use types::FstatResult;
-#[cfg(all(target_os = "linux", not(target_env = "musl")))]
-pub use types::StatxResult;
