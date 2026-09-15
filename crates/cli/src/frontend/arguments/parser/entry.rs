@@ -170,9 +170,13 @@ fn check_remote_option_dashes(remote_options: &[OsString]) -> Result<(), clap::E
 /// avoids a hand-maintained per-option mapping that would silently omit
 /// whatever it failed to list.
 ///
-/// The values are spliced immediately after the program name so they are
-/// parsed as ordinary options; [`check_remote_option_dashes`] has already
-/// guaranteed each begins with `-`, so none can be mistaken for an operand.
+/// The values are appended after the untouched argv, mirroring upstream's
+/// append order: `server_options()` serializes every local option first and
+/// only then copies `remote_options[]` (options.c:3175-3182), so in the child
+/// a `-M` payload that repeats a local option is parsed LAST and wins under
+/// popt's last-wins rule. [`check_remote_option_dashes`] has already
+/// guaranteed each value begins with `-`, so none can be mistaken for an
+/// operand once the re-parse hoists options ahead of the operands.
 ///
 /// The transfer is judged local from clap's own operand split rather than a
 /// hand-rolled scan of the raw argv, so this cannot disagree with the option
@@ -193,12 +197,36 @@ fn local_remote_option_argv(
     if operands.any(|operand| operand_is_remote(operand)) {
         return None;
     }
-    let (program, rest) = args.split_first()?;
     let mut folded = Vec::with_capacity(args.len() + remote_options.len());
-    folded.push(program.clone());
+    folded.extend_from_slice(args);
     folded.extend(remote_options);
-    folded.extend_from_slice(rest);
     Some(folded)
+}
+
+/// Relaxes clap's duplicate-occurrence error to popt's last-wins rule for the
+/// folded local re-parse.
+///
+/// upstream: popt has no "used multiple times" diagnostic - each occurrence
+/// simply re-runs its `parse_arguments()` case (options.c:1502 `while ((opt =
+/// poptGetNextOpt(pc)) != -1)`), so a repeated option resolves to the last
+/// value. The server child a local transfer forks therefore accepts the argv
+/// `server_options()` builds even when a `-M` payload repeats a local option
+/// (options.c:3175-3182 appends `remote_options[]` after the serialized local
+/// set). clap instead errors for `Set`/`SetTrue`/`SetFalse` actions unless the
+/// arg overrides itself, which turned every local `--X -M--X` combination into
+/// a spurious "cannot be used multiple times" rejection. `Count` and `Append`
+/// actions already accept repeats, so only the three erroring actions gain the
+/// self-override - explicit `overrides_with` pairs (e.g. `--no-X`) keep their
+/// declared relationships.
+fn popt_last_wins(command: clap::Command) -> clap::Command {
+    use clap::ArgAction;
+    command.mut_args(|arg| match arg.get_action() {
+        ArgAction::Set | ArgAction::SetTrue | ArgAction::SetFalse => {
+            let id = arg.get_id().clone();
+            arg.overrides_with(id)
+        }
+        _ => arg,
+    })
 }
 
 /// Parses command-line arguments into a structured [`ParsedArgs`] representation.
@@ -230,7 +258,7 @@ where
     // forked server child does. Re-parsed here, before any check below, so every
     // later validation sees the final option set.
     if let Some(folded) = local_remote_option_argv(&matches, &args) {
-        let command = clap_command(program_name.as_str());
+        let command = popt_last_wins(clap_command(program_name.as_str()));
         let folded = hoist_options_before_operands(&command, folded);
         let folded = expand_short_options(&command, folded);
         matches = command.try_get_matches_from(folded)?;
