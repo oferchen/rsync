@@ -384,7 +384,11 @@ jobs:
           # behaviour, divergences included, so this cannot redden on parity.
           # The "Set up SSH loopback" step below relies on the same client.
           OC_RSYNC_REQUIRE_SSH_G: "1"
-        run: cargo nextest run --locked --profile ci --workspace --all-features
+        # `shell: bash` turns on pipefail, so the tee never hides a failure.
+        shell: bash
+        run: |
+          cargo nextest run --locked --profile ci --workspace --all-features 2>&1 | tee nextest-run.log
+          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
 
       - name: Set up SSH loopback
         if: matrix.toolchain == 'stable'
@@ -462,10 +466,13 @@ jobs:
         run: cargo build --locked -p bin --bin oc-rsync
 
       - name: Test
+        # `shell: bash` turns on pipefail, so the tee never hides a failure.
+        shell: bash
         run: |
           # Run Windows-specific crates only (core, engine, cli have platform code)
           # Full test suite runs on Linux; Windows validates platform-specific paths
-          cargo nextest run --locked -p core -p engine -p cli --all-features
+          cargo nextest run --locked -p core -p engine -p cli --all-features 2>&1 | tee nextest-run.log
+          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
 
       # Pin the Windows crtime (NTFS creation-time via SetFileTime), NTFS
       # sparse (FSCTL_SET_SPARSE) and IOCP read-parity tests on the required
@@ -673,7 +680,11 @@ jobs:
       # listener, name-converter, and xfer-exec paths are exercised at PR
       # time rather than only on the nightly schedule.
       - name: Test daemon crate
-        run: cargo nextest run --locked -p daemon --no-fail-fast
+        # `shell: bash` turns on pipefail, so the tee never hides a failure.
+        shell: bash
+        run: |
+          cargo nextest run --locked -p daemon --no-fail-fast 2>&1 | tee nextest-run.log
+          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
 
   # ===========================================================================
   # Windows GNU Cross-Check - Validate x86_64-pc-windows-gnu compilation
@@ -814,6 +825,8 @@ jobs:
       # `error: unexpected argument 'build' found` when rust-toolchain.toml
       # pins a toolchain that was not pre-installed.
       - name: Test
+        # `shell: bash` turns on pipefail, so the tee never hides a failure.
+        shell: bash
         run: |
           # Run macOS-specific crates only (core, engine, cli have platform code).
           # Full test suite runs on Linux; macOS validates platform-specific paths.
@@ -832,7 +845,8 @@ jobs:
           # macOS while every required check stayed green, because no cell ran
           # the crate off Linux. Measured on master before adding it: 665 tests,
           # 662 passed, 3 failed - the whole cost of closing the hole.
-          rustup run ${{ matrix.toolchain }} cargo nextest run --locked -p core -p engine -p cli -p metadata -p apple-fs -p fast_io --all-features
+          rustup run ${{ matrix.toolchain }} cargo nextest run --locked -p core -p engine -p cli -p metadata -p apple-fs -p fast_io --all-features 2>&1 | tee nextest-run.log
+          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -916,7 +930,11 @@ jobs:
         run: cargo build --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
 
       - name: Test
-        run: cargo nextest run --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range"
+        # `shell: bash` turns on pipefail, so the tee never hides a failure.
+        shell: bash
+        run: |
+          cargo nextest run --locked --workspace --target x86_64-unknown-linux-musl --no-default-features --features "zstd,lz4,xattr,iconv,parallel,copy_file_range" 2>&1 | tee nextest-run.log
+          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
 
       - name: Verify static linking
         run: |
