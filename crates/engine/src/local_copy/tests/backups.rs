@@ -1,6 +1,6 @@
 // `--backup` must hard-link the existing destination into the backup
 // location when it stays on the same filesystem, mirroring upstream's
-// `link_or_rename()` HLINK branch (backup.c:200-207) - the default whenever
+// `link_or_rename()` HLINK branch (backup.c:239-246) - the default whenever
 // the caller doesn't prefer a rename outright. A plain rename would still
 // preserve the bytes, but a hard link is what upstream actually does, and it
 // matters: it keeps the backup coherent with any other name pointing at the
@@ -650,7 +650,7 @@ fn backup_preserves_symlinks_in_directory() {
     );
 }
 
-// upstream: backup.c:338-341 - after copying a regular file to the backup tree,
+// upstream: backup.c:418-421 - after copying a regular file to the backup tree,
 // make_backup runs set_file_attrs(buf, file, ...) so the backup carries the
 // source node's mode/owner/mtime rather than the copy defaults. When the
 // backup-dir is on a different filesystem the rename fails with EXDEV and
@@ -692,7 +692,7 @@ fn cross_device_file_backup_preserves_mode_and_mtime() {
         .group(true)
         .with_backup_directory(Some(backup_dir.clone()));
 
-    // The hard-link tier is tried first (backup.c:200-207); force it to fail
+    // The hard-link tier is tried first (backup.c:239-246); force it to fail
     // cross-device too so the rename override below is actually reached.
     with_hard_link_override(
         |_, _| Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE)),
@@ -878,7 +878,7 @@ fn cross_device_file_backup_without_acls_carries_no_acl() {
     );
 }
 
-// upstream: backup.c:338-341 / rsync.c:set_file_attrs() - the same reapply runs
+// upstream: backup.c:418-421 / rsync.c:set_file_attrs() - the same reapply runs
 // for the SYMLINK branch, but chmod is skipped and ownership/times are applied
 // with AT_SYMLINK_NOFOLLOW. Across a filesystem boundary the symlink backup is
 // recreated with do_symlink and must then carry the original link's mtime.
@@ -915,7 +915,7 @@ fn cross_device_symlink_backup_preserves_target_and_mtime() {
         .group(true)
         .with_backup_directory(Some(backup_dir.clone()));
 
-    // The hard-link tier is tried first (backup.c:200-207); force it to fail
+    // The hard-link tier is tried first (backup.c:239-246); force it to fail
     // cross-device too so the rename override below is actually reached.
     with_hard_link_override(
         |_, _| Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE)),
@@ -2957,7 +2957,7 @@ fn backup_with_no_whole_file_does_not_produce_vanished_error() {
 /// with `--delete --backup --backup-dir=$bakdir`. The destination file
 /// `$todir/dname` must be backed up over the pre-existing directory.
 ///
-/// upstream: backup.c:247-256 link_or_rename failure recovery treats EEXIST
+/// upstream: backup.c:318-327 link_or_rename failure recovery treats EEXIST
 /// and EISDIR identically by calling delete_item with DEL_RECURSE before
 /// retrying the rename.
 #[test]

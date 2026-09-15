@@ -371,12 +371,12 @@ fn apply_backup_dir_attrs(
 ///
 /// Returns the [`BackupStrategy`] that placed the backup, or `None` when the
 /// entry is a non-regular file that upstream declines to back up (mirrors
-/// `backup.c:306-317`, where `make_backup` returns 3 and leaves no backup:
+/// `backup.c:386-397`, where `make_backup` returns 3 and leaves no backup:
 /// a device without `am_root && --devices`, or a special without
 /// `--specials`).
 /// upstream: backup.c:make_backup() - copy-tree fallback (COPY / SYMLINK /
 /// DEVICE branches). Device and special nodes are recreated via do_mknod_at
-/// (backup.c:278-285), gated on am_root+preserve_devices / preserve_specials.
+/// (backup.c:358-365), gated on am_root+preserve_devices / preserve_specials.
 pub(crate) fn copy_entry_to_backup(
     source: &Path,
     backup_path: &Path,
@@ -456,7 +456,7 @@ fn create_backup_symlink(target: &Path, source: &Path, backup_path: &Path) -> io
 
 /// Re-materialises a device, FIFO, or socket node at `backup_path` from the
 /// existing destination node at `source`, mirroring upstream
-/// `backup.c:278-285`.
+/// `backup.c:358-365`.
 ///
 /// Returns `Some(BackupStrategy::Device)` once the node is recreated (upstream
 /// emits `make_backup: DEVICE` for both devices and specials), or `None` when
@@ -474,7 +474,7 @@ fn create_backup_symlink(target: &Path, source: &Path, backup_path: &Path) -> io
 /// re-materialise the destination's pre-transfer node - and, through the
 /// metadata reapply the caller performs afterwards, its mode, owner and times -
 /// outside the module being served.
-/// upstream: backup.c:278 - `(am_root && preserve_devices && IS_DEVICE(mode))
+/// upstream: backup.c:358 - `(am_root && preserve_devices && IS_DEVICE(mode))
 /// || (preserve_specials && IS_SPECIAL(mode))` gates `do_mknod_at`. am_root is
 /// non-zero for real root, --super, and --fake-super (options.c:90).
 #[cfg(unix)]
