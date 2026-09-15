@@ -35,8 +35,10 @@
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
 use std::time::{Duration, Instant};
+use test_support::ReapOnDrop;
 
 /// A log format naming every field this test reasons about, so one line
 /// carries the whole comparison.
@@ -106,7 +108,7 @@ impl Fixture {
 
     /// Runs one loopback pull against `daemon_bin` and returns the daemon log.
     fn run(&self, daemon_bin: &Path, client_bin: &Path) -> String {
-        let mut daemon = spawn_daemon(daemon_bin, &self.conf());
+        let daemon = spawn_daemon(daemon_bin, &self.conf());
         let dest = self.root.path().join("dest.txt");
         let status = Command::new(client_bin)
             .args([
@@ -123,8 +125,7 @@ impl Fixture {
         // assert on, the same way `spawn_daemon` waits for the listener rather
         // than sleeping.
         wait_for_probe_line(&self.log());
-        let _ = daemon.kill();
-        let _ = daemon.wait();
+        drop(daemon);
         assert!(status.success(), "pull failed against {daemon_bin:?}");
         fs::read_to_string(self.log()).expect("read daemon log")
     }
@@ -132,15 +133,17 @@ impl Fixture {
 
 /// Starts a daemon and waits until its port answers, so the client never races
 /// the listener.
-fn spawn_daemon(binary: &Path, conf: &Path) -> Child {
-    let child = Command::new(binary)
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg(format!("--config={}", conf.display()))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn daemon");
+fn spawn_daemon(binary: &Path, conf: &Path) -> ReapOnDrop {
+    let child = ReapOnDrop::new(
+        Command::new(binary)
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg(format!("--config={}", conf.display()))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
     let port: u16 = fs::read_to_string(conf)
         .expect("read config")
         .lines()
