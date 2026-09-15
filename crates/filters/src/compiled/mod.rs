@@ -87,6 +87,36 @@ impl CompiledRule {
             core_pattern
         };
 
+        // upstream: exclude.c:292-294 add_rule() counts EVERY `/` byte toward
+        // `slash_cnt`, including a `/` sitting inside a `[...]` class - even
+        // though lib/wildmatch.c:247 dowild() makes a class never match a `/`.
+        // For an unanchored rule without `**`, rule_matches() then chooses
+        // `slash_handling = slash_cnt + 1` (exclude.c:1046-1050) and
+        // `trailing_N_elements()` yields NULL unless the name has that many
+        // components. The bracket cannot consume the extra separator it added to
+        // `slash_cnt`, so no candidate can ever satisfy the trailing-component
+        // count: the rule is dead and keeps every path. Anchored rules use
+        // `slash_handling = 0` (no trailing-component gate) and `**` rules use
+        // `-1`, so neither is dead - only the unanchored, non-`**` form is.
+        // Reproduce that by compiling no matchers; matching then falls through
+        // to the default include (negation is still applied by CompiledRule).
+        if !anchored && !core_pattern.contains("**") && bracket_contains_slash(&core_pattern) {
+            return Ok(Self {
+                action,
+                pattern,
+                directory_only,
+                direct_matchers: Vec::new(),
+                descendant_matchers: Vec::new(),
+                deletion_descendant_matchers: Vec::new(),
+                applies_to_sender,
+                applies_to_receiver,
+                perishable,
+                negate,
+                order: 0,
+                source,
+            });
+        }
+
         // upstream: exclude.c:903-960 rule_matches() - an unanchored pattern
         // that already begins with `**` is matched with slash_handling = -1
         // (try after every slash) by wildmatch_array (lib/wildmatch.c:316).
@@ -204,6 +234,48 @@ impl CompiledRule {
     }
 }
 
+/// Returns `true` when `pattern` has a literal `/` inside a `[...]` bracket
+/// expression.
+///
+/// This mirrors how upstream rsync's `dowild()` (lib/wildmatch.c:137-252) walks
+/// a class: an unescaped `[` opens it, an optional leading `!`/`^` negates it, a
+/// `]` in the first member position is a literal member, `\` escapes the next
+/// byte, and the class closes at the next unescaped `]`. A `/` encountered
+/// before that close is the byte upstream counts toward `slash_cnt` yet can
+/// never match, which is exactly what makes the enclosing rule dead. An
+/// unterminated `[` matches nothing in either engine, so treating its `/` as
+/// bracketed only agrees with upstream's already-dead verdict.
+fn bracket_contains_slash(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            b'[' => {
+                let mut j = i + 1;
+                if matches!(bytes.get(j), Some(b'!' | b'^')) {
+                    j += 1;
+                }
+                if bytes.get(j) == Some(&b']') {
+                    j += 1;
+                }
+                while j < bytes.len() && bytes[j] != b']' {
+                    match bytes[j] {
+                        b'\\' => j += 2,
+                        b'/' => return true,
+                        _ => j += 1,
+                    }
+                }
+                // Advance past the class close, or past the lone `[` when the
+                // class never closes so a later real bracket is still scanned.
+                i = if j < bytes.len() { j + 1 } else { i + 1 };
+            }
+            _ => i += 1,
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,6 +368,63 @@ mod tests {
         assert!(compiled.matches(Path::new("back\\slash.txt"), false, true));
         // The escape must not make it match the escaped-away spelling.
         assert!(!compiled.matches(Path::new("backslash.txt"), false, true));
+    }
+
+    /// upstream: exclude.c:292-294 add_rule() counts the `/` inside `[/U]`
+    /// toward `slash_cnt`, and rule_matches() (exclude.c:1046-1050) then demands
+    /// `slash_cnt + 1` components the class can never supply, so the unanchored
+    /// non-`**` rule is dead. Verified against rsync 3.5.0: `- [/U]` keeps `U`,
+    /// `x/U`, and `a/b/U`. Regression for the `filter_rules_vs_upstream`
+    /// overnight fuzzer's `path="U" oc=false upstream=true` divergence.
+    #[test]
+    fn bracket_internal_slash_makes_unanchored_non_wild2_rule_dead() {
+        use crate::FilterRule;
+        use std::path::Path;
+
+        let compiled = CompiledRule::new(FilterRule::exclude("[/U]")).unwrap();
+        // The reported case and its deeper siblings must all survive.
+        assert!(!compiled.matches(Path::new("U"), false, true));
+        assert!(!compiled.matches(Path::new("x/U"), false, true));
+        assert!(!compiled.matches(Path::new("a/b/U"), false, true));
+        // A single trailing `*` is still non-`**`, so it stays dead too.
+        let star = CompiledRule::new(FilterRule::exclude("[/U]*")).unwrap();
+        assert!(!star.matches(Path::new("U"), false, true));
+        assert!(!star.matches(Path::new("UU"), false, true));
+    }
+
+    /// The dead-rule short-circuit must fire ONLY for the unanchored, non-`**`
+    /// form. The anchored spelling excludes the root `U` (slash_handling = 0),
+    /// and a `**` rule excludes at depth (slash_handling = -1); both are
+    /// measured against rsync 3.5.0 and must keep matching.
+    #[test]
+    fn bracket_internal_slash_anchored_and_wild2_still_match() {
+        use crate::FilterRule;
+        use std::path::Path;
+
+        let anchored = CompiledRule::new(FilterRule::exclude("/[/U]")).unwrap();
+        assert!(anchored.matches(Path::new("U"), false, true));
+        assert!(!anchored.matches(Path::new("x/U"), false, true));
+
+        let wild2 = CompiledRule::new(FilterRule::exclude("[/U]**")).unwrap();
+        assert!(wild2.matches(Path::new("U"), false, true));
+        assert!(wild2.matches(Path::new("x/U"), false, true));
+    }
+
+    /// `bracket_contains_slash` must see through negation, a literal first-member
+    /// `]`, and `\`-escapes, and must NOT flag a `\[`-escaped bracket or a
+    /// structural slash.
+    #[test]
+    fn bracket_contains_slash_detects_class_internal_slash() {
+        assert!(bracket_contains_slash("[/U]"));
+        assert!(bracket_contains_slash("a[/b]c"));
+        assert!(bracket_contains_slash("[!/]"));
+        assert!(bracket_contains_slash("[]/]"));
+        assert!(bracket_contains_slash("[/"));
+        // Not class-internal: structural slash, escaped bracket, plain class.
+        assert!(!bracket_contains_slash("foo/bar"));
+        assert!(!bracket_contains_slash("\\[/U]"));
+        assert!(!bracket_contains_slash("[abc]"));
+        assert!(!bracket_contains_slash("[a-z]/x"));
     }
 
     /// A wild pattern keeps `\` as a wildmatch escape (upstream sets
