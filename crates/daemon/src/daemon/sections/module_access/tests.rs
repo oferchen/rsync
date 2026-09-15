@@ -2838,11 +2838,23 @@ mod module_access_tests {
         assert_eq!(rule.pattern, "*.rs");
     }
 
+    /// ⚠ FLIPPED from `..._bare_pattern_defaults_to_exclude`, which asserted an
+    /// exclude of the literal `*.bak`. There is no bare-pattern reading on this
+    /// directive: `filter` is the one of the five module parameters upstream does
+    /// not give `XFLG_OLD_PREFIXES` (clientserver.c:933-935), so `*` reaches the
+    /// `default:` arm as a RULE CHARACTER, fails the second `switch (ch)`, and
+    /// exits `RERR_SYNTAX` (`exclude.c:1363`).
+    ///
+    /// MEASURED, loopback TCP: `filter = *.bak` is rc 5 upstream, was rc 0 in oc.
+    /// The `exclude`/`include` parameters DO take bare patterns and are parsed by
+    /// `push_old_prefix_token_rules`, not by this function - so nothing here
+    /// narrows them.
     #[test]
-    fn parse_daemon_filter_token_bare_pattern_defaults_to_exclude() {
-        let rule = accepted_rule("*.bak");
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
-        assert_eq!(rule.pattern, "*.bak");
+    fn parse_daemon_filter_token_bare_pattern_is_refused() {
+        assert!(
+            parse_daemon_filter_token("*.bak", RuleXflags::Daemon).is_err(),
+            "a bare pattern is not a `filter` rule"
+        );
     }
 
     #[test]
@@ -3030,19 +3042,22 @@ mod module_access_tests {
         assert_eq!(accepted_rule("P_bar").pattern, "bar");
     }
 
-    /// The bare-word fall-through survives arm 1.
+    /// ⚠ FLIPPED from `an_uppercase_bare_word_is_still_a_literal_pattern`, whose
+    /// own note said refusing these "would be upstream-correct ... but it is the
+    /// bare-word change, not this one". This is that change.
     ///
-    /// Refusing an uppercase-initial bare word would be upstream-correct
-    /// (`filter = Pictures` is rc 5 upstream, MEASURED) but it is the
-    /// bare-word change, not this one, and the same arm carries `merge FILE`,
-    /// a config upstream SERVES. A one-character prefix is therefore only
-    /// taken when its modifier run validates.
+    /// Each word is a side rule character followed by an invalid modifier, which
+    /// `exclude.c:1371-1380` refuses. MEASURED per spelling, loopback TCP:
+    /// upstream rc 5 and oc rc 0 for all four - and for `Pictures` and `README`
+    /// the oc served set was MISSING that very file, so oc was hiding a literal
+    /// bare pattern out of a config upstream refuses outright.
     #[test]
-    fn an_uppercase_bare_word_is_still_a_literal_pattern() {
+    fn an_uppercase_bare_word_in_rule_position_is_refused() {
         for token in ["Pictures", "README", "Series7", "Home"] {
-            let rule = accepted_rule(token);
-            assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
-            assert_eq!(rule.pattern, token, "{token}");
+            assert!(
+                parse_daemon_filter_token(token, RuleXflags::Daemon).is_err(),
+                "{token} must be refused"
+            );
         }
     }
 
@@ -3467,29 +3482,34 @@ mod module_access_tests {
         }
     }
 
-    /// Adding `:` does NOT change how a leading-`.` token is read.
+    /// A leading `.` in RULE position is REFUSED; in PATTERN position it is text.
     ///
-    /// `.` - upstream's EAGER `merge` character - is deliberately still absent
-    /// from `short_rule_prefix`, so `filter = .git` keeps reaching the bare-word
-    /// fall-through and stays a literal exclude. This cell exists to pin that
-    /// the `:` arm did not disturb it.
+    /// ⚠ THIS ASSERTION WAS FLIPPED, exactly as its predecessor instructed. It
+    /// used to read `accepted_rule(".git")` and pin a literal exclude, under a
+    /// note calling itself "a KNOWN DIVERGENCE, NOT FIDELITY ... must be
+    /// FLIPPED, not deleted, when that arm lands".
     ///
-    /// ⚠ THIS PINS A KNOWN DIVERGENCE, NOT FIDELITY. MEASURED against rsync
-    /// 3.5.0: `filter = .git` is rc 5 UPSTREAM, because `.` is a rule character
-    /// there and `g` is then an invalid modifier (exclude.c:1370-1379); oc
-    /// serves the module with `.git` excluded literally (rc 0). Closing that
-    /// needs the eager `merge` reader, which is tracked separately - so the
-    /// assertion below records today's behaviour deliberately and must be
-    /// FLIPPED, not deleted, when that arm lands.
+    /// Two things turned out to be true when it was measured. Upstream refuses
+    /// `filter = .git` - `.` is a rule character and `g` is then an invalid
+    /// modifier (`exclude.c:1370-1379`). And oc ALREADY refused it end to end:
+    /// MEASURED rc 5 on the PRE-CHANGE binary, because [`push_token_rules`]
+    /// consults [`merge_rule`] before this parser and the eager `.` arm rejects
+    /// `g` there. The old cell reached the literal-exclude fall-through only by
+    /// calling this function DIRECTLY, bypassing that arm, so the behaviour it
+    /// pinned was already unreachable from a real config and its "oc serves the
+    /// module ... (rc 0)" note was stale.
     ///
-    /// Note the neighbouring spelling is NOT affected: `filter = - .git` is one
-    /// rule whose pattern is `.git` and is rc 0 on both, because the `.` is
-    /// pattern text there rather than a leading rule character.
+    /// The neighbouring spelling is unaffected: `- .git` is ONE rule whose
+    /// pattern is `.git`, rc 0 on both, because the `.` is pattern text there.
+    /// MEASURED `filter = - foo .git`: rc 5 upstream, rc 0 before (every file
+    /// served), rc 5 now - the positional walk is what puts that `.git` in rule
+    /// position instead of gluing it onto `foo`.
     #[test]
-    fn a_leading_dot_token_is_still_a_literal_exclude() {
-        let rule = accepted_rule(".git");
-        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
-        assert_eq!(rule.pattern, ".git");
+    fn a_leading_dot_token_in_rule_position_is_refused() {
+        assert!(
+            parse_daemon_filter_token(".git", RuleXflags::Daemon).is_err(),
+            "`.git` in rule position must be refused"
+        );
 
         let prefixed = accepted_rule("- .git");
         assert_eq!(prefixed.rule_type, protocol::filters::RuleType::Exclude);
@@ -3573,12 +3593,25 @@ mod module_access_tests {
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Clear);
     }
 
+    /// ⚠ FLIPPED: `excluder` used to become a literal pattern. `rule_strcmp`
+    /// returning NULL does not demote the word to a pattern - upstream assigns
+    /// `s = RULE_STRCMP(...)` unconditionally, so a miss leaves `ch == 0` and
+    /// reaches `filter_rule_err("Unknown filter rule")` (`exclude.c:1363`).
+    ///
+    /// MEASURED: `filter = excluder *.tmp` is rc 5 upstream, was rc 0 in oc.
+    /// The keyword test itself is unchanged and still non-partial, which the
+    /// `exclude` control below pins.
     #[test]
     fn parse_daemon_filter_token_keyword_not_partial_match() {
-        // "excluder" should NOT match "exclude" keyword - treated as bare pattern
-        let rule = accepted_rule("excluder *.tmp");
+        assert!(
+            parse_daemon_filter_token("excluder", RuleXflags::Daemon).is_err(),
+            "`excluder` is not the `exclude` keyword"
+        );
+        // NON-VACUITY CONTROL: the real keyword still parses, so the refusal
+        // above is about the TERMINATOR and not about keywords in general.
+        let rule = accepted_rule("exclude *.tmp");
         assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
-        assert_eq!(rule.pattern, "excluder *.tmp");
+        assert_eq!(rule.pattern, "*.tmp");
     }
 
     #[test]
@@ -4170,16 +4203,19 @@ mod module_access_tests {
     fn an_unknown_record_inside_a_merge_file_refuses_the_module() {
         // upstream: "Unknown filter rule" (exclude.c:1363), fatal. MEASURED:
         // rc 5 for a merge file holding the bare word `bait`, where oc-base
-        // excluded `bait`. The DIRECTIVE keeps its bare-word fall-through,
-        // which the second half of this cell pins.
+        // excluded `bait`.
+        //
+        // ⚠ THE SECOND HALF FLIPPED. It used to assert that the DIRECTIVE kept a
+        // bare-word fall-through (`filter = bait` -> an exclude of `bait`). Both
+        // spellings refuse now, because both reach the same one parser: the merge
+        // FILE never had a gluing splitter, and the directive no longer has one
+        // either. MEASURED: `filter = bait` is rc 5 upstream and was rc 0 in oc.
         let dir = tempfile::tempdir().expect("temp dir");
         let path = merge_file(dir.path(), "rules", "bait\n");
         let err = filter_rules(dir.path(), &format!("merge {path}")).expect_err("must refuse");
         assert_eq!(err.to_string(), "Unknown filter rule: bait");
-        assert_eq!(
-            filter_patterns(dir.path(), "bait"),
-            vec!["bait".to_string()]
-        );
+        let err = filter_rules(dir.path(), "bait").expect_err("directive must refuse too");
+        assert_eq!(err.to_string(), "Unknown filter rule: bait");
     }
 
     #[test]
@@ -4740,23 +4776,30 @@ mod module_access_tests {
         );
     }
 
-    /// The splitter must NOT take an uppercase-initial bare word for a rule.
+    /// An uppercase-initial bare word after a rule IS its own token.
     ///
-    /// This is the control for the cell above: the same character opens a rule
-    /// token only when what follows it is a valid modifier run. `Pictures` is
-    /// `P` plus the invalid modifier `i`, which upstream refuses outright
-    /// (rc 5, MEASURED) and oc still serves as a literal bare pattern - the
-    /// deliberately preserved fall-through.
+    /// ⚠ THIS EXPECTATION IS THE REVERSE OF WHAT IT WAS, and deliberately so.
+    /// It used to read `vec!["- foo Pictures"]`, which was the boundary
+    /// heuristic's answer rather than upstream's: the scanner asked "does
+    /// `Pictures` LOOK like a rule prefix?", decided no, and glued it onto the
+    /// pattern before it. Upstream never asks. `- ` takes one separator and a
+    /// pattern that ends at whitespace (`exclude.c:1444-1462`), so `Pictures`
+    /// starts a fresh rule - `P` plus the invalid modifier `i`, which
+    /// `exclude.c:1371-1380` refuses with `RERR_SYNTAX`.
+    ///
+    /// MEASURED on loopback TCP, module holding
+    /// `foo bar baz keep ctl core Pictures README`: `filter = - foo Pictures` is
+    /// rc 5 upstream, was rc 0 in oc with EVERY FILE SERVED, and is rc 5 now.
     #[test]
-    fn split_filter_tokens_bare_word_after_a_rule_is_not_a_short_prefix() {
+    fn split_filter_tokens_bare_word_in_rule_position_is_its_own_token() {
         assert_eq!(
             split_filter_tokens("- foo Pictures"),
-            vec!["- foo Pictures"],
+            vec!["- foo", "Pictures"],
             "Pictures"
         );
         assert_eq!(
             split_filter_tokens("- foo README"),
-            vec!["- foo README"],
+            vec!["- foo", "README"],
             "README"
         );
     }
@@ -4783,32 +4826,161 @@ mod module_access_tests {
         assert_eq!(tokens, vec!["- foo", "hide_bar"]);
     }
 
-    /// NON-VACUITY COMPANION for the two cells above.
+    /// NON-VACUITY COMPANION for the two cells above: `hideout` is NOT a `hide`
+    /// rule, because `o` is not a separator - `rule_strcmp`
+    /// (`exclude.c:1218-1227`) returns NULL. Without this cell both would also
+    /// pass if the keyword test had been loosened to "any token STARTING WITH a
+    /// keyword", which is the obvious wrong fix.
     ///
-    /// Without this, both would also pass if the split had been loosened to
-    /// "any token STARTING WITH a keyword", which is the obvious wrong fix and
-    /// is what upstream's terminator rule exists to prevent: `hideout` is NOT a
-    /// `hide` rule, because `o` is not a separator - `rule_strcmp`
-    /// (`exclude.c:1218-1227`) returns NULL and no keyword matches.
-    ///
-    /// ⚠ THIS CELL PINS THE TOKENIZER ONLY, AND UPSTREAM AND oc PART COMPANY
-    /// IMMEDIATELY AFTER IT. MEASURED against a real rsync 3.5.0 daemon:
-    /// `filter = hideout` and `filter = - foo hideout` both make upstream
-    /// REFUSE the module - `Unknown filter rule: hideout`, exit 1 at
-    /// `exclude.c:136` - because a token matching no keyword falls to
-    /// upstream's `default:` arm. oc instead falls through to its bare-pattern
-    /// arm and builds an exclude of the literal text, so it serves where
-    /// upstream refuses.
-    ///
-    /// That over-acceptance is a SEPARATE defect from this commit's terminator
-    /// rule and is tracked on its own; the same measurement shows `mergeX`
-    /// refused identically, so it is the whole unrecognised-word class, not one
-    /// spelling. Do NOT read this assertion as "upstream treats `hideout` as a
-    /// pattern" - it does not.
+    /// ⚠ THIS EXPECTATION FLIPPED TOO, from `vec!["- foo hideout"]`. Failing
+    /// `rule_strcmp` does not make the word a pattern: upstream assigns
+    /// `s = RULE_STRCMP(...)` unconditionally, so a miss leaves `ch == 0` and
+    /// falls to `filter_rule_err("Unknown filter rule")` (`exclude.c:1363`).
+    /// The word is a REFUSED RULE, and the refusal is what the end-to-end cell
+    /// below pins. The old note here called that over-acceptance "a SEPARATE
+    /// defect tracked on its own" - this is that tracked defect, closed, and the
+    /// same measurement covers `mergeX` and every other unrecognised word.
     #[test]
-    fn split_filter_tokens_unterminated_keyword_opens_no_token() {
+    fn split_filter_tokens_unterminated_keyword_is_its_own_token() {
         let tokens = split_filter_tokens("- foo hideout");
-        assert_eq!(tokens, vec!["- foo hideout"]);
+        assert_eq!(tokens, vec!["- foo", "hideout"]);
+    }
+
+    /// THE POSITIONAL RULE: a `FILTRULE_WORD_SPLIT` pattern ends at the first
+    /// whitespace, and the next word is a fresh RULE.
+    ///
+    /// upstream: `exclude.c:1457-1462` measures the pattern with
+    /// `while (!isspace(*cp) && *cp != '\0') cp++`, and `exclude.c:1484` resumes
+    /// the walk at `*pat_ptr + len`. Nothing looks ahead at the next word.
+    ///
+    /// ⚠ NON-VACUITY: the heuristic returned ONE token for every row here.
+    /// MEASURED on loopback TCP against rsync 3.5.0 and oc daemons, module
+    /// holding `foo bar baz keep ctl core Pictures README`: `filter = - foo bar`
+    /// is rc 5 upstream and was rc 0 in oc WITH EVERY FILE SERVED - including
+    /// `foo`, which the rule's own first half names - because the glued pattern
+    /// `foo bar` matched nothing on disk.
+    #[test]
+    fn split_filter_tokens_pattern_ends_at_the_first_whitespace() {
+        assert_eq!(split_filter_tokens("- foo bar"), vec!["- foo", "bar"]);
+        assert_eq!(
+            split_filter_tokens("+ keep - bar baz"),
+            vec!["+ keep", "- bar", "baz"]
+        );
+        // A TAB ends the pattern exactly as a space does.
+        assert_eq!(split_filter_tokens("- foo\tbar"), vec!["- foo", "bar"]);
+    }
+
+    /// A separator RUN is not one separator.
+    ///
+    /// upstream consumes exactly ONE byte (`if (*s) s++`, `exclude.c:1444-1445`),
+    /// so a second separator lands where the pattern should start, the pattern
+    /// comes out EMPTY, and `exclude.c:1474-1476` refuses the rule. The word
+    /// after it is a rule of its own.
+    ///
+    /// ⚠ THE RUN THAT MATTERS IS THE ONE BEFORE THE PATTERN. A run AFTER the
+    /// pattern (`- foo  bar`) is just the next lap's whitespace skip and proves
+    /// nothing about this decision: a mutant that consumed a whole run here
+    /// passed such a cell unharmed, which is why the rows below lead instead.
+    ///
+    /// MEASURED, loopback TCP: `filter = -  foo` is rc 5 upstream and was rc 0
+    /// in oc WITH `foo` HIDDEN - oc built the operator's rule out of a config
+    /// upstream rejects outright. Same shape for `+  keep`, `P  bar` and
+    /// `exclude  bar`.
+    #[test]
+    fn split_filter_tokens_consumes_exactly_one_separator() {
+        // The prefix keeps ONE separator, the pattern is empty, so the token
+        // ends at the second space and `foo` opens a rule of its own.
+        assert_eq!(split_filter_tokens("-  foo"), vec!["- ", "foo"]);
+        assert_eq!(split_filter_tokens("exclude  bar"), vec!["exclude ", "bar"]);
+        // NON-VACUITY CONTROL: `_` is a separator too, and ONE of it still
+        // yields a pattern - MEASURED rc 0 on both for `filter = -_foo`.
+        assert_eq!(split_filter_tokens("-_foo"), vec!["-_foo"]);
+        // The after-the-pattern run, kept as the companion the note describes.
+        assert_eq!(split_filter_tokens("- foo  bar"), vec!["- foo", "bar"]);
+    }
+
+    /// The WORD_SPLIT STEP-BACK: a keyword separated by a TAB gets NO pattern.
+    ///
+    /// upstream: `exclude.c:1367-1370` - inside the modifier scan a
+    /// `FILTRULE_WORD_SPLIT` whitespace that is not `' '` ends the run by moving
+    /// `s` BACK one byte, so the `if (*s) s++` that follows lands ON the tab and
+    /// the pattern length comes out zero. The token is the bare keyword, and the
+    /// word after it is a separate rule.
+    ///
+    /// ⚠ THIS IS THE CELL ONLY A TRUE POSITIONAL PORT PASSES - a boundary
+    /// scanner has no step-back to reproduce, and no amount of prefix-table
+    /// tuning produces it. MEASURED: `filter = exclude<TAB>foo` is rc 5 upstream
+    /// (`unexpected end of filter rule`) where oc-base was rc 0 and served the
+    /// module with `foo` excluded - a DIFFERENT SERVED SET, not merely a
+    /// different exit code.
+    #[test]
+    fn split_filter_tokens_tab_after_a_keyword_empties_the_pattern() {
+        assert_eq!(split_filter_tokens("exclude\tfoo"), vec!["exclude", "foo"]);
+        // NON-VACUITY CONTROL: a single SPACE does not step back, so the very
+        // same keyword keeps its pattern.
+        assert_eq!(split_filter_tokens("exclude foo"), vec!["exclude foo"]);
+    }
+
+    /// END-TO-END: a word in RULE position that names no rule is REFUSED.
+    ///
+    /// upstream: `exclude.c:1363` `filter_rule_err("Unknown filter rule")` ->
+    /// `RERR_SYNTAX`. `filter` is the one of the five module directives upstream
+    /// does not give `XFLG_OLD_PREFIXES` (clientserver.c:933-935), so no
+    /// bare-pattern reading is available to it.
+    ///
+    /// ⚠ The tokenizer cells above cannot show this. Splitting `- foo bar` in
+    /// two is necessary but not sufficient: `bar` still has to be REFUSED rather
+    /// than become a second literal exclude, which would hide a file upstream
+    /// serves. This is the assertion that catches it from the outside.
+    #[test]
+    fn build_daemon_filter_rules_refuses_a_word_in_rule_position() {
+        for filter in [
+            "- foo bar",
+            "- foo Pictures",
+            "- foo hideout",
+            "shoo foo",
+            "*.bak",
+            "exclude\tfoo",
+        ] {
+            let module = ModuleRuntime::from(ModuleDefinition {
+                filter: vec![filter.to_string()],
+                ..Default::default()
+            });
+            assert!(
+                build_daemon_filter_rules(&module).is_err(),
+                "expected a refusal for {filter:?}"
+            );
+        }
+    }
+
+    /// NON-VACUITY CONTROL for the refusal above: the shapes upstream SERVES
+    /// must still build, and must still build the SAME rules.
+    ///
+    /// Each row puts a byte that is a rule character in RULE position into
+    /// PATTERN position instead. That is precisely the distinction a boundary
+    /// scanner cannot draw and the positional walk draws by construction, so
+    /// these rows are what stop the refusal above from being over-broad.
+    /// MEASURED rc 0 against rsync 3.5.0 for every row.
+    #[test]
+    fn build_daemon_filter_rules_still_serves_the_shapes_upstream_accepts() {
+        let cases: &[(&str, usize, &str)] = &[
+            // `!` in PATTERN position is a pattern, not a list clear.
+            ("- !bait", 1, "!bait"),
+            // `.` in PATTERN position is a pattern, not an eager merge.
+            ("- .git", 1, ".git"),
+            // A side prefix in RULE position really is a second rule.
+            ("- foo P bar", 2, "foo"),
+        ];
+        for &(filter, want_len, want_first) in cases {
+            let module = ModuleRuntime::from(ModuleDefinition {
+                filter: vec![filter.to_string()],
+                ..Default::default()
+            });
+            let rules = build_daemon_filter_rules(&module)
+                .unwrap_or_else(|e| panic!("{filter:?} must build: {e}"));
+            assert_eq!(rules.len(), want_len, "{filter:?}: {rules:?}");
+            assert_eq!(rules[0].pattern, want_first, "{filter:?}");
+        }
     }
 
     /// The END-TO-END cell: a line-final `clear` must reach the rule list as a
