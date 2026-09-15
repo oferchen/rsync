@@ -3,6 +3,7 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io;
+use std::os::fd::AsFd;
 use std::path::Path;
 
 #[cfg(feature = "parallel")]
@@ -10,15 +11,16 @@ use rayon::prelude::*;
 
 use super::types::FstatResult;
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
-use super::types::StatxResult;
+use fast_io::statx::StatxResult;
 
 /// Batch metadata fetcher for directory entries.
 ///
 /// Uses `openat`/`fstatat` to reduce path resolution overhead when
-/// fetching metadata for many files in the same directory.
+/// fetching metadata for many files in the same directory. The syscalls
+/// themselves are issued by `fast_io`, the I/O-syscall owner crate, so
+/// this crate stays free of `unsafe`.
 pub struct DirectoryStatBatch {
-    _dir_file: fs::File,
-    dir_fd: std::os::unix::io::RawFd,
+    dir: fs::File,
 }
 
 impl DirectoryStatBatch {
@@ -28,14 +30,8 @@ impl DirectoryStatBatch {
     ///
     /// Returns an error if the directory cannot be opened.
     pub fn open<P: AsRef<Path>>(dir_path: P) -> io::Result<Self> {
-        use std::os::unix::io::AsRawFd;
-
-        let dir = fs::File::open(dir_path.as_ref())?;
-        let dir_fd = dir.as_raw_fd();
-
         Ok(Self {
-            _dir_file: dir,
-            dir_fd,
+            dir: fs::File::open(dir_path.as_ref())?,
         })
     }
 
@@ -47,40 +43,13 @@ impl DirectoryStatBatch {
     /// # Errors
     ///
     /// Returns an error if the file cannot be stat'd.
-    #[allow(unsafe_code)]
     pub fn stat_relative(&self, name: &OsString, follow_symlinks: bool) -> io::Result<FstatResult> {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-
-        let name_bytes = name.as_bytes();
-        let c_name = CString::new(name_bytes).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("invalid filename: {e}"),
-            )
-        })?;
-
-        let flags = if follow_symlinks {
-            0
+        let at = if follow_symlinks {
+            fast_io::fstatat_follow(self.dir.as_fd(), name)?
         } else {
-            libc::AT_SYMLINK_NOFOLLOW
+            fast_io::fstatat_nofollow(self.dir.as_fd(), name)?
         };
-
-        // SAFETY: `libc::stat` is a POD `repr(C)` structure; the zero pattern
-        // is a valid initial state and the kernel populates it before any field
-        // is read.
-        let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
-
-        // SAFETY: `self.dir_fd` is a valid file descriptor borrowed from this
-        // `DirectoryStatBatch`. `c_name` is a NUL-terminated C string that outlives the
-        // call. `stat_buf` is sized and aligned correctly.
-        let ret = unsafe { libc::fstatat(self.dir_fd, c_name.as_ptr(), &mut stat_buf, flags) };
-
-        if ret != 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        Ok(FstatResult::from_stat(&stat_buf))
+        Ok(FstatResult::from_at_metadata(&at))
     }
 
     /// Stats a file relative to the directory using statx (Linux 4.11+).
@@ -93,64 +62,12 @@ impl DirectoryStatBatch {
     ///
     /// Returns an error if the file cannot be stat'd.
     #[cfg(all(target_os = "linux", not(target_env = "musl")))]
-    #[allow(unsafe_code)]
     pub fn statx_relative(
         &self,
         name: &OsString,
         follow_symlinks: bool,
     ) -> io::Result<StatxResult> {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-
-        let name_bytes = name.as_bytes();
-        let c_name = CString::new(name_bytes).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("invalid filename: {e}"),
-            )
-        })?;
-
-        let flags = if follow_symlinks {
-            0i32
-        } else {
-            libc::AT_SYMLINK_NOFOLLOW
-        };
-
-        // SAFETY: `libc::statx` is a POD `repr(C)` structure; the zero pattern
-        // is a valid initial state and the kernel populates it before any field
-        // is read.
-        let mut statx_buf: libc::statx = unsafe { std::mem::zeroed() };
-
-        // SAFETY: `self.dir_fd` is a valid file descriptor borrowed from this
-        // `DirectoryStatBatch`. `c_name` is a NUL-terminated C string that outlives the
-        // call. `statx_buf` is sized and aligned correctly.
-        let ret = unsafe {
-            libc::syscall(
-                libc::SYS_statx,
-                self.dir_fd,
-                c_name.as_ptr(),
-                flags,
-                libc::STATX_BASIC_STATS,
-                &mut statx_buf,
-            )
-        };
-
-        if ret != 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        Ok(StatxResult {
-            mode: statx_buf.stx_mode as u32,
-            size: statx_buf.stx_size,
-            mtime_sec: statx_buf.stx_mtime.tv_sec,
-            mtime_nsec: statx_buf.stx_mtime.tv_nsec,
-            uid: statx_buf.stx_uid,
-            gid: statx_buf.stx_gid,
-            ino: statx_buf.stx_ino,
-            nlink: statx_buf.stx_nlink,
-            rdev_major: statx_buf.stx_rdev_major,
-            rdev_minor: statx_buf.stx_rdev_minor,
-        })
+        fast_io::statx::statx_at(self.dir.as_fd(), name, follow_symlinks)
     }
 
     /// Stats multiple files in the directory in parallel.

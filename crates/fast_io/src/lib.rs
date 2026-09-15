@@ -230,6 +230,11 @@ pub mod signal;
 pub mod socket_options;
 /// Zero-copy socket-to-disk transfer using `splice`/`vmsplice` syscalls.
 pub mod splice;
+/// Lightweight `statx(2)` wrappers for file-list metadata fetching.
+///
+/// Linux-only wrappers built on `rustix` (no unsafe); `has_statx_support`
+/// compiles everywhere and reports `false` where the syscall is unavailable.
+pub mod statx;
 /// Force inherited stdin/stdout to blocking mode for server-side stdio.
 pub mod stdio_blocking;
 /// Half-close the write side of inherited stdout to signal end-of-stream.
