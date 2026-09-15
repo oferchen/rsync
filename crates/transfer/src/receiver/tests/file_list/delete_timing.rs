@@ -427,3 +427,100 @@ fn delete_pass_without_dest_rsync_filter_deletes_bak() {
     );
     assert!(dest.join("source.txt").exists(), "listed file must survive");
 }
+
+/// The delete-pass completeness predicate over synthetic segment/flist states.
+/// Both sweeps take the whole `file_list` as their keep-set, so upstream's
+/// call-site invariant (every list received, none freed - see
+/// `delete_pass_flist_complete` for the generator.c/compat.c anchors) must be
+/// reproducible from the receiver's own state:
+///
+/// - non-INC_RECURSE: the single list arrives whole (`receive.rs` sets
+///   `flist_eof` right after the initial receive), complete by construction;
+/// - INC_RECURSE before `NDX_FLIST_EOF`: a later segment could still list any
+///   destination entry - incomplete;
+/// - INC_RECURSE after `NDX_FLIST_EOF`: all file lists known (flist.c:112) -
+///   complete;
+/// - a reclaimed segment (`reclaim_oldest_segment` freed its entries' names,
+///   mirroring flist.c:2980 `flist_free`): those entries can no longer protect
+///   their files - incomplete again even though every list arrived.
+#[test]
+fn delete_pass_completeness_predicate_tracks_flist_state() {
+    let delete_config = || {
+        let mut config = test_config();
+        config.flags.delete = true;
+        config
+    };
+
+    // Non-INC_RECURSE: complete by construction, flist_eof marker or not.
+    let ctx = ReceiverContext::new_for_test(&test_handshake(), delete_config());
+    assert!(
+        ctx.delete_pass_flist_complete(),
+        "a non-INC_RECURSE list arrives whole and must read complete"
+    );
+
+    // INC_RECURSE with the terminator still outstanding: incomplete.
+    let mut handshake = test_handshake();
+    handshake.compat_flags = Some(protocol::CompatibilityFlags::INC_RECURSE);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, delete_config());
+    assert!(
+        !ctx.delete_pass_flist_complete(),
+        "an unfinished INC_RECURSE chain must read incomplete"
+    );
+
+    // NDX_FLIST_EOF received: every file list is known.
+    ctx.flist_eof = true;
+    assert!(
+        ctx.delete_pass_flist_complete(),
+        "flist_eof completes the INC_RECURSE chain"
+    );
+
+    // A reclaimed segment hollowed out part of the keep-set.
+    ctx.first_segment_idx = 1;
+    assert!(
+        !ctx.delete_pass_flist_complete(),
+        "a reclaimed segment cannot feed the keep-set"
+    );
+}
+
+/// The delete-pass gate must refuse to sweep while INC_RECURSE segments are
+/// still outstanding: `stale.txt` is extraneous against the CURRENT partial
+/// list, but a segment that has not arrived yet could still list it, so an
+/// early sweep is the data-loss path the INC_RECURSE-on-pull conversion must
+/// never open (see `compute_allow_inc_recurse` in `lib.rs`). Today the state
+/// is unreachable (both live drivers drain every segment up front), so the
+/// gate's debug assertion fires; this pin is what turns the future eager-drain
+/// removal red instead of letting it delete data silently.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "incomplete file list")]
+fn delete_pass_refuses_an_incomplete_file_list() {
+    use super::super::super::stats::TransferStats;
+    use super::super::super::transfer::DeletePassPhase;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let dest = dir.path();
+    std::fs::write(dest.join("stale.txt"), b"extraneous").unwrap();
+
+    let mut config = test_config();
+    config.flags.delete = true;
+    config.deletion.delete_after = false;
+    config.deletion.late_delete = false;
+    config.args = vec![OsString::from(dest.to_str().unwrap())];
+
+    let mut handshake = test_handshake();
+    handshake.compat_flags = Some(protocol::CompatibilityFlags::INC_RECURSE);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    // flist_eof deliberately left false: later segments are still pending.
+    let mut stats = TransferStats::default();
+    let mut writer = TestDeletionWriter;
+    let _ = ctx.run_receiver_delete_pass(
+        DeletePassPhase::Early,
+        dest,
+        #[cfg(unix)]
+        None,
+        &mut writer,
+        &mut stats,
+    );
+}

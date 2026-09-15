@@ -528,12 +528,20 @@ fn requires_multiplex_output(
 ///
 /// Both delete passes build their keep-set from a full `file_list` walk. With
 /// the drain removed the list is incomplete by construction, so every entry not
-/// yet materialised is classified extraneous and UNLINKED. The delete passes
-/// need a completeness predicate before the drain can go; `build_files_to_transfer`
-/// also hands back borrows of the whole context, so this is not a local edit.
+/// yet materialised is classified extraneous and UNLINKED. The completeness
+/// predicate now exists as `ReceiverContext::delete_pass_flist_complete`
+/// (`receiver/transfer.rs`), consumed at the single delete-pass dispatcher
+/// `run_receiver_delete_pass`: an incomplete list skips the sweep (soft, per
+/// upstream's incomplete-flist arm generator.c:304-311) with a `debug_assert!`
+/// so the conversion cannot silently sweep early. The drain conversion must
+/// either keep the predicate true at both delete sites or split the sweep
+/// per-segment the way upstream's `delete_in_dir` does;
+/// `build_files_to_transfer` also hands back borrows of the whole context, so
+/// this is not a local edit.
 ///
-/// Order: completeness predicate, then per-segment `NDX_DONE` during the walk,
-/// then the drain conversion, then re-run the A/B. Not a flag flip.
+/// Order: completeness predicate (done - see above), then per-segment
+/// `NDX_DONE` during the walk, then the drain conversion, then re-run the A/B.
+/// Not a flag flip.
 ///
 /// upstream: compat.c:161-179 set_allow_inc_recurse,
 /// rsync.h:151-152 (`MIN_FILECNT_LOOKAHEAD` / `MAX_FILECNT_LOOKAHEAD`),
