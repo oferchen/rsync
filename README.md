@@ -162,18 +162,20 @@ oc-rsync uses io_uring on Linux when the kernel and probed opcodes allow it; bel
 
 The full tier requires Linux 6.0+ together with the `iouring-send-zc` cargo feature for `SEND_ZC` dispatch; default builds downgrade to plain `SEND` even on 6.0+ kernels. See [`docs/audit/iouring-opcode-kernel-floor.md`](./docs/audit/iouring-opcode-kernel-floor.md) for the full per-opcode dispatch-site inventory.
 
-### SSH transport (russh)
+### SSH transports
 
-oc-rsync uses the Rust [`russh`](https://crates.io/crates/russh) crate for SSH transport, embedded directly in the binary. The default code path does not spawn an external `ssh` subprocess. Authentication uses key-based (RSA, ED25519, ECDSA) and password methods compatible with OpenSSH, and per-host settings are read from `~/.ssh/config` (and `/etc/ssh/ssh_config`) by an in-house parser (`rsync_io::ssh::ssh_config`, on by default via the `ssh-config-parse` feature), not an external SSH-config crate.
+oc-rsync has two SSH transports, selected by the operand spelling:
 
-What this changes versus upstream rsync, which shells out to the system `ssh` binary:
+- `host:path` and `user@host:path` operands (the classic rsync spelling) spawn the system `ssh` binary, exactly like upstream rsync. `-e`/`--rsh` and `RSYNC_RSH` pick a different remote shell program; `~/.ssh/config`, `ssh-agent`, `ControlMaster`, and `ProxyCommand` are handled by the spawned program itself. This path is always available and does not depend on any Cargo feature.
+- `ssh://[user@]host[:port]/path` URL operands (an oc-rsync extension; upstream rsync has no `ssh://` scheme) use an embedded SSH client built on the Rust [`russh`](https://crates.io/crates/russh) crate. This path spawns no subprocess. It requires the `embedded-ssh` feature (on by default); without the feature, an `ssh://` operand fails fast with a diagnostic instead of falling back. Combining an `ssh://` operand with `-e`/`--rsh` or `RSYNC_RSH` is rejected as a conflict.
 
-- No external `ssh` binary dependency at runtime; the SSH client lives inside the oc-rsync process.
+The embedded client authenticates with key-based (RSA, ED25519, ECDSA) and password methods compatible with OpenSSH, and reads per-host settings from `~/.ssh/config` (and `/etc/ssh/ssh_config`) with an in-house parser (`rsync_io::ssh::ssh_config`, on by default via the `ssh-config-parse` feature), not an external SSH-config crate. On the `ssh://` path:
+
 - All SSH state (connection, channel, auth context) lives in the oc-rsync process rather than crossing a pipe to a child.
 - `~/.ssh/config` `Match` blocks are honored for the limited subset implemented under the SSC-4 series.
 - SSH agent forwarding via `SSH_AUTH_SOCK` is honored when set.
 
-Current limitations:
+Current limitations of the embedded client:
 
 - Some exotic SSH features (for example SSH-2 keepalive intervals and certificate-based auth) may not be fully supported; please open an issue if you hit one.
 - The current `spawn_blocking` thread-pool bridge between the synchronous transfer pipeline and the async russh client throttles daemon concurrency at hundreds of concurrent sessions. The RUSSH-9..14 work moves the SSH transport to a fully async-native path; see [`docs/design/russh-async-native-path.md`](./docs/design/russh-async-native-path.md) for the planned evolution and [`docs/design/russh-async-native-back-compat-shim.md`](./docs/design/russh-async-native-back-compat-shim.md) for the back-compat shim.
@@ -309,7 +311,7 @@ release binary on modern Linux/macOS/Windows hosts; everything marked
 | `async` | workspace, `core`, `engine`, `daemon` | yes | Brings in tokio for async I/O paths across the orchestrator stack. | stable |
 | `openssl` | workspace, `checksums` | no | Routes MD4/MD5 through the system OpenSSL build. | stable |
 | `openssl-vendored` | workspace, `checksums` | no | Same as `openssl` but statically links a vendored OpenSSL. | stable |
-| `embedded-ssh` | workspace, `core`, `rsync_io` | yes | Pure-Rust SSH client via `russh`; removes the runtime dependency on system `ssh`. | stable |
+| `embedded-ssh` | workspace, `core`, `rsync_io` | yes | Built-in SSH client via `russh` for `ssh://` URL operands; `host:path` transfers still spawn the system `ssh`. | stable |
 | `sd-notify` | workspace, `core`, `daemon` | no | systemd `sd-notify` integration for the daemon. | stable |
 | `incremental-flist` | `transfer` | no | Incremental file-list processing with failed-directory tracking (a `transfer` crate feature, not forwarded into the default `oc-rsync` build). | stable |
 | `lazy-metadata` | `engine` | yes | Defers `stat()` calls until metadata is needed. | stable |
