@@ -175,9 +175,28 @@ impl ReceiverContext {
         let mut literal_data = 0u64;
         let mut matched_data = 0u64;
 
-        // upstream: receiver.c:809 - max_phase = protocol >= 29 ? 2 : 1.
+        // upstream: receiver.c:646 - max_phase = protocol >= 29 ? 2 : 1.
         let max_phase: i32 = if self.protocol.as_u8() >= 29 { 2 } else { 1 };
         let mut phase: i32 = 0;
+
+        // upstream: receiver.c:679-689 - with INC_RECURSE the recorded stream
+        // carries one NDX_DONE per flist segment ahead of the phase markers
+        // (the recording sender echoed each, sender.c:246-254). The receiver
+        // consumes each by freeing first_flist and, while more segments
+        // remain, continues WITHOUT advancing the phase; the DONE that frees
+        // the last segment falls through to the phase transition. Every
+        // segment is already materialized above, so the pending count is the
+        // segment total. The entries themselves are kept (upstream's forked
+        // generator holds its own copy for touch-up work; this single-process
+        // replay reuses the list for the generator half below).
+        let inc_recurse = self
+            .compat_flags
+            .is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE));
+        let mut flists_pending = if inc_recurse {
+            self.ndx_segments.len()
+        } else {
+            0
+        };
 
         loop {
             let row = crate::receiver::ndx_stream::read_ndx_and_attrs(
@@ -189,7 +208,16 @@ impl ReceiverContext {
             )?;
 
             let Some((ndx, attrs)) = row else {
-                // upstream: receiver.c:854-862 - NDX_DONE advances the phase;
+                // upstream: receiver.c:679-689 - free one INC_RECURSE segment
+                // per NDX_DONE; while more remain the marker does not advance
+                // the phase.
+                if flists_pending > 0 {
+                    flists_pending -= 1;
+                    if flists_pending > 0 {
+                        continue;
+                    }
+                }
+                // upstream: receiver.c:690-696 - NDX_DONE advances the phase;
                 // the loop ends once phase > max_phase.
                 phase += 1;
                 if phase > max_phase {
