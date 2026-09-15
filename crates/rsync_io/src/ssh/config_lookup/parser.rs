@@ -1,20 +1,23 @@
 //! The ssh_config scanner driving compression detection.
 //!
 //! Reads a config file, walks its lines tracking the active [`Block`],
-//! and applies OpenSSH's first-match-wins rule per scope. Holds the
-//! line-level helpers ([`split_directive`], [`parse_yes_no`]) and the
-//! public [`parse_enables_compression`] entry consumed by tests and the
-//! lookup driver.
+//! and applies OpenSSH's first-match-wins rule per scope, then exposes
+//! the decision through [`parse_enables_compression`].
 //!
-//! Values are tokenised by the shared [`argv_split`] owner, the same one
-//! the connection-configuring reader uses, so the two cannot disagree
-//! about where a token ends.
+//! Every line-level primitive is borrowed rather than owned here: the
+//! keyword lookup, the `Key Value` split and the yes/no parse all come
+//! from [`crate::ssh::config_options`], and values are tokenised by the
+//! shared [`argv_split`] owner. The connection-configuring reader
+//! (`crate::ssh::embedded::ssh_config`) consumes the same four, so the
+//! two cannot disagree about what a keyword is called, where a token
+//! ends, or what counts as `yes`.
 
 use std::path::Path;
 
 use logging::debug_log;
 
 use crate::ssh::argv_split::argv_split;
+use crate::ssh::config_options::{Opcode, parse_flag_value, parse_token, split_directive};
 
 use super::match_block::{MatchContext, match_line_applies};
 use super::pattern::{MatchKind, Pattern, host_patterns_from_tokens, pattern_list_matches};
@@ -104,12 +107,14 @@ pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'
             );
             return false;
         };
-        let key_lc = key.to_ascii_lowercase();
-        match key_lc.as_str() {
-            "host" => {
+        // One keyword lookup against the shared option table, exactly as
+        // upstream resolves the opcode once per line before the switch
+        // (openssh/readconf.c:1194 `parse_token`).
+        match parse_token(key) {
+            Opcode::Host => {
                 block = Block::Host(host_patterns_from_tokens(&tokens));
             }
-            "match" => {
+            Opcode::Match => {
                 let mut saw_exec = false;
                 let applies = match_line_applies(&tokens, ctx, &mut saw_exec);
                 block = if saw_exec {
@@ -118,8 +123,11 @@ pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'
                     Block::MatchEvaluated(applies)
                 };
             }
-            "compression" => {
-                let parsed = tokens.first().and_then(|arg| parse_yes_no(arg));
+            Opcode::Compression => {
+                let parsed = tokens
+                    .first()
+                    .map(String::as_str)
+                    .and_then(parse_flag_value);
                 match &block {
                     Block::TopLevel if top_level.is_none() => top_level = parsed,
                     Block::Host(patterns)
@@ -193,25 +201,4 @@ enum Block {
     /// Directives inside this block are not honoured but are inspected
     /// for `Compression yes` to emit a targeted user warning.
     MatchExecSkipped,
-}
-
-/// Splits `Key Value` (or `Key=Value`) on the first whitespace or `=`
-/// run. Returns `None` for keys with no value.
-fn split_directive(line: &str) -> Option<(&str, &str)> {
-    let (key, rest) = line.split_once(|c: char| c.is_whitespace() || c == '=')?;
-    let value = rest.trim_start_matches(|c: char| c.is_whitespace() || c == '=');
-    if value.is_empty() {
-        return None;
-    }
-    Some((key, value))
-}
-
-/// Parses a yes/no value (case-insensitive). Returns `None` for any
-/// other value so a typo cannot accidentally flip the bit.
-fn parse_yes_no(value: &str) -> Option<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "yes" | "true" => Some(true),
-        "no" | "false" => Some(false),
-        _ => None,
-    }
 }
