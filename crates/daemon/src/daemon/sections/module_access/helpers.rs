@@ -334,15 +334,13 @@ fn push_token_rules(
             // [`push_merge_file_rules`] pushes the same rule; a per-dir merge
             // just never expands its file here, so the rule must ride the
             // list instead.
+            // The pattern is never empty here: a patternless `:C` had
+            // `.cvsignore` substituted at parse time in
+            // [`build_prefixed_rule`] (exclude.c:1553-1557), matching where
+            // upstream performs the substitution - before this self-exclude
+            // is built.
             let pattern = rule.pattern.to_string_lossy();
-            // upstream: exclude.c:1554-1557 - an empty `:C`-style pattern
-            // means ".cvsignore", substituted before the self-exclude is
-            // built.
-            let name: &str = if rule.cvs_exclude && pattern.is_empty() {
-                ".cvsignore"
-            } else {
-                pattern.as_ref()
-            };
+            let name: &str = pattern.as_ref();
             let base = name.rsplit('/').next().unwrap_or(name);
             if !base.is_empty() {
                 let base = base.to_owned();
@@ -1656,7 +1654,9 @@ struct RuleModifiers {
     word_split: bool,
     /// `C` - `FILTRULE_CVS_IGNORE` on a MERGE rule, where it is expressible as
     /// `DirMergeConfig`'s CVS mode. On a non-merge rule the same character sets
-    /// [`Self::inexpressible`] instead; see [`scan_modifiers`].
+    /// [`Self::inexpressible`] TOO, and this bit then only exempts the
+    /// patternless `-C` from the empty-pattern refusal (exclude.c:1474-1476);
+    /// see [`scan_modifiers`].
     cvs_ignore: bool,
 }
 
@@ -1745,12 +1745,35 @@ fn scan_modifiers(
             // the whole rule as `inexpressible` and honouring no merge at all.
             'x' if merge => {}
             '!' | 'x' => modifiers.inexpressible = true,
-            'C' if merge => modifiers.cvs_ignore = true,
-            'C' if !specifies_side => modifiers.inexpressible = true,
+            // upstream: exclude.c:1402-1409 - `C` is refused once
+            // FILTRULE_NO_PREFIXES is already set or the prefix named a side,
+            // and otherwise raises NO_PREFIXES | WORD_SPLIT | NO_INHERIT |
+            // CVS_IGNORE TOGETHER. On a merge rule all four are expressible,
+            // so `:C` carries them to the wire rule; dropping the implied
+            // three read a `.cvsignore` with the standard one-rule-per-line
+            // grammar instead of CVS's word-split, exclude-only one.
+            'C' if merge && !modifiers.no_prefixes => {
+                modifiers.cvs_ignore = true;
+                modifiers.no_prefixes = true;
+                modifiers.word_split = true;
+                modifiers.no_inherit = true;
+            }
+            // On a non-merge rule `C` stays inexpressible (see the doc block),
+            // but `cvs_ignore` is still recorded: it is what exempts the
+            // patternless `-C` from the empty-pattern refusal below
+            // (exclude.c:1474-1476).
+            'C' if !specifies_side && !modifiers.no_prefixes => {
+                modifiers.inexpressible = true;
+                modifiers.cvs_ignore = true;
+            }
             // The merge-only arms. Each is `goto invalid` without
-            // FILTRULE_MERGE_FILE, so they must stay behind the guard.
-            '-' if merge => modifiers.no_prefixes = true,
-            '+' if merge => {
+            // FILTRULE_MERGE_FILE, so they must stay behind the guard, and
+            // `-`/`+` are `goto invalid` once NO_PREFIXES is set
+            // (BITS_SETnUNSET, exclude.c:1381-1391) - so `:C-` and `:-+`
+            // refuse, falling through to the catch-all like upstream's
+            // `goto invalid`.
+            '-' if merge && !modifiers.no_prefixes => modifiers.no_prefixes = true,
+            '+' if merge && !modifiers.no_prefixes => {
                 modifiers.no_prefixes = true;
                 modifiers.no_prefixes_include = true;
             }
@@ -1794,11 +1817,20 @@ fn build_prefixed_rule(
     token: &str,
     xflags: RuleXflags,
 ) -> Result<Option<FilterRuleWireFormat>, MalformedRule> {
-    let pattern = rule_pattern(run, used, xflags);
-    if pattern.is_empty() {
+    let mut pattern = rule_pattern(run, used, xflags);
+    // upstream: exclude.c:1474-1476 - an empty pattern is fatal UNLESS the
+    // rule carries FILTRULE_CVS_IGNORE. Without the exemption a module's
+    // `filter = :C` refused the whole module (nothing served) where upstream
+    // serves it under per-directory `.cvsignore` rules.
+    if pattern.is_empty() && !modifiers.cvs_ignore {
         return Err(MalformedRule::UnexpectedEnd {
             token: token.to_owned(),
         });
+    }
+    // upstream: exclude.c:1553-1557 - a patternless merge rule means
+    // `.cvsignore`, substituted before the rule is added.
+    if pattern.is_empty() && prefix.merge_file {
+        pattern = ".cvsignore";
     }
 
     // The side test happens HERE, at add time, never at match time.
