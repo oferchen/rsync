@@ -11,9 +11,12 @@
 //!
 //! Top-level directives, `Host` blocks (including glob and negation
 //! tokens), and `Match` blocks whose conditions all pass are honoured.
-//! Resolution mirrors OpenSSH's first-match-wins rule per directive: the
-//! first matching `Compression` assignment in the scan wins for its
-//! scope. SSC-4.c wires the `Match` evaluator into the parser, honouring
+//! Resolution mirrors OpenSSH's first-obtained-wins rule: one slot per
+//! directive, claimed by the first assignment from an applying line
+//! anywhere in the ordered scan, regardless of which scope kind the
+//! line sits in (openssh/readconf.c:1229
+//! `if (*activep && *intptr == -1)`).
+//! SSC-4.c wires the `Match` evaluator into the parser, honouring
 //! `host`, `originalhost`, `user`, `localuser`, and `all`. `Match exec`
 //! is deliberately unsupported - executing arbitrary shell commands from
 //! a passive config-lookup path is a security risk, and the

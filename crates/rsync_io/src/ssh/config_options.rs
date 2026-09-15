@@ -139,7 +139,50 @@ pub(in crate::ssh) enum ValueKind {
     Unknown,
 }
 
+/// How repeated assignments to one keyword resolve across the single
+/// ordered scan of a config file.
+///
+/// Upstream has no such enum; the split is expressed by which code each
+/// arm runs. Most options are a scalar slot assigned only while unset
+/// (openssh/readconf.c:1229 `if (*activep && *intptr == -1)`), so the
+/// FIRST value obtained from an active line wins and every later
+/// assignment is ignored. A few list options append on every active line
+/// instead - `IdentityFile` routes through `add_identity_file` with no
+/// unset test at all (openssh/readconf.c:1394).
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(not(feature = "ssh-config-parse"), allow(dead_code))]
+pub(in crate::ssh) enum ResolutionPolicy {
+    /// One slot; the first value obtained from an active line claims it.
+    FirstObtained,
+    /// A list; every active line appends.
+    Accumulate,
+}
+
+impl ResolutionPolicy {
+    /// Whether a directive under this policy may write its value now.
+    /// `slot_claimed` is whether an earlier active line already set the
+    /// option - upstream's `*intptr != -1` state.
+    #[cfg_attr(not(feature = "ssh-config-parse"), allow(dead_code))]
+    pub(in crate::ssh) fn may_assign(self, slot_claimed: bool) -> bool {
+        match self {
+            Self::FirstObtained => !slot_claimed,
+            Self::Accumulate => true,
+        }
+    }
+}
+
 impl Opcode {
+    /// How repeated assignments to this keyword resolve. `IdentityFile`
+    /// is the one accumulating row oc reads today (upstream's other
+    /// accumulators, e.g. `CertificateFile`, join here when added).
+    #[cfg_attr(not(feature = "ssh-config-parse"), allow(dead_code))]
+    pub(in crate::ssh) fn resolution_policy(self) -> ResolutionPolicy {
+        match self {
+            Self::IdentityFile => ResolutionPolicy::Accumulate,
+            _ => ResolutionPolicy::FirstObtained,
+        }
+    }
+
     /// The value shape this keyword's arm expects.
     pub(in crate::ssh) fn value_kind(self) -> ValueKind {
         match self {
@@ -412,6 +455,41 @@ mod tests {
         for opcode in [Opcode::Host, Opcode::Match, Opcode::Unknown] {
             assert_eq!(opcode.missing_argument(), None, "{opcode:?}");
         }
+    }
+
+    /// The policy axis splits the one accumulating row from the scalar
+    /// slots. `IdentityFile` appends on every active line
+    /// (openssh/readconf.c:1394 `add_identity_file`); everything else
+    /// is a first-obtained slot (openssh/readconf.c:1229).
+    #[test]
+    fn identityfile_accumulates_and_every_other_row_is_first_obtained() {
+        assert_eq!(
+            Opcode::IdentityFile.resolution_policy(),
+            ResolutionPolicy::Accumulate
+        );
+        for opcode in [
+            Opcode::Compression,
+            Opcode::IdentitiesOnly,
+            Opcode::Hostname,
+            Opcode::User,
+            Opcode::Port,
+            Opcode::IdentityAgent,
+            Opcode::ConnectTimeout,
+        ] {
+            assert_eq!(
+                opcode.resolution_policy(),
+                ResolutionPolicy::FirstObtained,
+                "{opcode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn may_assign_gates_only_the_first_obtained_claim() {
+        assert!(ResolutionPolicy::FirstObtained.may_assign(false));
+        assert!(!ResolutionPolicy::FirstObtained.may_assign(true));
+        assert!(ResolutionPolicy::Accumulate.may_assign(false));
+        assert!(ResolutionPolicy::Accumulate.may_assign(true));
     }
 
     /// `convtime` accepts the documented decimal-with-qualifier forms.

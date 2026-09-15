@@ -1,8 +1,9 @@
 //! The ssh_config scanner driving compression detection.
 //!
-//! Reads a config file, walks its lines tracking the active [`Block`],
-//! and applies OpenSSH's first-match-wins rule per scope, then exposes
-//! the decision through [`parse_enables_compression`].
+//! Reads a config file, walks its lines in order tracking the active
+//! [`Block`], and applies OpenSSH's first-obtained-wins rule - one slot
+//! per option, claimed by the first assignment from an applying line -
+//! then exposes the decision through [`parse_enables_compression`].
 //!
 //! Every line-level primitive is borrowed rather than owned here: the
 //! keyword lookup, the `Key Value` split and the yes/no parse all come
@@ -44,17 +45,20 @@ pub(super) fn read_and_check(path: &Path, ctx: &MatchContext<'_>) -> bool {
 /// Parses `text` and returns `true` when `Compression yes` is in effect
 /// for `ctx` at top level or under a matching `Host` or `Match` block.
 ///
-/// Per OpenSSH's first-match-wins rule (see SSC-4.a "First-match-wins
-/// ordering" and SSC-5 audit findings G1/G2), each scope keeps its own
-/// `Option<bool>` slot that records the first assignment encountered.
-/// The final answer ORs the scope slots: any scope whose first hit was
-/// `Compression yes` flips the warning. A `Host` block contributes only
-/// when `ctx.host` matches at least one positive pattern token and no
-/// negated token (`pattern_list_matches`, sourced from SSC-4.b). A
-/// `Match` block contributes only when every condition on its header
-/// line evaluates true against `ctx`; SKIP/DEFER conditions
-/// (`canonical`, `final`, `tagged`, `exec`) render the whole block
-/// inert per SSC-4.a.
+/// Per OpenSSH's first-obtained-wins rule the option keeps ONE slot,
+/// claimed by the first assignment made from an active line: upstream
+/// sets an option only while it is still unset
+/// (openssh/readconf.c:1229 `if (*activep && *intptr == -1)`), over a
+/// single ordered pass of the file. Whether a line is active is decided
+/// by the block it sits in - top level always applies; a `Host` block
+/// applies when `ctx.host` matches at least one positive pattern token
+/// and no negated token (`pattern_list_matches`, sourced from SSC-4.b);
+/// a `Match` block applies when every condition on its header line
+/// evaluates true against `ctx`, with SKIP/DEFER conditions
+/// (`canonical`, `final`, `tagged`, `exec`) rendering the whole block
+/// inert per SSC-4.a. The per-option claim itself is the option table's
+/// [`ResolutionPolicy`](crate::ssh::config_options::ResolutionPolicy):
+/// `Compression` is a `FirstObtained` row.
 ///
 /// `ctx`'s fields may be empty; in that case only `Host *` and
 /// `Match all` (or other patterns that tolerate empty input) can match.
@@ -64,16 +68,14 @@ pub(super) fn read_and_check(path: &Path, ctx: &MatchContext<'_>) -> bool {
 /// exec condition was not evaluated and suggesting a workaround (move
 /// the directive to a `Host` or `Match host` block, or pass
 /// `-e "ssh -C"` explicitly). The warning fires only when the skipped
-/// block actually contains a compression directive that would affect
-/// the detection result - bare `Match exec` blocks without compression
-/// settings produce no warning.
+/// directive could still have claimed the slot - once an earlier active
+/// line has claimed it, an evaluated exec block could not have changed
+/// the answer either, so no warning is owed.
 ///
 /// Exposed to tests so they can assert behaviour without disk I/O.
 pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> bool {
     let mut block = Block::TopLevel;
-    let mut top_level: Option<bool> = None;
-    let mut host_block: Option<bool> = None;
-    let mut match_block: Option<bool> = None;
+    let mut compression: Option<bool> = None;
     let mut exec_block_has_compression = false;
 
     for raw_line in text.lines() {
@@ -110,7 +112,8 @@ pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'
         // One keyword lookup against the shared option table, exactly as
         // upstream resolves the opcode once per line before the switch
         // (openssh/readconf.c:1194 `parse_token`).
-        match parse_token(key) {
+        let opcode = parse_token(key);
+        match opcode {
             Opcode::Host => {
                 block = Block::Host(host_patterns_from_tokens(&tokens));
             }
@@ -128,23 +131,35 @@ pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'
                     .first()
                     .map(String::as_str)
                     .and_then(parse_flag_value);
-                match &block {
-                    Block::TopLevel if top_level.is_none() => top_level = parsed,
-                    Block::Host(patterns)
-                        if host_block.is_none()
-                            && pattern_list_matches(patterns, ctx.host, MatchKind::HostBlock) =>
-                    {
-                        host_block = parsed;
+                // The activity gate: upstream's `*activep`, decided by
+                // the enclosing block for every line alike
+                // (openssh/readconf.c:1829 for `Host`, :1864 for
+                // `Match`).
+                let active = match &block {
+                    Block::TopLevel => true,
+                    Block::Host(patterns) => {
+                        pattern_list_matches(patterns, ctx.host, MatchKind::HostBlock)
                     }
-                    Block::MatchEvaluated(true) if match_block.is_none() => {
-                        match_block = parsed;
-                    }
+                    Block::MatchEvaluated(applies) => *applies,
                     Block::MatchExecSkipped => {
-                        if parsed == Some(true) {
+                        // Never active - the condition was not evaluated.
+                        // But a `Compression yes` here could have claimed
+                        // a still-unset slot had real ssh evaluated the
+                        // block, which is exactly when the warning below
+                        // is owed.
+                        if parsed == Some(true) && compression.is_none() {
                             exec_block_has_compression = true;
                         }
+                        false
                     }
-                    _ => {}
+                };
+                // ONE slot per option, claimed by the first assignment
+                // from an active line: upstream assigns only while the
+                // option is unset (openssh/readconf.c:1229
+                // `if (*activep && *intptr == -1)`). The claim rule is
+                // the table's per-option `ResolutionPolicy` row.
+                if active && opcode.resolution_policy().may_assign(compression.is_some()) {
+                    compression = parsed;
                 }
             }
             _ => {}
@@ -168,7 +183,7 @@ pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'
         eprintln!("         or pass -e \"ssh -C\" explicitly so oc-rsync can detect it.");
     }
 
-    top_level.unwrap_or(false) || host_block.unwrap_or(false) || match_block.unwrap_or(false)
+    compression.unwrap_or(false)
 }
 
 /// Active config block while parsing.
