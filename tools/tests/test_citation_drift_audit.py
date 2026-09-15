@@ -147,18 +147,24 @@ pub fn h() {{}}
         # one. Widening the filter must not turn a tree that was green into a red
         # one, so an inverted range the tool could not previously see is reported
         # in the non-blocking half instead.
-        source = """
+        # Assembled at run time, never spelled: `cargo xtask citations` hard-fails
+        # any backwards range anywhere in the tree, this file included, so a
+        # literal fixture here would redden the gate this fixture exists to
+        # complement. Same technique, and same reason, as the `cite()` helper in
+        # xtask/src/commands/citations.rs.
+        backwards = "flist.c" + ":80-40"
+        source = f"""
 // upstream: flist.c:12-20 in-order range
 /// # Upstream Reference
-/// - flist.c:80-40
-pub fn f() {}
+/// - {backwards}
+pub fn f() {{}}
 """
         with workspace({"demo": source}):
             _, result = run_audit("demo")
         blocking, extended, _ = result
         self.assertEqual(blocking.backwards, [])
         self.assertEqual(len(extended.backwards), 1)
-        self.assertIn("flist.c:80-40 runs backwards", extended.backwards[0])
+        self.assertIn(f"{backwards} runs backwards", extended.backwards[0])
 
 
 class ReportTests(unittest.TestCase):
