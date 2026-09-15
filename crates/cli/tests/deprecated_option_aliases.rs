@@ -315,7 +315,9 @@ fn test_del_and_delete_before_are_mutually_exclusive() {
 
 #[test]
 fn test_tmp_dir_and_temp_dir_are_same_option() {
-    // --tmp-dir and --temp-dir are the same option (alias), so using both is an error
+    // --tmp-dir and --temp-dir are the same option (alias), so using both is
+    // a plain repeat; popt resolves repeats to the LAST occurrence
+    // (options.c:1502 re-runs the case per occurrence, no duplicate error).
     let result = parse_args([
         "oc-rsync",
         "--temp-dir=/tmp1",
@@ -323,10 +325,10 @@ fn test_tmp_dir_and_temp_dir_are_same_option() {
         "src",
         "dest",
     ]);
-    assert!(
-        result.is_err(),
-        "--tmp-dir and --temp-dir are aliases and cannot both be specified"
+    let args = result.expect("--temp-dir repeated via its alias must parse like popt");
+    assert_eq!(
+        args.temp_dir.as_deref(),
+        Some(std::path::Path::new("/tmp2")),
+        "the last occurrence must win"
     );
-    let err = result.unwrap_err();
-    assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
 }
