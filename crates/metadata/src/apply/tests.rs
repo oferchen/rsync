@@ -3202,3 +3202,192 @@ fn symlink_own_mode_is_noop_on_linux() {
         "a Linux symlink keeps its fixed 0o777 mode"
     );
 }
+
+/// upstream: rsync.c:769-791 - `set_file_attrs()` applies the times before the
+/// rsync.c:806-822 chmod, so a target mode that forbids owner-write can never
+/// block the utimes that precede it. The local-copy (`fs::Metadata`-based) file
+/// arm must land BOTH the requested mtime AND the read-only mode; a chmod-first
+/// order would leave the mtime unset on any platform whose time-set needs write
+/// access (the non-Unix `filetime` arm opens the file).
+#[cfg(unix)]
+#[test]
+fn apply_file_metadata_sets_times_before_readonly_chmod() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("ro-source.txt");
+    let dest = temp.path().join("ro-dest.txt");
+    fs::write(&source, b"data").expect("write source");
+    fs::write(&dest, b"data").expect("write dest");
+    fs::set_permissions(&source, PermissionsExt::from_mode(0o444)).expect("chmod source");
+    let mtime = FileTime::from_unix_time(1_700_000_000, 123_456_789);
+    set_file_times(&source, mtime, mtime).expect("set source times");
+    // Start writable so the outcome depends only on the apply ordering.
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o644)).expect("seed dest perms");
+
+    let metadata = fs::metadata(&source).expect("source metadata");
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true);
+    apply_file_metadata_with_options(&dest, &metadata, &opts).expect("apply metadata");
+
+    let dest_meta = fs::metadata(&dest).expect("dest metadata");
+    assert_eq!(
+        FileTime::from_last_modification_time(&dest_meta),
+        mtime,
+        "mtime must survive: times are set before the read-only chmod"
+    );
+    assert_eq!(current_mode(&dest) & 0o777, 0o444);
+}
+
+/// Order pin for the local-copy file arm: on a missing destination the FIRST
+/// failing attribute operation names itself in the error. upstream
+/// `set_file_attrs()` reaches its times set (rsync.c:769-791) before its chmod
+/// (rsync.c:806-822), so the reported failure must be the timestamps one -
+/// a permissions-flavoured error here means the chmod ran first.
+#[cfg(unix)]
+#[test]
+fn apply_file_metadata_reports_times_failure_before_chmod() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("order-source.txt");
+    fs::write(&source, b"data").expect("write source");
+    let metadata = fs::metadata(&source).expect("source metadata");
+
+    let missing = temp.path().join("missing-dest.txt");
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true);
+    let error = apply_file_metadata_with_options(&missing, &metadata, &opts)
+        .expect_err("apply on a missing destination must fail");
+    assert!(
+        error.to_string().contains("preserve timestamps"),
+        "times must be attempted before the chmod; got: {error}"
+    );
+}
+
+/// Directory counterpart of the read-only ordering pin: an `r-x` (0o555)
+/// target mode and the source mtime must BOTH land. upstream: rsync.c:769-791
+/// (times) before rsync.c:806-822 (chmod).
+#[cfg(unix)]
+#[test]
+fn apply_directory_metadata_sets_times_before_readonly_chmod() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("ro-src-dir");
+    let dest = temp.path().join("ro-dst-dir");
+    fs::create_dir(&source).expect("mkdir source");
+    fs::create_dir(&dest).expect("mkdir dest");
+    fs::set_permissions(&source, PermissionsExt::from_mode(0o555)).expect("chmod source");
+    let mtime = FileTime::from_unix_time(1_700_000_200, 42_000_000);
+    set_file_times(&source, mtime, mtime).expect("set source times");
+
+    let pre = fs::metadata(&dest).expect("pre-transfer dest metadata");
+    let metadata = fs::metadata(&source).expect("source metadata");
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true);
+    apply_directory_metadata_with_options(&dest, &metadata, opts, Some(&pre))
+        .expect("apply directory metadata");
+
+    let dest_meta = fs::metadata(&dest).expect("dest metadata");
+    let landed_mtime = FileTime::from_last_modification_time(&dest_meta);
+    let landed_mode = current_mode(&dest) & 0o777;
+    // Restore writability so tempdir cleanup can remove the tree.
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o755)).expect("unlock dest");
+    assert_eq!(
+        landed_mtime, mtime,
+        "directory mtime must survive: times are set before the r-x chmod"
+    );
+    assert_eq!(landed_mode, 0o555);
+}
+
+/// Order pin for the local-copy directory arm, mirroring
+/// [`apply_file_metadata_reports_times_failure_before_chmod`]: the missing
+/// destination must be reported by the times set, which upstream reaches
+/// (rsync.c:769-791) before the chmod (rsync.c:806-822).
+#[cfg(unix)]
+#[test]
+fn apply_directory_metadata_reports_times_failure_before_chmod() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("order-src-dir");
+    fs::create_dir(&source).expect("mkdir source");
+    let metadata = fs::metadata(&source).expect("source metadata");
+
+    let missing = temp.path().join("missing-dst-dir");
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true);
+    let error = apply_directory_metadata_with_options(&missing, &metadata, opts, None)
+        .expect_err("apply on a missing destination must fail");
+    assert!(
+        error.to_string().contains("preserve timestamps"),
+        "times must be attempted before the chmod; got: {error}"
+    );
+}
+
+/// fd-arm counterpart of the read-only ordering pin: `futimens` and `fchmod`
+/// must run in upstream's times-then-chmod order (rsync.c:769-791 before
+/// rsync.c:806-822) and both attributes must land.
+#[cfg(unix)]
+#[test]
+fn apply_file_metadata_with_fd_sets_times_before_readonly_chmod() {
+    use std::os::fd::AsFd;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("fd-ro-source.txt");
+    let dest = temp.path().join("fd-ro-dest.txt");
+    fs::write(&source, b"data").expect("write source");
+    fs::write(&dest, b"data").expect("write dest");
+    fs::set_permissions(&source, PermissionsExt::from_mode(0o444)).expect("chmod source");
+    let mtime = FileTime::from_unix_time(1_700_000_300, 7_000_000);
+    set_file_times(&source, mtime, mtime).expect("set source times");
+
+    let metadata = fs::metadata(&source).expect("source metadata");
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true);
+    let file = fs::File::open(&dest).expect("open dest");
+    apply_file_metadata_with_fd(&dest, &metadata, &opts, file.as_fd()).expect("apply metadata");
+
+    let dest_meta = fs::metadata(&dest).expect("dest metadata");
+    assert_eq!(
+        FileTime::from_last_modification_time(&dest_meta),
+        mtime,
+        "mtime must survive: times are set before the read-only chmod"
+    );
+    assert_eq!(current_mode(&dest) & 0o777, 0o444);
+}
+
+/// if-changed-arm counterpart of the read-only ordering pin.
+#[cfg(unix)]
+#[test]
+fn apply_file_metadata_if_changed_sets_times_before_readonly_chmod() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("ic-ro-source.txt");
+    let dest = temp.path().join("ic-ro-dest.txt");
+    fs::write(&source, b"data").expect("write source");
+    fs::write(&dest, b"data").expect("write dest");
+    fs::set_permissions(&source, PermissionsExt::from_mode(0o444)).expect("chmod source");
+    let mtime = FileTime::from_unix_time(1_700_000_400, 9_000_000);
+    set_file_times(&source, mtime, mtime).expect("set source times");
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o644)).expect("seed dest perms");
+
+    let existing = fs::metadata(&dest).expect("existing dest metadata");
+    let metadata = fs::metadata(&source).expect("source metadata");
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true);
+    apply_file_metadata_if_changed(&dest, &metadata, &existing, &opts).expect("apply metadata");
+
+    let dest_meta = fs::metadata(&dest).expect("dest metadata");
+    assert_eq!(
+        FileTime::from_last_modification_time(&dest_meta),
+        mtime,
+        "mtime must survive: times are set before the read-only chmod"
+    );
+    assert_eq!(current_mode(&dest) & 0o777, 0o444);
+}
