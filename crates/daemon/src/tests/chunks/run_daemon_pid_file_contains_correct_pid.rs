@@ -27,7 +27,7 @@ fn run_daemon_pid_file_contains_correct_pid() {
 
     let pid_clone = pid_path.clone();
     drop(held_listener);
-    let handle = spawn_daemon_pending_no_detach(config);
+    let handle = spawn_daemon(config);
 
     let start = Instant::now();
     while !pid_clone.exists() {
