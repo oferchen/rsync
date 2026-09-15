@@ -1,8 +1,14 @@
 # Nextest defaults: keep full workspace filter while relying on CLI flags for package selection.
+#
+# Flaky visibility: `status-level = "retry"` prints every failed attempt as it
+# happens, and `final-status-level = "flaky"` lists each retried-then-passed
+# test after the summary, so a retry is counted instead of reported as a plain
+# pass. CI greps those FLAKY lines into the step summary via
+# tools/ci/nextest_flaky_summary.sh.
 [profile.default]
 default-filter = "all()"
-status-level = "fail"
-final-status-level = "fail"
+status-level = "retry"
+final-status-level = "flaky"
 failure-output = "immediate-final"
 # Per-test timeout, mirroring profile.ci. Without `terminate-after` nextest's
 # default is to warn about a slow test forever and never terminate it, so a
@@ -25,8 +31,8 @@ slow-timeout = { period = "120s", terminate-after = 3 }
 
 [profile.ci]
 default-filter = "all()"
-status-level = "fail"
-final-status-level = "fail"
+status-level = "retry"
+final-status-level = "flaky"
 failure-output = "immediate-final"
 success-output = "never"
 # Per-test timeout: fail individual tests that hang rather than hitting CI job timeout.
@@ -34,8 +40,13 @@ slow-timeout = { period = "120s", terminate-after = 3 }
 # Generate JUnit XML for CI dashboards (optional, not currently used)
 # junit.path = "junit.xml"
 
-# Retry policies for tests with inherent race conditions (port binding TOCTOU,
-# slow CI runner timing).
+# Retry policies for tests with inherent environmental races. The original
+# file-based port allocator TOCTOU was root-caused and fixed in the same
+# change that introduced this policy (OS-assigned ephemeral ports plus a held
+# listener); what remains is the irreducible drop-listener-then-daemon-rebind
+# window, plus accept/handshake stalls on loaded runners, which the bounded
+# client stream timeouts convert into fast failures for these retries to
+# absorb. Every absorbed pass is reported as FLAKY, never as a plain pass.
 [[profile.ci.overrides]]
 filter = "package(daemon) | test(execute_sparse) | binary_id(~integration_daemon)"
 retries = 2
@@ -84,12 +95,14 @@ test-group = "daemon-spawn-serial"
 max-threads = 1
 
 # SSH integration tests must run serially - parallel SSH sessions on the CI
-# runner cause pipe corruption (garbled data, zero-length filenames, broken
-# connections). Retries handle transient SSH pipe failures.
+# runner caused pipe corruption (garbled data, zero-length filenames, broken
+# connections); the serialisation below is the fix. This group deliberately
+# carries no retries: the real loopback tests are #[ignore] and run only in a
+# non-blocking CI step, so the filter otherwise matches deterministic unit
+# tests where a retry would only mask a regression.
 [[profile.default.overrides]]
 filter = "test(test_ssh)"
 test-group = "ssh-serial"
-retries = 2
 
 [test-groups.ssh-serial]
 max-threads = 1
