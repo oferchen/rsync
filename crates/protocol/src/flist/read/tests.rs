@@ -3246,3 +3246,91 @@ fn hardlink_dev_ino_is_read_when_hard_links_are_preserved() {
         "the whole dev/ino pair must be consumed when preserving links",
     );
 }
+
+/// upstream: flist.c:1175-1184 - `FLAG_HLINKED` is recorded only when
+/// `preserve_hard_links` is on, and generator.c:1943 re-checks the option
+/// before every `F_HLINK_NOT_FIRST` use, so a raw `XMIT_HLINKED` wire bit
+/// is inert without -H: the entry decodes as a plain file and transfers
+/// normally. Pre-fix the decoder persisted the bit unconditionally, so the
+/// receiver classified the entry as a hardlink "follower", dropped it from
+/// the transfer set, and never linked it - a silent omission at exit 0.
+#[test]
+fn stray_hlinked_wire_bit_is_inert_without_preserve_hard_links() {
+    use crate::flist::flags::{XMIT_HLINK_FIRST, XMIT_HLINKED};
+    use crate::flist::write::FileListWriter;
+
+    let protocol = test_protocol();
+
+    // Hostile "follower" (HLINKED alone) and hostile "leader" (both bits):
+    // neither interpretation may survive the decode without -H.
+    for hostile_ext in [XMIT_HLINKED, XMIT_HLINKED | XMIT_HLINK_FIRST] {
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::new(protocol);
+        let mut entry = FileEntry::new_file("victim.txt".into(), 7, 0o100644);
+        entry.set_mtime(1_700_000_000, 0);
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        // Inject the hostile extended-flags byte. Without -H the reader
+        // consumes no hardlink varint, so the flag bytes are the only
+        // difference from a plain entry.
+        assert_eq!(
+            data[0] & XMIT_EXTENDED_FLAGS,
+            0,
+            "fixture: plain first entry must not already carry extended flags",
+        );
+        data[0] |= XMIT_EXTENDED_FLAGS;
+        data.insert(1, hostile_ext);
+
+        let mut cursor = Cursor::new(&data[..]);
+        let mut reader = FileListReader::new(protocol);
+        let decoded = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+        // The entry decodes normally and the stream stays in sync: only the
+        // flag's interpretation is gated, never the bytes consumed.
+        assert_eq!(decoded.name(), "victim.txt");
+        assert_eq!(decoded.size(), 7);
+        assert_eq!(
+            cursor.position() as usize,
+            data.len(),
+            "byte consumption must not change under a hostile hlink flag",
+        );
+
+        assert!(
+            !decoded.hlinked(),
+            "XMIT_HLINKED (ext 0x{hostile_ext:02x}) must not survive decode without -H",
+        );
+        assert!(
+            !decoded.hlink_first(),
+            "XMIT_HLINK_FIRST (ext 0x{hostile_ext:02x}) must not survive decode without -H",
+        );
+    }
+}
+
+/// Control for `stray_hlinked_wire_bit_is_inert_without_preserve_hard_links`:
+/// with -H on both sides a legitimate leader keeps its hardlink flags, so
+/// the no--H gate cannot over-correct into dropping real hardlink state.
+#[test]
+fn hlink_leader_flags_survive_decode_with_preserve_hard_links() {
+    use crate::flist::write::FileListWriter;
+
+    let protocol = test_protocol();
+    let mut data = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+    let mut entry = FileEntry::new_file("leader.txt".into(), 7, 0o100644);
+    entry.set_mtime(1_700_000_000, 0);
+    entry.set_hlinked(true);
+    entry.set_hlink_first(true);
+    entry.set_hardlink_idx(u32::MAX);
+    writer.write_entry(&mut data, &entry).unwrap();
+
+    let mut cursor = Cursor::new(&data[..]);
+    let mut reader = FileListReader::new(protocol).with_preserve_hard_links(true);
+    let decoded = reader.read_entry(&mut cursor).unwrap().unwrap();
+
+    assert!(decoded.hlinked(), "-H leader must keep FLAG_HLINKED");
+    assert!(
+        decoded.hlink_first(),
+        "-H leader must keep FLAG_HLINK_FIRST"
+    );
+    assert_eq!(cursor.position() as usize, data.len());
+}
