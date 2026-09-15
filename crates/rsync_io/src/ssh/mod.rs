@@ -94,6 +94,9 @@ mod aux_channel;
 mod builder;
 #[cfg(feature = "ssh-config-parse")]
 mod config_lookup;
+/// The single ssh_config option table, shared by both config readers.
+#[cfg(any(feature = "ssh-config-parse", feature = "embedded-ssh"))]
+mod config_options;
 mod connect;
 mod connection;
 /// Embedded SSH transport using the russh library.
