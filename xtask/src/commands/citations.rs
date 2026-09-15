@@ -1,7 +1,7 @@
 //! Verifies that `upstream: <file>:<line>` citations name a file the pinned
 //! upstream rsync source has, at a line that file has.
 //!
-//! Two rules, both mechanical, both with no false-positive tension:
+//! Three rules, all mechanical, all with no false-positive tension:
 //!
 //! 1. **The cited file must exist.** `tools/ci/run_upstream_testsuite.sh` cited
 //!    `runtests.sh:205-215` and `runtests.sh:254`. Neither rsync 3.4.4 nor
@@ -13,11 +13,67 @@
 //!    permissions.rs` cited `rsync.c:954-965` for a `dest_mode()` call site;
 //!    rsync 3.4.4's `rsync.c` is 831 lines. The claim looked specific enough
 //!    that seven call sites copied it.
+//! 3. **A range must not run backwards.** `END >= START`, checked structurally
+//!    and independently of everything above. A retarget moves the START it
+//!    matched and leaves the END behind, because every search over citations
+//!    keys on `file.c:START`; the result names a real file at a real line and
+//!    audits perfectly clean under rules 1 and 2. There is no correct backwards
+//!    range, so this rule carries no exemption of any kind.
+//!
+//! # Two jurisdictions, because they have different false-positive profiles
+//!
+//! Rules 1 and 3 used to run only on lines carrying the literal word
+//! `upstream`, which is how a citation is written inline
+//! (`// upstream: flist.c:2477 ...`). It is not how the tree's other
+//! documentation style writes one: under a `/// # Upstream Reference` heading
+//! the word sits on the heading and never on the bullets beneath it. Measured
+//! over every git-tracked file: 20,273 citations, of which 10,193 (50.3%) sit
+//! on a line without that word, so half of what this gate exists to check was
+//! never once opened by it.
+//!
+//! Deleting the filter outright is the wrong repair, and the measurement says
+//! why: it takes the population to 20,273 and turns 46 rows red, none of them
+//! an upstream defect. The tree deliberately cites zsync's `hash.c` and
+//! `rsum.c`, OpenSSH's `readconf.c` and its own `run_interop.sh` by line, in
+//! prose, and a gate whose rule is "every
+//! `X.c:NNN` token anywhere names a file rsync 3.5.0 ships" has claimed
+//! jurisdiction it cannot justify. So the reach is split by what each rule can
+//! soundly assert:
+//!
+//! - **Rules 1 (existence) and the release-pin rule need a CLAIM.** They only
+//!   look at citations the text presents as upstream citations: the line
+//!   carries `upstream`, or it sits under an `# Upstream Reference` heading.
+//!   Measured 2026-09-15: 11,674 claimed citations, up from the 9,785 the
+//!   filter used to admit - and the widening costs zero new violations.
+//! - **Rules 2 (range) and 3 (backwards) need no claim.** Once a cited path
+//!   resolves to a file the pinned release actually ships, "is line N inside
+//!   it" is arithmetic, and "is END before START" is not even that. Neither can
+//!   be wrong about a correct citation, so both run on every citation in the
+//!   tree. Measured 2026-09-15: 8,027 unclaimed citations newly range-checked
+//!   after resolving to a pinned file, and today none is out of range.
 //!
 //! # What is deliberately NOT checked, and must not be "finished"
 //!
-//! Neither rule says anything about whether the cited line means what the
+//! No rule here says anything about whether the cited line *means* what the
 //! comment claims. That is the open question, not an oversight:
+//!
+//! - An ANCHOR gate - the cited range must contain a token the comment names -
+//!   was re-measured rather than inherited, and the rejection stands, but the
+//!   reason has moved. It is no longer only the false-positive rate; it is that
+//!   the corpus is not ready. `tools/ci/citation_drift_audit.py` already
+//!   implements exactly this check. On the population it has always gated it
+//!   finds 9 suspected drifts out of 675 string-anchored citations (1.3%), which
+//!   is gateable. On the population it was widened to see in #7623 - the same
+//!   half this gate was blind to until now - it finds **391 out of 599 (65%)**,
+//!   and spot-checking says those are real: `crates/transfer/src/flags.rs` cites
+//!   `flist.c:2548` for `numeric_ids <= 0`, which lives at 3.5.0 line 2820, and
+//!   `options.c:2770` for `--log-format=`, which lives at 2939. Those are
+//!   3.4.4-era numbers that the retarget sweep never reached, because the sweep
+//!   was driven by a tool that could not see them. Turning the anchor check into
+//!   a hard gate today would need ~391 exemptions, which is not a gate. The
+//!   sequencing is: sweep the 391, lower the drift audit's non-blocking count to
+//!   its false-positive floor, and only then promote the anchor check. Nothing
+//!   here should be allowlisted to bring that date forward.
 //!
 //! - Checking that a comment's quoted text appears in the cited file was
 //!   measured and rejected: 27-52% of citations fail it depending on the
@@ -164,6 +220,26 @@ pub enum Violation {
         /// The release the citation names.
         version: String,
     },
+    /// A cited range whose end precedes its start.
+    ///
+    /// Structural, and the only rule here that needs neither the manifest nor a
+    /// claim: a range over `exclude.c` whose END (1237) precedes its START
+    /// (1381) names a real file, and both numbers are real lines of it, so
+    /// rules 1 and 2 pass it without a murmur. It
+    /// arises because every retarget - by hand or by sweep - keys on
+    /// `file.c:START`, moves that number, and never looks at END.
+    BackwardsRange {
+        /// Workspace-relative file carrying the citation.
+        source: String,
+        /// Line in the citing file.
+        line: usize,
+        /// The upstream file name as written in the comment.
+        upstream: String,
+        /// The start of the range.
+        start: usize,
+        /// The end of the range, which precedes `start`.
+        end: usize,
+    },
 }
 
 impl std::fmt::Display for Violation {
@@ -199,6 +275,18 @@ impl std::fmt::Display for Violation {
                 "{source}:{line}: cites rsync-{version}/{upstream}:{cited}, but the pin is \
                  rsync {PINNED_VERSION}; re-locate the construct in {PINNED_SOURCE_DIR} and \
                  cite it as {upstream}:<line> there"
+            ),
+            Self::BackwardsRange {
+                source,
+                line,
+                upstream,
+                start,
+                end,
+            } => write!(
+                f,
+                "{source}:{line}: cites {upstream}:{start}-{end}, which runs backwards; \
+                 END must be >= START. A retarget that moved START left END on the old \
+                 pin - searches over citations key on {upstream}:START and never touch END"
             ),
         }
     }
@@ -401,9 +489,106 @@ pub fn citations_in_line(line: &str) -> Vec<(String, Vec<usize>)> {
     out
 }
 
+/// The heading under which the tree's other citation style writes its bullets.
+///
+/// Matched as a prefix, case-insensitively, so `# Upstream Reference`,
+/// `## Upstream references` and `//! # Upstream Reference` are one thing. All
+/// nine spellings present in the tree differ only in case and plural.
+const REFERENCE_HEADING: &str = "upstream reference";
+
+/// Comment markers that may sit between the indent and a heading's `#` run.
+///
+/// `#` is deliberately absent: a leading `#` is the heading's own marker, in
+/// shell and Python exactly as in markdown, and [`markdown_heading`] consumes
+/// the whole run. Stripping one as a comment marker and re-reading the rest
+/// would make `#######` - seven hashes, no heading anywhere - parse as six.
+/// `///` before `//` so the longer one wins.
+const HEADING_PREFIXES: [&str; 4] = ["///", "//!", "//", "*"];
+
+/// Markers that mean a line is still inside a comment block. `#` belongs here
+/// even though it is not a [`HEADING_PREFIXES`] member: a shell comment does
+/// keep the block open.
+const COMMENT_MARKERS: [&str; 6] = ["///", "//!", "//", "/*", "#", "*"];
+
+/// The title of the markdown heading `payload` is, if it is one.
+fn markdown_heading(payload: &str) -> Option<&str> {
+    let hashes = payload.len() - payload.trim_start_matches('#').len();
+    if !(1..=6).contains(&hashes) {
+        return None;
+    }
+    let title = payload[hashes..].trim();
+    (!title.is_empty()).then_some(title)
+}
+
+/// The title of the heading `line` carries, seeing past a comment marker.
+///
+/// Language-agnostic on purpose. `# Upstream Reference` is a level-1 heading in
+/// a markdown file and a comment in a shell script, and both are the tree's way
+/// of opening a reference section, so the hash run is read as the heading marker
+/// either way.
+fn heading_title(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    markdown_heading(trimmed).or_else(|| {
+        HEADING_PREFIXES.iter().find_map(|m| {
+            trimmed
+                .strip_prefix(m)
+                .and_then(|rest| markdown_heading(rest.trim_start()))
+        })
+    })
+}
+
+/// Whether the line could still be inside a doc comment.
+fn is_comment_or_blank(line: &str) -> bool {
+    let t = line.trim_start();
+    t.is_empty() || COMMENT_MARKERS.iter().any(|m| t.starts_with(m))
+}
+
+/// Tracks whether the current line sits under an `# Upstream Reference`
+/// heading, which is where the tree writes the citations that carry no
+/// `upstream` on the line itself.
+///
+/// Ends at the next heading of any level, and - outside markdown - at the first
+/// line that leaves the comment block, so a citation in code below a doc comment
+/// does not inherit the heading's claim.
+struct ReferenceSection {
+    inside: bool,
+    markdown: bool,
+}
+
+impl ReferenceSection {
+    fn new(source: &str) -> Self {
+        Self {
+            inside: false,
+            markdown: source.ends_with(".md") || source.ends_with(".markdown"),
+        }
+    }
+
+    /// Feeds one line and returns whether it is inside the section.
+    fn advance(&mut self, line: &str) -> bool {
+        if let Some(title) = heading_title(line) {
+            // `get` rather than a slice: headings carry non-ASCII, and a prefix
+            // cut at byte `REFERENCE_HEADING.len()` can land mid-codepoint.
+            self.inside = title
+                .get(..REFERENCE_HEADING.len())
+                .is_some_and(|p| p.eq_ignore_ascii_case(REFERENCE_HEADING));
+        } else if self.inside && !self.markdown && !is_comment_or_blank(line) {
+            self.inside = false;
+        }
+        self.inside
+    }
+}
+
 /// Collects every unfollowable citation in `contents` and tallies what was
 /// examined. The tallies are what let callers tell "clean" apart from
 /// "examined nothing".
+///
+/// Two reaches, one pass; see the module docs for why they differ. A citation
+/// the text presents as an upstream citation - the line says `upstream`, or it
+/// sits under an `# Upstream Reference` heading - gets every rule. Any other
+/// `file.c:NNN` in the tree gets only the two rules that cannot be wrong about
+/// a correct citation: the range check, and only once the path resolves to a
+/// file the pinned release ships, and the backwards-range check, which needs
+/// nothing at all.
 pub fn scan_contents(
     source: &str,
     contents: &str,
@@ -411,12 +596,47 @@ pub fn scan_contents(
     tally: &mut ScanTally,
 ) -> Vec<Violation> {
     let mut out = Vec::new();
+    let mut section = ReferenceSection::new(source);
     for (lineno, line) in contents.lines().enumerate() {
-        if !line.to_ascii_lowercase().contains("upstream") {
-            continue;
-        }
+        let in_reference = section.advance(line);
+        let claims_upstream = in_reference || line.to_ascii_lowercase().contains("upstream");
         for (cited_path, nums) in citations_in_line(line) {
+            // Rule 3, first and unconditional: it depends on neither the
+            // manifest nor the claim, and a backwards range is never correct in
+            // any file, so there is nothing here for a jurisdiction argument to
+            // narrow. Checked before the resolution below so a backwards range
+            // in a path that resolves nowhere is still reported.
+            if let (Some(&start), Some(&end)) = (nums.first(), nums.last()) {
+                if end < start {
+                    tally.backwards_checked += 1;
+                    out.push(Violation::BackwardsRange {
+                        source: source.to_owned(),
+                        line: lineno + 1,
+                        upstream: cited_path.clone(),
+                        start,
+                        end,
+                    });
+                    continue;
+                }
+                tally.backwards_checked += 1;
+            }
             let resolution = resolve_upstream_path(&cited_path, manifest);
+            if !claims_upstream {
+                // Nothing in the text says this is an upstream citation, so the
+                // existence and release-pin rules have no standing: the tree
+                // cites zsync, OpenSSH and its own scripts in prose, and calling
+                // those defects because rsync has no `hash.c` would be the gate
+                // inventing a claim the author never made. A path that DOES
+                // resolve to a pinned file still gets range-checked, because
+                // that answer cannot depend on who was being cited.
+                if let Resolution::Pinned(path) = resolution {
+                    tally.unclaimed_ranges_checked += 1;
+                    out.extend(range_violations(source, lineno + 1, &path, &nums, manifest));
+                } else {
+                    tally.unclaimed_unresolved += 1;
+                }
+                continue;
+            }
             // Counted BEFORE the skip, not after. The bug this replaces
             // incremented `names_checked` below the `continue`, so a skipped
             // citation left no trace at all: 379 of them were invisible in a
@@ -460,22 +680,39 @@ pub fn scan_contents(
                 }
             };
             tally.ranges_checked += 1;
-            let actual = manifest[&resolved];
-            for n in nums {
-                if n > actual {
-                    out.push(Violation::OutOfRange {
-                        source: source.to_owned(),
-                        line: lineno + 1,
-                        upstream: resolved.clone(),
-                        cited: n,
-                        actual,
-                    });
-                    break;
-                }
-            }
+            out.extend(range_violations(
+                source,
+                lineno + 1,
+                &resolved,
+                &nums,
+                manifest,
+            ));
         }
     }
     out
+}
+
+/// Rule 2 for one resolved citation: every cited number must be a line the file
+/// has. At most one violation per citation - both ends of an overrunning range
+/// name the same defect, and reporting it twice makes a sweep look twice as big
+/// as it is.
+fn range_violations(
+    source: &str,
+    line: usize,
+    resolved: &str,
+    nums: &[usize],
+    manifest: &BTreeMap<String, usize>,
+) -> Option<Violation> {
+    let actual = manifest[resolved];
+    nums.iter()
+        .find(|&&n| n > actual)
+        .map(|&cited| Violation::OutOfRange {
+            source: source.to_owned(),
+            line,
+            upstream: resolved.to_owned(),
+            cited,
+            actual,
+        })
 }
 
 /// How much each rule actually examined during a scan.
@@ -494,6 +731,21 @@ pub struct ScanTally {
     pub foreign_skipped: usize,
     /// Non-pinned-release citations allowed by [`unpinned_release_is_permitted`].
     pub unpinned_permitted: usize,
+    /// Citations range-checked WITHOUT an upstream claim on the line.
+    ///
+    /// The measure of the widening, and the floor that keeps it from being
+    /// quietly undone: narrowing the scan back to `upstream`-bearing lines
+    /// leaves every other assertion in this module passing and drives only this
+    /// number to zero.
+    pub unclaimed_ranges_checked: usize,
+    /// Unclaimed citations whose path is not a file the pinned release ships.
+    ///
+    /// zsync, OpenSSH and this repository's own scripts, cited in prose. Counted
+    /// so the population that the existence rule deliberately does not judge is
+    /// a number someone can look at rather than a silence.
+    pub unclaimed_unresolved: usize,
+    /// Citations whose range was tested for END >= START.
+    pub backwards_checked: usize,
 }
 
 /// What one full scan of the workspace saw.
@@ -555,6 +807,19 @@ pub fn collect_violations(workspace: &Path) -> TaskResult<ScanReport> {
             report.files_read
         )));
     }
+    if report.tally.unclaimed_ranges_checked == 0 {
+        // Thousands of citations in this tree sit on lines without the word
+        // `upstream`, so this cannot fire on a healthy run. If it does, the scan
+        // has collapsed back to the narrow filter that made half the corpus
+        // invisible, and every other check here would still report clean.
+        return Err(validation_error(format!(
+            "read {} source(s) and resolved {} claimed citation(s) but \
+             range-checked ZERO citations outside the lines carrying the word \
+             `upstream`; the scan has narrowed back to the filter that left \
+             half the tree's citations unexamined",
+            report.files_read, report.tally.names_checked
+        )));
+    }
     Ok(report)
 }
 
@@ -609,16 +874,22 @@ pub fn execute(workspace: &Path) -> TaskResult<()> {
     let report = collect_violations(workspace)?;
     if report.violations.is_empty() {
         eprintln!(
-            "citations: {} name(s) and {} line range(s) checked across {} \
-             file(s); {} skipped as not-rsync and {} permitted at a non-pinned \
-             release - every checked citation names a file rsync {PINNED_VERSION} has, \
-             at a line that file has. This does NOT mean the cited line says \
-             what the comment claims; nothing here checks that.",
+            "citations: {} claimed name(s) and {} claimed range(s) checked across \
+             {} file(s); {} skipped as not-rsync and {} permitted at a non-pinned \
+             release. A further {} citation(s) carrying no upstream claim resolved \
+             to a pinned file and were range-checked too, and {} resolved elsewhere \
+             and were left alone; {} range(s) were checked for END >= START. Every \
+             checked citation names a file rsync {PINNED_VERSION} has, at a line that \
+             file has. This does NOT mean the cited line says what the comment \
+             claims; nothing here checks that.",
             report.tally.names_checked,
             report.tally.ranges_checked,
             report.files_read,
             report.tally.foreign_skipped,
             report.tally.unpinned_permitted,
+            report.tally.unclaimed_ranges_checked,
+            report.tally.unclaimed_unresolved,
+            report.tally.backwards_checked,
         );
         return Ok(());
     }
@@ -659,6 +930,7 @@ mod tests {
             Violation::OutOfRange { cited, .. }
             | Violation::MissingFile { cited, .. }
             | Violation::UnpinnedRelease { cited, .. } => *cited,
+            Violation::BackwardsRange { start, .. } => *start,
         }
     }
 
@@ -670,6 +942,19 @@ mod tests {
             "// upstream: {file}{}{span} (`dest_mode()` invocation)",
             ":"
         )
+    }
+
+    /// The same coordinate written with NO upstream claim on the line: no
+    /// `upstream`, no heading above it. This is how the tree cites zsync,
+    /// OpenSSH and its own scripts, and half of how it cites rsync.
+    fn unclaimed(file: &str, span: &str) -> String {
+        format!("// see {file}{}{span} for the block layout", ":")
+    }
+
+    /// A bullet under an `# Upstream Reference` heading, the documentation
+    /// style whose citation lines never carry the word themselves.
+    fn under_heading(heading: &str, body: &str) -> String {
+        format!("/// {heading}\n{body}\n")
     }
 
     #[test]
@@ -917,9 +1202,191 @@ mod tests {
     }
 
     #[test]
-    fn ignores_lines_that_are_not_upstream_citations() {
-        let not_a_citation = format!("let x = foo.c;\n// see rsync.{}9999\n", "c:");
-        assert!(scan("a.rs", &not_a_citation, &manifest()).is_empty());
+    fn a_bullet_under_an_upstream_reference_heading_is_a_claim() {
+        // THE BLIND HALF. 10,193 of the tree's 20,273 citations sit on a line
+        // without the word `upstream`, and the largest style among them is this
+        // one: the word is on the heading, never on the bullet. Nothing in this
+        // module had ever opened such a line, so a phantom file cited here was
+        // invisible to a gate whose entire first rule is that the file exists.
+        let m = manifest();
+        let bullet = format!("/// - {}", unclaimed("runtests.sh", "205"));
+        for heading in [
+            "# Upstream Reference",
+            "## Upstream Reference",
+            "# Upstream references",
+            "# upstream reference",
+        ] {
+            let v = scan("a.rs", &under_heading(heading, &bullet), &m);
+            assert_eq!(v.len(), 1, "{heading}: {v:?}");
+            assert!(
+                matches!(v[0], Violation::MissingFile { .. }),
+                "{heading}: {:?}",
+                v[0]
+            );
+        }
+        // A markdown file spells the same heading without a comment marker.
+        let md = format!(
+            "# Upstream Reference\n\n- {}\n",
+            unclaimed("runtests.sh", "205")
+        );
+        assert_eq!(scan("d.md", &md, &m).len(), 1);
+    }
+
+    #[test]
+    fn a_reference_section_ends_at_the_next_heading_and_at_the_comment_block() {
+        // The claim is scoped, and the scope has to hold in both directions: a
+        // section that never ends would hand the existence rule jurisdiction
+        // over the whole rest of the file, which is how a widened gate starts
+        // flagging the zsync and OpenSSH references it has no business judging.
+        let m = manifest();
+        let phantom = unclaimed("runtests.sh", "205");
+        let after_heading = format!("/// # Upstream Reference\n/// # Notes\n/// - {phantom}\n");
+        assert!(
+            scan("a.rs", &after_heading, &m).is_empty(),
+            "a later heading must end the section"
+        );
+        let after_code = format!("/// # Upstream Reference\npub fn f() {{}}\n{phantom}\n");
+        assert!(
+            scan("a.rs", &after_code, &m).is_empty(),
+            "leaving the doc comment must end the section"
+        );
+        // Markdown has no comment block to leave, so a blank line and a fenced
+        // block do not end the section there.
+        let md = format!("# Upstream Reference\n\n    code\n\n- {phantom}\n");
+        assert_eq!(
+            scan("d.md", &md, &m).len(),
+            1,
+            "a markdown section runs to the next heading"
+        );
+    }
+
+    #[test]
+    fn an_unclaimed_citation_is_range_checked_but_never_existence_checked() {
+        // THE SPLIT, and why it is not just "delete the filter". Deleting it
+        // takes the population to 20,273 and turns 46 rows red, every one of
+        // them a deliberate reference to something that is not rsync: zsync's
+        // `hash.c`, OpenSSH's `readconf.c`, this repository's own
+        // `run_interop.sh`. The range check has no such problem, because it only
+        // ever fires once the path resolves to a file the pinned release ships.
+        let m = manifest();
+        let mut tally = ScanTally::default();
+        let v = scan_contents("a.rs", &unclaimed("rsync.c", "954"), &m, &mut tally);
+        assert_eq!(
+            v.len(),
+            1,
+            "an unclaimed overrun is still an overrun: {v:?}"
+        );
+        assert!(matches!(v[0], Violation::OutOfRange { actual: 831, .. }));
+        assert_eq!(tally.unclaimed_ranges_checked, 1);
+        assert_eq!(
+            tally.names_checked, 0,
+            "the existence rule must not claim jurisdiction here"
+        );
+
+        let mut tally = ScanTally::default();
+        let v = scan_contents("d.md", &unclaimed("runtests.sh", "205"), &m, &mut tally);
+        assert!(
+            v.is_empty(),
+            "a bare non-rsync name with no upstream claim is prose, not a defect: {v:?}"
+        );
+        assert_eq!(
+            tally.unclaimed_unresolved, 1,
+            "but it must still be counted"
+        );
+    }
+
+    #[test]
+    fn a_backwards_range_fails_with_no_claim_and_no_resolvable_file() {
+        // RULE 3, and the one rule here that has no jurisdiction question: a
+        // range whose END precedes its START names a real file at real lines and
+        // sails through rules 1 and 2. It exists because every retarget keys on
+        // `file.c:START`, moves that number and leaves END behind.
+        let m = manifest();
+        for (source, text) in [
+            ("a.rs", cite("flist.c", "80-40")),
+            ("d.md", unclaimed("flist.c", "80-40")),
+            // Not a file the manifest has, so nothing could be range-checked -
+            // the structural rule still applies.
+            ("d.md", unclaimed("runtests.sh", "80-40")),
+        ] {
+            let mut tally = ScanTally::default();
+            let v = scan_contents(source, &text, &m, &mut tally);
+            assert_eq!(v.len(), 1, "{source} {text}: {v:?}");
+            assert!(
+                matches!(
+                    v[0],
+                    Violation::BackwardsRange {
+                        start: 80,
+                        end: 40,
+                        ..
+                    }
+                ),
+                "{:?}",
+                v[0]
+            );
+            assert!(
+                v[0].to_string().contains("runs backwards"),
+                "the message must say what is wrong: {}",
+                v[0]
+            );
+        }
+        // An in-order range is counted as checked, not merely unflagged: the
+        // difference between "the rule passed" and "the rule never ran".
+        let mut tally = ScanTally::default();
+        assert!(scan_contents("a.rs", &cite("flist.c", "40-80"), &m, &mut tally).is_empty());
+        assert_eq!(tally.backwards_checked, 1);
+    }
+
+    #[test]
+    fn a_heading_is_recognised_past_a_comment_marker_and_nowhere_else() {
+        for (line, want) in [
+            ("# Upstream Reference", Some("Upstream Reference")),
+            ("/// # Upstream Reference", Some("Upstream Reference")),
+            ("//! ## Upstream Reference", Some("Upstream Reference")),
+            (" *  ### Upstream Reference", Some("Upstream Reference")),
+            // Ambiguous by design, and harmlessly so: in markdown this is a
+            // level-1 heading, in a shell script it is a comment. Reading it as
+            // a heading only ever ENDS a section - the title is not the
+            // reference heading, so it can never open one - and ending early
+            // narrows the claim rather than widening it.
+            ("# see the reference above", Some("see the reference above")),
+            // Seven hashes is not a heading in markdown either.
+            ("####### Upstream Reference", None),
+            ("let x = 1;", None),
+            ("", None),
+        ] {
+            assert_eq!(heading_title(line), want, "{line}");
+        }
+        // The property that matters: only the reference heading opens a section.
+        let mut section = ReferenceSection::new("d.md");
+        assert!(section.advance("# Upstream Reference"));
+        assert!(!section.advance("# see the reference above"));
+        // A non-ASCII heading must not panic on a byte-sliced prefix compare.
+        let mut section = ReferenceSection::new("a.rs");
+        assert!(!section.advance("/// # Vendored OpenSSL \u{2014} no system dependency"));
+    }
+
+    #[test]
+    fn ignores_tokens_that_are_not_citations_but_no_longer_ignores_the_line() {
+        // This test used to assert that BOTH lines below were ignored, which was
+        // the blind filter's behaviour stated as a requirement: a bare
+        // `// see rsync.c:<line>` comment has no `upstream` on it, so the gate
+        // never opened it - even for a line number the file does not reach. Half
+        // of that assertion still holds and half of it was the defect.
+        let m = manifest();
+        // Still ignored, and for a reason that survives any widening: `foo.c`
+        // with no `:line` after it is not a coordinate at all.
+        assert!(scan("a.rs", "let x = foo.c;\n", &m).is_empty());
+        // No longer ignored. Nothing on this line claims upstream, so rule 1
+        // stays out of it, but 9999 is not a line of an 831-line file however
+        // the citation is dressed.
+        let v = scan("a.rs", &format!("// see rsync.{}9999\n", "c:"), &m);
+        assert_eq!(v.len(), 1, "{v:?}");
+        assert!(
+            matches!(v[0], Violation::OutOfRange { actual: 831, .. }),
+            "{:?}",
+            v[0]
+        );
     }
 
     /// THE GATE. Every upstream citation in the repository must name a file the
@@ -1007,6 +1474,28 @@ mod tests {
             report.tally.names_checked,
             report.tally.ranges_checked,
             report.files_read
+        );
+        // THE FLOOR ON THE WIDENING, which is the only thing standing between
+        // this gate and the half of the corpus it used to skip. Measured on the
+        // tree that introduced these rules: 11,674 claimed citations (9,785
+        // before), 8,027 unclaimed ones range-checked against a pinned file, and
+        // 20,273 ranges tested for END >= START. The floors are set well below
+        // those so ordinary churn does not move them, and well above zero so
+        // restoring the `if !line.contains("upstream") { continue }` filter -
+        // which leaves every other assertion in this module passing - fails here.
+        assert!(
+            report.tally.unclaimed_ranges_checked > 4_000,
+            "only {} citation(s) outside the `upstream`-bearing lines were \
+             range-checked; the scan has narrowed back towards the filter that \
+             left 10,193 of the tree's 20,273 citations unexamined",
+            report.tally.unclaimed_ranges_checked
+        );
+        assert!(
+            report.tally.backwards_checked > 10_000,
+            "only {} range(s) checked for END >= START; rule 3 is supposed to \
+             need neither a claim nor a manifest, so it should see every \
+             citation in the tree",
+            report.tally.backwards_checked
         );
     }
 

@@ -132,8 +132,9 @@ def audit(crate):
             # Structural invariant, checked first and independent of the anchor
             # machinery: END >= START. `CITE` matches only `file.c:START`, so nothing
             # else in this tool ever looks at END - a retarget that moves START leaves
-            # END behind and yields `exclude.c:1381-1237`, which every other check
-            # here audits perfectly clean. A gate that accepts a backwards range has
+            # END behind and yields a range over exclude.c whose END (1237) precedes
+            # its START (1381), which every other check here audits perfectly
+            # clean. A gate that accepts a backwards range has
             # demonstrably not checked the range, so this one is hard-failing for the
             # BLOCKING population and is deliberately NOT ratcheted: there is no such
             # thing as an accepted inverted range. An inverted range found only by the

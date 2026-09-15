@@ -34,10 +34,22 @@
 # the thing it describes reads as authoritative, so a stale one is worse than
 # none - it cost two readers a wrong diagnosis before anyone printed the constant.
 #
-# Note also that this job answers only "does the cited line exist in that file?".
-# Whether the line still *says* what the citation claims is a separate question,
-# answered by `tools/ci/citation_drift_audit.py`. A citation can pass here and
-# fail there, which is exactly how a stale citation rides in a green cell.
+# Note also what this job answers: "does the cited file exist", "does the cited
+# line exist in it", and "does the range run forwards". Whether the line still
+# *says* what the citation claims is a separate question, answered by
+# `tools/ci/citation_drift_audit.py`. A citation can pass here and fail there,
+# which is exactly how a stale citation rides in a green cell.
+#
+# TWO JURISDICTIONS, because the three rules do not have the same reach. The
+# existence rule needs the text to CLAIM an upstream citation - the line carries
+# `upstream`, or it sits under an `# Upstream Reference` heading - because the
+# tree deliberately cites zsync, OpenSSH and its own scripts by line, and those
+# are not defects. The range rules need no claim at all: once a path resolves to
+# a file rsync 3.5.0 ships, "is line N inside it" is arithmetic. Measured over
+# every git-tracked file: 20,273 citations, of which 10,193 (50.3%) carry no
+# `upstream` on the line, so half the corpus was unexamined until the reach was
+# split this way. The claimed population went 9,785 -> 11,674 and a further
+# 8,027 citations are now range-checked that nothing had ever verified.
 #
 # This deliberately overlaps the copy that runs under nextest. The duplication is
 # cheap and the two have different trigger sets; the standalone job is the one
