@@ -1072,7 +1072,10 @@ jobs:
   # (:836) - the driver refuses EXPECT_SKIPPED on such a leg. The skip set is
   # leg-dependent (require_root/require_tcp), so the ledger names its leg:
   # ubuntu-latest, non-root, stdio-pipe, no --rsync-bin2 peer,
-  # LEGACY_ORACLES=off - the `upstream-testsuite` gate's exact configuration.
+  # LEGACY_ORACLES=on (the default) - the `upstream-testsuite` gate's exact
+  # configuration. The built old_versions/ archive is part of that
+  # configuration: it is what un-skips daemon-max-alloc-zero, so the ledger
+  # measured with it differs from one measured without it.
   #
   # A full run without --expect-result fails on any FAIL outcome, which is
   # currently equivalent to the pipe gate above (its manifest is 260 pass /
