@@ -1107,3 +1107,99 @@ fn batch_name_cap_enforced_for_each_option() {
         );
     }
 }
+
+/// A local `--X -M--X` pairing of a FLAG option parses, with the `-M` payload
+/// applying rather than colliding with the local occurrence.
+///
+/// upstream: options.c:3175-3182 appends `remote_options[]` after the
+/// serialized local options in the child's argv, and popt has no
+/// duplicate-occurrence error, so the child of a local transfer accepts the
+/// repeat with the last occurrence winning. clap's "cannot be used multiple
+/// times" rejection of the folded re-parse was oc-invented.
+#[test]
+fn remote_option_repeating_a_local_flag_is_accepted() {
+    let parsed = parse_test_args(["--partial", "-M--partial", "src/", "dst/"])
+        .expect("--partial -M--partial must parse on a local transfer");
+    assert!(parsed.partial, "the flag must still be in effect");
+}
+
+/// A local `--X=a -M--X=b` pairing of a VALUE option parses, and the `-M`
+/// payload wins: upstream's child sees the remote option LAST
+/// (options.c:3175-3182), and popt's last-wins occurrence handling makes it
+/// authoritative on the applying side.
+#[test]
+fn remote_option_repeating_a_local_value_option_last_wins() {
+    let parsed = parse_test_args(["--block-size=700", "-M--block-size=1024", "src/", "dst/"])
+        .expect("--block-size -M--block-size must parse on a local transfer");
+    assert_eq!(
+        parsed.block_size.as_deref(),
+        Some(std::ffi::OsStr::new("1024")),
+        "the -M payload is appended after the local occurrence and wins"
+    );
+}
+
+/// Repeated `-M` values that both duplicate local options still parse; the
+/// remote list is preserved verbatim for forwarding.
+#[test]
+fn repeated_remote_options_duplicating_local_options_are_accepted() {
+    let parsed = parse_test_args([
+        "--partial",
+        "--stats",
+        "-M--partial",
+        "-M--stats",
+        "src/",
+        "dst/",
+    ])
+    .expect("repeated -M duplicates must parse on a local transfer");
+    assert_eq!(
+        parsed.remote_options,
+        vec![
+            std::ffi::OsString::from("--partial"),
+            std::ffi::OsString::from("--stats"),
+        ],
+        "the -M payloads stay stored verbatim (options.c:1763-1771)"
+    );
+}
+
+/// `-M--X` WITHOUT a local `--X` keeps applying on a local transfer (the
+/// pre-existing fold behavior the duplicate fix must not disturb).
+#[test]
+fn remote_option_alone_still_applies_locally() {
+    let parsed = parse_test_args(["-M--partial", "src/", "dst/"])
+        .expect("-M--partial alone must parse on a local transfer");
+    assert!(parsed.partial, "the folded -M value must be applied");
+}
+
+/// Class-level drift guard: NO long option in the clap table may report
+/// clap's "cannot be used multiple times" for the local `--X -M--X` shape.
+///
+/// upstream: popt re-runs the option's `parse_arguments()` case on every
+/// occurrence (no duplicate diagnostic exists), so the child of a local
+/// transfer accepts every such repeat; any other rejection (conflicts,
+/// invalid values, mode checks) is allowed here because upstream has those
+/// too. Iterating the live option table keeps newly added options inside the
+/// invariant.
+#[test]
+fn no_long_option_rejects_its_own_remote_option_duplicate() {
+    let command = crate::frontend::command_builder::clap_command("rsync");
+    for arg in command.get_arguments() {
+        let Some(long) = arg.get_long() else {
+            continue;
+        };
+        let spelling = match arg.get_action() {
+            clap::ArgAction::SetTrue | clap::ArgAction::SetFalse => format!("--{long}"),
+            clap::ArgAction::Set => format!("--{long}=1"),
+            _ => continue, // Count/Append accept repeats by construction.
+        };
+        let forwarded = format!("-M{spelling}");
+        let result = parse_test_args([spelling.as_str(), forwarded.as_str(), "src/", "dst/"]);
+        if let Err(error) = result {
+            let text = error.to_string();
+            assert!(
+                !text.contains("cannot be used multiple times"),
+                "--{long}: local + -M duplicate must not be a clap \
+                 duplicate-occurrence error: {text}"
+            );
+        }
+    }
+}
