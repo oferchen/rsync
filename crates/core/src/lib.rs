@@ -55,17 +55,6 @@ pub use ::branding::workspace;
 /// The module itself is public but is primarily intended for use in tests.
 pub mod test_utils;
 
-/// File list generation and traversal (mirrors upstream `flist.c`).
-///
-/// This crate handles file list building and transmission, matching the
-/// functionality in upstream rsync's `flist.c`. The name `flist` aligns
-/// with upstream terminology for easier cross-referencing.
-///
-/// # Upstream Reference
-///
-/// - `flist.c` - File list building and transmission
-pub use ::flist;
-
 /// Socket and pipe I/O utilities (mirrors upstream `io.c`).
 ///
 /// This crate provides multiplexed I/O, negotiation streams, and transport
