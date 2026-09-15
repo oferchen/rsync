@@ -32,6 +32,26 @@ on:
           would be wrong for 40 tests.
         type: string
         default: ''
+      expect_skipped_nonroot:
+        description: >-
+          Repo-relative path to an expected-skip list for the non-root leg,
+          passed to runtests.py --expect-skipped as an @FILE. Mutually
+          exclusive with expect_result_nonroot BY CONSTRUCTION: runtests.py
+          gates the skip oracle on a full run (3.5.0 runtests.py:998) and
+          --expect-result clears full_run (:850), so the driver refuses the
+          combination rather than letting the oracle sit silently unfired.
+          On such a leg the run's skip set must be EXACTLY this list - the
+          oracle that stops a test from quietly becoming a permanent no-op.
+        type: string
+        default: ''
+      artifact_suffix:
+        description: >-
+          Suffix appended to the uploaded artifact names. Artifact names must
+          be unique within a run, so a workflow that calls this file twice
+          with the same transport (e.g. the expect-result gate plus the
+          skip-oracle leg) must disambiguate one of them.
+        type: string
+        default: ''
       transport:
         description: >-
           Daemon transport for the Python suite: `pipe` (upstream's secure
@@ -173,6 +193,10 @@ jobs:
           OC_RSYNC_BIN: target/release/oc-rsync
           UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
           EXPECT_RESULT: ${{ inputs.expect_result_nonroot }}
+          # The @FILE form resolves relative paths against the upstream source
+          # tree runtests.py runs in, so the repo-relative input is anchored to
+          # the workspace here. Empty input => empty spec => no oracle.
+          EXPECT_SKIPPED: ${{ inputs.expect_skipped_nonroot != '' && format('@{0}/{1}', github.workspace, inputs.expect_skipped_nonroot) || '' }}
           # Always emit the manifest this run would hold itself to. It is the
           # only honest source for `expect_result`: hand-curating the ledger is
           # exactly how it drifts out of agreement with the suite, and because
@@ -180,6 +204,11 @@ jobs:
           # coverage silently instead of failing. Uploaded as an artifact so a
           # re-baseline is a reviewable diff of outcome changes.
           EMIT_EXPECT_RESULT: target/interop/expect-result.nonroot.${{ inputs.transport }}.txt
+          # The skip-list twin of EMIT_EXPECT_RESULT, pipe legs only: a tcp leg
+          # runs the --daemon-tests-only subset, whose skip lines are not a
+          # full-run skip set and so can never be a valid --expect-skipped
+          # ledger (the driver refuses that combination outright).
+          EMIT_EXPECT_SKIPPED: ${{ inputs.transport == 'pipe' && 'target/interop/expect-skipped.nonroot.pipe.txt' || '' }}
         run: |
           set -euo pipefail
           mkdir -p target/interop
@@ -253,11 +282,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: upstream-testsuite-logs-${{ inputs.transport }}
+          name: upstream-testsuite-logs-${{ inputs.transport }}${{ inputs.artifact_suffix }}
           path: |
             target/interop/upstream-testsuite/
             target/interop/upstream-testsuite-output.log
             target/interop/expect-result.nonroot.${{ inputs.transport }}.txt
+            target/interop/expect-skipped.nonroot.pipe.txt
           if-no-files-found: ignore
           retention-days: 14
 
@@ -386,7 +416,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: upstream-testsuite-root-logs-${{ inputs.transport }}
+          name: upstream-testsuite-root-logs-${{ inputs.transport }}${{ inputs.artifact_suffix }}
           path: |
             target/interop/upstream-testsuite/
             target/interop/upstream-testsuite-root-output.log
