@@ -13,8 +13,6 @@
 //! two cannot disagree about what a keyword is called, where a token
 //! ends, or what counts as `yes`.
 
-use std::path::Path;
-
 use logging::debug_log;
 
 use crate::ssh::argv_split::argv_split;
@@ -23,23 +21,29 @@ use crate::ssh::config_options::{Opcode, parse_flag_value, parse_token, split_di
 use super::match_block::{MatchContext, match_line_applies};
 use super::pattern::{MatchKind, Pattern, host_patterns_from_tokens, pattern_list_matches};
 
-/// Reads `path` and returns whether it enables compression for `ctx`.
-/// Parse and I/O errors are converted to `false` with a single
-/// diagnostic line.
-pub(super) fn read_and_check(path: &Path, ctx: &MatchContext<'_>) -> bool {
-    match std::fs::read_to_string(path) {
-        Ok(text) => parse_enables_compression(&text, ctx),
-        Err(err) => {
-            debug_log!(
-                Io,
-                1,
-                "ssh_config compression detection: failed to read {}: {}",
-                path.display(),
-                err
-            );
-            false
-        }
-    }
+/// A line real `ssh` cannot tokenise was hit, which aborts upstream's
+/// whole config load (openssh/readconf.c:1196-1199 -> :2667) - no later
+/// file is read and no connection happens.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(super) struct SshWouldRefuse;
+
+/// The per-keyword claimed-slot state threaded across the config-file
+/// load order (openssh/ssh.c:561-592 reads the user file, then the
+/// system file, into the SAME options struct), plus the pending
+/// `Match exec` warning.
+///
+/// Block (`Host`/`Match`) state is deliberately NOT part of this struct:
+/// each [`Self::scan`] call starts back at the always-active top level,
+/// mirroring `read_config_file_depth()` re-initialising `active` per
+/// file (openssh/readconf.c).
+#[derive(Default)]
+pub(super) struct CompressionScan {
+    /// The `Compression` slot: `None` until an active line claims it
+    /// (openssh/readconf.c:1229 `if (*activep && *intptr == -1)`).
+    compression: Option<bool>,
+    /// Whether a skipped `Match exec` block held a `Compression yes`
+    /// that could still have claimed the slot.
+    exec_block_has_compression: bool,
 }
 
 /// Parses `text` and returns `true` when `Compression yes` is in effect
@@ -73,117 +77,154 @@ pub(super) fn read_and_check(path: &Path, ctx: &MatchContext<'_>) -> bool {
 /// the answer either, so no warning is owed.
 ///
 /// Exposed to tests so they can assert behaviour without disk I/O.
+#[cfg(test)]
 pub(in crate::ssh) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> bool {
-    let mut block = Block::TopLevel;
-    let mut compression: Option<bool> = None;
-    let mut exec_block_has_compression = false;
+    let mut scan = CompressionScan::default();
+    if scan.scan(text, ctx).is_err() {
+        return false;
+    }
+    scan.finish()
+}
 
-    for raw_line in text.lines() {
-        let line = raw_line.trim();
-        // The ONLY place a leading `#` is a comment marker: upstream tests
-        // the first non-blank character of the line and skips
-        // (openssh/readconf.c:1181). Anywhere else a `#` is handled by
-        // `argv_split`'s token-boundary rule below, not by cutting the
-        // string here - `HostName x#y` is a hostname containing a `#`.
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((key, value)) = split_directive(line) else {
-            debug_log!(
-                Io,
-                1,
-                "ssh_config compression detection: skipping malformed line"
-            );
-            continue;
-        };
-        // A value real `ssh` cannot tokenise aborts its whole config load
-        // (openssh/readconf.c:1196-1199 -> :2667), so there is no
-        // connection left to warn about. Abandoning the scan reports "no
-        // compression", which is this reader's documented degraded answer
-        // - it must not fail, and it must not guess.
-        let Ok(tokens) = argv_split(value, true) else {
-            debug_log!(
-                Io,
-                1,
-                "ssh_config compression detection: abandoning scan, ssh would refuse this file"
-            );
-            return false;
-        };
-        // One keyword lookup against the shared option table, exactly as
-        // upstream resolves the opcode once per line before the switch
-        // (openssh/readconf.c:1194 `parse_token`).
-        let opcode = parse_token(key);
-        match opcode {
-            Opcode::Host => {
-                block = Block::Host(host_patterns_from_tokens(&tokens));
+impl CompressionScan {
+    /// Scans one file's text, claiming the shared slot from active lines.
+    /// Block state is local to the call - a `Host` or `Match` block never
+    /// extends across a file boundary - while the claimed slot carries
+    /// over from any earlier file.
+    ///
+    /// # Errors
+    ///
+    /// [`SshWouldRefuse`] when a line real `ssh` cannot tokenise is hit -
+    /// upstream aborts the whole load there (openssh/readconf.c:2667), so
+    /// the caller must not read any further file either.
+    pub(super) fn scan(
+        &mut self,
+        text: &str,
+        ctx: &MatchContext<'_>,
+    ) -> Result<(), SshWouldRefuse> {
+        let mut block = Block::TopLevel;
+
+        for raw_line in text.lines() {
+            let line = raw_line.trim();
+            // The ONLY place a leading `#` is a comment marker: upstream tests
+            // the first non-blank character of the line and skips
+            // (openssh/readconf.c:1181). Anywhere else a `#` is handled by
+            // `argv_split`'s token-boundary rule below, not by cutting the
+            // string here - `HostName x#y` is a hostname containing a `#`.
+            if line.is_empty() || line.starts_with('#') {
+                continue;
             }
-            Opcode::Match => {
-                let mut saw_exec = false;
-                let applies = match_line_applies(&tokens, ctx, &mut saw_exec);
-                block = if saw_exec {
-                    Block::MatchExecSkipped
-                } else {
-                    Block::MatchEvaluated(applies)
-                };
-            }
-            Opcode::Compression => {
-                let parsed = tokens
-                    .first()
-                    .map(String::as_str)
-                    .and_then(parse_flag_value);
-                // The activity gate: upstream's `*activep`, decided by
-                // the enclosing block for every line alike
-                // (openssh/readconf.c:1829 for `Host`, :1864 for
-                // `Match`).
-                let active = match &block {
-                    Block::TopLevel => true,
-                    Block::Host(patterns) => {
-                        pattern_list_matches(patterns, ctx.host, MatchKind::HostBlock)
-                    }
-                    Block::MatchEvaluated(applies) => *applies,
-                    Block::MatchExecSkipped => {
-                        // Never active - the condition was not evaluated.
-                        // But a `Compression yes` here could have claimed
-                        // a still-unset slot had real ssh evaluated the
-                        // block, which is exactly when the warning below
-                        // is owed.
-                        if parsed == Some(true) && compression.is_none() {
-                            exec_block_has_compression = true;
-                        }
-                        false
-                    }
-                };
-                // ONE slot per option, claimed by the first assignment
-                // from an active line: upstream assigns only while the
-                // option is unset (openssh/readconf.c:1229
-                // `if (*activep && *intptr == -1)`). The claim rule is
-                // the table's per-option `ResolutionPolicy` row.
-                if active && opcode.resolution_policy().may_assign(compression.is_some()) {
-                    compression = parsed;
+            let Some((key, value)) = split_directive(line) else {
+                debug_log!(
+                    Io,
+                    1,
+                    "ssh_config compression detection: skipping malformed line"
+                );
+                continue;
+            };
+            // A value real `ssh` cannot tokenise aborts its whole config load
+            // (openssh/readconf.c:1196-1199 -> :2667), so there is no
+            // connection left to warn about. Abandoning the scan reports "no
+            // compression", which is this reader's documented degraded answer
+            // - it must not fail, and it must not guess.
+            let Ok(tokens) = argv_split(value, true) else {
+                debug_log!(
+                    Io,
+                    1,
+                    "ssh_config compression detection: abandoning scan, ssh would refuse this file"
+                );
+                return Err(SshWouldRefuse);
+            };
+            // One keyword lookup against the shared option table, exactly as
+            // upstream resolves the opcode once per line before the switch
+            // (openssh/readconf.c:1194 `parse_token`).
+            let opcode = parse_token(key);
+            match opcode {
+                Opcode::Host => {
+                    block = Block::Host(host_patterns_from_tokens(&tokens));
                 }
+                Opcode::Match => {
+                    let mut saw_exec = false;
+                    let applies = match_line_applies(&tokens, ctx, &mut saw_exec);
+                    block = if saw_exec {
+                        Block::MatchExecSkipped
+                    } else {
+                        Block::MatchEvaluated(applies)
+                    };
+                }
+                Opcode::Compression => {
+                    let parsed = tokens
+                        .first()
+                        .map(String::as_str)
+                        .and_then(parse_flag_value);
+                    // The activity gate: upstream's `*activep`, decided by
+                    // the enclosing block for every line alike
+                    // (openssh/readconf.c:1829 for `Host`, :1864 for
+                    // `Match`).
+                    let active = match &block {
+                        Block::TopLevel => true,
+                        Block::Host(patterns) => {
+                            pattern_list_matches(patterns, ctx.host, MatchKind::HostBlock)
+                        }
+                        Block::MatchEvaluated(applies) => *applies,
+                        Block::MatchExecSkipped => {
+                            // Never active - the condition was not evaluated.
+                            // But a `Compression yes` here could have claimed
+                            // a still-unset slot had real ssh evaluated the
+                            // block, which is exactly when the warning below
+                            // is owed.
+                            if parsed == Some(true) && self.compression.is_none() {
+                                self.exec_block_has_compression = true;
+                            }
+                            false
+                        }
+                    };
+                    // ONE slot per option, claimed by the first assignment
+                    // from an active line: upstream assigns only while the
+                    // option is unset (openssh/readconf.c:1229
+                    // `if (*activep && *intptr == -1)`). The claim rule is
+                    // the table's per-option `ResolutionPolicy` row.
+                    if active
+                        && opcode
+                            .resolution_policy()
+                            .may_assign(self.compression.is_some())
+                    {
+                        self.compression = parsed;
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
+
+        Ok(())
     }
 
-    if exec_block_has_compression {
-        debug_log!(
-            Io,
-            1,
-            "ssh_config compression detection: Match exec block contains \
-             Compression yes but the exec condition was not evaluated"
-        );
-        eprintln!(
-            "warning: ssh_config contains \"Compression yes\" inside a \"Match exec\" block."
-        );
-        eprintln!("         The exec condition was not evaluated because executing arbitrary");
-        eprintln!("         commands from a config-lookup path is a security risk. If SSH");
-        eprintln!("         compression is active, oc-rsync's --compress will double-compress.");
-        eprintln!("         Workaround: move \"Compression yes\" to a Host or Match host block,");
-        eprintln!("         or pass -e \"ssh -C\" explicitly so oc-rsync can detect it.");
-    }
+    /// Consumes the scan: emits the pending `Match exec` warning, if
+    /// owed, and reports the resolved answer.
+    pub(super) fn finish(self) -> bool {
+        if self.exec_block_has_compression {
+            debug_log!(
+                Io,
+                1,
+                "ssh_config compression detection: Match exec block contains \
+                 Compression yes but the exec condition was not evaluated"
+            );
+            eprintln!(
+                "warning: ssh_config contains \"Compression yes\" inside a \"Match exec\" block."
+            );
+            eprintln!("         The exec condition was not evaluated because executing arbitrary");
+            eprintln!("         commands from a config-lookup path is a security risk. If SSH");
+            eprintln!(
+                "         compression is active, oc-rsync's --compress will double-compress."
+            );
+            eprintln!(
+                "         Workaround: move \"Compression yes\" to a Host or Match host block,"
+            );
+            eprintln!("         or pass -e \"ssh -C\" explicitly so oc-rsync can detect it.");
+        }
 
-    compression.unwrap_or(false)
+        self.compression.unwrap_or(false)
+    }
 }
 
 /// Active config block while parsing.
