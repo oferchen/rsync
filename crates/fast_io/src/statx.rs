@@ -2,11 +2,11 @@
 //!
 //! Owns the statx syscall surface that `flist::batched_stat` consumes, per the
 //! two-owner unsafe policy: I/O syscalls live in `fast_io`. The wrappers are
-//! built entirely on [`rustix::fs::statx`], so this module contains no
-//! `unsafe`; `flist` re-exports [`StatxResult`] and the free functions under
+//! built entirely on `rustix::fs::statx`, so this module contains no
+//! `unsafe`; `flist` re-exports `StatxResult` and the free functions under
 //! their original paths.
 //!
-//! Everything except [`has_statx_support`] is gated to non-musl Linux,
+//! Everything except `has_statx_support` is gated to non-musl Linux,
 //! mirroring the gating this code carried in `flist` so per-target behaviour
 //! is unchanged. `has_statx_support` compiles everywhere and reports `false`
 //! where the syscall is not wrapped.
