@@ -123,7 +123,11 @@ jobs:
         run: cargo build --locked -p bin --bin oc-rsync
 
       - name: Test (${{ matrix.row.name }})
-        run: cargo nextest run --locked --profile ci ${{ matrix.row.args }}
+        # `shell: bash` turns on pipefail, so the tee never hides a failure.
+        shell: bash
+        run: |
+          cargo nextest run --locked --profile ci ${{ matrix.row.args }} 2>&1 | tee nextest-run.log
+          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
 
   # ---------------------------------------------------------------------------
   # Linux-only feature rows.
@@ -280,4 +284,8 @@ jobs:
         run: cargo build --locked -p bin --bin oc-rsync
 
       - name: Test (${{ matrix.name }})
-        run: cargo nextest run --locked --profile ci ${{ matrix.args }}
+        # `shell: bash` turns on pipefail, so the tee never hides a failure.
+        shell: bash
+        run: |
+          cargo nextest run --locked --profile ci ${{ matrix.args }} 2>&1 | tee nextest-run.log
+          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
