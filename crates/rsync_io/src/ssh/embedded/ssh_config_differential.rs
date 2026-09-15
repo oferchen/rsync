@@ -726,6 +726,54 @@ mod tests {
         assert_eq!(cell.verdict, Verdict::Match, "oc {:?}", cell.oc);
     }
 
+    /// Compression is resolved FIRST-OBTAINED-WINS across scopes, live.
+    ///
+    /// Upstream keeps ONE slot per option, assigned only while unset
+    /// (openssh/readconf.c:1229 `if (*activep && *intptr == -1)`), so a
+    /// top-level `Compression no` obtained first blocks a later matching
+    /// `Host` block's `yes`. Task 1221 measured the pre-fix oc answering
+    /// `yes` here: it kept three per-scope slots and ORed them, with no
+    /// ordering across scopes at all.
+    ///
+    /// Measured on `OpenSSH_10.3p1`: the fixture dumps `compression no`,
+    /// the control dumps `compression yes`.
+    #[cfg(feature = "ssh-config-parse")]
+    #[test]
+    fn compression_is_resolved_first_obtained_across_scopes() {
+        const FIXTURE: &str = "Compression no\nHost t\n  Compression yes\n";
+
+        let diff = match run(FIXTURE, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("compression first-obtained", &why);
+                return;
+            }
+        };
+        let cell = diff.cell("compression").expect("dumped");
+        assert_eq!(cell.upstream, vec!["no".to_owned()]);
+        assert_eq!(
+            cell.verdict,
+            Verdict::Match,
+            "compression parser ignored first-obtained ordering: oc {:?} on {}",
+            cell.oc,
+            diff.oracle_version
+        );
+
+        // Control: a `yes` obtained first survives a later matching `no`,
+        // so a parser that always answered `no` cannot pass both halves.
+        const CONTROL: &str = "Compression yes\nHost t\n  Compression no\n";
+        let diff = match run(CONTROL, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("compression first-obtained control", &why);
+                return;
+            }
+        };
+        let cell = diff.cell("compression").expect("dumped");
+        assert_eq!(cell.upstream, vec!["yes".to_owned()]);
+        assert_eq!(cell.verdict, Verdict::Match, "oc {:?}", cell.oc);
+    }
+
     /// SHARP EDGE 2, demonstrated live rather than asserted from the C.
     ///
     /// `IdentityFile` is dumped UNEXPANDED because openssh/ssh.c:2428 expands it

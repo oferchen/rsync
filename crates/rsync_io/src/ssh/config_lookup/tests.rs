@@ -537,9 +537,9 @@ fn match_all_enables_compression_unconditionally() {
 
 #[test]
 fn match_block_first_match_wins_within_scope() {
-    // SSC-4.c first-match-wins across the shared match-block slot:
-    // the first matching `Compression` (here `yes`) sticks and the
-    // later `Match all\n Compression no` cannot override it.
+    // First-obtained-wins: the first matching `Compression` (here
+    // `yes`) claims the one slot and the later `Match all\n
+    // Compression no` cannot override it.
     let text = "Match host *.example.com\n  Compression yes\nMatch all\n  Compression no\n";
     assert!(parse_enables_compression(
         text,
@@ -660,23 +660,60 @@ fn top_level_compression_no_not_overridden_by_non_matching_match() {
 }
 
 #[test]
-fn top_level_compression_no_or_with_matching_match_yes() {
-    // Top-level scope is `Compression no`; match-block scope is
-    // `Compression yes`. The final answer ORs the slots, so any
-    // scope set to true wins. Confirms the OR semantics described
-    // in `parse_enables_compression`.
+fn top_level_no_first_obtained_blocks_matching_match_yes() {
+    // First-obtained-wins across SCOPES, not per scope: upstream keeps
+    // ONE slot per option, assigned only while unset
+    // (openssh/readconf.c:1229 `if (*activep && *intptr == -1)`), so
+    // the top-level `no` claims the slot and the later matching
+    // `Match` block's `yes` is ignored. Oracle (OpenSSH_10.3p1):
+    // `compression no`. The pre-fix per-scope OR answered `true` here.
     let text = "Compression no\nMatch host *.example.com\n  Compression yes\n";
-    assert!(parse_enables_compression(
+    assert!(!parse_enables_compression(
         text,
         &match_ctx("web1.example.com", "web1.example.com", "", "")
     ));
 }
 
 #[test]
-fn host_block_and_match_block_both_contribute_via_or() {
-    // Host block enables compression for `web*`; match block
-    // enables compression for `Match user deploy`. Either one is
-    // sufficient on its own; together they still produce `true`.
+fn top_level_no_first_obtained_blocks_matching_host_yes() {
+    // Task 1221's measured divergence, now inverted into the pin:
+    // `Compression no` at top level, then a matching `Host` block's
+    // `yes`. Oracle (OpenSSH_10.3p1): `compression no`; the pre-fix
+    // three-slot OR answered `true`.
+    let text = "Compression no\nHost t\n  Compression yes\n";
+    assert!(!parse_enables_compression(text, &host_ctx("t")));
+}
+
+#[test]
+fn host_no_first_obtained_blocks_matching_match_yes() {
+    // Host-block scope obtains `no` first; a later matching `Match`
+    // block cannot flip it. Oracle (OpenSSH_10.3p1): `compression no`.
+    let text = "Host t\n  Compression no\nMatch host t\n  Compression yes\n";
+    assert!(!parse_enables_compression(text, &host_ctx("t")));
+}
+
+#[test]
+fn match_no_first_obtained_blocks_matching_host_yes() {
+    // Match-block scope obtains `no` first; a later matching `Host`
+    // block cannot flip it. Oracle (OpenSSH_10.3p1): `compression no`.
+    let text = "Match host t\n  Compression no\nHost t\n  Compression yes\n";
+    assert!(!parse_enables_compression(text, &host_ctx("t")));
+}
+
+#[test]
+fn cross_scope_yes_first_obtained_still_fires() {
+    // Non-vacuity control for the four cells above: a `yes` obtained
+    // first survives a later matching `no`, so the engine is
+    // first-obtained-wins and not "any `no` wins" or "last wins".
+    // Oracle (OpenSSH_10.3p1): `compression yes`.
+    let text = "Compression yes\nHost t\n  Compression no\n";
+    assert!(parse_enables_compression(text, &host_ctx("t")));
+}
+
+#[test]
+fn host_block_yes_then_match_block_yes_still_fires() {
+    // Host block enables compression for `web*` and claims the slot;
+    // the later matching `Match user deploy` block changes nothing.
     let text = "Host web*\n  Compression yes\nMatch user deploy\n  Compression yes\n";
     assert!(parse_enables_compression(
         text,
@@ -686,8 +723,9 @@ fn host_block_and_match_block_both_contribute_via_or() {
 
 #[test]
 fn host_block_miss_with_match_block_hit_still_enables() {
-    // Host block misses (`db*` vs `web1`); match block hits via
-    // user. OR across scopes flips the answer to `true`.
+    // Host block misses (`db*` vs `web1`), so it never claims the
+    // slot; the matching `Match user` block's `yes` is the first
+    // obtained value.
     let text = "Host db*\n  Compression yes\nMatch user deploy\n  Compression yes\n";
     assert!(parse_enables_compression(
         text,
@@ -843,10 +881,10 @@ fn match_exec_compression_no_does_not_warn() {
 #[test]
 fn match_exec_with_compression_yes_alongside_top_level() {
     // Top-level `Compression no` plus a `Match exec` block with
-    // `Compression yes`. The top-level `no` is honoured; the exec
-    // block is skipped. The overall result is `false`, but the
-    // warning should still fire because the exec block might enable
-    // compression if evaluated.
+    // `Compression yes`. The top-level `no` claims the slot first, so
+    // the overall result is `false` - and because the slot was already
+    // claimed, an evaluated exec block could not have changed the
+    // answer either, so no warning is owed.
     let text = "Compression no\nMatch exec /usr/local/bin/check-vpn\n  Compression yes\n";
     assert!(!parse_enables_compression(
         text,
