@@ -40,8 +40,9 @@ pub fn apply_directory_metadata(
 
 /// Applies metadata from `metadata` to the destination directory using explicit options.
 ///
-/// Applies ownership, permissions, and timestamps in the same order as
-/// upstream rsync's `set_file_attrs()`: chown, chmod, then utimensat.
+/// Applies ownership, timestamps, and permissions in the same order as
+/// upstream rsync's `set_file_attrs()`: chown, then utimensat, with chmod
+/// last.
 ///
 /// `pre_transfer_meta` is the directory's stat from BEFORE this transfer
 /// materialised it - `dest_mode()`'s `stat_mode`/`exists` inputs
@@ -49,7 +50,9 @@ pub fn apply_directory_metadata(
 /// means the directory is new to this transfer, so a `--chmod` without
 /// `--perms` takes the fresh-destination arm instead of rewriting bits an
 /// existing directory would keep.
-/// upstream: rsync.c:set_file_attrs() - order: chown → chmod → utimensat
+/// upstream: rsync.c:set_file_attrs() - order: chown (rsync.c:663) →
+/// utimensat (rsync.c:769-791) → chmod (rsync.c:806-822), so a mode that
+/// strips write permission can never block the times that follow it.
 pub fn apply_directory_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -57,7 +60,6 @@ pub fn apply_directory_metadata_with_options(
     pre_transfer_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, true, &options, None)?;
-    permissions::apply_permissions_with_chmod(destination, metadata, &options, pre_transfer_meta)?;
     if options.times() {
         timestamps::set_timestamp_like(metadata, destination, true, None, Some(&options))?;
     }
@@ -73,6 +75,7 @@ pub fn apply_directory_metadata_with_options(
     if options.crtimes() && !is_volume_root(destination) {
         timestamps::apply_crtime_from_source_metadata(destination, metadata)?;
     }
+    permissions::apply_permissions_with_chmod(destination, metadata, &options, pre_transfer_meta)?;
     Ok(())
 }
 
@@ -117,16 +120,18 @@ pub fn apply_file_metadata(
 
 /// Applies file metadata using explicit [`MetadataOptions`].
 ///
-/// Applies ownership, permissions, timestamps, and creation time in the
+/// Applies ownership, timestamps, creation time, and permissions in the
 /// same order as upstream rsync's `set_file_attrs()`.
-/// upstream: rsync.c:set_file_attrs() - order: chown → chmod → utimensat → crtime
+/// upstream: rsync.c:set_file_attrs() - order: chown (rsync.c:663) →
+/// utimensat (rsync.c:769-791) → crtime (rsync.c:751-767) → chmod
+/// (rsync.c:806-822); the chmod comes last so a mode that strips write
+/// permission can never block the times that precede it.
 pub fn apply_file_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
     options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, true, options, None)?;
-    permissions::apply_permissions_with_chmod(destination, metadata, options, None)?;
     // upstream: rsync.c:587-612 - mtime and atime are handled independently
     if options.times() {
         timestamps::set_timestamp_like(metadata, destination, true, None, Some(options))?;
@@ -142,6 +147,7 @@ pub fn apply_file_metadata_with_options(
     if options.crtimes() {
         timestamps::apply_crtime_from_source_metadata(destination, metadata)?;
     }
+    permissions::apply_permissions_with_chmod(destination, metadata, options, None)?;
     Ok(())
 }
 
@@ -227,7 +233,6 @@ pub fn apply_file_metadata_with_fd(
     fd: BorrowedFd<'_>,
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like_with_fd(metadata, destination, options, fd, None)?;
-    permissions::apply_permissions_with_chmod_fd(destination, metadata, options, Some(fd), None)?;
     // upstream: rsync.c:587-612 - mtime and atime are handled independently
     if options.times() {
         timestamps::set_timestamp_with_fd(metadata, destination, fd, None, Some(options))?;
@@ -238,6 +243,8 @@ pub fn apply_file_metadata_with_fd(
     if options.crtimes() {
         timestamps::apply_crtime_from_source_metadata(destination, metadata)?;
     }
+    // upstream: rsync.c:806-822 - the chmod runs after the times (rsync.c:769-791)
+    permissions::apply_permissions_with_chmod_fd(destination, metadata, options, Some(fd), None)?;
     Ok(())
 }
 
@@ -266,7 +273,6 @@ pub fn apply_file_metadata_if_changed(
     } else {
         existing
     };
-    permissions::apply_permissions_with_chmod(destination, metadata, options, Some(existing))?;
     // upstream: rsync.c:587-612 - mtime and atime are handled independently
     if options.times() {
         timestamps::set_timestamp_like(metadata, destination, true, Some(existing), Some(options))?;
@@ -281,6 +287,8 @@ pub fn apply_file_metadata_if_changed(
     if options.crtimes() {
         timestamps::apply_crtime_from_source_metadata(destination, metadata)?;
     }
+    // upstream: rsync.c:806-822 - the chmod runs after the times (rsync.c:769-791)
+    permissions::apply_permissions_with_chmod(destination, metadata, options, Some(existing))?;
     Ok(())
 }
 
@@ -310,13 +318,6 @@ pub fn apply_file_metadata_with_fd_if_changed(
     } else {
         existing
     };
-    permissions::apply_permissions_with_chmod_fd(
-        destination,
-        metadata,
-        options,
-        Some(fd),
-        Some(existing),
-    )?;
     // upstream: rsync.c:587-612 - mtime and atime are handled independently
     if options.times() {
         timestamps::set_timestamp_with_fd(
@@ -338,6 +339,14 @@ pub fn apply_file_metadata_with_fd_if_changed(
     if options.crtimes() {
         timestamps::apply_crtime_from_source_metadata(destination, metadata)?;
     }
+    // upstream: rsync.c:806-822 - the chmod runs after the times (rsync.c:769-791)
+    permissions::apply_permissions_with_chmod_fd(
+        destination,
+        metadata,
+        options,
+        Some(fd),
+        Some(existing),
+    )?;
     Ok(())
 }
 
@@ -593,10 +602,12 @@ pub fn apply_symlink_metadata_with_options_and_pre_transfer(
     pre_transfer_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, false, options, None)?;
-    permissions::apply_symlink_permissions_like(destination, metadata, options, pre_transfer_meta)?;
+    // upstream: rsync.c:769-791 - the times land before the chmod
+    // (rsync.c:806-822), for symlinks exactly as for every other type.
     if options.times() {
         timestamps::set_timestamp_like(metadata, destination, false, None, Some(options))?;
     }
+    permissions::apply_symlink_permissions_like(destination, metadata, options, pre_transfer_meta)?;
     Ok(())
 }
 
@@ -672,14 +683,8 @@ pub fn apply_symlink_metadata_from_entry_with_pre_transfer(
         let _ = cached_meta.as_ref();
     }
 
-    permissions::apply_symlink_permissions_from_entry(
-        destination,
-        entry,
-        options,
-        cached_meta.as_ref(),
-        pre_transfer_meta,
-    )?;
-
+    // upstream: rsync.c:769-791 - the times land before the chmod
+    // (rsync.c:806-822), for symlinks exactly as for every other type.
     if options.times() {
         timestamps::apply_symlink_timestamps_from_entry(
             destination,
@@ -688,6 +693,14 @@ pub fn apply_symlink_metadata_from_entry_with_pre_transfer(
             cached_meta.as_ref(),
         )?;
     }
+
+    permissions::apply_symlink_permissions_from_entry(
+        destination,
+        entry,
+        options,
+        cached_meta.as_ref(),
+        pre_transfer_meta,
+    )?;
 
     Ok(())
 }
