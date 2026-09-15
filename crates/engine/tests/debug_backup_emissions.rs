@@ -7,7 +7,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `backup.c:200-207` - `"make_backup: HLINK %s successful.\n"` fires
+//! - `backup.c:239-246` - `"make_backup: HLINK %s successful.\n"` fires
 //!   on the success branch of `do_link_at(from, to)` inside `link_or_rename`,
 //!   which is the strategy oc-rsync's local-copy executor exercises by
 //!   default when `--backup` is on and the destination shares a
@@ -39,7 +39,7 @@ fn backup_debug_messages() -> Vec<String> {
 /// `--backup --suffix=~` and confirms the HLINK debug line fires at
 /// level 1 with upstream's exact wording.
 ///
-/// upstream: backup.c:200-207 - `DEBUG_GTE(BACKUP, 1)` on the HLINK
+/// upstream: backup.c:239-246 - `DEBUG_GTE(BACKUP, 1)` on the HLINK
 /// success branch of `link_or_rename`, which upstream tries before RENAME
 /// whenever the caller doesn't prefer a rename outright.
 #[test]

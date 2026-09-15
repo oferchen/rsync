@@ -119,7 +119,7 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
 
-        // upstream: backup.c:200-207 link_or_rename() - try a hard link into
+        // upstream: backup.c:239-246 link_or_rename() - try a hard link into
         // the backup area first when the caller doesn't prefer a rename
         // outright. A successful link leaves the destination's inode as the
         // backup, so no metadata reapply is needed below (same as RENAME).
@@ -129,7 +129,7 @@ impl<'a> CopyContext<'a> {
             match create_backup_hard_link(destination, &backup_path) {
                 Ok(()) => Some(BackupStrategy::HardLink),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-                // upstream: backup.c:247-256 - a stale backup entry is
+                // upstream: backup.c:318-327 - a stale backup entry is
                 // removed and the hard link retried once.
                 Err(error) if is_stale_backup_conflict(&error) => {
                     remove_stale_backup_entry(&backup_path)?;
@@ -156,7 +156,7 @@ impl<'a> CopyContext<'a> {
             match backup_rename(destination, &backup_path) {
                 Ok(()) => BackupStrategy::Rename,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-                // upstream: backup.c:247-256 - link_or_rename failing with EEXIST or
+                // upstream: backup.c:318-327 - link_or_rename failing with EEXIST or
                 // EISDIR is recoverable: lstat the target and call delete_item with
                 // DEL_RECURSE, then retry. EISDIR fires when the backup-dir already
                 // contains a directory at the path we need (e.g. user pre-created
@@ -192,7 +192,7 @@ impl<'a> CopyContext<'a> {
                         self.options.fake_super_enabled(),
                     )? {
                         Some(strategy) => strategy,
-                        // upstream: backup.c:306-317 - a non-regular file that is
+                        // upstream: backup.c:386-397 - a non-regular file that is
                         // neither backed up as a device/special (gates off) nor a
                         // symlink is skipped; make_backup returns 3 and leaves no
                         // backup, so emit no trace and no "backed up" notice.
@@ -205,7 +205,7 @@ impl<'a> CopyContext<'a> {
             }
         };
 
-        // upstream: backup.c:338-341 - set_file_attrs(buf, file, NULL, fname,
+        // upstream: backup.c:418-421 - set_file_attrs(buf, file, NULL, fname,
         // ATTRS_ACCURATE_TIME) copies the source node's mode/owner/times onto
         // the freshly-created backup node (with preserve_xattrs temporarily
         // cleared), overriding the umask/copy defaults. Every cross-device copy
@@ -270,7 +270,7 @@ impl<'a> CopyContext<'a> {
             )?;
         }
 
-        // upstream: backup.c:201-202,216-217,282-283,299-300,333-334 -
+        // upstream: backup.c:240-241,255-256,362-363,379-380,413-414 -
         // DEBUG_GTE(BACKUP, 1) emits one of HLINK/RENAME/DEVICE/SYMLINK/COPY
         // per success path. oc-rsync's local-copy executor prefers a
         // same-filesystem hard link, falls back to rename, then falls back to
@@ -492,7 +492,7 @@ impl<'a> CopyContext<'a> {
 /// Returns `true` when a hard-link or rename attempt into the backup area
 /// failed because a stale entry already occupies `backup_path`.
 ///
-/// upstream: `backup.c:247` - `link_or_rename()` fails with `EEXIST` or
+/// upstream: `backup.c:318` - `link_or_rename()` fails with `EEXIST` or
 /// `EISDIR` when the backup path is already occupied. Windows reports
 /// renaming or linking onto an existing directory as `ERROR_ACCESS_DENIED`
 /// (`PermissionDenied`) rather than `EEXIST`/`EISDIR`, so it is treated the
@@ -511,7 +511,7 @@ fn is_stale_backup_conflict(error: &io::Error) -> bool {
 /// Clears whatever occupies `backup_path` so a hard-link or rename retry can
 /// land cleanly.
 ///
-/// upstream: `backup.c:247-256` - `make_backup()` lstats the stale backup
+/// upstream: `backup.c:318-327` - `make_backup()` lstats the stale backup
 /// target and calls `delete_item(...DEL_FOR_BACKUP | DEL_RECURSE)` before
 /// retrying `link_or_rename()`.
 fn remove_stale_backup_entry(backup_path: &Path) -> Result<(), LocalCopyError> {

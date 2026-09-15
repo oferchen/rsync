@@ -10,11 +10,11 @@
 //! and fire on the success branch of each backup placement strategy in
 //! `make_backup` / `link_or_rename`:
 //!
-//! - `backup.c:201-202` - `"make_backup: HLINK %s successful.\n"`
-//! - `backup.c:216-217` - `"make_backup: RENAME %s successful.\n"`
-//! - `backup.c:282-283` - `"make_backup: DEVICE %s successful.\n"`
-//! - `backup.c:299-300` - `"make_backup: SYMLINK %s successful.\n"`
-//! - `backup.c:333-334` - `"make_backup: COPY %s successful.\n"`
+//! - `backup.c:240-241` - `"make_backup: HLINK %s successful.\n"`
+//! - `backup.c:255-256` - `"make_backup: RENAME %s successful.\n"`
+//! - `backup.c:362-363` - `"make_backup: DEVICE %s successful.\n"`
+//! - `backup.c:379-380` - `"make_backup: SYMLINK %s successful.\n"`
+//! - `backup.c:413-414` - `"make_backup: COPY %s successful.\n"`
 //!
 //! The flag table entry at `options.c:299` is
 //! `DEBUG_WORD(BACKUP, W_REC, "Debug backup actions (levels 1-2)")`.
@@ -28,7 +28,7 @@ use logging::debug_log;
 /// existing destination is preserved via `link(2)` into the backup
 /// location.
 ///
-/// upstream: `backup.c:201-202` -
+/// upstream: `backup.c:240-241` -
 /// `"make_backup: HLINK %s successful.\n"`. Fires on the success branch
 /// of `do_link(from, to)` inside `link_or_rename` when `prefer_rename`
 /// is false and the kernel supports linking the source's file type.
@@ -41,7 +41,7 @@ pub fn trace_make_backup_hlink(fname: &str) {
 /// existing destination is moved into the backup location via
 /// `rename(2)`.
 ///
-/// upstream: `backup.c:216-217` -
+/// upstream: `backup.c:255-256` -
 /// `"make_backup: RENAME %s successful.\n"`. Fires on the success
 /// branch of `do_rename(from, to)` inside `link_or_rename`.
 #[inline]
@@ -53,7 +53,7 @@ pub fn trace_make_backup_rename(fname: &str) {
 /// existing device or special file is recreated in the backup location
 /// via `mknod(2)`.
 ///
-/// upstream: `backup.c:282-283` -
+/// upstream: `backup.c:362-363` -
 /// `"make_backup: DEVICE %s successful.\n"`. Fires after `do_mknod`
 /// succeeds for a device or special file under `--devices` /
 /// `--specials`.
@@ -65,7 +65,7 @@ pub fn trace_make_backup_device(fname: &str) {
 /// Emits the `make_backup: SYMLINK <fname> successful.` notice when a
 /// symbolic link is recreated in the backup location via `symlink(2)`.
 ///
-/// upstream: `backup.c:299-300` -
+/// upstream: `backup.c:379-380` -
 /// `"make_backup: SYMLINK %s successful.\n"`. Fires after `do_symlink`
 /// succeeds when the source is a symlink and `--links` is on.
 #[inline]
@@ -77,7 +77,7 @@ pub fn trace_make_backup_symlink(fname: &str) {
 /// regular file is copied into the backup location after a rename
 /// crosses a filesystem boundary or another fast-path fails.
 ///
-/// upstream: `backup.c:333-334` -
+/// upstream: `backup.c:413-414` -
 /// `"make_backup: COPY %s successful.\n"`. Fires after the fallback
 /// `copy_file` succeeds for a regular file.
 #[inline]
@@ -117,7 +117,7 @@ mod tests {
     /// Pins every BACKUP debug line to upstream `backup.c` byte-for-byte.
     #[test]
     fn upstream_wire_shapes() {
-        // upstream: backup.c:201-202, :216-217, :282-283, :299-300, :333-334
+        // upstream: backup.c:240-241, :255-256, :362-363, :379-380, :413-414
         init_at(1);
         trace_make_backup_hlink("src/file.txt");
         trace_make_backup_rename("src/file.txt");

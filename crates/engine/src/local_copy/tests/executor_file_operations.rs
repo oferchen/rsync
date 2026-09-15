@@ -163,7 +163,7 @@ mod file_operations_tests {
 
         // --specials must recreate the node at the backup location rather than
         // silently dropping it (the cross-device copy fallback previously did
-        // nothing for non-regular files). upstream: backup.c:279-285 do_mknod_at.
+        // nothing for non-regular files). upstream: backup.c:359-365 do_mknod_at.
         let result = copy_entry_to_backup(&fifo, &backup, metadata.file_type(), false, true, false)
             .expect("backup");
         assert_eq!(result, Some(BackupStrategy::Device));
@@ -186,7 +186,7 @@ mod file_operations_tests {
         assert!(metadata.file_type().is_fifo());
 
         // Without --specials upstream make_backup returns 3 and places no
-        // backup (backup.c:306-317); copy_entry_to_backup reports None so the
+        // backup (backup.c:386-397); copy_entry_to_backup reports None so the
         // caller emits neither a trace nor a "backed up" notice.
         let result = copy_entry_to_backup(&fifo, &backup, metadata.file_type(), true, false, false)
             .expect("backup");
