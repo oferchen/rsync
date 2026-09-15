@@ -371,12 +371,12 @@ struct MergeRule<'a> {
 /// parse-time read, so [`short_rule_prefix`] and [`KEYWORD_PREFIXES`] own those
 /// two spellings and [`build_prefixed_rule`] builds the rule.
 ///
-/// ⚠ `.` is NOT a token-boundary opener in [`split_filter_tokens`], and
-/// deliberately so - see [`opens_clear_rule`] for the same reasoning applied to
-/// `!`. `filter = - .git` is ONE rule whose pattern is `.git`; opening a token
-/// on the `.` would leave a patternless `-` and refuse the commonest daemon
-/// filter there is. A `merge` token therefore has to lead its value, or follow
-/// the `merge` KEYWORD spelling that [`RULE_KEYWORDS`] does open.
+/// ⚠ A `.` only opens a merge rule in RULE position. `filter = - .git` is ONE
+/// rule whose pattern is `.git`, and [`rule_token_len`] gets that from the walk
+/// rather than from a carve-out: after `- ` comes a pattern, so the `.` is never
+/// offered to this function at all. The heuristic this replaced needed an
+/// explicit exemption for `.` and another for `!` to avoid splitting
+/// `- .git` into a patternless `-`; the positional walk needs neither.
 fn merge_rule<'a>(
     token: &'a str,
     xflags: RuleXflags,
@@ -1000,12 +1000,135 @@ fn is_keyword_terminator(ch: char) -> bool {
     ch == '_' || ch == ',' || ch.is_ascii_whitespace()
 }
 
-/// Returns true when `s` opens with `keyword` AND the keyword is terminated.
-fn is_rule_keyword(s: &str, keyword: &str) -> bool {
-    match s.strip_prefix(keyword) {
-        Some(rest) => rest.chars().next().is_none_or(is_keyword_terminator),
-        None => false,
+/// The one keyword upstream's `switch (*s)` can reach from a given first byte.
+///
+/// upstream: `exclude.c:1288-1330` dispatches on the rule's FIRST byte and
+/// tries exactly ONE keyword - `c` reaches only `clear`, `s` only `show`. Every
+/// entry of [`RULE_KEYWORDS`] has a distinct initial, so the table doubles as
+/// upstream's switch and no second copy is needed.
+///
+/// ⚠ A miss is NOT a fall-through to the one-character arm. Upstream assigns
+/// `s = RULE_STRCMP(...)` unconditionally, so a failed match leaves `ch == 0`
+/// and reaches `filter_rule_err("Unknown filter rule")` (`exclude.c:1363`).
+/// `shoo` is a refusal, not the `s` show-rule and not a pattern.
+fn keyword_for_initial(byte: u8) -> Option<&'static str> {
+    RULE_KEYWORDS
+        .iter()
+        .copied()
+        .find(|kw| kw.as_bytes()[0] == byte)
+}
+
+/// Bytes up to the first ASCII whitespace, or all of them.
+///
+/// upstream: `exclude.c:1459-1461` - `while (!isspace(*cp) && *cp != '\0') cp++`.
+fn word_len(s: &str) -> usize {
+    s.find(|ch: char| ch.is_ascii_whitespace())
+        .unwrap_or(s.len())
+}
+
+/// Byte length of the one rule token that starts at the front of `s`.
+///
+/// This is the POSITIONAL WALK of `parse_rule_tok` (`exclude.c:1241-1486`),
+/// which is the only thing that decides where a daemon `filter` rule ends:
+/// rule character or keyword, then the modifier run, then ONE separator byte,
+/// then a pattern that stops at the first whitespace. The next rule resumes at
+/// `*pat_ptr + len` (`exclude.c:1484`) - the walk never looks ahead at the next
+/// word to decide whether the current one has ended.
+///
+/// The heuristic this replaced asked instead "does the word after this
+/// whitespace LOOK like a rule prefix?", and glued the word on when it did not.
+/// A scanner cannot answer that question, because the same byte means different
+/// things in prefix position and in pattern position: `filter = - foo P bar` is
+/// two rules while `filter = - !bait` is one. Positionally there is no question
+/// to ask - after `- ` comes a pattern, and the pattern ends at whitespace.
+///
+/// MEASURED against rsync 3.5.0 and oc-rsync daemons on loopback TCP, module
+/// holding `foo bar baz keep ctl core Pictures README`:
+///
+/// | `filter =`         | upstream 3.5.0 | oc before          |
+/// |--------------------|----------------|--------------------|
+/// | `- foo bar`        | rc 5           | rc 0, ALL served   |
+/// | `- foo Pictures`   | rc 5           | rc 0, ALL served   |
+/// | `- foo core`       | rc 5           | rc 0, ALL served   |
+/// | `+ keep - bar baz` | rc 5           | rc 0, ALL served   |
+/// | `- foo<TAB>bar`    | rc 5           | rc 0, ALL served   |
+/// | `exclude<TAB>foo`  | rc 5           | rc 0, `foo` hidden |
+///
+/// Every one of those lines names files the operator wrote the rule to hide,
+/// and oc served all of them because the glued pattern (`foo bar`) matched
+/// nothing.
+fn rule_token_len(s: &str) -> usize {
+    let b = s.as_bytes();
+    let n = b.len();
+    debug_assert!(n > 0, "callers skip whitespace and stop at end of string");
+
+    // upstream: exclude.c:1288-1330 - the keyword switch, then the `default:`
+    // one-character arm. `i` tracks upstream's `s`: the LAST byte of the
+    // prefix, which is where `rule_strcmp` leaves it (`str + rule_len - 1`,
+    // exclude.c:1222-1223) and where the bare rule character already is.
+    let mut i;
+    let is_clear;
+    match keyword_for_initial(b[0]) {
+        Some(keyword) => match strip_matched_keyword(s, keyword) {
+            // `,` is the one terminator `rule_strcmp` does NOT step back over
+            // (`str + rule_len`, exclude.c:1224-1225), so the modifier scan
+            // starts INSIDE the run rather than on the terminator.
+            Some(rest) if rest.starts_with(',') => {
+                i = keyword.len();
+                is_clear = keyword == "clear";
+            }
+            Some(_) => {
+                i = keyword.len() - 1;
+                is_clear = keyword == "clear";
+            }
+            // upstream exits RERR_SYNTAX here (`exclude.c:1363`), so it never
+            // uses a token boundary at all. Handing the parser one WORD keeps
+            // "one token is one word" true and its `MalformedRule::UnknownRule`
+            // arm is the refusal.
+            //
+            // ⚠ MEASURED INERT: a mutant returning `s.len()` here killed no
+            // test, and that is correct rather than a gap in the pins. Both
+            // spellings refuse the module, so there is no accepted behaviour for
+            // a pin to capture - the choice is tidiness, not semantics.
+            None => return word_len(s),
+        },
+        None => {
+            // upstream: exclude.c:1325-1329 `default: ch = *s; if (s[1] == ',') s++;`
+            i = usize::from(n > 1 && b[1] == b',');
+            is_clear = b[0] == b'!';
+        }
     }
+
+    // upstream: exclude.c:1365 - `while (ch != '!' && *++s && *s != ' ' && *s != '_')`.
+    // The `!` clear rule SKIPS the scan entirely, which is why its refusal
+    // comes from the trailing-characters check instead.
+    if !is_clear {
+        let mut k = i + 1;
+        while k < n && b[k] != b' ' && b[k] != b'_' {
+            // upstream: exclude.c:1367-1370 - under FILTRULE_WORD_SPLIT any
+            // other whitespace ends the run by stepping BACK one byte, so the
+            // `if (*s) s++` below lands ON the whitespace and the pattern comes
+            // out EMPTY. That is why `exclude<TAB>foo` is a syntax error
+            // upstream while `exclude foo` is a rule.
+            if b[k].is_ascii_whitespace() {
+                k -= 1;
+                break;
+            }
+            k += 1;
+        }
+        i = k;
+    }
+
+    // upstream: exclude.c:1444-1445 `if (*s) s++` - exactly ONE separator byte
+    // is consumed, never a run of them. Every index the walk can stop on is
+    // ASCII, so `i` is always a char boundary here.
+    if i < n {
+        i += 1;
+    }
+
+    // upstream: exclude.c:1457-1462 - with FILTRULE_WORD_SPLIT the pattern ends
+    // at the first whitespace, unconditionally.
+    i + word_len(&s[i..])
 }
 
 /// Splits a filter string with `FILTRULE_WORD_SPLIT` semantics into individual
@@ -1014,69 +1137,32 @@ fn is_rule_keyword(s: &str, keyword: &str) -> bool {
 /// A single `filter` line in rsyncd.conf can contain multiple space-separated
 /// rules: `"+ *.txt + *.rs - *"` becomes `["+ *.txt", "+ *.rs", "- *"]`.
 ///
-/// Each rule starts with a prefix (`+`, `-`, or a keyword like `include`,
-/// `exclude`, `hide`, `show`, `protect`, `risk`, `clear`, `merge`, `dir-merge`)
-/// followed by a pattern. The function scans for rule boundaries by looking for
-/// these prefixes after whitespace.
+/// This is `parse_filter_str`'s loop (`exclude.c:1526-1531`): skip whitespace,
+/// take ONE rule by the positional walk in [`rule_token_len`], resume where
+/// that rule's pattern ended. There is no boundary heuristic and no lookahead,
+/// so a word in pattern position is always a pattern and a word in rule
+/// position is always a rule - which is what makes `- !bait` one rule and
+/// `- foo bar` two.
 ///
-/// upstream: exclude.c:parse_filter_str() with FILTRULE_WORD_SPLIT flag
+/// upstream: exclude.c:1516-1531 `parse_filter_str()` with FILTRULE_WORD_SPLIT.
 fn split_filter_tokens(s: &str) -> Vec<String> {
-    let s = s.trim();
-    if s.is_empty() {
-        return Vec::new();
-    }
-
-    /// Returns true if `s` starts with a filter rule prefix.
-    ///
-    /// The keyword arm asks `is_rule_keyword`, so a keyword terminated by any
-    /// separator upstream accepts opens a new token. The table this replaced
-    /// carried a MANDATORY TRAILING SPACE on every entry, so `hide_bar` and a
-    /// line-final `clear` matched nothing, no token boundary opened, and the
-    /// whole remainder collapsed into one rule whose pattern was the literal
-    /// compound string.
-    ///
-    /// The short arm asks the SAME question [`parse_daemon_filter_token`]
-    /// asks - does a one-character rule prefix carry a valid modifier run? -
-    /// so the splitter and the parser cannot disagree about what a token is.
-    /// The hardcoded `["+ ", "- ", "+/", "-/"]` table it replaced recognised
-    /// no `P`/`R`/`H`/`S` prefix at all, so `filter = - foo P bar` collapsed
-    /// into ONE rule whose pattern was the literal `foo P bar` and the module
-    /// served both `foo` and `bar`; upstream hides both (MEASURED, rc 0 with
-    /// only `keep` and `ctl` listed).
-    fn starts_with_rule_prefix(s: &str) -> bool {
-        opens_short_rule(s)
-            || opens_clear_rule(s)
-            || RULE_KEYWORDS.iter().any(|kw| is_rule_keyword(s, kw))
-    }
-
     let mut tokens = Vec::new();
-    let mut start = 0;
-
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b' ' || bytes[i] == b'\t' {
-            let rest = &s[i..].trim_start();
-            if !rest.is_empty() && starts_with_rule_prefix(rest) {
-                let token = s[start..i].trim();
-                if !token.is_empty() {
-                    tokens.push(token.to_string());
-                }
-                let ws_len = s[i..].len() - rest.len();
-                start = i + ws_len;
-                i = start;
-                continue;
-            }
+    let mut rest = s;
+    loop {
+        // upstream: exclude.c:1250-1255 - WORD_SPLIT skips leading whitespace
+        // and a string with nothing left ends the walk.
+        rest = rest.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
+        if rest.is_empty() {
+            return tokens;
         }
-        i += 1;
+        let len = rule_token_len(rest);
+        let (token, tail) = rest.split_at(len);
+        // A zero-length token would spin: upstream cannot produce one, because
+        // the `if (*s) s++` step always advances past a non-empty rule.
+        debug_assert!(!token.is_empty(), "rule_token_len must consume a byte");
+        tokens.push(token.to_owned());
+        rest = tail;
     }
-
-    let token = s[start..].trim();
-    if !token.is_empty() {
-        tokens.push(token.to_string());
-    }
-
-    tokens
 }
 
 /// Parses a single daemon filter token in filter rule syntax.
@@ -1128,48 +1214,17 @@ fn parse_daemon_filter_token(
             Some(after_comma) => (after_comma, 2),
             None => (rest, 1),
         };
-        match scan_modifiers(run, prefix, base, token) {
-            Ok((modifiers, used)) => {
-                return build_prefixed_rule(prefix, modifiers, run, used, token, xflags);
-            }
-            // ⚠ THE TWO CHAR CLASSES PART COMPANY HERE, and only here.
-            //
-            // `+`/`-` cannot open a bare pattern - upstream reads them as rule
-            // characters unconditionally and oc has refused `-foo` since the
-            // modifier scan landed - so an invalid modifier is the refusal
-            // upstream reports.
-            //
-            // `P R S H` DO compete with the bare-word fall-through at the
-            // bottom of this function: `Pictures` is a rule character followed
-            // by the invalid modifier `i` upstream (rc 5, MEASURED), but oc
-            // still serves that module with `Pictures` excluded literally.
-            // Refusing it here would be a second, unrelated behaviour change
-            // riding on this one, so a failed scan hands such a token back to
-            // the fall-through unchanged; that residual belongs to the
-            // bare-word class.
-            //
-            // ⚠ NOT when a `,` follows the character. `,` is a keyword
-            // TERMINATOR (`rule_strcmp`, exclude.c:1224-1225), so `P,` is a rule
-            // prefix under exactly the test `strip_matched_keyword` applies to
-            // the long keywords - there is no bare word to compete with, and
-            // the fall-through would serve a module upstream refuses. MEASURED:
-            // `filter = P,r bar` is rc 5 upstream (`r` after a side-naming
-            // prefix, exclude.c:1424-1425) and, with the fall-through taken
-            // unconditionally, was rc 0 in oc with every file served.
-            //
-            // ⚠ NOR inside a merge FILE, where there is no bare-word
-            // fall-through to compete with: upstream's own scan refuses the
-            // token there (MEASURED, a merge file holding `Pictures` is rc 5
-            // `invalid modifier 'i'`).
-            Err(err) => {
-                if !prefix.competes_with_bare_words
-                    || rest.starts_with(',')
-                    || xflags == RuleXflags::MergeFile
-                {
-                    return Err(err);
-                }
-            }
-        }
+        // ⚠ NO BARE-WORD ESCAPE ON A FAILED SCAN. A rule character is a rule
+        // character in upstream's `default:` arm unconditionally, and the
+        // modifier scan's `invalid` arm exits RERR_SYNTAX (exclude.c:1371-1380).
+        // The escape that used to live here existed only because the boundary
+        // heuristic could hand this function a word taken from PATTERN
+        // position; the positional walk in [`rule_token_len`] cannot, so the
+        // refusal upstream reports is the one oc reports. MEASURED against
+        // rsync 3.5.0: `filter = - foo Pictures` is rc 5 `invalid modifier 'i'`
+        // where oc served every file of the module.
+        let (modifiers, used) = scan_modifiers(run, prefix, base, token)?;
+        return build_prefixed_rule(prefix, modifiers, run, used, token, xflags);
     }
 
     // `!` is upstream's clear rule. It takes no pattern, and because a daemon
@@ -1261,22 +1316,24 @@ fn parse_daemon_filter_token(
         return Ok(None);
     }
 
-    // A bare token falls through to a literal exclude. ⚠ NOT upstream
-    // behaviour: upstream refuses an unrecognised word ("Unknown filter rule",
-    // exclude.c:1363). The arm survives for the DAEMON directive only, where
-    // oc's splitter glues a trailing word onto the rule before it and refusing
-    // would turn configurations upstream serves into refusals.
+    // upstream: `exclude.c:1363` - a word that is neither a rule character nor
+    // a terminated keyword reaches `filter_rule_err("Unknown filter rule")` and
+    // exits RERR_SYNTAX. There is no bare-pattern arm on this directive: the
+    // daemon `filter` parameter is the ONE of the five that upstream does not
+    // give `XFLG_OLD_PREFIXES` (clientserver.c:933-935), so every rule must
+    // carry a prefix.
     //
-    // Inside a merge FILE there is no splitter and no gluing - each record is
-    // one rule - so upstream's refusal is reproduced there instead. MEASURED: a
-    // merge file holding the bare word `bait` is rc 5 upstream, `Unknown filter
-    // rule: <rule from FILE line 1>`, where oc-base excluded `bait`.
-    if xflags == RuleXflags::MergeFile {
-        return Err(MalformedRule::UnknownRule {
-            token: token.to_owned(),
-        });
-    }
-    Ok(Some(build_pattern_rule(token, false, xflags)))
+    // A literal-exclude fall-through used to stand here for
+    // [`RuleXflags::Daemon`], because the boundary heuristic glued a trailing
+    // word onto the rule before it and refusing would have turned
+    // configurations upstream serves into refusals. [`rule_token_len`] ends the
+    // gluing, so the arm's whole reason for existing is gone and both xflags
+    // now refuse alike. MEASURED against rsync 3.5.0: `filter = - foo bar` and
+    // `filter = - foo hideout` are both rc 5, where oc served the module with
+    // every named file listed.
+    Err(MalformedRule::UnknownRule {
+        token: token.to_owned(),
+    })
 }
 
 /// Builds the clear rule a `!` or `clear` token names, or upstream's refusal.
@@ -1454,9 +1511,6 @@ struct RulePrefix {
     /// `prefix_specifies_side` (`H`, `S`, `P`, `R`), which makes `C`, `r` and
     /// `s` invalid modifiers (`exclude.c:1403-1404`, `:1424-1425`, `:1429-1430`).
     specifies_side: bool,
-    /// True for the SHORT characters that a bare pattern could also start
-    /// with. See the failed-scan arm in [`parse_daemon_filter_token`].
-    competes_with_bare_words: bool,
     /// `FILTRULE_MERGE_FILE` (`:`, `dir-merge`), which is what opens the
     /// merge-only half of the modifier alphabet - `-`, `+`, `e`, `n` and `w`
     /// are `goto invalid` without it, and `!` is `goto invalid` WITH it
@@ -1480,7 +1534,6 @@ const SHORT_EXCLUDE: RulePrefix = RulePrefix {
     is_include: false,
     sender_side: false,
     specifies_side: false,
-    competes_with_bare_words: false,
     merge_file: false,
 };
 const SHORT_INCLUDE: RulePrefix = RulePrefix {
@@ -1490,7 +1543,6 @@ const SHORT_INCLUDE: RulePrefix = RulePrefix {
 const SHORT_HIDE: RulePrefix = RulePrefix {
     sender_side: true,
     specifies_side: true,
-    competes_with_bare_words: true,
     ..SHORT_EXCLUDE
 };
 const SHORT_SHOW: RulePrefix = RulePrefix {
@@ -1511,12 +1563,6 @@ const SHORT_RISK: RulePrefix = RulePrefix {
 /// plus `FILTRULE_FINISH_SETUP` and FALLS THROUGH to `case '.'`, which is what
 /// adds `FILTRULE_MERGE_FILE`. It names no side, so `specifies_side` stays
 /// false and the full `r`/`s`/`C` half of the alphabet remains open.
-///
-/// `competes_with_bare_words` is FALSE: a failed modifier scan REFUSES rather
-/// than falling back to a bare-word exclude. Upstream's scan sends any byte
-/// outside the alphabet to `invalid:` -> `"invalid modifier '%c' at position
-/// %d"` and `RERR_SYNTAX` (`exclude.c:1370-1379`), so `:` belongs to the
-/// `+`/`-` class, not to the `P R S H` class that competes with bare words.
 const SHORT_DIR_MERGE: RulePrefix = RulePrefix {
     merge_file: true,
     ..SHORT_EXCLUDE
@@ -1532,9 +1578,9 @@ const SHORT_DIR_MERGE: RulePrefix = RulePrefix {
 /// reads the named file at parse time, so a `.` token never reaches this
 /// function.
 ///
-/// ⚠ `competes_with_bare_words` is what keeps the four UPPERCASE characters
-/// from swallowing the bare-word fall-through; only a token whose modifier run
-/// VALIDATES is taken as a rule.
+/// ⚠ EVERY one of them is a rule character in RULE position, with no bare-word
+/// competitor: [`rule_token_len`] only ever starts a token where upstream's
+/// walk starts a rule, so a failed modifier scan is upstream's refusal.
 fn short_rule_prefix(token: &str) -> Option<(RulePrefix, char)> {
     let ch = token.chars().next()?;
     let prefix = match ch {
@@ -1549,43 +1595,6 @@ fn short_rule_prefix(token: &str) -> Option<(RulePrefix, char)> {
         _ => return None,
     };
     Some((prefix, ch))
-}
-
-/// Returns true when `s` opens a `!` clear rule, and nothing else.
-///
-/// upstream: `exclude.c:1325-1329` reads a leading `!` as a rule character
-/// unconditionally, and `FILTRULE_WORD_SPLIT` makes every whitespace-delimited
-/// word its own rule (exclude.c:1250-1255) - so `filter = - bait !` really is an
-/// exclude followed by a list clear.
-///
-/// ⚠ The test is deliberately NARROWER than upstream's: a token opens only when
-/// the `!` is the whole word, in one of the two spellings `parse_rule_tok`
-/// accepts as a clear (`!`, and the `!,` whose comma the prefix consumes).
-/// oc's splitter decides boundaries by looking at the word AFTER whitespace and
-/// cannot tell a rule character from the PATTERN of the rule before it.
-/// MEASURED against rsync 3.5.0: `filter = - !bait` is ONE rule whose pattern is
-/// `!bait` (rc 0, every file served). Opening a token on every leading `!` would
-/// split that into a patternless `-` and refuse a config upstream serves.
-fn opens_clear_rule(s: &str) -> bool {
-    let word = s
-        .split(|ch: char| ch.is_ascii_whitespace())
-        .next()
-        .unwrap_or("");
-    word == "!" || word == "!,"
-}
-
-/// Returns true when `s` opens with a one-character rule prefix whose modifier
-/// run is valid - the token-boundary question, asked through the same two
-/// helpers the parser uses so the two cannot drift apart.
-fn opens_short_rule(s: &str) -> bool {
-    let Some((prefix, ch)) = short_rule_prefix(s) else {
-        return false;
-    };
-    let rest = &s[ch.len_utf8()..];
-    // A `,` terminates the prefix outright (`rule_strcmp`, exclude.c:1224-1225), so
-    // the token IS a rule token even when its modifier run is one upstream
-    // refuses - the same split the parser's failed-scan arm makes.
-    rest.starts_with(',') || scan_modifiers(rest, prefix, 1, s).is_ok()
 }
 
 /// The flags upstream's modifier scan can raise on a daemon `filter` rule.
