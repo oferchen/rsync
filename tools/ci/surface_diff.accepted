@@ -1,0 +1,20 @@
+# Declared, deliberate divergences for tools/ci/surface_diff.sh.
+# Format: <surface>:<side>:<member> - side is `oc_only` (a declared oc
+# extension) or `upstream_only` (a known gap we have chosen not to close).
+# Anything not listed here fails --check, so new drift is loud.
+
+# debug-words: accelerated-I/O fallback visibility categories. These ride the
+# unconditional-forward path - a server accepts unknown --debug words
+# (upstream options.c:484) - so they are wire-safe against upstream peers.
+debug-words:oc_only:clone
+debug-words:oc_only:iocp
+debug-words:oc_only:iouring
+debug-words:oc_only:sockopt
+
+# exit-codes: upstream's rerr_names[] (log.c:81) has no row for 0 because
+# log_exit() special-cases a zero code before consulting the table, and none
+# for 6 because errcode.h defines no RERR_* with value 6 - the "daemon unable
+# to append to log-file" description exists only in rsync.1.md:4671. oc
+# defines both so every documented exit code renders a description.
+exit-codes:oc_only:0:success
+exit-codes:oc_only:6:daemon unable to append to log-file
