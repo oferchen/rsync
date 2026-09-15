@@ -15,6 +15,7 @@ pub mod daemon_port;
 pub mod deadline;
 pub mod dir_diff;
 pub mod lsh;
+pub mod reap;
 pub mod skip;
 #[cfg(unix)]
 pub mod umask;
@@ -28,6 +29,7 @@ pub use daemon_port::{daemon_listen_port, spawn_daemon_on_free_port};
 pub use deadline::{Deadlined, run_deadlined, run_deadlined_with_stdin};
 pub use dir_diff::{DirDiff, DirDiffEntry, DirDiffError, DirDiffMismatch, DirDiffOptions};
 pub use lsh::{LSH_STUB_BIN, LshError, LshRunnerStub};
+pub use reap::ReapOnDrop;
 pub use skip::{
     locate_command_on_path, locate_workspace_binary, require_binary, require_command_on_path,
     require_unix,

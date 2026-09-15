@@ -36,8 +36,10 @@
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
 use std::time::{Duration, Instant};
+use test_support::ReapOnDrop;
 
 fn oc_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_oc-rsync"))
@@ -151,7 +153,7 @@ impl Fixture {
 
     /// Runs one loopback pull and reports whether the peer was admitted.
     fn admitted(&self, daemon_bin: &Path, client_bin: &Path) -> bool {
-        let mut daemon = spawn_daemon(daemon_bin, &self.conf(), self.port);
+        let daemon = spawn_daemon(daemon_bin, &self.conf(), self.port);
         let dest = self.root.path().join("dest.txt");
         let status = Command::new(client_bin)
             .args([
@@ -161,8 +163,7 @@ impl Fixture {
             ])
             .status()
             .expect("run client");
-        let _ = daemon.kill();
-        let _ = daemon.wait();
+        drop(daemon);
         status.success() && dest.is_file()
     }
 }
@@ -173,16 +174,18 @@ impl Fixture {
 /// daemon takes its single-connection path and never listens, and every row
 /// then reports "connection refused" - identical output for rows that must
 /// differ. That is a broken instrument, not a result.
-fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> Child {
-    let child = Command::new(binary)
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg(format!("--config={}", conf.display()))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn daemon");
+fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> ReapOnDrop {
+    let child = ReapOnDrop::new(
+        Command::new(binary)
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg(format!("--config={}", conf.display()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {

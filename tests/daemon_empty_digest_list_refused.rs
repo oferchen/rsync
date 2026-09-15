@@ -38,7 +38,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
+
 use std::time::Duration;
+use test_support::ReapOnDrop;
 
 use tempfile::TempDir;
 
@@ -106,16 +108,20 @@ fn run_session(greeting: &str) -> (String, Option<i32>) {
     let child_stdin = Stdio::from(OwnedFd::from(theirs.try_clone().expect("clone for stdin")));
     let child_stdout = Stdio::from(OwnedFd::from(theirs));
 
-    let mut child = Command::new(oc_rsync_binary())
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg("--config")
-        .arg(&config)
-        .stdin(child_stdin)
-        .stdout(child_stdout)
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn daemon");
+    // Guarded from the spawn: every `expect` between here and the `wait` below
+    // would otherwise unwind past the reap and orphan the daemon.
+    let child = ReapOnDrop::new(
+        Command::new(oc_rsync_binary())
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg("--config")
+            .arg(&config)
+            .stdin(child_stdin)
+            .stdout(child_stdout)
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
 
     let mut reader = BufReader::new(ours.try_clone().expect("clone for reading"));
     let mut writer = ours;

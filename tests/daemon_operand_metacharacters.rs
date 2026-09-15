@@ -34,8 +34,10 @@
 use std::fs;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
 use std::time::{Duration, Instant};
+use test_support::ReapOnDrop;
 
 /// `SHELL_CHARS` (options.c:2693) minus `WILD_CHARS`, which `glob_expand()`
 /// legitimately expands on the daemon side, and minus the backslash covered by
@@ -81,15 +83,17 @@ fn free_port() -> Option<u16> {
 
 /// Starts a daemon and waits until its port answers, so the client never races
 /// the listener.
-fn spawn_daemon(conf: &Path, port: u16) -> Option<Child> {
-    let mut child = Command::new(oc_binary())
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg(format!("--config={}", conf.display()))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn daemon");
+fn spawn_daemon(conf: &Path, port: u16) -> Option<ReapOnDrop> {
+    let child = ReapOnDrop::new(
+        Command::new(oc_binary())
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg(format!("--config={}", conf.display()))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {
@@ -97,8 +101,7 @@ fn spawn_daemon(conf: &Path, port: u16) -> Option<Child> {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    // Dropping the guard here is the reap the old inline pair performed.
     None
 }
 
@@ -160,7 +163,7 @@ fn daemon_operands_keep_shell_metacharacters_intact() {
     )
     .expect("write config");
 
-    let Some(mut daemon) = spawn_daemon(&conf, port) else {
+    let Some(daemon) = spawn_daemon(&conf, port) else {
         println!("skipping: daemon did not answer on 127.0.0.1:{port}");
         return;
     };
@@ -179,8 +182,7 @@ fn daemon_operands_keep_shell_metacharacters_intact() {
         })
         .collect();
 
-    let _ = daemon.kill();
-    let _ = daemon.wait();
+    drop(daemon);
 
     assert!(
         failures.is_empty(),

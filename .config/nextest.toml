@@ -4,6 +4,24 @@ default-filter = "all()"
 status-level = "fail"
 final-status-level = "fail"
 failure-output = "immediate-final"
+# Per-test timeout, mirroring profile.ci. Without `terminate-after` nextest's
+# default is to warn about a slow test forever and never terminate it, so a
+# wedged daemon test hangs until the whole run is killed by hand. Measured with
+# nextest 0.9.105: a test blocked with the daemon's signal handlers installed
+# sat at "has been running for over 60 seconds" indefinitely under a
+# `slow-timeout`-less profile, and was only removed when nextest itself was
+# signalled. That matters here and not only in CI, because the Windows and
+# macOS nextest cells run this profile rather than profile.ci, and because a
+# local run that is killed with SIGKILL (the documented `pkill -9 -f cargo`
+# remedy) orphans every test process nextest had not yet reaped, which then
+# accumulate against `ulimit -u`.
+#
+# This bounds a wedged *test process*. It does not reach the separate leak of
+# detached daemon children a `-p daemon` run leaves at PPID 1: those are not the
+# process nextest spawned, so no timeout here can see them. That population is
+# the `spawn_daemon_pending_no_detach` migration tracked by
+# `tools/ci/check_daemon_no_detach.sh`.
+slow-timeout = { period = "120s", terminate-after = 3 }
 
 [profile.ci]
 default-filter = "all()"

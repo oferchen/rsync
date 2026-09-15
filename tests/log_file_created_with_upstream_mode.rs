@@ -41,6 +41,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
+use test_support::ReapOnDrop;
 
 /// upstream: log.c:170 - the literal mode argument at the single log-file open.
 const UPSTREAM_LOG_FILE_MODE: u32 = 0o644;
@@ -178,19 +179,20 @@ fn daemon_log_file_is_created_with_upstream_mode() {
     )
     .expect("write config");
 
-    let mut child = command_with_open_umask(oc_binary())
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg(format!("--log-file={}", log.display()))
-        .arg(format!("--config={}", conf.display()))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn daemon");
+    let daemon = ReapOnDrop::new(
+        command_with_open_umask(oc_binary())
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg(format!("--log-file={}", log.display()))
+            .arg(format!("--config={}", conf.display()))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
     let appeared = wait_for(&log);
     let mode = appeared.then(|| mode_of(&log));
-    let _ = child.kill();
-    let _ = child.wait();
+    drop(daemon);
 
     assert!(appeared, "the daemon never created its log file");
     assert_eq!(

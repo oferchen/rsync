@@ -12,6 +12,10 @@ description = "Shared test utilities for the oc-rsync workspace"
 [dependencies]
 tempfile = { workspace = true }
 
+# `sigterm-flag-stub` installs the production daemon signal handlers so the
+# reap contract is measured against the real SIGTERM disposition.
+platform = { path = "../platform" }
+
 # The binary-freshness guard compares mtimes, so its tests must set them
 # explicitly rather than rely on filesystem timestamp granularity.
 [dev-dependencies]
@@ -28,3 +32,10 @@ libc = { workspace = true }
 [[bin]]
 name = "lsh-stub"
 path = "src/bin/lsh-stub.rs"
+
+# Stand-in for an orphaned `oc-rsync --daemon`: carries the production SIGTERM
+# disposition and never exits on its own, so `ReapOnDrop` can be tested against
+# a child that genuinely survives SIGTERM.
+[[bin]]
+name = "sigterm-flag-stub"
+path = "src/bin/sigterm-flag-stub.rs"

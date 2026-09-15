@@ -42,9 +42,11 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::io::OwnedFd;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+
 use std::thread;
 use std::time::Duration;
+use test_support::ReapOnDrop;
 
 /// A local address distinct from `127.0.0.1`, so the fabricated value and the
 /// true value cannot coincide. IPv6 loopback is configured by default on both
@@ -83,22 +85,24 @@ fn write_config(root: &Path, allow: &str) -> PathBuf {
 
 /// Spawns the daemon with `stdin` bound to a socket whose peer is [`PEER_IP`],
 /// which is what inetd/socket activation hands a server process.
-fn spawn_inetd_daemon(conf: &Path, socket: TcpStream) -> Child {
+fn spawn_inetd_daemon(conf: &Path, socket: TcpStream) -> ReapOnDrop {
     // `TcpStream` -> `OwnedFd` -> `Stdio`: the child inherits the socket on
     // fd 0 and fd 1 exactly as inetd would hand it over.
     let stdin = Stdio::from(OwnedFd::from(
         socket.try_clone().expect("clone socket for stdin"),
     ));
     let stdout = Stdio::from(OwnedFd::from(socket));
-    Command::new(oc_binary())
-        .arg("--daemon")
-        .arg("--no-detach")
-        .arg(format!("--config={}", conf.display()))
-        .stdin(stdin)
-        .stdout(stdout)
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn inetd daemon")
+    ReapOnDrop::new(
+        Command::new(oc_binary())
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg(format!("--config={}", conf.display()))
+            .stdin(stdin)
+            .stdout(stdout)
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn inetd daemon"),
+    )
 }
 
 /// Speaks the opening `@RSYNCD:` exchange and asks for module `m`, returning
@@ -144,7 +148,7 @@ fn run_session(allow: &str) -> Option<String> {
     let daemon_side = TcpStream::connect(addr).expect("connect daemon side");
     let accepted = thread::spawn(move || listener.accept().map(|(stream, _)| stream));
 
-    let mut child = spawn_inetd_daemon(&conf, daemon_side);
+    let child = spawn_inetd_daemon(&conf, daemon_side);
     let client_side = accepted
         .join()
         .expect("accept thread")
@@ -152,8 +156,7 @@ fn run_session(allow: &str) -> Option<String> {
 
     let reply = request_module(client_side);
 
-    let _ = child.kill();
-    let _ = child.wait();
+    drop(child);
     drop(tmp);
     Some(reply)
 }
