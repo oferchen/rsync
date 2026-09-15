@@ -7,6 +7,12 @@
 //! matcher with the case-folding policy selected by [`MatchKind`].
 //! The separator set and the case-folding rule both differ per keyword,
 //! so neither is inferred from "it is a hostname".
+//!
+//! The glob itself is not implemented here: this module selects the case
+//! folding and delegates to [`crate::ssh::config_options::glob_matches`],
+//! the one `match_pattern` port both config readers share.
+
+use crate::ssh::config_options::glob_matches;
 
 /// A single token from an ssh_config `Host` or `Match` pattern-list.
 ///
@@ -142,16 +148,15 @@ pub(super) fn pattern_list_matches(patterns: &[Pattern], input: &str, kind: Matc
 }
 
 /// Glob-matches `input` against `glob`, applying the case-folding rule
-/// dictated by `kind`. Mirrors the embedded transport's `pattern_matches`
-/// (`*` matches any run, `?` matches one character) with an added
-/// case-folding step.
+/// dictated by `kind` and then delegating to the shared `match_pattern`
+/// port. Folding is the only thing this wrapper adds.
 fn pattern_glob_matches(glob: &str, input: &str, kind: MatchKind) -> bool {
     if case_fold(kind) {
         let input_norm = input.to_ascii_lowercase();
         let glob_norm = glob.to_ascii_lowercase();
-        glob_matches_bytes(input_norm.as_bytes(), glob_norm.as_bytes())
+        glob_matches(input_norm.as_bytes(), glob_norm.as_bytes())
     } else {
-        glob_matches_bytes(input.as_bytes(), glob.as_bytes())
+        glob_matches(input.as_bytes(), glob.as_bytes())
     }
 }
 
@@ -164,29 +169,5 @@ fn case_fold(kind: MatchKind) -> bool {
         MatchKind::HostBlock => false,
         MatchKind::MatchHost => true,
         MatchKind::User => cfg!(windows),
-    }
-}
-
-/// Byte-level glob matcher: `*` matches any run, `?` matches one byte.
-/// No character classes; no extended globs. Equivalent to `fnmatch(3)`
-/// without `FNM_PATHNAME`.
-fn glob_matches_bytes(input: &[u8], glob: &[u8]) -> bool {
-    if glob.is_empty() {
-        return input.is_empty();
-    }
-    match glob[0] {
-        b'*' => {
-            if glob.len() == 1 {
-                return true;
-            }
-            for i in 0..=input.len() {
-                if glob_matches_bytes(&input[i..], &glob[1..]) {
-                    return true;
-                }
-            }
-            false
-        }
-        b'?' => !input.is_empty() && glob_matches_bytes(&input[1..], &glob[1..]),
-        c => !input.is_empty() && input[0] == c && glob_matches_bytes(&input[1..], &glob[1..]),
     }
 }
