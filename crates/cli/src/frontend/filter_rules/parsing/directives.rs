@@ -109,19 +109,26 @@ pub(super) fn parse_dir_merge_alias(
         }
     }
 
-    // upstream: exclude.c:599-617 parse_merge_name - a leading '/' on the merge
-    // FILENAME only affects where the merge file is looked up (an ancestor
-    // parent_dirscan); the '/' is stripped from the name and does NOT anchor
-    // the rules loaded from the file. Rule anchoring to the merge directory
-    // happens per-rule in add_rule (exclude.c:200-207) only when the RULE
-    // pattern itself starts with '/'. Setting anchor_root here would wrongly
-    // root-anchor every rule (e.g. `- secret*` in `d1/d2/.rsync-filter` would
-    // become `/d1/d2/secret*` and stop matching `d1/d2/d3/secret.deeper`).
-    // The '/' modifier (dir-merge,/ file) is the real anchor_root source and is
-    // handled in parse_merge_modifiers.
-    if let Some(stripped) = path_text.strip_prefix('/') {
-        path_text = stripped;
-    }
+    // upstream: exclude.c:359-361 add_rule takes the merge name after the LAST
+    // '/', and setup_merge_file (exclude.c:797-801) rewrites `ex->pattern` to
+    // that basename, so the per-directory scan looks for the basename in each
+    // directory. A path portion only steers upstream's ancestor
+    // parent_dirscan; it is never joined onto each scanned directory, and it
+    // does NOT anchor the rules loaded from the file.
+    //
+    // Rule anchoring to the merge directory happens per-rule in add_rule
+    // (exclude.c:200-207) only when the RULE pattern itself starts with '/'.
+    // Setting anchor_root here would wrongly root-anchor every rule (e.g.
+    // `- secret*` in `d1/d2/.rsync-filter` would become `/d1/d2/secret*` and
+    // stop matching `d1/d2/d3/secret.deeper`). The '/' modifier (dir-merge,/
+    // file) is the real anchor_root source and is handled in
+    // parse_merge_modifiers.
+    //
+    // Taking only the leading '/' off would leave `dir/.filt` whole, so each
+    // directory would be searched for `<dir>/dir/.filt` and the merge would
+    // contribute nothing. Same owner as the daemon-side converter in
+    // `transfer/src/generator/filters.rs` and as the `:e` self-exclude.
+    path_text = filters::merge_file_basename(path_text);
 
     Some(Ok(FilterDirective::Rule(FilterRuleSpec::dir_merge(
         path_text.to_owned(),

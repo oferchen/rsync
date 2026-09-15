@@ -7,6 +7,18 @@
 //! matches any sequence, `?` matches any single character, `!pattern`
 //! negates a match for that block.
 //!
+//! # The keyword set is not declared here
+//!
+//! Which spelling means which directive comes from
+//! [`crate::ssh::config_options`], the one option table oc has, mirroring
+//! upstream's single `keywords[]` scan (openssh/readconf.c:1194
+//! `parse_token`). This module owns only what it DOES with a resolved
+//! opcode - the `Host`-only scope and the refusal policy below - and it
+//! shares the `Key Value` split, the yes/no parse and the glob matcher
+//! with the compression reader (`crate::ssh::config_lookup`). Adding a
+//! directive is one row in the table plus one arm here, and the other
+//! reader cannot drift away from the spelling.
+//!
 //! # Tokenisation
 //!
 //! Every line's value half is split by [`argv_split`], the shared port of
@@ -31,9 +43,11 @@
 //!   (openssh/readconf.c:1832-1836).
 //! * `Missing argument.` / `missing argument.` - a directive whose value
 //!   tokenised to nothing, e.g. `Port #comment`. The capitalisation is
-//!   upstream's own and splits by arm: string options say `Missing`
-//!   (openssh/readconf.c:1364), flag options say `missing`
-//!   (openssh/readconf.c:1240). Measured against real `ssh -G`, both.
+//!   upstream's own and splits by value SHAPE, not by keyword: single-token
+//!   options say `Missing` (openssh/readconf.c:1364), multistate flags say
+//!   `missing` (openssh/readconf.c:1108). Measured against real `ssh -G`
+//!   for every keyword below. The wording now hangs off the option table's
+//!   `ValueKind` so a keyword added later cannot pick the wrong one.
 //!
 //! The caller (`SshConfig::apply_ssh_config`) merges the resolved
 //! directives into the existing config, with the rule that any value
@@ -44,6 +58,9 @@ use std::path::{Path, PathBuf};
 
 use super::error::SshError;
 use crate::ssh::argv_split::argv_split;
+use crate::ssh::config_options::{
+    Opcode, glob_matches, parse_flag_value, parse_token, split_directive,
+};
 
 /// Placeholder file name used when a caller supplies config text with no
 /// path of its own. Upstream always has a real filename to name in a
@@ -107,21 +124,6 @@ fn refuse(path: &str, line: usize, reason: impl Into<String>) -> SshError {
     }
 }
 
-/// The missing-argument wording for `keyword`.
-///
-/// Upstream splits by arm and the capitalisation differs: the string
-/// options route through `parse_string` and print `Missing argument.`
-/// (openssh/readconf.c:1364) while the yes/no flags route through
-/// `parse_flag` and print `missing argument.` (openssh/readconf.c:1240).
-/// Measured against real `ssh -G` for every keyword below rather than
-/// inferred from the arm names.
-fn missing_argument(keyword: &str) -> &'static str {
-    match keyword {
-        "identitiesonly" => "missing argument.",
-        _ => "Missing argument.",
-    }
-}
-
 fn resolve_host_in(text: &str, host_alias: &str, path: &str) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
     let mut in_matching_block = false;
@@ -145,17 +147,23 @@ fn resolve_host_in(text: &str, host_alias: &str, path: &str) -> Result<ResolvedH
         let Some((key, value)) = split_directive(line) else {
             continue;
         };
-        let key_lc = key.to_ascii_lowercase();
+        // One keyword lookup against the shared option table, exactly
+        // where upstream resolves the opcode for the line
+        // (openssh/readconf.c:1194 `parse_token`).
+        let opcode = parse_token(key);
 
         // One tokenisation per line, exactly as upstream does it
         // (openssh/readconf.c:1196).
         let tokens =
             argv_split(value, true).map_err(|err| refuse(path, linenum, err.to_string()))?;
 
-        if key_lc == "host" {
+        if opcode == Opcode::Host {
             in_matching_block =
                 host_matches_any_pattern(host_alias, &tokens).map_err(|EmptyHostToken| {
-                    refuse(path, linenum, format!("keyword {key_lc} empty argument"))
+                    // Upstream interpolates the LOWERCASED keyword it
+                    // matched on (openssh/readconf.c:1184, :1833), not the
+                    // spelling in the file.
+                    refuse(path, linenum, "keyword host empty argument")
                 })?;
             continue;
         }
@@ -166,12 +174,25 @@ fn resolve_host_in(text: &str, host_alias: &str, path: &str) -> Result<ResolvedH
         // Every directive below is single-valued, so it consumes exactly
         // one token - upstream's `arg = argv_next(&ac, &av)`. A `NULL`
         // there is fatal, which is how `Port #comment` is refused.
-        let arg = match key_lc.as_str() {
-            "hostname" | "user" | "port" | "identityfile" | "identitiesonly" | "identityagent" => {
-                match tokens.first() {
-                    Some(arg) => arg.as_str(),
-                    None => return Err(refuse(path, linenum, missing_argument(&key_lc))),
-                }
+        //
+        // The opcode set is this reader's, not the table's: `Compression`
+        // is in the table with the same shape but belongs to the other
+        // reader, which never refuses. Widening the refusal to every known
+        // keyword is upstream's behaviour and a separate row.
+        let arg = match opcode {
+            Opcode::Hostname
+            | Opcode::User
+            | Opcode::Port
+            | Opcode::IdentityFile
+            | Opcode::IdentitiesOnly
+            | Opcode::IdentityAgent => {
+                let Some(arg) = tokens.first() else {
+                    let Some(reason) = opcode.missing_argument() else {
+                        continue;
+                    };
+                    return Err(refuse(path, linenum, reason));
+                };
+                arg.as_str()
             }
             // Not a directive this parser acts on. Upstream would still
             // classify it, but oc's unknown-keyword policy is task 237j's
@@ -179,51 +200,35 @@ fn resolve_host_in(text: &str, host_alias: &str, path: &str) -> Result<ResolvedH
             _ => continue,
         };
 
-        match key_lc.as_str() {
-            "hostname" => set_if_unset(&mut resolved.hostname, arg.to_owned()),
-            "user" => set_if_unset(&mut resolved.user, arg.to_owned()),
-            "port" => {
+        match opcode {
+            Opcode::Hostname => set_if_unset(&mut resolved.hostname, arg.to_owned()),
+            Opcode::User => set_if_unset(&mut resolved.user, arg.to_owned()),
+            Opcode::Port => {
                 if resolved.port.is_none()
                     && let Ok(parsed) = arg.parse::<u16>()
                 {
                     resolved.port = Some(parsed);
                 }
             }
-            "identityfile" => {
+            Opcode::IdentityFile => {
                 let expanded = expand_tilde(arg);
                 if !resolved.identity_files.contains(&expanded) {
                     resolved.identity_files.push(expanded);
                 }
             }
-            "identitiesonly" => {
+            Opcode::IdentitiesOnly => {
                 if resolved.identities_only.is_none() {
-                    resolved.identities_only = parse_yes_no(arg);
+                    resolved.identities_only = parse_flag_value(arg);
                 }
             }
-            "identityagent" => {
+            Opcode::IdentityAgent => {
                 set_if_unset(&mut resolved.identity_agent, expand_tilde_str(arg));
             }
-            _ => unreachable!("the match above already narrowed the keyword set"),
+            _ => unreachable!("the match above already narrowed the opcode set"),
         }
     }
 
     Ok(resolved)
-}
-
-/// Splits a `Key Value` directive on the first run of whitespace or
-/// optional `=` separator. Returns `None` for lines that contain only the
-/// key with no value.
-///
-/// The keyword half is upstream's `strdelim` (openssh/readconf.c:1176,
-/// openssh/misc.c:469-507), a *different* splitter from `argv_split`; it
-/// is the value half that this module then tokenises.
-fn split_directive(line: &str) -> Option<(&str, &str)> {
-    let (key, rest) = line.split_once(|c: char| c.is_whitespace() || c == '=')?;
-    let value = rest.trim_start_matches(|c: char| c.is_whitespace() || c == '=');
-    if value.is_empty() {
-        return None;
-    }
-    Some((key, value))
 }
 
 /// A `Host` line carried a token that tokenised to the empty string.
@@ -272,33 +277,11 @@ fn host_matches_any_pattern(host: &str, tokens: &[String]) -> Result<bool, Empty
     Ok(any_positive_match)
 }
 
-/// Glob-matches `host` against `pattern`, where `*` matches any sequence
-/// and `?` matches any single character. The implementation is a small
-/// recursive descent that mirrors `fnmatch(3)` without character classes.
+/// Glob-matches `host` against `pattern` with no case folding, which is
+/// what the `oHost` arm does (openssh/readconf.c:1844 calls `match_pattern`
+/// directly). The glob itself is the shared `match_pattern` port.
 fn pattern_matches(host: &str, pattern: &str) -> bool {
-    let host_bytes = host.as_bytes();
-    let pat_bytes = pattern.as_bytes();
-    fn matches(h: &[u8], p: &[u8]) -> bool {
-        if p.is_empty() {
-            return h.is_empty();
-        }
-        match p[0] {
-            b'*' => {
-                if p.len() == 1 {
-                    return true;
-                }
-                for i in 0..=h.len() {
-                    if matches(&h[i..], &p[1..]) {
-                        return true;
-                    }
-                }
-                false
-            }
-            b'?' => !h.is_empty() && matches(&h[1..], &p[1..]),
-            c => !h.is_empty() && h[0] == c && matches(&h[1..], &p[1..]),
-        }
-    }
-    matches(host_bytes, pat_bytes)
+    glob_matches(host.as_bytes(), pattern.as_bytes())
 }
 
 /// Expands a leading `~/` to the user's home directory. Returns the path
@@ -376,14 +359,6 @@ fn home_dir() -> Option<PathBuf> {
 fn set_if_unset<T>(slot: &mut Option<T>, value: T) {
     if slot.is_none() {
         *slot = Some(value);
-    }
-}
-
-fn parse_yes_no(value: &str) -> Option<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "yes" | "true" => Some(true),
-        "no" | "false" => Some(false),
-        _ => None,
     }
 }
 

@@ -351,7 +351,7 @@ windows-sys = "0.61"
 # Extended attribute helpers - shared by apple-fs, cli, daemon (dev), engine (dev), metadata (optional)
 xattr = "1.6"
 # Zstandard codec - shared by compress and protocol (optional)
-zstd = "0.13"
+zstd = "0.14"
 
 [workspace.metadata.docs.rs]
 all-features = true
