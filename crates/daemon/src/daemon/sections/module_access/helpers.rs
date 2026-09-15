@@ -323,6 +323,32 @@ fn push_token_rules(
     if let Some(rule) =
         parse_daemon_filter_token(token, xflags).map_err(MalformedRule::into_io_error)?
     {
+        if rule.rule_type == protocol::filters::RuleType::DirMerge && rule.exclude_from_merge {
+            // upstream: exclude.c:1558-1571 - FILTRULE_EXCLUDE_SELF adds an
+            // exclude of the merge file's BASENAME to the containing list
+            // BEFORE the merge rule itself, and for a module directive that
+            // list is `daemon_filter_list`. The rule is what hides the merge
+            // file from the served set, refuses it as an incoming name, and -
+            // through the exclude.c:1639-1665 open gate - stops the daemon's
+            // own dir-merge from ever reading its file. The eager `.e` arm in
+            // [`push_merge_file_rules`] pushes the same rule; a per-dir merge
+            // just never expands its file here, so the rule must ride the
+            // list instead.
+            let pattern = rule.pattern.to_string_lossy();
+            // upstream: exclude.c:1554-1557 - an empty `:C`-style pattern
+            // means ".cvsignore", substituted before the self-exclude is
+            // built.
+            let name: &str = if rule.cvs_exclude && pattern.is_empty() {
+                ".cvsignore"
+            } else {
+                pattern.as_ref()
+            };
+            let base = name.rsplit('/').next().unwrap_or(name);
+            if !base.is_empty() {
+                let base = base.to_owned();
+                rules.push(build_pattern_rule(&base, false, RuleXflags::MergeFile));
+            }
+        }
         rules.push(rule);
     }
     Ok(())

@@ -106,6 +106,15 @@ pub struct FilterChain {
     /// the behaviour of callers that pass merge directories already relative to
     /// the transfer root, e.g. unit tests).
     transfer_root: Option<PathBuf>,
+    /// The daemon module's own filter rules, consulted before every
+    /// per-directory merge-file open.
+    ///
+    /// upstream: exclude.c:1639-1665 parse_filter_file - when
+    /// `daemon_filter_list.head` is set, the merge file's module-relative path
+    /// is run through `check_filter(&daemon_filter_list, ...)` and a hidden
+    /// file is treated as non-existent: its rules are never read. `None` on
+    /// non-daemon transfers, where no such list exists.
+    daemon_gate: Option<FilterSet>,
 }
 
 impl FilterChain {
@@ -123,6 +132,7 @@ impl FilterChain {
             current_depth: 0,
             delete_excluded: false,
             transfer_root: None,
+            daemon_gate: None,
         }
     }
 
@@ -184,6 +194,45 @@ impl FilterChain {
     /// rsync's `XFLG_ANCHORED2ABS` handling in `exclude.c:add_rule`.
     pub fn set_transfer_root(&mut self, root: impl Into<PathBuf>) {
         self.transfer_root = Some(root.into());
+    }
+
+    /// Installs the daemon module's filter rules as a merge-file open gate.
+    ///
+    /// Once set, [`enter_directory`](Self::enter_directory) treats a per-dir
+    /// merge file whose module-relative path these rules exclude as
+    /// non-existent: its rules are never read, so they can hide nothing. The
+    /// daemon's `:e` self-exclude lands in this same set, which is why an
+    /// `e`-modified dir-merge in a module `filter` directive never loads its
+    /// own file.
+    ///
+    /// upstream: exclude.c:1639-1665 parse_filter_file - a merge file hidden
+    /// by `daemon_filter_list` is skipped without tripping fatal-error
+    /// handling; exclude.c:1558-1571 - FILTRULE_EXCLUDE_SELF adds the merge
+    /// file's basename to the containing list BEFORE the file is read.
+    pub fn set_daemon_filter_gate(&mut self, gate: FilterSet) {
+        self.daemon_gate = Some(gate);
+    }
+
+    /// Returns `true` when the daemon gate hides the merge file `filename`
+    /// inside the directory whose transfer-relative prefix is `rel_dir`.
+    ///
+    /// upstream: exclude.c:1640-1649 - the checked name is the merge file's
+    /// path relative to the module root (`dirbuf` + pattern with `module_dir`
+    /// stripped), matched with `name_flags == 0` (never as a directory).
+    fn daemon_gate_hides(&self, rel_dir: Option<&str>, filename: &str) -> bool {
+        let Some(gate) = &self.daemon_gate else {
+            return false;
+        };
+        let joined = match rel_dir {
+            Some(dir) => format!("{dir}/{filename}"),
+            None => filename.to_owned(),
+        };
+        // upstream: exclude.c:1644-1647 strips module_dir off an absolute
+        // spelling so the anchored daemon rule still matches; the relative
+        // spelling here only needs its leading `/` (an anchor-root merge
+        // filename) removed to match the same module-relative form.
+        let rel = joined.trim_start_matches('/');
+        !gate.allows(Path::new(rel), false)
     }
 
     /// Returns the directory of a per-dir merge file relative to the transfer
@@ -383,6 +432,14 @@ impl FilterChain {
         for config_index in 0..self.merge_configs.len() {
             let config = &self.merge_configs[config_index];
             let merge_path = directory.join(config.filename());
+
+            // upstream: exclude.c:1639-1665 - a merge file hidden by the
+            // daemon's own filter list is treated as non-existent, so a
+            // daemon-excluded (or `:e` self-excluded) merge file contributes
+            // no rules at all.
+            if self.daemon_gate_hides(rel_dir_prefix.as_deref(), config.filename()) {
+                continue;
+            }
 
             // upstream: exclude.c:push_local_filters() - parse_filter_file()
             // silently skips missing files
@@ -626,6 +683,15 @@ impl FilterChain {
         descriptor: &InlineDirMerge,
     ) -> Result<usize, FilterChainError> {
         let merge_path = directory.join(&descriptor.filename);
+        // upstream: exclude.c:1639-1665 - the daemon-list gate guards EVERY
+        // parse_filter_file() open, so a dir-merge declared inside another
+        // merge file is refused the same way a top-level one is.
+        if self.daemon_gate_hides(
+            self.merge_rel_dir(directory).as_deref(),
+            &descriptor.filename,
+        ) {
+            return Ok(0);
+        }
         let content = match crate::merge_open::read_to_string(&merge_path) {
             Ok(content) => content,
             // upstream: exclude.c:push_local_filters() - parse_filter_file()

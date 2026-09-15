@@ -1174,3 +1174,89 @@ fn dir_merge_bang_only_clears_its_own_mergelist() {
     chain.leave_directory(child_guard);
     chain.leave_directory(parent_guard);
 }
+
+/// A merge file the daemon filter list hides is treated as NON-EXISTENT: its
+/// rules are never read, so they can hide nothing.
+///
+/// upstream: exclude.c:1639-1665 - parse_filter_file() checks the merge
+/// file's module-relative name against `daemon_filter_list` before the open
+/// and returns silently on a hit. MEASURED against a real rsync 3.5.0 daemon
+/// (module `filter = - .rules dir-merge .rules`, `.rules` holding `- bait`):
+/// `bait` is SERVED, because the daemon's own exclude keeps the merge file
+/// from being read. Reading the file and hiding `bait` is the divergence this
+/// gate closes.
+#[test]
+fn daemon_gate_treats_hidden_merge_file_as_missing() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join(".rules"), "- bait\n").unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".rules"));
+    chain.set_daemon_filter_gate(FilterSet::from_rules([FilterRule::exclude(".rules")]).unwrap());
+
+    let guard = chain.enter_directory(dir.path()).unwrap();
+    assert_eq!(
+        guard.pushed_count(),
+        0,
+        "a gated merge file must push no scope"
+    );
+    assert!(
+        chain.allows(Path::new("bait"), false),
+        "rules from an unread merge file must hide nothing"
+    );
+    chain.leave_directory(guard);
+}
+
+/// NON-VACUITY COMPANION: the identical fixture without the gate reads the
+/// file and hides `bait`, so the test above passes because of the gate and not
+/// because the fixture was inert.
+#[test]
+fn without_a_daemon_gate_the_merge_file_is_read() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join(".rules"), "- bait\n").unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".rules"));
+
+    let guard = chain.enter_directory(dir.path()).unwrap();
+    assert!(!chain.allows(Path::new("bait"), false));
+    chain.leave_directory(guard);
+}
+
+/// The gate matches the merge file's TRANSFER-RELATIVE path, so an anchored
+/// daemon rule hides one directory's copy while a sibling's stays readable.
+///
+/// upstream: exclude.c:1640-1648 - the checked name is `dirbuf` + pattern with
+/// the module dir stripped, i.e. the module-relative spelling the daemon's own
+/// anchored rules are written against.
+#[test]
+fn daemon_gate_matches_the_transfer_relative_merge_path() {
+    let root = TempDir::new().unwrap();
+    let sub = root.path().join("sub");
+    let other = root.path().join("other");
+    fs::create_dir(&sub).unwrap();
+    fs::create_dir(&other).unwrap();
+    fs::write(sub.join(".rules"), "- bait\n").unwrap();
+    fs::write(other.join(".rules"), "- bait\n").unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.set_transfer_root(root.path());
+    chain.add_merge_config(DirMergeConfig::new(".rules"));
+    chain.set_daemon_filter_gate(
+        FilterSet::from_rules([FilterRule::exclude("/sub/.rules")]).unwrap(),
+    );
+
+    let sub_guard = chain.enter_directory(&sub).unwrap();
+    assert!(
+        chain.allows(Path::new("sub/bait"), false),
+        "the anchored daemon rule must gate sub's merge file"
+    );
+    chain.leave_directory(sub_guard);
+
+    let other_guard = chain.enter_directory(&other).unwrap();
+    assert!(
+        !chain.allows(Path::new("other/bait"), false),
+        "a sibling directory's merge file must still be read"
+    );
+    chain.leave_directory(other_guard);
+}

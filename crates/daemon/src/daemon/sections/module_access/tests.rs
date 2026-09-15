@@ -4199,6 +4199,55 @@ mod module_access_tests {
         }
     }
 
+    /// An `e`-modified dir-merge plants its basename self-exclude in the
+    /// daemon list, BEFORE the merge rule.
+    ///
+    /// upstream: exclude.c:1558-1571 - FILTRULE_EXCLUDE_SELF adds an exclude
+    /// of the merge file's basename (exclude.c:1565-1567) to the CONTAINING
+    /// list before the file is ever read; for a module `filter` directive that
+    /// list is `daemon_filter_list` (clientserver.c:934-936). That one rule is
+    /// what hides the merge file from the served set, refuses it as an
+    /// incoming name, and - through the exclude.c:1639-1665 open gate - stops
+    /// the daemon's own dir-merge from reading its file.
+    ///
+    /// MEASURED against a real rsync 3.5.0 daemon, module holding
+    /// `bait`+`ctl`+`keep` (and the same under `sub/`) with a `rules` file
+    /// holding `- ctl` in both directories:
+    /// * `filter = dir-merge,e rules` -> list serves EVERYTHING but the
+    ///   `rules` files themselves; `ctl` is SERVED because the self-exclude
+    ///   gates the read. A push of a file NAMED `rules` is rc 23,
+    ///   `daemon refused to receive file "rules"`.
+    /// * `filter = dir-merge rules` (control) -> `ctl` and `sub/ctl` hidden,
+    ///   the `rules` files served, a pushed `rules` accepted.
+    #[test]
+    fn an_e_dir_merge_plants_its_self_exclude_in_the_daemon_list() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for token in ["dir-merge,e rules", ":e rules"] {
+            let rules = filter_rules(dir.path(), token).expect("token refused");
+            assert_eq!(rules.len(), 2, "{token} must expand to exclude + merge");
+            assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+            assert_eq!(rules[0].pattern, "rules", "{token}");
+            assert!(
+                !rules[0].anchored,
+                "{token}: the self-exclude matches the basename everywhere"
+            );
+            assert_eq!(rules[1].rule_type, protocol::filters::RuleType::DirMerge);
+            assert!(rules[1].exclude_from_merge, "{token}");
+        }
+
+        // A path-bearing merge name self-excludes only its BASENAME, and the
+        // slash must not anchor it (upstream's excl_self template carries no
+        // xflags, so add_rule's ABS_IF_SLASH branch never sees it).
+        let nested = filter_rules(dir.path(), ":e sub/rules").expect("token refused");
+        assert_eq!(nested[0].pattern, "rules");
+        assert!(!nested[0].anchored);
+
+        // NON-VACUITY CONTROL: without `e` no extra rule is planted.
+        let plain = filter_rules(dir.path(), "dir-merge rules").expect("token refused");
+        assert_eq!(plain.len(), 1);
+        assert_eq!(plain[0].rule_type, protocol::filters::RuleType::DirMerge);
+    }
+
     #[test]
     fn an_unknown_record_inside_a_merge_file_refuses_the_module() {
         // upstream: "Unknown filter rule" (exclude.c:1363), fatal. MEASURED:
