@@ -228,6 +228,35 @@ impl<'a> CopyContext<'a> {
             } else {
                 apply_file_metadata_with_options(&backup_path, &source_meta, &metadata_options)
                     .map_err(map_metadata_error)?;
+                // upstream: backup.c:337-342 - the copy tier reads the
+                // PRE-IMAGE's access ACL off the source leaf (`get_acl_fdat`)
+                // and caches it against the backup's file_struct
+                // (`cache_tmp_acl`) BEFORE `copy_file`; `set_file_attrs` at
+                // backup.c:420 then stamps it onto the backup through
+                // `set_acl_fdat` (rsync.c:800-801). The hard-link and rename tiers
+                // `goto success` at backup.c:317 and never reach that block -
+                // they move or share the inode, so the ACL travels with it for
+                // free. Only the tiers that create a FRESH node need the
+                // explicit carry, and `io::copy` in `copy_pre_image_to_backup`
+                // moves bytes and mode bits alone.
+                //
+                // Upstream's own `!S_ISLNK(file->mode)` guard at backup.c:338
+                // excludes the SYMLINK tier (a symlink holds no ACL, and
+                // rsync.c:800 re-checks the same predicate), which is why this
+                // sits in the non-symlink arm alongside COPY and DEVICE.
+                //
+                // `destination` is still the pre-image at this point: the copy
+                // tier duplicates it and leaves the original for the caller's
+                // rename to replace, so the ACL read below finds it.
+                #[cfg(all(any(unix, windows), feature = "acl"))]
+                sync_acls_if_requested(
+                    self.options.acls_enabled(),
+                    self.options.fake_super_enabled(),
+                    self.mode(),
+                    destination,
+                    &backup_path,
+                    true,
+                )?;
             }
             // upstream: xattrs.c:set_stat_xattr() re-records the source stat in
             // `user.rsync.%stat` under --fake-super so the virtualised node's

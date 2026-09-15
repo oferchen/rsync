@@ -726,6 +726,158 @@ fn cross_device_file_backup_preserves_mode_and_mtime() {
     );
 }
 
+// upstream: backup.c:337-342 + backup.c:420 - the COPY tier reads the
+// PRE-IMAGE's access ACL (`get_acl_fdat`) and caches it against the backup's
+// file_struct (`cache_tmp_acl`) before `copy_file`, then `set_file_attrs`
+// stamps it onto the backup through `set_acl_fdat` (rsync.c:800-801). The hard-link
+// and rename tiers `goto success` at backup.c:317 and never reach that block:
+// they move or share the inode, so the ACL rides along with it for free. Only a
+// tier that creates a FRESH node can lose it, and `io::copy` in
+// `copy_pre_image_to_backup` carries the bytes plus the mode bits alone - so
+// without an explicit carry the cross-device backup silently stops being a
+// faithful pre-image of the ACL that was replaced.
+//
+// WHY IT MATTERS: `--backup` exists so the replaced content can be restored.
+// An ACL is part of who could read that content; a backup that keeps the bytes
+// but widens or narrows access is not a restorable pre-image. The same-
+// filesystem tiers already carry it, so a `--backup-dir` landing on another
+// mount was the one shape that silently lost it.
+//
+// Measured against rsync 3.5.0 with a `--backup-dir` on a second filesystem:
+// upstream keeps the named-user entry on the copy-tier backup, and before this
+// carry oc dropped it while both same-filesystem tiers kept it.
+// Runs one cross-device copy-tier backup cell with `--acls` either on or off,
+// and hands back the pre-image's ACL (read before the transfer) beside the
+// resulting backup's ACL. Both cells share this body so the only difference
+// between them is the `-A` gate the two tests below assert on.
+//
+// Group bits are rw so the POSIX mask Linux derives from the mode leaves the
+// named entry effective; `user_obj`/`group_obj`/`other_obj` mirror those bits
+// so the planted ACL and the mode agree.
+#[cfg(all(unix, feature = "acl"))]
+fn cross_device_copy_tier_backup_acl_cell(
+    preserve_acls: bool,
+) -> (protocol::acl::RsyncAcl, protocol::acl::RsyncAcl) {
+    use ::metadata::{apply_acls_from_cache, get_rsync_acl};
+    use protocol::acl::{AclCache, IdAccess, NAME_IS_USER, RsyncAcl};
+    use std::os::unix::fs::PermissionsExt;
+
+    const DEST_MODE: u32 = 0o664;
+    // uid 1 is `daemon` on both Linux and macOS. The entry is written by
+    // numeric id, so the cell does not depend on the name resolving.
+    const ACL_UID: u32 = 1;
+
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("file.txt");
+    fs::write(&source_file, b"updated").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("file.txt");
+    write_stale_dest(&existing, b"original");
+    fs::set_permissions(&existing, PermissionsExt::from_mode(DEST_MODE)).expect("chmod dest");
+
+    // Plant a named-user entry on the PRE-IMAGE through the receiver's own
+    // apply path: it reconstructs the POSIX base entries - and the mask Linux
+    // requires once a named entry exists - from the mode, so one call produces
+    // a valid ACL on both the POSIX and the macOS backend.
+    let mut cache = AclCache::new();
+    let mut planted = RsyncAcl::new();
+    planted.user_obj = 6;
+    planted.group_obj = 6;
+    planted.other_obj = 4;
+    planted.mask_obj = 6;
+    planted.names = [IdAccess {
+        id: ACL_UID,
+        access: NAME_IS_USER | 4,
+        name: None,
+    }]
+    .into_iter()
+    .collect();
+    let ndx = cache.store_access(planted);
+    apply_acls_from_cache(&existing, &cache, ndx, None, true, Some(DEST_MODE), None)
+        .expect("plant pre-image ACL");
+
+    // Anti-vacuity: on a filesystem that silently swallowed the ACL there is
+    // nothing for the copy tier to carry, and the comparison below would match
+    // an empty ACL against an empty ACL and report a pass.
+    let pre_acl = get_rsync_acl(&existing, DEST_MODE, false);
+    assert!(
+        !pre_acl.names.is_empty(),
+        "fixture planted no named ACL entry on the pre-image, so the cell cannot discriminate"
+    );
+
+    let backup_dir = ctx.dest.join("backups");
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .times(true)
+        .permissions(true)
+        .acls(preserve_acls)
+        .with_backup_directory(Some(backup_dir.clone()));
+
+    // The hard-link tier is tried first (backup.c:239); force it and the
+    // rename to report EXDEV so the COPY tier is the one under test.
+    with_hard_link_override(
+        |_, _| Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE)),
+        || {
+            with_backup_rename_override(
+                |_, _| {
+                    Some(Err(io::Error::from_raw_os_error(
+                        super::CROSS_DEVICE_ERROR_CODE,
+                    )))
+                },
+                || {
+                    plan.execute_with_options(LocalCopyExecution::Apply, options)
+                        .expect("copy succeeds")
+                },
+            )
+        },
+    );
+
+    let backup = backup_dir.join("source/file.txt~");
+    assert_eq!(fs::read(&backup).expect("read backup"), b"original");
+    let backup_acl = get_rsync_acl(&backup, DEST_MODE, false);
+    (pre_acl, backup_acl)
+}
+
+#[cfg(all(unix, feature = "acl"))]
+#[test]
+fn cross_device_file_backup_preserves_the_pre_image_acl() {
+    let (pre_acl, backup_acl) = cross_device_copy_tier_backup_acl_cell(true);
+    assert_eq!(
+        backup_acl.names, pre_acl.names,
+        "cross-device copy-tier backup dropped the pre-image ACL"
+    );
+}
+
+// The opposed control: upstream gates the whole cache/stamp pair on
+// `preserve_acls` - `backup.c:338` guards `get_acl_fdat`/`cache_tmp_acl`, and
+// `rsync.c:800-801` guards the `set_acl_fdat` that would apply it - so without
+// `-A` the copy-tier backup must carry NO ACL. Without this cell the carry
+// above is equally satisfied by an ungated apply, which would have oc stamping
+// an ACL upstream leaves off and silently widening access on a `--backup-dir`
+// for every user who never asked for `-A`.
+#[cfg(all(unix, feature = "acl"))]
+#[test]
+fn cross_device_file_backup_without_acls_carries_no_acl() {
+    let (pre_acl, backup_acl) = cross_device_copy_tier_backup_acl_cell(false);
+    assert!(
+        !pre_acl.names.is_empty(),
+        "fixture planted no named ACL entry, so the gate cannot be observed"
+    );
+    assert!(
+        backup_acl.names.is_empty(),
+        "copy-tier backup carried an ACL without --acls: {backup_acl:?}"
+    );
+}
+
 // upstream: backup.c:338-341 / rsync.c:set_file_attrs() - the same reapply runs
 // for the SYMLINK branch, but chmod is skipped and ownership/times are applied
 // with AT_SYMLINK_NOFOLLOW. Across a filesystem boundary the symlink backup is
@@ -797,6 +949,76 @@ fn cross_device_symlink_backup_preserves_target_and_mtime() {
         FileTime::from_last_modification_time(&meta),
         backup_mtime,
         "cross-device symlink backup did not preserve mtime"
+    );
+}
+
+// The placement control for the ACL carry two cells up: upstream's
+// `!S_ISLNK(file->mode)` guard at backup.c:338 keeps the cache/stamp pair off
+// the SYMLINK tier entirely, and rsync.c:800 re-checks it before `set_acl_fdat`.
+// A symlink holds no ACL of its own, so an ACL apply aimed at one can only
+// resolve THROUGH it - which is why the carry belongs in the non-symlink arm and
+// not hoisted beside the shared metadata reapply.
+//
+// This cell discriminates because the pre-image link is DANGLING: `sync_acls`
+// pre-checks `source.exists()` (which follows the link) and reports NotFound
+// rather than silently skipping, so a carry that reached the SYMLINK tier would
+// fail the whole transfer here instead of producing a backup. With `-A` off the
+// same shape is already covered above and cannot see the difference, so the flag
+// is what makes this cell live.
+#[cfg(all(unix, feature = "acl"))]
+#[test]
+fn cross_device_symlink_backup_does_not_apply_an_acl_through_the_link() {
+    use std::os::unix::fs::symlink;
+
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_link = ctx.source.join("link");
+    symlink("new_target", &source_link).expect("create source symlink");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing_link = dest_root.join("link");
+    symlink("old_target", &existing_link).expect("create dest symlink");
+    assert!(
+        fs::symlink_metadata(&existing_link).is_ok() && !existing_link.exists(),
+        "the pre-image link must dangle for this cell to discriminate"
+    );
+
+    let backup_dir = ctx.dest.join("backups");
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .links(true)
+        .times(true)
+        .acls(true)
+        .with_backup_directory(Some(backup_dir.clone()));
+
+    with_hard_link_override(
+        |_, _| Err(io::Error::from_raw_os_error(super::CROSS_DEVICE_ERROR_CODE)),
+        || {
+            with_backup_rename_override(
+                |_, _| {
+                    Some(Err(io::Error::from_raw_os_error(
+                        super::CROSS_DEVICE_ERROR_CODE,
+                    )))
+                },
+                || {
+                    plan.execute_with_options(LocalCopyExecution::Apply, options)
+                        .expect("symlink backup must not attempt an ACL through the link")
+                },
+            )
+        },
+    );
+
+    let backup = backup_dir.join("source/link~");
+    assert_eq!(
+        fs::read_link(&backup).expect("read backup link"),
+        PathBuf::from("old_target"),
+        "symlink tier did not place the backup"
     );
 }
 
