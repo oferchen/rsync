@@ -74,6 +74,9 @@ pub(in crate::ssh) enum Opcode {
     /// `IdentityAgent <path>`.
     /// upstream: openssh/readconf.c:235 `oIdentityAgent`, arm at :2419.
     IdentityAgent,
+    /// `ConnectTimeout <time>|none`.
+    /// upstream: openssh/readconf.c:274 `oConnectTimeout`, arm at :1215.
+    ConnectTimeout,
     /// A keyword no reader resolves. Ignored by both.
     Unknown,
 }
@@ -86,6 +89,7 @@ pub(in crate::ssh) enum Opcode {
 /// openssh/readconf.c:964-966).
 const KEYWORDS: &[(&str, Opcode)] = &[
     ("compression", Opcode::Compression),
+    ("connecttimeout", Opcode::ConnectTimeout),
     ("host", Opcode::Host),
     ("hostname", Opcode::Hostname),
     ("identitiesonly", Opcode::IdentitiesOnly),
@@ -127,6 +131,10 @@ pub(in crate::ssh) enum ValueKind {
     /// One token, taken verbatim - a string, a path, or a port number.
     /// upstream: the `parse_string` family (openssh/readconf.c:1441-1445).
     Single,
+    /// One token, read as a time value by `convtime`, with `none` as the
+    /// unset sentinel. upstream: the `parse_time` arm
+    /// (openssh/readconf.c:1215-1233).
+    Time,
     /// No shape, because no reader resolves the keyword.
     Unknown,
 }
@@ -141,6 +149,7 @@ impl Opcode {
             Self::Hostname | Self::User | Self::Port | Self::IdentityFile | Self::IdentityAgent => {
                 ValueKind::Single
             }
+            Self::ConnectTimeout => ValueKind::Time,
             Self::Unknown => ValueKind::Unknown,
         }
     }
@@ -153,13 +162,15 @@ impl Opcode {
     /// `parse_multistate_value` and print `missing argument.`
     /// (openssh/readconf.c:1108) while the single-token arms print
     /// `Missing argument.` (openssh/readconf.c:1364, :1397, :1444, :1562,
-    /// :2423). Deriving it from [`ValueKind`] is what keeps a new keyword
-    /// from picking the wrong one.
+    /// :2423) and the time arm prints `missing time value.`
+    /// (openssh/readconf.c:1219-1220). Deriving it from [`ValueKind`] is
+    /// what keeps a new keyword from picking the wrong one.
     #[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
     pub(in crate::ssh) fn missing_argument(self) -> Option<&'static str> {
         match self.value_kind() {
             ValueKind::Flag => Some("missing argument."),
             ValueKind::Single => Some("Missing argument."),
+            ValueKind::Time => Some("missing time value."),
             ValueKind::HostPatterns | ValueKind::MatchCriteria | ValueKind::Unknown => None,
         }
     }
@@ -193,6 +204,80 @@ pub(in crate::ssh) fn parse_flag_value(value: &str) -> Option<bool> {
         "no" | "false" => Some(false),
         _ => None,
     }
+}
+
+/// Parses a [`ValueKind::Time`] value into whole seconds.
+///
+/// A faithful port of upstream's `convtime` (openssh/misc.c:733-745) over
+/// `convtime_double` (openssh/misc.c:657-726): a sequence of decimal
+/// components, each with an optional case-insensitive qualifier - seconds
+/// (bare or `s`), minutes (`m`), hours (`h`), days (`d`), weeks (`w`) -
+/// summed together, so `1h30m` is 5400. A seconds component may appear
+/// only once (openssh/misc.c:685-686); a fraction is allowed only on a
+/// seconds component and must end in a digit (openssh/misc.c:710-717);
+/// anything else - a negative, an empty string, a stray byte - is `None`.
+/// Fractional seconds truncate and a total above `i32::MAX` is invalid,
+/// both from `convtime` itself (openssh/misc.c:737-742).
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) fn parse_time_value(value: &str) -> Option<u32> {
+    const MINUTES: f64 = 60.0;
+    const HOURS: f64 = 60.0 * MINUTES;
+    const DAYS: f64 = 24.0 * HOURS;
+    const WEEKS: f64 = 7.0 * DAYS;
+
+    if value.is_empty() {
+        return None;
+    }
+    let mut total = 0.0_f64;
+    let mut seen_seconds = false;
+    let mut rest = value;
+    while !rest.is_empty() {
+        // A component is a run of decimal digits and dots; any other lead
+        // byte, and any form strtod would accept beyond plain decimals,
+        // is rejected (openssh/misc.c:669-676).
+        let span = rest
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(rest.len());
+        let number = &rest[..span];
+        let val: f64 = number.parse().ok().filter(|v| *v >= 0.0)?;
+        rest = &rest[span..];
+
+        let multiplier = match rest.chars().next() {
+            // Bare seconds and `s` share upstream's once-only flag
+            // (openssh/misc.c:681-687).
+            None | Some('s' | 'S') => {
+                if seen_seconds {
+                    return None;
+                }
+                seen_seconds = true;
+                1.0
+            }
+            Some('m' | 'M') => MINUTES,
+            Some('h' | 'H') => HOURS,
+            Some('d' | 'D') => DAYS,
+            Some('w' | 'W') => WEEKS,
+            Some(_) => return None,
+        };
+
+        // A decimal point is legal only on a seconds component, and the
+        // digits must continue past it (openssh/misc.c:710-717), so `1.`
+        // and `1.5m` are both invalid.
+        if number.contains('.')
+            && (multiplier > 1.0 || !number.ends_with(|c: char| c.is_ascii_digit()))
+        {
+            return None;
+        }
+
+        total += val * multiplier;
+        if !rest.is_empty() {
+            rest = &rest[1..];
+        }
+    }
+    if total > f64::from(i32::MAX) {
+        return None;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Some(total as u32)
 }
 
 /// Byte-level glob matcher for a single `Host` or `Match` pattern token:
@@ -240,6 +325,7 @@ mod tests {
         ("IdentityFile", Opcode::IdentityFile),
         ("IdentitiesOnly", Opcode::IdentitiesOnly),
         ("IdentityAgent", Opcode::IdentityAgent),
+        ("ConnectTimeout", Opcode::ConnectTimeout),
     ];
 
     #[test]
@@ -314,11 +400,67 @@ mod tests {
                 "{opcode:?}"
             );
         }
+        // The time arm has its own wording (openssh/readconf.c:1219-1220),
+        // measured against real `ssh -G`.
+        assert_eq!(
+            Opcode::ConnectTimeout.missing_argument(),
+            Some("missing time value.")
+        );
         // The block-opening keywords consume a LIST; an absent value
         // leaves the walk empty rather than refusing
         // (openssh/readconf.c:1829-1831).
         for opcode in [Opcode::Host, Opcode::Match, Opcode::Unknown] {
             assert_eq!(opcode.missing_argument(), None, "{opcode:?}");
+        }
+    }
+
+    /// `convtime` accepts the documented decimal-with-qualifier forms.
+    /// Every accepted row was measured against real `ssh -G`
+    /// (`ConnectTimeout <value>` in a fixture), not derived from the C.
+    #[test]
+    fn time_values_cover_convtimes_accepted_forms() {
+        for (input, expected) in [
+            ("0", 0),
+            ("7", 7),
+            ("30S", 30),
+            ("90m", 5400),
+            ("1m30s", 90),
+            ("1h30m", 5400),
+            ("2d", 172_800),
+            ("1w", 604_800),
+            ("1.5", 1),
+            ("2147483647", i32::MAX as u32),
+        ] {
+            assert_eq!(parse_time_value(input), Some(expected), "{input}");
+        }
+    }
+
+    /// The refusals: negatives (first byte fails the digit test,
+    /// openssh/misc.c:669-670), a repeated seconds component
+    /// (openssh/misc.c:685-686), fractions outside seconds and a trailing
+    /// dot (openssh/misc.c:710-717), overflow past `INT_MAX`
+    /// (openssh/misc.c:740-741), and `none`, which is NOT convtime's to
+    /// accept - the readconf arm strcmp's it case-SENSITIVELY before
+    /// calling convtime (openssh/readconf.c:1222).
+    #[test]
+    fn time_values_reject_what_convtime_rejects() {
+        for input in [
+            "",
+            "-5",
+            "bogus",
+            "none",
+            "NONE",
+            "5x",
+            "1.",
+            ".",
+            "1.5m",
+            "5s5",
+            "5 s",
+            "2147483648",
+            "1e3",
+            "+5",
+        ] {
+            assert_eq!(parse_time_value(input), None, "{input}");
         }
     }
 
