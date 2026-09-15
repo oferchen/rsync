@@ -328,6 +328,29 @@ impl BatchReader {
         self.batch_file.as_mut()
     }
 
+    /// Consumes the reader, returning the batch stream positioned at the
+    /// first body byte - the `f_in` a local-replay receiver drives.
+    ///
+    /// Mirrors upstream `--read-batch`, where the batch fd itself becomes the
+    /// receiving client's `f_in` once `read_stream_flags()` and
+    /// `setup_protocol()` have consumed the header values
+    /// (`main.c:639-651`, `compat.c:604-613`).
+    ///
+    /// # Errors
+    ///
+    /// Fails when [`read_header`](Self::read_header) has not been called:
+    /// a stream still positioned at the header would make the receiver parse
+    /// header bytes as wire data.
+    pub fn into_body(self) -> BatchResult<impl Read> {
+        if self.header.is_none() {
+            return Err(BatchError::Io(io::Error::other(
+                "Must read header before taking the batch body stream",
+            )));
+        }
+        self.batch_file
+            .ok_or_else(|| BatchError::Io(io::Error::other("Batch file not open")))
+    }
+
     /// Returns the NDX codec initialized during flist reading.
     ///
     /// The codec carries state from reading incremental flist segment NDX

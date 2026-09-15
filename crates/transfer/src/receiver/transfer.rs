@@ -21,6 +21,7 @@ mod phases;
 mod pipeline;
 mod pipelined;
 mod pipelined_incremental;
+mod replay;
 mod setup;
 mod sync;
 
@@ -117,9 +118,13 @@ impl ReceiverContext {
     ) -> io::Result<TransferStats> {
         // upstream: main.c:1359 `!read_batch` keeps the batch f_in unmultiplexed.
         self.local_replay = true;
+        // The sender-driven replay drive reports no per-file progress
+        // (upstream's replay generator writes progress into a dead pipe);
+        // the parameter is kept so the signature matches the other drivers.
+        let _ = progress;
         let reader = crate::reader::ServerReader::new_plain(batch_input);
         let mut sink = crate::writer::DiscardSink::new();
-        self.run(reader, &mut sink, progress)
+        self.run_replay(reader, &mut sink)
     }
 
     /// True when this receiver is a *client* that was handed an empty file
@@ -921,6 +926,78 @@ mod tests {
         assert!(
             !ctx.should_activate_input_multiplex(),
             "a header-seeded batch f_in must stay Plain (upstream !read_batch)"
+        );
+    }
+
+    /// The recorded stream, not the local generator's plan, decides what is
+    /// transferred: a batch whose delta stream carries no update for a file
+    /// the replaying destination lacks must replay to a clean no-op finish.
+    ///
+    /// WHY: upstream's `--read-batch` receiver obeys the stream
+    /// (`receiver.c:828-862` reads each recorded row; the replaying
+    /// generator's own requests fall into a dead-end pipe, `main.c:639-651`).
+    /// The record-time generator saw an up-to-date destination and requested
+    /// nothing, so the batch body is just the phase `NDX_DONE`s, the stats
+    /// trailer, and the goodbye. A lockstep request/echo drive would plan a
+    /// request for the missing file and then die reading `NDX_DONE` with the
+    /// request outstanding - which is exactly how re-routing this through the
+    /// network pipeline fails. This is the dispatch-shape pin for the
+    /// sender-driven replay loop.
+    #[test]
+    fn run_local_replay_obeys_recorded_stream_not_local_plan() {
+        use protocol::codec::{ProtocolCodec, create_protocol_codec};
+        use protocol::flist::FileEntry;
+
+        let dest = test_support::create_tempdir();
+        let proto = ProtocolVersion::try_from(32u8).unwrap();
+
+        let handshake = HandshakeResult {
+            protocol: proto,
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: proto,
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![dest.path().as_os_str().to_owned()],
+            ..Default::default()
+        };
+        config.connection.client_mode = true;
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        // Recorded body: a one-file flist, then no transfer rows at all -
+        // three phase NDX_DONEs (receiver.c:809 max_phase = 2), the sender's
+        // five varlong30 stats (main.c:362-373), and the goodbye NDX_DONE.
+        let mut recorded = Vec::new();
+        let mut flist_writer = FileListWriter::new(proto);
+        let entry = FileEntry::new_file("absent.txt".into(), 42, 0o644);
+        flist_writer.write_entry(&mut recorded, &entry).unwrap();
+        flist_writer.write_end(&mut recorded, None).unwrap();
+        recorded.extend_from_slice(&[0x00, 0x00, 0x00]);
+        let stats_codec = create_protocol_codec(proto.as_u8());
+        for _ in 0..5 {
+            stats_codec.write_stat(&mut recorded, 0).unwrap();
+        }
+        recorded.push(0x00);
+
+        let stats = ctx
+            .run_local_replay(Cursor::new(recorded), None)
+            .expect("a recorded no-op batch must replay to completion");
+
+        assert_eq!(stats.files_listed, 1, "the recorded flist has one entry");
+        assert_eq!(
+            stats.files_transferred, 0,
+            "no recorded transfer row means no file is materialised"
+        );
+        assert!(
+            !dest.path().join("absent.txt").exists(),
+            "the replay must not invent an update the batch does not carry"
         );
     }
 
