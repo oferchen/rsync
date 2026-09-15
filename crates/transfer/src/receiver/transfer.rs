@@ -306,6 +306,50 @@ impl ReceiverContext {
         self.config.flags.delete && self.config.deletion.late_delete
     }
 
+    /// True when the delete passes may trust `file_list` as the complete
+    /// keep-set: every announced file list has been received and no received
+    /// segment has been reclaimed.
+    ///
+    /// Both delete phases build their keep-set from a whole `file_list` walk
+    /// (`run_immediate_delete_pass` / `collect_delayed_deletions`). An entry
+    /// that has not arrived yet - or whose heap data was freed by
+    /// `reclaim_oldest_segment` - cannot protect its destination file, so a
+    /// sweep over an incomplete list would classify still-pending files as
+    /// extraneous and unlink them. Upstream never tests this at delete time;
+    /// its call sites make it true by construction:
+    ///
+    /// - `compat.c:171-177` `set_allow_inc_recurse()` - `--delete-before` and
+    ///   `--delete-after` on the receiving side disable INC_RECURSE outright,
+    ///   so both `do_delete_pass()` sites (`generator.c:2753-2754` before the
+    ///   walk, `generator.c:2901-2902` after it) only ever sweep against an
+    ///   eagerly built, complete list.
+    /// - `generator.c:2780-2801` - the per-directory `delete_in_dir()` under
+    ///   INC_RECURSE runs exactly when `cur_flist` IS that directory's fully
+    ///   received segment, and its keep-set probe is scoped to that segment
+    ///   (`generator.c:347` `flist_find_ignore_dirness(cur_flist, fp)`).
+    /// - `generator.c:2836-2845` + `generator.c:2899-2900` - the closing
+    ///   `delete_in_dir(NULL, ..)` and `do_delayed_deletions()` run only after
+    ///   the `do {..} while (cur_flist->next)` loop consumed every list; its
+    ///   inner wait breaks on `cur_flist->next || flist_eof`
+    ///   (`generator.c:2838`), so both sites are downstream of `flist_eof`
+    ///   (`flist.c:112` - "all the file-lists are now known").
+    ///
+    /// The oc translation of that invariant: without INC_RECURSE the single
+    /// list arrives whole and is complete by construction (`receive.rs` sets
+    /// `flist_eof` right after the initial receive); with INC_RECURSE the
+    /// terminating `NDX_FLIST_EOF` must have been read (`flist_eof`), and in
+    /// both regimes no segment may have been reclaimed
+    /// (`first_segment_idx == 0`) since reclaim frees the very names the
+    /// keep-set is built from. Every live driver satisfies this today via the
+    /// up-front `ensure_all_segments_loaded` drain; the INC_RECURSE-on-pull
+    /// conversion (see `compute_allow_inc_recurse` in `lib.rs`) must either
+    /// keep it true at both delete sites or split the sweep per-segment the
+    /// way upstream's `delete_in_dir` does.
+    pub(in crate::receiver) fn delete_pass_flist_complete(&self) -> bool {
+        let inc_recurse = crate::receiver::ndx_stream::FlistMarkerSink::inc_recurse(self);
+        (!inc_recurse || self.flist_eof) && self.first_segment_idx == 0
+    }
+
     /// Runs the destination delete pass for `phase` and folds its results into
     /// `stats`. Called once at the early site (before the per-file loop) and once
     /// at the late site (after it, before finalize); the mode decides what each
@@ -342,6 +386,21 @@ impl ReceiverContext {
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     {
         use crate::generator::io_error_flags::IOERR_GENERAL;
+
+        // The keep-set below is the whole `file_list`, so sweeping before
+        // every segment has landed would delete files a later segment still
+        // lists. Unreachable on today's eager-drain drivers (see
+        // `delete_pass_flist_complete`); the skip mirrors the soft arm
+        // upstream applies to its analogous incomplete-flist hazard
+        // (generator.c:304-311) rather than aborting the transfer.
+        if !self.delete_pass_flist_complete() {
+            debug_assert!(
+                false,
+                "delete pass invoked on an incomplete file list \
+                 (flist_eof unset or a segment reclaimed)"
+            );
+            return Ok(());
+        }
 
         // upstream: generator.c:304-311 delete_in_dir() - if the sender hit a
         // general I/O error while scanning the source, its file list may be
