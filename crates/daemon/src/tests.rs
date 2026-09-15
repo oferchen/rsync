@@ -292,6 +292,10 @@ include!("tests/chunks/daemon_negotiation_authentication.rs");
 include!("tests/chunks/daemon_negotiation_version.rs");
 include!("tests/chunks/daemon_negotiation_error_handling.rs");
 include!("tests/chunks/daemon_negotiation_error_host_allow_blocks_unlisted.rs");
+// PROXY protocol trusted-peer gate (upstream clientserver.c:1443-1446)
+include!("tests/chunks/daemon_proxy_protocol_untrusted_peer_is_refused.rs");
+include!("tests/chunks/daemon_proxy_protocol_trusted_peer_header_is_honoured.rs");
+include!("tests/chunks/daemon_proxy_protocol_empty_hosts_warns_and_fail_closes.rs");
 // Protocol 28 forced-mode daemon negotiation
 include!("tests/chunks/daemon_protocol_28_forced_negotiation.rs");
 include!("tests/chunks/runtime_options_allows_relative_path_when_use_chroot_disabled.rs");
