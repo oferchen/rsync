@@ -1,0 +1,24 @@
+name: tmp macOS testsuite dispatch
+
+# TEMPORARY branch-only entry point: lets the macOS reusable workflow run on
+# demand so its four legs can be re-measured outside a pull request. Removed
+# before merge.
+on:
+  workflow_dispatch:
+    inputs:
+      transport:
+        description: 'pipe or tcp'
+        type: string
+        default: 'pipe'
+
+permissions:
+  contents: read
+
+jobs:
+  uts-macos:
+    uses: ./.github/workflows/_upstream-testsuite-macos.yml
+    with:
+      upstream_rsync_version: '3.5.0'
+      transport: ${{ inputs.transport }}
+      expect_result_macos: ${{ inputs.transport == 'tcp' && 'tools/ci/upstream-3.5.0-expect.macos.nonroot.tcp.txt' || 'tools/ci/upstream-3.5.0-expect.macos.nonroot.txt' }}
+      expect_result_macos_root: ${{ inputs.transport == 'tcp' && 'tools/ci/upstream-3.5.0-expect.macos.root.tcp.txt' || 'tools/ci/upstream-3.5.0-expect.macos.root.txt' }}
