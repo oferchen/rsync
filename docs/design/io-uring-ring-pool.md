@@ -348,6 +348,5 @@ does not block any of R1-R4.
   plan for #1937.
 - `docs/design/io-uring-bgid-namespace.md` - bgid namespace bound
   (#2044).
-- `docs/design/io-uring-adaptive-buffer-pool.md` /
-  `docs/design/iouring-adaptive-buffer-pool.md` - adaptive sizing
+- `docs/design/io-uring-adaptive-buffer-pool.md` - adaptive sizing
   (#2045).

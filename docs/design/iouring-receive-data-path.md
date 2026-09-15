@@ -7,7 +7,7 @@ Companion docs already in tree:
 
 - `docs/design/iouring-registered-buffer-adaptive-sizing.md` - registered
   buffer group sizing and lifecycle.
-- `docs/design/iouring-adaptive-buffer-pool.md` - cross-thread buffer
+- `docs/design/io-uring-adaptive-buffer-pool.md` - cross-thread buffer
   pool that supplies the SPSC chunks today.
 - `docs/design/iouring-borrowed-slice-consumer.md` (#4218) - pin-counted
   pool that this work must compose with.
