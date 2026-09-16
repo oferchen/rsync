@@ -44,6 +44,29 @@ impl ClientConfig {
         self.quic_ca.as_deref()
     }
 
+    /// Returns the `--quic-cc` congestion controller, if one was supplied.
+    ///
+    /// `None` defers to `OC_RSYNC_QUIC_CC` then the built-in default (BBR).
+    /// Available only under the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-cc")]
+    pub const fn quic_cc(&self) -> Option<rsync_io::quic::CongestionAlgorithm> {
+        self.quic_cc
+    }
+
+    /// Returns the `--quic-window` flow-control window in bytes, if one was
+    /// supplied.
+    ///
+    /// `None` defers to `OC_RSYNC_QUIC_WINDOW` then the built-in default.
+    /// Available only under the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-window")]
+    pub const fn quic_window(&self) -> Option<u64> {
+        self.quic_window
+    }
+
     /// Returns the configured connect program, if any.
     #[doc(alias = "--connect-program")]
     pub fn connect_program(&self) -> Option<&OsStr> {

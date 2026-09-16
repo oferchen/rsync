@@ -160,6 +160,10 @@ pub fn run_daemon_transfer(
     let quic_dial = QuicDialParams {
         #[cfg(feature = "quic")]
         ca: config.quic_ca().map(std::path::Path::to_path_buf),
+        #[cfg(feature = "quic")]
+        cc: config.quic_cc(),
+        #[cfg(feature = "quic")]
+        window: config.quic_window(),
     };
     let stream = open_daemon_stream(
         &request.address,

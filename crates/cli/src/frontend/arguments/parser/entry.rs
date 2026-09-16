@@ -101,8 +101,10 @@ fn check_basis_dir_limit(matches: &clap::ArgMatches) -> Result<(), clap::Error> 
 /// oc-specific: upstream rsync has no `--quic` modifier.
 #[cfg(not(feature = "quic"))]
 fn check_quic_feature(matches: &clap::ArgMatches) -> Result<(), clap::Error> {
-    let quic_requested =
-        matches.get_flag("quic") || matches.get_one::<OsString>("quic-ca").is_some();
+    let quic_requested = matches.get_flag("quic")
+        || matches.get_one::<OsString>("quic-ca").is_some()
+        || matches.get_one::<String>("quic-cc").is_some()
+        || matches.get_one::<OsString>("quic-window").is_some();
     if !quic_requested {
         return Ok(());
     }
@@ -113,6 +115,30 @@ fn check_quic_feature(matches: &clap::ArgMatches) -> Result<(), clap::Error> {
          build (rebuild with the 'quic' feature). For the daemon protocol over \
          TCP, use an rsync:// or host::module target instead.\n",
     ))
+}
+
+/// Parses the `--quic-window` value (bytes, optional `K`/`M`/`G` suffix) into a
+/// byte count, failing loudly on garbage, overflow, or a non-UTF-8 value.
+///
+/// Reuses the workspace size parser (`bandwidth::parse_size_arg`) so the suffix
+/// grammar matches `--max-size`/`--bwlimit`, rather than introducing a second
+/// parser.
+#[cfg(feature = "quic")]
+fn parse_quic_window(value: &std::ffi::OsStr) -> Result<u64, clap::Error> {
+    let invalid = || {
+        clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            "--quic-window expects a byte count with an optional K, M, or G suffix\n",
+        )
+    };
+    let text = value.to_str().ok_or_else(invalid)?;
+    let parsed = bandwidth::parse_size_arg(text, b'b').map_err(|_| invalid())?;
+    u64::try_from(parsed.bytes).map_err(|_| {
+        clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            "--quic-window value is too large\n",
+        )
+    })
 }
 
 /// Rejects a `-M` / `--remote-option` value that does not begin with a dash.
@@ -323,6 +349,23 @@ where
         .remove_one::<OsString>("quic-ca")
         .filter(|value| !value.is_empty())
         .map(std::path::PathBuf::from);
+    #[cfg(feature = "quic")]
+    let quic_cc = matches
+        .remove_one::<String>("quic-cc")
+        .map(|value| rsync_io::quic::CongestionAlgorithm::parse(&value))
+        .transpose()
+        .map_err(|error| {
+            clap::Error::raw(
+                clap::error::ErrorKind::ValueValidation,
+                format!("{error}\n"),
+            )
+        })?;
+    #[cfg(feature = "quic")]
+    let quic_window = matches
+        .remove_one::<OsString>("quic-window")
+        .filter(|value| !value.is_empty())
+        .map(|value| parse_quic_window(&value))
+        .transpose()?;
     let remote_options: Vec<OsString> = matches
         .remove_many::<OsString>("remote-option")
         .map(Iterator::collect)
@@ -1390,6 +1433,10 @@ where
         quic,
         #[cfg(feature = "quic")]
         quic_ca,
+        #[cfg(feature = "quic")]
+        quic_cc,
+        #[cfg(feature = "quic")]
+        quic_window,
         dparam,
         no_iconv,
         executability,

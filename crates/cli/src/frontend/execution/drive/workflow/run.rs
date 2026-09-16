@@ -61,6 +61,10 @@ where
         quic,
         #[cfg(feature = "quic")]
         quic_ca,
+        #[cfg(feature = "quic")]
+        quic_cc,
+        #[cfg(feature = "quic")]
+        quic_window,
         remote_options,
         rsync_path: _,
         protect_args,
@@ -568,6 +572,10 @@ where
             quic,
             #[cfg(feature = "quic")]
             quic_ca: quic_ca.as_deref(),
+            #[cfg(feature = "quic")]
+            quic_cc,
+            #[cfg(feature = "quic")]
+            quic_window,
             desired_protocol,
             password_override: password_override.clone(),
             no_motd,
@@ -935,6 +943,10 @@ where
         quic,
         #[cfg(feature = "quic")]
         quic_ca,
+        #[cfg(feature = "quic")]
+        quic_cc,
+        #[cfg(feature = "quic")]
+        quic_window,
         blocking_io,
         dry_run,
         list_only,

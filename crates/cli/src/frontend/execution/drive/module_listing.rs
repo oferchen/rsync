@@ -23,6 +23,13 @@ pub(super) struct ModuleListingInputs<'a> {
     /// certificate; `None` uses the system-roots default.
     #[cfg(feature = "quic")]
     pub quic_ca: Option<&'a std::path::Path>,
+    /// `--quic-cc` - client endpoint congestion controller for the listing.
+    #[cfg(feature = "quic")]
+    pub quic_cc: Option<rsync_io::quic::CongestionAlgorithm>,
+    /// `--quic-window` - client endpoint flow-control window (bytes) for the
+    /// listing.
+    #[cfg(feature = "quic")]
+    pub quic_window: Option<u64>,
     pub desired_protocol: Option<ProtocolVersion>,
     pub password_override: Option<Vec<u8>>,
     pub no_motd: bool,
@@ -58,6 +65,10 @@ where
         quic,
         #[cfg(feature = "quic")]
         quic_ca,
+        #[cfg(feature = "quic")]
+        quic_cc,
+        #[cfg(feature = "quic")]
+        quic_window,
         desired_protocol,
         password_override,
         no_motd,
@@ -125,6 +136,8 @@ where
     #[cfg(feature = "quic")]
     {
         list_options = list_options.with_quic_ca(quic_ca.map(std::path::Path::to_path_buf));
+        list_options = list_options.with_quic_cc(quic_cc);
+        list_options = list_options.with_quic_window(quic_window);
     }
 
     match run_module_list_with_password_and_options(

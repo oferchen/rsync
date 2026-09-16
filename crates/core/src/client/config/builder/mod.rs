@@ -294,6 +294,10 @@ pub struct ClientConfigBuilder {
     daemon_transport: crate::client::Transport,
     #[cfg(feature = "quic")]
     quic_ca: Option<PathBuf>,
+    #[cfg(feature = "quic")]
+    quic_cc: Option<rsync_io::quic::CongestionAlgorithm>,
+    #[cfg(feature = "quic")]
+    quic_window: Option<u64>,
     blocking_io: Option<bool>,
     iconv: IconvSetting,
     remote_shell: Option<Vec<OsString>>,
@@ -600,6 +604,10 @@ impl ClientConfigBuilder {
             daemon_transport: self.daemon_transport,
             #[cfg(feature = "quic")]
             quic_ca: self.quic_ca,
+            #[cfg(feature = "quic")]
+            quic_cc: self.quic_cc,
+            #[cfg(feature = "quic")]
+            quic_window: self.quic_window,
             blocking_io: self.blocking_io,
             iconv: self.iconv,
             remote_shell: self.remote_shell,

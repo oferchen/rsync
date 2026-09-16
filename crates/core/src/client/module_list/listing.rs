@@ -217,6 +217,10 @@ pub fn run_module_list_with_password_and_options(
         let quic_dial = QuicDialParams {
             #[cfg(feature = "quic")]
             ca: options.quic_ca().map(std::path::Path::to_path_buf),
+            #[cfg(feature = "quic")]
+            cc: options.quic_cc(),
+            #[cfg(feature = "quic")]
+            window: options.quic_window(),
         };
         open_daemon_stream(
             addr,

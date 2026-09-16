@@ -179,6 +179,16 @@ pub struct ModuleListOptions {
     /// present under the `quic` feature.
     #[cfg(feature = "quic")]
     quic_ca: Option<std::path::PathBuf>,
+    /// `--quic-cc` client endpoint congestion controller for QUIC listings.
+    /// `None` defers to `OC_RSYNC_QUIC_CC` then the default. Only present under
+    /// the `quic` feature.
+    #[cfg(feature = "quic")]
+    quic_cc: Option<rsync_io::quic::CongestionAlgorithm>,
+    /// `--quic-window` client endpoint flow-control window (bytes) for QUIC
+    /// listings. `None` defers to `OC_RSYNC_QUIC_WINDOW` then the default. Only
+    /// present under the `quic` feature.
+    #[cfg(feature = "quic")]
+    quic_window: Option<u64>,
 }
 
 impl ModuleListOptions {
@@ -197,6 +207,10 @@ impl ModuleListOptions {
             rsync_path: None,
             #[cfg(feature = "quic")]
             quic_ca: None,
+            #[cfg(feature = "quic")]
+            quic_cc: None,
+            #[cfg(feature = "quic")]
+            quic_window: None,
         }
     }
 
@@ -217,6 +231,46 @@ impl ModuleListOptions {
     #[must_use]
     pub fn quic_ca(&self) -> Option<&std::path::Path> {
         self.quic_ca.as_deref()
+    }
+
+    /// Supplies the `--quic-cc` congestion controller for QUIC listings.
+    ///
+    /// `None` (the default) defers to `OC_RSYNC_QUIC_CC` then the built-in
+    /// default (BBR). Available only under the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-cc")]
+    pub const fn with_quic_cc(mut self, cc: Option<rsync_io::quic::CongestionAlgorithm>) -> Self {
+        self.quic_cc = cc;
+        self
+    }
+
+    /// Returns the configured `--quic-cc` congestion controller, if any.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    pub const fn quic_cc(&self) -> Option<rsync_io::quic::CongestionAlgorithm> {
+        self.quic_cc
+    }
+
+    /// Supplies the `--quic-window` flow-control window (bytes) for QUIC
+    /// listings.
+    ///
+    /// `None` (the default) defers to `OC_RSYNC_QUIC_WINDOW` then the built-in
+    /// default. Available only under the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-window")]
+    pub const fn with_quic_window(mut self, bytes: Option<u64>) -> Self {
+        self.quic_window = bytes;
+        self
+    }
+
+    /// Returns the configured `--quic-window` flow-control window in bytes, if
+    /// any.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    pub const fn quic_window(&self) -> Option<u64> {
+        self.quic_window
     }
 
     /// Returns a new configuration that suppresses daemon MOTD lines.
