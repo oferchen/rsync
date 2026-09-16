@@ -18,6 +18,9 @@
 #   WHICHTESTS=00-hello.test tools/ci/...sh           # run a single test
 #   UPSTREAM_VERSION=3.4.4 tools/ci/...sh             # pin an older release
 #   PRESERVE_SCRATCH=yes tools/ci/...sh               # keep per-test scratch dirs
+#   UTS_JOBS=N tools/ci/...sh                          # runtests.py -j N: run up
+#                                                     # to N tests in parallel in
+#                                                     # ONE process (default 1)
 #
 # Python-suite options (see run_python_suite_mode):
 #   UPSTREAM_PEER_BIN=<path>  # --rsync-bin2: peer rsync for the daemon side and
@@ -182,11 +185,33 @@ published_bin_dirs=(/usr/local/bin /usr/bin)
 published_bin_prefix="oc-rsync-uts."
 testrun_timeout="${TESTRUN_TIMEOUT:-300}"
 
+# How many tests runtests.py runs at once (its own --parallel/-j). Default 1
+# keeps the historical serial behaviour so no REQUIRED context changes timing
+# or flakiness unless a caller opts in. runtests.py is built for this: each
+# test gets a unique per-testbase scratchdir and a private env copy (3.5.0
+# runtests.py:565-576, 906-919), and daemon tests serialise on the host-wide
+# port registry /tmp/rsync_test.lck rather than a fixed port (rsyncfns.py
+# claim_ports/claim_free_port), so N cells in ONE runtests process never
+# collide. This is the harness's OWN supported parallelism, preferred over
+# launching N separate harness invocations that would collide on the shared
+# resources this script namespaces below.
+uts_jobs="${UTS_JOBS:-1}"
+if ! [[ "$uts_jobs" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: UTS_JOBS must be a positive integer, got '${uts_jobs}'." >&2
+    exit 1
+fi
+
 # State for the xattr-capable loop-mounted scratch filesystem (see
 # setup_scratch_fs). Empty until a loop mount succeeds; the EXIT trap reads
 # these to unmount and delete the image.
 xattr_fs_image=""
 xattr_fs_mount=""
+
+# Per-run scratch tree the Python suite runs under (run_python_suite_mode).
+# Set once the directory is created and read by the EXIT trap so a SIGKILLed
+# run cannot strand a tree under the host-global scratch base. Named from
+# $uts_run_id so it is per-run, never per-leg - see run_python_suite_mode.
+uts_scratch_home=""
 
 KNOWN_FAILURES=()
 if [[ -f "$known_failures_conf" ]]; then
@@ -743,6 +768,19 @@ world_traversable_scratch_base() {
     return 0
 }
 
+# Compose the per-run Python-suite scratch tree path from its base and leg tags.
+#
+# Factored out of run_python_suite_mode so the non-collision property - two
+# concurrent runs of the same leg get DISTINCT trees - can be proved by calling
+# THIS function, not a hand copy of the naming (the fixture reads the real
+# behaviour). The $uts_run_id suffix is what makes it per-run rather than
+# per-leg; the leg tags stay so a preserved tree remains identifiable by leg.
+uts_scratch_home_path() {
+    local base=$1 mode_tag=$2 transport_tag=$3
+    printf '%s/oc-rsync-uts-scratch-%s-%s-%s' \
+        "$base" "$mode_tag" "$transport_tag" "$uts_run_id"
+}
+
 # Git-ref mode driver: delegate to upstream's own runtests.py.
 #
 # The 3.5.0dev testsuite is Python (runtests.py + testsuite/*_test.py), so we
@@ -1191,6 +1229,13 @@ run_python_suite_mode() {
     local transport_tag="pipe"
     local -a runtests_argv
     runtests_argv=(python3 ./runtests.py)
+    # runtests' own -j: N cells in ONE process, the parallelism lever upstream
+    # ships and isolates per test (see UTS_JOBS above). Added only when >1 so
+    # the default argv is byte-for-byte the historical serial one.
+    if (( uts_jobs > 1 )); then
+        echo "==> runtests.py parallelism: -j ${uts_jobs}" >&2
+        runtests_argv+=(--parallel="$uts_jobs")
+    fi
     if [[ "${USE_TCP:-no}" == "yes" ]]; then
         # --use-tcp runs daemon/proxy tests against a real loopback rsyncd
         # (RSYNC_TEST_USE_TCP=1) instead of degrading/SKIPping under the secure
@@ -1290,7 +1335,16 @@ run_python_suite_mode() {
     # runs (no root leg, no mount namespace) are unchanged.
     local scratch_base
     scratch_base=$(world_traversable_scratch_base "$log_root")
-    local scratch_home="${scratch_base}/oc-rsync-uts-scratch-${mode_tag}-${transport_tag}"
+    # PER-RUN, not per-leg. The base is host-global (/tmp), so a name keyed only
+    # on ${mode_tag}-${transport_tag} collides between two concurrent runs of the
+    # SAME leg on one host: run B's `rm -rf` below wipes run A's live per-test
+    # trees and runtests.py then fails link_stat with ENOENT. This is the exact
+    # hazard publish_oc_rsync_bin() fixed for the binary; $uts_run_id closes it
+    # for the sibling scratch tree the same way. The leg tags stay in the name so
+    # a preserved tree is still identifiable by leg.
+    local scratch_home
+    scratch_home="$(uts_scratch_home_path "$scratch_base" "$mode_tag" "$transport_tag")"
+    uts_scratch_home="$scratch_home"
     chmod -R u+rwX "$scratch_home" 2>/dev/null || true
     rm -rf "$scratch_home"
     mkdir -p "$scratch_home"
@@ -1580,11 +1634,23 @@ main() {
     fi
 }
 
-# Ensure the loop-ext4 scratch image is always unmounted and removed, even on
-# an early exit or failure. No-op when no image was mounted (git-ref mode,
-# fallback path, or local dev).
+# Remove this run's Python-suite scratch tree from the host-global base. The
+# in-run path removes it on normal completion; this collects the SIGKILLed /
+# timed-out case, where the per-run name (never reused) would otherwise
+# accumulate under /tmp. Guarded on a non-empty path so it is a no-op for the
+# shell-loop path and any run that never reached run_python_suite_mode.
+cleanup_scratch_home() {
+    [[ -n "${uts_scratch_home:-}" ]] || return 0
+    chmod -R u+rwX "$uts_scratch_home" 2>/dev/null || true
+    rm -rf -- "$uts_scratch_home" 2>/dev/null || true
+}
+
+# The EXIT-trap teardown: release every host-global and loop-mounted resource
+# this run acquired, so an early exit or failure leaves nothing stranded. Each
+# callee is a no-op when its resource was never acquired.
 cleanup_run() {
     cleanup_scratch_fs
+    cleanup_scratch_home
     cleanup_published_bin
 }
 
