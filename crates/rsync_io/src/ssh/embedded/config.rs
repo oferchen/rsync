@@ -484,6 +484,7 @@ fn raw_url_path(url_str: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use platform::env::EnvGuard;
 
     #[test]
     fn default_port_is_22() {
@@ -927,6 +928,17 @@ mod tests {
 
     #[test]
     fn from_url_preserves_defaults_for_non_url_fields() {
+        // `from_url` reads the default ssh_config load order, so a
+        // top-level directive in the developer's real `~/.ssh/config`
+        // (e.g. `ConnectTimeout`) would reach `connect_timeout` now that
+        // the pre-`Host` region is honoured. Point HOME/USERPROFILE at an
+        // empty directory so the assertion measures URL parsing alone.
+        // Safe under nextest's process-per-test isolation (no concurrent
+        // env mutation); EnvGuard restores the prior value on drop.
+        let home = tempfile::tempdir().expect("tempdir");
+        let _home = EnvGuard::set("HOME", home.path().as_os_str());
+        let _userprofile = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
         let (cfg, _) = SshConfig::from_url("ssh://host/path").unwrap();
         let defaults = SshConfig::default();
         assert_eq!(cfg.use_agent, defaults.use_agent);

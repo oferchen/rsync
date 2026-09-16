@@ -151,4 +151,24 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
         )
+        .arg(
+            Arg::new("quic-cc")
+                .long("quic-cc")
+                .value_name("ALGORITHM")
+                .help("Select the client's QUIC congestion controller: bbr (default), cubic, or newreno.")
+                .hide(quic_unavailable)
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(["bbr", "cubic", "newreno"]),
+        )
+        .arg(
+            Arg::new("quic-window")
+                .long("quic-window")
+                .value_name("SIZE")
+                .help("Size the client's QUIC flow-control window (bytes; K/M/G suffix accepted). Defaults to a BDP-generous value.")
+                .hide(quic_unavailable)
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
 }
