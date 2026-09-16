@@ -58,7 +58,26 @@ use compress::algorithm::CompressionAlgorithm;
 use compress::strategy::adaptive_level::AdaptiveLevelController;
 use compress::zlib::CompressionLevel;
 use filters::FilterRule;
-use logging::info_log;
+use logging::{info_log, info_log_bytes};
+
+/// Returns a path's raw bytes for embedding in a byte-capable notice.
+///
+/// On Unix the filename bytes are taken verbatim so a non-UTF-8 name survives
+/// to the notice render boundary - where `escape_for_output` escapes it - instead
+/// of being replaced with U+FFFD. This mirrors upstream, whose diagnostic buffer
+/// holds the raw filename bytes. On other platforms a `Path` is UTF-8 by
+/// construction, so `to_string_lossy` is exact.
+fn path_display_bytes(path: &std::path::Path) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        path.as_os_str().as_bytes().to_vec()
+    }
+    #[cfg(not(unix))]
+    {
+        path.to_string_lossy().into_owned().into_bytes()
+    }
+}
 use protocol::flist::FileListWriter;
 
 use super::overrides::{backup_rename, create_backup_hard_link};

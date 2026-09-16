@@ -283,6 +283,10 @@ where
     // the workflow itself uses. Without this, leftover Info events were
     // hardcoded to stderr and invisible to upstream tests that grep stdout.
     crate::frontend::progress::diagnostic::set_msgs_to_stderr(msgs_to_stderr_enabled);
+    // Record `--8-bit-output` alongside the stderr routing so the notice render
+    // boundary escapes a filename operand's bytes with the same `use_isprint`
+    // switch upstream's `rwrite()` applies (log.c:425 `!allow_8bit_chars`).
+    crate::frontend::progress::diagnostic::set_eight_bit_output(eight_bit_output);
 
     let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);
     logging::init(verbosity_config);

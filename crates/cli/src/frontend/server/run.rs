@@ -1279,7 +1279,7 @@ mod landlock_surfacing_tests {
                 DiagnosticEvent::Info { code, message, .. } => {
                     *code == LogCode::Warning && message.contains(needle)
                 }
-                DiagnosticEvent::Debug { .. } => false,
+                DiagnosticEvent::Debug { .. } | DiagnosticEvent::Bytes { .. } => false,
             })
             .count()
     }
@@ -1294,7 +1294,7 @@ mod landlock_surfacing_tests {
                     message,
                     ..
                 } => *flag == DebugFlag::Recv && *level == 1 && message.contains(needle),
-                DiagnosticEvent::Info { .. } => false,
+                DiagnosticEvent::Info { .. } | DiagnosticEvent::Bytes { .. } => false,
             })
             .count()
     }
