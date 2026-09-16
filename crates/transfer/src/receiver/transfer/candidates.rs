@@ -3065,15 +3065,20 @@ mod uptodate_notice_tests {
     }
 }
 
-/// A hostile `XMIT_HLINKED` wire bit against a receiver running without -H.
+/// A real hardlink follower decoded by a receiver running without -H.
 ///
-/// upstream: flist.c:1175-1184 records `FLAG_HLINKED` only under
-/// `preserve_hard_links`, and generator.c:1943 re-checks the option, so the
-/// bit alone has no effect: the file transfers normally. Pre-fix the decoded
-/// bit survived without -H, `is_hardlink_follower` (quick_check.rs) matched,
-/// and the receiver silently dropped the file from the transfer set at exit 0
-/// while `plan_dry_run` still itemized it as created - so `--dry-run` and the
-/// real run disagreed about the same wire stream.
+/// upstream: flist.c:875-876 reads the follower group-index varint under
+/// `protocol_version >= 30 && BITS_SETnUNSET(xflags, XMIT_HLINKED,
+/// XMIT_HLINK_FIRST)` with no `preserve_hard_links` check, so the no--H
+/// receiver consumes the same bytes a -H sender wrote or the flist stream
+/// desyncs. `recv_file_entry()` then records `FLAG_HLINKED` only under
+/// `preserve_hard_links` (flist.c:1175-1184) and generator.c:1943 re-checks
+/// the option, so without -H the follower has no hardlink effect and must
+/// transfer normally. Pre-fix the decoded bit survived without -H,
+/// `is_hardlink_follower` (quick_check.rs) matched, and the receiver silently
+/// dropped the file from the transfer set at exit 0 while `plan_dry_run` still
+/// itemized it as created - so `--dry-run` and the real run disagreed about
+/// the same wire stream.
 #[cfg(test)]
 mod hlink_wire_flag_tests {
     use std::ffi::OsString;
@@ -3089,46 +3094,70 @@ mod hlink_wire_flag_tests {
     use crate::receiver::stats::TransferStats;
     use crate::role::ServerRole;
 
-    /// Decodes one entry through the real wire decode path with the same
-    /// no--H reader the receiver constructs (receiver/context.rs
-    /// `with_preserve_hard_links(config.flags.hard_links)`), after injecting
-    /// the hostile extended-flags byte into an otherwise plain entry.
-    fn decode_hostile_entry() -> FileEntry {
-        use protocol::flist::{FileListReader, FileListWriter, XMIT_HLINKED};
-
-        // upstream: rsync.h:50 `XMIT_EXTENDED_FLAGS (1<<2)` - primary-byte
-        // bit announcing the extended flags byte (protocol 28+).
-        const XMIT_EXTENDED_FLAGS: u8 = 1 << 2;
+    /// Decodes a genuine hardlink follower through the real wire decode path
+    /// with the same no--H reader the receiver constructs (receiver/context.rs
+    /// `with_preserve_hard_links(config.flags.hard_links)`).
+    ///
+    /// A -H sender emits a leader (`XMIT_HLINK_FIRST`, full metadata) followed
+    /// by an abbreviated follower (`XMIT_HLINKED` + a group-index varint, no
+    /// metadata). upstream: flist.c:875-876 reads that varint on the flag bits
+    /// alone, so the no--H receiver consumes the same bytes or the stream
+    /// desyncs; recv_file_entry() then clears the surviving `FLAG_HLINKED`
+    /// interpretation when -H is off (read/mod.rs) so the follower stays a
+    /// plain file rather than a dropped "follower".
+    fn decode_follower_without_h() -> FileEntry {
+        use protocol::flist::{FileListReader, FileListWriter};
 
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         let mut data = Vec::new();
-        let mut writer = FileListWriter::new(protocol);
-        let mut entry = FileEntry::new_file("victim.txt".into(), 7, 0o100644);
-        entry.set_mtime(1_600_000_000, 0);
-        writer.write_entry(&mut data, &entry).unwrap();
+        let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
 
-        assert_eq!(
-            data[0] & XMIT_EXTENDED_FLAGS,
-            0,
-            "fixture: no extended flags yet"
-        );
-        data[0] |= XMIT_EXTENDED_FLAGS;
-        data.insert(1, XMIT_HLINKED);
+        // upstream: hlink.c:match_hard_links() - u32::MAX marks the group
+        // leader (XMIT_HLINK_FIRST); a later member points back at its NDX.
+        let mut leader = FileEntry::new_file("leader.txt".into(), 7, 0o100644);
+        leader.set_mtime(1_600_000_000, 0);
+        leader.set_hardlink_idx(u32::MAX);
+        let mut follower = FileEntry::new_file("victim.txt".into(), 7, 0o100644);
+        follower.set_mtime(1_600_000_000, 0);
+        follower.set_hardlink_idx(0);
 
-        let mut cursor = std::io::Cursor::new(&data[..]);
+        writer.write_entry(&mut data, &leader).unwrap();
+        writer.write_entry(&mut data, &follower).unwrap();
+        writer.write_end(&mut data, None).unwrap();
+
+        // Decode with the receiver's no--H reader, threading the growing
+        // segment so the abbreviated follower resolves its leader
+        // (flist.c:888-925 `goto create_object`).
         let mut reader = FileListReader::new(protocol);
-        let decoded = reader.read_entry(&mut cursor).unwrap().unwrap();
+        let mut cursor = std::io::Cursor::new(&data[..]);
+        let mut decoded: Vec<FileEntry> = Vec::new();
+        while let Some(entry) = reader
+            .read_entry_with_flist(&mut cursor, &decoded.clone())
+            .unwrap()
+        {
+            decoded.push(entry);
+        }
         assert_eq!(
             cursor.position() as usize,
             data.len(),
-            "stream stays in sync"
+            "the follower varint is consumed on the flag bits alone; the stream stays in sync"
         );
-        decoded
+        assert_eq!(decoded.len(), 2, "leader + follower decode");
+
+        let follower = decoded.pop().unwrap();
+        assert_eq!(follower.name(), "victim.txt");
+        // Without -H the decoded FLAG_HLINKED interpretation is cleared, so the
+        // follower is a plain file the transfer set keeps rather than drops.
+        assert!(
+            !follower.hlinked(),
+            "no--H decode must clear FLAG_HLINKED so the follower is not silently dropped"
+        );
+        follower
     }
 
     #[test]
     fn stray_hlinked_flag_without_h_transfers_and_dry_run_agrees() {
-        let hostile = decode_hostile_entry();
+        let hostile = decode_follower_without_h();
 
         let dir = test_support::create_tempdir();
         let dest = dir.path();
