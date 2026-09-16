@@ -134,7 +134,14 @@ pub(in crate::receiver) fn dir_merge_config_from_wire(
     wire_rule: &FilterRuleWireFormat,
 ) -> DirMergeConfig {
     let lossy = wire_rule.pattern.to_string_lossy();
-    let filename = lossy.rsplit('/').next().unwrap_or(lossy.as_ref());
+    // upstream: exclude.c:1553-1557 - a patternless CVS merge rule (`:C`)
+    // means `.cvsignore`. The daemon parse substitutes it before the rule is
+    // built, but a peer's wire rule may still arrive bare.
+    let filename = if wire_rule.cvs_exclude && lossy.is_empty() {
+        ".cvsignore"
+    } else {
+        lossy.rsplit('/').next().unwrap_or(lossy.as_ref())
+    };
     let mut config = DirMergeConfig::new(filename);
     if wire_rule.no_inherit {
         config = config.with_inherit(false);
@@ -151,6 +158,23 @@ pub(in crate::receiver) fn dir_merge_config_from_wire(
     if wire_rule.perishable {
         config = config.with_perishable(true);
     }
+    // upstream: exclude.c:1433-1437 - `w` (FILTRULE_WORD_SPLIT) cuts the merge
+    // file's records at any whitespace.
+    if wire_rule.word_split {
+        config = config.with_word_split(true);
+    }
+    // upstream: exclude.c:1381-1391 - `-`/`+` (FILTRULE_NO_PREFIXES) read every
+    // record as a bare pattern, `+` making each an include.
+    if wire_rule.no_prefixes {
+        config = config.with_no_prefixes(true, wire_rule.no_prefixes_include);
+    }
+    // upstream: exclude.c:1402-1409 - `C` implies NO_PREFIXES | WORD_SPLIT |
+    // NO_INHERIT | CVS_IGNORE together, so a `:C` merge reads its file with
+    // CVS semantics (word-split, exclude-only, `!` clears). Mirrors the
+    // sender-side decoder in `generator/filters.rs`.
+    if wire_rule.cvs_exclude {
+        config = config.with_cvs_mode(true).with_inherit(false);
+    }
     config
 }
 
@@ -166,6 +190,42 @@ mod tests {
             pattern: pattern.into(),
             ..FilterRuleWireFormat::default()
         }
+    }
+
+    /// A `:C` dir-merge decodes with CVS semantics on the RECEIVER too.
+    ///
+    /// upstream: exclude.c:1402-1409 - `C` implies NO_PREFIXES | WORD_SPLIT |
+    /// NO_INHERIT | CVS_IGNORE, and exclude.c:1553-1557 defaults the filename
+    /// to `.cvsignore`. This decoder serves both the daemon module's own
+    /// `filter = :C` and a client-sent `:C`; dropping the flags read each
+    /// merged `.cvsignore` with the standard one-rule-per-line grammar, so a
+    /// plain name line refused the parse or matched nothing.
+    #[test]
+    fn a_cvs_dir_merge_wire_rule_decodes_with_cvs_semantics() {
+        let wire = FilterRuleWireFormat {
+            rule_type: RuleType::DirMerge,
+            cvs_exclude: true,
+            word_split: true,
+            no_inherit: true,
+            no_prefixes: true,
+            ..FilterRuleWireFormat::default()
+        };
+
+        let config = dir_merge_config_from_wire(&wire);
+        assert_eq!(
+            config.filename(),
+            ".cvsignore",
+            "a bare CVS merge rule means .cvsignore"
+        );
+        assert!(config.cvs_mode(), "CVS grammar must survive the decode");
+        assert!(config.word_split(), "records are whitespace-cut");
+        assert!(!config.inherits(), "CVS rules do not inherit");
+        assert!(config.no_prefixes(), "records are bare patterns");
+        assert!(!config.no_prefixes_include(), "CVS records are excludes");
+        assert!(
+            !config.excludes_self(),
+            "only `e` hides the merge file itself"
+        );
     }
 
     /// An unsided `!` must pop every rule that precedes it.
