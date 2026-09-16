@@ -243,19 +243,16 @@ pub(in crate::local_copy) fn open_destination_writer(
                     ),
                 ));
             };
-            // ⚠ Upstream never passes `O_TRUNC` here, and this does. The
-            // difference is one unported half, not a policy choice: upstream's
-            // generator makes `partialptr` the delta basis as well as the
-            // in-place target (`generator.c:2270-2273` - `fnamecmp = partialptr;
-            // fnamecmp_type = FNAMECMP_PARTIAL_DIR`), so its reconstruction
-            // reads the entry it is writing and a final `ftruncate` sizes the
-            // result. This executor still picks its basis from the destination
-            // or a `--fuzzy` candidate only, so the partial entry is pure
-            // output: nothing reads it back, and its old tail has to go on open
-            // or it would survive past a shorter result. When the basis half is
-            // ported this becomes `delta_signature.is_none()`, exactly as
-            // `WriteStrategy::Inplace` above.
-            let should_truncate = true;
+            // upstream: generator.c:2270-2273 makes `partialptr` the delta basis
+            // (`fnamecmp = partialptr; fnamecmp_type = FNAMECMP_PARTIAL_DIR`) as
+            // well as the in-place target, so the reconstruction reads the entry
+            // it is rewriting and a final `ftruncate` sizes the result. Truncate
+            // only in the whole-file case (no delta basis), where the entry is
+            // pure output and its old tail must go on open or it would survive
+            // past a shorter result. With a delta the entry IS the basis: keep it
+            // so the delta loop can read matched blocks from it (mirrors
+            // `WriteStrategy::Inplace` above).
+            let should_truncate = delta_signature.is_none();
             debug_log!(
                 Io,
                 3,

@@ -115,6 +115,7 @@ fn assert_copy_stops_at_the_declared_length(sparse: bool) {
             0,
             Instant::now(),
             false,
+            false,
         )
         .expect("copy");
     drop(writer);
@@ -276,6 +277,7 @@ fn assert_short_source_is_recorded(sparse: bool, paced: bool) {
             0,
             Instant::now(),
             false,
+            false,
         )
         .expect("a short source must not abort the copy");
     drop(writer);
@@ -340,6 +342,7 @@ fn a_complete_source_records_no_read_error() {
             0,
             0,
             Instant::now(),
+            false,
             false,
         )
         .expect("copy");
@@ -414,6 +417,7 @@ fn mover_progress_updates(whole_file_enabled: bool) -> (usize, u64) {
                 0,
                 0,
                 Instant::now(),
+                false,
                 false,
             )
             .expect("copy");
@@ -517,6 +521,7 @@ fn no_whole_file_copy_of_a_complete_source_records_no_read_error() {
             0,
             0,
             Instant::now(),
+            false,
             false,
         )
         .expect("copy");
@@ -644,6 +649,7 @@ fn delta_copy_outcome_with(
             0,
             0,
             Instant::now(),
+            false,
             false,
         )
         .expect("a short source must not abort the copy");
