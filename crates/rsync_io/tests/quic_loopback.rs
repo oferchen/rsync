@@ -3,10 +3,11 @@
 #![cfg(feature = "quic")]
 
 use std::io::{Read, Write};
+use std::num::NonZeroU64;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rsync_io::quic::{QuicAcceptor, QuicConnector, QuicTrust, RootCertStore};
+use rsync_io::quic::{BandwidthLimiter, QuicAcceptor, QuicConnector, QuicTrust, RootCertStore};
 
 const PAYLOAD_LEN: usize = 4096;
 /// Prompt-teardown bound: far below any idle timeout, so a pass proves the
@@ -246,6 +247,86 @@ fn teardown_is_prompt() {
     assert!(
         elapsed < TEARDOWN_BOUND,
         "teardown took {elapsed:?}, expected < {TEARDOWN_BOUND:?} (idle-timeout reliance?)"
+    );
+}
+
+/// Bandwidth-pacing floor: at 256 KiB/s a 256 KiB payload has an ideal
+/// steady-state of ~1 s, so a `--bwlimit` throttle must hold the write phase
+/// above a conservative lower bound. The bound is a fraction of the ideal so it
+/// stays CI-robust, yet it fails closed if the limiter is never invoked - the
+/// pre-fix inert behaviour where `--bwlimit` did not reach the QUIC writer.
+const PACING_FLOOR: Duration = Duration::from_millis(150);
+/// Bytes-per-second rate for the pacing test.
+const PACING_RATE: u64 = 256 * 1024;
+/// Payload size for the pacing test - fits inside the QUIC send buffer, so the
+/// write phase is bounded by the throttle sleeps, not by flow-control blocking.
+const PACING_PAYLOAD_LEN: usize = 256 * 1024;
+
+/// Runs a one-way loopback transfer of a fixed payload, wrapping the client's
+/// QUIC write half in [`QuicStream::throttled_writer`] with `limiter`. Returns
+/// the wall-clock time spent in the write phase alone (connection setup and
+/// teardown are excluded). The server drains to EOF and verifies the bytes.
+fn timed_paced_send(limiter: Option<BandwidthLimiter>) -> Duration {
+    let acceptor =
+        QuicAcceptor::bind("127.0.0.1:0".parse().expect("loopback addr")).expect("bind acceptor");
+    let addr = acceptor.local_addr().expect("local addr");
+    let cert = acceptor.certificate().clone().into_owned();
+
+    let payload: Vec<u8> = (0..PACING_PAYLOAD_LEN).map(|i| (i % 251) as u8).collect();
+    let expected = payload.clone();
+    let server = thread::spawn(move || {
+        let mut stream = acceptor.accept().expect("accept stream");
+        let mut got = Vec::new();
+        stream.read_to_end(&mut got).expect("read to FIN");
+        assert_eq!(got, expected, "payload corrupted");
+    });
+
+    let connector = QuicConnector::new(&cert).expect("build connector");
+    let stream = connector.connect(addr, "localhost").expect("connect");
+
+    // Time only the write phase: the throttle governs egress here, and the
+    // handshake/teardown are pure overhead that would only inflate the bound.
+    let mut writer = stream.throttled_writer(limiter);
+    let start = Instant::now();
+    writer.write_all(&payload).expect("write payload");
+    let elapsed = start.elapsed();
+
+    let mut stream = writer.into_inner();
+    stream.finish().expect("finish");
+    stream.close();
+    server.join().expect("server thread");
+    elapsed
+}
+
+/// `--bwlimit` throttles the QUIC writer: paced writes hold above the floor.
+///
+/// WHY: task 270 - `--bwlimit` was inert on QUIC because the sender's pacing
+/// decorator was never installed on the QUIC stream. This pins the fix by
+/// routing the write half through the shared [`ThrottlingWriter`] and asserting
+/// the write phase paces. It FAILS closed if `throttled_writer` stops honouring
+/// the limiter (e.g. wrapping with `None`), the pre-fix inert behaviour.
+#[test]
+fn bwlimit_paces_quic_writer() {
+    let limiter = BandwidthLimiter::new(NonZeroU64::new(PACING_RATE).expect("non-zero rate"));
+    let elapsed = timed_paced_send(Some(limiter));
+    assert!(
+        elapsed >= PACING_FLOOR,
+        "bwlimit must pace QUIC egress; write phase elapsed={elapsed:?}, floor={PACING_FLOOR:?}"
+    );
+}
+
+/// Non-vacuity: without a limiter the identical transfer is not throttled.
+///
+/// WHY: proves the floor in `bwlimit_paces_quic_writer` measures the throttle
+/// and not fixed QUIC overhead - the same payload over the same loopback path
+/// with `None` completes well under the floor, so a passing paced test cannot
+/// be explained by anything but the limiter.
+#[test]
+fn no_bwlimit_does_not_throttle_quic_writer() {
+    let elapsed = timed_paced_send(None);
+    assert!(
+        elapsed < PACING_FLOOR,
+        "un-throttled QUIC write should be prompt; elapsed={elapsed:?}, floor={PACING_FLOOR:?}"
     );
 }
 

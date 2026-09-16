@@ -3210,6 +3210,7 @@ name = "rsync_io"
 version = "0.6.4"
 dependencies = [
  "aes-gcm",
+ "bandwidth",
  "base64",
  "bytes",
  "chacha20poly1305",
