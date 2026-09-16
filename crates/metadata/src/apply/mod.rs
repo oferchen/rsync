@@ -863,9 +863,14 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     // upstream: rsync.c:751 - `if (crtimes_ndx && !(flags & ATTRS_SKIP_CRTIME))`
     //
     // Deliberately no `crtime != 0` test. Zero is a legitimate incoming value,
-    // not a stand-in for "absent": upstream's `get_create_time()` returns 0 for
-    // a daemon running without chroot (syscall.c, 3.4.3+), so a file list
-    // sourced from such a daemon carries 0 and upstream stamps it. "Absent" is
+    // not a stand-in for "absent": upstream's `get_create_time()` returned 0 for
+    // a daemon running without chroot (syscall.c, 3.4.3-3.4.4), so a file list
+    // sourced from such a daemon carries 0 and upstream stamps it. rsync 3.5.0
+    // reversed that: it removed the `am_daemon && !am_chrooted` crtime guard
+    // (syscall.c), keeping --crtimes functional on a no-chroot daemon and
+    // accepting the parent-symlink race as a documented residual, so a 3.5.0
+    // daemon reads the real crtime and returns 0 only on a getattrlist failure -
+    // either way 0 remains a legitimate value that must be stamped. "Absent" is
     // already excluded by `options.crtimes()`, which mirrors `crtimes_ndx` -
     // when it is set, the decoder always produces a crtime
     // (`flist/read/metadata.rs`: `Some(mtime)` for XMIT_CRTIME_EQ_MTIME, else
