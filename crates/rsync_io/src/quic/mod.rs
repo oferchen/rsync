@@ -49,6 +49,7 @@
 mod driver;
 mod error;
 mod trust;
+mod tuning;
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
@@ -67,6 +68,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use driver::{Role, spawn_io};
+use tuning::build_transport_config;
 
 pub use error::{
     TransportFault, connect_fault, connection_fault, driver_gone, io_fault, stream_reset,
@@ -371,9 +373,10 @@ impl QuicAcceptor {
             .map_err(io_err)?;
         server_crypto.alpn_protocols = vec![ALPN_RSYNC.to_vec()];
 
-        let server_config = ServerConfig::with_crypto(Arc::new(
+        let mut server_config = ServerConfig::with_crypto(Arc::new(
             QuicServerConfig::try_from(server_crypto).map_err(io_err)?,
         ));
+        server_config.transport_config(build_transport_config()?);
 
         let local = socket.local_addr()?;
         // allow_mtud = false: a std UdpSocket cannot set the don't-fragment
@@ -497,9 +500,10 @@ impl QuicConnector {
         let mut client_crypto = builder.with_no_client_auth();
         client_crypto.alpn_protocols = vec![ALPN_RSYNC.to_vec()];
 
-        let config = ClientConfig::new(Arc::new(
+        let mut config = ClientConfig::new(Arc::new(
             QuicClientConfig::try_from(client_crypto).map_err(io_err)?,
         ));
+        config.transport_config(build_transport_config()?);
         Ok(Self { config })
     }
 
