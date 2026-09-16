@@ -627,15 +627,14 @@ fn combined_rlptgod_equals_full_expansion() {
     );
 }
 
-/// Note: Multiple -a flags conflict in clap's argument parser, so this test
-/// verifies the expected behavior of rejecting repeated archive flags.
+/// upstream: popt has no duplicate-occurrence diagnostic - options.c:1502
+/// re-runs `case 'a'` per occurrence, so repeated -a flags are accepted
+/// (rsync 3.5.0 `-a -a` exits 0). clap's former rejection was oc-invented.
 #[test]
-fn archive_repeated_causes_error() {
-    let result = parse_args(["oc-rsync", "-a", "-a", "-a", "src", "dest"]);
-    assert!(
-        result.is_err(),
-        "Multiple -a flags should cause an argument conflict error"
-    );
+fn archive_repeated_is_accepted_like_popt() {
+    let args = parse_args(["oc-rsync", "-a", "-a", "-a", "src", "dest"]).unwrap();
+    assert!(args.archive, "repeated -a must leave archive enabled");
+    assert!(args.recursive, "archive semantics must survive the repeats");
 }
 
 #[test]

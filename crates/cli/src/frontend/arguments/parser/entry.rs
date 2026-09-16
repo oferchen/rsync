@@ -203,21 +203,22 @@ fn local_remote_option_argv(
     Some(folded)
 }
 
-/// Relaxes clap's duplicate-occurrence error to popt's last-wins rule for the
-/// folded local re-parse.
+/// Relaxes clap's duplicate-occurrence error to popt's last-wins rule.
 ///
 /// upstream: popt has no "used multiple times" diagnostic - each occurrence
 /// simply re-runs its `parse_arguments()` case (options.c:1502 `while ((opt =
-/// poptGetNextOpt(pc)) != -1)`), so a repeated option resolves to the last
-/// value. The server child a local transfer forks therefore accepts the argv
-/// `server_options()` builds even when a `-M` payload repeats a local option
-/// (options.c:3175-3182 appends `remote_options[]` after the serialized local
-/// set). clap instead errors for `Set`/`SetTrue`/`SetFalse` actions unless the
-/// arg overrides itself, which turned every local `--X -M--X` combination into
-/// a spurious "cannot be used multiple times" rejection. `Count` and `Append`
-/// actions already accept repeats, so only the three erroring actions gain the
-/// self-override - explicit `overrides_with` pairs (e.g. `--no-X`) keep their
-/// declared relationships.
+/// poptGetNextOpt(pc)) != -1)`), so a plainly repeated option (`--X --X`)
+/// resolves to the last value. The server child a local transfer forks
+/// likewise accepts the argv `server_options()` builds even when a `-M`
+/// payload repeats a local option (options.c:3175-3182 appends
+/// `remote_options[]` after the serialized local set). clap instead errors for
+/// `Set`/`SetTrue`/`SetFalse` actions unless the arg overrides itself, which
+/// turned every repeat - plain or via `-M` - into a spurious "cannot be used
+/// multiple times" rejection, so the relaxation applies to the primary parse
+/// and the folded local re-parse alike. `Count` and `Append` actions already
+/// accept repeats, so only the three erroring actions gain the self-override -
+/// explicit `overrides_with` pairs (e.g. `--no-X`) keep their declared
+/// relationships.
 fn popt_last_wins(command: clap::Command) -> clap::Command {
     use clap::ArgAction;
     command.mut_args(|arg| match arg.get_action() {
@@ -249,7 +250,7 @@ where
         args.push(OsString::from(program_name.as_str()));
     }
 
-    let command = clap_command(program_name.as_str());
+    let command = popt_last_wins(clap_command(program_name.as_str()));
     let args = hoist_options_before_operands(&command, args);
     let args = expand_short_options(&command, args);
     let mut matches = command.try_get_matches_from(args.clone())?;

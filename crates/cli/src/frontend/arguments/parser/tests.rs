@@ -1203,3 +1203,121 @@ fn no_long_option_rejects_its_own_remote_option_duplicate() {
         }
     }
 }
+
+/// A plainly repeated flag (`--X --X`, no `-M` involved) parses on the
+/// primary command.
+///
+/// upstream: popt has no duplicate-occurrence diagnostic - options.c:1502
+/// re-runs the option's case per occurrence - so `rsync --partial --partial`
+/// exits 0. clap's "cannot be used multiple times" rejection was oc-invented.
+#[test]
+fn plain_duplicate_flag_is_accepted() {
+    let parsed = parse_test_args(["--partial", "--partial", "src/", "dst/"])
+        .expect("--partial --partial must parse like popt");
+    assert!(parsed.partial, "the repeated flag must still be in effect");
+}
+
+/// A plainly repeated VALUE option resolves to the LAST value, in both
+/// orders, mirroring popt's occurrence loop. Oracle: rsync 3.5.0
+/// `--debug=deltasum2` reports `blength=1024` for `--block-size=700
+/// --block-size=1024` and `blength=700` for the reverse.
+#[test]
+fn plain_duplicate_value_option_last_wins() {
+    let parsed = parse_test_args(["--block-size=700", "--block-size=1024", "src/", "dst/"])
+        .expect("repeated --block-size must parse like popt");
+    assert_eq!(
+        parsed.block_size.as_deref(),
+        Some(std::ffi::OsStr::new("1024")),
+        "the last occurrence must win"
+    );
+    let parsed = parse_test_args(["--block-size=1024", "--block-size=700", "src/", "dst/"])
+        .expect("repeated --block-size must parse like popt");
+    assert_eq!(
+        parsed.block_size.as_deref(),
+        Some(std::ffi::OsStr::new("700")),
+        "the last occurrence must win in the reverse order too"
+    );
+}
+
+/// `--max-size` repeats resolve to the last value in both orders. Oracle:
+/// rsync 3.5.0 `-rn -v --max-size=1 --max-size=1M` lists a 1000-byte file
+/// (last 1M wins) and the reverse order skips it (last 1 wins).
+#[test]
+fn plain_duplicate_max_size_last_wins() {
+    let parsed = parse_test_args(["--max-size=1", "--max-size=1M", "src/", "dst/"])
+        .expect("repeated --max-size must parse like popt");
+    assert_eq!(parsed.max_size.as_deref(), Some(std::ffi::OsStr::new("1M")));
+    let parsed = parse_test_args(["--max-size=1M", "--max-size=1", "src/", "dst/"])
+        .expect("repeated --max-size must parse like popt");
+    assert_eq!(parsed.max_size.as_deref(), Some(std::ffi::OsStr::new("1")));
+}
+
+/// `--timeout` repeats parse and keep the last value (rsync 3.5.0 accepts
+/// `--timeout=99 --timeout=7` with exit 0).
+#[test]
+fn plain_duplicate_timeout_last_wins() {
+    let parsed = parse_test_args(["--timeout=99", "--timeout=7", "src/", "dst/"])
+        .expect("repeated --timeout must parse like popt");
+    assert_eq!(parsed.timeout.as_deref(), Some(std::ffi::OsStr::new("7")));
+}
+
+/// Declared `--X`/`--no-X` override pairs keep their LAST-WINS relationship
+/// after the duplicate relaxation: the self-override is appended to the
+/// pair's declared `overrides_with`, never substituted for it.
+#[test]
+fn no_x_pair_override_survives_duplicate_relaxation() {
+    let parsed = parse_test_args(["--recursive", "--no-recursive", "src/", "dst/"])
+        .expect("--recursive --no-recursive must parse");
+    assert!(!parsed.recursive, "the later --no-recursive must win");
+    let parsed = parse_test_args(["--no-recursive", "--recursive", "src/", "dst/"])
+        .expect("--no-recursive --recursive must parse");
+    assert!(parsed.recursive, "the later --recursive must win");
+}
+
+/// Count actions still ACCUMULATE across repeats - the last-wins
+/// self-override must not touch them.
+#[test]
+fn count_actions_still_accumulate_across_repeats() {
+    let parsed = parse_test_args(["-v", "-v", "src/", "dst/"]).expect("repeated -v must parse");
+    assert_eq!(parsed.verbosity, 2, "-v -v must still count to 2");
+    let parsed = parse_test_args(["--old-args", "--old-args", "src/", "dst/"])
+        .expect("repeated --old-args must parse");
+    assert_eq!(
+        parsed.old_args,
+        Some(2),
+        "--old-args --old-args must still reach level 2 (options.c:1642)"
+    );
+}
+
+/// Class-level drift guard: NO long option in the clap table may report
+/// clap's "cannot be used multiple times" for the plain `--X --X` shape.
+///
+/// upstream: the rsync 3.5.0 binary contains no such diagnostic at all -
+/// popt re-runs the option's `parse_arguments()` case per occurrence
+/// (options.c:1502), so every plain repeat is accepted with the last value
+/// winning. Any other rejection (conflicts, invalid values, mode checks) is
+/// allowed here because upstream has those too. Iterating the live option
+/// table keeps newly added options inside the invariant.
+#[test]
+fn no_long_option_rejects_its_own_plain_duplicate() {
+    let command = crate::frontend::command_builder::clap_command("rsync");
+    for arg in command.get_arguments() {
+        let Some(long) = arg.get_long() else {
+            continue;
+        };
+        let spelling = match arg.get_action() {
+            clap::ArgAction::SetTrue | clap::ArgAction::SetFalse => format!("--{long}"),
+            clap::ArgAction::Set => format!("--{long}=1"),
+            _ => continue, // Count/Append accept repeats by construction.
+        };
+        let result = parse_test_args([spelling.as_str(), spelling.as_str(), "src/", "dst/"]);
+        if let Err(error) = result {
+            let text = error.to_string();
+            assert!(
+                !text.contains("cannot be used multiple times"),
+                "--{long}: a plain duplicate must not be a clap \
+                 duplicate-occurrence error: {text}"
+            );
+        }
+    }
+}

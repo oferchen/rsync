@@ -122,7 +122,10 @@ fn test_multiple_groupmap_concatenated() {
 }
 
 #[test]
-fn test_temp_dir_and_tmp_dir_conflict() {
+fn test_temp_dir_and_tmp_dir_last_wins() {
+    // --tmp-dir is an alias of --temp-dir, so this is one option repeated;
+    // popt has no duplicate diagnostic (options.c:1502 re-runs the case per
+    // occurrence), so the last occurrence wins like any other repeat.
     let result = parse_args([
         "oc-rsync",
         "--temp-dir=/tmp1",
@@ -130,12 +133,12 @@ fn test_temp_dir_and_tmp_dir_conflict() {
         "src",
         "dest",
     ]);
-    assert!(
-        result.is_err(),
-        "--temp-dir and --tmp-dir are aliases and should conflict"
+    let args = result.expect("--temp-dir repeated via its alias must parse like popt");
+    assert_eq!(
+        args.temp_dir.as_deref(),
+        Some(std::path::Path::new("/tmp2")),
+        "the last occurrence must win"
     );
-    let err = result.unwrap_err();
-    assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
 }
 
 #[test]
