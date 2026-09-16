@@ -295,7 +295,13 @@ fn match_host_still_comma_splits_its_pattern_list() {
 fn fixture_file(dir: &tempfile::TempDir, name: &str, text: &str, check_perm: bool) -> ConfigFile {
     let path = dir.path().join(name);
     std::fs::write(&path, text).expect("write fixture");
-    ConfigFile { path, check_perm }
+    // `user_conf` only steers `Include` anchoring, which the compression
+    // reader does not act on, so its value is immaterial here.
+    ConfigFile {
+        path,
+        check_perm,
+        user_conf: check_perm,
+    }
 }
 
 // -- file load order (task 237e) --------------------------------------
@@ -347,6 +353,7 @@ fn a_missing_user_file_still_reaches_the_system_file() {
     let user = ConfigFile {
         path: dir.path().join("nonexistent"),
         check_perm: true,
+        user_conf: true,
     };
     let system = fixture_file(&dir, "system", "Compression yes\n", false);
     assert!(enables_compression_in(&[user, system], &host_ctx("t")));

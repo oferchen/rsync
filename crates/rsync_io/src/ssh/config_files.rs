@@ -33,8 +33,9 @@ use std::path::{Path, PathBuf};
 /// (openssh/ssh.c:587-589).
 pub(in crate::ssh) const SYSTEM_CONFIG: &str = "/etc/ssh/ssh_config";
 
-/// One config file in the load order, and whether upstream's
-/// `SSHCONF_CHECKPERM` owner/permission check applies to it.
+/// One config file in the load order, plus the two upstream flags a
+/// reader needs from it: whether the `SSHCONF_CHECKPERM` owner/permission
+/// check applies, and whether it is a USER config (`SSHCONF_USERCONF`).
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(in crate::ssh) struct ConfigFile {
     /// The file to read. May not exist; a missing default file is skipped.
@@ -42,6 +43,13 @@ pub(in crate::ssh) struct ConfigFile {
     /// Whether to run the owner/permission check before reading. `true`
     /// only for the default `~/.ssh/config` (openssh/ssh.c:583).
     pub(in crate::ssh) check_perm: bool,
+    /// Whether upstream reads this file with `SSHCONF_USERCONF`
+    /// (openssh/ssh.c:574, :583) - `true` for the `-F` file and the
+    /// default `~/.ssh/config`, `false` for the system file. It decides
+    /// where a RELATIVE `Include` anchors (`~/.ssh` vs `/etc/ssh`) and
+    /// whether a `~`-prefixed include path is accepted at all
+    /// (openssh/readconf.c:2095-2103).
+    pub(in crate::ssh) user_conf: bool,
 }
 
 /// Returns the ordered config-file load list for `options`, the ssh
@@ -73,9 +81,12 @@ pub(in crate::ssh) fn config_files_from(
         // An explicit `-F` file is read INSTEAD of the user file, is not
         // permission-checked, and suppresses the system file entirely
         // (openssh/ssh.c:571-583; the system read sits in the `else`).
+        // It is still a USER config (openssh/ssh.c:574 passes
+        // `SSHCONF_USERCONF`).
         return vec![ConfigFile {
             path: file,
             check_perm: false,
+            user_conf: true,
         }];
     }
     let mut files = Vec::with_capacity(2);
@@ -83,11 +94,13 @@ pub(in crate::ssh) fn config_files_from(
         files.push(ConfigFile {
             path: home.join(".ssh").join("config"),
             check_perm: true,
+            user_conf: true,
         });
     }
     files.push(ConfigFile {
         path: system,
         check_perm: false,
+        user_conf: false,
     });
     files
 }
@@ -184,10 +197,12 @@ mod tests {
                 ConfigFile {
                     path: PathBuf::from("/home/u/.ssh/config"),
                     check_perm: true,
+                    user_conf: true,
                 },
                 ConfigFile {
                     path: PathBuf::from("/fixture/etc/ssh_config"),
                     check_perm: false,
+                    user_conf: false,
                 },
             ]
         );
@@ -208,6 +223,7 @@ mod tests {
             vec![ConfigFile {
                 path: PathBuf::from("/custom"),
                 check_perm: false,
+                user_conf: true,
             }]
         );
     }
@@ -236,6 +252,7 @@ mod tests {
             vec![ConfigFile {
                 path: PathBuf::from("/etc/ssh/ssh_config"),
                 check_perm: false,
+                user_conf: false,
             }]
         );
     }

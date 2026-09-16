@@ -64,10 +64,21 @@ use std::path::{Path, PathBuf};
 
 use super::error::SshError;
 use crate::ssh::argv_split::argv_split;
-use crate::ssh::config_files::{ConfigFile, check_default_user_config_perms};
+use crate::ssh::config_files::{ConfigFile, check_default_user_config_perms, home_dir as env_home};
 use crate::ssh::config_options::{
     Opcode, glob_matches, parse_flag_value, parse_time_value, parse_token, split_directive,
 };
+
+/// upstream's `READCONF_MAX_DEPTH` - the nested-`Include` ceiling
+/// (openssh/readconf.c:2561). A top-level file is depth 0, each `Include`
+/// recursion adds one, and a file entered at depth > 16 is a fatal config
+/// error (openssh/readconf.c:2573-2574).
+const READCONF_MAX_DEPTH: u32 = 16;
+
+/// The directory a RELATIVE `Include` anchors against in a SYSTEM config -
+/// upstream's `SSHDIR` (openssh/readconf.c:2103), the parent of
+/// `/etc/ssh/ssh_config`.
+const SYSTEM_SSH_DIR: &str = "/etc/ssh";
 
 /// Placeholder file name used when a caller supplies config text with no
 /// path of its own. Upstream always has a real filename to name in a
@@ -110,14 +121,56 @@ pub(super) struct ResolvedHost {
 pub(super) fn resolve_host(path: &Path, host_alias: &str) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
     if let Ok(text) = fs::read_to_string(path) {
-        resolve_host_into(
+        // An explicit single path behaves like upstream's `-F`: a USER
+        // config (openssh/ssh.c:574 passes `SSHCONF_USERCONF`), so a
+        // relative or `~`-prefixed `Include` anchors under `~/.ssh`.
+        scan_config(
             &mut resolved,
             &text,
-            host_alias,
             &path.display().to_string(),
+            &IncludeAnchors::live(),
+            true,
+            false,
+            0,
+            true,
+            host_alias,
         )?;
     }
     Ok(resolved)
+}
+
+/// The `Include`-anchoring inputs a scan needs but a single file does not
+/// carry: the home directory (for `~/` expansion), the directory a relative
+/// include anchors against in a USER config (`~/.ssh`) and in a SYSTEM
+/// config (`/etc/ssh`). upstream: openssh/readconf.c:2095-2104.
+struct IncludeAnchors {
+    home: Option<PathBuf>,
+    user_dir: Option<PathBuf>,
+    system_dir: PathBuf,
+}
+
+impl IncludeAnchors {
+    /// The live host's anchors: `$HOME`, `$HOME/.ssh` and `/etc/ssh`.
+    fn live() -> Self {
+        let home = env_home();
+        let user_dir = home.as_ref().map(|h| h.join(".ssh"));
+        Self {
+            home,
+            user_dir,
+            system_dir: PathBuf::from(SYSTEM_SSH_DIR),
+        }
+    }
+
+    /// Anchors with no home directory, for text-only fixtures that never
+    /// exercise a relative or `~`-prefixed include.
+    #[cfg(test)]
+    fn none() -> Self {
+        Self {
+            home: None,
+            user_dir: None,
+            system_dir: PathBuf::from(SYSTEM_SSH_DIR),
+        }
+    }
 }
 
 /// Resolves `host_alias` across the ordered config-file load order,
@@ -144,6 +197,17 @@ pub(super) fn resolve_host_files(
     files: &[ConfigFile],
     host_alias: &str,
 ) -> Result<ResolvedHost, SshError> {
+    resolve_host_files_with_anchors(files, host_alias, &IncludeAnchors::live())
+}
+
+/// The composition behind [`resolve_host_files`], with the `Include`
+/// anchors injected so tests can point them at fixture directories instead
+/// of the host's real `~/.ssh` and `/etc/ssh`.
+fn resolve_host_files_with_anchors(
+    files: &[ConfigFile],
+    host_alias: &str,
+    anchors: &IncludeAnchors,
+) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
     for file in files {
         if file.check_perm && check_default_user_config_perms(&file.path).is_err() {
@@ -154,11 +218,16 @@ pub(super) fn resolve_host_files(
         let Ok(text) = fs::read_to_string(&file.path) else {
             continue;
         };
-        resolve_host_into(
+        scan_config(
             &mut resolved,
             &text,
-            host_alias,
             &file.path.display().to_string(),
+            anchors,
+            true,
+            false,
+            0,
+            file.user_conf,
+            host_alias,
         )?;
     }
     Ok(resolved)
@@ -175,7 +244,17 @@ pub(super) fn resolve_host_files(
 #[cfg(test)]
 pub(super) fn resolve_host_str(text: &str, host_alias: &str) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
-    resolve_host_into(&mut resolved, text, host_alias, INLINE_CONFIG_NAME)?;
+    scan_config(
+        &mut resolved,
+        text,
+        INLINE_CONFIG_NAME,
+        &IncludeAnchors::none(),
+        true,
+        false,
+        0,
+        true,
+        host_alias,
+    )?;
     Ok(resolved)
 }
 
@@ -190,19 +269,34 @@ fn refuse(path: &str, line: usize, reason: impl Into<String>) -> SshError {
 
 /// Scans one file's text into `resolved`, claiming slots per the option
 /// table's `ResolutionPolicy` - which is what lets a later file's scan
-/// continue the same state. `Host` block activity is local to the call.
-fn resolve_host_into(
+/// continue the same state.
+///
+/// `active` is the block-activity state this file is entered under: `true`
+/// for a top-level file (upstream initialises `active` to 1 per file,
+/// openssh/readconf.c:2556), or the containing file's active state at the
+/// point of an `Include`. A `Host`/`Match` line then reassigns it. `Host`
+/// block state is otherwise local to the call.
+///
+/// `never_match` forces every `Host`/`Match` block inactive for the whole
+/// file, mirroring `SSHCONF_NEVERMATCH` (openssh/readconf.c:1841, :1882):
+/// upstream sets it on an `Include` recursed while the containing block was
+/// inactive, so the included file is parsed for refusals but assigns
+/// nothing. `depth` is the `Include` nesting level (openssh/readconf.c:2561
+/// `READCONF_MAX_DEPTH`) and `user_conf` steers where a relative `Include`
+/// anchors (openssh/readconf.c:2100-2104).
+#[allow(clippy::too_many_arguments)]
+fn scan_config(
     resolved: &mut ResolvedHost,
     text: &str,
-    host_alias: &str,
     path: &str,
+    anchors: &IncludeAnchors,
+    active: bool,
+    never_match: bool,
+    depth: u32,
+    user_conf: bool,
+    host_alias: &str,
 ) -> Result<(), SshError> {
-    // Upstream initialises `active` to 1 at the top of each file
-    // (openssh/readconf.c read_config_file_depth()), so directives before
-    // the first `Host`/`Match` line apply to every host. A `Host` line
-    // then reassigns this from its own match, which is why the top-level
-    // default only governs the pre-`Host` region.
-    let mut in_matching_block = true;
+    let mut in_matching_block = active;
 
     for (index, raw_line) in text.lines().enumerate() {
         // Upstream counts physical lines from 1 (openssh/readconf.c:2651-2654).
@@ -234,13 +328,38 @@ fn resolve_host_into(
             argv_split(value, true).map_err(|err| refuse(path, linenum, err.to_string()))?;
 
         if opcode == Opcode::Host {
-            in_matching_block =
+            let matched =
                 host_matches_any_pattern(host_alias, &tokens).map_err(|EmptyHostToken| {
                     // Upstream interpolates the LOWERCASED keyword it
                     // matched on (openssh/readconf.c:1184, :1833), not the
                     // spelling in the file.
                     refuse(path, linenum, "keyword host empty argument")
                 })?;
+            // Under `SSHCONF_NEVERMATCH` (a file included from an inactive
+            // block) the block can never activate, but the tokens are still
+            // walked for the empty-argument refusal above
+            // (openssh/readconf.c:1841).
+            in_matching_block = !never_match && matched;
+            continue;
+        }
+
+        // `Include` is processed on every line regardless of the block's
+        // activity - upstream globs and recurses unconditionally, passing
+        // `SSHCONF_NEVERMATCH` down when the containing block is inactive
+        // (openssh/readconf.c:2073-2150).
+        if opcode == Opcode::Include {
+            process_include(
+                resolved,
+                &tokens,
+                path,
+                linenum,
+                anchors,
+                in_matching_block,
+                never_match,
+                depth,
+                user_conf,
+                host_alias,
+            )?;
             continue;
         }
 
@@ -333,6 +452,189 @@ fn resolve_host_into(
     }
 
     Ok(())
+}
+
+/// Handles one `Include` line: for each whitespace-separated glob pattern,
+/// anchors it, expands it against the filesystem, and reads every match
+/// inline as a further config file.
+///
+/// upstream: the `oInclude` arm (openssh/readconf.c:2073-2150). `active` is
+/// the containing block's activity at this line; when it is inactive, or
+/// `never_match` already holds, the recursion carries `SSHCONF_NEVERMATCH`
+/// so the included file assigns nothing (openssh/readconf.c:2130).
+#[allow(clippy::too_many_arguments)]
+fn process_include(
+    resolved: &mut ResolvedHost,
+    tokens: &[String],
+    path: &str,
+    linenum: usize,
+    anchors: &IncludeAnchors,
+    active: bool,
+    never_match: bool,
+    depth: u32,
+    user_conf: bool,
+    host_alias: &str,
+) -> Result<(), SshError> {
+    // Upstream fatals when a file would be entered above the depth ceiling
+    // (openssh/readconf.c:2573-2574). A top-level file is depth 0; this
+    // include's children enter at depth+1.
+    if depth + 1 > READCONF_MAX_DEPTH {
+        return Err(refuse(
+            path,
+            linenum,
+            "Too many recursive configuration includes",
+        ));
+    }
+    let child_depth = depth + 1;
+    // The recursion is NEVERMATCH when the containing block was inactive, or
+    // when it already was (openssh/readconf.c:2130). The child starts at the
+    // containing block's active state, which upstream shares through
+    // `*activep` and restores after each file (openssh/readconf.c:2144).
+    let child_never_match = never_match || !active;
+
+    for token in tokens {
+        if token.is_empty() {
+            // upstream: openssh/readconf.c:2081-2083 `keyword %s empty
+            // argument` (the keyword is the lowercased `include`).
+            return Err(refuse(path, linenum, "keyword include empty argument"));
+        }
+        let pattern = match anchor_include(token, user_conf, anchors) {
+            Ok(Some(pattern)) => pattern,
+            // No anchor is available (e.g. no home directory for a `~/` or
+            // relative user-config include): the glob matches nothing, which
+            // upstream tolerates.
+            Ok(None) => continue,
+            Err(reason) => return Err(refuse(path, linenum, reason)),
+        };
+        for matched in glob_paths(&pattern) {
+            // Every included file is permission-checked - upstream adds
+            // `SSHCONF_CHECKPERM` to the recursion (openssh/readconf.c:2129).
+            if check_default_user_config_perms(&matched).is_err() {
+                return Err(SshError::SshConfigPermissions {
+                    path: matched.display().to_string(),
+                });
+            }
+            let text = match fs::read_to_string(&matched) {
+                Ok(text) => text,
+                // A file that vanished between the glob and the open is
+                // tolerated (upstream's `errno == ENOENT` arm,
+                // openssh/readconf.c:2136); present-but-unreadable is fatal.
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => {
+                    return Err(refuse(
+                        path,
+                        linenum,
+                        format!("Can't open user config file {}: {err}", matched.display()),
+                    ));
+                }
+            };
+            scan_config(
+                resolved,
+                &text,
+                &matched.display().to_string(),
+                anchors,
+                active,
+                child_never_match,
+                child_depth,
+                user_conf,
+                host_alias,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Anchors one `Include` argument, returning the glob pattern to expand,
+/// `None` when no anchor is available (so it matches nothing), or the
+/// upstream refusal reason for a `~`-prefixed path in a system config.
+///
+/// upstream: openssh/readconf.c:2095-2104. A `~`-prefixed path is legal only
+/// in a user config; an absolute path is taken as written; a relative path
+/// anchors under `~/.ssh` (user) or `/etc/ssh` (system).
+fn anchor_include(
+    token: &str,
+    user_conf: bool,
+    anchors: &IncludeAnchors,
+) -> Result<Option<String>, String> {
+    if let Some(rest) = token.strip_prefix('~') {
+        if !user_conf {
+            return Err(format!("bad include path {token}."));
+        }
+        // Only the `~/` form is expanded, mirroring glob's `GLOB_TILDE`
+        // against the caller's home; `~user` is left for the OS and simply
+        // matches nothing here.
+        let (Some(after), Some(home)) = (rest.strip_prefix('/'), anchors.home.as_deref()) else {
+            return Ok(None);
+        };
+        return Ok(Some(format!("{}/{after}", home.display())));
+    }
+    if Path::new(token).is_absolute() {
+        return Ok(Some(token.to_owned()));
+    }
+    let base = if user_conf {
+        anchors.user_dir.as_deref()
+    } else {
+        Some(anchors.system_dir.as_path())
+    };
+    Ok(base.map(|dir| format!("{}/{token}", dir.display())))
+}
+
+/// Expands `pattern` - an absolute, already `~`-resolved path that may hold
+/// `*` or `?` in any component - against the filesystem, returning existing
+/// matches in sorted (glob) order.
+///
+/// Mirrors glob(3): `*`/`?` are matched per component with the shared
+/// [`glob_matches`], a leading `.` is matched only by a pattern component
+/// that itself starts with `.`, an unreadable directory contributes no
+/// matches, and a purely-literal pattern that names nothing yields an empty
+/// result - upstream's `GLOB_NOMATCH`, which the caller tolerates
+/// (openssh/readconf.c:2122-2126). Character classes and `**` are not
+/// supported, matching oc's existing `Host`-pattern glob scope.
+fn glob_paths(pattern: &str) -> Vec<PathBuf> {
+    let mut segments = pattern.split('/');
+    // A leading '/' yields an empty first segment: anchor at the root.
+    let first = segments.next().unwrap_or("");
+    let mut bases: Vec<PathBuf> = vec![PathBuf::from(if first.is_empty() { "/" } else { first })];
+
+    for seg in segments {
+        if seg.is_empty() {
+            continue; // collapse `//`
+        }
+        if seg.contains('*') || seg.contains('?') {
+            let mut next = Vec::new();
+            for base in &bases {
+                let Ok(entries) = fs::read_dir(base) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    // glob(3)'s leading-dot rule: `*`/`?` do not match a name
+                    // beginning with `.` unless the pattern component does too.
+                    if name.starts_with('.') && !seg.starts_with('.') {
+                        continue;
+                    }
+                    if glob_matches(name.as_bytes(), seg.as_bytes()) {
+                        next.push(base.join(&*name));
+                    }
+                }
+            }
+            bases = next;
+        } else {
+            for base in &mut bases {
+                *base = base.join(seg);
+            }
+        }
+    }
+
+    // glob returns only paths that exist; a dangling symlink still exists as
+    // a link (`lstat`), matching glob's behaviour.
+    let mut out: Vec<PathBuf> = bases
+        .into_iter()
+        .filter(|p| p.symlink_metadata().is_ok())
+        .collect();
+    out.sort();
+    out
 }
 
 /// Parses a `ConnectTimeout` value per the `parse_time` arm
@@ -1163,7 +1465,14 @@ mod tests {
     ) -> ConfigFile {
         let path = dir.path().join(name);
         std::fs::write(&path, text).expect("write fixture");
-        ConfigFile { path, check_perm }
+        // These load-order cells do not use `Include`, so `user_conf` is
+        // immaterial; tie it to `check_perm` (both hold for the default user
+        // file, neither for the injected system file).
+        ConfigFile {
+            path,
+            check_perm,
+            user_conf: check_perm,
+        }
     }
 
     /// Cell (a): a scalar keyword set in BOTH files keeps the USER
@@ -1216,6 +1525,7 @@ mod tests {
         let user = ConfigFile {
             path: dir.path().join("nonexistent"),
             check_perm: true,
+            user_conf: true,
         };
         let system = fixture_file(&dir, "system", "Host *\n  Port 2222\n", false);
         let resolved = resolve_host_files(&[user, system], "t").expect("accepted");
@@ -1259,5 +1569,336 @@ mod tests {
         file.check_perm = false;
         let resolved = resolve_host_files(&[file], "t").expect("explicit file accepted");
         assert_eq!(resolved.port, Some(2222));
+    }
+
+    // -- Include (task 237f) ------------------------------------------
+    //
+    // upstream: the `oInclude` arm, openssh/readconf.c:2073-2150. The
+    // anchors (`~/.ssh` vs `/etc/ssh`, `~`) are injected through
+    // `IncludeAnchors` so the cells never touch the host's real config
+    // directories.
+
+    /// Writes `text` at `path`, creating parent directories, and returns
+    /// `path`.
+    fn write_at(path: PathBuf, text: &str) -> PathBuf {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("mkdir -p");
+        }
+        std::fs::write(&path, text).expect("write include fixture");
+        path
+    }
+
+    /// An explicit-file (`-F`-shaped) config row holding `text`, so the
+    /// perm check never interferes with an Include cell.
+    fn include_top(dir: &tempfile::TempDir, text: &str, user_conf: bool) -> ConfigFile {
+        ConfigFile {
+            path: write_at(dir.path().join("top"), text),
+            check_perm: false,
+            user_conf,
+        }
+    }
+
+    /// Anchors rooted under `dir`: `home`, `home/.ssh` (the userconf
+    /// anchor) and `etc/ssh` (the system anchor).
+    fn anchors_under(dir: &tempfile::TempDir) -> IncludeAnchors {
+        let home = dir.path().join("home");
+        IncludeAnchors {
+            user_dir: Some(home.join(".ssh")),
+            home: Some(home),
+            system_dir: dir.path().join("etc").join("ssh"),
+        }
+    }
+
+    /// An absolute-path Include pulls a scalar out of another file, under
+    /// the current (active) block state.
+    #[test]
+    fn absolute_include_pulls_in_a_scalar() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let snippet = write_at(
+            dir.path().join("snippet"),
+            "Host t\n  HostName inc.example\n",
+        );
+        let top = include_top(&dir, &format!("Include {}\n", snippet.display()), true);
+        let resolved = resolve_host_files_with_anchors(&[top], "t", &IncludeAnchors::none())
+            .expect("accepted");
+        assert_eq!(resolved.hostname.as_deref(), Some("inc.example"));
+    }
+
+    /// A glob expands in sorted order, so with first-obtained-wins the
+    /// alphabetically-first match claims the slot. The control (only the
+    /// second file present) proves the ORDER decides the winner, not merely
+    /// which files exist.
+    #[test]
+    fn glob_include_reads_matches_in_sorted_order() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let inc = dir.path().join("inc");
+        write_at(inc.join("01.conf"), "Host *\n  User first\n");
+        write_at(inc.join("02.conf"), "Host *\n  User second\n");
+        let top = include_top(&dir, &format!("Include {}/*.conf\n", inc.display()), true);
+        let resolved =
+            resolve_host_files_with_anchors(&[top.clone()], "t", &IncludeAnchors::none())
+                .expect("accepted");
+        assert_eq!(resolved.user.as_deref(), Some("first"));
+
+        // Control: drop the sorted-first file and the second one now wins,
+        // so the winner tracks glob order rather than a fixed preference.
+        std::fs::remove_file(inc.join("01.conf")).expect("rm");
+        let resolved = resolve_host_files_with_anchors(&[top], "t", &IncludeAnchors::none())
+            .expect("accepted");
+        assert_eq!(resolved.user.as_deref(), Some("second"));
+    }
+
+    /// A relative Include in a USER config anchors under `~/.ssh`; in a
+    /// SYSTEM config the SAME spelling anchors under `/etc/ssh`. The two
+    /// halves place different files at the two anchors and prove each config
+    /// kind reads its own.
+    #[test]
+    fn relative_include_anchors_by_config_kind() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let anchors = anchors_under(&dir);
+        write_at(
+            anchors.user_dir.clone().unwrap().join("inc.conf"),
+            "Host t\n  User fromuser\n",
+        );
+        write_at(
+            anchors.system_dir.join("inc.conf"),
+            "Host t\n  User fromsystem\n",
+        );
+
+        let user_top = include_top(&dir, "Include inc.conf\n", true);
+        assert_eq!(
+            resolve_host_files_with_anchors(&[user_top], "t", &anchors)
+                .expect("accepted")
+                .user
+                .as_deref(),
+            Some("fromuser")
+        );
+
+        let system_top = ConfigFile {
+            path: write_at(dir.path().join("systop"), "Include inc.conf\n"),
+            check_perm: false,
+            user_conf: false,
+        };
+        assert_eq!(
+            resolve_host_files_with_anchors(&[system_top], "t", &anchors)
+                .expect("accepted")
+                .user
+                .as_deref(),
+            Some("fromsystem")
+        );
+    }
+
+    /// A `~/`-prefixed Include expands against the home directory in a user
+    /// config, but is REFUSED in a system config with upstream's wording
+    /// (openssh/readconf.c:2095-2098).
+    #[test]
+    fn tilde_include_is_user_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let anchors = anchors_under(&dir);
+        write_at(
+            anchors.home.clone().unwrap().join("inc.conf"),
+            "Host t\n  Port 2020\n",
+        );
+
+        let user_top = include_top(&dir, "Include ~/inc.conf\n", true);
+        assert_eq!(
+            resolve_host_files_with_anchors(&[user_top], "t", &anchors)
+                .expect("accepted")
+                .port,
+            Some(2020)
+        );
+
+        let system_top = ConfigFile {
+            path: write_at(dir.path().join("systop"), "Include ~/inc.conf\n"),
+            check_perm: false,
+            user_conf: false,
+        };
+        let err =
+            resolve_host_files_with_anchors(&[system_top], "t", &anchors).expect_err("refused");
+        assert!(
+            err.to_string().ends_with("bad include path ~/inc.conf."),
+            "unexpected: {err}"
+        );
+    }
+
+    /// A glob that matches nothing is tolerated (upstream's `GLOB_NOMATCH`
+    /// arm, openssh/readconf.c:2122-2126): the load succeeds and the missing
+    /// include contributes nothing. The control include that DOES match
+    /// proves the resolve was otherwise live.
+    #[test]
+    fn missing_glob_is_tolerated() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let present = write_at(dir.path().join("present"), "Host t\n  Port 7\n");
+        let top = include_top(
+            &dir,
+            &format!(
+                "Include {}/does-not-exist-*.conf\nInclude {}\n",
+                dir.path().display(),
+                present.display()
+            ),
+            true,
+        );
+        let resolved = resolve_host_files_with_anchors(&[top], "t", &IncludeAnchors::none())
+            .expect("accepted");
+        assert_eq!(resolved.port, Some(7));
+    }
+
+    /// A present include file that fails the owner/permission check is
+    /// fatal, not skipped like a missing one - upstream adds
+    /// `SSHCONF_CHECKPERM` to the recursion (openssh/readconf.c:2129).
+    #[cfg(unix)]
+    #[test]
+    fn present_include_failing_the_perm_check_is_fatal() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let snippet = write_at(dir.path().join("snippet"), "Host t\n  Port 9\n");
+        std::fs::set_permissions(&snippet, std::fs::Permissions::from_mode(0o666)).expect("chmod");
+        let top = include_top(&dir, &format!("Include {}\n", snippet.display()), true);
+        let err = resolve_host_files_with_anchors(&[top], "t", &IncludeAnchors::none())
+            .expect_err("refused");
+        assert_eq!(
+            err.to_string(),
+            format!("Bad owner or permissions on {}", snippet.display())
+        );
+    }
+
+    /// A self-including file terminates at the depth ceiling rather than
+    /// recursing forever (READCONF_MAX_DEPTH, openssh/readconf.c:2573-2574).
+    #[test]
+    fn include_depth_limit_is_fatal() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("self");
+        write_at(path.clone(), &format!("Include {}\n", path.display()));
+        let top = ConfigFile {
+            path,
+            check_perm: false,
+            user_conf: true,
+        };
+        let err = resolve_host_files_with_anchors(&[top], "t", &IncludeAnchors::none())
+            .expect_err("refused");
+        assert!(
+            err.to_string()
+                .ends_with("Too many recursive configuration includes"),
+            "unexpected: {err}"
+        );
+    }
+
+    /// An empty Include argument (a quoted empty token) is refused with
+    /// upstream's wording (openssh/readconf.c:2081-2083).
+    #[test]
+    fn empty_include_argument_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let top = include_top(&dir, "Include \"\"\n", true);
+        let err = resolve_host_files_with_anchors(&[top], "t", &IncludeAnchors::none())
+            .expect_err("refused");
+        assert!(
+            err.to_string().ends_with("keyword include empty argument"),
+            "unexpected: {err}"
+        );
+    }
+
+    /// An Include inside a matching Host block reads its file under the
+    /// active state, so the file's own top-level directive applies. Under a
+    /// NON-matching block the include still runs but recurses NEVERMATCH, so
+    /// nothing from it lands - the active-state save/restore across the
+    /// include boundary (openssh/readconf.c:2130, :2144).
+    #[test]
+    fn include_inherits_the_block_active_state() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let snippet = write_at(dir.path().join("snippet"), "User included\n");
+
+        // Matching block: the include's top-level directive applies.
+        let matching = include_top(
+            &dir,
+            &format!("Host t\n  Include {}\n", snippet.display()),
+            true,
+        );
+        assert_eq!(
+            resolve_host_files_with_anchors(&[matching], "t", &IncludeAnchors::none())
+                .expect("accepted")
+                .user
+                .as_deref(),
+            Some("included")
+        );
+
+        // Non-matching block: the include is walked (a refusal would still
+        // fire) but assigns nothing under NEVERMATCH.
+        let non_matching = ConfigFile {
+            path: write_at(
+                dir.path().join("top2"),
+                &format!("Host other\n  Include {}\n", snippet.display()),
+            ),
+            check_perm: false,
+            user_conf: true,
+        };
+        assert!(
+            resolve_host_files_with_anchors(&[non_matching], "t", &IncludeAnchors::none())
+                .expect("accepted")
+                .user
+                .is_none()
+        );
+    }
+
+    /// A `Host` block opened inside an included file only activates when the
+    /// include ran from an active context: NEVERMATCH propagates into the
+    /// file so its own `Host *` cannot match, while from an active context
+    /// the same block applies.
+    #[test]
+    fn included_host_block_obeys_never_match() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let snippet = write_at(dir.path().join("snippet"), "Host *\n  Port 4242\n");
+
+        let active = include_top(
+            &dir,
+            &format!("Host t\n  Include {}\n", snippet.display()),
+            true,
+        );
+        assert_eq!(
+            resolve_host_files_with_anchors(&[active], "t", &IncludeAnchors::none())
+                .expect("accepted")
+                .port,
+            Some(4242)
+        );
+
+        let inactive = ConfigFile {
+            path: write_at(
+                dir.path().join("top2"),
+                &format!("Host other\n  Include {}\n", snippet.display()),
+            ),
+            check_perm: false,
+            user_conf: true,
+        };
+        assert!(
+            resolve_host_files_with_anchors(&[inactive], "t", &IncludeAnchors::none())
+                .expect("accepted")
+                .port
+                .is_none()
+        );
+    }
+
+    /// The block state is RESTORED after an include: a top-level include
+    /// that opens a non-matching `Host` block does not leak that block's
+    /// inactive state back to the including file, whose later directives
+    /// still apply. This is upstream's `*activep = oactive` restore
+    /// (openssh/readconf.c:2144).
+    #[test]
+    fn block_state_restores_after_the_include() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // The included file ends inside a NON-matching Host block.
+        let snippet = write_at(dir.path().join("snippet"), "Host nomatch\n  User dead\n");
+        let top = include_top(
+            &dir,
+            &format!("Include {}\nUser afterwards\n", snippet.display()),
+            true,
+        );
+        // `User afterwards` sits at the including file's top level; if the
+        // include leaked its trailing inactive block, this would be dropped.
+        assert_eq!(
+            resolve_host_files_with_anchors(&[top], "t", &IncludeAnchors::none())
+                .expect("accepted")
+                .user
+                .as_deref(),
+            Some("afterwards")
+        );
     }
 }
