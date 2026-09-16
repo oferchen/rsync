@@ -11,6 +11,11 @@ operators should expect in terms of feature coverage and performance.
 oc-rsync classifies its supported platforms into three tiers based on CI
 coverage depth, feature completeness, and performance validation.
 
+See [Platform support tiers](../design/platform-tiers.md) for the
+authoritative tier criteria, the per-criterion scoring of each OS, and the
+promotion procedure. That design document is the source of truth for which
+tier a platform is in; this document lists per-target detail.
+
 ### Tier 1 - primary development target
 
 Full test suite, interop coverage, benchmarking, and release artifact
@@ -19,6 +24,8 @@ generation. Regressions block merge.
 | Target | Runner | Notes |
 |--------|--------|-------|
 | `x86_64-unknown-linux-gnu` | `ubuntu-latest` | Full workspace nextest (stable/beta/nightly), SSH integration tests, interop against upstream rsync 3.0.9 - 3.4.3, benchmarks, fuzzing |
+| `x86_64-apple-darwin` | `macos-latest` | Tested crates: core, engine, cli, metadata, apple-fs. Stable/beta/nightly matrix; interop smoke; benchmarks (best-effort). Upstream-testsuite and interop legs run on every PR but are not yet registered as required checks |
+| `aarch64-apple-darwin` | `macos-15` | Release build plus native tests via the universal macos-latest runner; cross-compiled release artifact |
 
 ### Tier 2 - first-class platforms
 
@@ -28,8 +35,6 @@ failures block merge. Interop smoke coverage. Release artifacts produced.
 | Target | Runner | Tested Crates | Notes |
 |--------|--------|---------------|-------|
 | `x86_64-pc-windows-msvc` | `windows-latest` | core, engine, cli, metadata, fast_io, transfer | Stable/beta/nightly matrix; dedicated IOCP job; ACL/xattr job; interop (best-effort) |
-| `x86_64-apple-darwin` | `macos-latest` | core, engine, cli, metadata, apple-fs | Stable/beta/nightly matrix; interop smoke; benchmarks (best-effort) |
-| `aarch64-apple-darwin` | `macos-15` | (release build only) | Cross-compiled release artifact; native tests via universal macos-latest runner |
 | `x86_64-unknown-linux-musl` | `ubuntu-latest` | full workspace | Static binary; stable/beta/nightly matrix; verified static linking |
 
 ### Tier 3 - cross-compiled, limited testing
