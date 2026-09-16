@@ -49,6 +49,10 @@
 #                             # transport run: the tests it drops never call
 #                             # start_test_daemon(), so they cannot observe
 #                             # --use-tcp and would just repeat themselves.
+#   LEGACY_ORACLES=off        # skip building the old_versions/ oracle binaries
+#                             # (default: on). The consumers that would have
+#                             # asserted against a real old rsync are NAMED as
+#                             # degraded - see ensure_legacy_oracles().
 #
 # Git-ref mode (any RsyncProject ref, e.g. a post-release dev branch):
 #   UPSTREAM_VERSION=master tools/ci/...sh            # git-clone + build master
@@ -845,10 +849,13 @@ python_suite_available() {
 # enumeration still runs and every degraded consumer is NAMED, because the one
 # thing worse than a weak assertion is a weak assertion nobody can see.
 #
-# Off by DEFAULT, and per leg: putting a binary in old_versions/ un-skips
-# daemon-max-alloc-zero, i.e. it MOVES expect-manifest rows. Those rows may
-# only be re-baselined from a measured run (EMIT_EXPECT_RESULT), so a leg opts
-# in when someone is ready to measure the move - never as a side effect.
+# On by DEFAULT: every committed expect manifest and the skip ledger are
+# measured with the oracles ON DISK, so default-on is the configuration the
+# ledgers describe. Putting a binary in old_versions/ un-skips
+# daemon-max-alloc-zero, i.e. flipping this MOVES expect-manifest rows, and
+# rows may only be re-baselined from a measured run (EMIT_EXPECT_RESULT) - so
+# `off` is an explicit opt-out for a host that cannot fetch or build the
+# archive, taken knowingly, never a silent fallback.
 #
 # THE ORACLE SLOT IS HIJACKABLE, AND THE LABEL DOES NOT FOLLOW THE BINARY.
 #
@@ -882,7 +889,7 @@ python_suite_available() {
 
 # on: build every oracle a consumer on this leg can reach. off: build none and
 # report which consumers are running degraded.
-legacy_oracles_mode="${LEGACY_ORACLES:-off}"
+legacy_oracles_mode="${LEGACY_ORACLES:-on}"
 case "$legacy_oracles_mode" in
     on | off) ;;
     *)

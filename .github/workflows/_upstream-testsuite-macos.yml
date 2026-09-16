@@ -191,6 +191,15 @@ jobs:
           # without USE_TCP, so the two move together by construction.
           USE_TCP: ${{ inputs.transport == 'tcp' && 'yes' || '' }}
           DAEMON_TESTS_ONLY: ${{ inputs.transport == 'tcp' && 'yes' || '' }}
+          # The harness now defaults LEGACY_ORACLES=on, but that default was
+          # re-baselined only against the Linux legs. No macOS leg has been run
+          # on-config, so its committed manifests still describe the off state
+          # (daemon-max-alloc-zero skip). Pin off here so the leg runs the
+          # configuration its manifest describes rather than flipping that row
+          # and failing --expect-result. The harness NAMES the resulting oracle
+          # degradation as a warning. Drop this pin and re-baseline the four
+          # macos.* manifests together, from an emitted macOS run.
+          LEGACY_ORACLES: 'off'
           # Always emit the manifest this run would hold itself to, for the same
           # reason the Linux legs do: hand-curating the ledger is exactly how it
           # drifts, and because --expect-result runs ONLY the tests it names,
@@ -287,6 +296,10 @@ jobs:
           EXPECT_RESULT: ${{ inputs.expect_result_macos_root }}
           USE_TCP: ${{ inputs.transport == 'tcp' && 'yes' || '' }}
           DAEMON_TESTS_ONLY: ${{ inputs.transport == 'tcp' && 'yes' || '' }}
+          # Pinned off pending an on-config macOS re-baseline; see the nonroot
+          # leg above. Forwarded through `sudo env` below or the scrub drops it
+          # and the root leg would silently run the harness default (on).
+          LEGACY_ORACLES: 'off'
           EMIT_EXPECT_RESULT: target/interop/expect-result.macos.root.${{ inputs.transport }}.txt
         run: |
           set -euo pipefail
@@ -304,6 +317,7 @@ jobs:
             EXPECT_RESULT="$EXPECT_RESULT" \
             USE_TCP="$USE_TCP" \
             DAEMON_TESTS_ONLY="$DAEMON_TESTS_ONLY" \
+            LEGACY_ORACLES="$LEGACY_ORACLES" \
             EMIT_EXPECT_RESULT="$EMIT_EXPECT_RESULT" \
             GITHUB_STEP_SUMMARY="$GITHUB_STEP_SUMMARY" \
             bash tools/ci/run_upstream_testsuite.sh 2>&1 \
