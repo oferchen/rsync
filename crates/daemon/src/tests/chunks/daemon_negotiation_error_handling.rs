@@ -242,7 +242,7 @@ fn daemon_negotiation_error_refused_options() {
 
     drop(reader);
     // Don't assert on result - daemon may fail gracefully when client doesn't continue
-    let _ = handle.join();
+    let _ = finish_daemon(handle);
 }
 
 #[test]
@@ -341,7 +341,7 @@ fn daemon_negotiation_error_max_connections_exceeded() {
     drop(reader2);
     drop(stream1);
     drop(stream2);
-    let _ = handle.join();
+    let _ = finish_daemon(handle);
 }
 
 #[test]
@@ -531,5 +531,5 @@ fn daemon_negotiation_error_invalid_greeting_response() {
     }
 
     drop(reader);
-    let _ = handle.join();
+    let _ = finish_daemon(handle);
 }
