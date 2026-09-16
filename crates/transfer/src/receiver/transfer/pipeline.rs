@@ -112,6 +112,31 @@ impl InFlightRequests {
         Some((pending, file))
     }
 
+    /// Re-inserts a popped front request together with its file state at the
+    /// head of the window. Used when an out-of-order `MSG_NO_SEND` retired a
+    /// later entry and the popped front is still awaited.
+    fn restore_front(&mut self, pending: crate::pipeline::PendingTransfer, file: InFlightFile) {
+        self.wire.restore_front(pending);
+        self.files.push_front(file);
+    }
+
+    /// Retires the request whose wire NDX equals `ndx` from anywhere in the
+    /// window, dropping both its wire and file state; returns `true` when one
+    /// was found. The two parallel queues are pushed and popped in lockstep, so
+    /// the position `wire` reports addresses the same entry in `files`.
+    ///
+    /// upstream: io.c:1207-1256 `got_flist_entry_status(FES_NO_SEND, ndx)`
+    /// retires the declined entry by index, not by the receiver's window front.
+    fn retire_by_ndx(&mut self, ndx: i32) -> bool {
+        match self.wire.retire_ndx(ndx) {
+            Some(pos) => {
+                self.files.remove(pos);
+                true
+            }
+            None => false,
+        }
+    }
+
     fn is_empty(&self) -> bool {
         self.wire.is_empty()
     }
@@ -854,41 +879,42 @@ impl ReceiverContext {
                     xattr_list,
                     &mut token_reader,
                 );
-                let result = match response {
-                    Ok(result) => result,
-                    Err(err) => {
-                        // upstream: io.c:1809-1818 - the sender declined this
-                        // file and moved on, so no response is coming. The
-                        // sender has already reported why (FERROR_XFER,
-                        // sender.c:719) and set io_error, which is what makes
-                        // the run exit 23; the receiver simply drops the file,
-                        // exactly as upstream's generator retires the entry via
-                        // got_flist_entry_status(FES_NO_SEND).
-                        let declined = err
-                            .get_ref()
-                            .and_then(|inner| {
-                                inner.downcast_ref::<crate::reader::FileDeclinedError>()
-                            })
-                            .copied();
+                let result = match response? {
+                    crate::transfer_ops::ResponseProgress::Received(result) => result,
+                    crate::transfer_ops::ResponseProgress::Declined { pending, ndx } => {
+                        // upstream: io.c:1809-1818 -> got_flist_entry_status(FES_NO_SEND, ndx).
+                        // The sender declined a file (sender.c:669,723,751) and moved on
+                        // without answering; upstream's generator retires the entry BY INDEX,
+                        // not by any window front. The sender has already set io_error
+                        // (FERROR_XFER), which is what makes the run exit 23 - dropping the
+                        // file is correct, not fatal.
                         let awaited = self.flat_to_wire_ndx(file_idx);
-                        match declined {
-                            // The sender answers requests in NDX order and the
-                            // window pops in the same order, so a decline can
-                            // only ever name the file being awaited. Anything
-                            // else means the two have drifted apart.
-                            Some(d) if d.ndx == awaited => continue,
-                            Some(d) => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    format!(
-                                        "sender declined NDX {} while the receiver awaited NDX \
-                                         {awaited} - request stream desynchronised",
-                                        d.ndx
-                                    ),
-                                ));
-                            }
-                            None => return Err(err),
+                        if ndx == awaited {
+                            // The awaited front was declined: drop it (already popped) and
+                            // move on to the next request.
+                            continue;
                         }
+                        // Against an upstream sender the decline can name a later, still
+                        // outstanding request while this front is awaited (io.c:1207 is
+                        // NDX-addressed and tolerates the order). Retire the named entry by
+                        // index and restore the popped front, whose response is still coming.
+                        if pipeline.retire_by_ndx(ndx) {
+                            pipeline.restore_front(
+                                pending,
+                                (file_idx, file_path, file_entry, base_iflags),
+                            );
+                            continue;
+                        }
+                        // A decline for an index outside the window was never requested:
+                        // a genuine desync. upstream aborts with RERR_PROTOCOL when
+                        // ndx < flist->ndx_start (io.c:1210-1211).
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "sender declined NDX {ndx} while the receiver awaited NDX \
+                                 {awaited} - request stream desynchronised"
+                            ),
+                        ));
                     }
                 };
 
