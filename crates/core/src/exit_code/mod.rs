@@ -26,10 +26,12 @@
 
 mod codes;
 mod convert;
+mod funnel;
 mod latch;
 mod traits;
 
 pub use codes::ExitCode;
+pub use funnel::{abort, io_error_exit_code, record_exit};
 pub use latch::{ExitCodeLatch, process_latch};
 pub use traits::{ErrorCodification, HasExitCode};
 

@@ -339,7 +339,16 @@ where
             // its summary yet still owe a non-zero code (e.g. a receiver that
             // discarded a file because its output mkstemp() failed reports exit
             // 23 via MSG_ERROR_XFER). Honour it here instead of forcing 0.
-            summary.io_error_exit_code().unwrap_or(0)
+            //
+            // 430: latch the decided code at this decision site, mirroring
+            // upstream's `_exit_cleanup(RERR_*)` at the error site
+            // (cleanup.c:113-117). A second interrupt arriving while this code
+            // propagates back to `run`'s tail then finds the latch already set
+            // and cannot substitute RERR_SIGNAL.
+            core::exit_code::record_exit(
+                core::exit_code::process_latch(),
+                summary.io_error_exit_code().unwrap_or(0),
+            )
         }
         Err(error) => {
             if let Some(observer) = live_progress
@@ -356,7 +365,10 @@ where
                 "rsync error: client functionality is unavailable in this build (code 1)",
                 stderr,
             );
-            error.exit_code()
+            // 430: latch the decided error code at the site that maps it, so a
+            // second interrupt during unwinding cannot overwrite it with
+            // RERR_SIGNAL (upstream: cleanup.c:113-117).
+            core::exit_code::record_exit(core::exit_code::process_latch(), error.exit_code())
         }
     }
 }
