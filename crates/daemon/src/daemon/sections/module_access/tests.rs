@@ -2824,6 +2824,81 @@ mod module_access_tests {
         )
     }
 
+    /// The patternless CVS dir-merge, both spellings.
+    ///
+    /// upstream: exclude.c:1474-1476 exempts a FILTRULE_CVS_IGNORE rule from
+    /// the empty-pattern refusal, and exclude.c:1553-1557 then substitutes
+    /// `.cvsignore` as the merge filename. Refusing instead served NOTHING
+    /// from a module whose config says `filter = :C`. MEASURED against rsync
+    /// 3.5.0 (module `keep1`+`core`+`foo.o`+`rootbait`+`.cvsignore` holding
+    /// `rootbait`, plus a `sub/` mirror): upstream serves everything except
+    /// the names each directory's own `.cvsignore` lists - the CVS DEFAULT
+    /// set is NOT loaded (`core`/`foo.o` served; get_cvs_excludes needs
+    /// `!FILTRULE_MERGE_FILE`, exclude.c:1595-1597).
+    #[test]
+    fn a_patternless_cvs_dir_merge_defaults_to_cvsignore_with_cvs_semantics() {
+        for token in [":C", "dir-merge,C"] {
+            let rule = accepted_rule(token);
+            assert_eq!(
+                rule.rule_type,
+                protocol::filters::RuleType::DirMerge,
+                "{token} is a per-directory merge"
+            );
+            assert_eq!(
+                rule.pattern, ".cvsignore",
+                "{token}: exclude.c:1553-1557 substitutes the default name"
+            );
+            // upstream: exclude.c:1402-1409 - `C` raises NO_PREFIXES |
+            // WORD_SPLIT | NO_INHERIT | CVS_IGNORE together. Dropping any of
+            // the implied three reads the merged `.cvsignore` with the wrong
+            // grammar (one-rule-per-line, inheriting, prefix-parsing).
+            assert!(rule.cvs_exclude, "{token} carries CVS_IGNORE");
+            assert!(rule.word_split, "{token} implies WORD_SPLIT");
+            assert!(rule.no_inherit, "{token} implies NO_INHERIT");
+            assert!(rule.no_prefixes, "{token} implies NO_PREFIXES");
+            assert!(
+                !rule.no_prefixes_include,
+                "{token}: CVS records are EXCLUDES"
+            );
+            // Only the explicit `e` modifier sets EXCLUDE_SELF
+            // (exclude.c:1410-1414). MEASURED: upstream SERVES the
+            // `.cvsignore` files themselves under `filter = :C`.
+            assert!(
+                !rule.exclude_from_merge,
+                "{token} must not hide the merge file itself"
+            );
+        }
+    }
+
+    /// `filter = -C`: the patternless non-merge CVS rule.
+    ///
+    /// upstream accepts it (the exclude.c:1474-1476 exemption again) and its
+    /// own pattern never matches - `check_filter` short-circuits CVS_IGNORE
+    /// rules to the global CVS list (exclude.c:1201-1206). oc refused the
+    /// whole module. Dropping the rule is the documented `exclude,C` residual:
+    /// the module is served, without the CVS default set upstream would load.
+    #[test]
+    fn a_patternless_non_merge_cvs_rule_is_accepted_and_dropped() {
+        assert!(is_skipped("-C"), "-C must serve the module, not refuse it");
+    }
+
+    /// The NO_PREFIXES interlock on the CVS modifier.
+    ///
+    /// upstream: exclude.c:1381-1391 refuses `-`/`+` once NO_PREFIXES is set
+    /// (BITS_SETnUNSET), and exclude.c:1402-1404 refuses `C` the same way -
+    /// and `C` itself SETS the bit, so every pairing refuses. A scan that does
+    /// not raise NO_PREFIXES from `C` accepts `:C-`, which upstream exits
+    /// RERR_SYNTAX on.
+    #[test]
+    fn cvs_modifier_pairs_with_no_prefixes_refuse() {
+        for token in [":C-", ":C+", ":CC", ":-C", ":+C"] {
+            assert!(
+                parse_daemon_filter_token(token, RuleXflags::Daemon).is_err(),
+                "{token} must refuse like upstream's goto invalid"
+            );
+        }
+    }
+
     #[test]
     fn parse_daemon_filter_token_exclude() {
         let rule = accepted_rule("- *.tmp");
