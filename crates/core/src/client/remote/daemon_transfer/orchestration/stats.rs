@@ -20,7 +20,6 @@ pub(crate) fn convert_server_stats_to_summary(
 ) -> ClientSummary {
     use crate::server::ServerStats;
     use engine::local_copy::LocalCopySummary;
-    use transfer::io_error_flags;
 
     // upstream: generator.c:1249 - in list-only mode the receiver captures every
     // flist entry's metadata instead of requesting file data; convert those into
@@ -107,20 +106,46 @@ pub(crate) fn convert_server_stats_to_summary(
         summary = summary.with_events(list_only_events);
     }
 
-    // upstream: cleanup.c:210-218 - convert io_error bitfield to RERR_* codes.
-    // `log_exit()` only renders the chosen code; the selection rule lives in
-    // `_exit_cleanup`, and its three independent `if`s order the flags
-    // GENERAL > VANISHED > DEL_LIMIT.
-    let exit_code = io_error_flags::to_exit_code(io_error);
-    if exit_code != 0 {
+    // The io_error->RERR_* rule (cleanup.c:210-218, incl. the `|| got_xfer_error`
+    // lift to RERR_PARTIAL) has one owner in the exit funnel; both the daemon
+    // and SSH stat converters route through it so the rule cannot drift.
+    if let Some(exit_code) = crate::exit_code::io_error_exit_code(io_error, got_xfer_error) {
         summary.set_io_error_exit_code(exit_code);
-    } else if got_xfer_error {
-        // upstream: cleanup.c:217-218 - `io_error & IOERR_GENERAL ||
-        // got_xfer_error` lifts a zero exit to RERR_PARTIAL. This is the only
-        // arm a missing source argument reaches, since `flist.c:2431` withholds
-        // IOERR_GENERAL for ENOENT.
-        summary.set_io_error_exit_code(23);
     }
 
     summary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::convert_server_stats_to_summary;
+    use crate::server::ServerStats;
+    use std::time::Duration;
+    use transfer::TransferStats;
+
+    /// 432 dedup pin (daemon leg). A `got_xfer_error` with no io_error bit lifts
+    /// a clean daemon transfer to RERR_PARTIAL through the shared funnel rule.
+    /// If this converter's `|| got_xfer_error` arm is dropped or diverges from
+    /// the SSH leg's, this turns RED - the two legs can no longer disagree
+    /// silently.
+    ///
+    /// upstream: cleanup.c:217-218.
+    #[test]
+    fn got_xfer_error_lifts_a_clean_run_to_partial() {
+        let stats = ServerStats::Receiver(TransferStats {
+            got_xfer_error: true,
+            ..TransferStats::default()
+        });
+        let summary = convert_server_stats_to_summary(stats, Duration::ZERO);
+        assert_eq!(summary.io_error_exit_code(), Some(23));
+    }
+
+    /// Non-vacuity control: a clean run with neither an io_error bit nor
+    /// got_xfer_error owes no exit code.
+    #[test]
+    fn a_clean_run_owes_no_exit_code() {
+        let stats = ServerStats::Receiver(TransferStats::default());
+        let summary = convert_server_stats_to_summary(stats, Duration::ZERO);
+        assert_eq!(summary.io_error_exit_code(), None);
+    }
 }
