@@ -11,6 +11,7 @@ mod async_limiter;
 mod limiter;
 mod parse;
 mod size_arg;
+mod throttle;
 
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
@@ -26,3 +27,4 @@ pub use crate::parse::{
     BandwidthLimitComponents, BandwidthParseError, parse_bandwidth_argument, parse_bandwidth_limit,
 };
 pub use crate::size_arg::{ParsedSize, SizeArgError, parse_size_arg};
+pub use crate::throttle::ThrottlingWriter;
