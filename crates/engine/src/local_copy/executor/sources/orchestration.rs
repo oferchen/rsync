@@ -20,7 +20,9 @@ use crate::local_copy::{
 
 use super::super::file::remove_existing_destination;
 use super::super::non_empty_path;
-use super::super::transcode_filename_component;
+use super::super::{
+    emit_cannot_convert_filename, name_is_convertible, transcode_filename_component,
+};
 use super::destination::{ensure_destination_directory, query_destination_state};
 use super::handlers::{
     handle_directory_contents_copy, handle_directory_copy, handle_non_directory_source,
@@ -1044,6 +1046,29 @@ fn process_single_source(
     };
 
     let record_relative = proc_ctx.compute_record_relative();
+
+    // upstream: flist.c:1785-1799 send_file1() - a named operand whose basename
+    // cannot be strictly transcoded under --iconv is dropped from the file list
+    // with a `cannot convert filename` diagnostic and io_error |= IOERR_GENERAL
+    // (exit 23); it never reaches the transfer. The recursive walk gates a
+    // directory's children in `planner`, but the planner never sees a top-level
+    // operand's own leaf name (a single file, symlink, device, FIFO, or a
+    // non-copy-contents directory), so gate it here at the one operand boundary.
+    // A trailing-slash (`copy_contents`) directory contributes only its
+    // children - its own name maps to the flist "." entry, which always
+    // converts - so it is exempt and its children stay gated by the planner.
+    if !source.copy_contents()
+        && let Some(leaf) = source_path.file_name()
+        && !name_is_convertible(leaf, context.options().iconv())
+    {
+        let display = record_relative
+            .clone()
+            .unwrap_or_else(|| PathBuf::from(Path::new(leaf)));
+        emit_cannot_convert_filename(display.as_os_str());
+        context.record_iconv_conversion_error();
+        return Ok(());
+    }
+
     context.record_file_list_entry(record_relative.as_deref());
 
     if proc_ctx.requires_directory_destination() && !destination_behaves_like_directory {
