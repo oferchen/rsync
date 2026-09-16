@@ -677,17 +677,27 @@ fn daemon_filter_set(rules: &[FilterRuleWireFormat]) -> Option<filters::FilterSe
 
     let compiled: Vec<FilterRule> = rules
         .iter()
-        .filter_map(|wire_rule| {
+        .flat_map(|wire_rule| {
+            // A `-C` marker (empty pattern + `cvs_exclude`) stands in for the
+            // built-in `DEFAULT_CVSIGNORE` set. upstream's `check_filter`
+            // short-circuits a FILTRULE_CVS_IGNORE rule to `cvs_filter_list`
+            // (exclude.c:1201-1206), so expand it to those default excludes
+            // here rather than let its empty pattern match everything.
+            // `filters::cvs_exclusion_rules` is the ONE owner of the list,
+            // shared with the transfer-side expander in `generator::filters`.
+            if wire_rule.cvs_exclude && wire_rule.pattern.is_empty() {
+                return filters::cvs_exclusion_rules(false).collect::<Vec<_>>();
+            }
             let pat = wire_rule.pattern.to_string_lossy();
-            Some(match wire_rule.rule_type {
-                RuleType::Include => FilterRule::include(pat),
-                RuleType::Exclude => FilterRule::exclude(pat),
-                RuleType::Clear => FilterRule::clear(),
+            match wire_rule.rule_type {
+                RuleType::Include => vec![FilterRule::include(pat)],
+                RuleType::Exclude => vec![FilterRule::exclude(pat)],
+                RuleType::Clear => vec![FilterRule::clear()],
                 // Only include/exclude decide whether a NAME is hidden here:
                 // upstream calls `check_filter` with `name_flags == 0`, and the
                 // sided and per-directory kinds are answered elsewhere.
-                _ => return None,
-            })
+                _ => vec![],
+            }
         })
         .collect();
     filters::FilterSet::from_rules(compiled).ok()
@@ -1652,11 +1662,12 @@ struct RuleModifiers {
     exclude_self: bool,
     /// `w` - `FILTRULE_WORD_SPLIT`; merge rules only (`exclude.c:1433-1436`).
     word_split: bool,
-    /// `C` - `FILTRULE_CVS_IGNORE` on a MERGE rule, where it is expressible as
-    /// `DirMergeConfig`'s CVS mode. On a non-merge rule the same character sets
-    /// [`Self::inexpressible`] TOO, and this bit then only exempts the
-    /// patternless `-C` from the empty-pattern refusal (exclude.c:1474-1476);
-    /// see [`scan_modifiers`].
+    /// `C` - `FILTRULE_CVS_IGNORE`. On a MERGE rule it is expressible as
+    /// `DirMergeConfig`'s CVS mode. On a non-merge rule it makes the rule a
+    /// `-C` marker that loads the built-in `DEFAULT_CVSIGNORE` set
+    /// (exclude.c:1595-1597), and also exempts the patternless `-C` from the
+    /// empty-pattern refusal (exclude.c:1474-1476); see [`scan_modifiers`] and
+    /// [`build_prefixed_rule`].
     cvs_ignore: bool,
 }
 
@@ -1687,17 +1698,21 @@ struct RuleModifiers {
 ///   daemon's own `xattr_only` bit is read on the sender path only
 ///   (`generator/filters.rs`) and dropped on the receiver path
 ///   (`receiver/pipeline_setup.rs`), so setting it would hide `keep` on a push.
-/// - `filter = exclude,C keep` - rc 0, `keep` SERVED. `C` turns the rule into a
-///   CVS-ignore rule whose OWN pattern is never matched (`check_filter`
-///   short-circuits on `FILTRULE_CVS_IGNORE`, `exclude.c:1201-1206`).
 /// - `filter = exclude,! keep` - rc 0, ONLY `keep` served. `!` negates, and the
 ///   `negate` bit has the same sender-only plumbing as `xattr_only`.
 ///
-/// Dropping the rule reproduces upstream EXACTLY for `x` and `C`. For `!` it
-/// does not: upstream serves only `keep` where oc then serves everything. That
-/// residual is left open rather than half-closed, because expressing `!` needs
-/// the receiver-side plumbing this change does not touch, and a half-expressed
-/// `!` would INVERT the served set on a push.
+/// Dropping the rule reproduces upstream EXACTLY for `x`. For `!` it does not:
+/// upstream serves only `keep` where oc then serves everything. That residual
+/// is left open rather than half-closed, because expressing `!` needs the
+/// receiver-side plumbing this change does not touch, and a half-expressed `!`
+/// would INVERT the served set on a push.
+///
+/// `C` is NOT in that inexpressible set: a non-merge `C` is a CVS-ignore marker
+/// whose own pattern is never matched (`check_filter` short-circuits on
+/// `FILTRULE_CVS_IGNORE`, `exclude.c:1201-1206`) but which loads the built-in
+/// `DEFAULT_CVSIGNORE` defaults (`get_cvs_excludes`, `exclude.c:1595-1597`).
+/// [`build_prefixed_rule`] emits the wire marker so those defaults ARE hidden;
+/// dropping the rule would serve `*.o`, `core`, `CVS/` and the rest.
 ///
 /// A MERGE prefix (`:`, `dir-merge`) opens the merge-only half of the alphabet
 /// and closes one character. upstream gates each arm on `FILTRULE_MERGE_FILE`:
@@ -1758,12 +1773,18 @@ fn scan_modifiers(
                 modifiers.word_split = true;
                 modifiers.no_inherit = true;
             }
-            // On a non-merge rule `C` stays inexpressible (see the doc block),
-            // but `cvs_ignore` is still recorded: it is what exempts the
+            // On a non-merge rule `C` marks a CVS-ignore rule. upstream:
+            // exclude.c:1595-1597 - `parse_filter_str` calls
+            // `get_cvs_excludes()` for a non-merge FILTRULE_CVS_IGNORE rule,
+            // loading the built-in `DEFAULT_CVSIGNORE` set into
+            // `cvs_filter_list`, which the patternless marker then consults at
+            // match time (exclude.c:1201-1206). `cvs_ignore` both exempts the
             // patternless `-C` from the empty-pattern refusal below
-            // (exclude.c:1474-1476).
+            // (exclude.c:1474-1476) AND drives that default-set expansion in
+            // [`build_prefixed_rule`], so the marker is EXPRESSIBLE - unlike the
+            // `x`/`!` modifiers, dropping it silently would fail to hide the
+            // CVS defaults a module `filter = -C` is configured to exclude.
             'C' if !specifies_side && !modifiers.no_prefixes => {
-                modifiers.inexpressible = true;
                 modifiers.cvs_ignore = true;
             }
             // The merge-only arms. Each is `goto invalid` without
@@ -1831,6 +1852,27 @@ fn build_prefixed_rule(
     // `.cvsignore`, substituted before the rule is added.
     if pattern.is_empty() && prefix.merge_file {
         pattern = ".cvsignore";
+    }
+
+    // A non-merge `-C` rule loads the built-in CVS-ignore defaults. upstream:
+    // exclude.c:1595-1597 - after `add_rule`, `parse_filter_str` runs
+    // `get_cvs_excludes()` for any non-merge FILTRULE_CVS_IGNORE rule, filling
+    // `cvs_filter_list` with `DEFAULT_CVSIGNORE`. At match time a CVS_IGNORE
+    // rule short-circuits to that list and NEVER matches its own pattern
+    // (exclude.c:1201-1206), so the rule contributes ONLY the defaults - the
+    // `keep` in `filter = exclude,C keep` is inert, exactly as the empty
+    // pattern of a plain `-C` is. Emit the same `cvs_exclude` marker the wire
+    // path carries for a forwarded `-C`; the ONE owner
+    // (`generator::filters`, drawing on `filters::DEFAULT_CVSIGNORE`) expands
+    // it into the default exclude set, with the protocol-gated perishable flag.
+    // This runs BEFORE the side/inexpressible drop below because upstream's
+    // trigger is unconditional: even `-Cx` or `-Cs` still load the defaults.
+    if modifiers.cvs_ignore && !prefix.merge_file {
+        return Ok(Some(FilterRuleWireFormat {
+            rule_type: protocol::filters::RuleType::Exclude,
+            cvs_exclude: true,
+            ..FilterRuleWireFormat::default()
+        }));
     }
 
     // The side test happens HERE, at add time, never at match time.
