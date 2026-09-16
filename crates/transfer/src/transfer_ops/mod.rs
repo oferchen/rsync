@@ -316,7 +316,7 @@ fn resolve_use_inplace(
 ///
 /// - `receiver.c:1141-1143` - `fd1 == -1` leaves `st.st_size = 0`, i.e. no basis
 /// - `receiver.c:1174-1177` - `!S_ISREG(st.st_mode)` closes the fd and clears it
-fn usable_basis(path: &std::path::Path) -> Option<std::path::PathBuf> {
+pub(crate) fn usable_basis(path: &std::path::Path) -> Option<std::path::PathBuf> {
     let file = fast_io::open_basis_nofollow(path).ok()?;
     file.metadata().ok()?.is_file().then(|| path.to_path_buf())
 }
