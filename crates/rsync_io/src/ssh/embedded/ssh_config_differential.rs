@@ -1244,7 +1244,8 @@ mod tests {
             files,
             vec![ConfigFile {
                 path: user.clone(),
-                check_perm: false
+                check_perm: false,
+                user_conf: true,
             }],
             "-F must suppress the system file entirely"
         );
@@ -1308,5 +1309,98 @@ mod tests {
         let files = config_files_from(Some(path), None, dir.path().join("unused_system"));
         let resolved = resolve_host_files(&files, "t").expect("accepted");
         assert_eq!(resolved.port, Some(2345));
+    }
+
+    /// An absolute-path `Include` is followed identically by oc and
+    /// `ssh -G` (openssh/readconf.c:2073-2150).
+    ///
+    /// The value-bearing directives live in the included file, so a `Match`
+    /// verdict proves oc read it: a resolver that ignored the include would
+    /// dump the alias `t` for hostname where upstream dumps
+    /// `inc.example.com`, i.e. `Mismatch`. Only an ABSOLUTE include is
+    /// exercised here - a relative one anchors under `~/.ssh`, which the
+    /// harness must not touch and `ssh -G` would read from the operator's
+    /// real config directory.
+    #[test]
+    fn absolute_include_is_followed_by_both() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let snippet = dir.path().join("snippet");
+        std::fs::write(
+            &snippet,
+            "Host t\n  HostName inc.example.com\n  Port 2244\n  User carol\n",
+        )
+        .expect("write snippet");
+        let top_text = format!("Include {}\n", snippet.display());
+        let top = dir.path().join("ssh_config");
+        std::fs::write(&top, &top_text).expect("write top");
+
+        let diff = match differential(&top, &top_text, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("absolute include", &why);
+                return;
+            }
+        };
+        for keyword in ["hostname", "port", "user"] {
+            let cell = diff.cell(keyword).expect("dumped");
+            assert_eq!(
+                cell.verdict,
+                Verdict::Match,
+                "{keyword}: upstream {:?} vs oc {:?} on {}",
+                cell.upstream,
+                cell.oc,
+                diff.oracle_version
+            );
+        }
+    }
+
+    /// A glob `Include` expands in sorted order under first-obtained-wins,
+    /// identically on both sides.
+    ///
+    /// Two matching files each set `Port`; the alphabetically-first claims
+    /// the slot (openssh/readconf.c:2115 `glob()` sorts, openssh/readconf.c
+    /// :1229 assigns only while unset). The control drops the sorted-first
+    /// file so the second one wins, proving both sides track glob ORDER
+    /// rather than a fixed preference.
+    #[test]
+    fn glob_include_first_obtained_matches_on_both() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let inc = dir.path().join("inc");
+        std::fs::create_dir_all(&inc).expect("mkdir inc");
+        std::fs::write(inc.join("01.conf"), "Host t\n  Port 2201\n").expect("write 01");
+        std::fs::write(inc.join("02.conf"), "Host t\n  Port 2202\n").expect("write 02");
+        let top_text = format!("Include {}/*.conf\n", inc.display());
+        let top = dir.path().join("ssh_config");
+        std::fs::write(&top, &top_text).expect("write top");
+
+        let diff = match differential(&top, &top_text, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("glob include order", &why);
+                return;
+            }
+        };
+        let port = diff.cell("port").expect("dumped");
+        assert_eq!(port.upstream, vec!["2201".to_owned()]);
+        assert_eq!(
+            port.verdict,
+            Verdict::Match,
+            "oc took the wrong glob member: {:?} on {}",
+            port.oc,
+            diff.oracle_version
+        );
+
+        // Control: drop the sorted-first file; the second now wins on both.
+        std::fs::remove_file(inc.join("01.conf")).expect("rm 01");
+        let diff = match differential(&top, &top_text, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("glob include order control", &why);
+                return;
+            }
+        };
+        let port = diff.cell("port").expect("dumped");
+        assert_eq!(port.upstream, vec!["2202".to_owned()]);
+        assert_eq!(port.verdict, Verdict::Match, "oc {:?}", port.oc);
     }
 }
