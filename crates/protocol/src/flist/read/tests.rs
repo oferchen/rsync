@@ -3119,7 +3119,7 @@ fn read_entry_accepts_a_directory_transfer_root() {
 /// (without `XMIT_HLINK_FIRST`) while the receiver is NOT preserving hard links
 /// MUST still consume the follower's group-index varint from the wire.
 ///
-/// upstream: `flist.c:791-793` reads `first_hlink_ndx = read_varint(f)` under
+/// upstream: `flist.c:874-876` reads `first_hlink_ndx = read_varint(f)` under
 /// `protocol_version >= 30 && BITS_SETnUNSET(xflags, XMIT_HLINKED, XMIT_HLINK_FIRST)`
 /// with NO `preserve_hard_links` conjunct - the read is gated on the peer's flag
 /// bits alone. If the receiver instead gated it on the local -H option it would
@@ -3264,7 +3264,7 @@ fn hardlink_dev_ino_is_read_when_hard_links_are_preserved() {
 /// the transfer set, and never linked it - a silent omission at exit 0.
 ///
 /// This case covers the leader form (both bits set), which carries NO index
-/// varint on the wire (upstream: flist.c:585-587 writes `first_hlink_ndx` only
+/// varint on the wire (upstream: flist.c:667-669 writes `first_hlink_ndx` only
 /// for a non-first entry, and the reader returns `u32::MAX` for a first without
 /// reading). The follower form (HLINKED alone) DOES carry a varint the reader
 /// must consume on the flag alone, so it needs a valid leader on the wire and is
@@ -3318,7 +3318,7 @@ fn stray_hlinked_wire_bit_is_inert_without_preserve_hard_links() {
 
 /// The follower half of task #7842 under the corrected byte model: a proto-30+
 /// follower (`XMIT_HLINKED` without `XMIT_HLINK_FIRST`) carries a group-index
-/// varint the receiver must consume ON THE FLAG ALONE (upstream: flist.c:791-793,
+/// varint the receiver must consume ON THE FLAG ALONE (upstream: flist.c:874-876,
 /// no `preserve_hard_links` conjunct). Without -H the varint is still read so the
 /// stream stays in sync AND the follower survives the decode, but its hardlink
 /// flags must be cleared so `build_files_to_transfer` does not drop it. This
