@@ -1,20 +1,21 @@
-//! Bandwidth-throttling writer decorator for the network sender path.
+//! Bandwidth-throttling writer decorator.
 //!
 //! Mirrors upstream rsync's socket-write pacing in `io.c:834-862`: the sender's
 //! writer clamps every outbound write to `bwlimit_writemax` bytes
 //! (`options.c:2394-2397`, `bwlimit * 128` floored at 512) and calls
 //! `sleep_for_bwlimit(n)` after each chunk. The receiver never throttles -
 //! `main.c:1068` sets `bwlimit_writemax = 0` once it becomes the receiver - so
-//! callers install a limiter only on a sender-role (`am_sender`) writer.
+//! callers install a limiter only on a sender-role writer.
 //!
-//! Placed at the bottom of the sender's writer stack (below the multiplex
-//! framer and any compression), so it paces the exact wire bytes the raw
-//! descriptor accepts, matching upstream's `perform_io()` write path where the
-//! clamp and sleep sit on the raw `write()` of the outermost output buffer.
+//! This decorator is the single owner of that clamp-then-pace sequence for the
+//! whole workspace. Any transport whose write endpoint implements [`Write`] -
+//! the TCP/SSH `stdout` socket and the QUIC stream alike - paces the exact wire
+//! bytes the descriptor accepts by wrapping it here, so the pacing logic is
+//! never re-implemented per transport.
 
 use std::io::{self, IoSlice, Write};
 
-use bandwidth::BandwidthLimiter;
+use crate::BandwidthLimiter;
 
 /// Writer decorator that paces outbound writes to a bandwidth limit.
 ///
@@ -40,13 +41,11 @@ impl<W: Write> ThrottlingWriter<W> {
     }
 
     /// Consumes the decorator, returning the inner writer.
-    #[allow(dead_code)] // REASON: symmetry with the other writer wrappers; used by tests.
     pub fn into_inner(self) -> W {
         self.inner
     }
 
     /// Returns whether a bandwidth limiter is active on this writer.
-    #[allow(dead_code)] // REASON: exercised by tests asserting role-gated wiring.
     pub const fn is_throttled(&self) -> bool {
         self.limiter.is_some()
     }
@@ -98,8 +97,9 @@ impl<W: Write> Write for ThrottlingWriter<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::recorded_sleep_session;
     use std::num::NonZeroU64;
-    use std::time::Instant;
+    use std::time::Duration;
 
     /// Records the size of every inner `write` so tests can assert clamping.
     #[derive(Default)]
@@ -166,29 +166,33 @@ mod tests {
         assert!(sink.writes.len() >= 4, "large write split into chunks");
     }
 
-    /// The limiter paces throughput: sending more than one pacing interval's
-    /// worth of data blocks for a robust lower bound of wall-clock time.
+    /// The limiter registers pacing sleeps proportional to the throughput.
     ///
     /// WHY: this is the whole point of `--bwlimit` on the sender - upstream
     /// `io.c:861 sleep_for_bwlimit(n)` makes the sender wait so the average
-    /// egress rate tracks the configured limit. The bound is deliberately loose
-    /// (a fraction of the ideal sleep) to stay CI-robust while still failing
-    /// closed if the limiter is never invoked (the pre-fix inert behaviour).
+    /// egress rate tracks the configured limit. Under the crate's test build the
+    /// limiter records the requested sleep durations instead of blocking on them
+    /// (see `limiter::sleep`), so this asserts on the recorded pacing schedule -
+    /// a deterministic proxy for the wall-clock sleep that fails closed if the
+    /// decorator never registers the bytes with the limiter (the pre-fix inert
+    /// behaviour). The end-to-end wall-clock proof lives on the real backend in
+    /// the transport tests (e.g. `rsync_io`'s `bwlimit_paces_quic_writer`).
     #[test]
-    fn limited_paces_throughput_lower_bound() {
+    fn limited_registers_pacing_sleeps() {
         // 64 KiB/s rate, send 2x32 KiB -> ideal steady-state ~1.0 s. The first
         // pacing interval only fires once accumulated debt exceeds 100 ms
-        // (io.c ONE_SEC/10), so assert a conservative >= 150 ms lower bound.
+        // (io.c ONE_SEC/10), so assert a conservative >= 150 ms of recorded sleep.
         let rate = 64 * 1024;
+        let mut session = recorded_sleep_session();
+        session.clear();
         let mut writer = ThrottlingWriter::new(io::sink(), Some(limiter(rate)));
         let payload = vec![0u8; 32 * 1024];
-        let start = Instant::now();
         writer.write_all(&payload).expect("write");
         writer.write_all(&payload).expect("write");
-        let elapsed = start.elapsed();
+        let paced = session.total_duration();
         assert!(
-            elapsed.as_millis() >= 150,
-            "bwlimit must pace the sender; elapsed={elapsed:?}"
+            paced >= Duration::from_millis(150),
+            "bwlimit must register pacing sleeps; recorded total={paced:?}"
         );
     }
 
