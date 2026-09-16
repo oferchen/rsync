@@ -248,3 +248,63 @@ fn teardown_is_prompt() {
         "teardown took {elapsed:?}, expected < {TEARDOWN_BOUND:?} (idle-timeout reliance?)"
     );
 }
+
+/// Serializes the env-mutating congestion-control test below. `OC_RSYNC_QUIC_CC`
+/// is process-global and the test binary runs cases in parallel, so mutating it
+/// unguarded would leak across cases (the env-race flake class, task 976).
+static CC_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Runs one byte-exact request/reply round trip against a freshly bound
+/// acceptor, pinning the client to its certificate. Shared by the
+/// congestion-control cases so each controller drives the identical transfer.
+fn cc_round_trip() {
+    let acceptor =
+        QuicAcceptor::bind("127.0.0.1:0".parse().expect("loopback addr")).expect("bind acceptor");
+    let addr = acceptor.local_addr().expect("local addr");
+    let cert = acceptor.certificate().clone().into_owned();
+
+    let request = pattern(0x5a);
+    let reply = pattern(0xc3);
+
+    let expected_request = request.clone();
+    let server_reply = reply.clone();
+    let server = thread::spawn(move || {
+        let mut stream = acceptor.accept().expect("accept stream");
+        let mut got = vec![0u8; PAYLOAD_LEN];
+        stream.read_exact(&mut got).expect("read request");
+        assert_eq!(got, expected_request, "request corrupted");
+        stream.write_all(&server_reply).expect("write reply");
+        stream.finish().expect("finish reply");
+    });
+
+    let connector = QuicConnector::new(&cert).expect("build connector");
+    let mut stream = connector.connect(addr, "localhost").expect("connect");
+    stream.write_all(&request).expect("write request");
+    stream.finish().expect("finish request");
+    let mut received = vec![0u8; PAYLOAD_LEN];
+    stream.read_exact(&mut received).expect("read reply");
+    assert_eq!(received, reply, "reply corrupted");
+    stream.close();
+    server.join().expect("server thread");
+}
+
+/// A loopback transfer stays byte-correct under BBR and under CUBIC, proving the
+/// congestion-controller swap selected by `OC_RSYNC_QUIC_CC` (wired into both
+/// the acceptor and connector transport configs) does not perturb the byte pipe.
+/// Both controllers are exercised sequentially under one lock so the env
+/// mutation cannot bleed into the parallel default-controller tests.
+#[test]
+fn round_trip_under_each_congestion_controller() {
+    let _guard = CC_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for controller in ["bbr", "cubic"] {
+        // SAFETY: env access is serialized by CC_ENV_LOCK for the duration of
+        // the endpoint construction that reads it, and cleared before release.
+        unsafe {
+            std::env::set_var("OC_RSYNC_QUIC_CC", controller);
+        }
+        cc_round_trip();
+    }
+    unsafe {
+        std::env::remove_var("OC_RSYNC_QUIC_CC");
+    }
+}

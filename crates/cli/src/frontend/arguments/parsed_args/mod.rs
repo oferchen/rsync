@@ -115,6 +115,16 @@ pub struct ParsedArgs {
     /// system-roots default. Available only under the `quic` feature.
     #[cfg(feature = "quic")]
     pub quic_ca: Option<std::path::PathBuf>,
+    /// `--quic-cc <bbr|cubic|newreno>` - client endpoint congestion controller.
+    /// `None` defers to `OC_RSYNC_QUIC_CC` then the default (BBR). Available
+    /// only under the `quic` feature.
+    #[cfg(feature = "quic")]
+    pub quic_cc: Option<rsync_io::quic::CongestionAlgorithm>,
+    /// `--quic-window <SIZE>` - client endpoint flow-control window in bytes.
+    /// `None` defers to `OC_RSYNC_QUIC_WINDOW` then the default. Available only
+    /// under the `quic` feature.
+    #[cfg(feature = "quic")]
+    pub quic_window: Option<u64>,
 
     /// `--protocol` - force a specific protocol version (28-32).
     pub protocol: Option<OsString>,

@@ -37,6 +37,14 @@ pub(crate) struct ConfigInputs {
     /// certificate; `None` uses the system-roots default.
     #[cfg(feature = "quic")]
     pub(crate) quic_ca: Option<PathBuf>,
+    /// `--quic-cc` - client endpoint congestion controller; `None` defers to
+    /// `OC_RSYNC_QUIC_CC` then the default (BBR).
+    #[cfg(feature = "quic")]
+    pub(crate) quic_cc: Option<rsync_io::quic::CongestionAlgorithm>,
+    /// `--quic-window` - client endpoint flow-control window in bytes; `None`
+    /// defers to `OC_RSYNC_QUIC_WINDOW` then the default.
+    #[cfg(feature = "quic")]
+    pub(crate) quic_window: Option<u64>,
     pub(crate) blocking_io: Option<bool>,
     pub(crate) dry_run: bool,
     pub(crate) list_only: bool,
@@ -354,6 +362,12 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         // `--quic-ca` selects a private CA bundle for QUIC certificate
         // verification; `None` keeps the system-roots default.
         builder = builder.quic_ca(inputs.quic_ca);
+        // `--quic-cc` / `--quic-window` tune the client endpoint's congestion
+        // controller and flow-control window; `None` defers to the env vars and
+        // then the built-in defaults inside `build_transport_config`. These are
+        // client-local and never reach the forwarded server arguments.
+        builder = builder.quic_cc(inputs.quic_cc);
+        builder = builder.quic_window(inputs.quic_window);
     }
     // Only override the builder's upstream default when the user supplied
     // `--inc-recursive` or `--no-inc-recursive`. Mirrors upstream
