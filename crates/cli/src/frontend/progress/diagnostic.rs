@@ -6,6 +6,7 @@
 use std::cell::Cell;
 use std::io::{self, Write};
 
+use crate::frontend::escape::{EscapeStyle, escape_for_output};
 pub use logging::DiagnosticEvent;
 use logging::Stamped;
 
@@ -18,6 +19,54 @@ thread_local! {
     // `msgs2stderr` is set, so initial events that emit before the workflow
     // records its decision still land on the correct stream.
     static MSGS_TO_STDERR: Cell<bool> = const { Cell::new(false) };
+    // The workflow records its resolved `--8-bit-output` / `-8` decision here,
+    // alongside `--msgs-to-stderr`, so the terminal render boundary escapes a
+    // notice's bytes with the same rule upstream's `rwrite()` applies:
+    // log.c:425 `filtered_fwrite(f, buf, len, !allow_8bit_chars, 0, ...)`.
+    // Defaults to false (no `-8`), which escapes every non-`isprint` byte -
+    // upstream's default terminal behaviour.
+    static EIGHT_BIT_OUTPUT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Record the effective `--8-bit-output` / `-8` setting for the current thread.
+///
+/// The workflow calls this once it has resolved the CLI flag so the terminal
+/// render boundary ([`render_diagnostic_events`], [`flush_diagnostics`]) escapes
+/// notice bytes with the correct `use_isprint` switch, mirroring upstream
+/// `rwrite()` -> `filtered_fwrite(.., !allow_8bit_chars, ..)` (log.c:425).
+pub fn set_eight_bit_output(value: bool) {
+    EIGHT_BIT_OUTPUT.with(|cell| cell.set(value));
+}
+
+/// Read the recorded `--8-bit-output` / `-8` setting for the current thread.
+#[must_use]
+pub fn eight_bit_output() -> bool {
+    EIGHT_BIT_OUTPUT.with(Cell::get)
+}
+
+/// The terminal escape style for a notice, honouring `--8-bit-output` / `-8`.
+///
+/// upstream: log.c:425 `rwrite()` writes each FINFO/FERROR/FWARNING line through
+/// `filtered_fwrite(f, buf, len, !allow_8bit_chars, 0, trailing_CR_or_NL)`, so
+/// the escape rule is the terminal one and the `use_isprint` switch is `-8`.
+fn terminal_escape_style() -> EscapeStyle {
+    EscapeStyle::terminal(eight_bit_output())
+}
+
+/// The raw, unescaped message bytes carried by a diagnostic event.
+///
+/// The `Info`/`Debug` variants hold a `String` (valid UTF-8); the `Bytes`
+/// variant holds raw bytes that may not be UTF-8 - a filename operand that
+/// reached the notice channel through [`emit_info_bytes`](logging::emit_info_bytes).
+/// All three are the same thing to the sink: the buffer upstream `rwrite()`
+/// passes to `filtered_fwrite` (log.c:425), escaped once at the render boundary.
+fn event_message_bytes(event: &DiagnosticEvent) -> &[u8] {
+    match event {
+        DiagnosticEvent::Info { message, .. } | DiagnosticEvent::Debug { message, .. } => {
+            message.as_bytes()
+        }
+        DiagnosticEvent::Bytes { message, .. } => message.as_slice(),
+    }
 }
 
 /// Record the effective `--msgs-to-stderr` setting for the current thread.
@@ -100,7 +149,7 @@ const fn summary_stream(msgs2stderr: bool) -> logging::MessageStream {
 pub fn partition_by_summary_stream(
     events: Vec<Stamped<DiagnosticEvent>>,
     msgs2stderr: bool,
-) -> (Vec<Stamped<String>>, Vec<DiagnosticEvent>) {
+) -> (Vec<Stamped<Vec<u8>>>, Vec<DiagnosticEvent>) {
     let summary = summary_stream(msgs2stderr);
     let ctx = stream_context(msgs2stderr);
     let mut interleaved = Vec::new();
@@ -109,9 +158,14 @@ pub fn partition_by_summary_stream(
         let key = stamped.sequence();
         let event = stamped.into_value();
         if logging::message_stream(event.code(), ctx) == Ok(summary) {
-            let (DiagnosticEvent::Info { message, .. } | DiagnosticEvent::Debug { message, .. }) =
-                event;
-            interleaved.push(Stamped::with_sequence(key, message));
+            // Carry the RAW message bytes to the interleaving renderer; it
+            // escapes once at its own write boundary, mirroring
+            // `render_diagnostic_events`. A `Bytes` notice keeps its filename
+            // operand intact here rather than being forced through a `String`.
+            interleaved.push(Stamped::with_sequence(
+                key,
+                event_message_bytes(&event).to_vec(),
+            ));
         } else {
             deferred.push(event);
         }
@@ -144,16 +198,30 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
     err: &mut E,
     msgs2stderr: bool,
 ) -> io::Result<()> {
+    let style = terminal_escape_style();
     for event in events {
         let code = event.code();
-        let (DiagnosticEvent::Info { message, .. } | DiagnosticEvent::Debug { message, .. }) =
-            event;
         // upstream: rwrite() prints debug traces through rprintf(FINFO, ...)
         // with no flag-category bracket, so info and debug events differ only
-        // in the code they carry, never in their rendering.
+        // in the code they carry, never in their rendering. The `Bytes` variant
+        // carries a byte-faithful message (a possibly-non-UTF-8 filename); the
+        // String variants carry valid UTF-8, whose bytes are equally the buffer
+        // upstream `rwrite()` hands to `filtered_fwrite`.
+        let message = event_message_bytes(event);
+        // upstream: log.c:425 rwrite() -> filtered_fwrite escapes the whole line
+        // to the terminal before the trailing newline, so a control byte cannot
+        // forge a line or drive the terminal (CWE-117) and a non-UTF-8 filename
+        // byte reaches the fd verbatim under `-8`. Escape once, here, at the sink.
+        let rendered = escape_for_output(message, style);
         match logging::message_stream(code, stream_context(msgs2stderr)) {
-            Ok(logging::MessageStream::Stderr) => writeln!(err, "{message}")?,
-            Ok(logging::MessageStream::Stdout) => writeln!(out, "{message}")?,
+            Ok(logging::MessageStream::Stderr) => {
+                err.write_all(&rendered)?;
+                err.write_all(b"\n")?;
+            }
+            Ok(logging::MessageStream::Stdout) => {
+                out.write_all(&rendered)?;
+                out.write_all(b"\n")?;
+            }
             Ok(logging::MessageStream::LogOnly | logging::MessageStream::Suppressed) => {}
             Err(_) => {
                 // upstream: log.c:325-327 reports the bad code on stderr and

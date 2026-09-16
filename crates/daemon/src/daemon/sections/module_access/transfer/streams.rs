@@ -371,8 +371,17 @@ fn execute_transfer(
     // one.
     if let Some(log) = ctx.log_sink {
         for event in logging::drain_events_for_daemon_log() {
-            let (logging::DiagnosticEvent::Info { message, .. }
-            | logging::DiagnosticEvent::Debug { message, .. }) = event;
+            let message = match event {
+                logging::DiagnosticEvent::Info { message, .. }
+                | logging::DiagnosticEvent::Debug { message, .. } => message,
+                // A byte-faithful notice degrades to a lossy string on this
+                // daemon-log path; the log-file sink applies the log-file
+                // escape at write time. Byte-exact daemon-log fidelity is a
+                // follow-up (see the notice-channel migration inventory).
+                logging::DiagnosticEvent::Bytes { message, .. } => {
+                    String::from_utf8_lossy(&message).into_owned()
+                }
+            };
             log_message(log, &rsync_info!(message).with_role(Role::Daemon));
         }
     }

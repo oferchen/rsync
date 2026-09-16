@@ -608,10 +608,12 @@ mod name_converter_tests {
 
         let reported: Vec<String> = logging::drain_events_for_daemon_log()
             .into_iter()
-            .map(|event| {
-                let (logging::DiagnosticEvent::Info { message, .. }
-                | logging::DiagnosticEvent::Debug { message, .. }) = event;
-                message
+            .map(|event| match event {
+                logging::DiagnosticEvent::Info { message, .. }
+                | logging::DiagnosticEvent::Debug { message, .. } => message,
+                logging::DiagnosticEvent::Bytes { message, .. } => {
+                    String::from_utf8_lossy(&message).into_owned()
+                }
             })
             .collect();
         assert!(

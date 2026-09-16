@@ -36,6 +36,46 @@ macro_rules! info_log {
     };
 }
 
+/// Emit a byte-faithful info notice if the flag level is enabled.
+///
+/// The byte-capable sibling of [`info_log!`](crate::info_log): instead of a
+/// `format!()` string it takes an expression yielding the message as raw
+/// bytes (`Vec<u8>` / `impl Into<Vec<u8>>`), so a filename operand that is not
+/// valid UTF-8, or that carries a control byte, survives to the render
+/// boundary intact rather than being lossily replaced with U+FFFD. This
+/// mirrors upstream `rwrite()`, whose message buffer is copied to the output
+/// fd verbatim and escaped once at the sink (upstream: log.c:425 `rwrite()`
+/// -> log.c:250 `filtered_fwrite`).
+///
+/// # Arguments
+///
+/// - `$flag` - An [`InfoFlag`](crate::InfoFlag) variant name (e.g. `Nonreg`).
+/// - `$level` - Minimum level (`u8`). Level 1 corresponds to `-v`.
+/// - `$bytes` - An expression evaluated to the message bytes only when the
+///   flag is enabled, so a disabled notice pays no allocation cost.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// // The filename bytes reach the boundary unmangled and are escaped there.
+/// let mut msg = b"skipping non-regular file \"".to_vec();
+/// msg.extend_from_slice(name_bytes);
+/// msg.push(b'"');
+/// info_log_bytes!(Nonreg, 1, msg);
+/// ```
+#[macro_export]
+macro_rules! info_log_bytes {
+    ($flag:ident, $level:expr, $bytes:expr $(,)?) => {
+        if $crate::info_gte($crate::InfoFlag::$flag, $level) {
+            $crate::emit_info_bytes(
+                $crate::InfoFlag::$flag,
+                $level,
+                ::std::vec::Vec::from($bytes),
+            );
+        }
+    };
+}
+
 /// Emit a warning, unconditionally.
 ///
 /// Unlike [`info_log!`](crate::info_log) and

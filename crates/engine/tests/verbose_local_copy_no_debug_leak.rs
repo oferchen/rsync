@@ -26,6 +26,9 @@ fn drained_messages() -> Vec<String> {
             DiagnosticEvent::Debug { message, .. } | DiagnosticEvent::Info { message, .. } => {
                 message
             }
+            DiagnosticEvent::Bytes { message, .. } => {
+                String::from_utf8_lossy(&message).into_owned()
+            }
         })
         .collect()
 }
