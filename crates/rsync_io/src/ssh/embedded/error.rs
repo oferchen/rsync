@@ -91,6 +91,22 @@ pub enum SshError {
         reason: String,
     },
 
+    /// The default `~/.ssh/config` failed upstream's owner/permission
+    /// check.
+    ///
+    /// upstream: openssh/readconf.c:2579-2587 - under `SSHCONF_CHECKPERM`
+    /// (openssh/readconf.h:216) the file must be owned by root or the
+    /// caller and must not be group/world-writable, and a failure is
+    /// fatal, so the connection never starts. The check applies to the
+    /// default user file only (openssh/ssh.c:583) - never to an explicit
+    /// `-F` file or to the system file. The rendered text is upstream's
+    /// own fatal wording.
+    #[error("Bad owner or permissions on {path}")]
+    SshConfigPermissions {
+        /// The config file that failed the check.
+        path: String,
+    },
+
     /// An `ssh_config` line was refused while resolving the host alias.
     ///
     /// Upstream counts every refused line and then aborts the whole load
