@@ -480,7 +480,12 @@ pub fn device_word(rdev_major: u32, rdev_minor: u32) -> u64 {
 #[cfg(unix)]
 #[must_use]
 pub fn fifo_mknod_mode(mode_bits: u32) -> u32 {
-    (libc::S_IFIFO as u32) | (mode_bits & 0o7777)
+    // POSIX `S_IFIFO` octal literal rather than `libc::S_IFIFO as u32`: the
+    // constant is `u32` on Linux (so the cast trips `unnecessary_cast`) but
+    // `u16` on Apple targets, and a cross-platform `u32::from` would trip
+    // `useless_conversion` on Linux. The literal is pinned to libc by
+    // `s_if_type_bits_match_libc` so it cannot silently drift.
+    0o010000 | (mode_bits & 0o7777)
 }
 
 /// Composes the `mknod(2)` mode word for a character or block device node.
@@ -491,11 +496,12 @@ pub fn fifo_mknod_mode(mode_bits: u32) -> u32 {
 #[cfg(unix)]
 #[must_use]
 pub fn device_mknod_mode(mode_bits: u32, is_block: bool) -> u32 {
-    let type_bits = if is_block {
-        libc::S_IFBLK
-    } else {
-        libc::S_IFCHR
-    } as u32;
+    // POSIX `S_IFBLK` / `S_IFCHR` octal literals rather than `libc::S_IF* as
+    // u32`: those constants are `u32` on Linux (so the cast trips
+    // `unnecessary_cast`) and `u16` on Apple targets, and a cross-platform
+    // `u32::from` would trip `useless_conversion` on Linux. Pinned to libc by
+    // `s_if_type_bits_match_libc` so the literals cannot silently drift.
+    let type_bits: u32 = if is_block { 0o060000 } else { 0o020000 };
     type_bits | (mode_bits & 0o7777)
 }
 
@@ -821,6 +827,18 @@ mod tests {
     use std::path::Path;
     #[cfg(unix)]
     use tempfile::tempdir;
+
+    // Pins the POSIX octal type-bit literals used by `fifo_mknod_mode` and
+    // `device_mknod_mode` to libc's `S_IF*`, so they cannot silently drift.
+    // `u64::from` widens both the `u32` (Linux) and `u16` (Apple) definitions
+    // without a cast, keeping the check clippy-clean on every unix target.
+    #[cfg(unix)]
+    #[test]
+    fn s_if_type_bits_match_libc() {
+        assert_eq!(u64::from(libc::S_IFIFO), 0o010000);
+        assert_eq!(u64::from(libc::S_IFCHR), 0o020000);
+        assert_eq!(u64::from(libc::S_IFBLK), 0o060000);
+    }
 
     #[cfg(all(
         unix,
