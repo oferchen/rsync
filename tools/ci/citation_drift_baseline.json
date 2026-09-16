@@ -11,7 +11,7 @@
   "cli": 3,
   "compress": 0,
   "core": 0,
-  "daemon": 2,
+  "daemon": 3,
   "engine": 0,
   "filters": 0,
   "logging": 0,
