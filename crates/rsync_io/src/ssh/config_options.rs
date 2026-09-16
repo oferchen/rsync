@@ -53,6 +53,9 @@ pub(in crate::ssh) enum Opcode {
     /// `Match <criteria>` - opens a conditionally active block.
     /// upstream: openssh/readconf.c:247 `oMatch`, arm at :1864.
     Match,
+    /// `Include <pattern>...` - reads the glob-expanded file(s) inline.
+    /// upstream: openssh/readconf.c:248 `oInclude`, arm at :2073.
+    Include,
     /// `Compression yes|no`.
     /// upstream: openssh/readconf.c:256 `oCompression`, arm at :1344.
     Compression,
@@ -95,6 +98,7 @@ const KEYWORDS: &[(&str, Opcode)] = &[
     ("identitiesonly", Opcode::IdentitiesOnly),
     ("identityagent", Opcode::IdentityAgent),
     ("identityfile", Opcode::IdentityFile),
+    ("include", Opcode::Include),
     ("match", Opcode::Match),
     ("port", Opcode::Port),
     ("user", Opcode::User),
@@ -125,6 +129,10 @@ pub(in crate::ssh) enum ValueKind {
     /// A `Match` criteria list, walked by upstream's `match_cfg_line`
     /// (openssh/readconf.c:1864-1870).
     MatchCriteria,
+    /// A whitespace-separated list of glob patterns, each read as an
+    /// additional config file inline. upstream: the `oInclude` arm's
+    /// `while (argv_next(...))` loop (openssh/readconf.c:2079).
+    IncludePatterns,
     /// One token, read as a multistate yes/no flag.
     /// upstream: `parse_multistate_value` (openssh/readconf.c:1103-1117).
     Flag,
@@ -188,6 +196,7 @@ impl Opcode {
         match self {
             Self::Host => ValueKind::HostPatterns,
             Self::Match => ValueKind::MatchCriteria,
+            Self::Include => ValueKind::IncludePatterns,
             Self::Compression | Self::IdentitiesOnly => ValueKind::Flag,
             Self::Hostname | Self::User | Self::Port | Self::IdentityFile | Self::IdentityAgent => {
                 ValueKind::Single
@@ -214,7 +223,10 @@ impl Opcode {
             ValueKind::Flag => Some("missing argument."),
             ValueKind::Single => Some("Missing argument."),
             ValueKind::Time => Some("missing time value."),
-            ValueKind::HostPatterns | ValueKind::MatchCriteria | ValueKind::Unknown => None,
+            ValueKind::HostPatterns
+            | ValueKind::MatchCriteria
+            | ValueKind::IncludePatterns
+            | ValueKind::Unknown => None,
         }
     }
 }
@@ -361,6 +373,7 @@ mod tests {
     const UNION: &[(&str, Opcode)] = &[
         ("Host", Opcode::Host),
         ("Match", Opcode::Match),
+        ("Include", Opcode::Include),
         ("Compression", Opcode::Compression),
         ("HostName", Opcode::Hostname),
         ("User", Opcode::User),
@@ -451,8 +464,15 @@ mod tests {
         );
         // The block-opening keywords consume a LIST; an absent value
         // leaves the walk empty rather than refusing
-        // (openssh/readconf.c:1829-1831).
-        for opcode in [Opcode::Host, Opcode::Match, Opcode::Unknown] {
+        // (openssh/readconf.c:1829-1831). `Include` is list-shaped too:
+        // its empty-argument refusal is the per-TOKEN empty check
+        // (openssh/readconf.c:2081), not an absent-value one.
+        for opcode in [
+            Opcode::Host,
+            Opcode::Match,
+            Opcode::Include,
+            Opcode::Unknown,
+        ] {
             assert_eq!(opcode.missing_argument(), None, "{opcode:?}");
         }
     }
