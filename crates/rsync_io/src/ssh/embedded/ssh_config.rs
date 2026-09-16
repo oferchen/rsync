@@ -197,7 +197,12 @@ fn resolve_host_into(
     host_alias: &str,
     path: &str,
 ) -> Result<(), SshError> {
-    let mut in_matching_block = false;
+    // Upstream initialises `active` to 1 at the top of each file
+    // (openssh/readconf.c read_config_file_depth()), so directives before
+    // the first `Host`/`Match` line apply to every host. A `Host` line
+    // then reassigns this from its own match, which is why the top-level
+    // default only governs the pre-`Host` region.
+    let mut in_matching_block = true;
 
     for (index, raw_line) in text.lines().enumerate() {
         // Upstream counts physical lines from 1 (openssh/readconf.c:2651-2654).
@@ -537,6 +542,37 @@ mod tests {
     fn first_match_wins() {
         let text = "Host example\n  User first\nHost *\n  User second\n";
         assert_eq!(resolve(text, "example").user.as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn top_level_directive_applies_to_all_hosts() {
+        // Directives before the first Host line sit at the always-active
+        // top level and apply to every host, because upstream initialises
+        // `active` to 1 (openssh/readconf.c read_config_file_depth()). The
+        // Host-scoped HostName is the non-vacuity control: it must stay
+        // confined to the host `Host example` names.
+        let text = "User toplevel\nPort 2222\nHost example\n  HostName 1.2.3.4\n";
+
+        let matched = resolve(text, "example");
+        assert_eq!(matched.user.as_deref(), Some("toplevel"));
+        assert_eq!(matched.port, Some(2222));
+        assert_eq!(matched.hostname.as_deref(), Some("1.2.3.4"));
+
+        let unmatched = resolve(text, "nomatch");
+        assert_eq!(unmatched.user.as_deref(), Some("toplevel"));
+        assert_eq!(unmatched.port, Some(2222));
+        // Control: a directive confined to the non-matching Host block
+        // never reaches a host the block did not name.
+        assert!(unmatched.hostname.is_none());
+    }
+
+    #[test]
+    fn top_level_directive_wins_over_later_host_block() {
+        // First-obtained-wins: a top-level value claims the slot before a
+        // later matching Host block can overwrite it (openssh/readconf.c
+        // :1229 `if (*activep && *intptr == -1)`).
+        let text = "User topuser\nHost example\n  User blockuser\n";
+        assert_eq!(resolve(text, "example").user.as_deref(), Some("topuser"));
     }
 
     #[test]
