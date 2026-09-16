@@ -2089,6 +2089,62 @@ mod module_access_tests {
         assert_eq!(rules[2].pattern, "*.log");
     }
 
+    // upstream: exclude.c:1595-1597 - a non-merge `-C` rule triggers
+    // `get_cvs_excludes()`, loading the built-in `DEFAULT_CVSIGNORE` set. A
+    // module `filter = -C` must therefore hide `*.o`, `core`, `CVS/` and the
+    // rest, not drop the rule. The rule is emitted as a `cvs_exclude` marker
+    // (empty pattern) that the transfer-side `parse_received_filters` and the
+    // pre-open `daemon_filter_set` both expand from `filters::DEFAULT_CVSIGNORE`.
+    #[test]
+    fn build_daemon_filter_rules_non_merge_cvs_emits_marker() {
+        let module = ModuleRuntime::from(ModuleDefinition {
+            filter: vec!["-C".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        assert_eq!(rules.len(), 1, "the -C rule must not be dropped");
+        assert!(
+            rules[0].cvs_exclude,
+            "the marker carries the cvs_exclude bit"
+        );
+        assert!(
+            rules[0].pattern.is_empty(),
+            "the marker has no pattern; the defaults are expanded downstream"
+        );
+        assert_eq!(rules[0].rule_type, protocol::filters::RuleType::Exclude);
+    }
+
+    // The behavioural pin: the pre-open daemon filter gate compiled from a
+    // `filter = -C` module HIDES the built-in CVS-ignore names and SERVES a
+    // name outside the default set. Reverting the fix (dropping the rule)
+    // leaves the gate empty, which allows every name and fails the exclusions
+    // below; the `keep` assertion is the non-vacuity companion that a
+    // match-nothing gate cannot satisfy on its own.
+    #[test]
+    fn daemon_cvs_filter_hides_the_built_in_defaults() {
+        use std::path::Path;
+        let module = ModuleRuntime::from(ModuleDefinition {
+            filter: vec!["-C".to_string()],
+            ..Default::default()
+        });
+        let rules = build_daemon_filter_rules(&module).unwrap();
+        let set = daemon_filter_set(&rules).expect("the -C marker compiles to a filter set");
+        assert!(
+            !set.allows(Path::new("foo.o"), false),
+            "object files hidden"
+        );
+        assert!(!set.allows(Path::new("core"), false), "core hidden");
+        assert!(
+            !set.allows(Path::new("bar~"), false),
+            "editor backups hidden"
+        );
+        assert!(!set.allows(Path::new("CVS"), true), "the CVS dir is hidden");
+        assert!(
+            set.allows(Path::new("keep"), false),
+            "a name outside the default set is still served"
+        );
+    }
+
     #[test]
     fn build_daemon_filter_rules_exclude_from_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -2872,14 +2928,18 @@ mod module_access_tests {
 
     /// `filter = -C`: the patternless non-merge CVS rule.
     ///
-    /// upstream accepts it (the exclude.c:1474-1476 exemption again) and its
-    /// own pattern never matches - `check_filter` short-circuits CVS_IGNORE
-    /// rules to the global CVS list (exclude.c:1201-1206). oc refused the
-    /// whole module. Dropping the rule is the documented `exclude,C` residual:
-    /// the module is served, without the CVS default set upstream would load.
+    /// upstream accepts it (the exclude.c:1474-1476 exemption again), its own
+    /// pattern never matches - `check_filter` short-circuits CVS_IGNORE rules
+    /// to the global CVS list (exclude.c:1201-1206) - and it loads the built-in
+    /// `DEFAULT_CVSIGNORE` set through `get_cvs_excludes` (exclude.c:1595-1597).
+    /// oc emits a `cvs_exclude` marker (empty pattern) that both consumers of
+    /// the daemon list expand from that same default set.
     #[test]
-    fn a_patternless_non_merge_cvs_rule_is_accepted_and_dropped() {
-        assert!(is_skipped("-C"), "-C must serve the module, not refuse it");
+    fn a_patternless_non_merge_cvs_rule_loads_the_defaults() {
+        let rule = accepted_rule("-C");
+        assert!(rule.cvs_exclude, "-C carries the CVS-ignore marker bit");
+        assert!(rule.pattern.is_empty(), "the marker has no pattern");
+        assert_eq!(rule.rule_type, protocol::filters::RuleType::Exclude);
     }
 
     /// The NO_PREFIXES interlock on the CVS modifier.
@@ -3309,11 +3369,13 @@ mod module_access_tests {
     /// MEASURED against rsync 3.5.0, both directions:
     ///   filter = exclude,x keep -> rc 0, ALL FOUR served (an xattr rule never
     ///                              matches the file name)
-    ///   filter = exclude,C keep -> rc 0, ALL FOUR served (`check_filter`
-    ///                              short-circuits FILTRULE_CVS_IGNORE and
-    ///                              never matches the rule's own pattern)
     ///   filter = -x keep        -> rc 0, ALL FOUR served
-    /// Dropping the rule reproduces all three EXACTLY.
+    /// Dropping the rule reproduces both EXACTLY.
+    ///
+    /// `C` is deliberately NOT in this set: `exclude,C` is EXPRESSIBLE - it
+    /// loads the built-in CVS defaults (`get_cvs_excludes`, exclude.c:1595-1597),
+    /// so dropping it would fail to hide `*.o`/`core`/`*~`. That path is covered
+    /// by [`daemon_cvs_filter_hides_the_built_in_defaults`], not here.
     ///
     /// ⚠ `!` is the one it does NOT reproduce: `filter = exclude,! keep` serves
     /// ONLY `keep` upstream, where dropping serves everything. Left open rather
@@ -3321,13 +3383,7 @@ mod module_access_tests {
     /// would INVERT the served set on a push. RESIDUAL.
     #[test]
     fn an_inexpressible_modifier_drops_the_rule_rather_than_refusing_it() {
-        for token in [
-            "exclude,x keep",
-            "exclude,C keep",
-            "-x keep",
-            "exclude,! keep",
-            "-,! keep",
-        ] {
+        for token in ["exclude,x keep", "-x keep", "exclude,! keep", "-,! keep"] {
             assert!(is_skipped(token), "{token}");
         }
     }
