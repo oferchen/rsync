@@ -4,28 +4,28 @@ Tracking issue: oc-rsync #2045. Status: design (signal layer). Audience:
 maintainers of `crates/fast_io/src/io_uring/`. Scope: the
 `IORING_REGISTER_BUFFERS` slot-count sizing problem under sustained
 back-pressure, focused on the signals and kernel constraints that the
-two existing companion documents intentionally leave open.
+companion design record intentionally leaves open.
 
 ## 0. Relationship to existing documents
 
-This is the third document in the #2045 series. It does not restate the
-sizing policy that the prior two already specify; it covers the gaps:
+This document extends the #2045 design record. It does not restate the
+sizing policy that the parent design already specifies; it covers the
+gaps:
 
-- `docs/design/io-uring-adaptive-buffer-pool.md` (23 KiB, phase 2
-  specification) defines the EMA-smoothed `miss_rate` policy, the
-  parameter table, the `AdaptiveBufferSizer` API sketch, the test plan,
-  and the cross-references to #2044 and #1735. It treats "sustained
-  pressure" as a synonym for "miss rate above `GROW_THRESHOLD`".
-- `docs/design/iouring-adaptive-buffer-pool.md` (13 KiB, design brief)
-  summarises the four-question form, contrasts the engine `BufferPool`
-  lineage (#1638 / #1640 / #1641), and quantifies the `RLIMIT_MEMLOCK`
-  budget at daemon scale.
+- `docs/design/io-uring-adaptive-buffer-pool.md` (phase 2
+  specification, now the single reconciled design record) defines the
+  EMA-smoothed `miss_rate` policy, the parameter table, the
+  `AdaptiveBufferSizer` API sketch, the test plan, the pressure
+  scenarios, the engine `BufferPool` lineage contrast, the
+  `RLIMIT_MEMLOCK` budget at daemon scale, and the cross-references
+  to #2044 and #1735. It treats "sustained pressure" as a synonym for
+  "miss rate above `GROW_THRESHOLD`".
 
-Both lean on a single signal (acquire / miss counters) and assume the
+That record leans on a single signal (acquire / miss counters) and assumes the
 fixed-buffer registration slot is the only kernel-resource axis. This
 document widens the signal set, expands the kernel-constraint section
 beyond `RLIMIT_MEMLOCK`, gives concrete trigger numbers for signals
-that the prior two leave qualitative, and produces an explicit
+that the parent design leaves qualitative, and produces an explicit
 recommendation on when (or whether) to implement this work relative to
 the in-flight ring pool (#1937).
 
@@ -54,7 +54,7 @@ make the registered pool different from the generic pool, and only one
 | Index stability across resize | None - opaque `Vec<u8>` | Required - in-flight `READ_FIXED` / `WRITE_FIXED` SQEs reference `buf_index: u16` |
 | Accounting | Soft `AtomicUsize` (`pool.rs:110`) | OS-enforced `RLIMIT_MEMLOCK` |
 
-The first two existing documents address axes 2, 3, and 5. Axis 4
+The parent design addresses axes 2, 3, and 5. Axis 4
 (index stability) is treated as a quiescence pre-condition rather than
 a design space; it is the axis that opens up `IORING_REGISTER_BUFFERS_UPDATE`
 (see section 6). The `CQE wait time` signal in section 4 below is the
@@ -119,7 +119,7 @@ namespace audit and section 7 below for the interaction.
 
 ## 3. Failure mode under sustained pressure
 
-The existing documents describe slot saturation as "every checkout
+The parent design describes slot saturation as "every checkout
 returns `None` because all slots are in use". That description is
 necessary but not complete. Under sustained pressure with all slots in
 flight, three distinct failure shapes occur and the existing miss-rate
@@ -142,7 +142,7 @@ entire window. `total_misses` stays at zero. Miss-rate EMA reports the
 pool is healthy; in reality the pool is one tail-latency event away
 from regime 3.1. Peak-depth tracking (`peak_in_use == count` for a full
 window, sketched in `io-uring-adaptive-buffer-pool.md` section 6) is
-the signal that fires here, but neither existing document specifies
+the signal that fires here, but the parent design does not specify
 when to sample `available()`. Section 4.2 below proposes the sampling
 rule.
 
@@ -156,7 +156,7 @@ block device, a saturated NVMe queue, or a contended writeback path -
 and growing the pool makes it worse (more in-flight SQEs against the
 same bottleneck). The signal here is not miss rate; it is
 *completion latency*, the time between SQE submission and CQE arrival.
-The existing documents do not address this case. Section 4.1 below
+The parent design does not address this case. Section 4.1 below
 proposes the signal and an explicit grow-suppression rule.
 
 The three shapes can be distinguished by the (acquire-rate, miss-rate,
@@ -253,7 +253,7 @@ Trigger interaction:
   the cleanest signal that the next miss is imminent.
 - **`window_saturation == false AND peak_in_use < count / 2 for 4
   consecutive windows`** is the existing shrink signal made temporal:
-  the design brief (`iouring-adaptive-buffer-pool.md` section 3.1)
+  the parent design (`io-uring-adaptive-buffer-pool.md` section 7)
   calls for "a full window" of `peak_in_use < count / 2`; this
   document tightens it to four windows to suppress a single quiet
   burst from triggering an `unregister`/`register` syscall pair.
@@ -288,7 +288,7 @@ unreachable.
 
 ## 6. Kernel constraints beyond `RLIMIT_MEMLOCK`
 
-The existing documents cover `RLIMIT_MEMLOCK` thoroughly. Three further
+The parent design covers `RLIMIT_MEMLOCK` thoroughly. Three further
 kernel-side constraints shape the design and are not covered.
 
 ### 6.1 `IORING_REGISTER_BUFFERS_UPDATE` (kernel 5.13+)
@@ -385,7 +385,7 @@ from `register_buffers`. The mitigation:
   (return "unbounded" headroom).
 
 This is the corner of the design where the per-process daemon scenario
-(`iouring-adaptive-buffer-pool.md` section 2.3) cleanly composes with
+(`io-uring-adaptive-buffer-pool.md` section 1.3) cleanly composes with
 the bgid namespace audit (`docs/design/io-uring-bgid-namespace.md`):
 the bgid namespace is a kernel-side `u16`, the registered-buffer
 budget is a per-cgroup memory bound, and a healthy adaptive sizer must
@@ -467,7 +467,7 @@ sizing implementation until `docs/design/iouring-session-ring-pool.md`
 (#1937) is merged. Three reasons:
 
 1. **One-ring sizing has limited daemon impact.** The daemon-at-scale
-   scenario in `iouring-adaptive-buffer-pool.md` section 2.3 is the
+   scenario in `io-uring-adaptive-buffer-pool.md` section 1.3 is the
    strongest motivation for adaptive sizing: a 100-client daemon
    should let hot rings grow while cold rings shrink. But that
    redistribution only matters when there are multiple rings to
@@ -582,7 +582,6 @@ upstream-rsync interop tests.
 
 - Phase 1 audit: `docs/audits/io-uring-adaptive-buffer-sizing.md`.
 - Phase 2 parent design: `docs/design/io-uring-adaptive-buffer-pool.md`.
-- Phase 2 design brief: `docs/design/iouring-adaptive-buffer-pool.md`.
 - bgid namespace: `docs/design/io-uring-bgid-namespace.md`, #2044.
 - Session ring pool: `docs/design/iouring-session-ring-pool.md`, #1937.
 - Adaptive queue depth: #1735 (SQ analogue).

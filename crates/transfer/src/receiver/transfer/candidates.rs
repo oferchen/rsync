@@ -3064,3 +3064,136 @@ mod uptodate_notice_tests {
         );
     }
 }
+
+/// A hostile `XMIT_HLINKED` wire bit against a receiver running without -H.
+///
+/// upstream: flist.c:1175-1184 records `FLAG_HLINKED` only under
+/// `preserve_hard_links`, and generator.c:1943 re-checks the option, so the
+/// bit alone has no effect: the file transfers normally. Pre-fix the decoded
+/// bit survived without -H, `is_hardlink_follower` (quick_check.rs) matched,
+/// and the receiver silently dropped the file from the transfer set at exit 0
+/// while `plan_dry_run` still itemized it as created - so `--dry-run` and the
+/// real run disagreed about the same wire stream.
+#[cfg(test)]
+mod hlink_wire_flag_tests {
+    use std::ffi::OsString;
+
+    use metadata::MetadataOptions;
+    use protocol::ProtocolVersion;
+    use protocol::flist::FileEntry;
+
+    use crate::config::ServerConfig;
+    use crate::flags::ParsedServerFlags;
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::ReceiverContext;
+    use crate::receiver::stats::TransferStats;
+    use crate::role::ServerRole;
+
+    /// Decodes one entry through the real wire decode path with the same
+    /// no--H reader the receiver constructs (receiver/context.rs
+    /// `with_preserve_hard_links(config.flags.hard_links)`), after injecting
+    /// the hostile extended-flags byte into an otherwise plain entry.
+    fn decode_hostile_entry() -> FileEntry {
+        use protocol::flist::{FileListReader, FileListWriter, XMIT_HLINKED};
+
+        // upstream: rsync.h:50 `XMIT_EXTENDED_FLAGS (1<<2)` - primary-byte
+        // bit announcing the extended flags byte (protocol 28+).
+        const XMIT_EXTENDED_FLAGS: u8 = 1 << 2;
+
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let mut data = Vec::new();
+        let mut writer = FileListWriter::new(protocol);
+        let mut entry = FileEntry::new_file("victim.txt".into(), 7, 0o100644);
+        entry.set_mtime(1_600_000_000, 0);
+        writer.write_entry(&mut data, &entry).unwrap();
+
+        assert_eq!(
+            data[0] & XMIT_EXTENDED_FLAGS,
+            0,
+            "fixture: no extended flags yet"
+        );
+        data[0] |= XMIT_EXTENDED_FLAGS;
+        data.insert(1, XMIT_HLINKED);
+
+        let mut cursor = std::io::Cursor::new(&data[..]);
+        let mut reader = FileListReader::new(protocol);
+        let decoded = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(
+            cursor.position() as usize,
+            data.len(),
+            "stream stays in sync"
+        );
+        decoded
+    }
+
+    #[test]
+    fn stray_hlinked_flag_without_h_transfers_and_dry_run_agrees() {
+        let hostile = decode_hostile_entry();
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-r".to_owned(),
+            flags: ParsedServerFlags {
+                recursive: true,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+        ctx.file_list = vec![hostile];
+
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        let mut metadata_errors = Vec::new();
+        let mut stats = TransferStats::default();
+        let files = ctx.build_files_to_transfer(
+            &mut writer,
+            dest,
+            #[cfg(unix)]
+            None,
+            &MetadataOptions::default(),
+            None,
+            &mut metadata_errors,
+            &mut stats,
+            None,
+            None,
+        );
+        assert_eq!(
+            files.len(),
+            1,
+            "without -H a hardlink-flagged entry must transfer normally; \
+             dropping it is a silent omission at exit 0"
+        );
+        assert_eq!(files[0].1.path().to_string_lossy(), "victim.txt");
+
+        // --dry-run must agree with the real run about the same stream: the
+        // one file the real run requests is the one the dry run plans and
+        // counts as created.
+        let created_before = ctx.created_stats.get().files;
+        let plan = ctx.plan_dry_run(dest, &files);
+        assert_eq!(plan.len(), 1, "dry-run plan must contain the same file");
+        assert_eq!(
+            plan[0].0, files[0].0,
+            "dry-run and real run must agree on the entry"
+        );
+        assert_eq!(
+            ctx.created_stats.get().files - created_before,
+            files.len() as u64,
+            "dry-run creation tally must match the requested transfer count"
+        );
+    }
+}

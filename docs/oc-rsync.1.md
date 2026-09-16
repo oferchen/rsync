@@ -1553,10 +1553,22 @@ the SEC-1.p Landlock design note.
 
 # SSH TRANSPORT
 
-**oc-rsync** uses an embedded **russh** SSH client for SSH transport. The
-default code path does not spawn an external **ssh**(1) subprocess; the
-SSH state machine (transport, channel, auth context) lives inside the
-**oc-rsync** process for the full lifetime of the transfer.
+**oc-rsync** has two SSH transports, selected by the operand spelling.
+Classic *host*:*path* operands spawn an external **ssh**(1) subprocess,
+exactly like upstream rsync; **-e** / **--rsh** and the **RSYNC_RSH**
+environment variable pick a different remote shell program, and
+**ssh_config**(5), agent, and multiplexing behaviour belong to the
+spawned program. **ssh://** URL operands (an oc-rsync extension;
+upstream rsync has no **ssh://** scheme) instead use an embedded
+**russh** SSH client: no subprocess is spawned, and the SSH state
+machine (transport, channel, auth context) lives inside the
+**oc-rsync** process for the full lifetime of the transfer. The
+**ssh://** spelling requires the **embedded-ssh** build feature (on by
+default); without the feature an **ssh://** operand fails with a
+diagnostic rather than falling back, and combining an **ssh://**
+operand with **-e** / **--rsh** or **RSYNC_RSH** is an error. The
+entries below describe the embedded client used for **ssh://**
+operands.
 
 **Authentication**
 :   Key-based authentication is supported for RSA, ED25519, and ECDSA key
@@ -1564,8 +1576,8 @@ SSH state machine (transport, channel, auth context) lives inside the
     read from the conventional locations under **~/.ssh/id_\***, and
     per-host settings (**HostName**, **User**, **Port**,
     **IdentityFile**, **ProxyJump** and the SSC-3 / SSC-4 subset of
-    other directives) are read from **~/.ssh/config** via the embedded
-    **ssh2-config** parser.
+    other directives) are read from **~/.ssh/config** via
+    **oc-rsync**'s built-in ssh_config reader.
 
 **Environment**
 :   The **SSH_AUTH_SOCK** environment variable is honored, so ssh-agent
@@ -1593,7 +1605,7 @@ SSH state machine (transport, channel, auth context) lives inside the
     back-compat shim. If you hit an unsupported SSH feature in
     practice, please open an issue against the project repository.
 
-See also the **SSH transport (russh)** section of the README for the
+See also the **SSH transports** section of the README for the
 operator-facing summary and a worked example.
 
 # LINUX IO_URING SUPPORT

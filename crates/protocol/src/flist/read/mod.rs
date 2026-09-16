@@ -765,6 +765,19 @@ impl FileListReader {
             flags,
         );
 
+        // upstream: flist.c:1175-1184 - FLAG_HLINKED is recorded only when
+        // preserve_hard_links is on, and generator.c:1943 re-checks the
+        // option before every F_HLINK_NOT_FIRST use. Without -H a raw
+        // XMIT_HLINKED wire bit must not survive the decode: keeping it
+        // would classify the entry as a hardlink "follower" the receiver
+        // drops from the transfer set and never links - a silent omission
+        // at exit 0. Only the interpretation is gated here; the bytes
+        // consumed above are unchanged.
+        if !self.preserve_hard_links {
+            entry.set_hlinked(false);
+            entry.set_hlink_first(false);
+        }
+
         // Intern the dirname so entries in the same directory share
         // a single Arc<Path> allocation instead of each holding a separate copy.
         // This mirrors upstream rsync's shared dirname pointer pool.
