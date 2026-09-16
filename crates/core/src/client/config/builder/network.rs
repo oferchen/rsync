@@ -57,6 +57,36 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the `--quic-cc` congestion controller for the client's QUIC
+    /// endpoint.
+    ///
+    /// `None` (the default) defers to `OC_RSYNC_QUIC_CC` and then the built-in
+    /// default (BBR). This is a client-local transport tuning knob; it never
+    /// affects the daemon's own endpoint or the forwarded server arguments.
+    /// Available only under the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-cc")]
+    pub const fn quic_cc(mut self, cc: Option<rsync_io::quic::CongestionAlgorithm>) -> Self {
+        self.quic_cc = cc;
+        self
+    }
+
+    /// Sets the `--quic-window` flow-control window (bytes) for the client's
+    /// QUIC endpoint.
+    ///
+    /// `None` (the default) defers to `OC_RSYNC_QUIC_WINDOW` and then the
+    /// built-in default. This is a client-local transport tuning knob; it never
+    /// affects the daemon's own endpoint or the forwarded server arguments.
+    /// Available only under the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-window")]
+    pub const fn quic_window(mut self, bytes: Option<u64>) -> Self {
+        self.quic_window = bytes;
+        self
+    }
+
     /// Configures the TCP Fast Open mode applied to daemon and client sockets.
     ///
     /// `auto` (the default) enables TFO opportunistically on platforms that

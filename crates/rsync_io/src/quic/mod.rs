@@ -69,6 +69,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use driver::{Role, spawn_io};
 use tuning::build_transport_config;
+pub use tuning::{CongestionAlgorithm, QuicTransportTuning};
 
 pub use error::{
     TransportFault, connect_fault, connection_fault, driver_gone, io_fault, stream_reset,
@@ -376,7 +377,9 @@ impl QuicAcceptor {
         let mut server_config = ServerConfig::with_crypto(Arc::new(
             QuicServerConfig::try_from(server_crypto).map_err(io_err)?,
         ));
-        server_config.transport_config(build_transport_config()?);
+        // The daemon's own endpoint takes env/default tuning; client `--quic-*`
+        // flags configure the client endpoint, never the server's.
+        server_config.transport_config(build_transport_config(QuicTransportTuning::default())?);
 
         let local = socket.local_addr()?;
         // allow_mtud = false: a std UdpSocket cannot set the don't-fragment
@@ -477,12 +480,23 @@ impl QuicConnector {
         Self::with_trust(QuicTrust::Pinned(server_certificate))
     }
 
-    /// Creates a connector whose trust decision is supplied by `trust`.
-    ///
-    /// Every variant produces a TLS 1.3, ALPN-`rsync` client config through
-    /// the one shared builder below; only the verifier stage differs. This is
-    /// the constructor the CA/system-root/TOFU resolution feeds.
+    /// Creates a connector whose trust decision is supplied by `trust`, taking
+    /// congestion control and flow-control windows from the environment and
+    /// built-in defaults. Convenience wrapper over
+    /// [`QuicConnector::with_trust_tuned`] with default tuning.
     pub fn with_trust(trust: QuicTrust) -> io::Result<Self> {
+        Self::with_trust_tuned(trust, QuicTransportTuning::default())
+    }
+
+    /// Creates a connector whose trust decision is supplied by `trust` and
+    /// whose transport tuning (congestion controller, flow-control windows) is
+    /// resolved from `tuning` (CLI `--quic-cc`/`--quic-window`), falling back to
+    /// the environment and defaults inside [`build_transport_config`].
+    ///
+    /// Every trust variant produces a TLS 1.3, ALPN-`rsync` client config
+    /// through the one shared builder below; only the verifier stage differs.
+    /// This is the constructor the CA/system-root/TOFU resolution feeds.
+    pub fn with_trust_tuned(trust: QuicTrust, tuning: QuicTransportTuning) -> io::Result<Self> {
         let builder = rustls::ClientConfig::builder_with_provider(ring_provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .map_err(io_err)?;
@@ -503,7 +517,7 @@ impl QuicConnector {
         let mut config = ClientConfig::new(Arc::new(
             QuicClientConfig::try_from(client_crypto).map_err(io_err)?,
         ));
-        config.transport_config(build_transport_config()?);
+        config.transport_config(build_transport_config(tuning)?);
         Ok(Self { config })
     }
 

@@ -5188,7 +5188,7 @@ mod oc_flag_forwarding {
     /// local resource knobs with no upstream counterpart; a real upstream
     /// 3.4.4 server rejects any of them with an unknown-option error.
     fn kitchen_sink_config() -> ClientConfig {
-        ClientConfig::builder()
+        let builder = ClientConfig::builder()
             .io_uring_policy(fast_io::IoUringPolicy::Enabled)
             .io_uring_depth(Some(128))
             .cow_policy(fast_io::CowPolicy::Required)
@@ -5200,8 +5200,15 @@ mod oc_flag_forwarding {
             .sparse_detect(engine::SparseDetectStrategy::Map)
             .tcp_fastopen(TcpFastOpenMode::On)
             .spill_dir(Some(PathBuf::from("/tmp/spill")))
-            .spill_threshold_bytes(Some(1024))
-            .build()
+            .spill_threshold_bytes(Some(1024));
+        // `--quic-cc`/`--quic-window` are client-local QUIC transport tuning;
+        // like the knobs above they must never alter the remote `--server`
+        // argv.
+        #[cfg(feature = "quic")]
+        let builder = builder
+            .quic_cc(Some(rsync_io::quic::CongestionAlgorithm::Cubic))
+            .quic_window(Some(32 * 1024 * 1024));
+        builder.build()
     }
 
     fn build_args(config: &ClientConfig, role: RemoteRole) -> Vec<String> {
@@ -5247,5 +5254,30 @@ mod oc_flag_forwarding {
             args, baseline,
             "oc-invented tuning knobs must not alter the remote --server argv"
         );
+    }
+
+    /// `--quic-cc`/`--quic-window` are client-local QUIC transport tuning and
+    /// must never be spelled into the forwarded `--server` argv (the recurring
+    /// option-leak bug class). Asserted for both roles: the tuned argv equals
+    /// the untuned baseline and contains no `quic` token at all.
+    #[cfg(feature = "quic")]
+    #[test]
+    fn quic_transport_tuning_never_reaches_server_argv() {
+        let tuned = ClientConfig::builder()
+            .quic_cc(Some(rsync_io::quic::CongestionAlgorithm::NewReno))
+            .quic_window(Some(64 * 1024 * 1024))
+            .build();
+        for role in [RemoteRole::Receiver, RemoteRole::Sender] {
+            let baseline = build_args(&ClientConfig::builder().build(), role);
+            let args = build_args(&tuned, role);
+            assert_eq!(
+                args, baseline,
+                "QUIC transport tuning must not alter the remote --server argv ({role:?})"
+            );
+            assert!(
+                args.iter().all(|arg| !arg.contains("quic")),
+                "no QUIC token may leak into the --server argv ({role:?}): {args:?}"
+            );
+        }
     }
 }

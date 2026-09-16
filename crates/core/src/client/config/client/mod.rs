@@ -273,6 +273,16 @@ pub struct ClientConfig {
     /// present under the `quic` feature.
     #[cfg(feature = "quic")]
     pub(super) quic_ca: Option<PathBuf>,
+    /// `--quic-cc <bbr|cubic|newreno>` - client endpoint congestion controller.
+    /// `None` falls back to `OC_RSYNC_QUIC_CC` then the default (BBR). Only
+    /// present under the `quic` feature.
+    #[cfg(feature = "quic")]
+    pub(super) quic_cc: Option<rsync_io::quic::CongestionAlgorithm>,
+    /// `--quic-window <SIZE>` - client endpoint flow-control window in bytes.
+    /// `None` falls back to `OC_RSYNC_QUIC_WINDOW` then the default. Only
+    /// present under the `quic` feature.
+    #[cfg(feature = "quic")]
+    pub(super) quic_window: Option<u64>,
     pub(super) blocking_io: Option<bool>,
     pub(super) iconv: IconvSetting,
     pub(super) remote_shell: Option<Vec<OsString>>,
@@ -498,6 +508,10 @@ impl Default for ClientConfig {
             daemon_transport: crate::client::Transport::Tcp,
             #[cfg(feature = "quic")]
             quic_ca: None,
+            #[cfg(feature = "quic")]
+            quic_cc: None,
+            #[cfg(feature = "quic")]
+            quic_window: None,
             blocking_io: None,
             iconv: IconvSetting::Unspecified,
             remote_shell: None,

@@ -59,9 +59,11 @@ pub(super) const DEFAULT_WINDOW: u64 = 64 * 1024 * 1024;
 /// The `quinn-proto` factory types are opaque trait objects that cannot be
 /// compared, so parsing resolves to this enum first; [`Self::factory`] then
 /// maps it to the controller factory. This keeps the string-to-algorithm
-/// mapping unit-testable independently of the transport.
+/// mapping unit-testable independently of the transport. Public so the CLI
+/// (`--quic-cc`) and core can carry a resolved choice down to
+/// [`build_transport_config`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum CongestionAlgorithm {
+pub enum CongestionAlgorithm {
     /// BBR - model-based, the high-BDP default.
     Bbr,
     /// CUBIC - loss-based, the modern TCP default.
@@ -71,10 +73,14 @@ pub(super) enum CongestionAlgorithm {
 }
 
 impl CongestionAlgorithm {
-    /// Parses the `OC_RSYNC_QUIC_CC` value, failing loudly on anything but the
-    /// three recognized names (repo policy: never silently fall back on a bad
-    /// argument).
-    pub(super) fn parse(value: &str) -> io::Result<Self> {
+    /// The accepted controller names, in a stable order for CLI value
+    /// restriction and help text (`--quic-cc <bbr|cubic|newreno>`).
+    pub const NAMES: [&'static str; 3] = ["bbr", "cubic", "newreno"];
+
+    /// Parses a controller name (`OC_RSYNC_QUIC_CC` or `--quic-cc`), failing
+    /// loudly on anything but the three recognized names (repo policy: never
+    /// silently fall back on a bad argument).
+    pub fn parse(value: &str) -> io::Result<Self> {
         match value.trim() {
             "bbr" => Ok(Self::Bbr),
             "cubic" => Ok(Self::Cubic),
@@ -82,7 +88,7 @@ impl CongestionAlgorithm {
             other => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
-                    "unrecognized {CC_ENV} value {other:?}; expected one of: bbr, cubic, newreno"
+                    "unrecognized QUIC congestion controller {other:?}; expected one of: bbr, cubic, newreno"
                 ),
             )),
         }
@@ -144,20 +150,47 @@ fn window_from_env() -> io::Result<u64> {
     }
 }
 
+/// Explicit transport-tuning overrides supplied by the CLI (`--quic-cc`,
+/// `--quic-window`), each taking precedence over the environment fallback.
+///
+/// A `None` field defers to the environment variable and then the built-in
+/// default, so the resolution order is CLI flag > environment variable >
+/// default, all resolved in the single [`build_transport_config`] owner.
+/// [`Default`] (both fields `None`) is the env/default-only path used by the
+/// daemon's own endpoint, which no client CLI flag configures.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct QuicTransportTuning {
+    /// `--quic-cc`: the congestion controller, or `None` to consult
+    /// `OC_RSYNC_QUIC_CC` then default to BBR.
+    pub congestion: Option<CongestionAlgorithm>,
+    /// `--quic-window`: the flow-control window in bytes, or `None` to consult
+    /// `OC_RSYNC_QUIC_WINDOW` then default to [`DEFAULT_WINDOW`].
+    pub window: Option<u64>,
+}
+
 /// Builds the shared [`TransportConfig`] consulted by both the client and the
 /// server construction sites.
 ///
-/// Selects the congestion controller from `OC_RSYNC_QUIC_CC` (default `bbr`)
-/// and sizes the flow-control windows from `OC_RSYNC_QUIC_WINDOW` (default
-/// [`DEFAULT_WINDOW`]). The per-stream and connection receive windows and the
-/// send window are all set to the same value; quinn requires
-/// `receive_window >= stream_receive_window`, which equality satisfies, and
-/// rsync drives a single bidirectional stream so the per-stream window is the
-/// binding constraint. This function is behaviour-neutral on the wire - it
-/// changes only pacing and back-pressure (see the module docs).
-pub(super) fn build_transport_config() -> io::Result<Arc<TransportConfig>> {
-    let algorithm = CongestionAlgorithm::from_env()?;
-    let window = window_from_env()?;
+/// Resolution order, applied here so there is a single resolution site:
+/// CLI override (`tuning`) > environment variable (`OC_RSYNC_QUIC_CC` /
+/// `OC_RSYNC_QUIC_WINDOW`) > built-in default (BBR / [`DEFAULT_WINDOW`]). The
+/// per-stream and connection receive windows and the send window are all set to
+/// the same value; quinn requires `receive_window >= stream_receive_window`,
+/// which equality satisfies, and rsync drives a single bidirectional stream so
+/// the per-stream window is the binding constraint. This function is
+/// behaviour-neutral on the wire - it changes only pacing and back-pressure
+/// (see the module docs).
+pub(super) fn build_transport_config(
+    tuning: QuicTransportTuning,
+) -> io::Result<Arc<TransportConfig>> {
+    let algorithm = match tuning.congestion {
+        Some(algorithm) => algorithm,
+        None => CongestionAlgorithm::from_env()?,
+    };
+    let window = match tuning.window {
+        Some(window) => window,
+        None => window_from_env()?,
+    };
     let stream_window = VarInt::from_u64(window).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -228,10 +261,22 @@ mod tests {
     }
 
     /// The builder constructs a transport config under the default environment
-    /// (no `OC_RSYNC_QUIC_*` set): the default controller (BBR) and the default
+    /// (no `OC_RSYNC_*` set): the default controller (BBR) and the default
     /// window feed a valid config without error.
     #[test]
     fn builder_succeeds_under_default_env() {
-        build_transport_config().expect("default transport config");
+        build_transport_config(QuicTransportTuning::default()).expect("default transport config");
+    }
+
+    /// Explicit CLI-style overrides build a valid config without consulting the
+    /// environment. (Env-vs-CLI precedence is exercised end-to-end by the
+    /// loopback test, where env mutation is permitted.)
+    #[test]
+    fn builder_accepts_explicit_overrides() {
+        let tuning = QuicTransportTuning {
+            congestion: Some(CongestionAlgorithm::Cubic),
+            window: Some(8 * 1024 * 1024),
+        };
+        build_transport_config(tuning).expect("override transport config");
     }
 }

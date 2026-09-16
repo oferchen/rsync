@@ -291,6 +291,14 @@ pub(crate) struct QuicDialParams {
     /// store for verifying the daemon's certificate.
     #[cfg(feature = "quic")]
     pub(crate) ca: Option<std::path::PathBuf>,
+    /// `--quic-cc`: the client endpoint's congestion controller, or `None` to
+    /// fall back to `OC_RSYNC_QUIC_CC` then the built-in default.
+    #[cfg(feature = "quic")]
+    pub(crate) cc: Option<rsync_io::quic::CongestionAlgorithm>,
+    /// `--quic-window`: the client endpoint's flow-control window in bytes, or
+    /// `None` to fall back to `OC_RSYNC_QUIC_WINDOW` then the built-in default.
+    #[cfg(feature = "quic")]
+    pub(crate) window: Option<u64>,
 }
 
 /// Opens a stream to a daemon, dispatching on the address's [`Transport`].
@@ -359,7 +367,7 @@ fn open_quic_daemon_stream(
     address_mode: AddressMode,
     quic: &QuicDialParams,
 ) -> Result<DaemonStream, ClientError> {
-    use rsync_io::quic::{QuicConnector, load_private_ca, resolve};
+    use rsync_io::quic::{QuicConnector, QuicTransportTuning, load_private_ca, resolve};
 
     // Trust ladder (policy B): `--quic-ca` selects a private CA bundle;
     // otherwise the system-roots default applies. The `resolve(ca, tofu)` seam
@@ -371,7 +379,13 @@ fn open_quic_daemon_stream(
         None => None,
     };
     let trust = resolve(ca, None).map_err(|error| quic_dial_error(addr, &error.to_string()))?;
-    let connector = QuicConnector::with_trust(trust)
+    // `--quic-cc`/`--quic-window` tune the client endpoint only; unset fields
+    // fall back to env then default inside `build_transport_config`.
+    let tuning = QuicTransportTuning {
+        congestion: quic.cc,
+        window: quic.window,
+    };
+    let connector = QuicConnector::with_trust_tuned(trust, tuning)
         .map_err(|error| quic_dial_error(addr, &error.to_string()))?;
 
     let candidates = resolve_daemon_addresses(addr, address_mode)?;
@@ -726,7 +740,11 @@ mod quic_connect_tests {
     }
 
     fn dial(addr: &DaemonAddress, ca: Option<PathBuf>) -> Result<DaemonStream, ClientError> {
-        let quic = QuicDialParams { ca };
+        let quic = QuicDialParams {
+            ca,
+            cc: None,
+            window: None,
+        };
         open_daemon_stream(
             addr,
             DaemonConnectTimeouts {
