@@ -16,6 +16,8 @@ mod stats;
 mod transfer;
 
 pub(crate) use arguments::send_daemon_arguments;
+pub(crate) use server_config::build_server_config_for_receiver;
+pub(crate) use stats::convert_server_stats_to_summary;
 pub(crate) use transfer::{run_pull_transfer, run_push_transfer};
 
 #[cfg(test)]

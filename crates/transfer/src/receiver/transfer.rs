@@ -21,6 +21,7 @@ mod phases;
 mod pipeline;
 mod pipelined;
 mod pipelined_incremental;
+mod replay;
 mod setup;
 mod sync;
 
@@ -117,9 +118,13 @@ impl ReceiverContext {
     ) -> io::Result<TransferStats> {
         // upstream: main.c:1359 `!read_batch` keeps the batch f_in unmultiplexed.
         self.local_replay = true;
+        // The sender-driven replay drive reports no per-file progress
+        // (upstream's replay generator writes progress into a dead pipe);
+        // the parameter is kept so the signature matches the other drivers.
+        let _ = progress;
         let reader = crate::reader::ServerReader::new_plain(batch_input);
         let mut sink = crate::writer::DiscardSink::new();
-        self.run(reader, &mut sink, progress)
+        self.run_replay(reader, &mut sink)
     }
 
     /// True when this receiver is a *client* that was handed an empty file
@@ -922,6 +927,184 @@ mod tests {
             !ctx.should_activate_input_multiplex(),
             "a header-seeded batch f_in must stay Plain (upstream !read_batch)"
         );
+    }
+
+    /// The recorded stream, not the local generator's plan, decides what is
+    /// transferred: a batch whose delta stream carries no update for a file
+    /// the replaying destination lacks must replay to a clean no-op finish.
+    ///
+    /// WHY: upstream's `--read-batch` receiver obeys the stream
+    /// (`receiver.c:828-862` reads each recorded row; the replaying
+    /// generator's own requests fall into a dead-end pipe, `main.c:639-651`).
+    /// The record-time generator saw an up-to-date destination and requested
+    /// nothing, so the batch body is just the phase `NDX_DONE`s, the stats
+    /// trailer, and the goodbye. A lockstep request/echo drive would plan a
+    /// request for the missing file and then die reading `NDX_DONE` with the
+    /// request outstanding - which is exactly how re-routing this through the
+    /// network pipeline fails. This is the dispatch-shape pin for the
+    /// sender-driven replay loop.
+    #[test]
+    fn run_local_replay_obeys_recorded_stream_not_local_plan() {
+        use protocol::codec::{ProtocolCodec, create_protocol_codec};
+        use protocol::flist::FileEntry;
+
+        let dest = test_support::create_tempdir();
+        let proto = ProtocolVersion::try_from(32u8).unwrap();
+
+        let handshake = HandshakeResult {
+            protocol: proto,
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: proto,
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![dest.path().as_os_str().to_owned()],
+            ..Default::default()
+        };
+        config.connection.client_mode = true;
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        // Recorded body: a one-file flist, then no transfer rows at all -
+        // three phase NDX_DONEs (receiver.c:809 max_phase = 2), the sender's
+        // five varlong30 stats (main.c:362-373), and the goodbye NDX_DONE.
+        let mut recorded = Vec::new();
+        let mut flist_writer = FileListWriter::new(proto);
+        let entry = FileEntry::new_file("absent.txt".into(), 42, 0o644);
+        flist_writer.write_entry(&mut recorded, &entry).unwrap();
+        flist_writer.write_end(&mut recorded, None).unwrap();
+        recorded.extend_from_slice(&[0x00, 0x00, 0x00]);
+        let stats_codec = create_protocol_codec(proto.as_u8());
+        for _ in 0..5 {
+            stats_codec.write_stat(&mut recorded, 0).unwrap();
+        }
+        recorded.push(0x00);
+
+        let stats = ctx
+            .run_local_replay(Cursor::new(recorded), None)
+            .expect("a recorded no-op batch must replay to completion");
+
+        assert_eq!(stats.files_listed, 1, "the recorded flist has one entry");
+        assert_eq!(
+            stats.files_transferred, 0,
+            "no recorded transfer row means no file is materialised"
+        );
+        assert!(
+            !dest.path().join("absent.txt").exists(),
+            "the replay must not invent an update the batch does not carry"
+        );
+    }
+
+    /// An INC_RECURSE recording carries one `NDX_DONE` per flist segment
+    /// ahead of the phase markers; the replay must consume the segment echoes
+    /// without advancing the phase, or the stats trailer is read misaligned.
+    ///
+    /// WHY: this is how `--read-batch` of an upstream multi-directory batch
+    /// regressed. The recording sender echoes an `NDX_DONE` for every
+    /// remaining flist segment (`sender.c:246-254`) before its phase-end
+    /// markers, and upstream's receiver consumes each by freeing
+    /// `first_flist` and continuing WITHOUT a phase advance
+    /// (`receiver.c:679-689`). A replay loop that counts every `NDX_DONE` as
+    /// a phase transition leaves the loop early, decodes the segment echoes
+    /// as the head of the stats trailer, and dies with an unexpected EOF
+    /// ("failed to fill whole buffer") on the trailer's final varlong. Two
+    /// segments make the smallest discriminating stream: one echo plus three
+    /// phase markers. Distinct stat values prove the trailer was read at the
+    /// right offset, not merely without error.
+    #[test]
+    fn run_local_replay_consumes_inc_recurse_segment_done_echoes() {
+        use protocol::CompatibilityFlags;
+        use protocol::codec::{
+            NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, ProtocolCodec, create_ndx_codec,
+            create_protocol_codec,
+        };
+        use protocol::flist::FileEntry;
+
+        use crate::receiver::file_list::DirFlist;
+
+        let dest = test_support::create_tempdir();
+        let proto = ProtocolVersion::try_from(32u8).unwrap();
+
+        let handshake = HandshakeResult {
+            protocol: proto,
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: Some(CompatibilityFlags::INC_RECURSE),
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: proto,
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![dest.path().as_os_str().to_owned()],
+            ..Default::default()
+        };
+        config.connection.client_mode = true;
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+        // Stand in for an initial flist that carried the segment's parent
+        // directory, so the sub-list's dir_ndx 0 passes the fail-closed
+        // range check (flist.c:2906-2909).
+        ctx.dir_flist = DirFlist::with_active(["sub"]);
+
+        // Recorded body: initial flist (one file), one sub-list segment
+        // (NDX_FLIST_OFFSET header + entry + end), the NDX_FLIST_EOF
+        // terminator, then the trailer exactly as a two-segment upstream
+        // recording lays it out: FOUR NDX_DONEs (one segment-free echo +
+        // three phase markers), five varlong30 stats, and the goodbye byte
+        // that upstream leaves unread.
+        let mut recorded = Vec::new();
+        let mut flist_writer = FileListWriter::new(proto);
+        let entry = FileEntry::new_file("top.txt".into(), 42, 0o644);
+        flist_writer.write_entry(&mut recorded, &entry).unwrap();
+        flist_writer.write_end(&mut recorded, None).unwrap();
+
+        let mut seg_codec = create_ndx_codec(proto.as_u8());
+        seg_codec
+            .write_ndx(&mut recorded, NDX_FLIST_OFFSET)
+            .unwrap();
+        let mut seg_writer = FileListWriter::new(proto);
+        let mut sub_entry = FileEntry::new_file("sub/inner.txt".into(), 8, 0o644);
+        sub_entry.set_mtime(1_700_000_000, 0);
+        seg_writer.write_entry(&mut recorded, &sub_entry).unwrap();
+        seg_writer.write_end(&mut recorded, None).unwrap();
+        seg_codec.write_ndx(&mut recorded, NDX_FLIST_EOF).unwrap();
+
+        recorded.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        let stats_codec = create_protocol_codec(proto.as_u8());
+        for value in [11, 22, 33, 44, 55] {
+            stats_codec.write_stat(&mut recorded, value).unwrap();
+        }
+        recorded.push(0x00);
+
+        let stats = ctx
+            .run_local_replay(Cursor::new(recorded), None)
+            .expect("segment-echo NDX_DONEs must not exhaust the phase count");
+
+        assert_eq!(
+            ctx.file_list().len(),
+            2,
+            "the sub-list segment must be materialized alongside the initial entry"
+        );
+        assert_eq!(stats.files_transferred, 0, "no transfer rows are recorded");
+        let sender = ctx
+            .sender_stats()
+            .expect("a client replay reads the recorded stats trailer");
+        assert_eq!(
+            (sender.total_read, sender.total_written, sender.total_size),
+            (11, 22, 33),
+            "the stats trailer must be decoded at its recorded offset"
+        );
+        assert_eq!(sender.flist_buildtime_ms, Some(44));
+        assert_eq!(sender.flist_xfertime_ms, Some(55));
     }
 
     /// Verifies the delayed rename sweep moves files from staging paths to

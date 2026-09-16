@@ -14,7 +14,7 @@ use crate::client::summary::{
 /// Maps statistics returned by the server (receiver or generator) into the
 /// format expected by the client summary. The elapsed time is used to calculate
 /// the transfer rate (bytes/sec) shown in the summary output.
-pub(super) fn convert_server_stats_to_summary(
+pub(crate) fn convert_server_stats_to_summary(
     stats: crate::server::ServerStats,
     elapsed: Duration,
 ) -> ClientSummary {

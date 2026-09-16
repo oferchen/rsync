@@ -5,7 +5,6 @@
 //! for replay and, for a local copy only, `main.c:374-383` for the stats
 //! trailer.
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use engine::batch::{BatchConfig, BatchStats, BatchWriter};
@@ -364,129 +363,183 @@ fn serialize_filter_rules(rules: &[FilterRuleSpec]) -> Result<String, ClientErro
     Ok(output)
 }
 
-/// Replay a batch file to reconstruct the transfer at the destination.
+/// Replay a batch file by driving the real receiver pipeline over the
+/// recorded stream.
 ///
-/// Delegates to [`engine::batch::replay::replay`] for the actual delta-application
-/// logic, then wraps the result in a [`ClientSummary`].
+/// Mirrors upstream `--read-batch`: the batch file becomes the receiving
+/// client's `f_in` (`main.c:639-651`) and the ordinary receiver decodes the
+/// recorded file list and delta stream (`main.c:1387 do_recv()`), with the
+/// generator's consumer-less `f_out` swallowed by a discard sink. The
+/// receiver's negotiated state (protocol, compat flags, checksum seed) is
+/// pinned from the batch header instead of a live handshake
+/// (`compat.c:604-613 setup_protocol()` under `read_batch`).
 fn replay_batch(
     batch_cfg: &BatchConfig,
     config: &ClientConfig,
 ) -> Result<ClientSummary, ClientError> {
-    // upstream: main.c - with --read-batch the destination is the last
-    // (and typically only) operand, e.g. `rsync --read-batch=FILE dest/`
+    // upstream: main.c:1520-1523 - with --read-batch no source is specified;
+    // the destination is the last (and only counted) operand.
     let dest_root = config
         .transfer_args()
         .last()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .cloned()
+        .unwrap_or_else(|| std::ffi::OsString::from("."));
 
     // upstream: batch.c:120 check_batch_flags() reconciles the active options
     // against the batch header during replay, so carry the current flag state
-    // into the reader. numeric_ids is not a recorded stream flag (batch.c:59-76);
-    // it comes from the replay invocation and gates the post-flist id-list region
-    // (uidlist.c:465,473 `numeric_ids <= 0`).
-    let replay_cfg = batch_cfg
-        .clone()
-        .with_active_flags(config_batch_flags(config))
-        .with_numeric_ids(config.numeric_ids())
-        // --atimes / --crtimes have no flag_ptr[] bit either (batch.c:59-76),
-        // and each gates a per-entry flist field, so they must reach the
-        // reader from the replay invocation or the entry decode desyncs.
-        .with_preserve_atimes(config.preserve_atimes())
-        .with_preserve_crtimes(config.preserve_crtimes());
+    // into the reader.
+    let active_flags = config_batch_flags(config);
+    let replay_cfg = batch_cfg.clone().with_active_flags(active_flags);
 
-    let result = engine::batch::replay::replay(&replay_cfg, &dest_root, config.verbosity().into())
-        .map_err(|e| match e {
-            // upstream: batch.c:137-142 - an --iconv mismatch aborts with
-            // RERR_SYNTAX (exit 1) printing the bare reconcile message.
-            engine::batch::BatchError::FlagMismatch(msg) => {
-                ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-            }
-            // upstream: compat.c:609-612 setup_protocol() - a batch recorded
-            // with a protocol newer than this build supports aborts with
-            // exit_cleanup(RERR_PROTOCOL) (exit 2), printing the bare "too new"
-            // diagnostic rather than the generic replay-failure message. The
-            // reader tags this case with protocol::ProtocolViolation; detect it
-            // and mirror the exit code and message exactly.
-            engine::batch::BatchError::Io(ref io_err)
-                if io_err
-                    .get_ref()
-                    .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()) =>
-            {
-                ClientError::new(2, rsync_error!(2, "{}", io_err).with_role(Role::Client))
-            }
-            // upstream: batch.c:271,280 - a batch file that cannot be opened, or
-            // that resolves to a non-regular node, aborts with
-            // `exit_cleanup(RERR_FILEIO)` (exit 11) and prints the bare
-            // `Batch file ...` line. The generic arm below would report exit 1
-            // under a "batch replay failed" prefix, which names the wrong phase:
-            // nothing was replayed, the input was refused.
-            engine::batch::BatchError::BatchFileUnusable(ref msg) => {
-                ClientError::new(11, rsync_error!(11, "{}", msg).with_role(Role::Client))
-            }
-            other => {
-                let msg = format!("batch replay failed: {other}");
-                ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
-            }
-        })?;
+    let mut reader = engine::batch::BatchReader::new(replay_cfg).map_err(map_batch_error)?;
+    // upstream: main.c:1914-1915 read_stream_flags(batch_fd), then
+    // compat.c:604-613 setup_protocol() reads protocol/compat/seed back from
+    // the batch fd; the reader's single header parse covers both, and rejects
+    // a too-new batch protocol with RERR_PROTOCOL (compat.c:609-613).
+    let stream_flags = reader.read_header().map_err(map_batch_error)?;
 
-    #[cfg(feature = "tracing")]
-    {
-        if result.recurse {
-            tracing::info!("Batch mode enabled: recurse");
+    // upstream: compat.c:641-642 - setup_protocol() calls check_batch_flags()
+    // under read_batch. Non-iconv mismatches are forced to the batch's value
+    // and mentioned at --info=misc level; an --iconv mismatch is fatal
+    // (RERR_SYNTAX, via the FlagMismatch arm of map_batch_error).
+    let notices = engine::batch::check_batch_flags(
+        stream_flags,
+        active_flags,
+        reader.config().protocol_version,
+    )
+    .map_err(map_batch_error)?;
+    if config.verbosity() > 0 {
+        for message in &notices {
+            println!("{message}");
         }
-        tracing::info!(
-            file_count = result.file_count,
-            total_size = result.total_size,
-            "Batch replay complete"
-        );
     }
 
-    // upstream: main.c:362-373 - on the --read-batch side the receiver reads
-    // total_read / total_written / stats.total_size from the batch trailer and
-    // surfaces them through output_summary(). Mirror that by populating the
-    // ClientSummary so the "sent X bytes received X bytes" / "total size is X"
-    // lines reflect the replayed payload instead of zeros.
-    //
-    // The replay engine accounts every flist entry against `file_count` and
-    // every byte of source-side material against `total_size`. Symlinks and
-    // dirs created during replay are counted as files_transferred because the
-    // receiver materialised them at the destination, matching upstream's
-    // num_files / num_transferred accounting under --read-batch.
-    use engine::local_copy::LocalCopySummary;
-    let files_listed = usize::try_from(result.file_count).unwrap_or(usize::MAX);
-    let files_transferred = files_listed;
-    let total_size = result.total_size;
-    let summary = LocalCopySummary::from_receiver_stats(
-        files_listed,
-        files_transferred,
-        // upstream: receiver.c:784 total_transferred_size - the replay materialises
-        // every flist entry, so the summed transferred-file length is total_size.
-        total_size,
-        total_size,
-        total_size,
-        total_size,
-        std::time::Duration::ZERO,
-        total_size,
-        0,
-        // The --read-batch replay engine decodes the flist from the batch file
-        // without a raw wire counter, so no flist span is measured.
-        0,
-        protocol::DeleteStats::new(),
-        // The --read-batch replay engine does not reconstruct a per-type
-        // ITEM_IS_NEW breakdown, so carry every replayed entry as a created
-        // regular file (reg = files_transferred, the pre-existing behaviour):
-        // `regular()` derives it from `files` with the typed sub-counts at zero.
-        protocol::CreatedStats {
-            files: files_transferred as u64,
-            ..protocol::CreatedStats::new()
-        },
-        // The --read-batch replay engine does not reconstruct a per-type file
-        // breakdown, so leave the tallies at zero: reg = files_listed, the
-        // pre-existing behaviour.
-        engine::local_copy::FileTypeTotals::default(),
-    );
-    Ok(ClientSummary::from_summary(summary))
+    let header = reader.header().cloned().ok_or_else(|| {
+        ClientError::new(
+            1,
+            rsync_error!(1, "batch header missing after read").with_role(Role::Client),
+        )
+    })?;
+    let body = reader.into_body().map_err(map_batch_error)?;
+
+    let server_config = build_replay_server_config(config, dest_root, &stream_flags)?;
+
+    let mut ctx = crate::server::ReceiverContext::for_batch_replay(&header, server_config)
+        .map_err(|e| {
+            // upstream: compat.c:625-638 - a protocol outside the supported
+            // bounds aborts with exit_cleanup(RERR_PROTOCOL).
+            ClientError::new(2, rsync_error!(2, "{}", e).with_role(Role::Client))
+        })?;
+
+    let start = std::time::Instant::now();
+    let stats = ctx.run_local_replay(body, None).map_err(|e| {
+        let msg = format!("batch replay failed: {e}");
+        ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
+    })?;
+
+    // upstream: main.c:362-373 - the --read-batch side surfaces the replayed
+    // totals through output_summary(). The receiver ran for real, so reuse the
+    // pull receiver's stats conversion (including the io_error -> exit-code
+    // mapping of cleanup.c:210-218).
+    Ok(remote::daemon_transfer::convert_server_stats_to_summary(
+        crate::server::ServerStats::Receiver(stats),
+        start.elapsed(),
+    ))
+}
+
+/// Maps a batch open/header/reconcile error onto upstream's exit codes.
+fn map_batch_error(e: engine::batch::BatchError) -> ClientError {
+    match e {
+        // upstream: batch.c:137-142 - an --iconv mismatch aborts with
+        // RERR_SYNTAX (exit 1) printing the bare reconcile message.
+        engine::batch::BatchError::FlagMismatch(msg) => {
+            ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
+        }
+        // upstream: compat.c:609-613 setup_protocol() - a batch recorded with
+        // a protocol newer than this build supports aborts with
+        // exit_cleanup(RERR_PROTOCOL) (exit 2), printing the bare "too new"
+        // diagnostic rather than the generic replay-failure message. The
+        // reader tags this case with protocol::ProtocolViolation; detect it
+        // and mirror the exit code and message exactly.
+        engine::batch::BatchError::Io(ref io_err)
+            if io_err
+                .get_ref()
+                .is_some_and(|inner| inner.is::<protocol::ProtocolViolation>()) =>
+        {
+            ClientError::new(2, rsync_error!(2, "{}", io_err).with_role(Role::Client))
+        }
+        // upstream: batch.c:271,280 - a batch file that cannot be opened, or
+        // that resolves to a non-regular node, aborts with
+        // `exit_cleanup(RERR_FILEIO)` (exit 11) and prints the bare
+        // `Batch file ...` line. The generic arm below would report exit 1
+        // under a "batch replay failed" prefix, which names the wrong phase:
+        // nothing was replayed, the input was refused.
+        engine::batch::BatchError::BatchFileUnusable(ref msg) => {
+            ClientError::new(11, rsync_error!(11, "{}", msg).with_role(Role::Client))
+        }
+        other => {
+            let msg = format!("batch replay failed: {other}");
+            ClientError::new(1, rsync_error!(1, "{}", msg).with_role(Role::Client))
+        }
+    }
+}
+
+/// Builds the receiver `ServerConfig` that drives a `--read-batch` replay.
+///
+/// Reuses the daemon-pull receiver builder - on a pull the local client IS
+/// the receiver, exactly the position a batch replay is in - then overrides
+/// what a recorded batch dictates:
+///
+/// - no daemon connection is involved (upstream: main.c:1520 read_batch
+///   forces `local_server = 1`), and
+/// - every data-stream-affecting option is forced to the batch's recorded
+///   stream flag, mirroring upstream `batch.c:126-135` where
+///   `check_batch_flags()` writes each recorded bit back onto the option
+///   global before `do_recv()` decodes the stream.
+fn build_replay_server_config(
+    config: &ClientConfig,
+    dest_root: std::ffi::OsString,
+    stream_flags: &engine::batch::BatchFlags,
+) -> Result<crate::server::ServerConfig, ClientError> {
+    // upstream: main.c:1408 send_filter_list(read_batch ? -1 : f_out) - the
+    // replay parses the local filter rules without a peer to send them to.
+    let filter_rules =
+        remote::flags::build_wire_format_rules(config.filter_rules(), config.delete_excluded())?;
+    let mut server_config = remote::daemon_transfer::build_server_config_for_receiver(
+        config,
+        &[dest_root],
+        filter_rules,
+    )?;
+    server_config.connection.is_daemon_connection = false;
+    // The itemize-event drain lives on the daemon/SSH drivers; the replay
+    // receiver prints its own default output instead of buffering events.
+    server_config.flags.info_flags.out_format_active = false;
+
+    // upstream: batch.c:126-135 - the recorded stream flags win over the
+    // invocation's options; the stream was encoded under them.
+    server_config.flags.recursive = stream_flags.recurse;
+    server_config.flags.owner = stream_flags.preserve_uid;
+    server_config.flags.group = stream_flags.preserve_gid;
+    server_config.flags.links = stream_flags.preserve_links;
+    server_config.flags.devices = stream_flags.preserve_devices;
+    server_config.flags.hard_links = stream_flags.preserve_hard_links;
+    server_config.flags.checksum = stream_flags.always_checksum;
+    server_config.flags.dirs = stream_flags.xfer_dirs;
+    server_config.flags.acls = stream_flags.preserve_acls;
+    server_config.flags.xattrs = stream_flags.preserve_xattrs;
+    server_config.write.inplace = stream_flags.inplace;
+    server_config.flags.append = stream_flags.append;
+    server_config.flags.append_verify = stream_flags.append_verify;
+    // upstream: compat.c:414 getenv_nstr() pins a batch to zlib, which is
+    // exactly the compact `-z` codec path; explicit choices do not apply.
+    server_config.flags.compress = stream_flags.do_compression;
+    server_config.connection.compress_choice = None;
+    if server_config.flags.compress && server_config.connection.compression_level.is_none() {
+        // upstream: options.c:2755-2758 - compress_level defaults to 6.
+        server_config.connection.compression_level =
+            Some(compress::zlib::CompressionLevel::Default);
+    }
+    Ok(server_config)
 }
 
 #[cfg(test)]
@@ -618,6 +671,21 @@ mod tests {
         let plan = LocalCopyPlan::from_operands(&operands).unwrap();
         plan.execute_with_options(LocalCopyExecution::DryRun, options)
             .unwrap();
+        {
+            // Mirror finalize_batch's trailer: the five varlong30 stats
+            // (upstream main.c:374-383) plus the goodbye NDX_DONE that
+            // read_final_goodbye() consumes - the real receiver reads both.
+            let mut w = writer.lock().unwrap();
+            w.write_stats(&BatchStats {
+                total_read: 0,
+                total_written: 0,
+                total_size: 22,
+                flist_buildtime: Some(0),
+                flist_xfertime: Some(0),
+            })
+            .unwrap();
+            w.write_data(&[0x00]).unwrap();
+        }
         Arc::try_unwrap(writer)
             .expect("writer uniquely owned")
             .into_inner()
@@ -644,6 +712,168 @@ mod tests {
             std::fs::read(replay_dest.join("hello.txt")).unwrap(),
             b"in-range batch payload",
             "in-range replay must materialise the source file"
+        );
+    }
+
+    /// An `--iconv` mismatch between the batch header and the replay
+    /// invocation must abort with RERR_SYNTAX (exit 1), printing upstream's
+    /// bare reconcile message.
+    ///
+    /// WHY: upstream batch.c:137-142 - every other stream-flag mismatch is
+    /// forced to the batch's value, but iconv changes the byte encoding of
+    /// the recorded names themselves, so `check_batch_flags()` calls
+    /// `exit_cleanup(RERR_SYNTAX)`. The dispatch (compat.c:641-642 runs the
+    /// check inside setup_protocol under read_batch) now owns this call; a
+    /// dispatch that skipped the reconcile would feed mis-encoded names to
+    /// the receiver instead of failing loudly.
+    #[test]
+    fn read_batch_iconv_mismatch_exits_rerr_syntax() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let batch_path = temp.path().join("iconv.batch");
+        let dest = temp.path().join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        let write_cfg = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        );
+        let mut writer = BatchWriter::new(write_cfg).unwrap();
+        writer
+            .write_header(engine::batch::BatchFlags {
+                iconv: true,
+                ..Default::default()
+            })
+            .unwrap();
+        writer.finalize().unwrap();
+
+        let read_cfg = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        );
+        let config = ClientConfig::builder()
+            .compress(false)
+            .transfer_args([dest.to_string_lossy().to_string()])
+            .build();
+
+        let err = handle_batch_read(&read_cfg, &config)
+            .expect("read mode handled")
+            .expect_err("an --iconv mismatch must be fatal");
+        assert_eq!(
+            err.exit_code(),
+            1,
+            "iconv mismatch must exit RERR_SYNTAX (1), got {}",
+            err.exit_code()
+        );
+        assert!(
+            err.to_string().contains("--iconv"),
+            "expected upstream's bare --iconv reconcile message, got: {err}"
+        );
+    }
+
+    /// The replay summary reflects the REAL receiver's accounting: only the
+    /// regular files the recorded stream transferred count as copied, never
+    /// every flist entry.
+    ///
+    /// WHY: upstream counts `stats.xferred_files` per recorded transfer row
+    /// (receiver.c:961) - directories and the root entry are itemize rows,
+    /// not transfers. The native replay fork counted every flist entry as a
+    /// transferred regular file; driving dispatch through the receiver
+    /// pipeline is what fixes the breakdown, so this pins the dispatch route
+    /// itself: re-routing to the native replay inflates the count and fails
+    /// here.
+    #[test]
+    fn read_batch_summary_counts_only_transferred_files() {
+        use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
+        use protocol::CompatibilityFlags;
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let source = temp.path().join("src");
+        let batch_path = temp.path().join("counts.batch");
+        std::fs::create_dir_all(source.join("sub")).unwrap();
+        std::fs::write(source.join("top.txt"), b"top payload").unwrap();
+        std::fs::write(source.join("sub").join("inner.txt"), b"inner payload").unwrap();
+
+        let compat = CompatibilityFlags::SAFE_FILE_LIST
+            | CompatibilityFlags::AVOID_XATTR_OPTIMIZATION
+            | CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::INPLACE_PARTIAL_DIR
+            | CompatibilityFlags::VARINT_FLIST_FLAGS;
+        let write_cfg = BatchConfig::new(
+            BatchMode::OnlyWrite,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        )
+        .with_compat_flags(compat.bits() as i32)
+        .with_checksum_seed(1);
+        let writer = Arc::new(Mutex::new(BatchWriter::new(write_cfg).unwrap()));
+        writer
+            .lock()
+            .unwrap()
+            .write_header(engine::batch::BatchFlags {
+                recurse: true,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let options = LocalCopyOptions::default()
+            .recursive(true)
+            .batch_writer(Some(Arc::clone(&writer)));
+        let mut src_os = source.clone().into_os_string();
+        src_os.push("/");
+        let operands = vec![src_os, temp.path().join("write_dest").into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        plan.execute_with_options(LocalCopyExecution::DryRun, options)
+            .unwrap();
+        {
+            let mut w = writer.lock().unwrap();
+            w.write_stats(&BatchStats {
+                total_read: 0,
+                total_written: 0,
+                total_size: 24,
+                flist_buildtime: Some(0),
+                flist_xfertime: Some(0),
+            })
+            .unwrap();
+            w.write_data(&[0x00]).unwrap();
+        }
+        Arc::try_unwrap(writer)
+            .expect("writer uniquely owned")
+            .into_inner()
+            .unwrap()
+            .finalize()
+            .unwrap();
+
+        let replay_dest = temp.path().join("replay");
+        std::fs::create_dir_all(&replay_dest).unwrap();
+        let read_cfg = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        );
+        let config = ClientConfig::builder()
+            .compress(false)
+            .transfer_args([replay_dest.to_string_lossy().to_string()])
+            .build();
+        let summary = handle_batch_read(&read_cfg, &config)
+            .expect("read mode handled")
+            .expect("batch must replay successfully");
+
+        assert_eq!(
+            std::fs::read(replay_dest.join("top.txt")).unwrap(),
+            b"top payload"
+        );
+        assert_eq!(
+            std::fs::read(replay_dest.join("sub").join("inner.txt")).unwrap(),
+            b"inner payload"
+        );
+        // Flist carries ".", "sub", "top.txt", "sub/inner.txt" - only the two
+        // regular files are recorded transfers (receiver.c:961).
+        assert_eq!(
+            summary.files_copied(),
+            2,
+            "only the recorded transfers count as copied, not every flist entry"
         );
     }
 
