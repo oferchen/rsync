@@ -79,7 +79,7 @@ fn early_exec_hook_capture(early_input: Option<&[u8]>) -> String {
     // the session on EOF.
     drop(reader);
     drop(stream);
-    let _ = handle.join().expect("daemon thread");
+    let _ = finish_daemon(handle);
 
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {

@@ -54,8 +54,7 @@ fn daemon_delete_pull_reports_delete_stats() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     let rsync_url = format!("rsync://127.0.0.1:{port}/pullmod/");
@@ -73,7 +72,7 @@ fn daemon_delete_pull_reports_delete_stats() {
     let summary = match result {
         Ok(s) => s,
         Err(e) => {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("delete-stats pull failed: {e}");
         }
     };
@@ -97,5 +96,5 @@ fn daemon_delete_pull_reports_delete_stats() {
         "client summary must report one deleted file from the local receiver sweep"
     );
 
-    let _ = daemon_handle.join();
+    let _ = finish_daemon(daemon_handle);
 }
