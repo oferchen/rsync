@@ -161,19 +161,28 @@ impl FileListReader {
         Ok(Some((major, minor)))
     }
 
-    /// Reads hardlink index if preserving hardlinks and flags indicate it.
+    /// Reads the hardlink group index when the flags indicate a follower.
     ///
     /// Wire format (protocol 30+):
     /// - If XMIT_HLINKED is set but not XMIT_HLINK_FIRST: read varint index
     /// - If XMIT_HLINK_FIRST is also set: return u32::MAX (this is the first/leader)
     ///
-    /// upstream: flist.c:recv_file_entry() lines 791-799
+    /// Wire consumption is gated on the flags ALONE, not on the local
+    /// `preserve_hard_links` (-H) setting. upstream: flist.c:791-793 reads
+    /// `first_hlink_ndx = read_varint(f)` under
+    /// `protocol_version >= 30 && BITS_SETnUNSET(xflags, XMIT_HLINKED, XMIT_HLINK_FIRST)`
+    /// with no `preserve_hard_links` check, and copies the leader's metadata at
+    /// flist.c:805-834 (`goto create_object`) regardless of -H. A sender may set
+    /// XMIT_HLINKED without the receiver enabling -H, so gating this read on the
+    /// local flag would leave the varint on the wire and desync the flist stream.
+    /// The disk-linking semantics (receiver transfer set) stay gated on
+    /// `preserve_hard_links` elsewhere; this read only keeps the stream in sync.
     pub(super) fn read_hardlink_idx<R: Read + ?Sized>(
         &self,
         reader: &mut R,
         flags: FileFlags,
     ) -> io::Result<Option<u32>> {
-        if !self.preserve_hard_links || self.protocol.as_u8() < 30 {
+        if self.protocol.as_u8() < 30 {
             return Ok(None);
         }
 

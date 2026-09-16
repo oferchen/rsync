@@ -3115,30 +3115,32 @@ fn read_entry_accepts_a_directory_transfer_root() {
     assert_eq!(entry.mode() & 0o170000, 0o040000);
 }
 
-/// A peer that sets `XMIT_HLINKED` while the receiver is not preserving hard
-/// links must not cause a single byte of hard-link payload to be consumed.
+/// Hostile / version-skew case: a proto-30+ peer that sets `XMIT_HLINKED`
+/// (without `XMIT_HLINK_FIRST`) while the receiver is NOT preserving hard links
+/// MUST still consume the follower's group-index varint from the wire.
 ///
-/// upstream: `flist.c:1335` `recv_file_entry()` gates the whole hard-link read
-/// on `preserve_hard_links && xflags & XMIT_HLINKED` - the local option is
-/// checked FIRST, so the peer's bit is never consulted on its own. Without that
-/// conjunct the receiver reads a varint the sender never wrote, and every
-/// subsequent field in the stream decodes from the wrong offset: a
-/// remote-controlled desync of the whole file list from one flag bit.
+/// upstream: `flist.c:791-793` reads `first_hlink_ndx = read_varint(f)` under
+/// `protocol_version >= 30 && BITS_SETnUNSET(xflags, XMIT_HLINKED, XMIT_HLINK_FIRST)`
+/// with NO `preserve_hard_links` conjunct - the read is gated on the peer's flag
+/// bits alone. If the receiver instead gated it on the local -H option it would
+/// leave a varint the sender wrote sitting on the wire, and every subsequent
+/// field would decode from the wrong offset: a remote-controlled desync of the
+/// whole file list from one flag bit. The disk-linking semantics stay gated on
+/// `preserve_hard_links` elsewhere; this read only keeps the stream in sync.
 ///
-/// The assertion is on BYTES CONSUMED, not on the returned value. `None` alone
-/// cannot discriminate - an ungated reader that swallowed the varint and then
-/// discarded it would also return `None`. Only the cursor position proves the
-/// stream was left untouched.
+/// The assertion is on BYTES CONSUMED, not just the returned value: the cursor
+/// must advance past the whole varint so the next field is aligned.
 #[test]
-fn hardlink_idx_is_not_read_when_hard_links_are_not_preserved() {
+fn hardlink_idx_is_read_on_the_flag_alone_without_preserve_hard_links() {
     use crate::flist::flags::{FileFlags, XMIT_HLINKED};
 
     let mut payload = Vec::new();
     crate::encode_varint_to_vec(7, &mut payload);
-    assert!(
-        !payload.is_empty(),
-        "fixture must carry a hard-link index for the guard to skip",
-    );
+    // A sentinel standing in for the START of the next field/entry. A correct
+    // decode consumes only the varint and stops here.
+    let sentinel = [0xABu8, 0xCD];
+    payload.extend_from_slice(&sentinel);
+    let varint_len = payload.len() - sentinel.len();
 
     let flags = FileFlags::new(0, XMIT_HLINKED);
     let reader = FileListReader::new(test_protocol()).with_preserve_hard_links(false);
@@ -3146,11 +3148,15 @@ fn hardlink_idx_is_not_read_when_hard_links_are_not_preserved() {
     let mut cursor = Cursor::new(&payload[..]);
     let idx = reader.read_hardlink_idx(&mut cursor, flags).unwrap();
 
-    assert_eq!(idx, None, "no hard-link index without preserve_hard_links");
     assert_eq!(
-        cursor.position(),
-        0,
-        "the peer's XMIT_HLINKED bit must not consume stream bytes",
+        idx,
+        Some(7),
+        "the follower index must decode on the flag alone",
+    );
+    assert_eq!(
+        cursor.position() as usize,
+        varint_len,
+        "exactly the varint must be consumed, leaving the stream aligned",
     );
 }
 
@@ -3179,12 +3185,14 @@ fn hardlink_idx_is_read_when_hard_links_are_preserved() {
     );
 }
 
-/// The protocol 28-29 dev/ino form of the same gate. Here the ungated read is
-/// TWO longints rather than one varint, so the desync it would open is wider.
+/// The protocol 28-29 dev/ino gate. Unlike the protocol 30+ index (read on the
+/// flag alone), upstream DOES gate the pre-30 dev/ino read on the local -H
+/// option, so this read is correctly skipped when it is off. Here the read is
+/// TWO longints rather than one varint, so a desync would be wider still.
 ///
-/// upstream: `flist.c:recv_file_entry()` - the pre-30 dev/ino read sits under
-/// the same `preserve_hard_links && xflags & XMIT_HLINKED` conjunct as the
-/// protocol 30+ index.
+/// upstream: `flist.c:1188-1215` `recv_file_entry()` - the pre-30 dev/ino read
+/// sits under `preserve_hard_links && xflags & XMIT_HLINKED`, the local option
+/// checked FIRST.
 #[test]
 fn hardlink_dev_ino_is_not_read_when_hard_links_are_not_preserved() {
     use crate::flist::flags::{FileFlags, XMIT_HLINKED};
@@ -3254,6 +3262,13 @@ fn hardlink_dev_ino_is_read_when_hard_links_are_preserved() {
 /// normally. Pre-fix the decoder persisted the bit unconditionally, so the
 /// receiver classified the entry as a hardlink "follower", dropped it from
 /// the transfer set, and never linked it - a silent omission at exit 0.
+///
+/// This case covers the leader form (both bits set), which carries NO index
+/// varint on the wire (upstream: flist.c:585-587 writes `first_hlink_ndx` only
+/// for a non-first entry, and the reader returns `u32::MAX` for a first without
+/// reading). The follower form (HLINKED alone) DOES carry a varint the reader
+/// must consume on the flag alone, so it needs a valid leader on the wire and is
+/// covered by `hlink_follower_kept_but_flags_cleared_without_preserve_hard_links`.
 #[test]
 fn stray_hlinked_wire_bit_is_inert_without_preserve_hard_links() {
     use crate::flist::flags::{XMIT_HLINK_FIRST, XMIT_HLINKED};
@@ -3261,49 +3276,108 @@ fn stray_hlinked_wire_bit_is_inert_without_preserve_hard_links() {
 
     let protocol = test_protocol();
 
-    // Hostile "follower" (HLINKED alone) and hostile "leader" (both bits):
-    // neither interpretation may survive the decode without -H.
-    for hostile_ext in [XMIT_HLINKED, XMIT_HLINKED | XMIT_HLINK_FIRST] {
-        let mut data = Vec::new();
-        let mut writer = FileListWriter::new(protocol);
-        let mut entry = FileEntry::new_file("victim.txt".into(), 7, 0o100644);
-        entry.set_mtime(1_700_000_000, 0);
-        writer.write_entry(&mut data, &entry).unwrap();
+    let mut data = Vec::new();
+    let mut writer = FileListWriter::new(protocol);
+    let mut entry = FileEntry::new_file("victim.txt".into(), 7, 0o100644);
+    entry.set_mtime(1_700_000_000, 0);
+    writer.write_entry(&mut data, &entry).unwrap();
 
-        // Inject the hostile extended-flags byte. Without -H the reader
-        // consumes no hardlink varint, so the flag bytes are the only
-        // difference from a plain entry.
-        assert_eq!(
-            data[0] & XMIT_EXTENDED_FLAGS,
-            0,
-            "fixture: plain first entry must not already carry extended flags",
-        );
-        data[0] |= XMIT_EXTENDED_FLAGS;
-        data.insert(1, hostile_ext);
+    // Inject the hostile leader flags (both bits). A leader carries no index
+    // varint, so the flag bytes are the only difference from a plain entry.
+    assert_eq!(
+        data[0] & XMIT_EXTENDED_FLAGS,
+        0,
+        "fixture: plain first entry must not already carry extended flags",
+    );
+    data[0] |= XMIT_EXTENDED_FLAGS;
+    data.insert(1, XMIT_HLINKED | XMIT_HLINK_FIRST);
 
-        let mut cursor = Cursor::new(&data[..]);
-        let mut reader = FileListReader::new(protocol);
-        let decoded = reader.read_entry(&mut cursor).unwrap().unwrap();
+    let mut cursor = Cursor::new(&data[..]);
+    let mut reader = FileListReader::new(protocol);
+    let decoded = reader.read_entry(&mut cursor).unwrap().unwrap();
 
-        // The entry decodes normally and the stream stays in sync: only the
-        // flag's interpretation is gated, never the bytes consumed.
-        assert_eq!(decoded.name(), "victim.txt");
-        assert_eq!(decoded.size(), 7);
-        assert_eq!(
-            cursor.position() as usize,
-            data.len(),
-            "byte consumption must not change under a hostile hlink flag",
-        );
+    // The entry decodes normally and the stream stays in sync: only the
+    // flag's interpretation is gated, never the bytes consumed.
+    assert_eq!(decoded.name(), "victim.txt");
+    assert_eq!(decoded.size(), 7);
+    assert_eq!(
+        cursor.position() as usize,
+        data.len(),
+        "byte consumption must not change under a hostile leader hlink flag",
+    );
 
-        assert!(
-            !decoded.hlinked(),
-            "XMIT_HLINKED (ext 0x{hostile_ext:02x}) must not survive decode without -H",
-        );
-        assert!(
-            !decoded.hlink_first(),
-            "XMIT_HLINK_FIRST (ext 0x{hostile_ext:02x}) must not survive decode without -H",
-        );
-    }
+    assert!(
+        !decoded.hlinked(),
+        "XMIT_HLINKED must not survive decode without -H",
+    );
+    assert!(
+        !decoded.hlink_first(),
+        "XMIT_HLINK_FIRST must not survive decode without -H",
+    );
+}
+
+/// The follower half of task #7842 under the corrected byte model: a proto-30+
+/// follower (`XMIT_HLINKED` without `XMIT_HLINK_FIRST`) carries a group-index
+/// varint the receiver must consume ON THE FLAG ALONE (upstream: flist.c:791-793,
+/// no `preserve_hard_links` conjunct). Without -H the varint is still read so the
+/// stream stays in sync AND the follower survives the decode, but its hardlink
+/// flags must be cleared so `build_files_to_transfer` does not drop it. This
+/// reconciles the read gate (bytes) with #7842's semantic gate (flag meaning).
+#[test]
+fn hlink_follower_kept_but_flags_cleared_without_preserve_hard_links() {
+    use crate::flist::write::FileListWriter;
+
+    let protocol = test_protocol();
+
+    // A valid leader + abbreviated follower (follower references leader at ndx 0).
+    let mut leader = FileEntry::new_file("leader.txt".into(), 7, 0o100644);
+    leader.set_mtime(1_700_000_000, 0);
+    leader.set_hlinked(true);
+    leader.set_hlink_first(true);
+    leader.set_hardlink_idx(u32::MAX);
+
+    let mut follower = FileEntry::new_file("follower.txt".into(), 7, 0o100644);
+    follower.set_mtime(1_700_000_000, 0);
+    follower.set_hlinked(true);
+    follower.set_hlink_first(false);
+    follower.set_hardlink_idx(0);
+
+    let mut data = Vec::new();
+    let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+    writer.write_entry(&mut data, &leader).unwrap();
+    writer.write_entry(&mut data, &follower).unwrap();
+
+    // Decode with a receiver that is NOT preserving hard links.
+    let mut cursor = Cursor::new(&data[..]);
+    let mut reader = FileListReader::new(protocol);
+    let decoded_leader = reader
+        .read_entry_with_flist(&mut cursor, &[])
+        .unwrap()
+        .unwrap();
+    let decoded_follower = reader
+        .read_entry_with_flist(&mut cursor, std::slice::from_ref(&decoded_leader))
+        .unwrap()
+        .unwrap();
+
+    // 1259: the follower's group-index varint was consumed on the flag alone -
+    // the whole two-entry stream decoded and the cursor reached the end.
+    assert_eq!(
+        cursor.position() as usize,
+        data.len(),
+        "follower group-index varint must be consumed even without -H",
+    );
+    assert_eq!(decoded_follower.name(), "follower.txt");
+
+    // #7842: without -H the follower's hardlink flags must not survive, so it is
+    // kept in the transfer set as a plain file rather than dropped as a follower.
+    assert!(
+        !decoded_follower.hlinked(),
+        "follower XMIT_HLINKED must not survive decode without -H",
+    );
+    assert!(
+        !decoded_follower.hlink_first(),
+        "follower XMIT_HLINK_FIRST must not survive decode without -H",
+    );
 }
 
 /// Control for `stray_hlinked_wire_bit_is_inert_without_preserve_hard_links`:
