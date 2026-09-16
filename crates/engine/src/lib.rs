@@ -144,7 +144,7 @@ pub mod batch {
     //! Re-exports from the [`batch`] crate for backward compatibility.
     pub use batch::{
         BatchConfig, BatchError, BatchFlags, BatchHeader, BatchMode, BatchReader, BatchResult,
-        BatchStats, BatchWriter, DeltaOp, FileEntry, ReplayResult,
+        BatchStats, BatchWriter, DeltaOp, FileEntry, ReplayResult, check_batch_flags,
     };
 
     /// Batch replay functions for applying recorded delta operations.

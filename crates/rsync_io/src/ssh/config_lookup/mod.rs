@@ -35,7 +35,10 @@
 //!
 //! # Module layout
 //!
-//! - [`paths`] - candidate file resolution, `-F` override, home/env.
+//! - [`paths`] - the local-user env lookup for `Match localuser`. The
+//!   file load order itself (user file, system file, `-F` override)
+//!   lives in [`crate::ssh::config_files`], shared with the embedded
+//!   transport's reader.
 //! - [`pattern`] - `Host`/`Match` pattern tokens and glob matching.
 //! - [`match_block`] - `Match` condition model, context, evaluation.
 //! - [`parser`] - the ssh_config scanner and compression decision.
@@ -61,8 +64,10 @@ mod tests;
 
 pub(super) use match_block::MatchContext;
 
-use parser::read_and_check;
-use paths::candidate_paths;
+use logging::debug_log;
+
+use crate::ssh::config_files::{ConfigFile, check_default_user_config_perms, config_files};
+use parser::CompressionScan;
 
 // Test-only aliases so the moved test module can keep reaching every
 // item through `super::*`, matching the pre-decomposition single-file
@@ -77,20 +82,19 @@ use match_block::{MatchCondition, evaluate_match, match_line_applies};
 #[cfg(test)]
 pub(super) use parser::parse_enables_compression;
 #[cfg(test)]
-use paths::extract_dash_f_path;
-#[cfg(test)]
 use pattern::{Pattern, host_patterns_from_tokens, parse_pattern_list};
 
 /// Returns `true` when `~/.ssh/config` or `/etc/ssh/ssh_config`
 /// configures `Compression yes` for `ctx` at top level or under a
 /// matching `Host` or `Match` block.
 ///
-/// `options` is the SSH option argv; a `-F <file>` (or `-F<file>`)
-/// override is honoured first when present and the file exists. After
-/// the override, the lookup tries `~/.ssh/config`, then
-/// `/etc/ssh/ssh_config`. The first existing file wins; later files in
-/// the list are not consulted, matching OpenSSH's behaviour when `-F`
-/// is supplied.
+/// `options` is the SSH option argv; the file load order is the shared
+/// [`config_files`] owner's - a `-F <file>` (or `-F<file>`) override is
+/// read INSTEAD of `~/.ssh/config` and suppresses `/etc/ssh/ssh_config`
+/// entirely, while without `-F` BOTH the user and system files are read
+/// in that order into one claimed-slot scan, so first-obtained-wins
+/// arbitrates per keyword across the file boundary
+/// (openssh/ssh.c:561-592 `process_config_files()`).
 ///
 /// `ctx` carries the connection context evaluated by SSC-4.b/SSC-5.b:
 /// the destination host (used for `Host` blocks and `Match host`),
@@ -98,16 +102,49 @@ use pattern::{Pattern, host_patterns_from_tokens, parse_pattern_list};
 /// empty only top-level and `Host *` / `Match all` directives can fire.
 ///
 /// Returns `false` when:
-/// - no candidate file exists,
-/// - the chosen file does not contain a matching `Compression yes`,
-/// - the chosen file fails to parse (a `debug_log!` line is emitted and
-///   the function reports `false` rather than aborting the transfer).
+/// - no file in the load order exists,
+/// - no read file contains a matching `Compression yes`,
+/// - a file real `ssh` would refuse is hit - an untokenisable line, or a
+///   group/world-writable default `~/.ssh/config`
+///   (openssh/readconf.c:2579-2587) - because upstream aborts the whole
+///   load there and no connection would exist to warn about. A
+///   `debug_log!` line is emitted and the function reports `false`
+///   rather than aborting the transfer.
 pub(super) fn ssh_config_enables_compression(options: &[OsString], ctx: &MatchContext<'_>) -> bool {
-    for candidate in candidate_paths(options) {
-        if !candidate.is_file() {
-            continue;
+    enables_compression_in(&config_files(options), ctx)
+}
+
+/// The multi-file scan behind [`ssh_config_enables_compression`]: one
+/// [`CompressionScan`] threaded across `files` in order, so the
+/// claimed-slot state - not file existence - decides which file's
+/// directive wins. Takes the file list as a parameter so tests can
+/// inject fixture paths instead of the host's real config files.
+fn enables_compression_in(files: &[ConfigFile], ctx: &MatchContext<'_>) -> bool {
+    let mut scan = CompressionScan::default();
+    for file in files {
+        // upstream: SSHCONF_CHECKPERM applies to the default user file
+        // only (openssh/ssh.c:583) and its failure is fatal - the load
+        // stops, so later files are not read either.
+        if file.check_perm
+            && let Err(reason) = check_default_user_config_perms(&file.path)
+        {
+            debug_log!(
+                Io,
+                1,
+                "ssh_config compression detection: abandoning scan, ssh would refuse: {}",
+                reason
+            );
+            return false;
         }
-        return read_and_check(&candidate, ctx);
+        // A missing or unreadable file is skipped: upstream ignores the
+        // result of reading the default files (openssh/ssh.c:580-589
+        // discards read_config_file's return in the no--F arm).
+        let Ok(text) = std::fs::read_to_string(&file.path) else {
+            continue;
+        };
+        if scan.scan(&text, ctx).is_err() {
+            return false;
+        }
     }
-    false
+    scan.finish()
 }

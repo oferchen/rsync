@@ -45,8 +45,6 @@ exposes a unified API.
   and pacing.
 - [`version`] - oc-rsync release version and compiled feature set, used by
   the CLI `--version` output.
-- [`flist`] (re-export) - file list generation and transmission, mirroring
-  upstream `flist.c`.
 - [`io`] (re-export of `rsync_io`) - multiplexed socket and pipe I/O,
   mirroring upstream `io.c`.
 

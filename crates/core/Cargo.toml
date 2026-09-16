@@ -30,7 +30,6 @@ bandwidth = { path = "../bandwidth" }
 rsync_io = { path = "../rsync_io", package = "rsync_io" }
 filters = { path = "../filters" }
 compress = { path = "../compress" }
-flist = { path = "../flist" }
 logging = { path = "../logging" }
 fast_io = { path = "../fast_io", default-features = false }
 thiserror = { workspace = true }
