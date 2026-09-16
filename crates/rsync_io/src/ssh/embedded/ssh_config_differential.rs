@@ -1403,4 +1403,217 @@ mod tests {
         assert_eq!(port.upstream, vec!["2202".to_owned()]);
         assert_eq!(port.verdict, Verdict::Match, "oc {:?}", port.oc);
     }
+
+    /// `Match final` forces the SECOND pass, and its block applies there.
+    ///
+    /// The two-pass discriminator. Upstream parses the config twice: the
+    /// first pass leaves a `Match final` block inactive (`r = !!final_pass`
+    /// is 0) but records the request, and the second `SSHCONF_FINAL` pass
+    /// runs it (openssh/ssh.c:1190-1268, openssh/readconf.c:823-836). A
+    /// resolver that only ran the first pass would leave `port` unset here
+    /// and diverge from the oracle's 2244 - which is exactly the failure
+    /// this cell is built to catch.
+    #[test]
+    fn match_final_triggers_the_second_pass() {
+        const FIXTURE: &str = "Match final\n  Port 2244\n  User finaluser\n";
+
+        let diff = match run(FIXTURE, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("match final second pass", &why);
+                return;
+            }
+        };
+        let port = diff.cell("port").expect("dumped");
+        assert_eq!(port.upstream, vec!["2244".to_owned()]);
+        assert_eq!(
+            port.verdict,
+            Verdict::Match,
+            "oc did not run the final Match pass: {:?} on {}",
+            port.oc,
+            diff.oracle_version
+        );
+        let user = diff.cell("user").expect("dumped");
+        assert_eq!(user.upstream, vec!["finaluser".to_owned()]);
+        assert_eq!(user.verdict, Verdict::Match, "oc {:?}", user.oc);
+    }
+
+    /// `Match canonical` ALONE does not trigger a second pass.
+    ///
+    /// The control for the cell above. `canonical` never sets
+    /// `want_final_pass` (only a non-negated `final` does,
+    /// openssh/readconf.c:826-828), and with canonicalization off - the
+    /// default, and all oc supports until task 1218 - there is no other
+    /// trigger (openssh/ssh.c:1252-1256). So the block stays inactive on
+    /// both passes: upstream dumps the built-in `port 22` and oc leaves the
+    /// slot unset. A resolver that ran the second pass unconditionally would
+    /// wrongly apply 2255 here.
+    #[test]
+    fn match_canonical_alone_does_not_trigger_a_second_pass() {
+        const FIXTURE: &str = "Match canonical\n  Port 2255\n";
+
+        let diff = match run(FIXTURE, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("match canonical no second pass", &why);
+                return;
+            }
+        };
+        let port = diff.cell("port").expect("dumped");
+        assert_eq!(port.upstream, vec!["22".to_owned()]);
+        assert_eq!(
+            port.verdict,
+            Verdict::OcUnset,
+            "oc ran a spurious second pass and applied a canonical block: {:?} on {}",
+            port.oc,
+            diff.oracle_version
+        );
+    }
+
+    /// First-obtained-wins carries ACROSS the two passes.
+    ///
+    /// Upstream re-parses into the SAME options struct, so a slot claimed on
+    /// the first pass is not reassigned on the second - `oPort` guards with
+    /// `options->port == -1` (openssh/readconf.c:1229 shape). A top-level
+    /// `Port 2001` obtained first therefore survives a `Match final` block's
+    /// `Port 2002` seen only on the second pass.
+    #[test]
+    fn match_final_respects_first_obtained_across_passes() {
+        const FIXTURE: &str = "Port 2001\nMatch final\n  Port 2002\n";
+
+        let diff = match run(FIXTURE, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("match final first-obtained", &why);
+                return;
+            }
+        };
+        let port = diff.cell("port").expect("dumped");
+        assert_eq!(port.upstream, vec!["2001".to_owned()]);
+        assert_eq!(
+            port.verdict,
+            Verdict::Match,
+            "second pass overwrote a first-obtained slot: {:?} on {}",
+            port.oc,
+            diff.oracle_version
+        );
+
+        // Control: with no top-level directive, the Match final block does
+        // claim the slot on the second pass, so a resolver that never ran
+        // the pass would fail here instead.
+        const CONTROL: &str = "Match final\n  Port 2002\n";
+        let diff = match run(CONTROL, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("match final first-obtained control", &why);
+                return;
+            }
+        };
+        let port = diff.cell("port").expect("dumped");
+        assert_eq!(port.upstream, vec!["2002".to_owned()]);
+        assert_eq!(port.verdict, Verdict::Match, "oc {:?}", port.oc);
+    }
+
+    /// `Match all` applies on the first pass, no second pass needed.
+    #[test]
+    fn match_all_applies_on_the_first_pass() {
+        const FIXTURE: &str = "Match all\n  Port 2266\n";
+
+        let diff = match run(FIXTURE, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("match all first pass", &why);
+                return;
+            }
+        };
+        let port = diff.cell("port").expect("dumped");
+        assert_eq!(port.upstream, vec!["2266".to_owned()]);
+        assert_eq!(port.verdict, Verdict::Match, "oc {:?}", port.oc);
+    }
+
+    /// `Match host` gates the block case-INSENSITIVELY, and glob-matches.
+    ///
+    /// `match_hostname` lowercases the host (openssh/match.c:193-203), so an
+    /// upper-case alias still matches a lower-case pattern - unlike a `Host`
+    /// block, which is byte-exact. The negated control (an alias the glob
+    /// does not cover) must leave the slot unset on both sides, or a
+    /// resolver that applied the block unconditionally would pass the first
+    /// half alone.
+    #[test]
+    fn match_host_criterion_is_case_insensitive_and_gates_the_block() {
+        const FIXTURE: &str = "Match host prod-*.example.com\n  Port 2277\n";
+
+        let diff = match run(FIXTURE, "PROD-web1.example.com") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("match host case-insensitive", &why);
+                return;
+            }
+        };
+        let port = diff.cell("port").expect("dumped");
+        assert_eq!(port.upstream, vec!["2277".to_owned()]);
+        assert_eq!(
+            port.verdict,
+            Verdict::Match,
+            "oc did not case-fold Match host: {:?} on {}",
+            port.oc,
+            diff.oracle_version
+        );
+
+        // Control: an alias the glob cannot reach declines on both sides.
+        let diff = match run(FIXTURE, "dev-web1.example.com") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("match host control", &why);
+                return;
+            }
+        };
+        let port = diff.cell("port").expect("dumped");
+        assert_eq!(port.upstream, vec!["22".to_owned()]);
+        assert_eq!(
+            port.verdict,
+            Verdict::OcUnset,
+            "oc applied a non-matching Match host block: {:?} on {}",
+            port.oc,
+            diff.oracle_version
+        );
+    }
+
+    /// A negated `Match host` inverts the gate.
+    ///
+    /// upstream: `r == (negate ? 1 : 0)` (openssh/readconf.c:895-897) makes
+    /// `!host` active exactly when the pattern does NOT match.
+    #[test]
+    fn negated_match_host_inverts_the_gate() {
+        const FIXTURE: &str = "Match !host banned.example.com\n  Port 2288\n";
+
+        let diff = match run(FIXTURE, "ok.example.com") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("negated match host", &why);
+                return;
+            }
+        };
+        let port = diff.cell("port").expect("dumped");
+        assert_eq!(port.upstream, vec!["2288".to_owned()]);
+        assert_eq!(
+            port.verdict,
+            Verdict::Match,
+            "oc mishandled negated Match host: {:?} on {}",
+            port.oc,
+            diff.oracle_version
+        );
+
+        // Control: the banned alias matches the pattern, so `!host` declines.
+        let diff = match run(FIXTURE, "banned.example.com") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("negated match host control", &why);
+                return;
+            }
+        };
+        let port = diff.cell("port").expect("dumped");
+        assert_eq!(port.upstream, vec!["22".to_owned()]);
+        assert_eq!(port.verdict, Verdict::OcUnset, "oc {:?}", port.oc);
+    }
 }
