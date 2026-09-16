@@ -75,28 +75,25 @@ on:
         default: 'pipe'
       legacy_oracles:
         description: >-
-          `on` builds the historical rsync binaries the 3.5.0 testsuite looks
-          for in old_versions/ (see tools/ci/run_upstream_testsuite.sh,
-          ensure_legacy_oracles) so the tests that name a release assert
-          against that release. `off` (default) builds none, and the harness
-          NAMES every test that will therefore assert against a static fallback
-          instead - the degradation stays visible either way.
+          `on` (default) builds the historical rsync binaries the 3.5.0
+          testsuite looks for in old_versions/ (see
+          tools/ci/run_upstream_testsuite.sh, ensure_legacy_oracles) so the
+          tests that name a release assert against that release. `off` builds
+          none, and the harness NAMES every test that will therefore assert
+          against a static fallback instead - the degradation stays visible
+          either way.
 
-          Off by default because putting those binaries on disk un-skips
-          daemon-max-alloc-zero, i.e. it MOVES rows in this leg's
-          --expect-result manifest. Manifest rows may only be re-baselined from
-          a measured run, so a leg opts in when someone is ready to measure the
-          move, never as a side effect of an unrelated change.
-
-          This is therefore a THIRD manifest axis, alongside privilege and
-          transport: a manifest describes one (privilege, transport, oracle)
-          configuration. A caller that flips this input needs its OWN manifest -
-          it cannot keep sharing a file with a caller at the other setting,
-          because the two disagree on that row and runtests.py compares outcomes
-          exactly. Re-baselining the shared file moves the failure to the other
-          caller instead of removing it.
+          On by default because every committed expect manifest (and the skip
+          ledger) is measured with the oracles on disk, so `on` is the
+          configuration those ledgers describe. Flipping a leg to `off` MOVES
+          rows - putting the binaries on disk is what un-skips
+          daemon-max-alloc-zero - and manifest rows may only be re-baselined
+          from a measured run, so such a caller needs its OWN re-measured
+          manifest: runtests.py compares outcomes exactly, and re-baselining a
+          shared file would move the failure to the other caller instead of
+          removing it.
         type: string
-        default: 'off'
+        default: 'on'
 
 permissions:
   contents: read
@@ -402,7 +399,7 @@ jobs:
             "EMIT_EXPECT_RESULT=${EMIT_EXPECT_RESULT:-}" \
             "USE_TCP=${USE_TCP:-no}" \
             "DAEMON_TESTS_ONLY=${DAEMON_TESTS_ONLY:-no}" \
-            "LEGACY_ORACLES=${LEGACY_ORACLES:-off}" \
+            "LEGACY_ORACLES=${LEGACY_ORACLES:-on}" \
             "GITHUB_ACTIONS=${GITHUB_ACTIONS:-}" \
             "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY:-}" \
             bash tools/ci/run_upstream_testsuite.sh 2>&1 \
