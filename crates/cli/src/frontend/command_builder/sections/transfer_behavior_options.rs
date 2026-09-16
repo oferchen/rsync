@@ -317,7 +317,9 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                         "Opt-in: scan a large file's delta across multiple \
                          cores (sender side). Only engages for large, \
                          duplicate-free basis files (duplicate-content basis \
-                         files fall back to the sequential scan). \
+                         files fall back to the sequential scan, as does \
+                         --inplace, whose in-place basis updates require \
+                         monotonic basis reads). \
                          Reconstruction and matched/literal stats are \
                          unaffected; the literal-token wire framing may differ \
                          by a few bytes at a range boundary. Local-only \
