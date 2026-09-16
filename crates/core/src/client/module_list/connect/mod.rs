@@ -704,12 +704,13 @@ impl Write for DaemonStream {
 
 #[cfg(all(test, feature = "quic"))]
 mod quic_connect_tests {
-    use std::io::{Read, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::path::PathBuf;
     use std::thread;
 
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
+    use protocol::{ProtocolVersion, format_legacy_daemon_greeting, parse_legacy_daemon_greeting};
     use rsync_io::quic::QuicAcceptor;
     use tempfile::TempDir;
 
@@ -859,6 +860,130 @@ mod quic_connect_tests {
         assert_eq!(err.exit_code(), 5);
         let refused = quic_dial_error(&addr, "aborted by peer: the cryptographic handshake failed");
         assert_eq!(refused.exit_code(), 5);
+    }
+
+    /// With no `--quic-ca`, the client falls back to the system-roots default
+    /// (policy-B precedence: `--quic-ca` > system roots). That default cannot
+    /// anchor a daemon's self-signed loopback certificate, so the dial
+    /// hard-fails with `RERR_STARTCLIENT` (5) - never a `DaemonStream`, never a
+    /// silent TCP downgrade. Pins that the *default* arm of the trust ladder is
+    /// wired into the live connect path (`resolve(None, None)` -> `system_roots`),
+    /// not merely unit-tested in isolation. Encodes WHY: a self-signed daemon
+    /// needs an explicit `--quic-ca` (or, later, TOFU); the zero-config default
+    /// must reject it rather than trust it. A `resolve(None, None)` that returned
+    /// an accept-any verifier would let this dial succeed, failing the test.
+    #[test]
+    fn quic_system_roots_default_rejects_self_signed_and_hard_fails() {
+        let acceptor =
+            QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind acceptor");
+        let port = acceptor.local_addr().expect("local addr").port();
+
+        // Keep the acceptor draining so the client handshake reaches (and fails)
+        // certificate verification rather than stalling on connect. If the
+        // platform trust store is empty, `resolve` errors before any dial and
+        // this thread is simply left parked - hence detach, never join.
+        let server = thread::spawn(move || {
+            let _ = acceptor.accept();
+        });
+
+        let addr = quic_addr(port);
+        match dial(&addr, None) {
+            Ok(_) => panic!("the system-roots default must not trust a self-signed daemon cert"),
+            Err(err) => assert_eq!(
+                err.exit_code(),
+                5,
+                "no --quic-ca -> system-roots default rejects self-signed -> RERR_STARTCLIENT"
+            ),
+        }
+        drop(server);
+    }
+
+    /// The real `@RSYNCD` greeting codec round-trips over a dialed QUIC stream.
+    /// Where `quic_ca_trust_path_dials_and_is_byte_transparent` proves literal
+    /// bytes pass through untouched, this drives the production
+    /// [`format_legacy_daemon_greeting`]/[`parse_legacy_daemon_greeting`]
+    /// functions on both ends over the split [`DaemonStream`] the connect path
+    /// yields: the client opens the stream with its greeting, the daemon parses
+    /// it, replies with its own greeting, the client parses that, and the
+    /// exchange completes with `@RSYNCD: OK`. Encodes WHY: QUIC is only useful
+    /// for a daemon transfer if the actual version negotiation - not just
+    /// arbitrary bytes - reaches and completes over it (the QUIC-5e
+    /// connect->handshake requirement); a transport that reordered or dropped a
+    /// greeting line would fail the parse.
+    ///
+    /// ORDER NOTE (deliberate, and a genuine limitation surfaced by this test):
+    /// upstream `@RSYNCD` has the *daemon* speak first. Over QUIC that is not
+    /// reachable in-process yet, because [`QuicAcceptor::accept`] blocks until
+    /// the client opens a bidirectional stream - and a client-opened QUIC bidi
+    /// stream is not announced to the peer until the client sends its first
+    /// bytes (a daemon-first variant of this test deadlocks both sides). The
+    /// daemon-first ordering needs the daemon-side QUIC accept wiring (QUIC-6d,
+    /// task 55) plus an eager stream open; until then this pins the reachable
+    /// client-first exchange, matching the existing byte-transparent test's
+    /// direction while upgrading it from literal bytes to the real codec.
+    #[test]
+    fn quic_real_rsyncd_greeting_codec_round_trips_over_quic() {
+        let version = ProtocolVersion::NEWEST;
+        let greeting = format_legacy_daemon_greeting(version);
+
+        let acceptor =
+            QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind acceptor");
+        let port = acceptor.local_addr().expect("local addr").port();
+        let (_dir, ca_path) = write_ca_pem(acceptor.certificate().as_ref());
+
+        let daemon_greeting = greeting.clone();
+        let server = thread::spawn(move || {
+            let mut stream = acceptor.accept().expect("accept");
+            let mut reader = BufReader::new(stream.try_clone());
+            // Read + parse the client's opening greeting with the real codec.
+            let mut client_line = String::new();
+            reader
+                .read_line(&mut client_line)
+                .expect("read client greeting");
+            let parsed = parse_legacy_daemon_greeting(&client_line).expect("parse client greeting");
+            assert_eq!(parsed, version, "client greeting must carry the version");
+            // Reply with the daemon greeting (real codec) then complete with OK.
+            stream
+                .write_all(daemon_greeting.as_bytes())
+                .expect("daemon greeting");
+            stream.write_all(b"@RSYNCD: OK\n").expect("daemon OK");
+            stream.finish().expect("daemon finish");
+        });
+
+        let addr = quic_addr(port);
+        let stream = dial(&addr, Some(ca_path)).expect("quic dial with matching --quic-ca");
+        let (reader, mut writer, guard) = stream.split().expect("split");
+        let mut reader = BufReader::new(reader);
+
+        // Open the stream with the client greeting, formatted by the real codec.
+        writer
+            .write_all(greeting.as_bytes())
+            .expect("client greeting");
+        writer.flush().expect("client flush greeting");
+
+        // Read + parse the daemon's greeting reply with the real codec.
+        let mut daemon_line = String::new();
+        reader
+            .read_line(&mut daemon_line)
+            .expect("read daemon greeting");
+        let negotiated = parse_legacy_daemon_greeting(&daemon_line).expect("parse daemon greeting");
+        assert_eq!(
+            negotiated, version,
+            "the daemon greeting must carry the protocol version over QUIC"
+        );
+
+        // The exchange completes with the daemon's OK line.
+        let mut ok = String::new();
+        reader.read_line(&mut ok).expect("read OK");
+        assert_eq!(
+            ok, "@RSYNCD: OK\n",
+            "the @RSYNCD negotiation must complete over QUIC"
+        );
+
+        drop(writer);
+        drop(reader);
+        drop(guard);
+        server.join().expect("server thread");
     }
 }
 

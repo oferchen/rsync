@@ -866,6 +866,19 @@ mod tests {
         QuicConnector::with_trust(QuicTrust::Roots(roots)).expect("build roots connector");
     }
 
+    /// The ALPN identifier advertised on every QUIC connection is exactly
+    /// `rsync`. This is a wire-format constant, not an internal name: a QUIC
+    /// rsync peer completes the handshake only when the client advertises this
+    /// exact protocol id, so a rename would silently break interop (the connect
+    /// path maps an ALPN mismatch to `RERR_STARTCLIENT`). TLS 1.3 and this ALPN
+    /// are mandatory under QUIC; both loopback round-trip tests succeed
+    /// precisely because the shared client/acceptor config advertises `rsync`
+    /// over TLS 1.3 (both built with `.with_protocol_versions(&[&TLS13])`).
+    #[test]
+    fn alpn_identifier_is_the_rsync_wire_constant() {
+        assert_eq!(ALPN_RSYNC, b"rsync");
+    }
+
     /// A custom [`ServerCertVerifier`] drives a full round trip over the same
     /// `connect`/`QuicStream` path as the pinned form. Encodes WHY the trust
     /// source is pluggable: the future TOFU verifier is a `dyn
