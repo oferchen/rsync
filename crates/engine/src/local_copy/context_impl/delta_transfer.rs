@@ -97,6 +97,7 @@ impl<'a> CopyContext<'a> {
         preallocated_len: u64,
         start: Instant,
         basis_separate_from_writer: bool,
+        updating_in_place: bool,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
         // upstream: receiver.c:receive_data() - the matched-block path mirrors
         // upstream's two-condition optimization. When `updating_basis_or_equiv
@@ -112,7 +113,13 @@ impl<'a> CopyContext<'a> {
         // location), the skip-path is never safe because the writer's file
         // is freshly opened and contains nothing. Force every matched block
         // through the copy path by treating the run as non-inplace.
-        let inplace_mode = self.inplace_enabled() && !basis_separate_from_writer;
+        //
+        // `updating_in_place` is upstream's `one_inplace` (`--partial-dir` leaf
+        // rewritten in place, receiver.c:1138 `updating_basis_or_equiv`): the
+        // basis IS the writer's file, so it takes the in-place path even without
+        // the `--inplace` flag.
+        let inplace_mode =
+            (self.inplace_enabled() || updating_in_place) && !basis_separate_from_writer;
 
         // The batch body about to be written references blocks of this basis,
         // so the reserved sum_head must describe exactly this geometry.
