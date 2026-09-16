@@ -469,8 +469,7 @@ Tracking issues, in scope order:
   (`docs/design/iouring-rayon-submission.md`) - if per-thread rings
   ever land, this is the integration point.
 - **#2045** Adaptive registered-buffer pool
-  (`docs/design/io-uring-adaptive-buffer-pool.md`,
-  `docs/design/iouring-adaptive-buffer-pool.md`) - per-thread
+  (`docs/design/io-uring-adaptive-buffer-pool.md`) - per-thread
   rings multiply the per-ring buffer budget by N; #2045 has to be
   revisited as a prerequisite.
 

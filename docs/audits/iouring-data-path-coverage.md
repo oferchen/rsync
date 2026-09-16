@@ -205,7 +205,7 @@ Ordered by expected throughput payoff under the workloads we benchmark.
 - IUD-3 (small-file and noatime data-path migration): build on the existing
   threshold logic in `transfer/src/generator/mod.rs::open_source_reader`
   and on `docs/audits/io-uring-adaptive-buffer-sizing.md`,
-  `docs/design/iouring-adaptive-buffer-pool.md` for buffer pool sizing.
+  `docs/design/io-uring-adaptive-buffer-pool.md` for buffer pool sizing.
 - Related prior audits: `docs/audits/io-uring-fixed-buffer-audit.md`,
   `docs/audits/per-file-vs-shared-uring-ring.md`,
   `docs/audits/disk-commit-iouring-batching.md`.
