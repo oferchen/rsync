@@ -311,6 +311,9 @@ mod tests {
             .map(|event| match event {
                 logging::DiagnosticEvent::Info { message, .. }
                 | logging::DiagnosticEvent::Debug { message, .. } => message,
+                logging::DiagnosticEvent::Bytes { message, .. } => {
+                    String::from_utf8_lossy(&message).into_owned()
+                }
             })
             .collect()
     }

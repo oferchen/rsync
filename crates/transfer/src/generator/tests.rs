@@ -312,6 +312,9 @@ fn sender_flist_path_emits_no_debug_instrumentation_at_verbose() {
         .into_iter()
         .filter_map(|event| match event {
             logging::DiagnosticEvent::Info { message, .. } => Some(message),
+            logging::DiagnosticEvent::Bytes { message, .. } => {
+                Some(String::from_utf8_lossy(&message).into_owned())
+            }
             logging::DiagnosticEvent::Debug { .. } => None,
         })
         .filter(|m| {

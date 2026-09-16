@@ -10,6 +10,7 @@
 use std::collections::VecDeque;
 use std::io::{self, Write};
 
+use crate::frontend::escape::{EscapeStyle, escape_for_output};
 use logging::{Sequence, Stamped};
 
 /// Diagnostics held back for rendering at the position they were produced.
@@ -26,7 +27,14 @@ use logging::{Sequence, Stamped};
 /// the merging type's own impl and be rejected by coherence.
 #[derive(Debug, Default)]
 pub(crate) struct PendingDiagnostics {
-    queue: VecDeque<Stamped<String>>,
+    queue: VecDeque<Stamped<Vec<u8>>>,
+    /// The escape style this renderer applies to each held message before
+    /// writing it, mirroring `render_diagnostic_events`. The messages are
+    /// carried as raw bytes and escaped once, here, at the write boundary
+    /// (upstream: log.c:425 `rwrite()` -> log.c:250 `filtered_fwrite`), so a
+    /// filename operand's control or non-UTF-8 bytes are octal-escaped rather
+    /// than written raw to the terminal.
+    style: EscapeStyle,
 }
 
 impl PendingDiagnostics {
@@ -38,6 +46,9 @@ impl PendingDiagnostics {
     pub(crate) const fn empty() -> Self {
         Self {
             queue: VecDeque::new(),
+            // No message is ever rendered from an empty collaborator, so the
+            // style is inert; the terminal default keeps `empty` a `const fn`.
+            style: EscapeStyle::terminal(false),
         }
     }
 
@@ -47,10 +58,15 @@ impl PendingDiagnostics {
     /// drained from one thread-local queue today, but the key exists precisely
     /// so that messages from several producers can be merged, and a merge that
     /// silently depends on input order would break the first time one is added.
-    pub(crate) fn new(mut messages: Vec<Stamped<String>>) -> Self {
+    ///
+    /// `style` is the terminal escape rule (honouring `-8`) applied to every
+    /// held message at write time, so the interleaved half escapes identically
+    /// to the deferred half in `render_diagnostic_events`.
+    pub(crate) fn new(mut messages: Vec<Stamped<Vec<u8>>>, style: EscapeStyle) -> Self {
         messages.sort_by_key(Stamped::sequence);
         Self {
             queue: messages.into(),
+            style,
         }
     }
 
@@ -72,10 +88,16 @@ impl PendingDiagnostics {
         while let Some(held) = self.queue.front()
             && held.sequence() < key
         {
-            writeln!(out, "{}", held.value())?;
+            self.write_escaped(held.value(), out)?;
             self.queue.pop_front();
         }
         Ok(())
+    }
+
+    /// Escapes one held message and writes it as a single line.
+    fn write_escaped<W: Write + ?Sized>(&self, message: &[u8], out: &mut W) -> io::Result<()> {
+        out.write_all(&escape_for_output(message, self.style))?;
+        out.write_all(b"\n")
     }
 
     /// Renders the diagnostics that outlived the event stream.
@@ -84,8 +106,8 @@ impl PendingDiagnostics {
     /// end of the per-file block - which is where upstream would have written
     /// it, ahead of the `match_report()` totals and the summary trailer.
     pub(crate) fn finish<W: Write + ?Sized>(&mut self, out: &mut W) -> io::Result<()> {
-        for held in self.queue.drain(..) {
-            writeln!(out, "{}", held.value())?;
+        while let Some(held) = self.queue.pop_front() {
+            self.write_escaped(held.value(), out)?;
         }
         Ok(())
     }
@@ -102,8 +124,10 @@ mod tests {
         // was produced after it; oc must reproduce that from the key alone.
         let first = Sequence::stamp();
         let second = Sequence::stamp();
-        let mut pending =
-            PendingDiagnostics::new(vec![Stamped::with_sequence(first, "skipping".to_owned())]);
+        let mut pending = PendingDiagnostics::new(
+            vec![Stamped::with_sequence(first, b"skipping".to_vec())],
+            EscapeStyle::terminal(false),
+        );
 
         let mut out = Vec::new();
         pending.begin_event(Some(second), &mut out).unwrap();
@@ -117,8 +141,10 @@ mod tests {
         // diagnostic produced after the event stays behind it.
         let first = Sequence::stamp();
         let second = Sequence::stamp();
-        let mut pending =
-            PendingDiagnostics::new(vec![Stamped::with_sequence(second, "later".to_owned())]);
+        let mut pending = PendingDiagnostics::new(
+            vec![Stamped::with_sequence(second, b"later".to_vec())],
+            EscapeStyle::terminal(false),
+        );
 
         let mut out = Vec::new();
         pending.begin_event(Some(first), &mut out).unwrap();
@@ -133,10 +159,10 @@ mod tests {
         // WHY: a remote-transfer event has no production key. Treating `None`
         // as position zero would dump every held diagnostic ahead of the whole
         // event stream - the exact mis-ordering the funnel exists to remove.
-        let mut pending = PendingDiagnostics::new(vec![Stamped::with_sequence(
-            Sequence::stamp(),
-            "held".to_owned(),
-        )]);
+        let mut pending = PendingDiagnostics::new(
+            vec![Stamped::with_sequence(Sequence::stamp(), b"held".to_vec())],
+            EscapeStyle::terminal(false),
+        );
 
         let mut out = Vec::new();
         pending.begin_event(None, &mut out).unwrap();
@@ -151,11 +177,14 @@ mod tests {
         let first = Sequence::stamp();
         let second = Sequence::stamp();
         let third = Sequence::stamp();
-        let mut pending = PendingDiagnostics::new(vec![
-            Stamped::with_sequence(third, "c".to_owned()),
-            Stamped::with_sequence(first, "a".to_owned()),
-            Stamped::with_sequence(second, "b".to_owned()),
-        ]);
+        let mut pending = PendingDiagnostics::new(
+            vec![
+                Stamped::with_sequence(third, b"c".to_vec()),
+                Stamped::with_sequence(first, b"a".to_vec()),
+                Stamped::with_sequence(second, b"b".to_vec()),
+            ],
+            EscapeStyle::terminal(false),
+        );
 
         let mut out = Vec::new();
         pending.finish(&mut out).unwrap();

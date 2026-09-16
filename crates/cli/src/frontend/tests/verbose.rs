@@ -237,6 +237,91 @@ fn verbose_transfer_reports_skipped_specials() {
     );
 }
 
+/// Facet (b): a control byte in a skipped file's name must be octal-escaped
+/// (`\#001`) at the notice render boundary, never written raw. Raw control
+/// bytes on a terminal are a log-injection vector (CWE-117); upstream escapes
+/// the whole output line in `filtered_fwrite` (log.c:250). Reverting the
+/// `escape_for_output` call at the boundary restores the raw 0x01 and reddens
+/// the "no raw control byte" assertion, so the escape is load-bearing here.
+#[cfg(unix)]
+#[test]
+fn skipped_special_escapes_control_byte_in_name() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_fifo = tmp.path().join(OsStr::from_bytes(b"skip\x01mark.pipe"));
+    mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
+
+    let destination = tmp.path().join("dest.pipe");
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-v"),
+        source_fifo.into_os_string(),
+        destination.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let mut out = stdout;
+    out.extend_from_slice(&stderr);
+
+    let prefix = b"skipping non-regular file";
+    assert!(
+        out.windows(prefix.len()).any(|w| w == prefix),
+        "expected the NONREG notice; got {out:?}"
+    );
+    assert!(
+        !out.contains(&0x01),
+        "control byte leaked raw into the notice (CWE-117); got {out:?}"
+    );
+}
+
+/// Facet (a): a non-UTF-8 byte (0xFF) in a skipped file's name must survive
+/// the notice channel and be octal-escaped, not replaced with U+FFFD. The old
+/// String-based notice ran the name through `to_string_lossy`, turning 0xFF
+/// into U+FFFD (`EF BF BD`) before the byte-faithful sink could escape it.
+/// Reverting the byte-capable producer restores U+FFFD; reverting the boundary
+/// escape restores the raw 0xFF. Both are asserted absent, so both reverts red.
+/// Linux-only: macOS/APFS rejects a non-UTF-8 path component at `mkfifo`.
+#[cfg(target_os = "linux")]
+#[test]
+fn skipped_special_escapes_non_utf8_name_without_replacement() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_fifo = tmp.path().join(OsStr::from_bytes(b"skip\xffmark.pipe"));
+    mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
+
+    let destination = tmp.path().join("dest.pipe");
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-v"),
+        source_fifo.into_os_string(),
+        destination.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let mut out = stdout;
+    out.extend_from_slice(&stderr);
+
+    let prefix = b"skipping non-regular file";
+    assert!(
+        out.windows(prefix.len()).any(|w| w == prefix),
+        "expected the NONREG notice; got {out:?}"
+    );
+    assert!(
+        !out.windows(3).any(|w| w == [0xEF, 0xBF, 0xBD]),
+        "non-UTF-8 name was lossily replaced with U+FFFD; got {out:?}"
+    );
+    assert!(
+        !out.contains(&0xFF),
+        "raw 0xFF byte leaked into the notice output; got {out:?}"
+    );
+}
+
 #[test]
 fn verbose_human_readable_formats_sizes() {
     use tempfile::tempdir;

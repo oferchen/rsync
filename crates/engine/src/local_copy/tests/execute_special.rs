@@ -224,14 +224,17 @@ fn skipping_non_regular_emits_info_nonreg_notice() {
         )
         .expect("copy executes");
 
+    // The NONREG notice is a byte-capable `Bytes` event so a non-UTF-8 filename
+    // survives to the render boundary (facet a). A printable name is byte-identical
+    // to its String form, so this reads it back losslessly.
     let messages: Vec<String> = drain_events()
         .into_iter()
         .filter_map(|event| match event {
-            DiagnosticEvent::Info {
+            DiagnosticEvent::Bytes {
                 flag: InfoFlag::Nonreg,
                 message,
                 ..
-            } => Some(message),
+            } => Some(String::from_utf8_lossy(&message).into_owned()),
             _ => None,
         })
         .collect();
@@ -277,11 +280,11 @@ fn nononreg_suppresses_info_nonreg_notice() {
     let nonreg_msgs: Vec<String> = drain_events()
         .into_iter()
         .filter_map(|event| match event {
-            DiagnosticEvent::Info {
+            DiagnosticEvent::Bytes {
                 flag: InfoFlag::Nonreg,
                 message,
                 ..
-            } => Some(message),
+            } => Some(String::from_utf8_lossy(&message).into_owned()),
             _ => None,
         })
         .collect();

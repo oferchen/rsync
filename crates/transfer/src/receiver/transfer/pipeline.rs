@@ -197,8 +197,16 @@ fn drain_thread_local_peer_messages() -> Vec<(protocol::MessageCode, String)> {
     logging::drain_events_for_peer()
         .into_iter()
         .filter_map(|event| {
-            let (logging::DiagnosticEvent::Info { code, message, .. }
-            | logging::DiagnosticEvent::Debug { code, message, .. }) = event;
+            let (code, message) = match event {
+                logging::DiagnosticEvent::Info { code, message, .. }
+                | logging::DiagnosticEvent::Debug { code, message, .. } => (code, message),
+                // Peer framing is String-based; a byte-faithful notice degrades
+                // to a lossy string on this path. Byte-exact peer framing is a
+                // follow-up (see the notice-channel migration inventory).
+                logging::DiagnosticEvent::Bytes { code, message, .. } => {
+                    (code, String::from_utf8_lossy(&message).into_owned())
+                }
+            };
             peer_message_code(code).map(|code| (code, message))
         })
         .collect()
@@ -1454,7 +1462,8 @@ mod peer_message_tests {
 
         for event in logging::drain_events_for_peer() {
             let (logging::DiagnosticEvent::Info { code, .. }
-            | logging::DiagnosticEvent::Debug { code, .. }) = event;
+            | logging::DiagnosticEvent::Debug { code, .. }
+            | logging::DiagnosticEvent::Bytes { code, .. }) = event;
             assert!(
                 peer_message_code(code).is_some(),
                 "drain_events_for_peer yielded {code:?}, which peer_message_code \

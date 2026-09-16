@@ -66,6 +66,28 @@ pub enum DiagnosticEvent {
         /// The diagnostic message.
         message: String,
     },
+    /// A byte-faithful notice whose message may carry a non-UTF-8 filename.
+    ///
+    /// Rendered exactly like [`Info`](DiagnosticEvent::Info) - upstream's
+    /// `rwrite()` writes an FINFO line the same way regardless of the flag
+    /// category - but the message survives to the render boundary as raw
+    /// bytes rather than a `String`. This mirrors upstream `rwrite()`, whose
+    /// buffer is a `char *` copied to the output fd verbatim (log.c:425
+    /// `rwrite()` -> `filtered_fwrite()`), so a filename operand that is not
+    /// valid UTF-8 (or that carries a control byte) reaches the escaping sink
+    /// unmangled instead of being lossily replaced with U+FFFD during
+    /// `format!()`. The escaping itself happens once, at the sink
+    /// (log.c:250 `filtered_fwrite`), never here.
+    Bytes {
+        /// The info flag category.
+        flag: InfoFlag,
+        /// The verbosity level.
+        level: u8,
+        /// The upstream log code classifying the event's destination.
+        code: LogCode,
+        /// The diagnostic message as raw bytes (may be non-UTF-8).
+        message: Vec<u8>,
+    },
 }
 
 impl DiagnosticEvent {
@@ -73,7 +95,9 @@ impl DiagnosticEvent {
     #[must_use]
     pub const fn code(&self) -> LogCode {
         match self {
-            DiagnosticEvent::Info { code, .. } | DiagnosticEvent::Debug { code, .. } => *code,
+            DiagnosticEvent::Info { code, .. }
+            | DiagnosticEvent::Debug { code, .. }
+            | DiagnosticEvent::Bytes { code, .. } => *code,
         }
     }
 }
@@ -149,6 +173,29 @@ pub fn emit_info_coded(flag: InfoFlag, level: u8, code: LogCode, message: String
             flag,
             level,
             code,
+            message,
+        }));
+    });
+}
+
+/// Emit a byte-faithful info notice into the thread-local buffer.
+///
+/// This is the byte-capable sibling of [`emit_info`]: the message is carried
+/// as raw bytes so a filename operand that is not valid UTF-8, or that holds a
+/// control byte, reaches the render boundary intact rather than being replaced
+/// with U+FFFD during `format!()`. The caller is responsible for checking
+/// [`info_gte`] first; the [`info_log_bytes!`](crate::info_log_bytes) macro
+/// handles this automatically.
+///
+/// The event is tagged [`LogCode::Info`], matching [`emit_info`]. The escaping
+/// of the bytes happens once at the render boundary, per sink
+/// (upstream: log.c:250 `filtered_fwrite`), never at this emitter.
+pub fn emit_info_bytes(flag: InfoFlag, level: u8, message: Vec<u8>) {
+    EVENTS.with(|e| {
+        e.borrow_mut().push(Stamped::stamp(DiagnosticEvent::Bytes {
+            flag,
+            level,
+            code: LogCode::Info,
             message,
         }));
     });

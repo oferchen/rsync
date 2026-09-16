@@ -28,12 +28,17 @@ impl<'a> CopyContext<'a> {
     /// this, or the entry is reported only through the verbose renderer and
     /// therefore vanishes at default verbosity, where upstream still prints.
     pub(super) fn note_skipped_non_regular(&mut self, relative: &Path) {
-        info_log!(
-            Nonreg,
-            1,
-            "skipping non-regular file \"{}\"",
-            relative.display()
-        );
+        // Build the notice as raw bytes so a non-UTF-8 filename survives to the
+        // render boundary and is escaped there, rather than being replaced with
+        // U+FFFD by `format!()`'s `Display`. This mirrors upstream, whose
+        // buffer is `skipping non-regular file "%s"` with the raw filename bytes
+        // (generator.c:1696 `rprintf(FINFO, ...)`), escaped once in
+        // `filtered_fwrite` (log.c:250). A control byte in the name is escaped
+        // at the sink too, closing the CWE-117 terminal-injection facet.
+        let mut message = b"skipping non-regular file \"".to_vec();
+        message.extend_from_slice(&path_display_bytes(relative));
+        message.push(b'"');
+        info_log_bytes!(Nonreg, 1, message);
     }
 
     /// Records a skip event for a symbolic link whose creation the platform
