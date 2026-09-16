@@ -123,7 +123,12 @@ fn handle_session(
             // wording is upstream's verbatim; the 3.5.0
             // `proxy-protocol-trusted-peer` cell greps the daemon log for it.
             if let Some(log) = log_sink.as_ref() {
-                let host = peer_host_display(None, reverse_lookup);
+                // upstream: clientserver.c:1390 - `host` starts as the
+                // UNDETERMINED sentinel, and with forward DNS off
+                // (access.c:304) nothing ever replaces it, so the rejection
+                // line names UNDETERMINED regardless of `reverse lookup` -
+                // no lookup has run this early in the connection.
+                let host = module_state::UNDETERMINED_HOSTNAME;
                 let text = format!(
                     "proxy protocol rejected from untrusted peer {host} ({})",
                     peer_addr.ip()
