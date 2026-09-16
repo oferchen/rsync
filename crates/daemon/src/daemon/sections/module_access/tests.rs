@@ -2103,7 +2103,10 @@ mod module_access_tests {
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
         assert_eq!(rules.len(), 1, "the -C rule must not be dropped");
-        assert!(rules[0].cvs_exclude, "the marker carries the cvs_exclude bit");
+        assert!(
+            rules[0].cvs_exclude,
+            "the marker carries the cvs_exclude bit"
+        );
         assert!(
             rules[0].pattern.is_empty(),
             "the marker has no pattern; the defaults are expanded downstream"
@@ -2126,9 +2129,15 @@ mod module_access_tests {
         });
         let rules = build_daemon_filter_rules(&module).unwrap();
         let set = daemon_filter_set(&rules).expect("the -C marker compiles to a filter set");
-        assert!(!set.allows(Path::new("foo.o"), false), "object files hidden");
+        assert!(
+            !set.allows(Path::new("foo.o"), false),
+            "object files hidden"
+        );
         assert!(!set.allows(Path::new("core"), false), "core hidden");
-        assert!(!set.allows(Path::new("bar~"), false), "editor backups hidden");
+        assert!(
+            !set.allows(Path::new("bar~"), false),
+            "editor backups hidden"
+        );
         assert!(!set.allows(Path::new("CVS"), true), "the CVS dir is hidden");
         assert!(
             set.allows(Path::new("keep"), false),
