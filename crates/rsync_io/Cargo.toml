@@ -95,6 +95,12 @@ ssh-config-parse = []
 # See `docs/design/socketpair-stderr-channel.md` for the staging plan.
 ssh-socketpair-stderr = ["dep:tracing"]
 
+# The ssh_config owner/permission check mirrors OpenSSH's `getuid()`
+# comparison (openssh/readconf.c:2579-2587); `platform` owns identity
+# syscalls per the unsafe-code policy, so the real uid comes from there.
+[target.'cfg(unix)'.dependencies]
+platform = { path = "../platform" }
+
 [dev-dependencies]
 proptest = { workspace = true }
 rand = { workspace = true }

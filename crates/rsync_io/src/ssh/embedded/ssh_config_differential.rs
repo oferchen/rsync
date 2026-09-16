@@ -1210,4 +1210,103 @@ mod tests {
         assert_eq!(hostname.upstream, vec!["spliced.example.com".to_owned()]);
         assert_eq!(hostname.verdict, Verdict::Match);
     }
+
+    // -- file load order (task 237e) ----------------------------------
+    //
+    // `ssh -G`'s system path is compiled in and its user path comes from
+    // the passwd entry, so the oracle cannot be pointed at fixture
+    // user/system PAIRS; the two-file composition cells live as unit
+    // tests on the injected `ConfigFile` seam, cited to
+    // openssh/ssh.c:561-592. What the oracle CAN pin live is `-F`'s
+    // side of the contract, below.
+
+    /// Cell (c): with `-F`, a directive that exists only in a
+    /// (would-be) system file applies on NEITHER side - `ssh -G -F`
+    /// never reads a system file (the `else` at openssh/ssh.c:578), and
+    /// oc's `-F` load order contains only the explicit file.
+    #[test]
+    fn dash_f_suppresses_the_system_file_on_both_sides() {
+        use crate::ssh::config_files::{ConfigFile, config_files_from};
+        use crate::ssh::embedded::ssh_config::resolve_host_files;
+
+        const USER_FIXTURE: &str = "Host t\n  Port 2345\n";
+        const SYSTEM_FIXTURE: &str = "Host *\n  Port 45678\n  User sysuser\n";
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let user = dir.path().join("user_config");
+        let system = dir.path().join("system_config");
+        std::fs::write(&user, USER_FIXTURE).expect("write user fixture");
+        std::fs::write(&system, SYSTEM_FIXTURE).expect("write system fixture");
+
+        // oc arm: the -F composition through the ONE load-order owner.
+        let files = config_files_from(Some(user.clone()), None, system.clone());
+        assert_eq!(
+            files,
+            vec![ConfigFile {
+                path: user.clone(),
+                check_perm: false
+            }],
+            "-F must suppress the system file entirely"
+        );
+        let resolved = resolve_host_files(&files, "t").expect("accepted");
+        assert_eq!(resolved.port, Some(2345));
+        assert_eq!(resolved.user, None, "system-only User must not apply");
+
+        // Oracle arm: ssh -G -F <user> resolves the same port and never
+        // sees the system fixture's values.
+        let (version, dump) = match upstream_dump(&user, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("-F system suppression", &why);
+                return;
+            }
+        };
+        assert_eq!(
+            dump.get("port"),
+            Some(&vec!["2345".to_owned()]),
+            "on {version}"
+        );
+        assert_ne!(
+            dump.get("user"),
+            Some(&vec!["sysuser".to_owned()]),
+            "ssh -G -F must not surface the system fixture's User on {version}"
+        );
+    }
+
+    /// Cell (d), oracle half: a world-writable file passed via `-F` is
+    /// ACCEPTED by real `ssh -G` - SSHCONF_CHECKPERM does not apply to
+    /// an explicit config (openssh/ssh.c:571-577) - and oc's `-F` load
+    /// order accepts it identically. The refused half (the same mode on
+    /// the DEFAULT user file) is pinned by the unit cells, because the
+    /// oracle's default path comes from the passwd entry and cannot be
+    /// pointed at a fixture.
+    #[cfg(unix)]
+    #[test]
+    fn a_world_writable_dash_f_file_is_accepted_on_both_sides() {
+        use std::os::unix::fs::PermissionsExt;
+
+        use crate::ssh::config_files::config_files_from;
+        use crate::ssh::embedded::ssh_config::resolve_host_files;
+
+        const FIXTURE: &str = "Host t\n  Port 2345\n";
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ww_config");
+        std::fs::write(&path, FIXTURE).expect("write fixture");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).expect("chmod");
+
+        // Oracle arm: no "Bad owner or permissions" refusal.
+        match upstream_refusal(&path, "t") {
+            Ok(None) => {}
+            Ok(Some(refusal)) => panic!("ssh -G refused a -F file: {refusal}"),
+            Err(why) => {
+                report_skip("world-writable -F acceptance", &why);
+                return;
+            }
+        }
+
+        // oc arm: same file through the -F composition resolves.
+        let files = config_files_from(Some(path), None, dir.path().join("unused_system"));
+        let resolved = resolve_host_files(&files, "t").expect("accepted");
+        assert_eq!(resolved.port, Some(2345));
+    }
 }

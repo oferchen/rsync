@@ -2,9 +2,6 @@
 //! from the pre-decomposition single-file module. Items are reached
 //! through the parent module's re-exports via `super::*`.
 
-use std::ffi::OsString;
-use std::path::PathBuf;
-
 use super::*;
 
 /// Builds a host-only `MatchContext` for tests that only need to
@@ -290,28 +287,117 @@ fn match_host_still_comma_splits_its_pattern_list() {
     assert!(parse_enables_compression(text, &host_ctx("b")));
 }
 
-#[test]
-fn extracts_split_dash_f() {
-    let opts = vec![OsString::from("-F"), OsString::from("/tmp/custom")];
-    assert_eq!(
-        extract_dash_f_path(&opts),
-        Some(PathBuf::from("/tmp/custom"))
-    );
+// The `-F` extractor's own tests moved with it to
+// `crate::ssh::config_files`, the one owner of the file load order.
+
+/// Materialises `text` as a config file and returns its [`ConfigFile`]
+/// row for a composed-scan fixture.
+fn fixture_file(dir: &tempfile::TempDir, name: &str, text: &str, check_perm: bool) -> ConfigFile {
+    let path = dir.path().join(name);
+    std::fs::write(&path, text).expect("write fixture");
+    ConfigFile { path, check_perm }
 }
 
+// -- file load order (task 237e) --------------------------------------
+//
+// upstream: openssh/ssh.c:561-592 `process_config_files()` reads the
+// user file, then the system file, into ONE options struct, so
+// first-obtained-wins arbitrates per keyword ACROSS the file boundary.
+// The system path is injected through the `ConfigFile` seam rather than
+// read from the host's real `/etc/ssh/ssh_config`.
+
+/// Cell (a): a keyword set in BOTH files resolves to the USER file's
+/// value - in both directions, so this pins the order, not a constant.
 #[test]
-fn extracts_combined_dash_f() {
-    let opts = vec![OsString::from("-F/tmp/custom")];
-    assert_eq!(
-        extract_dash_f_path(&opts),
-        Some(PathBuf::from("/tmp/custom"))
-    );
+fn user_file_claims_the_slot_before_the_system_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let user = fixture_file(&dir, "user", "Compression no\n", false);
+    let system = fixture_file(&dir, "system", "Compression yes\n", false);
+    assert!(!enables_compression_in(
+        &[user.clone(), system.clone()],
+        &host_ctx("t")
+    ));
+    // Swap the CONTENTS: the first file still wins, so a composition
+    // that read system-before-user reddens exactly one of the two.
+    let user_yes = fixture_file(&dir, "user2", "Compression yes\n", false);
+    let system_no = fixture_file(&dir, "system2", "Compression no\n", false);
+    assert!(enables_compression_in(
+        &[user_yes, system_no],
+        &host_ctx("t")
+    ));
 }
 
+/// Cell (b): a keyword ONLY in the system file applies - the cell that
+/// was red before this change, when the first EXISTING file ended the
+/// lookup and an existing user file hid the system file entirely.
 #[test]
-fn no_dash_f_returns_none() {
-    let opts = vec![OsString::from("-oBatchMode=yes")];
-    assert!(extract_dash_f_path(&opts).is_none());
+fn a_directive_only_in_the_system_file_applies() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // The user file EXISTS but does not claim the slot.
+    let user = fixture_file(&dir, "user", "Host other\n  Port 2222\n", false);
+    let system = fixture_file(&dir, "system", "Compression yes\n", false);
+    assert!(enables_compression_in(&[user, system], &host_ctx("t")));
+}
+
+/// A missing user file is skipped, not fatal: the system file is still
+/// read (openssh/ssh.c:580-589 discards the default reads' results).
+#[test]
+fn a_missing_user_file_still_reaches_the_system_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let user = ConfigFile {
+        path: dir.path().join("nonexistent"),
+        check_perm: true,
+    };
+    let system = fixture_file(&dir, "system", "Compression yes\n", false);
+    assert!(enables_compression_in(&[user, system], &host_ctx("t")));
+}
+
+/// Block state does NOT cross the file boundary: a `Host` block left
+/// open at the end of the user file must not swallow the system file's
+/// top-level directives, because `read_config_file` starts every file
+/// back at the always-active top level (openssh/readconf.c
+/// `read_config_file_depth()` re-initialises `active` per file).
+#[test]
+fn a_host_block_does_not_extend_into_the_next_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let user = fixture_file(&dir, "user", "Host nevermatches\n  Port 2222\n", false);
+    let system = fixture_file(&dir, "system", "Compression yes\n", false);
+    assert!(enables_compression_in(&[user, system], &host_ctx("t")));
+}
+
+/// A refusal in the user file aborts the WHOLE load: the system file is
+/// never read (openssh/readconf.c:2667 fatals before ssh.c's second
+/// read_config_file call), so its `Compression yes` must not apply.
+#[test]
+fn a_refused_user_file_stops_the_scan_before_the_system_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let user = fixture_file(&dir, "user", "Host \"broken\n", false);
+    let system = fixture_file(&dir, "system", "Compression yes\n", false);
+    assert!(!enables_compression_in(&[user, system], &host_ctx("t")));
+}
+
+/// Cell (d), lookup half: the CHECKPERM gate rides on the
+/// `check_perm` flag - the same world-writable file is refused as the
+/// default user config but accepted as an explicit (`-F`-shaped) file
+/// (openssh/ssh.c:571-583: only the default user path passes
+/// SSHCONF_CHECKPERM).
+#[cfg(unix)]
+#[test]
+fn checkperm_scope_follows_the_flag_not_the_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut file = fixture_file(&dir, "config", "Compression yes\n", true);
+    std::fs::set_permissions(&file.path, std::fs::Permissions::from_mode(0o666)).expect("chmod");
+    // As the default user file: refused, and the refusal kills the
+    // whole load - the system file behind it is not consulted.
+    let system = fixture_file(&dir, "system", "Compression yes\n", false);
+    assert!(!enables_compression_in(
+        &[file.clone(), system],
+        &host_ctx("t")
+    ));
+    // The SAME file as an explicit -F file: accepted.
+    file.check_perm = false;
+    assert!(enables_compression_in(&[file], &host_ctx("t")));
 }
 
 fn ctx<'a>(host: &'a str, user: &'a str, local_user: &'a str) -> MatchContext<'a> {

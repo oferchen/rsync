@@ -9,8 +9,11 @@ use std::time::Duration;
 use url::Url;
 
 use super::error::SshError;
-use super::ssh_config::{ResolvedHost, resolve_host as resolve_ssh_config_host};
+use super::ssh_config::{
+    ResolvedHost, resolve_host as resolve_ssh_config_host, resolve_host_files,
+};
 use super::types::{IpPreference, StrictHostKeyChecking};
+use crate::ssh::config_files::config_files;
 
 /// Default SSH port.
 const DEFAULT_PORT: u16 = 22;
@@ -250,37 +253,52 @@ impl SshConfig {
         self
     }
 
-    /// Merges directives from the user's `~/.ssh/config` into this config.
+    /// Merges directives from the client config-file load order into
+    /// this config: the user's `~/.ssh/config` first, then the system
+    /// `/etc/ssh/ssh_config`, both feeding one per-keyword claim state
+    /// so first-obtained-wins arbitrates across the file boundary
+    /// (openssh/ssh.c:561-592 `process_config_files()`). The default
+    /// user file is refused when group/world-writable, exactly
+    /// upstream's `SSHCONF_CHECKPERM` scope (openssh/ssh.c:583,
+    /// openssh/readconf.c:2579-2587); the system file and any missing
+    /// file are never permission-checked.
     ///
     /// `host_alias` is the host token the user typed on the command line
     /// (the value before any `Hostname` rewrite) so that wildcard `Host`
     /// patterns match against the same string OpenSSH would see.
     ///
-    /// Values already explicitly set on the config win over the file:
+    /// Values already explicitly set on the config win over the files:
     /// only fields left at their URL/default state are overwritten. A
     /// missing or unreadable config file is treated as empty.
     ///
     /// # Errors
     ///
-    /// [`SshError::SshConfig`] when the file contains a line real `ssh`
-    /// would refuse. Upstream aborts the whole load on a bad line
-    /// (openssh/readconf.c:2667) rather than continuing with a partial
-    /// config, so silently resolving to different connection parameters
-    /// than `ssh` would have used is not an option here either.
+    /// [`SshError::SshConfig`] when a file contains a line real `ssh`
+    /// would refuse, and [`SshError::SshConfigPermissions`] when the
+    /// default user file fails the owner/permission check. Upstream
+    /// aborts the whole load in both cases (openssh/readconf.c:2667,
+    /// :2579-2587) rather than continuing with a partial config, so
+    /// silently resolving to different connection parameters than `ssh`
+    /// would have used is not an option here either.
     pub fn apply_ssh_config(&mut self, host_alias: &str) -> Result<&mut Self, SshError> {
-        if let Some(path) = default_ssh_config_path() {
-            self.apply_ssh_config_from(&path, host_alias)?;
-        }
+        // The embedded transport has no ssh option argv, so no `-F`
+        // override can reach it: the load order is always the default
+        // user-then-system pair.
+        let resolved = resolve_host_files(&config_files(&[]), host_alias)?;
+        self.merge_resolved_host(&resolved);
         Ok(self)
     }
 
     /// Variant of [`Self::apply_ssh_config`] that reads from a caller-supplied
     /// path. Exposed for testing and for callers that ship a non-default
-    /// config location.
+    /// config location. An explicit path behaves like upstream's `-F`:
+    /// it is read alone - no system file behind it - and is never
+    /// permission-checked (openssh/ssh.c:571-583).
     ///
     /// # Errors
     ///
-    /// Same as [`Self::apply_ssh_config`].
+    /// [`SshError::SshConfig`] when the file contains a line real `ssh`
+    /// would refuse.
     pub fn apply_ssh_config_from(
         &mut self,
         path: &Path,
@@ -461,12 +479,6 @@ fn raw_url_path(url_str: &str) -> Option<&str> {
     let path = &after_scheme[start..];
     let end = path.find(['?', '#']).unwrap_or(path.len());
     Some(&path[..end])
-}
-
-/// Returns the default `~/.ssh/config` path, or `None` if `$HOME` /
-/// `$USERPROFILE` is not set.
-fn default_ssh_config_path() -> Option<PathBuf> {
-    home_dir().map(|h| h.join(".ssh").join("config"))
 }
 
 #[cfg(test)]

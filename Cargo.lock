@@ -3218,6 +3218,7 @@ dependencies = [
  "is-terminal",
  "logging",
  "memchr",
+ "platform",
  "proptest",
  "protocol",
  "quinn-proto",
