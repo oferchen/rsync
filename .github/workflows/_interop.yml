@@ -91,13 +91,6 @@ jobs:
           chmod 600 ~/.ssh/authorized_keys
           ssh -o StrictHostKeyChecking=no localhost true
 
-      - name: Install upstream rsync to PATH
-        run: |
-          UPSTREAM="target/interop/upstream-src/rsync-3.4.4/rsync"
-          if [ -f "$UPSTREAM" ]; then
-            sudo cp "$UPSTREAM" /usr/local/bin/rsync
-          fi
-
       - name: Install cargo-nextest
         uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2
         with:
@@ -462,6 +455,16 @@ jobs:
             echo "::warning title=Non-blocking interop cell failed::RP28.d failed (not gating; tracked under RP28)"
           fi
 
+      # Exercised against EACH upstream peer we must interoperate with over a
+      # real ssh loopback. run_interop.sh already sweeps every version by
+      # explicit path, but the push/pull/remote-sender legs below drive the
+      # `rsync` on PATH, so they reinstall and re-verify per version. 3.4.4
+      # stays (the conservative regression-fix peer) and 3.5.0 is added (the
+      # release this project targets); both binaries are built and cached by
+      # `run_interop.sh build-only`. Keeping this one job preserves the
+      # `interop / interop with upstream rsync` required check as a single gate
+      # that reddens if EITHER peer regresses - a per-version job matrix would
+      # rename that context and drop the required check.
       - name: Run SSH interop tests
         run: |
           set -euo pipefail
@@ -469,111 +472,138 @@ jobs:
           # --rsync-path is resolved by the REMOTE shell, whose cwd is $HOME,
           # so the oc-rsync path handed to upstream has to be absolute.
           OC_RSYNC_ABS="$(pwd)/${OC_RSYNC}"
-          SRC=$(mktemp -d)
-          DST=$(mktemp -d)
-          DST2=$(mktemp -d)
-          DST3=$(mktemp -d)
-          trap 'rm -rf "$SRC" "$DST" "$DST2" "$DST3"' EXIT
 
-          # Create test data
-          for i in $(seq 1 10); do
-            dd if=/dev/urandom of="$SRC/file_$i.bin" bs=1024 count=10 2>/dev/null
+          # The version ci.yml passes stays the first arm; 3.5.0 is always
+          # added. Dedupe so an operator override of 3.5.0 runs the leg once.
+          SSH_INTEROP_VERSIONS="$(printf '%s\n' "${{ inputs.upstream_rsync_version }}" 3.5.0 | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
+
+          run_ssh_interop_for_version() {
+            local VER="$1"
+
+            # Install this peer to PATH from the freshly built source tree;
+            # fail loud if it is absent rather than silently testing the distro
+            # rsync (the banner check below is the second line of defence).
+            local UPSTREAM="target/interop/upstream-src/rsync-${VER}/rsync"
+            if [ ! -f "$UPSTREAM" ]; then
+              echo "upstream rsync ${VER} binary missing at $UPSTREAM" >&2
+              exit 1
+            fi
+            sudo cp "$UPSTREAM" /usr/local/bin/rsync
+            hash -r
+
+            local SRC DST DST2 DST3 i
+            SRC=$(mktemp -d)
+            DST=$(mktemp -d)
+            DST2=$(mktemp -d)
+            DST3=$(mktemp -d)
+            trap 'rm -rf "$SRC" "$DST" "$DST2" "$DST3"' RETURN
+
+            # Create test data
+            for i in $(seq 1 10); do
+              dd if=/dev/urandom of="$SRC/file_$i.bin" bs=1024 count=10 2>/dev/null
+            done
+            mkdir -p "$SRC/subdir"
+            echo "nested" > "$SRC/subdir/nested.txt"
+
+            # Verify binaries. The upstream peer is only an oracle if it really
+            # is the requested version, so assert on the --version banner and
+            # never on the path: if the install above found no freshly built
+            # binary, `rsync` on PATH is silently the distro build instead.
+            local UP_BANNER
+            UP_BANNER="$(rsync --version 2>&1 | head -1)"
+            echo "=== SSH interop vs upstream rsync ${VER} ==="
+            echo "oc-rsync: $($OC_RSYNC --version 2>&1 | head -1)"
+            echo "upstream rsync: $UP_BANNER"
+            echo "upstream rsync path: $(which rsync)"
+            case "$UP_BANNER" in
+              "rsync  version ${VER} "*) ;;
+              *) echo "expected upstream rsync ${VER} on PATH, got: $UP_BANNER" >&2; exit 1 ;;
+            esac
+
+            # Baseline: upstream rsync → upstream rsync via SSH
+            echo "=== Baseline: upstream rsync SSH pull ==="
+            timeout 60 rsync -av --timeout=30 "localhost:$SRC/" "$DST2/" 2>&1
+            diff -r "$SRC" "$DST2"
+            echo "PASS: upstream SSH pull baseline"
+
+            # SSH push: oc-rsync client → upstream rsync server
+            echo "=== SSH push: oc-rsync → upstream rsync ==="
+            timeout 60 "$OC_RSYNC" -av --timeout=30 "$SRC/" "localhost:$DST/" 2>&1 || {
+              RC=$?
+              echo "SSH push failed with exit $RC"
+
+              # Show oc-rsync diagnostic output (eprintln goes to stderr)
+              echo "--- Attempting push with verbose stderr capture ---"
+              timeout 60 "$OC_RSYNC" -avvv --timeout=30 "$SRC/" "localhost:$DST/" > /tmp/oc_push_stdout.txt 2>/tmp/oc_push_stderr.txt || true
+              echo "=== oc-rsync stderr ==="
+              cat /tmp/oc_push_stderr.txt || true
+              echo "=== oc-rsync stdout ==="
+              cat /tmp/oc_push_stdout.txt || true
+
+              # Diagnostic: manually invoke remote rsync with strace to see what it reads
+              echo "--- Remote rsync manual test ---"
+              echo "Remote rsync args that oc-rsync would send:"
+              "$OC_RSYNC" -av --timeout=30 --dry-run "$SRC/" "localhost:$DST/" 2>&1 | head -5 || true
+
+              # Test: upstream rsync client → upstream rsync server (same args)
+              echo "--- Baseline upstream push for comparison ---"
+              timeout 60 rsync -av --timeout=30 "$SRC/" "localhost:$DST/" 2>&1 || true
+
+              # Capture what upstream rsync server sees from oc-rsync via raw pipe
+              echo "--- Raw protocol capture ---"
+              ARGS=$(echo "--server -logDtprv -e.LsfxCIvu . $DST/")
+              echo "Remote rsync args: rsync $ARGS"
+              # Send oc-rsync's output through a pipe to see what the server gets
+              timeout 30 ssh localhost "strace -e trace=read,write -f rsync $ARGS" < /dev/null > /tmp/strace_out.txt 2>&1 || true
+              echo "=== strace output (first 100 lines) ==="
+              head -100 /tmp/strace_out.txt || true
+
+              exit 1
+            }
+            diff -r "$SRC" "$DST"
+            echo "PASS: SSH push initial sync"
+
+            # SSH pull: oc-rsync client ← upstream rsync server
+            rm -rf "$DST"/*
+            echo "=== SSH pull: oc-rsync ← upstream rsync ==="
+            timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" 2>&1 || {
+              RC=$?
+              echo "SSH pull failed with exit $RC"
+
+              # Show oc-rsync diagnostic output
+              echo "--- Attempting pull with verbose stderr capture ---"
+              timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" > /tmp/oc_pull_stdout.txt 2>/tmp/oc_pull_stderr.txt || true
+              echo "=== oc-rsync stderr ==="
+              cat /tmp/oc_pull_stderr.txt || true
+              echo "=== oc-rsync stdout ==="
+              cat /tmp/oc_pull_stdout.txt || true
+
+              exit 1
+            }
+            diff -r "$SRC" "$DST"
+            echo "PASS: SSH pull initial sync"
+
+            # SSH pull no-change
+            timeout 60 "$OC_RSYNC" -av --timeout=30 "localhost:$SRC/" "$DST/"
+            echo "PASS: SSH pull no-change sync"
+
+            # SSH pull with oc-rsync as the REMOTE SENDER: upstream rsync is the
+            # client and spawns oc-rsync as `--server --sender` over SSH. Every
+            # other SSH leg here runs oc-rsync as the client, so without this one
+            # oc-rsync's server-sender wire output has no upstream oracle: an
+            # oc<->oc transfer cannot see a divergence that both sides share.
+            echo "=== SSH pull: upstream rsync client <- oc-rsync remote sender ==="
+            timeout 60 rsync -av --timeout=30 --rsync-path="$OC_RSYNC_ABS" \
+              "localhost:$SRC/" "$DST3/" 2>&1
+            diff -r "$SRC" "$DST3"
+            echo "PASS: SSH pull with oc-rsync as remote sender"
+
+            echo "All SSH interop tests passed for upstream rsync ${VER}."
+          }
+
+          for VER in $SSH_INTEROP_VERSIONS; do
+            run_ssh_interop_for_version "$VER"
           done
-          mkdir -p "$SRC/subdir"
-          echo "nested" > "$SRC/subdir/nested.txt"
-
-          # Verify binaries. The upstream peer is only an oracle if it really
-          # is upstream 3.4.4, so assert on the --version banner and never on
-          # the path: if the install step above found no freshly built binary,
-          # `rsync` on PATH is silently the distro build instead.
-          UP_BANNER="$(rsync --version 2>&1 | head -1)"
-          echo "oc-rsync: $($OC_RSYNC --version 2>&1 | head -1)"
-          echo "upstream rsync: $UP_BANNER"
-          echo "upstream rsync path: $(which rsync)"
-          case "$UP_BANNER" in
-            "rsync  version 3.4.4 "*) ;;
-            *) echo "expected upstream rsync 3.4.4 on PATH, got: $UP_BANNER" >&2; exit 1 ;;
-          esac
-
-          # Baseline: upstream rsync → upstream rsync via SSH
-          echo "=== Baseline: upstream rsync SSH pull ==="
-          timeout 60 rsync -av --timeout=30 "localhost:$SRC/" "$DST2/" 2>&1
-          diff -r "$SRC" "$DST2"
-          echo "PASS: upstream SSH pull baseline"
-
-          # SSH push: oc-rsync client → upstream rsync server
-          echo "=== SSH push: oc-rsync → upstream rsync ==="
-          timeout 60 "$OC_RSYNC" -av --timeout=30 "$SRC/" "localhost:$DST/" 2>&1 || {
-            RC=$?
-            echo "SSH push failed with exit $RC"
-
-            # Show oc-rsync diagnostic output (eprintln goes to stderr)
-            echo "--- Attempting push with verbose stderr capture ---"
-            timeout 60 "$OC_RSYNC" -avvv --timeout=30 "$SRC/" "localhost:$DST/" > /tmp/oc_push_stdout.txt 2>/tmp/oc_push_stderr.txt || true
-            echo "=== oc-rsync stderr ==="
-            cat /tmp/oc_push_stderr.txt || true
-            echo "=== oc-rsync stdout ==="
-            cat /tmp/oc_push_stdout.txt || true
-
-            # Diagnostic: manually invoke remote rsync with strace to see what it reads
-            echo "--- Remote rsync manual test ---"
-            echo "Remote rsync args that oc-rsync would send:"
-            "$OC_RSYNC" -av --timeout=30 --dry-run "$SRC/" "localhost:$DST/" 2>&1 | head -5 || true
-
-            # Test: upstream rsync client → upstream rsync server (same args)
-            echo "--- Baseline upstream push for comparison ---"
-            timeout 60 rsync -av --timeout=30 "$SRC/" "localhost:$DST/" 2>&1 || true
-
-            # Capture what upstream rsync server sees from oc-rsync via raw pipe
-            echo "--- Raw protocol capture ---"
-            ARGS=$(echo "--server -logDtprv -e.LsfxCIvu . $DST/")
-            echo "Remote rsync args: rsync $ARGS"
-            # Send oc-rsync's output through a pipe to see what the server gets
-            timeout 30 ssh localhost "strace -e trace=read,write -f rsync $ARGS" < /dev/null > /tmp/strace_out.txt 2>&1 || true
-            echo "=== strace output (first 100 lines) ==="
-            head -100 /tmp/strace_out.txt || true
-
-            exit 1
-          }
-          diff -r "$SRC" "$DST"
-          echo "PASS: SSH push initial sync"
-
-          # SSH pull: oc-rsync client ← upstream rsync server
-          rm -rf "$DST"/*
-          echo "=== SSH pull: oc-rsync ← upstream rsync ==="
-          timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" 2>&1 || {
-            RC=$?
-            echo "SSH pull failed with exit $RC"
-
-            # Show oc-rsync diagnostic output
-            echo "--- Attempting pull with verbose stderr capture ---"
-            timeout 60 "$OC_RSYNC" -avvv --timeout=30 "localhost:$SRC/" "$DST/" > /tmp/oc_pull_stdout.txt 2>/tmp/oc_pull_stderr.txt || true
-            echo "=== oc-rsync stderr ==="
-            cat /tmp/oc_pull_stderr.txt || true
-            echo "=== oc-rsync stdout ==="
-            cat /tmp/oc_pull_stdout.txt || true
-
-            exit 1
-          }
-          diff -r "$SRC" "$DST"
-          echo "PASS: SSH pull initial sync"
-
-          # SSH pull no-change
-          timeout 60 "$OC_RSYNC" -av --timeout=30 "localhost:$SRC/" "$DST/"
-          echo "PASS: SSH pull no-change sync"
-
-          # SSH pull with oc-rsync as the REMOTE SENDER: upstream rsync is the
-          # client and spawns oc-rsync as `--server --sender` over SSH. Every
-          # other SSH leg here runs oc-rsync as the client, so without this one
-          # oc-rsync's server-sender wire output has no upstream oracle: an
-          # oc<->oc transfer cannot see a divergence that both sides share.
-          echo "=== SSH pull: upstream rsync client <- oc-rsync remote sender ==="
-          timeout 60 rsync -av --timeout=30 --rsync-path="$OC_RSYNC_ABS" \
-            "localhost:$SRC/" "$DST3/" 2>&1
-          diff -r "$SRC" "$DST3"
-          echo "PASS: SSH pull with oc-rsync as remote sender"
-
-          echo "All SSH interop tests passed."
 
       - name: Regenerate interop compatibility matrix
         if: always()
