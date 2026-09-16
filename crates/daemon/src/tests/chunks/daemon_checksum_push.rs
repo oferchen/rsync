@@ -71,8 +71,7 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
         ])
         .build();
 
-    let (probe_stream, daemon_handle) =
-        start_daemon_pending_no_detach(daemon_config, port, held_listener);
+    let (probe_stream, daemon_handle) = start_daemon(daemon_config, port, held_listener);
     drop(probe_stream);
 
     // Phase 1: Initial push (seeds destination with original content)
@@ -96,7 +95,7 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
                 );
             }
             Err(e) => {
-                let _ = daemon_handle.join();
+                let _ = finish_daemon(daemon_handle);
                 panic!("initial push failed: {e}");
             }
         }
@@ -161,7 +160,7 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
                 );
             }
             Err(e) => {
-                let _ = daemon_handle.join();
+                let _ = finish_daemon(daemon_handle);
                 panic!("checksum push failed: {e}");
             }
         }
@@ -182,6 +181,5 @@ fn daemon_checksum_push_detects_content_change_despite_matching_mtime() {
         "beta.txt must match modified source after checksum push"
     );
 
-    let daemon_result = daemon_handle.join().expect("daemon thread");
-    let _ = daemon_result;
+    let _ = finish_daemon(daemon_handle);
 }

@@ -93,7 +93,7 @@ fn daemon_async_accept_push_pull_byte_identical() {
     match core::client::run_client(pull_config) {
         Ok(_) => {}
         Err(e) => {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("async daemon pull failed: {e}");
         }
     }
@@ -117,7 +117,7 @@ fn daemon_async_accept_push_pull_byte_identical() {
     match core::client::run_client(push_config) {
         Ok(_) => {}
         Err(e) => {
-            let _ = daemon_handle.join();
+            let _ = finish_daemon(daemon_handle);
             panic!("async daemon push failed: {e}");
         }
     }

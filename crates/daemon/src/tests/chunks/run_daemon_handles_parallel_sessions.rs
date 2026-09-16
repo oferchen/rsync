@@ -17,7 +17,7 @@ fn run_daemon_handles_parallel_sessions() {
         .build();
 
     drop(held_listener);
-    let handle = spawn_daemon_pending_no_detach(config);
+    let handle = spawn_daemon(config);
 
     let barrier = Arc::new(Barrier::new(2));
     let mut clients = Vec::new();
