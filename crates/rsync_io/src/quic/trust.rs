@@ -757,6 +757,31 @@ mod tests {
         );
     }
 
+    /// The third arm of the policy-B ladder: with neither an explicit CA nor a
+    /// TOFU target, `resolve` falls back to the system-roots default - a
+    /// [`QuicTrust::Roots`] (or the documented trust-store error), never a TOFU
+    /// verifier and never an exact pin. Completes [`resolve_precedence_ca_over_tofu`]
+    /// (which pins CA > TOFU and TOFU > default): together the three arms cover
+    /// the whole precedence order. Encodes WHY: "system roots is the default
+    /// when no CA is given" is the zero-config behaviour the CLI wiring relies
+    /// on, and a mutation that made the empty case a verifier (or a blanket
+    /// accept-any trust source) would pass the CA/TOFU arm tests while silently
+    /// weakening the default.
+    #[test]
+    fn resolve_none_none_selects_system_roots_default() {
+        match resolve(None, None) {
+            Ok(trust) => assert!(
+                matches!(trust, QuicTrust::Roots(_)),
+                "no CA + no TOFU must resolve to the system-roots default, \
+                 not a verifier or an exact pin"
+            ),
+            Err(err) => assert!(
+                err.to_string().contains("system trust store"),
+                "a trust-store-less environment must fail with the documented message: {err}"
+            ),
+        }
+    }
+
     /// Encodes a DER certificate as a PEM `CERTIFICATE` block, base64 wrapped at
     /// 64 columns - the on-disk shape `--quic-ca` is pointed at. Kept local so
     /// the loader tests own their fixtures without pulling rcgen's optional
