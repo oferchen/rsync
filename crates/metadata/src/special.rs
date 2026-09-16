@@ -467,6 +467,38 @@ pub fn device_word(rdev_major: u32, rdev_minor: u32) -> u64 {
     combine_dev(rdev_major, rdev_minor) as u64
 }
 
+/// Composes the `mknod(2)` mode word for a FIFO node from its permission bits.
+///
+/// Upstream forwards `file->mode` - the file-type bits ORed with the low
+/// permission bits - straight to `do_mknod_at()`, so a confined-dirfd
+/// `mknodat` needs the same combined word rather than the bare `0o7777` a
+/// [`FileEntry`](protocol::flist::FileEntry) carries. Kept beside
+/// [`device_word`] so the one crate that owns `libc`'s `S_IF*` constants owns
+/// the type-bit composition too, leaving `#![deny(unsafe_code)]` callers free
+/// of it.
+// upstream: syscall.c:do_mknod_at() forwards `file->mode` (type | perms).
+#[cfg(unix)]
+#[must_use]
+pub fn fifo_mknod_mode(mode_bits: u32) -> u32 {
+    (libc::S_IFIFO as u32) | (mode_bits & 0o7777)
+}
+
+/// Composes the `mknod(2)` mode word for a character or block device node.
+///
+/// `is_block` selects `S_IFBLK` over `S_IFCHR`; the low permission bits are
+/// carried through unchanged. See [`fifo_mknod_mode`] for why this lives here.
+// upstream: syscall.c:do_mknod_at() forwards `file->mode` (type | perms).
+#[cfg(unix)]
+#[must_use]
+pub fn device_mknod_mode(mode_bits: u32, is_block: bool) -> u32 {
+    let type_bits = if is_block {
+        libc::S_IFBLK
+    } else {
+        libc::S_IFCHR
+    } as u32;
+    type_bits | (mode_bits & 0o7777)
+}
+
 #[cfg(all(
     unix,
     any(
