@@ -14,8 +14,8 @@
 //! This crate is not wired into the active transfer path. The live file-list
 //! machinery used by transfers lives in `protocol::flist`; nothing in the
 //! transfer pipeline consumes [`FileListWalker`] or [`FileListBuilder`]. The
-//! crate is re-exported by `core` but is otherwise a self-contained, legacy
-//! traversal utility retained for its standalone walker API.
+//! crate is a self-contained, legacy traversal utility retained for its
+//! standalone walker API.
 //!
 //! # Design
 //!
