@@ -727,14 +727,19 @@ impl DeltaSignatureIndex {
     /// Shared by the contiguous and two-slice probes so the chain-walk rule -
     /// the prune skips and the [`MAX_CHAIN_LEN`] bound - lives in one place.
     ///
-    /// upstream: `match.c` `hash_search()` inner chain loop. Candidates dropped
-    /// by the prune bitsets are the analogue of upstream's bypassed in-place
-    /// entries, which upstream unlinks from the chain before its counter runs;
-    /// like upstream's, they do not spend the budget, so the bound covers
-    /// exactly the candidates that reach the strong-checksum compare. That
-    /// placement is what keeps the bound inert on honest bases: a duplicate
-    /// basis block is matched by the first live candidate, never by walking
-    /// past a thousand dead ones.
+    /// upstream: `match.c` `hash_search()` inner chain loop. The prune bitsets
+    /// only mark a block consumed; they never unlink it from the append-only
+    /// lookup chain, so a consumed entry stays linked and is re-walked by every
+    /// later probe. The bound is therefore charged for every candidate the
+    /// chain yields - dead or live - before the prune skips, exactly like
+    /// upstream's non-inplace `hash_search` (`match.c:250`), which never
+    /// unlinks and so counts every same-weak-sum record. Charging after the
+    /// skips would let a hostile peer park thousands of weak-colliding blocks
+    /// ahead of a live match, consume them, and make every probe re-walk the
+    /// dead run for free - O(dead entries) per probe, O(n^2) overall - while
+    /// the bound looked intact (task 628, CVE-2026-70453). `--inplace`'s
+    /// physical unlink (`match.c:235`) is the deferred follow-up (task 1268);
+    /// here dead entries spend the budget instead.
     #[inline]
     fn walk_chain(
         &self,
@@ -744,6 +749,16 @@ impl DeltaSignatureIndex {
     ) -> Option<usize> {
         let mut chain_len = 0u32;
         for index in self.lookup.find_all(digest.sum1(), digest.sum2()) {
+            // upstream: `match.c:250` - bound the work spent on one pathological
+            // bucket, charging every same-weak-sum candidate the chain yields
+            // (including the prune-skipped dead entries below) before deciding
+            // whether it is a match. Past the cap the offset is a non-match and
+            // the caller rolls forward a byte, so the skipped data goes out as
+            // literals.
+            chain_len += 1;
+            if chain_len > MAX_CHAIN_LEN {
+                return None;
+            }
             if matches!(matched, Some(m) if m.is_matched(index)) {
                 continue;
             }
@@ -754,13 +769,6 @@ impl DeltaSignatureIndex {
             // duplicate-block correctness contract.
             if self.is_consumed(index as u32) {
                 continue;
-            }
-            // upstream: `match.c` - bound the work spent on one pathological
-            // bucket. Past the cap the offset is a non-match and the caller
-            // rolls forward a byte, so the skipped data goes out as literals.
-            chain_len += 1;
-            if chain_len > MAX_CHAIN_LEN {
-                return None;
             }
             let block = &self.blocks[index];
             debug_assert_eq!(block.len(), self.block_length);
