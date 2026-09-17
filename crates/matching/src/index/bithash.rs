@@ -28,6 +28,16 @@
 /// = 8` bithash bits, giving a 1/8 set-bit density at saturation.
 pub(super) const BITHASH_BITS: u32 = 3;
 
+/// Logarithm of the rsum-bucket over-allocation factor.
+///
+/// zsync sizes its rsum hash table at roughly `4 * N` buckets for `N` blocks
+/// (`docs/design/zsync-bithash.md` section on the `4*N` bucket sizing). The
+/// bithash inherits that same over-allocation, so the total bit budget is
+/// `2^(BITHASH_BITS + RSUM_BUCKET_OVERALLOC_LOG2) = 32` times the block count.
+/// Kept as a named owner so the derivation in [`log2_bits_for`] reads from two
+/// documented exponents rather than a bare literal.
+const RSUM_BUCKET_OVERALLOC_LOG2: u32 = 2;
+
 /// Minimum bithash size in bits, expressed as a power-of-two exponent.
 ///
 /// `2^7 = 128` bits keeps the mask stable for very small basis files and
@@ -155,10 +165,12 @@ impl BitHash {
 /// Returns the `log2` of the chosen bit-array size for a block count.
 ///
 /// Picks the smallest exponent `k` with `2^k >= 32 * n_blocks` (the `4x`
-/// bucket factor times zsync's `8x` bithash factor), then clamps into
+/// [`RSUM_BUCKET_OVERALLOC_LOG2`] bucket factor times zsync's `8x`
+/// [`BITHASH_BITS`] bithash factor), then clamps into
 /// `[MIN_LOG2_BITS, MAX_LOG2_BITS]`.
 fn log2_bits_for(n_blocks: usize) -> u32 {
-    let target_bits = (n_blocks as u64).saturating_mul(1u64 << (BITHASH_BITS + 2));
+    let target_bits =
+        (n_blocks as u64).saturating_mul(1u64 << (BITHASH_BITS + RSUM_BUCKET_OVERALLOC_LOG2));
     let log2 = if target_bits <= 1 {
         MIN_LOG2_BITS
     } else {
@@ -172,6 +184,38 @@ fn log2_bits_for(n_blocks: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sizing_factor_is_pinned_to_zsync_source() {
+        // The existing density / false-positive tests use loose statistical
+        // bounds that a `BITHASH_BITS` drift survives (over-provisioning only
+        // lowers the measured rate). This pins the two sizing exponents to
+        // their documented sources deterministically, so any drift reddens.
+        //
+        // - BITHASH_BITS = zsync's BITHASHBITS (librcksum/internal.h:83), the
+        //   8x bit/bucket factor giving the canonical 1/8 saturation density.
+        // - RSUM_BUCKET_OVERALLOC_LOG2 = the 4x `4*N` bucket over-allocation
+        //   from docs/design/zsync-bithash.md.
+        assert_eq!(
+            BITHASH_BITS, 3,
+            "BITHASH_BITS must mirror zsync BITHASHBITS"
+        );
+        assert_eq!(
+            RSUM_BUCKET_OVERALLOC_LOG2, 2,
+            "the rsum-bucket over-allocation must stay at the documented 4x"
+        );
+        assert_eq!(
+            1u32 << (BITHASH_BITS + RSUM_BUCKET_OVERALLOC_LOG2),
+            32,
+            "the combined bithash sizing factor must be 32 bits per block"
+        );
+
+        // Above the MIN clamp, `log2_bits_for` must yield the smallest power of
+        // two >= 32 * n_blocks. The literal exponents redden if either factor
+        // drifts (e.g. BITHASH_BITS 3->2 makes 1000 blocks round to 2^14).
+        assert_eq!(log2_bits_for(1_000), 15, "32 * 1000 = 32000 -> 2^15");
+        assert_eq!(log2_bits_for(100_000), 22, "32 * 100000 = 3.2M -> 2^22");
+    }
 
     #[test]
     fn min_size_is_clamped() {
