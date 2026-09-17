@@ -13,6 +13,7 @@ anyhow = "1"
 camino = "1"
 clap = { workspace = true, features = ["derive"] }
 branding = { path = "../crates/branding" }
+filetime = { workspace = true }
 toml = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

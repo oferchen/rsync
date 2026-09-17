@@ -255,9 +255,6 @@ mod tests {
         assert!(exclusion_violation(dir.path()).is_none());
     }
 
-    // `build_fixture` backdates mtimes with GNU `touch -d @epoch`, which BSD
-    // `touch` (macOS) rejects; the harness itself only runs on Linux.
-    #[cfg(target_os = "linux")]
     #[test]
     fn build_fixture_is_idempotent_and_populates_the_tree() {
         use super::build_fixture;
