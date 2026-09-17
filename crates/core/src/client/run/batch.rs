@@ -441,10 +441,27 @@ fn replay_batch(
     // totals through output_summary(). The receiver ran for real, so reuse the
     // pull receiver's stats conversion (including the io_error -> exit-code
     // mapping of cleanup.c:210-218).
-    Ok(remote::daemon_transfer::convert_server_stats_to_summary(
+    let mut summary = remote::daemon_transfer::convert_server_stats_to_summary(
         crate::server::ServerStats::Receiver(stats),
         start.elapsed(),
-    ))
+    );
+
+    // A custom `--out-format` made the replay receiver buffer one
+    // metadata-bearing itemize event per transferred row instead of printing
+    // its own line; hand each to the CLI's out-format renderer, exactly as the
+    // daemon/SSH pull drivers drain their itemize sink. Empty for plain
+    // `-v`/`-i` (those printed their own output during the replay).
+    let mut itemize_sink = remote::itemize_sink::ItemizeEventSink::new(true);
+    for row in ctx.drain_event_rows() {
+        use crate::server::ItemizeCallback as _;
+        itemize_sink.on_itemize_row(&row.as_row());
+    }
+    let events = itemize_sink.take_events();
+    if !events.is_empty() {
+        summary = summary.with_events(events);
+    }
+
+    Ok(summary)
 }
 
 /// Maps a batch open/header/reconcile error onto upstream's exit codes.
@@ -511,9 +528,12 @@ fn build_replay_server_config(
         filter_rules,
     )?;
     server_config.connection.is_daemon_connection = false;
-    // The itemize-event drain lives on the daemon/SSH drivers; the replay
-    // receiver prints its own default output instead of buffering events.
-    server_config.flags.info_flags.out_format_active = false;
+    // A custom `--out-format` makes the replay receiver buffer one
+    // metadata-bearing itemize event per transferred row (it suppresses its own
+    // stdout); `handle_batch_read` drains and renders these, mirroring the
+    // daemon/SSH pull drivers. Plain `-v`/`-i` keep printing their own default
+    // output because `render_out_format_locally()` is false for them.
+    server_config.flags.info_flags.out_format_active = config.render_out_format_locally();
 
     // upstream: batch.c:126-135 - the recorded stream flags win over the
     // invocation's options; the stream was encoded under them.
@@ -875,6 +895,304 @@ mod tests {
             2,
             "only the recorded transfers count as copied, not every flist entry"
         );
+    }
+
+    /// Records a recursive protocol-32 batch for `source` into `batch_path`
+    /// via the `--only-write-batch` local-copy path, then appends the stats
+    /// trailer + goodbye the real replay receiver reads. Shared by the replay
+    /// parity tests below so each varies only the replay-side config.
+    fn record_recurse_batch(
+        source: &std::path::Path,
+        batch_path: &std::path::Path,
+        dest: &std::path::Path,
+    ) {
+        use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
+        use protocol::CompatibilityFlags;
+
+        let compat = CompatibilityFlags::SAFE_FILE_LIST
+            | CompatibilityFlags::AVOID_XATTR_OPTIMIZATION
+            | CompatibilityFlags::CHECKSUM_SEED_FIX
+            | CompatibilityFlags::INPLACE_PARTIAL_DIR
+            | CompatibilityFlags::VARINT_FLIST_FLAGS;
+        let write_cfg = BatchConfig::new(
+            BatchMode::OnlyWrite,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        )
+        .with_compat_flags(compat.bits() as i32)
+        .with_checksum_seed(1);
+        let writer = Arc::new(Mutex::new(BatchWriter::new(write_cfg).unwrap()));
+        writer
+            .lock()
+            .unwrap()
+            .write_header(engine::batch::BatchFlags {
+                recurse: true,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let options = LocalCopyOptions::default()
+            .recursive(true)
+            .batch_writer(Some(Arc::clone(&writer)));
+        let mut src_os = source.to_path_buf().into_os_string();
+        src_os.push("/");
+        let operands = vec![src_os, dest.to_path_buf().into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        plan.execute_with_options(LocalCopyExecution::DryRun, options)
+            .unwrap();
+        {
+            let mut w = writer.lock().unwrap();
+            w.write_stats(&BatchStats {
+                total_read: 0,
+                total_written: 0,
+                total_size: 0,
+                flist_buildtime: Some(0),
+                flist_xfertime: Some(0),
+            })
+            .unwrap();
+            w.write_data(&[0x00]).unwrap();
+        }
+        Arc::try_unwrap(writer)
+            .expect("writer uniquely owned")
+            .into_inner()
+            .unwrap()
+            .finalize()
+            .unwrap();
+    }
+
+    /// `--read-batch --delete` must run the real receiver's delete pass, so an
+    /// extraneous destination file is removed and the summary counts it.
+    ///
+    /// WHY: upstream generator.c:2753-2754 `do_delete_pass()` runs regardless of
+    /// read_batch (the replaying generator forks and runs locally, main.c:639-651).
+    /// The reunified replay drive skipped every delete site, so `--delete` was a
+    /// silent no-op. The paired control (no `--delete`) proves the stale file
+    /// survives without the flag, so the deletion is attributable to `--delete`
+    /// and not to the transfer itself.
+    #[test]
+    fn read_batch_delete_removes_extraneous_dest_file() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let source = temp.path().join("src");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("keep.txt"), b"keep payload").unwrap();
+        let batch_path = temp.path().join("delete.batch");
+        record_recurse_batch(&source, &batch_path, &temp.path().join("write_dest"));
+
+        // Control: replay WITHOUT --delete leaves the extraneous file in place.
+        let ctrl_dest = temp.path().join("ctrl");
+        std::fs::create_dir_all(&ctrl_dest).unwrap();
+        std::fs::write(ctrl_dest.join("stale.txt"), b"stale").unwrap();
+        let ctrl_cfg = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        );
+        let ctrl_config = ClientConfig::builder()
+            .compress(false)
+            .transfer_args([ctrl_dest.to_string_lossy().to_string()])
+            .build();
+        let ctrl_summary = handle_batch_read(&ctrl_cfg, &ctrl_config)
+            .expect("read mode handled")
+            .expect("control batch must replay");
+        assert!(
+            ctrl_dest.join("stale.txt").exists(),
+            "without --delete the extraneous file must survive"
+        );
+        assert_eq!(ctrl_summary.items_deleted(), 0, "control deletes nothing");
+
+        // Treatment: replay WITH --delete removes the extraneous file.
+        let del_dest = temp.path().join("del");
+        std::fs::create_dir_all(&del_dest).unwrap();
+        std::fs::write(del_dest.join("stale.txt"), b"stale").unwrap();
+        let del_cfg = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        );
+        let del_config = ClientConfig::builder()
+            .compress(false)
+            .delete(true)
+            .transfer_args([del_dest.to_string_lossy().to_string()])
+            .build();
+        let del_summary = handle_batch_read(&del_cfg, &del_config)
+            .expect("read mode handled")
+            .expect("delete batch must replay");
+        assert_eq!(
+            std::fs::read(del_dest.join("keep.txt")).unwrap(),
+            b"keep payload",
+            "the transferred file must still land"
+        );
+        assert!(
+            !del_dest.join("stale.txt").exists(),
+            "--read-batch --delete must remove the extraneous file"
+        );
+        assert_eq!(
+            del_summary.items_deleted(),
+            1,
+            "the delete pass must count the extraneous file"
+        );
+    }
+
+    /// `--read-batch -b` must preserve the pre-image at the backup name, exactly
+    /// as the network receiver's commit tier does.
+    ///
+    /// WHY: upstream generator.c:2280-2288 resolves `get_backup_name` under
+    /// read_batch + make_backups; the network commit (sync.rs) renames the
+    /// existing file to its backup before the temp file lands, but the reunified
+    /// replay drive reimplemented the commit inline and omitted the backup step.
+    /// The paired control (no `-b`) proves the pre-image is otherwise lost, so the
+    /// preserved backup is attributable to `-b`.
+    #[test]
+    fn read_batch_backup_preserves_pre_image() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let source = temp.path().join("src");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("top.txt"), b"new payload").unwrap();
+        let batch_path = temp.path().join("backup.batch");
+        record_recurse_batch(&source, &batch_path, &temp.path().join("write_dest"));
+
+        // Control: replay WITHOUT -b overwrites the pre-image, leaving no backup.
+        let ctrl_dest = temp.path().join("ctrl");
+        std::fs::create_dir_all(&ctrl_dest).unwrap();
+        std::fs::write(ctrl_dest.join("top.txt"), b"old payload").unwrap();
+        let ctrl_cfg = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        );
+        let ctrl_config = ClientConfig::builder()
+            .compress(false)
+            .transfer_args([ctrl_dest.to_string_lossy().to_string()])
+            .build();
+        handle_batch_read(&ctrl_cfg, &ctrl_config)
+            .expect("read mode handled")
+            .expect("control batch must replay");
+        assert_eq!(
+            std::fs::read(ctrl_dest.join("top.txt")).unwrap(),
+            b"new payload",
+            "control overwrites the destination"
+        );
+        assert!(
+            !ctrl_dest.join("top.txt~").exists(),
+            "without -b there is no backup pre-image"
+        );
+
+        // Treatment: replay WITH -b keeps the pre-image at "top.txt~".
+        let bak_dest = temp.path().join("bak");
+        std::fs::create_dir_all(&bak_dest).unwrap();
+        std::fs::write(bak_dest.join("top.txt"), b"old payload").unwrap();
+        let bak_cfg = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        );
+        let bak_config = ClientConfig::builder()
+            .compress(false)
+            .backup(true)
+            .transfer_args([bak_dest.to_string_lossy().to_string()])
+            .build();
+        handle_batch_read(&bak_cfg, &bak_config)
+            .expect("read mode handled")
+            .expect("backup batch must replay");
+        assert_eq!(
+            std::fs::read(bak_dest.join("top.txt")).unwrap(),
+            b"new payload",
+            "the destination is updated to the new payload"
+        );
+        assert_eq!(
+            std::fs::read(bak_dest.join("top.txt~")).unwrap(),
+            b"old payload",
+            "--read-batch -b must preserve the pre-image at the backup name"
+        );
+    }
+
+    /// `--read-batch` with a custom `--out-format` must itemize each transferred
+    /// row through the same owner the network receiver uses, so the CLI renders
+    /// the template. The reunified replay drive force-cleared `out_format_active`
+    /// and never itemized, so the rows were lost.
+    ///
+    /// WHY: upstream receiver.c:1273 `log_item(log_code, file, iflags, NULL)`
+    /// runs per transferred row regardless of read_batch (generator.c:589's
+    /// `!read_batch` guards only the wire itemize header, not the local log).
+    /// The paired control (no out-format) proves no events surface without it,
+    /// so the itemize rows are attributable to the out-format request.
+    #[test]
+    fn read_batch_out_format_itemizes_transferred_rows() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let source = temp.path().join("src");
+        std::fs::create_dir_all(source.join("sub")).unwrap();
+        std::fs::write(source.join("top.txt"), b"top payload").unwrap();
+        std::fs::write(source.join("sub").join("inner.txt"), b"inner payload").unwrap();
+        let batch_path = temp.path().join("itemize.batch");
+        record_recurse_batch(&source, &batch_path, &temp.path().join("write_dest"));
+
+        // Control: replay WITHOUT a custom out-format buffers no itemize events.
+        let ctrl_dest = temp.path().join("ctrl");
+        std::fs::create_dir_all(&ctrl_dest).unwrap();
+        let ctrl_cfg = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        );
+        let ctrl_config = ClientConfig::builder()
+            .compress(false)
+            .transfer_args([ctrl_dest.to_string_lossy().to_string()])
+            .build();
+        let ctrl_summary = handle_batch_read(&ctrl_cfg, &ctrl_config)
+            .expect("read mode handled")
+            .expect("control batch must replay");
+        assert!(
+            ctrl_summary.events().is_empty(),
+            "no custom out-format means no buffered itemize events"
+        );
+
+        // Treatment: a custom out-format collects one metadata event per
+        // transferred regular file (the two files, never the dir/root rows).
+        let fmt_dest = temp.path().join("fmt");
+        std::fs::create_dir_all(&fmt_dest).unwrap();
+        let fmt_cfg = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().into_owned(),
+            32,
+        );
+        let fmt_config = ClientConfig::builder()
+            .compress(false)
+            .render_out_format_locally(true)
+            .transfer_args([fmt_dest.to_string_lossy().to_string()])
+            .build();
+        let fmt_summary = handle_batch_read(&fmt_cfg, &fmt_config)
+            .expect("read mode handled")
+            .expect("out-format batch must replay");
+        let names: Vec<String> = fmt_summary
+            .events()
+            .iter()
+            .map(|e| e.relative_path().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "top.txt"),
+            "itemize events must cover top.txt, got {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "sub/inner.txt"),
+            "itemize events must cover sub/inner.txt, got {names:?}"
+        );
+        // Every transferred regular file itemizes as a received file (`>f...`),
+        // exactly as the network receiver renders it; the row is driven by the
+        // recorded stream, not the local plan.
+        for name in ["top.txt", "sub/inner.txt"] {
+            let event = fmt_summary
+                .events()
+                .iter()
+                .find(|e| e.relative_path().to_string_lossy() == name)
+                .expect("file event present");
+            let itemize = event
+                .itemize_override()
+                .expect("a remote itemize event carries its rendered flags");
+            assert!(
+                itemize.starts_with(">f"),
+                "{name} must itemize as a received regular file, got {itemize:?}"
+            );
+        }
     }
 
     #[test]
