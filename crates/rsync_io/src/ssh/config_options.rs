@@ -80,6 +80,32 @@ pub(in crate::ssh) enum Opcode {
     /// `ConnectTimeout <time>|none`.
     /// upstream: openssh/readconf.c:274 `oConnectTimeout`, arm at :1215.
     ConnectTimeout,
+    /// `AddressFamily any|inet|inet6`.
+    /// upstream: openssh/readconf.c:270 `oAddressFamily`, arm at :1903 via
+    /// `multistate_addressfamily` (:1016).
+    AddressFamily,
+    /// `BindAddress <addr>`.
+    /// upstream: openssh/readconf.c:262 `oBindAddress`, arm at :1507.
+    BindAddress,
+    /// `BindInterface <iface>`.
+    /// upstream: openssh/readconf.c:263 `oBindInterface`, arm at :1511.
+    BindInterface,
+    /// `ConnectionAttempts <count>`.
+    /// upstream: openssh/readconf.c:247 `oConnectionAttempts`, arm at :1574.
+    ConnectionAttempts,
+    /// `IPQoS <interactive> [bulk]`.
+    /// upstream: openssh/readconf.c:287 `oIPQoS`, arm at :2148.
+    IPQoS,
+    /// `TCPKeepAlive yes|no|transport|all` (obsolete alias `KeepAlive`).
+    /// upstream: openssh/readconf.c:252 `oTCPKeepAlive`, arm at :1346 via
+    /// `multistate_keepalives` (:1080).
+    TCPKeepAlive,
+    /// `ServerAliveInterval <time>`.
+    /// upstream: openssh/readconf.c:271 `oServerAliveInterval`, arm at :1916.
+    ServerAliveInterval,
+    /// `ServerAliveCountMax <count>`.
+    /// upstream: openssh/readconf.c:272 `oServerAliveCountMax`, arm at :1920.
+    ServerAliveCountMax,
     /// A keyword no reader resolves. Ignored by both.
     Unknown,
 }
@@ -91,7 +117,11 @@ pub(in crate::ssh) enum Opcode {
 /// (openssh/readconf.c:1184 `lowercase(keyword)` into
 /// openssh/readconf.c:964-966).
 const KEYWORDS: &[(&str, Opcode)] = &[
+    ("addressfamily", Opcode::AddressFamily),
+    ("bindaddress", Opcode::BindAddress),
+    ("bindinterface", Opcode::BindInterface),
     ("compression", Opcode::Compression),
+    ("connectionattempts", Opcode::ConnectionAttempts),
     ("connecttimeout", Opcode::ConnectTimeout),
     ("host", Opcode::Host),
     ("hostname", Opcode::Hostname),
@@ -99,8 +129,15 @@ const KEYWORDS: &[(&str, Opcode)] = &[
     ("identityagent", Opcode::IdentityAgent),
     ("identityfile", Opcode::IdentityFile),
     ("include", Opcode::Include),
+    ("ipqos", Opcode::IPQoS),
+    // Obsolete alias resolving to the same opcode as `TCPKeepAlive`.
+    // upstream: openssh/readconf.c:253 `{ "keepalive", oTCPKeepAlive }`.
+    ("keepalive", Opcode::TCPKeepAlive),
     ("match", Opcode::Match),
     ("port", Opcode::Port),
+    ("serveralivecountmax", Opcode::ServerAliveCountMax),
+    ("serveraliveinterval", Opcode::ServerAliveInterval),
+    ("tcpkeepalive", Opcode::TCPKeepAlive),
     ("user", Opcode::User),
 ];
 
@@ -143,6 +180,22 @@ pub(in crate::ssh) enum ValueKind {
     /// unset sentinel. upstream: the `parse_time` arm
     /// (openssh/readconf.c:1215-1233).
     Time,
+    /// One token, read as a non-negative integer by `atoi_err`
+    /// (openssh/misc.c:2448-2456, `strtonum(arg, 0, INT_MAX)`).
+    /// upstream: the `parse_int` arm (openssh/readconf.c:1576-1587).
+    Int,
+    /// One token, read as an address-family multistate (`any`, `inet`,
+    /// `inet6`). upstream: the `parse_multistate` arm
+    /// (openssh/readconf.c:1264-1276) with `multistate_addressfamily`
+    /// (openssh/readconf.c:1016-1021).
+    AddressFamily,
+    /// One token, read as a keepalive multistate (`yes`/`true`/`transport`,
+    /// `no`/`false`, `all`). upstream: the `parse_multistate` arm with
+    /// `multistate_keepalives` (openssh/readconf.c:1080-1088).
+    KeepAlive,
+    /// One or two tokens, each an IPQoS class or DSCP value.
+    /// upstream: the two-token `oIPQoS` arm (openssh/readconf.c:2148-2170).
+    IpQos,
     /// No shape, because no reader resolves the keyword.
     Unknown,
 }
@@ -198,10 +251,18 @@ impl Opcode {
             Self::Match => ValueKind::MatchCriteria,
             Self::Include => ValueKind::IncludePatterns,
             Self::Compression | Self::IdentitiesOnly => ValueKind::Flag,
-            Self::Hostname | Self::User | Self::Port | Self::IdentityFile | Self::IdentityAgent => {
-                ValueKind::Single
-            }
-            Self::ConnectTimeout => ValueKind::Time,
+            Self::Hostname
+            | Self::User
+            | Self::Port
+            | Self::IdentityFile
+            | Self::IdentityAgent
+            | Self::BindAddress
+            | Self::BindInterface => ValueKind::Single,
+            Self::ConnectTimeout | Self::ServerAliveInterval => ValueKind::Time,
+            Self::ConnectionAttempts | Self::ServerAliveCountMax => ValueKind::Int,
+            Self::AddressFamily => ValueKind::AddressFamily,
+            Self::TCPKeepAlive => ValueKind::KeepAlive,
+            Self::IPQoS => ValueKind::IpQos,
             Self::Unknown => ValueKind::Unknown,
         }
     }
@@ -220,10 +281,25 @@ impl Opcode {
     #[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
     pub(in crate::ssh) fn missing_argument(self) -> Option<&'static str> {
         match self.value_kind() {
-            ValueKind::Flag => Some("missing argument."),
+            // The multistate arms (`Flag`, `AddressFamily`, `KeepAlive`)
+            // all route through `parse_multistate_value`, whose absent-value
+            // wording is `missing argument.` (openssh/readconf.c:1106).
+            ValueKind::Flag | ValueKind::AddressFamily | ValueKind::KeepAlive => {
+                Some("missing argument.")
+            }
             ValueKind::Single => Some("Missing argument."),
             ValueKind::Time => Some("missing time value."),
-            ValueKind::HostPatterns
+            // `atoi_err(NULL)` returns `"missing"`, printed as
+            // `integer value missing.` (openssh/readconf.c:1579,
+            // openssh/misc.c:2452).
+            ValueKind::Int => Some("integer value missing."),
+            // `IpQos` refuses an absent value with a VALUE-interpolated
+            // `Bad IPQoS value: %s` (openssh/readconf.c:2151), not a fixed
+            // string, so it has no entry here - like the list shapes below,
+            // whose refusal is the per-token empty check rather than an
+            // absent-value one.
+            ValueKind::IpQos
+            | ValueKind::HostPatterns
             | ValueKind::MatchCriteria
             | ValueKind::IncludePatterns
             | ValueKind::Unknown => None,
@@ -335,6 +411,75 @@ pub(in crate::ssh) fn parse_time_value(value: &str) -> Option<u32> {
     Some(total as u32)
 }
 
+/// The address family a `AddressFamily` directive selects.
+///
+/// upstream: the three non-sentinel rows of `multistate_addressfamily`
+/// (openssh/readconf.c:1016-1021), which map to `AF_INET`, `AF_INET6` and
+/// `AF_UNSPEC`. Kept as a reader-neutral enum so the transport, not this
+/// table, owns the mapping onto its own IP-preference knob.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) enum AddressFamily {
+    /// `any` - no preference (`AF_UNSPEC`).
+    Any,
+    /// `inet` - IPv4 only (`AF_INET`).
+    Inet,
+    /// `inet6` - IPv6 only (`AF_INET6`).
+    Inet6,
+}
+
+impl AddressFamily {
+    /// The lower-case spelling `ssh -G` dumps for this family
+    /// (openssh/readconf.c:3582-3583 `fmt_multistate_int`). Consumed by the
+    /// `ssh -G` differential harness, which is `#[cfg(test)]`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(in crate::ssh) fn as_str(self) -> &'static str {
+        match self {
+            Self::Any => "any",
+            Self::Inet => "inet",
+            Self::Inet6 => "inet6",
+        }
+    }
+}
+
+/// Parses a [`ValueKind::AddressFamily`] value. Returns `None` for anything
+/// outside the multistate set, which the caller reports as upstream's
+/// `unsupported option "<arg>".` (openssh/readconf.c:1269).
+///
+/// upstream: `parse_multistate_value` compares with `strcasecmp`
+/// (openssh/readconf.c:1109-1112), so the match is case-insensitive.
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) fn parse_address_family(value: &str) -> Option<AddressFamily> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "any" => Some(AddressFamily::Any),
+        "inet" => Some(AddressFamily::Inet),
+        "inet6" => Some(AddressFamily::Inet6),
+        _ => None,
+    }
+}
+
+/// Parses a [`ValueKind::Int`] value the way upstream's `atoi_err` does:
+/// `strtonum(arg, 0, INT_MAX)` (openssh/misc.c:2448-2456). `Err` carries
+/// the full diagnostic upstream prints (`integer value <errstr>.`,
+/// openssh/readconf.c:1579), so a caller maps it straight to a refusal.
+///
+/// The accepted range is `0..=i32::MAX`: a negative is `too small`, a value
+/// past `i32::MAX` is `too large`, and a non-decimal token is `invalid`,
+/// matching `strtonum`'s own `errstr` set.
+#[cfg_attr(not(feature = "embedded-ssh"), allow(dead_code))]
+pub(in crate::ssh) fn parse_int_value(value: &str) -> Result<u32, &'static str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("integer value missing.");
+    }
+    match trimmed.parse::<i64>() {
+        Ok(v) if v < 0 => Err("integer value too small."),
+        Ok(v) if v > i64::from(i32::MAX) => Err("integer value too large."),
+        Ok(v) => Ok(v as u32),
+        Err(_) => Err("integer value invalid."),
+    }
+}
+
 /// Byte-level glob matcher for a single `Host` or `Match` pattern token:
 /// `*` matches any run, `?` matches exactly one byte. No character
 /// classes, no extended globs.
@@ -382,6 +527,16 @@ mod tests {
         ("IdentitiesOnly", Opcode::IdentitiesOnly),
         ("IdentityAgent", Opcode::IdentityAgent),
         ("ConnectTimeout", Opcode::ConnectTimeout),
+        ("AddressFamily", Opcode::AddressFamily),
+        ("BindAddress", Opcode::BindAddress),
+        ("BindInterface", Opcode::BindInterface),
+        ("ConnectionAttempts", Opcode::ConnectionAttempts),
+        ("IPQoS", Opcode::IPQoS),
+        ("TCPKeepAlive", Opcode::TCPKeepAlive),
+        // Obsolete alias, same opcode (openssh/readconf.c:253).
+        ("KeepAlive", Opcode::TCPKeepAlive),
+        ("ServerAliveInterval", Opcode::ServerAliveInterval),
+        ("ServerAliveCountMax", Opcode::ServerAliveCountMax),
     ];
 
     #[test]
@@ -457,23 +612,91 @@ mod tests {
             );
         }
         // The time arm has its own wording (openssh/readconf.c:1219-1220),
-        // measured against real `ssh -G`.
-        assert_eq!(
-            Opcode::ConnectTimeout.missing_argument(),
-            Some("missing time value.")
-        );
+        // measured against real `ssh -G`. `ServerAliveInterval` shares the
+        // arm, so it shares the wording.
+        for opcode in [Opcode::ConnectTimeout, Opcode::ServerAliveInterval] {
+            assert_eq!(
+                opcode.missing_argument(),
+                Some("missing time value."),
+                "{opcode:?}"
+            );
+        }
+        // The `parse_int` arm's absent value is `atoi_err(NULL) == "missing"`
+        // (openssh/misc.c:2452), printed as `integer value missing.`.
+        for opcode in [Opcode::ConnectionAttempts, Opcode::ServerAliveCountMax] {
+            assert_eq!(
+                opcode.missing_argument(),
+                Some("integer value missing."),
+                "{opcode:?}"
+            );
+        }
+        // The address-family and keepalive multistates route through the
+        // same `parse_multistate_value` as the plain flags, so they share
+        // its `missing argument.` wording (openssh/readconf.c:1106).
+        for opcode in [Opcode::AddressFamily, Opcode::TCPKeepAlive] {
+            assert_eq!(
+                opcode.missing_argument(),
+                Some("missing argument."),
+                "{opcode:?}"
+            );
+        }
+        // The string arms print the capital-M `Missing argument.`.
+        for opcode in [Opcode::BindAddress, Opcode::BindInterface] {
+            assert_eq!(
+                opcode.missing_argument(),
+                Some("Missing argument."),
+                "{opcode:?}"
+            );
+        }
         // The block-opening keywords consume a LIST; an absent value
         // leaves the walk empty rather than refusing
         // (openssh/readconf.c:1829-1831). `Include` is list-shaped too:
         // its empty-argument refusal is the per-TOKEN empty check
-        // (openssh/readconf.c:2081), not an absent-value one.
+        // (openssh/readconf.c:2081), not an absent-value one. `IPQoS`
+        // refuses with a VALUE-interpolated `Bad IPQoS value: %s`, not a
+        // fixed absent-value string, so it too has no entry.
         for opcode in [
             Opcode::Host,
             Opcode::Match,
             Opcode::Include,
+            Opcode::IPQoS,
             Opcode::Unknown,
         ] {
             assert_eq!(opcode.missing_argument(), None, "{opcode:?}");
+        }
+    }
+
+    /// `parse_int_value` mirrors `atoi_err`'s `strtonum(arg, 0, INT_MAX)`
+    /// (openssh/misc.c:2448-2456): the accepted band and every `errstr`.
+    #[test]
+    fn int_values_cover_atoi_errs_range_and_errstrings() {
+        assert_eq!(parse_int_value("0"), Ok(0));
+        assert_eq!(parse_int_value("3"), Ok(3));
+        assert_eq!(parse_int_value("2147483647"), Ok(i32::MAX as u32));
+        assert_eq!(parse_int_value(""), Err("integer value missing."));
+        assert_eq!(parse_int_value("-1"), Err("integer value too small."));
+        assert_eq!(
+            parse_int_value("2147483648"),
+            Err("integer value too large.")
+        );
+        for bad in ["abc", "5x", "1.5", "0x10"] {
+            assert_eq!(parse_int_value(bad), Err("integer value invalid."), "{bad}");
+        }
+    }
+
+    /// `parse_address_family` is the `multistate_addressfamily` set
+    /// (openssh/readconf.c:1016-1021), compared case-insensitively; a
+    /// token outside it is `None` so the caller can refuse it.
+    #[test]
+    fn address_family_covers_the_multistate_set() {
+        assert_eq!(parse_address_family("any"), Some(AddressFamily::Any));
+        assert_eq!(parse_address_family("inet"), Some(AddressFamily::Inet));
+        assert_eq!(parse_address_family("INET6"), Some(AddressFamily::Inet6));
+        assert_eq!(AddressFamily::Any.as_str(), "any");
+        assert_eq!(AddressFamily::Inet.as_str(), "inet");
+        assert_eq!(AddressFamily::Inet6.as_str(), "inet6");
+        for bad in ["", "ipv4", "yes", "unix"] {
+            assert_eq!(parse_address_family(bad), None, "{bad}");
         }
     }
 
@@ -495,6 +718,18 @@ mod tests {
             Opcode::Port,
             Opcode::IdentityAgent,
             Opcode::ConnectTimeout,
+            // The connection-establishment family: every one is a scalar
+            // first-obtained slot upstream (`*intptr == -1` gate, or the
+            // `charptr` set-once for the string arms, or
+            // `ip_qos_interactive == -1` for IPQoS). None accumulate.
+            Opcode::AddressFamily,
+            Opcode::BindAddress,
+            Opcode::BindInterface,
+            Opcode::ConnectionAttempts,
+            Opcode::IPQoS,
+            Opcode::TCPKeepAlive,
+            Opcode::ServerAliveInterval,
+            Opcode::ServerAliveCountMax,
         ] {
             assert_eq!(
                 opcode.resolution_policy(),

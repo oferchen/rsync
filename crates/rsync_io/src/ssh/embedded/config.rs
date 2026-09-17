@@ -14,6 +14,7 @@ use super::ssh_config::{
 };
 use super::types::{IpPreference, StrictHostKeyChecking};
 use crate::ssh::config_files::config_files;
+use crate::ssh::config_options::AddressFamily;
 
 /// Default SSH port.
 const DEFAULT_PORT: u16 = 22;
@@ -365,6 +366,41 @@ impl SshConfig {
             && let Some(secs) = resolved.connect_timeout
         {
             self.connect_timeout = Duration::from_secs(u64::from(secs));
+        }
+        // `AddressFamily` maps onto the transport's DNS-resolution preference,
+        // the knob `embedded::resolve` acts on. Upstream's three families
+        // are `any`/`inet`/`inet6` (openssh/readconf.c:1016-1021); oc has no
+        // "prefer" form, so each maps to the exact-or-unspecified choice.
+        // Same explicit-wins rule as the fields above: only a config still at
+        // the built-in `Auto` default takes the file's value.
+        if self.ip_preference == IpPreference::Auto
+            && let Some(family) = resolved.address_family
+        {
+            self.ip_preference = match family {
+                AddressFamily::Any => IpPreference::Auto,
+                AddressFamily::Inet => IpPreference::ForceV4,
+                AddressFamily::Inet6 => IpPreference::ForceV6,
+            };
+        }
+        // `ServerAliveInterval`/`ServerAliveCountMax` are the russh keepalive
+        // knobs `embedded::connect` forwards into the client config. A
+        // resolved interval of 0 is upstream's "disable keepalives"
+        // (openssh/readconf.c:1916 stores 0, clientloop treats it as off),
+        // which the transport models as `None`. Explicit-wins again: only a
+        // config still at the built-in defaults takes the file's value.
+        if self.keepalive_interval == Some(Duration::from_secs(DEFAULT_KEEPALIVE_INTERVAL_SECS))
+            && let Some(secs) = resolved.server_alive_interval
+        {
+            self.keepalive_interval = if secs == 0 {
+                None
+            } else {
+                Some(Duration::from_secs(u64::from(secs)))
+            };
+        }
+        if self.keepalive_max_count == DEFAULT_KEEPALIVE_MAX_COUNT
+            && let Some(count) = resolved.server_alive_count_max
+        {
+            self.keepalive_max_count = count;
         }
     }
 
@@ -1083,6 +1119,145 @@ mod tests {
         cfg.apply_ssh_config_from(&path, "example")
             .expect("config accepted");
         assert_eq!(cfg.connect_timeout, SshConfig::default().connect_timeout);
+    }
+
+    #[test]
+    fn address_family_reaches_the_ip_preference_knob() {
+        // The effect pin: an `AddressFamily` directive lands in
+        // `SshConfig::ip_preference`, the field `embedded::resolve` filters
+        // DNS answers by.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  AddressFamily inet6\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.ip_preference, IpPreference::ForceV6);
+    }
+
+    #[test]
+    fn address_family_inet_forces_v4() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  AddressFamily inet\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.ip_preference, IpPreference::ForceV4);
+    }
+
+    #[test]
+    fn explicit_ip_preference_wins_over_config() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  AddressFamily inet\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.ip_preference(IpPreference::ForceV6);
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.ip_preference, IpPreference::ForceV6);
+    }
+
+    #[test]
+    fn server_alive_interval_reaches_the_keepalive_knob() {
+        // The effect pin: `ServerAliveInterval` lands in
+        // `SshConfig::keepalive_interval`, which `embedded::connect`
+        // forwards into the russh client config.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  ServerAliveInterval 15\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(15)));
+    }
+
+    #[test]
+    fn server_alive_interval_zero_disables_keepalives() {
+        // Upstream stores 0 = disabled (openssh/readconf.c:1916); the
+        // transport models "off" as `None`.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  ServerAliveInterval 0\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.keepalive_interval, None);
+    }
+
+    #[test]
+    fn server_alive_count_max_reaches_the_keepalive_knob() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  ServerAliveCountMax 7\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.keepalive_max_count, 7);
+    }
+
+    #[test]
+    fn server_alive_interval_first_obtained_wins() {
+        // Two directives in the same block: the FIRST claims the slot.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(
+            &path,
+            "Host example\n  ServerAliveInterval 15\n  ServerAliveInterval 99\n",
+        )
+        .expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.keepalive_interval, Some(Duration::from_secs(15)));
+    }
+
+    #[test]
+    fn connection_establishment_options_under_non_matching_host_keep_defaults() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(
+            &path,
+            "Host other\n  AddressFamily inet6\n  ServerAliveInterval 15\n  ServerAliveCountMax 7\n",
+        )
+        .expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        let default = SshConfig::default();
+        assert_eq!(cfg.ip_preference, default.ip_preference);
+        assert_eq!(cfg.keepalive_interval, default.keepalive_interval);
+        assert_eq!(cfg.keepalive_max_count, default.keepalive_max_count);
+    }
+
+    #[test]
+    fn bad_server_alive_count_max_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  ServerAliveCountMax bogus\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        let err = cfg
+            .apply_ssh_config_from(&path, "example")
+            .expect_err("bad integer must be refused");
+        assert!(
+            err.to_string().contains("integer value invalid."),
+            "got {err}"
+        );
+    }
+
+    #[test]
+    fn bad_address_family_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  AddressFamily ipv4\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        let err = cfg
+            .apply_ssh_config_from(&path, "example")
+            .expect_err("bad address family must be refused");
+        assert!(
+            err.to_string().contains("unsupported option \"ipv4\"."),
+            "got {err}"
+        );
     }
 
     #[test]
