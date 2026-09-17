@@ -27,10 +27,7 @@ use std::path::Path;
 #[cfg(unix)]
 use logging::{debug_log, info_log};
 #[cfg(unix)]
-use metadata::{
-    MetadataOptions, apply_metadata_from_file_entry, create_device_node_from_parts,
-    create_fifo_node_from_parts,
-};
+use metadata::{MetadataOptions, apply_metadata_from_file_entry, create_fifo_node_from_parts};
 #[cfg(unix)]
 use protocol::flist::{FileEntry, FileType};
 
@@ -221,21 +218,49 @@ impl ReceiverContext {
                     continue;
                 }
 
-                // upstream: generator.c:1675 atomic_create -> do_mknod_at
-                let create_result = if is_device {
-                    create_device_node_from_parts(
-                        &node_path,
-                        entry.mode() & 0o7777,
-                        entry.is_block_device(),
+                // upstream: generator.c:1675 atomic_create -> do_mknod_at.
+                // FIFO and device nodes are materialised through the confined
+                // parent dirfd so a raced parent-component symlink swap cannot
+                // redirect the new node outside the transfer root
+                // (do_mknod_at's secure_relpath arm). The socket arm keeps the
+                // existing path-based create: a nested socket has already been
+                // skipped above (`socket_creation_unsupported`, no
+                // dirfd-relative `bind(2)`) so only a top-level one reaches
+                // here, and confining the Linux `mknod(S_IFSOCK)` is the
+                // documented residual.
+                let create_result: std::io::Result<()> = if is_device {
+                    let mode =
+                        metadata::device_mknod_mode(entry.mode() & 0o7777, entry.is_block_device());
+                    let dev = metadata::device_word(
                         entry.rdev_major().unwrap_or(0),
                         entry.rdev_minor().unwrap_or(0),
+                    );
+                    fast_io::mknodat_via_sandbox_or_fallback(
+                        sandbox,
+                        dest_dir,
+                        relative_path,
+                        &node_path,
+                        mode,
+                        dev,
                         self.config.fake_super,
                     )
-                } else {
+                } else if entry.file_type() == FileType::Socket {
                     create_fifo_node_from_parts(
                         &node_path,
                         entry.mode() & 0o7777,
-                        entry.file_type() == FileType::Socket,
+                        true,
+                        self.config.fake_super,
+                    )
+                    .map_err(std::io::Error::other)
+                } else {
+                    let mode = metadata::fifo_mknod_mode(entry.mode() & 0o7777);
+                    fast_io::mknodat_via_sandbox_or_fallback(
+                        sandbox,
+                        dest_dir,
+                        relative_path,
+                        &node_path,
+                        mode,
+                        0,
                         self.config.fake_super,
                     )
                 };
