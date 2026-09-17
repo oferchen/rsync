@@ -76,7 +76,19 @@ pub fn process_file_response<R: Read>(
     token_buffer: &mut TokenBuffer,
     token_reader: &mut TokenReader,
 ) -> io::Result<u64> {
-    let header = read_response_header(reader, ndx_codec, pending, ctx, receiver)?;
+    let header = match read_response_header(reader, ndx_codec, pending, ctx, receiver)? {
+        super::HeaderOutcome::Header(header) => header,
+        // upstream: io.c:1809-1818 - a declined file is retired by the generator
+        // and never answered. This synchronous, single-request path has no window
+        // to retire against, so a decline is surfaced as an error rather than
+        // silently dropped.
+        super::HeaderOutcome::Declined { ndx, .. } => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("sender declined NDX {ndx} (MSG_NO_SEND)"),
+            ));
+        }
+    };
     let file_path = header.file_path;
     let basis_path = header.basis_path;
     let signature = header.signature;

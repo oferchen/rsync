@@ -96,6 +96,15 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # The upstream_compat oracle cells below spawn the oc-rsync binary through
+      # the test-support resolver, which only looks in the profile directory
+      # Cargo baked in. The `-p bin` cells link the binary as a side effect of
+      # their own build, but the `-p transfer` MSG_NO_SEND cell does not, so
+      # build it once here first. Keeps the interop job covered under the
+      # bin-build-coverage guard.
+      - name: Build oc-rsync (for subprocess integration tests)
+        run: cargo build --locked -p bin --bin oc-rsync
+
       # INC-S1a oracle: oc sender vs the real upstream 3.4.4 receiver under
       # INC_RECURSE. Gated on OC_RSYNC_UPSTREAM_COMPAT so the standard
       # nextest cells stay upstream-binary-free; this cell has the
@@ -114,6 +123,17 @@ jobs:
         env:
           OC_RSYNC_UPSTREAM_COMPAT: "1"
         run: cargo nextest run --locked --profile ci -p bin -E 'binary(upstream_compat_inc_recurse_receiver_oracle)'
+
+      # MSG_NO_SEND out-of-order oracle: a real upstream 3.5.0 sender declines a
+      # file it cannot open, emitting MSG_NO_SEND for a later NDX while oc's
+      # receiver still awaits an earlier one. Pins that oc retires the declined
+      # entry by index (io.c:1207 got_flist_entry_status) and lands the readable
+      # files instead of aborting the whole transfer as a desync. Same
+      # OC_RSYNC_UPSTREAM_COMPAT gate; the 3.5.0 install tree was built above.
+      - name: Run MSG_NO_SEND out-of-order oracle (upstream sender vs oc receiver)
+        env:
+          OC_RSYNC_UPSTREAM_COMPAT: "1"
+        run: cargo nextest run --locked --profile ci -p transfer -E 'binary(upstream_compat_no_send_out_of_order)'
 
       - name: Run interop tests
         run: |

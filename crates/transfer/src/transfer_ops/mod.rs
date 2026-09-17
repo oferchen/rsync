@@ -53,7 +53,7 @@ use crate::receiver::SumHead;
 
 pub use self::request::{send_file_request, send_file_request_xattr};
 pub use self::response::process_file_response;
-pub use self::streaming::{StreamingResult, process_file_response_streaming};
+pub use self::streaming::{ResponseProgress, StreamingResult, process_file_response_streaming};
 pub use crate::token_reader::TokenReader;
 
 /// Configuration for sending file transfer requests and processing responses.
@@ -321,10 +321,32 @@ pub(crate) fn usable_basis(path: &std::path::Path) -> Option<std::path::PathBuf>
     file.metadata().ok()?.is_file().then(|| path.to_path_buf())
 }
 
+/// Outcome of reading and validating one response header.
+///
+/// A sender answers a request either with the file's attributes and delta
+/// (`Header`) or, when it cannot open the file, with a `MSG_NO_SEND` decline
+/// (`Declined`). The decline is surfaced before `pending` is consumed, so the
+/// front request is handed back intact: the caller retires the declined entry
+/// by NDX, which - against an upstream sender - may name a still-outstanding
+/// later request rather than the awaited front.
+///
+/// upstream: io.c:1207-1256 `got_flist_entry_status(FES_NO_SEND, ndx)`.
+pub(crate) enum HeaderOutcome {
+    /// The awaited file's validated response header.
+    Header(ResponseHeader),
+    /// The sender declined a file; `pending` is the untouched front request and
+    /// `ndx` is the declined file's wire index.
+    Declined {
+        pending: crate::pipeline::PendingTransfer,
+        ndx: i32,
+    },
+}
+
 /// Reads and validates the echoed NDX and sum_head from the sender response.
 ///
-/// Returns the file path, basis path, signature, target size, sender attributes,
-/// and whether inplace mode applies for this file.
+/// Returns [`HeaderOutcome::Header`] with the file path, basis path, signature,
+/// target size, sender attributes, and inplace flag; or
+/// [`HeaderOutcome::Declined`] when the sender answered with `MSG_NO_SEND`.
 ///
 /// # Errors
 ///
@@ -335,7 +357,7 @@ fn read_response_header<R: Read>(
     pending: crate::pipeline::PendingTransfer,
     ctx: &ResponseContext<'_>,
     flist_sink: &mut impl crate::receiver::ndx_stream::FlistMarkerSink,
-) -> io::Result<ResponseHeader> {
+) -> io::Result<HeaderOutcome> {
     let expected_ndx = pending.ndx();
 
     // upstream: rsync.c:322-431 `read_ndx_and_attrs()`. The NDX must be read
@@ -353,27 +375,49 @@ fn read_response_header<R: Read>(
     // never negotiated INC_RECURSE still trips the `rsync.c:343` gate on every
     // marker, exactly as this driver behaved before. `last_file_ndx` is
     // diagnostic context for that error only; it is not a classification input.
-    let (echoed_ndx, sender_attrs) = crate::receiver::ndx_stream::read_ndx_and_attrs(
+    let read = crate::receiver::ndx_stream::read_ndx_and_attrs(
         reader,
         ndx_codec,
         flist_sink,
         ctx.config.preserve_xattrs,
         ctx.config.want_xattr_optim,
-    )?
-    .ok_or_else(|| {
-        // upstream: rsync.c:334-335 - `NDX_DONE` ends the phase. Reaching it
-        // with a transfer still outstanding means the sender dropped a file
-        // without the receiver retiring it (e.g. an unconsumed `MSG_NO_SEND`,
-        // io.c:1639 -> got_flist_entry_status(), io.c:1089). Fail loudly here
-        // rather than reading attributes that were never sent.
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "sender ended the phase (NDX_DONE) while the response for NDX {expected_ndx} \
-                 was still outstanding - protocol violation"
-            ),
-        )
-    })?;
+    );
+    let (echoed_ndx, sender_attrs) = match read {
+        Ok(Some(pair)) => pair,
+        Ok(None) => {
+            // upstream: rsync.c:334-335 - `NDX_DONE` ends the phase. Reaching it
+            // with a transfer still outstanding means the sender dropped a file
+            // without the receiver retiring it (e.g. an unconsumed `MSG_NO_SEND`,
+            // io.c:1639 -> got_flist_entry_status(), io.c:1089). Fail loudly here
+            // rather than reading attributes that were never sent.
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "sender ended the phase (NDX_DONE) while the response for NDX \
+                     {expected_ndx} was still outstanding - protocol violation"
+                ),
+            ));
+        }
+        Err(err) => {
+            // upstream: io.c:1809-1818 -> got_flist_entry_status(FES_NO_SEND, ndx)
+            // retires the declined entry by index. The sender emits MSG_NO_SEND
+            // the moment it fails to open a file (sender.c:669,723,751), which -
+            // against an upstream sender - can name a still-outstanding later
+            // request while this front is awaited. Hand `pending` back untouched
+            // so the caller retires the named entry by NDX instead of aborting;
+            // the front's response is still coming when the decline is not it.
+            if let Some(declined) = err
+                .get_ref()
+                .and_then(|inner| inner.downcast_ref::<crate::reader::FileDeclinedError>())
+            {
+                return Ok(HeaderOutcome::Declined {
+                    ndx: declined.ndx,
+                    pending,
+                });
+            }
+            return Err(err);
+        }
+    };
 
     // upstream: receiver.c:871-881 - `recv_files()` tests `F_IS_ACTIVE` on the
     // entry the peer's index resolves to, before doing anything else with it. A
@@ -431,7 +475,7 @@ fn read_response_header<R: Read>(
         0
     };
 
-    Ok(ResponseHeader {
+    Ok(HeaderOutcome::Header(ResponseHeader {
         file_path,
         basis_path,
         signature,
@@ -439,11 +483,11 @@ fn read_response_header<R: Read>(
         use_inplace,
         append_offset,
         xattr_values: sender_attrs.xattr_values,
-    })
+    }))
 }
 
 /// Parsed response header from the sender after NDX and sum_head validation.
-struct ResponseHeader {
+pub(crate) struct ResponseHeader {
     /// Destination file path.
     file_path: std::path::PathBuf,
     /// Optional basis file path for delta transfers.
@@ -892,7 +936,13 @@ mod tests {
             std::path::PathBuf::from("data.txt"),
             0,
         );
-        read_response_header(&mut reader, &mut ndx_codec, pending, &ctx, receiver)
+        match read_response_header(&mut reader, &mut ndx_codec, pending, &ctx, receiver)? {
+            HeaderOutcome::Header(header) => Ok(header),
+            HeaderOutcome::Declined { ndx, .. } => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("sender declined NDX {ndx}"),
+            )),
+        }
     }
 
     /// A sender that names a CLEARED file-list slot is refused with upstream's
