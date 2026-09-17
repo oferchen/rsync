@@ -55,7 +55,6 @@
 //! requests as they arrive and sends responses in order.
 
 pub mod async_signature;
-pub mod job;
 pub mod messages;
 mod pending;
 pub mod receiver;
@@ -64,7 +63,6 @@ mod state;
 
 use std::env;
 
-pub use job::{FileJob, FileList, MAX_RETRY_COUNT, TransferFlags};
 pub use pending::PendingTransfer;
 pub use state::PipelineState;
 
