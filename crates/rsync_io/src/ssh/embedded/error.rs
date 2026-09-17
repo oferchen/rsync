@@ -140,4 +140,45 @@ pub enum SshError {
         /// IP version preference that filtered out all results.
         preference: String,
     },
+
+    /// A `ProxyCommand` (or a `ProxyJump` lowered into one) could not be
+    /// spawned, or its stdin/stdout could not be captured.
+    ///
+    /// Mirrors the failure upstream reports when its proxy fork/exec fails
+    /// (openssh/sshconnect.c:222-286 `ssh_proxy_connect`): the connection
+    /// never starts rather than silently falling back to a direct dial.
+    #[error("proxy command failed: {reason}")]
+    ProxyCommand {
+        /// What went wrong spawning the command or capturing its stdio.
+        reason: String,
+    },
+
+    /// A `ProxyCommand`/`ProxyJump` referenced a percent token the embedded
+    /// transport does not expand.
+    ///
+    /// Only the connection tokens `%h`, `%p`, `%r` and the literal `%%` are
+    /// supported (upstream's `ssh_proxy_connect` expands the same
+    /// connection set, openssh/sshconnect.c:236-241). An unknown token is
+    /// refused loudly rather than passed to the shell verbatim, since a
+    /// stray `%n`/`%C` would otherwise reach the command unexpanded.
+    #[error("unsupported percent token %{token} in proxy command")]
+    ProxyTokenUnsupported {
+        /// The character following the unhandled `%`.
+        token: char,
+    },
+
+    /// `ProxyUseFdpass yes` was requested with an active `ProxyCommand`.
+    ///
+    /// Upstream's fd-passing variant expects the command to hand back a
+    /// connected socket over its stdout via `SCM_RIGHTS`
+    /// (openssh/sshconnect.c:151-210 `ssh_proxy_fdpass_connect`). The
+    /// embedded transport dials russh over a byte stream and has no way to
+    /// receive a passed descriptor, so the request is refused rather than
+    /// run as an ordinary stdio proxy - which would misinterpret a
+    /// descriptor-passing helper's protocol.
+    #[error(
+        "ProxyUseFdpass is not supported by the embedded SSH transport; \
+         drop it or use an external ssh binary"
+    )]
+    ProxyUseFdpassUnsupported,
 }
