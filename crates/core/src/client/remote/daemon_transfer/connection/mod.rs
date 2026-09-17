@@ -4,6 +4,7 @@
 //! selection, MOTD output, authentication (AUTHREQD), and early-input
 //! forwarding. Mirrors upstream `clientserver.c:start_inband_exchange()`.
 
+use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
@@ -29,7 +30,11 @@ use crate::client::error::invalid_argument_error;
 pub(crate) struct DaemonTransferRequest {
     pub(crate) address: DaemonAddress,
     pub(crate) module: String,
-    pub(crate) path: String,
+    /// The requested path within the module, carried as an `OsString` so a
+    /// non-UTF-8 operand byte (e.g. a 0xFF in a filename) survives verbatim to
+    /// the secluded-args wire. upstream carries daemon operand paths as raw
+    /// `char*` end-to-end (clientserver.c).
+    pub(crate) path: OsString,
     pub(crate) username: Option<String>,
 }
 
@@ -57,13 +62,19 @@ impl DaemonTransferRequest {
     ///
     /// Format: `rsync://[user@]host[:port]/module/path`. `default_port` applies
     /// when the authority names no port; see [`Self::resolve_default_port`].
-    pub(crate) fn parse_rsync_url(url: &str, default_port: u16) -> Result<Self, ClientError> {
-        let rest = url
-            .strip_prefix("rsync://")
-            .or_else(|| url.strip_prefix("RSYNC://"))
-            .ok_or_else(|| invalid_argument_error(&format!("not an rsync:// URL: {url}"), 1))?;
-
-        Self::from_url_authority(rest, url, "rsync", default_port)
+    pub(crate) fn parse_rsync_url(url: &OsStr, default_port: u16) -> Result<Self, ClientError> {
+        // The scheme is ASCII, so detect it on the lossy view; the operand's
+        // path bytes are preserved by slicing the raw `OsStr` past the prefix
+        // rather than routing them through the lossy `String`.
+        let lossy = url.to_string_lossy();
+        if !(lossy.starts_with("rsync://") || lossy.starts_with("RSYNC://")) {
+            return Err(invalid_argument_error(
+                &format!("not an rsync:// URL: {lossy}"),
+                1,
+            ));
+        }
+        let rest = os_str_drop_prefix(url, "rsync://".len());
+        Self::from_url_authority(&rest, &lossy, "rsync", default_port)
     }
 
     /// Parses a quic:// URL into a transfer request, tagging the address with
@@ -72,36 +83,40 @@ impl DaemonTransferRequest {
     /// Format: `quic://[user@]host[:port]/module/path`. The grammar is
     /// identical to `rsync://`; only the selected transport differs (QUIC-8b).
     #[cfg(feature = "quic")]
-    pub(crate) fn parse_quic_url(url: &str, default_port: u16) -> Result<Self, ClientError> {
-        let rest = url
-            .strip_prefix("quic://")
-            .or_else(|| url.strip_prefix("QUIC://"))
-            .ok_or_else(|| invalid_argument_error(&format!("not a quic:// URL: {url}"), 1))?;
-
-        Ok(Self::from_url_authority(rest, url, "quic", default_port)?
-            .with_transport(Transport::Quic))
+    pub(crate) fn parse_quic_url(url: &OsStr, default_port: u16) -> Result<Self, ClientError> {
+        let lossy = url.to_string_lossy();
+        if !(lossy.starts_with("quic://") || lossy.starts_with("QUIC://")) {
+            return Err(invalid_argument_error(
+                &format!("not a quic:// URL: {lossy}"),
+                1,
+            ));
+        }
+        let rest = os_str_drop_prefix(url, "quic://".len());
+        Ok(
+            Self::from_url_authority(&rest, &lossy, "quic", default_port)?
+                .with_transport(Transport::Quic),
+        )
     }
 
     /// Parses the shared daemon-URL body (`[user@]host[:port]/module/path`)
     /// after the scheme prefix has been stripped. `scheme` names the origin
     /// scheme for the "must specify a module" diagnostic.
     fn from_url_authority(
-        rest: &str,
+        rest: &OsStr,
         url: &str,
         scheme: &str,
         default_port: u16,
     ) -> Result<Self, ClientError> {
         use super::super::super::module_list::parse_host_port;
 
-        let mut parts = rest.splitn(2, '/');
-        let host_port = parts.next().unwrap_or("");
-        let path_part = parts.next().unwrap_or("");
+        // `[user@]host[:port]` is the ASCII structural head; the `module[/path]`
+        // tail keeps its raw bytes so a non-UTF-8 path survives to the wire.
+        let (host_port, module_path) = split_operand_head(rest, b"/")
+            .unwrap_or_else(|| (rest.to_string_lossy().into_owned(), OsString::new()));
 
-        let target = parse_host_port(host_port, default_port)?;
+        let target = parse_host_port(&host_port, default_port)?;
 
-        let mut path_parts = path_part.splitn(2, '/');
-        let module = path_parts.next().unwrap_or("").to_owned();
-        let file_path = path_parts.next().unwrap_or("").to_owned();
+        let (module, path) = split_module_path(&module_path);
 
         if module.is_empty() {
             return Err(invalid_argument_error(
@@ -113,7 +128,7 @@ impl DaemonTransferRequest {
         Ok(Self {
             address: target.address,
             module,
-            path: file_path,
+            path,
             username: target.username,
         })
     }
@@ -135,28 +150,94 @@ impl DaemonTransferRequest {
     ///
     /// upstream: `main.c` - `host::module` is equivalent to `rsync://host/module`.
     pub(crate) fn parse_double_colon(
-        operand: &str,
+        operand: &OsStr,
         default_port: u16,
     ) -> Result<Self, ClientError> {
         use super::super::super::module_list::parse_host_port;
 
-        let (host_part, module_path) = operand.split_once("::").ok_or_else(|| {
-            invalid_argument_error(&format!("not a daemon operand: {operand}"), 1)
+        // `[user@]host` is ASCII; the `module[/path]` tail past `::` keeps its
+        // raw bytes so a non-UTF-8 path survives to the wire.
+        let (host_part, module_path) = split_operand_head(operand, b"::").ok_or_else(|| {
+            invalid_argument_error(
+                &format!("not a daemon operand: {}", operand.to_string_lossy()),
+                1,
+            )
         })?;
 
-        let target = parse_host_port(host_part, default_port)?;
+        let target = parse_host_port(&host_part, default_port)?;
 
-        let mut path_parts = module_path.splitn(2, '/');
-        let module = path_parts.next().unwrap_or("").to_owned();
-        let file_path = path_parts.next().unwrap_or("").to_owned();
+        let (module, path) = split_module_path(&module_path);
 
         Ok(Self {
             address: target.address,
             module,
-            path: file_path,
+            path,
             username: target.username,
         })
     }
+}
+
+/// Drops the first `n` bytes (a confirmed ASCII scheme prefix) from an operand,
+/// preserving the remaining raw bytes.
+///
+/// Because the prefix is ASCII, `n` lands on a character boundary on every
+/// target; the tail keeps its verbatim filesystem bytes on Unix (a non-UTF-8
+/// operand byte survives) and its exact WTF-8 on other targets, whose operands
+/// originate from Unicode argv.
+fn os_str_drop_prefix(operand: &OsStr, n: usize) -> OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        OsString::from_vec(operand.as_bytes()[n..].to_vec())
+    }
+    #[cfg(not(unix))]
+    {
+        OsString::from(operand.to_string_lossy()[n..].to_owned())
+    }
+}
+
+/// Splits an operand at the first occurrence of the ASCII delimiter `delim`,
+/// returning the head as a lossy `String` and the tail as a byte-preserving
+/// `OsString`.
+///
+/// The head (`[user@]host[:port]`) is ASCII by the daemon-operand grammar and
+/// feeds `parse_host_port` (a `&str` API). The tail (`module[/path]`) may hold
+/// a non-UTF-8 filename that rsync carries as raw `char*`; keeping it as raw
+/// bytes lets a byte such as 0xFF reach the secluded-args wire verbatim.
+/// `delim` is ASCII, so a byte-level search never lands inside a multibyte (or
+/// WTF-8) sequence. Returns `None` when the delimiter is absent.
+fn split_operand_head(operand: &OsStr, delim: &[u8]) -> Option<(String, OsString)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let bytes = operand.as_bytes();
+        let pos = bytes.windows(delim.len()).position(|w| w == delim)?;
+        let head = String::from_utf8_lossy(&bytes[..pos]).into_owned();
+        let tail = OsString::from_vec(bytes[pos + delim.len()..].to_vec());
+        Some((head, tail))
+    }
+    #[cfg(not(unix))]
+    {
+        // `delim` is ASCII and non-Unix operands come from Unicode argv, so the
+        // lossy view round-trips exactly.
+        let lossy = operand.to_string_lossy();
+        let delim_str = std::str::from_utf8(delim).expect("split delimiter is ASCII");
+        let pos = lossy.find(delim_str)?;
+        let head = lossy[..pos].to_owned();
+        let tail = OsString::from(lossy[pos + delim_str.len()..].to_owned());
+        Some((head, tail))
+    }
+}
+
+/// Splits a `module[/path]` operand tail at the first `/`.
+///
+/// The module name comes back as a lossy `String` - daemon module names are
+/// ASCII per the config grammar and the module travels as a text handshake
+/// line - while the path keeps its raw bytes so a non-UTF-8 filename survives
+/// to the wire. A tail with no `/` is all module and an empty path.
+fn split_module_path(module_path: &OsStr) -> (String, OsString) {
+    split_operand_head(module_path, b"/")
+        .unwrap_or_else(|| (module_path.to_string_lossy().into_owned(), OsString::new()))
 }
 
 /// Parses the protocol version from an `@RSYNCD` greeting line.

@@ -72,8 +72,8 @@ pub(crate) fn send_daemon_arguments<W: Write>(
         let (options, operands) = split_at_operands(&full_args);
         options
             .iter()
-            .map(|arg| safe_arg_for_daemon(OsStr::new(arg)))
-            .chain(operands.iter().cloned().map(OsString::from))
+            .map(|arg| safe_arg_for_daemon(arg))
+            .chain(operands.iter().cloned())
             .collect()
     };
 
@@ -112,24 +112,31 @@ pub(crate) fn send_daemon_arguments<W: Write>(
     // via the secluded-args wire format (null-separated with empty terminator),
     // applying iconvbufs(ic_send, ...) per arg when --iconv is configured.
     if protect {
-        let mut secluded = vec!["rsync"];
         // upstream: options.c:2734-2745 - `--iconv=...` is emitted before the
         // NULL cutoff, so it already travelled in phase 1
         // (`build_minimal_daemon_args`). Skip it here to avoid sending it
         // twice; `full_args` still carries it for the non-protect single-phase
-        // send path above.
-        secluded.extend(
-            full_args
-                .iter()
-                .filter(|a| !a.starts_with("--iconv="))
-                .map(String::as_str),
-        );
+        // send path above. The filter operates on the arg's raw bytes so the
+        // trailing operand (which never matches the ASCII `--iconv=` prefix)
+        // keeps its non-UTF-8 bytes intact.
+        let payload: Vec<&OsStr> = full_args
+            .iter()
+            .filter(|a| !daemon_arg_wire_bytes(a).starts_with(b"--iconv="))
+            .map(OsString::as_os_str)
+            .collect();
         // upstream: rsync.c:296-297 - DEBUG_GTE(CMD, 1) emits
         // `print_child_argv("protected args:", args + i + 1)` right before the
         // per-arg `iconvbufs(ic_send, ...)` loop. Upstream's argv begins after
         // the original NULL terminator at `args + i + 1`, which is the
         // post-`"rsync"` payload - emit the matching shape here.
-        protocol::cmd::trace_protected_args(&secluded[1..]);
+        protocol::cmd::trace_protected_args(&payload);
+        // upstream: rsync.c:283-296 send_protected_args() prepends argv[0]
+        // (`"rsync"`) ahead of the payload. Ship every arg as raw bytes so a
+        // non-UTF-8 operand path survives verbatim (secluded_args writes bytes
+        // unchanged; `send_secluded_args` accepts any `AsRef<[u8]>`).
+        let mut secluded: Vec<&[u8]> = Vec::with_capacity(payload.len() + 1);
+        secluded.push(b"rsync".as_slice());
+        secluded.extend(payload.iter().map(|a| daemon_arg_wire_bytes(a)));
         let iconv_converter = config.iconv().resolve_converter();
         protocol::secluded_args::send_secluded_args(stream, &secluded, iconv_converter.as_ref())
             .map_err(|e| {
@@ -247,7 +254,7 @@ pub(super) fn build_full_daemon_args(
     request: &DaemonTransferRequest,
     protocol: ProtocolVersion,
     is_sender: bool,
-) -> Vec<String> {
+) -> Vec<OsString> {
     let mut args = Vec::new();
     // upstream: options.c:2608-2610
     args.push("--server".to_owned());
@@ -813,11 +820,32 @@ pub(super) fn build_full_daemon_args(
     // upstream: dummy argument representing CWD.
     args.push(DAEMON_ARG_SEPARATOR.to_owned());
 
-    let module_path = format!("{}/{}", request.module, request.path);
-    args.push(module_path);
-
     strip_client_only_batch_flags(&mut args);
-    args
+
+    // Every option arg above is ASCII/formatted text and widens to `OsString`
+    // losslessly. The module/path operand is the sole argument that can carry a
+    // non-UTF-8 byte (e.g. a 0xFF in the requested path), so it is built
+    // byte-preserving and appended after the `Vec<String>` option stage - it
+    // reaches the secluded-args wire verbatim rather than through a lossy
+    // `String`. upstream: clientserver.c:303 appends the module/path operand as
+    // raw `char*`, mirroring the SSH path's end-to-end `OsString` operand
+    // handling (invocation/builder.rs).
+    let mut os_args: Vec<OsString> = args.into_iter().map(OsString::from).collect();
+    os_args.push(build_module_operand(request));
+    os_args
+}
+
+/// Builds the `module/path` operand as a byte-preserving `OsString`.
+///
+/// The module name is ASCII (daemon config grammar) and joined with a literal
+/// `/`; the path is appended verbatim via [`OsString::push`], which concatenates
+/// the raw bytes on Unix so a non-UTF-8 filename survives to the wire.
+fn build_module_operand(request: &DaemonTransferRequest) -> OsString {
+    let mut operand = OsString::with_capacity(request.module.len() + 1 + request.path.len());
+    operand.push(&request.module);
+    operand.push("/");
+    operand.push(&request.path);
+    operand
 }
 
 /// Removes `--write-batch`, `--only-write-batch`, and `--read-batch` from a
@@ -906,10 +934,11 @@ const DAEMON_ARG_SEPARATOR: &str = ".";
 ///
 /// A vector with no separator is all options - that is the shape
 /// `build_minimal_daemon_args` produces, and it carries no operands to protect.
-fn split_at_operands(args: &[String]) -> (&[String], &[String]) {
+fn split_at_operands(args: &[OsString]) -> (&[OsString], &[OsString]) {
+    let separator = OsStr::new(DAEMON_ARG_SEPARATOR);
     let operands_start = args
         .iter()
-        .position(|arg| arg == DAEMON_ARG_SEPARATOR)
+        .position(|arg| arg.as_os_str() == separator)
         .map_or(args.len(), |dot| dot + 1);
     args.split_at(operands_start)
 }
@@ -1027,6 +1056,143 @@ fn compression_level_numeric(level: compress::zlib::CompressionLevel) -> i32 {
         CompressionLevel::Best => 9,
         CompressionLevel::Precise(n) => i32::from(n.get()),
         CompressionLevel::PreciseSigned(v) => v,
+    }
+}
+
+// upstream: clientserver.c carries the daemon operand path as raw `char*`
+// end-to-end and io.c:send_secluded_args writes each arg's bytes verbatim, so a
+// non-UTF-8 operand (a legal filename) must survive the whole daemon-arg
+// emission byte-for-byte. These tests pin that on the wire; they need raw bytes
+// that no `String` can represent, so they are Unix-only.
+#[cfg(all(test, unix))]
+mod operand_byte_fidelity_tests {
+    use super::*;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    use protocol::ProtocolVersion;
+
+    use crate::client::ClientConfig;
+    use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
+
+    /// The in-module path bytes `a \<0xFF>b`: an ASCII lead-in, a space, a
+    /// literal backslash, a raw 0xFF (the byte a lossy `String` round-trip
+    /// destroys, becoming the 3-byte U+FFFD), and a trailing ASCII byte.
+    fn non_utf8_path_bytes() -> Vec<u8> {
+        let mut p = b"a \\".to_vec();
+        p.push(0xFF);
+        p.push(b'b');
+        p
+    }
+
+    fn request_with_non_utf8_path() -> DaemonTransferRequest {
+        let mut operand = b"rsync://host/mod/".to_vec();
+        operand.extend_from_slice(&non_utf8_path_bytes());
+        DaemonTransferRequest::parse_rsync_url(&OsString::from_vec(operand), 873)
+            .expect("rsync url with a non-UTF-8 path parses")
+    }
+
+    /// The parsed request keeps the operand path byte-for-byte, and the built
+    /// argv's trailing operand is `mod/` + those bytes verbatim - 0xFF is never
+    /// mapped to U+FFFD. A `String` hop anywhere on this path would replace
+    /// 0xFF with the 3-byte U+FFFD, failing both the `.path` and the operand
+    /// assertions.
+    #[test]
+    fn build_full_daemon_args_operand_preserves_non_utf8_bytes() {
+        let request = request_with_non_utf8_path();
+        assert_eq!(request.path.as_bytes(), non_utf8_path_bytes().as_slice());
+
+        let config = ClientConfig::builder().build();
+        let args = build_full_daemon_args(&config, &request, ProtocolVersion::V31, true);
+        let operand = args.last().expect("argv has a trailing operand");
+
+        let mut expected = b"mod/".to_vec();
+        expected.extend_from_slice(&non_utf8_path_bytes());
+        assert_eq!(operand.as_bytes(), expected.as_slice());
+        assert!(operand.as_bytes().contains(&0xFF), "0xFF was lost");
+        assert!(
+            !operand
+                .as_bytes()
+                .windows(3)
+                .any(|w| w == [0xEF, 0xBF, 0xBD]),
+            "operand carries U+FFFD - a lossy String hop crept in"
+        );
+    }
+
+    /// End-to-end golden: with protect-args on (the daemon default), the
+    /// operand travels in the phase-2 secluded-args stream, which writes each
+    /// arg's bytes verbatim. The emitted wire must carry `mod/a \<0xFF>b`
+    /// byte-for-byte (the backslash is NOT doubled - secluded mode does not
+    /// escape) and must not carry U+FFFD. Decoding the secluded frame recovers
+    /// the exact operand bytes.
+    #[test]
+    fn secluded_wire_carries_non_utf8_operand_byte_for_byte() {
+        let request = request_with_non_utf8_path();
+        let config = ClientConfig::builder().protect_args(Some(true)).build();
+
+        let mut wire = Vec::new();
+        send_daemon_arguments(&mut wire, &config, &request, ProtocolVersion::V31, true)
+            .expect("send daemon args");
+
+        let mut expected_operand = b"mod/".to_vec();
+        expected_operand.extend_from_slice(&non_utf8_path_bytes());
+
+        // The operand appears verbatim, framed by a trailing NUL, in the wire.
+        let mut framed = expected_operand.clone();
+        framed.push(0);
+        assert!(
+            wire.windows(framed.len()).any(|w| w == framed.as_slice()),
+            "secluded wire is missing the verbatim operand frame"
+        );
+        assert!(wire.contains(&0xFF), "0xFF was dropped from the wire");
+        assert!(
+            !wire.windows(3).any(|w| w == [0xEF, 0xBF, 0xBD]),
+            "wire carries U+FFFD - the operand went through a lossy String"
+        );
+
+        // Decode the phase-2 secluded frame byte-for-byte and confirm the last
+        // arg is the operand.
+        let phase2 = &wire[find_phase2_start(&wire)..];
+        let decoded = decode_secluded(phase2);
+        assert_eq!(
+            decoded.last().map(Vec::as_slice),
+            Some(expected_operand.as_slice()),
+            "decoded secluded operand must equal the requested path bytes"
+        );
+        assert_eq!(
+            decoded.first().map(Vec::as_slice),
+            Some(b"rsync".as_slice()),
+            "the secluded payload leads with argv[0]"
+        );
+    }
+
+    /// Phase 1 is a run of NUL-terminated args ended by an empty string (a lone
+    /// NUL), so the first `\0\0` pair marks its end; phase 2 (the secluded
+    /// frame) begins immediately after. No phase-1 arg contains an embedded
+    /// NUL, so this boundary is unambiguous.
+    fn find_phase2_start(wire: &[u8]) -> usize {
+        wire.windows(2)
+            .position(|w| w == [0, 0])
+            .map(|i| i + 2)
+            .expect("phase-1 ends with an empty-string NUL terminator")
+    }
+
+    /// Splits a secluded frame (null-separated args, empty-string terminator)
+    /// into raw byte args, byte-for-byte. Unlike `recv_secluded_args` this does
+    /// not UTF-8-decode, so it can recover a non-UTF-8 operand.
+    fn decode_secluded(buf: &[u8]) -> Vec<Vec<u8>> {
+        let mut args = Vec::new();
+        let mut cur = Vec::new();
+        for &b in buf {
+            if b == 0 {
+                if cur.is_empty() {
+                    break;
+                }
+                args.push(std::mem::take(&mut cur));
+            } else {
+                cur.push(b);
+            }
+        }
+        args
     }
 }
 
@@ -1338,12 +1504,23 @@ mod server_option_fidelity_tests {
     use protocol::ProtocolVersion;
 
     fn request() -> DaemonTransferRequest {
-        DaemonTransferRequest::parse_rsync_url("rsync://host/mod/path", 873)
+        DaemonTransferRequest::parse_rsync_url(std::ffi::OsStr::new("rsync://host/mod/path"), 873)
             .expect("valid rsync url")
     }
 
+    /// Builds the daemon argv and renders it as `Vec<String>` for these
+    /// option-fidelity assertions. The builder returns `Vec<OsString>` so a
+    /// non-UTF-8 operand byte survives to the wire; every arg here is ASCII, so
+    /// the lossy render is exact.
     fn args(config: &ClientConfig, is_sender: bool) -> Vec<String> {
-        build_full_daemon_args(config, &request(), ProtocolVersion::V31, is_sender)
+        args_at(config, ProtocolVersion::V31, is_sender)
+    }
+
+    fn args_at(config: &ClientConfig, protocol: ProtocolVersion, is_sender: bool) -> Vec<String> {
+        build_full_daemon_args(config, &request(), protocol, is_sender)
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
     }
 
     // WHY: explicitly-set --info / --debug levels must reach the daemon peer so
@@ -1851,12 +2028,12 @@ mod server_option_fidelity_tests {
         // means the daemon is the receiver, i.e. we are the sender (a push).
         // The polarity is inverted at the top of build_full_daemon_args
         // (`let we_are_sender = !is_sender;`) - do not "correct" it here.
-        let push_28 = build_full_daemon_args(&config, &request(), ProtocolVersion::V28, false);
+        let push_28 = args_at(&config, ProtocolVersion::V28, false);
         assert!(
             !push_28.iter().any(|a| a == "--no-implied-dirs"),
             "daemon push below protocol 30 must not forward --no-implied-dirs: {push_28:?}"
         );
-        let pull_28 = build_full_daemon_args(&config, &request(), ProtocolVersion::V28, true);
+        let pull_28 = args_at(&config, ProtocolVersion::V28, true);
         assert!(
             pull_28.iter().any(|a| a == "--no-implied-dirs"),
             "daemon pull forwards --no-implied-dirs at every protocol: {pull_28:?}"
@@ -2026,8 +2203,18 @@ mod oc_flag_forwarding_tests {
     ];
 
     fn request() -> DaemonTransferRequest {
-        DaemonTransferRequest::parse_rsync_url("rsync://host/mod/path", 873)
+        DaemonTransferRequest::parse_rsync_url(std::ffi::OsStr::new("rsync://host/mod/path"), 873)
             .expect("valid rsync url")
+    }
+
+    /// Builds the daemon argv and renders it as `Vec<String>` for these
+    /// upstream-recognition assertions. Every emitted arg is ASCII, so the
+    /// lossy render of the `Vec<OsString>` the builder returns is exact.
+    fn built_args(config: &ClientConfig, is_sender: bool) -> Vec<String> {
+        build_full_daemon_args(config, &request(), ProtocolVersion::V31, is_sender)
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
     }
 
     /// Sets every oc-invented tuning knob to a non-default value. These are
@@ -2067,18 +2254,8 @@ mod oc_flag_forwarding_tests {
 
     #[test]
     fn oc_tuning_flags_never_reach_daemon_sender_argv() {
-        let baseline = build_full_daemon_args(
-            &ClientConfig::builder().build(),
-            &request(),
-            ProtocolVersion::V31,
-            true,
-        );
-        let args = build_full_daemon_args(
-            &kitchen_sink_config(),
-            &request(),
-            ProtocolVersion::V31,
-            true,
-        );
+        let baseline = built_args(&ClientConfig::builder().build(), true);
+        let args = built_args(&kitchen_sink_config(), true);
         assert_upstream_recognized(&args);
         assert_eq!(
             args, baseline,
@@ -2088,18 +2265,8 @@ mod oc_flag_forwarding_tests {
 
     #[test]
     fn oc_tuning_flags_never_reach_daemon_receiver_argv() {
-        let baseline = build_full_daemon_args(
-            &ClientConfig::builder().build(),
-            &request(),
-            ProtocolVersion::V31,
-            false,
-        );
-        let args = build_full_daemon_args(
-            &kitchen_sink_config(),
-            &request(),
-            ProtocolVersion::V31,
-            false,
-        );
+        let baseline = built_args(&ClientConfig::builder().build(), false);
+        let args = built_args(&kitchen_sink_config(), false);
         assert_upstream_recognized(&args);
         assert_eq!(
             args, baseline,

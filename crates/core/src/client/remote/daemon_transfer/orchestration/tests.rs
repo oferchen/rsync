@@ -1,5 +1,5 @@
 use super::super::connection::DaemonTransferRequest;
-use super::arguments::build_full_daemon_args;
+use super::arguments::build_full_daemon_args as build_full_daemon_args_os;
 use super::server_config::{build_server_config_for_generator, build_server_config_for_receiver};
 use super::transfer::{
     DaemonProgressAdapter, is_dry_run_remote_close, read_files_from_for_forwarding,
@@ -10,6 +10,23 @@ use crate::client::module_list::DaemonAddress;
 
 use protocol::ProtocolVersion;
 
+/// Test shim rendering the daemon argv (`Vec<OsString>`) as `Vec<String>` for
+/// these option-fidelity assertions. `build_full_daemon_args` returns
+/// `Vec<OsString>` so a non-UTF-8 operand byte survives to the wire; every
+/// operand in these fixtures is ASCII, so the lossy render is exact. A
+/// non-UTF-8 operand's byte fidelity is pinned by a dedicated golden test.
+fn build_full_daemon_args(
+    config: &ClientConfig,
+    request: &DaemonTransferRequest,
+    protocol: ProtocolVersion,
+    is_sender: bool,
+) -> Vec<String> {
+    build_full_daemon_args_os(config, request, protocol, is_sender)
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect()
+}
+
 mod protect_args_daemon_tests {
     use super::super::arguments::build_minimal_daemon_args;
     use super::*;
@@ -18,7 +35,7 @@ mod protect_args_daemon_tests {
         DaemonTransferRequest {
             address: DaemonAddress::new("127.0.0.1".to_owned(), 873),
             module: "test".to_owned(),
-            path: String::new(),
+            path: std::ffi::OsString::new(),
             username: None,
         }
     }
@@ -1764,7 +1781,7 @@ mod files_from_daemon_args_tests {
         DaemonTransferRequest {
             address: DaemonAddress::new("127.0.0.1".to_owned(), 873),
             module: "test".to_owned(),
-            path: String::new(),
+            path: std::ffi::OsString::new(),
             username: None,
         }
     }
