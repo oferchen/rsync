@@ -392,7 +392,13 @@ fn open_quic_daemon_stream(
     let server_name = addr.host();
     let mut last_error: Option<io::Error> = None;
     for candidate in candidates {
-        match connector.connect(candidate, server_name) {
+        // The daemon is server-speaks-first: it opens the bidirectional stream
+        // and writes the `@RSYNCD:` greeting before the client sends anything,
+        // so the client accepts that stream rather than opening its own (which
+        // would deadlock - a QUIC stream is invisible to its peer until a frame
+        // is sent on it). Pairs with the daemon's
+        // `QuicAcceptor::from_socket_server_first`.
+        match connector.connect_server_first(candidate, server_name) {
             Ok(stream) => return Ok(DaemonStream::quic(stream)),
             Err(error) => last_error = Some(error),
         }

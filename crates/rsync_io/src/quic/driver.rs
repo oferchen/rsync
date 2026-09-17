@@ -51,6 +51,11 @@ struct Driver {
     shared: Arc<Shared>,
     wake_addr: SocketAddr,
     role: Role,
+    /// Whether this endpoint OPENS the single bidirectional stream (speaks
+    /// first) rather than accepting a peer-opened one. Set per connection so
+    /// both client-first (request/reply) and server-first (rsync daemon
+    /// greeting) exchanges avoid the frameless-stream deadlock.
+    opens_stream: bool,
     /// Scratch buffer `poll_transmit`/`Endpoint::handle` write packets into.
     buf: Vec<u8>,
     /// Scratch buffer for incoming datagrams.
@@ -237,16 +242,29 @@ impl Driver {
             }
         }
         if c.stream.is_none() && !c.conn.is_handshaking() {
-            let opened = match self.role {
-                Role::Client => c.conn.streams().open(Dir::Bi),
-                Role::Server => c.conn.streams().accept(Dir::Bi),
+            // A QUIC stream only becomes visible to its peer once a frame is
+            // sent on it, so the party that speaks first must be the one that
+            // OPENS the single bidirectional stream - otherwise the peer's
+            // `accept` blocks on a frameless stream while the opener waits to
+            // read, and both sides deadlock. `opens_stream` records that choice
+            // per connection: a client-speaks-first exchange (the transport's
+            // request/reply tests) has the client open; the rsync daemon is
+            // server-speaks-first (it writes the `@RSYNCD:` greeting before the
+            // client sends anything), so its acceptor opens and the client
+            // connecting to it accepts.
+            let opened = if self.opens_stream {
+                c.conn.streams().open(Dir::Bi)
+            } else {
+                c.conn.streams().accept(Dir::Bi)
             };
             if let Some(id) = opened {
                 c.stream = Some(id);
                 c.readable = true;
                 progress = true;
+                let peer = c.conn.remote_address();
                 let mut st = self.shared.lock();
                 st.stream_ready = true;
+                st.peer = Some(peer);
                 self.shared.cond.notify_all();
             }
         }
@@ -472,6 +490,7 @@ pub(super) fn spawn_io(
     socket: UdpSocket,
     endpoint: Endpoint,
     role: Role,
+    opens_stream: bool,
     conn: Option<(ConnectionHandle, Connection)>,
 ) -> io::Result<Arc<Io>> {
     let local = socket.local_addr()?;
@@ -491,6 +510,7 @@ pub(super) fn spawn_io(
         shared: Arc::clone(&shared),
         wake_addr,
         role,
+        opens_stream,
         buf: Vec::with_capacity(DATAGRAM_BUF),
         recv_buf: vec![0; DATAGRAM_BUF],
         current_timeout: None,
