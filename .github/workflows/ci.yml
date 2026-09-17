@@ -324,6 +324,62 @@ jobs:
         run: python3 tools/ci/dead_code_census.py gate
 
   # ===========================================================================
+  # Surface Diff - oc vs upstream user-facing surfaces
+  # ---------------------------------------------------------------------------
+  # `tools/ci/surface_diff.sh` mechanically diffs the enumerable surfaces oc
+  # shares with upstream rsync - daemon directives, CLI long/short options,
+  # syslog facilities, --debug/--info words, exit codes, multiplex message
+  # codes, compat-flag bits, socket options, checksum and compression names -
+  # so a missing table row or an undeclared divergence fails loudly instead of
+  # slipping in unreviewed. Every deliberate oc extension is declared with a
+  # reason in tools/ci/surface_diff.accepted; anything else fails --check.
+  #
+  # Pinned to upstream 3.5.0 (per the 3.5.0 rebaseline): the oracle version is
+  # the whole answer to "gap or absorbed?", so a moving pin would silently
+  # re-open rows a release already closed. No Rust toolchain: the script reads
+  # the two source trees with awk/grep and never compiles anything. --self-test
+  # runs first so an extractor that quietly returns nothing fails as a broken
+  # gate rather than a clean pass. Blocking: an informational surface gate is
+  # the drift it is meant to catch.
+  # ===========================================================================
+  surface-diff:
+    name: surface diff (upstream 3.5.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      UPSTREAM_VERSION: "3.5.0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache upstream rsync source
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/interop/upstream-src/rsync-${{ env.UPSTREAM_VERSION }}
+          key: surface-diff-src-${{ env.UPSTREAM_VERSION }}-${{ runner.os }}
+
+      - name: Fetch upstream rsync source
+        run: |
+          set -euo pipefail
+          dir="target/interop/upstream-src"
+          mkdir -p "$dir"
+          if [ ! -d "$dir/rsync-${UPSTREAM_VERSION}" ]; then
+            curl -fsSL --connect-timeout 30 --max-time 300 \
+              "https://download.samba.org/pub/rsync/src/rsync-${UPSTREAM_VERSION}.tar.gz" \
+              -o "$dir/rsync-${UPSTREAM_VERSION}.tar.gz"
+            tar xzf "$dir/rsync-${UPSTREAM_VERSION}.tar.gz" -C "$dir"
+          fi
+
+      - name: Surface extractor self-test
+        run: bash tools/ci/surface_diff.sh --self-test
+
+      - name: Surface diff gate (oc vs upstream 3.5.0)
+        run: bash tools/ci/surface_diff.sh --check
+
+  # ===========================================================================
   # Test Job - Full test suite on Linux with toolchain matrix
   # ===========================================================================
   test:
