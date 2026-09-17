@@ -1267,14 +1267,12 @@ fn info_flag_skip3_is_clamped_not_rejected() {
     assert_eq!(settings.skip, Some(3));
 }
 
-// ---------------------------------------------------------------------------
 // Unknown-item rejection parity (upstream options.c:443-490).
 //
 // MEASURED against target/interop/upstream-src/rsync-3.5.0/rsync. Each of the
 // four pins below reproduces one cell where oc diverged from that binary; the
 // `still` companions are the non-vacuity controls that stop "reject
 // everything" from satisfying the pins.
-// ---------------------------------------------------------------------------
 
 // upstream: options.c:448-454 splits on ',' and skips only ZERO-LENGTH
 // segments (`if (!len) continue;`); it never trims surrounding whitespace, and
@@ -1399,7 +1397,6 @@ fn the_server_side_decoder_still_ignores_an_unknown_item() {
     assert_eq!(settings.stats, Some(1));
 }
 
-// ---------------------------------------------------------------------------
 // Single-owner drift pins.
 //
 // The parser tables in info.rs/debug.rs are THE owner of the accepted word
@@ -1407,7 +1404,6 @@ fn the_server_side_decoder_still_ignores_an_unknown_item() {
 // logging crate keeps its own name -> enum match. Each copy is pinned to the
 // owner THROUGH THE LIVE PARSE PATH so a word added or removed in one place
 // fails here instead of drifting silently.
-// ---------------------------------------------------------------------------
 
 /// Extracts the word-table names from a `--info=help`/`--debug=help` body.
 ///

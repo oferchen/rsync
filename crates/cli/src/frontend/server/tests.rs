@@ -1912,8 +1912,6 @@ fn parse_server_args_log_format_strips_from_dest() {
     assert_eq!(pos_args, vec![OsString::from("/src/path/")]);
 }
 
-// --- server_daemon_mode_requested tests ---
-
 #[test]
 fn server_daemon_mode_not_requested_empty() {
     let args: Vec<OsString> = vec![];
@@ -1965,8 +1963,6 @@ fn server_daemon_mode_not_requested_after_double_dash() {
     ];
     assert!(!server_daemon_mode_requested(&args));
 }
-
-// --- server_daemon_arguments tests ---
 
 #[test]
 fn server_daemon_arguments_strips_server_and_daemon() {
@@ -2413,7 +2409,6 @@ fn parse_server_args_skips_task291_long_flags() {
     );
 }
 
-// ===========================================================================
 // popt arg-arity model: split `-e` capability value (issue #7153) and the
 // client-emit -> server-decode round-trip guard.
 //
@@ -2427,7 +2422,6 @@ fn parse_server_args_skips_task291_long_flags() {
 // the `.<caps>` token into `positional_args` (push wrote to `.<caps>/...`; a
 // sender exited 23 on `link_stat ".<caps>"`) AND lost compat negotiation
 // (the `-e` value never reached `ParsedServerFlags`).
-// ===========================================================================
 
 use core::client::ClientConfig;
 use core::client::remote::{RemoteInvocationBuilder, RemoteRole};

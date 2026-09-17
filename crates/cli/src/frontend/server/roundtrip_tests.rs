@@ -181,7 +181,6 @@ fn broad_flag_mix_never_leaks_positionals() {
     assert_no_positional_leak(&config, RemoteRole::Receiver, &["/remote/a", "/remote/b"]);
 }
 
-// ---------------------------------------------------------------------------
 // VALUE round-trip: not just "the flag did not leak" but "the value the parser
 // captures is exactly the value the builder emitted". The presence guards above
 // (and #7160) prove the token reaches the server parser; these prove the VALUE
@@ -192,7 +191,6 @@ fn broad_flag_mix_never_leaks_positionals() {
 // way out: --bwlimit scales bytes/sec to whole KiB, --iconv forwards only the
 // remote charset, --info/--debug are role-filtered and level-1 is emitted bare.
 // Comparing against the emitted token captures the true wire contract.
-// ---------------------------------------------------------------------------
 
 /// Returns the value of the joined `--flag=value` server arg the builder
 /// emitted, panicking if the flag was not forwarded for this config/role (so a
