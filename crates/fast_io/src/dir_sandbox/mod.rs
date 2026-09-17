@@ -89,9 +89,10 @@ pub use at_syscalls::{
     nested_parent_anchoring_supported, openat, openat_via_sandbox_or_fallback,
     read_dir_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,
     recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback, renameat,
-    renameat_via_sandbox_or_fallback, secure_chmod_at, secure_chown_at, secure_utimes_at,
-    symlinkat, symlinkat_via_sandbox_or_fallback, unlink_path, unlink_via_sandbox_or_fallback,
-    unlinkat, utimensat, utimensat_via_sandbox_or_fallback,
+    renameat_via_sandbox_or_fallback, secure_chmod_at, secure_chmod_at_dirfd, secure_chown_at,
+    secure_chown_at_dirfd, secure_utimes_at, secure_utimes_at_dirfd, symlinkat,
+    symlinkat_via_sandbox_or_fallback, unlink_path, unlink_via_sandbox_or_fallback, unlinkat,
+    utimensat, utimensat_via_sandbox_or_fallback,
 };
 
 /// Parent-dirfd carrier threaded through the receiver pipeline.
