@@ -1789,7 +1789,10 @@ fn nested_mkdirat_via_sandbox_creates_under_interior_dir() {
 /// The `S_IFIFO` type bits ORed with the requested permission bits, as
 /// upstream's `do_mknod_at()` receives `file->mode`.
 fn fifo_mode() -> u32 {
-    (libc::S_IFIFO as u32) | 0o644
+    // POSIX `S_IFIFO` octal literal rather than `libc::S_IFIFO as u32`: the
+    // constant is `u32` on Linux (so the cast trips `unnecessary_cast`) but
+    // `u16` on Apple targets. Pinned to libc by `s_if_type_bits_match_libc`.
+    0o010000 | 0o644
 }
 
 /// Non-vacuity companion for the FIFO-confinement pin (single-component
