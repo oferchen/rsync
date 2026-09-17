@@ -90,3 +90,7 @@ harness = false
 [[test]]
 name = "parallel_delta_stripe_invariance"
 required-features = ["bench-internal"]
+
+[[test]]
+name = "parallel_delta_bithash_order_neutral"
+required-features = ["bench-internal"]
