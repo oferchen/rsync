@@ -60,6 +60,12 @@ impl ReceiverContext {
         writer: &mut W,
     ) -> io::Result<TransferStats> {
         let _t = PhaseTimer::new("receiver-transfer-replay");
+        // Buffer itemize rows so the generator-half's speculative local rows can
+        // be dropped below and only the recorded stream's authoritative rows are
+        // flushed, in flist-index order (like run_pipelined). Under a custom
+        // `--out-format` the buffered rows are metadata events drained by the
+        // dispatch after this returns.
+        self.defer_itemize = true;
         let (mut reader, file_count, setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 
@@ -133,6 +139,22 @@ impl ReceiverContext {
             ..Default::default()
         };
 
+        // upstream: generator.c:2753-2754 - `do_delete_pass()` runs regardless
+        // of read_batch (the replaying generator forks and runs locally,
+        // main.c:639-651). --delete-before / --delete-during sweep here, before
+        // the row loop, exactly as the network drivers do (pipelined.rs Early);
+        // --delete-after / --delete-delay defer to the late site below.
+        if self.delete_pass_is_early() {
+            self.run_receiver_delete_pass(
+                super::DeletePassPhase::Early,
+                &dest_dir,
+                #[cfg(unix)]
+                sandbox.as_ref(),
+                writer,
+                &mut stats,
+            )?;
+        }
+
         // Quick-check walk for its side effects only (metadata-only fixes,
         // upstream generator.c:1900 set_file_attrs for identical files). The
         // returned request list is discarded: the recorded stream, not the
@@ -150,6 +172,16 @@ impl ReceiverContext {
             acl_id_map.as_deref(),
         ));
         self.server_no_transfer_itemize.borrow_mut().clear();
+        // The generator half above itemizes against the LOCAL quick-check (it
+        // classifies which files it would transfer), but on a replay the
+        // recorded stream - not the local plan - decides what is itemized and
+        // transferred (upstream drives itemize off the stream iflags:
+        // receiver.c:903 maybe_log_item for non-transfer rows, receiver.c:1273
+        // log_item for transfer rows). Drop the speculative rows so only the
+        // recorded rows emitted in the loop below survive; this is the itemize
+        // counterpart of the server_no_transfer_itemize clear above.
+        self.itemize_rows.borrow_mut().clear();
+        self.event_rows.borrow_mut().clear();
 
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
@@ -228,12 +260,20 @@ impl ReceiverContext {
             };
 
             if attrs.iflags & SenderAttrs::ITEM_TRANSFER == 0 {
-                // upstream: receiver.c:904-925 - a metadata-only itemize row
-                // carries no data payload; the local generator half already
-                // applied the attribute fixes, so the row is only consumed.
-                // Such a row may also name a segment's parent directory via
-                // an index below the segment's ndx_start (receiver.c:864-871
-                // resolves it from dir_flist), so no flist lookup is needed.
+                // upstream: receiver.c:903 maybe_log_item(file, iflags, ...) - a
+                // metadata-only itemize row carries no data payload; the local
+                // generator half already applied the attribute fixes, so the row
+                // is only itemized and consumed. The recorded iflags are
+                // authoritative, so re-emit the row here from them. A row may
+                // name a segment's parent directory via an index below the
+                // segment's ndx_start (receiver.c:864-871 resolves it from
+                // dir_flist); when the index does not resolve to a live flist
+                // entry there is nothing to itemize, so it is only consumed.
+                if let Some(flat_idx) = self.wire_to_flat_ndx(ndx) {
+                    let entry = self.file_list[flat_idx].clone();
+                    let iflags = crate::generator::ItemFlags::from_raw(u32::from(attrs.iflags));
+                    self.emit_or_record_itemize(writer, flat_idx, &iflags, &entry)?;
+                }
                 continue;
             }
 
@@ -411,6 +451,19 @@ impl ReceiverContext {
             }
             drop(file);
 
+            // upstream: generator.c:2280-2288 - read_batch with make_backups>0
+            // still resolves the backup name and preserves the pre-image before
+            // the destination is overwritten. Routed through the same
+            // commit-tier owner the network commit uses (see
+            // `ReceiverContext::backup_existing_dest`).
+            self.backup_existing_dest(
+                &dest_dir,
+                &file_path,
+                &metadata_opts,
+                #[cfg(unix)]
+                sandbox.as_deref(),
+            )?;
+
             // Commit: rename the temp file over the destination. Mirrors the
             // SEC-1.j routing of sync.rs (the sandbox-anchored renameat with
             // the io_uring fast path first).
@@ -480,7 +533,21 @@ impl ReceiverContext {
                 metadata_errors.push((file_path.clone(), acl_err.to_string()));
             }
 
-            // upstream: rsync.c:672-676 - name the updated file under -v.
+            // upstream: receiver.c:1273 - `log_item(log_code, file, iflags,
+            // NULL)` itemizes every transferred row locally, regardless of
+            // read_batch (generator.c:589's `!read_batch` guards only the wire
+            // itemize header, not the per-file local log). The recorded iflags
+            // carry the generator's itemize decision (ITEM_IS_NEW /
+            // ITEM_REPORT_* / ITEM_TRANSFER), so reuse them through the same
+            // owner the network receiver uses. A no-op unless `-i` /
+            // `--out-format` is active (emit_itemize gates on
+            // should_emit_itemize()).
+            let iflags = crate::generator::ItemFlags::from_raw(u32::from(attrs.iflags));
+            self.emit_or_record_itemize(writer, flat_idx, &iflags, &file_entry)?;
+
+            // upstream: rsync.c:672-676 - name the updated file under -v. Under
+            // `-i`/`--out-format` the itemize row above carries the name, so the
+            // bare name is suppressed (should_emit_itemize()).
             if self.config.flags.verbose
                 && self.config.connection.client_mode
                 && !self.should_emit_itemize()
@@ -513,9 +580,39 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_hardlinks(&dest_dir, writer)?;
 
+        // Drain the recorded stream's accumulated io_error before the late
+        // sweep consults `stats.io_error`, mirroring the network drivers
+        // (pipelined.rs, upstream generator.c:304-311 gates delete_in_dir on the
+        // global io_error). `take_io_error` is destructive and ORs, so the
+        // second drain below folds in anything read during finalization without
+        // double-counting.
+        stats.io_error |= reader.take_io_error();
+
+        // upstream: generator.c:2425-2428 - --delete-after / --delete-delay run
+        // the sweep only after every file has landed. Runs before touch_up_dirs
+        // so deletion-induced parent mtime changes are re-tidied, matching the
+        // network drivers and upstream's touch_up_dirs-after-late-delete order.
+        if self.delete_pass_is_late() {
+            self.run_receiver_delete_pass(
+                super::DeletePassPhase::Late,
+                &dest_dir,
+                #[cfg(unix)]
+                sandbox.as_ref(),
+                writer,
+                &mut stats,
+            )?;
+        }
+
         // upstream: generator.c:2093-2146 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(&dest_dir, writer);
+
+        // Flush any buffered `-v` names then the deferred itemize rows in
+        // flist-index order before the goodbye handshake, matching run_pipelined.
+        // Under a custom `--out-format` the rows are metadata events left in
+        // `event_rows` for the dispatch to drain and render (batch.rs).
+        self.flush_names_all()?;
+        self.flush_itemize_rows(writer)?;
 
         self.finalize_replay(reader, writer)?;
 
