@@ -407,7 +407,12 @@ fn serve_connections(
             proxy_policy.clone(),
             daemon_timeout,
         );
-        materialize_and_serve_quic(quic_sockets, quic_identity, &quic_context, log_sink.as_ref());
+        materialize_and_serve_quic(
+            quic_sockets,
+            quic_identity,
+            &quic_context,
+            log_sink.as_ref(),
+        );
     }
 
     let mut state = AcceptLoopState {

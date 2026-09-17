@@ -192,4 +192,3 @@ fn serve_quic_acceptor(acceptor: QuicAcceptor, context: ConnectionContext) {
         }
     }
 }
-
