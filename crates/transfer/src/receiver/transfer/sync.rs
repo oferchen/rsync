@@ -5,7 +5,6 @@
 //! `run_pipelined` / `run_pipelined_incremental` which decouple network reads
 //! from disk writes via the pipeline machinery.
 
-use std::fs;
 use std::io::{self, Read, Write};
 
 use logging::{PhaseTimer, debug_log, info_log};
@@ -427,98 +426,17 @@ impl ReceiverContext {
             }
             drop(file);
 
-            // upstream: backup.c:make_backup() - rename existing file before overwrite
-            if self.config.flags.backup && file_path.exists() {
-                let backup_path = engine::compute_backup_path(
-                    &dest_dir,
-                    &file_path,
-                    None,
-                    self.config.backup_dir.as_ref().map(std::path::Path::new),
-                    std::ffi::OsStr::new(self.config.effective_backup_suffix()),
-                );
-                if let Some(parent) = backup_path.parent() {
-                    match self.config.backup_dir.as_ref().map(std::path::Path::new) {
-                        // upstream: backup.c:159,copy_valid_path - with
-                        // --backup-dir each new subdirectory inherits its source
-                        // dir's attrs and any non-directory obstruction is
-                        // cleared before it is recreated as a directory.
-                        Some(backup_dir) => {
-                            engine::create_backup_dir_parents(
-                                &dest_dir,
-                                backup_dir,
-                                parent,
-                                &metadata_opts,
-                                |path| fs::create_dir_all(path),
-                            )?;
-                        }
-                        // Without --backup-dir the parent already exists next to
-                        // the destination; upstream runs no copy_valid_path.
-                        None if parent.exists() => {}
-                        None => fs::create_dir_all(parent)?,
-                    }
-                }
-                // SEC-1.j: route the backup rename through the sandbox dirfd
-                // when both endpoints sit beneath the destination root as
-                // single-component leaves, so a TOCTOU symlink swap on
-                // either leaf cannot redirect the commit to an
-                // attacker-chosen inode. Falls back to path-based
-                // `std::fs::rename` for multi-component / cross-tree cases.
+            // upstream: backup.c:make_backup() - back up the existing file
+            // before overwrite. Routed through the shared commit-tier owner so
+            // this and the local-replay path cannot drift (see
+            // `ReceiverContext::backup_existing_dest`).
+            self.backup_existing_dest(
+                &dest_dir,
+                &file_path,
+                &metadata_opts,
                 #[cfg(unix)]
-                {
-                    if backup_path.parent() == Some(dest_dir.as_path()) {
-                        let backup_rel = backup_path
-                            .strip_prefix(&dest_dir)
-                            .map(std::path::Path::to_path_buf)
-                            .unwrap_or_else(|_| backup_path.clone());
-                        fast_io::renameat_via_sandbox_or_fallback(
-                            sandbox.as_deref(),
-                            &dest_dir,
-                            relative_path,
-                            &file_path,
-                            &dest_dir,
-                            &backup_rel,
-                            &backup_path,
-                            true,
-                        )?;
-                    } else {
-                        // Every `--backup-dir` lands here: the backup name
-                        // carries the directory as a second component, so the
-                        // sandbox dirfd is not the right anchor for it. Upstream
-                        // resolves it with the operator-path ownership walk
-                        // bound to the module root instead - a trusted-owned
-                        // directory symlink standing at the `--backup-dir` is
-                        // followed by design, so only the root can refuse the
-                        // landing site.
-                        //
-                        // upstream: backup.c:443-449 `make_backup()`;
-                        // syscall.c:1891 `do_rename_at()` under
-                        // `operator_path_resolve`.
-                        fast_io::operator_rename_confined(&file_path, &backup_path, true)?;
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    fs::rename(&file_path, &backup_path)?;
-                }
-                // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) on RENAME
-                // success branch of link_or_rename.
-                engine::trace_make_backup_rename(&file_path.display().to_string());
-                // upstream: backup.c:352 - INFO_GTE(BACKUP, 1) reports every
-                // successful backup. Mirrors the local-copy executor emission
-                // in engine::local_copy::context_impl::state::backup_existing_entry.
-                // Paths are displayed relative to the destination root to
-                // match upstream test assertions (testsuite/backup.test).
-                let file_rel = file_path.strip_prefix(&dest_dir).unwrap_or(&file_path);
-                let backup_rel_display =
-                    backup_path.strip_prefix(&dest_dir).unwrap_or(&backup_path);
-                info_log!(
-                    Backup,
-                    1,
-                    "backed up {} to {}",
-                    file_rel.display(),
-                    backup_rel_display.display()
-                );
-            }
+                sandbox.as_deref(),
+            )?;
 
             // upstream: Linux 5.11+ io_uring submits IORING_OP_RENAMEAT; we
             // fall back to std::fs::rename on other platforms or older kernels.
@@ -561,7 +479,7 @@ impl ReceiverContext {
                 }
                 #[cfg(all(not(unix), not(windows)))]
                 {
-                    fs::rename(temp_guard.path(), &file_path)?;
+                    std::fs::rename(temp_guard.path(), &file_path)?;
                 }
             }
             CleanupManager::global().unregister_temp_file(temp_guard.path());

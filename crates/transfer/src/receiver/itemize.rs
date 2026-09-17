@@ -535,8 +535,11 @@ impl ReceiverContext {
     /// Drains every buffered `--out-format` event row in ascending flist-index
     /// order (the same order [`Self::flush_itemize_rows`] uses for strings).
     /// Called once by the client driver after the transfer, which hands each row
-    /// to the `ItemizeCallback` so the CLI renders the user's template.
-    pub(crate) fn drain_event_rows(&self) -> Vec<crate::progress::OwnedItemizeRow> {
+    /// to the `ItemizeCallback` so the CLI renders the user's template. Also
+    /// drained by the `--read-batch` replay dispatch (`core::client::run::batch`)
+    /// after `run_local_replay`, which is why this is crate-public rather than
+    /// receiver-private.
+    pub fn drain_event_rows(&self) -> Vec<crate::progress::OwnedItemizeRow> {
         std::mem::take(&mut *self.event_rows.borrow_mut())
             .into_values()
             .flatten()

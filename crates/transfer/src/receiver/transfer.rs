@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 
 use logging::{debug_log, info_log};
 
-use crate::disk_commit::{BackupEnv, make_backup};
+use crate::disk_commit::{BackupConfig, BackupEnv, make_backup};
 use crate::receiver::ReceiverContext;
 use crate::receiver::stats::TransferStats;
 
@@ -269,6 +269,57 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_hardlinks(dest_dir, writer)?;
 
+        Ok(())
+    }
+
+    /// Backs up an existing destination file before the commit overwrites it,
+    /// routing through the shared [`make_backup`] tier so the synchronous
+    /// (`run_sync`) and local-replay (`run_replay`) commits reuse the one owner
+    /// the pipelined/delayed-update commit already uses, instead of each holding
+    /// its own copy of the backup-then-rename block.
+    ///
+    /// No-op unless `--backup` is active; [`make_backup`] itself no-ops when the
+    /// destination file does not exist. On a successful backup emits upstream's
+    /// `INFO_GTE(BACKUP, 1)` "backed up X to Y" line; the per-mechanism
+    /// `--debug=BACKUP` traces are emitted inside [`make_backup`].
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `backup.c:make_backup()` - the hardlink/rename/copy backup tier.
+    /// - `generator.c:2280-2288` - `read_batch` with `make_backups > 0` still
+    ///   resolves the backup name and preserves the pre-image before overwrite.
+    pub(in crate::receiver) fn backup_existing_dest(
+        &self,
+        dest_dir: &Path,
+        file_path: &Path,
+        metadata_opts: &metadata::MetadataOptions,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    ) -> io::Result<()> {
+        if !self.config.flags.backup {
+            return Ok(());
+        }
+        let backup_config = BackupConfig {
+            dest_dir: dest_dir.to_path_buf(),
+            backup_dir: self.config.backup_dir.as_ref().map(PathBuf::from),
+            suffix: self.config.effective_backup_suffix().into(),
+        };
+        let env = BackupEnv {
+            #[cfg(unix)]
+            sandbox,
+            #[cfg(unix)]
+            dest_dir: Some(dest_dir),
+            metadata_opts: Some(metadata_opts),
+        };
+        if let Some(notice) = make_backup(file_path, &backup_config, env)? {
+            // upstream: backup.c:432-433 - INFO_GTE(BACKUP, 1) "backed up X to Y".
+            info_log!(
+                Backup,
+                1,
+                "backed up {} to {}",
+                notice.original.display(),
+                notice.backup.display()
+            );
+        }
         Ok(())
     }
 
