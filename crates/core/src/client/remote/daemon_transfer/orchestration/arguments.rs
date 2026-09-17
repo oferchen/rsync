@@ -951,9 +951,18 @@ fn daemon_arg_wire_bytes(arg: &OsStr) -> &[u8] {
     }
 }
 
-/// Concatenation of `WILD_CHARS` + `SHELL_CHARS` used as the escape set for
-/// option values (upstream `options.c:2698` ternary `WILD_CHARS SHELL_CHARS`).
-const OPTION_ESCAPES: &str = "*?[]!#$&;|<>(){}\"'` \t\\";
+/// Whether byte `b` must be backslash-escaped in a daemon arg.
+///
+/// Mirrors upstream `options.c:2698`
+/// `escapes = is_filename_arg ? SHELL_CHARS : WILD_CHARS SHELL_CHARS`: filename
+/// args escape only `SHELL_CHARS` (leaving wildcards shell-expandable), while
+/// option values also escape `WILD_CHARS`. Deriving the option set from the two
+/// owner constants at the point of use reproduces upstream's literal
+/// juxtaposition and keeps the sets - including the `\n`/`\r` that stop a value
+/// from splitting the newline-terminated proto<30 wire - from drifting apart.
+fn daemon_arg_needs_escape(b: u8, is_filename_arg: bool) -> bool {
+    SHELL_CHARS.as_bytes().contains(&b) || (!is_filename_arg && WILD_CHARS.as_bytes().contains(&b))
+}
 
 /// Backslash-escapes a daemon argument at the byte level - the strict inverse
 /// of upstream `unbackslash_arg` (`io.c:1441`, `\X -> X` for any byte X).
@@ -963,9 +972,9 @@ const OPTION_ESCAPES: &str = "*?[]!#$&;|<>(){}\"'` \t\\";
 /// - The arg is split at the first `=` (upstream's `opt = "--foo"` /
 ///   `arg = "value"` convention in `server_options()`); the `--foo=` key
 ///   passes through verbatim while only the value is escaped.
-/// - Option values escape `WILD_CHARS` + `SHELL_CHARS` (`OPTION_ESCAPES`); the
-///   filename / module-path form escapes only `SHELL_CHARS` so wildcards stay
-///   shell-expandable.
+/// - Option values escape `WILD_CHARS` + `SHELL_CHARS`; the filename /
+///   module-path form escapes only `SHELL_CHARS` so wildcards stay
+///   shell-expandable ([`daemon_arg_needs_escape`]).
 /// - `\` is doubled so `unbackslash_arg` recovers the literal, except in the
 ///   filename form where an existing `\` before a wildcard is left intact
 ///   (upstream `options.c:2585`) to preserve a deliberate wildcard escape.
@@ -978,18 +987,15 @@ const OPTION_ESCAPES: &str = "*?[]!#$&;|<>(){}\"'` \t\\";
 /// Args with neither `=` nor any escapable byte are returned verbatim to avoid
 /// allocation.
 fn escape_daemon_arg_bytes(arg: &[u8]) -> Vec<u8> {
-    let (prefix, value, escapes, is_filename_arg): (&[u8], &[u8], &[u8], bool) =
+    let (prefix, value, is_filename_arg): (&[u8], &[u8], bool) =
         match arg.iter().position(|&b| b == b'=') {
-            Some(eq_pos) if arg.starts_with(b"--") => (
-                &arg[..=eq_pos],
-                &arg[eq_pos + 1..],
-                OPTION_ESCAPES.as_bytes(),
-                false,
-            ),
-            _ => (b"", arg, SHELL_CHARS.as_bytes(), true),
+            Some(eq_pos) if arg.starts_with(b"--") => (&arg[..=eq_pos], &arg[eq_pos + 1..], false),
+            _ => (b"", arg, true),
         };
 
-    let needs_work = value.iter().any(|&b| b == b'\\' || escapes.contains(&b));
+    let needs_work = value
+        .iter()
+        .any(|&b| b == b'\\' || daemon_arg_needs_escape(b, is_filename_arg));
     if !needs_work {
         return arg.to_vec();
     }
@@ -1006,7 +1012,7 @@ fn escape_daemon_arg_bytes(arg: &[u8]) -> Vec<u8> {
             if !(is_filename_arg && wild.contains(&next)) {
                 out.push(b'\\');
             }
-        } else if escapes.contains(&b) {
+        } else if daemon_arg_needs_escape(b, is_filename_arg) {
             out.push(b'\\');
         }
         out.push(b);
@@ -1159,19 +1165,29 @@ mod safe_arg_tests {
     }
 
     // UTS-8.REOPEN: verify every escape character upstream `safe_arg`
-    // emits for an option arg (`WILD_CHARS + SHELL_CHARS`) survives the
-    // `safe_arg_for_daemon` -> daemon-side `unbackslash_arg` round trip.
-    // Drift in either escape set would resurface upstream #829 for the
-    // dropped character. Mirrors upstream `options.c:2541-2544`.
+    // emits for an option arg (`WILD_CHARS + SHELL_CHARS`) is backslash-escaped
+    // on the wire AND survives the `safe_arg_for_daemon` -> daemon-side
+    // `unbackslash_arg` round trip. Drift in either escape set would resurface
+    // upstream #829 for the dropped character. The escaped-form check is the
+    // load-bearing half for the delimiter bytes `\n`/`\r`: a raw newline still
+    // round-trips (unbackslash of an unescaped newline is the newline), so only
+    // asserting it reaches the wire prefixed with `\` catches the split.
+    // Mirrors upstream `options.c:2695-2696` (`SHELL_CHARS`/`WILD_CHARS`).
     #[test]
     fn every_safe_arg_escape_char_round_trips_through_unbackslash() {
         let escape_chars = [
             '*', '?', '[', ']', '!', '#', '$', '&', ';', '|', '<', '>', '(', ')', '{', '}', '"',
-            '\'', '`', ' ', '\t', '\\',
+            '\'', '`', ' ', '\t', '\n', '\r', '\\',
         ];
         for &ch in &escape_chars {
             let original = format!("--groupmap=prefix{ch}suffix");
             let escaped = esc(&original);
+            // The metacharacter must reach the wire backslash-escaped so it can
+            // never act as a shell/line delimiter on the daemon side.
+            assert!(
+                escaped.contains(&format!("\\{ch}")),
+                "escape char {ch:?} was not backslash-escaped (got {escaped:?})",
+            );
             // Reverse with the same algorithm the daemon's `unbackslash_arg`
             // uses (`\X -> X` for any X).
             let bytes = escaped.as_bytes();
@@ -1189,6 +1205,45 @@ mod safe_arg_tests {
                 round_trip, original,
                 "round-trip failed for {ch:?} (escaped to {escaped:?})",
             );
+        }
+    }
+
+    // A newline or carriage return in an option value must be backslash-escaped
+    // byte-for-byte the way upstream `safe_arg` does (`SHELL_CHARS` includes
+    // `\n`/`\r`, options.c:2695). Without the escape a raw `\n` splits the
+    // newline-terminated proto<30 daemon arg wire (the reader takes one arg per
+    // line), letting a peer-supplied value inject a spurious arg line.
+    #[test]
+    fn option_value_newline_and_cr_are_escaped_like_upstream() {
+        // upstream: safe_arg("--usermap", "a\nb") -> "--usermap=a\\\nb"
+        assert_eq!(esc("--usermap=a\nb"), "--usermap=a\\\nb");
+        assert_eq!(esc("--usermap=a\rb"), "--usermap=a\\\rb");
+
+        // The escaped value carries no raw delimiter byte, so the proto<30
+        // reader sees exactly one arg line, and unbackslash recovers the value.
+        for original in ["--usermap=a\nb", "--suffix=x\r\ny"] {
+            let escaped = esc(original);
+            let value = escaped.split_once('=').unwrap().1;
+            for (i, b) in value.bytes().enumerate() {
+                if b == b'\n' || b == b'\r' {
+                    assert_eq!(
+                        value.as_bytes()[i - 1],
+                        b'\\',
+                        "unescaped delimiter in {escaped:?}",
+                    );
+                }
+            }
+            let bytes = escaped.as_bytes();
+            let mut decoded = Vec::with_capacity(bytes.len());
+            let mut i = 0;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    i += 1;
+                }
+                decoded.push(bytes[i]);
+                i += 1;
+            }
+            assert_eq!(String::from_utf8(decoded).unwrap(), original);
         }
     }
 
