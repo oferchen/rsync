@@ -17,6 +17,8 @@ mod error;
 #[cfg(feature = "embedded-ssh")]
 mod handler;
 #[cfg(feature = "embedded-ssh")]
+mod proxy;
+#[cfg(feature = "embedded-ssh")]
 mod resolve;
 #[cfg(feature = "embedded-ssh")]
 mod ssh_config;

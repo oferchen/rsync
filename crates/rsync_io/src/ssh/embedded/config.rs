@@ -100,6 +100,21 @@ pub struct SshConfig {
     pub strict_host_key_checking: StrictHostKeyChecking,
     /// IP version preference for DNS resolution.
     pub ip_preference: IpPreference,
+    /// `ProxyCommand` template (may still contain `%h`/`%p`/`%r` tokens),
+    /// run through a shell with its stdio replacing the direct TCP socket.
+    /// `None`, or the literal `none`, means a direct connection.
+    /// upstream: openssh/sshconnect.c:222 `ssh_proxy_connect`.
+    pub proxy_command: Option<String>,
+    /// `ProxyJump` chain, `[user@]host[:port][,...]`. Lowered to an
+    /// equivalent `ProxyCommand` at dial time (openssh/ssh.c:1310-1360).
+    /// Ignored when `proxy_command` is already set.
+    pub jump_hosts: Option<String>,
+    /// `ProxyUseFdpass yes` - the `ProxyCommand` passes back a connected file
+    /// descriptor rather than piping through stdio. The embedded transport
+    /// cannot express fd-passing (russh dials over a byte stream), so a
+    /// `true` here is surfaced as an error at dial time rather than silently
+    /// ignored. upstream: openssh/sshconnect.c:151 `ssh_proxy_fdpass_connect`.
+    pub proxy_use_fdpass: bool,
 }
 
 /// Returns the default identity file paths under `~/.ssh/`.
@@ -156,6 +171,9 @@ impl Default for SshConfig {
             known_hosts_file: default_known_hosts_file(),
             strict_host_key_checking: StrictHostKeyChecking::default(),
             ip_preference: IpPreference::default(),
+            proxy_command: None,
+            jump_hosts: None,
+            proxy_use_fdpass: false,
         }
     }
 }
@@ -401,6 +419,22 @@ impl SshConfig {
             && let Some(count) = resolved.server_alive_count_max
         {
             self.keepalive_max_count = count;
+        }
+        // `ProxyCommand`/`ProxyJump` share one slot and are mutually
+        // exclusive (openssh/readconf.c:1730), so only fill it when neither
+        // has already been set on this config. `ProxyCommand` wins over
+        // `ProxyJump` when a resolution somehow carried both, matching
+        // upstream's precedence (openssh/ssh.c:1305-1310 synthesises the jump
+        // command only when no `ProxyCommand` is present).
+        if self.proxy_command.is_none() && self.jump_hosts.is_none() {
+            if let Some(ref cmd) = resolved.proxy_command {
+                self.proxy_command = Some(cmd.clone());
+            } else if let Some(ref jump) = resolved.jump_hosts {
+                self.jump_hosts = Some(jump.clone());
+            }
+        }
+        if let Some(fdpass) = resolved.proxy_use_fdpass {
+            self.proxy_use_fdpass = fdpass;
         }
     }
 
@@ -1012,6 +1046,52 @@ mod tests {
         cfg.apply_ssh_config_from(&path, "example")
             .expect("config accepted");
         assert_eq!(cfg.identity_agent.as_deref(), Some("/run/custom.sock"));
+    }
+
+    #[test]
+    fn proxy_command_from_config_is_applied() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  ProxyCommand ssh -W %h:%p gw\n")
+            .expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.proxy_command.as_deref(), Some("ssh -W %h:%p gw"));
+        assert!(cfg.jump_hosts.is_none());
+    }
+
+    #[test]
+    fn proxy_jump_and_fdpass_from_config_are_applied() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(
+            &path,
+            "Host example\n  ProxyJump bastion:2222\n  ProxyUseFdpass yes\n",
+        )
+        .expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.jump_hosts.as_deref(), Some("bastion:2222"));
+        assert!(cfg.proxy_command.is_none());
+        assert!(cfg.proxy_use_fdpass);
+    }
+
+    /// Non-vacuity control: with no proxy directives the config keeps its
+    /// direct-dial defaults, so the merge above is filling from the file
+    /// rather than setting these fields unconditionally.
+    #[test]
+    fn proxy_fields_default_to_direct_dial() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  Port 2200\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert!(cfg.proxy_command.is_none());
+        assert!(cfg.jump_hosts.is_none());
+        assert!(!cfg.proxy_use_fdpass);
     }
 
     #[test]
