@@ -2273,20 +2273,20 @@ mod tests {
             Cell {
                 op: "operator_mknod_confined",
                 option_family: "--backup-dir device/FIFO tier",
+                // 0o010000 is S_IFIFO, spelled as a literal rather than
+                // `libc::S_IFIFO as u32`: the libc const is u16 on macOS (a real
+                // widening cast) but u32 on Linux (a no-op clippy flags as
+                // `unnecessary_cast`), so only a cast-free literal is clean on
+                // both. A FIFO needs no privilege, so the in-root control creates.
                 escape: Box::new(|| {
-                    super::operator_mknod_confined(
-                        &esc("fifo"),
-                        libc::S_IFIFO as u32 | 0o600,
-                        0,
-                        false,
-                    )
-                    .map(|_| ())
+                    super::operator_mknod_confined(&esc("fifo"), 0o010000 | 0o600, 0, false)
+                        .map(|_| ())
                 }),
                 contained: Box::new(|| !outside.join("fifo").exists()),
                 control: Box::new(|| {
                     super::operator_mknod_confined(
                         &root.join("fifo_ok"),
-                        libc::S_IFIFO as u32 | 0o600,
+                        0o010000 | 0o600,
                         0,
                         false,
                     )
