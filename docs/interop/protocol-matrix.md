@@ -66,7 +66,7 @@ present at that protocol version.
 | Binary negotiation handshake         |    |    | Y  | Y  | Y  | `uses_binary_negotiation`, upstream `compat.c:710` |
 | Fixed-size flist flag encoding       | Y  | Y  |    |    |    | `uses_fixed_encoding` |
 | Varint flist flag encoding (`CF_VARINT_FLIST_FLAGS`) |    |    | Y  | Y  | Y  | `uses_varint_flist_flags`, upstream `compat.c:117-125,729-732` |
-| 2-byte iflags after NDX              |    | Y  | Y  | Y  | Y  | `supports_iflags`, upstream `sender.c:180-187` |
+| 2-byte iflags after NDX              |    | Y  | Y  | Y  | Y  | `supports_iflags`, upstream `sender.c:468-485` |
 | Extended file flags                  | Y  | Y  | Y  | Y  | Y  | `supports_extended_flags` |
 
 ### File list and recursion

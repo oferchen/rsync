@@ -5,7 +5,7 @@
 //! write_shortint(iflags)` for every quick-check-matched entry whose
 //! attributes still differ (`generator.c:582-593`), the sender prints the row
 //! (`sender.c:292-293 maybe_log_item`) and echoes the attrs back
-//! (`sender.c:294 write_ndx_and_attrs`). These tests pin the record's exact
+//! (`sender.c:468-485 write_ndx_and_attrs`). These tests pin the record's exact
 //! wire bytes and prove the pipeline drains the sender's echo, so a
 //! metadata-only run cannot desync the phase-done handshake.
 

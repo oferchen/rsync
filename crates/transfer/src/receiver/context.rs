@@ -408,7 +408,7 @@ pub struct ReceiverContext {
     /// (sender.c:292-293 `maybe_log_item`). The candidate scan records those
     /// rows here and the transfer loop interleaves them with the file requests
     /// in flist-index order, consuming the sender's per-record echo
-    /// (sender.c:294 `write_ndx_and_attrs`) inline. Empty on a pull: a
+    /// (sender.c:468-485 `write_ndx_and_attrs`) inline. Empty on a pull: a
     /// client-mode receiver prints its rows locally instead.
     ///
     /// upstream: generator.c:582-593 - `itemize()` wire emission gate.
