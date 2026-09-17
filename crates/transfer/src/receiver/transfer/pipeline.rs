@@ -1135,7 +1135,7 @@ impl ReceiverContext {
     /// same "Number of regular files transferred" as the real run would.
     ///
     /// upstream: generator.c:1858-1959 - `!do_xfers` path sends write_ndx() then
-    /// goto cleanup, skipping write_sum_head(). sender.c:394-399 - `!do_xfers`
+    /// goto cleanup, skipping write_sum_head(). sender.c:468-485 - `!do_xfers`
     /// logs the item and echoes write_ndx_and_attrs() without receive_sums().
     pub(in crate::receiver) fn run_dry_run_loop<
         R: Read,
@@ -1195,7 +1195,7 @@ impl ReceiverContext {
             // pending - matching upstream's batched iobuf_out pattern.
             writer.flush()?;
 
-            // upstream: sender.c:394-399 - sender echoes write_ndx_and_attrs back
+            // upstream: sender.c:468-485 - sender echoes write_ndx_and_attrs back
             let (_echoed_ndx, _sender_attrs) =
                 crate::receiver::wire::SenderAttrs::read_with_codec_xattr(
                     reader,
@@ -1241,7 +1241,7 @@ impl ReceiverContext {
     ///   client sender diverted its token stream into its own batch fd
     ///   (sender.c:217 `f_xfer = write_batch < 0 ? batch_fd : f_out`), so only
     ///   the bare NDX+attrs echo from `write_ndx_and_attrs(f_out, ...)`
-    ///   (sender.c:442) reaches the wire. Reading further would block forever.
+    ///   (sender.c:468-485) reaches the wire. Reading further would block forever.
     /// - PULL (this side is the local client receiver, `!am_server`): upstream
     ///   never forwards the flag to the remote sender (options.c:2850 sits in
     ///   the `am_sender` block), so that sender is an ordinary one writing sum
@@ -1257,7 +1257,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `main.c:1839` - `if (write_batch < 0) dry_run = 1` (do_xfers stays 1)
-    /// - `sender.c:442-443` - `write_ndx_and_attrs(f_out); write_sum_head(f_xfer)`
+    /// - `sender.c:766-767` - `write_ndx_and_attrs(f_out); write_sum_head(f_xfer)`
     /// - `receiver.c:811-817` - `write_batch < 0`: log, `if (!am_server)`
     ///   `discard_receive_data()`, no dest write
     /// - `receiver.c:524-527` - `discard_receive_data()`
@@ -1377,7 +1377,7 @@ impl ReceiverContext {
             // its own batch fd, and echoes only NDX+attrs back to us.
             writer.flush()?;
 
-            // upstream: sender.c:442 - write_ndx_and_attrs(f_out, ...) echo.
+            // upstream: sender.c:468-485 - write_ndx_and_attrs(f_out, ...) echo.
             let (_echoed_ndx, _sender_attrs) =
                 crate::receiver::wire::SenderAttrs::read_with_codec_xattr(
                     reader,

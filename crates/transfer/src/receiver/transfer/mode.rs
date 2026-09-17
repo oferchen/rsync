@@ -63,7 +63,7 @@ impl ReceiverContext {
     ///   < 0` forces `dry_run = 1` while leaving `do_xfers = 1`, so the flag
     ///   pair is ambiguous and only the order disambiguates it. The generator
     ///   still sends real block checksums and the sender expects a sum head per
-    ///   file (`sender.c:442-443`); taking the dry-run body here would send a
+    ///   file (`sender.c:766-767`); taking the dry-run body here would send a
     ///   bare NDX + iflags with no sum head and hang both ends.
     /// - `--dry-run` last (`generator.c:1858-1959`): NDX + iflags, no sum head.
     pub(in crate::receiver) const fn select_mode(&self) -> ReceiverMode {

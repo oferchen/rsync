@@ -462,7 +462,7 @@ the entire transfer - silent data placement errors.
 - `crates/transfer/src/generator/item_flags.rs:149` - matching `ItemFlags::read`.
 - `crates/transfer/src/receiver/transfer/sync.rs:151` (doc-only).
 
-**Upstream**: `sender.c:180-187 write_ndx_and_attrs()`.
+**Upstream**: `sender.c:468-485 write_ndx_and_attrs()`.
 
 **Behaviour difference**: 2 bytes per file index, controlling itemize output and
 transfer skipping logic.

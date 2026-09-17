@@ -95,7 +95,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `sender.c:180-187` - `write_ndx_and_attrs()` sends iflags for protocol >= 29
+    /// `sender.c:468-485` - `write_ndx_and_attrs()` sends iflags for protocol >= 29
     #[must_use]
     pub const fn supports_iflags(self) -> bool {
         self.as_u8() >= 29

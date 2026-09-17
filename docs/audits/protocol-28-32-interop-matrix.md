@@ -163,7 +163,7 @@ ignored when `protocol.uses_old_prefixes()` is true. The CI test for
 | `XMIT_TOP_DIR` and extended xflags                             | Y  | Y  | Y  | Y  | Y  | `flist/mod.rs:52` `XMIT_TOP_DIR` | `flist.c:525,551` |
 | Multi-phase transfer (`max_phase = 2`)                         |    | Y  | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:112` `supports_multi_phase` | `generator.c`, `receiver.c` |
 | File list timing stats                                         |    | Y  | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:86` `supports_flist_times` | `main.c handle_stats()` |
-| Iflags (2-byte `iflag_extra`) follow each NDX                  |    | Y  | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:99` `supports_iflags` | `sender.c:180-187` |
+| Iflags (2-byte `iflag_extra`) follow each NDX                  |    | Y  | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:99` `supports_iflags` | `sender.c:468-485` |
 | Incremental recursion (`CF_INC_RECURSE`)                       |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:286` `supports_inc_recurse` | `compat.c:712,720` |
 | Safe file list (`CF_SAFE_FLIST`) negotiable                    |    |    | Y  | Y  | Y  | `version/protocol_version/capabilities.rs:142` `uses_safe_file_list` | `compat.c:719,775` |
 | Safe file list always on (no negotiation needed)               |    |    |    | Y  | Y  | `version/protocol_version/capabilities.rs:151` `safe_file_list_always_enabled` | `compat.c:775` |
@@ -460,7 +460,7 @@ https://download.samba.org/pub/rsync/src/rsync-3.4.1.tar.gz`.
   flags), `:608` upstream batch inflate failure.
 - `main.c:880-905` `read_final_goodbye` with proto>=31 extra round-trip,
   `:1304-1305` multiplex activation.
-- `sender.c:180-187` `write_ndx_and_attrs` iflags proto>=29.
+- `sender.c:468-485` `write_ndx_and_attrs` iflags proto>=29.
 
 ### Sibling oc-rsync documents
 
