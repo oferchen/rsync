@@ -25,6 +25,21 @@ use std::fs;
 use std::os::fd::BorrowedFd;
 use std::path::Path;
 
+/// A borrowed handle to a destination's parent directory, resolved once and
+/// shared across the ownership/timestamp/permission appliers so the hardened
+/// `secure_open_dir` parent walk runs once per file instead of once per
+/// attribute.
+///
+/// `None` means "no shared parent available" - the applier keeps its existing
+/// per-attribute behaviour (its own walk, or the `--keep-dirlinks` / AT_FDCWD
+/// path). On non-Unix targets file descriptors do not exist, so the alias
+/// degenerates to a shared unit reference the stubs ignore.
+#[cfg(unix)]
+pub(crate) type ParentDirFd<'a> = Option<BorrowedFd<'a>>;
+/// Non-Unix placeholder; see the Unix definition above.
+#[cfg(not(unix))]
+pub(crate) type ParentDirFd<'a> = Option<&'a ()>;
+
 /// Applies metadata from `metadata` to the destination directory.
 ///
 /// Preserves permission bits (best-effort on non-Unix targets) and
@@ -827,8 +842,48 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     attrs_flags: AttrsFlags,
     pre_transfer_meta: Option<fs::Metadata>,
 ) -> Result<(), MetadataError> {
-    let restat_after_chown =
-        ownership::apply_ownership_from_entry(destination, entry, options, cached_meta.as_ref())?;
+    // Resolve the destination's parent directory ONCE through the hardened
+    // `secure_open_dir` walk and share the borrowed dirfd across the three
+    // metadata appliers below. Each applier would otherwise re-walk the same
+    // parent (`fchownat`/`utimensat`/`fchmodat` each opening it), tripling the
+    // per-file openat2+close syscall count on the receiver's hot path. Sharing
+    // one resolution is pure de-duplication: the walk is byte-identical, so the
+    // CVE-2026-29518 symlink-race confinement is preserved exactly.
+    //
+    // The share is skipped (dirfd stays `None`, each applier keeps its existing
+    // behaviour) when:
+    // - `--keep-dirlinks` / an owned symlinked destination root is in effect
+    //   (`resolves_symlinked_parent`), where the appliers deliberately follow a
+    //   symlinked parent through AT_FDCWD instead of walking it;
+    // - the destination has no multi-component parent to walk; or
+    // - the walk itself fails - then each applier re-walks and reports the
+    //   failure exactly as before (unchanged error attribution).
+    #[cfg(unix)]
+    let parent_dir_owned: Option<std::os::fd::OwnedFd> = if options
+        .resolves_symlinked_parent(destination)
+    {
+        None
+    } else {
+        match destination.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => fast_io::secure_open_dir(parent).ok(),
+            _ => None,
+        }
+    };
+    #[cfg(unix)]
+    let parent_dirfd: ParentDirFd<'_> = {
+        use std::os::fd::AsFd;
+        parent_dir_owned.as_ref().map(|fd| fd.as_fd())
+    };
+    #[cfg(not(unix))]
+    let parent_dirfd: ParentDirFd<'_> = None;
+
+    let restat_after_chown = ownership::apply_ownership_from_entry(
+        destination,
+        entry,
+        options,
+        cached_meta.as_ref(),
+        parent_dirfd,
+    )?;
 
     // upstream: rsync.c:564-567 - the chown may have cleared setuid/setgid bits,
     // so refresh the cached stat before the chmod compare re-applies them.
@@ -846,7 +901,13 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
 
     // upstream: rsync.c:597 - `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
     if options.times() && !attrs_flags.skip_mtime() {
-        timestamps::apply_timestamps_from_entry(destination, entry, options, cached_meta.as_ref())?;
+        timestamps::apply_timestamps_from_entry(
+            destination,
+            entry,
+            options,
+            cached_meta.as_ref(),
+            parent_dirfd,
+        )?;
     }
 
     // upstream: rsync.c:604 - atime applied independently when SKIP_MTIME is set
@@ -857,6 +918,7 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
             entry,
             cached_meta.as_ref(),
             options.resolves_symlinked_parent(destination),
+            parent_dirfd,
         )?;
     }
 
@@ -887,6 +949,7 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
         options,
         cached_meta.as_ref(),
         pre_transfer_meta.as_ref(),
+        parent_dirfd,
     )?;
 
     Ok(())

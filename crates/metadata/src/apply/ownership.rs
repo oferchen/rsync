@@ -54,6 +54,14 @@ use std::os::unix::fs::MetadataExt;
 /// inode on the chown call, not on directory opens.
 /// upstream: syscall.c:do_lchown()/do_chown() call the lchown(2)/chown(2) libc
 /// symbols; rsync 3.4.3+ resolves them under the module dirfd (CVE-2026-29518).
+///
+/// `parent_dirfd` optionally carries the destination's parent directory,
+/// already resolved through the SAME `secure_open_dir` walk `secure_chown_at`
+/// performs internally (see [`crate::apply::ParentDirFd`]). When present - the
+/// receiver applies several attributes to one file - the chown anchors on the
+/// shared dirfd instead of re-walking the parent, which is byte-identical
+/// confinement. It is only ever `Some` on the non-`resolve_symlinked_parent`
+/// path, so the `--keep-dirlinks` branch above is unaffected.
 #[cfg(unix)]
 fn chown_path(
     path: &Path,
@@ -61,6 +69,7 @@ fn chown_path(
     group: Option<unix_fs::Gid>,
     follow_symlinks: bool,
     resolve_symlinked_parent: bool,
+    parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
     if resolve_symlinked_parent {
         let flag = if follow_symlinks {
@@ -82,8 +91,13 @@ fn chown_path(
     // sentinel, matching `owner`/`group` of `None`.
     let uid = owner.map(|uid| uid.as_raw()).unwrap_or(u32::MAX);
     let gid = group.map(|gid| gid.as_raw()).unwrap_or(u32::MAX);
-    fast_io::secure_chown_at(path, uid, gid, follow_symlinks)
-        .map_err(|error| MetadataError::new("preserve ownership", path, error))
+    let result = match (parent_dirfd, path.parent(), path.file_name()) {
+        (Some(parent), Some(dir), Some(leaf)) if !dir.as_os_str().is_empty() => {
+            fast_io::secure_chown_at_dirfd(parent, leaf, uid, gid, follow_symlinks)
+        }
+        _ => fast_io::secure_chown_at(path, uid, gid, follow_symlinks),
+    };
+    result.map_err(|error| MetadataError::new("preserve ownership", path, error))
 }
 
 /// fd-based counterpart to [`chown_path`] using the libc `fchown(2)` symbol via
@@ -531,6 +545,7 @@ pub(super) fn set_owner_like(
             group,
             follow_symlinks,
             options.resolves_symlinked_parent(destination),
+            None,
         )?;
 
         // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
@@ -613,6 +628,7 @@ pub(super) fn apply_ownership_from_entry(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
     cached_meta: Option<&fs::Metadata>,
+    parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<bool, MetadataError> {
     use rustix::process::{RawGid, RawUid};
 
@@ -685,6 +701,7 @@ pub(super) fn apply_ownership_from_entry(
                 group,
                 true,
                 options.resolves_symlinked_parent(destination),
+                parent_dirfd,
             )?;
 
             // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
@@ -770,6 +787,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
             group,
             false,
             options.resolves_symlinked_parent(destination),
+            None,
         )?;
 
         // upstream: rsync.c:558-561 - impossible-id warning also fires for
@@ -882,6 +900,7 @@ pub(super) fn apply_ownership_from_entry(
     _entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
     _cached_meta: Option<&fs::Metadata>,
+    _parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<bool, MetadataError> {
     super::platform_warn::warn_ownership_unsupported(options);
     Ok(false)

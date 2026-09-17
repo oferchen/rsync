@@ -52,8 +52,8 @@ pub use lstat::{LstatOutcome, lstat_via_sandbox_or_fallback};
 pub use metadata::{AtMetadata, fstatat_follow, fstatat_nofollow};
 pub use metadata_ops::{
     fchmodat, fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback,
-    secure_chmod_at, secure_chown_at, secure_utimes_at, utimensat,
-    utimensat_via_sandbox_or_fallback,
+    secure_chmod_at, secure_chmod_at_dirfd, secure_chown_at, secure_chown_at_dirfd,
+    secure_utimes_at, secure_utimes_at_dirfd, utimensat, utimensat_via_sandbox_or_fallback,
 };
 pub use nested::nested_parent_anchoring_supported;
 pub use open::{

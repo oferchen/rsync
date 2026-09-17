@@ -334,6 +334,74 @@ fn chmodat_with_chmod_setgid_semantics(
     }
 }
 
+/// Chmod the single-component leaf `name` under an already-open parent dirfd.
+///
+/// Shared-dirfd variant of [`secure_chmod_at`]: the caller resolved `parent`
+/// through the SAME [`secure_open_dir`](crate::secure_open_dir) walk that
+/// [`secure_chmod_at`] performs internally, so the symlink-race confinement is
+/// byte-identical - this only skips re-walking the parent when several metadata
+/// attributes are applied to one file in a row (`fchownat`/`utimensat`/`fchmodat`
+/// all anchored on one resolved parent instead of three). `name` must be a
+/// single-component leaf beneath `parent`. Preserves the macOS set-group-ID
+/// retry via [`chmodat_with_chmod_setgid_semantics`].
+///
+/// # Errors
+///
+/// Surfaces the [`fchmodat`] error verbatim; see [`secure_chmod_at`] for the
+/// notable security cases (they are guaranteed by the caller's identical walk).
+pub fn secure_chmod_at_dirfd(
+    parent: BorrowedFd<'_>,
+    name: &OsStr,
+    mode: u32,
+    follow_symlinks: bool,
+) -> io::Result<()> {
+    chmodat_with_chmod_setgid_semantics(parent, name, mode, follow_symlinks)
+}
+
+/// Chown the single-component leaf `name` under an already-open parent dirfd.
+///
+/// Shared-dirfd variant of [`secure_chown_at`]; see [`secure_chmod_at_dirfd`]
+/// for why sharing the resolved parent preserves confinement exactly. Uses the
+/// libc `fchownat(2)` symbol (via [`fchownat`]) so `fakeroot`'s `LD_PRELOAD`
+/// interposition observes the ownership change, identical to the anchored op in
+/// [`secure_chown_at`].
+///
+/// # Errors
+///
+/// Surfaces the [`fchownat`] error verbatim.
+pub fn secure_chown_at_dirfd(
+    parent: BorrowedFd<'_>,
+    name: &OsStr,
+    uid: u32,
+    gid: u32,
+    follow_symlinks: bool,
+) -> io::Result<()> {
+    fchownat(parent, name, uid, gid, follow_symlinks)
+}
+
+/// Set atime/mtime on the single-component leaf `name` under an already-open
+/// parent dirfd, with `None` slots left unchanged (`UTIME_OMIT`).
+///
+/// Shared-dirfd variant of [`secure_utimes_at`]; see [`secure_chmod_at_dirfd`]
+/// for why sharing the resolved parent preserves confinement exactly. The
+/// syscall never opens the target inode, so a peerless FIFO cannot block it.
+///
+/// # Errors
+///
+/// Surfaces the underlying `utimensat(2)` error verbatim, or `EINVAL` when
+/// `name` contains an interior NUL byte.
+pub fn secure_utimes_at_dirfd(
+    parent: BorrowedFd<'_>,
+    name: &OsStr,
+    atime: Option<FileTime>,
+    mtime: Option<FileTime>,
+    follow_symlinks: bool,
+) -> io::Result<()> {
+    let c_name =
+        CString::new(name.as_bytes()).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+    utimensat_omit_raw(parent.as_raw_fd(), &c_name, atime, mtime, follow_symlinks)
+}
+
 /// Path-based `chown(2)` / `lchown(2)` on `link_path` through the libc
 /// symbol.
 ///
