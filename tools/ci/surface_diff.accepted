@@ -18,3 +18,49 @@ debug-words:oc_only:sockopt
 # defines both so every documented exit code renders a description.
 exit-codes:oc_only:0:success
 exit-codes:oc_only:6:daemon unable to append to log-file
+
+# daemon-directives: upstream's parm_table carries `name` as the module
+# identity, populated from the `[module]` section header (loadparm.c
+# add_a_module() -> string_set(&s->name)), not written as a `name = value`
+# line - it is undocumented in rsyncd.conf(5). oc derives the module name from
+# the section header identically, so there is no operator-facing directive to
+# add; the row is upstream's data-model artifact, not a real gap.
+daemon-directives:upstream_only:name
+
+# daemon-directives: deliberate oc daemon extensions with no upstream
+# counterpart (each is commented as such at its dispatch site in
+# crates/daemon/src/daemon/sections/config_parsing/).
+#   acceptorthreads - SO_REUSEPORT listener replicas per address family; kernel
+#     socket behaviour only, never the wire.
+#   bwlimit         - daemon-global bandwidth ceiling; upstream exposes bwlimit
+#     only as a client option, not an rsyncd.conf directive.
+#   motd            - inline message-of-the-day line; upstream has only the
+#     file-backed `motd file` (motd_file). oc keeps both.
+#   quiccertfile / quickeyfile / quicport - QUIC transport identity/port
+#     (feature = "quic"); QUIC is an oc-only transport with no upstream peer.
+daemon-directives:oc_only:acceptorthreads
+daemon-directives:oc_only:bwlimit
+daemon-directives:oc_only:motd
+daemon-directives:oc_only:quiccertfile
+daemon-directives:oc_only:quickeyfile
+daemon-directives:oc_only:quicport
+
+# cli-long-options: deliberate oc CLI extensions/aliases the help-text registry
+# (crates/cli/src/frontend/tests/help.rs OC_EXTENSION_FLAGS) does not carry,
+# because they are not primary long flags rendered in the help extensions
+# section - either aliases of an existing option or feature-hidden modifiers.
+#   no-b          - visible alias of --no-backup (upstream has --no-backup but
+#     no --no-b short-word alias).
+#   no-fake-super - explicit negation of --fake-super; upstream ships
+#     --fake-super only, with no --no-fake-super row.
+#   quic / quic-ca - QUIC transport selector and CA-bundle override
+#     (feature = "quic"); hidden from help when the feature is absent, so they
+#     stay out of the exact-match help registry that its sibling --quic-cc /
+#     --quic-window belong to.
+#   tmp-dir       - visible alias of the upstream --temp-dir option (-T); an
+#     oc-added spelling, not present in upstream's popt table.
+cli-long-options:oc_only:no-b
+cli-long-options:oc_only:no-fake-super
+cli-long-options:oc_only:quic
+cli-long-options:oc_only:quic-ca
+cli-long-options:oc_only:tmp-dir

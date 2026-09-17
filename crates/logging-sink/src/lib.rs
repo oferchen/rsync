@@ -97,8 +97,9 @@ pub use sink::{LineModeGuard, MessageSink, TryMapWriterError};
 ///
 /// upstream: loadparm.c enum_syslog_facility[]
 const SYSLOG_FACILITY_NAMES: &[&str] = &[
-    "kern", "user", "mail", "daemon", "auth", "syslog", "lpr", "news", "uucp", "cron", "local0",
-    "local1", "local2", "local3", "local4", "local5", "local6", "local7",
+    "auth", "authpriv", "cron", "daemon", "ftp", "kern", "lpr", "mail", "news", "security",
+    "syslog", "user", "uucp", "local0", "local1", "local2", "local3", "local4", "local5", "local6",
+    "local7",
 ];
 
 /// Returns the canonical (lowercase) form of a syslog facility name, or `None`

@@ -51,6 +51,10 @@ pub enum SyslogFacility {
     Daemon,
     /// Security/authorization messages (LOG_AUTH).
     Auth,
+    /// Private security/authorization messages (LOG_AUTHPRIV).
+    AuthPriv,
+    /// FTP daemon (LOG_FTP).
+    Ftp,
     /// Messages generated internally by syslogd (LOG_SYSLOG).
     Syslog,
     /// Line printer subsystem (LOG_LPR).
@@ -121,6 +125,12 @@ impl SyslogFacility {
             "mail" => Some(Self::Mail),
             "daemon" => Some(Self::Daemon),
             "auth" => Some(Self::Auth),
+            // upstream: loadparm.c enum_syslog_facility[] - "security" is a
+            // second name for LOG_AUTH, so it parses to the same facility as
+            // "auth" and has no distinct reverse spelling.
+            "security" => Some(Self::Auth),
+            "authpriv" => Some(Self::AuthPriv),
+            "ftp" => Some(Self::Ftp),
             "syslog" => Some(Self::Syslog),
             "lpr" => Some(Self::Lpr),
             "news" => Some(Self::News),
@@ -146,6 +156,8 @@ impl SyslogFacility {
             Self::Mail => "mail",
             Self::Daemon => "daemon",
             Self::Auth => "auth",
+            Self::AuthPriv => "authpriv",
+            Self::Ftp => "ftp",
             Self::Syslog => "syslog",
             Self::Lpr => "lpr",
             Self::News => "news",
@@ -170,6 +182,8 @@ impl SyslogFacility {
             Self::Mail => Facility::LOG_MAIL,
             Self::Daemon => Facility::LOG_DAEMON,
             Self::Auth => Facility::LOG_AUTH,
+            Self::AuthPriv => Facility::LOG_AUTHPRIV,
+            Self::Ftp => Facility::LOG_FTP,
             Self::Syslog => Facility::LOG_SYSLOG,
             Self::Lpr => Facility::LOG_LPR,
             Self::News => Facility::LOG_NEWS,
@@ -458,6 +472,8 @@ mod tests {
             ("mail", SyslogFacility::Mail),
             ("daemon", SyslogFacility::Daemon),
             ("auth", SyslogFacility::Auth),
+            ("authpriv", SyslogFacility::AuthPriv),
+            ("ftp", SyslogFacility::Ftp),
             ("syslog", SyslogFacility::Syslog),
             ("lpr", SyslogFacility::Lpr),
             ("news", SyslogFacility::News),
@@ -480,6 +496,17 @@ mod tests {
                 "failed for facility name '{name}'"
             );
         }
+    }
+
+    #[test]
+    fn security_is_an_alias_of_auth() {
+        // upstream: loadparm.c enum_syslog_facility[] lists "security" as a
+        // second name bound to LOG_AUTH, so it must parse to the same facility
+        // as "auth" (and shares its wire code).
+        assert_eq!(
+            SyslogFacility::from_name("security"),
+            Some(SyslogFacility::Auth)
+        );
     }
 
     #[test]
@@ -518,6 +545,8 @@ mod tests {
             SyslogFacility::Mail,
             SyslogFacility::Daemon,
             SyslogFacility::Auth,
+            SyslogFacility::AuthPriv,
+            SyslogFacility::Ftp,
             SyslogFacility::Syslog,
             SyslogFacility::Lpr,
             SyslogFacility::News,
@@ -559,6 +588,8 @@ mod tests {
             SyslogFacility::Mail,
             SyslogFacility::Daemon,
             SyslogFacility::Auth,
+            SyslogFacility::AuthPriv,
+            SyslogFacility::Ftp,
             SyslogFacility::Syslog,
             SyslogFacility::Lpr,
             SyslogFacility::News,
