@@ -657,7 +657,7 @@ fn no_cow_platform_copy_propagates_missing_source_error() {
     assert_eq!(err.kind(), io::ErrorKind::NotFound);
 }
 
-// ── FSCTL_DUPLICATE_EXTENTS parameter construction tests ──────────────
+// FSCTL_DUPLICATE_EXTENTS parameter construction tests
 
 #[test]
 fn duplicate_extents_params_already_aligned() {
@@ -741,7 +741,7 @@ fn duplicate_extents_params_one_byte() {
     assert_eq!(params.byte_count, 4096);
 }
 
-// ── Partial ReFS reflink tests ────────────────────────────────────────
+// Partial ReFS reflink tests
 
 #[cfg(not(target_os = "windows"))]
 #[test]
