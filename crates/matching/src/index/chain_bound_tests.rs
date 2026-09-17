@@ -269,6 +269,85 @@ fn bound_is_inert_on_a_realistic_basis() {
     );
 }
 
+/// REGRESSION for the dead-entry bound gap (task 628, CVE-2026-70453).
+///
+/// The ZSO-3 prune skips consumed basis blocks, but those entries stay linked
+/// in the append-only lookup chain - the prune only flips a bitset, it never
+/// unlinks. If the bound is charged only for candidates that survive the prune,
+/// a hostile peer can park thousands of weak-colliding blocks ahead of a live
+/// match, consume them, and make every later probe re-walk them for free: the
+/// per-probe cost is O(dead entries) and the whole generate degrades to
+/// `O(source_len * chain_len)` even though the bound looks intact.
+///
+/// The charge must cover every candidate the weak-sum chain yields, dead or
+/// live, exactly like upstream's non-inplace `hash_search` (`match.c:250`,
+/// which never unlinks and so counts every same-weak-sum record). With 1027
+/// consumed entries parked ahead of a live block, the walk must spend the whole
+/// 1024-entry budget on the dead run and report the offset as a non-match -
+/// never reach the block at position 1027. Pre-fix this returned `Some(1027)`,
+/// proving dead entries were walked uncharged and the bound was bypassed.
+#[test]
+fn consumed_chain_entries_are_charged_against_the_bound() {
+    let n_blocks = MAX_CHAIN_LEN + 4;
+    let basis = hostile_basis(n_blocks);
+    let index = index_over(&basis, BLOCK_LEN as u32);
+
+    // Park a run of consumed dead entries ahead of a still-live match.
+    let live = MAX_CHAIN_LEN as usize + 3;
+    for position in 0..live {
+        index.mark_consumed(position as u32);
+    }
+    assert!(
+        !index.is_consumed(live as u32),
+        "the block under test must still be live",
+    );
+
+    let window = block_bytes(&basis, live);
+    let found = index.find_match_bytes(RollingDigest::from_bytes(window), window);
+    assert_eq!(
+        found, None,
+        "the {live} consumed entries ahead of the live match must each spend a \
+         unit of the {MAX_CHAIN_LEN} budget, so the walk stops before the live \
+         block and reports a non-match - matching upstream non-inplace mode",
+    );
+}
+
+/// CLASS TEST over the number of consumed entries parked ahead of a live match.
+///
+/// A live block preceded by `k` consumed siblings is the `k + 1`-th candidate
+/// the charged walk visits, so it stays reachable exactly while `k <
+/// MAX_CHAIN_LEN`. Dead entries count toward the budget just like live ones -
+/// the whole point of the fix.
+#[test]
+fn live_match_past_consumed_run_reachable_only_below_the_bound() {
+    let n_blocks = MAX_CHAIN_LEN + 4;
+    let basis = hostile_basis(n_blocks);
+
+    for k in [
+        0usize,
+        1,
+        (MAX_CHAIN_LEN - 2) as usize,
+        (MAX_CHAIN_LEN - 1) as usize,
+        MAX_CHAIN_LEN as usize,
+        (MAX_CHAIN_LEN + 1) as usize,
+    ] {
+        // Fresh index per case so consumed runs from earlier cases do not leak.
+        let index = index_over(&basis, BLOCK_LEN as u32);
+        for position in 0..k {
+            index.mark_consumed(position as u32);
+        }
+
+        let window = block_bytes(&basis, k);
+        let found = index.find_match_bytes(RollingDigest::from_bytes(window), window);
+        let expected = ((k as u32) < MAX_CHAIN_LEN).then_some(k);
+        assert_eq!(
+            found, expected,
+            "live match after {k} consumed entries: reachable iff k < \
+             {MAX_CHAIN_LEN}",
+        );
+    }
+}
+
 /// Pins the cap to upstream's literal value. oc must not invent a different
 /// limit: a smaller one starts sending literals where upstream sends a Copy,
 /// a larger one leaves the DoS window open.
