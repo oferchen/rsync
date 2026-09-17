@@ -243,7 +243,7 @@ mod early_input_roundtrip_tests {
         DaemonTransferRequest {
             address: DaemonAddress::new("127.0.0.1".to_owned(), 873),
             module: "test".to_owned(),
-            path: String::new(),
+            path: std::ffi::OsString::new(),
             username: None,
         }
     }
@@ -533,7 +533,7 @@ mod handle_at_error_tests {
         let request = DaemonTransferRequest {
             address: DaemonAddress::new("127.0.0.1".to_owned(), 873),
             module: "mod".to_owned(),
-            path: String::new(),
+            path: std::ffi::OsString::new(),
             username: None,
         };
 
@@ -570,7 +570,7 @@ mod handle_at_error_tests {
         let request = DaemonTransferRequest {
             address: DaemonAddress::new("127.0.0.1".to_owned(), 873),
             module: "mod".to_owned(),
-            path: String::new(),
+            path: std::ffi::OsString::new(),
             username: None,
         };
         let mut reader = BufReader::new(Cursor::new(greeting.to_vec()));
@@ -663,8 +663,11 @@ mod quic_url_tests {
     #[test]
     fn parse_rsync_url_selects_tcp() {
         // WHY: `rsync://` transfers keep the TCP transport (default behaviour).
-        let request =
-            DaemonTransferRequest::parse_rsync_url("rsync://host/mod/path", 873).expect("parse");
+        let request = DaemonTransferRequest::parse_rsync_url(
+            std::ffi::OsStr::new("rsync://host/mod/path"),
+            873,
+        )
+        .expect("parse");
         assert_eq!(request.address.transport(), Transport::Tcp);
         assert_eq!(request.address.port(), 873);
         assert_eq!(request.module, "mod");
@@ -674,8 +677,11 @@ mod quic_url_tests {
     fn parse_quic_url_selects_quic_default_port() {
         // WHY (QUIC-8b): `quic://` is parsed beside `rsync://` and yields the
         // QUIC transport on the shared default port 873 (873/udp).
-        let request =
-            DaemonTransferRequest::parse_quic_url("quic://host/mod/path", 873).expect("parse");
+        let request = DaemonTransferRequest::parse_quic_url(
+            std::ffi::OsStr::new("quic://host/mod/path"),
+            873,
+        )
+        .expect("parse");
         assert_eq!(request.address.transport(), Transport::Quic);
         assert_eq!(request.address.port(), 873);
         assert_eq!(request.module, "mod");
@@ -685,8 +691,11 @@ mod quic_url_tests {
     #[test]
     fn parse_quic_url_honours_explicit_port() {
         // WHY: an explicit `:port` overrides the 873 default, as for `rsync://`.
-        let request =
-            DaemonTransferRequest::parse_quic_url("quic://host:4321/mod", 873).expect("parse");
+        let request = DaemonTransferRequest::parse_quic_url(
+            std::ffi::OsStr::new("quic://host:4321/mod"),
+            873,
+        )
+        .expect("parse");
         assert_eq!(request.address.port(), 4321);
         assert_eq!(request.address.transport(), Transport::Quic);
     }
@@ -694,8 +703,8 @@ mod quic_url_tests {
     #[test]
     fn parse_quic_url_requires_module() {
         // WHY: a module is mandatory, and the diagnostic names the quic scheme.
-        let err =
-            DaemonTransferRequest::parse_quic_url("quic://host/", 873).expect_err("no module");
+        let err = DaemonTransferRequest::parse_quic_url(std::ffi::OsStr::new("quic://host/"), 873)
+            .expect_err("no module");
         assert!(
             err.message()
                 .to_string()
@@ -706,9 +715,10 @@ mod quic_url_tests {
     #[test]
     fn with_transport_upgrades_double_colon_to_quic() {
         // WHY (QUIC-8c): `--quic` upgrades an ordinary `host::` target to QUIC.
-        let request = DaemonTransferRequest::parse_double_colon("host::mod/path", 873)
-            .expect("parse")
-            .with_transport(Transport::Quic);
+        let request =
+            DaemonTransferRequest::parse_double_colon(std::ffi::OsStr::new("host::mod/path"), 873)
+                .expect("parse")
+                .with_transport(Transport::Quic);
         assert_eq!(request.address.transport(), Transport::Quic);
         assert_eq!(request.address.port(), 873);
     }

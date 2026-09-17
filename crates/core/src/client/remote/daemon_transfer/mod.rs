@@ -127,19 +127,19 @@ pub fn run_daemon_transfer(
     let mut request = if daemon_operand_str.starts_with("rsync://")
         || daemon_operand_str.starts_with("RSYNC://")
     {
-        DaemonTransferRequest::parse_rsync_url(&daemon_operand_str, default_port)?
+        DaemonTransferRequest::parse_rsync_url(daemon_operand, default_port)?
     } else {
         // A `quic://` operand is dispatched to the QUIC parser under the
         // feature; without it `is_daemon_url` never matches `quic://`, so this
         // branch only sees `host::module` targets.
         #[cfg(feature = "quic")]
         if daemon_operand_str.starts_with("quic://") || daemon_operand_str.starts_with("QUIC://") {
-            DaemonTransferRequest::parse_quic_url(&daemon_operand_str, default_port)?
+            DaemonTransferRequest::parse_quic_url(daemon_operand, default_port)?
         } else {
-            DaemonTransferRequest::parse_double_colon(&daemon_operand_str, default_port)?
+            DaemonTransferRequest::parse_double_colon(daemon_operand, default_port)?
         }
         #[cfg(not(feature = "quic"))]
-        DaemonTransferRequest::parse_double_colon(&daemon_operand_str, default_port)?
+        DaemonTransferRequest::parse_double_colon(daemon_operand, default_port)?
     };
 
     // The `--quic` modifier upgrades an ordinary `rsync://` / `host::` target to
@@ -258,7 +258,14 @@ pub fn run_daemon_transfer(
     // upstream: main.c:1549 - record the requested daemon source (module/path)
     // as an implied include for the receiver-side flist validation
     // (CVE-2022-29154); is_daemon_connection strips the module on the receiver.
-    let implied_source_args = [format!("{}/{}", request.module, request.path)];
+    // The implied-include filter (CVE-2022-29154) is a `String`-typed
+    // subsystem, so take an explicit lossy view of the byte-preserving operand
+    // path here; widening that filter to `OsString` is tracked separately.
+    let implied_source_args = [format!(
+        "{}/{}",
+        request.module,
+        request.path.to_string_lossy()
+    )];
     let outcome = match role {
         RemoteRole::Receiver => run_pull_transfer(
             config,
@@ -357,12 +364,12 @@ pub fn run_daemon_over_remote_shell(
         .iter()
         .find(|arg| arg.to_string_lossy().contains("::"))
         .ok_or_else(|| invalid_argument_error("no host::module operand found", 1))?;
-    let daemon_operand_str = daemon_operand.to_string_lossy();
     // upstream: main.c:1632 - a daemon-over-remote-shell connection carries the
     // port to the child as RSYNC_PORT rather than dialling it, but the value is
-    // the same `rsync_port` the socket path uses.
+    // the same `rsync_port` the socket path uses. The operand is passed as an
+    // `OsStr` so a non-UTF-8 path byte survives to the wire.
     let request = DaemonTransferRequest::parse_double_colon(
-        &daemon_operand_str,
+        daemon_operand,
         DaemonTransferRequest::resolve_default_port(config.daemon_port()),
     )?;
 
@@ -428,7 +435,14 @@ pub fn run_daemon_over_remote_shell(
     // upstream: main.c:1549 - record the requested daemon source (module/path)
     // as an implied include for the receiver-side flist validation
     // (CVE-2022-29154); is_daemon_connection strips the module on the receiver.
-    let implied_source_args = [format!("{}/{}", request.module, request.path)];
+    // The implied-include filter (CVE-2022-29154) is a `String`-typed
+    // subsystem, so take an explicit lossy view of the byte-preserving operand
+    // path here; widening that filter to `OsString` is tracked separately.
+    let implied_source_args = [format!(
+        "{}/{}",
+        request.module,
+        request.path.to_string_lossy()
+    )];
     let outcome = match role {
         RemoteRole::Receiver => run_pull_transfer(
             config,
