@@ -14,6 +14,7 @@ use super::cipher;
 use super::config::SshConfig;
 use super::error::SshError;
 use super::handler::SshClientHandler;
+use super::proxy::{ProxyDial, expand_proxy_tokens, spawn_proxy_command};
 use super::resolve::resolve_host;
 
 /// Bounded budget for the SSH goodbye phase.
@@ -401,16 +402,6 @@ async fn ssh_setup(
     ),
     SshError,
 > {
-    let addrs = resolve_host(&ssh_config.host, ssh_config.port, ssh_config.ip_preference).await?;
-
-    let addr = addrs
-        .into_iter()
-        .next()
-        .ok_or_else(|| SshError::DnsResolution {
-            host: ssh_config.host.clone(),
-            preference: "any".to_owned(),
-        })?;
-
     let client_config = Arc::new(build_client_config(ssh_config));
 
     let handler = SshClientHandler::new(
@@ -420,13 +411,49 @@ async fn ssh_setup(
         ssh_config.known_hosts_file.clone(),
     );
 
-    let mut handle = tokio::time::timeout(ssh_config.connect_timeout, async {
-        russh::client::connect(client_config, addr, handler).await
-    })
-    .await
-    .map_err(|_| SshError::Timeout {
-        secs: ssh_config.connect_timeout.as_secs(),
-    })??;
+    // Direct dial versus a `ProxyCommand`/`ProxyJump` stream is the single
+    // point the connect path branches on; everything after the handle is
+    // identical. upstream makes the same split at openssh/sshconnect.c:1300
+    // `ssh_connect` (direct) versus :222 `ssh_proxy_connect`.
+    let mut handle = match ProxyDial::from_config(ssh_config)? {
+        ProxyDial::Direct => {
+            let addrs =
+                resolve_host(&ssh_config.host, ssh_config.port, ssh_config.ip_preference).await?;
+            let addr = addrs
+                .into_iter()
+                .next()
+                .ok_or_else(|| SshError::DnsResolution {
+                    host: ssh_config.host.clone(),
+                    preference: "any".to_owned(),
+                })?;
+            tokio::time::timeout(ssh_config.connect_timeout, async {
+                russh::client::connect(client_config, addr, handler).await
+            })
+            .await
+            .map_err(|_| SshError::Timeout {
+                secs: ssh_config.connect_timeout.as_secs(),
+            })??
+        }
+        ProxyDial::Command(template) => {
+            // Expand `%h`/`%p`/`%r` against the final target, then run the
+            // command and speak SSH over its stdio (russh `connect_stream`),
+            // mirroring upstream's `ssh_proxy_connect`.
+            let command = expand_proxy_tokens(
+                &template,
+                &ssh_config.host,
+                ssh_config.port,
+                ssh_config.username.as_deref(),
+            )?;
+            let stream = spawn_proxy_command(&command)?;
+            tokio::time::timeout(ssh_config.connect_timeout, async {
+                russh::client::connect_stream(client_config, stream, handler).await
+            })
+            .await
+            .map_err(|_| SshError::Timeout {
+                secs: ssh_config.connect_timeout.as_secs(),
+            })??
+        }
+    };
 
     authenticate(&mut handle, ssh_config).await?;
 

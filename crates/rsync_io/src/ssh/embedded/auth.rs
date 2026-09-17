@@ -828,6 +828,9 @@ mod tests {
             known_hosts_file: None,
             strict_host_key_checking: super::super::types::StrictHostKeyChecking::No,
             ip_preference: super::super::types::IpPreference::Auto,
+            proxy_command: None,
+            jump_hosts: None,
+            proxy_use_fdpass: false,
         }
     }
 

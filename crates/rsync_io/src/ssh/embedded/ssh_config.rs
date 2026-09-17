@@ -121,6 +121,32 @@ pub(super) struct ResolvedHost {
     /// `ServerAliveCountMax`. `None` means no directive claimed the slot
     /// (openssh/readconf.c:1920, `parse_int`).
     pub server_alive_count_max: Option<u32>,
+    /// `ProxyCommand`, the rest of the line taken verbatim. `None` means no
+    /// active line claimed the proxy slot. The literal `none` is stored as
+    /// written and later read as "no proxy" (openssh/ssh.c:1298
+    /// `option_clear_or_none`), so the value carries through unchanged.
+    pub proxy_command: Option<String>,
+    /// `ProxyJump`, the raw `[user@]host[:port][,...]` chain. `None` means no
+    /// active line claimed the proxy slot. Lowered to a `ProxyCommand`
+    /// equivalent at dial time, mirroring openssh/ssh.c:1310-1360.
+    pub jump_hosts: Option<String>,
+    /// `ProxyUseFdpass`. `None` means no active line claimed the slot
+    /// (openssh/readconf.c:1471, `parse_flag`).
+    pub proxy_use_fdpass: Option<bool>,
+}
+
+impl ResolvedHost {
+    /// Whether an active line has already claimed the shared proxy slot.
+    ///
+    /// `ProxyCommand` and `ProxyJump` are mutually exclusive and resolve
+    /// first-obtained-wins across BOTH keywords, exactly as upstream: the
+    /// `oProxyCommand` arm ignores its value once a jump is set
+    /// (openssh/readconf.c:1466-1467), and `parse_jump` no-ops once either
+    /// is set (openssh/readconf.c:1730 `active &= o->proxy_command == NULL
+    /// && o->jump_host == NULL`).
+    fn proxy_claimed(&self) -> bool {
+        self.proxy_command.is_some() || self.jump_hosts.is_some()
+    }
 }
 
 /// Parses `path` and returns the directives that apply to `host_alias`.
@@ -478,6 +504,48 @@ fn scan_config(
                 final_pass,
                 want_final_pass,
             )?;
+            continue;
+        }
+
+        // Proxy dial directives. `ProxyCommand` and `ProxyJump` consume the
+        // rest of the line verbatim: upstream's `parse_command` reads
+        // `s + strspn(s, WHITESPACE "=")` (openssh/readconf.c:1465-1470) and
+        // `parse_jump` acts on the whole remaining string `s`
+        // (openssh/readconf.c:1730-1735), neither tokenising an arg. They
+        // share one first-obtained slot across both keywords - the
+        // `ResolvedHost::proxy_claimed` guard mirrors upstream's mutual
+        // exclusion.
+        if opcode == Opcode::ProxyCommand {
+            if in_matching_block && !resolved.proxy_claimed() {
+                resolved.proxy_command = Some(value.to_owned());
+            }
+            continue;
+        }
+        if opcode == Opcode::ProxyJump {
+            if in_matching_block && !resolved.proxy_claimed() {
+                resolved.jump_hosts = Some(value.to_owned());
+            }
+            continue;
+        }
+        if opcode == Opcode::ProxyUseFdpass {
+            // A multistate flag. An out-of-set token is upstream's
+            // `unsupported option "%s".` (openssh/readconf.c:1269), and an
+            // empty value (e.g. a lone `#comment`) is `missing argument.`
+            // (openssh/readconf.c:1106) - both refused whether or not the
+            // block is active, exactly as `AddressFamily` above.
+            let Some(tok) = tokens.first() else {
+                return Err(refuse(path, linenum, "missing argument."));
+            };
+            let Some(flag) = parse_flag_value(tok) else {
+                return Err(refuse(
+                    path,
+                    linenum,
+                    format!("unsupported option \"{tok}\"."),
+                ));
+            };
+            if in_matching_block && resolved.proxy_use_fdpass.is_none() {
+                resolved.proxy_use_fdpass = Some(flag);
+            }
             continue;
         }
 
@@ -1158,6 +1226,89 @@ mod tests {
         assert!(resolved.user.is_none());
         assert!(resolved.port.is_none());
         assert!(resolved.identity_files.is_empty());
+    }
+
+    // --- Proxy directives: ProxyCommand / ProxyJump / ProxyUseFdpass ---
+
+    #[test]
+    fn proxy_command_is_the_rest_of_the_line_verbatim() {
+        // The value is taken whole, not tokenised: internal spaces and `%`
+        // tokens survive for expansion at dial time.
+        let resolved = resolve("Host t\n  ProxyCommand ssh -W %h:%p bastion\n", "t");
+        assert_eq!(
+            resolved.proxy_command.as_deref(),
+            Some("ssh -W %h:%p bastion")
+        );
+        assert!(resolved.jump_hosts.is_none());
+    }
+
+    #[test]
+    fn proxy_command_equals_form_strips_the_separator() {
+        let resolved = resolve("Host t\n  ProxyCommand=nc %h %p\n", "t");
+        assert_eq!(resolved.proxy_command.as_deref(), Some("nc %h %p"));
+    }
+
+    #[test]
+    fn proxy_jump_is_recorded() {
+        let resolved = resolve("Host t\n  ProxyJump alice@bastion:2222\n", "t");
+        assert_eq!(resolved.jump_hosts.as_deref(), Some("alice@bastion:2222"));
+        assert!(resolved.proxy_command.is_none());
+    }
+
+    #[test]
+    fn proxy_command_and_jump_share_one_first_obtained_slot() {
+        // ProxyCommand first claims the shared slot, so the later ProxyJump
+        // is ignored - upstream's mutual exclusion
+        // (openssh/readconf.c:1730 active-guard).
+        let resolved = resolve(
+            "Host t\n  ProxyCommand nc %h %p\n  ProxyJump bastion\n",
+            "t",
+        );
+        assert_eq!(resolved.proxy_command.as_deref(), Some("nc %h %p"));
+        assert!(resolved.jump_hosts.is_none());
+    }
+
+    #[test]
+    fn proxy_jump_first_blocks_a_later_proxy_command() {
+        // The reverse order: ProxyJump claims the slot first, so the later
+        // ProxyCommand is dropped.
+        let resolved = resolve(
+            "Host t\n  ProxyJump bastion\n  ProxyCommand nc %h %p\n",
+            "t",
+        );
+        assert_eq!(resolved.jump_hosts.as_deref(), Some("bastion"));
+        assert!(resolved.proxy_command.is_none());
+    }
+
+    #[test]
+    fn proxy_use_fdpass_parses_as_a_flag() {
+        assert_eq!(
+            resolve("Host t\n  ProxyUseFdpass yes\n", "t").proxy_use_fdpass,
+            Some(true)
+        );
+        assert_eq!(
+            resolve("Host t\n  ProxyUseFdpass no\n", "t").proxy_use_fdpass,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn proxy_use_fdpass_rejects_an_out_of_set_value() {
+        // A multistate flag: upstream refuses a non-yes/no token with
+        // `unsupported option "%s".` (openssh/readconf.c:1269).
+        let msg = refusal("Host t\n  ProxyUseFdpass maybe\n", "t");
+        assert!(msg.contains("unsupported option \"maybe\"."), "{msg}");
+    }
+
+    /// Non-vacuity control for the proxy parse cells: a host the block does
+    /// not match resolves none of the proxy slots, so the assertions above
+    /// are exercising the matcher, not accepting every input.
+    #[test]
+    fn proxy_directives_ignored_outside_a_matching_block() {
+        let resolved = resolve("Host other\n  ProxyCommand nc %h %p\n", "t");
+        assert!(resolved.proxy_command.is_none());
+        assert!(resolved.jump_hosts.is_none());
+        assert!(resolved.proxy_use_fdpass.is_none());
     }
 
     // --- Match blocks + the two-pass model (task 237g) ---

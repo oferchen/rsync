@@ -106,6 +106,21 @@ pub(in crate::ssh) enum Opcode {
     /// `ServerAliveCountMax <count>`.
     /// upstream: openssh/readconf.c:272 `oServerAliveCountMax`, arm at :1920.
     ServerAliveCountMax,
+    /// `ProxyCommand <command>` - the rest of the line taken verbatim and
+    /// later run through a shell, its stdio replacing the direct socket.
+    /// upstream: openssh/readconf.c:249 `oProxyCommand`, arm at :1466
+    /// (`parse_command`); dialled by openssh/sshconnect.c:222
+    /// `ssh_proxy_connect`.
+    ProxyCommand,
+    /// `ProxyJump [user@]host[:port][,...]` - a jump-host chain upstream
+    /// synthesises into an equivalent `ProxyCommand`.
+    /// upstream: openssh/readconf.c:277 `oProxyJump`, arm at :1730
+    /// (`parse_jump`); the synthesis is openssh/ssh.c:1310-1360.
+    ProxyJump,
+    /// `ProxyUseFdpass yes|no` - whether the `ProxyCommand` passes back a
+    /// connected file descriptor rather than piping through stdio.
+    /// upstream: openssh/readconf.c:250 `oProxyUseFdpass`, arm at :1471.
+    ProxyUseFdpass,
     /// A keyword no reader resolves. Ignored by both.
     Unknown,
 }
@@ -135,6 +150,9 @@ const KEYWORDS: &[(&str, Opcode)] = &[
     ("keepalive", Opcode::TCPKeepAlive),
     ("match", Opcode::Match),
     ("port", Opcode::Port),
+    ("proxycommand", Opcode::ProxyCommand),
+    ("proxyjump", Opcode::ProxyJump),
+    ("proxyusefdpass", Opcode::ProxyUseFdpass),
     ("serveralivecountmax", Opcode::ServerAliveCountMax),
     ("serveraliveinterval", Opcode::ServerAliveInterval),
     ("tcpkeepalive", Opcode::TCPKeepAlive),
@@ -196,6 +214,12 @@ pub(in crate::ssh) enum ValueKind {
     /// One or two tokens, each an IPQoS class or DSCP value.
     /// upstream: the two-token `oIPQoS` arm (openssh/readconf.c:2148-2170).
     IpQos,
+    /// The rest of the line taken verbatim, un-tokenised - the shape
+    /// `ProxyCommand` and `ProxyJump` share. Upstream's `parse_command`
+    /// arm reads `s + strspn(s, WHITESPACE "=")` rather than a tokenised
+    /// arg (openssh/readconf.c:1465-1470), and `parse_jump` likewise acts
+    /// on the whole remaining string `s` (openssh/readconf.c:1730-1735).
+    Command,
     /// No shape, because no reader resolves the keyword.
     Unknown,
 }
@@ -250,7 +274,8 @@ impl Opcode {
             Self::Host => ValueKind::HostPatterns,
             Self::Match => ValueKind::MatchCriteria,
             Self::Include => ValueKind::IncludePatterns,
-            Self::Compression | Self::IdentitiesOnly => ValueKind::Flag,
+            Self::Compression | Self::IdentitiesOnly | Self::ProxyUseFdpass => ValueKind::Flag,
+            Self::ProxyCommand | Self::ProxyJump => ValueKind::Command,
             Self::Hostname
             | Self::User
             | Self::Port
@@ -298,10 +323,17 @@ impl Opcode {
             // string, so it has no entry here - like the list shapes below,
             // whose refusal is the per-token empty check rather than an
             // absent-value one.
+            // `ProxyCommand`/`ProxyJump` (the `Command` shape) never surface a
+            // fixed missing-value diagnostic here: upstream's `parse_command`
+            // silently leaves the slot unset when only the keyword is present
+            // (openssh/readconf.c:1465-1470), and a keyword-only line is
+            // dropped before dispatch because [`split_directive`] returns
+            // `None` for it.
             ValueKind::IpQos
             | ValueKind::HostPatterns
             | ValueKind::MatchCriteria
             | ValueKind::IncludePatterns
+            | ValueKind::Command
             | ValueKind::Unknown => None,
         }
     }
@@ -537,6 +569,9 @@ mod tests {
         ("KeepAlive", Opcode::TCPKeepAlive),
         ("ServerAliveInterval", Opcode::ServerAliveInterval),
         ("ServerAliveCountMax", Opcode::ServerAliveCountMax),
+        ("ProxyCommand", Opcode::ProxyCommand),
+        ("ProxyJump", Opcode::ProxyJump),
+        ("ProxyUseFdpass", Opcode::ProxyUseFdpass),
     ];
 
     #[test]
@@ -561,7 +596,7 @@ mod tests {
     /// not a function that answers every question affirmatively.
     #[test]
     fn a_keyword_outside_the_table_is_unknown() {
-        for spelling in ["proxyjump", "ciphers", "", "hostnamex", "hos"] {
+        for spelling in ["forwardagent", "ciphers", "", "hostnamex", "hos"] {
             assert_eq!(parse_token(spelling), Opcode::Unknown, "keyword {spelling}");
         }
     }
