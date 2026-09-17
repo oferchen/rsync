@@ -24,6 +24,7 @@ generation. Regressions block merge.
 | Target | Runner | Notes |
 |--------|--------|-------|
 | `x86_64-unknown-linux-gnu` | `ubuntu-latest` | Full workspace nextest (stable/beta/nightly), SSH integration tests, interop against upstream rsync 3.0.9 - 3.4.3, benchmarks, fuzzing |
+| `x86_64-unknown-linux-musl` | `ubuntu-latest` | Static binary; full workspace nextest (stable/beta/nightly), verified static linking. The `Linux musl (stable)` required gate is part of Linux's Tier 1 native-gate evidence (criterion T1-1 in the authority doc), not a separate tier |
 | `x86_64-apple-darwin` | `macos-latest` | Tested crates: core, engine, cli, metadata, apple-fs. Stable/beta/nightly matrix; interop smoke; benchmarks (best-effort). Upstream-testsuite and interop legs run on every PR but are not yet registered as required checks |
 | `aarch64-apple-darwin` | `macos-15` | Release build plus native tests via the universal macos-latest runner; cross-compiled release artifact |
 
@@ -35,7 +36,6 @@ failures block merge. Interop smoke coverage. Release artifacts produced.
 | Target | Runner | Tested Crates | Notes |
 |--------|--------|---------------|-------|
 | `x86_64-pc-windows-msvc` | `windows-latest` | core, engine, cli, metadata, fast_io, transfer | Stable/beta/nightly matrix; dedicated IOCP job; ACL/xattr job; interop (best-effort) |
-| `x86_64-unknown-linux-musl` | `ubuntu-latest` | full workspace | Static binary; stable/beta/nightly matrix; verified static linking |
 
 ### Tier 3 - cross-compiled, limited testing
 
