@@ -645,11 +645,9 @@ fn an_absolute_symlink_target_is_refused_even_when_it_points_back_inside() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Task 602: the residual cases from the resolver test plan
 // (`docs/design/path-confinement-resolver-api.md` section 8). The cases the
 // walk already pins live above; these are the four it did not.
-// ---------------------------------------------------------------------------
 
 /// An oracle that counts how many times it is consulted.
 ///
