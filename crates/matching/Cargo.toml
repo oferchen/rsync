@@ -86,3 +86,7 @@ harness = false
 [[bench]]
 name = "parallel_delta_scan"
 harness = false
+
+[[test]]
+name = "parallel_delta_stripe_invariance"
+required-features = ["bench-internal"]

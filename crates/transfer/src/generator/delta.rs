@@ -1710,6 +1710,101 @@ mod tests {
         }
     }
 
+    /// Deterministic LCG byte stream, matching the matching-crate parity tests.
+    fn lcg_bytes(seed: u64, len: usize) -> Vec<u8> {
+        let mut state: u64 = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut out = Vec::with_capacity(len);
+        for _ in 0..len {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            out.push((state >> 33) as u8);
+        }
+        out
+    }
+
+    /// A duplicate-content basis must route the opt-in parallel scan back to the
+    /// pruned sequential scan.
+    ///
+    /// WHY: the prune-off parallel scan resolves duplicate siblings to different
+    /// `Copy` indices than the pruned sequential scan, so on a duplicate-heavy
+    /// basis its token stream (and the wire bytes) diverge from what the receiver
+    /// expects. [`generate_delta_from_signature_chunked`] guards against this by
+    /// falling back to [`DeltaGenerator::generate`] whenever
+    /// [`DeltaSignatureIndex::has_duplicate_blocks`] is `true`. This pins that
+    /// fallback end to end: the wrapper's output equals the pure sequential scan,
+    /// while a control shows the parallel scan WOULD diverge on this same
+    /// fixture - so the equality is the fallback engaging, not the parallel path
+    /// happening to agree.
+    #[test]
+    fn duplicate_basis_routes_chunked_back_to_sequential() {
+        const BLOCK_LEN: u32 = 512;
+        const STRONG_LEN: u8 = 16;
+
+        // Three distinct block contents repeated `A B C A B C ...`, sized past
+        // the matching crate's 1 MiB / 64-block per-stripe floor so the parallel
+        // scan genuinely splits (and thus genuinely diverges) on the control.
+        let block_a = lcg_bytes(0x0DDB_A5E5_CAB7_E5A0, BLOCK_LEN as usize);
+        let block_b = lcg_bytes(0x0DDB_A5E5_CAB7_E5B0, BLOCK_LEN as usize);
+        let block_c = lcg_bytes(0x0DDB_A5E5_CAB7_E5C0, BLOCK_LEN as usize);
+        let mut basis = Vec::new();
+        while basis.len() < 3 * 1024 * 1024 {
+            basis.extend_from_slice(&block_a);
+            basis.extend_from_slice(&block_b);
+            basis.extend_from_slice(&block_c);
+        }
+        let source = basis.clone();
+        let source_len = source.len() as u64;
+
+        let sig_blocks = wire_signature(&basis, BLOCK_LEN, STRONG_LEN);
+        let index = build_signature_index(delta_config(
+            sig_blocks.clone(),
+            BLOCK_LEN,
+            STRONG_LEN,
+            false,
+        ))
+        .expect("index");
+        assert!(
+            index.has_duplicate_blocks(),
+            "A/B/C repetition must be flagged duplicate-heavy so the gate fires"
+        );
+
+        // Wrapper on the duplicate basis: must take the sequential path.
+        let (wrapper, _) = generate_delta_from_signature_chunked(
+            &source,
+            delta_config(sig_blocks.clone(), BLOCK_LEN, STRONG_LEN, false),
+            4,
+        )
+        .expect("chunked wrapper");
+
+        // Pure sequential reference.
+        let (sequential, _) = generate_delta_from_signature(
+            io::Cursor::new(source.clone()),
+            delta_config(sig_blocks.clone(), BLOCK_LEN, STRONG_LEN, false),
+            source_len,
+        )
+        .expect("sequential");
+
+        assert_eq!(
+            wrapper.tokens(),
+            sequential.tokens(),
+            "duplicate basis must make the chunked wrapper fall back to the sequential scan"
+        );
+
+        // Discrimination control: the direct parallel scan diverges on this same
+        // fixture, so the equality above is the fallback engaging, not agreement.
+        let (parallel_direct, _) = DeltaGenerator::new()
+            .with_source_len(source_len)
+            .generate_chunked_counted(&source, &index, 4)
+            .expect("direct parallel scan");
+        assert_ne!(
+            parallel_direct.tokens(),
+            sequential.tokens(),
+            "the parallel scan diverges on a duplicate-heavy basis; that divergence is \
+             exactly what the wrapper's fallback avoids"
+        );
+    }
+
     /// The wire `remainder` must land on the LAST reconstructed block, and only
     /// there.
     ///

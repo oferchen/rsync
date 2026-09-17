@@ -253,6 +253,32 @@ fn merge_copy_runs(source: &[u8], mut runs: Vec<CopyRun>, block_len: usize) -> D
     DeltaScript::new(tokens, n, literal_bytes)
 }
 
+/// Builds the overlapping spatial-stripe ranges for the parallel scan.
+///
+/// Worker `k` owns stripe `[k*stripe, (k+1)*stripe)` and *scans* `block_len`
+/// bytes past its stripe end so a match starting inside its stripe that crosses
+/// the boundary is completed here, not degraded to literals
+/// (`docs/design/intra-file-parallelism.md`, "Approach A"). The final stripe
+/// runs to `n`, and empty trailing stripes (when `chunks` exceeds `n`) are
+/// dropped so no worker scans an empty slice. `chunks` is clamped to `>= 1`, so
+/// a single stripe is the whole source `[0, n)`.
+fn stripe_ranges(n: usize, chunks: usize, block_len: usize) -> Vec<(usize, usize)> {
+    let chunks = chunks.max(1);
+    let stripe = (n / chunks).max(1);
+    (0..chunks)
+        .map(|k| {
+            let start = k * stripe;
+            let end = if k + 1 == chunks {
+                n
+            } else {
+                (start + stripe + block_len).min(n)
+            };
+            (start, end)
+        })
+        .take_while(|&(start, _)| start < n)
+        .collect()
+}
+
 /// Produces rsync-style delta tokens by comparing an input stream against a signature index.
 #[derive(Clone, Debug)]
 pub struct DeltaGenerator {
@@ -1310,28 +1336,31 @@ impl DeltaGenerator {
         // this reset it stays immutable across the concurrent scan.
         index.reset_consumed();
 
-        // Overlapping spatial split: worker k owns stripe [k*S, (k+1)*S) and
-        // scans block_len bytes past its stripe end so a straddling match is
-        // completed here, not lost to literals. The final stripe runs to EOF.
-        let stripe = (n / chunks).max(1);
-        let ranges: Vec<(usize, usize)> = (0..chunks)
-            .map(|k| {
-                let start = k * stripe;
-                let end = if k + 1 == chunks {
-                    n
-                } else {
-                    (start + stripe + block_len).min(n)
-                };
-                (start, end)
-            })
-            .take_while(|&(start, _)| start < n)
-            .collect();
+        let ranges = stripe_ranges(n, chunks, block_len);
+        self.scan_ranges_and_merge(source, index, &ranges)
+    }
 
-        // Scan every stripe concurrently against the shared read-only index.
-        // Only a stripe that runs to `n` sees the file's real EOF, so only it may
-        // claim the basis's short final block; a stripe that stops at a boundary
-        // would otherwise place that block mid-file, where upstream's
-        // `l = MIN(blength, len-offset)` test (`match.c:222-224`) never admits it.
+    /// Scans every stripe in `ranges` concurrently against the shared read-only
+    /// `index`, then merges the union of `Copy` runs back into the single-pass
+    /// token stream.
+    ///
+    /// `index.reset_consumed()` must have run before this call: pruning is off
+    /// per stripe (`generate_with_prune(.., false, ..)`), so no worker writes the
+    /// shared `consumed` bitset and the `&index` is read concurrently with no
+    /// locking. Only a stripe that runs to `source.len()` sees the file's real
+    /// EOF, so only it may claim the basis's short final block; a stripe that
+    /// stops at a boundary would otherwise place that block mid-file, where
+    /// upstream's `l = MIN(blength, len-offset)` test (`match.c:222-224`) never
+    /// admits it.
+    fn scan_ranges_and_merge(
+        &self,
+        source: &[u8],
+        index: &DeltaSignatureIndex,
+        ranges: &[(usize, usize)],
+    ) -> io::Result<(DeltaScript, ScanCounters)> {
+        let block_len = index.block_length();
+        let n = source.len();
+
         let scripts: Vec<io::Result<(DeltaScript, ScanCounters)>> = ranges
             .par_iter()
             .map(|&(s, e)| {
@@ -1387,6 +1416,70 @@ impl DeltaGenerator {
         }
 
         Ok((merge_copy_runs(source, runs, block_len), counters))
+    }
+
+    /// Test-only parallel scan that forces an exact stripe count, bypassing the
+    /// production feasibility floor (`MIN_PARALLEL_CHUNK_BYTES` / 64 blocks per
+    /// stripe).
+    ///
+    /// [`Self::generate_chunked_counted`] derives its stripe count from the
+    /// source size and a per-stripe minimum, so a small fixture always collapses
+    /// to a single sequential pass and the stripe count depends on the file size.
+    /// The stripe-invariance suite needs to drive the overlap + greedy-merge
+    /// machinery at a chosen stripe count `{1, 2, 4, 8, ...}` on modest fixtures,
+    /// independent of host CPU count and file size, so it can prove the merged
+    /// output is invariant to how the source was striped. This entry point does
+    /// exactly that: it clears the consumed bitset and runs
+    /// [`Self::scan_ranges_and_merge`] over exactly `stripes` overlapping ranges
+    /// (or fewer only when `source` is shorter than `stripes` bytes).
+    ///
+    /// It honours the same two bail-outs as the production path - the
+    /// consecutive-match extension (`seq_matches >= 2`) and the in-place guard
+    /// (`updating_basis_file`) both route to their sequential scans - so those
+    /// contracts stay observable through this entry too. Not compiled into
+    /// release builds; gated behind `bench-internal` exactly like
+    /// [`Self::with_prune_matched`].
+    #[cfg(any(test, feature = "bench-internal"))]
+    pub fn generate_chunked_forced(
+        &self,
+        source: &[u8],
+        index: &DeltaSignatureIndex,
+        stripes: usize,
+    ) -> io::Result<(DeltaScript, ScanCounters)> {
+        if self.consecutive_match_needed >= 2
+            && index.full_block_count() >= self.consecutive_match_needed as usize
+        {
+            return self.generate_gated(Cursor::new(source), index);
+        }
+        if self.updating_basis_file {
+            return self.generate_counted(Cursor::new(source), index);
+        }
+        let block_len = index.block_length();
+        if block_len == 0 || source.is_empty() {
+            return self.generate_counted(Cursor::new(source), index);
+        }
+        index.reset_consumed();
+        let ranges = stripe_ranges(source.len(), stripes.max(1), block_len);
+        self.scan_ranges_and_merge(source, index, &ranges)
+    }
+
+    /// Test-only: the number of overlapping stripes
+    /// [`Self::generate_chunked_forced`] scans for a `source_len`-byte source at
+    /// `stripes` requested. Lets a test assert the fixture genuinely splits into
+    /// the requested stripe count (non-vacuity) rather than collapsing to one
+    /// range. Gated behind `bench-internal` like the forced scan itself.
+    #[cfg(any(test, feature = "bench-internal"))]
+    #[must_use]
+    pub fn forced_stripe_count(
+        &self,
+        source_len: usize,
+        index: &DeltaSignatureIndex,
+        stripes: usize,
+    ) -> usize {
+        if index.block_length() == 0 || source_len == 0 {
+            return 1;
+        }
+        stripe_ranges(source_len, stripes.max(1), index.block_length()).len()
     }
 }
 
