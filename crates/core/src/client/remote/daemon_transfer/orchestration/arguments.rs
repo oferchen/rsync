@@ -4,6 +4,7 @@
 //! `options.c`. Supports both single-phase (plain) and two-phase (protect-args)
 //! argument exchange protocols.
 
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 
 use protocol::ProtocolVersion;
@@ -48,8 +49,11 @@ pub(crate) fn send_daemon_arguments<W: Write>(
     // upstream: clientserver.c:395-407 - phase 1 sends args over the daemon text
     // protocol; with protect-args, only the minimal set is sent so the daemon
     // detects the secluded-args marker and expects phase-2 secluded args.
-    let phase1_args = if protect {
+    let phase1_args: Vec<OsString> = if protect {
         build_minimal_daemon_args(config, is_sender)
+            .into_iter()
+            .map(OsString::from)
+            .collect()
     } else {
         // upstream: options.c:2608-3015 server_options() wraps every emitted
         // option-with-value through `safe_arg()` before it enters the wire
@@ -68,8 +72,8 @@ pub(crate) fn send_daemon_arguments<W: Write>(
         let (options, operands) = split_at_operands(&full_args);
         options
             .iter()
-            .map(|arg| safe_arg_for_daemon(arg))
-            .chain(operands.iter().cloned())
+            .map(|arg| safe_arg_for_daemon(OsStr::new(arg)))
+            .chain(operands.iter().cloned().map(OsString::from))
             .collect()
     };
 
@@ -82,7 +86,7 @@ pub(crate) fn send_daemon_arguments<W: Write>(
     let terminator = if protocol.as_u8() >= 30 { b'\0' } else { b'\n' };
 
     for arg in &phase1_args {
-        stream.write_all(arg.as_bytes()).map_err(|e| {
+        stream.write_all(daemon_arg_wire_bytes(arg)).map_err(|e| {
             socket_error("send argument to", request.address.socket_addr_display(), e)
         })?;
         stream.write_all(&[terminator]).map_err(|e| {
@@ -910,58 +914,102 @@ fn split_at_operands(args: &[String]) -> (&[String], &[String]) {
     args.split_at(operands_start)
 }
 
-fn safe_arg_for_daemon(arg: &str) -> String {
-    let (prefix, value, escapes, is_filename_arg) = match arg.find('=') {
-        Some(eq_pos) if arg.starts_with("--") => {
-            // upstream: safe_arg("--foo", value) -> "--foo=" + escaped value
-            // with WILD_CHARS+SHELL_CHARS escapes.
-            (&arg[..=eq_pos], &arg[eq_pos + 1..], OPTION_ESCAPES, false)
-        }
-        _ => {
-            // upstream: safe_arg(NULL, arg) - filename / module path arg uses
-            // only SHELL_CHARS so wildcards stay shell-expandable.
-            ("", arg, SHELL_CHARS, true)
-        }
-    };
-
-    let needs_work = value.chars().any(|c| c == '\\' || escapes.contains(c));
-    if !needs_work {
-        return arg.to_owned();
+/// Byte-generic wrapper over [`escape_daemon_arg_bytes`] used by the wire path.
+///
+/// On Unix the escape runs over the operand's raw filesystem bytes, so a
+/// non-UTF-8 option value (e.g. `--tmpdir=<path with a 0xFF byte>`) survives
+/// verbatim through the daemon's `unbackslash_arg` (upstream `io.c:1441`).
+/// Other targets escape the lossy Unicode view, which is exact for the
+/// argv-sourced operands they carry; the escape only ever inserts ASCII
+/// backslashes, so the result stays valid UTF-8.
+fn safe_arg_for_daemon(arg: &OsStr) -> OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        OsString::from_vec(escape_daemon_arg_bytes(arg.as_bytes()))
     }
-    escape_with(prefix, value, escapes, is_filename_arg)
+    #[cfg(not(unix))]
+    {
+        let escaped = escape_daemon_arg_bytes(arg.to_string_lossy().as_bytes());
+        OsString::from(String::from_utf8_lossy(&escaped).into_owned())
+    }
+}
+
+/// Raw wire bytes of a daemon argument. On Unix these are the verbatim
+/// filesystem bytes (`OsStrExt::as_bytes`); elsewhere the WTF-8 encoding
+/// (`as_encoded_bytes`), which is exact for the Unicode operands non-Unix
+/// targets carry.
+fn daemon_arg_wire_bytes(arg: &OsStr) -> &[u8] {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        arg.as_bytes()
+    }
+    #[cfg(not(unix))]
+    {
+        arg.as_encoded_bytes()
+    }
 }
 
 /// Concatenation of `WILD_CHARS` + `SHELL_CHARS` used as the escape set for
 /// option values (upstream `options.c:2698` ternary `WILD_CHARS SHELL_CHARS`).
 const OPTION_ESCAPES: &str = "*?[]!#$&;|<>(){}\"'` \t\\";
 
-/// Builds `prefix + backslash_escaped(value)` using the given escape set.
+/// Backslash-escapes a daemon argument at the byte level - the strict inverse
+/// of upstream `unbackslash_arg` (`io.c:1441`, `\X -> X` for any byte X).
 ///
-/// Mirrors upstream `options.c:2583-2590`. For each input byte:
+/// Mirrors upstream `safe_arg()` (`options.c:2693`):
 ///
-/// - `\` is doubled into `\\` so the receiver's `unbackslash_arg` recovers
-///   the literal backslash. The one exception is filename args, where an
-///   existing `\` before a wildcard is left as-is to preserve the user's
-///   intentional wildcard escape.
-/// - Any character in `escapes` is prefixed with `\`.
-/// - All other characters pass through verbatim.
-fn escape_with(prefix: &str, value: &str, escapes: &str, is_filename_arg: bool) -> String {
-    let mut out = String::with_capacity(prefix.len() + value.len() + 8);
-    out.push_str(prefix);
-    let bytes: Vec<char> = value.chars().collect();
-    for (i, &ch) in bytes.iter().enumerate() {
-        if ch == '\\' {
+/// - The arg is split at the first `=` (upstream's `opt = "--foo"` /
+///   `arg = "value"` convention in `server_options()`); the `--foo=` key
+///   passes through verbatim while only the value is escaped.
+/// - Option values escape `WILD_CHARS` + `SHELL_CHARS` (`OPTION_ESCAPES`); the
+///   filename / module-path form escapes only `SHELL_CHARS` so wildcards stay
+///   shell-expandable.
+/// - `\` is doubled so `unbackslash_arg` recovers the literal, except in the
+///   filename form where an existing `\` before a wildcard is left intact
+///   (upstream `options.c:2585`) to preserve a deliberate wildcard escape.
+/// - Every other byte - crucially including bytes >= 0x80 - passes through
+///   untouched, exactly as upstream `safe_arg` leaves non-metacharacter bytes,
+///   so a non-UTF-8 path round-trips through escape -> `unbackslash_arg`
+///   byte-for-byte unchanged. All escape-set members are ASCII, so byte-level
+///   membership never mis-flags a continuation byte of a multibyte sequence.
+///
+/// Args with neither `=` nor any escapable byte are returned verbatim to avoid
+/// allocation.
+fn escape_daemon_arg_bytes(arg: &[u8]) -> Vec<u8> {
+    let (prefix, value, escapes, is_filename_arg): (&[u8], &[u8], &[u8], bool) =
+        match arg.iter().position(|&b| b == b'=') {
+            Some(eq_pos) if arg.starts_with(b"--") => (
+                &arg[..=eq_pos],
+                &arg[eq_pos + 1..],
+                OPTION_ESCAPES.as_bytes(),
+                false,
+            ),
+            _ => (b"", arg, SHELL_CHARS.as_bytes(), true),
+        };
+
+    let needs_work = value.iter().any(|&b| b == b'\\' || escapes.contains(&b));
+    if !needs_work {
+        return arg.to_vec();
+    }
+
+    let wild = WILD_CHARS.as_bytes();
+    let mut out = Vec::with_capacity(prefix.len() + value.len() + 8);
+    out.extend_from_slice(prefix);
+    for (i, &b) in value.iter().enumerate() {
+        if b == b'\\' {
             // upstream: options.c:2585 - filename args preserve `\<wildcard>`
             // sequences verbatim so the user's deliberate wildcard escape
             // survives. Option args always double the backslash.
-            let next = bytes.get(i + 1).copied().unwrap_or('\0');
-            if !(is_filename_arg && WILD_CHARS.contains(next)) {
-                out.push('\\');
+            let next = value.get(i + 1).copied().unwrap_or(0);
+            if !(is_filename_arg && wild.contains(&next)) {
+                out.push(b'\\');
             }
-        } else if escapes.contains(ch) {
-            out.push('\\');
+        } else if escapes.contains(&b) {
+            out.push(b'\\');
         }
-        out.push(ch);
+        out.push(b);
     }
     out
 }
@@ -986,39 +1034,38 @@ fn compression_level_numeric(level: compress::zlib::CompressionLevel) -> i32 {
 mod safe_arg_tests {
     use super::*;
 
+    /// Escapes an ASCII arg through the byte-generic core the wire path uses.
+    /// `safe_arg_for_daemon` is a thin per-platform `OsStr` wrapper over it, so
+    /// exercising the core directly keeps the grammar assertions readable.
+    fn esc(arg: &str) -> String {
+        String::from_utf8(escape_daemon_arg_bytes(arg.as_bytes()))
+            .expect("ASCII-only escape keeps the result valid UTF-8")
+    }
+
     // upstream: options.c:2539 safe_arg(NULL, arg) - filename args (no opt)
     // escape only SHELL_CHARS, leaving wildcards intact so the remote shell
     // can still expand them when no remote-shell wrapper is involved.
     #[test]
     fn filename_arg_leaves_wildcards_alone() {
-        assert_eq!(safe_arg_for_daemon("file*name"), "file*name");
-        assert_eq!(safe_arg_for_daemon("question?path"), "question?path");
+        assert_eq!(esc("file*name"), "file*name");
+        assert_eq!(esc("question?path"), "question?path");
     }
 
     // upstream: options.c:2539 safe_arg(NULL, arg) - SHELL_CHARS get backslash
     // escaped even in filename args.
     #[test]
     fn filename_arg_escapes_shell_chars() {
-        assert_eq!(
-            safe_arg_for_daemon("file with space"),
-            "file\\ with\\ space"
-        );
-        assert_eq!(
-            safe_arg_for_daemon("dangerous;rm -rf /"),
-            "dangerous\\;rm\\ -rf\\ /"
-        );
+        assert_eq!(esc("file with space"), "file\\ with\\ space");
+        assert_eq!(esc("dangerous;rm -rf /"), "dangerous\\;rm\\ -rf\\ /");
     }
 
     // upstream: options.c:2544 - option args escape WILD_CHARS + SHELL_CHARS
     // because the daemon receiver `unbackslash_arg`s before option parsing.
     #[test]
     fn option_arg_escapes_wildcards_in_value() {
+        assert_eq!(esc("--groupmap=*:1234"), "--groupmap=\\*:1234");
         assert_eq!(
-            safe_arg_for_daemon("--groupmap=*:1234"),
-            "--groupmap=\\*:1234"
-        );
-        assert_eq!(
-            safe_arg_for_daemon("--usermap=alice:bob,*:1234"),
+            esc("--usermap=alice:bob,*:1234"),
             "--usermap=alice:bob,\\*:1234"
         );
     }
@@ -1029,7 +1076,7 @@ mod safe_arg_tests {
     #[test]
     fn option_arg_round_trips_shell_meta_value() {
         let arg = "--groupmap=*:1234;dangerous";
-        let escaped = safe_arg_for_daemon(arg);
+        let escaped = esc(arg);
         assert_eq!(escaped, "--groupmap=\\*:1234\\;dangerous");
 
         // Reverse the escape exactly the way the daemon's `unbackslash_arg`
@@ -1051,10 +1098,10 @@ mod safe_arg_tests {
     // (no allocation churn).
     #[test]
     fn plain_args_pass_through() {
-        assert_eq!(safe_arg_for_daemon("--server"), "--server");
-        assert_eq!(safe_arg_for_daemon("-logDtprz"), "-logDtprz");
-        assert_eq!(safe_arg_for_daemon("."), ".");
-        assert_eq!(safe_arg_for_daemon("module/path"), "module/path");
+        assert_eq!(esc("--server"), "--server");
+        assert_eq!(esc("-logDtprz"), "-logDtprz");
+        assert_eq!(esc("."), ".");
+        assert_eq!(esc("module/path"), "module/path");
     }
 
     // upstream: options.c:2585 - filename args preserve `\<wildcard>` so the
@@ -1063,7 +1110,7 @@ mod safe_arg_tests {
     fn filename_arg_preserves_escaped_wildcard() {
         // Filename branch: \* (literal) is kept verbatim because the wildcard
         // is already escaped by the caller.
-        assert_eq!(safe_arg_for_daemon("file\\*"), "file\\*");
+        assert_eq!(esc("file\\*"), "file\\*");
     }
 
     // upstream: options.c:2583-2590 - option args always double an embedded
@@ -1075,7 +1122,7 @@ mod safe_arg_tests {
         // daemon's unbackslash_arg turns `\\\*` into `\*` (the literal the
         // user typed). This is the round-trip both halves of the patch are
         // designed to preserve.
-        let escaped = safe_arg_for_daemon("--groupmap=\\*:1234");
+        let escaped = esc("--groupmap=\\*:1234");
         assert_eq!(escaped, "--groupmap=\\\\\\*:1234");
     }
 
@@ -1091,13 +1138,13 @@ mod safe_arg_tests {
         // upstream's safe_arg("--groupmap", "*:42") yields "--groupmap=\*:42":
         //   "--groupmap" + "=" + escape("*") + ":" + "4" + "2"
         // where escape(*) = `\*` because `*` is in WILD_CHARS.
-        assert_eq!(safe_arg_for_daemon("--groupmap=*:42"), "--groupmap=\\*:42");
+        assert_eq!(esc("--groupmap=*:42"), "--groupmap=\\*:42");
 
         // Reversing the escape with the daemon-side algorithm
         // (`\X -> X` for any X) must recover the original. This is the
         // round-trip parity asserted on both sides of the wire.
         let original = "--groupmap=*:42";
-        let escaped = safe_arg_for_daemon(original);
+        let escaped = esc(original);
         let bytes = escaped.as_bytes();
         let mut decoded = Vec::with_capacity(bytes.len());
         let mut i = 0;
@@ -1124,7 +1171,7 @@ mod safe_arg_tests {
         ];
         for &ch in &escape_chars {
             let original = format!("--groupmap=prefix{ch}suffix");
-            let escaped = safe_arg_for_daemon(&original);
+            let escaped = esc(&original);
             // Reverse with the same algorithm the daemon's `unbackslash_arg`
             // uses (`\X -> X` for any X).
             let bytes = escaped.as_bytes();
@@ -1142,6 +1189,51 @@ mod safe_arg_tests {
                 round_trip, original,
                 "round-trip failed for {ch:?} (escaped to {escaped:?})",
             );
+        }
+    }
+
+    // Byte-fidelity golden. A non-UTF-8 option value carrying a raw 0xFF byte,
+    // alongside a space and a literal backslash, must survive the
+    // escape -> `unbackslash_arg` round trip byte-for-byte. Upstream `safe_arg`
+    // (`options.c:2693`) leaves bytes >= 0x80 untouched - they are in no escape
+    // set - and `unbackslash_arg` (`io.c:1441`) reverses `\X -> X` for any byte
+    // X, so the pair is a strict byte-generic inverse. The previous String-typed
+    // escape could not represent 0xFF at all; this pins the byte path that lets
+    // a non-UTF-8 path-bearing option value (`--tmpdir=`, `--partial-dir=`, ...)
+    // reach the daemon intact.
+    #[test]
+    fn non_utf8_option_value_round_trips_byte_for_byte() {
+        // `--tmpdir=` + value bytes { 'a', ' ', '\\', 0xFF, 'x' }.
+        let mut original = b"--tmpdir=a \\".to_vec();
+        original.push(0xFF);
+        original.push(b'x');
+
+        let escaped = escape_daemon_arg_bytes(&original);
+
+        // Space escaped, backslash doubled (option-arg form), 0xFF verbatim.
+        assert_eq!(escaped, b"--tmpdir=a\\ \\\\\xffx".to_vec());
+        assert!(escaped.contains(&0xFF), "0xFF byte was dropped or mangled");
+
+        // Reverse exactly the way the daemon's `unbackslash_arg` does
+        // (`\X -> X` for any byte X).
+        let mut decoded = Vec::with_capacity(escaped.len());
+        let mut i = 0;
+        while i < escaped.len() {
+            if escaped[i] == b'\\' && i + 1 < escaped.len() {
+                i += 1;
+            }
+            decoded.push(escaped[i]);
+            i += 1;
+        }
+        assert_eq!(decoded, original, "escape -> unbackslash was not identity");
+
+        // The wire wrapper must carry the same bytes: an `OsStr` operand with a
+        // 0xFF byte escapes to the identical sequence the wire path writes.
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::{OsStrExt, OsStringExt};
+            let via_wrapper = safe_arg_for_daemon(&OsString::from_vec(original.clone()));
+            assert_eq!(via_wrapper.as_bytes(), escaped.as_slice());
         }
     }
 }
