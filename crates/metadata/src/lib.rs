@@ -320,13 +320,13 @@ pub use mapping_win::{GroupMapping, MappingKind, MappingParseError, NameMapping,
 
 pub use options::{AttrsFlags, MetadataOptions};
 
-#[cfg(unix)]
-pub use special::device_word;
 pub use special::{
     create_device_node, create_device_node_from_parts, create_device_node_with_fake_super,
     create_fifo, create_fifo_node_from_parts, create_fifo_with_fake_super,
     format_skipped_socket_message, socket_creation_unsupported,
 };
+#[cfg(unix)]
+pub use special::{device_mknod_mode, device_word, fifo_mknod_mode};
 
 pub use xattr_send::{XattrRole, XattrSendOptions, XattrSyncFilters, dest_xattrs_differ};
 

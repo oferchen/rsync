@@ -255,6 +255,92 @@ pub fn mkfifoat(dirfd: BorrowedFd<'_>, name: &OsStr, mode: u32) -> io::Result<()
     }
 }
 
+/// Issue `mknodat` on the already-confined `dirfd`, then apply upstream's
+/// per-type retry when the filesystem cannot make the node in a single call.
+///
+/// `dirfd` is a confined parent - a sandbox anchor or an ownership-walked
+/// parent - and never `AT_FDCWD` except on the explicit `--insecure-links`
+/// opt-out path. Because there is no dirfd-relative `bind(2)`, the socket arm
+/// fails with `EOPNOTSUPP` rather than re-resolving a potentially unsafe parent
+/// by path; a FIFO that `mknodat(2)` rejects (the BSDs, macOS, Solaris) is
+/// retried with `mkfifoat` on the SAME dirfd so the confinement guarantee is
+/// unchanged. The capability is filesystem-dependent, so the retry is decided
+/// per call rather than probed at build time.
+///
+/// # Errors
+///
+/// The `mknodat(2)` / `mkfifoat(2)` errno verbatim, or `EOPNOTSUPP` for a
+/// socket beneath a real dirfd.
+// upstream: syscall.c:1359-1380 do_mknod_at() - mknodat() then the per-call
+// mkfifoat() retry and the S_ISSOCK EOPNOTSUPP arm.
+pub(crate) fn mknodat_with_retry(
+    dirfd: BorrowedFd<'_>,
+    name: &OsStr,
+    mode: u32,
+    dev: u64,
+) -> io::Result<()> {
+    let Err(error) = mknodat(dirfd, name, mode, dev) else {
+        return Ok(());
+    };
+    // Computed in `mode_t` space so the mask needs no cast to a concrete width:
+    // `S_IFMT` is `u16` on Apple targets and `u32` on Linux.
+    let node_type = (mode as libc::mode_t) & libc::S_IFMT;
+    if node_type == libc::S_IFIFO {
+        mkfifoat(dirfd, name, mode)
+    } else if node_type == libc::S_IFSOCK {
+        Err(io::Error::from_raw_os_error(libc::EOPNOTSUPP))
+    } else {
+        Err(error)
+    }
+}
+
+/// Write the `--fake-super` regular-file placeholder for a special node against
+/// the confined `dirfd`.
+///
+/// Mirrors upstream's `am_root < 0` branch: the node's privileged metadata is
+/// carried in a `%stat` xattr elsewhere, and the on-disk representation is an
+/// inert `0600` regular file created relative to the verified parent so the
+/// confinement guarantee does not depend on which representation is in use. The
+/// leaf is unlinked first and re-created `O_EXCL | O_NOFOLLOW`: `unlinkat(2)`
+/// never follows a terminal symlink and the create refuses one, so a planted
+/// leaf cannot redirect the placeholder.
+///
+/// # Errors
+///
+/// The `unlinkat(2)` / `openat(2)` errno verbatim.
+// upstream: syscall.c:1276-1284 / 1336-1356 do_mknod_at() - the fake-super
+// placeholder created against the held dirfd.
+pub(crate) fn fake_super_placeholder_at(dirfd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
+    match super::unlinkat(dirfd, name, super::UnlinkFlags::File) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    super::openat(
+        dirfd,
+        name,
+        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW,
+        0o600,
+    )
+    .map(drop)
+}
+
+/// Create a special node - or its `--fake-super` placeholder - at `name`
+/// beneath the confined `dirfd`.
+fn create_special_leaf(
+    dirfd: BorrowedFd<'_>,
+    name: &OsStr,
+    mode: u32,
+    dev: u64,
+    fake_super: bool,
+) -> io::Result<()> {
+    if fake_super {
+        fake_super_placeholder_at(dirfd, name)
+    } else {
+        mknodat_with_retry(dirfd, name, mode, dev)
+    }
+}
+
 /// Issue `mkdirat` against `dir_path` when the `sandbox` root is the
 /// immediate parent.
 ///
@@ -331,6 +417,76 @@ pub fn symlinkat_via_sandbox_or_fallback(
         return symlinkat(target, dirfd.as_fd(), name);
     }
     crate::ConfinedFallback::confined().symlink_at(target, link_path)
+}
+
+/// Materialise a FIFO or device node at `node_path` beneath a confined parent
+/// dirfd, mirroring the every-type body of upstream's `do_mknod_at()`.
+///
+/// The receiver creates FIFO and device nodes named in the file list; a
+/// path-based `mknod(2)` on `dest_dir.join(relative_path)` re-resolves every
+/// parent component through the ambient namespace, so a parent flipped to a
+/// symlink between the receiver's decide-to-create moment and the syscall
+/// redirects the new node outside the transfer root. This adaptor closes that
+/// window exactly as the sibling `*_via_sandbox_or_fallback` helpers do:
+///
+/// - `sandbox` present and `relative_path` a single component: create the leaf
+///   against the sandbox dirfd.
+/// - `relative_path` nested and its parent resolves beneath the sandbox anchor
+///   (`openat2(RESOLVE_BENEATH)` on Linux, the `ds_descend` port elsewhere):
+///   create the leaf against that parent dirfd.
+/// - otherwise the ownership-walk fallback ([`ConfinedFallback`](crate::ConfinedFallback)):
+///   a foreign-owned symlink on the parent chain is refused, not followed.
+///   There is deliberately no path from a walk *failure* to a plain full-path
+///   `mknod` - a refusal that retries unconfined is not a refusal. The one
+///   path-based create is arm 1, taken only under the explicit
+///   `--insecure-links` opt-out, which is upstream's `return do_mknod(pathname)`.
+///
+/// `mode` carries the file-type bits (`S_IFIFO`, `S_IFCHR`, `S_IFBLK`) with the
+/// permission bits, exactly as upstream forwards `file->mode`; `dev` is the
+/// device word (`0` for a FIFO). `fake_super` selects the `0600` regular-file
+/// placeholder, created against the SAME verified parent.
+///
+/// # Errors
+///
+/// The terminal `mknodat`/`mkfifoat`/`openat` errno, or the ownership walk's
+/// refusal (`ELOOP` / `EXDEV`). A socket beneath a real dirfd is `EOPNOTSUPP`.
+// upstream: rsync-3.5.0/syscall.c:1253-1388 do_mknod_at() - the secure_relpath
+// arm (split parent + mknodat on the held dirfd), including the mkfifoat retry
+// and the S_ISSOCK EOPNOTSUPP refusal for a nested node.
+pub fn mknodat_via_sandbox_or_fallback(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    dest_dir: &Path,
+    relative_path: &Path,
+    node_path: &Path,
+    mode: u32,
+    dev: u64,
+    fake_super: bool,
+) -> io::Result<()> {
+    if let Some(sandbox) = sandbox
+        && let Some(leaf) = single_component_leaf(dest_dir, relative_path, node_path)
+    {
+        return create_special_leaf(sandbox.current_dirfd(), leaf, mode, dev, fake_super);
+    }
+    if let ParentAnchor::Anchored { dirfd, name } =
+        anchor_parent(sandbox, dest_dir, relative_path, node_path)?
+    {
+        return create_special_leaf(dirfd.as_fd(), name, mode, dev, fake_super);
+    }
+    match crate::ConfinedFallback::confined().parent_at(node_path)? {
+        Some((parent, leaf)) => {
+            create_special_leaf(parent.as_fd(), leaf.as_os_str(), mode, dev, fake_super)
+        }
+        // Arm 1: the explicit `--insecure-links` opt-out, upstream's
+        // `return do_mknod(pathname)`; the caller supplies the path-based op,
+        // exactly as upstream's `dfd >= 0 ? ..._atfd(...) : ...(fname)` ternary.
+        None => create_special_leaf(
+            rustix::fs::CWD,
+            node_path.as_os_str(),
+            mode,
+            dev,
+            fake_super,
+        ),
+    }
 }
 
 /// Issue `linkat` against `new_path` when the `sandbox` root is the
