@@ -466,3 +466,189 @@ fn corrupted_merge_is_detected() {
         "mis-ordering merge tokens must break token-sequence identity"
     );
 }
+
+/// Matched-block prune, cross-CALL reset (task 939 / contract row B,
+/// requirement 1). Pins that `index.reset_consumed()` inside the striped entry
+/// is load-bearing ACROSS calls, not just within one.
+///
+/// # What decides this
+///
+/// The striped scan disables per-stripe pruning (`generate_with_prune(.., false,
+/// ..)`), so no worker writes the shared `consumed` bitset - row B is
+/// INVARIANT, not stripe-dependent. But `walk_chain`
+/// (`crates/matching/src/index/mod.rs`) consults `is_consumed` on EVERY probe
+/// regardless of the per-session filter, and a `DeltaSignatureIndex` outlives a
+/// single `generate()` call. A prior pruned sequential scan on the same index
+/// leaves its matched blocks marked consumed; without the up-front
+/// `reset_consumed()` the striped scan would skip every one of them in
+/// `walk_chain` and collapse to all-literals. This is the one requirement the
+/// contract flags as covered by no natural fixture: a test that builds a fresh
+/// index per scan can never observe it.
+///
+/// The fixture therefore PRIMES the shared index with a pruned sequential
+/// `generate()` (identical source -> every full block consumed), then runs the
+/// striped scan on that SAME index at every stripe count and requires the
+/// sequential (fresh-index) token stream back. It is duplicate-free, so the
+/// prune is otherwise a no-op and the only thing that can perturb the output is
+/// a stale consumed bitset. Mutation proof: deleting `reset_consumed()` from
+/// `generate_chunked_forced` collapses stripes >= 2 to literals and fails the
+/// canonical-token assertion.
+#[test]
+fn primed_consumed_bitset_is_reset_before_striped_scan() {
+    let basis = lcg_bytes(0x9E37_79B9_7F4A_7C15, 96 * 1024);
+    let index = build_index(&basis, BLOCK_LEN);
+    assert!(
+        !index.has_duplicate_blocks(),
+        "fixture must be duplicate-free so a stale bitset is the only variable"
+    );
+    let source = basis.clone();
+    let block_len = index.block_length();
+    let generator = DeltaGenerator::new();
+
+    // Fresh-index baseline: the token stream the primed striped scan must
+    // reproduce byte-for-byte.
+    let fresh_index = build_index(&basis, BLOCK_LEN);
+    let sequential = generator
+        .generate(Cursor::new(source.clone()), &fresh_index)
+        .expect("sequential baseline");
+    let seq_canon = canonical(&sequential, block_len);
+
+    // Prime the SHARED index with a pruned sequential scan: on an identical
+    // source every full block matches once and is marked consumed, so the
+    // shared bitset is left fully set. `generate` prunes in production.
+    let primed = generator
+        .generate(Cursor::new(source.clone()), &index)
+        .expect("priming pruned scan");
+    assert_eq!(reconstruct(&basis, &index, &primed), source);
+    assert!(
+        primed.copy_bytes() > (source.len() as u64) * 9 / 10,
+        "priming scan must actually consume the basis blocks (copy_bytes={})",
+        primed.copy_bytes()
+    );
+
+    // The striped scan on the SAME index must reset the primed bits up front;
+    // otherwise walk_chain skips every consumed block and the stream collapses
+    // to literals.
+    for &stripes in STRIPE_COUNTS {
+        if source.len() < stripes {
+            continue;
+        }
+        assert_eq!(
+            generator.forced_stripe_count(source.len(), &index, stripes),
+            stripes,
+            "fixture must split into exactly {stripes} stripes"
+        );
+        let (chunked, _) = generator
+            .generate_chunked_forced(&source, &index, stripes)
+            .expect("forced chunked on primed index");
+        assert_eq!(
+            reconstruct(&basis, &index, &chunked),
+            source,
+            "reconstruction must survive a primed consumed bitset at {stripes} stripes"
+        );
+        assert_eq!(
+            canonical(&chunked, block_len),
+            seq_canon,
+            "striped scan on a primed index must reset the consumed bitset and \
+             reproduce the sequential stream at {stripes} stripes"
+        );
+    }
+}
+
+/// Consecutive-match at a stripe boundary (task 940 / contract row C). Pins
+/// that the opt-in consecutive-match extension is ROUTED AWAY from the striped
+/// scan (bail-out 1) to the sequential gated scan, at every stripe count.
+///
+/// # What decides this
+///
+/// The "trusted only when preceded by a matching neighbour" predicate (zsync
+/// `seq_matches=2`, engaged by `with_consecutive_match_needed(2)`) is inherently
+/// sequential: the decision for the first window of stripe k depends on the last
+/// window of stripe k-1, which a different worker scanned. A matched run
+/// straddling a stripe edge would be seen by the boundary worker as starting
+/// fresh, so its first block would have no in-stripe predecessor and would be
+/// demoted to a literal - a stripe-DEPENDENT token stream, and, because the
+/// extension also halves `s2length` on the wire, not one the receiver can absorb
+/// silently. oc does not reason about this per stripe; it routes the whole file
+/// to the sequential gated scan (`generate_chunked*` bail-out 1). So row C is
+/// INVARIANT by routing.
+///
+/// The pin asserts on the ROUTE: a gated config produces the sequential gated
+/// scan's EXACT token stream at every stripe count (`generate_chunked_forced`
+/// ignores `stripes` and returns `generate_gated`). The fixture is mostly
+/// identical to the basis (long consecutive-match runs that straddle every
+/// stripe boundary) plus one lone match isolated by corrupting its two
+/// neighbours: the gated scan demotes that lone match to a literal while the
+/// ungated parallel scan emits it as a `Copy`, so the route makes an observable
+/// difference. Mutation proof: deleting bail-out 1 from `generate_chunked_forced`
+/// drops the file into the ungated parallel scan, whose lone-match `Copy`
+/// diverges from the gated stream and fails the canonical-token assertion at
+/// stripes >= 2.
+#[test]
+fn consecutive_match_routes_around_striping() {
+    let basis = lcg_bytes(0x5EED_C0FF_EE15_2025, 96 * 1024);
+    let index = build_index(&basis, BLOCK_LEN);
+    assert!(
+        !index.has_duplicate_blocks(),
+        "fixture must be duplicate-free so the divergence is the lone-match demotion, \
+         not a duplicate-sibling reshuffle"
+    );
+    let block_len = index.block_length();
+    assert!(
+        index.full_block_count() >= 2,
+        "the gate engages only with >= 2 full blocks"
+    );
+
+    // Isolate block 6 as a lone match by corrupting the first byte of blocks 5
+    // and 7. Blocks 0..5 and 8..end stay long consecutive runs that straddle
+    // every stripe boundary; block 6 stands alone.
+    let mut source = basis.clone();
+    source[5 * block_len] ^= 0xff;
+    source[7 * block_len] ^= 0xff;
+
+    let gated_gen = DeltaGenerator::new().with_consecutive_match_needed(2);
+
+    // Baseline: the sequential gated scan. `generate` routes to `generate_gated`
+    // under consecutive_match_needed >= 2 with enough full blocks.
+    let gated = gated_gen
+        .generate(Cursor::new(source.clone()), &index)
+        .expect("gated sequential");
+    let gated_canon = canonical(&gated, block_len);
+    assert_eq!(reconstruct(&basis, &index, &gated), source);
+
+    for &stripes in STRIPE_COUNTS {
+        if source.len() < stripes {
+            continue;
+        }
+        // A stripe boundary must bisect a matched run so the straddle scenario
+        // the route protects is genuinely exercised.
+        assert_eq!(
+            gated_gen.forced_stripe_count(source.len(), &index, stripes),
+            stripes,
+            "fixture must split into exactly {stripes} stripes"
+        );
+        let (routed, _) = gated_gen
+            .generate_chunked_forced(&source, &index, stripes)
+            .expect("forced chunked (gated route)");
+        assert_eq!(
+            canonical(&routed, block_len),
+            gated_canon,
+            "consecutive-match must route to the sequential gated scan at {stripes} stripes"
+        );
+        assert_eq!(reconstruct(&basis, &index, &routed), source);
+    }
+
+    // Non-vacuity of the route pin: the gated scan must actually demote the lone
+    // match, so the ungated scan on the same fixture diverges. Without this the
+    // deleting-the-route mutation would produce an identical stream and the
+    // canonical-token assertion above could not go red.
+    let ungated = DeltaGenerator::new()
+        .generate(Cursor::new(source.clone()), &index)
+        .expect("ungated sequential");
+    assert_ne!(
+        canonical(&ungated, block_len),
+        gated_canon,
+        "the gated route must change the token stream (lone match demoted), else \
+         the route pin is vacuous"
+    );
+}
