@@ -300,6 +300,20 @@ mod imp {
     /// races in the engine's parallel `DestinationWriteGuard` path, never on the
     /// wire.
     ///
+    /// Retry-policy note: the transfer subsystem's standing rule is no retry /
+    /// no backoff (block on backpressure, never spin). This bounded loop is a
+    /// deliberate, reviewed exemption, not a violation, on three grounds: it is
+    /// a Windows filesystem sharing-violation retry (a platform idiom), not the
+    /// forbidden network/flow-control backpressure retry; the contention it
+    /// absorbs is created by *our own* reparse-swap hardening (the parent pin
+    /// that omits `FILE_SHARE_DELETE`), so removing the loop would trade a
+    /// security invariant for spurious commit failures; and it has no upstream
+    /// counterpart, since upstream's single-threaded receiver never commits two
+    /// temp files to one destination. The alternative - serializing same-
+    /// destination commits in the engine so the pin never collides - is a
+    /// larger executor change and is deferred, not adopted here. Keep this loop
+    /// bounded and gated on the two transient codes only.
+    ///
     /// # Errors
     ///
     /// - [`io::ErrorKind::InvalidInput`] if `dest_path` lacks a parent
