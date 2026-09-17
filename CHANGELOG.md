@@ -41,6 +41,12 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   unresolved, so a module under a symlinked ancestor escaped the guard - on
   Linux only Landlock stopped it, leaving any pre-Landlock kernel,
   `OC_RSYNC_NO_LANDLOCK`, or non-Linux platform exposed (#7659)
+- Escape a newline or carriage return in a daemon option value, and make the
+  daemon argument escaper byte-generic so a non-UTF-8 operand round-trips
+  through it unchanged (#7884, #7882). Non-UTF-8 daemon operand path bytes are
+  preserved end-to-end rather than lost at a lossy string boundary (#7889)
+- Pin the proxy-protocol trust gate and its log lines, following the
+  `proxy protocol hosts` allow-list (#7852)
 
 **Path confinement (CVE-2026-53795 family)**
 - Confine the destination write and the source read against symlink races, and
@@ -119,6 +125,10 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   `openat` so the seccomp worker filter admits it, and fall back to the confined
   wrappers rather than to plain syscalls when a confined open is unavailable
   (#7541, #7545, #7548)
+- Confine the backup ladder's parent chain, copy and symlink tiers, then its
+  device tier, through the ownership walk (#7808, #7812)
+- Confine receiver FIFO and device-node creation to the destination dirfd
+  (#7872)
 
 **Daemon**
 - Refuse shell metacharacters when expanding a hook variable, closing command
@@ -209,6 +219,8 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   the forged entry live for mkdir, rename and backup (#7625)
 - Reject a modern NDX that overflows a signed file index rather than wrapping
   it (#7630)
+- Charge consumed chain entries against the equal-weak-checksum DoS bound, so a
+  matched block cannot be re-walked past the cap (CVE-2026-70453, #7878)
 
 **Daemon session isolation and module confinement**
 - A peer can no longer override module configuration by sending an
@@ -238,6 +250,11 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   prefixes, `XFLG_OLD_PREFIXES` and a record's leading whitespace as pattern
   text - each of which previously changed which files a module served
   (#7795, #7804, #7807, #7757, #7732, #7729)
+- A module's dir-merge and merge reads are gated on the module's own filter
+  list, a merge-file open honours the `w` modifier, and the rules are walked
+  positionally like `parse_rule_tok` (#7813, #7833, #7826)
+- A module `-C` / CVS filter rule loads the CVS defaults, including the
+  patternless `:C` dir-merge form (#7862, #7850)
 
 ### Added
 
@@ -280,6 +297,15 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   (#7768)
 - `accept-new` is a real `StrictHostKeyChecking` policy rather than a spelling
   that behaved as `ask`, so unattended first contact succeeds (#7783)
+- The receiver gates its delete pass on file-list completeness, so a partial
+  list cannot drive a deletion (#7828)
+- The embedded `ssh_config` reader gained `Match` blocks with the two-pass
+  evaluation model, the `Include` directive, `ConnectTimeout`, the
+  connection-establishment options, and loads the user file before the system
+  file first-obtained-wins like OpenSSH (#7865, #7863, #7829, #7880, #7849)
+- QUIC selects BBR or Cubic congestion control with BDP flow-control windows
+  (#7859), and paces its writer through the `BandwidthLimiter` so `--bwlimit`
+  applies to a QUIC transfer (#7866)
 
 ### Changed
 
@@ -358,6 +384,11 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   slot in the parent, and names how a session ended (#7715, #7716)
 - One shared dirname allocation per directory on the sender, mirroring
   upstream's lastdir cache (#7756)
+- One `ssh_config` option table serves both readers (#7823), and the flist
+  `statx` call routes through `fast_io`'s safe owner rather than a direct
+  syscall (#7827)
+- The metadata appliers share one dest-parent dirfd (#7877), and the dormant
+  file-job pipeline retry counter is removed (#7875)
 
 ### Fixed
 
@@ -399,6 +430,10 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Terminate a self-referential dir-merge instead of hanging (#7362)
 - A receiver must not refuse a perishable rule below protocol 30 (#7381)
 - Track `--delete-excluded` distinctly in the server arg parse (#7382)
+- The dir-merge `/` modifier is a flag rather than a pattern rewrite, its anchor
+  is carried across the wire, and the merge name is taken after the last slash
+  rather than the first (#7810, #7805, #7816)
+- Keep files matched by a bracket-slash filter rule (#7830)
 
 **Transfer and receiver**
 - Honour `-B` / `--block-size` on every wire transport; three decoders parsed the
@@ -493,6 +528,15 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   (#7625)
 - Skip a directory operand instead of transferring it when directory transfer
   is off, per `flist.c:2723-2726` (#7627)
+- Honour an unsided clear rule on the receiver (#7811)
+- Ignore the hardlink wire flags when `-H` is off, and read the hardlink
+  follower index on the flag alone (#7842, #7854)
+- Tolerate an out-of-order `MSG_NO_SEND` decline rather than treating it as a
+  protocol error (#7869)
+- Skip an unconvertible `--iconv` operand instead of writing it (#7867)
+- Render the info / notice channel byte-faithfully at the render boundary
+  (#7864)
+- Drive `--read-batch` through the real receiver pipeline (#7838)
 
 **Local copy and engine**
 - Size a local copy from the opened file, not the flist record, and clamp the
@@ -532,6 +576,9 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   so every cell of the writer/replayer cross-matrix except upstream-to-upstream
   produced unlinked copies and the payload was written once per cluster member
   (#7596)
+- Carry the pre-image ACL onto a copy-tier backup, alongside the ownership,
+  timestamps and mode that tier already applies (#7825)
+- Reuse the `--partial-dir` leaf as a local delta basis (#7868)
 
 **Daemon**
 - Collapse `..` in client paths instead of refusing the request (#7343)
@@ -626,6 +673,10 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   3. Upstream's `am_receiver` half of the send gate is a forked-sibling relay
   condition rather than a wire one, so the port gates on the protocol version
   alone (#7609)
+- Accept `-M` duplicates of local options, and repeated long options with
+  last-wins, the way popt does (#7835, #7846)
+- Latch the run exit code at the error-site funnel, so the first error's code
+  is the one reported (#7871)
 
 **Metadata**
 - An installed name converter must replace the host database (#7360)
@@ -633,6 +684,7 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   (#7462)
 - Condense the fake-super access ACL to upstream's stored form (#7502)
 - Answer upstream's `am_root` for the receiver xattr screen (#7562)
+- Apply timestamps before chmod in the local-copy arms (#7832)
 
 **Permissions and destination modes**
 - `--chmod` without `--perms` is recomposed as tweak-first, collapse-second per
@@ -681,6 +733,9 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - `IdentitiesOnly` restricts agent keys, not just the identity-file list
   (#7791)
 - Tilde expansion emits one separator kind rather than mixing them (#7792)
+- Tokenise `ssh_config` lines the way `argv_split` does (#7814)
+- Resolve an option first-obtained-wins like OpenSSH (#7836), and apply the
+  top-level directives that precede the first `Host` block (#7856)
 
 ### Testing and CI
 
@@ -824,6 +879,25 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - `fake_rsh` is gated to Unix so the Windows test build compiles (#7785)
 - The 3.5.0dev testsuite tracker workflow is retired; the committed
   expect-manifests supersede it as the gate (#7764)
+- The parallel delta scan is pinned order-neutral under striping: the BitHash
+  prefilter, the prune and consecutive-match paths, and the `--inplace`
+  bail-out are each gated on stripe invariance (#7885, #7888, #7883, #7851)
+- Non-UTF-8 byte transparency is pinned for `send_secluded_args` and for every
+  confined operator's path through the ownership walk (#7887, #7879); QUIC
+  client trust precedence and the connect-to-handshake gaps are pinned (#7861)
+- Daemon tests run in the foreground so their assertions execute, reap their
+  children on drop, and bound a wedged test; an absent merge path is spelled the
+  way a directive spells one, and files no module declaration reaches are gated
+  (#7840, #7824, #7815, #7806)
+- The 3.5.0 suite's skip oracle fires on a full-run leg (#7837), the legacy
+  old-rsync oracles default on for the Linux legs (#7855), the scratch tree is
+  per-run with a `-j` lever (#7870), retried tests are counted rather than
+  hidden (#7845), and `ssh` interop runs against upstream 3.4.4 and 3.5.0
+  (#7857)
+- Eight verified surface extractors feed `surface_diff`, which gates oc's
+  surfaces against upstream 3.5.0 (#7839, #7874); the citation gate covers the
+  half of the corpus its filter could not see (#7822), and `xtask validate`
+  fixtures are portable on macOS (#7886)
 
 ### Documentation
 
@@ -947,6 +1021,18 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - The three rustdoc links the doc gate reports are repaired, and the
   `ssh-config-parse` note no longer calls `Host` and `Match` blocks deferred
   when `config_lookup` implements both (#7789, #7799)
+- The platform support tiers and their criteria are defined in a source-of-truth
+  design note (#7847), with the macOS and musl tiers and the Windows
+  commit-retry policy reconciled against it (#7853, #7873, #7876)
+- A QUIC transport operator guide is added (#7860), and the SSH transport each
+  operand spelling uses is documented (#7841)
+- The parallel-delta stripe-invariance contract is written down (#7843), the
+  io_uring buffer-sizing design notes are reconciled (#7848), and the production
+  unsafe blocks are triaged for the two-owner migration (#7834)
+- Stale citations are retargeted at 3.5.0: the `backup.c` ladder ranges (#7831)
+  and the `get_create_time` crtime version claim (#7858)
+- The changelog is refreshed and the 3.5.0 testsuite figures re-derived from the
+  manifests that produce them (#7809)
 
 ### Maintenance
 
@@ -955,6 +1041,10 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Give the in-place open chain a single owner with the resolver injected,
   and the bounded drain-and-wait helper a single owner (#7487, #7504)
 - Update the Homebrew formulas for v0.6.4 (#7492)
+- Dependency and action updates, including zstd 0.14.0 across the workspace and
+  the fuzz targets (#7817, #7818, #7819, #7820, #7821)
+- Drop the unused `flist` crate dependency from `core` (#7844), and pin the
+  BitHash sizing factor to its named owners (#7881)
 
 ## [0.6.4] - 2026-07-18
 
