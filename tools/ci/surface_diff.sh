@@ -516,9 +516,12 @@ self_test() {
   # silently. Both the miscount and the two names are pinned here, so a future
   # extractor that loses case fails loudly instead of understating a release.
   #
-  # Skipped, not failed, when the newer oracle is not fetched: a self-test that
-  # cannot run must say so rather than pass vacuously.
-  if [ -d "$(upstream_src 3.5.0)" ]; then
+  # Skipped, not failed, when either release the delta names is not fetched: a
+  # self-test that cannot run must say so rather than pass vacuously. The guard
+  # covers BOTH hardcoded versions - the CI job pins UPSTREAM_VERSION=3.5.0 and
+  # fetches only that tree, so 3.4.4 (the delta baseline) is absent there; a
+  # guard on 3.5.0 alone passed and then read a missing 3.4.4/options.c.
+  if [ -d "$(upstream_src 3.4.4)" ] && [ -d "$(upstream_src 3.5.0)" ]; then
     local added
     added=$(comm -13 <(surface_at 3.4.4 cli-long-options) <(surface_at 3.5.0 cli-long-options))
     check "cli-long-options 3.4.4->3.5.0 adds exactly 5" \
@@ -528,7 +531,7 @@ self_test() {
     check "cli-long-options delta keeps mixed-case 'no-drop-D'" \
       "no-drop-D" "$(printf '%s\n' "$added" | grep -x 'no-drop-D' || true)"
   else
-    printf '  skip  cli-long-options delta: rsync 3.5.0 source not fetched\n'
+    printf '  skip  cli-long-options delta: rsync 3.4.4 and 3.5.0 source not both fetched\n'
   fi
 
   printf 'self-test: %s failure(s)\n' "$fails"
