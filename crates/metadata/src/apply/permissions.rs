@@ -287,7 +287,7 @@ pub fn apply_dest_mode_pre_transfer(
         .permissions()
         .mode();
     if (current_mode & 0o7777) != (new_mode & 0o7777) {
-        chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode")?;
+        chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode", None)?;
     }
     Ok(())
 }
@@ -348,7 +348,13 @@ pub(super) fn set_permissions_like(
         // Under `--keep-dirlinks` the user has opted into following dest-side
         // symlinks-to-dirs, so the sandbox refusal is wrong - fall through to
         // `chmod_path_honoring_keep_dirlinks` which uses `std::fs::set_permissions`.
-        chmod_path_honoring_keep_dirlinks(destination, mode, options, "preserve permissions")?;
+        chmod_path_honoring_keep_dirlinks(
+            destination,
+            mode,
+            options,
+            "preserve permissions",
+            None,
+        )?;
     }
 
     #[cfg(not(unix))]
@@ -479,6 +485,7 @@ fn apply_fake_super_mode(
         real_mode & 0o7777,
         options,
         "preserve permissions",
+        None,
     )
 }
 
@@ -532,7 +539,13 @@ pub(super) fn apply_permissions_with_chmod(
 
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant
             // anchored on the parent dirfd.
-            chmod_path_honoring_keep_dirlinks(destination, mode, options, "preserve permissions")?;
+            chmod_path_honoring_keep_dirlinks(
+                destination,
+                mode,
+                options,
+                "preserve permissions",
+                None,
+            )?;
             return Ok(());
         }
     }
@@ -581,6 +594,7 @@ pub(super) fn apply_permissions_with_chmod(
                         new_mode,
                         options,
                         "apply dest_mode",
+                        None,
                     );
                 }
             }
@@ -598,6 +612,7 @@ pub(super) fn apply_permissions_with_chmod(
                 new_mode,
                 options,
                 "apply dest_mode",
+                None,
             );
         }
     }
@@ -659,7 +674,13 @@ pub(super) fn apply_permissions_with_chmod_fd(
             fchmod_libc(fd, mode, destination, "preserve permissions")?;
         } else {
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
-            chmod_path_honoring_keep_dirlinks(destination, mode, options, "preserve permissions")?;
+            chmod_path_honoring_keep_dirlinks(
+                destination,
+                mode,
+                options,
+                "preserve permissions",
+                None,
+            )?;
         }
         return Ok(());
     }
@@ -706,6 +727,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
                 new_mode,
                 options,
                 "apply dest_mode",
+                None,
             );
         }
     }
@@ -736,20 +758,33 @@ pub(super) fn apply_permissions_with_chmod_fd(
 /// the faked mode here.
 ///
 /// upstream: rsync.c:set_file_attrs() / generator.c:1356 link_stat
+///
+/// `parent_dirfd` optionally carries the destination's parent directory,
+/// already resolved through the SAME `secure_open_dir` walk `secure_chmod_at`
+/// performs internally (see [`crate::apply::ParentDirFd`]). When present it
+/// anchors the chmod on the shared dirfd instead of re-walking the parent -
+/// byte-identical confinement, one walk per file. It is only `Some` on the
+/// non-`--keep-dirlinks` path, so the `set_permissions` branch is unaffected.
 #[cfg(unix)]
 fn chmod_path_honoring_keep_dirlinks(
     destination: &Path,
     mode: u32,
     options: &MetadataOptions,
     action: &'static str,
+    parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
     if options.resolves_symlinked_parent(destination) {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(destination, fs::Permissions::from_mode(mode))
             .map_err(|error| MetadataError::new(action, destination, error))?;
     } else {
-        fast_io::secure_chmod_at(destination, mode, true)
-            .map_err(|error| MetadataError::new(action, destination, error))?;
+        match (parent_dirfd, destination.parent(), destination.file_name()) {
+            (Some(parent), Some(dir), Some(leaf)) if !dir.as_os_str().is_empty() => {
+                fast_io::secure_chmod_at_dirfd(parent, leaf, mode, true)
+            }
+            _ => fast_io::secure_chmod_at(destination, mode, true),
+        }
+        .map_err(|error| MetadataError::new(action, destination, error))?;
     }
     Ok(())
 }
@@ -1186,6 +1221,7 @@ fn apply_permissions_without_chmod(
                 destination_permissions,
                 options,
                 "preserve permissions",
+                None,
             )?;
         }
     }
@@ -1215,6 +1251,7 @@ pub(super) fn apply_permissions_from_entry(
     options: &MetadataOptions,
     cached_meta: Option<&fs::Metadata>,
     pre_transfer_meta: Option<&fs::Metadata>,
+    parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     {
@@ -1270,6 +1307,7 @@ pub(super) fn apply_permissions_from_entry(
                         new_mode,
                         options,
                         "apply dest_mode",
+                        parent_dirfd,
                     );
                 }
             } else if entry.file_type().is_dir() {
@@ -1328,6 +1366,7 @@ pub(super) fn apply_permissions_from_entry(
                         new_mode,
                         options,
                         "apply dest_mode",
+                        parent_dirfd,
                     );
                 }
             }
@@ -1358,6 +1397,7 @@ pub(super) fn apply_permissions_from_entry(
                     mode,
                     options,
                     "preserve permissions",
+                    parent_dirfd,
                 )?;
                 perms_changed = true;
             }
@@ -1405,7 +1445,13 @@ pub(super) fn apply_permissions_from_entry(
                 // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
                 // Helper follows symlinked parents under `--keep-dirlinks` to
                 // mirror upstream `generator.c:1356`.
-                chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply chmod")?;
+                chmod_path_honoring_keep_dirlinks(
+                    destination,
+                    new_mode,
+                    options,
+                    "apply chmod",
+                    parent_dirfd,
+                )?;
             }
         } else if options.executability()
             && !options.permissions()
@@ -1450,6 +1496,7 @@ pub(super) fn apply_permissions_from_entry(
                     destination_permissions,
                     options,
                     "preserve permissions",
+                    parent_dirfd,
                 )?;
             }
         }
@@ -1458,6 +1505,7 @@ pub(super) fn apply_permissions_from_entry(
     #[cfg(not(unix))]
     {
         let _ = pre_transfer_meta;
+        let _ = parent_dirfd;
         // Only the read-only bit survives on Windows; warn once when the user
         // requested full POSIX modes, --chmod, or -E.
         super::platform_warn::warn_permissions_unsupported(options);

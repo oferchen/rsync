@@ -509,6 +509,102 @@ fn secure_chmod_at_refuses_symlinked_parent_leaf() {
 }
 
 #[test]
+fn secure_chmod_at_dirfd_changes_mode_via_shared_parent() {
+    // The metadata-dedup fast path resolves the parent ONCE through
+    // `secure_open_dir` and reuses the borrowed dirfd for chmod. Prove the
+    // shared-dirfd chmod lands the same mode `secure_chmod_at` would.
+    let (_keep, root) = canonical_tempdir();
+    let path = root.join("file");
+    std::fs::write(&path, b"x").expect("write");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("seed perms");
+
+    let parent = secure_open_dir(&root).expect("resolve parent once");
+    secure_chmod_at_dirfd(parent.as_fd(), std::ffi::OsStr::new("file"), 0o640, true)
+        .expect("shared-dirfd chmod");
+    assert_eq!(
+        std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777,
+        0o640
+    );
+}
+
+#[test]
+fn secure_chmod_at_dirfd_does_not_follow_symlinked_leaf() {
+    // Confinement backstop for the shared-dirfd path: with `follow = false`
+    // a symlink swapped in at the LEAF must not be chased to an outside
+    // target. The parent dirfd is still the hardened `secure_open_dir`
+    // result, so ancestor confinement is unchanged; this pins the leaf guard.
+    let (_keep, root) = canonical_tempdir();
+    let outside = root.join("outside_target");
+    std::fs::write(&outside, b"OUTSIDE").expect("write outside");
+    std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o600))
+        .expect("seed outside");
+    symlink(&outside, root.join("leaf")).expect("plant leaf symlink");
+
+    let parent = secure_open_dir(&root).expect("resolve parent");
+    // NOFOLLOW on the leaf: on Linux chmod-on-symlink is a no-op/EOPNOTSUPP,
+    // never a follow. Either way the OUTSIDE target must keep its mode.
+    let _ = secure_chmod_at_dirfd(parent.as_fd(), std::ffi::OsStr::new("leaf"), 0o777, false);
+    assert_eq!(
+        std::fs::symlink_metadata(&outside)
+            .expect("stat outside")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600,
+        "a symlinked leaf must never redirect the shared-dirfd chmod to the target"
+    );
+}
+
+#[test]
+fn secure_utimes_at_dirfd_sets_mtime_via_shared_parent() {
+    // The shared-dirfd utimes must land the mtime the per-attribute
+    // `secure_utimes_at` would, with a `None` atime slot left untouched.
+    let (_keep, root) = canonical_tempdir();
+    let path = root.join("file");
+    std::fs::write(&path, b"x").expect("write");
+
+    let mtime = filetime::FileTime::from_unix_time(1_500_000_000, 0);
+    let parent = secure_open_dir(&root).expect("resolve parent");
+    secure_utimes_at_dirfd(
+        parent.as_fd(),
+        std::ffi::OsStr::new("file"),
+        None,
+        Some(mtime),
+        true,
+    )
+    .expect("shared-dirfd utimes");
+    assert_eq!(
+        filetime::FileTime::from_last_modification_time(&std::fs::metadata(&path).expect("stat")),
+        mtime
+    );
+}
+
+#[test]
+fn secure_chown_at_dirfd_neg1_sentinel_is_noop_via_shared_parent() {
+    // The (-1, -1) sentinel leaves ownership unchanged; real reowning needs
+    // CAP_CHOWN/root which CI lacks. Proves the shared-dirfd chown reaches the
+    // libc `fchownat` symbol (fakeroot-visible) without erroring.
+    let (_keep, root) = canonical_tempdir();
+    let path = root.join("file");
+    std::fs::write(&path, b"x").expect("write");
+    let before = std::fs::metadata(&path).expect("stat");
+
+    let parent = secure_open_dir(&root).expect("resolve parent");
+    secure_chown_at_dirfd(
+        parent.as_fd(),
+        std::ffi::OsStr::new("file"),
+        u32::MAX,
+        u32::MAX,
+        true,
+    )
+    .expect("shared-dirfd chown neg1");
+
+    let after = std::fs::metadata(&path).expect("stat");
+    assert_eq!(after.uid(), before.uid());
+    assert_eq!(after.gid(), before.gid());
+}
+
+#[test]
 fn fchownat_no_change_when_uid_gid_are_neg1_sentinel() {
     // Passing the (-1, -1) sentinel must succeed and leave the
     // existing uid/gid unchanged. Exercising real reowning requires
