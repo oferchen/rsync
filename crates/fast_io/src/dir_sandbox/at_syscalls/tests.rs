@@ -1882,6 +1882,123 @@ fn nested_mkdirat_via_sandbox_creates_under_interior_dir() {
     assert!(dir_path.is_dir(), "nested directory must be created");
 }
 
+/// The `S_IFIFO` type bits ORed with the requested permission bits, as
+/// upstream's `do_mknod_at()` receives `file->mode`.
+fn fifo_mode() -> u32 {
+    // POSIX `S_IFIFO` octal literal rather than `libc::S_IFIFO as u32`: the
+    // constant is `u32` on Linux (so the cast trips `unnecessary_cast`) but
+    // `u16` on Apple targets. Pinned to libc by `s_if_type_bits_match_libc`.
+    0o010000 | 0o644
+}
+
+/// Non-vacuity companion for the FIFO-confinement pin (single-component
+/// arm): a safe leaf directly under the sandbox anchor still materialises the
+/// node, so a refusal in the escape test below is a real defence and not a
+/// helper that refuses everything.
+#[test]
+fn fifo_via_sandbox_creates_single_component_leaf() {
+    use std::os::unix::fs::FileTypeExt;
+
+    let (_keep, root) = canonical_tempdir();
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+    let rel = Path::new("pipe");
+    let node_path = root.join(rel);
+    mknodat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        rel,
+        &node_path,
+        fifo_mode(),
+        0,
+        false,
+    )
+    .expect("single-component FIFO must be created beneath the anchor");
+
+    let meta = std::fs::symlink_metadata(&node_path).expect("stat fifo");
+    assert!(meta.file_type().is_fifo(), "a FIFO node must be created");
+}
+
+/// Non-vacuity companion for the nested arm: a FIFO named through real
+/// interior directories lands exactly under the resolved parent.
+#[test]
+fn nested_fifo_via_sandbox_creates_under_interior_dir() {
+    use std::os::unix::fs::FileTypeExt;
+
+    let (_keep, root) = canonical_tempdir();
+    std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+    let rel = Path::new("a/b/pipe");
+    let node_path = root.join(rel);
+    mknodat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        rel,
+        &node_path,
+        fifo_mode(),
+        0,
+        false,
+    )
+    .expect("nested FIFO must be created beneath the resolved parent");
+
+    let meta = std::fs::symlink_metadata(&node_path).expect("stat fifo");
+    assert!(
+        meta.file_type().is_fifo(),
+        "a nested FIFO node must be created"
+    );
+}
+
+/// The keystone FIFO-confinement pin: an interior directory component swapped
+/// for a symlink pointing OUTSIDE the sandbox root must not let the node
+/// creation escape. This is the structural TOCTOU `do_mknod_at()`'s
+/// secure_relpath arm closes (`syscall.c:1314-1328`); reverting the wrapper's
+/// anchored create to a path-based `mknod` on the full path lets the symlink be
+/// followed and the node appear at the outside target, reddening this test.
+#[test]
+fn nested_fifo_via_sandbox_refuses_interior_symlink_escape() {
+    let (_keep, root) = canonical_tempdir();
+    let outside = root.join("outside");
+    std::fs::create_dir(&outside).expect("mkdir outside");
+    std::fs::create_dir(root.join("a")).expect("mkdir a");
+    // a/evil -> ../outside : an interior-component symlink that escapes the root.
+    symlink(&outside, root.join("a/evil")).expect("plant escaping symlink");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+    let rel = Path::new("a/evil/pwned");
+    let node_path = root.join(rel);
+    let result = mknodat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        rel,
+        &node_path,
+        fifo_mode(),
+        0,
+        false,
+    );
+
+    if nested_anchor_live() {
+        let err = result.expect_err("interior symlink escape must be refused");
+        let raw = err.raw_os_error();
+        assert!(
+            matches!(
+                raw,
+                Some(libc::EXDEV) | Some(libc::ELOOP) | Some(libc::ENOTDIR)
+            ),
+            "expected EXDEV/ELOOP/ENOTDIR, got {raw:?}"
+        );
+        assert!(
+            !outside.join("pwned").exists(),
+            "no FIFO node may be created outside the sandbox root"
+        );
+    } else {
+        // Without openat2 the helper degrades to the path-based fallback; the
+        // security guarantee is the anchoring gate, matching the sibling
+        // symlink escape test's contract.
+        let _ = result;
+    }
+}
+
 #[test]
 fn nested_lstat_via_sandbox_stats_under_interior_dir() {
     let (_keep, root) = canonical_tempdir();

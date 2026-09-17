@@ -124,17 +124,39 @@ pub(super) fn resolve_host(path: &Path, host_alias: &str) -> Result<ResolvedHost
         // An explicit single path behaves like upstream's `-F`: a USER
         // config (openssh/ssh.c:574 passes `SSHCONF_USERCONF`), so a
         // relative or `~`-prefixed `Include` anchors under `~/.ssh`.
+        let display = path.display().to_string();
+        let anchors = IncludeAnchors::live();
+        // First pass, then the `SSHCONF_FINAL` re-parse only when a
+        // non-negated `Match final` asked for it (openssh/ssh.c:1190-1268).
+        let mut want_final_pass = false;
         scan_config(
             &mut resolved,
             &text,
-            &path.display().to_string(),
-            &IncludeAnchors::live(),
+            &display,
+            &anchors,
             true,
             false,
             0,
             true,
             host_alias,
+            false,
+            &mut want_final_pass,
         )?;
+        if want_final_pass {
+            scan_config(
+                &mut resolved,
+                &text,
+                &display,
+                &anchors,
+                true,
+                false,
+                0,
+                true,
+                host_alias,
+                true,
+                &mut false,
+            )?;
+        }
     }
     Ok(resolved)
 }
@@ -209,6 +231,30 @@ fn resolve_host_files_with_anchors(
     anchors: &IncludeAnchors,
 ) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
+    // First pass over the whole load order, then the `SSHCONF_FINAL`
+    // re-parse only when a non-negated `Match final` asked for it. Upstream
+    // calls `process_config_files` a second time with the SAME options
+    // struct, so first-obtained-wins carries across both passes and the
+    // re-parse only fills slots a `Match final`/`Match canonical` block
+    // could not reach on the first (openssh/ssh.c:1190-1268).
+    let want_final_pass = scan_files_once(&mut resolved, files, host_alias, anchors, false)?;
+    if want_final_pass {
+        scan_files_once(&mut resolved, files, host_alias, anchors, true)?;
+    }
+    Ok(resolved)
+}
+
+/// One pass over the ordered load order, threading `resolved` through every
+/// file. Returns whether any file requested the final pass. `final_pass`
+/// selects which of upstream's two passes this is.
+fn scan_files_once(
+    resolved: &mut ResolvedHost,
+    files: &[ConfigFile],
+    host_alias: &str,
+    anchors: &IncludeAnchors,
+    final_pass: bool,
+) -> Result<bool, SshError> {
+    let mut want_final_pass = false;
     for file in files {
         if file.check_perm && check_default_user_config_perms(&file.path).is_err() {
             return Err(SshError::SshConfigPermissions {
@@ -219,7 +265,7 @@ fn resolve_host_files_with_anchors(
             continue;
         };
         scan_config(
-            &mut resolved,
+            resolved,
             &text,
             &file.path.display().to_string(),
             anchors,
@@ -228,9 +274,11 @@ fn resolve_host_files_with_anchors(
             0,
             file.user_conf,
             host_alias,
+            final_pass,
+            &mut want_final_pass,
         )?;
     }
-    Ok(resolved)
+    Ok(want_final_pass)
 }
 
 /// Variant of [`resolve_host`] that takes the config text directly.
@@ -244,17 +292,36 @@ fn resolve_host_files_with_anchors(
 #[cfg(test)]
 pub(super) fn resolve_host_str(text: &str, host_alias: &str) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
+    let anchors = IncludeAnchors::none();
+    let mut want_final_pass = false;
     scan_config(
         &mut resolved,
         text,
         INLINE_CONFIG_NAME,
-        &IncludeAnchors::none(),
+        &anchors,
         true,
         false,
         0,
         true,
         host_alias,
+        false,
+        &mut want_final_pass,
     )?;
+    if want_final_pass {
+        scan_config(
+            &mut resolved,
+            text,
+            INLINE_CONFIG_NAME,
+            &anchors,
+            true,
+            false,
+            0,
+            true,
+            host_alias,
+            true,
+            &mut false,
+        )?;
+    }
     Ok(resolved)
 }
 
@@ -284,6 +351,15 @@ fn refuse(path: &str, line: usize, reason: impl Into<String>) -> SshError {
 /// nothing. `depth` is the `Include` nesting level (openssh/readconf.c:2561
 /// `READCONF_MAX_DEPTH`) and `user_conf` steers where a relative `Include`
 /// anchors (openssh/readconf.c:2100-2104).
+///
+/// `final_pass` selects which of upstream's two passes this scan is: `false`
+/// for the first pass, `true` for the `SSHCONF_FINAL` re-parse
+/// (openssh/ssh.c:1258-1268). It reaches [`evaluate_match_line`] so a
+/// `Match final`/`Match canonical` block activates only on the final pass
+/// (openssh/readconf.c:826-835). A non-negated `Match final` seen on the
+/// first pass sets `want_final_pass`, which is how the driver learns it must
+/// run the second pass at all (openssh/readconf.c:826-828,
+/// openssh/ssh.c:1190-1192).
 #[allow(clippy::too_many_arguments)]
 fn scan_config(
     resolved: &mut ResolvedHost,
@@ -295,6 +371,8 @@ fn scan_config(
     depth: u32,
     user_conf: bool,
     host_alias: &str,
+    final_pass: bool,
+    want_final_pass: &mut bool,
 ) -> Result<(), SshError> {
     let mut in_matching_block = active;
 
@@ -343,6 +421,26 @@ fn scan_config(
             continue;
         }
 
+        if opcode == Opcode::Match {
+            // upstream: the `oMatch` arm (openssh/readconf.c:2106-2117).
+            // `match_cfg_line` evaluates the criteria and the arm then sets
+            // `*activep = (flags & SSHCONF_NEVERMATCH) ? 0 : value`
+            // (openssh/readconf.c:2116). A bad condition returns < 0 there
+            // and aborts the load regardless of the block's activity, which
+            // is why the evaluation runs even under `never_match`.
+            let match_host = resolved.hostname.as_deref().unwrap_or(host_alias);
+            let activates = evaluate_match_line(
+                &tokens,
+                match_host,
+                final_pass,
+                want_final_pass,
+                path,
+                linenum,
+            )?;
+            in_matching_block = !never_match && activates;
+            continue;
+        }
+
         // `Include` is processed on every line regardless of the block's
         // activity - upstream globs and recurses unconditionally, passing
         // `SSHCONF_NEVERMATCH` down when the containing block is inactive
@@ -359,6 +457,8 @@ fn scan_config(
                 depth,
                 user_conf,
                 host_alias,
+                final_pass,
+                want_final_pass,
             )?;
             continue;
         }
@@ -474,6 +574,8 @@ fn process_include(
     depth: u32,
     user_conf: bool,
     host_alias: &str,
+    final_pass: bool,
+    want_final_pass: &mut bool,
 ) -> Result<(), SshError> {
     // Upstream fatals when a file would be entered above the depth ceiling
     // (openssh/readconf.c:2573-2574). A top-level file is depth 0; this
@@ -538,6 +640,8 @@ fn process_include(
                 child_depth,
                 user_conf,
                 host_alias,
+                final_pass,
+                want_final_pass,
             )?;
         }
     }
@@ -709,6 +813,187 @@ fn pattern_matches(host: &str, pattern: &str) -> bool {
     glob_matches(host.as_bytes(), pattern.as_bytes())
 }
 
+/// Evaluates one `Match` line's criteria, returning whether the block
+/// activates - upstream's `match_cfg_line` `result` (1 => active, 0 =>
+/// inactive; a bad line returns < 0, mapped here to [`SshError`]).
+///
+/// Mirrors `match_cfg_line` (openssh/readconf.c:768-1045) and the two-pass
+/// model it participates in (openssh/ssh.c:1190-1268):
+///
+/// - Criteria are AND-ed: once one fails, `result` drops to `false` and
+///   never rises again, exactly as upstream only ever assigns
+///   `this_result = result = 0` (openssh/readconf.c:889 onward).
+/// - `all` must appear alone and takes no argument
+///   (openssh/readconf.c:807-822); a leading `!` negates it.
+/// - `canonical`/`final` take no argument and evaluate to the pass flag:
+///   `r = !!final_pass` (openssh/readconf.c:832), so they match only on the
+///   final pass. A non-negated `final` sets `want_final_pass` so the driver
+///   runs that second pass (openssh/readconf.c:826-828). With
+///   canonicalization unbuilt (owned by task 1218) the only trigger for the
+///   final pass is a `Match final`, which is upstream's behaviour with
+///   canonicalization off (openssh/ssh.c:1252-1256 leaves `want_final_pass`
+///   untouched when `canonicalize_hostname` is 0).
+/// - `host` matches case-INSENSITIVELY against the resolved hostname (or the
+///   alias when no `HostName` has been obtained), mirroring
+///   `match_hostname` (openssh/match.c:193-203).
+///
+/// The remaining upstream criteria (`originalhost`, `user`, `localuser`,
+/// `exec`, `localnetwork`, `version`, `tagged`, `command`, `sessiontype`)
+/// are owned by task 1209. Their argument grammar is still validated here -
+/// a missing argument refuses exactly as upstream does
+/// (openssh/readconf.c:855-858) - but the predicate is not evaluated: the
+/// criterion is treated as a non-match, leaving the block inactive rather
+/// than applying options oc cannot yet gate correctly. `exec` is
+/// deliberately never executed even once task 1209 lands its plumbing:
+/// running an arbitrary shell command from a passive resolver inverts the
+/// trust model (the same stance as the `config_lookup` reader).
+fn evaluate_match_line(
+    tokens: &[String],
+    match_host: &str,
+    final_pass: bool,
+    want_final_pass: &mut bool,
+    path: &str,
+    linenum: usize,
+) -> Result<bool, SshError> {
+    let mut result = true;
+    let mut attributes = 0usize;
+    let mut it = tokens.iter().peekable();
+    while let Some(raw) = it.next() {
+        // A `#` token ends the criteria list (openssh/readconf.c:797-800).
+        if raw.starts_with('#') {
+            break;
+        }
+        let (negate, attrib_full) = raw
+            .strip_prefix('!')
+            .map_or((false, raw.as_str()), |stripped| (true, stripped));
+        // An inline `attrib=value` splits here; the spaced `attrib value`
+        // form consumes the next token below (openssh/readconf.c:846-853).
+        let (attrib, inline_arg) = match attrib_full.split_once('=') {
+            Some((keyword, value)) => (keyword, Some(value)),
+            None => (attrib_full, None),
+        };
+        let attrib_lc = attrib.to_ascii_lowercase();
+
+        // `all`: no argument, must appear alone (openssh/readconf.c:807-822).
+        if attrib_lc == "all" {
+            let trailing = it
+                .peek()
+                .is_some_and(|next| !next.starts_with('#') && !next.is_empty());
+            if attributes > 0 || inline_arg.is_some() || trailing {
+                return Err(refuse(
+                    path,
+                    linenum,
+                    format!("'{attrib_full}' cannot be combined with other Match attributes"),
+                ));
+            }
+            if result {
+                result = !negate;
+            }
+            return Ok(result);
+        }
+        attributes += 1;
+
+        // `canonical`/`final`: no argument; the pass flag is the predicate
+        // (openssh/readconf.c:823-836).
+        if attrib_lc == "canonical" || attrib_lc == "final" {
+            if attrib_lc == "final" && !negate {
+                *want_final_pass = true;
+            }
+            let matched = if negate { !final_pass } else { final_pass };
+            if !matched {
+                result = false;
+            }
+            continue;
+        }
+
+        // Every remaining criterion requires an argument
+        // (openssh/readconf.c:855-872).
+        let arg = match inline_arg {
+            Some(arg) => arg,
+            None => match it.next() {
+                Some(arg) => arg.as_str(),
+                None => {
+                    return Err(refuse(
+                        path,
+                        linenum,
+                        format!("missing argument for Match '{attrib}'"),
+                    ));
+                }
+            },
+        };
+        if arg.is_empty() || arg.starts_with('#') {
+            return Err(refuse(
+                path,
+                linenum,
+                format!("Missing Match criteria for {attrib}"),
+            ));
+        }
+
+        match attrib_lc.as_str() {
+            "host" => {
+                let matched = match_pattern_list_ci(match_host, arg);
+                let pass = if negate { !matched } else { matched };
+                if !pass {
+                    result = false;
+                }
+            }
+            // Owned by task 1209: argument validated above, predicate
+            // deferred, so the block stays inactive rather than mis-applied.
+            "originalhost" | "user" | "localuser" | "exec" | "localnetwork" | "version"
+            | "tagged" | "command" | "sessiontype" => {
+                result = false;
+            }
+            _ => {
+                // upstream: "Unsupported Match attribute" (openssh/readconf.c:1027).
+                return Err(refuse(
+                    path,
+                    linenum,
+                    format!("Unsupported Match attribute {attrib}"),
+                ));
+            }
+        }
+    }
+    if attributes == 0 {
+        // upstream: "One or more attributes required for Match"
+        // (openssh/readconf.c:1035-1038).
+        return Err(refuse(
+            path,
+            linenum,
+            "One or more attributes required for Match",
+        ));
+    }
+    Ok(result)
+}
+
+/// Case-INSENSITIVE glob-list match for `Match host`/`originalhost`, the
+/// rule `match_hostname` applies (openssh/match.c:193-203): lowercase the
+/// host and match it against a comma/whitespace-separated pattern list
+/// (openssh/match.c:143) where a leading `!` on any pattern negates and a
+/// negated hit fails the whole list. An empty input never matches.
+fn match_pattern_list_ci(input: &str, patterns: &str) -> bool {
+    if input.is_empty() {
+        return false;
+    }
+    let input_lc = input.to_ascii_lowercase();
+    let mut any_positive = false;
+    for token in patterns.split(|c: char| c.is_whitespace() || c == ',') {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let (negate, pattern) = token
+            .strip_prefix('!')
+            .map_or((false, token), |stripped| (true, stripped));
+        if glob_matches(input_lc.as_bytes(), pattern.to_ascii_lowercase().as_bytes()) {
+            if negate {
+                return false;
+            }
+            any_positive = true;
+        }
+    }
+    any_positive
+}
+
 /// Expands a leading `~/` to the user's home directory. Returns the path
 /// unchanged when expansion is not possible.
 fn expand_tilde(path: &str) -> PathBuf {
@@ -814,6 +1099,149 @@ mod tests {
         assert!(resolved.user.is_none());
         assert!(resolved.port.is_none());
         assert!(resolved.identity_files.is_empty());
+    }
+
+    // --- Match blocks + the two-pass model (task 237g) ---
+    //
+    // Oracle-independent counterparts to the `ssh -G` differential cells,
+    // so the two-pass model is gated even where no `ssh` binary is present.
+    // Every value here was measured against `OpenSSH_10.3p1`.
+
+    #[test]
+    fn match_all_block_applies() {
+        let resolved = resolve("Match all\n  Port 2266\n", "t");
+        assert_eq!(resolved.port, Some(2266));
+    }
+
+    #[test]
+    fn negated_match_all_never_applies() {
+        // `Match !all` is the never-match sentinel: result = negate ? 0 : 1.
+        let resolved = resolve("Match !all\n  Port 2266\n", "t");
+        assert_eq!(resolved.port, None);
+    }
+
+    #[test]
+    fn match_final_activates_only_on_the_second_pass() {
+        // Single-pass resolution would leave the port unset; the block
+        // applies only because the driver runs the SSHCONF_FINAL re-parse.
+        let resolved = resolve("Match final\n  Port 2244\n  User finaluser\n", "t");
+        assert_eq!(resolved.port, Some(2244));
+        assert_eq!(resolved.user.as_deref(), Some("finaluser"));
+    }
+
+    #[test]
+    fn match_canonical_alone_stays_inactive() {
+        // `canonical` never sets want_final_pass, and with canonicalization
+        // off there is no second pass, so the block never activates.
+        let resolved = resolve("Match canonical\n  Port 2255\n", "t");
+        assert_eq!(resolved.port, None);
+    }
+
+    #[test]
+    fn negated_match_final_matches_on_the_first_pass_only() {
+        // `!final` matches when !final_pass and does not request a second
+        // pass, so it applies on the first pass and there is no re-parse.
+        let resolved = resolve("Match !final\n  Port 2233\n", "t");
+        assert_eq!(resolved.port, Some(2233));
+    }
+
+    #[test]
+    fn first_obtained_wins_across_the_two_passes() {
+        let resolved = resolve("Port 2001\nMatch final\n  Port 2002\n", "t");
+        assert_eq!(resolved.port, Some(2001));
+        // Control: with no first-obtained value the final block claims it.
+        let control = resolve("Match final\n  Port 2002\n", "t");
+        assert_eq!(control.port, Some(2002));
+    }
+
+    #[test]
+    fn match_host_gates_case_insensitively_and_globs() {
+        let matched = resolve(
+            "Match host prod-*.example.com\n  Port 2277\n",
+            "PROD-web1.example.com",
+        );
+        assert_eq!(matched.port, Some(2277));
+        let declined = resolve(
+            "Match host prod-*.example.com\n  Port 2277\n",
+            "dev-web1.example.com",
+        );
+        assert_eq!(declined.port, None);
+    }
+
+    #[test]
+    fn negated_match_host_inverts_the_gate() {
+        let allowed = resolve(
+            "Match !host banned.example.com\n  Port 2288\n",
+            "ok.example.com",
+        );
+        assert_eq!(allowed.port, Some(2288));
+        let blocked = resolve(
+            "Match !host banned.example.com\n  Port 2288\n",
+            "banned.example.com",
+        );
+        assert_eq!(blocked.port, None);
+    }
+
+    #[test]
+    fn match_host_reads_the_resolved_hostname_when_obtained() {
+        // A first-obtained `HostName` becomes the `Match host` input, so the
+        // block gates on the resolved name rather than the alias.
+        let resolved = resolve(
+            "Host t\n  HostName real.example.com\nMatch host real.example.com\n  Port 2299\n",
+            "t",
+        );
+        assert_eq!(resolved.hostname.as_deref(), Some("real.example.com"));
+        assert_eq!(resolved.port, Some(2299));
+    }
+
+    #[test]
+    fn match_host_inline_equals_form_is_accepted() {
+        let resolved = resolve("Match host=t.example.com\n  Port 2300\n", "t.example.com");
+        assert_eq!(resolved.port, Some(2300));
+    }
+
+    #[test]
+    fn deferred_match_criterion_leaves_the_block_inactive() {
+        // `user` is owned by task 1209: its argument is validated but the
+        // predicate is deferred, so the block does not apply.
+        let resolved = resolve("Match user someone\n  Port 2311\n", "t");
+        assert_eq!(resolved.port, None);
+    }
+
+    #[test]
+    fn match_host_missing_argument_is_refused() {
+        let err = refusal("Match host\n  Port 22\n", "t");
+        assert!(
+            err.contains("missing argument for Match"),
+            "unexpected refusal: {err}"
+        );
+    }
+
+    #[test]
+    fn match_all_combined_with_another_attribute_is_refused() {
+        let err = refusal("Match all host t\n  Port 22\n", "t");
+        assert!(
+            err.contains("cannot be combined with other Match attributes"),
+            "unexpected refusal: {err}"
+        );
+    }
+
+    #[test]
+    fn unsupported_match_attribute_is_refused() {
+        let err = refusal("Match bogus t\n  Port 22\n", "t");
+        assert!(
+            err.contains("Unsupported Match attribute"),
+            "unexpected refusal: {err}"
+        );
+    }
+
+    #[test]
+    fn match_block_ends_at_the_next_host_line() {
+        // A `Host` line closes the Match block, matching upstream's
+        // block-activity reset.
+        let resolved = resolve("Match all\n  Port 2266\nHost other\n  User wrong\n", "t");
+        assert_eq!(resolved.port, Some(2266));
+        assert_eq!(resolved.user, None);
     }
 
     #[test]

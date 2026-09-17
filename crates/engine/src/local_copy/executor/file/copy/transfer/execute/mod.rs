@@ -133,36 +133,61 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // fuzzy_basis`, `find_fuzzy()` selects the closest-named candidate and the
     // generator uses it as `fnamecmp` (the delta basis) instead of sending the
     // whole file.
-    let fuzzy_basis = if !whole_file_enabled && existing_metadata.is_none() {
-        // upstream: generator.c:858 compares against the source file's mtime
-        // (whole seconds) for the fuzzy size/modtime fast-path.
-        let target_mtime = metadata.modified().ok().map(system_time_to_unix_secs);
-        find_fuzzy_basis(
-            context,
-            destination,
-            relative,
-            file_type,
-            file_size,
-            target_mtime,
-        )
-    } else {
-        None
+    //
+    // A `--partial-dir` leaf that already exists as a regular file is upstream's
+    // `partialptr`: the generator makes it `fnamecmp` (`FNAMECMP_PARTIAL_DIR`),
+    // the delta basis, ahead of the destination AND any fuzzy candidate, and the
+    // receiver rewrites the reconstruction into that same leaf in place
+    // (`one_inplace`). Compute it once here so the basis selection below, the
+    // in-place write strategy, and the delta loop all agree on the one file.
+    // upstream: generator.c:2172-2179 + 2270-2274, receiver.c:1137-1138.
+    let one_inplace_partial_file =
+        super::write_strategy::one_inplace_partial_file(context, destination);
+    let partial_dir_basis: Option<(&Path, fs::Metadata)> = match one_inplace_partial_file {
+        Some(ref leaf) if !whole_file_enabled => fs::symlink_metadata(leaf)
+            .ok()
+            .map(|meta| (leaf.as_path(), meta)),
+        _ => None,
     };
+
+    let fuzzy_basis =
+        if !whole_file_enabled && existing_metadata.is_none() && partial_dir_basis.is_none() {
+            // upstream: generator.c:858 compares against the source file's mtime
+            // (whole seconds) for the fuzzy size/modtime fast-path.
+            let target_mtime = metadata.modified().ok().map(system_time_to_unix_secs);
+            find_fuzzy_basis(
+                context,
+                destination,
+                relative,
+                file_type,
+                file_size,
+                target_mtime,
+            )
+        } else {
+            None
+        };
 
     // Build delta signature BEFORE backup renames the destination away.
     // upstream: receiver.c - the basis file must be read while it still exists
     // at the destination path. If backup runs first, the rename causes ENOENT
     // which is_vanished_error() misclassifies as a source vanish (exit 24).
     let delta_signature = if !whole_file_enabled {
-        match existing_metadata {
-            Some(existing) if existing.is_file() => {
-                build_delta_signature(destination, existing, context.block_size_override())?
+        match partial_dir_basis {
+            // upstream: generator.c:2270-2274 `prepare_to_open` - `partialptr`
+            // overrides both the destination and any fuzzy basis as `fnamecmp`.
+            Some((leaf, ref meta)) => {
+                build_delta_signature(leaf, meta, context.block_size_override())?
             }
-            _ => match fuzzy_basis {
-                Some((ref path, ref meta)) => {
-                    build_delta_signature(path, meta, context.block_size_override())?
+            None => match existing_metadata {
+                Some(existing) if existing.is_file() => {
+                    build_delta_signature(destination, existing, context.block_size_override())?
                 }
-                None => None,
+                _ => match fuzzy_basis {
+                    Some((ref path, ref meta)) => {
+                        build_delta_signature(path, meta, context.block_size_override())?
+                    }
+                    None => None,
+                },
             },
         }
     } else {
@@ -480,12 +505,11 @@ pub(in crate::local_copy) fn execute_transfer_once(
     let mut guard = None;
     let mut staging_path: Option<PathBuf> = None;
 
-    // upstream: generator.c:2173-2179 + receiver.c:1137 - a `--partial-dir`
-    // entry that already exists as a regular file is both the basis name and,
-    // under `one_inplace`, the file the reconstruction is written into.
-    let one_inplace_partial_file =
-        super::write_strategy::one_inplace_partial_file(context, destination);
-
+    // `one_inplace_partial_file` (the `--partial-dir` leaf, upstream's
+    // `partialptr`) was resolved once above where the delta basis is selected;
+    // it is both the basis name and, under `one_inplace`, the file the
+    // reconstruction is written into. upstream: generator.c:2173-2179 +
+    // receiver.c:1137.
     let strategy = select_write_strategy(
         append_offset,
         inplace_enabled,
@@ -615,13 +639,29 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // destination. Under `--inplace --backup` the destination is instead copied
     // aside (inode preserved) and rewritten in place, so `delta_basis_override`
     // stays unset and the writer IS the basis.
-    let delta_basis = delta_basis_override.as_deref().unwrap_or(destination);
+    //
+    // A `one_inplace` `--partial-dir` update overrides both: the leaf IS the
+    // basis and IS the writer's file (the InplacePartialDir strategy opened it,
+    // untruncated when a delta exists), so the reconstruction reads and rewrites
+    // it in place exactly as upstream's `updating_basis_or_equiv` path does
+    // (receiver.c:1138). The basis is therefore NOT separate from the writer.
+    let delta_basis = match one_inplace_partial_file {
+        Some(ref leaf) => leaf.as_path(),
+        None => delta_basis_override.as_deref().unwrap_or(destination),
+    };
     // The inplace skip-optimization is unsafe whenever the writer's file is
     // separate from the basis: a freshly created destination contains nothing to
     // skip over, so every matched block must be copied through. Forcing
     // non-inplace here keeps matched-block bytes flowing to the writer instead of
-    // being skipped against an empty file.
-    let basis_separate_from_writer = delta_basis_override.is_some();
+    // being skipped against an empty file. A `one_inplace` leaf is the exception:
+    // basis and writer are the same file, so it stays in-place.
+    let basis_separate_from_writer =
+        delta_basis_override.is_some() && one_inplace_partial_file.is_none();
+    // upstream: receiver.c:1138 `one_inplace` sets `updating_basis_or_equiv`, so
+    // the delta loop takes the in-place skip/rewrite path even without the
+    // `--inplace` flag. The InplacePartialDir writer holds the leaf open for
+    // in-place rewrite, so honour that here.
+    let updating_in_place = one_inplace_partial_file.is_some();
     // Snapshot the short-read counter so the check below sees only THIS
     // pass's report, not one an earlier file already recorded.
     let source_read_events_before = context.source_read_events();
@@ -641,6 +681,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         preallocated_len,
         start,
         basis_separate_from_writer,
+        updating_in_place,
     );
 
     // On Linux, keep writer alive for fd-based metadata (fchmod/fchown/futimens).

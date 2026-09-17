@@ -59,6 +59,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+pub use bandwidth::{BandwidthLimiter, ThrottlingWriter};
+
 use bytes::Bytes;
 use quinn_proto::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn_proto::{ClientConfig, Endpoint, EndpointConfig, ServerConfig};
@@ -597,6 +599,29 @@ impl QuicStream {
         QuicStream {
             io: Arc::clone(&self.io),
         }
+    }
+
+    /// Wraps this stream's write half in the shared bandwidth-pacing decorator
+    /// so `--bwlimit` throttles QUIC egress exactly as it throttles the TCP/SSH
+    /// sender socket.
+    ///
+    /// This routes QUIC writes through [`ThrottlingWriter`] - the same
+    /// [`BandwidthLimiter`]-driven decorator the TCP/SSH sender installs at the
+    /// bottom of its writer stack - rather than re-implementing the clamp and
+    /// pace loop on the stream. Pass `Some(limiter)` on the sender role and
+    /// `None` on the receiver (or `--bwlimit=0`), where the wrapper is a
+    /// zero-overhead passthrough. Because [`QuicStream`] is a byte pipe, the
+    /// decorator paces the exact wire bytes handed to the driver, matching
+    /// upstream's `sleep_for_bwlimit` on the raw socket write (`io.c:846,861`).
+    ///
+    /// The returned writer owns this handle; obtain the read half first via
+    /// [`QuicStream::try_clone`] when a split read/write pair is needed.
+    #[must_use]
+    pub fn throttled_writer(
+        self,
+        limiter: Option<BandwidthLimiter>,
+    ) -> ThrottlingWriter<QuicStream> {
+        ThrottlingWriter::new(self, limiter)
     }
 
     /// Builds a teardown guard for this connection.

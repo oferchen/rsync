@@ -264,7 +264,8 @@ where
             // `FLOG` events stay queued - the log-file sink below takes those.
             let (interleaved, other_stream) =
                 partition_by_summary_stream(drain_stamped_events_for_client(), msgs_to_stderr);
-            let mut pending = PendingDiagnostics::new(interleaved);
+            let mut pending =
+                PendingDiagnostics::new(interleaved, EscapeStyle::terminal(eight_bit_output));
             if !other_stream.is_empty() {
                 let _ = render_diagnostic_events(
                     &other_stream,
@@ -339,7 +340,16 @@ where
             // its summary yet still owe a non-zero code (e.g. a receiver that
             // discarded a file because its output mkstemp() failed reports exit
             // 23 via MSG_ERROR_XFER). Honour it here instead of forcing 0.
-            summary.io_error_exit_code().unwrap_or(0)
+            //
+            // 430: latch the decided code at this decision site, mirroring
+            // upstream's `_exit_cleanup(RERR_*)` at the error site
+            // (cleanup.c:113-117). A second interrupt arriving while this code
+            // propagates back to `run`'s tail then finds the latch already set
+            // and cannot substitute RERR_SIGNAL.
+            core::exit_code::record_exit(
+                core::exit_code::process_latch(),
+                summary.io_error_exit_code().unwrap_or(0),
+            )
         }
         Err(error) => {
             if let Some(observer) = live_progress
@@ -356,7 +366,10 @@ where
                 "rsync error: client functionality is unavailable in this build (code 1)",
                 stderr,
             );
-            error.exit_code()
+            // 430: latch the decided error code at the site that maps it, so a
+            // second interrupt during unwinding cannot overwrite it with
+            // RERR_SIGNAL (upstream: cleanup.c:113-117).
+            core::exit_code::record_exit(core::exit_code::process_latch(), error.exit_code())
         }
     }
 }
@@ -441,9 +454,20 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
     // them in emission order, so "building file list" (flist.c:2248) or
     // "receiving file list" (flist.c:2608) precedes the per-file lines.
     for event in &flog_events {
-        let (logging::DiagnosticEvent::Info { message, .. }
-        | logging::DiagnosticEvent::Debug { message, .. }) = event;
-        writeln!(log.file, "{message}")?;
+        match event {
+            logging::DiagnosticEvent::Info { message, .. }
+            | logging::DiagnosticEvent::Debug { message, .. } => writeln!(log.file, "{message}")?,
+            // A byte-faithful notice reaches the log file as raw bytes; the
+            // `LogFileWriter` escapes them once with its own log-file style
+            // (upstream: log.c:132 `logit`), so the filename operand survives
+            // and a control byte cannot forge a log line. The message boundary
+            // is one `write`, so append the record's newline and write it whole.
+            logging::DiagnosticEvent::Bytes { message, .. } => {
+                let mut line = message.clone();
+                line.push(b'\n');
+                log.file.write_all(&line)?;
+            }
+        }
     }
     // The FCLIENT "sending incremental file list" banner is stdout only;
     // upstream's parallel "building file list" line (flist.c:2520) is an FLOG

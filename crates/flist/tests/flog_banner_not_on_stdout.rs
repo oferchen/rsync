@@ -26,6 +26,7 @@ const LOG_FILE_ONLY_BANNERS: [&str; 2] = ["building file list", "built file list
 fn message(event: &DiagnosticEvent) -> &str {
     match event {
         DiagnosticEvent::Info { message, .. } | DiagnosticEvent::Debug { message, .. } => message,
+        DiagnosticEvent::Bytes { message, .. } => std::str::from_utf8(message).unwrap_or(""),
     }
 }
 

@@ -442,19 +442,6 @@ fn latched_run_exit(
     code
 }
 
-/// Decides the abort path's fate against the process exit latch.
-///
-/// Returns `Some(code)` when the watcher wins the claim and must terminate
-/// the process, `None` when the normal return path already claimed the exit -
-/// the watcher's code is latched either way, so a deferring watcher loses
-/// nothing but the right to truncate the winner's output.
-/// upstream: cleanup.c:113-117 (first writer wins) + cleanup.c:105 (the
-/// cleanup body runs once no matter how many entrants arrive).
-fn abort_exit(latch: &core::exit_code::ExitCodeLatch, code: i32) -> Option<i32> {
-    let code = latch.resolve(code);
-    latch.claim_exit().then_some(code)
-}
-
 /// Renders a `clap` parse failure into the detail text used to compose an
 /// rsync-style diagnostic, stripping clap's own leading `error: ` header.
 ///
@@ -528,8 +515,13 @@ fn install_client_signal_handling() {
                     .map_or(i32::from(core::exit_code::ExitCode::Signal), |r| {
                         i32::from(r.exit_code())
                     });
-                if let Some(code) = abort_exit(core::exit_code::process_latch(), code) {
-                    engine::CleanupManager::global().finalize_partials();
+                // The exit funnel owns the abort path: it resolves the code
+                // first-writer-wins, admits a single claimant, and on a win
+                // finalises the interrupted transfer's retained `--partial`
+                // files before returning the code to terminate with. It
+                // disconnects the pipeline ropes rather than joining their
+                // worker threads (a parked worker would deadlock a join).
+                if let Some(code) = core::exit_code::abort(core::exit_code::process_latch(), code) {
                     std::process::exit(code);
                 }
                 // The normal return path already claimed the exit with a
@@ -557,13 +549,13 @@ pub fn exit_code_from(status: i32) -> std::process::ExitCode {
 
 /// Deterministic race harness for the signal watcher vs the normal return
 /// path. Both arms call the exact functions the live sites call
-/// ([`abort_exit`] for the watcher, [`latched_run_exit`] for `run`'s tail),
-/// and each ordering is forced with a channel handoff - no sleeps, no timing
-/// luck. upstream: cleanup.c:113-117 + cleanup.c:105.
+/// (`core::exit_code::abort` for the watcher, [`latched_run_exit`] for `run`'s
+/// tail), and each ordering is forced with a channel handoff - no sleeps, no
+/// timing luck. upstream: cleanup.c:113-117 + cleanup.c:105.
 #[cfg(test)]
 mod exit_latch_race_tests {
-    use super::{abort_exit, latched_run_exit};
-    use core::exit_code::ExitCodeLatch;
+    use super::latched_run_exit;
+    use core::exit_code::{ExitCodeLatch, abort};
     use std::sync::Arc;
     use std::sync::mpsc;
     use std::thread;
@@ -582,7 +574,7 @@ mod exit_latch_race_tests {
         let watcher = {
             let latch = Arc::clone(&latch);
             thread::spawn(move || {
-                let decision = abort_exit(&latch, SIGNAL);
+                let decision = abort(&latch, SIGNAL);
                 done_tx.send(()).expect("main thread waits on the channel");
                 decision
             })
@@ -607,7 +599,7 @@ mod exit_latch_race_tests {
 
         let watcher = {
             let latch = Arc::clone(&latch);
-            thread::spawn(move || abort_exit(&latch, SIGNAL))
+            thread::spawn(move || abort(&latch, SIGNAL))
         };
         let decision = watcher.join().expect("watcher thread");
         assert_eq!(decision, None, "the watcher must not exit the process");
@@ -628,7 +620,7 @@ mod exit_latch_race_tests {
 
         let watcher = {
             let latch = Arc::clone(&latch);
-            thread::spawn(move || abort_exit(&latch, SIGNAL))
+            thread::spawn(move || abort(&latch, SIGNAL))
         };
         assert_eq!(watcher.join().expect("watcher thread"), None);
     }

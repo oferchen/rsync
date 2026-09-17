@@ -467,6 +467,44 @@ pub fn device_word(rdev_major: u32, rdev_minor: u32) -> u64 {
     combine_dev(rdev_major, rdev_minor) as u64
 }
 
+/// Composes the `mknod(2)` mode word for a FIFO node from its permission bits.
+///
+/// Upstream forwards `file->mode` - the file-type bits ORed with the low
+/// permission bits - straight to `do_mknod_at()`, so a confined-dirfd
+/// `mknodat` needs the same combined word rather than the bare `0o7777` a
+/// [`FileEntry`](protocol::flist::FileEntry) carries. Kept beside
+/// [`device_word`] so the one crate that owns `libc`'s `S_IF*` constants owns
+/// the type-bit composition too, leaving `#![deny(unsafe_code)]` callers free
+/// of it.
+// upstream: syscall.c:do_mknod_at() forwards `file->mode` (type | perms).
+#[cfg(unix)]
+#[must_use]
+pub fn fifo_mknod_mode(mode_bits: u32) -> u32 {
+    // POSIX `S_IFIFO` octal literal rather than `libc::S_IFIFO as u32`: the
+    // constant is `u32` on Linux (so the cast trips `unnecessary_cast`) but
+    // `u16` on Apple targets, and a cross-platform `u32::from` would trip
+    // `useless_conversion` on Linux. The literal is pinned to libc by
+    // `s_if_type_bits_match_libc` so it cannot silently drift.
+    0o010000 | (mode_bits & 0o7777)
+}
+
+/// Composes the `mknod(2)` mode word for a character or block device node.
+///
+/// `is_block` selects `S_IFBLK` over `S_IFCHR`; the low permission bits are
+/// carried through unchanged. See [`fifo_mknod_mode`] for why this lives here.
+// upstream: syscall.c:do_mknod_at() forwards `file->mode` (type | perms).
+#[cfg(unix)]
+#[must_use]
+pub fn device_mknod_mode(mode_bits: u32, is_block: bool) -> u32 {
+    // POSIX `S_IFBLK` / `S_IFCHR` octal literals rather than `libc::S_IF* as
+    // u32`: those constants are `u32` on Linux (so the cast trips
+    // `unnecessary_cast`) and `u16` on Apple targets, and a cross-platform
+    // `u32::from` would trip `useless_conversion` on Linux. Pinned to libc by
+    // `s_if_type_bits_match_libc` so the literals cannot silently drift.
+    let type_bits: u32 = if is_block { 0o060000 } else { 0o020000 };
+    type_bits | (mode_bits & 0o7777)
+}
+
 #[cfg(all(
     unix,
     any(
@@ -789,6 +827,18 @@ mod tests {
     use std::path::Path;
     #[cfg(unix)]
     use tempfile::tempdir;
+
+    // Pins the POSIX octal type-bit literals used by `fifo_mknod_mode` and
+    // `device_mknod_mode` to libc's `S_IF*`, so they cannot silently drift.
+    // `u64::from` widens both the `u32` (Linux) and `u16` (Apple) definitions
+    // without a cast, keeping the check clippy-clean on every unix target.
+    #[cfg(unix)]
+    #[test]
+    fn s_if_type_bits_match_libc() {
+        assert_eq!(u64::from(libc::S_IFIFO), 0o010000);
+        assert_eq!(u64::from(libc::S_IFCHR), 0o020000);
+        assert_eq!(u64::from(libc::S_IFBLK), 0o060000);
+    }
 
     #[cfg(all(
         unix,
