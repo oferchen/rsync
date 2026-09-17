@@ -2066,4 +2066,284 @@ mod tests {
             "uid {foreign} is neither root nor the euid and must be refused"
         );
     }
+
+    /// CLASS coverage: every confined operator-path family reaches the ONE
+    /// shared ownership walk, and the walk's confinement-root refusal fires for
+    /// each of them.
+    ///
+    /// The individual cells above pin the walk's INTERNALS - the owner test, the
+    /// hop budget, the `ENOTDIR`, the leaf/ancestor split - through one or two
+    /// entry points. This pins the WIRING: that each `operator_*_confined`
+    /// spelling actually routes its operator path through that walk, rather than
+    /// through a plain path-based syscall that would silently skip the root
+    /// check. A table keeps the cells honest - adding a confined operator without
+    /// a row here leaves a hole, adding a row without wiring the operator leaves
+    /// a red cell.
+    ///
+    /// # Non-vacuity
+    ///
+    /// Every cell is a triple. The ESCAPE names an operator path that resolves
+    /// OUT of the root through a euid-owned (therefore trusted, therefore
+    /// FOLLOWED) directory symlink, so only the root check can stop it; it must
+    /// be refused with `ELOOP` - the confinement decision (`syscall.c:464`), not
+    /// an incidental `EACCES`/`ENOTDIR`. The CONTAINED check proves the escape
+    /// produced no out-of-root side effect (or, for the read/stat cells, that the
+    /// out-of-root victim really was disclosable, so the refusal is meaningful
+    /// rather than an unrelated failure). The CONTROL runs the SAME operation on
+    /// an in-root path and must SUCCEED, so a walk that simply refused everything
+    /// is caught rather than mistaken for a fix.
+    ///
+    /// Reverting the root check to always-allow (`path_outside_root` -> `false`)
+    /// turns every ESCAPE cell red; the CONTROLs stay green. That is the mutation
+    /// this table exists to kill.
+    ///
+    /// # Deliberately skipped: the `Ancillary` operators
+    ///
+    /// The `PathKind::Ancillary` spellings - `operator_open_read`,
+    /// `operator_read_to_string`, `operator_open_append` (`--log-file`),
+    /// `operator_open_write_create`/`operator_open_create_new` (`--write-batch`
+    /// and its `.sh`), `operator_open_rw_create` (daemon `lock file`),
+    /// `operator_open_recv` (`--partial-dir`/`--temp-dir` receiver open),
+    /// `operator_open_dir`, `operator_mkdir`, `operator_rename`, `operator_link`
+    /// and `operator_symlink_metadata`, plus the config/`secrets file`/`motd`/
+    /// `--password-file`/`--*clude-from`/`--files-from` reads - reach the SAME
+    /// walk but carry no confinement root (they may legitimately point outside
+    /// the tree). Their only refusal is an untrusted-owner symlink, which needs a
+    /// second uid to plant and therefore root; that half is pinned at the
+    /// predicate by `refuses_an_owner_that_is_neither_root_nor_the_euid`, and its
+    /// behavioural, cross-implementation form is upstream's own
+    /// `operator-path-insecure-links-daemon` cell (separate task). A runtime
+    /// `--confine-root` local session would still leave those spellings inert, so
+    /// asserting a refusal on them here would be vacuous; they are named here and
+    /// left to that predicate rather than faked.
+    #[test]
+    fn every_confined_operator_reaches_the_ownership_walk() {
+        // The confinement root is compared against the walk's PHYSICAL resolved
+        // path, so anchor the fixture on the canonical tempdir (macOS resolves
+        // `/var` -> `/private/var`, and a logical root would read every in-root
+        // control as an escape).
+        let temp = TempDir::new().expect("tempdir");
+        let base = temp.path().canonicalize().expect("canonicalise tempdir");
+        let root = base.join("module");
+        std::fs::create_dir(&root).expect("mkdir module");
+        let outside = base.join("outside");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        // A euid-owned directory symlink INSIDE the root: the walk trusts and
+        // FOLLOWS it (ownership, not location, is the signal), so the escape
+        // reaches the leaf and only the root check can refuse it.
+        symlink("../outside", root.join("esc")).expect("symlink esc");
+
+        // Out-of-root victims the escape cells would disclose or destroy.
+        std::fs::write(outside.join("secret"), b"OUTSIDE").expect("write secret");
+        std::fs::write(outside.join("rm_victim"), b"VICTIM").expect("write rm_victim");
+
+        // In-root control sources.
+        std::fs::write(root.join("merge"), b"RULES\n").expect("write merge");
+        std::fs::write(root.join("rename_ctl"), b"CTL").expect("write rename_ctl");
+        std::fs::write(root.join("link_ctl"), b"LCTL").expect("write link_ctl");
+        std::fs::write(root.join("rm_ctl"), b"RMCTL").expect("write rm_ctl");
+        std::fs::write(root.join("rename_src"), b"SRC").expect("write rename_src");
+        std::fs::write(root.join("link_src"), b"LSRC").expect("write link_src");
+
+        confine_to(&root);
+
+        struct Cell<'a> {
+            /// The confined operator function under test.
+            op: &'static str,
+            /// The operator-path option family that routes it in production.
+            option_family: &'static str,
+            /// The operation on an operator path resolving OUT of the root.
+            escape: Box<dyn Fn() -> std::io::Result<()> + 'a>,
+            /// Whether the escape produced no out-of-root effect (or, for reads,
+            /// that the victim was genuinely disclosable).
+            contained: Box<dyn Fn() -> bool + 'a>,
+            /// The SAME operation on an in-root operator path.
+            control: Box<dyn Fn() -> std::io::Result<()> + 'a>,
+        }
+
+        let esc = |name: &str| root.join("esc").join(name);
+        let cells: Vec<Cell> = vec![
+            Cell {
+                op: "operator_open_read_confined",
+                option_family: "--filter dir-merge / peer-named merge file",
+                escape: Box::new(|| super::operator_open_read_confined(&esc("secret")).map(|_| ())),
+                contained: Box::new(|| {
+                    std::fs::read(outside.join("secret")).is_ok_and(|b| b == b"OUTSIDE")
+                }),
+                control: Box::new(|| {
+                    super::operator_open_read_confined(&root.join("merge")).map(|_| ())
+                }),
+            },
+            Cell {
+                op: "operator_read_to_string_confined",
+                option_family: "--filter merge file (peer-named)",
+                escape: Box::new(|| {
+                    super::operator_read_to_string_confined(&esc("secret")).map(|_| ())
+                }),
+                contained: Box::new(|| {
+                    std::fs::read(outside.join("secret")).is_ok_and(|b| b == b"OUTSIDE")
+                }),
+                control: Box::new(|| {
+                    super::operator_read_to_string_confined(&root.join("merge")).map(|_| ())
+                }),
+            },
+            Cell {
+                op: "operator_open_write_create_confined",
+                option_family: "--backup-dir (in-place backup file)",
+                escape: Box::new(|| {
+                    super::operator_open_write_create_confined(&esc("wrote"), 0o600).map(|_| ())
+                }),
+                contained: Box::new(|| !outside.join("wrote").exists()),
+                control: Box::new(|| {
+                    super::operator_open_write_create_confined(&root.join("wrote_ok"), 0o600)
+                        .map(|_| ())
+                }),
+            },
+            Cell {
+                op: "operator_create_dir_all_confined",
+                option_family: "--backup-dir (parent chain)",
+                escape: Box::new(|| {
+                    super::operator_create_dir_all_confined(&esc("mkdir_esc"), 0o700).map(|_| ())
+                }),
+                contained: Box::new(|| !outside.join("mkdir_esc").exists()),
+                control: Box::new(|| {
+                    super::operator_create_dir_all_confined(
+                        &root.join("newtree").join("sub"),
+                        0o700,
+                    )
+                    .map(|_| ())
+                }),
+            },
+            Cell {
+                op: "operator_rename_confined",
+                option_family: "--temp-dir commit / --backup-dir rename",
+                escape: Box::new(|| {
+                    super::operator_rename_confined(&root.join("rename_src"), &esc("moved"), true)
+                        .map(|_| ())
+                }),
+                contained: Box::new(|| {
+                    !outside.join("moved").exists() && root.join("rename_src").exists()
+                }),
+                control: Box::new(|| {
+                    super::operator_rename_confined(
+                        &root.join("rename_ctl"),
+                        &root.join("rename_dst"),
+                        true,
+                    )
+                    .map(|_| ())
+                }),
+            },
+            Cell {
+                op: "operator_link_confined",
+                option_family: "--link-dest / --copy-dest hardlink",
+                escape: Box::new(|| {
+                    super::operator_link_confined(&root.join("link_src"), &esc("linked"))
+                        .map(|_| ())
+                }),
+                contained: Box::new(|| !outside.join("linked").exists()),
+                control: Box::new(|| {
+                    super::operator_link_confined(&root.join("link_ctl"), &root.join("link_dst"))
+                        .map(|_| ())
+                }),
+            },
+            Cell {
+                op: "operator_symlink_confined",
+                option_family: "--backup-dir symlink recreation",
+                escape: Box::new(|| {
+                    super::operator_symlink_confined(Path::new("payload"), &esc("symed"))
+                        .map(|_| ())
+                }),
+                contained: Box::new(|| outside.join("symed").symlink_metadata().is_err()),
+                control: Box::new(|| {
+                    super::operator_symlink_confined(Path::new("payload"), &root.join("symed_ok"))
+                        .map(|_| ())
+                }),
+            },
+            Cell {
+                op: "operator_remove_file_confined",
+                option_family: "--backup-dir obstruction clear",
+                escape: Box::new(|| {
+                    super::operator_remove_file_confined(&esc("rm_victim")).map(|_| ())
+                }),
+                contained: Box::new(|| outside.join("rm_victim").exists()),
+                control: Box::new(|| {
+                    super::operator_remove_file_confined(&root.join("rm_ctl")).map(|_| ())
+                }),
+            },
+            Cell {
+                op: "operator_mknod_confined",
+                option_family: "--backup-dir device/FIFO tier",
+                // 0o010000 is S_IFIFO, spelled as a literal rather than
+                // `libc::S_IFIFO as u32`: the libc const is u16 on macOS (a real
+                // widening cast) but u32 on Linux (a no-op clippy flags as
+                // `unnecessary_cast`), so only a cast-free literal is clean on
+                // both. A FIFO needs no privilege, so the in-root control creates.
+                escape: Box::new(|| {
+                    super::operator_mknod_confined(&esc("fifo"), 0o010000 | 0o600, 0, false)
+                        .map(|_| ())
+                }),
+                contained: Box::new(|| !outside.join("fifo").exists()),
+                control: Box::new(|| {
+                    super::operator_mknod_confined(
+                        &root.join("fifo_ok"),
+                        0o010000 | 0o600,
+                        0,
+                        false,
+                    )
+                    .map(|_| ())
+                }),
+            },
+            Cell {
+                op: "operator_symlink_metadata_confined",
+                option_family: "--link-dest basis stat (basis_link_stat)",
+                escape: Box::new(|| {
+                    super::operator_symlink_metadata_confined(&esc("secret")).map(|_| ())
+                }),
+                contained: Box::new(|| {
+                    std::fs::read(outside.join("secret")).is_ok_and(|b| b == b"OUTSIDE")
+                }),
+                control: Box::new(|| {
+                    super::operator_symlink_metadata_confined(&root.join("merge")).map(|_| ())
+                }),
+            },
+        ];
+
+        // Accumulate every mismatch so a mutation reports the WHOLE kill count in
+        // one message rather than stopping at the first cell.
+        let mut failures: Vec<String> = Vec::new();
+        for cell in &cells {
+            match (cell.escape)() {
+                Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {}
+                Err(error) => failures.push(format!(
+                    "{} ({}): escape refused with {:?}, expected ELOOP",
+                    cell.op,
+                    cell.option_family,
+                    error.raw_os_error()
+                )),
+                Ok(()) => failures.push(format!(
+                    "{} ({}): escape SUCCEEDED - the ownership walk was not reached",
+                    cell.op, cell.option_family
+                )),
+            }
+            if !(cell.contained)() {
+                failures.push(format!(
+                    "{} ({}): the escape left an out-of-root effect",
+                    cell.op, cell.option_family
+                ));
+            }
+            if let Err(error) = (cell.control)() {
+                failures.push(format!(
+                    "{} ({}): the in-root control failed with {error}",
+                    cell.op, cell.option_family
+                ));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "{} of {} confined-operator cells failed:\n{}",
+            failures.len(),
+            cells.len(),
+            failures.join("\n")
+        );
+    }
 }
