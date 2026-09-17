@@ -28,7 +28,7 @@ use crate::writer::MsgInfoSender;
 /// payload on the wire.
 ///
 /// Bundles the NDX with the iflags-gated trailing fields that always travel
-/// together (upstream `sender.c:184-193`): `fnamecmp_type` is emitted when
+/// together (upstream `sender.c:468-485`): `fnamecmp_type` is emitted when
 /// `iflags.has_basis_type()` and `xname` when `iflags.has_xname()`. Grouping
 /// them as a single parameter object keeps the two writer methods below at a
 /// manageable arity and prevents the four fields from drifting apart at call
@@ -303,7 +303,7 @@ impl GeneratorContext {
         } = *attrs;
         ndx_codec.write_ndx(writer, ndx)?;
         if self.protocol.supports_iflags() {
-            // upstream: sender.c:184 - write_shortint(f_out, iflags) writes the
+            // upstream: sender.c:468-485 - write_shortint(f_out, iflags) writes the
             // FULL 16-bit iflags, including the ITEM_BASIS_TYPE_FOLLOWS /
             // ITEM_XNAME_FOLLOWS framing bits. The receiver reads those bits to
             // decide whether the trailing fnamecmp_type / xname fields follow;

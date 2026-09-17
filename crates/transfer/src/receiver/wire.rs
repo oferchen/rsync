@@ -318,7 +318,7 @@ impl SumHead {
 ///
 /// # Upstream Reference
 ///
-/// - `sender.c:184` - `write_ndx_and_attrs()` sends these
+/// - `sender.c:468-485` - `write_ndx_and_attrs()` sends these
 /// - `rsync.c:383` - `read_ndx_and_attrs()` reads them
 /// - `xattrs.c:623` - `send_xattr_request()` writes abbreviated xattr values
 #[derive(Debug, Clone, Default)]

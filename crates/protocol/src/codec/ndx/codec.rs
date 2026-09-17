@@ -595,7 +595,7 @@ pub fn create_ndx_codec(protocol_version: u8) -> NdxCodecEnum {
 /// are excluded.
 ///
 /// A redo pass legitimately re-emits an already-sent index: upstream
-/// `io.c:write_ndx` imposes no ordering, and `sender.c:442` echoes the redo
+/// `io.c:write_ndx` imposes no ordering, and `sender.c:468-485` echoes the redo
 /// NDX via the same `write_ndx_and_attrs` path used for the first send
 /// (`generator.c:2178-2216` re-requests the file on the redo). Once such a
 /// re-emission is seen the guard latches off, since no monotonic invariant
@@ -659,7 +659,7 @@ impl NdxCodec for MonotonicNdxWriter {
     fn write_ndx<W: Write + ?Sized>(&mut self, writer: &mut W, ndx: i32) -> io::Result<()> {
         // Only check positive file indices - negative values are sentinels
         // (NDX_DONE, NDX_FLIST_EOF, NDX_DEL_STATS, NDX_FLIST_OFFSET). A redo
-        // pass re-emits an already-sent index (sender.c:442 echoes the redo NDX
+        // pass re-emits an already-sent index (sender.c:468-485 echoes the redo NDX
         // via write_ndx_and_attrs), so a non-increasing value latches the guard
         // off rather than tripping it.
         #[cfg(debug_assertions)]
