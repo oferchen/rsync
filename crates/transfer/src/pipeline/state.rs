@@ -120,6 +120,32 @@ impl PipelineState {
         self.pending.front()
     }
 
+    /// Re-inserts a transfer at the front of the window, undoing a `pop` whose
+    /// response turned out to belong to a different, out-of-order entry.
+    ///
+    /// The popped front is still awaited, so it must return to the head of the
+    /// FIFO; the `pop`'s `total_processed` bump is reversed to keep the counter
+    /// honest.
+    pub fn restore_front(&mut self, transfer: PendingTransfer) {
+        self.pending.push_front(transfer);
+        self.total_processed = self.total_processed.saturating_sub(1);
+    }
+
+    /// Retires the outstanding request whose NDX equals `ndx`, wherever it sits
+    /// in the window, returning its position when one is removed.
+    ///
+    /// A sender declines a file with `MSG_NO_SEND` the instant it fails to open
+    /// it, which can name a later request while an earlier one is still at the
+    /// window front. Upstream's generator is NDX-addressed and retires the entry
+    /// by index regardless of order (io.c:1207-1256 `got_flist_entry_status`);
+    /// this mirrors that for oc's FIFO-positional window.
+    pub fn retire_ndx(&mut self, ndx: i32) -> Option<usize> {
+        let pos = self.pending.iter().position(|t| t.ndx() == ndx)?;
+        self.pending.remove(pos);
+        self.total_processed += 1;
+        Some(pos)
+    }
+
     /// Returns the expected NDX for the next response.
     ///
     /// Used to verify responses arrive in order.

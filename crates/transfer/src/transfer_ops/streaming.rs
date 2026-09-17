@@ -50,6 +50,29 @@ pub struct StreamingResult {
     pub is_inplace: bool,
 }
 
+/// Outcome of reading one pipelined response.
+///
+/// Either the awaited file's delta was received and dispatched, or the sender
+/// declined a file with `MSG_NO_SEND`. On a decline the front request is handed
+/// back untouched (`pending`) so the caller can retire the declined entry by
+/// NDX: against an upstream sender the declined index may name a later, still
+/// outstanding request rather than the awaited front, and that front's response
+/// is still on its way.
+///
+/// upstream: io.c:1207-1256 `got_flist_entry_status(FES_NO_SEND, ndx)`.
+pub enum ResponseProgress {
+    /// The awaited file's delta arrived and was streamed to the disk thread.
+    Received(StreamingResult),
+    /// The sender declined a file.
+    Declined {
+        /// The unconsumed front request, to restore if the decline named a
+        /// different, still-outstanding entry.
+        pending: PendingTransfer,
+        /// The declined file's wire NDX, from the `MSG_NO_SEND` payload.
+        ndx: i32,
+    },
+}
+
 /// Processes a file transfer response, streaming chunks to the disk thread.
 ///
 /// Like [`super::process_file_response`], reads echoed attributes and delta tokens -
@@ -97,8 +120,13 @@ pub fn process_file_response_streaming<R: Read>(
     is_device_target: bool,
     xattr_list: Option<protocol::xattr::XattrList>,
     token_reader: &mut TokenReader,
-) -> io::Result<StreamingResult> {
-    let header = read_response_header(reader, ndx_codec, pending, ctx, receiver)?;
+) -> io::Result<ResponseProgress> {
+    let header = match read_response_header(reader, ndx_codec, pending, ctx, receiver)? {
+        super::HeaderOutcome::Header(header) => header,
+        super::HeaderOutcome::Declined { pending, ndx } => {
+            return Ok(ResponseProgress::Declined { pending, ndx });
+        }
+    };
 
     // upstream: receiver.c:911-912 - updating_basis_or_equiv is set when the
     // basis file IS the destination being updated in place (fnamecmp == fname).
@@ -189,7 +217,7 @@ pub fn process_file_response_streaming<R: Read>(
     // Try single-chunk coalescing: if the first token is a literal and the
     // next token is end-of-file, send one WholeFile message instead of
     // Begin + Chunk + Commit (3 sends -> 1).
-    match first_delta {
+    let result = match first_delta {
         DeltaToken::Literal(literal_data) if basis_map.is_none() => {
             let buf = literal_to_buf(literal_data, reader, buf_return_rx)?;
             let len = buf.len();
@@ -220,14 +248,14 @@ pub fn process_file_response_streaming<R: Read>(
                         io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")
                     })?;
 
-                return Ok(StreamingResult {
+                return Ok(ResponseProgress::Received(StreamingResult {
                     total_bytes,
                     literal_bytes: total_bytes,
                     matched_bytes: 0,
                     expected_checksum,
                     checksum_len,
                     is_inplace,
-                });
+                }));
             }
 
             // Not a single-chunk file - send Begin + first Chunk,
@@ -258,7 +286,7 @@ pub fn process_file_response_streaming<R: Read>(
                 total_bytes, // initial literal bytes from first chunk
                 updating_basis,
                 is_inplace,
-            )
+            )?
         }
         first_delta => {
             // First token was not a simple literal - send Begin and process normally.
@@ -279,7 +307,8 @@ pub fn process_file_response_streaming<R: Read>(
                 0,
                 updating_basis,
                 is_inplace,
-            )
+            )?
         }
-    }
+    };
+    Ok(ResponseProgress::Received(result))
 }
