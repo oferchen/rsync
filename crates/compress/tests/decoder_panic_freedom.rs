@@ -42,10 +42,6 @@ fn drain_bounded<R: Read>(reader: R) -> std::io::Result<u64> {
     std::io::copy(&mut bounded, &mut sink)
 }
 
-// ---------------------------------------------------------------------------
-// zlib
-// ---------------------------------------------------------------------------
-
 proptest! {
     #![proptest_config(ProptestConfig { cases: CASES, ..ProptestConfig::default() })]
 
@@ -70,10 +66,6 @@ proptest! {
         let _ = compress::zlib::decompress_to_vec(&buf);
     }
 }
-
-// ---------------------------------------------------------------------------
-// zstd
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "zstd")]
 proptest! {
@@ -100,10 +92,6 @@ proptest! {
         let _ = compress::zstd::decompress_to_vec(&buf);
     }
 }
-
-// ---------------------------------------------------------------------------
-// lz4
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "lz4")]
 proptest! {
@@ -139,13 +127,9 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Deterministic edge cases
-//
-// Property tests sample a wide distribution but rarely hit the exact
-// off-by-one and minimum-length boundaries that bounds-check-via-panic bugs
-// live on. These explicit cases pin the contract.
-// ---------------------------------------------------------------------------
+// Deterministic edge cases: property tests sample a wide distribution but
+// rarely hit the exact off-by-one and minimum-length boundaries that
+// bounds-check-via-panic bugs live on. These explicit cases pin the contract.
 
 #[test]
 fn zlib_decoder_handles_empty_input() {
