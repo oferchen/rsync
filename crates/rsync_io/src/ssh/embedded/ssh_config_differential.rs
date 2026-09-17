@@ -320,6 +320,31 @@ fn oc_resolution(config_text: &str, alias: &str) -> BTreeMap<String, Option<Vec<
         "connecttimeout".to_owned(),
         resolved.connect_timeout.map(|secs| vec![secs.to_string()]),
     );
+    // `ssh -G` dumps the family as its lower-case spelling
+    // (openssh/readconf.c:3582-3583). oc's `None` means no directive
+    // claimed the slot, which lands in `OcUnset` against upstream's
+    // default `any`.
+    map.insert(
+        "addressfamily".to_owned(),
+        resolved
+            .address_family
+            .map(|af| vec![af.as_str().to_owned()]),
+    );
+    // Both `ServerAlive*` rows dump a bare integer. `None` (no directive,
+    // or `ServerAliveInterval none`) is `OcUnset` against upstream's
+    // defaults `0` / `3`.
+    map.insert(
+        "serveraliveinterval".to_owned(),
+        resolved
+            .server_alive_interval
+            .map(|secs| vec![secs.to_string()]),
+    );
+    map.insert(
+        "serveralivecountmax".to_owned(),
+        resolved
+            .server_alive_count_max
+            .map(|count| vec![count.to_string()]),
+    );
 
     map
 }
@@ -1155,6 +1180,122 @@ mod tests {
                 Ok(v) => v,
                 Err(why) => {
                     report_skip("connecttimeout refusal parity", &why);
+                    return;
+                }
+            };
+            let upstream = upstream.expect("ssh -G must refuse this fixture");
+            assert!(
+                upstream.contains(needle),
+                "oracle refused {fixture:?} with unexpected text: {upstream}"
+            );
+            let oc = oc_refusal(fixture, alias).expect("oc must refuse it too");
+            assert!(
+                oc.contains(needle),
+                "oc refused {fixture:?} with unexpected text: {oc}"
+            );
+        }
+    }
+
+    /// `AddressFamily` resolves to the same lower-case family `ssh -G`
+    /// dumps, for each of the three multistate values.
+    #[test]
+    fn addressfamily_parity_with_the_oracle() {
+        for (value, expected) in [("inet", "inet"), ("inet6", "inet6"), ("any", "any")] {
+            let fixture = format!("Host t\n  AddressFamily {value}\n");
+            let diff = match run(&fixture, "t") {
+                Ok(d) => d,
+                Err(why) => {
+                    report_skip("addressfamily parity", &why);
+                    return;
+                }
+            };
+            let cell = diff.cell("addressfamily").expect("dumped");
+            assert_eq!(cell.upstream, vec![expected.to_owned()]);
+            assert_eq!(
+                cell.verdict,
+                Verdict::Match,
+                "upstream {:?} vs oc {:?} on {}",
+                cell.upstream,
+                cell.oc,
+                diff.oracle_version
+            );
+        }
+    }
+
+    /// `ServerAliveInterval` (a `parse_time` value) resolves to the same
+    /// whole-seconds count `ssh -G` dumps, including the `1m30s` form.
+    #[test]
+    fn serveraliveinterval_parity_with_the_oracle() {
+        const FIXTURE: &str = "Host t\n  ServerAliveInterval 1m30s\n";
+        let diff = match run(FIXTURE, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("serveraliveinterval parity", &why);
+                return;
+            }
+        };
+        let cell = diff.cell("serveraliveinterval").expect("dumped");
+        assert_eq!(cell.upstream, vec!["90".to_owned()]);
+        assert_eq!(
+            cell.verdict,
+            Verdict::Match,
+            "upstream {:?} vs oc {:?} on {}",
+            cell.upstream,
+            cell.oc,
+            diff.oracle_version
+        );
+    }
+
+    /// `ServerAliveCountMax` (a `parse_int`) resolves to the same integer.
+    #[test]
+    fn serveralivecountmax_parity_with_the_oracle() {
+        const FIXTURE: &str = "Host t\n  ServerAliveCountMax 7\n";
+        let diff = match run(FIXTURE, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("serveralivecountmax parity", &why);
+                return;
+            }
+        };
+        let cell = diff.cell("serveralivecountmax").expect("dumped");
+        assert_eq!(cell.upstream, vec!["7".to_owned()]);
+        assert_eq!(
+            cell.verdict,
+            Verdict::Match,
+            "upstream {:?} vs oc {:?} on {}",
+            cell.upstream,
+            cell.oc,
+            diff.oracle_version
+        );
+    }
+
+    /// The connection-establishment refusals are upstream's own wording,
+    /// measured live: a bad multistate token, an out-of-range integer, and
+    /// (via the inactive-block arm) a bad value under a NON-matching
+    /// `Host` block, which upstream still aborts on.
+    #[test]
+    fn connection_option_refusals_match_the_oracle() {
+        for (fixture, alias, needle) in [
+            (
+                "Host t\n  AddressFamily ipv4\n",
+                "t",
+                "unsupported option \"ipv4\".",
+            ),
+            (
+                "Host t\n  ServerAliveCountMax -1\n",
+                "t",
+                "integer value too small.",
+            ),
+            (
+                "Host other\n  AddressFamily ipv4\nHost t\n",
+                "t",
+                "unsupported option \"ipv4\".",
+            ),
+        ] {
+            let upstream = match refusal(fixture, alias) {
+                Ok(v) => v,
+                Err(why) => {
+                    report_skip("connection option refusal parity", &why);
                     return;
                 }
             };

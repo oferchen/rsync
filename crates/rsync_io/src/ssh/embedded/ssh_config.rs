@@ -2,7 +2,13 @@
 //!
 //! Recognises the subset of OpenSSH client directives that the embedded
 //! transport can act on: `Host`, `Hostname`, `User`, `Port`, `IdentityFile`,
-//! `IdentitiesOnly`, `IdentityAgent`, `ConnectTimeout`. Unknown directives are skipped
+//! `IdentitiesOnly`, `IdentityAgent`, `ConnectTimeout`, and the
+//! connection-establishment trio the russh transport has a knob for -
+//! `AddressFamily`, `ServerAliveInterval`, `ServerAliveCountMax`. Other
+//! recognised connection keywords (`BindAddress`, `BindInterface`,
+//! `ConnectionAttempts`, `IPQoS`, `TCPKeepAlive`) are accepted by the shared
+//! table but not acted on here, because the embedded transport exposes no
+//! matching knob. Unknown directives are skipped
 //! silently. Wildcards in `Host` patterns follow OpenSSH semantics: `*`
 //! matches any sequence, `?` matches any single character, `!pattern`
 //! negates a match for that block.
@@ -66,7 +72,8 @@ use super::error::SshError;
 use crate::ssh::argv_split::argv_split;
 use crate::ssh::config_files::{ConfigFile, check_default_user_config_perms, home_dir as env_home};
 use crate::ssh::config_options::{
-    Opcode, glob_matches, parse_flag_value, parse_time_value, parse_token, split_directive,
+    AddressFamily, Opcode, glob_matches, parse_address_family, parse_flag_value, parse_int_value,
+    parse_time_value, parse_token, split_directive,
 };
 
 /// upstream's `READCONF_MAX_DEPTH` - the nested-`Include` ceiling
@@ -103,6 +110,17 @@ pub(super) struct ResolvedHost {
     /// resolves to, since upstream maps `none` onto the same -1 the unset
     /// slot holds (openssh/readconf.c:1222-1223, :2734).
     pub connect_timeout: Option<u32>,
+    /// `AddressFamily` selection. `None` means no directive claimed the
+    /// slot (openssh/readconf.c:1903-1906).
+    pub address_family: Option<AddressFamily>,
+    /// `ServerAliveInterval` in whole seconds. `None` means no directive
+    /// obtained a value - the same collapse as `ConnectTimeout`, since the
+    /// shared `parse_time` arm maps `none` onto the unset -1
+    /// (openssh/readconf.c:1214-1228, :1916).
+    pub server_alive_interval: Option<u32>,
+    /// `ServerAliveCountMax`. `None` means no directive claimed the slot
+    /// (openssh/readconf.c:1920, `parse_int`).
+    pub server_alive_count_max: Option<u32>,
 }
 
 /// Parses `path` and returns the directives that apply to `host_alias`.
@@ -484,7 +502,10 @@ fn scan_config(
             | Opcode::IdentityFile
             | Opcode::IdentitiesOnly
             | Opcode::IdentityAgent
-            | Opcode::ConnectTimeout => {
+            | Opcode::ConnectTimeout
+            | Opcode::AddressFamily
+            | Opcode::ServerAliveInterval
+            | Opcode::ServerAliveCountMax => {
                 let Some(arg) = tokens.first() else {
                     let Some(reason) = opcode.missing_argument() else {
                         continue;
@@ -501,9 +522,30 @@ fn scan_config(
 
         // Value validation that upstream performs before the `*activep`
         // check, so it too refuses from an inactive block.
-        let connect_timeout = match opcode {
-            Opcode::ConnectTimeout => {
+        // `ConnectTimeout` and `ServerAliveInterval` share upstream's single
+        // `parse_time` arm, `none`-collapse included
+        // (openssh/readconf.c:1214-1228, :1916).
+        let time_value = match opcode {
+            Opcode::ConnectTimeout | Opcode::ServerAliveInterval => {
                 parse_connect_timeout(arg).map_err(|reason| refuse(path, linenum, reason))?
+            }
+            _ => None,
+        };
+        // `AddressFamily` (a multistate): an out-of-set token is upstream's
+        // `unsupported option "%s".` (openssh/readconf.c:1269).
+        let address_family =
+            match opcode {
+                Opcode::AddressFamily => Some(parse_address_family(arg).ok_or_else(|| {
+                    refuse(path, linenum, format!("unsupported option \"{arg}\"."))
+                })?),
+                _ => None,
+            };
+        // `ServerAliveCountMax` (a `parse_int`): an out-of-band or non-decimal
+        // value is upstream's `integer value <errstr>.`
+        // (openssh/readconf.c:1579).
+        let server_alive_count_max = match opcode {
+            Opcode::ServerAliveCountMax => {
+                Some(parse_int_value(arg).map_err(|reason| refuse(path, linenum, reason))?)
             }
             _ => None,
         };
@@ -543,8 +585,25 @@ fn scan_config(
                 // `ssh -G`: `none` then `5` dumps 5). A plain
                 // first-obtained-wins that let `none` claim the slot
                 // would diverge exactly there.
-                if let Some(secs) = connect_timeout {
+                if let Some(secs) = time_value {
                     set_if_unset(&mut resolved.connect_timeout, secs);
+                }
+            }
+            // Same `parse_time` `none`-sentinel behaviour as `ConnectTimeout`
+            // above: `none` leaves the slot claimable for a later numeric.
+            Opcode::ServerAliveInterval => {
+                if let Some(secs) = time_value {
+                    set_if_unset(&mut resolved.server_alive_interval, secs);
+                }
+            }
+            Opcode::ServerAliveCountMax => {
+                if let Some(count) = server_alive_count_max {
+                    set_if_unset(&mut resolved.server_alive_count_max, count);
+                }
+            }
+            Opcode::AddressFamily => {
+                if let Some(family) = address_family {
+                    set_if_unset(&mut resolved.address_family, family);
                 }
             }
             _ => unreachable!("the match above already narrowed the opcode set"),
