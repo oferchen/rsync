@@ -3,11 +3,29 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use filetime::FileTime;
 
 use crate::error::{TaskError, TaskResult};
 
 /// Run `program args...`, returning trimmed stdout; error on non-zero exit.
+///
+/// `touch` and `stat` are served from portable std/[`filetime`] implementations
+/// instead of the host binary: the fixtures backdate mtimes with GNU
+/// `touch -d @<epoch>` and read times with GNU `stat -c %W|%X`, flag forms that
+/// BSD/macOS `touch` and `stat` reject. Shelling out there made every fixture
+/// fail on macOS, collapsing whole checks into a single aggregate skip so their
+/// remaining transport cells produced no outcome at all. The Rust
+/// implementations behave identically to the GNU tools on the exact argument
+/// shapes the harness uses, on every host, so the matrix reports real outcomes
+/// everywhere. Every other program shells out unchanged.
 pub fn capture(program: &str, args: &[&str]) -> TaskResult<String> {
+    match program {
+        "touch" => return portable_touch(args),
+        "stat" => return portable_stat(args),
+        _ => {}
+    }
     let out = Command::new(program)
         .args(args)
         .output()
@@ -19,6 +37,129 @@ pub fn capture(program: &str, args: &[&str]) -> TaskResult<String> {
         )));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+}
+
+/// Portable stand-in for the GNU `touch` invocations the fixtures use.
+///
+/// Recognises the exact shape those call sites emit: optional `-h` (act on the
+/// symlink itself), `-m` (mtime only), and `-a` (atime only) flags, a mandatory
+/// `-d @<seconds>` epoch, and a trailing path. GNU `touch -d @<epoch>` with no
+/// `-m`/`-a` sets *both* atime and mtime, which the default arm mirrors. Like
+/// `touch`, a missing regular-file target is created first. Returns empty stdout
+/// on success, matching what `touch` prints.
+fn portable_touch(args: &[&str]) -> TaskResult<String> {
+    let (mut no_deref, mut mtime_only, mut atime_only) = (false, false, false);
+    let mut epoch: Option<i64> = None;
+    let mut path: Option<&str> = None;
+
+    let mut it = args.iter();
+    while let Some(&arg) = it.next() {
+        match arg {
+            "-h" => no_deref = true,
+            "-m" => mtime_only = true,
+            "-a" => atime_only = true,
+            "-d" => {
+                let value = it.next().ok_or_else(|| {
+                    TaskError::Validation("touch: -d requires a date argument".into())
+                })?;
+                epoch = Some(parse_epoch_arg(value)?);
+            }
+            other if other.starts_with('-') => {
+                return Err(TaskError::Validation(format!(
+                    "touch: unsupported flag `{other}` in portable stand-in"
+                )));
+            }
+            other => path = Some(other),
+        }
+    }
+
+    let epoch =
+        epoch.ok_or_else(|| TaskError::Validation("touch: missing -d <date> argument".into()))?;
+    let path = path.ok_or_else(|| TaskError::Validation("touch: missing path argument".into()))?;
+    let path = Path::new(path);
+    let ft = FileTime::from_unix_time(epoch, 0);
+
+    // `touch` creates a missing file; `filetime` requires it to exist. A `-h`
+    // request targets a symlink, which cannot be conjured, so only materialise
+    // regular targets.
+    if !no_deref && !path.exists() {
+        std::fs::File::create(path)
+            .map_err(|e| TaskError::Validation(format!("touch: create {}: {e}", path.display())))?;
+    }
+
+    let result = if no_deref {
+        // The fixtures only pair `-h` with a full backdate (both times), never
+        // with `-m`/`-a`; set both on the link itself to match.
+        filetime::set_symlink_file_times(path, ft, ft)
+    } else if mtime_only {
+        filetime::set_file_mtime(path, ft)
+    } else if atime_only {
+        filetime::set_file_atime(path, ft)
+    } else {
+        filetime::set_file_times(path, ft, ft)
+    };
+    result
+        .map(|()| String::new())
+        .map_err(|e| TaskError::Validation(format!("touch: set times on {}: {e}", path.display())))
+}
+
+/// Parse a `touch -d` date argument. Only the `@<seconds>` epoch form the
+/// fixtures use is accepted; anything else fails loudly rather than silently
+/// stamping the wrong time.
+fn parse_epoch_arg(value: &str) -> TaskResult<i64> {
+    value
+        .strip_prefix('@')
+        .and_then(|s| s.parse::<i64>().ok())
+        .ok_or_else(|| {
+            TaskError::Validation(format!(
+                "touch: portable stand-in only accepts `@<seconds>`, got `{value}`"
+            ))
+        })
+}
+
+/// Portable stand-in for the GNU `stat -c %W|%X <path>` invocations the fixtures
+/// use. `%W` is birth time, `%X` access time, each printed as bare epoch
+/// seconds. Symlinks are followed, mirroring `stat`'s default. When the
+/// filesystem does not expose a birth time the value is reported as `0`, exactly
+/// as GNU `stat` does, so the birth-time capability probe reads it the same way.
+fn portable_stat(args: &[&str]) -> TaskResult<String> {
+    let [flag, spec, path] = args else {
+        return Err(TaskError::Validation(format!(
+            "stat: portable stand-in expects `-c <spec> <path>`, got {args:?}"
+        )));
+    };
+    if *flag != "-c" {
+        return Err(TaskError::Validation(format!(
+            "stat: portable stand-in only supports `-c`, got `{flag}`"
+        )));
+    }
+    let path = Path::new(path);
+    // Follow symlinks like `stat` (no `-L`/dereference distinction is needed
+    // because no call site passes a symlink here, but matching the default keeps
+    // the stand-in faithful).
+    let meta = std::fs::metadata(path)
+        .map_err(|e| TaskError::Validation(format!("stat: {}: {e}", path.display())))?;
+    let secs = match *spec {
+        "%X" => system_time_secs(meta.accessed().ok()),
+        "%Y" => system_time_secs(meta.modified().ok()),
+        // A filesystem without birth times reports 0, the GNU convention the
+        // crtimes capability probe relies on.
+        "%W" => system_time_secs(meta.created().ok()),
+        other => {
+            return Err(TaskError::Validation(format!(
+                "stat: portable stand-in only supports %W/%X/%Y, got `{other}`"
+            )));
+        }
+    };
+    Ok(secs.to_string())
+}
+
+/// Whole seconds since the Unix epoch for `time`, or `0` when unavailable -
+/// matching GNU `stat`'s `0` for an unexposed timestamp.
+fn system_time_secs(time: Option<SystemTime>) -> i64 {
+    time.and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// True if a TCP connection to localhost:22 succeeds (sshd likely present).
@@ -118,10 +259,105 @@ pub fn build_backdated_tree(src: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_backdated_tree, entry_count, rel_entries};
+    use super::{build_backdated_tree, capture, entry_count, parse_epoch_arg, rel_entries};
     use std::fs;
     use std::os::unix::fs::symlink;
     use std::time::UNIX_EPOCH;
+
+    fn mtime_secs(path: &std::path::Path) -> i64 {
+        fs::symlink_metadata(path)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+    }
+
+    /// The portable `touch` sets mtime from `-d @<epoch>` on every host, so the
+    /// backdate the quick-check relies on works where BSD `touch -d` would fail.
+    #[test]
+    fn portable_touch_backdates_mtime_from_epoch() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f");
+        fs::write(&file, b"x").unwrap();
+        capture(
+            "touch",
+            &["-h", "-d", "@1614830767", &file.to_string_lossy()],
+        )
+        .unwrap();
+        assert_eq!(mtime_secs(&file), 1_614_830_767);
+    }
+
+    /// `-m` changes only the mtime, leaving the atime untouched, mirroring GNU
+    /// `touch -m` - the separation the atimes fixture depends on.
+    #[test]
+    fn portable_touch_m_sets_only_mtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f");
+        fs::write(&file, b"x").unwrap();
+        capture(
+            "touch",
+            &["-a", "-d", "@1500000000", &file.to_string_lossy()],
+        )
+        .unwrap();
+        capture(
+            "touch",
+            &["-m", "-d", "@1614830767", &file.to_string_lossy()],
+        )
+        .unwrap();
+        let meta = fs::metadata(&file).unwrap();
+        let atime = meta
+            .accessed()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert_eq!(mtime_secs(&file), 1_614_830_767);
+        assert_eq!(atime, 1_500_000_000, "-m must not disturb the atime");
+    }
+
+    /// `touch` creates a missing regular target, so a fixture that stamps a file
+    /// it has not written yet still succeeds.
+    #[test]
+    fn portable_touch_creates_missing_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("new");
+        capture("touch", &["-d", "@1614830767", &file.to_string_lossy()]).unwrap();
+        assert!(file.exists());
+        assert_eq!(mtime_secs(&file), 1_614_830_767);
+    }
+
+    /// A non-`@` date is refused loudly rather than silently stamping "now".
+    #[test]
+    fn portable_touch_rejects_non_epoch_date() {
+        assert!(parse_epoch_arg("2020-01-01 00:00:00").is_err());
+        assert_eq!(parse_epoch_arg("@42").unwrap(), 42);
+    }
+
+    /// `stat -c %X` reads back the access time as bare epoch seconds, so the
+    /// atime/crtime comparisons work without GNU `stat`.
+    #[test]
+    fn portable_stat_reads_access_time_as_epoch_seconds() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f");
+        fs::write(&file, b"x").unwrap();
+        capture(
+            "touch",
+            &["-a", "-d", "@1500000000", &file.to_string_lossy()],
+        )
+        .unwrap();
+        let got = capture("stat", &["-c", "%X", &file.to_string_lossy()]).unwrap();
+        assert_eq!(got, "1500000000");
+    }
+
+    /// A missing path fails, so `stat`-based readers get `None` via `.ok()`.
+    #[test]
+    fn portable_stat_errors_on_missing_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope");
+        assert!(capture("stat", &["-c", "%W", &missing.to_string_lossy()]).is_err());
+    }
 
     #[test]
     fn backdated_tree_populates_and_backdates_the_root() {
