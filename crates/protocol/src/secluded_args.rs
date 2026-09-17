@@ -313,6 +313,45 @@ mod tests {
     }
 
     #[test]
+    fn send_preserves_non_utf8_operand_bytes_verbatim() {
+        // Byte-transparency of the send boundary for the rsync:// operand-path
+        // epic (229): a remote operand that is not valid UTF-8 - rsync carries
+        // paths as raw `char*` - must reach the wire byte-for-byte. The arg
+        // carries a raw 0xFF (invalid UTF-8), a space, and a backslash.
+        //
+        // This exercises the `A: AsRef<[u8]>` signature directly: the arg is a
+        // `Vec<u8>` that no `&str`/`String` signature could even construct
+        // (0xFF is not valid UTF-8, so a `str` literal will not compile). If
+        // the boundary were reverted to a `String` signature the vector would
+        // not type-check; if it applied a lossy `to_string_lossy()` the 0xFF
+        // would become U+FFFD (0xEF 0xBF 0xBD) and the golden bytes below would
+        // fail. Either regression is caught here.
+        //
+        // upstream: rsync.c:283-320 send_protected_args() writes each arg with
+        // `write_buf(fd, args[i], strlen(args[i]) + 1)` - raw bytes plus the
+        // NUL, no charset assumption when ic_send == (iconv_t)-1.
+        let arg: Vec<u8> = vec![b'a', 0xFF, b' ', b'b', b'\\', b'c'];
+        let args = vec![arg.clone()];
+        let mut buf = Vec::new();
+        send_secluded_args(&mut buf, &args, None).expect("send should succeed");
+
+        // Golden wire: the arg bytes verbatim, then the arg NUL, then the
+        // empty-string terminator NUL.
+        assert_eq!(buf, b"a\xFF b\\c\0\0");
+
+        // Decode byte-for-byte by splitting on the NUL delimiter (recv's
+        // `Vec<String>` return type cannot represent 0xFF, so the decode is
+        // done at the byte level here - the recv-side `String` typing is the
+        // separate server-read concern, not the send boundary under test).
+        let first = buf.split(|&b| b == 0).next().expect("at least one field");
+        assert_eq!(
+            first,
+            arg.as_slice(),
+            "0xFF/space/backslash must survive verbatim"
+        );
+    }
+
+    #[test]
     fn recv_from_truncated_stream_returns_error() {
         // Stream ends without terminator
         let buf = b"arg1\0arg2";
