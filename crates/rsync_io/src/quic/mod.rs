@@ -81,9 +81,9 @@ pub use error::{
 pub use quinn_proto::{ConnectError, ConnectionError, TransportError, TransportErrorCode, VarInt};
 
 pub use trust::{
-    ClientAuth, Fingerprint, KnownHostsFile, KnownHostsStore, TofuVerifier, TrustPolicy,
-    default_known_hosts_path, load_cert_chain_and_key, load_private_ca, private_ca_file, resolve,
-    system_roots, tofu, tofu_file,
+    AcceptNewVerifier, ClientAuth, Fingerprint, KnownHostsFile, KnownHostsStore, TofuVerifier,
+    TrustPolicy, default_known_hosts_path, load_cert_chain_and_key, load_private_ca,
+    private_ca_file, resolve, system_roots, tofu, tofu_file,
 };
 
 /// ALPN protocol identifier advertised on every QUIC connection.
@@ -519,8 +519,9 @@ pub enum QuicTrust {
     /// platform trust store (system-roots default) or a private CA bundle
     /// supplied via `--quic-ca`.
     Roots(RootCertStore),
-    /// Delegate the trust decision to a custom rustls verifier, e.g. the TOFU
-    /// SPKI-pinning verifier that backs `quic_known_hosts`.
+    /// Delegate the trust decision to a custom rustls verifier - the
+    /// accept-new default ([`AcceptNewVerifier`], CA/system-root layer plus a
+    /// `quic_known_hosts` TOFU fallback) or a bare TOFU verifier.
     Verifier(Arc<dyn ServerCertVerifier>),
 }
 
