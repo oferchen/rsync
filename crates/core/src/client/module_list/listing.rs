@@ -218,6 +218,10 @@ pub fn run_module_list_with_password_and_options(
             #[cfg(feature = "quic")]
             ca: options.quic_ca().map(std::path::Path::to_path_buf),
             #[cfg(feature = "quic")]
+            cert: options.quic_cert().map(std::path::Path::to_path_buf),
+            #[cfg(feature = "quic")]
+            key: options.quic_key().map(std::path::Path::to_path_buf),
+            #[cfg(feature = "quic")]
             cc: options.quic_cc(),
             #[cfg(feature = "quic")]
             window: options.quic_window(),

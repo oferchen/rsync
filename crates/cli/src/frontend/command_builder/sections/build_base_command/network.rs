@@ -152,6 +152,26 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("quic-cert")
+                .long("quic-cert")
+                .value_name("PATH")
+                .help("Present the client certificate chain in PATH (PEM) to the QUIC daemon for mutual TLS. Requires --quic-key.")
+                .hide(quic_unavailable)
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
+            Arg::new("quic-key")
+                .long("quic-key")
+                .value_name("PATH")
+                .help("Private key (PEM) for the --quic-cert client certificate. Requires --quic-cert.")
+                .hide(quic_unavailable)
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("quic-cc")
                 .long("quic-cc")
                 .value_name("ALGORITHM")

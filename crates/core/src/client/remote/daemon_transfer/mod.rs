@@ -161,6 +161,10 @@ pub fn run_daemon_transfer(
         #[cfg(feature = "quic")]
         ca: config.quic_ca().map(std::path::Path::to_path_buf),
         #[cfg(feature = "quic")]
+        cert: config.quic_cert().map(std::path::Path::to_path_buf),
+        #[cfg(feature = "quic")]
+        key: config.quic_key().map(std::path::Path::to_path_buf),
+        #[cfg(feature = "quic")]
         cc: config.quic_cc(),
         #[cfg(feature = "quic")]
         window: config.quic_window(),
