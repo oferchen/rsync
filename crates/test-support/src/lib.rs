@@ -15,6 +15,8 @@ pub mod daemon_port;
 pub mod deadline;
 pub mod dir_diff;
 pub mod lsh;
+#[cfg(feature = "quic")]
+pub mod quic_cert;
 pub mod reap;
 pub mod skip;
 #[cfg(unix)]

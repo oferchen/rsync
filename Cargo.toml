@@ -125,15 +125,17 @@ openssl-vendored = ["checksums/openssl-vendored"]
 embedded-ssh = ["cli/embedded-ssh", "core/embedded-ssh"]
 
 # Native QUIC daemon transport (oc extension, off by default). Forwards through
-# `cli`/`core` to `rsync_io/quic`; only makes the `Transport::Quic` selection
-# representable - no default build is affected. Design:
+# `cli`/`core` (the client dial and `Transport::Quic` selection) and through
+# `daemon` (the `quic cert file` / `quic key file` / `quic port` directives and
+# the UDP/QUIC listener), so `--features quic` yields a binary that can both
+# dial `quic://` and serve it - no default build is affected. Design:
 # docs/design/quic-transport-policy.md.
 #
 # Packagers: this feature is opt-in and NOT in `default`, so stock `oc-rsync`
 # binaries - including the release artefacts - do not carry QUIC. Enabling it
 # pulls a pure-Rust crypto surface (quinn-proto, rustls with the ring provider,
 # rcgen) via `rsync_io/quic`; there is no system libssl or OpenSSL requirement.
-quic = ["cli/quic", "core/quic"]
+quic = ["cli/quic", "core/quic", "daemon/quic"]
 
 # ============================================================================
 # Runtime and Debugging Features

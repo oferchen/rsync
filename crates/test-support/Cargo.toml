@@ -16,6 +16,21 @@ tempfile = { workspace = true }
 # reap contract is measured against the real SIGTERM disposition.
 platform = { path = "../platform" }
 
+# Self-signed certificate generation for the QUIC e2e helpers. Optional and
+# pulled only by the `quic` feature so the common (non-QUIC) test build never
+# compiles the rustls/ring cert stack. Mirrors `rsync_io`'s own `rcgen` gate.
+# `rcgen`'s own `pem` feature is left off (it wants a newer `pem` crate than the
+# workspace pins); the helper PEM-encodes the DER output with `base64` instead,
+# the same shape the `core` connect tests use.
+rcgen = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+
+[features]
+# QUIC test helpers. Off by default; enabled through the workspace `quic`
+# feature so QUIC end-to-end tests can mint a loopback server identity without
+# every test build paying for `rcgen`.
+quic = ["dep:rcgen", "dep:base64"]
+
 # The binary-freshness guard compares mtimes, so its tests must set them
 # explicitly rather than rely on filesystem timestamp granularity.
 [dev-dependencies]
