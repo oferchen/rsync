@@ -182,6 +182,75 @@ Current limitations of the embedded client:
 
 See also the `SSH TRANSPORT` section of `oc-rsync(1)` for the man-page summary.
 
+### QUIC transport
+
+oc-rsync can carry the rsync protocol over QUIC (RFC 9000/9001, i.e. TLS 1.3 over UDP) as an alternative to a plain `rsync://` TCP socket. QUIC is an oc-rsync extension -- upstream rsync has no QUIC transport -- so it is compile-gated behind the `quic` Cargo feature and is **off by default**; stock and release builds do not carry it. Build the client and daemon with the feature to enable it:
+
+```sh
+cargo build --release --features quic -p cli -p daemon
+```
+
+**Background and trust model.** QUIC always runs TLS 1.3 -- there is no unauthenticated QUIC -- and negotiates the ALPN token `rsync`. The daemon presents a certificate and the client verifies it; optionally the client also presents a certificate that the daemon verifies (mutual TLS). Selecting QUIC is hard-fail: if QUIC is requested but the feature or a listener is unavailable, the transfer errors out rather than silently falling back to TCP. By default the client validates the daemon certificate against the system root store; `--quic-ca <pem>` supplies a private CA instead, and a self-signed daemon can be pinned trust-on-first-use in `quic_known_hosts` (the SSH `known_hosts` analogue).
+
+**Cipher selection.** The AEAD suite is chosen to match the CPU: on hardware with AES acceleration (x86 AES-NI, ARMv8 crypto extensions) oc-rsync prefers AES-GCM, which is fastest there; without hardware AES it prefers ChaCha20-Poly1305. Override the family explicitly with `--quic-cipher aes|chacha20`. AES-128-GCM is always kept available because RFC 9001 mandates it for QUIC Initial packets.
+
+**Creating certificates with OpenSSL.** A self-signed certificate is enough for a private daemon (pair it with `--quic-ca` or TOFU pinning on the client). The SubjectAltName must match the host the client connects to:
+
+```sh
+# Daemon server certificate + key (RSA shown; EC/Ed25519 also work).
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout quic-key.pem -out quic-cert.pem -days 365 \
+  -subj "/CN=rsync.example.com" \
+  -addext "subjectAltName=DNS:rsync.example.com"
+```
+
+For **mutual TLS (quic-mtls)** you also need a CA that signs client certificates:
+
+```sh
+# 1. A private CA that the daemon will trust for client certs.
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+  -keyout ca-key.pem -out ca-cert.pem -subj "/CN=oc-rsync client CA"
+
+# 2. A client key + certificate-signing request.
+openssl req -newkey rsa:2048 -nodes \
+  -keyout client-key.pem -out client.csr -subj "/CN=alice"
+
+# 3. Sign the client certificate with the CA.
+openssl x509 -req -in client.csr -CA ca-cert.pem -CAkey ca-key.pem \
+  -CAcreateserial -out client-cert.pem -days 365
+```
+
+**Daemon configuration** (`oc-rsyncd.conf`, global directives):
+
+```ini
+quic cert file = /etc/oc-rsync/quic-cert.pem
+quic key file  = /etc/oc-rsync/quic-key.pem
+# quic port defaults to the module `port` (873); override if desired:
+# quic port = 1873
+# For mutual TLS, require and verify a client certificate against this CA:
+quic client ca file = /etc/oc-rsync/ca-cert.pem
+```
+
+**Client usage:**
+
+```sh
+# Select QUIC for a daemon target -- the quic:// scheme or the --quic modifier.
+oc-rsync -a quic://host/module/ dest/
+oc-rsync -a --quic host::module/ dest/
+
+# Verify a self-signed daemon against a private CA.
+oc-rsync -a --quic-ca ca-cert.pem quic://host/module/ dest/
+
+# Mutual TLS: present a client certificate and key (supply both together).
+oc-rsync -a --quic --quic-cert client-cert.pem --quic-key client-key.pem \
+  host::module/ dest/
+
+# Force a cipher family (default is hardware-adaptive as described above).
+oc-rsync -a --quic --quic-cipher chacha20 quic://host/module/ dest/
+```
+
+Connection tuning is available via `--quic-cc` (congestion controller) and `--quic-window` (flow-control window). See [`docs/quic-transport.md`](./docs/quic-transport.md) for the full operator guide.
+
 ### Performance
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
