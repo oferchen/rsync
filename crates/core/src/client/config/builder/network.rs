@@ -57,6 +57,25 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the `--quic-cert` / `--quic-key` client certificate the client
+    /// presents to the daemon for mutual TLS.
+    ///
+    /// Both `None` (the default) presents no client certificate, so the QUIC
+    /// handshake is byte-identical to a client without mutual TLS. Both set
+    /// presents the certificate chain in `cert` with the private key in `key`
+    /// (rustls `with_client_auth_cert`). The pair travels together as one config
+    /// shape; both-or-neither is enforced at connect time. Available only under
+    /// the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-cert")]
+    #[doc(alias = "--quic-key")]
+    pub fn quic_client_cert(mut self, cert: Option<PathBuf>, key: Option<PathBuf>) -> Self {
+        self.quic_cert = cert;
+        self.quic_key = key;
+        self
+    }
+
     /// Sets the `--quic-cc` congestion controller for the client's QUIC
     /// endpoint.
     ///

@@ -115,6 +115,16 @@ pub struct ParsedArgs {
     /// system-roots default. Available only under the `quic` feature.
     #[cfg(feature = "quic")]
     pub quic_ca: Option<std::path::PathBuf>,
+    /// `--quic-cert <PATH>` - client certificate chain (PEM) presented to the
+    /// QUIC daemon for mutual TLS. `None` presents no client certificate.
+    /// Requires `--quic-key`. Available only under the `quic` feature.
+    #[cfg(feature = "quic")]
+    pub quic_cert: Option<std::path::PathBuf>,
+    /// `--quic-key <PATH>` - private key (PEM) for the `--quic-cert` client
+    /// certificate. Requires `--quic-cert`. Available only under the `quic`
+    /// feature.
+    #[cfg(feature = "quic")]
+    pub quic_key: Option<std::path::PathBuf>,
     /// `--quic-cc <bbr|cubic|newreno>` - client endpoint congestion controller.
     /// `None` defers to `OC_RSYNC_QUIC_CC` then the default (BBR). Available
     /// only under the `quic` feature.

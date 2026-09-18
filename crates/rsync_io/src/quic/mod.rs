@@ -66,7 +66,6 @@ use quinn_proto::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn_proto::{ClientConfig, Endpoint, EndpointConfig, ServerConfig};
 pub use rustls::RootCertStore;
 pub use rustls::client::danger::ServerCertVerifier;
-use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use driver::{Role, spawn_io};
@@ -79,9 +78,9 @@ pub use error::{
 pub use quinn_proto::{ConnectError, ConnectionError, TransportError, TransportErrorCode, VarInt};
 
 pub use trust::{
-    Fingerprint, KnownHostsFile, KnownHostsStore, TofuVerifier, TrustPolicy,
-    default_known_hosts_path, load_private_ca, private_ca_file, resolve, system_roots, tofu,
-    tofu_file,
+    ClientAuth, Fingerprint, KnownHostsFile, KnownHostsStore, TofuVerifier, TrustPolicy,
+    default_known_hosts_path, load_cert_chain_and_key, load_private_ca, private_ca_file, resolve,
+    system_roots, tofu, tofu_file,
 };
 
 /// ALPN protocol identifier advertised on every QUIC connection.
@@ -319,10 +318,9 @@ impl QuicServerIdentity {
                 Ok((certificate.clone(), vec![certificate], key))
             }
             Self::PemFiles { cert, key } => {
-                let chain: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert)
-                    .map_err(io_err)?
-                    .collect::<Result<_, _>>()
-                    .map_err(io_err)?;
+                // Shared loader (one owner): the client's mutual-TLS cert
+                // (`trust::ClientAuth`) parses identical chain/key shapes.
+                let (chain, key) = trust::load_cert_chain_and_key(cert, key)?;
                 let leaf = chain
                     .first()
                     .ok_or_else(|| {
@@ -332,7 +330,6 @@ impl QuicServerIdentity {
                         )
                     })?
                     .clone();
-                let key = PrivateKeyDer::from_pem_file(key).map_err(io_err)?;
                 Ok((leaf, chain, key))
             }
         }
@@ -376,7 +373,7 @@ impl QuicAcceptor {
     /// daemon (which writes the `@RSYNCD:` greeting before the client sends
     /// anything) use [`QuicAcceptor::from_socket_server_first`] instead.
     pub fn from_socket(socket: UdpSocket, identity: &QuicServerIdentity) -> io::Result<Self> {
-        Self::from_socket_with(socket, identity, false)
+        Self::from_socket_with(socket, identity, false, None)
     }
 
     /// Like [`QuicAcceptor::from_socket`], but the server OPENS the single
@@ -391,22 +388,61 @@ impl QuicAcceptor {
         socket: UdpSocket,
         identity: &QuicServerIdentity,
     ) -> io::Result<Self> {
-        Self::from_socket_with(socket, identity, true)
+        Self::from_socket_with(socket, identity, true, None)
+    }
+
+    /// Like [`QuicAcceptor::from_socket_server_first`], but the daemon requires
+    /// and verifies a client certificate (mutual TLS).
+    ///
+    /// `client_ca` is the trust-anchor store (loaded from the daemon's
+    /// `quic client ca file` directive via
+    /// [`load_private_ca`]) against which each connecting client's certificate
+    /// chain is verified. A client that presents no certificate, or one not
+    /// anchored by `client_ca`, is rejected in the TLS handshake before any
+    /// `@RSYNCD:` byte is exchanged. This is the daemon-side mirror of the
+    /// client's `--quic-ca` server verification; the presented server identity
+    /// (`identity`) is unchanged from the plain path.
+    pub fn from_socket_server_first_mutual(
+        socket: UdpSocket,
+        identity: &QuicServerIdentity,
+        client_ca: RootCertStore,
+    ) -> io::Result<Self> {
+        Self::from_socket_with(socket, identity, true, Some(client_ca))
     }
 
     fn from_socket_with(
         socket: UdpSocket,
         identity: &QuicServerIdentity,
         opens_stream: bool,
+        client_ca: Option<RootCertStore>,
     ) -> io::Result<Self> {
         let (certificate, chain, key) = identity.materialize()?;
 
-        let mut server_crypto = rustls::ServerConfig::builder_with_provider(ring_provider())
+        let versions = rustls::ServerConfig::builder_with_provider(ring_provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
-            .map_err(io_err)?
-            .with_no_client_auth()
-            .with_single_cert(chain, key)
             .map_err(io_err)?;
+        // Default off: no `client_ca` means `with_no_client_auth`, byte-identical
+        // to the pre-mutual-TLS path. A configured client CA installs a
+        // `WebPkiClientVerifier` that requires and verifies a client certificate
+        // against those roots (the daemon-side mirror of `--quic-ca`).
+        let mut server_crypto = match client_ca {
+            None => versions
+                .with_no_client_auth()
+                .with_single_cert(chain, key)
+                .map_err(io_err)?,
+            Some(roots) => {
+                let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+                    Arc::new(roots),
+                    ring_provider(),
+                )
+                .build()
+                .map_err(io_err)?;
+                versions
+                    .with_client_cert_verifier(verifier)
+                    .with_single_cert(chain, key)
+                    .map_err(io_err)?
+            }
+        };
         server_crypto.alpn_protocols = vec![ALPN_RSYNC.to_vec()];
 
         let mut server_config = ServerConfig::with_crypto(Arc::new(
@@ -532,6 +568,24 @@ impl QuicConnector {
     /// through the one shared builder below; only the verifier stage differs.
     /// This is the constructor the CA/system-root/TOFU resolution feeds.
     pub fn with_trust_tuned(trust: QuicTrust, tuning: QuicTransportTuning) -> io::Result<Self> {
+        Self::with_trust_tuned_client_auth(trust, tuning, None)
+    }
+
+    /// Like [`QuicConnector::with_trust_tuned`], but the client presents
+    /// `client_auth` (a certificate chain + private key) in the QUIC handshake
+    /// for mutual TLS.
+    ///
+    /// `client_auth` is `Some` only when both `--quic-cert` and `--quic-key`
+    /// were supplied; `None` reproduces today's behaviour exactly - the client
+    /// presents no certificate (rustls `with_no_client_auth`). The server-trust
+    /// decision (`trust`) and transport tuning are unaffected: mutual TLS adds
+    /// the client's own identity without changing how the client verifies the
+    /// daemon. The certificate is installed via rustls `with_client_auth_cert`.
+    pub fn with_trust_tuned_client_auth(
+        trust: QuicTrust,
+        tuning: QuicTransportTuning,
+        client_auth: Option<ClientAuth>,
+    ) -> io::Result<Self> {
         let builder = rustls::ClientConfig::builder_with_provider(ring_provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .map_err(io_err)?;
@@ -546,7 +600,15 @@ impl QuicConnector {
                 .dangerous()
                 .with_custom_certificate_verifier(verifier),
         };
-        let mut client_crypto = builder.with_no_client_auth();
+        // Default off: no `client_auth` keeps `with_no_client_auth`, so the
+        // handshake is byte-identical to the pre-mutual-TLS client. A supplied
+        // certificate is presented via `with_client_auth_cert`.
+        let mut client_crypto = match client_auth {
+            None => builder.with_no_client_auth(),
+            Some(auth) => builder
+                .with_client_auth_cert(auth.chain, auth.key)
+                .map_err(io_err)?,
+        };
         client_crypto.alpn_protocols = vec![ALPN_RSYNC.to_vec()];
 
         let mut config = ClientConfig::new(Arc::new(
@@ -1128,5 +1190,214 @@ mod tests {
         )
         .expect_err("a missing certificate file must fail the bind");
         let _ = err;
+    }
+
+    /// Builds a CA and a client leaf certificate signed by it (SAN
+    /// `oc-rsync-client`, `clientAuth` EKU), returning `(ca_pem, cert_pem,
+    /// key_pem)`. The leaf/key are what a client presents via `--quic-cert` /
+    /// `--quic-key`; the CA PEM is what the daemon's `quic client ca file`
+    /// loads to anchor it. Each call produces an independent CA, so two calls
+    /// model a trusted vs an untrusted issuer.
+    fn ca_and_client_identity() -> (String, String, String) {
+        use rcgen::{
+            BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+            KeyUsagePurpose,
+        };
+
+        let ca_key = KeyPair::generate().expect("ca key");
+        let mut ca_params =
+            CertificateParams::new(vec!["oc-rsync client test ca".to_owned()]).expect("ca params");
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![
+            KeyUsagePurpose::KeyCertSign,
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::CrlSign,
+        ];
+        let ca_cert = ca_params.self_signed(&ca_key).expect("self-sign ca");
+        let ca_pem = der_to_pem("CERTIFICATE", ca_cert.der().as_ref());
+        let issuer = Issuer::new(ca_params, ca_key);
+
+        let leaf_key = KeyPair::generate().expect("leaf key");
+        let mut leaf_params =
+            CertificateParams::new(vec!["oc-rsync-client".to_owned()]).expect("leaf params");
+        leaf_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+        let leaf = leaf_params
+            .signed_by(&leaf_key, &issuer)
+            .expect("sign leaf");
+        let cert_pem = der_to_pem("CERTIFICATE", leaf.der().as_ref());
+        let key_pem = der_to_pem("PRIVATE KEY", &leaf_key.serialize_der());
+        (ca_pem, cert_pem, key_pem)
+    }
+
+    /// Writes the CA/cert/key PEMs into `dir` and returns their paths as
+    /// `(ca, cert, key)`.
+    fn write_pems(
+        dir: &std::path::Path,
+        ca: &str,
+        cert: &str,
+        key: &str,
+    ) -> (PathBuf, PathBuf, PathBuf) {
+        let ca_path = dir.join("client-ca.pem");
+        let cert_path = dir.join("client-cert.pem");
+        let key_path = dir.join("client-key.pem");
+        std::fs::write(&ca_path, ca).expect("write ca");
+        std::fs::write(&cert_path, cert).expect("write cert");
+        std::fs::write(&key_path, key).expect("write key");
+        (ca_path, cert_path, key_path)
+    }
+
+    /// Binds a mutual-TLS acceptor requiring a client cert anchored by
+    /// `client_ca_roots`, spawns a server thread that accepts one connection and
+    /// sends `b"ok"`, and returns `(addr, pinned_server_cert, join_handle)`. The
+    /// server tolerates a rejected handshake (`accept` returning `Err`) so the
+    /// refusal tests do not panic in the server thread.
+    fn spawn_mutual_server(
+        client_ca_roots: RootCertStore,
+    ) -> (SocketAddr, CertificateDer<'static>, thread::JoinHandle<()>) {
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("udp bind");
+        let acceptor = QuicAcceptor::from_socket_server_first_mutual(
+            socket,
+            &QuicServerIdentity::Ephemeral,
+            client_ca_roots,
+        )
+        .expect("bind mutual acceptor");
+        let addr = acceptor.local_addr().expect("local addr");
+        let server_cert = acceptor.certificate().clone().into_owned();
+        let handle = thread::spawn(move || {
+            if let Ok(mut stream) = acceptor.accept() {
+                let _ = stream.write_all(b"ok");
+                let _ = stream.finish();
+            }
+        });
+        (addr, server_cert, handle)
+    }
+
+    /// Mutual TLS happy path: a client presenting a certificate anchored by the
+    /// daemon's configured client CA completes the handshake and the byte pipe
+    /// works. Encodes WHY mutual TLS matters: the daemon requires a client
+    /// certificate, and one signed by the trusted CA is exactly what must be
+    /// accepted.
+    #[test]
+    fn mutual_tls_accepts_client_signed_by_configured_ca() {
+        let (ca_pem, cert_pem, key_pem) = ca_and_client_identity();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (ca_path, cert_path, key_path) = write_pems(dir.path(), &ca_pem, &cert_pem, &key_pem);
+
+        let client_ca = load_private_ca(&ca_path).expect("load client ca");
+        let (addr, server_cert, server) = spawn_mutual_server(client_ca);
+
+        let client_auth = ClientAuth::from_pem_files(&cert_path, &key_path).expect("client auth");
+        let connector = QuicConnector::with_trust_tuned_client_auth(
+            QuicTrust::Pinned(server_cert),
+            QuicTransportTuning::default(),
+            Some(client_auth),
+        )
+        .expect("connector with client cert");
+        let mut stream = connector
+            .connect_server_first(addr, "localhost")
+            .expect("a client cert anchored by the configured CA must be accepted");
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).expect("read greeting");
+        assert_eq!(
+            &buf, b"ok",
+            "the mutual-TLS session must carry stream bytes"
+        );
+        stream.close();
+        server.join().expect("server thread");
+    }
+
+    /// A daemon requiring client auth refuses a client that presents no
+    /// certificate. Encodes WHY: the security property of mutual TLS is that an
+    /// anonymous client cannot connect; a verifier that allowed unauthenticated
+    /// clients would pass the happy path yet fail here.
+    #[test]
+    fn mutual_tls_rejects_client_presenting_no_cert() {
+        let (ca_pem, _cert_pem, _key_pem) = ca_and_client_identity();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ca_path = dir.path().join("client-ca.pem");
+        std::fs::write(&ca_path, &ca_pem).expect("write ca");
+
+        let client_ca = load_private_ca(&ca_path).expect("load client ca");
+        let (addr, server_cert, server) = spawn_mutual_server(client_ca);
+
+        // No client auth: the default connect path, which presents no cert.
+        let connector = QuicConnector::with_trust_tuned_client_auth(
+            QuicTrust::Pinned(server_cert),
+            QuicTransportTuning::default(),
+            None,
+        )
+        .expect("connector without client cert");
+        connector
+            .connect_server_first(addr, "localhost")
+            .expect_err("a client presenting no certificate must be refused");
+        server.join().expect("server thread");
+    }
+
+    /// A daemon requiring client auth refuses a client whose certificate is
+    /// signed by an untrusted CA. This is the discriminating test: it fails if
+    /// the client verifier is replaced with an accept-all one, because such a
+    /// verifier would accept the off-CA certificate. Encodes WHY: `quic client
+    /// ca file` is only meaningful if a cert it does NOT anchor is rejected.
+    #[test]
+    fn mutual_tls_rejects_client_signed_by_untrusted_ca() {
+        let (trusted_ca_pem, _tc, _tk) = ca_and_client_identity();
+        let (_untrusted_ca_pem, rogue_cert_pem, rogue_key_pem) = ca_and_client_identity();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ca_path = dir.path().join("trusted-ca.pem");
+        let cert_path = dir.path().join("rogue-cert.pem");
+        let key_path = dir.path().join("rogue-key.pem");
+        std::fs::write(&ca_path, &trusted_ca_pem).expect("write ca");
+        std::fs::write(&cert_path, &rogue_cert_pem).expect("write cert");
+        std::fs::write(&key_path, &rogue_key_pem).expect("write key");
+
+        let client_ca = load_private_ca(&ca_path).expect("load client ca");
+        let (addr, server_cert, server) = spawn_mutual_server(client_ca);
+
+        let rogue_auth = ClientAuth::from_pem_files(&cert_path, &key_path).expect("rogue auth");
+        let connector = QuicConnector::with_trust_tuned_client_auth(
+            QuicTrust::Pinned(server_cert),
+            QuicTransportTuning::default(),
+            Some(rogue_auth),
+        )
+        .expect("connector with rogue client cert");
+        connector
+            .connect_server_first(addr, "localhost")
+            .expect_err("a client cert signed by an untrusted CA must be refused");
+        server.join().expect("server thread");
+    }
+
+    /// Default off: a non-mutual acceptor (no `quic client ca file`) accepts a
+    /// client that presents no certificate, exactly as before mutual TLS
+    /// existed. Encodes WHY: enabling the feature must not change the plain QUIC
+    /// path - with neither the daemon directive nor a client cert, the handshake
+    /// is byte-identical to today's.
+    #[test]
+    fn plain_acceptor_unchanged_without_client_auth() {
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("udp bind");
+        let acceptor =
+            QuicAcceptor::from_socket_server_first(socket, &QuicServerIdentity::Ephemeral)
+                .expect("bind plain acceptor");
+        let addr = acceptor.local_addr().expect("local addr");
+        let server_cert = acceptor.certificate().clone().into_owned();
+        let server = thread::spawn(move || {
+            let mut stream = acceptor.accept().expect("accept");
+            stream.write_all(b"ok").expect("write");
+            stream.finish().expect("finish");
+        });
+
+        let connector = QuicConnector::with_trust_tuned_client_auth(
+            QuicTrust::Pinned(server_cert),
+            QuicTransportTuning::default(),
+            None,
+        )
+        .expect("plain connector");
+        let mut stream = connector
+            .connect_server_first(addr, "localhost")
+            .expect("the plain path must accept a client without a certificate");
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).expect("read greeting");
+        assert_eq!(&buf, b"ok");
+        stream.close();
+        server.join().expect("server thread");
     }
 }

@@ -179,6 +179,15 @@ pub struct ModuleListOptions {
     /// present under the `quic` feature.
     #[cfg(feature = "quic")]
     quic_ca: Option<std::path::PathBuf>,
+    /// `--quic-cert` client certificate chain (PEM) presented to a QUIC daemon
+    /// for mutual TLS during a listing. `None` presents no client certificate.
+    /// Only present under the `quic` feature.
+    #[cfg(feature = "quic")]
+    quic_cert: Option<std::path::PathBuf>,
+    /// `--quic-key` private key (PEM) for the `--quic-cert` certificate. Only
+    /// present under the `quic` feature.
+    #[cfg(feature = "quic")]
+    quic_key: Option<std::path::PathBuf>,
     /// `--quic-cc` client endpoint congestion controller for QUIC listings.
     /// `None` defers to `OC_RSYNC_QUIC_CC` then the default. Only present under
     /// the `quic` feature.
@@ -208,6 +217,10 @@ impl ModuleListOptions {
             #[cfg(feature = "quic")]
             quic_ca: None,
             #[cfg(feature = "quic")]
+            quic_cert: None,
+            #[cfg(feature = "quic")]
+            quic_key: None,
+            #[cfg(feature = "quic")]
             quic_cc: None,
             #[cfg(feature = "quic")]
             quic_window: None,
@@ -231,6 +244,41 @@ impl ModuleListOptions {
     #[must_use]
     pub fn quic_ca(&self) -> Option<&std::path::Path> {
         self.quic_ca.as_deref()
+    }
+
+    /// Supplies the `--quic-cert` / `--quic-key` client certificate for a QUIC
+    /// listing's mutual-TLS handshake.
+    ///
+    /// Both `None` (the default) presents no client certificate. The pair
+    /// travels together as one config shape. Available only under the `quic`
+    /// feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-cert")]
+    #[doc(alias = "--quic-key")]
+    pub fn with_quic_client_cert(
+        mut self,
+        cert: Option<std::path::PathBuf>,
+        key: Option<std::path::PathBuf>,
+    ) -> Self {
+        self.quic_cert = cert;
+        self.quic_key = key;
+        self
+    }
+
+    /// Returns the configured `--quic-cert` client certificate chain path, if
+    /// any.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    pub fn quic_cert(&self) -> Option<&std::path::Path> {
+        self.quic_cert.as_deref()
+    }
+
+    /// Returns the configured `--quic-key` client private-key path, if any.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    pub fn quic_key(&self) -> Option<&std::path::Path> {
+        self.quic_key.as_deref()
     }
 
     /// Supplies the `--quic-cc` congestion controller for QUIC listings.

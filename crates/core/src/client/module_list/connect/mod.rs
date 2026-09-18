@@ -291,6 +291,14 @@ pub(crate) struct QuicDialParams {
     /// store for verifying the daemon's certificate.
     #[cfg(feature = "quic")]
     pub(crate) ca: Option<std::path::PathBuf>,
+    /// `--quic-cert <PATH>`: the client certificate chain (PEM) presented to the
+    /// daemon for mutual TLS. `None` presents no client certificate.
+    #[cfg(feature = "quic")]
+    pub(crate) cert: Option<std::path::PathBuf>,
+    /// `--quic-key <PATH>`: the private key (PEM) for `cert`. Both-or-neither
+    /// with `cert`, enforced at connect time.
+    #[cfg(feature = "quic")]
+    pub(crate) key: Option<std::path::PathBuf>,
     /// `--quic-cc`: the client endpoint's congestion controller, or `None` to
     /// fall back to `OC_RSYNC_QUIC_CC` then the built-in default.
     #[cfg(feature = "quic")]
@@ -367,8 +375,35 @@ fn open_quic_daemon_stream(
     address_mode: AddressMode,
     quic: &QuicDialParams,
 ) -> Result<DaemonStream, ClientError> {
-    use rsync_io::quic::{QuicConnector, QuicTransportTuning, load_private_ca, resolve};
+    use rsync_io::quic::{
+        ClientAuth, QuicConnector, QuicTransportTuning, load_private_ca, resolve,
+    };
 
+    // Mutual TLS (`--quic-cert` / `--quic-key`): both set presents the client
+    // certificate; both unset presents nothing (byte-identical to today). One
+    // without the other is a hard error - fail loud, never silently omit the
+    // certificate the operator asked to present. Validated first, before any
+    // trust resolution or dial, so a misconfiguration fails fast and with a
+    // message naming the missing flag rather than an opaque handshake error.
+    let client_auth = match (&quic.cert, &quic.key) {
+        (Some(cert), Some(key)) => Some(
+            ClientAuth::from_pem_files(cert, key)
+                .map_err(|error| quic_dial_error(addr, &error.to_string()))?,
+        ),
+        (None, None) => None,
+        (Some(_), None) => {
+            return Err(quic_dial_error(
+                addr,
+                "--quic-cert requires --quic-key (client certificate needs its private key)",
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(quic_dial_error(
+                addr,
+                "--quic-key requires --quic-cert (a private key needs its client certificate)",
+            ));
+        }
+    };
     // Trust ladder (policy B): `--quic-ca` selects a private CA bundle;
     // otherwise the system-roots default applies. The `resolve(ca, tofu)` seam
     // keeps the TOFU precedence slot in place (tofu = None here).
@@ -385,7 +420,7 @@ fn open_quic_daemon_stream(
         congestion: quic.cc,
         window: quic.window,
     };
-    let connector = QuicConnector::with_trust_tuned(trust, tuning)
+    let connector = QuicConnector::with_trust_tuned_client_auth(trust, tuning, client_auth)
         .map_err(|error| quic_dial_error(addr, &error.to_string()))?;
 
     let candidates = resolve_daemon_addresses(addr, address_mode)?;
@@ -761,8 +796,19 @@ mod quic_connect_tests {
     }
 
     fn dial(addr: &DaemonAddress, ca: Option<PathBuf>) -> Result<DaemonStream, ClientError> {
+        dial_with_client_cert(addr, ca, None, None)
+    }
+
+    fn dial_with_client_cert(
+        addr: &DaemonAddress,
+        ca: Option<PathBuf>,
+        cert: Option<PathBuf>,
+        key: Option<PathBuf>,
+    ) -> Result<DaemonStream, ClientError> {
         let quic = QuicDialParams {
             ca,
+            cert,
+            key,
             cc: None,
             window: None,
         };
@@ -873,6 +919,44 @@ mod quic_connect_tests {
         match dial(&addr, Some(missing)) {
             Ok(_) => panic!("a missing --quic-ca bundle must not connect"),
             Err(err) => assert_eq!(err.exit_code(), 5),
+        }
+    }
+
+    /// Mutual TLS is both-or-neither: `--quic-cert` without `--quic-key` (and
+    /// vice versa) fails loudly at exit 5 before any dial, naming the missing
+    /// flag. Encodes WHY: the fail-loud rule forbids silently omitting the
+    /// certificate the operator asked to present, and the check runs before
+    /// trust resolution so the message is actionable rather than an opaque
+    /// handshake error.
+    #[test]
+    fn quic_client_cert_without_key_hard_fails() {
+        let addr = quic_addr(1);
+        let cert = PathBuf::from("/etc/oc-rsync/client.pem");
+        match dial_with_client_cert(&addr, None, Some(cert), None) {
+            Ok(_) => panic!("--quic-cert without --quic-key must not connect"),
+            Err(err) => {
+                assert_eq!(err.exit_code(), 5);
+                assert!(
+                    err.to_string().contains("--quic-key"),
+                    "the error must name the missing --quic-key: {err}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn quic_client_key_without_cert_hard_fails() {
+        let addr = quic_addr(1);
+        let key = PathBuf::from("/etc/oc-rsync/client.key");
+        match dial_with_client_cert(&addr, None, None, Some(key)) {
+            Ok(_) => panic!("--quic-key without --quic-cert must not connect"),
+            Err(err) => {
+                assert_eq!(err.exit_code(), 5);
+                assert!(
+                    err.to_string().contains("--quic-cert"),
+                    "the error must name the missing --quic-cert: {err}"
+                );
+            }
         }
     }
 

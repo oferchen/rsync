@@ -3998,4 +3998,51 @@ mod config_parsing_tests {
         parse_config_modules(file.path())
             .expect_err("empty quic cert file directive is a config error");
     }
+
+    // `quic client ca file` (mutual TLS, oc extension) stores on the global
+    // config exactly like `quic cert file` / `quic key file`, so the listener
+    // can require and verify a client certificate against it.
+    #[cfg(feature = "quic")]
+    #[test]
+    fn parse_quic_client_ca_file_into_global_config() {
+        let config = format!(
+            "quic client ca file = {}\n",
+            abs("/etc/oc-rsync/quic/clients.pem"),
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        let (ca, _) = result
+            .quic_client_ca_file
+            .expect("quic client ca file stored");
+        assert_eq!(ca, PathBuf::from(abs("/etc/oc-rsync/quic/clients.pem")));
+    }
+
+    // A per-module `quic client ca file` cannot be honoured (the QUIC listener
+    // is shared across modules), so it is a hard config error like the other
+    // QUIC identity directives.
+    #[cfg(feature = "quic")]
+    #[test]
+    fn parse_quic_client_ca_file_in_module_scope_is_config_error() {
+        let config = format!(
+            "[data]\npath = {}\nquic client ca file = {}\n",
+            abs("/srv/data"),
+            abs("/etc/oc-rsync/quic/clients.pem"),
+        );
+        let file = write_config(&config);
+        let error = parse_config_modules(file.path())
+            .expect_err("module-scoped quic client ca file is a config error");
+        assert!(
+            error.to_string().contains("global-only"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[cfg(feature = "quic")]
+    #[test]
+    fn parse_quic_client_ca_file_empty_value_is_config_error() {
+        let file = write_config("quic client ca file =\n");
+        parse_config_modules(file.path())
+            .expect_err("empty quic client ca file directive is a config error");
+    }
 }

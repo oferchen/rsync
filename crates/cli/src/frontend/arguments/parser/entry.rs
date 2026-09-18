@@ -103,6 +103,8 @@ fn check_basis_dir_limit(matches: &clap::ArgMatches) -> Result<(), clap::Error> 
 fn check_quic_feature(matches: &clap::ArgMatches) -> Result<(), clap::Error> {
     let quic_requested = matches.get_flag("quic")
         || matches.get_one::<OsString>("quic-ca").is_some()
+        || matches.get_one::<OsString>("quic-cert").is_some()
+        || matches.get_one::<OsString>("quic-key").is_some()
         || matches.get_one::<String>("quic-cc").is_some()
         || matches.get_one::<OsString>("quic-window").is_some();
     if !quic_requested {
@@ -347,6 +349,16 @@ where
     #[cfg(feature = "quic")]
     let quic_ca = matches
         .remove_one::<OsString>("quic-ca")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from);
+    #[cfg(feature = "quic")]
+    let quic_cert = matches
+        .remove_one::<OsString>("quic-cert")
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from);
+    #[cfg(feature = "quic")]
+    let quic_key = matches
+        .remove_one::<OsString>("quic-key")
         .filter(|value| !value.is_empty())
         .map(std::path::PathBuf::from);
     #[cfg(feature = "quic")]
@@ -1433,6 +1445,10 @@ where
         quic,
         #[cfg(feature = "quic")]
         quic_ca,
+        #[cfg(feature = "quic")]
+        quic_cert,
+        #[cfg(feature = "quic")]
+        quic_key,
         #[cfg(feature = "quic")]
         quic_cc,
         #[cfg(feature = "quic")]

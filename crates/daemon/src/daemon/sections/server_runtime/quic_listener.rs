@@ -124,12 +124,44 @@ fn materialize_and_serve_quic(
     log_sink: Option<&SharedLogSink>,
 ) {
     let server_identity = quic_server_identity(identity);
+    // Mutual TLS (oc extension, default off): when `quic client ca file` is set,
+    // load its CA bundle once and require+verify a client certificate against it
+    // on every QUIC connection. Unset, no client certificate is requested and
+    // the handshake is byte-identical to the pre-mutual-TLS listener. A bad CA
+    // bundle disables the QUIC listener (logged) rather than taking the daemon
+    // down, mirroring the per-socket bad-certificate handling below.
+    let client_ca = match identity.client_ca.as_deref() {
+        None => None,
+        Some(path) => match rsync_io::quic::load_private_ca(path) {
+            Ok(roots) => Some(roots),
+            Err(error) => {
+                if let Some(log) = log_sink {
+                    let text = format!(
+                        "failed to load QUIC client-auth CA {}: {error}",
+                        path.display()
+                    );
+                    let message =
+                        rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                return;
+            }
+        },
+    };
     for socket in sockets {
         let local = socket.local_addr().ok();
         // Server-speaks-first: the daemon writes the `@RSYNCD:` greeting before
         // the client sends anything, so the acceptor opens the bidirectional
         // stream. The peer connects with `QuicConnector::connect_server_first`.
-        match QuicAcceptor::from_socket_server_first(socket, &server_identity) {
+        // With a client CA configured, the mutual-TLS acceptor additionally
+        // requires and verifies the client's certificate.
+        let built = match client_ca.clone() {
+            Some(roots) => {
+                QuicAcceptor::from_socket_server_first_mutual(socket, &server_identity, roots)
+            }
+            None => QuicAcceptor::from_socket_server_first(socket, &server_identity),
+        };
+        match built {
             Ok(acceptor) => {
                 if let (Some(log), Some(addr)) = (log_sink, local) {
                     let text = format!("QUIC listener serving on {addr}");

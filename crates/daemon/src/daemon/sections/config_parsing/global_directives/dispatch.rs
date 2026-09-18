@@ -276,6 +276,32 @@ fn apply_global_directive(
             let resolved = resolve_config_relative_path(path, trimmed);
             store_global_directive(&mut state.quic_key_file, resolved, canonical, line_number);
         }
+        // oc extension (no upstream counterpart). `quic client ca file` names the
+        // CA bundle the QUIC listener verifies connecting clients against (mutual
+        // TLS): unset, no client certificate is requested (default off, so an
+        // existing config is unchanged); set, a client must present a certificate
+        // anchored by this CA or the handshake is refused. This is the daemon-side
+        // mirror of the client's `--quic-ca` server verification. Global-only and
+        // path-handled exactly like `quic cert file` / `quic key file`.
+        #[cfg(feature = "quic")]
+        "quicclientcafile" => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(config_parse_error(
+                    path,
+                    line_number,
+                    "'quic client ca file' directive must not be empty",
+                ));
+            }
+
+            let resolved = resolve_config_relative_path(path, trimmed);
+            store_global_directive(
+                &mut state.quic_client_ca_file,
+                resolved,
+                canonical,
+                line_number,
+            );
+        }
         // oc extension (no upstream counterpart). `quic port` selects the port
         // the QUIC listener binds; unset, the listener shares the daemon TCP
         // `port` (873 by default). Value handling mirrors the TCP `port`

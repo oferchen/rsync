@@ -61,6 +61,14 @@ impl RuntimeOptions {
         if let Some((key, _origin)) = parsed.quic_key_file {
             self.quic_key_file = Some(key);
         }
+        // QUIC client-auth CA (oc extension). When set, the QUIC listener
+        // requires and verifies a client certificate against this bundle (mutual
+        // TLS); unset, no client certificate is requested. Last-wins, like the
+        // other global path directives; module-scoped use was already rejected.
+        #[cfg(feature = "quic")]
+        if let Some((client_ca, _origin)) = parsed.quic_client_ca_file {
+            self.quic_client_ca_file = Some(client_ca);
+        }
         // QUIC listener port (oc extension). Unset means the QUIC listener
         // shares the daemon TCP `port`; a value here overrides that
         // independently. Directive parsing already coerced a `quic port = 0`

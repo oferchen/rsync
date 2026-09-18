@@ -33,6 +33,11 @@ pub(crate) struct ParsedConfigModules {
     /// `quic_key_file`. Identity is per-listener, so both are global-only.
     #[cfg(feature = "quic")]
     quic_cert_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    /// QUIC client-auth CA path from the `quic client ca file` global directive.
+    /// When set, the QUIC listener requires and verifies a client certificate
+    /// against this CA bundle (mutual TLS). Per-listener, so global-only.
+    #[cfg(feature = "quic")]
+    quic_client_ca_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     /// QUIC listener private-key path from the `quic key file` global directive.
     #[cfg(feature = "quic")]
     quic_key_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
