@@ -162,7 +162,19 @@ impl ResolvedHost {
 ///
 /// [`SshError::SshConfig`] when a line is one upstream would refuse; see
 /// the module docs for the three cases.
+#[cfg(test)]
 pub(super) fn resolve_host(path: &Path, host_alias: &str) -> Result<ResolvedHost, SshError> {
+    resolve_host_with_remote_user(path, host_alias, "")
+}
+
+/// `resolve_host` with the remote user the caller resolved from the operand
+/// (`user@host`/`-l`) or a `User` directive, so a `Match user` line gates on
+/// the same value `ssh` would see.
+pub(super) fn resolve_host_with_remote_user(
+    path: &Path,
+    host_alias: &str,
+    remote_user: &str,
+) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
     if let Ok(text) = fs::read_to_string(path) {
         // An explicit single path behaves like upstream's `-F`: a USER
@@ -170,6 +182,8 @@ pub(super) fn resolve_host(path: &Path, host_alias: &str) -> Result<ResolvedHost
         // relative or `~`-prefixed `Include` anchors under `~/.ssh`.
         let display = path.display().to_string();
         let anchors = IncludeAnchors::live();
+        let mut local_user = String::new();
+        let ctx = MatchCtx::with_remote_user(host_alias, remote_user, &mut local_user);
         // First pass, then the `SSHCONF_FINAL` re-parse only when a
         // non-negated `Match final` asked for it (openssh/ssh.c:1190-1268).
         let mut want_final_pass = false;
@@ -182,7 +196,7 @@ pub(super) fn resolve_host(path: &Path, host_alias: &str) -> Result<ResolvedHost
             false,
             0,
             true,
-            host_alias,
+            &ctx,
             false,
             &mut want_final_pass,
         )?;
@@ -196,7 +210,7 @@ pub(super) fn resolve_host(path: &Path, host_alias: &str) -> Result<ResolvedHost
                 false,
                 0,
                 true,
-                host_alias,
+                &ctx,
                 true,
                 &mut false,
             )?;
@@ -259,19 +273,47 @@ impl IncludeAnchors {
 /// upstream's owner/permission check (openssh/readconf.c:2579-2587);
 /// [`SshError::SshConfig`] when a line is one upstream would refuse.
 /// Either aborts the load - later files are not read.
+#[cfg(test)]
 pub(super) fn resolve_host_files(
     files: &[ConfigFile],
     host_alias: &str,
 ) -> Result<ResolvedHost, SshError> {
-    resolve_host_files_with_anchors(files, host_alias, &IncludeAnchors::live())
+    let mut local_user = String::new();
+    let ctx = MatchCtx::live(host_alias, &mut local_user);
+    resolve_host_files_with_ctx(files, &ctx, &IncludeAnchors::live())
+}
+
+/// `resolve_host_files` with the remote user the caller resolved from the
+/// operand (`user@host`/`-l`) or a `User` directive, so a `Match user` line
+/// gates on the same value `ssh` would see.
+pub(super) fn resolve_host_files_with_remote_user(
+    files: &[ConfigFile],
+    host_alias: &str,
+    remote_user: &str,
+) -> Result<ResolvedHost, SshError> {
+    let mut local_user = String::new();
+    let ctx = MatchCtx::with_remote_user(host_alias, remote_user, &mut local_user);
+    resolve_host_files_with_ctx(files, &ctx, &IncludeAnchors::live())
 }
 
 /// The composition behind [`resolve_host_files`], with the `Include`
 /// anchors injected so tests can point them at fixture directories instead
 /// of the host's real `~/.ssh` and `/etc/ssh`.
+#[cfg(test)]
 fn resolve_host_files_with_anchors(
     files: &[ConfigFile],
     host_alias: &str,
+    anchors: &IncludeAnchors,
+) -> Result<ResolvedHost, SshError> {
+    let mut local_user = String::new();
+    let ctx = MatchCtx::live(host_alias, &mut local_user);
+    resolve_host_files_with_ctx(files, &ctx, anchors)
+}
+
+/// The shared core taking the already-built [`MatchCtx`] and anchors.
+fn resolve_host_files_with_ctx(
+    files: &[ConfigFile],
+    ctx: &MatchCtx<'_>,
     anchors: &IncludeAnchors,
 ) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
@@ -281,9 +323,9 @@ fn resolve_host_files_with_anchors(
     // struct, so first-obtained-wins carries across both passes and the
     // re-parse only fills slots a `Match final`/`Match canonical` block
     // could not reach on the first (openssh/ssh.c:1190-1268).
-    let want_final_pass = scan_files_once(&mut resolved, files, host_alias, anchors, false)?;
+    let want_final_pass = scan_files_once(&mut resolved, files, ctx, anchors, false)?;
     if want_final_pass {
-        scan_files_once(&mut resolved, files, host_alias, anchors, true)?;
+        scan_files_once(&mut resolved, files, ctx, anchors, true)?;
     }
     Ok(resolved)
 }
@@ -294,7 +336,7 @@ fn resolve_host_files_with_anchors(
 fn scan_files_once(
     resolved: &mut ResolvedHost,
     files: &[ConfigFile],
-    host_alias: &str,
+    ctx: &MatchCtx<'_>,
     anchors: &IncludeAnchors,
     final_pass: bool,
 ) -> Result<bool, SshError> {
@@ -317,7 +359,7 @@ fn scan_files_once(
             false,
             0,
             file.user_conf,
-            host_alias,
+            ctx,
             final_pass,
             &mut want_final_pass,
         )?;
@@ -335,6 +377,31 @@ fn scan_files_once(
 /// Same as [`resolve_host`].
 #[cfg(test)]
 pub(super) fn resolve_host_str(text: &str, host_alias: &str) -> Result<ResolvedHost, SshError> {
+    let mut local_user = String::new();
+    let ctx = MatchCtx::live(host_alias, &mut local_user);
+    resolve_host_str_with_ctx(text, &ctx)
+}
+
+/// [`resolve_host_str`] with an explicit remote and local user, so tests can
+/// exercise `Match user`/`Match localuser` deterministically without
+/// touching the process environment.
+#[cfg(test)]
+pub(super) fn resolve_host_str_with_users(
+    text: &str,
+    host_alias: &str,
+    remote_user: &str,
+    local_user: &str,
+) -> Result<ResolvedHost, SshError> {
+    let ctx = MatchCtx {
+        host_alias,
+        remote_user,
+        local_user,
+    };
+    resolve_host_str_with_ctx(text, &ctx)
+}
+
+#[cfg(test)]
+fn resolve_host_str_with_ctx(text: &str, ctx: &MatchCtx<'_>) -> Result<ResolvedHost, SshError> {
     let mut resolved = ResolvedHost::default();
     let anchors = IncludeAnchors::none();
     let mut want_final_pass = false;
@@ -347,7 +414,7 @@ pub(super) fn resolve_host_str(text: &str, host_alias: &str) -> Result<ResolvedH
         false,
         0,
         true,
-        host_alias,
+        ctx,
         false,
         &mut want_final_pass,
     )?;
@@ -361,7 +428,7 @@ pub(super) fn resolve_host_str(text: &str, host_alias: &str) -> Result<ResolvedH
             false,
             0,
             true,
-            host_alias,
+            ctx,
             true,
             &mut false,
         )?;
@@ -376,6 +443,91 @@ fn refuse(path: &str, line: usize, reason: impl Into<String>) -> SshError {
         line,
         reason: reason.into(),
     }
+}
+
+/// The connection-derived inputs a `Match` line evaluates against, threaded
+/// unchanged through the whole scan so every criterion reads the same values
+/// `ssh` would have resolved once at option-processing time.
+///
+/// `host_alias` is the target as typed on the command line: the `Host`
+/// pattern target and the `Match originalhost` input (openssh/readconf.c:1171,
+/// where the criterion matches against `original_host`). `Match host` reads
+/// the resolved `HostName` instead, so the alias alone does not suffice.
+///
+/// `remote_user` and `local_user` back `Match user` and `Match localuser`.
+/// Upstream matches `user` against `ruser` - `options->user` when a `User`
+/// directive or `-l`/`user@host` set one, otherwise the local `pw->pw_name`
+/// (openssh/readconf.c ~1090) - and `localuser` against `pw->pw_name`
+/// unconditionally (openssh/readconf.c:1182). We mirror that default in
+/// [`MatchCtx::ruser`].
+#[derive(Clone, Copy)]
+struct MatchCtx<'a> {
+    host_alias: &'a str,
+    remote_user: &'a str,
+    local_user: &'a str,
+}
+
+impl<'a> MatchCtx<'a> {
+    /// A context for the passive resolvers, whose only connection input is
+    /// the alias: no remote user was supplied, and the local user is read
+    /// from the platform's canonical env var.
+    #[cfg(test)]
+    fn live(host_alias: &'a str, local_user_buf: &'a mut String) -> Self {
+        if let Some(value) = local_user_env() {
+            *local_user_buf = value;
+        }
+        Self {
+            host_alias,
+            remote_user: "",
+            local_user: local_user_buf.as_str(),
+        }
+    }
+
+    /// The production context: the remote user the caller resolved from the
+    /// operand (`user@host`/`-l`) or a `User` directive, plus the env local
+    /// user. An empty `remote_user` means none was supplied.
+    fn with_remote_user(
+        host_alias: &'a str,
+        remote_user: &'a str,
+        local_user_buf: &'a mut String,
+    ) -> Self {
+        if let Some(value) = local_user_env() {
+            *local_user_buf = value;
+        }
+        Self {
+            host_alias,
+            remote_user,
+            local_user: local_user_buf.as_str(),
+        }
+    }
+
+    /// The user `Match user` matches against: the supplied remote user, or
+    /// the local user when none was given, mirroring upstream's `ruser`
+    /// default (openssh/readconf.c ~1090 `ruser = options->user ? ... :
+    /// pw->pw_name`).
+    fn ruser(&self) -> &str {
+        if self.remote_user.is_empty() {
+            self.local_user
+        } else {
+            self.remote_user
+        }
+    }
+}
+
+/// The local username from `USER` (Unix) or `USERNAME` (Windows), or the
+/// empty string when neither is set or usable. Mirrors the `pw->pw_name`
+/// source `Match localuser` reads (openssh/readconf.c:1182); reading it via
+/// `std::env` keeps this crate free of the `getpwuid` FFI.
+fn local_user_env() -> Option<String> {
+    #[cfg(unix)]
+    let raw = std::env::var_os("USER");
+    #[cfg(windows)]
+    let raw = std::env::var_os("USERNAME");
+    #[cfg(not(any(unix, windows)))]
+    let raw: Option<std::ffi::OsString> = None;
+
+    let value = raw?.to_string_lossy().into_owned();
+    if value.is_empty() { None } else { Some(value) }
 }
 
 /// Scans one file's text into `resolved`, claiming slots per the option
@@ -414,7 +566,7 @@ fn scan_config(
     never_match: bool,
     depth: u32,
     user_conf: bool,
-    host_alias: &str,
+    ctx: &MatchCtx<'_>,
     final_pass: bool,
     want_final_pass: &mut bool,
 ) -> Result<(), SshError> {
@@ -451,7 +603,7 @@ fn scan_config(
 
         if opcode == Opcode::Host {
             let matched =
-                host_matches_any_pattern(host_alias, &tokens).map_err(|EmptyHostToken| {
+                host_matches_any_pattern(ctx.host_alias, &tokens).map_err(|EmptyHostToken| {
                     // Upstream interpolates the LOWERCASED keyword it
                     // matched on (openssh/readconf.c:1184, :1833), not the
                     // spelling in the file.
@@ -472,10 +624,11 @@ fn scan_config(
             // (openssh/readconf.c:2116). A bad condition returns < 0 there
             // and aborts the load regardless of the block's activity, which
             // is why the evaluation runs even under `never_match`.
-            let match_host = resolved.hostname.as_deref().unwrap_or(host_alias);
+            let match_host = resolved.hostname.as_deref().unwrap_or(ctx.host_alias);
             let activates = evaluate_match_line(
                 &tokens,
                 match_host,
+                ctx,
                 final_pass,
                 want_final_pass,
                 path,
@@ -500,7 +653,7 @@ fn scan_config(
                 never_match,
                 depth,
                 user_conf,
-                host_alias,
+                ctx,
                 final_pass,
                 want_final_pass,
             )?;
@@ -700,7 +853,7 @@ fn process_include(
     never_match: bool,
     depth: u32,
     user_conf: bool,
-    host_alias: &str,
+    ctx: &MatchCtx<'_>,
     final_pass: bool,
     want_final_pass: &mut bool,
 ) -> Result<(), SshError> {
@@ -766,7 +919,7 @@ fn process_include(
                 child_never_match,
                 child_depth,
                 user_conf,
-                host_alias,
+                ctx,
                 final_pass,
                 want_final_pass,
             )?;
@@ -963,20 +1116,33 @@ fn pattern_matches(host: &str, pattern: &str) -> bool {
 /// - `host` matches case-INSENSITIVELY against the resolved hostname (or the
 ///   alias when no `HostName` has been obtained), mirroring
 ///   `match_hostname` (openssh/match.c:193-203).
+/// - `originalhost` matches case-INSENSITIVELY against the alias as typed on
+///   the command line, before any `HostName` rewrite
+///   (openssh/readconf.c:1171-1174, `match_hostname(original_host, arg)`).
+/// - `user` matches case-SENSITIVELY against `ruser` - the remote user the
+///   operand or a `User` directive set, defaulting to the local user when
+///   unset (openssh/readconf.c:1175-1178, `match_pattern_list(ruser, arg, 0)`
+///   with the trailing 0 disabling case folding).
+/// - `localuser` matches case-SENSITIVELY against the local user
+///   (openssh/readconf.c:1180-1183, `match_pattern_list(pw->pw_name, arg, 0)`).
+/// - `exec` runs its argument through the user's shell and matches when the
+///   command exits 0 (openssh/readconf.c:1222-1242: `execute_in_shell(cmd)`
+///   then `r = r == 0`). Negation inverts that verdict.
 ///
-/// The remaining upstream criteria (`originalhost`, `user`, `localuser`,
-/// `exec`, `localnetwork`, `version`, `tagged`, `command`, `sessiontype`)
-/// are owned by task 1209. Their argument grammar is still validated here -
-/// a missing argument refuses exactly as upstream does
-/// (openssh/readconf.c:855-858) - but the predicate is not evaluated: the
-/// criterion is treated as a non-match, leaving the block inactive rather
-/// than applying options oc cannot yet gate correctly. `exec` is
-/// deliberately never executed even once task 1209 lands its plumbing:
-/// running an arbitrary shell command from a passive resolver inverts the
-/// trust model (the same stance as the `config_lookup` reader).
+/// The criteria oc cannot yet evaluate faithfully - `localnetwork` (needs the
+/// interface-address enumeration `check_match_ifaddrs`, openssh/readconf.c:1189,
+/// which lives behind FFI this crate forbids), `version` (matches OpenSSH's
+/// `SSH_RELEASE`, openssh/readconf.c:1196, a value oc has no analogue for),
+/// `tagged` (the `Tag` directive is not modelled), and the session-only
+/// `command`/`sessiontype` (openssh/readconf.c:1207-1221, no counterpart in a
+/// non-interactive transfer) - keep upstream's argument grammar (a missing
+/// argument refuses, openssh/readconf.c:855-858) but resolve to a non-match,
+/// leaving the block inactive rather than applying options oc cannot gate
+/// correctly.
 fn evaluate_match_line(
     tokens: &[String],
     match_host: &str,
+    ctx: &MatchCtx<'_>,
     final_pass: bool,
     want_final_pass: &mut bool,
     path: &str,
@@ -1064,10 +1230,50 @@ fn evaluate_match_line(
                     result = false;
                 }
             }
-            // Owned by task 1209: argument validated above, predicate
-            // deferred, so the block stays inactive rather than mis-applied.
-            "originalhost" | "user" | "localuser" | "exec" | "localnetwork" | "version"
-            | "tagged" | "command" | "sessiontype" => {
+            // `match_hostname(original_host, arg)` (openssh/readconf.c:1171):
+            // the alias as typed, before any `HostName` rewrite, matched
+            // case-insensitively like `host`.
+            "originalhost" => {
+                let matched = match_pattern_list_ci(ctx.host_alias, arg);
+                let pass = if negate { !matched } else { matched };
+                if !pass {
+                    result = false;
+                }
+            }
+            // `match_pattern_list(ruser, arg, 0)` (openssh/readconf.c:1177):
+            // the remote user, case-sensitive, defaulting to the local user
+            // when the operand supplied none.
+            "user" => {
+                let matched = match_pattern_list_cs(ctx.ruser(), arg);
+                let pass = if negate { !matched } else { matched };
+                if !pass {
+                    result = false;
+                }
+            }
+            // `match_pattern_list(pw->pw_name, arg, 0)`
+            // (openssh/readconf.c:1182): the local user, case-sensitive.
+            "localuser" => {
+                let matched = match_pattern_list_cs(ctx.local_user, arg);
+                let pass = if negate { !matched } else { matched };
+                if !pass {
+                    result = false;
+                }
+            }
+            // `execute_in_shell(cmd)` then `r = r == 0`
+            // (openssh/readconf.c:1222-1242): the command runs through the
+            // user's shell and a zero exit is a match; negation inverts it.
+            "exec" => {
+                let matched = run_match_exec(arg);
+                let pass = if negate { !matched } else { matched };
+                if !pass {
+                    result = false;
+                }
+            }
+            // Deferred: upstream's argument grammar is honoured above, but oc
+            // has no faithful predicate (see the function's doc comment), so
+            // the criterion resolves to a non-match and the block stays
+            // inactive rather than mis-applied.
+            "localnetwork" | "version" | "tagged" | "command" | "sessiontype" => {
                 result = false;
             }
             _ => {
@@ -1119,6 +1325,88 @@ fn match_pattern_list_ci(input: &str, patterns: &str) -> bool {
         }
     }
     any_positive
+}
+
+/// Case-SENSITIVE glob-list match for `Match user`/`localuser`, the rule
+/// `match_pattern_list(string, arg, 0)` applies with the trailing `0`
+/// disabling case folding (openssh/readconf.c:1177, :1182; the list walker is
+/// `match_pattern_list`, openssh/match.c:143-184). A leading `!` on any
+/// pattern negates, and a negated hit fails the whole list. Unlike
+/// [`match_pattern_list_ci`] there is no empty-input guard: upstream's
+/// `ruser`/`pw_name` are never empty, and a bare `*` still matches an empty
+/// string, matching `match_pattern`'s glob semantics
+/// (openssh/match.c:57-114).
+fn match_pattern_list_cs(input: &str, patterns: &str) -> bool {
+    let mut any_positive = false;
+    for token in patterns.split(|c: char| c.is_whitespace() || c == ',') {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        let (negate, pattern) = token
+            .strip_prefix('!')
+            .map_or((false, token), |stripped| (true, stripped));
+        if glob_matches(input.as_bytes(), pattern.as_bytes()) {
+            if negate {
+                return false;
+            }
+            any_positive = true;
+        }
+    }
+    any_positive
+}
+
+/// Runs a `Match exec` command through the user's shell and reports whether
+/// it exited zero (a match). Mirrors `execute_in_shell`
+/// (openssh/readconf.c:1500-1533): the command is passed as a single string
+/// to `$SHELL -c`, falling back to `/bin/sh` when `SHELL` is unset
+/// (openssh/readconf.c:1506), and only a zero exit status counts
+/// (openssh/readconf.c:1237 `r = r == 0`). A shell that cannot be spawned is a
+/// non-match, matching upstream's `r = 1` fallback on `waitpid`/fork failure
+/// (openssh/readconf.c:1524-1528).
+///
+/// `std::process::Command` is a safe `std` API, so this stays inside this
+/// crate's `#![deny(unsafe_code)]` without reaching for process FFI.
+///
+/// `%`-token expansion (`%h`, `%r`, ...) that upstream applies via
+/// `expand_match_exec_or_include_path` (openssh/readconf.c:1224) is not
+/// performed: the command is run verbatim. A literal command - the common
+/// case - is unaffected.
+#[cfg(unix)]
+fn run_match_exec(command: &str) -> bool {
+    use std::ffi::OsString;
+    use std::process::Command;
+
+    let shell = std::env::var_os("SHELL")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| OsString::from("/bin/sh"));
+    Command::new(shell)
+        .arg("-c")
+        .arg(command)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn run_match_exec(command: &str) -> bool {
+    use std::ffi::OsString;
+    use std::process::Command;
+
+    let comspec = std::env::var_os("COMSPEC")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| OsString::from("cmd.exe"));
+    Command::new(comspec)
+        .arg("/C")
+        .arg(command)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn run_match_exec(_command: &str) -> bool {
+    false
 }
 
 /// Expands a leading `~/` to the user's home directory. Returns the path
@@ -1216,6 +1504,13 @@ mod tests {
             Ok(resolved) => panic!("expected a refusal, resolved {resolved:?}"),
             Err(err) => err.to_string(),
         }
+    }
+
+    /// Resolve with an explicit remote and local user injected, so the
+    /// `Match user`/`Match localuser` cells are deterministic regardless of
+    /// the process environment.
+    fn resolve_users(text: &str, alias: &str, remote_user: &str, local_user: &str) -> ResolvedHost {
+        resolve_host_str_with_users(text, alias, remote_user, local_user).expect("config accepted")
     }
 
     #[test]
@@ -1412,10 +1707,152 @@ mod tests {
 
     #[test]
     fn deferred_match_criterion_leaves_the_block_inactive() {
-        // `user` is owned by task 1209: its argument is validated but the
-        // predicate is deferred, so the block does not apply.
-        let resolved = resolve("Match user someone\n  Port 2311\n", "t");
-        assert_eq!(resolved.port, None);
+        // `tagged` has no faithful oc predicate (no `Tag` directive): its
+        // argument is validated but it resolves to a non-match, so the block
+        // does not apply. Control: an otherwise identical `Match all` block
+        // DOES apply, proving the inactivity is the criterion, not the
+        // surrounding parse.
+        let deferred = resolve("Match tagged prod\n  Port 2311\n", "t");
+        assert_eq!(deferred.port, None);
+        let control = resolve("Match all\n  Port 2311\n", "t");
+        assert_eq!(control.port, Some(2311));
+    }
+
+    #[test]
+    fn match_originalhost_gates_on_the_typed_alias() {
+        // `originalhost` reads the alias as typed, before any `HostName`
+        // rewrite, matched case-insensitively (openssh/readconf.c:1171).
+        let hit = resolve(
+            "HostName real.example\nMatch originalhost T\n  Port 2401\n",
+            "t",
+        );
+        assert_eq!(hit.port, Some(2401));
+        // Control: a non-matching alias leaves the block inactive.
+        let miss = resolve("Match originalhost other\n  Port 2401\n", "t");
+        assert_eq!(miss.port, None);
+    }
+
+    #[test]
+    fn negated_match_originalhost_inverts_the_gate() {
+        let applies = resolve("Match !originalhost other\n  Port 2402\n", "t");
+        assert_eq!(applies.port, Some(2402));
+        let blocked = resolve("Match !originalhost t\n  Port 2402\n", "t");
+        assert_eq!(blocked.port, None);
+    }
+
+    #[test]
+    fn match_user_gates_on_the_remote_user_case_sensitively() {
+        // `Match user` reads the remote user, case-sensitively
+        // (openssh/readconf.c:1177, dolower off).
+        let hit = resolve_users("Match user deploy\n  Port 2411\n", "t", "deploy", "local");
+        assert_eq!(hit.port, Some(2411));
+        // Control 1: a different user does not match.
+        let miss = resolve_users("Match user deploy\n  Port 2411\n", "t", "other", "local");
+        assert_eq!(miss.port, None);
+        // Control 2: case matters - `Deploy` != `deploy`.
+        let cased = resolve_users("Match user deploy\n  Port 2411\n", "t", "Deploy", "local");
+        assert_eq!(cased.port, None);
+    }
+
+    #[test]
+    fn match_user_defaults_to_the_local_user_when_none_supplied() {
+        // With no remote user, `ruser` defaults to the local user
+        // (openssh/readconf.c ~1090).
+        let hit = resolve_users("Match user localguy\n  Port 2412\n", "t", "", "localguy");
+        assert_eq!(hit.port, Some(2412));
+        let miss = resolve_users("Match user someone\n  Port 2412\n", "t", "", "localguy");
+        assert_eq!(miss.port, None);
+    }
+
+    #[test]
+    fn negated_match_user_inverts_the_gate() {
+        let applies = resolve_users("Match !user root\n  Port 2413\n", "t", "deploy", "l");
+        assert_eq!(applies.port, Some(2413));
+        let blocked = resolve_users("Match !user deploy\n  Port 2413\n", "t", "deploy", "l");
+        assert_eq!(blocked.port, None);
+    }
+
+    #[test]
+    fn match_localuser_gates_on_the_local_user() {
+        // `Match localuser` reads the local user, case-sensitively
+        // (openssh/readconf.c:1182). It ignores the remote user: the remote
+        // is `root` here, yet the block gates on the local `builder`.
+        let hit = resolve_users(
+            "Match localuser builder\n  Port 2421\n",
+            "t",
+            "root",
+            "builder",
+        );
+        assert_eq!(hit.port, Some(2421));
+        let miss = resolve_users(
+            "Match localuser builder\n  Port 2421\n",
+            "t",
+            "root",
+            "someone",
+        );
+        assert_eq!(miss.port, None);
+    }
+
+    #[test]
+    fn match_and_conjunction_requires_every_criterion() {
+        // AND across criteria: the block applies only when BOTH the user and
+        // the originalhost match. This is the mutation cell - flipping the
+        // AND to an OR makes the mixed rows below activate the block.
+        let both = resolve_users(
+            "Match user deploy originalhost t\n  Port 2431\n",
+            "t",
+            "deploy",
+            "l",
+        );
+        assert_eq!(both.port, Some(2431), "both criteria true must apply");
+
+        let user_only = resolve_users(
+            "Match user deploy originalhost other\n  Port 2431\n",
+            "t",
+            "deploy",
+            "l",
+        );
+        assert_eq!(
+            user_only.port, None,
+            "originalhost false must fail the block"
+        );
+
+        let host_only = resolve_users(
+            "Match user wrong originalhost t\n  Port 2431\n",
+            "t",
+            "deploy",
+            "l",
+        );
+        assert_eq!(host_only.port, None, "user false must fail the block");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn match_exec_matches_on_zero_exit_only() {
+        // `Match exec` runs the command through the shell; exit 0 is a match,
+        // nonzero is not (openssh/readconf.c:1237 `r = r == 0`). Skip where
+        // no POSIX shell is available.
+        if !std::path::Path::new("/bin/sh").exists() {
+            return;
+        }
+        let hit = resolve("Match exec \"exit 0\"\n  Port 2441\n", "t");
+        assert_eq!(hit.port, Some(2441), "exit 0 must match");
+        let miss = resolve("Match exec \"exit 3\"\n  Port 2441\n", "t");
+        assert_eq!(miss.port, None, "nonzero exit must not match");
+        // Negation inverts the verdict.
+        let negated = resolve("Match !exec \"exit 3\"\n  Port 2441\n", "t");
+        assert_eq!(negated.port, Some(2441), "negated nonzero exit must match");
+    }
+
+    #[test]
+    fn match_user_missing_argument_is_refused() {
+        // The argument grammar is upstream's: a bare criterion refuses
+        // (openssh/readconf.c:855-858).
+        let err = refusal("Match user\n  Port 22\n", "t");
+        assert!(
+            err.contains("missing argument for Match"),
+            "unexpected refusal: {err}"
+        );
     }
 
     #[test]
