@@ -554,6 +554,7 @@ fn raw_url_path(url_str: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use platform::env::EnvGuard;
 
     #[test]
@@ -996,6 +997,9 @@ mod tests {
         assert_eq!(cfg.connect_timeout, precise);
     }
 
+    // Uses `EnvGuard` from the unix-only `platform` crate to isolate
+    // HOME/USERPROFILE; the whole test is gated to unix accordingly.
+    #[cfg(unix)]
     #[test]
     fn from_url_preserves_defaults_for_non_url_fields() {
         // `from_url` reads the default ssh_config load order, so a
