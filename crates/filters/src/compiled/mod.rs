@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use crate::{FilterAction, FilterError, FilterRule};
 
 pub(crate) use clear::apply_clear_rule;
-use pattern::{compile_patterns, normalise_pattern};
+use pattern::{compile_patterns, has_wild3_suffix, normalise_pattern};
 pub(crate) use rule::CompiledRule;
 pub(crate) use xattr::CompiledXattrRule;
 pub use xattr::XattrSide;
@@ -67,6 +67,18 @@ impl CompiledRule {
 
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
 
+        // upstream: exclude.c:340-345 sets FILTRULE_WILD3_SUFFIX for a pattern
+        // ending in `/***`. That single rule wildmatches BOTH the directory
+        // (name + "/", exclude.c:1033-1036) and every descendant (the trailing
+        // `***` crosses `/`, lib/wildmatch.c), then inverts once for `!`
+        // (exclude.c:1005 ret_match). `normalise_pattern` folds the `/***` into a
+        // directory-only stem, so the descendant reach must be re-attached as a
+        // genuine matcher rather than the pruning-only descendant set - otherwise
+        // a `!`-negated rule inverts against the stem alone and over-excludes a
+        // file the pattern actually matches (filter differential fuzzer,
+        // `-!p /?*/***` vs `I/0`).
+        let wild3_suffix = has_wild3_suffix(&pattern);
+
         // upstream: exclude.c:236 add_rule() - FILTRULE_WILD is set only when
         // the pattern contains a wildcard metacharacter (`*`, `?`, `[`). A
         // non-wild rule is matched with a literal comparison (exclude.c:967-978
@@ -112,6 +124,7 @@ impl CompiledRule {
                 applies_to_receiver,
                 perishable,
                 negate,
+                wild3_suffix,
                 order: 0,
                 source,
             });
@@ -175,9 +188,17 @@ impl CompiledRule {
         // `{core}/**` would steal precedence from a later include like
         // `+ foo/s?b/`. Kept as an explicit predicate so the dir-only
         // unanchored case is greppable and pinned by unit tests.
+        //
+        // A trailing `/***` (WILD3) is exempt from BOTH suppressions: its
+        // descendant reach is not a pruning emulation but the second half of
+        // upstream's single wildmatch (`dir/***` matches every descendant via
+        // the slash-crossing `***`, lib/wildmatch.c). Suppressing it would make
+        // a `!`-negated WILD3 rule invert against the directory stem alone and
+        // over-exclude a matching file (filter differential fuzzer, `-!p /?*/***`
+        // vs `I/0`).
         let is_directory_only_unanchored_wildcard =
-            directory_only && !slash_anchored && has_glob_wildcard;
-        let is_anchored_wildcard = slash_anchored && has_glob_wildcard;
+            directory_only && !slash_anchored && has_glob_wildcard && !wild3_suffix;
+        let is_anchored_wildcard = slash_anchored && has_glob_wildcard && !wild3_suffix;
         let suppress_descendants = is_directory_only_unanchored_wildcard || is_anchored_wildcard;
         let mut deletion_descendant_patterns = HashSet::new();
         if matches!(
@@ -228,6 +249,7 @@ impl CompiledRule {
             applies_to_receiver,
             perishable,
             negate,
+            wild3_suffix,
             order: 0,
             source,
         })

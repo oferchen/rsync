@@ -284,9 +284,44 @@ pub(super) fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
     }
 }
 
+/// Returns `true` when `pattern` carries upstream's trailing `/***`
+/// (`FILTRULE_WILD3_SUFFIX`, exclude.c:340-345) after a single trailing-slash
+/// peel.
+///
+/// The detection mirrors [`normalise_pattern`] exactly: a lone trailing `/` is
+/// stripped first (upstream peels `FILTRULE_DIRECTORY` before testing the
+/// suffix, exclude.c:287-345), then the stem must be longer than the bare
+/// `/***` (so `/***` itself is an ordinary `***` wildcard, not a WILD3 stem).
+/// [`normalise_pattern`] folds this suffix into a directory-only stem; callers
+/// that need to know whether the stem's descendant reach came from a `/***`
+/// (a genuine part of upstream's single wildmatch) versus a plain trailing `/`
+/// (a pruning-only directory rule) use this predicate to tell them apart.
+pub(super) fn has_wild3_suffix(pattern: &str) -> bool {
+    let mut stem = pattern;
+    if stem.len() > 1 && stem.ends_with('/') {
+        stem = &stem[..stem.len() - 1];
+    }
+    stem.len() > 4 && stem.ends_with("/***")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn has_wild3_suffix_matches_normalise_detection() {
+        assert!(has_wild3_suffix("new/lose/***"));
+        assert!(has_wild3_suffix("/new/lose/***"));
+        assert!(has_wild3_suffix("/?*/***"));
+        // A single trailing slash is peeled first, matching normalise_pattern.
+        assert!(has_wild3_suffix("dir/***/"));
+        // Bare `/***` (len 4) is an ordinary wildcard, not a WILD3 stem.
+        assert!(!has_wild3_suffix("/***"));
+        // `***` without a preceding slash is a plain wildcard.
+        assert!(!has_wild3_suffix("foo***"));
+        assert!(!has_wild3_suffix("foo/"));
+        assert!(!has_wild3_suffix("foo"));
+    }
 
     #[test]
     fn normalise_pattern_plain() {
