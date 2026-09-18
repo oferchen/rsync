@@ -38,10 +38,13 @@ daemon-directives:upstream_only:name
 #     file-backed `motd file` (motd_file). oc keeps both.
 #   quiccertfile / quickeyfile / quicport - QUIC transport identity/port
 #     (feature = "quic"); QUIC is an oc-only transport with no upstream peer.
+#   quicclientcafile - CA bundle verifying a client-presented cert (QUIC mutual
+#     TLS); same oc-only transport, no upstream peer.
 daemon-directives:oc_only:acceptorthreads
 daemon-directives:oc_only:bwlimit
 daemon-directives:oc_only:motd
 daemon-directives:oc_only:quiccertfile
+daemon-directives:oc_only:quicclientcafile
 daemon-directives:oc_only:quickeyfile
 daemon-directives:oc_only:quicport
 
@@ -57,10 +60,14 @@ daemon-directives:oc_only:quicport
 #     (feature = "quic"); hidden from help when the feature is absent, so they
 #     stay out of the exact-match help registry that its sibling --quic-cc /
 #     --quic-window belong to.
+#   quic-cert / quic-key - client certificate + key for QUIC mutual TLS
+#     (feature = "quic"); same feature-hidden group as --quic / --quic-ca.
 #   tmp-dir       - visible alias of the upstream --temp-dir option (-T); an
 #     oc-added spelling, not present in upstream's popt table.
 cli-long-options:oc_only:no-b
 cli-long-options:oc_only:no-fake-super
 cli-long-options:oc_only:quic
 cli-long-options:oc_only:quic-ca
+cli-long-options:oc_only:quic-cert
+cli-long-options:oc_only:quic-key
 cli-long-options:oc_only:tmp-dir
