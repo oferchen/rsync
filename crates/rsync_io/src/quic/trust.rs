@@ -5,25 +5,31 @@
 //! the decision to [`QuicConnector`](super::QuicConnector) as a [`QuicTrust`].
 //! Three sources make up the client verification ladder:
 //!
-//! - **System roots** ([`system_roots`], QUIC-5c) - the zero-config default.
-//!   Verifies the server chain against the live platform trust store, the
-//!   openssl/stunnel behaviour upstream `rsync-ssl` relies on when
-//!   `RSYNC_SSL_CA_CERT` is unset.
+//! - **System roots** ([`system_roots`], QUIC-5c) - verifies the server chain
+//!   against the live platform trust store, the openssl/stunnel behaviour
+//!   upstream `rsync-ssl` relies on when `RSYNC_SSL_CA_CERT` is unset.
 //! - **TOFU `quic_known_hosts`** ([`tofu`]/[`TofuVerifier`], QUIC-5d) - the
 //!   self-signed path. On first contact with an authority the server's cert
 //!   fingerprint is pinned into a known-hosts file (mirroring SSH); a changed
 //!   fingerprint for a known authority aborts the handshake loudly. There is no
 //!   blanket insecure escape hatch.
 //! - **Private CA** ([`load_private_ca`]/[`private_ca_file`], `--quic-ca`,
-//!   QUIC-5b) - a PEM CA bundle parsed into a [`RootCertStore`] and used as the
-//!   highest-precedence [`QuicTrust::Roots`], for a daemon whose chain is
-//!   anchored by an internal or corporate CA rather than the platform store.
+//!   QUIC-5b) - a PEM CA bundle parsed into a [`RootCertStore`], for a daemon
+//!   whose chain is anchored by an internal or corporate CA rather than the
+//!   platform store.
 //!
-//! [`resolve`] selects one source per policy-B precedence so the CLI wiring
-//! (`--quic-ca` > system roots > TOFU) composes these backends without
-//! re-deriving the order. Dependency inversion keeps the TOFU verifier testable:
-//! it pins through a [`KnownHostsStore`] trait, not a hard-wired file, so tests
-//! inject a temp-path store and no network or real trust store is touched.
+//! [`AcceptNewVerifier`] composes the CA/system-root layer with the TOFU
+//! fallback into the zero-config **default** (task 134): a chain that validates
+//! against a `--quic-ca` bundle or the platform trust store is trusted outright
+//! and takes precedence, otherwise the decision falls to trust-on-first-use.
+//! This mirrors `ssh(1)` with `StrictHostKeyChecking=accept-new` - a CA-signed
+//! host key is honoured without a `known_hosts` entry, an unknown host is
+//! learned and pinned on first contact, and a changed key is refused loudly - so
+//! a self-signed QUIC daemon works with no `--quic-ca` while a CA-anchored one
+//! still verifies against its CA. [`resolve`] builds this default from the
+//! parsed flags. Dependency inversion keeps the TOFU arm testable: it pins
+//! through a [`KnownHostsStore`] trait, not a hard-wired file, so tests inject a
+//! temp-path store and no network or real trust store is touched.
 //!
 //! See `docs/design/quic-transport-policy.md` (Decision B) and
 //! `docs/design/quic-transport-integration.md` (Phase 3).
@@ -321,6 +327,132 @@ impl ServerCertVerifier for TofuVerifier {
     }
 }
 
+/// A rustls [`ServerCertVerifier`] implementing SSH-style accept-new trust, the
+/// zero-config QUIC client default (task 134).
+///
+/// Composes two layers into one trust-decision owner, mirroring `ssh(1)` with
+/// `StrictHostKeyChecking=accept-new`:
+///
+/// - **CA/system-root layer** (`roots`, optional) - a chain that validates
+///   against a `--quic-ca` bundle or the platform trust store is trusted
+///   outright and takes precedence, exactly as SSH honours a CA-signed host key
+///   without a `known_hosts` entry. When no usable platform store is available
+///   this layer is absent and the verifier is pure TOFU - never a blanket
+///   accept.
+/// - **TOFU fallback** (`tofu`) - reached only when the root layer is absent or
+///   fails to validate: an unknown authority is pinned on first contact
+///   (accept-new), a known authority must re-present its pinned certificate, and
+///   a changed certificate aborts the handshake loudly.
+///
+/// Handshake-signature verification is delegated to the TOFU arm (both layers
+/// share the one crypto provider), so a peer must always prove possession of the
+/// presented certificate's private key regardless of which layer accepted it.
+pub struct AcceptNewVerifier {
+    roots: Option<Arc<dyn ServerCertVerifier>>,
+    tofu: TofuVerifier,
+}
+
+impl AcceptNewVerifier {
+    /// Builds an accept-new verifier. `roots` (when `Some`) verifies the chain
+    /// against a CA/system-root store and wins when it validates; otherwise the
+    /// pin decision runs through `store` keyed by `authority` (`host:port`).
+    #[must_use]
+    pub fn new(
+        roots: Option<Arc<dyn ServerCertVerifier>>,
+        authority: impl Into<String>,
+        store: Box<dyn KnownHostsStore>,
+    ) -> Self {
+        Self {
+            roots,
+            tofu: TofuVerifier::new(authority, store),
+        }
+    }
+}
+
+impl fmt::Debug for AcceptNewVerifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AcceptNewVerifier")
+            .field("has_roots", &self.roots.is_some())
+            .field("tofu", &self.tofu)
+            .finish()
+    }
+}
+
+impl ServerCertVerifier for AcceptNewVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, TlsError> {
+        // CA/system-root precedence: a chain that validates against a configured
+        // authority wins outright, so the known-hosts store is never consulted
+        // (mirrors SSH trusting a CA-signed host key without a known_hosts pin).
+        if let Some(roots) = &self.roots {
+            if let Ok(verified) =
+                roots.verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+            {
+                return Ok(verified);
+            }
+        }
+        // Otherwise the self-signed path: accept-new / verify-pin / refuse-changed.
+        self.tofu
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        self.tofu.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        self.tofu.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.tofu.supported_verify_schemes()
+    }
+}
+
+/// Builds a WebPKI verifier over `roots` (a `--quic-ca` bundle or the platform
+/// trust store) - the CA/system-root layer of the accept-new default. Fails if
+/// `roots` holds no usable trust anchor, so an empty store never silently
+/// degrades to trusting nothing.
+fn webpki_verifier(roots: RootCertStore) -> io::Result<Arc<dyn ServerCertVerifier>> {
+    let verifier: Arc<dyn ServerCertVerifier> =
+        rustls::client::WebPkiServerVerifier::builder_with_provider(
+            Arc::new(roots),
+            ring_provider(),
+        )
+        .build()
+        .map_err(io_err)?;
+    Ok(verifier)
+}
+
+/// The platform-trust-store layer of the accept-new default, or `None` when the
+/// store yields no usable certificate.
+///
+/// Unlike [`system_roots`], an empty store is not fatal here: it means the
+/// default degrades to pure TOFU, exactly as SSH relies on `known_hosts` alone
+/// when no CA is configured.
+fn system_root_verifier() -> Option<Arc<dyn ServerCertVerifier>> {
+    match system_roots() {
+        Ok(QuicTrust::Roots(roots)) => webpki_verifier(roots).ok(),
+        _ => None,
+    }
+}
+
 /// Informational first-contact notice (not fatal), matching the policy note.
 fn emit_pinned_notice(authority: &str, fingerprint: &Fingerprint) {
     let _ = writeln!(
@@ -557,6 +689,17 @@ pub enum TrustPolicy {
         /// Explicit known-hosts path, or `None` for [`default_known_hosts_path`].
         known_hosts: Option<PathBuf>,
     },
+    /// SSH-style accept-new (task 134): verify against a CA/system-root layer,
+    /// falling back to trust-on-first-use. The zero-config client default.
+    AcceptNew {
+        /// A `--quic-ca` bundle to anchor the daemon chain, or `None` to use the
+        /// platform trust store as the CA/system-root layer.
+        roots: Option<RootCertStore>,
+        /// `host:port` the TOFU fallback pins by.
+        authority: String,
+        /// Explicit known-hosts path, or `None` for [`default_known_hosts_path`].
+        known_hosts: Option<PathBuf>,
+    },
 }
 
 impl TrustPolicy {
@@ -576,30 +719,57 @@ impl TrustPolicy {
                     })?;
                 Ok(tofu_file(authority, path))
             }
+            Self::AcceptNew {
+                roots,
+                authority,
+                known_hosts,
+            } => {
+                let path = known_hosts
+                    .or_else(default_known_hosts_path)
+                    .ok_or_else(|| {
+                        io_err("cannot resolve a quic_known_hosts path (no HOME/config dir)")
+                    })?;
+                // CA/system-root layer: an explicit `--quic-ca` must parse (its
+                // failure already surfaced at load time), while an absent
+                // platform store degrades to pure TOFU rather than failing.
+                let roots = match roots {
+                    Some(ca) => Some(webpki_verifier(ca)?),
+                    None => system_root_verifier(),
+                };
+                let store = Box::new(KnownHostsFile::new(path));
+                Ok(QuicTrust::Verifier(Arc::new(AcceptNewVerifier::new(
+                    roots, authority, store,
+                ))))
+            }
         }
     }
 }
 
-/// Selects the effective client trust source per policy-B precedence
-/// (`--quic-ca` > system roots > TOFU) and materializes it into a [`QuicTrust`].
+/// Builds the client trust source - the SSH-style accept-new default (task 134)
+/// - and materializes it into a [`QuicTrust`].
 ///
-/// An explicit private CA wins; otherwise an explicit TOFU target engages the
-/// self-signed path; otherwise the system-roots default applies. This is the
-/// composition seam for the CLI wiring: it supplies `ca`/`tofu` from the parsed
-/// flags and receives one ready trust source, without re-encoding the order.
+/// The QUIC client trusts a daemon the way `ssh(1)` does with
+/// `StrictHostKeyChecking=accept-new`: a certificate that chains to a configured
+/// authority - a `--quic-ca` bundle (`ca`) when supplied, otherwise the platform
+/// trust store - is trusted outright and takes precedence; failing that, the
+/// decision falls to trust-on-first-use against `quic_known_hosts` keyed by
+/// `authority` (`host:port`), with `known_hosts` overriding the default file
+/// location. This composes the CA/system-root layer and the TOFU fallback into
+/// the one accept-new verifier the connector consumes, so a self-signed daemon
+/// works zero-config while a CA-anchored one still verifies against its CA. This
+/// is the composition seam for the CLI wiring: it supplies `ca`/`authority` from
+/// the parsed target and receives one ready trust source.
 pub fn resolve(
     ca: Option<RootCertStore>,
-    tofu: Option<(String, Option<PathBuf>)>,
+    authority: impl Into<String>,
+    known_hosts: Option<PathBuf>,
 ) -> io::Result<QuicTrust> {
-    let policy = match (ca, tofu) {
-        (Some(roots), _) => TrustPolicy::PrivateCa(roots),
-        (None, Some((authority, known_hosts))) => TrustPolicy::Tofu {
-            authority,
-            known_hosts,
-        },
-        (None, None) => TrustPolicy::SystemRoots,
-    };
-    policy.into_trust()
+    TrustPolicy::AcceptNew {
+        roots: ca,
+        authority: authority.into(),
+        known_hosts,
+    }
+    .into_trust()
 }
 
 #[cfg(test)]
@@ -797,54 +967,144 @@ mod tests {
         );
     }
 
-    /// The resolver honours policy-B precedence: an explicit CA outranks a TOFU
-    /// target, and TOFU outranks the system-roots default. Encodes WHY: the CLI
-    /// wiring (#50) relies on this order to compose `--quic-ca`, TOFU, and the
-    /// default without re-deriving it.
-    #[test]
-    fn resolve_precedence_ca_over_tofu() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("quic_known_hosts");
+    /// Drives an [`AcceptNewVerifier`] over `path` with no CA/system-root layer.
+    fn verify_accept_new(
+        cert: &CertificateDer<'_>,
+        path: &Path,
+    ) -> Result<ServerCertVerified, TlsError> {
+        let verifier = AcceptNewVerifier::new(None, AUTHORITY, store_at(path));
+        verifier.verify_server_cert(
+            cert,
+            &[],
+            &ServerName::try_from("host.example").expect("server name"),
+            &[],
+            UnixTime::now(),
+        )
+    }
 
-        let tofu_target = Some((AUTHORITY.to_owned(), Some(path.clone())));
-        let trust = resolve(None, tofu_target).expect("tofu resolves");
-        assert!(
-            matches!(trust, QuicTrust::Verifier(_)),
-            "TOFU target -> verifier"
+    /// The accept-new DEFAULT (task 134), mirroring `ssh` `accept-new`: on first
+    /// contact an unknown self-signed cert is LEARNED (pinned + persisted) and
+    /// accepted, the SAME cert VERIFIES against the pin on a later contact, and a
+    /// CHANGED cert for the known authority is REFUSED. `roots = None` isolates
+    /// the TOFU arm so no CA layer can shadow it, and a real on-disk
+    /// `quic_known_hosts` exercises the persist step. Encodes WHY: accept-new's
+    /// security property is "learn once, then require the same key" - a
+    /// first-contact accept plus a hard reject on change is exactly what
+    /// separates accept-new from a blanket insecure flag. A mutation reverting
+    /// the unknown-host arm to a hard-fail (the pre-task default) fails the
+    /// first-contact accept here.
+    #[test]
+    fn accept_new_pins_unknown_then_verifies_then_refuses_changed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("state").join("quic_known_hosts");
+        let cert = synthetic_cert();
+        let rogue = synthetic_cert();
+        assert_ne!(
+            Fingerprint::of_certificate(&cert),
+            Fingerprint::of_certificate(&rogue),
+            "distinct certs must fingerprint distinctly for this test to mean anything"
         );
 
-        let ca = RootCertStore::empty();
-        let both =
-            resolve(Some(ca), Some((AUTHORITY.to_owned(), Some(path)))).expect("ca resolves");
+        // First contact (accept-new): no pin yet, so learn + persist + accept.
+        assert!(!path.exists(), "no known-hosts before first contact");
+        verify_accept_new(&cert, &path).expect("accept-new pins and accepts an unknown host");
+        let recorded = std::fs::read_to_string(&path).expect("known-hosts persisted");
         assert!(
-            matches!(both, QuicTrust::Roots(_)),
-            "explicit CA outranks TOFU"
+            recorded.contains(AUTHORITY) && recorded.contains("SHA256:"),
+            "first contact must persist an authority/fingerprint record: {recorded:?}"
+        );
+
+        // Later contact, same identity: the pin matches, so verify + accept.
+        verify_accept_new(&cert, &path).expect("the pinned cert verifies on a later contact");
+
+        // Changed identity for a known authority: MITM-shaped, must refuse.
+        let err = verify_accept_new(&rogue, &path).expect_err("a changed cert must be refused");
+        assert!(
+            err.to_string().contains("host key mismatch"),
+            "the refusal must name the mismatch: {err}"
+        );
+
+        // A refused key must never repin the host.
+        let after = std::fs::read_to_string(&path).expect("known-hosts still present");
+        assert_eq!(recorded, after, "a refused key must never repin the host");
+    }
+
+    /// CA precedence over TOFU (task 134), mirroring `ssh` trusting a CA-signed
+    /// host key without a `known_hosts` entry: a leaf that chains to the
+    /// configured CA is accepted OUTRIGHT and the known-hosts store is NEVER
+    /// consulted. Proven discriminatingly by PRE-PINNING a DIFFERENT fingerprint
+    /// for the authority - which the TOFU arm would reject as a host-key mismatch
+    /// if it were reached - and asserting the leaf is still accepted and the pin
+    /// file is left untouched. Encodes WHY: the filed precedence is "a
+    /// `--quic-ca`/system-root that validates still wins"; a verifier that
+    /// consulted TOFU (before OR after the roots check) would refuse this
+    /// handshake against the conflicting pin.
+    #[test]
+    fn accept_new_ca_validation_wins_over_a_conflicting_pin() {
+        let (ca_pem, leaf) = private_ca_and_leaf();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ca_path = dir.path().join("private-ca.pem");
+        std::fs::write(&ca_path, ca_pem).expect("write ca pem");
+        let known_hosts = dir.path().join("quic_known_hosts");
+
+        // Pre-pin a rogue fingerprint: if the TOFU arm were consulted for this
+        // authority it would refuse the (different) CA-signed leaf as a mismatch.
+        let store = KnownHostsFile::new(known_hosts.clone());
+        store
+            .pin(AUTHORITY, &Fingerprint::of_certificate(&synthetic_cert()))
+            .expect("pre-pin a conflicting fingerprint");
+        let before = std::fs::read_to_string(&known_hosts).expect("pin file written");
+
+        let roots =
+            webpki_verifier(load_private_ca(&ca_path).expect("load ca")).expect("webpki verifier");
+        let verifier = AcceptNewVerifier::new(Some(roots), AUTHORITY, Box::new(store));
+        verifier
+            .verify_server_cert(
+                &leaf,
+                &[],
+                &ServerName::try_from("host.example").expect("server name"),
+                &[],
+                UnixTime::now(),
+            )
+            .expect("a CA-signed leaf is trusted outright, TOFU never consulted");
+
+        let after = std::fs::read_to_string(&known_hosts).expect("pin file still present");
+        assert_eq!(
+            before, after,
+            "a roots-validated cert must not touch quic_known_hosts"
         );
     }
 
-    /// The third arm of the policy-B ladder: with neither an explicit CA nor a
-    /// TOFU target, `resolve` falls back to the system-roots default - a
-    /// [`QuicTrust::Roots`] (or the documented trust-store error), never a TOFU
-    /// verifier and never an exact pin. Completes [`resolve_precedence_ca_over_tofu`]
-    /// (which pins CA > TOFU and TOFU > default): together the three arms cover
-    /// the whole precedence order. Encodes WHY: "system roots is the default
-    /// when no CA is given" is the zero-config behaviour the CLI wiring relies
-    /// on, and a mutation that made the empty case a verifier (or a blanket
-    /// accept-any trust source) would pass the CA/TOFU arm tests while silently
-    /// weakening the default.
+    /// `resolve` builds the accept-new default in both shapes - with a
+    /// `--quic-ca` bundle and without one - always yielding the composed
+    /// [`QuicTrust::Verifier`] (CA/system-root layer + TOFU fallback) the
+    /// connector consumes, never a bare [`QuicTrust::Roots`] that would hard-fail
+    /// a self-signed daemon, and never an exact pin. Encodes WHY: the connect
+    /// wiring relies on `resolve` returning one accept-new verifier regardless of
+    /// `--quic-ca`, so the zero-config default is accept-new while `--quic-ca`
+    /// still anchors the chain. A mutation that returned `Roots` for the
+    /// no-CA case (the pre-task system-roots default) fails the first assertion.
     #[test]
-    fn resolve_none_none_selects_system_roots_default() {
-        match resolve(None, None) {
-            Ok(trust) => assert!(
-                matches!(trust, QuicTrust::Roots(_)),
-                "no CA + no TOFU must resolve to the system-roots default, \
-                 not a verifier or an exact pin"
-            ),
-            Err(err) => assert!(
-                err.to_string().contains("system trust store"),
-                "a trust-store-less environment must fail with the documented message: {err}"
-            ),
-        }
+    fn resolve_yields_accept_new_verifier_with_and_without_ca() {
+        let (ca_pem, _leaf) = private_ca_and_leaf();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ca_path = dir.path().join("private-ca.pem");
+        std::fs::write(&ca_path, ca_pem).expect("write ca pem");
+        let known_hosts = dir.path().join("quic_known_hosts");
+
+        let without_ca =
+            resolve(None, AUTHORITY, Some(known_hosts.clone())).expect("resolve with no CA");
+        assert!(
+            matches!(without_ca, QuicTrust::Verifier(_)),
+            "no --quic-ca must still yield the accept-new verifier, not a bare Roots store"
+        );
+
+        let ca = load_private_ca(&ca_path).expect("load ca");
+        let with_ca = resolve(Some(ca), AUTHORITY, Some(known_hosts)).expect("resolve with CA");
+        assert!(
+            matches!(with_ca, QuicTrust::Verifier(_)),
+            "--quic-ca must compose into the accept-new verifier, not replace it with Roots"
+        );
     }
 
     /// Encodes a DER certificate as a PEM `CERTIFICATE` block, base64 wrapped at
@@ -937,26 +1197,18 @@ mod tests {
             .expect_err("a certificate not signed by the CA must be rejected");
     }
 
-    /// `--quic-ca` pointed at a private CA outranks both the system-roots
-    /// default and a TOFU target, and it arrives as the `QuicTrust::Roots` the
-    /// connector consumes. Threads the real loader through [`resolve`] so the
-    /// precedence assertion covers the actual `--quic-ca` bytes, not a stand-in
-    /// empty store.
+    /// The standalone `private_ca_file` builder loads a real `--quic-ca` bundle
+    /// into the `QuicTrust::Roots` source the connector consumes directly (the
+    /// non-accept-new path a caller can still select explicitly). The accept-new
+    /// composition of the same bytes is covered by
+    /// [`accept_new_ca_validation_wins_over_a_conflicting_pin`] and
+    /// [`resolve_yields_accept_new_verifier_with_and_without_ca`].
     #[test]
-    fn loaded_private_ca_outranks_tofu_via_resolve() {
+    fn private_ca_file_yields_a_roots_trust_source() {
         let (ca_pem, _leaf) = private_ca_and_leaf();
         let dir = tempfile::tempdir().expect("tempdir");
         let ca_path = dir.path().join("private-ca.pem");
         std::fs::write(&ca_path, ca_pem).expect("write ca pem");
-        let known_hosts = dir.path().join("quic_known_hosts");
-
-        let ca = load_private_ca(&ca_path).expect("load private ca");
-        let trust = resolve(Some(ca), Some((AUTHORITY.to_owned(), Some(known_hosts))))
-            .expect("resolve with ca and tofu");
-        assert!(
-            matches!(trust, QuicTrust::Roots(_)),
-            "a loaded --quic-ca must win over a TOFU target"
-        );
 
         let private = private_ca_file(&ca_path).expect("private_ca_file");
         assert!(
