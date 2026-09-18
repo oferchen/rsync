@@ -42,6 +42,12 @@ pub(crate) struct CompiledRule {
     pub(crate) applies_to_receiver: bool,
     pub(crate) perishable: bool,
     pub(crate) negate: bool,
+    /// The source pattern ended in `/***` (upstream `FILTRULE_WILD3_SUFFIX`,
+    /// exclude.c:340-345). Such a rule's descendant matchers are the
+    /// slash-crossing half of upstream's single wildmatch, not a pruning
+    /// emulation, so they are consulted unconditionally when the rule is
+    /// negated - see [`Self::pattern_matches_impl`].
+    pub(super) wild3_suffix: bool,
     /// Source-definition order across the whole rule stream, assigned by
     /// [`FilterSet::from_rules`](crate::FilterSet::from_rules). Upstream keeps
     /// every rule in one list and `check_filter()` walks it first-match-wins
@@ -144,6 +150,15 @@ impl CompiledRule {
 
     /// Internal pattern matching without negate logic.
     fn pattern_matches_impl(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
+        // upstream: exclude.c:1005/1062 - a `!`-negated rule inverts ONE
+        // wildmatch of the whole pattern. For a `/***` (WILD3) rule that
+        // wildmatch spans the directory stem AND every descendant, so the
+        // descendant reach must be part of the value that negate inverts. The
+        // descendant set is otherwise a subtree-pruning emulation consulted only
+        // on single-path/deletion queries; a negated WILD3 rule has no subtree
+        // to prune (its action fires on NON-match), so consult it unconditionally
+        // to mirror upstream's full match.
+        let check_descendants = check_descendants || (self.negate && self.wild3_suffix);
         for matcher in &self.direct_matchers {
             if matcher.is_match(path) && (!self.directory_only || is_dir) {
                 debug_log!(Filter, 2, "direct pattern matched: {:?}", path);
