@@ -64,6 +64,50 @@ fn round_trip_and_eof() {
     server.join().expect("server thread");
 }
 
+/// Server-speaks-first: the acceptor OPENS the bidirectional stream and writes
+/// first (the rsync daemon greeting shape), and the client ACCEPTS it via
+/// `connect_server_first`. This is the exact pairing the QUIC daemon and the
+/// core client use, and it must not deadlock on the frameless-stream problem a
+/// mismatched opener would hit.
+#[test]
+fn server_first_round_trip() {
+    use rsync_io::quic::QuicServerIdentity;
+
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("udp bind");
+    let acceptor = QuicAcceptor::from_socket_server_first(socket, &QuicServerIdentity::Ephemeral)
+        .expect("server-first acceptor");
+    let addr = acceptor.local_addr().expect("local addr");
+    let cert = acceptor.certificate().clone().into_owned();
+
+    let greeting = pattern(0x9e);
+    let expected_reply = pattern(0x3b);
+
+    let server_greeting = greeting.clone();
+    let server_expected = expected_reply.clone();
+    let server = thread::spawn(move || {
+        // Server speaks first: open + write the greeting before reading.
+        let mut stream = acceptor.accept().expect("accept stream");
+        stream.write_all(&server_greeting).expect("write greeting");
+        let mut reply = vec![0u8; PAYLOAD_LEN];
+        stream.read_exact(&mut reply).expect("read reply");
+        assert_eq!(reply, server_expected, "client reply corrupted");
+        stream.finish().expect("finish");
+    });
+
+    let connector = QuicConnector::new(&cert).expect("build connector");
+    let mut stream = connector
+        .connect_server_first(addr, "localhost")
+        .expect("connect");
+    let mut received = vec![0u8; PAYLOAD_LEN];
+    stream.read_exact(&mut received).expect("read greeting");
+    assert_eq!(received, greeting, "server greeting corrupted");
+    stream.write_all(&expected_reply).expect("write reply");
+    stream.finish().expect("finish");
+    stream.close();
+
+    server.join().expect("server thread");
+}
+
 /// The same round trip as `round_trip_and_eof`, but the connector is built
 /// from a [`QuicTrust::Roots`] store instead of an exact pin. Both tests drive
 /// the identical `connect`/`QuicStream` path; passing both proves the trust

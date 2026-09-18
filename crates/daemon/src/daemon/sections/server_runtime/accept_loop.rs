@@ -43,13 +43,24 @@ fn serve_connections(
     // UDP/QUIC listener binds the same resolved address set as TCP but only
     // when QUIC is configured; unconfigured (the default, even under
     // `--all-features`) leaves this `None` and no UDP socket is opened.
+    //
+    // QUIC has no ephemeral certificate fallback: when the operator requested
+    // QUIC (any `quic *` directive) but did not supply BOTH `quic cert file`
+    // and `quic key file`, the daemon refuses to start rather than synthesizing
+    // an identity or silently skipping the listener. This mirrors oc's
+    // hard-fail-no-fallback posture for the QUIC transport.
     #[cfg(all(unix, feature = "quic"))]
-    let quic_bind = options.quic_listener_enabled().then(|| {
-        (
-            options.effective_quic_port(),
-            options.resolve_quic_identity(),
-        )
-    });
+    let quic_bind: Option<(u16, QuicIdentity)> = {
+        if let Some(reason) = options.quic_config_error() {
+            return Err(DaemonError::new(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                rsync_error!(FEATURE_UNAVAILABLE_EXIT_CODE, reason).with_role(Role::Daemon),
+            ));
+        }
+        options
+            .resolve_quic_identity()
+            .map(|identity| (options.effective_quic_port(), identity))
+    };
 
     let RuntimeOptions {
         bind_address,
@@ -228,32 +239,29 @@ fn serve_connections(
         }
     }
 
-    // QUIC/UDP listener (oc extension): bind it alongside the TCP listeners,
-    // over the identical `resolve_bind_addresses` set, while CAP_NET_BIND_SERVICE
-    // is still held (the default port 873 is privileged). The bound acceptors
-    // are held for the whole daemon lifetime; the accept()->session handoff
-    // lands under QUIC task #55, so for now they simply keep the UDP sockets
-    // reserved next to the TCP ones.
+    // QUIC/UDP listener (oc extension): bind the UDP sockets alongside the TCP
+    // listeners, over the identical `resolve_bind_addresses` set, while
+    // CAP_NET_BIND_SERVICE is still held (the default port 873 is privileged).
+    // Only the raw sockets are bound here; each is turned into a live
+    // `QuicAcceptor` (which spawns an I/O driver thread) and served after the
+    // `become_daemon` fork and privilege drop below, so the driver lives in the
+    // final serving process rather than a pre-fork parent whose threads the
+    // fork discards. See `materialize_and_serve_quic`.
     #[cfg(all(unix, feature = "quic"))]
-    let _quic_acceptors: Vec<QuicAcceptor> = if let Some((quic_port, quic_identity)) = &quic_bind {
-        match bind_quic_listeners_per_family(
-            &bind_addresses,
-            *quic_port,
-            quic_identity,
-            log_sink.as_ref(),
-        ) {
-            Ok(acceptors) => {
+    let quic_sockets: Vec<std::net::UdpSocket> = if let Some((quic_port, _)) = &quic_bind {
+        match bind_quic_sockets_per_family(&bind_addresses, *quic_port, log_sink.as_ref()) {
+            Ok(sockets) => {
                 if let Some(log) = log_sink.as_ref() {
-                    let addrs: Vec<String> = acceptors
+                    let addrs: Vec<String> = sockets
                         .iter()
-                        .filter_map(|a| a.local_addr().ok())
+                        .filter_map(|s| s.local_addr().ok())
                         .map(|a| a.to_string())
                         .collect();
                     let text = format!("QUIC listener bound on {}", addrs.join(" and "));
                     let message = rsync_info!(text).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
-                acceptors
+                sockets
             }
             Err(error) => {
                 let requested_addr = SocketAddr::new(bind_addresses[0], *quic_port);
@@ -378,6 +386,33 @@ fn serve_connections(
     };
     if let Err(error) = notifier.ready(Some(&ready_status)) {
         log_sd_notify_failure(log_sink.as_ref(), "service readiness", &error);
+    }
+
+    // QUIC accept->session handoff (oc extension): the daemon now holds its
+    // final identity (detached, privileges dropped, chroot applied), so turn
+    // each pre-bound QUIC socket into a live acceptor and serve it with the
+    // SAME `serve_session` core the TCP path uses. Building the context from the
+    // same runtime state as the TCP `ConnectionContext` keeps the served
+    // session transport-agnostic; the driver thread each acceptor spawns lives
+    // here in the post-fork process.
+    #[cfg(all(unix, feature = "quic"))]
+    if let Some((_, quic_identity)) = quic_bind.as_ref() {
+        let quic_context = ConnectionContext::new(
+            Arc::clone(&modules),
+            Arc::clone(&motd_lines),
+            log_sink.as_ref().map(Arc::clone),
+            Arc::clone(&client_socket_options),
+            bandwidth_limit,
+            reverse_lookup,
+            proxy_policy.clone(),
+            daemon_timeout,
+        );
+        materialize_and_serve_quic(
+            quic_sockets,
+            quic_identity,
+            &quic_context,
+            log_sink.as_ref(),
+        );
     }
 
     let mut state = AcceptLoopState {

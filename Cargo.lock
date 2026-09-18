@@ -1055,6 +1055,7 @@ dependencies = [
  "nix",
  "platform",
  "protocol",
+ "rcgen",
  "rsync_io",
  "sd-notify",
  "seccompiler",

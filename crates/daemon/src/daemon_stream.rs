@@ -55,6 +55,18 @@ pub enum DaemonStream {
     /// existing connection (e.g., SSH). Reads from stdin, writes to stdout.
     /// upstream: main.c - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`.
     Stdio(StdioPair),
+
+    /// QUIC connection (oc extension, feature `quic`, default off).
+    ///
+    /// A single bidirectional QUIC stream exposed as blocking `Read + Write`,
+    /// driven by an in-process background thread. It carries no `TcpStream`
+    /// (so [`DaemonStream::tcp_stream`] is `None`, like `Stdio`) and is not a
+    /// stdio pipe (so [`DaemonStream::is_stdio`] is `false`); the transfer
+    /// stage splits it with [`rsync_io::quic::QuicStream::try_clone`] rather
+    /// than a socket `dup`. Upstream has no QUIC transport - this is
+    /// oc-original.
+    #[cfg(feature = "quic")]
+    Quic(rsync_io::quic::QuicStream),
 }
 
 impl DaemonStream {
@@ -68,6 +80,12 @@ impl DaemonStream {
         Self::Stdio(pair)
     }
 
+    /// Wraps an accepted QUIC stream (oc extension, feature `quic`).
+    #[cfg(feature = "quic")]
+    pub fn quic(stream: rsync_io::quic::QuicStream) -> Self {
+        Self::Quic(stream)
+    }
+
     /// Configures the read timeout on the underlying TCP socket.
     ///
     /// Delegates to `TcpStream::set_read_timeout`. No-op for stdio streams
@@ -76,6 +94,12 @@ impl DaemonStream {
         match self {
             Self::Plain(s) => s.set_read_timeout(dur),
             Self::Stdio(_) => Ok(()),
+            // QUIC has no per-read socket timeout; the blocking facade returns
+            // when the driver signals data or connection loss, and the
+            // handshake deadline's own expiry arm bounds the exchange (like
+            // stdio).
+            #[cfg(feature = "quic")]
+            Self::Quic(_) => Ok(()),
         }
     }
 
@@ -86,6 +110,8 @@ impl DaemonStream {
         match self {
             Self::Plain(s) => s.set_write_timeout(dur),
             Self::Stdio(_) => Ok(()),
+            #[cfg(feature = "quic")]
+            Self::Quic(_) => Ok(()),
         }
     }
 
@@ -96,6 +122,10 @@ impl DaemonStream {
         match self {
             Self::Plain(s) => s.set_nodelay(nodelay),
             Self::Stdio(_) => Ok(()),
+            // TCP_NODELAY has no QUIC analogue; the transport paces its own
+            // datagrams, so this is a no-op rather than an error.
+            #[cfg(feature = "quic")]
+            Self::Quic(_) => Ok(()),
         }
     }
 
@@ -107,6 +137,11 @@ impl DaemonStream {
         match self {
             Self::Plain(s) => s.shutdown(how),
             Self::Stdio(_) => Ok(()),
+            // QUIC teardown is a graceful FIN + connection close driven by the
+            // stream's own close/finish path (or its `QuicShutdown` guard), not
+            // a half-close of a socket, so a directional shutdown is a no-op.
+            #[cfg(feature = "quic")]
+            Self::Quic(_) => Ok(()),
         }
     }
 
@@ -117,12 +152,28 @@ impl DaemonStream {
         match self {
             Self::Plain(s) => Some(s),
             Self::Stdio(_) => None,
+            #[cfg(feature = "quic")]
+            Self::Quic(_) => None,
         }
     }
 
     /// Returns `true` if this is a stdio-based connection.
     pub fn is_stdio(&self) -> bool {
         matches!(self, Self::Stdio(_))
+    }
+
+    /// Returns a reference to the underlying QUIC stream, if this is a QUIC
+    /// connection.
+    ///
+    /// The transfer stage uses this to split the connection into independent
+    /// read/write handles via [`rsync_io::quic::QuicStream::try_clone`], the
+    /// QUIC counterpart of `TcpStream::try_clone`.
+    #[cfg(feature = "quic")]
+    pub fn quic_stream(&self) -> Option<&rsync_io::quic::QuicStream> {
+        match self {
+            Self::Quic(s) => Some(s),
+            _ => None,
+        }
     }
 
     /// Consumes the `DaemonStream` and returns the inner `TcpStream`.
@@ -136,6 +187,8 @@ impl DaemonStream {
         match self {
             Self::Plain(s) => s,
             Self::Stdio(_) => panic!("cannot extract TcpStream from Stdio variant"),
+            #[cfg(feature = "quic")]
+            Self::Quic(_) => panic!("cannot extract TcpStream from Quic variant"),
         }
     }
 }
@@ -145,6 +198,8 @@ impl Read for DaemonStream {
         match self {
             Self::Plain(s) => s.read(buf),
             Self::Stdio(pair) => pair.reader.read(buf),
+            #[cfg(feature = "quic")]
+            Self::Quic(s) => s.read(buf),
         }
     }
 }
@@ -154,6 +209,8 @@ impl Write for DaemonStream {
         match self {
             Self::Plain(s) => s.write(buf),
             Self::Stdio(pair) => pair.writer.write(buf),
+            #[cfg(feature = "quic")]
+            Self::Quic(s) => s.write(buf),
         }
     }
 
@@ -161,6 +218,8 @@ impl Write for DaemonStream {
         match self {
             Self::Plain(s) => s.flush(),
             Self::Stdio(pair) => pair.writer.flush(),
+            #[cfg(feature = "quic")]
+            Self::Quic(s) => s.flush(),
         }
     }
 }
@@ -173,6 +232,8 @@ impl std::fmt::Debug for DaemonStream {
                 .debug_tuple("DaemonStream::Stdio")
                 .field(&"<stdio>")
                 .finish(),
+            #[cfg(feature = "quic")]
+            Self::Quic(s) => f.debug_tuple("DaemonStream::Quic").field(s).finish(),
         }
     }
 }
