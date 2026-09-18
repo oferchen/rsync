@@ -128,6 +128,11 @@ embedded-ssh = ["cli/embedded-ssh", "core/embedded-ssh"]
 # `cli`/`core` to `rsync_io/quic`; only makes the `Transport::Quic` selection
 # representable - no default build is affected. Design:
 # docs/design/quic-transport-policy.md.
+#
+# Packagers: this feature is opt-in and NOT in `default`, so stock `oc-rsync`
+# binaries - including the release artefacts - do not carry QUIC. Enabling it
+# pulls a pure-Rust crypto surface (quinn-proto, rustls with the ring provider,
+# rcgen) via `rsync_io/quic`; there is no system libssl or OpenSSL requirement.
 quic = ["cli/quic", "core/quic"]
 
 # ============================================================================
