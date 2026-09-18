@@ -307,6 +307,10 @@ pub(crate) struct QuicDialParams {
     /// `None` to fall back to `OC_RSYNC_QUIC_WINDOW` then the built-in default.
     #[cfg(feature = "quic")]
     pub(crate) window: Option<u64>,
+    /// `--quic-cipher`: restrict the TLS 1.3 cipher-suite family (`aes` or
+    /// `chacha20`), or `None` for the CPU-adaptive default.
+    #[cfg(feature = "quic")]
+    pub(crate) cipher: Option<rsync_io::quic::QuicCipher>,
 }
 
 /// Opens a stream to a daemon, dispatching on the address's [`Transport`].
@@ -420,8 +424,12 @@ fn open_quic_daemon_stream(
         congestion: quic.cc,
         window: quic.window,
     };
-    let connector = QuicConnector::with_trust_tuned_client_auth(trust, tuning, client_auth)
-        .map_err(|error| quic_dial_error(addr, &error.to_string()))?;
+    // `--quic-cipher` restricts the client's negotiable TLS 1.3 suite family;
+    // unset keeps the CPU-adaptive default (AES-first on hardware AES,
+    // byte-identical to today, else ChaCha20-first).
+    let connector =
+        QuicConnector::with_trust_tuned_client_auth(trust, tuning, client_auth, quic.cipher)
+            .map_err(|error| quic_dial_error(addr, &error.to_string()))?;
 
     let candidates = resolve_daemon_addresses(addr, address_mode)?;
     let server_name = addr.host();
@@ -811,6 +819,7 @@ mod quic_connect_tests {
             key,
             cc: None,
             window: None,
+            cipher: None,
         };
         open_daemon_stream(
             addr,

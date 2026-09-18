@@ -250,6 +250,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "    QUIC transport (requires the 'quic' feature):\n",
             "      --quic-cc=ALGORITHM  Select the client's QUIC congestion controller (bbr, cubic, newreno; default bbr). Client-local tuning; env OC_RSYNC_QUIC_CC is the fallback.\n",
             "      --quic-window=SIZE  Size the client's QUIC flow-control window (bytes; K/M/G suffix). Client-local tuning; env OC_RSYNC_QUIC_WINDOW is the fallback; default is BDP-generous.\n",
+            "      --quic-cipher=CIPHER  Fix the client's QUIC TLS 1.3 cipher family: aes or chacha20. Default is CPU-adaptive (AES on hardware AES, otherwise ChaCha20). Client-local tuning.\n",
             "\n",
             "    Security / daemon:\n",
             "      --password-command=COMMAND  Alternative to --password-file and the RSYNC_PASSWORD environment variable (both honored); use when the daemon password must come from a command.\n",

@@ -46,6 +46,7 @@
 //! surface. The acceptor generates a fresh self-signed certificate at bind
 //! time and exposes its DER encoding so a connector can pin it.
 
+mod cipher;
 mod driver;
 mod error;
 mod trust;
@@ -68,6 +69,8 @@ pub use rustls::RootCertStore;
 pub use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
+pub use cipher::QuicCipher;
+use cipher::client_provider;
 use driver::{Role, spawn_io};
 use tuning::build_transport_config;
 pub use tuning::{CongestionAlgorithm, QuicTransportTuning};
@@ -568,25 +571,29 @@ impl QuicConnector {
     /// through the one shared builder below; only the verifier stage differs.
     /// This is the constructor the CA/system-root/TOFU resolution feeds.
     pub fn with_trust_tuned(trust: QuicTrust, tuning: QuicTransportTuning) -> io::Result<Self> {
-        Self::with_trust_tuned_client_auth(trust, tuning, None)
+        Self::with_trust_tuned_client_auth(trust, tuning, None, None)
     }
 
     /// Like [`QuicConnector::with_trust_tuned`], but the client presents
     /// `client_auth` (a certificate chain + private key) in the QUIC handshake
-    /// for mutual TLS.
+    /// for mutual TLS, and `cipher` may override the negotiable cipher-suite
+    /// family.
     ///
     /// `client_auth` is `Some` only when both `--quic-cert` and `--quic-key`
     /// were supplied; `None` reproduces today's behaviour exactly - the client
-    /// presents no certificate (rustls `with_no_client_auth`). The server-trust
-    /// decision (`trust`) and transport tuning are unaffected: mutual TLS adds
-    /// the client's own identity without changing how the client verifies the
-    /// daemon. The certificate is installed via rustls `with_client_auth_cert`.
+    /// presents no certificate (rustls `with_no_client_auth`). `cipher` is
+    /// `Some` only when `--quic-cipher` was supplied; `None` keeps the
+    /// CPU-adaptive default (see [`client_provider`]), byte-identical to the
+    /// pre-`--quic-cipher` client on hosts with hardware AES. The server-trust
+    /// decision (`trust`) and transport tuning are unaffected. The certificate
+    /// is installed via rustls `with_client_auth_cert`.
     pub fn with_trust_tuned_client_auth(
         trust: QuicTrust,
         tuning: QuicTransportTuning,
         client_auth: Option<ClientAuth>,
+        cipher: Option<QuicCipher>,
     ) -> io::Result<Self> {
-        let builder = rustls::ClientConfig::builder_with_provider(ring_provider())
+        let builder = rustls::ClientConfig::builder_with_provider(client_provider(cipher))
             .with_protocol_versions(&[&rustls::version::TLS13])
             .map_err(io_err)?;
         let builder = match trust {
@@ -1106,6 +1113,69 @@ mod tests {
         server.join().expect("server thread");
     }
 
+    /// Drives one `ping`/`pong` round trip against `acceptor` with a client
+    /// pinned to `cert` and its cipher family fixed to `cipher`. The acceptor
+    /// offers the full ring suite list, so a completed handshake proves the
+    /// client's restricted offer interoperates - and, because a TLS 1.3 server
+    /// can only select from the suites the client offered, the negotiated AEAD
+    /// is necessarily the forced family.
+    fn round_trip_cipher(
+        acceptor: QuicAcceptor,
+        cert: CertificateDer<'static>,
+        cipher: QuicCipher,
+    ) {
+        let addr = acceptor.local_addr().expect("local addr");
+        let server = thread::spawn(move || {
+            let mut stream = acceptor.accept().expect("accept");
+            let mut buf = [0u8; 4];
+            stream.read_exact(&mut buf).expect("read");
+            assert_eq!(&buf, b"ping");
+            stream.write_all(b"pong").expect("write");
+            stream.finish().expect("finish");
+        });
+
+        let connector = QuicConnector::with_trust_tuned_client_auth(
+            QuicTrust::Pinned(cert),
+            QuicTransportTuning::default(),
+            None,
+            Some(cipher),
+        )
+        .expect("build connector");
+        let mut stream = connector.connect(addr, "localhost").expect("connect");
+        stream.write_all(b"ping").expect("write");
+        stream.finish().expect("finish");
+        let mut reply = [0u8; 4];
+        stream.read_exact(&mut reply).expect("read reply");
+        assert_eq!(&reply, b"pong");
+        stream.close();
+        server.join().expect("server thread");
+    }
+
+    /// A client forced to ChaCha20-Poly1305 (`--quic-cipher=chacha20`) completes
+    /// a real QUIC handshake and round trip. Combined with the
+    /// `client_provider` unit tests (which prove the ChaCha20 override offers
+    /// only ChaCha20-Poly1305), a completed handshake means the connection
+    /// negotiated ChaCha20-Poly1305.
+    #[test]
+    fn quic_cipher_chacha20_round_trips() {
+        let acceptor =
+            QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind acceptor");
+        let cert = acceptor.certificate().clone().into_owned();
+        round_trip_cipher(acceptor, cert, QuicCipher::ChaCha20);
+    }
+
+    /// A client forced to AES-GCM (`--quic-cipher=aes`) completes a real QUIC
+    /// handshake and round trip. With the unit tests proving the AES override
+    /// offers only AES-GCM, a completed handshake means the connection
+    /// negotiated AES-GCM.
+    #[test]
+    fn quic_cipher_aes_round_trips() {
+        let acceptor =
+            QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind acceptor");
+        let cert = acceptor.certificate().clone().into_owned();
+        round_trip_cipher(acceptor, cert, QuicCipher::Aes);
+    }
+
     /// `from_socket` with an ephemeral identity binds a caller-owned UDP socket
     /// and serves a round trip - the identity-parameterized path is
     /// behaviorally identical to the historical `bind` helper.
@@ -1291,6 +1361,7 @@ mod tests {
             QuicTrust::Pinned(server_cert),
             QuicTransportTuning::default(),
             Some(client_auth),
+            None,
         )
         .expect("connector with client cert");
         let mut stream = connector
@@ -1325,6 +1396,7 @@ mod tests {
             QuicTrust::Pinned(server_cert),
             QuicTransportTuning::default(),
             None,
+            None,
         )
         .expect("connector without client cert");
         connector
@@ -1358,6 +1430,7 @@ mod tests {
             QuicTrust::Pinned(server_cert),
             QuicTransportTuning::default(),
             Some(rogue_auth),
+            None,
         )
         .expect("connector with rogue client cert");
         connector
@@ -1388,6 +1461,7 @@ mod tests {
         let connector = QuicConnector::with_trust_tuned_client_auth(
             QuicTrust::Pinned(server_cert),
             QuicTransportTuning::default(),
+            None,
             None,
         )
         .expect("plain connector");

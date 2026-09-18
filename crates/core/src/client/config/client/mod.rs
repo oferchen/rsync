@@ -292,6 +292,11 @@ pub struct ClientConfig {
     /// present under the `quic` feature.
     #[cfg(feature = "quic")]
     pub(super) quic_window: Option<u64>,
+    /// `--quic-cipher <aes|chacha20>` - client cipher-suite family override.
+    /// `None` keeps the CPU-adaptive default. Only present under the `quic`
+    /// feature.
+    #[cfg(feature = "quic")]
+    pub(super) quic_cipher: Option<rsync_io::quic::QuicCipher>,
     pub(super) blocking_io: Option<bool>,
     pub(super) iconv: IconvSetting,
     pub(super) remote_shell: Option<Vec<OsString>>,
@@ -525,6 +530,8 @@ impl Default for ClientConfig {
             quic_cc: None,
             #[cfg(feature = "quic")]
             quic_window: None,
+            #[cfg(feature = "quic")]
+            quic_cipher: None,
             blocking_io: None,
             iconv: IconvSetting::Unspecified,
             remote_shell: None,

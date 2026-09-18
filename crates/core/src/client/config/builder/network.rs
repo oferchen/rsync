@@ -106,6 +106,22 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets the `--quic-cipher` cipher-suite family override for the client's
+    /// QUIC handshake.
+    ///
+    /// `None` (the default) keeps the CPU-adaptive default (AES-GCM first on
+    /// hosts with hardware AES, ChaCha20-Poly1305 first otherwise). `Some`
+    /// restricts the negotiable TLS 1.3 suites to the chosen family. This is a
+    /// client-local knob; it never affects the daemon's own endpoint or the
+    /// forwarded server arguments. Available only under the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-cipher")]
+    pub const fn quic_cipher(mut self, cipher: Option<rsync_io::quic::QuicCipher>) -> Self {
+        self.quic_cipher = cipher;
+        self
+    }
+
     /// Configures the TCP Fast Open mode applied to daemon and client sockets.
     ///
     /// `auto` (the default) enables TFO opportunistically on platforms that
