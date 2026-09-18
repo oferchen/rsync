@@ -106,7 +106,8 @@ fn check_quic_feature(matches: &clap::ArgMatches) -> Result<(), clap::Error> {
         || matches.get_one::<OsString>("quic-cert").is_some()
         || matches.get_one::<OsString>("quic-key").is_some()
         || matches.get_one::<String>("quic-cc").is_some()
-        || matches.get_one::<OsString>("quic-window").is_some();
+        || matches.get_one::<OsString>("quic-window").is_some()
+        || matches.get_one::<String>("quic-cipher").is_some();
     if !quic_requested {
         return Ok(());
     }
@@ -378,6 +379,17 @@ where
         .filter(|value| !value.is_empty())
         .map(|value| parse_quic_window(&value))
         .transpose()?;
+    #[cfg(feature = "quic")]
+    let quic_cipher = matches
+        .remove_one::<String>("quic-cipher")
+        .map(|value| rsync_io::quic::QuicCipher::parse(&value))
+        .transpose()
+        .map_err(|error| {
+            clap::Error::raw(
+                clap::error::ErrorKind::ValueValidation,
+                format!("{error}\n"),
+            )
+        })?;
     let remote_options: Vec<OsString> = matches
         .remove_many::<OsString>("remote-option")
         .map(Iterator::collect)
@@ -1453,6 +1465,8 @@ where
         quic_cc,
         #[cfg(feature = "quic")]
         quic_window,
+        #[cfg(feature = "quic")]
+        quic_cipher,
         dparam,
         no_iconv,
         executability,

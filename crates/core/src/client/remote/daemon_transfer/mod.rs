@@ -168,6 +168,8 @@ pub fn run_daemon_transfer(
         cc: config.quic_cc(),
         #[cfg(feature = "quic")]
         window: config.quic_window(),
+        #[cfg(feature = "quic")]
+        cipher: config.quic_cipher(),
     };
     let stream = open_daemon_stream(
         &request.address,

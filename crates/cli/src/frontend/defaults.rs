@@ -33,7 +33,7 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--aes, --no-aes, --ssh-cipher, --ssh-connect-timeout, --ssh-keepalive, --ssh-identity, ",
     "--ssh-no-agent, --ssh-strict-host-key-checking, --ssh-ipv6, --ssh-port, --jump-host, ",
     "--spill-dir, --spill-threshold-bytes, --no-spill, ",
-    "--quic-cc, --quic-window"
+    "--quic-cc, --quic-window, --quic-cipher"
 );
 
 /// Format string used for `--itemize-changes` output.

@@ -191,4 +191,14 @@ pub(super) fn add_network_args(command: ClapCommand) -> ClapCommand {
                 .action(ArgAction::Set)
                 .value_parser(OsStringValueParser::new()),
         )
+        .arg(
+            Arg::new("quic-cipher")
+                .long("quic-cipher")
+                .value_name("CIPHER")
+                .help("Restrict the client's QUIC TLS 1.3 cipher suite to a family: aes (AES-GCM) or chacha20. Default is CPU-adaptive (AES-GCM on hardware AES, else ChaCha20-Poly1305).")
+                .hide(quic_unavailable)
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(["aes", "chacha20"]),
+        )
 }
