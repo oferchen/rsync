@@ -131,10 +131,92 @@ fn resolve_quic_identity_uses_directive_paths_verbatim() {
         Some(QuicIdentity {
             cert: dir.path().join("server.pem"),
             key: dir.path().join("server.key"),
+            client_ca: None,
         })
     );
     assert!(
         !dir.path().join("quic").exists(),
         "operator identity must not trigger any persisted default"
+    );
+}
+
+#[test]
+fn resolve_quic_identity_carries_client_ca_for_mutual_tls() {
+    // With `quic client ca file` set alongside the cert/key, the resolved
+    // identity carries the client-auth CA path (config-relative, verbatim) so
+    // the listener requires and verifies a client certificate (mutual TLS).
+    let dir = tempdir().expect("config dir");
+    let config_path = dir.path().join("rsyncd.conf");
+    fs::write(
+        &config_path,
+        "quic cert file = server.pem\nquic key file = server.key\nquic client ca file = clients.pem\n",
+    )
+    .expect("write config");
+
+    let options = RuntimeOptions::parse(&[
+        OsString::from("--config"),
+        config_path.as_os_str().to_os_string(),
+    ])
+    .expect("parse config");
+
+    let identity = options
+        .resolve_quic_identity()
+        .expect("cert + key must resolve an identity");
+    assert_eq!(
+        identity.client_ca,
+        Some(dir.path().join("clients.pem")),
+        "`quic client ca file` must be carried on the resolved identity for mutual TLS"
+    );
+}
+
+#[test]
+fn quic_client_ca_defaults_off_when_unset() {
+    // Default off: a QUIC listener configured with only cert/key (no client CA)
+    // resolves an identity with `client_ca = None`, so no client certificate is
+    // required and the handshake is unchanged from the pre-mutual-TLS listener.
+    let dir = tempdir().expect("config dir");
+    let config_path = dir.path().join("rsyncd.conf");
+    fs::write(
+        &config_path,
+        "quic cert file = server.pem\nquic key file = server.key\n",
+    )
+    .expect("write config");
+
+    let options = RuntimeOptions::parse(&[
+        OsString::from("--config"),
+        config_path.as_os_str().to_os_string(),
+    ])
+    .expect("parse config");
+
+    let identity = options
+        .resolve_quic_identity()
+        .expect("cert + key must resolve an identity");
+    assert_eq!(
+        identity.client_ca, None,
+        "no `quic client ca file` must leave mutual TLS off (client_ca = None)"
+    );
+}
+
+#[test]
+fn quic_client_ca_without_cert_key_is_a_fatal_request() {
+    // A `quic client ca file` on its own requests QUIC (mutual TLS) but supplies
+    // no server identity. QUIC has no ephemeral fallback, so this is a fatal
+    // misconfiguration the startup path must reject - not a silent no-op.
+    let dir = tempdir().expect("config dir");
+    let config_path = dir.path().join("rsyncd.conf");
+    fs::write(&config_path, "quic client ca file = clients.pem\n").expect("write config");
+
+    let options = RuntimeOptions::parse(&[
+        OsString::from("--config"),
+        config_path.as_os_str().to_os_string(),
+    ])
+    .expect("parse config");
+
+    let reason = options
+        .quic_config_error()
+        .expect("a client-CA-only config requests QUIC without an identity and must be rejected");
+    assert!(
+        reason.contains("quic cert file") && reason.contains("quic key file"),
+        "the rejection must name the missing identity directives, got: {reason}"
     );
 }

@@ -454,10 +454,11 @@ fn apply_module_directive(
         // operator believing a certificate they named is in force. Reuse the
         // shared `config_parse_error` surface every other directive uses.
         #[cfg(feature = "quic")]
-        "quiccertfile" | "quickeyfile" | "quicport" => {
+        "quiccertfile" | "quickeyfile" | "quicclientcafile" | "quicport" => {
             let directive = match key {
                 "quiccertfile" => "quic cert file",
                 "quickeyfile" => "quic key file",
+                "quicclientcafile" => "quic client ca file",
                 _ => "quic port",
             };
             return Err(config_parse_error(

@@ -37,6 +37,14 @@ pub(crate) struct ConfigInputs {
     /// certificate; `None` uses the system-roots default.
     #[cfg(feature = "quic")]
     pub(crate) quic_ca: Option<PathBuf>,
+    /// `--quic-cert <PATH>` - client certificate chain (PEM) presented to the
+    /// QUIC daemon for mutual TLS; `None` presents no client certificate.
+    #[cfg(feature = "quic")]
+    pub(crate) quic_cert: Option<PathBuf>,
+    /// `--quic-key <PATH>` - private key (PEM) for the `--quic-cert` client
+    /// certificate.
+    #[cfg(feature = "quic")]
+    pub(crate) quic_key: Option<PathBuf>,
     /// `--quic-cc` - client endpoint congestion controller; `None` defers to
     /// `OC_RSYNC_QUIC_CC` then the default (BBR).
     #[cfg(feature = "quic")]
@@ -362,6 +370,10 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         // `--quic-ca` selects a private CA bundle for QUIC certificate
         // verification; `None` keeps the system-roots default.
         builder = builder.quic_ca(inputs.quic_ca);
+        // `--quic-cert` / `--quic-key` supply the client certificate the client
+        // presents to the daemon for mutual TLS; both unset presents nothing
+        // (byte-identical to today). Both-or-neither is enforced at connect time.
+        builder = builder.quic_client_cert(inputs.quic_cert, inputs.quic_key);
         // `--quic-cc` / `--quic-window` tune the client endpoint's congestion
         // controller and flow-control window; `None` defers to the env vars and
         // then the built-in defaults inside `build_transport_config`. These are

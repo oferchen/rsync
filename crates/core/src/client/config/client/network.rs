@@ -44,6 +44,23 @@ impl ClientConfig {
         self.quic_ca.as_deref()
     }
 
+    /// Returns the `--quic-cert` client certificate chain path, if one was
+    /// supplied. Presented to the daemon for mutual TLS with [`quic_key`](Self::quic_key).
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-cert")]
+    pub fn quic_cert(&self) -> Option<&std::path::Path> {
+        self.quic_cert.as_deref()
+    }
+
+    /// Returns the `--quic-key` client private-key path, if one was supplied.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-key")]
+    pub fn quic_key(&self) -> Option<&std::path::Path> {
+        self.quic_key.as_deref()
+    }
+
     /// Returns the `--quic-cc` congestion controller, if one was supplied.
     ///
     /// `None` defers to `OC_RSYNC_QUIC_CC` then the built-in default (BBR).

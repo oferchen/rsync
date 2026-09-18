@@ -62,6 +62,10 @@ where
         #[cfg(feature = "quic")]
         quic_ca,
         #[cfg(feature = "quic")]
+        quic_cert,
+        #[cfg(feature = "quic")]
+        quic_key,
+        #[cfg(feature = "quic")]
         quic_cc,
         #[cfg(feature = "quic")]
         quic_window,
@@ -577,6 +581,10 @@ where
             #[cfg(feature = "quic")]
             quic_ca: quic_ca.as_deref(),
             #[cfg(feature = "quic")]
+            quic_cert: quic_cert.as_deref(),
+            #[cfg(feature = "quic")]
+            quic_key: quic_key.as_deref(),
+            #[cfg(feature = "quic")]
             quic_cc,
             #[cfg(feature = "quic")]
             quic_window,
@@ -947,6 +955,10 @@ where
         quic,
         #[cfg(feature = "quic")]
         quic_ca,
+        #[cfg(feature = "quic")]
+        quic_cert,
+        #[cfg(feature = "quic")]
+        quic_key,
         #[cfg(feature = "quic")]
         quic_cc,
         #[cfg(feature = "quic")]

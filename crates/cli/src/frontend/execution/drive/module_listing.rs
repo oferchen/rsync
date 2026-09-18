@@ -23,6 +23,13 @@ pub(super) struct ModuleListingInputs<'a> {
     /// certificate; `None` uses the system-roots default.
     #[cfg(feature = "quic")]
     pub quic_ca: Option<&'a std::path::Path>,
+    /// `--quic-cert <PATH>` - client certificate chain (PEM) presented to the
+    /// QUIC daemon for mutual TLS during the listing; `None` presents nothing.
+    #[cfg(feature = "quic")]
+    pub quic_cert: Option<&'a std::path::Path>,
+    /// `--quic-key <PATH>` - private key (PEM) for the `--quic-cert` certificate.
+    #[cfg(feature = "quic")]
+    pub quic_key: Option<&'a std::path::Path>,
     /// `--quic-cc` - client endpoint congestion controller for the listing.
     #[cfg(feature = "quic")]
     pub quic_cc: Option<rsync_io::quic::CongestionAlgorithm>,
@@ -65,6 +72,10 @@ where
         quic,
         #[cfg(feature = "quic")]
         quic_ca,
+        #[cfg(feature = "quic")]
+        quic_cert,
+        #[cfg(feature = "quic")]
+        quic_key,
         #[cfg(feature = "quic")]
         quic_cc,
         #[cfg(feature = "quic")]
@@ -136,6 +147,10 @@ where
     #[cfg(feature = "quic")]
     {
         list_options = list_options.with_quic_ca(quic_ca.map(std::path::Path::to_path_buf));
+        list_options = list_options.with_quic_client_cert(
+            quic_cert.map(std::path::Path::to_path_buf),
+            quic_key.map(std::path::Path::to_path_buf),
+        );
         list_options = list_options.with_quic_cc(quic_cc);
         list_options = list_options.with_quic_window(quic_window);
     }

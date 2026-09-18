@@ -54,6 +54,49 @@ fn parse_args_quic_ca_defaults_none() {
 
 #[cfg(feature = "quic")]
 #[test]
+fn parse_args_recognises_quic_client_cert_flags() {
+    // WHY (mutual TLS): `--quic-cert <PATH>` / `--quic-key <PATH>` are recognised
+    // value flags under the feature and thread the client certificate chain and
+    // its private key through to the QUIC connector's `with_client_auth_cert`.
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--quic-cert"),
+        OsString::from("/etc/oc-rsync/client.pem"),
+        OsString::from("--quic-key"),
+        OsString::from("/etc/oc-rsync/client.key"),
+        OsString::from("quic://host/module"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed.quic_cert.as_deref(),
+        Some(std::path::Path::new("/etc/oc-rsync/client.pem"))
+    );
+    assert_eq!(
+        parsed.quic_key.as_deref(),
+        Some(std::path::Path::new("/etc/oc-rsync/client.key"))
+    );
+}
+
+#[cfg(feature = "quic")]
+#[test]
+fn parse_args_quic_client_cert_defaults_none() {
+    // WHY: without `--quic-cert`/`--quic-key` the client presents no certificate,
+    // so the QUIC handshake is byte-identical to a non-mutual-TLS client.
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("host::module"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert!(parsed.quic_cert.is_none());
+    assert!(parsed.quic_key.is_none());
+}
+
+#[cfg(feature = "quic")]
+#[test]
 fn parse_args_recognises_quic_cc_flag() {
     // WHY: `--quic-cc <bbr|cubic|newreno>` selects the client endpoint's
     // congestion controller and threads a resolved `CongestionAlgorithm` down
@@ -163,6 +206,18 @@ fn parse_args_rejects_quic_flags_with_actionable_error_when_feature_off() {
     for args in [
         vec!["--quic", "host::module", "dest"],
         vec!["--quic-ca", "/etc/oc-rsync/ca.pem", "host::module", "dest"],
+        vec![
+            "--quic-cert",
+            "/etc/oc-rsync/client.pem",
+            "host::module",
+            "dest",
+        ],
+        vec![
+            "--quic-key",
+            "/etc/oc-rsync/client.key",
+            "host::module",
+            "dest",
+        ],
         vec!["--quic-cc", "bbr", "host::module", "dest"],
         vec!["--quic-window", "32M", "host::module", "dest"],
     ] {

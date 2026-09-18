@@ -39,7 +39,7 @@ use base64::engine::general_purpose::STANDARD_NO_PAD;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::pem::PemObject;
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, Error as TlsError, RootCertStore, SignatureScheme};
 use sha2::{Digest, Sha256};
 
@@ -427,6 +427,71 @@ pub fn load_private_ca(path: &Path) -> io::Result<RootCertStore> {
 /// system-roots default.
 pub fn private_ca_file(path: &Path) -> io::Result<QuicTrust> {
     Ok(QuicTrust::Roots(load_private_ca(path)?))
+}
+
+/// Loads a PEM certificate chain (leaf first) and its private key from `cert`
+/// and `key`.
+///
+/// The single owner of PEM chain+key loading for the QUIC transport: both the
+/// daemon's server identity ([`QuicServerIdentity::PemFiles`](super::QuicServerIdentity))
+/// and the client's mutual-TLS certificate ([`ClientAuth::from_pem_files`]) go
+/// through here, so the two sides accept identical file shapes and surface
+/// identical errors. The key is PKCS#8, PKCS#1, or SEC1 (the encodings the ring
+/// provider accepts). Fails loudly - a missing/unreadable file, a malformed PEM
+/// certificate, a chain with no certificate, or an unreadable key each return an
+/// [`io::Error`] naming the offending path - rather than yielding an empty chain
+/// that would fail opaquely later in the handshake.
+pub fn load_cert_chain_and_key(
+    cert: &Path,
+    key: &Path,
+) -> io::Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+    let chain: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert)
+        .map_err(io_err)?
+        .collect::<Result<_, _>>()
+        .map_err(io_err)?;
+    if chain.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("no certificate found in {}", cert.display()),
+        ));
+    }
+    let key = PrivateKeyDer::from_pem_file(key).map_err(io_err)?;
+    Ok((chain, key))
+}
+
+/// A client certificate chain and its private key, presented to the daemon in
+/// the QUIC handshake for mutual TLS (`--quic-cert` / `--quic-key`).
+///
+/// Loaded from operator-supplied PEM files through the shared
+/// [`load_cert_chain_and_key`] loader, so it accepts exactly the same chain/key
+/// shapes as the daemon's own [`QuicServerIdentity::PemFiles`](super::QuicServerIdentity).
+/// Handed to [`QuicConnector::with_trust_tuned_client_auth`](super::QuicConnector::with_trust_tuned_client_auth),
+/// which installs it via rustls `with_client_auth_cert`. Absent it, the client
+/// presents no certificate and the handshake is byte-identical to today's.
+pub struct ClientAuth {
+    pub(super) chain: Vec<CertificateDer<'static>>,
+    pub(super) key: PrivateKeyDer<'static>,
+}
+
+impl ClientAuth {
+    /// Loads the client certificate chain (leaf first) from `cert` and its
+    /// private key from `key`.
+    ///
+    /// Delegates to [`load_cert_chain_and_key`], so a missing file, a malformed
+    /// certificate, or an unreadable key fails loudly with a path-naming error
+    /// rather than silently presenting no certificate.
+    pub fn from_pem_files(cert: &Path, key: &Path) -> io::Result<Self> {
+        let (chain, key) = load_cert_chain_and_key(cert, key)?;
+        Ok(Self { chain, key })
+    }
+}
+
+impl fmt::Debug for ClientAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClientAuth")
+            .field("chain_len", &self.chain.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Builds a TOFU trust source (QUIC-5d) pinning `authority` through `store`.

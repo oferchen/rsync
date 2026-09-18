@@ -295,6 +295,10 @@ pub struct ClientConfigBuilder {
     #[cfg(feature = "quic")]
     quic_ca: Option<PathBuf>,
     #[cfg(feature = "quic")]
+    quic_cert: Option<PathBuf>,
+    #[cfg(feature = "quic")]
+    quic_key: Option<PathBuf>,
+    #[cfg(feature = "quic")]
     quic_cc: Option<rsync_io::quic::CongestionAlgorithm>,
     #[cfg(feature = "quic")]
     quic_window: Option<u64>,
@@ -604,6 +608,10 @@ impl ClientConfigBuilder {
             daemon_transport: self.daemon_transport,
             #[cfg(feature = "quic")]
             quic_ca: self.quic_ca,
+            #[cfg(feature = "quic")]
+            quic_cert: self.quic_cert,
+            #[cfg(feature = "quic")]
+            quic_key: self.quic_key,
             #[cfg(feature = "quic")]
             quic_cc: self.quic_cc,
             #[cfg(feature = "quic")]

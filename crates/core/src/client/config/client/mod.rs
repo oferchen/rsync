@@ -273,6 +273,15 @@ pub struct ClientConfig {
     /// present under the `quic` feature.
     #[cfg(feature = "quic")]
     pub(super) quic_ca: Option<PathBuf>,
+    /// `--quic-cert <PATH>` - client certificate chain (PEM) presented to the
+    /// daemon for mutual TLS. `None` presents no client certificate. Requires
+    /// `quic_key`. Only present under the `quic` feature.
+    #[cfg(feature = "quic")]
+    pub(super) quic_cert: Option<PathBuf>,
+    /// `--quic-key <PATH>` - private key (PEM) for the `quic_cert` client
+    /// certificate. Only present under the `quic` feature.
+    #[cfg(feature = "quic")]
+    pub(super) quic_key: Option<PathBuf>,
     /// `--quic-cc <bbr|cubic|newreno>` - client endpoint congestion controller.
     /// `None` falls back to `OC_RSYNC_QUIC_CC` then the default (BBR). Only
     /// present under the `quic` feature.
@@ -508,6 +517,10 @@ impl Default for ClientConfig {
             daemon_transport: crate::client::Transport::Tcp,
             #[cfg(feature = "quic")]
             quic_ca: None,
+            #[cfg(feature = "quic")]
+            quic_cert: None,
+            #[cfg(feature = "quic")]
+            quic_key: None,
             #[cfg(feature = "quic")]
             quic_cc: None,
             #[cfg(feature = "quic")]

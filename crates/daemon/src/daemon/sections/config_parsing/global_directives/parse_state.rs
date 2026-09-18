@@ -36,6 +36,12 @@ struct GlobalParseState {
     quic_cert_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     #[cfg(feature = "quic")]
     quic_key_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
+    /// Client-auth CA path from the `quic client ca file` global directive (oc
+    /// extension, feature-gated). When set, the QUIC listener requires and
+    /// verifies a client certificate against this CA bundle (mutual TLS); unset,
+    /// no client certificate is requested. Per-listener, so global-only.
+    #[cfg(feature = "quic")]
+    quic_client_ca_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     /// QUIC listener port from the `quic port` global directive (oc extension,
     /// feature-gated). Unset shares the daemon TCP `port`; a `quic port = 0` is
     /// coerced to 873 at parse time, mirroring the TCP `port = 0` handling.
@@ -90,6 +96,8 @@ impl GlobalParseState {
             daemon_timeout: None,
             #[cfg(feature = "quic")]
             quic_cert_file: None,
+            #[cfg(feature = "quic")]
+            quic_client_ca_file: None,
             #[cfg(feature = "quic")]
             quic_key_file: None,
             #[cfg(feature = "quic")]
@@ -196,6 +204,8 @@ impl GlobalParseState {
             daemon_timeout: self.daemon_timeout,
             #[cfg(feature = "quic")]
             quic_cert_file: self.quic_cert_file,
+            #[cfg(feature = "quic")]
+            quic_client_ca_file: self.quic_client_ca_file,
             #[cfg(feature = "quic")]
             quic_key_file: self.quic_key_file,
             #[cfg(feature = "quic")]

@@ -64,6 +64,13 @@ pub(crate) struct RuntimeOptions {
     quic_cert_file: Option<PathBuf>,
     #[cfg(feature = "quic")]
     quic_key_file: Option<PathBuf>,
+    /// Client-auth CA path from the `quic client ca file` global directive (oc
+    /// extension). When set, the QUIC listener requires and verifies a client
+    /// certificate against this CA bundle (mutual TLS); unset (the default), no
+    /// client certificate is requested and behaviour is unchanged. Global-only,
+    /// like the QUIC identity directives.
+    #[cfg(feature = "quic")]
+    quic_client_ca_file: Option<PathBuf>,
     /// QUIC listener port from the `quic port` global directive (oc extension).
     ///
     /// `None` means the QUIC listener shares the daemon TCP `port` (873 by
@@ -188,6 +195,8 @@ impl Default for RuntimeOptions {
             quic_cert_file: None,
             #[cfg(feature = "quic")]
             quic_key_file: None,
+            #[cfg(feature = "quic")]
+            quic_client_ca_file: None,
             #[cfg(feature = "quic")]
             quic_port: None,
             global_incoming_chmod: None,

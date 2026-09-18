@@ -2488,6 +2488,7 @@ fn quic_server_identity_maps_operator_cert_to_pem_files() {
         quic_server_identity(&QuicIdentity {
             cert: cert.clone(),
             key: key.clone(),
+            client_ca: None,
         }),
         rsync_io::quic::QuicServerIdentity::PemFiles { cert, key },
     );

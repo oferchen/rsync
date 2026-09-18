@@ -8,13 +8,17 @@
 // daemon certificate was considered (decision A) and dropped 2026-09-18: it
 // created more problems than it solved.
 
-/// The operator-supplied certificate/key pair the QUIC listener presents.
+/// The operator-supplied certificate/key pair the QUIC listener presents,
+/// plus the optional client-auth CA it verifies connecting clients against.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct QuicIdentity {
     /// Path to the PEM certificate chain (leaf first).
     pub(crate) cert: PathBuf,
     /// Path to the PEM private key (PKCS#8, PKCS#1, or SEC1).
     pub(crate) key: PathBuf,
+    /// Path to the PEM client-auth CA bundle (`quic client ca file`), or `None`
+    /// when no client certificate is required (mutual TLS off, the default).
+    pub(crate) client_ca: Option<PathBuf>,
 }
 
 impl RuntimeOptions {
@@ -31,6 +35,7 @@ impl RuntimeOptions {
             (Some(cert), Some(key)) => Some(QuicIdentity {
                 cert: cert.clone(),
                 key: key.clone(),
+                client_ca: self.quic_client_ca_file.clone(),
             }),
             _ => None,
         }
@@ -42,7 +47,7 @@ impl RuntimeOptions {
     /// docs/design/quic-transport-policy.md (Decision, daemon-side config) is
     /// not yet parsed, so this interim predicate treats QUIC as requested when
     /// the operator configured any QUIC directive: a certificate path, a key
-    /// path, or an explicit `quic port`. A daemon with no QUIC directives never
+    /// path, a client-auth CA path, or an explicit `quic port`. A daemon with no QUIC directives never
     /// opens the UDP socket, so a default `--all-features` build stays TCP-only
     /// and byte-identical. When the enable directive lands, this is the single
     /// seam to consult it instead.
@@ -52,7 +57,10 @@ impl RuntimeOptions {
     /// returning `None`) is a fatal misconfiguration, not a silent no-op.
     #[allow(dead_code)] // REASON: consumed by the QUIC listener wiring under cfg(all(unix, feature = "quic"))
     pub(crate) fn quic_listener_enabled(&self) -> bool {
-        self.quic_cert_file.is_some() || self.quic_key_file.is_some() || self.quic_port.is_some()
+        self.quic_cert_file.is_some()
+            || self.quic_key_file.is_some()
+            || self.quic_client_ca_file.is_some()
+            || self.quic_port.is_some()
     }
 
     /// Validates that a requested QUIC listener is serviceable, returning the

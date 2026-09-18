@@ -106,13 +106,34 @@ client trips the loud "host key changed" abort until its stale
 `quic_known_hosts` line is removed. Keep the daemon's certificate and key
 stable across restarts, and plan a coordinated re-pin when you rotate them.
 
+### Mutual TLS (client certificate)
+
+The client can additionally present its own certificate so the daemon can
+authenticate it (mutual TLS), the reverse direction of the server verification
+above. It is opt-in and off by default: with neither flag set the client
+presents no certificate and the handshake is unchanged.
+
+```sh
+oc-rsync -a --quic-cert /etc/oc-rsync/client.pem \
+            --quic-key  /etc/oc-rsync/client.key \
+            quic://host/module/ dest/
+```
+
+- `--quic-cert <PATH>` is the PEM certificate chain (leaf first) the client
+  presents; `--quic-key <PATH>` is its PEM private key (PKCS#8, PKCS#1, or SEC1).
+- The pair is **all-or-nothing**: naming only one of the two is an error, since a
+  client certificate needs its private key (and vice versa).
+- Whether a client certificate is *required* is the daemon's decision (see
+  `quic client ca file` below); a daemon that does not request one ignores a
+  presented certificate.
+
 ## Daemon configuration
 
 The QUIC listener runs alongside the daemon's TCP listener and is configured
 with global directives in `oc-rsyncd.conf`. Setting **any** QUIC directive
-(`quic cert file`, `quic key file`, or `quic port`) marks QUIC as requested; a
-config with no QUIC directives leaves the listener off, so a default
-`--features quic` daemon stays TCP-only until you configure it.
+(`quic cert file`, `quic key file`, `quic client ca file`, or `quic port`) marks
+QUIC as requested; a config with no QUIC directives leaves the listener off, so a
+default `--features quic` daemon stays TCP-only until you configure it.
 
 The QUIC daemon listener is **Unix-only**. On other platforms a `quic`-feature
 build can still dial a QUIC daemon as a client, but cannot open a local QUIC
@@ -149,6 +170,25 @@ Both directives are **global-only** and their paths resolve relative to the
 config file (the same handling as `pid file` / `lock file`), with any `%`
 tokens left verbatim for expansion at listener-bind time. A module section
 that sets either one is rejected.
+
+### Requiring a client certificate (mutual TLS)
+
+```
+quic client ca file = /etc/oc-rsync/quic/clients-ca.pem
+```
+
+- `quic client ca file` names a PEM CA bundle. When set, the QUIC listener
+  **requires** every connecting client to present a certificate and verifies its
+  chain against this bundle; a client that presents no certificate, or one not
+  anchored by this CA, is refused in the TLS handshake before any `@RSYNCD:`
+  byte is exchanged. This is the daemon-side mirror of the client's `--quic-ca`
+  server verification.
+- It is **off by default**: unset, the listener requests no client certificate,
+  so existing configurations behave exactly as before.
+- Global-only and path-handled exactly like `quic cert file` / `quic key file`
+  (a per-module use is a configuration error). It requires a configured
+  `quic cert file` / `quic key file`, since the listener still needs its own
+  identity to present.
 
 ### No ephemeral fallback
 
