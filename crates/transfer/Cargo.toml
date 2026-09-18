@@ -63,6 +63,17 @@ features = ["xattr"]
 default = ["zstd", "lz4", "xattr", "incremental-flist"]
 
 # ============================================================================
+# QUIC transport (oc extension, off by default)
+# ============================================================================
+# Gates the `quic_tcp_differential_oracle` e2e test, which spawns the real
+# `oc-rsync` daemon and drives one transfer over TCP and one over QUIC. It does
+# not change any `transfer` library code (QUIC lives in `rsync_io`/`daemon`);
+# it only turns on the `test-support` cert helper the test needs. The `oc-rsync`
+# binary the test spawns must itself be built with QUIC - guaranteed under the
+# workspace `--all-features` test job, where this feature is also on.
+quic = ["test-support/quic"]
+
+# ============================================================================
 # Compression Features
 # ============================================================================
 zstd = ["engine/zstd", "compress/zstd", "protocol/zstd"]
