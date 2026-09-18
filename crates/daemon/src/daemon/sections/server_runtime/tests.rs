@@ -2479,15 +2479,13 @@ fn kqueue_engine_delivers_queued_connection_without_sleep_floor() {
 // exercise only compiles under `cfg(all(unix, feature = "quic"))`.
 #[cfg(all(unix, feature = "quic"))]
 #[test]
-fn quic_server_identity_maps_both_variants() {
-    assert_eq!(
-        quic_server_identity(&QuicIdentity::Ephemeral),
-        rsync_io::quic::QuicServerIdentity::Ephemeral,
-    );
+fn quic_server_identity_maps_operator_cert_to_pem_files() {
+    // The daemon presents only the operator-configured cert/key pair; there is
+    // no ephemeral variant to map (that fallback was dropped 2026-09-18).
     let cert = std::path::PathBuf::from("/etc/oc-rsync/quic/server.pem");
     let key = std::path::PathBuf::from("/etc/oc-rsync/quic/server.key");
     assert_eq!(
-        quic_server_identity(&QuicIdentity::Files {
+        quic_server_identity(&QuicIdentity {
             cert: cert.clone(),
             key: key.clone(),
         }),
@@ -2499,31 +2497,26 @@ fn quic_server_identity_maps_both_variants() {
 #[test]
 fn bind_quic_listeners_binds_dual_stack_loopback() {
     // The same resolved dual-stack list TCP uses (IPv6 first, IPv4 second)
-    // yields one QUIC acceptor per family. Loopback addresses on port 0
+    // yields one QUIC socket per family. Loopback addresses on port 0
     // keep the test hermetic - no privileged port, no shared-port race.
     let bind_addresses = vec![
         IpAddr::V6(std::net::Ipv6Addr::LOCALHOST),
         IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
     ];
 
-    let acceptors =
-        bind_quic_listeners_per_family(&bind_addresses, 0, &QuicIdentity::Ephemeral, None)
-            .expect("dual-stack QUIC bind");
+    let sockets =
+        bind_quic_sockets_per_family(&bind_addresses, 0, None).expect("dual-stack QUIC bind");
 
-    assert_eq!(
-        acceptors.len(),
-        2,
-        "both families must bind a QUIC listener"
-    );
-    let bound: Vec<SocketAddr> = acceptors
+    assert_eq!(sockets.len(), 2, "both families must bind a QUIC socket");
+    let bound: Vec<SocketAddr> = sockets
         .iter()
-        .map(|a| a.local_addr().expect("local addr"))
+        .map(|s| s.local_addr().expect("local addr"))
         .collect();
-    assert!(bound[0].is_ipv6(), "first acceptor must be IPv6");
-    assert!(bound[1].is_ipv4(), "second acceptor must be IPv4");
+    assert!(bound[0].is_ipv6(), "first socket must be IPv6");
+    assert!(bound[1].is_ipv4(), "second socket must be IPv4");
     assert!(
         bound.iter().all(|a| a.port() != 0),
-        "the kernel must assign an ephemeral UDP port to each acceptor"
+        "the kernel must assign an ephemeral UDP port to each socket"
     );
 }
 
@@ -2538,16 +2531,12 @@ fn bind_quic_listeners_falls_back_from_ipv6_to_ipv4() {
     let reachable_v4 = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
     let bind_addresses = vec![unreachable_v6, reachable_v4];
 
-    let acceptors =
-        bind_quic_listeners_per_family(&bind_addresses, 0, &QuicIdentity::Ephemeral, None)
-            .expect("IPv4 fallback must bind when IPv6 is unreachable");
+    let sockets = bind_quic_sockets_per_family(&bind_addresses, 0, None)
+        .expect("IPv4 fallback must bind when IPv6 is unreachable");
 
-    assert_eq!(acceptors.len(), 1, "only the reachable IPv4 family binds");
-    let bound = acceptors[0].local_addr().expect("local addr");
-    assert!(
-        bound.is_ipv4(),
-        "fallback acceptor must be IPv4, got {bound}"
-    );
+    assert_eq!(sockets.len(), 1, "only the reachable IPv4 family binds");
+    let bound = sockets[0].local_addr().expect("local addr");
+    assert!(bound.is_ipv4(), "fallback socket must be IPv4, got {bound}");
 }
 
 #[cfg(all(unix, feature = "quic"))]
@@ -2560,6 +2549,176 @@ fn bind_quic_listeners_single_family_propagates_error() {
         0x2001, 0x0db8, 0, 0, 0, 0, 0, 1,
     ))];
 
-    bind_quic_listeners_per_family(&bind_addresses, 0, &QuicIdentity::Ephemeral, None)
+    bind_quic_sockets_per_family(&bind_addresses, 0, None)
         .expect_err("the single unreachable address must fail the QUIC bind");
+}
+
+/// The shared, transport-agnostic per-connection context used by the parity
+/// test below. An empty module table is sufficient: the `@RSYNCD:` greeting is
+/// emitted before any module is selected, and using the SAME context on both
+/// transports makes any greeting difference attributable to the transport
+/// wiring rather than to configuration.
+#[cfg(all(unix, feature = "quic"))]
+fn quic_parity_context() -> ConnectionContext {
+    ConnectionContext::new(
+        Arc::new(Vec::new()),
+        Arc::new(Vec::new()),
+        None,
+        Arc::new(Vec::new()),
+        None,
+        false,
+        ProxyProtocolPolicy::Disabled,
+        None,
+    )
+}
+
+/// Wraps DER bytes in a base64 PEM block (the workspace builds `rcgen` without
+/// its `pem` feature, so the fixture encodes the block itself).
+#[cfg(all(unix, feature = "quic"))]
+fn der_to_pem(label: &str, der: &[u8]) -> String {
+    use base64::Engine as _;
+    let body = base64::engine::general_purpose::STANDARD.encode(der);
+    let mut out = format!("-----BEGIN {label}-----\n");
+    for chunk in body.as_bytes().chunks(64) {
+        out.push_str(std::str::from_utf8(chunk).expect("base64 is ascii"));
+        out.push('\n');
+    }
+    out.push_str(&format!("-----END {label}-----\n"));
+    out
+}
+
+/// Generates a self-signed cert/key pair and writes it as operator PEM files
+/// under `dir`, returning the two paths. The test plays the operator's role:
+/// the daemon presents an operator-configured identity, never a generated one.
+#[cfg(all(unix, feature = "quic"))]
+fn write_operator_quic_cert(dir: &std::path::Path) -> (PathBuf, PathBuf) {
+    let issued =
+        rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).expect("generate cert");
+    let cert_path = dir.join("quic-cert.pem");
+    let key_path = dir.join("quic-key.pem");
+    std::fs::write(
+        &cert_path,
+        der_to_pem("CERTIFICATE", issued.cert.der().as_ref()),
+    )
+    .expect("write cert pem");
+    std::fs::write(
+        &key_path,
+        der_to_pem("PRIVATE KEY", &issued.signing_key.serialize_der()),
+    )
+    .expect("write key pem");
+    (cert_path, key_path)
+}
+
+/// Reads one newline-terminated line (the `@RSYNCD:` greeting) from `reader`.
+#[cfg(all(unix, feature = "quic"))]
+fn read_first_line(mut reader: impl std::io::Read) -> Vec<u8> {
+    let mut line = Vec::with_capacity(32);
+    let mut byte = [0u8; 1];
+    loop {
+        match reader.read(&mut byte) {
+            Ok(0) => break,
+            Ok(_) => {
+                line.push(byte[0]);
+                if byte[0] == b'\n' {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    line
+}
+
+/// A QUIC session reaches the `@RSYNCD:` greeting byte-for-byte identically to
+/// the TCP session, proving the accept->`serve_session` handoff (QUIC-6d) routes
+/// an accepted `QuicStream` through the SAME transport-agnostic session core the
+/// TCP path uses - not a parallel runner.
+///
+/// Both arms drive the private `serve_session` core over the SAME
+/// [`ConnectionContext`]; the QUIC arm goes through the production
+/// [`serve_quic_acceptor`] handoff. Non-vacuity: the TCP arm asserts the bytes
+/// are the real `@RSYNCD:` banner (a broken wiring yields EOF, an empty line, so
+/// the parity `assert_eq!` alone could pass vacuously on two empty reads - the
+/// banner and non-empty checks close that). The `recv_timeout` guard turns a
+/// server-first deadlock (the daemon speaks first, but a QUIC bidi stream is
+/// opened by the client) into a loud failure instead of a hung suite.
+#[cfg(all(unix, feature = "quic"))]
+#[test]
+fn quic_session_reaches_rsyncd_greeting_parity_with_tcp() {
+    use rsync_io::quic::{QuicAcceptor, QuicConnector, QuicServerIdentity};
+
+    // The daemon has no ephemeral fallback, so the acceptor is stood up from an
+    // operator-configured cert/key pair - exactly what `quic cert file` /
+    // `quic key file` yield in production. Generating the pair here makes the
+    // test the operator, not the daemon.
+    let cert_dir = tempfile::tempdir().expect("cert dir");
+    let (cert_path, key_path) = write_operator_quic_cert(cert_dir.path());
+    let server_identity = QuicServerIdentity::PemFiles {
+        cert: cert_path,
+        key: key_path,
+    };
+
+    // TCP arm: drive serve_session over a loopback TcpStream and capture the
+    // greeting the daemon writes first.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind tcp");
+    let tcp_addr = listener.local_addr().expect("tcp addr");
+    let tcp_ctx = quic_parity_context();
+    let tcp_server = thread::spawn(move || {
+        let (server, peer) = listener.accept().expect("accept tcp");
+        let _ = tcp_ctx.serve_session(DaemonStream::plain(server), peer);
+    });
+    let mut tcp_client = TcpStream::connect(tcp_addr).expect("connect tcp");
+    tcp_client
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("tcp read timeout");
+    let tcp_greeting = read_first_line(&mut tcp_client);
+    drop(tcp_client);
+    let _ = tcp_server.join();
+
+    assert!(
+        tcp_greeting.starts_with(b"@RSYNCD:"),
+        "TCP greeting must be the @RSYNCD banner, got {:?}",
+        String::from_utf8_lossy(&tcp_greeting),
+    );
+
+    // QUIC arm: the SAME serve_session core, reached through the production
+    // serve_quic_acceptor handoff over a loopback QUIC connection.
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("udp bind");
+    // Server-speaks-first, exactly as the daemon builds it in
+    // `materialize_and_serve_quic`: the acceptor opens the stream and writes the
+    // greeting before the client sends anything.
+    let acceptor =
+        QuicAcceptor::from_socket_server_first(socket, &server_identity).expect("quic acceptor");
+    let quic_addr = acceptor.local_addr().expect("quic addr");
+    let server_cert = acceptor.certificate().clone().into_owned();
+    let quic_ctx = quic_parity_context();
+    let quic_server = thread::spawn(move || serve_quic_acceptor(acceptor, quic_ctx));
+
+    let connector = QuicConnector::pinned(server_cert).expect("connector");
+    // Server-speaks-first: the client accepts the daemon-opened stream and reads
+    // the greeting, mirroring how the core client dials the daemon.
+    let mut quic_stream = connector
+        .connect_server_first(quic_addr, "localhost")
+        .expect("quic connect");
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reader = thread::spawn(move || {
+        let greeting = read_first_line(&mut quic_stream);
+        let _ = tx.send(greeting);
+        quic_stream.close();
+    });
+    let quic_greeting = rx
+        .recv_timeout(Duration::from_secs(15))
+        .expect("the QUIC daemon must write its @RSYNCD greeting; accept()->serve_session must not deadlock");
+    let _ = reader.join();
+    let _ = quic_server.join();
+
+    assert!(
+        !quic_greeting.is_empty(),
+        "the QUIC session produced no greeting - the accept->serve_session wiring is broken",
+    );
+    assert_eq!(
+        quic_greeting, tcp_greeting,
+        "the QUIC greeting must match the TCP greeting byte-for-byte (transport-agnostic session core)",
+    );
 }

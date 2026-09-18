@@ -137,6 +137,11 @@ windows = { workspace = true, features = [
 bandwidth = { path = "../bandwidth", features = ["test-support"] }
 criterion = { workspace = true }
 filetime = { workspace = true }
+# The QUIC session-parity test acts as the operator: it generates a self-signed
+# cert/key pair and points the daemon at it via `quic cert file`/`quic key file`
+# (there is no daemon-side cert generation to lean on). Used only by tests gated
+# on `cfg(all(unix, feature = "quic"))`.
+rcgen = { workspace = true }
 test-support = { path = "../test-support" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 

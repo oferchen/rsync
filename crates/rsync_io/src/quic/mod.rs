@@ -146,6 +146,11 @@ impl Terminal {
 struct State {
     /// Handshake finished and the bidirectional stream exists.
     stream_ready: bool,
+    /// Remote address of the established connection, recorded by the driver
+    /// once the connection exists. On a server endpoint this is the connecting
+    /// client's address; the daemon uses it as the session peer for logging
+    /// and `hosts allow`/`hosts deny` evaluation.
+    peer: Option<SocketAddr>,
     /// Ordered stream data awaiting facade reads.
     recv: VecDeque<Bytes>,
     recv_len: usize,
@@ -365,7 +370,35 @@ impl QuicAcceptor {
     /// collide with the paired IPv4 socket (mirrors the TCP listener's
     /// `set_only_v6(true)`). This crate deliberately keeps that policy in the
     /// caller so it stays identical to the TCP path.
+    ///
+    /// The accepted stream is client-opened: the peer opens the single
+    /// bidirectional stream and speaks first. For the server-speaks-first rsync
+    /// daemon (which writes the `@RSYNCD:` greeting before the client sends
+    /// anything) use [`QuicAcceptor::from_socket_server_first`] instead.
     pub fn from_socket(socket: UdpSocket, identity: &QuicServerIdentity) -> io::Result<Self> {
+        Self::from_socket_with(socket, identity, false)
+    }
+
+    /// Like [`QuicAcceptor::from_socket`], but the server OPENS the single
+    /// bidirectional stream and speaks first.
+    ///
+    /// This is the rsync daemon's mode: the daemon writes the `@RSYNCD:`
+    /// greeting before the client sends anything, and a QUIC stream is invisible
+    /// to its peer until a frame is sent on it, so the speaker must be the
+    /// opener or both sides deadlock. The peer must connect with
+    /// [`QuicConnector::connect_server_first`].
+    pub fn from_socket_server_first(
+        socket: UdpSocket,
+        identity: &QuicServerIdentity,
+    ) -> io::Result<Self> {
+        Self::from_socket_with(socket, identity, true)
+    }
+
+    fn from_socket_with(
+        socket: UdpSocket,
+        identity: &QuicServerIdentity,
+        opens_stream: bool,
+    ) -> io::Result<Self> {
         let (certificate, chain, key) = identity.materialize()?;
 
         let mut server_crypto = rustls::ServerConfig::builder_with_provider(ring_provider())
@@ -392,7 +425,7 @@ impl QuicAcceptor {
             false,
             None,
         );
-        let io = spawn_io(socket, endpoint, Role::Server, None)?;
+        let io = spawn_io(socket, endpoint, Role::Server, opens_stream, None)?;
         Ok(Self {
             io,
             certificate,
@@ -523,9 +556,36 @@ impl QuicConnector {
         Ok(Self { config })
     }
 
-    /// Connects to `addr`, validating the peer as `server_name`, and opens
-    /// one bidirectional stream.
+    /// Connects to `addr`, validating the peer as `server_name`, and opens the
+    /// single bidirectional stream (the client speaks first).
+    ///
+    /// For the server-speaks-first rsync daemon - where the client must instead
+    /// accept the stream the daemon opens and read its `@RSYNCD:` greeting
+    /// first - use [`QuicConnector::connect_server_first`].
     pub fn connect(&self, addr: SocketAddr, server_name: &str) -> io::Result<QuicStream> {
+        self.connect_with(addr, server_name, true)
+    }
+
+    /// Like [`QuicConnector::connect`], but the client ACCEPTS the single
+    /// bidirectional stream the server opens and lets the server speak first.
+    ///
+    /// This is the mode for connecting to the rsync daemon, whose acceptor is
+    /// built with [`QuicAcceptor::from_socket_server_first`]; the daemon writes
+    /// the `@RSYNCD:` greeting before the client sends anything.
+    pub fn connect_server_first(
+        &self,
+        addr: SocketAddr,
+        server_name: &str,
+    ) -> io::Result<QuicStream> {
+        self.connect_with(addr, server_name, false)
+    }
+
+    fn connect_with(
+        &self,
+        addr: SocketAddr,
+        server_name: &str,
+        opens_stream: bool,
+    ) -> io::Result<QuicStream> {
         let bind_ip: IpAddr = match addr {
             SocketAddr::V4(_) => IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             SocketAddr::V6(_) => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
@@ -535,7 +595,13 @@ impl QuicConnector {
         let (handle, conn) = endpoint
             .connect(Instant::now(), self.config.clone(), addr, server_name)
             .map_err(|e| error::connect_fault(&e))?;
-        let io = spawn_io(socket, endpoint, Role::Client, Some((handle, conn)))?;
+        let io = spawn_io(
+            socket,
+            endpoint,
+            Role::Client,
+            opens_stream,
+            Some((handle, conn)),
+        )?;
         wait_stream(&io)
     }
 }
@@ -599,6 +665,19 @@ impl QuicStream {
         QuicStream {
             io: Arc::clone(&self.io),
         }
+    }
+
+    /// Returns the remote peer's address for this connection.
+    ///
+    /// On a stream accepted by a [`QuicAcceptor`] this is the connecting
+    /// client's address, recorded by the driver when the connection was
+    /// established. Returns `None` only if the connection ended before the
+    /// address was recorded, which cannot happen for a stream returned by
+    /// [`QuicAcceptor::accept`] (the stream exists only after the connection
+    /// does).
+    #[must_use]
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        self.io.shared.lock().peer
     }
 
     /// Wraps this stream's write half in the shared bandwidth-pacing decorator

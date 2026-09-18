@@ -196,6 +196,28 @@ fn setup_transfer_streams(
         }));
     }
 
+    // QUIC transport (oc extension): split the single bidirectional stream into
+    // independent blocking read/write handles with `QuicStream::try_clone` - the
+    // QUIC counterpart of `TcpStream::try_clone`. Reads touch only the receive
+    // path and writes only the send path, so the two handles never contend
+    // beyond the driver's shared lock. No #503 drain thread is needed: the QUIC
+    // driver continuously pulls datagrams off the socket into a receive buffer
+    // regardless of facade reads, so the single-socket write-write deadlock the
+    // TCP path guards against cannot occur (the same property that lets the
+    // stdio branch above skip the drain). Teardown is the stream's own graceful
+    // FIN + close, not a TCP half-close, so `supports_tcp_shutdown` is false.
+    #[cfg(feature = "quic")]
+    if let Some(quic) = stream.quic_stream() {
+        let read_half = quic.try_clone();
+        let write_half = quic.try_clone();
+        return Ok(Some(TransferStreams {
+            read: Box::new(read_half),
+            write: Box::new(write_half),
+            supports_tcp_shutdown: false,
+            drain_handle: None,
+        }));
+    }
+
     let tcp = stream
         .tcp_stream()
         .expect("non-stdio stream has tcp_stream");
