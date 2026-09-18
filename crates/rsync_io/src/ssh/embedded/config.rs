@@ -10,7 +10,8 @@ use url::Url;
 
 use super::error::SshError;
 use super::ssh_config::{
-    ResolvedHost, resolve_host as resolve_ssh_config_host, resolve_host_files,
+    ResolvedHost, resolve_host_files_with_remote_user,
+    resolve_host_with_remote_user as resolve_ssh_config_host_with_user,
 };
 use super::types::{IpPreference, StrictHostKeyChecking};
 use crate::ssh::config_files::config_files;
@@ -303,7 +304,11 @@ impl SshConfig {
         // The embedded transport has no ssh option argv, so no `-F`
         // override can reach it: the load order is always the default
         // user-then-system pair.
-        let resolved = resolve_host_files(&config_files(&[]), host_alias)?;
+        let resolved = resolve_host_files_with_remote_user(
+            &config_files(&[]),
+            host_alias,
+            self.username.as_deref().unwrap_or(""),
+        )?;
         self.merge_resolved_host(&resolved);
         Ok(self)
     }
@@ -323,7 +328,11 @@ impl SshConfig {
         path: &Path,
         host_alias: &str,
     ) -> Result<&mut Self, SshError> {
-        let resolved = resolve_ssh_config_host(path, host_alias)?;
+        let resolved = resolve_ssh_config_host_with_user(
+            path,
+            host_alias,
+            self.username.as_deref().unwrap_or(""),
+        )?;
         self.merge_resolved_host(&resolved);
         Ok(self)
     }
