@@ -37,6 +37,9 @@ pub(super) struct ModuleListingInputs<'a> {
     /// listing.
     #[cfg(feature = "quic")]
     pub quic_window: Option<u64>,
+    /// `--quic-cipher` - client cipher-suite family override for the listing.
+    #[cfg(feature = "quic")]
+    pub quic_cipher: Option<rsync_io::quic::QuicCipher>,
     pub desired_protocol: Option<ProtocolVersion>,
     pub password_override: Option<Vec<u8>>,
     pub no_motd: bool,
@@ -80,6 +83,8 @@ where
         quic_cc,
         #[cfg(feature = "quic")]
         quic_window,
+        #[cfg(feature = "quic")]
+        quic_cipher,
         desired_protocol,
         password_override,
         no_motd,
@@ -153,6 +158,7 @@ where
         );
         list_options = list_options.with_quic_cc(quic_cc);
         list_options = list_options.with_quic_window(quic_window);
+        list_options = list_options.with_quic_cipher(quic_cipher);
     }
 
     match run_module_list_with_password_and_options(

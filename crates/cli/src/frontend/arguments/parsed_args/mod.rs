@@ -135,6 +135,11 @@ pub struct ParsedArgs {
     /// under the `quic` feature.
     #[cfg(feature = "quic")]
     pub quic_window: Option<u64>,
+    /// `--quic-cipher <aes|chacha20>` - client cipher-suite family override.
+    /// `None` keeps the CPU-adaptive default. Available only under the `quic`
+    /// feature.
+    #[cfg(feature = "quic")]
+    pub quic_cipher: Option<rsync_io::quic::QuicCipher>,
 
     /// `--protocol` - force a specific protocol version (28-32).
     pub protocol: Option<OsString>,

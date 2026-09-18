@@ -225,6 +225,8 @@ pub fn run_module_list_with_password_and_options(
             cc: options.quic_cc(),
             #[cfg(feature = "quic")]
             window: options.quic_window(),
+            #[cfg(feature = "quic")]
+            cipher: options.quic_cipher(),
         };
         open_daemon_stream(
             addr,

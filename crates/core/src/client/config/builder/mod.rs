@@ -302,6 +302,8 @@ pub struct ClientConfigBuilder {
     quic_cc: Option<rsync_io::quic::CongestionAlgorithm>,
     #[cfg(feature = "quic")]
     quic_window: Option<u64>,
+    #[cfg(feature = "quic")]
+    quic_cipher: Option<rsync_io::quic::QuicCipher>,
     blocking_io: Option<bool>,
     iconv: IconvSetting,
     remote_shell: Option<Vec<OsString>>,
@@ -616,6 +618,8 @@ impl ClientConfigBuilder {
             quic_cc: self.quic_cc,
             #[cfg(feature = "quic")]
             quic_window: self.quic_window,
+            #[cfg(feature = "quic")]
+            quic_cipher: self.quic_cipher,
             blocking_io: self.blocking_io,
             iconv: self.iconv,
             remote_shell: self.remote_shell,

@@ -53,6 +53,10 @@ pub(crate) struct ConfigInputs {
     /// defers to `OC_RSYNC_QUIC_WINDOW` then the default.
     #[cfg(feature = "quic")]
     pub(crate) quic_window: Option<u64>,
+    /// `--quic-cipher` - client cipher-suite family override; `None` keeps the
+    /// CPU-adaptive default.
+    #[cfg(feature = "quic")]
+    pub(crate) quic_cipher: Option<rsync_io::quic::QuicCipher>,
     pub(crate) blocking_io: Option<bool>,
     pub(crate) dry_run: bool,
     pub(crate) list_only: bool,
@@ -380,6 +384,10 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         // client-local and never reach the forwarded server arguments.
         builder = builder.quic_cc(inputs.quic_cc);
         builder = builder.quic_window(inputs.quic_window);
+        // `--quic-cipher` restricts the client's negotiable TLS 1.3 cipher
+        // family; `None` keeps the CPU-adaptive default. Client-local, never
+        // forwarded to the server.
+        builder = builder.quic_cipher(inputs.quic_cipher);
     }
     // Only override the builder's upstream default when the user supplied
     // `--inc-recursive` or `--no-inc-recursive`. Mirrors upstream

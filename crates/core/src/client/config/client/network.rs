@@ -84,6 +84,18 @@ impl ClientConfig {
         self.quic_window
     }
 
+    /// Returns the `--quic-cipher` cipher-suite family override, if one was
+    /// supplied.
+    ///
+    /// `None` keeps the CPU-adaptive default. Available only under the `quic`
+    /// feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-cipher")]
+    pub const fn quic_cipher(&self) -> Option<rsync_io::quic::QuicCipher> {
+        self.quic_cipher
+    }
+
     /// Returns the configured connect program, if any.
     #[doc(alias = "--connect-program")]
     pub fn connect_program(&self) -> Option<&OsStr> {

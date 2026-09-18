@@ -166,6 +166,60 @@ fn parse_args_rejects_invalid_quic_window_value() {
 
 #[cfg(feature = "quic")]
 #[test]
+fn parse_args_recognises_quic_cipher_flag() {
+    // WHY: `--quic-cipher <aes|chacha20>` restricts the client's negotiable
+    // TLS 1.3 cipher family and threads a resolved `QuicCipher` down to the
+    // QUIC connector's crypto provider.
+    for (value, expected) in [
+        ("aes", rsync_io::quic::QuicCipher::Aes),
+        ("chacha20", rsync_io::quic::QuicCipher::ChaCha20),
+    ] {
+        let parsed = parse_args([
+            OsString::from(RSYNC),
+            OsString::from("--quic-cipher"),
+            OsString::from(value),
+            OsString::from("quic://host/module"),
+            OsString::from("dest"),
+        ])
+        .expect("parse");
+
+        assert_eq!(parsed.quic_cipher, Some(expected));
+    }
+}
+
+#[cfg(feature = "quic")]
+#[test]
+fn parse_args_rejects_unknown_quic_cipher_value() {
+    // WHY: an unrecognised cipher name must fail loudly at parse time (the clap
+    // value restriction), never silently fall back to the adaptive default.
+    let err = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("--quic-cipher"),
+        OsString::from("blowfish"),
+        OsString::from("quic://host/module"),
+        OsString::from("dest"),
+    ])
+    .expect_err("unknown cipher must be rejected");
+    assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+}
+
+#[cfg(feature = "quic")]
+#[test]
+fn parse_args_quic_cipher_defaults_none() {
+    // WHY: without the flag the client keeps the CPU-adaptive cipher-suite
+    // default (AES-GCM on hardware AES, else ChaCha20-Poly1305).
+    let parsed = parse_args([
+        OsString::from(RSYNC),
+        OsString::from("host::module"),
+        OsString::from("dest"),
+    ])
+    .expect("parse");
+
+    assert!(parsed.quic_cipher.is_none());
+}
+
+#[cfg(feature = "quic")]
+#[test]
 fn parse_args_quic_cc_and_window_default_none() {
     // WHY: without the flags the client endpoint defers to the env vars and
     // then the built-in defaults (BBR / BDP-generous window).
@@ -220,6 +274,7 @@ fn parse_args_rejects_quic_flags_with_actionable_error_when_feature_off() {
         ],
         vec!["--quic-cc", "bbr", "host::module", "dest"],
         vec!["--quic-window", "32M", "host::module", "dest"],
+        vec!["--quic-cipher", "chacha20", "host::module", "dest"],
     ] {
         let mut argv = vec![OsString::from(RSYNC)];
         argv.extend(args.iter().map(OsString::from));

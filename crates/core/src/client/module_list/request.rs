@@ -198,6 +198,10 @@ pub struct ModuleListOptions {
     /// present under the `quic` feature.
     #[cfg(feature = "quic")]
     quic_window: Option<u64>,
+    /// `--quic-cipher` cipher-suite family override for QUIC listings. `None`
+    /// keeps the CPU-adaptive default. Only present under the `quic` feature.
+    #[cfg(feature = "quic")]
+    quic_cipher: Option<rsync_io::quic::QuicCipher>,
 }
 
 impl ModuleListOptions {
@@ -224,6 +228,8 @@ impl ModuleListOptions {
             quic_cc: None,
             #[cfg(feature = "quic")]
             quic_window: None,
+            #[cfg(feature = "quic")]
+            quic_cipher: None,
         }
     }
 
@@ -319,6 +325,26 @@ impl ModuleListOptions {
     #[must_use]
     pub const fn quic_window(&self) -> Option<u64> {
         self.quic_window
+    }
+
+    /// Supplies the `--quic-cipher` cipher-suite family override for QUIC
+    /// listings.
+    ///
+    /// `None` (the default) keeps the CPU-adaptive default. Available only
+    /// under the `quic` feature.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    #[doc(alias = "--quic-cipher")]
+    pub const fn with_quic_cipher(mut self, cipher: Option<rsync_io::quic::QuicCipher>) -> Self {
+        self.quic_cipher = cipher;
+        self
+    }
+
+    /// Returns the configured `--quic-cipher` cipher-suite family, if any.
+    #[cfg(feature = "quic")]
+    #[must_use]
+    pub const fn quic_cipher(&self) -> Option<rsync_io::quic::QuicCipher> {
+        self.quic_cipher
     }
 
     /// Returns a new configuration that suppresses daemon MOTD lines.
