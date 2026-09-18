@@ -31,9 +31,10 @@ cargo build --release --features quic
 The feature propagates through the crate graph (`cli` -> `core` ->
 `rsync_io`, and `daemon` for the listener side), pulling in the QUIC stack
 (`quinn-proto` for the sans-I/O QUIC state machine, `rustls` with the ring
-crypto provider for TLS 1.3, `rcgen` for ephemeral certificate generation, and
-`rustls-native-certs` for the system trust store). A build without the feature
-is byte-for-byte unaffected on every other transport.
+crypto provider for TLS 1.3, and `rustls-native-certs` for the system trust
+store; `rcgen` generates self-signed certificates for the QUIC test suite
+only, not at runtime). A build without the feature is byte-for-byte unaffected
+on every other transport.
 
 ## Invoking QUIC (client)
 
@@ -99,17 +100,34 @@ certificate, and the verification source is chosen by a fixed precedence:
    handshake loudly. There is no blanket "insecure" escape hatch that accepts any
    certificate.
 
-Because a changed fingerprint aborts a TOFU-pinned connection, a self-signed
-daemon that rotates its certificate on every restart (see the ephemeral cert
-below) will trip the TOFU check after each restart. For a stable identity across
-restarts, configure a persistent certificate and key on the daemon.
+Because a changed fingerprint aborts a TOFU-pinned connection, rotating the
+daemon's certificate invalidates every client's pin for that authority: each
+client trips the loud "host key changed" abort until its stale
+`quic_known_hosts` line is removed. Keep the daemon's certificate and key
+stable across restarts, and plan a coordinated re-pin when you rotate them.
 
 ## Daemon configuration
 
 The QUIC listener runs alongside the daemon's TCP listener and is configured
-with global directives in `oc-rsyncd.conf`. The listener is enabled when
-**either** a certificate/key pair **or** an explicit `quic port` is configured;
-a config with no QUIC directives leaves the listener off.
+with global directives in `oc-rsyncd.conf`. Setting **any** QUIC directive
+(`quic cert file`, `quic key file`, or `quic port`) marks QUIC as requested; a
+config with no QUIC directives leaves the listener off, so a default
+`--features quic` daemon stays TCP-only until you configure it.
+
+The QUIC daemon listener is **Unix-only**. On other platforms a `quic`-feature
+build can still dial a QUIC daemon as a client, but cannot open a local QUIC
+listener.
+
+"Requested" is not "serviceable". Because there is no ephemeral fallback (see
+below), a QUIC request without **both** a certificate and a key is a fatal
+misconfiguration: the daemon fails loudly at startup with
+
+```
+QUIC listener requested but no certificate configured: set both
+`quic cert file` and `quic key file` (there is no ephemeral fallback)
+```
+
+rather than synthesizing an identity or silently skipping the listener.
 
 ### Certificate identity
 
@@ -123,24 +141,27 @@ quic key file  = /etc/oc-rsync/quic/server.key
   like those directives they only resolve and store a path — the files are read
   when the listener is built, not at parse time.
 - The pair is **all-or-nothing**: naming only `quic cert file` or only
-  `quic key file` is a configuration error, since the listener needs both to
+  `quic key file` leaves QUIC requested but unserviceable, and the daemon
+  refuses to start (see the startup error above). The listener needs both to
   present an identity.
 
-### Ephemeral (zero-config) certificate
+Both directives are **global-only** and their paths resolve relative to the
+config file (the same handling as `pid file` / `lock file`), with any `%`
+tokens left verbatim for expansion at listener-bind time. A module section
+that sets either one is rejected.
 
-If the QUIC listener is enabled (via an explicit `quic port`) but **no**
-`quic cert file` / `quic key file` are configured, the daemon mints a **fresh
-self-signed certificate in memory at bind time**. This certificate:
+### No ephemeral fallback
 
-- is generated with `rcgen`, valid for `localhost`;
-- is **never written to disk**; and
-- **rotates on every restart** — a new certificate each time the daemon binds.
+QUIC has **no auto-generated or in-memory certificate**. The listener presents
+only the operator-supplied `quic cert file` / `quic key file` pair; if that
+pair is absent the daemon fails loudly at startup rather than minting a
+throwaway self-signed identity. (Auto-generating a daemon certificate was
+considered and dropped: it created more problems than it solved, chiefly the
+unstable identity that would trip every TOFU pin on each restart.)
 
-This makes a QUIC daemon usable with zero certificate setup, at the cost of a
-changing identity. Because the identity is not stable across restarts, clients
-that pinned it via TOFU (`quic_known_hosts`) will see a changed fingerprint and
-refuse to connect after a restart. Configure a persistent `quic cert file` /
-`quic key file` pair whenever the certificate must survive restarts.
+A bad or unreadable certificate does not take the whole daemon down: the
+affected QUIC socket is logged and skipped while the TCP listener keeps
+serving, degrading to TCP-only rather than a total outage.
 
 ### Port selection
 
