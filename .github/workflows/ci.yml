@@ -482,6 +482,81 @@ jobs:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
 
   # ===========================================================================
+  # Linux QUIC - Explicit `--features quic` coverage
+  # ---------------------------------------------------------------------------
+  # `quic` is an off-by-default oc extension. The only cell that compiles it
+  # today is the `--workspace --all-features` Test job, and all-features masks
+  # two questions this job asks in isolation:
+  #
+  #   1. Does `quic` build on its own, without another opt-in feature happening
+  #      to pull in a shared dependency? The isolated build proves the
+  #      quinn-proto / rustls-ring / rcgen dependency surface compiles behind
+  #      the gate and nothing else.
+  #   2. Does the feature FORWARD end-to-end? Root `quic` -> `cli/quic` ->
+  #      `core/quic` -> `rsync_io/quic`, and `daemon/quic` -> `rsync_io/quic`.
+  #      Selecting `-p rsync_io -p cli -p daemon --features quic` exercises
+  #      every forwarding edge; a broken edge fails here rather than silently
+  #      under all-features, where an unrelated path can keep the build green.
+  #
+  # The tests are self-contained: `quic_loopback` dials an in-process
+  # self-signed certificate over loopback UDP, so no system libssl, no apt
+  # packages, and no network egress are required (rustls uses the ring
+  # provider). Blocking, mirroring the Windows IOCP job: the feature builds and
+  # its 30 quic tests pass today, so a regression should fail the PR.
+  # ===========================================================================
+  linux-quic:
+    name: Linux QUIC (--features quic)
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 30
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          sudo apt-get clean || true
+          df -h /
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: linux-quic
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@9534c84618278caac52cb373bb164ed464dbd8af # v2
+        with:
+          tool: cargo-nextest
+
+      # Build the feature across every crate it forwards through so a broken
+      # forwarding edge fails the build, not just the rsync_io leaf.
+      - name: Build quic forwarding (rsync_io + cli + daemon, --features quic)
+        run: cargo build --locked -p rsync_io -p cli -p daemon --features quic
+
+      # rsync_io owns the QUIC transport and its loopback tests; the strong
+      # signal lives here.
+      - name: Test rsync_io (--features quic)
+        # `shell: bash` turns on pipefail, so the tee never hides a failure.
+        shell: bash
+        run: |
+          cargo nextest run --locked --profile ci -p rsync_io --features quic 2>&1 | tee nextest-run.log
+          bash tools/ci/nextest_flaky_summary.sh nextest-run.log
+
+  # ===========================================================================
   # Windows Test - Platform-specific testing with toolchain matrix
   # ===========================================================================
   windows-test:
