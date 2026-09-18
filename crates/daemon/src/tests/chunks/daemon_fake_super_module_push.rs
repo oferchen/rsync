@@ -3,8 +3,9 @@
 /// Verifies that the daemon honours its module-config `fake super = yes`
 /// directive end-to-end: a non-root client pushes a file with `--owner`
 /// and `--group`, and the daemon receiver stores the ownership metadata
-/// in the `user.rsync.%stat` xattr instead of calling `chown` (which
-/// would fail without privileges).
+/// in the fake-super `%stat` xattr (`user.rsync.%stat` on Linux, bare
+/// `rsync.%stat` elsewhere) instead of calling `chown` (which would fail
+/// without privileges).
 ///
 /// # Wiring under test
 ///
@@ -31,7 +32,6 @@
 ///   `user.rsync.%stat` xattr.
 #[cfg(unix)]
 #[test]
-#[ignore = "task 1246: fake super module push does not store user.rsync.%stat on the destination"]
 fn daemon_fake_super_module_directive_stores_ownership_in_xattr() {
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
@@ -132,25 +132,49 @@ fn daemon_fake_super_module_directive_stores_ownership_in_xattr() {
     );
 
     // The wire-up assertion: with `fake super = yes` on the module, the
-    // receiver must have stored ownership in the user.rsync.%stat xattr.
-    // upstream: xattrs.c:set_stat_xattr() encodes mode/uid/gid into this
-    // single xattr, used by xattrs.c:read_stat_xattr() on restore.
-    let stat_xattr = xattr::get(&dest_payload, "user.rsync.%stat")
-        .expect("read user.rsync.%stat from destination payload")
-        .expect(
-            "user.rsync.%stat must be present on the destination when \
-             `fake super = yes` is configured on the daemon module",
-        );
+    // receiver must have stored ownership in the fake-super `%stat` xattr.
+    // The on-disk attribute name is platform-dependent - `user.rsync.%stat`
+    // on Linux, bare `rsync.%stat` elsewhere - so read it via the same
+    // platform constant the receiver wrote through, not a hard-coded Linux
+    // name (upstream: xattrs.c:64-76 RSYNC_PREFIX under HAVE_LINUX_XATTRS).
+    use std::os::unix::fs::MetadataExt;
+    let source_meta = fs::metadata(&payload_path).expect("read source metadata");
 
-    let stat_text = String::from_utf8(stat_xattr).expect("user.rsync.%stat must be UTF-8");
-    // upstream: xattrs.c:set_stat_xattr() format is "<mode_octal> <rdev_major>,<rdev_minor> <uid>:<gid>".
-    assert!(
-        stat_text.contains(":"),
-        "user.rsync.%stat must encode uid:gid (got {stat_text:?})"
+    let stat_xattr = xattr::get(&dest_payload, metadata::FAKE_SUPER_XATTR)
+        .unwrap_or_else(|e| panic!("read {} from destination: {e}", metadata::FAKE_SUPER_XATTR))
+        .unwrap_or_else(|| {
+            panic!(
+                "{} must be present on the destination when `fake super = yes` \
+                 is configured on the daemon module",
+                metadata::FAKE_SUPER_XATTR
+            )
+        });
+
+    // upstream: xattrs.c:set_stat_xattr() format is
+    // "<mode_octal> <rdev_major>,<rdev_minor> <uid>:<gid>". Decode it and
+    // confirm the ownership round-trips back to the source's real uid/gid
+    // and that a regular file's type bits survived - the metadata a
+    // `--fake-super` restore would replay onto the inode.
+    let stat_text = String::from_utf8(stat_xattr).expect("%stat must be UTF-8");
+    let decoded = metadata::FakeSuperStat::decode(&stat_text)
+        .unwrap_or_else(|e| panic!("%stat {stat_text:?} must decode: {e}"));
+    assert_eq!(
+        decoded.uid,
+        source_meta.uid(),
+        "%stat must record the source uid (got {stat_text:?})"
+    );
+    assert_eq!(
+        decoded.gid,
+        source_meta.gid(),
+        "%stat must record the source gid (got {stat_text:?})"
     );
     assert!(
-        stat_text.contains(","),
-        "user.rsync.%stat must encode rdev_major,rdev_minor (got {stat_text:?})"
+        decoded.is_regular_file(),
+        "%stat mode must record a regular file (got {stat_text:?})"
+    );
+    assert_eq!(
+        decoded.rdev, None,
+        "a regular file carries no rdev (got {stat_text:?})"
     );
 
     let _ = finish_daemon(daemon_handle);
