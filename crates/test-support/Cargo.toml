@@ -48,6 +48,13 @@ libc = { workspace = true }
 name = "lsh-stub"
 path = "src/bin/lsh-stub.rs"
 
+# Teeing remote-shell trampoline: relays the client<->server byte streams
+# while appending each direction to a capture file, so tests can assert
+# byte-identity of whole wire transcripts (see src/transcript.rs).
+[[bin]]
+name = "capture-rsh"
+path = "src/bin/capture-rsh.rs"
+
 # Stand-in for an orphaned `oc-rsync --daemon`: carries the production SIGTERM
 # disposition and never exits on its own, so `ReapOnDrop` can be tested against
 # a child that genuinely survives SIGTERM.
