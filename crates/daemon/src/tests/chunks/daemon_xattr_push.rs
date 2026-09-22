@@ -29,7 +29,14 @@
 /// - `xattrs.c:send_xattr()` - sender-side xattr encoding
 /// - `xattrs.c:receive_xattr()` - receiver-side xattr application
 /// - `options.c` - `-X` sets `preserve_xattrs`
-#[cfg(unix)]
+///
+/// # Platform
+///
+/// Gated on unix + the `xattr` feature. Without the `xattr` feature the
+/// `metadata` crate compiles the `xattr_stub` no-op applier (mirroring
+/// upstream's compile-time `--enable-xattr-support`), so a daemon built
+/// without it cannot preserve xattrs and this assertion would not hold.
+#[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn daemon_xattr_push_preserves_extended_attributes() {
     let _lock = ENV_LOCK.lock().expect("env lock");
