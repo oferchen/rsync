@@ -301,6 +301,10 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto", "rin
 rustls-native-certs = "0.8"
 # SHA-256 for the QUIC TOFU known-hosts certificate fingerprint.
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
+# HMAC-SHA1 for writing hashed `known_hosts` entries (HashKnownHosts yes),
+# the `|1|salt|hash` format OpenSSH uses and russh reads back.
+hmac = "0.13"
+sha1 = "0.11"
 # URL parsing for ssh:// URIs
 url = "2"
 # Secure password input from terminal

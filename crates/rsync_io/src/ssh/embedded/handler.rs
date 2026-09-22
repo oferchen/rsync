@@ -4,33 +4,95 @@
 //! with configurable host key checking behavior mirroring OpenSSH's
 //! `StrictHostKeyChecking` option.
 
-use std::io::Write;
-use std::path::PathBuf;
+use std::fs::OpenOptions;
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 
+use base64::Engine as _;
+use hmac::{Hmac, KeyInit, Mac};
 use is_terminal::IsTerminal;
 use russh::keys::{HashAlg, PublicKey, PublicKeyOrCertificate, known_hosts};
+use sha1::Sha1;
 
 use super::error::SshError;
 use super::types::StrictHostKeyChecking;
 
-/// SSH client handler that verifies server host keys against a known hosts file.
+/// HMAC-SHA1, the MAC OpenSSH uses for hashed `known_hosts` entries
+/// (openssh/hostfile.c `host_hash`, `HASH_MAGIC "|1|"`).
+type HmacSha1 = Hmac<Sha1>;
+
+/// How one name (hostname or IP) verified against the configured sources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NameVerdict {
+    /// A known_hosts entry recorded this exact key for the name.
+    Known,
+    /// The name is recorded with a DIFFERENT key at the given line - a
+    /// potential MITM, refused under every policy.
+    Changed(usize),
+    /// No entry recorded the name.
+    Unknown,
+}
+
+/// The host-key verification inputs resolved from an `SshConfig`, mirroring
+/// the OpenSSH `known_hosts` decision surface: the ordered file list, the
+/// learn target, hashing, the lookup alias, the optional IP identity and the
+/// revoked-keys file.
+pub struct HostKeyOptions {
+    /// The `StrictHostKeyChecking` policy.
+    pub strict_host_key_checking: StrictHostKeyChecking,
+    /// Files consulted for verification, in order. A `None` element means
+    /// russh's default `~/.ssh/known_hosts` location.
+    pub check_sources: Vec<Option<PathBuf>>,
+    /// Where a newly learned key is written: `Some(target)` where `target`
+    /// is a file path (or `None` for russh's default). The outer `None`
+    /// disables learning to a file (`UserKnownHostsFile none`).
+    pub learn_target: Option<Option<PathBuf>>,
+    /// Whether a newly learned entry is written hashed (`|1|salt|hash`).
+    pub hash_known_hosts: bool,
+    /// The name looked up and stored: `HostKeyAlias` if set, else the host.
+    pub lookup_name: String,
+    /// The connection host, used for diagnostics and error context.
+    pub host: String,
+    /// The connection port.
+    pub port: u16,
+    /// The resolved server IP, present only when `CheckHostIP` is on and the
+    /// address is known (a direct dial). `None` skips the IP identity.
+    pub server_ip: Option<String>,
+    /// The `RevokedHostKeys` file; a listed server key is rejected.
+    pub revoked_host_keys: Option<PathBuf>,
+}
+
+/// SSH client handler that verifies server host keys against known_hosts files.
 ///
 /// Behavior depends on the configured `StrictHostKeyChecking` mode:
 /// - `Yes` - reject unknown or changed keys immediately.
 /// - `Ask` - prompt the user on a TTY; reject if no TTY is available.
 /// - `No` - accept unknown keys with a warning (changed keys are always rejected).
+///
+/// The verification surface mirrors OpenSSH: an ordered list of known_hosts
+/// files (`UserKnownHostsFile`/`GlobalKnownHostsFile`), an optional
+/// `HostKeyAlias` used in place of the hostname, `HashKnownHosts` for hashed
+/// entries, `CheckHostIP` for treating the resolved IP as a second identity,
+/// and a `RevokedHostKeys` file whose keys are refused outright.
 pub struct SshClientHandler {
     strict_host_key_checking: StrictHostKeyChecking,
-    known_hosts_file: Option<PathBuf>,
+    check_sources: Vec<Option<PathBuf>>,
+    learn_target: Option<Option<PathBuf>>,
+    hash_known_hosts: bool,
+    lookup_name: String,
     host: String,
     port: u16,
+    server_ip: Option<String>,
+    revoked_host_keys: Option<PathBuf>,
 }
 
 impl SshClientHandler {
-    /// Create a new handler for the given host and port.
+    /// Create a handler that consults a single known_hosts file.
     ///
     /// When `known_hosts_file` is `None`, the default `~/.ssh/known_hosts`
     /// location is used (via `russh::keys::known_hosts::check_known_hosts`).
+    /// The host is its own lookup name; hashing, the IP identity and the
+    /// revoked list are off. Richer configurations use [`Self::with_options`].
     pub fn new(
         host: String,
         port: u16,
@@ -39,44 +101,102 @@ impl SshClientHandler {
     ) -> Self {
         Self {
             strict_host_key_checking,
-            known_hosts_file,
+            check_sources: vec![known_hosts_file.clone()],
+            learn_target: Some(known_hosts_file),
+            hash_known_hosts: false,
+            lookup_name: host.clone(),
             host,
             port,
+            server_ip: None,
+            revoked_host_keys: None,
         }
     }
 
-    /// Check the server key against the known hosts file.
-    ///
-    /// Returns `Ok(true)` to accept, `Ok(false)` to reject, or an error
-    /// for key mismatches (potential MITM).
-    fn verify_host_key(&self, server_public_key: &PublicKey) -> Result<bool, SshError> {
-        let check_result = match &self.known_hosts_file {
-            Some(path) => {
-                known_hosts::check_known_hosts_path(&self.host, self.port, server_public_key, path)
-            }
-            None => known_hosts::check_known_hosts(&self.host, self.port, server_public_key),
-        };
+    /// Create a handler from the full resolved [`HostKeyOptions`].
+    pub fn with_options(opts: HostKeyOptions) -> Self {
+        Self {
+            strict_host_key_checking: opts.strict_host_key_checking,
+            check_sources: opts.check_sources,
+            learn_target: opts.learn_target,
+            hash_known_hosts: opts.hash_known_hosts,
+            lookup_name: opts.lookup_name,
+            host: opts.host,
+            port: opts.port,
+            server_ip: opts.server_ip,
+            revoked_host_keys: opts.revoked_host_keys,
+        }
+    }
 
-        match check_result {
-            Ok(true) => Ok(true),
-            Ok(false) => self.handle_unknown_host(server_public_key),
-            Err(russh::keys::Error::KeyChanged { line }) => {
+    /// Verify the server key against the revoked list, the known_hosts files,
+    /// and - when `CheckHostIP` is on - the resolved IP.
+    ///
+    /// Returns `Ok(true)` to accept, `Ok(false)` to reject, or an error for a
+    /// changed or revoked key. A revoked key is refused before any
+    /// known_hosts check and under every policy (openssh/sshconnect.c:1050).
+    fn verify_host_key(&self, server_public_key: &PublicKey) -> Result<bool, SshError> {
+        if let Some(ref path) = self.revoked_host_keys
+            && key_is_revoked(path, server_public_key)
+        {
+            return Err(SshError::HostKeyRevoked {
+                host: self.host.clone(),
+            });
+        }
+
+        let mut verdict = self.verify_name(&self.lookup_name, server_public_key);
+        // `CheckHostIP`: the resolved IP is a second recognised identity.
+        // A hostname match still governs (upstream treats a differing IP
+        // entry as a warning, not a hard failure, openssh/sshconnect.c:1233),
+        // so `Known` wins over `Changed` in the merge.
+        if let Some(ref ip) = self.server_ip {
+            verdict = merge_verdicts(verdict, self.verify_name(ip, server_public_key));
+        }
+
+        match verdict {
+            NameVerdict::Known => Ok(true),
+            NameVerdict::Changed(line) => {
                 emit_key_changed_warning(&self.host, self.port, server_public_key, line);
                 Err(SshError::HostKeyMismatch {
                     host: self.host.clone(),
                 })
             }
+            NameVerdict::Unknown => self.handle_unknown_host(server_public_key),
+        }
+    }
+
+    /// Verify one name against every configured source, first match wins.
+    fn verify_name(&self, name: &str, key: &PublicKey) -> NameVerdict {
+        let mut changed = None;
+        for source in &self.check_sources {
+            match self.check_one(name, key, source.as_deref()) {
+                NameVerdict::Known => return NameVerdict::Known,
+                NameVerdict::Changed(line) => changed = changed.or(Some(line)),
+                NameVerdict::Unknown => {}
+            }
+        }
+        changed.map_or(NameVerdict::Unknown, NameVerdict::Changed)
+    }
+
+    /// Check `name`'s key against one source (`None` = russh default file).
+    fn check_one(&self, name: &str, key: &PublicKey, file: Option<&Path>) -> NameVerdict {
+        let result = match file {
+            Some(path) => known_hosts::check_known_hosts_path(name, self.port, key, path),
+            None => known_hosts::check_known_hosts(name, self.port, key),
+        };
+        match result {
+            Ok(true) => NameVerdict::Known,
+            Ok(false) => NameVerdict::Unknown,
+            Err(russh::keys::Error::KeyChanged { line }) => NameVerdict::Changed(line),
             Err(e) => {
                 // File-not-found or parse errors - treat as unknown host.
                 logging::debug_log!(
                     Io,
                     1,
                     "known_hosts check error for {}:{}: {}",
-                    self.host,
+                    name,
                     self.port,
                     e
                 );
-                self.handle_unknown_host(server_public_key)
+                NameVerdict::Unknown
             }
         }
     }
@@ -92,7 +212,7 @@ impl SshClientHandler {
             // way, by testing only for YES and ASK and letting OFF and NEW
             // fall through together (openssh/sshconnect.c:1169-1181). They diverge
             // only on a CHANGED key, which never reaches here - that path is
-            // the KeyChanged branch in verify_host_key, which refuses under
+            // the Changed branch in verify_host_key, which refuses under
             // every policy.
             StrictHostKeyChecking::No | StrictHostKeyChecking::AcceptNew => {
                 eprintln!(
@@ -150,17 +270,136 @@ impl SshClientHandler {
         }
     }
 
-    /// Append the server's public key to the known hosts file.
+    /// Append the server's public key to the learn target, under the lookup
+    /// name and - when `CheckHostIP` is on - the resolved IP as well.
+    ///
+    /// A `learn_target` of `None` (an explicit `UserKnownHostsFile none`)
+    /// disables writing entirely, matching upstream, which has no user file
+    /// to append to.
     fn learn_host_key(&self, server_public_key: &PublicKey) -> Result<(), SshError> {
-        match &self.known_hosts_file {
-            Some(path) => {
-                known_hosts::learn_known_hosts_path(&self.host, self.port, server_public_key, path)
-                    .map_err(|e| SshError::Io(std::io::Error::other(e.to_string())))
-            }
-            None => known_hosts::learn_known_hosts(&self.host, self.port, server_public_key)
+        let Some(target) = self.learn_target.as_ref() else {
+            return Ok(());
+        };
+        self.learn_name(&self.lookup_name, server_public_key, target.as_deref())?;
+        if let Some(ref ip) = self.server_ip {
+            self.learn_name(ip, server_public_key, target.as_deref())?;
+        }
+        Ok(())
+    }
+
+    /// Write one `name -> key` entry to `file` (`None` = russh default),
+    /// hashed when `HashKnownHosts` is set and a concrete path is available.
+    fn learn_name(&self, name: &str, key: &PublicKey, file: Option<&Path>) -> Result<(), SshError> {
+        match (self.hash_known_hosts, file) {
+            (true, Some(path)) => learn_hashed(name, self.port, key, path),
+            (false, Some(path)) => known_hosts::learn_known_hosts_path(name, self.port, key, path)
+                .map_err(|e| SshError::Io(std::io::Error::other(e.to_string()))),
+            // No concrete path (russh default): russh's own writer, which is
+            // plaintext-only, so hashing cannot be honoured here.
+            (_, None) => known_hosts::learn_known_hosts(name, self.port, key)
                 .map_err(|e| SshError::Io(std::io::Error::other(e.to_string()))),
         }
     }
+}
+
+/// Merge a hostname verdict with an IP verdict: a `Known` on either wins,
+/// then a `Changed`, else `Unknown`. Mirrors upstream treating a hostname
+/// match as authoritative even when the IP entry differs
+/// (openssh/sshconnect.c:1233-1249).
+fn merge_verdicts(host: NameVerdict, ip: NameVerdict) -> NameVerdict {
+    match (host, ip) {
+        (NameVerdict::Known, _) | (_, NameVerdict::Known) => NameVerdict::Known,
+        (NameVerdict::Changed(line), _) | (_, NameVerdict::Changed(line)) => {
+            NameVerdict::Changed(line)
+        }
+        _ => NameVerdict::Unknown,
+    }
+}
+
+/// Whether `key` appears in the `RevokedHostKeys` file.
+///
+/// The file is read as a list of public keys, one per line, in either
+/// `authorized_keys` form (`<algo> <base64> [comment]`) or `known_hosts`
+/// form (`<host-field> <algo> <base64>`); a leading host field is stripped
+/// and the key retried. Comparison is on key material only, so a differing
+/// comment or host field does not hide a revocation. Comment lines and blanks
+/// are ignored. A missing or unreadable file revokes nothing.
+///
+/// upstream reads a KRL or a plaintext key list here (openssh/sshconnect.c:
+/// 1050 `sshkey_check_revoked`); oc supports the plaintext form.
+fn key_is_revoked(path: &Path, key: &PublicKey) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let target = key.key_data();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(parsed) = parse_revoked_key(line)
+            && parsed.key_data() == target
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Parse one revoked-list line into a public key, tolerating a leading
+/// `known_hosts` host field.
+fn parse_revoked_key(line: &str) -> Option<PublicKey> {
+    if let Ok(key) = PublicKey::from_openssh(line) {
+        return Some(key);
+    }
+    let (_host, rest) = line.split_once(char::is_whitespace)?;
+    PublicKey::from_openssh(rest.trim()).ok()
+}
+
+/// Append a hashed `known_hosts` entry (`|1|salt|hash <algo> <base64>`),
+/// the format `russh::keys::known_hosts` reads back and OpenSSH writes under
+/// `HashKnownHosts yes` (openssh/hostfile.c `host_hash`, `HASH_MAGIC "|1|"`,
+/// `HASH_DELIM '|'`). The hash is `HMAC-SHA1(salt, host_port)` and both salt
+/// and hash are base64-encoded, matching russh's reader (`Hmac::<Sha1>` over
+/// the `[host]:port` form).
+fn learn_hashed(name: &str, port: u16, key: &PublicKey, path: &Path) -> Result<(), SshError> {
+    let host_port = if port == 22 {
+        name.to_owned()
+    } else {
+        format!("[{name}]:{port}")
+    };
+    let salt: [u8; 20] = rand::random();
+    let mut mac = HmacSha1::new_from_slice(&salt).expect("HMAC accepts any key length");
+    mac.update(host_port.as_bytes());
+    let digest = mac.finalize().into_bytes();
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let hashed_host = format!("|1|{}|{}", b64.encode(salt), b64.encode(digest));
+    let openssh = key
+        .to_openssh()
+        .map_err(|e| SshError::Io(std::io::Error::other(e.to_string())))?;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = OpenOptions::new()
+        .read(true)
+        .append(true)
+        .create(true)
+        .open(path)?;
+    // Prepend a newline when the file does not already end in one, mirroring
+    // russh's `learn_known_hosts_path` so an entry never joins the last line.
+    let mut last = [0u8; 1];
+    let mut ends_in_newline = false;
+    if file.seek(SeekFrom::End(-1)).is_ok() {
+        file.read_exact(&mut last)?;
+        ends_in_newline = last[0] == b'\n';
+    }
+    file.seek(SeekFrom::End(0))?;
+    if !ends_in_newline {
+        file.write_all(b"\n")?;
+    }
+    writeln!(file, "{hashed_host} {openssh}")?;
+    Ok(())
 }
 
 impl russh::client::Handler for SshClientHandler {
@@ -291,14 +530,21 @@ mod tests {
         );
     }
 
-    /// Verify handler creation with each strict host key checking mode.
+    /// Verify handler creation with each strict host key checking mode. The
+    /// single-file `new` maps the file into one check source plus the same
+    /// learn target, its host doubling as the lookup name.
     #[test]
     fn handler_creation_modes() {
         let h = SshClientHandler::new("example.com".into(), 22, StrictHostKeyChecking::Yes, None);
         assert_eq!(h.strict_host_key_checking, StrictHostKeyChecking::Yes);
         assert_eq!(h.host, "example.com");
+        assert_eq!(h.lookup_name, "example.com");
         assert_eq!(h.port, 22);
-        assert!(h.known_hosts_file.is_none());
+        assert_eq!(h.check_sources, vec![None]);
+        assert_eq!(h.learn_target, Some(None));
+        assert!(!h.hash_known_hosts);
+        assert!(h.server_ip.is_none());
+        assert!(h.revoked_host_keys.is_none());
 
         let h = SshClientHandler::new(
             "example.com".into(),
@@ -308,10 +554,8 @@ mod tests {
         );
         assert_eq!(h.strict_host_key_checking, StrictHostKeyChecking::No);
         assert_eq!(h.port, 2222);
-        assert_eq!(
-            h.known_hosts_file.as_deref(),
-            Some(std::path::Path::new("/tmp/kh"))
-        );
+        assert_eq!(h.check_sources, vec![Some(PathBuf::from("/tmp/kh"))]);
+        assert_eq!(h.learn_target, Some(Some(PathBuf::from("/tmp/kh"))));
     }
 
     /// Verify host:port formatting omits port 22.
@@ -575,5 +819,254 @@ mod tests {
         // Should be treated as unknown host - strict Yes rejects.
         let result = handler.verify_host_key(&pubkey);
         assert!(result.is_err());
+    }
+
+    // --- Host-key verification family (task 237m) ---
+
+    /// Build options for a single check/learn file with the family knobs.
+    fn opts(
+        host: &str,
+        strict: StrictHostKeyChecking,
+        check: Vec<Option<PathBuf>>,
+        learn: Option<Option<PathBuf>>,
+    ) -> HostKeyOptions {
+        HostKeyOptions {
+            strict_host_key_checking: strict,
+            check_sources: check,
+            learn_target: learn,
+            hash_known_hosts: false,
+            lookup_name: host.to_owned(),
+            host: host.to_owned(),
+            port: 22,
+            server_ip: None,
+            revoked_host_keys: None,
+        }
+    }
+
+    /// `HashKnownHosts yes` writes a hashed entry (no plaintext hostname on
+    /// disk) that russh still reads back as a match; the `no` control writes
+    /// the hostname in the clear. This is the behavioural pin: the same
+    /// learned key verifies either way, but only the plaintext form exposes
+    /// the hostname.
+    #[test]
+    fn hash_known_hosts_hashes_the_learned_entry() {
+        let pubkey = test_ed25519_pubkey();
+
+        // hash = yes
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kh = dir.path().join("known_hosts");
+        std::fs::File::create(&kh).expect("create");
+        let hashed = SshClientHandler::with_options(HostKeyOptions {
+            hash_known_hosts: true,
+            ..opts(
+                "secret.example",
+                StrictHostKeyChecking::No,
+                vec![Some(kh.clone())],
+                Some(Some(kh.clone())),
+            )
+        });
+        assert!(
+            hashed.verify_host_key(&pubkey).expect("learns"),
+            "unknown host under No must be learned",
+        );
+        let on_disk = std::fs::read_to_string(&kh).expect("read");
+        assert!(
+            on_disk.contains("|1|"),
+            "expected a hashed entry: {on_disk}"
+        );
+        assert!(
+            !on_disk.contains("secret.example"),
+            "the hostname must not appear in the clear: {on_disk}",
+        );
+        // russh reads the hashed entry back as a match.
+        assert!(
+            known_hosts::check_known_hosts_path("secret.example", 22, &pubkey, &kh).expect("check"),
+            "the hashed entry must verify",
+        );
+
+        // control: hash = no writes the hostname in the clear
+        let dir2 = tempfile::tempdir().expect("tempdir");
+        let kh2 = dir2.path().join("known_hosts");
+        std::fs::File::create(&kh2).expect("create");
+        let plain = SshClientHandler::with_options(opts(
+            "secret.example",
+            StrictHostKeyChecking::No,
+            vec![Some(kh2.clone())],
+            Some(Some(kh2.clone())),
+        ));
+        assert!(plain.verify_host_key(&pubkey).expect("learns"));
+        let clear = std::fs::read_to_string(&kh2).expect("read");
+        assert!(
+            clear.contains("secret.example") && !clear.contains("|1|"),
+            "plaintext control must record the hostname: {clear}",
+        );
+    }
+
+    /// The user known_hosts files are consulted in order: a key recorded only
+    /// in the second file still verifies. The control is the first file,
+    /// which does not contain it, so a single-file check would miss it.
+    #[test]
+    fn user_known_hosts_files_are_consulted_in_order() {
+        let pubkey = test_ed25519_pubkey();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        std::fs::File::create(&first).expect("create");
+        known_hosts::learn_known_hosts_path("multi.example", 22, &pubkey, &second).expect("learn");
+
+        let handler = SshClientHandler::with_options(opts(
+            "multi.example",
+            StrictHostKeyChecking::Yes,
+            vec![Some(first.clone()), Some(second)],
+            None,
+        ));
+        assert!(
+            handler
+                .verify_host_key(&pubkey)
+                .expect("second file matches"),
+            "a key in the second file must verify",
+        );
+
+        // Control: only the first (empty) file - the same strict handler now
+        // cannot find the key.
+        let only_first = SshClientHandler::with_options(opts(
+            "multi.example",
+            StrictHostKeyChecking::Yes,
+            vec![Some(first)],
+            None,
+        ));
+        assert!(only_first.verify_host_key(&pubkey).is_err());
+    }
+
+    /// `HostKeyAlias` makes the key store and look up under the alias, not
+    /// the connection host. The learned entry is keyed on the alias, and a
+    /// lookup under the real host would miss it.
+    #[test]
+    fn host_key_alias_keys_the_entry_on_the_alias() {
+        let pubkey = test_ed25519_pubkey();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kh = dir.path().join("known_hosts");
+        std::fs::File::create(&kh).expect("create");
+
+        let handler = SshClientHandler::with_options(HostKeyOptions {
+            lookup_name: "alias.name".to_owned(),
+            ..opts(
+                "real.host",
+                StrictHostKeyChecking::No,
+                vec![Some(kh.clone())],
+                Some(Some(kh.clone())),
+            )
+        });
+        assert!(handler.verify_host_key(&pubkey).expect("learns"));
+        // Stored under the alias, not the real host.
+        assert!(
+            known_hosts::check_known_hosts_path("alias.name", 22, &pubkey, &kh).expect("check"),
+        );
+        assert!(
+            !known_hosts::check_known_hosts_path("real.host", 22, &pubkey, &kh).expect("check"),
+            "the entry must not be keyed on the connection host",
+        );
+    }
+
+    /// A key listed in `RevokedHostKeys` is refused before any known_hosts
+    /// check and under every policy - even `No`, and even when the key is
+    /// ALSO a valid known_hosts entry (the control: without the revoked file
+    /// the same key verifies).
+    #[test]
+    fn revoked_host_key_is_refused_under_every_policy() {
+        let pubkey = test_ed25519_pubkey();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kh = dir.path().join("known_hosts");
+        known_hosts::learn_known_hosts_path("revoke.example", 22, &pubkey, &kh).expect("learn");
+        let revoked = dir.path().join("revoked");
+        std::fs::write(&revoked, pubkey.to_openssh().expect("openssh")).expect("write revoked");
+
+        let handler = SshClientHandler::with_options(HostKeyOptions {
+            revoked_host_keys: Some(revoked),
+            ..opts(
+                "revoke.example",
+                StrictHostKeyChecking::No,
+                vec![Some(kh.clone())],
+                Some(Some(kh.clone())),
+            )
+        });
+        assert!(
+            matches!(
+                handler.verify_host_key(&pubkey),
+                Err(SshError::HostKeyRevoked { ref host }) if host == "revoke.example"
+            ),
+            "a revoked key must be refused even under No",
+        );
+
+        // Control: the identical setup without the revoked file accepts the
+        // key (it is a valid known_hosts entry), proving the refusal is the
+        // revoked list and not the fixture.
+        let ok = SshClientHandler::with_options(opts(
+            "revoke.example",
+            StrictHostKeyChecking::Yes,
+            vec![Some(kh)],
+            None,
+        ));
+        assert!(ok.verify_host_key(&pubkey).expect("valid"));
+    }
+
+    /// `CheckHostIP` makes the resolved IP a second recognised identity: a
+    /// key stored only under the IP verifies when `server_ip` is set, and the
+    /// control with no IP identity treats the same host as unknown.
+    #[test]
+    fn check_host_ip_treats_the_ip_as_a_second_identity() {
+        let pubkey = test_ed25519_pubkey();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kh = dir.path().join("known_hosts");
+        // The key is recorded ONLY under the IP, never the hostname.
+        known_hosts::learn_known_hosts_path("192.0.2.10", 22, &pubkey, &kh).expect("learn");
+
+        let with_ip = SshClientHandler::with_options(HostKeyOptions {
+            server_ip: Some("192.0.2.10".to_owned()),
+            ..opts(
+                "ip.example",
+                StrictHostKeyChecking::Yes,
+                vec![Some(kh.clone())],
+                None,
+            )
+        });
+        assert!(
+            with_ip
+                .verify_host_key(&pubkey)
+                .expect("ip identity matches"),
+            "the IP entry must satisfy verification",
+        );
+
+        // Control: no IP identity (CheckHostIP off) - the hostname is unknown.
+        let no_ip = SshClientHandler::with_options(opts(
+            "ip.example",
+            StrictHostKeyChecking::Yes,
+            vec![Some(kh)],
+            None,
+        ));
+        assert!(no_ip.verify_host_key(&pubkey).is_err());
+    }
+
+    /// `UserKnownHostsFile none` (a `None` learn target) disables writing:
+    /// an unknown host under `No` is still accepted, but nothing is recorded.
+    #[test]
+    fn a_disabled_learn_target_accepts_without_writing() {
+        let pubkey = test_ed25519_pubkey();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let kh = dir.path().join("known_hosts");
+        std::fs::File::create(&kh).expect("create");
+
+        let handler = SshClientHandler::with_options(opts(
+            "nowrite.example",
+            StrictHostKeyChecking::No,
+            vec![Some(kh.clone())],
+            None, // learning disabled
+        ));
+        assert!(handler.verify_host_key(&pubkey).expect("accepts"));
+        assert_eq!(
+            std::fs::read_to_string(&kh).expect("read"),
+            "",
+            "a disabled learn target must not write",
+        );
     }
 }

@@ -121,6 +121,39 @@ pub(in crate::ssh) enum Opcode {
     /// connected file descriptor rather than piping through stdio.
     /// upstream: openssh/readconf.c:250 `oProxyUseFdpass`, arm at :1471.
     ProxyUseFdpass,
+    /// `UserKnownHostsFile <file>...` - the ordered list of per-user
+    /// known_hosts files consulted for host-key verification and appended
+    /// to when a new key is learned. `none` (alone) disables the user list.
+    /// upstream: openssh/readconf.c:243 `oUserKnownHostsFile`, arm at :1614
+    /// via the `parse_char_array` path (:1600-1652).
+    UserKnownHostsFile,
+    /// `GlobalKnownHostsFile <file>...` - the ordered list of system-wide
+    /// known_hosts files, consulted for verification only (never written).
+    /// `none` (alone) disables the system list.
+    /// upstream: openssh/readconf.c:242 `oGlobalKnownHostsFile`, arm at
+    /// :1610 via the same `parse_char_array` path.
+    GlobalKnownHostsFile,
+    /// `HashKnownHosts yes|no` - whether a newly learned host entry is
+    /// written hashed (`|1|salt|hash`) rather than as a plaintext hostname.
+    /// upstream: openssh/readconf.c:264 `oHashKnownHosts`, arm at :1873 via
+    /// `parse_flag`.
+    HashKnownHosts,
+    /// `HostKeyAlias <alias>` - the name used to look up and store the host
+    /// key instead of the real hostname. Taken verbatim, never expanded.
+    /// upstream: openssh/readconf.c:237 `oHostKeyAlias`, arm at :1497 via
+    /// `parse_string`.
+    HostKeyAlias,
+    /// `CheckHostIP yes|no` - whether the host key is additionally checked
+    /// against the server's resolved IP address.
+    /// upstream: openssh/readconf.c:238 `oCheckHostIP`, arm at :1466 via
+    /// `parse_flag`.
+    CheckHostIP,
+    /// `RevokedHostKeys <file>` - a file of revoked host keys; a server key
+    /// listed there is rejected. Path taken verbatim (tilde-expanded by the
+    /// consumer).
+    /// upstream: openssh/readconf.c:290 `oRevokedHostKeys`, arm at :2444 via
+    /// `parse_string`.
+    RevokedHostKeys,
     /// A keyword no reader resolves. Ignored by both.
     Unknown,
 }
@@ -135,10 +168,14 @@ const KEYWORDS: &[(&str, Opcode)] = &[
     ("addressfamily", Opcode::AddressFamily),
     ("bindaddress", Opcode::BindAddress),
     ("bindinterface", Opcode::BindInterface),
+    ("checkhostip", Opcode::CheckHostIP),
     ("compression", Opcode::Compression),
     ("connectionattempts", Opcode::ConnectionAttempts),
     ("connecttimeout", Opcode::ConnectTimeout),
+    ("globalknownhostsfile", Opcode::GlobalKnownHostsFile),
+    ("hashknownhosts", Opcode::HashKnownHosts),
     ("host", Opcode::Host),
+    ("hostkeyalias", Opcode::HostKeyAlias),
     ("hostname", Opcode::Hostname),
     ("identitiesonly", Opcode::IdentitiesOnly),
     ("identityagent", Opcode::IdentityAgent),
@@ -153,10 +190,12 @@ const KEYWORDS: &[(&str, Opcode)] = &[
     ("proxycommand", Opcode::ProxyCommand),
     ("proxyjump", Opcode::ProxyJump),
     ("proxyusefdpass", Opcode::ProxyUseFdpass),
+    ("revokedhostkeys", Opcode::RevokedHostKeys),
     ("serveralivecountmax", Opcode::ServerAliveCountMax),
     ("serveraliveinterval", Opcode::ServerAliveInterval),
     ("tcpkeepalive", Opcode::TCPKeepAlive),
     ("user", Opcode::User),
+    ("userknownhostsfile", Opcode::UserKnownHostsFile),
 ];
 
 /// Resolves a keyword spelling to its [`Opcode`], case-insensitively.
@@ -188,6 +227,15 @@ pub(in crate::ssh) enum ValueKind {
     /// additional config file inline. upstream: the `oInclude` arm's
     /// `while (argv_next(...))` loop (openssh/readconf.c:2079).
     IncludePatterns,
+    /// A whitespace-separated list of known_hosts file paths, with `none`
+    /// permitted only in first position and alone. upstream: the
+    /// `parse_char_array` path shared by `oUserKnownHostsFile` and
+    /// `oGlobalKnownHostsFile` (openssh/readconf.c:1600-1652). Only the
+    /// FIRST active line of a given keyword claims the list; a later line is
+    /// ignored (`value = *uintptr == 0` gate, openssh/readconf.c:1603,
+    /// :1646), so the cross-line policy is first-obtained even though the
+    /// one claiming line accumulates every token on it.
+    KnownHostsFiles,
     /// One token, read as a multistate yes/no flag.
     /// upstream: `parse_multistate_value` (openssh/readconf.c:1103-1117).
     Flag,
@@ -274,15 +322,22 @@ impl Opcode {
             Self::Host => ValueKind::HostPatterns,
             Self::Match => ValueKind::MatchCriteria,
             Self::Include => ValueKind::IncludePatterns,
-            Self::Compression | Self::IdentitiesOnly | Self::ProxyUseFdpass => ValueKind::Flag,
+            Self::Compression
+            | Self::IdentitiesOnly
+            | Self::ProxyUseFdpass
+            | Self::HashKnownHosts
+            | Self::CheckHostIP => ValueKind::Flag,
             Self::ProxyCommand | Self::ProxyJump => ValueKind::Command,
+            Self::UserKnownHostsFile | Self::GlobalKnownHostsFile => ValueKind::KnownHostsFiles,
             Self::Hostname
             | Self::User
             | Self::Port
             | Self::IdentityFile
             | Self::IdentityAgent
             | Self::BindAddress
-            | Self::BindInterface => ValueKind::Single,
+            | Self::BindInterface
+            | Self::HostKeyAlias
+            | Self::RevokedHostKeys => ValueKind::Single,
             Self::ConnectTimeout | Self::ServerAliveInterval => ValueKind::Time,
             Self::ConnectionAttempts | Self::ServerAliveCountMax => ValueKind::Int,
             Self::AddressFamily => ValueKind::AddressFamily,
@@ -333,6 +388,11 @@ impl Opcode {
             | ValueKind::HostPatterns
             | ValueKind::MatchCriteria
             | ValueKind::IncludePatterns
+            // The known_hosts file lists are list-shaped like `Include`: an
+            // absent value walks the loop zero times rather than refusing,
+            // and an empty TOKEN is the per-token `keyword %s empty argument`
+            // (openssh/readconf.c:1626), not an absent-value diagnostic.
+            | ValueKind::KnownHostsFiles
             | ValueKind::Command
             | ValueKind::Unknown => None,
         }
@@ -572,6 +632,12 @@ mod tests {
         ("ProxyCommand", Opcode::ProxyCommand),
         ("ProxyJump", Opcode::ProxyJump),
         ("ProxyUseFdpass", Opcode::ProxyUseFdpass),
+        ("UserKnownHostsFile", Opcode::UserKnownHostsFile),
+        ("GlobalKnownHostsFile", Opcode::GlobalKnownHostsFile),
+        ("HashKnownHosts", Opcode::HashKnownHosts),
+        ("HostKeyAlias", Opcode::HostKeyAlias),
+        ("CheckHostIP", Opcode::CheckHostIP),
+        ("RevokedHostKeys", Opcode::RevokedHostKeys),
     ];
 
     #[test]
@@ -676,12 +742,33 @@ mod tests {
             );
         }
         // The string arms print the capital-M `Missing argument.`.
-        for opcode in [Opcode::BindAddress, Opcode::BindInterface] {
+        // `HostKeyAlias` and `RevokedHostKeys` route through `parse_string`
+        // too (openssh/readconf.c:1497, :2444), so they share the wording.
+        for opcode in [
+            Opcode::BindAddress,
+            Opcode::BindInterface,
+            Opcode::HostKeyAlias,
+            Opcode::RevokedHostKeys,
+        ] {
             assert_eq!(
                 opcode.missing_argument(),
                 Some("Missing argument."),
                 "{opcode:?}"
             );
+        }
+        // `HashKnownHosts` and `CheckHostIP` are `parse_flag` multistates,
+        // so they share `missing argument.` (openssh/readconf.c:1106).
+        for opcode in [Opcode::HashKnownHosts, Opcode::CheckHostIP] {
+            assert_eq!(
+                opcode.missing_argument(),
+                Some("missing argument."),
+                "{opcode:?}"
+            );
+        }
+        // The known_hosts file lists are list-shaped, so an absent value is
+        // not a fixed refusal (openssh/readconf.c:1600-1652).
+        for opcode in [Opcode::UserKnownHostsFile, Opcode::GlobalKnownHostsFile] {
+            assert_eq!(opcode.missing_argument(), None, "{opcode:?}");
         }
         // The block-opening keywords consume a LIST; an absent value
         // leaves the walk empty rather than refusing
@@ -765,6 +852,18 @@ mod tests {
             Opcode::TCPKeepAlive,
             Opcode::ServerAliveInterval,
             Opcode::ServerAliveCountMax,
+            // The host-key verification family: the flags and single-string
+            // slots are scalar first-obtained upstream, and the known_hosts
+            // file lists are first-obtained at LINE granularity - only the
+            // first active line of a given keyword claims the list
+            // (openssh/readconf.c:1603 `value = *uintptr == 0`), so a later
+            // line adds nothing, exactly the FirstObtained cross-line rule.
+            Opcode::UserKnownHostsFile,
+            Opcode::GlobalKnownHostsFile,
+            Opcode::HashKnownHosts,
+            Opcode::HostKeyAlias,
+            Opcode::CheckHostIP,
+            Opcode::RevokedHostKeys,
         ] {
             assert_eq!(
                 opcode.resolution_policy(),
