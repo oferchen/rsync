@@ -100,13 +100,13 @@ fn anchored_directory_pattern() {
 #[test]
 fn anchor_to_root_adds_leading_slash() {
     let rule = FilterRule::exclude("test.txt").anchor_to_root();
-    assert_eq!(rule.pattern(), "/test.txt");
+    assert_eq!(rule.pattern(), b"/test.txt");
 }
 
 #[test]
 fn anchor_to_root_idempotent() {
     let rule = FilterRule::exclude("/test.txt").anchor_to_root();
-    assert_eq!(rule.pattern(), "/test.txt");
+    assert_eq!(rule.pattern(), b"/test.txt");
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn anchor_to_root_preserves_other_attributes() {
         .with_negate(true)
         .anchor_to_root();
 
-    assert_eq!(rule.pattern(), "/test.txt");
+    assert_eq!(rule.pattern(), b"/test.txt");
     assert!(rule.is_perishable());
     assert!(rule.is_negated());
 }
@@ -124,7 +124,7 @@ fn anchor_to_root_preserves_other_attributes() {
 #[test]
 fn anchor_to_root_with_wildcard() {
     let rule = FilterRule::exclude("*.bak").anchor_to_root();
-    assert_eq!(rule.pattern(), "/*.bak");
+    assert_eq!(rule.pattern(), b"/*.bak");
 
     let rules = [rule, FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
@@ -257,13 +257,13 @@ fn root_only_pattern() {
 fn double_leading_slash() {
     // Double slash should be normalized or handled gracefully
     let rule = FilterRule::exclude("//test.txt");
-    assert_eq!(rule.pattern(), "//test.txt");
+    assert_eq!(rule.pattern(), b"//test.txt");
 }
 
 #[test]
 fn anchored_empty_after_slash() {
     let rule = FilterRule::exclude("/");
-    assert_eq!(rule.pattern(), "/");
+    assert_eq!(rule.pattern(), b"/");
 }
 
 #[test]

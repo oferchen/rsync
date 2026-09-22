@@ -423,7 +423,7 @@ impl CompiledRule {
         let applies_to_sender = rule.applies_to_sender();
         let applies_to_receiver = rule.applies_to_receiver();
         let negate = rule.is_negated();
-        let pattern = rule.pattern().to_owned();
+        let pattern = String::from_utf8_lossy(rule.pattern()).into_owned();
         let source = rule.source().clone();
 
         // upstream: exclude.c:259-275 add_rule() logs every parsed rule at

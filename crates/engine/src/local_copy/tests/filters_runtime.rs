@@ -276,7 +276,7 @@ fn dir_merge_clear_keyword_discards_previous_rules() {
 
     assert_eq!(entries.rules.len(), 1);
     assert!(entries.rules.iter().any(|rule| {
-        rule.pattern() == "skip" && matches!(rule.action(), filters::FilterAction::Exclude)
+        rule.pattern() == b"skip" && matches!(rule.action(), filters::FilterAction::Exclude)
     }));
     assert!(entries.exclude_if_present.is_empty());
 }

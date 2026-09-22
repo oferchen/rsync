@@ -12,7 +12,7 @@ use tempfile::TempDir;
 fn dir_merge_basic_construction() {
     let rule = FilterRule::dir_merge(".rsync-filter");
     assert_eq!(rule.action(), FilterAction::DirMerge);
-    assert_eq!(rule.pattern(), ".rsync-filter");
+    assert_eq!(rule.pattern(), b".rsync-filter");
     assert!(rule.applies_to_sender());
     assert!(rule.applies_to_receiver());
 }
@@ -21,7 +21,7 @@ fn dir_merge_basic_construction() {
 fn dir_merge_custom_filename() {
     let rule = FilterRule::dir_merge(".gitignore");
     assert_eq!(rule.action(), FilterAction::DirMerge);
-    assert_eq!(rule.pattern(), ".gitignore");
+    assert_eq!(rule.pattern(), b".gitignore");
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn dir_merge_with_path_separator() {
     // Dir-merge patterns should typically just be filenames,
     // but paths are technically allowed
     let rule = FilterRule::dir_merge("filters/.rsync-filter");
-    assert_eq!(rule.pattern(), "filters/.rsync-filter");
+    assert_eq!(rule.pattern(), b"filters/.rsync-filter");
 }
 
 #[test]
@@ -58,13 +58,13 @@ fn dir_merge_with_no_inherit() {
 fn merge_basic_construction() {
     let rule = FilterRule::merge("/etc/rsync/global.rules");
     assert_eq!(rule.action(), FilterAction::Merge);
-    assert_eq!(rule.pattern(), "/etc/rsync/global.rules");
+    assert_eq!(rule.pattern(), b"/etc/rsync/global.rules");
 }
 
 #[test]
 fn merge_relative_path() {
     let rule = FilterRule::merge("relative/path/rules.txt");
-    assert_eq!(rule.pattern(), "relative/path/rules.txt");
+    assert_eq!(rule.pattern(), b"relative/path/rules.txt");
 }
 
 #[test]
@@ -91,11 +91,11 @@ fn dir_merge_and_merge_are_distinct_actions() {
 fn dir_merge_typical_use_case() {
     // Dir-merge: filename looked up in each directory
     let rule = FilterRule::dir_merge(".rsync-filter");
-    assert_eq!(rule.pattern(), ".rsync-filter");
+    assert_eq!(rule.pattern(), b".rsync-filter");
 
     // Merge: absolute or relative path to a single file
     let rule2 = FilterRule::merge("/home/user/.rsync/global.rules");
-    assert!(rule2.pattern().starts_with('/'));
+    assert!(rule2.pattern().starts_with(b"/"));
 }
 
 #[test]
@@ -147,7 +147,7 @@ fn parse_dir_merge_short_form() {
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
 }
 
 #[test]
@@ -159,7 +159,7 @@ fn parse_dir_merge_long_form() {
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
 }
 
 #[test]
@@ -201,7 +201,7 @@ fn recursive_expansion_preserves_dir_merge() {
     let rules = filters::merge::read_rules_recursive(&rules_path, 10).unwrap();
     assert_eq!(rules.len(), 3);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
     assert_eq!(rules[1].action(), FilterAction::Include);
     assert_eq!(rules[2].action(), FilterAction::Exclude);
 }
@@ -226,10 +226,10 @@ fn recursive_expansion_expands_merge_but_not_dir_merge() {
     // Dir-merge preserved, merge expanded
     assert_eq!(rules.len(), 2);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
     // The merge rule is expanded to show the nested rules
     assert_eq!(rules[1].action(), FilterAction::Exclude);
-    assert_eq!(rules[1].pattern(), "*.tmp");
+    assert_eq!(rules[1].pattern(), b"*.tmp");
 }
 
 #[test]
@@ -247,9 +247,9 @@ fn multiple_dir_merge_rules_preserved() {
     for rule in &rules {
         assert_eq!(rule.action(), FilterAction::DirMerge);
     }
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
-    assert_eq!(rules[1].pattern(), ".gitignore");
-    assert_eq!(rules[2].pattern(), ".project-rules");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
+    assert_eq!(rules[1].pattern(), b".gitignore");
+    assert_eq!(rules[2].pattern(), b".project-rules");
 }
 
 #[test]
@@ -278,25 +278,25 @@ fn dir_merge_empty_pattern() {
     // While technically allowed at construction time,
     // an empty pattern wouldn't be useful
     let rule = FilterRule::dir_merge("");
-    assert_eq!(rule.pattern(), "");
+    assert_eq!(rule.pattern(), b"");
 }
 
 #[test]
 fn dir_merge_with_spaces_in_filename() {
     let rule = FilterRule::dir_merge("my rsync filter");
-    assert_eq!(rule.pattern(), "my rsync filter");
+    assert_eq!(rule.pattern(), b"my rsync filter");
 }
 
 #[test]
 fn dir_merge_with_special_characters() {
     let rule = FilterRule::dir_merge(".rsync-filter-v2.0");
-    assert_eq!(rule.pattern(), ".rsync-filter-v2.0");
+    assert_eq!(rule.pattern(), b".rsync-filter-v2.0");
 }
 
 #[test]
 fn dir_merge_unicode_filename() {
     let rule = FilterRule::dir_merge(".rsync-フィルタ");
-    assert_eq!(rule.pattern(), ".rsync-フィルタ");
+    assert_eq!(rule.pattern(), ".rsync-フィルタ".as_bytes());
 }
 
 #[test]
@@ -356,15 +356,15 @@ fn mixed_merge_and_dir_merge_ordering() {
     // Verify order: dir-merge, include, (merged) include, dir-merge, exclude
     assert_eq!(rules.len(), 5);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
     assert_eq!(rules[1].action(), FilterAction::Include);
-    assert_eq!(rules[1].pattern(), "*.rs");
+    assert_eq!(rules[1].pattern(), b"*.rs");
     assert_eq!(rules[2].action(), FilterAction::Include);
-    assert_eq!(rules[2].pattern(), "important.txt");
+    assert_eq!(rules[2].pattern(), b"important.txt");
     assert_eq!(rules[3].action(), FilterAction::DirMerge);
-    assert_eq!(rules[3].pattern(), ".gitignore");
+    assert_eq!(rules[3].pattern(), b".gitignore");
     assert_eq!(rules[4].action(), FilterAction::Exclude);
-    assert_eq!(rules[4].pattern(), "*");
+    assert_eq!(rules[4].pattern(), b"*");
 }
 
 #[test]

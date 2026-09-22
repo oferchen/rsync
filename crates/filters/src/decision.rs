@@ -203,7 +203,8 @@ impl FilterSetInner {
             // redaction a peer-chosen per-directory merge file's contents are
             // echoed at plain `-vv`, because upstream sets this trace's level
             // to 1 for a sender or generator (`exclude.c:1093`).
-            let shown = rule.source.as_source().rule_text(&rule.pattern);
+            let pattern_text = String::from_utf8_lossy(&rule.pattern);
+            let shown = rule.source.as_source().rule_text(&pattern_text);
             if allowed {
                 debug_log!(
                     Filter,
@@ -733,7 +734,7 @@ mod tests {
     fn push_rule(inner: &mut FilterSetInner, action: FilterAction, pattern: &str) {
         let rule = FilterRule {
             action,
-            pattern: pattern.to_owned(),
+            pattern: pattern.as_bytes().to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,

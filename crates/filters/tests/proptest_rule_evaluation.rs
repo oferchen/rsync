@@ -266,7 +266,7 @@ proptest! {
         // Pattern: /PREFIX*SUFFIX matches PREFIXanythingSUFFIX at root only,
         // but the * cannot cross a `/`.
         let pattern = format!("/{prefix}*{suffix}");
-        let set = FilterSet::from_rules([FilterRule::exclude(&pattern)]).unwrap();
+        let set = FilterSet::from_rules([FilterRule::exclude(pattern.as_str())]).unwrap();
 
         // A path with no separator between prefix and suffix should match.
         let flat = format!("{prefix}X{suffix}");
@@ -313,7 +313,7 @@ proptest! {
         child_path in relative_path(),
     ) {
         let pattern = format!("{prefix}/**");
-        let set = FilterSet::from_rules([FilterRule::exclude(&pattern)]).unwrap();
+        let set = FilterSet::from_rules([FilterRule::exclude(pattern.as_str())]).unwrap();
 
         let full = format!("{prefix}/{child_path}");
         prop_assert!(
@@ -583,7 +583,7 @@ proptest! {
         prop_assume!(outer != dir);
 
         let pattern = format!("{dir}/{file}");
-        let set = FilterSet::from_rules([FilterRule::exclude(&pattern)]).unwrap();
+        let set = FilterSet::from_rules([FilterRule::exclude(pattern.as_str())]).unwrap();
 
         // Direct path should be excluded.
         prop_assert!(

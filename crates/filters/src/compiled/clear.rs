@@ -23,7 +23,7 @@ mod tests {
     fn compiled_rule_clear_sides_sender() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.tmp".to_owned(),
+            pattern: b"*.tmp".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -49,7 +49,7 @@ mod tests {
     fn compiled_rule_clear_sides_receiver() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.tmp".to_owned(),
+            pattern: b"*.tmp".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -75,7 +75,7 @@ mod tests {
     fn compiled_rule_clear_sides_both() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.tmp".to_owned(),
+            pattern: b"*.tmp".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -108,7 +108,7 @@ mod tests {
     fn apply_clear_rule_no_change() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.tmp".to_owned(),
+            pattern: b"*.tmp".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -132,7 +132,7 @@ mod tests {
     fn apply_clear_rule_removes_inactive() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.tmp".to_owned(),
+            pattern: b"*.tmp".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: false,
             perishable: false,

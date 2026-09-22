@@ -25,7 +25,7 @@ mod include_rules {
         let rules = parse_rules("+ *.txt", Path::new("test")).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].action(), FilterAction::Include);
-        assert_eq!(rules[0].pattern(), "*.txt");
+        assert_eq!(rules[0].pattern(), b"*.txt");
     }
 
     #[test]
@@ -42,7 +42,7 @@ mod include_rules {
         let rules = parse_rules("include *.txt", Path::new("test")).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].action(), FilterAction::Include);
-        assert_eq!(rules[0].pattern(), "*.txt");
+        assert_eq!(rules[0].pattern(), b"*.txt");
     }
 
     #[test]
@@ -169,7 +169,7 @@ mod exclude_rules {
         let rules = parse_rules("- *.bak", Path::new("test")).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].action(), FilterAction::Exclude);
-        assert_eq!(rules[0].pattern(), "*.bak");
+        assert_eq!(rules[0].pattern(), b"*.bak");
     }
 
     #[test]
@@ -185,7 +185,7 @@ mod exclude_rules {
         let rules = parse_rules("exclude *.bak", Path::new("test")).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].action(), FilterAction::Exclude);
-        assert_eq!(rules[0].pattern(), "*.bak");
+        assert_eq!(rules[0].pattern(), b"*.bak");
     }
 
     #[test]
@@ -303,7 +303,7 @@ mod exclude_rules {
         // then takes the rest verbatim (strlen), so the following space stays
         // part of the pattern.
         let rules = parse_rules("-!_ *.txt", Path::new("test")).unwrap();
-        assert_eq!(rules[0].pattern(), " *.txt");
+        assert_eq!(rules[0].pattern(), b" *.txt");
         assert!(rules[0].is_negated());
     }
 }
@@ -437,7 +437,7 @@ mod dir_merge_rules {
         let rules = parse_rules(": .rsync-filter", Path::new("test")).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].action(), FilterAction::DirMerge);
-        assert_eq!(rules[0].pattern(), ".rsync-filter");
+        assert_eq!(rules[0].pattern(), b".rsync-filter");
     }
 
     #[test]
@@ -445,7 +445,7 @@ mod dir_merge_rules {
         let rules = parse_rules("dir-merge .rsync-filter", Path::new("test")).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].action(), FilterAction::DirMerge);
-        assert_eq!(rules[0].pattern(), ".rsync-filter");
+        assert_eq!(rules[0].pattern(), b".rsync-filter");
     }
 
     #[test]
@@ -465,7 +465,7 @@ mod dir_merge_rules {
         let rule = FilterRule::dir_merge(".rsync-filter");
 
         assert_eq!(rule.action(), FilterAction::DirMerge);
-        assert_eq!(rule.pattern(), ".rsync-filter");
+        assert_eq!(rule.pattern(), b".rsync-filter");
         assert!(rule.applies_to_sender());
         assert!(rule.applies_to_receiver());
     }
@@ -473,7 +473,7 @@ mod dir_merge_rules {
     #[test]
     fn dir_merge_with_custom_filename() {
         let rules = parse_rules(": .gitignore", Path::new("test")).unwrap();
-        assert_eq!(rules[0].pattern(), ".gitignore");
+        assert_eq!(rules[0].pattern(), b".gitignore");
     }
 
     #[test]
@@ -492,7 +492,7 @@ mod dir_merge_rules {
         let rules = parse_rules(". /etc/rsync/rules", Path::new("test")).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].action(), FilterAction::Merge);
-        assert_eq!(rules[0].pattern(), "/etc/rsync/rules");
+        assert_eq!(rules[0].pattern(), b"/etc/rsync/rules");
     }
 
     #[test]
@@ -507,7 +507,7 @@ mod dir_merge_rules {
         let rule = FilterRule::merge("/etc/rsync/global.rules");
 
         assert_eq!(rule.action(), FilterAction::Merge);
-        assert_eq!(rule.pattern(), "/etc/rsync/global.rules");
+        assert_eq!(rule.pattern(), b"/etc/rsync/global.rules");
         assert!(rule.applies_to_sender());
         assert!(rule.applies_to_receiver());
     }
@@ -521,7 +521,7 @@ mod hide_show_rules {
         let rules = parse_rules("H *.secret", Path::new("test")).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].action(), FilterAction::Exclude);
-        assert_eq!(rules[0].pattern(), "*.secret");
+        assert_eq!(rules[0].pattern(), b"*.secret");
         assert!(rules[0].applies_to_sender());
         assert!(!rules[0].applies_to_receiver());
     }
@@ -550,7 +550,7 @@ mod hide_show_rules {
         let rules = parse_rules("S *.public", Path::new("test")).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].action(), FilterAction::Include);
-        assert_eq!(rules[0].pattern(), "*.public");
+        assert_eq!(rules[0].pattern(), b"*.public");
         assert!(rules[0].applies_to_sender());
         assert!(!rules[0].applies_to_receiver());
     }
@@ -578,7 +578,7 @@ mod hide_show_rules {
         let rule = FilterRule::hide("*.secret");
 
         assert_eq!(rule.action(), FilterAction::Exclude);
-        assert_eq!(rule.pattern(), "*.secret");
+        assert_eq!(rule.pattern(), b"*.secret");
         assert!(rule.applies_to_sender());
         assert!(!rule.applies_to_receiver());
     }
@@ -588,7 +588,7 @@ mod hide_show_rules {
         let rule = FilterRule::show("*.public");
 
         assert_eq!(rule.action(), FilterAction::Include);
-        assert_eq!(rule.pattern(), "*.public");
+        assert_eq!(rule.pattern(), b"*.public");
         assert!(rule.applies_to_sender());
         assert!(!rule.applies_to_receiver());
     }
@@ -658,7 +658,7 @@ mod protect_risk_rules {
         let rules = parse_rules("P /important", Path::new("test")).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].action(), FilterAction::Protect);
-        assert_eq!(rules[0].pattern(), "/important");
+        assert_eq!(rules[0].pattern(), b"/important");
     }
 
     #[test]
@@ -682,7 +682,7 @@ mod protect_risk_rules {
         let rules = parse_rules("R /temp", Path::new("test")).unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].action(), FilterAction::Risk);
-        assert_eq!(rules[0].pattern(), "/temp");
+        assert_eq!(rules[0].pattern(), b"/temp");
     }
 
     #[test]
@@ -1181,7 +1181,7 @@ mod comments_and_whitespace {
         // upstream: exclude.c:1313 - the pattern length is strlen, so trailing
         // whitespace stays part of the pattern verbatim.
         let rules = parse_rules("+ *.txt ", Path::new("test")).unwrap();
-        assert_eq!(rules[0].pattern(), "*.txt ");
+        assert_eq!(rules[0].pattern(), b"*.txt ");
     }
 
     #[test]
@@ -1252,19 +1252,19 @@ mod pattern_preservation {
     #[test]
     fn pattern_case_preserved() {
         let rules = parse_rules("include README.TXT", Path::new("test")).unwrap();
-        assert_eq!(rules[0].pattern(), "README.TXT");
+        assert_eq!(rules[0].pattern(), b"README.TXT");
     }
 
     #[test]
     fn pattern_with_spaces_preserved() {
         let rules = parse_rules("+ file with spaces.txt", Path::new("test")).unwrap();
-        assert_eq!(rules[0].pattern(), "file with spaces.txt");
+        assert_eq!(rules[0].pattern(), b"file with spaces.txt");
     }
 
     #[test]
     fn pattern_special_chars_preserved() {
         let rules = parse_rules("+ foo\\?bar", Path::new("test")).unwrap();
-        assert_eq!(rules[0].pattern(), "foo\\?bar");
+        assert_eq!(rules[0].pattern(), b"foo\\?bar");
     }
 }
 

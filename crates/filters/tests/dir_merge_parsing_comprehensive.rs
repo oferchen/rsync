@@ -71,7 +71,7 @@ fn dir_merge_exclude_self_modifier() {
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
 }
 
 #[test]
@@ -98,7 +98,7 @@ fn dir_merge_with_underscore_separator() {
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
     assert!(rules[0].is_perishable());
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn dir_merge_with_space_separator() {
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
     assert!(rules[0].is_perishable());
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
 }
 
 #[test]
@@ -144,7 +144,7 @@ fn dir_merge_with_separator_parses_no_inherit() {
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
     assert!(rules[0].is_no_inherit());
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn merge_absolute_path() {
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].pattern(), "/etc/rsync/global.rules");
+    assert_eq!(rules[0].pattern(), b"/etc/rsync/global.rules");
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn merge_relative_path_with_subdirs() {
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].pattern(), "config/filters/rules.txt");
+    assert_eq!(rules[0].pattern(), b"config/filters/rules.txt");
 }
 
 #[test]
@@ -238,7 +238,7 @@ fn dir_merge_with_trailing_whitespace_kept() {
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].pattern(), ".rsync-filter   ");
+    assert_eq!(rules[0].pattern(), b".rsync-filter   ");
 }
 
 #[test]
@@ -277,7 +277,7 @@ fn dir_merge_pattern_with_wildcards() {
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].pattern(), ".rsync-*");
+    assert_eq!(rules[0].pattern(), b".rsync-*");
 }
 
 #[test]
@@ -290,7 +290,7 @@ fn dir_merge_pattern_with_path_separator() {
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].pattern(), "subdir/.rsync-filter");
+    assert_eq!(rules[0].pattern(), b"subdir/.rsync-filter");
 }
 
 #[test]
@@ -331,9 +331,9 @@ fn multiple_dir_merges_different_files() {
     for rule in &rules {
         assert_eq!(rule.action(), FilterAction::DirMerge);
     }
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
-    assert_eq!(rules[1].pattern(), ".gitignore");
-    assert_eq!(rules[2].pattern(), ".hgignore");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
+    assert_eq!(rules[1].pattern(), b".gitignore");
+    assert_eq!(rules[2].pattern(), b".hgignore");
 }
 
 #[test]
@@ -500,7 +500,7 @@ fn dir_merge_preserves_pattern_case() {
     fs::write(&rules_path, ": .Rsync-Filter\n").unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
-    assert_eq!(rules[0].pattern(), ".Rsync-Filter");
+    assert_eq!(rules[0].pattern(), b".Rsync-Filter");
 }
 
 #[test]
@@ -512,7 +512,7 @@ fn dir_merge_preserves_special_chars() {
     fs::write(&rules_path, ": .rsync-filter_v2.0\n").unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
-    assert_eq!(rules[0].pattern(), ".rsync-filter_v2.0");
+    assert_eq!(rules[0].pattern(), b".rsync-filter_v2.0");
 }
 
 #[test]
@@ -529,7 +529,11 @@ fn dir_merge_with_inline_comment() {
     // (actual behavior depends on parsing implementation)
     let pattern = rules[0].pattern();
     // In rsync, comments are not supported inline, so this would be part of filename
-    assert!(pattern.contains(".rsync-filter"));
+    assert!(
+        pattern
+            .windows(b".rsync-filter".len())
+            .any(|w| w == b".rsync-filter")
+    );
 }
 
 #[test]

@@ -206,7 +206,7 @@ impl ServerConfigBuilder {
 
     /// Records the client's requested remote source args as implied includes
     /// used to validate the received file list (CVE-2022-29154).
-    pub fn implied_source_args(&mut self, args: Vec<String>) -> &mut Self {
+    pub fn implied_source_args(&mut self, args: Vec<Vec<u8>>) -> &mut Self {
         self.connection.implied_source_args = args;
         self
     }
