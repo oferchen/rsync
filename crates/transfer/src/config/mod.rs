@@ -320,7 +320,7 @@ pub struct ConnectionConfig {
     /// - `main.c:1525,1549` - `add_implied_include()` per requested source arg
     /// - `exclude.c:379` `add_implied_include()`
     /// - `flist.c:1026` `recv_file_entry()` - the receiver-side name check
-    pub implied_source_args: Vec<String>,
+    pub implied_source_args: Vec<Vec<u8>>,
     /// Whether the leading daemon module name must be stripped from each
     /// [`implied_source_args`] entry before it is compiled into an implied
     /// include rule.

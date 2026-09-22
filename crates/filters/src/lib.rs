@@ -102,6 +102,8 @@
 mod action;
 /// AppleDouble (`._foo`) sidecar exclusion patterns for `--apple-double-skip`.
 pub mod apple_double;
+/// Boundary adapters between raw pattern bytes and `Path` values.
+pub mod byte_path;
 /// Per-directory scoped filter chain with push/pop semantics.
 pub mod chain;
 /// Lexical `..` collapse for filter paths, mirroring `clean_fname()`.
@@ -142,6 +144,7 @@ pub use action::FilterAction;
 pub use apple_double::{
     DEFAULT_APPLE_DOUBLE_PATTERN, default_patterns as apple_double_default_patterns,
 };
+pub use byte_path::{path_pattern_bytes, pattern_path};
 pub use chain::{DirFilterGuard, DirMergeConfig, FilterChain, FilterChainError};
 pub use clean_fname::collapse_dot_dot_dirs;
 pub use clear_token::{ClearToken, classify_clear_token};

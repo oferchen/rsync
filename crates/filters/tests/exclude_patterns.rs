@@ -1113,7 +1113,7 @@ mod edge_cases {
     fn long_pattern_and_path() {
         let long_name = "x".repeat(200);
         let pattern = format!("{long_name}*.txt");
-        let set = FilterSet::from_rules([FilterRule::exclude(&pattern)]).unwrap();
+        let set = FilterSet::from_rules([FilterRule::exclude(pattern.as_str())]).unwrap();
 
         let matching = format!("{long_name}foo.txt");
         assert!(!set.allows(Path::new(&matching), false));

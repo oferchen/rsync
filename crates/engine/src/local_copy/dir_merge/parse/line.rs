@@ -266,7 +266,7 @@ fn discard_over_long(
     source: RuleSource<'_>,
 ) -> Option<ParsedFilterDirective> {
     let pattern: Cow<'_, str> = match &directive {
-        ParsedFilterDirective::Rule(rule) => Cow::Borrowed(rule.pattern()),
+        ParsedFilterDirective::Rule(rule) => String::from_utf8_lossy(rule.pattern()),
         ParsedFilterDirective::Merge { path, .. } => path.to_string_lossy(),
         ParsedFilterDirective::DirMerge { pattern, .. } => pattern.to_string_lossy(),
         ParsedFilterDirective::ExcludeIfPresent(_) | ParsedFilterDirective::Clear => {
@@ -979,12 +979,12 @@ mod tests {
     /// rule outright.
     #[test]
     fn an_underscore_separates_a_keyword_from_its_pattern() {
-        assert_eq!(rule_of("exclude_b.txt").pattern(), "b.txt");
-        assert_eq!(rule_of("include_b.txt").pattern(), "b.txt");
-        assert_eq!(rule_of("hide_b.txt").pattern(), "b.txt");
+        assert_eq!(rule_of("exclude_b.txt").pattern(), b"b.txt");
+        assert_eq!(rule_of("include_b.txt").pattern(), b"b.txt");
+        assert_eq!(rule_of("hide_b.txt").pattern(), b"b.txt");
         // Non-vacuity: a `_` inside the PATTERN is not a separator, because
         // only the first one is consumed.
-        assert_eq!(rule_of("exclude a_b").pattern(), "a_b");
-        assert_eq!(rule_of("exclude__b").pattern(), "_b");
+        assert_eq!(rule_of("exclude a_b").pattern(), b"a_b");
+        assert_eq!(rule_of("exclude__b").pattern(), b"_b");
     }
 }

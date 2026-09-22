@@ -688,7 +688,10 @@ fn daemon_filter_set(rules: &[FilterRuleWireFormat]) -> Option<filters::FilterSe
             if wire_rule.cvs_exclude && wire_rule.pattern.is_empty() {
                 return filters::cvs_exclusion_rules(false).collect::<Vec<_>>();
             }
-            let pat = wire_rule.pattern.to_string_lossy();
+            // Raw bytes, matching upstream's `char *pattern` model - a
+            // non-UTF-8 daemon-config pattern byte matches itself.
+            let pat =
+                filters::path_pattern_bytes(std::path::Path::new(&wire_rule.pattern)).into_owned();
             match wire_rule.rule_type {
                 RuleType::Include => vec![FilterRule::include(pat)],
                 RuleType::Exclude => vec![FilterRule::exclude(pat)],

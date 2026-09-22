@@ -27,8 +27,8 @@ pub(crate) struct CompiledPattern {
 }
 
 impl CompiledPattern {
-    /// Returns the source glob string this pattern was compiled from. Patterns
-    /// always originate from a `String`, so the bytes are valid UTF-8.
+    /// Returns the source glob bytes this pattern was compiled from, rendered
+    /// for test assertions (lossy only in the display; storage is raw bytes).
     #[cfg(test)]
     pub(super) fn glob(&self) -> String {
         String::from_utf8_lossy(&self.bytes).into_owned()
@@ -61,18 +61,38 @@ impl CompiledPattern {
 ///
 /// rsync feeds filter candidates as `/`-separated relative names, so a literal
 /// rendering (preserving `.`/`..` and single components) is what `wildmatch()`
-/// expects. Backslashes are folded to `/` on Windows so matching is identical
-/// across platforms.
+/// expects.
+///
+/// On Unix the OS bytes are used verbatim: upstream matches raw `char *`
+/// names (exclude.c:1002 rule_matches, lib/wildmatch.c:64 dowild), so a
+/// non-UTF-8 name must reach the matcher unaltered - a lossy conversion here
+/// folded distinct byte names onto U+FFFD and weakened the CVE-2022-29154
+/// implied-include check into a false-accept. On Windows (no upstream daemon;
+/// paths are WTF-16) the name is rendered as UTF-8 with backslashes folded to
+/// `/` so matching is consistent across platforms.
 fn path_match_bytes(path: &Path) -> Vec<u8> {
-    let rendered = path.to_string_lossy();
-    if cfg!(windows) && rendered.contains('\\') {
-        rendered.replace('\\', "/").into_bytes()
-    } else {
-        rendered.into_owned().into_bytes()
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        path.as_os_str().as_bytes().to_vec()
+    }
+    #[cfg(not(unix))]
+    {
+        let rendered = path.to_string_lossy();
+        if rendered.contains('\\') {
+            rendered.replace('\\', "/").into_bytes()
+        } else {
+            rendered.into_owned().into_bytes()
+        }
     }
 }
 
-/// Compiles a set of glob pattern strings into sorted, deduplicated matchers.
+/// Returns `true` when `haystack` contains the byte sequence `needle`.
+pub(crate) fn contains_seq(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Compiles a set of glob byte patterns into sorted, deduplicated matchers.
 ///
 /// Patterns are sorted for deterministic evaluation order. Matching is
 /// delegated to [`wildmatch`], so compilation is infallible: upstream rsync
@@ -89,10 +109,10 @@ fn path_match_bytes(path: &Path) -> Vec<u8> {
 ///
 /// upstream: `lib/wildmatch.c:dowild()` - `**` always matches across `/`.
 pub(crate) fn compile_patterns(
-    patterns: HashSet<String>,
+    patterns: HashSet<Vec<u8>>,
     wild2_prefix: bool,
 ) -> Result<Vec<CompiledPattern>, FilterError> {
-    let mut expanded: HashSet<String> = HashSet::with_capacity(patterns.len() * 2);
+    let mut expanded: HashSet<Vec<u8>> = HashSet::with_capacity(patterns.len() * 2);
     for pattern in patterns {
         let rewritten = match normalise_recursive_wildcards(&pattern) {
             Cow::Borrowed(_) => None,
@@ -110,21 +130,21 @@ pub(crate) fn compile_patterns(
     let mut matchers = Vec::with_capacity(unique.len());
     for pattern in unique {
         matchers.push(CompiledPattern {
-            bytes: pattern.into_bytes(),
+            bytes: pattern,
             wild2_prefix,
         });
     }
     Ok(matchers)
 }
 
-/// Rewrites bare interior `**` sequences into slash-delimited `/**/` so
-/// globset treats them as recursive wildcards.
+/// Rewrites bare interior `**` sequences into slash-delimited `/**/` so the
+/// matcher set treats them as recursive wildcards.
 ///
 /// upstream: `lib/wildmatch.c:dowild()` - when `**` is encountered, the
 /// `special` flag is set, and the wildcard matches across `/` boundaries
-/// regardless of surrounding characters. globset only treats `**` as
-/// recursive when it is bounded by `/` (or string boundaries), so a pattern
-/// like `foo**too` must be rewritten to `foo/**/too` to match
+/// regardless of surrounding characters. The direct matcher only treats `**`
+/// as recursive when it is bounded by `/` (or string boundaries), so a
+/// pattern like `foo**too` must be rewritten to `foo/**/too` to match
 /// `bar/down/to/foo/too`.
 ///
 /// Runs of three or more `*` characters are collapsed to `**` first, since
@@ -142,16 +162,13 @@ pub(crate) fn compile_patterns(
 /// `*` and `?` outside `**` runs are left intact. Backslash-escaped
 /// characters (`\*`) are passed through verbatim - the escape is consumed
 /// with its escapee so neither participates in `**` detection.
-fn normalise_recursive_wildcards(pattern: &str) -> Cow<'_, str> {
-    if !pattern.contains("**") {
+fn normalise_recursive_wildcards(pattern: &[u8]) -> Cow<'_, [u8]> {
+    if !contains_seq(pattern, b"**") {
         return Cow::Borrowed(pattern);
     }
 
-    // `*`, `\`, and `/` are all single-byte ASCII so byte-indexed scanning
-    // is safe within a UTF-8 string. Multi-byte UTF-8 sequences are copied
-    // verbatim via str slicing between cut points to preserve encoding.
-    let bytes = pattern.as_bytes();
-    let mut out = String::with_capacity(bytes.len() + 4);
+    let bytes = pattern;
+    let mut out = Vec::with_capacity(bytes.len() + 4);
     let mut cut = 0;
     let mut i = 0;
     let mut changed = false;
@@ -172,7 +189,7 @@ fn normalise_recursive_wildcards(pattern: &str) -> Cow<'_, str> {
             }
 
             // Flush any pending verbatim slice before the `**` run.
-            out.push_str(&pattern[cut..run_start]);
+            out.extend_from_slice(&pattern[cut..run_start]);
 
             if j - run_start > 2 {
                 changed = true;
@@ -186,12 +203,12 @@ fn normalise_recursive_wildcards(pattern: &str) -> Cow<'_, str> {
             let need_trailing_slash = !at_end && !next_is_slash;
 
             if need_leading_slash {
-                out.push('/');
+                out.push(b'/');
                 changed = true;
             }
-            out.push_str("**");
+            out.extend_from_slice(b"**");
             if need_trailing_slash {
-                out.push('/');
+                out.push(b'/');
                 changed = true;
             }
             i = j;
@@ -205,7 +222,7 @@ fn normalise_recursive_wildcards(pattern: &str) -> Cow<'_, str> {
         return Cow::Borrowed(pattern);
     }
 
-    out.push_str(&pattern[cut..]);
+    out.extend_from_slice(&pattern[cut..]);
     Cow::Owned(out)
 }
 
@@ -229,8 +246,8 @@ fn normalise_recursive_wildcards(pattern: &str) -> Cow<'_, str> {
 /// `exclude.c:parse_filter_str()` where leading and trailing slashes are
 /// stripped and used to set `FILTRULE_ABS_PATH` and `FILTRULE_DIRECTORY`
 /// flags respectively.
-pub(super) fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
-    let starts_with_slash = pattern.starts_with('/');
+pub(super) fn normalise_pattern(pattern: &[u8]) -> (bool, bool, Cow<'_, [u8]>) {
+    let starts_with_slash = pattern.first() == Some(&b'/');
 
     // upstream: exclude.c:190-193 then 243-248 - add_rule() first peels a
     // single trailing `/` (FILTRULE_DIRECTORY), THEN detects a trailing `***`
@@ -239,14 +256,14 @@ pub(super) fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
     // before the slash-peel misses it and leaves `*/***`, which cannot match a
     // slashless directory name (differential fuzzer divergence on `*/***/`).
     let mut directory_only = false;
-    let mut stem: &str = pattern;
-    if stem.len() > 1 && stem.ends_with('/') {
+    let mut stem: &[u8] = pattern;
+    if stem.len() > 1 && stem.last() == Some(&b'/') {
         stem = &stem[..stem.len() - 1];
         directory_only = true;
-    } else if stem == "/" {
+    } else if stem == b"/" {
         directory_only = true;
     }
-    if stem.len() > 4 && stem.ends_with("/***") {
+    if stem.len() > 4 && stem.ends_with(b"/***") {
         // `/***` (SLASH_WILD3_SUFFIX) means "match both the directory and
         // everything inside it". Strip it and treat the stem as directory-only;
         // the descendant-matcher expansion then produces the `dir/**` content
@@ -258,7 +275,7 @@ pub(super) fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
 
     // Strip the leading `/` if present.
     let core_pattern = if starts_with_slash {
-        stripped.strip_prefix('/').unwrap_or(stripped)
+        stripped.strip_prefix(b"/").unwrap_or(stripped)
     } else {
         stripped
     };
@@ -276,11 +293,7 @@ pub(super) fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
         // Nothing was stripped - borrow the original.
         (anchored, false, Cow::Borrowed(pattern))
     } else {
-        (
-            anchored,
-            directory_only,
-            Cow::Owned(core_pattern.to_string()),
-        )
+        (anchored, directory_only, Cow::Owned(core_pattern.to_vec()))
     }
 }
 
@@ -296,108 +309,124 @@ pub(super) fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
 /// that need to know whether the stem's descendant reach came from a `/***`
 /// (a genuine part of upstream's single wildmatch) versus a plain trailing `/`
 /// (a pruning-only directory rule) use this predicate to tell them apart.
-pub(super) fn has_wild3_suffix(pattern: &str) -> bool {
+pub(super) fn has_wild3_suffix(pattern: &[u8]) -> bool {
     let mut stem = pattern;
-    if stem.len() > 1 && stem.ends_with('/') {
+    if stem.len() > 1 && stem.last() == Some(&b'/') {
         stem = &stem[..stem.len() - 1];
     }
-    stem.len() > 4 && stem.ends_with("/***")
+    stem.len() > 4 && stem.ends_with(b"/***")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn nrw(pattern: &str) -> String {
+        String::from_utf8(normalise_recursive_wildcards(pattern.as_bytes()).into_owned()).unwrap()
+    }
+
     #[test]
     fn has_wild3_suffix_matches_normalise_detection() {
-        assert!(has_wild3_suffix("new/lose/***"));
-        assert!(has_wild3_suffix("/new/lose/***"));
-        assert!(has_wild3_suffix("/?*/***"));
+        assert!(has_wild3_suffix(b"new/lose/***"));
+        assert!(has_wild3_suffix(b"/new/lose/***"));
+        assert!(has_wild3_suffix(b"/?*/***"));
         // A single trailing slash is peeled first, matching normalise_pattern.
-        assert!(has_wild3_suffix("dir/***/"));
+        assert!(has_wild3_suffix(b"dir/***/"));
         // Bare `/***` (len 4) is an ordinary wildcard, not a WILD3 stem.
-        assert!(!has_wild3_suffix("/***"));
+        assert!(!has_wild3_suffix(b"/***"));
         // `***` without a preceding slash is a plain wildcard.
-        assert!(!has_wild3_suffix("foo***"));
-        assert!(!has_wild3_suffix("foo/"));
-        assert!(!has_wild3_suffix("foo"));
+        assert!(!has_wild3_suffix(b"foo***"));
+        assert!(!has_wild3_suffix(b"foo/"));
+        assert!(!has_wild3_suffix(b"foo"));
     }
 
     #[test]
     fn normalise_pattern_plain() {
-        let (anchored, dir_only, core) = normalise_pattern("foo");
+        let (anchored, dir_only, core) = normalise_pattern(b"foo");
         assert!(!anchored);
         assert!(!dir_only);
-        assert_eq!(core, "foo");
+        assert_eq!(core.as_ref(), b"foo");
     }
 
     #[test]
     fn normalise_pattern_anchored() {
-        let (anchored, dir_only, core) = normalise_pattern("/foo");
+        let (anchored, dir_only, core) = normalise_pattern(b"/foo");
         assert!(anchored);
         assert!(!dir_only);
-        assert_eq!(core, "foo");
+        assert_eq!(core.as_ref(), b"foo");
     }
 
     #[test]
     fn normalise_pattern_directory_only() {
-        let (anchored, dir_only, core) = normalise_pattern("foo/");
+        let (anchored, dir_only, core) = normalise_pattern(b"foo/");
         assert!(!anchored);
         assert!(dir_only);
-        assert_eq!(core, "foo");
+        assert_eq!(core.as_ref(), b"foo");
     }
 
     #[test]
     fn normalise_pattern_anchored_directory() {
-        let (anchored, dir_only, core) = normalise_pattern("/foo/");
+        let (anchored, dir_only, core) = normalise_pattern(b"/foo/");
         assert!(anchored);
         assert!(dir_only);
-        assert_eq!(core, "foo");
+        assert_eq!(core.as_ref(), b"foo");
     }
 
     #[test]
     fn normalise_pattern_wildcard() {
-        let (anchored, dir_only, core) = normalise_pattern("*.txt");
+        let (anchored, dir_only, core) = normalise_pattern(b"*.txt");
         assert!(!anchored);
         assert!(!dir_only);
-        assert_eq!(core, "*.txt");
+        assert_eq!(core.as_ref(), b"*.txt");
     }
 
     #[test]
     fn normalise_pattern_anchored_wildcard() {
-        let (anchored, dir_only, core) = normalise_pattern("/*.txt");
+        let (anchored, dir_only, core) = normalise_pattern(b"/*.txt");
         assert!(anchored);
         assert!(!dir_only);
-        assert_eq!(core, "*.txt");
+        assert_eq!(core.as_ref(), b"*.txt");
     }
 
     #[test]
     fn normalise_pattern_nested_path() {
-        let (anchored, dir_only, core) = normalise_pattern("src/lib/");
+        let (anchored, dir_only, core) = normalise_pattern(b"src/lib/");
         // upstream: internal slashes without a leading `/` are NOT anchored;
         // they use tail-matching (match last N+1 path components via `**/pattern`).
         assert!(!anchored);
         assert!(dir_only);
-        assert_eq!(core, "src/lib");
+        assert_eq!(core.as_ref(), b"src/lib");
     }
 
     #[test]
     fn normalise_pattern_anchored_nested_path() {
         // Leading `/` anchors even with internal slashes.
-        let (anchored, dir_only, core) = normalise_pattern("/src/lib/");
+        let (anchored, dir_only, core) = normalise_pattern(b"/src/lib/");
         assert!(anchored);
         assert!(dir_only);
-        assert_eq!(core, "src/lib");
+        assert_eq!(core.as_ref(), b"src/lib");
     }
 
     #[test]
     fn normalise_pattern_empty_after_strip() {
         // Edge case: pattern is just "/"
-        let (anchored, dir_only, core) = normalise_pattern("/");
+        let (anchored, dir_only, core) = normalise_pattern(b"/");
         assert!(anchored);
         assert!(dir_only);
         // Core is empty but we don't strip further because it would be empty
-        assert_eq!(core, "");
+        assert_eq!(core.as_ref(), b"");
+    }
+
+    /// Non-UTF-8 pattern bytes survive normalisation verbatim.
+    ///
+    /// upstream: exclude.c:add_rule() stores the pattern as raw `char *`
+    /// bytes; nothing in the pipeline requires valid UTF-8.
+    #[test]
+    fn normalise_pattern_preserves_non_utf8_bytes() {
+        let (anchored, dir_only, core) = normalise_pattern(b"/caf\xe9/");
+        assert!(anchored);
+        assert!(dir_only);
+        assert_eq!(core.as_ref(), b"caf\xe9");
     }
 
     /// upstream: exclude.c:936-937 - FILTRULE_WILD3_SUFFIX appends `/` to
@@ -405,18 +434,18 @@ mod tests {
     /// itself (when is_dir) and everything inside it.
     #[test]
     fn normalise_pattern_wild3_suffix() {
-        let (anchored, dir_only, core) = normalise_pattern("new/lose/***");
+        let (anchored, dir_only, core) = normalise_pattern(b"new/lose/***");
         assert!(!anchored);
         assert!(dir_only);
-        assert_eq!(core, "new/lose");
+        assert_eq!(core.as_ref(), b"new/lose");
     }
 
     #[test]
     fn normalise_pattern_anchored_wild3_suffix() {
-        let (anchored, dir_only, core) = normalise_pattern("/new/lose/***");
+        let (anchored, dir_only, core) = normalise_pattern(b"/new/lose/***");
         assert!(anchored);
         assert!(dir_only);
-        assert_eq!(core, "new/lose");
+        assert_eq!(core.as_ref(), b"new/lose");
     }
 
     /// Bare `/***` (no directory stem) should be treated as directory-only
@@ -425,45 +454,45 @@ mod tests {
     fn normalise_pattern_bare_wild3_suffix() {
         // Pattern "/***" has len 4, not > 4, so the `/***` branch does NOT
         // fire. This is by design: bare `***` is just a wildcard pattern.
-        let (anchored, dir_only, core) = normalise_pattern("/***");
+        let (anchored, dir_only, core) = normalise_pattern(b"/***");
         assert!(anchored);
         assert!(!dir_only);
-        assert_eq!(core, "***");
+        assert_eq!(core.as_ref(), b"***");
     }
 
     /// Pattern ending with `***` but without a preceding `/` is a regular
     /// wildcard, not the WILD3_SUFFIX semantic.
     #[test]
     fn normalise_pattern_trailing_triple_star_no_slash() {
-        let (anchored, dir_only, core) = normalise_pattern("foo***");
+        let (anchored, dir_only, core) = normalise_pattern(b"foo***");
         assert!(!anchored);
         assert!(!dir_only);
-        assert_eq!(core, "foo***");
+        assert_eq!(core.as_ref(), b"foo***");
     }
 
     /// `**` between non-slash characters must be rewritten to `/**/` so
-    /// globset treats it as a recursive wildcard.
+    /// the matcher treats it as a recursive wildcard.
     ///
     /// upstream: `lib/wildmatch.c:dowild()` - `**` always matches across `/`.
     #[test]
     fn normalise_recursive_wildcards_interior_rewrites() {
-        assert_eq!(normalise_recursive_wildcards("foo**too"), "foo/**/too");
-        assert_eq!(normalise_recursive_wildcards("a**b**c"), "a/**/b/**/c");
+        assert_eq!(nrw("foo**too"), "foo/**/too");
+        assert_eq!(nrw("a**b**c"), "a/**/b/**/c");
     }
 
     /// `**` already adjacent to `/` on at least one side gets the missing
     /// slash on the other side.
     #[test]
     fn normalise_recursive_wildcards_one_sided_slash() {
-        assert_eq!(normalise_recursive_wildcards("foo/**bar"), "foo/**/bar");
-        assert_eq!(normalise_recursive_wildcards("bar**/foo"), "bar/**/foo");
+        assert_eq!(nrw("foo/**bar"), "foo/**/bar");
+        assert_eq!(nrw("bar**/foo"), "bar/**/foo");
     }
 
     /// `**` already fully slash-bounded must not be touched.
     #[test]
     fn normalise_recursive_wildcards_already_bounded() {
         for p in &["**/bar", "bar/**", "foo/**/bar", "**", "**/foo/**"] {
-            assert_eq!(normalise_recursive_wildcards(p), *p, "pattern {p:?}");
+            assert_eq!(nrw(p), *p, "pattern {p:?}");
         }
     }
 
@@ -471,8 +500,8 @@ mod tests {
     /// edges, not as needing a slash inserted there.
     #[test]
     fn normalise_recursive_wildcards_edges() {
-        assert_eq!(normalise_recursive_wildcards("**foo"), "**/foo");
-        assert_eq!(normalise_recursive_wildcards("foo**"), "foo/**");
+        assert_eq!(nrw("**foo"), "**/foo");
+        assert_eq!(nrw("foo**"), "foo/**");
     }
 
     /// Three or more consecutive `*` characters collapse to `**` then get
@@ -480,23 +509,23 @@ mod tests {
     /// `while (*++p == '*') {}` consumption.
     #[test]
     fn normalise_recursive_wildcards_collapse_runs() {
-        assert_eq!(normalise_recursive_wildcards("foo***too"), "foo/**/too");
-        assert_eq!(normalise_recursive_wildcards("foo****"), "foo/**");
+        assert_eq!(nrw("foo***too"), "foo/**/too");
+        assert_eq!(nrw("foo****"), "foo/**");
     }
 
     /// Single `*` and `?` wildcards are left intact - they retain their
-    /// "match anything except `/`" semantics in globset.
+    /// "match anything except `/`" semantics.
     #[test]
     fn normalise_recursive_wildcards_leaves_single_wildcards() {
         for p in &["*.txt", "foo?bar", "src/*.rs", "?", "*"] {
-            assert_eq!(normalise_recursive_wildcards(p), *p, "pattern {p:?}");
+            assert_eq!(nrw(p), *p, "pattern {p:?}");
         }
     }
 
     /// Patterns without `**` are returned borrowed without allocation.
     #[test]
     fn normalise_recursive_wildcards_no_double_star_is_borrowed() {
-        let p = "foo/bar/baz";
+        let p = b"foo/bar/baz";
         assert!(matches!(normalise_recursive_wildcards(p), Cow::Borrowed(_)));
     }
 
@@ -506,7 +535,7 @@ mod tests {
     /// single `*` + `bar`, which is NOT a `**` recursive wildcard.
     #[test]
     fn normalise_recursive_wildcards_respects_backslash_escape() {
-        assert_eq!(normalise_recursive_wildcards("foo\\**bar"), "foo\\**bar");
-        assert_eq!(normalise_recursive_wildcards("\\*\\*foo"), "\\*\\*foo");
+        assert_eq!(nrw("foo\\**bar"), "foo\\**bar");
+        assert_eq!(nrw("\\*\\*foo"), "\\*\\*foo");
     }
 }

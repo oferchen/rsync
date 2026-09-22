@@ -57,7 +57,7 @@ pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>,
         let name = source_path.display().to_string();
         trace_add_rule(
             rule.action,
-            &rule.pattern,
+            &String::from_utf8_lossy(&rule.pattern),
             &RuleSource::File {
                 name: &name,
                 line: line_num,
@@ -112,7 +112,11 @@ pub(crate) fn parse_rules_no_prefixes(
         } else {
             FilterRule::exclude(token)
         };
-        trace_add_rule(rule.action, &rule.pattern, &source);
+        trace_add_rule(
+            rule.action,
+            &String::from_utf8_lossy(&rule.pattern),
+            &source,
+        );
         rules.push(rule);
     };
 
@@ -158,7 +162,11 @@ pub(crate) fn parse_rules_word_split(
     let source = RuleSource::FileWordSplit { name: &name };
     for token in content.split_whitespace() {
         let rule = parse_rule_line(token, source_path, 0)?;
-        trace_add_rule(rule.action, &rule.pattern, &source);
+        trace_add_rule(
+            rule.action,
+            &String::from_utf8_lossy(&rule.pattern),
+            &source,
+        );
         rules.push(rule);
     }
     Ok(rules)

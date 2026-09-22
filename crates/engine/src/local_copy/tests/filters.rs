@@ -82,7 +82,7 @@ fn parse_filter_directive_keyword_with_xattr_modifier() {
     assert!(rule.is_xattr_only());
     assert!(rule.applies_to_sender());
     assert!(rule.applies_to_receiver());
-    assert_eq!(rule.pattern(), "user.keep");
+    assert_eq!(rule.pattern(), b"user.keep");
 }
 
 /// upstream: exclude.c:1438 - `case 'x'` carries no guard, so it is legal after
@@ -103,7 +103,7 @@ fn parse_filter_directive_accepts_xattr_on_show_keyword() {
         !rule.applies_to_receiver(),
         "`show` binds the sender side (exclude.c:1345-1351)"
     );
-    assert_eq!(rule.pattern(), "user.skip");
+    assert_eq!(rule.pattern(), b"user.skip");
 }
 
 #[test]

@@ -90,7 +90,7 @@ impl FilterProgram {
                     // `DirMergeEntries::push_rule`.
                     filters::trace_add_rule(
                         rule.action(),
-                        rule.pattern(),
+                        &String::from_utf8_lossy(rule.pattern()),
                         &filters::RuleSource::Argument,
                     );
                     #[cfg(all(any(unix, windows), feature = "xattr"))]
@@ -138,7 +138,7 @@ impl FilterProgram {
                         let excluded = filters::FilterRule::exclude(excluded);
                         filters::trace_add_rule(
                             excluded.action(),
-                            excluded.pattern(),
+                            &String::from_utf8_lossy(excluded.pattern()),
                             &filters::RuleSource::Argument,
                         );
                         current_segment.push_rule(excluded)?;
@@ -413,7 +413,7 @@ impl XattrRule {
             return Ok(None);
         };
 
-        let pattern = rule.pattern().to_owned();
+        let pattern = String::from_utf8_lossy(rule.pattern()).into_owned();
         let glob = GlobBuilder::new(&pattern)
             .literal_separator(true)
             .backslash_escape(true)

@@ -60,7 +60,7 @@ pub struct ImpliedIncludeOptions {
 pub struct ImpliedIncludes {
     opts: ImpliedIncludeOptions,
     rules: Vec<CompiledRule>,
-    seen: HashSet<String>,
+    seen: HashSet<Vec<u8>>,
     /// Whether an arg contributed a rule accepting the transfer root's own
     /// contents (upstream: the `/**` / `/*` patterns `is_implied_parent_dir()`
     /// scans for at `exclude.c:1153-1163`). Only the empty-arg branch of
@@ -82,6 +82,10 @@ impl ImpliedIncludes {
 
     /// Builds the implied-include set from `args` under `opts`.
     ///
+    /// Args are raw bytes: upstream records each requested source arg as the
+    /// `char *` it received (`exclude.c:476` `add_implied_include()`), so a
+    /// non-UTF-8 operand byte is an ordinary pattern byte here.
+    ///
     /// # Errors
     ///
     /// Returns [`FilterError`] only if an implied pattern cannot be compiled
@@ -89,7 +93,7 @@ impl ImpliedIncludes {
     pub fn from_args<I, S>(opts: ImpliedIncludeOptions, args: I) -> Result<Self, FilterError>
     where
         I: IntoIterator<Item = S>,
-        S: AsRef<str>,
+        S: AsRef<[u8]>,
     {
         let mut this = Self::new(opts);
         for arg in args {
@@ -98,52 +102,56 @@ impl ImpliedIncludes {
         Ok(this)
     }
 
-    /// Adds the implied-include rules for a single requested source `arg`.
+    /// Adds the implied-include rules for a single requested source `arg`
+    /// (raw bytes, see [`Self::from_args`]).
     ///
-    /// upstream: `exclude.c:379` `add_implied_include()`.
+    /// upstream: `exclude.c:476` `add_implied_include()`.
     ///
     /// # Errors
     ///
     /// Returns [`FilterError`] if a synthesized pattern cannot be compiled even
     /// after literal escaping.
-    pub fn add_arg(&mut self, arg: &str) -> Result<(), FilterError> {
+    pub fn add_arg(&mut self, arg: &[u8]) -> Result<(), FilterError> {
         let mut arg = arg;
 
         // upstream: exclude.c:396-401 - strip the daemon module name.
         if self.opts.skip_daemon_module {
-            arg = arg.split_once('/').map_or("", |(_, rest)| rest);
+            arg = arg
+                .iter()
+                .position(|&b| b == b'/')
+                .map_or(b"", |idx| &arg[idx + 1..]);
         }
 
         // upstream: exclude.c:403-408 - --relative keeps the path after a
         // "/./" pivot; otherwise the arg is reduced to its basename.
         if self.opts.relative {
-            if let Some(idx) = arg.find("/./") {
+            if let Some(idx) = arg.windows(3).position(|w| w == b"/./") {
                 arg = &arg[idx + 3..];
             }
-        } else if let Some(idx) = arg.rfind('/') {
+        } else if let Some(idx) = arg.iter().rposition(|&b| b == b'/') {
             arg = &arg[idx + 1..];
         }
 
         // upstream: exclude.c:410-411 - a bare "." arg contributes no name rule.
-        if arg == "." {
-            arg = "";
+        if arg == b"." {
+            arg = b"";
         }
 
         // upstream: exclude.c:509-516 - `strpbrk(arg, "*[?")` decides whether
         // the arg builds FILTRULE_WILD rules; the check runs on the arg AFTER
         // the module/basename strip and BEFORE the escaping transform.
-        let saw_wild = arg.contains(['*', '[', '?']);
+        let saw_wild = arg.iter().any(|b| matches!(b, b'*' | b'[' | b'?'));
 
         // upstream: exclude.c:412-491 - normalise the arg into an anchored
         // pattern, collapsing "//", "/./" and trailing "/" the way the C loop
         // does. Empty and "." segments are dropped.
-        let segments: Vec<&str> = arg
-            .split('/')
-            .filter(|seg| !seg.is_empty() && *seg != ".")
+        let segments: Vec<&[u8]> = arg
+            .split(|&b| b == b'/')
+            .filter(|seg| !seg.is_empty() && *seg != b".")
             .collect();
 
         if !segments.is_empty() {
-            let joined = segments.join("/");
+            let joined = segments.join(&b'/');
             // upstream: exclude.c:521-533 - the char loop rewrites backslashes:
             // in a wild arg, a `\` that does not escape a wildcard char is
             // doubled so wildmatch keeps it literal; in a non-wild arg, a `\]`
@@ -152,9 +160,9 @@ impl ImpliedIncludes {
             // (FILTRULE_WILD unset upstream, compile-time literalisation here),
             // so the raw single-backslash spelling is the literal form.
             let base = if saw_wild {
-                format!("/{}", escape_backslashes_for_wild(&joined))
+                anchor(&escape_backslashes_for_wild(&joined))
             } else {
-                format!("/{}", drop_nonwild_bracket_escapes(&joined))
+                anchor(&drop_nonwild_bracket_escapes(&joined))
             };
             self.push_rule(&base, false)?;
 
@@ -166,12 +174,15 @@ impl ImpliedIncludes {
             // keeps single backslashes (with `\]` reduced to `]`).
             if self.opts.relative {
                 for depth in 1..segments.len() {
-                    let raw = segments[..depth].join("/");
-                    let parent = if saw_wild && raw.contains(['*', '[', '?']) {
-                        format!("/{}/", escape_backslashes_for_wild(&raw))
+                    let raw = segments[..depth].join(&b'/');
+                    let raw_is_wild =
+                        saw_wild && raw.iter().any(|b| matches!(b, b'*' | b'[' | b'?'));
+                    let mut parent = if raw_is_wild {
+                        anchor(&escape_backslashes_for_wild(&raw))
                     } else {
-                        format!("/{}/", drop_nonwild_bracket_escapes(&raw))
+                        anchor(&drop_nonwild_bracket_escapes(&raw))
                     };
+                    parent.push(b'/');
                     self.push_rule(&parent, true)?;
                 }
             }
@@ -184,20 +195,17 @@ impl ImpliedIncludes {
         // literal under wildmatch.
         if self.opts.recurse || self.opts.dirs {
             let base = if segments.is_empty() {
-                String::new()
+                Vec::new()
             } else {
-                let joined = segments.join("/");
+                let joined = segments.join(&b'/');
                 if saw_wild {
-                    format!("/{}", escape_backslashes_for_wild(&joined))
+                    anchor(&escape_backslashes_for_wild(&joined))
                 } else {
-                    format!(
-                        "/{}",
-                        drop_nonwild_bracket_escapes(&joined).replace('\\', "\\\\")
-                    )
+                    anchor(&double_backslashes(&drop_nonwild_bracket_escapes(&joined)))
                 }
             };
-            let suffix = if self.opts.recurse { "**" } else { "*" };
-            let pattern = format!("{base}/{suffix}");
+            let suffix: &[u8] = if self.opts.recurse { b"**" } else { b"*" };
+            let pattern = [base.as_slice(), b"/", suffix].concat();
             self.push_rule(&pattern, false)?;
             // upstream: exclude.c:1153-1163 - `/**` / `/*` are the only implied
             // patterns that accept the transfer root's own contents, and only an
@@ -285,9 +293,9 @@ impl ImpliedIncludes {
     ///
     /// upstream: `exclude.c:312` `maybe_add_literal_brackets_rule()`, invoked
     /// after each implied rule with a live `[` (exclude.c:494, 526, 569).
-    fn push_rule(&mut self, pattern: &str, directory_only: bool) -> Result<(), FilterError> {
-        if self.seen.insert(pattern.to_owned()) {
-            let compiled = CompiledRule::new(FilterRule::include(pattern))?;
+    fn push_rule(&mut self, pattern: &[u8], directory_only: bool) -> Result<(), FilterError> {
+        if self.seen.insert(pattern.to_vec()) {
+            let compiled = CompiledRule::new(FilterRule::include(pattern.to_vec()))?;
             debug_assert_eq!(compiled.is_directory_only(), directory_only);
             self.rules.push(compiled);
         }
@@ -302,6 +310,29 @@ impl ImpliedIncludes {
     }
 }
 
+/// Prepends the anchoring `/` to a pattern body.
+fn anchor(body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(body.len() + 1);
+    out.push(b'/');
+    out.extend_from_slice(body);
+    out
+}
+
+/// Doubles every backslash so a wild rule keeps it literal under wildmatch.
+///
+/// upstream: `exclude.c:640-647` - appending the `/**` / `/*` suffix makes a
+/// non-wild base wild, so its backslashes are doubled first.
+fn double_backslashes(arg: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(arg.len() + 4);
+    for &b in arg {
+        if b == b'\\' {
+            out.push(b'\\');
+        }
+        out.push(b);
+    }
+    out
+}
+
 /// Rewrites a wild arg's backslashes the way upstream's implied-include char
 /// loop does: a `\` escaping a wildcard char (`*`, `[`, `?`) is kept as the
 /// escape, a `\]` pair is kept verbatim, and every other `\` (including a
@@ -309,8 +340,7 @@ impl ImpliedIncludes {
 ///
 /// upstream: `exclude.c:521-533` - `case '\\'` inside `add_implied_include()`
 /// with `saw_wild` set.
-fn escape_backslashes_for_wild(arg: &str) -> String {
-    let bytes = arg.as_bytes();
+fn escape_backslashes_for_wild(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len() + 4);
     let mut i = 0;
     while i < bytes.len() {
@@ -329,8 +359,7 @@ fn escape_backslashes_for_wild(arg: &str) -> String {
         }
         i += 1;
     }
-    debug_assert!(std::str::from_utf8(&out).is_ok());
-    String::from_utf8(out).unwrap_or_else(|_| arg.to_owned())
+    out
 }
 
 /// Reduces every `\]` pair in a non-wild arg to a bare `]`.
@@ -338,8 +367,7 @@ fn escape_backslashes_for_wild(arg: &str) -> String {
 /// upstream: `exclude.c:524-526` - "A `\]` in a non-wild filter causes a
 /// problem, so drop the `\`". All other backslashes stay single: a non-wild
 /// rule is matched literally, so they mean themselves.
-fn drop_nonwild_bracket_escapes(arg: &str) -> String {
-    let bytes = arg.as_bytes();
+fn drop_nonwild_bracket_escapes(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
@@ -351,8 +379,7 @@ fn drop_nonwild_bracket_escapes(arg: &str) -> String {
             i += 1;
         }
     }
-    debug_assert!(std::str::from_utf8(&out).is_ok());
-    String::from_utf8(out).unwrap_or_else(|_| arg.to_owned())
+    out
 }
 
 /// Escapes every live (unescaped) `[` in `pattern` as `\[`, returning `None`
@@ -361,19 +388,18 @@ fn drop_nonwild_bracket_escapes(arg: &str) -> String {
 /// upstream: `exclude.c:312` `maybe_add_literal_brackets_rule()` - a `\`
 /// consumes the following byte (so an already-escaped `\[` is left alone), and
 /// each remaining `[` is prefixed with a backslash so it matches literally.
-fn escape_live_brackets(pattern: &str) -> Option<String> {
-    let bytes = pattern.as_bytes();
-    let mut out = String::with_capacity(pattern.len() + 4);
+fn escape_live_brackets(pattern: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(pattern.len() + 4);
     let mut cut = 0;
     let mut i = 0;
     let mut changed = false;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+    while i < pattern.len() {
+        if pattern[i] == b'\\' && i + 1 < pattern.len() {
             // Skip the escape pair verbatim so `\[` is not re-escaped.
             i += 2;
-        } else if bytes[i] == b'[' {
-            out.push_str(&pattern[cut..i]);
-            out.push('\\');
+        } else if pattern[i] == b'[' {
+            out.extend_from_slice(&pattern[cut..i]);
+            out.push(b'\\');
             cut = i;
             changed = true;
             i += 1;
@@ -384,7 +410,7 @@ fn escape_live_brackets(pattern: &str) -> Option<String> {
     if !changed {
         return None;
     }
-    out.push_str(&pattern[cut..]);
+    out.extend_from_slice(&pattern[cut..]);
     Some(out)
 }
 
@@ -726,13 +752,16 @@ mod tests {
 
     #[test]
     fn escape_live_brackets_escapes_only_live_brackets() {
-        assert_eq!(escape_live_brackets("a[b").as_deref(), Some("a\\[b"));
         assert_eq!(
-            escape_live_brackets("/x[y]z/**").as_deref(),
-            Some("/x\\[y]z/**")
+            escape_live_brackets(b"a[b").as_deref(),
+            Some(b"a\\[b".as_slice())
+        );
+        assert_eq!(
+            escape_live_brackets(b"/x[y]z/**").as_deref(),
+            Some(b"/x\\[y]z/**".as_slice())
         );
         // Already-escaped `\[` is left alone; no live `[` means no rewrite.
-        assert_eq!(escape_live_brackets("a\\[b"), None);
-        assert_eq!(escape_live_brackets("plain/name"), None);
+        assert_eq!(escape_live_brackets(b"a\\[b"), None);
+        assert_eq!(escape_live_brackets(b"plain/name"), None);
     }
 }

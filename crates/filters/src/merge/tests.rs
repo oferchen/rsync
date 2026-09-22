@@ -45,7 +45,7 @@ fn parse_include_short() {
     let rules = parse_rules("+ *.txt", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Include);
-    assert_eq!(rules[0].pattern(), "*.txt");
+    assert_eq!(rules[0].pattern(), b"*.txt");
 }
 
 #[test]
@@ -53,7 +53,7 @@ fn parse_exclude_short() {
     let rules = parse_rules("- *.bak", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Exclude);
-    assert_eq!(rules[0].pattern(), "*.bak");
+    assert_eq!(rules[0].pattern(), b"*.bak");
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn parse_protect_short() {
     let rules = parse_rules("P /important", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Protect);
-    assert_eq!(rules[0].pattern(), "/important");
+    assert_eq!(rules[0].pattern(), b"/important");
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn parse_risk_short() {
     let rules = parse_rules("R /temp", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Risk);
-    assert_eq!(rules[0].pattern(), "/temp");
+    assert_eq!(rules[0].pattern(), b"/temp");
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn parse_merge_short() {
     let rules = parse_rules(". /etc/rsync/rules", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Merge);
-    assert_eq!(rules[0].pattern(), "/etc/rsync/rules");
+    assert_eq!(rules[0].pattern(), b"/etc/rsync/rules");
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn parse_dir_merge_short() {
     let rules = parse_rules(": .rsync-filter", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn parse_include_long() {
     let rules = parse_rules("include *.txt", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Include);
-    assert_eq!(rules[0].pattern(), "*.txt");
+    assert_eq!(rules[0].pattern(), b"*.txt");
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn long_form_keywords_are_case_sensitive() {
     // under oc, otherwise the two implementations disagree on which rules apply.
     let excl = parse_rules("exclude foo", Path::new("test")).unwrap();
     assert_eq!(excl[0].action(), FilterAction::Exclude);
-    assert_eq!(excl[0].pattern(), "foo");
+    assert_eq!(excl[0].pattern(), b"foo");
     let dm = parse_rules("dir-merge .f", Path::new("test")).unwrap();
     assert_eq!(dm[0].action(), FilterAction::DirMerge);
     let clr = parse_rules("clear", Path::new("test")).unwrap();
@@ -166,7 +166,7 @@ fn parse_comments_and_empty_lines() {
     let content = "# Comment\n\n; Another comment\n+ *.txt\n";
     let rules = parse_rules(content, Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].pattern(), "*.txt");
+    assert_eq!(rules[0].pattern(), b"*.txt");
 }
 
 /// A lone `\r` ends a rule here too, and CRLF ends exactly one.
@@ -179,13 +179,13 @@ fn parse_comments_and_empty_lines() {
 fn parse_splits_records_at_a_carriage_return() {
     let rules = parse_rules("- a \r- b\r", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 2);
-    assert_eq!(rules[0].pattern(), "a ");
-    assert_eq!(rules[1].pattern(), "b");
+    assert_eq!(rules[0].pattern(), b"a ");
+    assert_eq!(rules[1].pattern(), b"b");
 
     let crlf = parse_rules("- a \r\n- b\r\n", Path::new("test")).unwrap();
     assert_eq!(crlf.len(), 2);
-    assert_eq!(crlf[0].pattern(), "a ");
-    assert_eq!(crlf[1].pattern(), "b");
+    assert_eq!(crlf[0].pattern(), b"a ");
+    assert_eq!(crlf[1].pattern(), b"b");
 }
 
 /// The no-prefixes reader (`:-`/`:+` dir-merge) shares the boundary.
@@ -193,8 +193,8 @@ fn parse_splits_records_at_a_carriage_return() {
 fn parse_no_prefixes_splits_records_at_a_carriage_return() {
     let rules = parse_rules_no_prefixes("a \rb\r", Path::new("test"), false, false, false);
     assert_eq!(rules.len(), 2);
-    assert_eq!(rules[0].pattern(), "a ");
-    assert_eq!(rules[1].pattern(), "b");
+    assert_eq!(rules[0].pattern(), b"a ");
+    assert_eq!(rules[1].pattern(), b"b");
 }
 
 #[test]
@@ -260,9 +260,9 @@ fn read_rules_recursive_with_merge() {
 
     let rules = read_rules_recursive(&main_path, 10).unwrap();
     assert_eq!(rules.len(), 3);
-    assert_eq!(rules[0].pattern(), "*.txt");
-    assert_eq!(rules[1].pattern(), "*.tmp"); // From nested file
-    assert_eq!(rules[2].pattern(), "*.bak");
+    assert_eq!(rules[0].pattern(), b"*.txt");
+    assert_eq!(rules[1].pattern(), b"*.tmp"); // From nested file
+    assert_eq!(rules[2].pattern(), b"*.bak");
 }
 
 #[test]
@@ -287,13 +287,13 @@ fn read_rules_recursive_preserves_dir_merge() {
     let rules = read_rules_recursive(&rules_path, 10).unwrap();
     assert_eq!(rules.len(), 2);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
 }
 
 #[test]
 fn parse_preserves_pattern_case() {
     let rules = parse_rules("include README.TXT", Path::new("test")).unwrap();
-    assert_eq!(rules[0].pattern(), "README.TXT");
+    assert_eq!(rules[0].pattern(), b"README.TXT");
 }
 
 #[test]
@@ -313,7 +313,7 @@ fn parse_trailing_whitespace_is_kept_in_pattern() {
     // `*.o ` and stays included (differential-fuzz silent-data regression).
     let rules = parse_rules("- *.o ", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].pattern(), "*.o ");
+    assert_eq!(rules[0].pattern(), b"*.o ");
 }
 
 #[test]
@@ -333,7 +333,7 @@ fn parse_no_prefixes_keeps_literal_whitespace() {
     // leading and trailing whitespace are preserved literally.
     let rules = parse_rules_no_prefixes("  *.o \n", Path::new("test"), false, false, false);
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].pattern(), "  *.o ");
+    assert_eq!(rules[0].pattern(), b"  *.o ");
 }
 
 #[test]
@@ -341,7 +341,7 @@ fn parse_negate_modifier_exclude() {
     let rules = parse_rules("-! *.txt", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Exclude);
-    assert_eq!(rules[0].pattern(), "*.txt");
+    assert_eq!(rules[0].pattern(), b"*.txt");
     assert!(rules[0].is_negated());
 }
 
@@ -350,7 +350,7 @@ fn parse_negate_modifier_include() {
     let rules = parse_rules("+! *.txt", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Include);
-    assert_eq!(rules[0].pattern(), "*.txt");
+    assert_eq!(rules[0].pattern(), b"*.txt");
     assert!(rules[0].is_negated());
 }
 
@@ -359,7 +359,7 @@ fn parse_perishable_modifier() {
     let rules = parse_rules("-p *.tmp", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Exclude);
-    assert_eq!(rules[0].pattern(), "*.tmp");
+    assert_eq!(rules[0].pattern(), b"*.tmp");
     assert!(rules[0].is_perishable());
     assert!(!rules[0].is_negated());
 }
@@ -369,7 +369,7 @@ fn parse_combined_modifiers() {
     let rules = parse_rules("-!p *.tmp", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Exclude);
-    assert_eq!(rules[0].pattern(), "*.tmp");
+    assert_eq!(rules[0].pattern(), b"*.tmp");
     assert!(rules[0].is_negated());
     assert!(rules[0].is_perishable());
 }
@@ -379,7 +379,7 @@ fn parse_sender_side_modifier() {
     let rules = parse_rules("-s *.bak", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Exclude);
-    assert_eq!(rules[0].pattern(), "*.bak");
+    assert_eq!(rules[0].pattern(), b"*.bak");
     assert!(rules[0].applies_to_sender());
     assert!(!rules[0].applies_to_receiver());
 }
@@ -389,7 +389,7 @@ fn parse_receiver_side_modifier() {
     let rules = parse_rules("-r *.bak", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Exclude);
-    assert_eq!(rules[0].pattern(), "*.bak");
+    assert_eq!(rules[0].pattern(), b"*.bak");
     assert!(!rules[0].applies_to_sender());
     assert!(rules[0].applies_to_receiver());
 }
@@ -399,7 +399,7 @@ fn parse_xattr_modifier() {
     let rules = parse_rules("-x user.*", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Exclude);
-    assert_eq!(rules[0].pattern(), "user.*");
+    assert_eq!(rules[0].pattern(), b"user.*");
     assert!(rules[0].is_xattr_only());
 }
 
@@ -425,7 +425,7 @@ fn parse_underscore_separator() {
     // is consumed after the rule char and modifiers; the remaining ` *.txt` is
     // taken verbatim by strlen, so the leading space stays part of the pattern.
     let rules = parse_rules("-!_ *.txt", Path::new("test")).unwrap();
-    assert_eq!(rules[0].pattern(), " *.txt");
+    assert_eq!(rules[0].pattern(), b" *.txt");
     assert!(rules[0].is_negated());
 }
 
@@ -434,7 +434,7 @@ fn parse_protect_with_negate() {
     let rules = parse_rules("P! /important", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Protect);
-    assert_eq!(rules[0].pattern(), "/important");
+    assert_eq!(rules[0].pattern(), b"/important");
     assert!(rules[0].is_negated());
 }
 
@@ -443,7 +443,7 @@ fn parse_risk_with_negate() {
     let rules = parse_rules("R! /temp", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Risk);
-    assert_eq!(rules[0].pattern(), "/temp");
+    assert_eq!(rules[0].pattern(), b"/temp");
     assert!(rules[0].is_negated());
 }
 
@@ -473,7 +473,7 @@ fn parse_modifier_negate_then_pattern() {
     // `-! /path/*.txt` is `-` (exclude) with the `!` (negate) modifier and the
     // pattern `/path/*.txt`.
     let rules = parse_rules("-! /path/*.txt", Path::new("test")).unwrap();
-    assert_eq!(rules[0].pattern(), "/path/*.txt");
+    assert_eq!(rules[0].pattern(), b"/path/*.txt");
     assert!(rules[0].is_negated());
 }
 
@@ -587,7 +587,7 @@ fn parse_exclude_self_modifier_accepted_on_dir_merge_rule() {
     let rules = parse_rules(":e .rsync-filter", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
 }
 
 /// `e` is likewise accepted on a plain merge rule.
@@ -596,7 +596,7 @@ fn parse_exclude_self_modifier_accepted_on_merge_rule() {
     let rules = parse_rules(".e rules.txt", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Merge);
-    assert_eq!(rules[0].pattern(), "rules.txt");
+    assert_eq!(rules[0].pattern(), b"rules.txt");
 }
 
 /// `n` (FILTRULE_NO_INHERIT) is valid only on a merge-file rule. On an
@@ -647,7 +647,7 @@ fn parse_word_split_modifier_accepted_on_dir_merge_rule() {
     let rules = parse_rules(":w .rsync-filter", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".rsync-filter");
+    assert_eq!(rules[0].pattern(), b".rsync-filter");
 }
 
 #[test]
@@ -672,7 +672,7 @@ fn parse_dir_merge_no_prefixes_exclude_modifier() {
     let rules = parse_rules(":- .filt", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".filt");
+    assert_eq!(rules[0].pattern(), b".filt");
     assert_eq!(rules[0].no_prefixes(), (true, false));
 }
 
@@ -752,8 +752,8 @@ fn read_rules_recursive_depth_one_single_merge() {
 
     let rules = read_rules_recursive(&main_path, 1).unwrap();
     assert_eq!(rules.len(), 2);
-    assert_eq!(rules[0].pattern(), "*.txt");
-    assert_eq!(rules[1].pattern(), "*.tmp");
+    assert_eq!(rules[0].pattern(), b"*.txt");
+    assert_eq!(rules[1].pattern(), b"*.tmp");
 }
 
 #[test]
@@ -805,10 +805,10 @@ fn read_rules_recursive_exact_depth_succeeds() {
 
     let rules = read_rules_recursive(&main_path, 3).unwrap();
     assert_eq!(rules.len(), 4);
-    assert_eq!(rules[0].pattern(), "*.main");
-    assert_eq!(rules[1].pattern(), "*.level1");
-    assert_eq!(rules[2].pattern(), "*.level2");
-    assert_eq!(rules[3].pattern(), "*.level3");
+    assert_eq!(rules[0].pattern(), b"*.main");
+    assert_eq!(rules[1].pattern(), b"*.level1");
+    assert_eq!(rules[2].pattern(), b"*.level2");
+    assert_eq!(rules[3].pattern(), b"*.level3");
 
     let result = read_rules_recursive(&main_path, 2);
     assert!(result.is_err());
@@ -846,8 +846,8 @@ fn read_rules_recursive_multiple_merges_same_level() {
 
     let rules = read_rules_recursive(&main_path, 1).unwrap();
     assert_eq!(rules.len(), 2);
-    assert_eq!(rules[0].pattern(), "*.a");
-    assert_eq!(rules[1].pattern(), "*.b");
+    assert_eq!(rules[0].pattern(), b"*.a");
+    assert_eq!(rules[1].pattern(), b"*.b");
 }
 
 #[test]
@@ -886,7 +886,7 @@ fn read_rules_recursive_relative_path_merge() {
 
     let rules = read_rules_recursive(&main_path, 2).unwrap();
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].pattern(), "*.nested");
+    assert_eq!(rules[0].pattern(), b"*.nested");
 }
 
 #[test]
@@ -997,7 +997,7 @@ fn parse_colon_c_empty_pattern_defaults_to_cvsignore() {
     let rules = parse_rules(":C\n", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".cvsignore");
+    assert_eq!(rules[0].pattern(), b".cvsignore");
     assert!(rules[0].is_cvs_mode());
 }
 
@@ -1006,7 +1006,7 @@ fn parse_colon_c_with_explicit_pattern_preserves_cvs_mode() {
     let rules = parse_rules(":C my.ignore\n", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), "my.ignore");
+    assert_eq!(rules[0].pattern(), b"my.ignore");
     assert!(rules[0].is_cvs_mode());
 }
 
@@ -1015,7 +1015,7 @@ fn parse_dot_c_empty_pattern_defaults_to_cvsignore() {
     let rules = parse_rules(".C\n", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Merge);
-    assert_eq!(rules[0].pattern(), ".cvsignore");
+    assert_eq!(rules[0].pattern(), b".cvsignore");
     assert!(rules[0].is_cvs_mode());
 }
 
@@ -1026,7 +1026,7 @@ fn parse_dir_merge_w_modifier_sets_word_split_on_rule() {
     let rules = parse_rules(":w .filt\n", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::DirMerge);
-    assert_eq!(rules[0].pattern(), ".filt");
+    assert_eq!(rules[0].pattern(), b".filt");
     assert!(rules[0].is_word_split());
 }
 
@@ -1039,9 +1039,9 @@ fn parse_rules_word_split_splits_on_any_whitespace() {
     for rule in &rules {
         assert_eq!(rule.action(), FilterAction::Exclude);
     }
-    assert_eq!(rules[0].pattern(), "*.log");
-    assert_eq!(rules[1].pattern(), "*.tmp");
-    assert_eq!(rules[2].pattern(), "*.bak");
+    assert_eq!(rules[0].pattern(), b"*.log");
+    assert_eq!(rules[1].pattern(), b"*.tmp");
+    assert_eq!(rules[2].pattern(), b"*.bak");
 }
 
 // upstream: exclude.c:1211-1213 - a bare token with no valid prefix is an
@@ -1063,9 +1063,9 @@ fn parse_rules_no_prefixes_word_split_literal_tokens() {
         true,
     );
     assert_eq!(rules.len(), 3);
-    assert_eq!(rules[0].pattern(), "*.log");
-    assert_eq!(rules[1].pattern(), "*.tmp");
-    assert_eq!(rules[2].pattern(), "*.bak");
+    assert_eq!(rules[0].pattern(), b"*.log");
+    assert_eq!(rules[1].pattern(), b"*.tmp");
+    assert_eq!(rules[2].pattern(), b"*.bak");
     assert!(rules.iter().all(|r| r.action() == FilterAction::Exclude));
 }
 
@@ -1081,7 +1081,7 @@ fn parse_rules_no_prefixes_line_mode_keeps_whole_line() {
         false,
     );
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].pattern(), "*.log *.tmp *.bak");
+    assert_eq!(rules[0].pattern(), b"*.log *.tmp *.bak");
 }
 
 // upstream: exclude.c:1069-1078 rule_strcmp accepts `_` as a keyword separator
@@ -1095,7 +1095,7 @@ fn long_form_keyword_underscore_separator_matches_space_form() {
     assert_eq!(under.len(), 1);
     assert_eq!(under[0].action(), FilterAction::Exclude);
     assert_eq!(under[0].pattern(), space[0].pattern());
-    assert_eq!(under[0].pattern(), "*.bak");
+    assert_eq!(under[0].pattern(), b"*.bak");
 }
 
 // upstream: rule_strcmp uses isspace(), which accepts a tab as a separator, so
@@ -1105,7 +1105,7 @@ fn long_form_keyword_tab_separator() {
     let rules = parse_rules("include\t*.txt", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Include);
-    assert_eq!(rules[0].pattern(), "*.txt");
+    assert_eq!(rules[0].pattern(), b"*.txt");
 }
 
 // upstream: rule_strcmp accepts end-of-string (`!str[rule_len]`), so a bare
@@ -1117,7 +1117,7 @@ fn long_form_keyword_alone_is_empty_pattern() {
     assert_eq!(rules[0].action(), FilterAction::Exclude);
     assert!(rules[0].applies_to_sender());
     assert!(!rules[0].applies_to_receiver());
-    assert_eq!(rules[0].pattern(), "");
+    assert_eq!(rules[0].pattern(), b"");
 }
 
 // upstream: rule_strcmp returns `str + rule_len` for a comma, so the modifier
@@ -1129,7 +1129,7 @@ fn long_form_comma_modifier_matches_short_form() {
     let short = parse_rules(":n .filt", Path::new("test")).unwrap();
     assert_eq!(long.len(), 1);
     assert_eq!(long[0].action(), FilterAction::DirMerge);
-    assert_eq!(long[0].pattern(), ".filt");
+    assert_eq!(long[0].pattern(), b".filt");
     assert!(long[0].is_no_inherit());
     assert_eq!(long[0].pattern(), short[0].pattern());
     assert_eq!(long[0].is_no_inherit(), short[0].is_no_inherit());
@@ -1142,7 +1142,7 @@ fn long_form_comma_sender_side_exclude() {
     let rules = parse_rules("exclude,s foo", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Exclude);
-    assert_eq!(rules[0].pattern(), "foo");
+    assert_eq!(rules[0].pattern(), b"foo");
     assert!(rules[0].applies_to_sender());
     assert!(!rules[0].applies_to_receiver());
 }
@@ -1156,7 +1156,7 @@ fn short_form_prefix_comma_separator_matches_plain() {
     let plain = parse_rules("+p foo", Path::new("test")).unwrap();
     assert_eq!(comma.len(), 1);
     assert_eq!(comma[0].action(), FilterAction::Include);
-    assert_eq!(comma[0].pattern(), "foo");
+    assert_eq!(comma[0].pattern(), b"foo");
     assert!(comma[0].is_perishable());
     assert_eq!(comma[0].is_perishable(), plain[0].is_perishable());
 }

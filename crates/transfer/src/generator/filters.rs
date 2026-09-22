@@ -642,18 +642,18 @@ fn cvs_exclude_wire_rule() -> FilterRuleWireFormat {
     }
 }
 
-fn reconstruct_pattern(wire_rule: &FilterRuleWireFormat) -> String {
-    // The sender's local FilterChain compiles patterns via wildmatch (&str),
-    // so a non-UTF-8 wire pattern is decoded lossily here. The wire pattern
-    // itself remains byte-faithful; only this rule-compilation input is lossy.
-    let body = wire_rule.pattern.to_string_lossy();
-    let mut pattern = String::with_capacity(body.len() + 2);
-    if wire_rule.anchored && !body.starts_with('/') {
-        pattern.push('/');
+fn reconstruct_pattern(wire_rule: &FilterRuleWireFormat) -> Vec<u8> {
+    // The filters model stores patterns as raw bytes (upstream:
+    // exclude.c:add_rule keeps the `char *` verbatim), so the wire pattern's
+    // bytes reach the sender's local match set unaltered.
+    let body = filters::path_pattern_bytes(std::path::Path::new(&wire_rule.pattern));
+    let mut pattern = Vec::with_capacity(body.len() + 2);
+    if wire_rule.anchored && body.first() != Some(&b'/') {
+        pattern.push(b'/');
     }
-    pattern.push_str(&body);
-    if wire_rule.directory_only && !pattern.ends_with('/') {
-        pattern.push('/');
+    pattern.extend_from_slice(&body);
+    if wire_rule.directory_only && pattern.last() != Some(&b'/') {
+        pattern.push(b'/');
     }
     pattern
 }

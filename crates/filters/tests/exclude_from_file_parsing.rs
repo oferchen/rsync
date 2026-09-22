@@ -33,9 +33,9 @@ mod reading_from_file {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern(), "*.tmp");
-        assert_eq!(rules[1].pattern(), "*.bak");
-        assert_eq!(rules[2].pattern(), "*.log");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
+        assert_eq!(rules[1].pattern(), b"*.bak");
+        assert_eq!(rules[2].pattern(), b"*.log");
     }
 
     /// Test: File with mixed rule types (short form).
@@ -62,7 +62,7 @@ mod reading_from_file {
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 3);
         assert_eq!(rules[0].action(), FilterAction::Include);
-        assert_eq!(rules[0].pattern(), "*.txt");
+        assert_eq!(rules[0].pattern(), b"*.txt");
         assert_eq!(rules[1].action(), FilterAction::Exclude);
         assert_eq!(rules[2].action(), FilterAction::Protect);
     }
@@ -135,7 +135,7 @@ mod reading_from_file {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].pattern(), "*.tmp");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
     }
 
     /// Test: Empty file returns no rules.
@@ -166,8 +166,8 @@ mod comment_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 2);
-        assert_eq!(rules[0].pattern(), "*.tmp");
-        assert_eq!(rules[1].pattern(), "*.bak");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
+        assert_eq!(rules[1].pattern(), b"*.bak");
     }
 
     /// Test: Lines starting with ; are comments (semicolon comments).
@@ -183,8 +183,8 @@ mod comment_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 2);
-        assert_eq!(rules[0].pattern(), "*.tmp");
-        assert_eq!(rules[1].pattern(), "*.bak");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
+        assert_eq!(rules[1].pattern(), b"*.bak");
     }
 
     /// Test: Mixed hash and semicolon comments.
@@ -242,7 +242,7 @@ mod comment_handling {
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 1);
         // The comment is part of the pattern - rsync doesn't support inline comments
-        assert_eq!(rules[0].pattern(), "*.tmp # this is part of pattern");
+        assert_eq!(rules[0].pattern(), b"*.tmp # this is part of pattern");
     }
 
     /// Test: Comment at end of file without newline.
@@ -254,7 +254,7 @@ mod comment_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].pattern(), "*.tmp");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
     }
 
     /// Test: Comment character inside pattern (not at start).
@@ -266,8 +266,8 @@ mod comment_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 2);
-        assert_eq!(rules[0].pattern(), "file#1.txt");
-        assert_eq!(rules[1].pattern(), "file;2.txt");
+        assert_eq!(rules[0].pattern(), b"file#1.txt");
+        assert_eq!(rules[1].pattern(), b"file;2.txt");
     }
 }
 
@@ -283,9 +283,9 @@ mod blank_line_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern(), "*.tmp");
-        assert_eq!(rules[1].pattern(), "*.bak");
-        assert_eq!(rules[2].pattern(), "*.log");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
+        assert_eq!(rules[1].pattern(), b"*.bak");
+        assert_eq!(rules[2].pattern(), b"*.log");
     }
 
     /// Test: A whitespace-only line is not blank and is not skipped.
@@ -356,7 +356,7 @@ mod blank_line_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].pattern(), "*.tmp");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
     }
 }
 
@@ -380,10 +380,10 @@ mod multiple_exclude_from_files {
         all_rules.extend(rules2);
 
         assert_eq!(all_rules.len(), 4);
-        assert_eq!(all_rules[0].pattern(), "*.tmp");
-        assert_eq!(all_rules[1].pattern(), "*.bak");
-        assert_eq!(all_rules[2].pattern(), "*.log");
-        assert_eq!(all_rules[3].pattern(), "*.swp");
+        assert_eq!(all_rules[0].pattern(), b"*.tmp");
+        assert_eq!(all_rules[1].pattern(), b"*.bak");
+        assert_eq!(all_rules[2].pattern(), b"*.log");
+        assert_eq!(all_rules[3].pattern(), b"*.swp");
     }
 
     /// Test: Order of files matters (first-match-wins).
@@ -472,7 +472,7 @@ mod multiple_exclude_from_files {
         all_rules.extend(rules2);
 
         assert_eq!(all_rules.len(), 1);
-        assert_eq!(all_rules[0].pattern(), "*.tmp");
+        assert_eq!(all_rules[0].pattern(), b"*.tmp");
     }
 
     /// Test: Conflicting rules across files (include then exclude).
@@ -567,9 +567,9 @@ mod line_ending_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern(), "*.tmp");
-        assert_eq!(rules[1].pattern(), "*.bak");
-        assert_eq!(rules[2].pattern(), "*.log");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
+        assert_eq!(rules[1].pattern(), b"*.bak");
+        assert_eq!(rules[2].pattern(), b"*.log");
     }
 
     /// Test: Windows line endings (CRLF).
@@ -581,9 +581,9 @@ mod line_ending_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern(), "*.tmp");
-        assert_eq!(rules[1].pattern(), "*.bak");
-        assert_eq!(rules[2].pattern(), "*.log");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
+        assert_eq!(rules[1].pattern(), b"*.bak");
+        assert_eq!(rules[2].pattern(), b"*.log");
     }
 
     /// Test: Mixed line endings (LF and CRLF).
@@ -595,9 +595,9 @@ mod line_ending_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern(), "*.tmp");
-        assert_eq!(rules[1].pattern(), "*.bak");
-        assert_eq!(rules[2].pattern(), "*.log");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
+        assert_eq!(rules[1].pattern(), b"*.bak");
+        assert_eq!(rules[2].pattern(), b"*.log");
     }
 
     /// Test: Old Mac line endings (CR only) - three separate rules.
@@ -616,9 +616,9 @@ mod line_ending_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern(), "*.tmp");
-        assert_eq!(rules[1].pattern(), "*.bak");
-        assert_eq!(rules[2].pattern(), "*.log");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
+        assert_eq!(rules[1].pattern(), b"*.bak");
+        assert_eq!(rules[2].pattern(), b"*.log");
     }
 
     /// Test: No trailing newline.
@@ -630,8 +630,8 @@ mod line_ending_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 2);
-        assert_eq!(rules[0].pattern(), "*.tmp");
-        assert_eq!(rules[1].pattern(), "*.bak");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
+        assert_eq!(rules[1].pattern(), b"*.bak");
     }
 
     /// Test: CRLF with no trailing newline.
@@ -643,8 +643,8 @@ mod line_ending_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 2);
-        assert_eq!(rules[0].pattern(), "*.tmp");
-        assert_eq!(rules[1].pattern(), "*.bak");
+        assert_eq!(rules[0].pattern(), b"*.tmp");
+        assert_eq!(rules[1].pattern(), b"*.bak");
     }
 }
 
@@ -663,7 +663,7 @@ mod pattern_preservation {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].pattern(), "  spaced_file.txt");
+        assert_eq!(rules[0].pattern(), b"  spaced_file.txt");
     }
 
     /// Test: Trailing whitespace in the pattern is kept verbatim.
@@ -677,7 +677,7 @@ mod pattern_preservation {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].pattern(), "pattern_with_trailing   ");
+        assert_eq!(rules[0].pattern(), b"pattern_with_trailing   ");
     }
 
     /// Test: Pattern case is preserved.
@@ -688,9 +688,9 @@ mod pattern_preservation {
         fs::write(&path, "- README.TXT\n- Makefile\n- CamelCase\n").expect("write");
 
         let rules = read_rules(&path).expect("read rules");
-        assert_eq!(rules[0].pattern(), "README.TXT");
-        assert_eq!(rules[1].pattern(), "Makefile");
-        assert_eq!(rules[2].pattern(), "CamelCase");
+        assert_eq!(rules[0].pattern(), b"README.TXT");
+        assert_eq!(rules[1].pattern(), b"Makefile");
+        assert_eq!(rules[2].pattern(), b"CamelCase");
     }
 
     /// Test: Special glob characters are preserved.
@@ -701,9 +701,9 @@ mod pattern_preservation {
         fs::write(&path, "- *.[ch]\n- file[0-9]?.txt\n- **/*.log\n").expect("write");
 
         let rules = read_rules(&path).expect("read rules");
-        assert_eq!(rules[0].pattern(), "*.[ch]");
-        assert_eq!(rules[1].pattern(), "file[0-9]?.txt");
-        assert_eq!(rules[2].pattern(), "**/*.log");
+        assert_eq!(rules[0].pattern(), b"*.[ch]");
+        assert_eq!(rules[1].pattern(), b"file[0-9]?.txt");
+        assert_eq!(rules[2].pattern(), b"**/*.log");
     }
 
     /// Test: Escaped characters are preserved.
@@ -714,8 +714,8 @@ mod pattern_preservation {
         fs::write(&path, "- file\\*.txt\n- what\\?\n").expect("write");
 
         let rules = read_rules(&path).expect("read rules");
-        assert_eq!(rules[0].pattern(), "file\\*.txt");
-        assert_eq!(rules[1].pattern(), "what\\?");
+        assert_eq!(rules[0].pattern(), b"file\\*.txt");
+        assert_eq!(rules[1].pattern(), b"what\\?");
     }
 
     /// Test: Unicode patterns are preserved.
@@ -726,8 +726,8 @@ mod pattern_preservation {
         fs::write(&path, "- \u{4e2d}\u{6587}.txt\n- caf\u{e9}.doc\n").expect("write");
 
         let rules = read_rules(&path).expect("read rules");
-        assert_eq!(rules[0].pattern(), "\u{4e2d}\u{6587}.txt"); // Chinese characters
-        assert_eq!(rules[1].pattern(), "caf\u{e9}.doc"); // cafe with accent
+        assert_eq!(rules[0].pattern(), "\u{4e2d}\u{6587}.txt".as_bytes()); // Chinese characters
+        assert_eq!(rules[1].pattern(), "caf\u{e9}.doc".as_bytes()); // cafe with accent
     }
 }
 
@@ -751,9 +751,9 @@ mod merge_file_functionality {
 
         let rules = read_rules_recursive(&main_path, 10).expect("read recursive");
         assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern(), "*.main");
-        assert_eq!(rules[1].pattern(), "*.nested");
-        assert_eq!(rules[2].pattern(), "*.after");
+        assert_eq!(rules[0].pattern(), b"*.main");
+        assert_eq!(rules[1].pattern(), b"*.nested");
+        assert_eq!(rules[2].pattern(), b"*.after");
     }
 
     /// Test: Recursive merge depth limit.
@@ -785,7 +785,7 @@ mod merge_file_functionality {
 
         let rules = read_rules_recursive(&main_path, 10).expect("read recursive");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].pattern(), "*.nested");
+        assert_eq!(rules[0].pattern(), b"*.nested");
     }
 
     /// Test: Dir-merge rules are preserved (not expanded).
@@ -799,7 +799,7 @@ mod merge_file_functionality {
         let rules = read_rules_recursive(&path, 10).expect("read recursive");
         assert_eq!(rules.len(), 2);
         assert_eq!(rules[0].action(), FilterAction::DirMerge);
-        assert_eq!(rules[0].pattern(), ".rsync-filter");
+        assert_eq!(rules[0].pattern(), b".rsync-filter");
         assert_eq!(rules[1].action(), FilterAction::Exclude);
     }
 }
@@ -822,8 +822,8 @@ mod large_file_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 1000);
-        assert_eq!(rules[0].pattern(), "pattern_0.txt");
-        assert_eq!(rules[999].pattern(), "pattern_999.txt");
+        assert_eq!(rules[0].pattern(), b"pattern_0.txt");
+        assert_eq!(rules[999].pattern(), b"pattern_999.txt");
     }
 
     /// Test: Long pattern (PATH_MAX-ish length).
@@ -837,7 +837,7 @@ mod large_file_handling {
 
         let rules = read_rules(&path).expect("read rules");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].pattern(), long_name);
+        assert_eq!(rules[0].pattern(), long_name.as_bytes());
     }
 
     /// Test: Many comments interspersed with patterns.

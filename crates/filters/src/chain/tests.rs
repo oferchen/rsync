@@ -50,9 +50,9 @@ fn dir_merge_config_anchor_root_does_not_rewrite_the_pattern() {
     let config = DirMergeConfig::new(".rsync-filter").with_anchor_root(true);
     assert!(config.is_anchor_root());
     let rule = config.apply_modifiers(FilterRule::exclude("test"));
-    assert_eq!(rule.pattern(), "test");
+    assert_eq!(rule.pattern(), b"test");
     let anchored = config.apply_modifiers(FilterRule::exclude("/test"));
-    assert_eq!(anchored.pattern(), "/test");
+    assert_eq!(anchored.pattern(), b"/test");
 }
 
 #[test]

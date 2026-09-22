@@ -314,7 +314,7 @@ impl DirMergeEntries {
         // echoed merged-file contents verbatim.
         filters::trace_add_rule(
             rule.action(),
-            rule.pattern(),
+            &String::from_utf8_lossy(rule.pattern()),
             &filters::RuleSource::FileReadEarlier,
         );
         // The same provenance is RETAINED ON THE RULE, not just consumed here:

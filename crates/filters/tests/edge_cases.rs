@@ -282,7 +282,7 @@ fn very_long_path() {
 fn very_long_pattern() {
     let long_name = "x".repeat(200);
     let pattern = format!("{long_name}*.txt");
-    let set = FilterSet::from_rules([FilterRule::exclude(&pattern)]).unwrap();
+    let set = FilterSet::from_rules([FilterRule::exclude(pattern.as_str())]).unwrap();
 
     let matching = format!("{long_name}foo.txt");
     assert!(!set.allows(Path::new(&matching), false));
@@ -475,7 +475,7 @@ fn rule_with_all_modifiers() {
         .with_xattr_only(false);
 
     assert_eq!(rule.action(), FilterAction::Exclude);
-    assert_eq!(rule.pattern(), "*.log");
+    assert_eq!(rule.pattern(), b"*.log");
     assert!(rule.is_perishable());
     assert!(rule.applies_to_sender());
     assert!(!rule.applies_to_receiver());
@@ -487,11 +487,11 @@ fn rule_with_all_modifiers() {
 fn anchor_to_root() {
     let rule = FilterRule::exclude("path").anchor_to_root();
 
-    assert_eq!(rule.pattern(), "/path");
+    assert_eq!(rule.pattern(), b"/path");
 
     // Already anchored pattern
     let already_anchored = FilterRule::exclude("/path").anchor_to_root();
-    assert_eq!(already_anchored.pattern(), "/path");
+    assert_eq!(already_anchored.pattern(), b"/path");
 }
 
 /// Verifies large number of rules.
