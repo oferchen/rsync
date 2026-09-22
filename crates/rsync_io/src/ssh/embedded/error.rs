@@ -35,6 +35,18 @@ pub enum SshError {
         host: String,
     },
 
+    /// The server's host key is listed in the `RevokedHostKeys` file.
+    ///
+    /// upstream: openssh/sshconnect.c:1050-1064 - a key found in the revoked
+    /// list is refused before any `known_hosts` check, under every
+    /// `StrictHostKeyChecking` mode. A revoked key is never learned or
+    /// accepted, so the connection is refused rather than downgraded.
+    #[error("host key for {host} is revoked")]
+    HostKeyRevoked {
+        /// Hostname or IP that presented the revoked key.
+        host: String,
+    },
+
     /// Server authenticated with an OpenSSH host certificate.
     ///
     /// A certificate replaces the plain host-key check rather than adding to

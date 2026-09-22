@@ -5,6 +5,7 @@
 //! synchronous `Read`/`Write` handles suitable for the rsync protocol layer.
 
 use std::borrow::Cow;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
@@ -13,7 +14,7 @@ use super::auth::authenticate;
 use super::cipher;
 use super::config::SshConfig;
 use super::error::SshError;
-use super::handler::SshClientHandler;
+use super::handler::{HostKeyOptions, SshClientHandler};
 use super::proxy::{ProxyDial, expand_proxy_tokens, spawn_proxy_command};
 use super::resolve::resolve_host;
 
@@ -388,6 +389,58 @@ fn resolve_cipher_names(names: &[String]) -> Vec<russh::cipher::Name> {
     resolved
 }
 
+/// Resolves the host-key verification inputs from an [`SshConfig`].
+///
+/// The check order is the `UserKnownHostsFile` list followed by the
+/// `GlobalKnownHostsFile` list; when no `UserKnownHostsFile` was configured
+/// the single default file stands in for the user list. New keys are learned
+/// into the first user file (or the default), unless `UserKnownHostsFile none`
+/// disabled the user list, which disables learning too. `resolved_ip` is the
+/// dialled server address, consulted as a second identity only when
+/// `CheckHostIP` is enabled.
+fn build_host_key_options(cfg: &SshConfig, resolved_ip: Option<String>) -> HostKeyOptions {
+    // `HostKeyAlias` replaces the hostname for lookup and storage.
+    let lookup_name = cfg
+        .host_key_alias
+        .clone()
+        .unwrap_or_else(|| cfg.host.clone());
+
+    let global = cfg
+        .global_known_hosts_files
+        .iter()
+        .cloned()
+        .map(Some)
+        .collect::<Vec<Option<PathBuf>>>();
+
+    let (check_sources, learn_target) = match &cfg.user_known_hosts_files {
+        Some(user) => {
+            let mut sources: Vec<Option<PathBuf>> = user.iter().cloned().map(Some).collect();
+            sources.extend(global);
+            // Learn into the first user file, or disable learning when the
+            // user list is empty (an explicit `none`).
+            let learn = user.first().map(|first| Some(first.clone()));
+            (sources, learn)
+        }
+        None => {
+            let mut sources = vec![cfg.known_hosts_file.clone()];
+            sources.extend(global);
+            (sources, Some(cfg.known_hosts_file.clone()))
+        }
+    };
+
+    HostKeyOptions {
+        strict_host_key_checking: cfg.strict_host_key_checking,
+        check_sources,
+        learn_target,
+        hash_known_hosts: cfg.hash_known_hosts,
+        lookup_name,
+        host: cfg.host.clone(),
+        port: cfg.port,
+        server_ip: if cfg.check_host_ip { resolved_ip } else { None },
+        revoked_host_keys: cfg.revoked_host_keys.clone(),
+    }
+}
+
 /// Performs SSH connection setup: DNS resolution, connect, auth, channel
 /// open, exec, and optional initial stdin data delivery.
 async fn ssh_setup(
@@ -404,17 +457,13 @@ async fn ssh_setup(
 > {
     let client_config = Arc::new(build_client_config(ssh_config));
 
-    let handler = SshClientHandler::new(
-        ssh_config.host.clone(),
-        ssh_config.port,
-        ssh_config.strict_host_key_checking,
-        ssh_config.known_hosts_file.clone(),
-    );
-
     // Direct dial versus a `ProxyCommand`/`ProxyJump` stream is the single
     // point the connect path branches on; everything after the handle is
     // identical. upstream makes the same split at openssh/sshconnect.c:1300
-    // `ssh_connect` (direct) versus :222 `ssh_proxy_connect`.
+    // `ssh_connect` (direct) versus :222 `ssh_proxy_connect`. The handler is
+    // built per branch because `CheckHostIP` needs the resolved server IP,
+    // which only the direct dial has - upstream also skips the IP check when
+    // connecting through a proxy (openssh/sshconnect.c:1447-1452).
     let mut handle = match ProxyDial::from_config(ssh_config)? {
         ProxyDial::Direct => {
             let addrs =
@@ -426,6 +475,10 @@ async fn ssh_setup(
                     host: ssh_config.host.clone(),
                     preference: "any".to_owned(),
                 })?;
+            let handler = SshClientHandler::with_options(build_host_key_options(
+                ssh_config,
+                Some(addr.ip().to_string()),
+            ));
             tokio::time::timeout(ssh_config.connect_timeout, async {
                 russh::client::connect(client_config, addr, handler).await
             })
@@ -435,6 +488,7 @@ async fn ssh_setup(
             })??
         }
         ProxyDial::Command(template) => {
+            let handler = SshClientHandler::with_options(build_host_key_options(ssh_config, None));
             // Expand `%h`/`%p`/`%r` against the final target, then run the
             // command and speak SSH over its stdio (russh `connect_stream`),
             // mirroring upstream's `ssh_proxy_connect`.

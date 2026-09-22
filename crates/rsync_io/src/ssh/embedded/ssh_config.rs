@@ -133,6 +133,26 @@ pub(super) struct ResolvedHost {
     /// `ProxyUseFdpass`. `None` means no active line claimed the slot
     /// (openssh/readconf.c:1471, `parse_flag`).
     pub proxy_use_fdpass: Option<bool>,
+    /// `UserKnownHostsFile` list. `None` means no active line claimed it;
+    /// `Some(empty)` is an explicit `none` (the user list is disabled);
+    /// `Some(list)` is the tilde-expanded file paths from the first active
+    /// line. Only that first line wins (openssh/readconf.c:1603-1646).
+    pub user_known_hosts_files: Option<Vec<PathBuf>>,
+    /// `GlobalKnownHostsFile` list, with the same claim/`none` semantics as
+    /// [`Self::user_known_hosts_files`].
+    pub global_known_hosts_files: Option<Vec<PathBuf>>,
+    /// `HashKnownHosts`. `None` means no active line claimed the slot
+    /// (openssh/readconf.c:1873, `parse_flag`).
+    pub hash_known_hosts: Option<bool>,
+    /// `HostKeyAlias`, taken verbatim. `None` means no active line claimed
+    /// the slot (openssh/readconf.c:1497, `parse_string`).
+    pub host_key_alias: Option<String>,
+    /// `CheckHostIP`. `None` means no active line claimed the slot
+    /// (openssh/readconf.c:1466, `parse_flag`).
+    pub check_host_ip: Option<bool>,
+    /// `RevokedHostKeys`, tilde-expanded. `None` means no active line
+    /// claimed the slot (openssh/readconf.c:2444, `parse_string`).
+    pub revoked_host_keys: Option<PathBuf>,
 }
 
 impl ResolvedHost {
@@ -701,6 +721,55 @@ fn scan_config(
             }
             continue;
         }
+        // `HashKnownHosts` and `CheckHostIP` are plain `parse_flag`
+        // multistates, the same shape as `ProxyUseFdpass`: an out-of-set
+        // token is `unsupported option "%s".` (openssh/readconf.c:1269) and
+        // an absent value is `missing argument.` (openssh/readconf.c:1106),
+        // both refused whether or not the block is active.
+        if opcode == Opcode::HashKnownHosts || opcode == Opcode::CheckHostIP {
+            let Some(tok) = tokens.first() else {
+                return Err(refuse(path, linenum, "missing argument."));
+            };
+            let Some(flag) = parse_flag_value(tok) else {
+                return Err(refuse(
+                    path,
+                    linenum,
+                    format!("unsupported option \"{tok}\"."),
+                ));
+            };
+            if in_matching_block {
+                let slot = if opcode == Opcode::HashKnownHosts {
+                    &mut resolved.hash_known_hosts
+                } else {
+                    &mut resolved.check_host_ip
+                };
+                if slot.is_none() {
+                    *slot = Some(flag);
+                }
+            }
+            continue;
+        }
+        // `UserKnownHostsFile`/`GlobalKnownHostsFile` walk the whole token
+        // list through upstream's `parse_char_array` (openssh/readconf.c:
+        // 1600-1652). The empty-token and `none`-must-appear-alone refusals
+        // fire before the `*activep` gate, so a bad line in an inactive
+        // block still aborts the load; the append is gated on the block
+        // being active AND the list still unclaimed (`value = *uintptr == 0`
+        // captured once per line, so only the FIRST active line wins).
+        if opcode == Opcode::UserKnownHostsFile || opcode == Opcode::GlobalKnownHostsFile {
+            let files = parse_known_hosts_files(&tokens, &key.to_ascii_lowercase(), path, linenum)?;
+            if in_matching_block {
+                let slot = if opcode == Opcode::UserKnownHostsFile {
+                    &mut resolved.user_known_hosts_files
+                } else {
+                    &mut resolved.global_known_hosts_files
+                };
+                if slot.is_none() {
+                    *slot = Some(files);
+                }
+            }
+            continue;
+        }
 
         // Every directive below is single-valued, so it consumes exactly
         // one token - upstream's `arg = argv_next(&ac, &av)`. A `NULL`
@@ -726,7 +795,9 @@ fn scan_config(
             | Opcode::ConnectTimeout
             | Opcode::AddressFamily
             | Opcode::ServerAliveInterval
-            | Opcode::ServerAliveCountMax => {
+            | Opcode::ServerAliveCountMax
+            | Opcode::HostKeyAlias
+            | Opcode::RevokedHostKeys => {
                 let Some(arg) = tokens.first() else {
                     let Some(reason) = opcode.missing_argument() else {
                         continue;
@@ -826,6 +897,16 @@ fn scan_config(
                 if let Some(family) = address_family {
                     set_if_unset(&mut resolved.address_family, family);
                 }
+            }
+            // `HostKeyAlias` is a hostname, not a path: upstream stores it
+            // verbatim (openssh/readconf.c:1497 `parse_string`) and never
+            // tilde- or percent-expands it.
+            Opcode::HostKeyAlias => set_if_unset(&mut resolved.host_key_alias, arg.to_owned()),
+            // `RevokedHostKeys` is a file path; upstream tilde/percent-expands
+            // it before use (openssh/ssh.c:601 `tilde_expand_filename`). The
+            // reader mirrors `IdentityFile` and does the tilde half here.
+            Opcode::RevokedHostKeys => {
+                set_if_unset(&mut resolved.revoked_host_keys, expand_tilde(arg));
             }
             _ => unreachable!("the match above already narrowed the opcode set"),
         }
@@ -1485,6 +1566,53 @@ fn set_if_unset<T>(slot: &mut Option<T>, value: T) {
     if slot.is_none() {
         *slot = Some(value);
     }
+}
+
+/// Validates and tilde-expands a `UserKnownHostsFile`/`GlobalKnownHostsFile`
+/// token list, mirroring upstream's `parse_char_array`
+/// (openssh/readconf.c:1600-1652).
+///
+/// Every token is checked whether or not the block is active, because
+/// upstream runs the validation loop before the `*activep` gate: an empty
+/// token is `keyword <kw> empty argument` (openssh/readconf.c:1626), and the
+/// literal `none` is legal only alone in first position, otherwise
+/// `keyword <kw> "none" argument must appear alone.`
+/// (openssh/readconf.c:1631-1636).
+///
+/// A lone `none` disables the list; upstream stores the literal string and
+/// its loader skips a file named `none`, which oc models as an empty list.
+/// `keyword` is the lowercased spelling upstream interpolates
+/// (openssh/readconf.c:1184).
+fn parse_known_hosts_files(
+    tokens: &[String],
+    keyword: &str,
+    path: &str,
+    linenum: usize,
+) -> Result<Vec<PathBuf>, SshError> {
+    let mut files = Vec::new();
+    for (i, tok) in tokens.iter().enumerate() {
+        if tok.is_empty() {
+            return Err(refuse(
+                path,
+                linenum,
+                format!("keyword {keyword} empty argument"),
+            ));
+        }
+        if tok.eq_ignore_ascii_case("none") {
+            if i > 0 || tokens.len() > 1 {
+                return Err(refuse(
+                    path,
+                    linenum,
+                    format!("keyword {keyword} \"none\" argument must appear alone."),
+                ));
+            }
+            // A lone `none`: the list is explicitly disabled, so it stays
+            // empty rather than carrying a `none` sentinel path.
+            continue;
+        }
+        files.push(expand_tilde(tok));
+    }
+    Ok(files)
 }
 
 #[cfg(test)]
@@ -2975,5 +3103,170 @@ mod tests {
                 .as_deref(),
             Some("afterwards")
         );
+    }
+
+    // --- Host-key verification family (task 237m) ---
+
+    #[test]
+    fn user_known_hosts_file_accumulates_every_token_on_the_line() {
+        // upstream `parse_char_array` appends every token on the one active
+        // line (openssh/readconf.c:1646), so the pair both land, in order.
+        let resolved = resolve(
+            "Host t\n  UserKnownHostsFile /a/known_hosts /b/known_hosts2\n",
+            "t",
+        );
+        assert_eq!(
+            resolved.user_known_hosts_files,
+            Some(vec![
+                PathBuf::from("/a/known_hosts"),
+                PathBuf::from("/b/known_hosts2"),
+            ])
+        );
+    }
+
+    #[test]
+    fn user_known_hosts_file_first_active_line_wins() {
+        // `value = *uintptr == 0` is captured per line, so once the first
+        // active line has claimed the list a later line adds nothing
+        // (openssh/readconf.c:1603, :1646).
+        let resolved = resolve(
+            "Host t\n  UserKnownHostsFile /first/kh\n  UserKnownHostsFile /second/kh\n",
+            "t",
+        );
+        assert_eq!(
+            resolved.user_known_hosts_files,
+            Some(vec![PathBuf::from("/first/kh")])
+        );
+    }
+
+    #[test]
+    fn user_known_hosts_file_none_disables_the_list() {
+        // A lone `none` claims the slot as an empty (disabled) list. Some
+        // vs None is the load-bearing distinction: None would fall back to
+        // the default file, Some(empty) is an explicit opt-out.
+        let resolved = resolve("Host t\n  UserKnownHostsFile none\n", "t");
+        assert_eq!(resolved.user_known_hosts_files, Some(Vec::new()));
+    }
+
+    #[test]
+    fn user_known_hosts_file_none_must_appear_alone() {
+        // upstream refuses `none` beside another token
+        // (openssh/readconf.c:1631-1636), even from an inactive block.
+        let msg = refusal("Host t\n  UserKnownHostsFile none /other\n", "t");
+        assert!(
+            msg.contains("keyword userknownhostsfile \"none\" argument must appear alone."),
+            "unexpected: {msg}"
+        );
+    }
+
+    #[test]
+    fn user_known_hosts_file_empty_token_is_refused() {
+        // An empty quoted token is `keyword <kw> empty argument`
+        // (openssh/readconf.c:1626).
+        let msg = refusal("Host t\n  UserKnownHostsFile \"\"\n", "t");
+        assert!(
+            msg.contains("keyword userknownhostsfile empty argument"),
+            "unexpected: {msg}"
+        );
+    }
+
+    #[test]
+    fn global_known_hosts_file_parses_its_own_slot() {
+        let resolved = resolve(
+            "Host t\n  GlobalKnownHostsFile /etc/ssh/ssh_known_hosts\n",
+            "t",
+        );
+        assert_eq!(
+            resolved.global_known_hosts_files,
+            Some(vec![PathBuf::from("/etc/ssh/ssh_known_hosts")])
+        );
+        // Non-vacuity: the user slot stays unclaimed - the two keywords do
+        // not share a slot.
+        assert!(resolved.user_known_hosts_files.is_none());
+    }
+
+    #[test]
+    fn hash_known_hosts_parses_yes_and_no_first_obtained() {
+        assert_eq!(
+            resolve("Host t\n  HashKnownHosts yes\n", "t").hash_known_hosts,
+            Some(true)
+        );
+        assert_eq!(
+            resolve("Host t\n  HashKnownHosts no\n", "t").hash_known_hosts,
+            Some(false)
+        );
+        // First-obtained: the earlier active value wins.
+        assert_eq!(
+            resolve("Host t\n  HashKnownHosts yes\n  HashKnownHosts no\n", "t").hash_known_hosts,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn hash_known_hosts_rejects_an_out_of_set_value() {
+        let msg = refusal("Host t\n  HashKnownHosts maybe\n", "t");
+        assert!(msg.contains("unsupported option \"maybe\"."), "got: {msg}");
+    }
+
+    #[test]
+    fn check_host_ip_parses_and_rejects_bad_values() {
+        assert_eq!(
+            resolve("Host t\n  CheckHostIP yes\n", "t").check_host_ip,
+            Some(true)
+        );
+        let msg = refusal("Host t\n  CheckHostIP nope\n", "t");
+        assert!(msg.contains("unsupported option \"nope\"."), "got: {msg}");
+    }
+
+    #[test]
+    fn host_key_alias_is_stored_verbatim() {
+        let resolved = resolve("Host t\n  HostKeyAlias bastion.internal\n", "t");
+        assert_eq!(resolved.host_key_alias.as_deref(), Some("bastion.internal"));
+        // A keyword-only line has no value and is dropped before dispatch,
+        // so it never claims the slot.
+        let bare = resolve("Host t\n  HostKeyAlias real\n  HostKeyAlias other\n", "t");
+        assert_eq!(bare.host_key_alias.as_deref(), Some("real"));
+    }
+
+    #[test]
+    fn host_key_alias_missing_value_is_dropped_not_refused() {
+        // `split_directive` returns None for a keyword-only line, so it never
+        // reaches the single-token missing-argument refusal.
+        let resolved = resolve("Host t\n  HostKeyAlias\n", "t");
+        assert!(resolved.host_key_alias.is_none());
+    }
+
+    #[test]
+    fn revoked_host_keys_stores_the_path() {
+        let resolved = resolve("Host t\n  RevokedHostKeys /etc/ssh/revoked\n", "t");
+        assert_eq!(
+            resolved.revoked_host_keys.as_deref(),
+            Some(Path::new("/etc/ssh/revoked"))
+        );
+    }
+
+    #[test]
+    fn verification_family_defaults_to_unclaimed() {
+        // Non-vacuity for every cell above: with no directive present each
+        // slot stays at its unset state, so a resolved value is a real read
+        // of the file rather than a default masquerading as one.
+        let resolved = resolve("Host t\n  User someone\n", "t");
+        assert!(resolved.user_known_hosts_files.is_none());
+        assert!(resolved.global_known_hosts_files.is_none());
+        assert!(resolved.hash_known_hosts.is_none());
+        assert!(resolved.host_key_alias.is_none());
+        assert!(resolved.check_host_ip.is_none());
+        assert!(resolved.revoked_host_keys.is_none());
+    }
+
+    #[test]
+    fn verification_directives_gated_by_host_block() {
+        // A directive under a non-matching `Host` block claims nothing, but
+        // a bad flag value on such a line is still refused (the validation
+        // runs before the `*activep` gate, openssh/readconf.c:1229).
+        let resolved = resolve("Host other\n  HashKnownHosts yes\n", "t");
+        assert!(resolved.hash_known_hosts.is_none());
+        let msg = refusal("Host other\n  CheckHostIP bogus\n", "t");
+        assert!(msg.contains("unsupported option \"bogus\"."), "got: {msg}");
     }
 }
