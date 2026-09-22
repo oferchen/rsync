@@ -144,11 +144,10 @@ impl DrainInner {
     /// from both the external `DrainHandle` and `DrainingReader::drop`.
     fn stop_and_join(&self) {
         self.stop.store(true, Ordering::Release);
-        if let Ok(mut guard) = self.join.lock() {
-            if let Some(handle) = guard.take() {
+        if let Ok(mut guard) = self.join.lock()
+            && let Some(handle) = guard.take() {
                 let _ = handle.join();
             }
-        }
     }
 }
 

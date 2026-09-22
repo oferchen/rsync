@@ -439,18 +439,18 @@ fn ensure_dest_root(
 
 /// Create the parent directory of `path` if it does not already exist.
 fn ensure_parent_dir(path: &Path) -> BatchResult<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).map_err(|e| {
-                BatchError::Io(std::io::Error::new(
-                    e.kind(),
-                    format!(
-                        "failed to create parent directory '{}': {e}",
-                        parent.display()
-                    ),
-                ))
-            })?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent).map_err(|e| {
+            BatchError::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "failed to create parent directory '{}': {e}",
+                    parent.display()
+                ),
+            ))
+        })?;
     }
     Ok(())
 }
@@ -475,15 +475,14 @@ fn apply_all_metadata(
 
         match entry.file_type() {
             protocol::flist::FileType::Directory | protocol::flist::FileType::Regular => {
-                if dest_path.exists() {
-                    if let Err(e) = apply_entry_metadata(&dest_path, entry, flags) {
-                        if verbosity > 0 {
-                            println!(
-                                "  warning: could not apply metadata to '{}': {e}",
-                                dest_path.display()
-                            );
-                        }
-                    }
+                if dest_path.exists()
+                    && let Err(e) = apply_entry_metadata(&dest_path, entry, flags)
+                    && verbosity > 0
+                {
+                    println!(
+                        "  warning: could not apply metadata to '{}': {e}",
+                        dest_path.display()
+                    );
                 }
             }
             protocol::flist::FileType::Symlink => {

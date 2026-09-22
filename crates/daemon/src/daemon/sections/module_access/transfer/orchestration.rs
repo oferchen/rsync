@@ -187,8 +187,8 @@ fn process_approved_module(
     // Run early exec after authentication so the authenticated username
     // is available in the RSYNC_USER_NAME environment variable.
     // upstream: clientserver.c - early_exec() runs after auth completes.
-    if xfer_exec_enabled() {
-        if let Some(command) = &module.early_exec {
+    if xfer_exec_enabled()
+        && let Some(command) = &module.early_exec {
             let early_path_ctx = PathExpansionContext {
                 module_path: &module.path.display().to_string(),
                 module_name: &module.name,
@@ -284,7 +284,6 @@ fn process_approved_module(
                 }
             }
         }
-    }
 
     // upstream: clientserver.c:930-951 - the five daemon filter parameters
     // (`filter`, `include from`, `include`, `exclude from`, `exclude`) are
@@ -1034,16 +1033,13 @@ fn process_approved_module(
         // upstream: cleanup.c::handle_cleanup() -> close_all() emits the
         // kernel FIN as the process exits; the threaded daemon collapses
         // that pattern into the explicit shutdown here.
-        if let Some(tcp) = stream.tcp_stream() {
-            if let Err(err) = core::server::writer::shutdown_send_side(tcp, Duration::from_secs(5))
-            {
-                if let Some(log) = ctx.log_sink {
+        if let Some(tcp) = stream.tcp_stream()
+            && let Err(err) = core::server::writer::shutdown_send_side(tcp, Duration::from_secs(5))
+                && let Some(log) = ctx.log_sink {
                     let text = format!("daemon-sender drain-barrier shutdown failed: {err}");
                     let message = rsync_warning!(text).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
-            }
-        }
 
         // Post-shutdown drain: now that our FIN is on the wire, wait for the
         // peer to observe it and close, consuming any last bytes so the final

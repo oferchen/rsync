@@ -330,10 +330,10 @@ impl ReceiverContext {
         // already shut down. Early close during goodbye-shutdown is rare and
         // the transfer is over, so any other error is treated as a real
         // failure rather than swallowed.
-        if let Err(e) = writer.flush() {
-            if !crate::is_early_close_error(&e) {
-                return Err(e);
-            }
+        if let Err(e) = writer.flush()
+            && !crate::is_early_close_error(&e)
+        {
+            return Err(e);
         }
 
         // upstream: receiver.c:1114-1115 DEBUG_GTE(RECV, 1)

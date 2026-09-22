@@ -49,10 +49,11 @@ impl CompressionNegotiator for DefaultCompressionNegotiator {
             // Server: iterate client's (remote) list, first match in our list wins.
             // upstream: compat.c:353 `if (best == 1 || am_server) break;`
             for remote_algo in remote_list {
-                if let Some(kind) = CompressionAlgorithmKind::from_name(remote_algo) {
-                    if kind.is_available() && supported.contains(remote_algo) {
-                        return kind.name();
-                    }
+                if let Some(kind) = CompressionAlgorithmKind::from_name(remote_algo)
+                    && kind.is_available()
+                    && supported.contains(remote_algo)
+                {
+                    return kind.name();
                 }
             }
         } else {

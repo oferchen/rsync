@@ -134,10 +134,10 @@ fn create_test_files(files: &[(&str, &[u8])]) -> TempDir {
     let base_path = temp_dir.path();
     for (name, content) in files {
         let file_path = base_path.join(name);
-        if let Some(parent) = file_path.parent() {
-            if parent != base_path {
-                std::fs::create_dir_all(parent).unwrap();
-            }
+        if let Some(parent) = file_path.parent()
+            && parent != base_path
+        {
+            std::fs::create_dir_all(parent).unwrap();
         }
         std::fs::write(file_path, content).unwrap();
     }
@@ -154,10 +154,10 @@ fn create_test_structure(entries: &[&str]) -> TempDir {
             std::fs::create_dir_all(base_path.join(entry.trim_end_matches('/'))).unwrap();
         } else {
             let file_path = base_path.join(entry);
-            if let Some(parent) = file_path.parent() {
-                if parent != base_path {
-                    std::fs::create_dir_all(parent).unwrap();
-                }
+            if let Some(parent) = file_path.parent()
+                && parent != base_path
+            {
+                std::fs::create_dir_all(parent).unwrap();
             }
             std::fs::write(file_path, b"data").unwrap();
         }
@@ -3859,7 +3859,7 @@ mod files_from {
         config.args = vec![OsString::from(&src_dir)];
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
-        ctx.build_file_list(&[src_dir.clone()]).unwrap();
+        ctx.build_file_list(std::slice::from_ref(&src_dir)).unwrap();
         let names: Vec<String> = ctx
             .file_list()
             .iter()

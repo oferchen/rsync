@@ -351,10 +351,10 @@ fn write_file(path: &Path, content: &[u8]) -> io::Result<()> {
 /// Strip a `[pid NNN]` prefix from a strace line, returning the rest.
 fn strip_pid_prefix(line: &str) -> &str {
     let trimmed = line.trim_start();
-    if let Some(rest) = trimmed.strip_prefix("[pid ") {
-        if let Some(end) = rest.find(']') {
-            return rest[end + 1..].trim_start();
-        }
+    if let Some(rest) = trimmed.strip_prefix("[pid ")
+        && let Some(end) = rest.find(']')
+    {
+        return rest[end + 1..].trim_start();
     }
     trimmed
 }

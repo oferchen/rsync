@@ -1141,15 +1141,15 @@ pub(crate) fn remove_source_entry_if_requested(
     // inode just written to the destination (local_server num_dev_ino_buf).
     #[cfg(unix)]
     {
-        if let Ok(destination_meta) = fs::symlink_metadata(destination) {
-            if is_destination_inode(&current, &destination_meta) {
-                eprintln!(
-                    "ERROR: Skipping sender remove of destination file: {}",
-                    source.display()
-                );
-                context.record_sender_remove_error();
-                return Ok(());
-            }
+        if let Ok(destination_meta) = fs::symlink_metadata(destination)
+            && is_destination_inode(&current, &destination_meta)
+        {
+            eprintln!(
+                "ERROR: Skipping sender remove of destination file: {}",
+                source.display()
+            );
+            context.record_sender_remove_error();
+            return Ok(());
         }
     }
     #[cfg(not(unix))]

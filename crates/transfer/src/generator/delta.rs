@@ -236,10 +236,8 @@ pub(super) fn poison_file_checksum(checksum_buf: &mut [u8], checksum_len: usize)
     let sum = &mut checksum_buf[..checksum_len];
     let was_all_zero = sum.iter().all(|&b| b == 0);
     sum.fill(0);
-    if was_all_zero {
-        if let Some(last) = sum.last_mut() {
-            *last = last.wrapping_add(1);
-        }
+    if was_all_zero && let Some(last) = sum.last_mut() {
+        *last = last.wrapping_add(1);
     }
 }
 

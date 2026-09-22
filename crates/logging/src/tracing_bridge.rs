@@ -191,13 +191,13 @@ where
             return;
         }
 
-        if let Some(info_flag) = Self::target_to_info_flag(target) {
-            if info_gte(info_flag, verbosity_level) {
-                let mut visitor = MessageVisitor::default();
-                event.record(&mut visitor);
-                if let Some(message) = visitor.message {
-                    emit_info(info_flag, verbosity_level, message);
-                }
+        if let Some(info_flag) = Self::target_to_info_flag(target)
+            && info_gte(info_flag, verbosity_level)
+        {
+            let mut visitor = MessageVisitor::default();
+            event.record(&mut visitor);
+            if let Some(message) = visitor.message {
+                emit_info(info_flag, verbosity_level, message);
             }
         }
     }

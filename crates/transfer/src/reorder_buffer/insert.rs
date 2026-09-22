@@ -60,11 +60,11 @@ impl<T> BoundedReorderBuffer<T> {
         let drained = self.drain_consecutive();
 
         // If the drain advanced next_expected, the stall (if any) has ended.
-        if self.next_expected > prev_expected {
-            if let Some(start) = self.stall_start.take() {
-                let elapsed = (self.clock)().duration_since(start);
-                self.total_stall_nanos += elapsed.as_nanos() as u64;
-            }
+        if self.next_expected > prev_expected
+            && let Some(start) = self.stall_start.take()
+        {
+            let elapsed = (self.clock)().duration_since(start);
+            self.total_stall_nanos += elapsed.as_nanos() as u64;
         }
 
         Ok(drained)

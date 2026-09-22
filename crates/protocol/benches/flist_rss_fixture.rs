@@ -86,11 +86,9 @@ fn allocate_entries(
     for i in 0..count {
         let path = path_fn(i);
         let mut entry = FileEntry::new_file(path.clone(), (i as u64) * 512, 0o644);
-        if use_interner {
-            if let Some(parent) = path.parent() {
-                let interned = interner.intern(parent);
-                entry.set_dirname(interned);
-            }
+        if use_interner && let Some(parent) = path.parent() {
+            let interned = interner.intern(parent);
+            entry.set_dirname(interned);
         }
         entries.push(entry);
     }

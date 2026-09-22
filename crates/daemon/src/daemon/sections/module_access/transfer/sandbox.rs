@@ -185,9 +185,9 @@ fn apply_privilege_restrictions_with_upstream_errors(
         log_message(log_sink, &message);
     }
 
-    if let Some(target) = drop_target {
-        if target.uid.is_some() || !target.gids.is_empty() {
-            if let Err(err) = drop_privileges(target.uid, &target.gids, log_sink) {
+    if let Some(target) = drop_target
+        && (target.uid.is_some() || !target.gids.is_empty())
+            && let Err(err) = drop_privileges(target.uid, &target.gids, log_sink) {
                 // Distinguish upstream error messages based on the error text.
                 // upstream: clientserver.c:1024/1031/1053
                 let text = err.to_string();
@@ -210,8 +210,6 @@ fn apply_privilege_restrictions_with_upstream_errors(
                 );
                 return Ok(None);
             }
-        }
-    }
 
     Ok(Some(PrivilegeOutcome {
         chroot_applied,

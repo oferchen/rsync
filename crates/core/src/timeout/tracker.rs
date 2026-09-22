@@ -156,15 +156,15 @@ impl TimeoutTracker {
     /// assert!(tracker.check_connect_timeout().is_ok());
     /// ```
     pub fn check_connect_timeout(&self) -> Result<(), TimeoutError> {
-        if let Some(timeout) = self.config.connect_timeout() {
-            if let Some(start) = self.connect_start {
-                let elapsed = start.elapsed();
-                if elapsed >= timeout {
-                    return Err(TimeoutError::ConnectTimeout {
-                        elapsed,
-                        limit: timeout,
-                    });
-                }
+        if let Some(timeout) = self.config.connect_timeout()
+            && let Some(start) = self.connect_start
+        {
+            let elapsed = start.elapsed();
+            if elapsed >= timeout {
+                return Err(TimeoutError::ConnectTimeout {
+                    elapsed,
+                    limit: timeout,
+                });
             }
         }
         Ok(())

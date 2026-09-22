@@ -96,10 +96,10 @@ impl CorkedTcpWriter {
     /// the option leaves `corked` false so `flush`/`Drop` never issue a
     /// dangling uncork, and never fails the write path.
     fn cork(&mut self) {
-        if !self.corked {
-            if let Ok(true) = fast_io::set_tcp_cork(&self.stream, true) {
-                self.corked = true;
-            }
+        if !self.corked
+            && let Ok(true) = fast_io::set_tcp_cork(&self.stream, true)
+        {
+            self.corked = true;
         }
     }
 
@@ -694,10 +694,10 @@ impl DaemonStreamGuard {
     /// upstream: socket.c:1046 `sock_exec()` forks the connect program and
     /// never signals it; the child ends when the socket closes.
     pub(crate) fn finish(mut self) {
-        if let Self::Child(child) = &mut self {
-            if let Some(mut child) = child.take() {
-                let _ = child.wait();
-            }
+        if let Self::Child(child) = &mut self
+            && let Some(mut child) = child.take()
+        {
+            let _ = child.wait();
         }
     }
 }

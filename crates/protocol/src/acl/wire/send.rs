@@ -51,12 +51,10 @@ pub fn send_ida_entries<W: Write>(
         write_varint(writer, encoded as i32)?;
 
         // upstream: acls.c send_ida_entries() writes name after access flags
-        if has_name {
-            if let Some(ref name) = entry.name {
-                let len = name.len().min(255);
-                writer.write_all(&[len as u8])?;
-                writer.write_all(&name[..len])?;
-            }
+        if has_name && let Some(ref name) = entry.name {
+            let len = name.len().min(255);
+            writer.write_all(&[len as u8])?;
+            writer.write_all(&name[..len])?;
         }
     }
 

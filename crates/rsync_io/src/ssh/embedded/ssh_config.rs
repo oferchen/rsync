@@ -3125,9 +3125,12 @@ mod tests {
         write_at(inc.join("01.conf"), "Host *\n  User first\n");
         write_at(inc.join("02.conf"), "Host *\n  User second\n");
         let top = include_top(&dir, &format!("Include {}/*.conf\n", inc.display()), true);
-        let resolved =
-            resolve_host_files_with_anchors(&[top.clone()], "t", &IncludeAnchors::none())
-                .expect("accepted");
+        let resolved = resolve_host_files_with_anchors(
+            std::slice::from_ref(&top),
+            "t",
+            &IncludeAnchors::none(),
+        )
+        .expect("accepted");
         assert_eq!(resolved.user.as_deref(), Some("first"));
 
         // Control: drop the sorted-first file and the second one now wins,

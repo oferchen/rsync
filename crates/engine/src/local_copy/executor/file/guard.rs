@@ -768,10 +768,8 @@ impl DestinationWriteGuard {
                     Some(PartialKind::Dir { file, remove_dir }) => {
                         CleanupManager::global().unregister_partial(&temp_path);
                         let consumed = fs::remove_file(&file).is_ok();
-                        if consumed {
-                            if let Some(dir) = remove_dir {
-                                let _ = fs::remove_dir(dir);
-                            }
+                        if consumed && let Some(dir) = remove_dir {
+                            let _ = fs::remove_dir(dir);
                         }
                     }
                     // upstream: receiver.c:1291-1299 - under `one_inplace`

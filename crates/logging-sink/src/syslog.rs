@@ -446,10 +446,10 @@ impl fmt::Debug for SyslogReconfigGuard {
 
 impl Drop for SyslogReconfigGuard {
     fn drop(&mut self) {
-        if let Some(previous) = self.previous.take() {
-            if let Ok(mut slot) = logger_slot().lock() {
-                *slot = previous;
-            }
+        if let Some(previous) = self.previous.take()
+            && let Ok(mut slot) = logger_slot().lock()
+        {
+            *slot = previous;
         }
     }
 }

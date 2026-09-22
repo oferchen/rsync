@@ -95,28 +95,28 @@ impl GeneratorContext {
 
         for entry in &self.file_list {
             // Collect UIDs if preserving ownership
-            if self.config.flags.owner {
-                if let Some(uid) = entry.uid() {
-                    // Skip expensive lookup if we already have this UID
-                    if !self.uid_list.contains(uid) {
-                        // A converter that could not answer is not "this uid
-                        // has no name": upstream exits rather than send a file
-                        // list whose ownership the operator's converter never
-                        // vouched for (clientserver.c:1326, :1333).
-                        let name = no_id_unless_converter_failed(lookup_user_name_cached(uid))?;
-                        self.uid_list.add_id(uid, name);
-                    }
+            if self.config.flags.owner
+                && let Some(uid) = entry.uid()
+            {
+                // Skip expensive lookup if we already have this UID
+                if !self.uid_list.contains(uid) {
+                    // A converter that could not answer is not "this uid
+                    // has no name": upstream exits rather than send a file
+                    // list whose ownership the operator's converter never
+                    // vouched for (clientserver.c:1326, :1333).
+                    let name = no_id_unless_converter_failed(lookup_user_name_cached(uid))?;
+                    self.uid_list.add_id(uid, name);
                 }
             }
 
             // Collect GIDs if preserving group
-            if self.config.flags.group {
-                if let Some(gid) = entry.gid() {
-                    // Skip expensive lookup if we already have this GID
-                    if !self.gid_list.contains(gid) {
-                        let name = no_id_unless_converter_failed(lookup_group_name_cached(gid))?;
-                        self.gid_list.add_id(gid, name);
-                    }
+            if self.config.flags.group
+                && let Some(gid) = entry.gid()
+            {
+                // Skip expensive lookup if we already have this GID
+                if !self.gid_list.contains(gid) {
+                    let name = no_id_unless_converter_failed(lookup_group_name_cached(gid))?;
+                    self.gid_list.add_id(gid, name);
                 }
             }
         }

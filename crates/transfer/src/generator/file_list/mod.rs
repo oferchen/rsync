@@ -190,15 +190,14 @@ impl GeneratorContext {
             self.config.flags.recursive || self.config.flags.dirs || self.config.flags.list_only;
         if implied_dot_dir && xfer_dirs {
             let dot_root = Path::new(".");
-            if let Ok(meta) = std::fs::symlink_metadata(dot_root).map(SourceMetadata::from) {
-                if meta.is_dir() {
-                    // upstream: flist.c:2753 - the implied dot dir is sent with
-                    // NO_FILTERS (0).
-                    let mut dot_entry =
-                        self.create_entry(dot_root, PathBuf::from("."), &meta, 0)?;
-                    mark_implied_dir(&mut dot_entry);
-                    self.push_file_item(dot_entry, dot_root.to_path_buf());
-                }
+            if let Ok(meta) = std::fs::symlink_metadata(dot_root).map(SourceMetadata::from)
+                && meta.is_dir()
+            {
+                // upstream: flist.c:2753 - the implied dot dir is sent with
+                // NO_FILTERS (0).
+                let mut dot_entry = self.create_entry(dot_root, PathBuf::from("."), &meta, 0)?;
+                mark_implied_dir(&mut dot_entry);
+                self.push_file_item(dot_entry, dot_root.to_path_buf());
             }
         }
 
@@ -296,17 +295,15 @@ impl GeneratorContext {
         // on a duplicate root `.`.
         let emit_implied_root_dot =
             self.config.flags.relative && entries.iter().any(|e| e.implied_dot);
-        if emit_implied_root_dot {
-            if let Ok(meta) = std::fs::symlink_metadata(base_dir).map(SourceMetadata::from) {
-                if meta.is_dir() {
-                    // upstream: flist.c:2753 - the implied dot dir is sent with
-                    // NO_FILTERS (0).
-                    let mut dot_entry =
-                        self.create_entry(base_dir, PathBuf::from("."), &meta, 0)?;
-                    mark_implied_dir(&mut dot_entry);
-                    self.push_file_item(dot_entry, base_dir.to_path_buf());
-                }
-            }
+        if emit_implied_root_dot
+            && let Ok(meta) = std::fs::symlink_metadata(base_dir).map(SourceMetadata::from)
+            && meta.is_dir()
+        {
+            // upstream: flist.c:2753 - the implied dot dir is sent with
+            // NO_FILTERS (0).
+            let mut dot_entry = self.create_entry(base_dir, PathBuf::from("."), &meta, 0)?;
+            mark_implied_dir(&mut dot_entry);
+            self.push_file_item(dot_entry, base_dir.to_path_buf());
         }
 
         // Every --files-from entry that is itself a directory. Used only to
@@ -320,10 +317,10 @@ impl GeneratorContext {
                 if rel.as_os_str().is_empty() {
                     continue;
                 }
-                if let Ok(meta) = std::fs::symlink_metadata(&entry.path) {
-                    if meta.is_dir() {
-                        explicit_dirs.insert((entry.base.clone(), rel.to_path_buf()));
-                    }
+                if let Ok(meta) = std::fs::symlink_metadata(&entry.path)
+                    && meta.is_dir()
+                {
+                    explicit_dirs.insert((entry.base.clone(), rel.to_path_buf()));
                 }
             }
         }
@@ -473,12 +470,11 @@ impl GeneratorContext {
             // the rescan because `flags.recursive` is cleared whenever
             // `--files-from` is active (upstream `options.c:2189`), so
             // `walk_path_with_metadata` would emit only the root entry.
-            if entry.recurse {
-                if let Ok(meta) = std::fs::symlink_metadata(&entry.path) {
-                    if meta.is_dir() {
-                        self.scan_files_from_marker_dir(&entry.base, &entry.path)?;
-                    }
-                }
+            if entry.recurse
+                && let Ok(meta) = std::fs::symlink_metadata(&entry.path)
+                && meta.is_dir()
+            {
+                self.scan_files_from_marker_dir(&entry.base, &entry.path)?;
             }
         }
 
@@ -772,10 +768,10 @@ fn relative_walk_base(path: &Path, module_root: Option<&Path>) -> (PathBuf, Path
     // upstream: clientserver.c:1059 - a daemon server serves from the module
     // root, so that root is the `curr_dir` the operand is named against and the
     // transmitted name is the module-relative tail, never the server's path.
-    if let Some(root) = module_root {
-        if path.starts_with(root) {
-            return (root.to_path_buf(), path.to_path_buf());
-        }
+    if let Some(root) = module_root
+        && path.starts_with(root)
+    {
+        return (root.to_path_buf(), path.to_path_buf());
     }
 
     // upstream: flist.c:2329 - no "/./" anchor: the entire path is the

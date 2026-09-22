@@ -372,13 +372,13 @@ fn connect_to_daemon(
 
     loop {
         // Fail fast if the daemon thread has already exited.
-        if let Some(h) = handle {
-            if h.is_finished() {
-                panic!(
-                    "daemon exited before accepting a connection on port {port}; \
+        if let Some(h) = handle
+            && h.is_finished()
+        {
+            panic!(
+                "daemon exited before accepting a connection on port {port}; \
                      check daemon startup logs for bind errors or config issues"
-                );
-            }
+            );
         }
 
         match TcpStream::connect_timeout(&target, backoff) {

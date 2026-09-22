@@ -207,10 +207,10 @@ impl DeferredSync {
     /// Flushes pending directories.
     fn flush_directories(&self) -> io::Result<()> {
         for dir in &self.pending_dirs {
-            if let Err(e) = sync_directory(dir) {
-                if e.kind() != io::ErrorKind::NotFound {
-                    return Err(e);
-                }
+            if let Err(e) = sync_directory(dir)
+                && e.kind() != io::ErrorKind::NotFound
+            {
+                return Err(e);
             }
         }
         Ok(())

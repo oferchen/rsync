@@ -298,12 +298,11 @@ fn permission_write_denied_overwriting_readonly_file() {
     // - May fail with permission denied
     // - May succeed if using temp file + rename strategy
     // Both are valid rsync behaviors
-    if let Err(error) = &result {
-        if let LocalCopyErrorKind::Io { source, .. } = error.kind() {
+    if let Err(error) = &result
+        && let LocalCopyErrorKind::Io { source, .. } = error.kind() {
             // Accept any error - the key is we don't crash
             let _ = source;
         }
-    }
 
     // Verify the destination file still has its original content
     // (the readonly file wasn't corrupted)

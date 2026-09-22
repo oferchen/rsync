@@ -99,7 +99,7 @@ fn copy_dirlinks_transmits_symlink_to_dir_as_directory() {
     let handshake = test_handshake();
     let pipeline = test_pipeline();
     let mut ctx = GeneratorContext::new(&handshake, config, pipeline);
-    ctx.build_file_list(&[src.clone()])
+    ctx.build_file_list(std::slice::from_ref(&src))
         .expect("build_file_list");
 
     let file_list = ctx.file_list();
@@ -142,7 +142,7 @@ fn without_copy_dirlinks_symlink_to_dir_stays_symlink() {
     let handshake = test_handshake();
     let pipeline = test_pipeline();
     let mut ctx = GeneratorContext::new(&handshake, config, pipeline);
-    ctx.build_file_list(&[src.clone()])
+    ctx.build_file_list(std::slice::from_ref(&src))
         .expect("build_file_list");
 
     let file_list = ctx.file_list();

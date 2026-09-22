@@ -291,10 +291,10 @@ fn streaming_vs_batch_produces_same_results() {
     let mut batch_controller = PipelineController::new(16);
     for i in 0..count {
         while !batch_controller.can_fill() {
-            if batch_controller.has_ready_entries() {
-                if let Some(entry) = batch_controller.dequeue_ready() {
-                    batch_controller.submit_response(entry);
-                }
+            if batch_controller.has_ready_entries()
+                && let Some(entry) = batch_controller.dequeue_ready()
+            {
+                batch_controller.submit_response(entry);
             }
             if batch_controller.has_pending_responses() {
                 let _ = batch_controller.dequeue_response();

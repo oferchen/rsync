@@ -95,14 +95,14 @@ pub fn sync_acls(
     };
 
     if !source_acl.is_empty() {
-        if let Err(e) = setfacl(&[destination], &source_acl, None) {
-            if !is_unsupported_error(&e) {
-                return Err(MetadataError::new(
-                    "apply ACL",
-                    destination,
-                    io::Error::other(e.to_string()),
-                ));
-            }
+        if let Err(e) = setfacl(&[destination], &source_acl, None)
+            && !is_unsupported_error(&e)
+        {
+            return Err(MetadataError::new(
+                "apply ACL",
+                destination,
+                io::Error::other(e.to_string()),
+            ));
         }
     } else {
         reset_acl_from_mode(destination)?;

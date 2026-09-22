@@ -209,11 +209,11 @@ impl AclTestFixture {
                     return None;
                 }
             } else {
-                if let Some(parent) = abs_path.parent() {
-                    if let Err(e) = fs::create_dir_all(parent) {
-                        skip(&format!("failed to create parent dir: {e}"));
-                        return None;
-                    }
+                if let Some(parent) = abs_path.parent()
+                    && let Err(e) = fs::create_dir_all(parent)
+                {
+                    skip(&format!("failed to create parent dir: {e}"));
+                    return None;
                 }
                 if let Err(e) = fs::write(&abs_path, &entry.content) {
                     skip(&format!(

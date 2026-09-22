@@ -1060,10 +1060,10 @@ struct InlineDirMerge {
 fn path_to_forward_slash(path: &Path) -> String {
     let mut parts: Vec<&str> = Vec::new();
     for component in path.components() {
-        if let Component::Normal(part) = component {
-            if let Some(s) = part.to_str() {
-                parts.push(s);
-            }
+        if let Component::Normal(part) = component
+            && let Some(s) = part.to_str()
+        {
+            parts.push(s);
         }
     }
     parts.join("/")
@@ -1078,16 +1078,16 @@ fn path_to_forward_slash(path: &Path) -> String {
 /// `foo` becomes `/foo/file1`. Rules without a leading `/` (and the root merge
 /// file, where `rel_dir` is `None`) are returned unchanged.
 fn reanchor_merge_rule(mut rule: FilterRule, rel_dir: Option<&str>) -> FilterRule {
-    if let Some(dir) = rel_dir {
-        if rule.pattern.first() == Some(&b'/') {
-            // `/{dir}{pattern}`: the pattern's own leading `/` supplies the
-            // separator between `dir` and the rest.
-            let mut reanchored = Vec::with_capacity(1 + dir.len() + rule.pattern.len());
-            reanchored.push(b'/');
-            reanchored.extend_from_slice(dir.as_bytes());
-            reanchored.extend_from_slice(&rule.pattern);
-            rule.pattern = reanchored;
-        }
+    if let Some(dir) = rel_dir
+        && rule.pattern.first() == Some(&b'/')
+    {
+        // `/{dir}{pattern}`: the pattern's own leading `/` supplies the
+        // separator between `dir` and the rest.
+        let mut reanchored = Vec::with_capacity(1 + dir.len() + rule.pattern.len());
+        reanchored.push(b'/');
+        reanchored.extend_from_slice(dir.as_bytes());
+        reanchored.extend_from_slice(&rule.pattern);
+        rule.pattern = reanchored;
     }
     rule
 }

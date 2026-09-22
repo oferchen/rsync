@@ -255,12 +255,11 @@ pub(super) fn try_reference_directories(
 ) -> Option<(fs::File, u64, PathBuf, usize)> {
     for (index, ref_dir) in reference_directories.iter().enumerate() {
         let candidate = ref_dir.path.join(relative_path);
-        if let Ok(file) = fast_io::open_basis_nofollow(&candidate) {
-            if let Ok(meta) = file.metadata() {
-                if meta.is_file() {
-                    return Some((file, meta.len(), candidate, index));
-                }
-            }
+        if let Ok(file) = fast_io::open_basis_nofollow(&candidate)
+            && let Ok(meta) = file.metadata()
+            && meta.is_file()
+        {
+            return Some((file, meta.len(), candidate, index));
         }
     }
     None

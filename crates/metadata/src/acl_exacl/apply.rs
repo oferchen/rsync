@@ -70,14 +70,14 @@ pub fn apply_acls_from_cache(
         let reconstructed = reconstruct_acl(acl, mode);
         let entries = rsync_acl_to_entries(&reconstructed, id_map);
         if !entries.is_empty() {
-            if let Err(e) = setfacl(&[destination], &entries, None) {
-                if !is_unsupported_error(&e) {
-                    return Err(MetadataError::new(
-                        "apply ACL from cache",
-                        destination,
-                        io::Error::other(e.to_string()),
-                    ));
-                }
+            if let Err(e) = setfacl(&[destination], &entries, None)
+                && !is_unsupported_error(&e)
+            {
+                return Err(MetadataError::new(
+                    "apply ACL from cache",
+                    destination,
+                    io::Error::other(e.to_string()),
+                ));
             }
         } else {
             reset_acl_from_mode(destination)?;

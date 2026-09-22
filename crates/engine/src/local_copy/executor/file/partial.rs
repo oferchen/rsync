@@ -62,10 +62,10 @@ impl PartialMode {
         }
 
         if partial {
-            if let Ok(env_dir) = env::var("RSYNC_PARTIAL_DIR") {
-                if !env_dir.is_empty() {
-                    return Self::PartialDir(PathBuf::from(env_dir));
-                }
+            if let Ok(env_dir) = env::var("RSYNC_PARTIAL_DIR")
+                && !env_dir.is_empty()
+            {
+                return Self::PartialDir(PathBuf::from(env_dir));
             }
             return Self::Keep;
         }

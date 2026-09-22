@@ -376,24 +376,24 @@ fn try_create_new(
 ) -> io::Result<fs::File> {
     #[cfg(unix)]
     {
-        if let (Some(sandbox), Some(dest_dir)) = (sandbox, dest_dir) {
-            if let Some(leaf_name) = concrete_path.file_name() {
-                let parent = concrete_path.parent().unwrap_or(Path::new(""));
-                if parent == dest_dir {
-                    let relative = Path::new(leaf_name);
-                    // Mirror the fallback's `OpenOptions::new().write(true).create_new(true)`
-                    // exactly: `O_WRONLY | O_CREAT | O_EXCL`, plus `O_NOFOLLOW` so a
-                    // pre-planted symlink at the leaf path cannot redirect the create.
-                    let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW;
-                    return fast_io::openat_via_sandbox_or_fallback(
-                        Some(sandbox.as_ref()),
-                        dest_dir,
-                        relative,
-                        concrete_path,
-                        flags,
-                        0o600,
-                    );
-                }
+        if let (Some(sandbox), Some(dest_dir)) = (sandbox, dest_dir)
+            && let Some(leaf_name) = concrete_path.file_name()
+        {
+            let parent = concrete_path.parent().unwrap_or(Path::new(""));
+            if parent == dest_dir {
+                let relative = Path::new(leaf_name);
+                // Mirror the fallback's `OpenOptions::new().write(true).create_new(true)`
+                // exactly: `O_WRONLY | O_CREAT | O_EXCL`, plus `O_NOFOLLOW` so a
+                // pre-planted symlink at the leaf path cannot redirect the create.
+                let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW;
+                return fast_io::openat_via_sandbox_or_fallback(
+                    Some(sandbox.as_ref()),
+                    dest_dir,
+                    relative,
+                    concrete_path,
+                    flags,
+                    0o600,
+                );
             }
         }
     }
@@ -734,19 +734,19 @@ impl Drop for TempFileGuard {
         // away, and we cannot propagate errors from drop anyway.
         #[cfg(unix)]
         {
-            if let Some(anchor) = self.anchor.as_ref() {
-                if let Some(leaf) = self.path.file_name() {
-                    let relative = Path::new(leaf);
-                    let _ = fast_io::unlink_via_sandbox_or_fallback(
-                        Some(anchor.sandbox.as_ref()),
-                        &anchor.dest_dir,
-                        relative,
-                        &self.path,
-                        fast_io::UnlinkFlags::File,
-                    );
-                    self.unregister();
-                    return;
-                }
+            if let Some(anchor) = self.anchor.as_ref()
+                && let Some(leaf) = self.path.file_name()
+            {
+                let relative = Path::new(leaf);
+                let _ = fast_io::unlink_via_sandbox_or_fallback(
+                    Some(anchor.sandbox.as_ref()),
+                    &anchor.dest_dir,
+                    relative,
+                    &self.path,
+                    fast_io::UnlinkFlags::File,
+                );
+                self.unregister();
+                return;
             }
         }
         let _ = std::fs::remove_file(&self.path);

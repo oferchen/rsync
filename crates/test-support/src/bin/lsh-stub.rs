@@ -91,10 +91,8 @@ fn run() -> i32 {
     } else {
         let mut c = Command::new("sh");
         c.arg("-c").arg(&joined);
-        if do_cd {
-            if let Ok(home) = std::env::var("HOME") {
-                c.current_dir(home);
-            }
+        if do_cd && let Ok(home) = std::env::var("HOME") {
+            c.current_dir(home);
         }
         c
     };

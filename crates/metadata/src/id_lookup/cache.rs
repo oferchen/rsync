@@ -43,10 +43,10 @@ pub fn map_uid(uid: RawUid, numeric_ids: bool) -> Option<Uid> {
         return Some(ownership::uid_from_raw(uid));
     }
 
-    if let Ok(cache) = UID_CACHE.read() {
-        if let Some(&cached) = cache.get(&uid) {
-            return Some(ownership::uid_from_raw(cached));
-        }
+    if let Ok(cache) = UID_CACHE.read()
+        && let Some(&cached) = cache.get(&uid)
+    {
+        return Some(ownership::uid_from_raw(cached));
     }
 
     let mapped = map_uid_uncached(uid);
@@ -82,10 +82,10 @@ pub fn map_gid(gid: RawGid, numeric_ids: bool) -> Option<Gid> {
         return Some(ownership::gid_from_raw(gid));
     }
 
-    if let Ok(cache) = GID_CACHE.read() {
-        if let Some(&cached) = cache.get(&gid) {
-            return Some(ownership::gid_from_raw(cached));
-        }
+    if let Ok(cache) = GID_CACHE.read()
+        && let Some(&cached) = cache.get(&gid)
+    {
+        return Some(ownership::gid_from_raw(cached));
     }
 
     let mapped = map_gid_uncached(gid);

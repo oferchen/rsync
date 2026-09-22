@@ -62,14 +62,14 @@ pub(super) fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
     // Permission bits are managed separately from the extended ACL.
     #[cfg(target_os = "macos")]
     {
-        if let Err(e) = setfacl(&[path], &[], None) {
-            if !is_unsupported_error(&e) {
-                return Err(MetadataError::new(
-                    "reset ACL",
-                    path,
-                    io::Error::other(e.to_string()),
-                ));
-            }
+        if let Err(e) = setfacl(&[path], &[], None)
+            && !is_unsupported_error(&e)
+        {
+            return Err(MetadataError::new(
+                "reset ACL",
+                path,
+                io::Error::other(e.to_string()),
+            ));
         }
     }
 

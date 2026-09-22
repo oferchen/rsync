@@ -355,18 +355,16 @@ fn apply_long_form_args(
                     }
                 // upstream: options.c:2755-2758
                 } else if let Some(level_str) = arg.strip_prefix("--compress-level=") {
-                    if let Ok(level) = level_str.parse::<u32>() {
-                        if let Ok(cl) = compress::zlib::CompressionLevel::from_numeric(level) {
+                    if let Ok(level) = level_str.parse::<u32>()
+                        && let Ok(cl) = compress::zlib::CompressionLevel::from_numeric(level) {
                             config.connection.compression_level = Some(cl);
                         }
-                    }
                 // upstream: options.c:2825-2828
                 } else if let Some(val) = arg.strip_prefix("--max-delete=") {
-                    if let Ok(n) = val.parse::<i64>() {
-                        if n >= 0 {
+                    if let Ok(n) = val.parse::<i64>()
+                        && n >= 0 {
                             config.deletion.max_delete = Some(n as u64);
                         }
-                    }
                 // upstream: options.c:2998-3001 - `server_options()` forwards
                 // `--min-size`/`--max-size` (as one `--opt=VALUE` token, see
                 // safe_arg at options.c:2716-2720) only when the local end is

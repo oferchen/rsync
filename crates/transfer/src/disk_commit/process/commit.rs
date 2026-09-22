@@ -121,49 +121,50 @@ pub(super) fn commit_file(
         None
     };
 
-    if needs_rename && config.delay_updates {
-        if let Some(staging_path) = delay_updates_staging_path(config, &begin.file_path) {
-            // upstream: util1.c:1518-1530 handle_partial_dir(..., PDIR_CREATE)
-            // creates the partial directory before moving the temp into it,
-            // and clears a non-directory standing at that name first
-            // (:1523-1528). Without the clear, `create_dir_all` reports
-            // `AlreadyExists` for that shape and the `?` fails the whole
-            // transfer where upstream unlinks the obstruction and proceeds -
-            // measured against real 3.5.0 over a daemon push, which exits 0.
-            //
-            // The create goes through [`create_dir_all_sandboxed`], the same
-            // helper the `--backup-dir` parent already uses, rather than a bare
-            // `std::fs::create_dir_all`. `.~tmp~` is a single component beneath
-            // `dest_dir`, so that helper reduces it to one `mkdirat` anchored on
-            // the destination sandbox. A bare `create_dir_all` reaches glibc's
-            // `mkdir()` wrapper, which lowers to the legacy `mkdir(2)` on
-            // x86_64 - a syscall the daemon worker's seccomp allowlist
-            // deliberately omits in favour of the `*at` variants. MEASURED on
-            // x86_64 CI: the whole `--delay-updates` push died here with
-            // `Operation not permitted`, surfacing downstream as
-            // `mkstemp ... failed`, while the identical push without
-            // `--delay-updates` succeeded. aarch64 has no legacy `mkdir(2)` for
-            // glibc to lower to, which is why the defect was architecture-only.
-            if let Some(parent) = staging_path.parent() {
-                clear_partial_dir_obstruction(parent)?;
-                create_dir_all_sandboxed(config.backup_env(), parent)?;
-            }
-            let result = stage_into_partial_dir(config, cleanup_guard.path(), &staging_path)
-                .map_err(|e| {
-                    crate::temp_guard::attach_commit_op(
-                        crate::temp_guard::CommitOp::Rename,
-                        &staging_path,
-                        e,
-                    )
-                })?;
-            CleanupManager::global().unregister_temp_file(cleanup_guard.path());
-            cleanup_guard.keep();
-            return Ok(CommitOutcome {
-                was_copy: result,
-                delayed_path: Some(staging_path),
-                backup_notice,
-            });
+    if needs_rename
+        && config.delay_updates
+        && let Some(staging_path) = delay_updates_staging_path(config, &begin.file_path)
+    {
+        // upstream: util1.c:1518-1530 handle_partial_dir(..., PDIR_CREATE)
+        // creates the partial directory before moving the temp into it,
+        // and clears a non-directory standing at that name first
+        // (:1523-1528). Without the clear, `create_dir_all` reports
+        // `AlreadyExists` for that shape and the `?` fails the whole
+        // transfer where upstream unlinks the obstruction and proceeds -
+        // measured against real 3.5.0 over a daemon push, which exits 0.
+        //
+        // The create goes through [`create_dir_all_sandboxed`], the same
+        // helper the `--backup-dir` parent already uses, rather than a bare
+        // `std::fs::create_dir_all`. `.~tmp~` is a single component beneath
+        // `dest_dir`, so that helper reduces it to one `mkdirat` anchored on
+        // the destination sandbox. A bare `create_dir_all` reaches glibc's
+        // `mkdir()` wrapper, which lowers to the legacy `mkdir(2)` on
+        // x86_64 - a syscall the daemon worker's seccomp allowlist
+        // deliberately omits in favour of the `*at` variants. MEASURED on
+        // x86_64 CI: the whole `--delay-updates` push died here with
+        // `Operation not permitted`, surfacing downstream as
+        // `mkstemp ... failed`, while the identical push without
+        // `--delay-updates` succeeded. aarch64 has no legacy `mkdir(2)` for
+        // glibc to lower to, which is why the defect was architecture-only.
+        if let Some(parent) = staging_path.parent() {
+            clear_partial_dir_obstruction(parent)?;
+            create_dir_all_sandboxed(config.backup_env(), parent)?;
         }
+        let result =
+            stage_into_partial_dir(config, cleanup_guard.path(), &staging_path).map_err(|e| {
+                crate::temp_guard::attach_commit_op(
+                    crate::temp_guard::CommitOp::Rename,
+                    &staging_path,
+                    e,
+                )
+            })?;
+        CleanupManager::global().unregister_temp_file(cleanup_guard.path());
+        cleanup_guard.keep();
+        return Ok(CommitOutcome {
+            was_copy: result,
+            delayed_path: Some(staging_path),
+            backup_notice,
+        });
     }
 
     let was_copy = if needs_rename {

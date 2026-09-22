@@ -220,10 +220,11 @@ impl FileListWriter {
         let hlinked = (xflags & ((XMIT_HLINKED as u32) << 8)) != 0;
         let hlink_first = (xflags & ((XMIT_HLINK_FIRST as u32) << 8)) != 0;
 
-        if hlinked && !hlink_first {
-            if let Some(idx) = entry.hardlink_idx() {
-                write_varint(writer, idx as i32)?;
-            }
+        if hlinked
+            && !hlink_first
+            && let Some(idx) = entry.hardlink_idx()
+        {
+            write_varint(writer, idx as i32)?;
         }
 
         Ok(())

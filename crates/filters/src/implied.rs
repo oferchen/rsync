@@ -299,12 +299,12 @@ impl ImpliedIncludes {
             debug_assert_eq!(compiled.is_directory_only(), directory_only);
             self.rules.push(compiled);
         }
-        if let Some(escaped) = escape_live_brackets(pattern) {
-            if self.seen.insert(escaped.clone()) {
-                let compiled = CompiledRule::new(FilterRule::include(escaped))?;
-                debug_assert_eq!(compiled.is_directory_only(), directory_only);
-                self.rules.push(compiled);
-            }
+        if let Some(escaped) = escape_live_brackets(pattern)
+            && self.seen.insert(escaped.clone())
+        {
+            let compiled = CompiledRule::new(FilterRule::include(escaped))?;
+            debug_assert_eq!(compiled.is_directory_only(), directory_only);
+            self.rules.push(compiled);
         }
         Ok(())
     }

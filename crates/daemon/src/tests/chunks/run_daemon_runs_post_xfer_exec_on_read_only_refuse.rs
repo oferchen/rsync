@@ -100,12 +100,11 @@ fn run_daemon_runs_post_xfer_exec_on_read_only_refuse() {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut contents = String::new();
     while Instant::now() < deadline {
-        if let Ok(text) = fs::read_to_string(&marker) {
-            if !text.trim().is_empty() {
+        if let Ok(text) = fs::read_to_string(&marker)
+            && !text.trim().is_empty() {
                 contents = text;
                 break;
             }
-        }
         thread::sleep(Duration::from_millis(50));
     }
     assert_eq!(

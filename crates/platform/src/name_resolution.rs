@@ -140,11 +140,11 @@ pub fn rid_to_account_name(rid: u32) -> Option<String> {
         let mut found = None;
         for user in users {
             // SAFETY: `usri0_name` is a valid PWSTR from NetUserEnum.
-            if let Ok(name) = unsafe { user.usri0_name.to_string() } {
-                if name_to_rid(&name) == Some(rid) {
-                    found = Some(name);
-                    break;
-                }
+            if let Ok(name) = unsafe { user.usri0_name.to_string() }
+                && name_to_rid(&name) == Some(rid)
+            {
+                found = Some(name);
+                break;
             }
         }
         found

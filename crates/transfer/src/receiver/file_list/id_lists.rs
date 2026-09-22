@@ -115,22 +115,22 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        if self.config.flags.owner || self.config.flags.acls {
-            if let (Some(uid), Some(name)) = (entry.uid(), entry.user_name()) {
-                self.uid_list
-                    .register_inline_name(uid, name.as_bytes(), |n| {
-                        no_id_unless_converter_failed(lookup_user_by_name(n))
-                    })?;
-            }
+        if (self.config.flags.owner || self.config.flags.acls)
+            && let (Some(uid), Some(name)) = (entry.uid(), entry.user_name())
+        {
+            self.uid_list
+                .register_inline_name(uid, name.as_bytes(), |n| {
+                    no_id_unless_converter_failed(lookup_user_by_name(n))
+                })?;
         }
 
-        if self.config.flags.group || self.config.flags.acls {
-            if let (Some(gid), Some(name)) = (entry.gid(), entry.group_name()) {
-                self.gid_list
-                    .register_inline_name(gid, name.as_bytes(), |n| {
-                        no_id_unless_converter_failed(lookup_group_by_name(n))
-                    })?;
-            }
+        if (self.config.flags.group || self.config.flags.acls)
+            && let (Some(gid), Some(name)) = (entry.gid(), entry.group_name())
+        {
+            self.gid_list
+                .register_inline_name(gid, name.as_bytes(), |n| {
+                    no_id_unless_converter_failed(lookup_group_by_name(n))
+                })?;
         }
 
         Ok(())
