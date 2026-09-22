@@ -147,36 +147,43 @@ sides translate wire NDX to a flat array index through a segment table:
 Upstream stores the flist as a **circular doubly-linked list of separately
 allocated `file_list` objects**, each owning its own `file_struct` array.
 
-- `rsync.h:964-975` - `struct file_list { next, prev; files, sorted;
+Anchors below were re-verified by reading `rsync-3.5.0` (the predicted
+line retarget from the 3.4.4 capture has been applied; semantics were
+re-read, not assumed).
+
+- `rsync.h:983-994` - `struct file_list { next, prev; files, sorted;
   file_pool; pool_boundary; used, malloced; low, high; ndx_start; flist_num;
-  parent_ndx; in_progress, to_redo; }`. The declaration is unchanged between
-  3.4.4 and 3.5.0 - same twelve members in the same order, only the line
-  number moves (`:964-975` -> `:983-994`), so this anchor survives the
-  source-of-truth flip as a line retarget with no semantic re-reading.
-- Globals `flist.c:101-103` - `cur_flist, first_flist, dir_flist`,
-  `flist_cnt`.
-- `flist.c:2960-2977` - `flist_new` appends to the list and assigns
-  `flist->ndx_start = prev->ndx_start + prev->used + 1` (the +1 gap oc
-  reproduces in `ndx_segments`).
-- `rsync.c:787-821` - `flist_for_ndx(ndx, ...)` walks from `cur_flist`
-  backward/forward until `flist->ndx_start <= ndx < flist->ndx_start +
+  parent_ndx; in_progress, to_redo; }`. Same twelve members as the 3.4.4
+  declaration (`rsync.h:964-975` there); only the line number moved.
+- Globals `flist.c:107` - `cur_flist, first_flist, dir_flist`, `flist_cnt`.
+- `flist.c:3244-3279` - `flist_new` appends to the ring and assigns
+  `flist->ndx_start = prev->ndx_start + prev->used + 1` (`:3268` - the +1
+  gap oc reproduces in `ndx_segments`). Note the pool ownership: only the
+  FIRST transfer list creates a pool; every later list ALIASES it
+  (`:3266`) - see Section 3.2.
+- `rsync.c:951-984` - `flist_for_ndx(ndx, ...)` walks from `cur_flist`
+  backward/forward until `flist->ndx_start-1 <= ndx < flist->ndx_start +
   flist->used`; then the caller resolves `file =
-  flist->files[ndx - flist->ndx_start]` (e.g. `sender.c:266-269`). Out of
-  range is a fatal "File-list index N not in first-last" protocol error.
-- `flist.c:2980-3012` - `flist_free(flist)` unlinks the object, decrements
-  `file_total`/`flist_cnt`, `pool_free_old` on the segment's pool boundary,
-  and `free()`s `sorted`, `files`, and the object. The completed segment's
-  entry array is **fully deallocated**.
-- `sender.c:240-258` - on `NDX_DONE` in inc_recurse mode the sender does
-  `file_old_total -= first_flist->used; flist_free(first_flist);` and, if
-  another flist remains, echoes `NDX_DONE` and continues without advancing
-  phase. This is exactly the gate oc reproduces with `flist_done_remaining`
-  and `reclaim_oldest_segment`, except upstream frees the whole segment.
+  flist->files[ndx - flist->ndx_start]` (e.g. `sender.c:551-557`, which
+  also maps the gap NDX `ndx_start - 1` to the parent dir entry in
+  `dir_flist`). Out of range is a fatal "File-list index N not in
+  first-last" protocol error.
+- `flist.c:3282-3314` - `flist_free(flist)` unlinks the object, decrements
+  `file_total`/`flist_cnt`, `pool_free_old` on the segment's pool boundary
+  (`:3308`), and `free()`s `sorted` (when it is a clone), `files`, and the
+  object. The completed segment's entry array is **fully deallocated**.
+- `sender.c:524-546` - on `NDX_DONE` in inc_recurse mode the sender does
+  `file_old_total -= first_flist->used; flist_free(first_flist);`
+  (`:530-532`) and, if another flist remains, echoes `NDX_DONE` and
+  continues without advancing phase. This is exactly the gate oc reproduces
+  with `flist_done_remaining` and `reclaim_oldest_segment`, except upstream
+  frees the whole segment.
 
 Only the window between `first_flist` and `cur_flist` is ever live, so peak
 memory is bounded by the lookahead window (`MIN_FILECNT_LOOKAHEAD`), not by
 the total file count. Generation is lazy: `send_extra_file_list` produces the
-next sub-list on demand (`sender.c:230-232`).
+next sub-list on demand (`sender.c:515,549`); the producer specification is
+`docs/design/lazy-sender-inc-recurse.md`.
 
 ### 3.1 Field-by-field: upstream `struct file_list` vs oc today
 
@@ -207,11 +214,65 @@ segment's memory in one step, and `low`/`high`/`parent_ndx` are the
 per-segment bookkeeping that a shared flat buffer cannot express.
 
 That is the same gap §2.4 reaches from the other direction - oc's
-`reclaim_oldest_segment` cites `flist.c:2980 flist_free()` but walks
-`file_list[start..end]` calling `reclaim_heap_data()` on each entry, so the
-per-entry payloads drop while the `FileEntry` structs and the `Vec`'s backing
-allocation stay resident for the whole transfer. Restoring the upstream
-behaviour needs the pool, not a better loop.
+`reclaim_oldest_segment` cites upstream `flist_free()` (3.5.0
+`flist.c:3282`) but walks `file_list[start..end]` calling
+`reclaim_heap_data()` on each entry, so the per-entry payloads drop while
+the `FileEntry` structs and the `Vec`'s backing allocation stay resident for
+the whole transfer. Restoring the upstream behaviour needs the pool, not a
+better loop.
+
+### 3.2 The allocation-pool and index-range fields (verified, 3.5.0)
+
+The four members Section 3.1 marks absent-in-oc are not incidental
+bookkeeping; they are the mechanism that makes upstream's segment reclaim
+cheap and its per-segment iteration exact. Semantics, verified by reading:
+
+**Allocation pool - `file_pool` + `pool_boundary` + `malloced`.** One
+detail matters and is easy to get wrong: the transfer chain shares ONE
+pool, it does not hold a pool per segment.
+
+- The first transfer list creates the chain's pool with NORMAL_EXTENT
+  (256 KiB) extents (`flist.c:3257`, `rsync.h:978`); every later list
+  aliases the same pool: `flist->file_pool = first_flist->file_pool`
+  (`flist.c:3266`). `dir_flist` is the exception - as a FLIST_TEMP list it
+  owns its own SMALL_EXTENT pool (`flist.c:3250-3252`, `rsync.h:979,981`)
+  that lives for the whole run.
+- What IS per-segment is the boundary marker: each list snapshots
+  `pool_boundary` at creation (`flist.c:3274`,
+  `lib/pool_alloc.c:353 pool_boundary`), and `flist_done_allocating`
+  re-snapshots it with 8 KiB rounding once the list stops allocating
+  (`flist.c:418-425`; NULL when the list used no pool memory). Entries are
+  bump-allocated into the shared pool in list order, so the extent span
+  between two boundaries is exactly one list's entries.
+- Reclaim is then `pool_free_old(flist->file_pool, flist->pool_boundary)`
+  (`flist.c:3308`, `lib/pool_alloc.c:300`): free everything allocated
+  BEFORE the boundary - whole extents at a time, no per-entry walk. That
+  is what makes segment reclaim O(extents), effectively O(1) per segment,
+  versus oc's O(entries) `reclaim_heap_data` loop that frees payloads but
+  never slots. `pool_destroy` runs only when the chain empties or for the
+  FLIST_TEMP list (`flist.c:3305-3306`).
+- `malloced` is the capacity of the `files` pointer array (grown by
+  `flist_expand`, `flist.c:366`, policy constants `rsync.h:965-967`); the
+  pointer array itself is heap-allocated per list and `free()`d whole in
+  `flist_free` (`flist.c:3312`).
+- Consequence for IR-3a: the oc port needs one arena per CHAIN plus a
+  per-segment boundary (or, equivalently, one arena per segment - stricter
+  than upstream and still correct), not a literal "per-segment pool"
+  reading of the field name.
+
+**Index range - `low` / `high` (with `used`).** `used` counts slots
+appended; `low`/`high` are the 0-relative bounds of the entries still worth
+visiting, "excluding empties" (`rsync.h:989`). `flist_sort_and_clean` sets
+them: an empty list gets `high = -1, low = 0` (`flist.c:3325-3328`);
+otherwise the scan skips cleared (`!F_IS_ACTIVE`) slots at both ends and
+duplicate-clearing keeps `low` correct when it clears the lowest entry.
+Iteration then runs `for (i = flist->low; i <= flist->high; i++)` rather
+than `0..used`, so cleared duplicates at the edges cost nothing. NDX
+arithmetic, by contrast, always uses `ndx_start` + `used` - `low`/`high`
+never affect wire indices, only iteration bounds. oc's flat store has no
+equivalent: cleared slots remain inside every scan range, and the
+`FlistSegment` container (IR-1a) should carry both `used` and `low`/`high`
+so per-segment sweeps match upstream's bounds exactly.
 
 ## 4. Target Design
 
