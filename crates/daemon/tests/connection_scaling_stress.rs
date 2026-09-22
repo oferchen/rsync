@@ -416,8 +416,8 @@ fn ensure_fd_capacity(required: u64) -> Result<u64, String> {
                 std::io::Error::last_os_error()
             ));
         }
-        let hard = rlim.rlim_max as u64;
-        let soft = rlim.rlim_cur as u64;
+        let hard = rlim.rlim_max;
+        let soft = rlim.rlim_cur;
         if required <= soft {
             return Ok(soft);
         }

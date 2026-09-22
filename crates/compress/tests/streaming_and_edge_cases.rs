@@ -393,10 +393,10 @@ fn decompress_bit_flips_at_various_positions() {
 
         // A bit flip in deflate padding bits can leave output unchanged; only
         // sample-and-tolerate is asserted here, not strict corruption detection.
-        if let Ok(decompressed) = result {
-            if decompressed.len() == data.len() {
-                let _ = (decompressed == data, flip_pos);
-            }
+        if let Ok(decompressed) = result
+            && decompressed.len() == data.len()
+        {
+            let _ = (decompressed == data, flip_pos);
         }
     }
 }

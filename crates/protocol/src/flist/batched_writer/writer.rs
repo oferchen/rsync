@@ -271,10 +271,10 @@ impl BatchedFileListWriter {
             return Some(FlushReason::ByteSize);
         }
 
-        if let Some(start) = self.batch_start {
-            if start.elapsed() >= self.config.flush_timeout {
-                return Some(FlushReason::Timeout);
-            }
+        if let Some(start) = self.batch_start
+            && start.elapsed() >= self.config.flush_timeout
+        {
+            return Some(FlushReason::Timeout);
         }
 
         None
@@ -298,11 +298,12 @@ impl BatchedFileListWriter {
     ///
     /// Returns `Ok(true)` if a flush was performed, `Ok(false)` otherwise.
     pub fn check_timeout_flush<W: Write>(&mut self, writer: &mut W) -> io::Result<bool> {
-        if let Some(start) = self.batch_start {
-            if start.elapsed() >= self.config.flush_timeout && self.entry_count > 0 {
-                self.flush_with_reason(writer, FlushReason::Timeout)?;
-                return Ok(true);
-            }
+        if let Some(start) = self.batch_start
+            && start.elapsed() >= self.config.flush_timeout
+            && self.entry_count > 0
+        {
+            self.flush_with_reason(writer, FlushReason::Timeout)?;
+            return Ok(true);
         }
         Ok(false)
     }

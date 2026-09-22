@@ -161,10 +161,10 @@ pub fn send_file_to_writer<W: Write>(
 /// ```
 #[cfg(target_os = "linux")]
 pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
-    if length >= SENDFILE_THRESHOLD {
-        if let Ok(n) = try_sendfile(source, dest_fd, length) {
-            return Ok(n);
-        }
+    if length >= SENDFILE_THRESHOLD
+        && let Ok(n) = try_sendfile(source, dest_fd, length)
+    {
+        return Ok(n);
     }
     copy_via_fd_write(source, dest_fd, length)
 }
@@ -177,10 +177,10 @@ pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u
 /// to the buffered `read`/`write` loop transparently.
 #[cfg(target_os = "macos")]
 pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u64> {
-    if length >= SENDFILE_THRESHOLD {
-        if let Ok(n) = try_sendfile_macos(source, dest_fd, length) {
-            return Ok(n);
-        }
+    if length >= SENDFILE_THRESHOLD
+        && let Ok(n) = try_sendfile_macos(source, dest_fd, length)
+    {
+        return Ok(n);
     }
     copy_via_fd_write(source, dest_fd, length)
 }

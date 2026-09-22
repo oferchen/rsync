@@ -377,55 +377,54 @@ impl<'a> DeltaApplicator<'a> {
             &self.checksum_verifier,
             self.sparse_state.as_ref(),
             bytes_to_copy,
-        ) {
-            if let Some(basis_file) = basis_map.buffered_basis_file() {
-                let dest_off = self.stats.bytes_written;
+        ) && let Some(basis_file) = basis_map.buffered_basis_file()
+        {
+            let dest_off = self.stats.bytes_written;
 
-                // REFLINK-4: try FICLONERANGE first when the basis and
-                // destination ranges are block-aligned and large enough to
-                // amortize the ioctl. Success is metadata-only - no bytes
-                // traverse userspace or the kernel page cache. Failure
-                // (`Ok(false)`) falls through to `copy_file_range(2)`.
-                if Self::try_clone_basis_range(
-                    basis_file,
-                    offset,
-                    &self.output,
-                    dest_off,
-                    bytes_to_copy,
-                    self.cow_policy,
-                    &mut self.reflink_range,
-                    &mut self.same_fs,
-                )? {
-                    self.output
-                        .seek(SeekFrom::Start(dest_off + bytes_to_copy as u64))?;
-                    self.stats.bytes_written += bytes_to_copy as u64;
-                    self.stats.matched_bytes += bytes_to_copy as u64;
-                    self.stats.block_tokens += 1;
-                    return Ok(());
-                }
-
-                let dispatched = Self::try_copy_basis_range(
-                    basis_file,
-                    offset,
-                    &self.output,
-                    dest_off,
-                    bytes_to_copy,
-                    &mut self.same_fs,
-                )?;
-                if dispatched == bytes_to_copy {
-                    // Kernel honoured the full range. copy_file_range does
-                    // not advance the destination file position, so seek
-                    // forward to keep subsequent literal writes contiguous.
-                    self.output
-                        .seek(SeekFrom::Start(dest_off + dispatched as u64))?;
-                    self.stats.bytes_written += dispatched as u64;
-                    self.stats.matched_bytes += dispatched as u64;
-                    self.stats.block_tokens += 1;
-                    return Ok(());
-                }
-                // Partial or zero dispatch: fall through to read+write. The
-                // destination position has not been touched (no seek issued).
+            // REFLINK-4: try FICLONERANGE first when the basis and
+            // destination ranges are block-aligned and large enough to
+            // amortize the ioctl. Success is metadata-only - no bytes
+            // traverse userspace or the kernel page cache. Failure
+            // (`Ok(false)`) falls through to `copy_file_range(2)`.
+            if Self::try_clone_basis_range(
+                basis_file,
+                offset,
+                &self.output,
+                dest_off,
+                bytes_to_copy,
+                self.cow_policy,
+                &mut self.reflink_range,
+                &mut self.same_fs,
+            )? {
+                self.output
+                    .seek(SeekFrom::Start(dest_off + bytes_to_copy as u64))?;
+                self.stats.bytes_written += bytes_to_copy as u64;
+                self.stats.matched_bytes += bytes_to_copy as u64;
+                self.stats.block_tokens += 1;
+                return Ok(());
             }
+
+            let dispatched = Self::try_copy_basis_range(
+                basis_file,
+                offset,
+                &self.output,
+                dest_off,
+                bytes_to_copy,
+                &mut self.same_fs,
+            )?;
+            if dispatched == bytes_to_copy {
+                // Kernel honoured the full range. copy_file_range does
+                // not advance the destination file position, so seek
+                // forward to keep subsequent literal writes contiguous.
+                self.output
+                    .seek(SeekFrom::Start(dest_off + dispatched as u64))?;
+                self.stats.bytes_written += dispatched as u64;
+                self.stats.matched_bytes += dispatched as u64;
+                self.stats.block_tokens += 1;
+                return Ok(());
+            }
+            // Partial or zero dispatch: fall through to read+write. The
+            // destination position has not been touched (no seek issued).
         }
 
         let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
@@ -777,16 +776,16 @@ impl<'a> DeltaApplicator<'a> {
                 fast_io::punch_hole(&mut self.output, pos, len)?;
             }
             self.stats.final_pos = Some(final_pos);
-            if let Some(expected) = expected_size {
-                if final_pos != expected {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "sparse file size mismatch: expected {expected} bytes, \
+            if let Some(expected) = expected_size
+                && final_pos != expected
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "sparse file size mismatch: expected {expected} bytes, \
                              got {final_pos} bytes"
-                        ),
-                    ));
-                }
+                    ),
+                ));
             }
         }
 

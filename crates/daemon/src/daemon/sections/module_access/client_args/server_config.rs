@@ -426,10 +426,10 @@ fn build_server_config(
             // upstream: loadparm.c - `temp dir` module parameter provides a
             // default temp directory. The client's --temp-dir takes precedence
             // if already set from apply_long_form_args.
-            if cfg.temp_dir.is_none() {
-                if let Some(ref dir) = module.temp_dir {
-                    cfg.temp_dir = Some(std::path::PathBuf::from(dir));
-                }
+            if cfg.temp_dir.is_none()
+                && let Some(ref dir) = module.temp_dir
+            {
+                cfg.temp_dir = Some(std::path::PathBuf::from(dir));
             }
 
             // upstream: loadparm.c - `dont compress` parameter specifies suffixes
@@ -440,10 +440,10 @@ fn build_server_config(
             // per-file wire effect. The only live case is a bare `*`, which
             // collapses the whole zlib stream to store (level 0) at init
             // (token.c:206-211) - still deflated framing, never plain tokens.
-            if let Some(dont_compress) = module.dont_compress.as_deref() {
-                if dont_compress_is_match_all(dont_compress) {
-                    cfg.connection.dont_compress_match_all = true;
-                }
+            if let Some(dont_compress) = module.dont_compress.as_deref()
+                && dont_compress_is_match_all(dont_compress)
+            {
+                cfg.connection.dont_compress_match_all = true;
             }
 
             // upstream: clientserver.c:714-718 - `iconv_opt = lp_charset(i);

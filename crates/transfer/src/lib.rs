@@ -880,23 +880,22 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // When the server advertises this flag and a partial directory is configured,
     // enable per-file inplace for partial-dir basis files.
     // upstream: receiver.c:910 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
-    if let Some(flags) = setup_result.compat_flags {
-        if flags.contains(protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR)
-            && config.has_partial_dir
-        {
-            config.write.inplace_partial = true;
-        }
-
-        // upstream: compat.c:722-723,747 - CF_AVOID_XATTR_OPTIM only signals
-        // "avoid the xattr hardlink optimization" (want_xattr_optim) and is
-        // gated on protocol_version >= 31. Its absence does NOT mean the peer
-        // lacks xattr support: proto-30 peers (rsync 3.0.x) never define the
-        // flag yet fully preserve xattrs, and the 'x' capability that drives it
-        // is emitted unconditionally (options.c:3048). A remote genuinely built
-        // without SUPPORT_XATTRS rejects -X at option-parse time instead. So we
-        // must NOT disable xattr preservation here - doing so half-disabled the
-        // sender and desynced the proto-30 flist ("xa index out of range").
+    if let Some(flags) = setup_result.compat_flags
+        && flags.contains(protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR)
+        && config.has_partial_dir
+    {
+        config.write.inplace_partial = true;
     }
+
+    // upstream: compat.c:722-723,747 - CF_AVOID_XATTR_OPTIM only signals
+    // "avoid the xattr hardlink optimization" (want_xattr_optim) and is
+    // gated on protocol_version >= 31. Its absence does NOT mean the peer
+    // lacks xattr support: proto-30 peers (rsync 3.0.x) never define the
+    // flag yet fully preserve xattrs, and the 'x' capability that drives it
+    // is emitted unconditionally (options.c:3048). A remote genuinely built
+    // without SUPPORT_XATTRS rejects -X at option-parse time instead. So we
+    // must NOT disable xattr preservation here - doing so half-disabled the
+    // sender and desynced the proto-30 flist ("xa index out of range").
 
     // upstream: options.c:1858-1884 - when compiled without SUPPORT_ACLS or
     // SUPPORT_XATTRS, the server rejects -A/-X from the client. We mirror this
@@ -936,11 +935,11 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // path, so its presence plus the client-receiver role gates adoption exactly
     // as upstream does. The client's own --timeout is the current value the
     // adoption test compares against (upstream io.c:1726 `!io_timeout || io_timeout > val`).
-    if let Some(reapply) = io_timeout_reapply {
-        if config.connection.client_mode && config.role == crate::role::ServerRole::Receiver {
-            reader
-                .enable_io_timeout_adoption(handshake.io_timeout.map(|secs| secs as u32), reapply);
-        }
+    if let Some(reapply) = io_timeout_reapply
+        && config.connection.client_mode
+        && config.role == crate::role::ServerRole::Receiver
+    {
+        reader.enable_io_timeout_adoption(handshake.io_timeout.map(|secs| secs as u32), reapply);
     }
 
     // upstream: log.c:870-874 - the client (a push client is the sender/generator
@@ -1057,21 +1056,22 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // can build the file list from the forwarded filenames.
     // This applies only in client-mode pull (Receiver), where the daemon's
     // generator reads filenames from the protocol stream.
-    if config.connection.client_mode && config.role == ServerRole::Receiver {
-        if let Some(data) = config.connection.files_from_data.take() {
-            // upstream: io.c:1228 start_filesfrom_forwarding - below protocol 31
-            // the client-receiver forwards its files-from names un-multiplexed
-            // (MPLX_TO_BUFFERED). At protocol 30 the client's output IS
-            // multiplexed (need_messages_from_generator, main.c:1362-1363), so
-            // without this bypass the names would be MSG_DATA-framed while a
-            // real upstream sender reads them raw. At protocol >= 31 they stay
-            // framed; below 30 the stream is already plain so both paths match.
-            if handshake.protocol.forwards_files_from_unmultiplexed() && writer.is_multiplexed() {
-                writer.write_raw(&data)?;
-            } else {
-                writer.write_all(&data)?;
-                writer.flush()?;
-            }
+    if config.connection.client_mode
+        && config.role == ServerRole::Receiver
+        && let Some(data) = config.connection.files_from_data.take()
+    {
+        // upstream: io.c:1228 start_filesfrom_forwarding - below protocol 31
+        // the client-receiver forwards its files-from names un-multiplexed
+        // (MPLX_TO_BUFFERED). At protocol 30 the client's output IS
+        // multiplexed (need_messages_from_generator, main.c:1362-1363), so
+        // without this bypass the names would be MSG_DATA-framed while a
+        // real upstream sender reads them raw. At protocol >= 31 they stay
+        // framed; below 30 the stream is already plain so both paths match.
+        if handshake.protocol.forwards_files_from_unmultiplexed() && writer.is_multiplexed() {
+            writer.write_raw(&data)?;
+        } else {
+            writer.write_all(&data)?;
+            writer.flush()?;
         }
     }
 

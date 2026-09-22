@@ -75,13 +75,12 @@ pub(super) fn handle_directory_contents_copy(
     // upstream: flist.c:flist_sort_and_clean() - when -m is active,
     // directories excluded by non-dir-specific rules are still
     // traversed so file-level include rules can rescue contents.
-    if let Some(root) = relative_root {
-        if !(context.allows(root.as_path(), true)
+    if let Some(root) = relative_root
+        && !(context.allows(root.as_path(), true)
             || context.prune_empty_dirs_enabled()
                 && context.excluded_dir_by_non_dir_rule(root.as_path()))
-        {
-            return Ok(true);
-        }
+    {
+        return Ok(true);
     }
 
     if !recursion_enabled && !dirs_enabled {

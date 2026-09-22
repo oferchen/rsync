@@ -417,15 +417,14 @@ impl ReceiverContext {
                     feature = "acl",
                     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
                 ))]
-                if probe_default_perms {
-                    if let Some(parent) = dir_path.parent() {
-                        if probed_parents.insert(parent.to_path_buf()) {
-                            // upstream: generator.c:1351 dflt_perms = default_perms_for_dir(dn)
-                            // Pass umask = 0; upstream prints the ACL-derived bits, not
-                            // the umask-derived fallback, so the trace value is umask-independent.
-                            let _ = ::metadata::default_perms_for_dir(parent, 0);
-                        }
-                    }
+                if probe_default_perms
+                    && let Some(parent) = dir_path.parent()
+                    && probed_parents.insert(parent.to_path_buf())
+                {
+                    // upstream: generator.c:1351 dflt_perms = default_perms_for_dir(dn)
+                    // Pass umask = 0; upstream prints the ACL-derived bits, not
+                    // the umask-derived fallback, so the trace value is umask-independent.
+                    let _ = ::metadata::default_perms_for_dir(parent, 0);
                 }
                 // SEC-1.h: when the sandbox is plumbed and the new dir
                 // is a single-component leaf under the sandbox root,
@@ -778,17 +777,17 @@ impl ReceiverContext {
                     let _ = rel_path;
                     fs::create_dir(&dir_path)
                 };
-                if let Err(e) = create_result {
-                    if e.kind() != io::ErrorKind::AlreadyExists {
-                        debug_log!(
-                            Recv,
-                            1,
-                            "failed to create implied parent directory {}: {}",
-                            dir_path.display(),
-                            e
-                        );
-                        break;
-                    }
+                if let Err(e) = create_result
+                    && e.kind() != io::ErrorKind::AlreadyExists
+                {
+                    debug_log!(
+                        Recv,
+                        1,
+                        "failed to create implied parent directory {}: {}",
+                        dir_path.display(),
+                        e
+                    );
+                    break;
                 }
                 created.insert(dir_path);
             }
@@ -1096,30 +1095,30 @@ impl ReceiverContext {
                 Some(dir_path),
                 filter_ref,
                 None,
-            ) {
-                if self.config.flags.verbose && self.config.connection.client_mode {
-                    info_log!(
-                        Misc,
-                        1,
-                        "warning: xattr error for {}: {}",
-                        dir_path.display(),
-                        e
-                    );
-                }
-            }
-        }
-
-        if let Err(e) = apply_acls_from_receiver_cache(dir_path, entry, acl_cache, acl_id_map, true)
-        {
-            if self.config.flags.verbose && self.config.connection.client_mode {
+            ) && self.config.flags.verbose
+                && self.config.connection.client_mode
+            {
                 info_log!(
                     Misc,
                     1,
-                    "warning: ACL error for {}: {}",
+                    "warning: xattr error for {}: {}",
                     dir_path.display(),
                     e
                 );
             }
+        }
+
+        if let Err(e) = apply_acls_from_receiver_cache(dir_path, entry, acl_cache, acl_id_map, true)
+            && self.config.flags.verbose
+            && self.config.connection.client_mode
+        {
+            info_log!(
+                Misc,
+                1,
+                "warning: ACL error for {}: {}",
+                dir_path.display(),
+                e
+            );
         }
     }
 
@@ -1265,16 +1264,14 @@ impl ReceiverContext {
                 Err(_) => false, // directory may not exist (permission denied, etc.)
             };
 
-            if needs_update {
-                if let Err(e) = filetime::set_file_mtime(&dir_path, mtime) {
-                    debug_log!(
-                        Recv,
-                        1,
-                        "touch_up_dirs: failed to set mtime on {}: {}",
-                        dir_path.display(),
-                        e
-                    );
-                }
+            if needs_update && let Err(e) = filetime::set_file_mtime(&dir_path, mtime) {
+                debug_log!(
+                    Recv,
+                    1,
+                    "touch_up_dirs: failed to set mtime on {}: {}",
+                    dir_path.display(),
+                    e
+                );
             }
         }
     }

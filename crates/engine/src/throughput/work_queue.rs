@@ -285,13 +285,11 @@ impl GovernedWorkQueue {
     #[must_use]
     pub fn with_sizing(mut self, protection_window: Duration, mem_budget: u64) -> Self {
         if let (Some(rope), Some((min, max))) = (self.rope.as_ref(), self.sender.capacity_bounds())
-        {
-            if let Ok(config) = RopeConfig::new(min, max)
+            && let Ok(config) = RopeConfig::new(min, max)
                 .and_then(|c| c.with_mem_budget(mem_budget))
                 .map(|c| c.with_protection_window(protection_window))
-            {
-                self.rope = Some(Rope::new(rope.semaphore_arc(), config));
-            }
+        {
+            self.rope = Some(Rope::new(rope.semaphore_arc(), config));
         }
         self
     }

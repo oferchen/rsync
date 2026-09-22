@@ -185,32 +185,31 @@ fn apply_privilege_restrictions_with_upstream_errors(
         log_message(log_sink, &message);
     }
 
-    if let Some(target) = drop_target {
-        if target.uid.is_some() || !target.gids.is_empty() {
-            if let Err(err) = drop_privileges(target.uid, &target.gids, log_sink) {
-                // Distinguish upstream error messages based on the error text.
-                // upstream: clientserver.c:1024/1031/1053
-                let text = err.to_string();
-                let error = if text.contains("setgroups") {
-                    AtError::SetgroupsFailed
-                } else if text.contains("setuid") {
-                    AtError::SetuidFailed
-                } else {
-                    AtError::SetgidFailed
-                };
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                let host_owned = ctx.host_display().to_owned();
-                run_post_xfer_finalizer(
-                    ctx,
-                    module,
-                    &host_owned,
-                    auth_user,
-                    client_args,
-                    MODULE_ABORT_EXIT_CODE,
-                );
-                return Ok(None);
-            }
-        }
+    if let Some(target) = drop_target
+        && (target.uid.is_some() || !target.gids.is_empty())
+        && let Err(err) = drop_privileges(target.uid, &target.gids, log_sink)
+    {
+        // Distinguish upstream error messages based on the error text.
+        // upstream: clientserver.c:1024/1031/1053
+        let text = err.to_string();
+        let error = if text.contains("setgroups") {
+            AtError::SetgroupsFailed
+        } else if text.contains("setuid") {
+            AtError::SetuidFailed
+        } else {
+            AtError::SetgidFailed
+        };
+        send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+        let host_owned = ctx.host_display().to_owned();
+        run_post_xfer_finalizer(
+            ctx,
+            module,
+            &host_owned,
+            auth_user,
+            client_args,
+            MODULE_ABORT_EXIT_CODE,
+        );
+        return Ok(None);
     }
 
     Ok(Some(PrivilegeOutcome {

@@ -187,101 +187,100 @@ fn process_approved_module(
     // Run early exec after authentication so the authenticated username
     // is available in the RSYNC_USER_NAME environment variable.
     // upstream: clientserver.c - early_exec() runs after auth completes.
-    if xfer_exec_enabled() {
-        if let Some(command) = &module.early_exec {
-            let early_path_ctx = PathExpansionContext {
-                module_path: &module.path.display().to_string(),
-                module_name: &module.name,
-                username: auth_user.as_deref().unwrap_or(""),
-                remote_addr: &ctx.peer_ip.to_string(),
-                hostname: ctx.host_display(),
-                pid: std::process::id(),
-            };
-            let expanded_command = match expand_exec_command(command, &early_path_ctx) {
-                Ok(expanded) => expanded,
-                Err(refusal) => {
-                    refuse_shell_hook(ctx, &refusal)?;
-                    return Ok(());
+    if xfer_exec_enabled()
+        && let Some(command) = &module.early_exec
+    {
+        let early_path_ctx = PathExpansionContext {
+            module_path: &module.path.display().to_string(),
+            module_name: &module.name,
+            username: auth_user.as_deref().unwrap_or(""),
+            remote_addr: &ctx.peer_ip.to_string(),
+            hostname: ctx.host_display(),
+            pid: std::process::id(),
+        };
+        let expanded_command = match expand_exec_command(command, &early_path_ctx) {
+            Ok(expanded) => expanded,
+            Err(refusal) => {
+                refuse_shell_hook(ctx, &refusal)?;
+                return Ok(());
+            }
+        };
+        let early_ctx = XferExecContext {
+            module_name: &module.name,
+            module_path: &module.path,
+            host_addr: ctx.peer_ip,
+            host_name: ctx.host_display(),
+            user_name: auth_user.as_deref(),
+            // Early exec runs before the client names a request, so
+            // upstream passes NULL and the hook sees "(NONE)" with no
+            // RSYNC_ARG<n>. upstream: clientserver.c:1004 -
+            // write_pre_exec_args(arg_fd, NULL, NULL, NULL, 1).
+            request: EARLY_EXEC_REQUEST,
+            client_args: &[],
+        };
+        match run_early_exec(
+            &expanded_command,
+            &early_ctx,
+            ctx.early_input_data.as_deref(),
+        ) {
+            Ok(Ok(())) => {
+                if let Some(log) = ctx.log_sink {
+                    let text = format!("early exec succeeded for module '{}'", ctx.request);
+                    let message = rsync_info!(text).with_role(Role::Daemon);
+                    log_message(log, &message);
                 }
-            };
-            let early_ctx = XferExecContext {
-                module_name: &module.name,
-                module_path: &module.path,
-                host_addr: ctx.peer_ip,
-                host_name: ctx.host_display(),
-                user_name: auth_user.as_deref(),
-                // Early exec runs before the client names a request, so
-                // upstream passes NULL and the hook sees "(NONE)" with no
-                // RSYNC_ARG<n>. upstream: clientserver.c:1004 -
-                // write_pre_exec_args(arg_fd, NULL, NULL, NULL, 1).
-                request: EARLY_EXEC_REQUEST,
-                client_args: &[],
-            };
-            match run_early_exec(
-                &expanded_command,
-                &early_ctx,
-                ctx.early_input_data.as_deref(),
-            ) {
-                Ok(Ok(())) => {
-                    if let Some(log) = ctx.log_sink {
-                        let text = format!("early exec succeeded for module '{}'", ctx.request);
-                        let message = rsync_info!(text).with_role(Role::Daemon);
-                        log_message(log, &message);
-                    }
+            }
+            Ok(Err(error_msg)) => {
+                // upstream: clientserver.c:1005-1008 - a hook that ran and
+                // exited non-zero logs `rsyserr(FLOG, ..., "early exec
+                // failed")` and sends the fixed `@ERROR: early exec failed`
+                // line; the exit-code/stderr detail stays in the daemon log.
+                if let Some(log) = ctx.log_sink {
+                    let message = rsync_error!(1, error_msg.to_string()).with_role(Role::Daemon);
+                    log_message(log, &message);
                 }
-                Ok(Err(error_msg)) => {
-                    // upstream: clientserver.c:1005-1008 - a hook that ran and
-                    // exited non-zero logs `rsyserr(FLOG, ..., "early exec
-                    // failed")` and sends the fixed `@ERROR: early exec failed`
-                    // line; the exit-code/stderr detail stays in the daemon log.
-                    if let Some(log) = ctx.log_sink {
-                        let message =
-                            rsync_error!(1, error_msg.to_string()).with_role(Role::Daemon);
-                        log_message(log, &message);
-                    }
-                    let error = AtError::message("early exec failed".to_string());
-                    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                    // upstream: clientserver.c:945-949 - early exec runs after
-                    // the post-xfer-exec fork point, so its failure is a
-                    // child exit the waiting parent still observes.
-                    let host_owned = ctx.host_display().to_owned();
-                    run_post_xfer_finalizer(
-                        ctx,
-                        module,
-                        &host_owned,
-                        auth_user.as_deref(),
-                        &[],
-                        MODULE_ABORT_EXIT_CODE,
+                let error = AtError::message("early exec failed".to_string());
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+                // upstream: clientserver.c:945-949 - early exec runs after
+                // the post-xfer-exec fork point, so its failure is a
+                // child exit the waiting parent still observes.
+                let host_owned = ctx.host_display().to_owned();
+                run_post_xfer_finalizer(
+                    ctx,
+                    module,
+                    &host_owned,
+                    auth_user.as_deref(),
+                    &[],
+                    MODULE_ABORT_EXIT_CODE,
+                );
+                return Ok(());
+            }
+            Err(err) => {
+                // upstream: clientserver.c:999-1002 - a hook that could not
+                // be started logs `rsyserr(FLOG, errno, "early exec
+                // preparation failed")` and sends the fixed `@ERROR: early
+                // exec preparation failed` line; the OS error detail stays
+                // in the daemon log.
+                if let Some(log) = ctx.log_sink {
+                    let text = format!(
+                        "failed to run early exec command for module '{}': {err}",
+                        ctx.request
                     );
-                    return Ok(());
+                    let message = rsync_error!(1, text).with_role(Role::Daemon);
+                    log_message(log, &message);
                 }
-                Err(err) => {
-                    // upstream: clientserver.c:999-1002 - a hook that could not
-                    // be started logs `rsyserr(FLOG, errno, "early exec
-                    // preparation failed")` and sends the fixed `@ERROR: early
-                    // exec preparation failed` line; the OS error detail stays
-                    // in the daemon log.
-                    if let Some(log) = ctx.log_sink {
-                        let text = format!(
-                            "failed to run early exec command for module '{}': {err}",
-                            ctx.request
-                        );
-                        let message = rsync_error!(1, text).with_role(Role::Daemon);
-                        log_message(log, &message);
-                    }
-                    let error = AtError::message("early exec preparation failed".to_string());
-                    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                    let host_owned = ctx.host_display().to_owned();
-                    run_post_xfer_finalizer(
-                        ctx,
-                        module,
-                        &host_owned,
-                        auth_user.as_deref(),
-                        &[],
-                        MODULE_ABORT_EXIT_CODE,
-                    );
-                    return Ok(());
-                }
+                let error = AtError::message("early exec preparation failed".to_string());
+                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+                let host_owned = ctx.host_display().to_owned();
+                run_post_xfer_finalizer(
+                    ctx,
+                    module,
+                    &host_owned,
+                    auth_user.as_deref(),
+                    &[],
+                    MODULE_ABORT_EXIT_CODE,
+                );
+                return Ok(());
             }
         }
     }
@@ -1034,15 +1033,13 @@ fn process_approved_module(
         // upstream: cleanup.c::handle_cleanup() -> close_all() emits the
         // kernel FIN as the process exits; the threaded daemon collapses
         // that pattern into the explicit shutdown here.
-        if let Some(tcp) = stream.tcp_stream() {
-            if let Err(err) = core::server::writer::shutdown_send_side(tcp, Duration::from_secs(5))
-            {
-                if let Some(log) = ctx.log_sink {
-                    let text = format!("daemon-sender drain-barrier shutdown failed: {err}");
-                    let message = rsync_warning!(text).with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-            }
+        if let Some(tcp) = stream.tcp_stream()
+            && let Err(err) = core::server::writer::shutdown_send_side(tcp, Duration::from_secs(5))
+            && let Some(log) = ctx.log_sink
+        {
+            let text = format!("daemon-sender drain-barrier shutdown failed: {err}");
+            let message = rsync_warning!(text).with_role(Role::Daemon);
+            log_message(log, &message);
         }
 
         // Post-shutdown drain: now that our FIN is on the wire, wait for the

@@ -602,12 +602,11 @@ impl ServerConfigBuilder {
         if let (Some(min), Some(max)) = (
             self.file_selection.min_file_size,
             self.file_selection.max_file_size,
-        ) {
-            if min > max {
-                return Err(BuilderError::InvalidCombination {
-                    message: format!("min_file_size ({min}) cannot exceed max_file_size ({max})"),
-                });
-            }
+        ) && min > max
+        {
+            return Err(BuilderError::InvalidCombination {
+                message: format!("min_file_size ({min}) cannot exceed max_file_size ({max})"),
+            });
         }
 
         Ok(())

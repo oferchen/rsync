@@ -206,13 +206,13 @@ fn check_target(env: &dyn CheckEnv, target: &CrossTarget) -> CheckOutcome {
         }
     }
 
-    if let Some(tool) = target.linker {
-        if !env.command_available(tool.program) {
-            return CheckOutcome::Skipped(format!(
-                "cross toolchain '{}' was not found on PATH; {}",
-                tool.program, tool.hint
-            ));
-        }
+    if let Some(tool) = target.linker
+        && !env.command_available(tool.program)
+    {
+        return CheckOutcome::Skipped(format!(
+            "cross toolchain '{}' was not found on PATH; {}",
+            tool.program, tool.hint
+        ));
     }
 
     match env.run(target.cargo_args, target.display) {

@@ -933,10 +933,10 @@ mod tests {
             _user: &str,
             password: &str,
         ) -> Result<russh::server::Auth, Self::Error> {
-            if let Some(ref expected) = self.policy.accepted_password {
-                if password == expected {
-                    return Ok(russh::server::Auth::Accept);
-                }
+            if let Some(ref expected) = self.policy.accepted_password
+                && password == expected
+            {
+                return Ok(russh::server::Auth::Accept);
             }
             Ok(russh::server::Auth::reject())
         }

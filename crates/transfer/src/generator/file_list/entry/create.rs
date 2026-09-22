@@ -295,12 +295,11 @@ impl GeneratorContext {
         }
 
         // Set creation time if preserving (upstream: flist.c:495-498)
-        if self.config.flags.crtimes {
-            if let Ok(crtime) = metadata.created() {
-                if let Ok(duration) = crtime.duration_since(std::time::UNIX_EPOCH) {
-                    entry.set_crtime(duration.as_secs() as i64);
-                }
-            }
+        if self.config.flags.crtimes
+            && let Ok(crtime) = metadata.created()
+            && let Ok(duration) = crtime.duration_since(std::time::UNIX_EPOCH)
+        {
+            entry.set_crtime(duration.as_secs() as i64);
         }
 
         // upstream: flist.c:make_file() - set uid/gid
@@ -409,13 +408,11 @@ impl GeneratorContext {
         #[cfg(all(feature = "acl", windows))]
         if self.config.flags.acls {
             let should_read = file_type.is_file() || file_type.is_dir();
-            if should_read {
-                if let Ok(Some(sddl_entry)) = metadata::sddl_xattr_entry(full_path) {
-                    let mut list = entry.xattr_list().cloned().unwrap_or_default();
-                    list.push(sddl_entry);
-                    list.sort_by_name();
-                    entry.set_xattr_list(list);
-                }
+            if should_read && let Ok(Some(sddl_entry)) = metadata::sddl_xattr_entry(full_path) {
+                let mut list = entry.xattr_list().cloned().unwrap_or_default();
+                list.push(sddl_entry);
+                list.sort_by_name();
+                entry.set_xattr_list(list);
             }
         }
 
@@ -454,10 +451,11 @@ impl GeneratorContext {
         // it the sender emits an all-zero checksum, the receiver's `-c`
         // quick-check never matches, and every content-identical file is
         // needlessly re-transferred.
-        if self.config.flags.checksum && entry.is_file() {
-            if let Some(sum) = self.compute_flist_checksum(full_path, entry.size()) {
-                entry.set_checksum(sum);
-            }
+        if self.config.flags.checksum
+            && entry.is_file()
+            && let Some(sum) = self.compute_flist_checksum(full_path, entry.size())
+        {
+            entry.set_checksum(sum);
         }
 
         Ok(entry)

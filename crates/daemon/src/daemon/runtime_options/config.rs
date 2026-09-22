@@ -107,12 +107,12 @@ impl RuntimeOptions {
 
         // Apply the `address` directive only when no CLI --address/--bind was given.
         // upstream: clientserver.c - CLI --address overrides the config file `address`.
-        if let Some((addr, _origin)) = parsed.bind_address {
-            if !self.bind_address_overridden {
-                self.bind_address = addr;
-                self.bind_address_overridden = true;
-                self.address_family = Some(AddressFamily::from_ip(addr));
-            }
+        if let Some((addr, _origin)) = parsed.bind_address
+            && !self.bind_address_overridden
+        {
+            self.bind_address = addr;
+            self.bind_address_overridden = true;
+            self.address_family = Some(AddressFamily::from_ip(addr));
         }
 
         if let Some((uid_str, origin)) = parsed.daemon_uid {

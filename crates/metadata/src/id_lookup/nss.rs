@@ -298,10 +298,10 @@ pub fn groups_for_user(username: &str) -> Result<Vec<String>, io::Error> {
     let gids = supplementary_gids_for_uid(uid)?;
     let mut names = Vec::with_capacity(gids.len());
     for gid in gids {
-        if let Some(name) = lookup_group_name(gid)? {
-            if let Ok(name) = String::from_utf8(name) {
-                names.push(name);
-            }
+        if let Some(name) = lookup_group_name(gid)?
+            && let Ok(name) = String::from_utf8(name)
+        {
+            names.push(name);
         }
     }
     Ok(names)

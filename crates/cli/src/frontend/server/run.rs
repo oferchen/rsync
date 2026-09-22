@@ -687,16 +687,16 @@ where
                     // with EACCES (observed as the
                     // "Permission denied (os error 13)" branch when the
                     // receiver reached the new forwarder).
-                    if let Some(path) = config.file_selection.files_from_path.as_deref() {
-                        if path != "-" {
-                            let p = std::path::PathBuf::from(path);
-                            if let Some(canon) = p
-                                .canonicalize()
-                                .ok()
-                                .or_else(|| p.parent().and_then(|d| d.canonicalize().ok()))
-                            {
-                                allowed.push(canon);
-                            }
+                    if let Some(path) = config.file_selection.files_from_path.as_deref()
+                        && path != "-"
+                    {
+                        let p = std::path::PathBuf::from(path);
+                        if let Some(canon) = p
+                            .canonicalize()
+                            .ok()
+                            .or_else(|| p.parent().and_then(|d| d.canonicalize().ok()))
+                        {
+                            allowed.push(canon);
                         }
                     }
 
@@ -836,12 +836,11 @@ fn collect_keep_dirlink_targets(root: &std::path::Path, out: &mut Vec<std::path:
             if lst.file_type().is_symlink() {
                 // A symlink that resolves to a directory is a kept dirlink;
                 // allowlist its canonical target so writes through it succeed.
-                if let Ok(canon) = std::fs::canonicalize(&path) {
-                    if std::fs::metadata(&canon).is_ok_and(|m| m.file_type().is_dir())
-                        && seen.insert(canon.clone())
-                    {
-                        out.push(canon);
-                    }
+                if let Ok(canon) = std::fs::canonicalize(&path)
+                    && std::fs::metadata(&canon).is_ok_and(|m| m.file_type().is_dir())
+                    && seen.insert(canon.clone())
+                {
+                    out.push(canon);
                 }
             } else if lst.file_type().is_dir() {
                 stack.push((path, depth + 1));

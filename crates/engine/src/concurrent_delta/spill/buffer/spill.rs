@@ -164,10 +164,10 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
                         // to the typed PriorSpillsLost variant so the
                         // receiver can emit an actionable diagnostic.
                         self.inner.force_insert(seq, item);
-                        if e.kind() == io::ErrorKind::NotFound {
-                            if let Some(lost) = self.prior_spills_lost_error() {
-                                return Err(lost);
-                            }
+                        if e.kind() == io::ErrorKind::NotFound
+                            && let Some(lost) = self.prior_spills_lost_error()
+                        {
+                            return Err(lost);
                         }
                         return Err(SpillError::Io(e));
                     }

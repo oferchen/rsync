@@ -815,10 +815,10 @@ impl<R> MultiplexReader<R> {
                 // gates on its own info=del / itemize verbosity. A server or
                 // client-receiver reader has no render state and drops the frame,
                 // matching upstream's non-rendering `am_server` path.
-                if let Some(render) = self.deleted_render {
-                    if let Some(line) = render.format(&self.buffer) {
-                        sink.info(&line);
-                    }
+                if let Some(render) = self.deleted_render
+                    && let Some(line) = render.format(&self.buffer)
+                {
+                    sink.info(&line);
                 }
             }
             _ => {}

@@ -192,10 +192,10 @@ pub(crate) fn format_name_line(
         xname.filter(|name| iflags.raw() & ItemFlags::ITEM_XNAME_FOLLOWS != 0 && !name.is_empty());
     if let Some(name) = hlink {
         let _ = write!(buf, " => {}", String::from_utf8_lossy(name));
-    } else if entry.is_symlink() {
-        if let Some(target) = entry.link_target() {
-            let _ = write!(buf, " -> {}", target.display());
-        }
+    } else if entry.is_symlink()
+        && let Some(target) = entry.link_target()
+    {
+        let _ = write!(buf, " -> {}", target.display());
     }
 
     buf.push('\n');

@@ -285,7 +285,7 @@ mod tests {
         let content = b"single file content";
         std::fs::write(&path, content).unwrap();
 
-        let results = hash_files_parallel::<Sha256>(&[path.clone()], 64 * 1024);
+        let results = hash_files_parallel::<Sha256>(std::slice::from_ref(&path), 64 * 1024);
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].path, path);
@@ -390,8 +390,11 @@ mod tests {
         std::fs::write(&path, &data).unwrap();
 
         let block_size = 1024;
-        let results =
-            compute_file_signatures_parallel::<Md5>(&[path.clone()], block_size, 64 * 1024);
+        let results = compute_file_signatures_parallel::<Md5>(
+            std::slice::from_ref(&path),
+            block_size,
+            64 * 1024,
+        );
 
         assert_eq!(results.len(), 1);
         let result = &results[0];

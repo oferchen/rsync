@@ -954,12 +954,12 @@ impl ReceiverContext {
                 }
             }
             // upstream: generator.c:553-554 - uid_ndx && am_root && uid differs
-            if self.config.flags.owner && metadata::am_root() {
-                if let Some(uid) = entry.uid() {
-                    if dest_meta.uid() != uid {
-                        iflags |= ItemFlags::ITEM_REPORT_OWNER;
-                    }
-                }
+            if self.config.flags.owner
+                && metadata::am_root()
+                && let Some(uid) = entry.uid()
+                && dest_meta.uid() != uid
+            {
+                iflags |= ItemFlags::ITEM_REPORT_OWNER;
             }
             // upstream: generator.c:555-556 - `gid_ndx && !(file->flags &
             // FLAG_SKIP_GROUP) && sxp->st.st_gid != (gid_t)F_GROUP(file)`.
@@ -970,12 +970,12 @@ impl ReceiverContext {
             // (rsync.c:527) nor reports the group as changed. Without this
             // test an unprivileged pull printed `g` on every file whose group
             // it could never set.
-            if self.config.flags.group {
-                if let Some(gid) = entry.gid() {
-                    if dest_meta.gid() != gid && metadata::group_is_settable(gid) {
-                        iflags |= ItemFlags::ITEM_REPORT_GROUP;
-                    }
-                }
+            if self.config.flags.group
+                && let Some(gid) = entry.gid()
+                && dest_meta.gid() != gid
+                && metadata::group_is_settable(gid)
+            {
+                iflags |= ItemFlags::ITEM_REPORT_GROUP;
             }
         }
         // upstream: generator.c:557-563 - with `preserve_acls` and a non-symlink
@@ -1210,23 +1210,23 @@ impl ReceiverContext {
         max_size: Option<u64>,
     ) -> bool {
         let size = entry.size();
-        if let Some(max) = max_size {
-            if size > max {
-                if logging::info_gte(logging::InfoFlag::Skip, 1) {
-                    let name = entry.path().to_string_lossy();
-                    let _ = self.emit_info_line(writer, &format!("{name} is over max-size\n"));
-                }
-                return true;
+        if let Some(max) = max_size
+            && size > max
+        {
+            if logging::info_gte(logging::InfoFlag::Skip, 1) {
+                let name = entry.path().to_string_lossy();
+                let _ = self.emit_info_line(writer, &format!("{name} is over max-size\n"));
             }
+            return true;
         }
-        if let Some(min) = min_size {
-            if size < min {
-                if logging::info_gte(logging::InfoFlag::Skip, 1) {
-                    let name = entry.path().to_string_lossy();
-                    let _ = self.emit_info_line(writer, &format!("{name} is under min-size\n"));
-                }
-                return true;
+        if let Some(min) = min_size
+            && size < min
+        {
+            if logging::info_gte(logging::InfoFlag::Skip, 1) {
+                let name = entry.path().to_string_lossy();
+                let _ = self.emit_info_line(writer, &format!("{name} is under min-size\n"));
             }
+            return true;
         }
         false
     }
@@ -1333,50 +1333,48 @@ impl ReceiverContext {
                 stat_meta,
                 self.config.file_selection.modify_window,
             );
-        if attrs_updated {
-            if let Err(e) = apply_metadata_with_cached_stat(
+        if attrs_updated
+            && let Err(e) = apply_metadata_with_cached_stat(
                 file_path,
                 entry,
                 metadata_opts,
                 Some(stat_meta.clone()),
-            ) {
-                metadata_errors.push((file_path.to_path_buf(), e.to_string()));
-            }
+            )
+        {
+            metadata_errors.push((file_path.to_path_buf(), e.to_string()));
         }
 
         // upstream: rsync.c:set_file_attrs() -> set_acl() for ACL preservation
-        if has_acls {
-            if let Err(e) = apply_acls_from_receiver_cache(
+        if has_acls
+            && let Err(e) = apply_acls_from_receiver_cache(
                 file_path,
                 entry,
                 acl_cache,
                 acl_id_map,
                 !entry.is_symlink(),
-            ) {
-                metadata_errors.push((file_path.to_path_buf(), e.to_string()));
-                return;
-            }
+            )
+        {
+            metadata_errors.push((file_path.to_path_buf(), e.to_string()));
+            return;
         }
 
         // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
-        if has_xattrs {
-            if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
-                let filter = self.xattr_name_filter().map(|set| {
-                    move |name: &str| set.xattr_name_allowed(name, filters::XattrSide::Receiver)
-                });
-                let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
-                // upstream: rsync_xal_set resolves an abbreviated value against
-                // fnamecmp; the file is its own basis for the in-place case.
-                if let Err(e) = metadata::apply_xattrs_from_list(
-                    file_path,
-                    xattr_list,
-                    true,
-                    Some(file_path),
-                    filter_ref,
-                    None,
-                ) {
-                    metadata_errors.push((file_path.to_path_buf(), e.to_string()));
-                }
+        if has_xattrs && let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
+            let filter = self.xattr_name_filter().map(|set| {
+                move |name: &str| set.xattr_name_allowed(name, filters::XattrSide::Receiver)
+            });
+            let filter_ref = filter.as_ref().map(|f| f as &dyn Fn(&str) -> bool);
+            // upstream: rsync_xal_set resolves an abbreviated value against
+            // fnamecmp; the file is its own basis for the in-place case.
+            if let Err(e) = metadata::apply_xattrs_from_list(
+                file_path,
+                xattr_list,
+                true,
+                Some(file_path),
+                filter_ref,
+                None,
+            ) {
+                metadata_errors.push((file_path.to_path_buf(), e.to_string()));
             }
         }
 

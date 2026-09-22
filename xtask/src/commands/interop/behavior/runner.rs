@@ -224,10 +224,11 @@ pub fn run_scenario(
     }
 
     for arg in &mut cmd_args {
-        if !arg.starts_with('/') && !arg.starts_with('-') {
-            if let Some(file_name) = arg.strip_prefix("filelist") {
-                *arg = format!("{}/filelist{}", work_dir.display(), file_name);
-            }
+        if !arg.starts_with('/')
+            && !arg.starts_with('-')
+            && let Some(file_name) = arg.strip_prefix("filelist")
+        {
+            *arg = format!("{}/filelist{}", work_dir.display(), file_name);
         }
     }
 

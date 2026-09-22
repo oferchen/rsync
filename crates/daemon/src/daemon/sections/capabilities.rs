@@ -160,12 +160,12 @@ fn drop_cap_net_bind_service(log_sink: Option<&SharedLogSink>) {
     }
 
     for set in [CapSet::Effective, CapSet::Permitted, CapSet::Bounding] {
-        if let Err(err) = caps::drop(None, set, target) {
-            if let Some(log) = log_sink {
-                let text = format!("failed to drop CAP_NET_BIND_SERVICE from {set:?}: {err}");
-                let message = rsync_warning!(text).with_role(Role::Daemon);
-                log_message(log, &message);
-            }
+        if let Err(err) = caps::drop(None, set, target)
+            && let Some(log) = log_sink
+        {
+            let text = format!("failed to drop CAP_NET_BIND_SERVICE from {set:?}: {err}");
+            let message = rsync_warning!(text).with_role(Role::Daemon);
+            log_message(log, &message);
         }
     }
 
@@ -256,12 +256,12 @@ fn drop_worker_capabilities(module: &ModuleRuntime, log_sink: Option<&SharedLogS
             continue;
         }
         for set in [CapSet::Effective, CapSet::Permitted, CapSet::Bounding] {
-            if let Err(err) = caps::drop(None, set, cap) {
-                if let Some(log) = log_sink {
-                    let text = format!("failed to drop {cap:?} from {set:?}: {err}");
-                    let message = rsync_warning!(text).with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
+            if let Err(err) = caps::drop(None, set, cap)
+                && let Some(log) = log_sink
+            {
+                let text = format!("failed to drop {cap:?} from {set:?}: {err}");
+                let message = rsync_warning!(text).with_role(Role::Daemon);
+                log_message(log, &message);
             }
         }
         dropped.push(cap);

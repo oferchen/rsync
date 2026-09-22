@@ -319,19 +319,19 @@ fn parse_list(scoped: &str, resolve: impl Fn(&str) -> Option<&'static str>) -> O
     for token in scoped.split_whitespace() {
         // upstream: compat.c:295-306 - unrecognised names are dropped and the
         // first occurrence of each algorithm wins (duplicates removed).
-        if let Some(canonical) = resolve(token) {
-            if !candidates.contains(&canonical) {
-                candidates.push(canonical);
-                // upstream: compat.c:298-304 - only a recognised alias (an entry
-                // whose main_nni points elsewhere) is rewritten to its canonical
-                // spelling; every other name keeps the operator's original bytes
-                // verbatim on the wire, including casing. A token that differs
-                // from its canonical name only in ASCII case is not an alias.
-                if token.eq_ignore_ascii_case(canonical) {
-                    advertised.push(token.to_string());
-                } else {
-                    advertised.push(canonical.to_string());
-                }
+        if let Some(canonical) = resolve(token)
+            && !candidates.contains(&canonical)
+        {
+            candidates.push(canonical);
+            // upstream: compat.c:298-304 - only a recognised alias (an entry
+            // whose main_nni points elsewhere) is rewritten to its canonical
+            // spelling; every other name keeps the operator's original bytes
+            // verbatim on the wire, including casing. A token that differs
+            // from its canonical name only in ASCII case is not an alias.
+            if token.eq_ignore_ascii_case(canonical) {
+                advertised.push(token.to_string());
+            } else {
+                advertised.push(canonical.to_string());
             }
         }
     }

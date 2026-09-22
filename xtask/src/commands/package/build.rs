@@ -603,28 +603,28 @@ fn rename_deb_with_variant_suffix(
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
-            if filename.starts_with(&format!(
+        if let Some(filename) = path.file_name().and_then(|s| s.to_str())
+            && filename.starts_with(&format!(
                 "{}_{}",
                 branding.client_bin, branding.rust_version
-            )) && filename.ends_with(".deb")
-                && !filename.contains(&format!("_{variant}.deb"))
-            {
-                let new_filename = filename.replace(".deb", &format!("_{variant}.deb"));
-                let new_path = deb_dir.join(&new_filename);
-                fs::rename(&path, &new_path).map_err(|error| {
-                    TaskError::Io(std::io::Error::new(
-                        error.kind(),
-                        format!(
-                            "failed to rename {} to {}: {error}",
-                            path.display(),
-                            new_path.display()
-                        ),
-                    ))
-                })?;
-                println!("Renamed {filename} -> {new_filename}");
-                break;
-            }
+            ))
+            && filename.ends_with(".deb")
+            && !filename.contains(&format!("_{variant}.deb"))
+        {
+            let new_filename = filename.replace(".deb", &format!("_{variant}.deb"));
+            let new_path = deb_dir.join(&new_filename);
+            fs::rename(&path, &new_path).map_err(|error| {
+                TaskError::Io(std::io::Error::new(
+                    error.kind(),
+                    format!(
+                        "failed to rename {} to {}: {error}",
+                        path.display(),
+                        new_path.display()
+                    ),
+                ))
+            })?;
+            println!("Renamed {filename} -> {new_filename}");
+            break;
         }
     }
 

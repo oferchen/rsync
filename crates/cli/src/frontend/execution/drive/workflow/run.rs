@@ -778,16 +778,16 @@ where
     }
 
     let is_daemon_transfer = transfer_operands.iter().any(|op| operand_is_remote(op));
-    if !is_daemon_transfer {
-        if let Some(exit_code) = validation::validate_local_only_options(
+    if !is_daemon_transfer
+        && let Some(exit_code) = validation::validate_local_only_options(
             password_override.is_some(),
             password_file.is_some() || password_command.is_some(),
             connect_program.as_ref(),
             parsed.rsync_path.as_ref(),
             stderr,
-        ) {
-            return exit_code;
-        }
+        )
+    {
+        return exit_code;
     }
 
     if let Err(code) =

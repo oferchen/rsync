@@ -150,14 +150,14 @@ fn apply_rule_modifiers(
 /// adjacent single-letter form as an unknown rule.
 fn split_keyword_modifiers(keyword: &str) -> (&str, &str) {
     let mut chars = keyword.chars();
-    if let Some(first) = chars.next() {
-        if SINGLE_LETTER_PREFIXES.contains(first) {
-            let rest = chars.as_str();
-            return (
-                &keyword[..first.len_utf8()],
-                rest.strip_prefix(',').unwrap_or(rest),
-            );
-        }
+    if let Some(first) = chars.next()
+        && SINGLE_LETTER_PREFIXES.contains(first)
+    {
+        let rest = chars.as_str();
+        return (
+            &keyword[..first.len_utf8()],
+            rest.strip_prefix(',').unwrap_or(rest),
+        );
     }
     if let Some((name, modifiers)) = keyword.split_once(',') {
         (name, modifiers)

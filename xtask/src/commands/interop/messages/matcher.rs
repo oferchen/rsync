@@ -42,6 +42,7 @@ pub trait MessageMatcher: std::fmt::Debug + Send + Sync {
 pub struct ExactMatcher {
     pub text: String,
     pub role: Option<String>,
+    #[allow(dead_code)] // Backs the scenario() trait accessor (debugging API)
     pub scenario: String,
     pub optional: bool,
 }
@@ -85,6 +86,7 @@ pub struct PatternMatcher {
     pub pattern: String,
     pub compiled: OnceLock<Regex>,
     pub role: Option<String>,
+    #[allow(dead_code)] // Backs the scenario() trait accessor (debugging API)
     pub scenario: String,
     pub optional: bool,
 }
@@ -150,6 +152,7 @@ pub struct GroupMatcher {
     pub name: String,
     pub matchers: Vec<Box<dyn MessageMatcher>>,
     pub require_at_least: usize,
+    #[allow(dead_code)] // Backs the scenario() trait accessor (debugging API)
     pub scenario: String,
 }
 

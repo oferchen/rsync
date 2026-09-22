@@ -127,12 +127,12 @@ pub fn encode_end_marker<W: Write>(
         return Ok(());
     }
 
-    if let Some(error) = io_error {
-        if use_safe_file_list {
-            writer.write_all(&[XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST])?;
-            write_varint(writer, error)?;
-            return Ok(());
-        }
+    if let Some(error) = io_error
+        && use_safe_file_list
+    {
+        writer.write_all(&[XMIT_EXTENDED_FLAGS, XMIT_IO_ERROR_ENDLIST])?;
+        write_varint(writer, error)?;
+        return Ok(());
     }
 
     writer.write_all(&[0u8])

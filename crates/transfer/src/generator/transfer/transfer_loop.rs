@@ -1396,10 +1396,10 @@ impl GeneratorContext {
             // the receiver has already sent pending file requests that expect responses.
             // The error propagates up, causing the connection to close and the remote
             // side to detect the closed pipe and clean up.
-            if let Some(ref dl) = deadline {
-                if dl.is_reached() {
-                    return Err(TransferDeadline::as_io_error());
-                }
+            if let Some(ref dl) = deadline
+                && dl.is_reached()
+            {
+                return Err(TransferDeadline::as_io_error());
             }
         }
 
@@ -1450,10 +1450,10 @@ impl GeneratorContext {
         // only skips the file; it does not carry the exit-code bits.
         if self.io_error != save_io_error && self.protocol.supports_generator_messages() {
             let io_error = self.io_error;
-            if let Err(e) = writer.send_io_error(io_error) {
-                if !(tolerant && is_early_close_error(&e)) {
-                    return Err(e);
-                }
+            if let Err(e) = writer.send_io_error(io_error)
+                && !(tolerant && is_early_close_error(&e))
+            {
+                return Err(e);
             }
         }
 
@@ -1464,10 +1464,9 @@ impl GeneratorContext {
         if let Err(e) = ndx_write_codec
             .write_ndx_done(&mut *writer)
             .and_then(|()| flush_with_count(&mut *writer))
+            && !(tolerant && is_early_close_error(&e))
         {
-            if !(tolerant && is_early_close_error(&e)) {
-                return Err(e);
-            }
+            return Err(e);
         }
 
         Ok(TransferLoopResult {

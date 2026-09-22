@@ -111,8 +111,8 @@ pub(in crate::local_copy) fn execute_transfer_once(
     let device_as_file_size = context.copy_device_as_file_size(source, metadata);
     let file_size = device_as_file_size.unwrap_or(metadata.len());
 
-    if let Some(existing) = existing_metadata {
-        if try_skip_up_to_date(
+    if let Some(existing) = existing_metadata
+        && try_skip_up_to_date(
             context,
             source,
             destination,
@@ -122,9 +122,9 @@ pub(in crate::local_copy) fn execute_transfer_once(
             existing,
             &flags,
             mode,
-        )? {
-            return Ok(TransferOutcome::Complete);
-        }
+        )?
+    {
+        return Ok(TransferOutcome::Complete);
     }
 
     // When the exact destination is absent and --fuzzy is active, look for a
@@ -598,10 +598,12 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // whole-file case), so preallocated_len must stay 0 here.
     // upstream: receiver.c:486-487 - `if (sparse_files > 0 && whole_file &&
     // fd >= 0 && do_ftruncate(fd, 0) == 0) preallocated_len = 0;`
-    if preallocated_len == 0 && inplace_enabled && !whole_file_enabled {
-        if let Some(existing) = existing_metadata {
-            preallocated_len = existing.len();
-        }
+    if preallocated_len == 0
+        && inplace_enabled
+        && !whole_file_enabled
+        && let Some(existing) = existing_metadata
+    {
+        preallocated_len = existing.len();
     }
 
     // Acquire the copy buffer lazily: paths that move no bytes through it

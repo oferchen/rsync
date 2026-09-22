@@ -31,14 +31,14 @@ impl LocalCopyOptionsBuilder {
             });
         }
 
-        if let (Some(min), Some(max)) = (self.min_file_size, self.max_file_size) {
-            if min > max {
-                return Err(BuilderError::InvalidCombination {
-                    message: format!(
-                        "min_file_size ({min}) cannot be greater than max_file_size ({max})"
-                    ),
-                });
-            }
+        if let (Some(min), Some(max)) = (self.min_file_size, self.max_file_size)
+            && min > max
+        {
+            return Err(BuilderError::InvalidCombination {
+                message: format!(
+                    "min_file_size ({min}) cannot be greater than max_file_size ({max})"
+                ),
+            });
         }
 
         if self.copy_links && self.preserve_symlinks {

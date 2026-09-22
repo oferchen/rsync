@@ -424,10 +424,8 @@ pub(in crate::disk_commit) fn process_file(
                 // Truncate/punch the temp file first so the ftruncate + punch
                 // (both of which touch mtime) cannot clobber the timestamp the
                 // metadata step is about to apply.
-                if needs_rename {
-                    if let Some(ref sparse) = sparse_final {
-                        finalize_sparse(cleanup_guard.path(), sparse)?;
-                    }
+                if needs_rename && let Some(ref sparse) = sparse_final {
+                    finalize_sparse(cleanup_guard.path(), sparse)?;
                 }
 
                 // upstream: rsync.c:748 finish_transfer() - "Change
@@ -672,10 +670,8 @@ pub(in crate::disk_commit) fn process_whole_file(
     // upstream: fileio.c:43 sparse_end() runs before finish_transfer() ->
     // set_file_attrs() (see process_file for full rationale). Truncate/punch
     // the temp file before applying metadata so the mtime survives.
-    if needs_rename {
-        if let Some(ref sparse) = sparse_final {
-            finalize_sparse(cleanup_guard.path(), sparse)?;
-        }
+    if needs_rename && let Some(ref sparse) = sparse_final {
+        finalize_sparse(cleanup_guard.path(), sparse)?;
     }
 
     // upstream: rsync.c:748 finish_transfer() - apply metadata to the
@@ -1083,20 +1079,24 @@ pub(super) fn make_writer<'a>(
     // write_file + lseek rather than any async submission path.
     #[cfg(all(target_os = "linux", feature = "io_uring"))]
     {
-        if !use_sparse && append_offset == 0 && !is_inplace {
-            if let Some(batch) = disk_batch {
-                batch.begin_file(file)?;
-                return Ok(Writer::IoUring { batch });
-            }
+        if !use_sparse
+            && append_offset == 0
+            && !is_inplace
+            && let Some(batch) = disk_batch
+        {
+            batch.begin_file(file)?;
+            return Ok(Writer::IoUring { batch });
         }
     }
     #[cfg(all(target_os = "windows", feature = "iocp"))]
     {
-        if !use_sparse && append_offset == 0 && !is_inplace {
-            if let Some(batch) = iocp_batch {
-                batch.begin_file(file)?;
-                return Ok(Writer::Iocp { batch });
-            }
+        if !use_sparse
+            && append_offset == 0
+            && !is_inplace
+            && let Some(batch) = iocp_batch
+        {
+            batch.begin_file(file)?;
+            return Ok(Writer::Iocp { batch });
         }
     }
     // GCD (`dispatch_io`) writer, preferred over the F_NOCACHE + writev

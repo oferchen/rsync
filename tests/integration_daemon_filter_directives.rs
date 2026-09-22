@@ -80,10 +80,10 @@ fn collect_files(root: &Path) -> BTreeMap<String, Vec<u8>> {
             let Ok(meta) = entry.metadata() else { continue };
             if meta.is_dir() {
                 stack.push(path);
-            } else if meta.is_file() {
-                if let (Ok(rel), Ok(contents)) = (path.strip_prefix(root), fs::read(&path)) {
-                    out.insert(rel.to_string_lossy().into_owned(), contents);
-                }
+            } else if meta.is_file()
+                && let (Ok(rel), Ok(contents)) = (path.strip_prefix(root), fs::read(&path))
+            {
+                out.insert(rel.to_string_lossy().into_owned(), contents);
             }
         }
     }

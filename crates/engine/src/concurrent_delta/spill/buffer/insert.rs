@@ -68,17 +68,17 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// newer in-memory version. The on-disk slot is replaced with `None` so
     /// the encode order survives partial evictions.
     pub(super) fn evict_from_spill_state(&mut self, sequence: u64) {
-        if let Some(offset) = self.spill_index.remove(&sequence) {
-            if let Some(members) = self.batch_members.get_mut(&offset) {
-                for slot in members.iter_mut() {
-                    if *slot == Some(sequence) {
-                        *slot = None;
-                        break;
-                    }
+        if let Some(offset) = self.spill_index.remove(&sequence)
+            && let Some(members) = self.batch_members.get_mut(&offset)
+        {
+            for slot in members.iter_mut() {
+                if *slot == Some(sequence) {
+                    *slot = None;
+                    break;
                 }
-                if members.iter().all(Option::is_none) {
-                    self.batch_members.remove(&offset);
-                }
+            }
+            if members.iter().all(Option::is_none) {
+                self.batch_members.remove(&offset);
             }
         }
     }

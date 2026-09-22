@@ -88,10 +88,10 @@ fn short_copies(script: &DeltaScript, block_len: usize) -> Vec<(u64, u64, usize)
     let mut out = Vec::new();
     let mut offset = 0u64;
     for token in script.tokens() {
-        if let DeltaToken::Copy { index, len } = token {
-            if *len < block_len {
-                out.push((offset, *index, *len));
-            }
+        if let DeltaToken::Copy { index, len } = token
+            && *len < block_len
+        {
+            out.push((offset, *index, *len));
         }
         offset += token.byte_len() as u64;
     }
