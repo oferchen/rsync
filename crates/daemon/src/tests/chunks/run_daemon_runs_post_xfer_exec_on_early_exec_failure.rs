@@ -11,7 +11,6 @@
 /// early-return abort path.
 #[cfg(unix)]
 #[test]
-#[ignore = "task 1246: daemon sends the early-exec @ERROR before the module @RSYNCD: OK"]
 fn run_daemon_runs_post_xfer_exec_on_early_exec_failure() {
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
@@ -68,15 +67,16 @@ fn run_daemon_runs_post_xfer_exec_on_early_exec_failure() {
         .expect("send module request");
     stream.flush().expect("flush module request");
 
-    // Daemon sends OK for unauthenticated modules before running early exec.
-    line.clear();
-    reader.read_line(&mut line).expect("ok message");
-    assert_eq!(line, "@RSYNCD: OK\n");
-
-    // Early exec fails immediately - the daemon never waits for client args.
+    // upstream: clientserver.c:994-1008 - early exec runs (and its failure is
+    // reported) BEFORE the `@RSYNCD: OK` at clientserver.c:1152, so the
+    // client's very next line after naming the module is the fixed
+    // `@ERROR: early exec failed` refusal; no OK ever arrives.
     line.clear();
     reader.read_line(&mut line).expect("error message");
-    assert!(line.starts_with("@ERROR:"), "expected @ERROR, got: {line}");
+    assert_eq!(
+        line, "@ERROR: early exec failed\n",
+        "upstream sends the fixed early-exec refusal before any OK"
+    );
 
     drop(reader);
     let result = handle.join().expect("daemon thread");

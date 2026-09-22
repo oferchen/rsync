@@ -139,6 +139,12 @@ pub(crate) const MAX_EXIT_CODE: i32 = u8::MAX as i32;
 const DEFAULT_BIND_ADDRESS: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 /// Default port used for the development daemon listener.
 const DEFAULT_PORT: u16 = 873;
+/// Default `lock file` path used when no CLI or config value names one.
+///
+/// upstream: rsync.h:33 `#define DEFAULT_LOCK_FILE "/var/run/rsyncd.lock"`,
+/// installed as the `lock_file` default by daemon-parm.h:178.
+#[cfg(unix)]
+const DEFAULT_LOCK_FILE: &str = "/var/run/rsyncd.lock";
 
 /// Environment variable that overrides the default config file path (branded).
 pub(crate) const BRANDED_CONFIG_ENV: &str = "OC_RSYNC_CONFIG";

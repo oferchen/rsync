@@ -12,7 +12,6 @@
 // the per-module value binds independently of any daemon-wide limit.
 
 #[test]
-#[ignore = "task 1246: module cap over-limit connection is offered auth instead of @ERROR"]
 fn run_daemon_per_module_cap_overrides_global_max_connections() {
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
@@ -31,10 +30,17 @@ fn run_daemon_per_module_cap_overrides_global_max_connections() {
             .expect("chmod secrets");
     }
 
+    // Each session runs in a forked child (upstream: socket.c:753-772
+    // start_accept_loop), so the per-module slot is claimed through the
+    // `lock file` (clientserver.c:791 claim_connection). The default
+    // /var/run/rsyncd.lock (rsync.h:33) is unopenable for this unprivileged
+    // test, so the config names a writable one.
+    let lock_path = dir.path().join("rsyncd.lock");
     let config_path = dir.path().join("rsyncd.conf");
     writeln!(
         fs::File::create(&config_path).expect("create config"),
-        "[secure]\npath = {}\nauth users = alice\nsecrets file = {}\nmax connections = 1\n",
+        "lock file = {}\n[secure]\npath = {}\nauth users = alice\nsecrets file = {}\nmax connections = 1\n",
+        lock_path.display(),
         module_dir.display(),
         secrets_path.display()
     )
