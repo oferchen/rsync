@@ -556,9 +556,9 @@ fn expand_merge_rules(
     for rule in rules {
         match rule.action() {
             FilterAction::Merge => {
-                let merge_path = Path::new(rule.pattern());
+                let merge_path = crate::byte_path::pattern_path(rule.pattern());
                 let nested =
-                    read_rules_recursive(merge_path, max_depth.saturating_sub(current_depth))?;
+                    read_rules_recursive(&merge_path, max_depth.saturating_sub(current_depth))?;
                 let nested_expanded = expand_merge_rules(nested, max_depth, current_depth + 1)?;
                 expanded.extend(scope_local_clear(nested_expanded));
             }

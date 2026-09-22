@@ -355,7 +355,7 @@ fn parse_negated_exclude_short() {
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].action(), FilterAction::Exclude);
     assert!(rules[0].is_negated());
-    assert_eq!(rules[0].pattern(), "*.txt");
+    assert_eq!(rules[0].pattern(), b"*.txt");
 }
 
 #[test]

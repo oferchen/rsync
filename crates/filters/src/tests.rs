@@ -625,13 +625,13 @@ mod properties {
     proptest! {
         #[test]
         fn include_exclude_duality(pattern in valid_pattern()) {
-            let include = FilterRule::include(&pattern);
+            let include = FilterRule::include(pattern.as_str());
             prop_assert!(include.applies_to_sender());
             prop_assert!(include.applies_to_receiver());
             prop_assert_eq!(include.action(), FilterAction::Include);
-            prop_assert_eq!(include.pattern(), &pattern);
+            prop_assert_eq!(include.pattern(), pattern.as_bytes());
 
-            let exclude = FilterRule::exclude(&pattern);
+            let exclude = FilterRule::exclude(pattern.as_str());
             prop_assert!(exclude.applies_to_sender());
             prop_assert!(exclude.applies_to_receiver());
             prop_assert_eq!(exclude.action(), FilterAction::Exclude);
@@ -643,7 +643,7 @@ mod properties {
             sender in any::<bool>(),
             receiver in any::<bool>()
         ) {
-            let rule = FilterRule::include(&pattern)
+            let rule = FilterRule::include(pattern.as_str())
                 .with_sides(sender, receiver);
 
             prop_assert_eq!(rule.applies_to_sender(), sender);
@@ -655,23 +655,23 @@ mod properties {
             // Skip patterns that already start with '/' to test the anchoring behavior
             prop_assume!(!pattern.starts_with('/'));
 
-            let rule = FilterRule::include(&pattern).anchor_to_root();
-            prop_assert!(rule.pattern().starts_with('/'));
+            let rule = FilterRule::include(pattern.as_str()).anchor_to_root();
+            prop_assert!(rule.pattern().starts_with(b"/"));
 
             // Double anchoring should be idempotent
             let double_anchored = rule.anchor_to_root();
-            prop_assert!(double_anchored.pattern().starts_with('/'));
-            prop_assert!(!double_anchored.pattern().starts_with("//"));
+            prop_assert!(double_anchored.pattern().starts_with(b"/"));
+            prop_assert!(!double_anchored.pattern().starts_with(b"//"));
         }
 
         #[test]
         fn show_hide_are_sender_only(pattern in valid_pattern()) {
-            let show = FilterRule::show(&pattern);
+            let show = FilterRule::show(pattern.as_str());
             prop_assert!(show.applies_to_sender());
             prop_assert!(!show.applies_to_receiver());
             prop_assert_eq!(show.action(), FilterAction::Include);
 
-            let hide = FilterRule::hide(&pattern);
+            let hide = FilterRule::hide(pattern.as_str());
             prop_assert!(hide.applies_to_sender());
             prop_assert!(!hide.applies_to_receiver());
             prop_assert_eq!(hide.action(), FilterAction::Exclude);
@@ -679,12 +679,12 @@ mod properties {
 
         #[test]
         fn protect_risk_are_receiver_only(pattern in valid_pattern()) {
-            let protect = FilterRule::protect(&pattern);
+            let protect = FilterRule::protect(pattern.as_str());
             prop_assert!(!protect.applies_to_sender());
             prop_assert!(protect.applies_to_receiver());
             prop_assert_eq!(protect.action(), FilterAction::Protect);
 
-            let risk = FilterRule::risk(&pattern);
+            let risk = FilterRule::risk(pattern.as_str());
             prop_assert!(!risk.applies_to_sender());
             prop_assert!(risk.applies_to_receiver());
             prop_assert_eq!(risk.action(), FilterAction::Risk);
@@ -695,7 +695,7 @@ mod properties {
             pattern in valid_pattern(),
             perishable in any::<bool>()
         ) {
-            let rule = FilterRule::exclude(&pattern).with_perishable(perishable);
+            let rule = FilterRule::exclude(pattern.as_str()).with_perishable(perishable);
             prop_assert_eq!(rule.is_perishable(), perishable);
             prop_assert_eq!(rule.action(), FilterAction::Exclude);
         }
@@ -766,7 +766,7 @@ mod evaluation_properties {
         ) {
             let anchored = format!("/{file}");
             let rules = vec![
-                FilterRule::include(&anchored),
+                FilterRule::include(anchored.as_str()),
                 FilterRule::exclude("*"),
             ];
             let set = FilterSet::from_rules(rules).unwrap();
@@ -779,7 +779,7 @@ mod evaluation_properties {
             (file, ext) in file_with_ext()
         ) {
             let pattern = format!("*.{ext}");
-            let set = FilterSet::from_rules(vec![FilterRule::exclude(&pattern)]).unwrap();
+            let set = FilterSet::from_rules(vec![FilterRule::exclude(pattern.as_str())]).unwrap();
             prop_assert!(!set.allows(Path::new(&file), false));
         }
 
@@ -791,8 +791,8 @@ mod evaluation_properties {
         ) {
             let pattern = format!("*.{ext}");
             let rules = vec![
-                FilterRule::include(&pattern),
-                FilterRule::exclude(&pattern),
+                FilterRule::include(pattern.as_str()),
+                FilterRule::exclude(pattern.as_str()),
             ];
             let set = FilterSet::from_rules(rules).unwrap();
             prop_assert!(set.allows(Path::new(&file), false));
@@ -806,8 +806,8 @@ mod evaluation_properties {
         ) {
             let pattern = format!("*.{ext}");
             let rules = vec![
-                FilterRule::exclude(&pattern),
-                FilterRule::include(&pattern),
+                FilterRule::exclude(pattern.as_str()),
+                FilterRule::include(pattern.as_str()),
             ];
             let set = FilterSet::from_rules(rules).unwrap();
             prop_assert!(!set.allows(Path::new(&file), false));
@@ -822,9 +822,9 @@ mod evaluation_properties {
             extra_excludes in 1..10usize
         ) {
             let pattern = format!("*.{ext}");
-            let mut rules = vec![FilterRule::include(&pattern)];
+            let mut rules = vec![FilterRule::include(pattern.as_str())];
             for _ in 0..extra_excludes {
-                rules.push(FilterRule::exclude(&pattern));
+                rules.push(FilterRule::exclude(pattern.as_str()));
             }
             let set = FilterSet::from_rules(rules).unwrap();
             prop_assert!(set.allows(Path::new(&file), false));
@@ -841,7 +841,7 @@ mod evaluation_properties {
             let file_b = format!("{name}.{ext_b}");
             let pattern_a = format!("*.{ext_a}");
 
-            let set = FilterSet::from_rules(vec![FilterRule::exclude(&pattern_a)]).unwrap();
+            let set = FilterSet::from_rules(vec![FilterRule::exclude(pattern_a.as_str())]).unwrap();
             prop_assert!(!set.allows(Path::new(&file_a), false));
             prop_assert!(set.allows(Path::new(&file_b), false));
         }
@@ -873,7 +873,7 @@ mod evaluation_properties {
         ) {
             let pattern = format!("*.{ext}");
             let rules = vec![
-                FilterRule::exclude(&pattern),
+                FilterRule::exclude(pattern.as_str()),
                 FilterRule::clear(),
             ];
             let set = FilterSet::from_rules(rules).unwrap();
@@ -889,7 +889,7 @@ mod evaluation_properties {
         ) {
             let pattern = format!("*.{ext}");
             let rules: Vec<_> = (0..count)
-                .map(|_| FilterRule::include(&pattern))
+                .map(|_| FilterRule::include(pattern.as_str()))
                 .collect();
             let set = FilterSet::from_rules(rules).unwrap();
             prop_assert!(set.allows(Path::new(&file), false));
@@ -904,7 +904,7 @@ mod evaluation_properties {
         ) {
             let pattern = format!("*.{ext}");
             let rules: Vec<_> = (0..count)
-                .map(|_| FilterRule::exclude(&pattern))
+                .map(|_| FilterRule::exclude(pattern.as_str()))
                 .collect();
             let set = FilterSet::from_rules(rules).unwrap();
             prop_assert!(!set.allows(Path::new(&file), false));
@@ -916,7 +916,7 @@ mod evaluation_properties {
             (file, ext) in file_with_ext()
         ) {
             let pattern = format!("*.{ext}");
-            let set = FilterSet::from_rules(vec![FilterRule::exclude(&pattern)]).unwrap();
+            let set = FilterSet::from_rules(vec![FilterRule::exclude(pattern.as_str())]).unwrap();
             let path = Path::new(&file);
             prop_assert!(!set.allows(path, false));
             prop_assert!(!set.allows_deletion(path, false));
@@ -928,7 +928,7 @@ mod evaluation_properties {
             (file, ext) in file_with_ext()
         ) {
             let pattern = format!("*.{ext}");
-            let rules = vec![FilterRule::exclude(&pattern).with_sides(true, false)];
+            let rules = vec![FilterRule::exclude(pattern.as_str()).with_sides(true, false)];
             let set = FilterSet::from_rules(rules).unwrap();
             let path = Path::new(&file);
             prop_assert!(!set.allows(path, false));

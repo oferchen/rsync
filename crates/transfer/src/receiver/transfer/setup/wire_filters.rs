@@ -41,16 +41,17 @@ pub(in crate::receiver) fn parse_wire_filters_for_receiver(
         // applied below via `anchor_to_root()`.
         // upstream: exclude.c:get_rule_prefix() - directory-only is a trailing
         // slash on the pattern body.
-        // The `filters` crate compiles patterns into `wildmatch`, which operates
-        // on `&str`, so a non-UTF-8 wire pattern is decoded lossily here for the
-        // local match set. The wire pattern itself stays byte-faithful (it is an
-        // `OsString`); only this receiver-side rule-compilation boundary is
-        // lossy, mirroring the fact that the whole `filters` model is `String`.
-        let lossy = wire_rule.pattern.to_string_lossy();
-        let pattern: Cow<'_, str> = if wire_rule.directory_only && !lossy.ends_with('/') {
-            Cow::Owned(format!("{lossy}/"))
+        // The filters model stores patterns as raw bytes (upstream:
+        // exclude.c:add_rule keeps the `char *` verbatim), so the wire
+        // pattern's bytes reach the local match set unaltered - no lossy
+        // re-encoding on this receiver-side rule-compilation boundary.
+        let raw = filters::path_pattern_bytes(std::path::Path::new(&wire_rule.pattern));
+        let pattern: Cow<'_, [u8]> = if wire_rule.directory_only && raw.last() != Some(&b'/') {
+            let mut with_slash = raw.into_owned();
+            with_slash.push(b'/');
+            Cow::Owned(with_slash)
         } else {
-            lossy.clone()
+            raw
         };
         let mut rule = match wire_rule.rule_type {
             RuleType::Include => FilterRule::include(pattern.as_ref()),
@@ -190,6 +191,42 @@ mod tests {
             pattern: pattern.into(),
             ..FilterRuleWireFormat::default()
         }
+    }
+
+    /// A non-UTF-8 wire exclude pattern reaches the receiver's match set
+    /// byte-for-byte: the raw-byte name is excluded, and neither a different
+    /// invalid byte nor the U+FFFD rendering aliases it.
+    ///
+    /// upstream: exclude.c:add_rule stores the received pattern as raw
+    /// `char *` bytes and rule_matches (exclude.c:1002) compares bytes, so a
+    /// lossy decode here previously collapsed distinct byte names onto one
+    /// U+FFFD spelling (the task-209 documented seam, now closed).
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_wire_pattern_matches_raw_bytes_only() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let wire = vec![FilterRuleWireFormat {
+            rule_type: RuleType::Exclude,
+            pattern: OsStr::from_bytes(b"secret\xe9.txt").to_os_string(),
+            ..FilterRuleWireFormat::default()
+        }];
+
+        let (set, _merge_configs) =
+            parse_wire_filters_for_receiver(&wire).expect("non-UTF-8 rule parses");
+
+        let raw = Path::new(OsStr::from_bytes(b"secret\xe9.txt"));
+        assert!(!set.allows(raw, false), "the raw-byte name is excluded");
+        let other = Path::new(OsStr::from_bytes(b"secret\x80.txt"));
+        assert!(
+            set.allows(other, false),
+            "a different invalid byte is a different name - upstream keeps it"
+        );
+        assert!(
+            set.allows(Path::new("secret\u{FFFD}.txt"), false),
+            "the lossy U+FFFD rendering must not alias the raw byte"
+        );
     }
 
     /// A `:C` dir-merge decodes with CVS semantics on the RECEIVER too.

@@ -215,7 +215,7 @@ fn include_specific_directories_exclude_others() {
 #[test]
 fn protect_directory_only() {
     let rule = FilterRule::protect("/data/");
-    assert_eq!(rule.pattern(), "/data/");
+    assert_eq!(rule.pattern(), b"/data/");
     assert!(!rule.applies_to_sender());
     assert!(rule.applies_to_receiver());
 }
@@ -223,20 +223,20 @@ fn protect_directory_only() {
 #[test]
 fn risk_directory_only() {
     let rule = FilterRule::risk("/tmp/");
-    assert_eq!(rule.pattern(), "/tmp/");
+    assert_eq!(rule.pattern(), b"/tmp/");
 }
 
 #[test]
 fn empty_directory_name_with_slash() {
     let rule = FilterRule::exclude("/");
-    assert_eq!(rule.pattern(), "/");
+    assert_eq!(rule.pattern(), b"/");
 }
 
 #[test]
 fn multiple_trailing_slashes() {
     // Multiple trailing slashes - behavior may vary
     let rule = FilterRule::exclude("dir//");
-    assert_eq!(rule.pattern(), "dir//");
+    assert_eq!(rule.pattern(), b"dir//");
 }
 
 #[test]
@@ -415,7 +415,7 @@ fn directory_only_with_negation() {
 fn directory_only_with_perishable() {
     let rule = FilterRule::exclude("tmp/").with_perishable(true);
     assert!(rule.is_perishable());
-    assert_eq!(rule.pattern(), "tmp/");
+    assert_eq!(rule.pattern(), b"tmp/");
 }
 
 #[test]

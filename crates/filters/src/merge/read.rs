@@ -72,12 +72,13 @@ fn read_rules_recursive_impl(
     let mut expanded = Vec::with_capacity(rules.len());
     for rule in rules {
         if rule.action() == FilterAction::Merge {
-            let merge_path = if rule.pattern().starts_with('/') {
-                Path::new(rule.pattern()).to_path_buf()
+            let pattern_path = crate::byte_path::pattern_path(rule.pattern());
+            let merge_path = if rule.pattern().first() == Some(&b'/') {
+                pattern_path.into_owned()
             } else if let Some(base) = base_dir {
-                base.join(rule.pattern())
+                base.join(pattern_path)
             } else {
-                Path::new(rule.pattern()).to_path_buf()
+                pattern_path.into_owned()
             };
 
             // Each nested merge file owns its own clear-rules scope. Resolve

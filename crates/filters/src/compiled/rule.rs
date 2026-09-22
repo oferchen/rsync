@@ -23,7 +23,7 @@ pub(crate) struct CompiledRule {
     pub(crate) action: FilterAction,
     /// The source pattern, retained for `--debug=FILTER` reporting
     /// (upstream: exclude.c:report_filter_result() logs `ent->pattern`).
-    pub(crate) pattern: String,
+    pub(crate) pattern: Vec<u8>,
     pub(super) directory_only: bool,
     pub(super) direct_matchers: Vec<CompiledPattern>,
     pub(super) descendant_matchers: Vec<CompiledPattern>,
@@ -228,7 +228,7 @@ mod tests {
     fn compiled_rule_matches_simple() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.bak".to_owned(),
+            pattern: b"*.bak".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -253,7 +253,7 @@ mod tests {
     fn compiled_rule_matches_anchored() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "/build".to_owned(),
+            pattern: b"/build".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -277,7 +277,7 @@ mod tests {
     fn compiled_rule_matches_directory_only() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "node_modules/".to_owned(),
+            pattern: b"node_modules/".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -301,7 +301,7 @@ mod tests {
     fn compiled_rule_matches_descendant() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "build/".to_owned(),
+            pattern: b"build/".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -326,7 +326,7 @@ mod tests {
     fn compiled_rule_protect_action() {
         let rule = FilterRule {
             action: FilterAction::Protect,
-            pattern: "important.dat".to_owned(),
+            pattern: b"important.dat".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -350,7 +350,7 @@ mod tests {
     fn compiled_rule_risk_action() {
         let rule = FilterRule {
             action: FilterAction::Risk,
-            pattern: "temp.dat".to_owned(),
+            pattern: b"temp.dat".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -373,7 +373,7 @@ mod tests {
     fn compiled_rule_include_matches() {
         let rule = FilterRule {
             action: FilterAction::Include,
-            pattern: "*.txt".to_owned(),
+            pattern: b"*.txt".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -397,7 +397,7 @@ mod tests {
     fn compiled_rule_complex_glob() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "**/*.o".to_owned(),
+            pattern: b"**/*.o".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -427,7 +427,7 @@ mod tests {
     fn anchored_wildcard_exclude_does_not_match_nested_paths() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "/*".to_owned(),
+            pattern: b"/*".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -463,7 +463,7 @@ mod tests {
     fn anchored_literal_exclude_matches_descendants() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "/build".to_owned(),
+            pattern: b"/build".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -489,7 +489,7 @@ mod tests {
     fn compiled_rule_negate_inverts_match() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.txt".to_owned(),
+            pattern: b"*.txt".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -510,7 +510,7 @@ mod tests {
 
         let rule_negated = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.txt".to_owned(),
+            pattern: b"*.txt".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -534,7 +534,7 @@ mod tests {
     fn compiled_rule_negate_with_directory_only() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "cache/".to_owned(),
+            pattern: b"cache/".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -562,7 +562,7 @@ mod tests {
     fn compiled_rule_negate_with_anchored() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "/important".to_owned(),
+            pattern: b"/important".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -593,7 +593,7 @@ mod tests {
     fn include_dir_wildcard_does_not_match_file_descendants() {
         let rule = FilterRule {
             action: FilterAction::Include,
-            pattern: "*/".to_owned(),
+            pattern: b"*/".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -631,7 +631,7 @@ mod tests {
     fn single_char_wildcard_does_not_match_multichar_names() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "?".to_owned(),
+            pattern: b"?".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -664,7 +664,7 @@ mod tests {
     fn wild3_suffix_matches_dir_and_contents() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "new/lose/***".to_owned(),
+            pattern: b"new/lose/***".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -702,7 +702,7 @@ mod tests {
     fn check_descendants_false_skips_descendant_matchers() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "/bar".to_owned(),
+            pattern: b"/bar".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -739,7 +739,7 @@ mod tests {
     fn double_star_suffix_does_not_match_dir_itself() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "new/keep/**".to_owned(),
+            pattern: b"new/keep/**".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,

@@ -103,10 +103,10 @@ fn arb_filter_rule() -> impl Strategy<Value = FilterRule> {
     )
         .prop_map(|(action, pattern, perishable, negate, sender_only)| {
             let rule = match action {
-                FilterAction::Include => FilterRule::include(&pattern),
-                FilterAction::Exclude => FilterRule::exclude(&pattern),
-                FilterAction::Protect => FilterRule::protect(&pattern),
-                FilterAction::Risk => FilterRule::risk(&pattern),
+                FilterAction::Include => FilterRule::include(pattern.as_str()),
+                FilterAction::Exclude => FilterRule::exclude(pattern.as_str()),
+                FilterAction::Protect => FilterRule::protect(pattern.as_str()),
+                FilterAction::Risk => FilterRule::risk(pattern.as_str()),
                 _ => unreachable!(),
             };
             let rule = rule.with_perishable(perishable).with_negate(negate);
@@ -212,30 +212,30 @@ proptest! {
     /// Constructing FilterRule::include with arbitrary patterns must never panic.
     #[test]
     fn filter_rule_include_arbitrary(pattern in arbitrary_string()) {
-        let rule = FilterRule::include(&pattern);
+        let rule = FilterRule::include(pattern.as_str());
         prop_assert_eq!(rule.action(), FilterAction::Include);
-        prop_assert_eq!(rule.pattern(), &pattern);
+        prop_assert_eq!(rule.pattern(), pattern.as_bytes());
     }
 
     /// Constructing FilterRule::exclude with arbitrary patterns must never panic.
     #[test]
     fn filter_rule_exclude_arbitrary(pattern in arbitrary_string()) {
-        let rule = FilterRule::exclude(&pattern);
+        let rule = FilterRule::exclude(pattern.as_str());
         prop_assert_eq!(rule.action(), FilterAction::Exclude);
-        prop_assert_eq!(rule.pattern(), &pattern);
+        prop_assert_eq!(rule.pattern(), pattern.as_bytes());
     }
 
     /// Constructing FilterRule::protect with arbitrary patterns must never panic.
     #[test]
     fn filter_rule_protect_arbitrary(pattern in arbitrary_string()) {
-        let rule = FilterRule::protect(&pattern);
+        let rule = FilterRule::protect(pattern.as_str());
         prop_assert_eq!(rule.action(), FilterAction::Protect);
     }
 
     /// Constructing FilterRule::risk with arbitrary patterns must never panic.
     #[test]
     fn filter_rule_risk_arbitrary(pattern in arbitrary_string()) {
-        let rule = FilterRule::risk(&pattern);
+        let rule = FilterRule::risk(pattern.as_str());
         prop_assert_eq!(rule.action(), FilterAction::Risk);
     }
 
@@ -251,7 +251,7 @@ proptest! {
         exclude_only in any::<bool>(),
         no_inherit in any::<bool>(),
     ) {
-        let rule = FilterRule::include(&pattern)
+        let rule = FilterRule::include(pattern.as_str())
             .with_perishable(perishable)
             .with_sender(sender)
             .with_receiver(receiver)
@@ -272,13 +272,13 @@ proptest! {
     /// anchor_to_root with arbitrary patterns must never panic.
     #[test]
     fn filter_rule_anchor_arbitrary(pattern in arbitrary_string()) {
-        let rule = FilterRule::include(&pattern).anchor_to_root();
-        prop_assert!(rule.pattern().starts_with('/'));
+        let rule = FilterRule::include(pattern.as_str()).anchor_to_root();
+        prop_assert!(rule.pattern().starts_with(b"/"));
 
         // Idempotence
         let double = rule.anchor_to_root();
-        prop_assert!(double.pattern().starts_with('/'));
-        prop_assert!(!double.pattern().starts_with("//") || pattern.starts_with('/'));
+        prop_assert!(double.pattern().starts_with(b"/"));
+        prop_assert!(!double.pattern().starts_with(b"//") || pattern.starts_with('/'));
     }
 }
 
@@ -289,19 +289,19 @@ proptest! {
     /// Invalid glob patterns should return Err, but never panic.
     #[test]
     fn filter_set_from_arbitrary_exclude(pattern in arbitrary_string()) {
-        let _ = FilterSet::from_rules([FilterRule::exclude(&pattern)]);
+        let _ = FilterSet::from_rules([FilterRule::exclude(pattern.as_str())]);
     }
 
     /// Building a FilterSet from arbitrary include patterns must not panic.
     #[test]
     fn filter_set_from_arbitrary_include(pattern in arbitrary_string()) {
-        let _ = FilterSet::from_rules([FilterRule::include(&pattern)]);
+        let _ = FilterSet::from_rules([FilterRule::include(pattern.as_str())]);
     }
 
     /// Building a FilterSet from arbitrary protect patterns must not panic.
     #[test]
     fn filter_set_from_arbitrary_protect(pattern in arbitrary_string()) {
-        let _ = FilterSet::from_rules([FilterRule::protect(&pattern)]);
+        let _ = FilterSet::from_rules([FilterRule::protect(pattern.as_str())]);
     }
 
     /// Building a FilterSet from multiple arbitrary rules must not panic.
@@ -409,7 +409,7 @@ proptest! {
             FilterAction::Clear => "!",
         };
 
-        let re_serialized = format!("{prefix} {}", rule.pattern());
+        let re_serialized = format!("{prefix} {}", String::from_utf8_lossy(rule.pattern()));
         let re_parsed = parse_rules(&re_serialized, Path::new("<fuzz>"));
         prop_assert!(re_parsed.is_ok(), "Failed to re-parse: {re_serialized}");
         let re_rules = re_parsed.unwrap();
@@ -512,7 +512,7 @@ proptest! {
     /// Filter rules with unicode patterns must not panic when compiled.
     #[test]
     fn filter_set_unicode_patterns(pattern in "\\PC{1,50}") {
-        let _ = FilterSet::from_rules([FilterRule::exclude(&pattern)]);
+        let _ = FilterSet::from_rules([FilterRule::exclude(pattern.as_str())]);
     }
 
     /// Strings consisting entirely of action prefixes and modifiers.
@@ -537,21 +537,21 @@ proptest! {
     ) {
         let pattern: String = meta.into_iter().collect();
         // May succeed or fail but must not panic
-        let _ = FilterSet::from_rules([FilterRule::exclude(&pattern)]);
+        let _ = FilterSet::from_rules([FilterRule::exclude(pattern.as_str())]);
     }
 
     /// Very deeply nested glob patterns must not panic.
     #[test]
     fn filter_set_nested_globs(depth in 1usize..20) {
         let pattern = "**/".repeat(depth) + "*.txt";
-        let _ = FilterSet::from_rules([FilterRule::exclude(&pattern)]);
+        let _ = FilterSet::from_rules([FilterRule::exclude(pattern.as_str())]);
     }
 
     /// Patterns with lots of character class brackets.
     #[test]
     fn filter_set_character_classes(count in 1usize..10) {
         let pattern = "[abc]".repeat(count);
-        let result = FilterSet::from_rules([FilterRule::exclude(&pattern)]);
+        let result = FilterSet::from_rules([FilterRule::exclude(pattern.as_str())]);
         // Should compile since [abc] is valid glob
         prop_assert!(result.is_ok());
     }
@@ -684,7 +684,7 @@ fn filter_set_pattern_triple_star() {
 #[test]
 fn filter_set_very_long_pattern() {
     let pattern = "a/".repeat(500) + "*.txt";
-    let _ = FilterSet::from_rules([FilterRule::exclude(&pattern)]);
+    let _ = FilterSet::from_rules([FilterRule::exclude(pattern.as_str())]);
 }
 
 #[test]
@@ -747,8 +747,8 @@ fn parse_rules_trailing_whitespace() {
     let content = "- *.bak   \n+ *.txt   \n";
     let rules = parse_rules(content, Path::new("<test>")).unwrap();
     assert_eq!(rules.len(), 2);
-    assert_eq!(rules[0].pattern(), "*.bak   ");
-    assert_eq!(rules[1].pattern(), "*.txt   ");
+    assert_eq!(rules[0].pattern(), b"*.bak   ");
+    assert_eq!(rules[1].pattern(), b"*.txt   ");
 }
 
 #[test]

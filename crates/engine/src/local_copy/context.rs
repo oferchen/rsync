@@ -776,20 +776,22 @@ fn anchor_dir_merge_rule(rule: FilterRule, relative_dir: Option<&Path>) -> Filte
     if dir.as_os_str().is_empty() {
         return rule;
     }
-    let pattern = rule.pattern();
-    let Some(rest) = pattern.strip_prefix('/') else {
+    let Some(rest) = rule.pattern().strip_prefix(b"/").map(<[u8]>::to_vec) else {
         return rule;
     };
     // `dir` is the transfer-root-relative directory of the merge file; build the
     // anchored pattern `/<dir>/<rest>` using forward slashes (filter patterns are
-    // always `/`-delimited regardless of platform separator).
+    // always `/`-delimited regardless of platform separator). The pattern bytes
+    // are spliced verbatim so a non-UTF-8 merge-file pattern is preserved.
     let dir_str = dir.to_string_lossy().replace('\\', "/");
     let dir_str = dir_str.trim_matches('/');
-    let new_pattern = if rest.is_empty() {
-        format!("/{dir_str}")
-    } else {
-        format!("/{dir_str}/{rest}")
-    };
+    let mut new_pattern = Vec::with_capacity(1 + dir_str.len() + 1 + rest.len());
+    new_pattern.push(b'/');
+    new_pattern.extend_from_slice(dir_str.as_bytes());
+    if !rest.is_empty() {
+        new_pattern.push(b'/');
+        new_pattern.extend_from_slice(&rest);
+    }
     rule.with_pattern(new_pattern)
 }
 

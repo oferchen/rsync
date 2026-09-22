@@ -1079,8 +1079,14 @@ fn path_to_forward_slash(path: &Path) -> String {
 /// file, where `rel_dir` is `None`) are returned unchanged.
 fn reanchor_merge_rule(mut rule: FilterRule, rel_dir: Option<&str>) -> FilterRule {
     if let Some(dir) = rel_dir {
-        if let Some(rest) = rule.pattern.strip_prefix('/') {
-            rule.pattern = format!("/{dir}/{rest}");
+        if rule.pattern.first() == Some(&b'/') {
+            // `/{dir}{pattern}`: the pattern's own leading `/` supplies the
+            // separator between `dir` and the rest.
+            let mut reanchored = Vec::with_capacity(1 + dir.len() + rule.pattern.len());
+            reanchored.push(b'/');
+            reanchored.extend_from_slice(dir.as_bytes());
+            reanchored.extend_from_slice(&rule.pattern);
+            rule.pattern = reanchored;
         }
     }
     rule
@@ -1104,7 +1110,11 @@ fn split_dir_merge_rules(rules: Vec<FilterRule>) -> (Vec<FilterRule>, Vec<Inline
         if matches!(rule.action(), FilterAction::DirMerge) {
             let (no_prefixes, no_prefixes_include) = rule.no_prefixes();
             dir_merges.push(InlineDirMerge {
-                filename: rule.pattern().to_owned(),
+                // The merge-file layer is still text-based (its parser reads
+                // lines as `str`), so the filename is rendered through UTF-8
+                // here; a non-UTF-8 dir-merge FILENAME remains a known seam of
+                // that layer, not of the byte-pattern model.
+                filename: String::from_utf8_lossy(rule.pattern()).into_owned(),
                 cvs_mode: rule.is_cvs_mode(),
                 no_inherit: rule.is_no_inherit(),
                 sender_only: rule.applies_to_sender() && !rule.applies_to_receiver(),

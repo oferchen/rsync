@@ -91,10 +91,16 @@ impl CompiledRule {
         // to `\\` for non-wild patterns so wildmatch reproduces upstream's
         // literal comparison. Wild patterns keep `\` as an escape, matching
         // upstream's wildmatch_array path.
-        let has_glob_wildcard =
-            core_pattern.contains('*') || core_pattern.contains('?') || core_pattern.contains('[');
-        let core_pattern = if !has_glob_wildcard && core_pattern.contains('\\') {
-            std::borrow::Cow::Owned(core_pattern.replace('\\', "\\\\"))
+        let has_glob_wildcard = core_pattern.iter().any(|b| matches!(b, b'*' | b'?' | b'['));
+        let core_pattern = if !has_glob_wildcard && core_pattern.contains(&b'\\') {
+            let mut escaped = Vec::with_capacity(core_pattern.len() + 4);
+            for &b in core_pattern.iter() {
+                if b == b'\\' {
+                    escaped.push(b'\\');
+                }
+                escaped.push(b);
+            }
+            std::borrow::Cow::Owned(escaped)
         } else {
             core_pattern
         };
@@ -112,7 +118,10 @@ impl CompiledRule {
         // `-1`, so neither is dead - only the unanchored, non-`**` form is.
         // Reproduce that by compiling no matchers; matching then falls through
         // to the default include (negation is still applied by CompiledRule).
-        if !anchored && !core_pattern.contains("**") && bracket_contains_slash(&core_pattern) {
+        if !anchored
+            && !pattern::contains_seq(&core_pattern, b"**")
+            && bracket_contains_slash(&core_pattern)
+        {
             return Ok(Self {
                 action,
                 pattern,
@@ -142,11 +151,11 @@ impl CompiledRule {
         // the implicit `**/` prefix is required for upstream's
         // tail-matching semantics. Regression for UTS-DD-exclude.5 and the
         // double_star_interior_matches_across_path_segments guard.
-        let has_double_star = core_pattern.starts_with("**");
+        let has_double_star = core_pattern.starts_with(b"**");
         let mut direct_patterns = HashSet::new();
-        direct_patterns.insert(core_pattern.to_string());
+        direct_patterns.insert(core_pattern.to_vec());
         if !anchored && !has_double_star {
-            direct_patterns.insert(format!("**/{core_pattern}"));
+            direct_patterns.insert([b"**/", core_pattern.as_ref()].concat());
         }
 
         let mut descendant_patterns = HashSet::new();
@@ -180,7 +189,7 @@ impl CompiledRule {
         // `CompiledRule` is shared across them and upstream's rule_matches()
         // returns "no match" for FILTRULE_DIRECTORY non-dir candidates
         // regardless of which call site dispatched the query.
-        let slash_anchored = pattern.starts_with('/');
+        let slash_anchored = pattern.first() == Some(&b'/');
         // Directory-only unanchored wildcard gate: the user wrote `foo/*/`
         // (or any dir-only wildcard without a leading `/`). Upstream never
         // synthesises a descendant rule for it; the sender's traversal
@@ -206,9 +215,9 @@ impl CompiledRule {
             FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
         ) {
             if !suppress_descendants {
-                descendant_patterns.insert(format!("{core_pattern}/**"));
+                descendant_patterns.insert([core_pattern.as_ref(), b"/**"].concat());
                 if !anchored && !has_double_star {
-                    descendant_patterns.insert(format!("**/{core_pattern}/**"));
+                    descendant_patterns.insert([b"**/", core_pattern.as_ref(), b"/**"].concat());
                 }
             } else if is_directory_only_unanchored_wildcard {
                 // upstream: exclude.c:rule_matches() emits no `foo/*/**`
@@ -221,9 +230,10 @@ impl CompiledRule {
                 // anchored-wildcard case (`/*`) stays fully suppressed because
                 // `*/**` would over-match nested paths even on deletion
                 // (regression #5421).
-                deletion_descendant_patterns.insert(format!("{core_pattern}/**"));
+                deletion_descendant_patterns.insert([core_pattern.as_ref(), b"/**"].concat());
                 if !anchored && !has_double_star {
-                    deletion_descendant_patterns.insert(format!("**/{core_pattern}/**"));
+                    deletion_descendant_patterns
+                        .insert([b"**/", core_pattern.as_ref(), b"/**"].concat());
                 }
             }
         }
@@ -232,7 +242,7 @@ impl CompiledRule {
         // user's pattern starts with `**`, which implies it is unanchored.
         // Anchored patterns (`/**/*`) whose stem starts with `**` after the
         // leading-`/` strip are NOT WILD2_PREFIX and must not get the prepend.
-        let wild2_prefix = !anchored && core_pattern.starts_with("**");
+        let wild2_prefix = !anchored && core_pattern.starts_with(b"**");
         let direct_matchers = compile_patterns(direct_patterns, wild2_prefix)?;
         let descendant_matchers = compile_patterns(descendant_patterns, wild2_prefix)?;
         let deletion_descendant_matchers =
@@ -267,8 +277,7 @@ impl CompiledRule {
 /// never match, which is exactly what makes the enclosing rule dead. An
 /// unterminated `[` matches nothing in either engine, so treating its `/` as
 /// bracketed only agrees with upstream's already-dead verdict.
-fn bracket_contains_slash(pattern: &str) -> bool {
-    let bytes = pattern.as_bytes();
+fn bracket_contains_slash(bytes: &[u8]) -> bool {
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
@@ -307,7 +316,7 @@ mod tests {
     fn compiled_rule_new_simple_exclude() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.bak".to_owned(),
+            pattern: b"*.bak".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -333,7 +342,7 @@ mod tests {
     fn compiled_rule_new_include() {
         let rule = FilterRule {
             action: FilterAction::Include,
-            pattern: "*.rs".to_owned(),
+            pattern: b"*.rs".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -356,7 +365,7 @@ mod tests {
     fn compiled_rule_perishable() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.log".to_owned(),
+            pattern: b"*.log".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: true,
@@ -437,16 +446,16 @@ mod tests {
     /// structural slash.
     #[test]
     fn bracket_contains_slash_detects_class_internal_slash() {
-        assert!(bracket_contains_slash("[/U]"));
-        assert!(bracket_contains_slash("a[/b]c"));
-        assert!(bracket_contains_slash("[!/]"));
-        assert!(bracket_contains_slash("[]/]"));
-        assert!(bracket_contains_slash("[/"));
+        assert!(bracket_contains_slash(b"[/U]"));
+        assert!(bracket_contains_slash(b"a[/b]c"));
+        assert!(bracket_contains_slash(b"[!/]"));
+        assert!(bracket_contains_slash(b"[]/]"));
+        assert!(bracket_contains_slash(b"[/"));
         // Not class-internal: structural slash, escaped bracket, plain class.
-        assert!(!bracket_contains_slash("foo/bar"));
-        assert!(!bracket_contains_slash("\\[/U]"));
-        assert!(!bracket_contains_slash("[abc]"));
-        assert!(!bracket_contains_slash("[a-z]/x"));
+        assert!(!bracket_contains_slash(b"foo/bar"));
+        assert!(!bracket_contains_slash(b"\\[/U]"));
+        assert!(!bracket_contains_slash(b"[abc]"));
+        assert!(!bracket_contains_slash(b"[a-z]/x"));
     }
 
     /// A wild pattern keeps `\` as a wildmatch escape (upstream sets
@@ -472,7 +481,7 @@ mod tests {
     fn include_directory_only_has_no_descendant_matchers() {
         let rule = FilterRule {
             action: FilterAction::Include,
-            pattern: "*/".to_owned(),
+            pattern: b"*/".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -505,7 +514,7 @@ mod tests {
     fn exclude_directory_only_literal_has_descendant_matchers() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "cache/".to_owned(),
+            pattern: b"cache/".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -550,7 +559,7 @@ mod tests {
         ] {
             let rule = FilterRule {
                 action: FilterAction::Exclude,
-                pattern: pattern.to_string(),
+                pattern: pattern.as_bytes().to_vec(),
                 applies_to_sender: true,
                 applies_to_receiver: true,
                 perishable: false,
@@ -584,7 +593,7 @@ mod tests {
         for pattern in &["/*", "/*.txt", "/cache_?/"] {
             let rule = FilterRule {
                 action: FilterAction::Exclude,
-                pattern: pattern.to_string(),
+                pattern: pattern.as_bytes().to_vec(),
                 applies_to_sender: true,
                 applies_to_receiver: true,
                 perishable: false,
@@ -615,7 +624,7 @@ mod tests {
         for pattern in &["/build", "/build/", "/target/"] {
             let rule = FilterRule {
                 action: FilterAction::Exclude,
-                pattern: pattern.to_string(),
+                pattern: pattern.as_bytes().to_vec(),
                 applies_to_sender: true,
                 applies_to_receiver: true,
                 perishable: false,
@@ -644,7 +653,7 @@ mod tests {
         for pattern in &["build", "*.bak", "cache/"] {
             let rule = FilterRule {
                 action: FilterAction::Exclude,
-                pattern: pattern.to_string(),
+                pattern: pattern.as_bytes().to_vec(),
                 applies_to_sender: true,
                 applies_to_receiver: true,
                 perishable: false,
@@ -679,7 +688,7 @@ mod tests {
     fn double_star_interior_matches_across_path_segments() {
         let rule = FilterRule {
             action: FilterAction::Include,
-            pattern: "foo**too".to_owned(),
+            pattern: b"foo**too".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -716,7 +725,7 @@ mod tests {
     fn double_star_prefix_regression_guard() {
         let rule = FilterRule {
             action: FilterAction::Include,
-            pattern: "**/bar".to_owned(),
+            pattern: b"**/bar".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -744,7 +753,7 @@ mod tests {
     fn double_star_suffix_regression_guard() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "bar/**".to_owned(),
+            pattern: b"bar/**".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -807,7 +816,7 @@ mod tests {
     fn make_exclude(pattern: &str) -> CompiledRule {
         CompiledRule::new(FilterRule {
             action: FilterAction::Exclude,
-            pattern: pattern.to_owned(),
+            pattern: pattern.as_bytes().to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -1009,7 +1018,7 @@ mod tests {
     fn compiled_rule_negate_flag_preserved() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.tmp".to_owned(),
+            pattern: b"*.tmp".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -1029,7 +1038,7 @@ mod tests {
 
         let rule2 = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*.tmp".to_owned(),
+            pattern: b"*.tmp".to_vec(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,

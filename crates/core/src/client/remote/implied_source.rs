@@ -29,7 +29,7 @@ pub(crate) fn implied_source_args_for_pull(
     config: &ClientConfig,
     source_paths: &[String],
     files_from_data: Option<&[u8]>,
-) -> Vec<String> {
+) -> Vec<Vec<u8>> {
     // upstream: options.c:2513 - a non-zero old_style_args sets
     // trust_sender_args, so add_implied_include() returns early and the implied
     // list stays empty. Any active level (>= 1) qualifies.
@@ -48,18 +48,23 @@ pub(crate) fn implied_source_args_for_pull(
         };
     }
 
-    source_paths.to_vec()
+    source_paths
+        .iter()
+        .map(|arg| arg.clone().into_bytes())
+        .collect()
 }
 
 /// Splits the staged `--files-from` wire bytes (NUL-separated, double-NUL
 /// terminated) into individual entries, preserving each entry's `/./` pivots
 /// and trailing slashes so [`filters::ImpliedIncludes`] reproduces upstream's
-/// per-entry `add_implied_include()` processing.
-fn files_from_entries(bytes: &[u8]) -> Vec<String> {
+/// per-entry `add_implied_include()` processing. Entries are raw bytes:
+/// upstream records each forwarded name verbatim (`io.c:427,464`), so a
+/// non-UTF-8 filename must survive to the implied-include rules unaltered.
+fn files_from_entries(bytes: &[u8]) -> Vec<Vec<u8>> {
     bytes
         .split(|&b| b == 0)
         .filter(|entry| !entry.is_empty())
-        .map(|entry| String::from_utf8_lossy(entry).into_owned())
+        .map(<[u8]>::to_vec)
         .collect()
 }
 
@@ -82,6 +87,9 @@ mod tests {
         assert_eq!(
             implied_source_args_for_pull(&config, &sources, None),
             sources
+                .iter()
+                .map(|s| s.clone().into_bytes())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -100,7 +108,7 @@ mod tests {
         let bytes = b"from/./\0from/./dir/subdir\0\0";
         assert_eq!(
             implied_source_args_for_pull(&config, &["ignored".to_owned()], Some(bytes)),
-            vec!["from/./".to_owned(), "from/./dir/subdir".to_owned()]
+            vec![b"from/./".to_vec(), b"from/./dir/subdir".to_vec()]
         );
     }
 
@@ -118,9 +126,9 @@ mod tests {
         assert_eq!(
             files_from_entries(bytes),
             vec![
-                "from/./".to_owned(),
-                "from/./dir/subdir".to_owned(),
-                "from/./dir/subsubdir2/".to_owned(),
+                b"from/./".to_vec(),
+                b"from/./dir/subdir".to_vec(),
+                b"from/./dir/subsubdir2/".to_vec(),
             ]
         );
     }

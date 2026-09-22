@@ -55,10 +55,10 @@ use crate::rule_source::OwnedRuleSource;
 /// When `negate` is true, the rule's match result is inverted. A negated exclude
 /// rule excludes files that do NOT match the pattern, matching upstream rsync's
 /// `!` modifier behavior (see `exclude.c` line 906: `ret_match = negate ? 0 : 1`).
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct FilterRule {
     pub(crate) action: FilterAction,
-    pub(crate) pattern: String,
+    pub(crate) pattern: Vec<u8>,
     pub(crate) applies_to_sender: bool,
     pub(crate) applies_to_receiver: bool,
     pub(crate) perishable: bool,
@@ -114,6 +114,30 @@ pub struct FilterRule {
     pub(crate) source: OwnedRuleSource,
 }
 
+impl std::fmt::Debug for FilterRule {
+    /// Mirrors the derived output but renders the raw pattern bytes as text
+    /// (invalid UTF-8 shown as U+FFFD) so diagnostics stay readable.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FilterRule")
+            .field("action", &self.action)
+            .field("pattern", &String::from_utf8_lossy(&self.pattern))
+            .field("applies_to_sender", &self.applies_to_sender)
+            .field("applies_to_receiver", &self.applies_to_receiver)
+            .field("perishable", &self.perishable)
+            .field("xattr_only", &self.xattr_only)
+            .field("negate", &self.negate)
+            .field("exclude_only", &self.exclude_only)
+            .field("no_inherit", &self.no_inherit)
+            .field("cvs_mode", &self.cvs_mode)
+            .field("abs_path", &self.abs_path)
+            .field("word_split", &self.word_split)
+            .field("no_prefixes", &self.no_prefixes)
+            .field("no_prefixes_include", &self.no_prefixes_include)
+            .field("source", &self.source)
+            .finish()
+    }
+}
+
 impl FilterRule {
     /// Creates an include rule for `pattern`.
     ///
@@ -128,10 +152,10 @@ impl FilterRule {
     ///
     /// let rule = FilterRule::include("*.rs");
     /// assert_eq!(rule.action(), FilterAction::Include);
-    /// assert_eq!(rule.pattern(), "*.rs");
+    /// assert_eq!(rule.pattern(), b"*.rs");
     /// ```
     #[must_use]
-    pub fn include(pattern: impl Into<String>) -> Self {
+    pub fn include(pattern: impl Into<Vec<u8>>) -> Self {
         Self {
             action: FilterAction::Include,
             pattern: pattern.into(),
@@ -164,10 +188,10 @@ impl FilterRule {
     ///
     /// let rule = FilterRule::exclude("*.bak");
     /// assert_eq!(rule.action(), FilterAction::Exclude);
-    /// assert_eq!(rule.pattern(), "*.bak");
+    /// assert_eq!(rule.pattern(), b"*.bak");
     /// ```
     #[must_use]
-    pub fn exclude(pattern: impl Into<String>) -> Self {
+    pub fn exclude(pattern: impl Into<Vec<u8>>) -> Self {
         Self {
             action: FilterAction::Exclude,
             pattern: pattern.into(),
@@ -203,7 +227,7 @@ impl FilterRule {
     /// assert!(rule.applies_to_receiver());
     /// ```
     #[must_use]
-    pub fn protect(pattern: impl Into<String>) -> Self {
+    pub fn protect(pattern: impl Into<Vec<u8>>) -> Self {
         Self {
             action: FilterAction::Protect,
             pattern: pattern.into(),
@@ -229,7 +253,7 @@ impl FilterRule {
     /// same path, re-allowing deletion. Like protect, risk only applies on the
     /// receiver side.
     #[must_use]
-    pub fn risk(pattern: impl Into<String>) -> Self {
+    pub fn risk(pattern: impl Into<Vec<u8>>) -> Self {
         Self {
             action: FilterAction::Risk,
             pattern: pattern.into(),
@@ -259,7 +283,7 @@ impl FilterRule {
     pub const fn clear() -> Self {
         Self {
             action: FilterAction::Clear,
-            pattern: String::new(),
+            pattern: Vec::new(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -286,7 +310,7 @@ impl FilterRule {
     /// assert!(!rule.applies_to_receiver());
     /// ```
     #[must_use]
-    pub fn show(pattern: impl Into<String>) -> Self {
+    pub fn show(pattern: impl Into<Vec<u8>>) -> Self {
         Self {
             action: FilterAction::Include,
             pattern: pattern.into(),
@@ -316,7 +340,7 @@ impl FilterRule {
     /// assert!(!rule.applies_to_receiver());
     /// ```
     #[must_use]
-    pub fn hide(pattern: impl Into<String>) -> Self {
+    pub fn hide(pattern: impl Into<Vec<u8>>) -> Self {
         Self {
             action: FilterAction::Exclude,
             pattern: pattern.into(),
@@ -347,10 +371,10 @@ impl FilterRule {
     /// use filters::{FilterRule, FilterAction};
     /// let rule = FilterRule::merge("/etc/rsync/global.rules");
     /// assert_eq!(rule.action(), FilterAction::Merge);
-    /// assert_eq!(rule.pattern(), "/etc/rsync/global.rules");
+    /// assert_eq!(rule.pattern(), b"/etc/rsync/global.rules");
     /// ```
     #[must_use]
-    pub fn merge(file_path: impl Into<String>) -> Self {
+    pub fn merge(file_path: impl Into<Vec<u8>>) -> Self {
         Self {
             action: FilterAction::Merge,
             pattern: file_path.into(),
@@ -381,10 +405,10 @@ impl FilterRule {
     /// use filters::{FilterRule, FilterAction};
     /// let rule = FilterRule::dir_merge(".rsync-filter");
     /// assert_eq!(rule.action(), FilterAction::DirMerge);
-    /// assert_eq!(rule.pattern(), ".rsync-filter");
+    /// assert_eq!(rule.pattern(), b".rsync-filter");
     /// ```
     #[must_use]
-    pub fn dir_merge(filename: impl Into<String>) -> Self {
+    pub fn dir_merge(filename: impl Into<Vec<u8>>) -> Self {
         Self {
             action: FilterAction::DirMerge,
             pattern: filename.into(),
@@ -410,10 +434,23 @@ impl FilterRule {
         self.action
     }
 
-    /// Glob or literal pattern text for matching.
+    /// Glob or literal pattern bytes for matching.
+    ///
+    /// Patterns are raw bytes, mirroring upstream rsync's `char *pattern`
+    /// (exclude.c:add_rule): a non-UTF-8 filename byte is an ordinary pattern
+    /// byte, never re-encoded.
     #[must_use]
-    pub fn pattern(&self) -> &str {
+    pub fn pattern(&self) -> &[u8] {
         &self.pattern
+    }
+
+    /// Pattern rendered as text for display and diagnostics only.
+    ///
+    /// Invalid UTF-8 is replaced with U+FFFD, so this must never feed back
+    /// into matching or rule construction - use [`Self::pattern`] there.
+    #[must_use]
+    pub fn pattern_text(&self) -> std::borrow::Cow<'_, str> {
+        String::from_utf8_lossy(&self.pattern)
     }
 
     /// Returns whether the rule should be ignored when pruning directories.
@@ -645,8 +682,8 @@ impl FilterRule {
     /// no-op.
     #[must_use]
     pub fn anchor_to_root(mut self) -> Self {
-        if !self.pattern.starts_with('/') {
-            self.pattern.insert(0, '/');
+        if self.pattern.first() != Some(&b'/') {
+            self.pattern.insert(0, b'/');
         }
         self
     }
@@ -657,7 +694,7 @@ impl FilterRule {
     /// Used to re-anchor a per-directory merge rule against the merge file's
     /// directory without rebuilding the rule from scratch.
     #[must_use]
-    pub fn with_pattern(mut self, pattern: impl Into<String>) -> Self {
+    pub fn with_pattern(mut self, pattern: impl Into<Vec<u8>>) -> Self {
         self.pattern = pattern.into();
         self
     }
@@ -674,7 +711,7 @@ mod tests {
         fn include_rule() {
             let rule = FilterRule::include("*.txt");
             assert_eq!(rule.action(), FilterAction::Include);
-            assert_eq!(rule.pattern(), "*.txt");
+            assert_eq!(rule.pattern(), b"*.txt");
             assert!(rule.applies_to_sender());
             assert!(rule.applies_to_receiver());
             assert!(!rule.is_perishable());
@@ -685,7 +722,7 @@ mod tests {
         fn exclude_rule() {
             let rule = FilterRule::exclude("*.bak");
             assert_eq!(rule.action(), FilterAction::Exclude);
-            assert_eq!(rule.pattern(), "*.bak");
+            assert_eq!(rule.pattern(), b"*.bak");
             assert!(rule.applies_to_sender());
             assert!(rule.applies_to_receiver());
         }
@@ -735,7 +772,7 @@ mod tests {
         fn merge_rule() {
             let rule = FilterRule::merge("/etc/rsync/global.rules");
             assert_eq!(rule.action(), FilterAction::Merge);
-            assert_eq!(rule.pattern(), "/etc/rsync/global.rules");
+            assert_eq!(rule.pattern(), b"/etc/rsync/global.rules");
             assert!(rule.applies_to_sender());
             assert!(rule.applies_to_receiver());
             assert!(!rule.is_perishable());
@@ -746,7 +783,7 @@ mod tests {
         fn dir_merge_rule() {
             let rule = FilterRule::dir_merge(".rsync-filter");
             assert_eq!(rule.action(), FilterAction::DirMerge);
-            assert_eq!(rule.pattern(), ".rsync-filter");
+            assert_eq!(rule.pattern(), b".rsync-filter");
             assert!(rule.applies_to_sender());
             assert!(rule.applies_to_receiver());
             assert!(!rule.is_perishable());
@@ -823,13 +860,13 @@ mod tests {
         #[test]
         fn anchor_to_root_adds_slash() {
             let rule = FilterRule::include("test").anchor_to_root();
-            assert_eq!(rule.pattern(), "/test");
+            assert_eq!(rule.pattern(), b"/test");
         }
 
         #[test]
         fn anchor_to_root_idempotent() {
             let rule = FilterRule::include("/test").anchor_to_root();
-            assert_eq!(rule.pattern(), "/test");
+            assert_eq!(rule.pattern(), b"/test");
         }
 
         #[test]
@@ -852,7 +889,7 @@ mod tests {
         fn pattern_accepts_string() {
             let pattern = String::from("dynamic");
             let rule = FilterRule::include(pattern);
-            assert_eq!(rule.pattern(), "dynamic");
+            assert_eq!(rule.pattern(), b"dynamic");
         }
     }
 }

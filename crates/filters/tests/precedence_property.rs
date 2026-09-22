@@ -116,9 +116,9 @@ proptest! {
             .take(n)
             .map(|(is_include, pat)| {
                 if *is_include {
-                    FilterRule::include(pat)
+                    FilterRule::include(pat.as_str())
                 } else {
-                    FilterRule::exclude(pat)
+                    FilterRule::exclude(pat.as_str())
                 }
             })
             .collect();
@@ -259,9 +259,9 @@ proptest! {
         path in segment(),
         is_dir in any::<bool>(),
     ) {
-        let plain = FilterSet::from_rules([FilterRule::exclude(&pat)]).unwrap();
+        let plain = FilterSet::from_rules([FilterRule::exclude(pat.as_str())]).unwrap();
         let negated = FilterSet::from_rules([
-            FilterRule::exclude(&pat).with_negate(true),
+            FilterRule::exclude(pat.as_str()).with_negate(true),
         ])
         .unwrap();
 
@@ -375,8 +375,8 @@ proptest! {
 
         // risk before protect -> deletion allowed.
         let risk_first = FilterSet::from_rules([
-            FilterRule::risk(&pat),
-            FilterRule::protect(&pat),
+            FilterRule::risk(pat.as_str()),
+            FilterRule::protect(pat.as_str()),
         ])
         .unwrap();
         prop_assert!(
@@ -386,8 +386,8 @@ proptest! {
 
         // protect before risk -> deletion blocked.
         let protect_first = FilterSet::from_rules([
-            FilterRule::protect(&pat),
-            FilterRule::risk(&pat),
+            FilterRule::protect(pat.as_str()),
+            FilterRule::risk(pat.as_str()),
         ])
         .unwrap();
         prop_assert!(

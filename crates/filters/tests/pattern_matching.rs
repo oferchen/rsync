@@ -445,7 +445,7 @@ fn escaped_question_mark() {
 fn long_pattern() {
     let long_name = "a".repeat(200);
     let pattern = format!("{long_name}.txt");
-    let set = FilterSet::from_rules([FilterRule::exclude(&pattern)]).unwrap();
+    let set = FilterSet::from_rules([FilterRule::exclude(pattern.as_str())]).unwrap();
 
     assert!(!set.allows(Path::new(&format!("{long_name}.txt")), false));
 }

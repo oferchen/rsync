@@ -23,7 +23,7 @@ fn injected_name_rejected_with_exit_code_4() {
     // streams `evil` is exploiting CVE-2022-29154 and must be refused.
     let mut config = test_config();
     config.flags.recursive = true;
-    config.connection.implied_source_args = vec!["dir".to_owned()];
+    config.connection.implied_source_args = vec![b"dir".to_vec()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
     ctx.file_list
         .push(FileEntry::new_directory(".".into(), 0o755));
@@ -44,11 +44,46 @@ fn injected_name_rejected_with_exit_code_4() {
     );
 }
 
+/// A sender-injected non-UTF-8 name whose lossy UTF-8 rendering collides with
+/// the requested arg must still be refused: upstream compares raw bytes
+/// (exclude.c:1002 rule_matches over `char *`), so `caf\x80` never matches an
+/// implied include built from `caf\xe9`. The historical lossy conversion
+/// folded both onto U+FFFD and accepted the injection (task-224 defect).
+#[cfg(unix)]
+#[test]
+fn injected_non_utf8_alias_rejected_with_exit_code_4() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut config = test_config();
+    config.flags.recursive = true;
+    config.connection.implied_source_args = vec![b"caf\xe9".to_vec()];
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    // The requested byte-exact name passes...
+    ctx.file_list.push(FileEntry::new_directory(
+        OsStr::from_bytes(b"caf\xe9").into(),
+        0o755,
+    ));
+    ctx.recheck_received_implied_includes()
+        .expect("requested raw-byte name is covered");
+
+    // ...but the lossy-colliding injected name is refused.
+    ctx.file_list.push(FileEntry::new_file(
+        OsStr::from_bytes(b"caf\x80").into(),
+        10,
+        0o644,
+    ));
+    let err = ctx.recheck_received_implied_includes().unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+}
+
 #[test]
 fn requested_names_and_subtree_pass() {
     let mut config = test_config();
     config.flags.recursive = true;
-    config.connection.implied_source_args = vec!["dir".to_owned()];
+    config.connection.implied_source_args = vec![b"dir".to_vec()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
     ctx.file_list
         .push(FileEntry::new_directory(".".into(), 0o755));
@@ -70,7 +105,7 @@ fn relative_implied_parent_directories_pass() {
     let mut config = test_config();
     config.flags.recursive = true;
     config.flags.relative = true;
-    config.connection.implied_source_args = vec!["a/b/c".to_owned()];
+    config.connection.implied_source_args = vec![b"a/b/c".to_vec()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
     ctx.file_list
         .push(FileEntry::new_directory(".".into(), 0o755));
@@ -94,7 +129,7 @@ fn relative_sibling_injection_rejected() {
     let mut config = test_config();
     config.flags.recursive = true;
     config.flags.relative = true;
-    config.connection.implied_source_args = vec!["a/b/c".to_owned()];
+    config.connection.implied_source_args = vec![b"a/b/c".to_vec()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
     ctx.file_list
         .push(FileEntry::new_directory("a".into(), 0o755));
@@ -116,7 +151,7 @@ fn wildcard_arg_stays_active_and_admits_matching_names() {
     // yet still rejects a non-matching injection.
     let mut config = test_config();
     config.flags.recursive = true;
-    config.connection.implied_source_args = vec!["d*".to_owned()];
+    config.connection.implied_source_args = vec![b"d*".to_vec()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
     ctx.file_list
         .push(FileEntry::new_directory("data".into(), 0o755));
@@ -152,7 +187,7 @@ fn daemon_files_from_subdir_entry_passes_without_module_strip() {
     config.flags.recursive = false;
     config.connection.is_daemon_connection = true;
     config.connection.implied_skip_daemon_module = false;
-    config.connection.implied_source_args = vec!["a.txt".to_owned(), "sub/d.txt".to_owned()];
+    config.connection.implied_source_args = vec![b"a.txt".to_vec(), b"sub/d.txt".to_vec()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
     ctx.file_list
         .push(FileEntry::new_directory(".".into(), 0o755));
@@ -177,7 +212,7 @@ fn daemon_files_from_still_rejects_unrequested_name() {
     config.flags.recursive = false;
     config.connection.is_daemon_connection = true;
     config.connection.implied_skip_daemon_module = false;
-    config.connection.implied_source_args = vec!["a.txt".to_owned(), "sub/d.txt".to_owned()];
+    config.connection.implied_source_args = vec![b"a.txt".to_vec(), b"sub/d.txt".to_vec()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
     ctx.file_list
         .push(FileEntry::new_file("evil".into(), 20, 0o644));
@@ -200,7 +235,7 @@ fn daemon_module_operand_still_strips_module_name() {
     config.flags.recursive = true;
     config.connection.is_daemon_connection = true;
     config.connection.implied_skip_daemon_module = true;
-    config.connection.implied_source_args = vec!["m/dir".to_owned()];
+    config.connection.implied_source_args = vec![b"m/dir".to_vec()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
     ctx.file_list
         .push(FileEntry::new_directory("dir".into(), 0o755));
@@ -219,7 +254,7 @@ fn trust_sender_skips_implied_check() {
     let mut config = test_config();
     config.trust_sender = true;
     config.flags.recursive = true;
-    config.connection.implied_source_args = vec!["dir".to_owned()];
+    config.connection.implied_source_args = vec![b"dir".to_vec()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
     ctx.file_list
         .push(FileEntry::new_file("evil".into(), 20, 0o644));
@@ -258,7 +293,7 @@ fn implied_parent_dir_is_downgraded_whatever_the_sender_sent() {
     let mut config = test_config();
     config.flags.relative = true;
     config.flags.recursive = true;
-    config.connection.implied_source_args = vec!["m/dir/file".to_owned()];
+    config.connection.implied_source_args = vec![b"m/dir/file".to_vec()];
     config.connection.implied_skip_daemon_module = true;
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
 
@@ -295,7 +330,7 @@ fn implied_parent_dir_is_downgraded_whatever_the_sender_sent() {
 fn a_requested_directory_keeps_its_content_flag() {
     let mut config = test_config();
     config.flags.recursive = true;
-    config.connection.implied_source_args = vec!["dir".to_owned()];
+    config.connection.implied_source_args = vec![b"dir".to_vec()];
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
 
     let mut requested = FileEntry::new_directory("dir".into(), 0o755);
