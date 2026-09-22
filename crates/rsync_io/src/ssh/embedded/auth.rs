@@ -226,9 +226,10 @@ async fn try_identity_file_auth(
     session: &mut russh::client::Handle<SshClientHandler>,
     username: &str,
     identity_files: &[std::path::PathBuf],
+    prompts_allowed: bool,
 ) -> Result<bool, SshError> {
     for path in identity_files {
-        let key = match load_identity_key(path) {
+        let key = match load_identity_key_with(path, prompts_allowed) {
             Some(k) => k,
             None => continue,
         };
@@ -287,7 +288,11 @@ const MAX_PASSPHRASE_ATTEMPTS: usize = 3;
 /// Load a private key from disk, prompting for passphrase if needed.
 ///
 /// Returns `None` when the file is missing, unreadable, or the user declines
-/// to enter a passphrase for an encrypted key.
+/// to enter a passphrase for an encrypted key. The live auth path calls
+/// [`load_identity_key_with`] directly so that `BatchMode` can suppress the
+/// passphrase prompt; this terminal-probing convenience wrapper is retained
+/// for the tests that exercise the loader without a `BatchMode` decision.
+#[cfg(test)]
 fn load_identity_key(path: &Path) -> Option<PrivateKey> {
     load_identity_key_with(path, has_controlling_terminal())
 }
@@ -346,75 +351,165 @@ fn load_identity_key_with(path: &Path, terminal_available: bool) -> Option<Priva
     None
 }
 
+/// How many times the transport may prompt for a password on the controlling
+/// terminal.
+///
+/// Zero when `BatchMode` forbids any interactive prompt (openssh/readconf.c
+/// `batch_mode` gates `read_passphrase` through `SSH_ASKPASS`-less contexts),
+/// when no terminal is reachable, or when `NumberOfPasswordPrompts` is 0.
+/// Otherwise it is `NumberOfPasswordPrompts`, mirroring upstream's
+/// `for (i = 0; i < options.number_of_password_prompts; i++)`
+/// (openssh/sshconnect2.c `userauth_passwd`).
+fn interactive_password_budget(config: &SshConfig, terminal_available: bool) -> u32 {
+    if config.batch_mode || !terminal_available {
+        0
+    } else {
+        config.number_of_password_prompts
+    }
+}
+
 /// Try password authentication.
 ///
 /// Uses the URL-embedded password if present (with a security warning), or
-/// prompts interactively on the controlling terminal. Returns `Ok(false)` when
-/// no password is available.
+/// prompts interactively on the controlling terminal up to
+/// `NumberOfPasswordPrompts` times (unless `BatchMode` forbids prompting).
+/// Returns `Ok(false)` when no password is available.
 async fn try_password_auth(
     session: &mut russh::client::Handle<SshClientHandler>,
     username: &str,
     config: &SshConfig,
 ) -> Result<bool, SshError> {
-    let password = if let Some(ref pw) = config.password {
+    if let Some(ref pw) = config.password {
         eprintln!(
             "Warning: password provided via URL - this is insecure and may be visible in process listings."
         );
-        pw.clone()
-    } else if has_controlling_terminal() {
-        match rpassword::prompt_password(format!("{username}@{}'s password: ", config.host)) {
-            Ok(pw) => pw,
-            Err(e) => {
-                logging::debug_log!(Io, 1, "password prompt failed: {}", e);
-                return Ok(false);
-            }
-        }
-    } else {
-        return Ok(false);
-    };
-
-    match session.authenticate_password(username, &password).await {
-        Ok(result) => Ok(result.success()),
-        Err(e) => Err(SshError::Connect(e)),
+        return match session.authenticate_password(username, pw).await {
+            Ok(result) => Ok(result.success()),
+            Err(e) => Err(SshError::Connect(e)),
+        };
     }
+
+    // Interactive: re-prompt on a rejected password, exactly as upstream does
+    // (openssh/sshconnect2.c), bounded by the resolved prompt budget.
+    let budget = interactive_password_budget(config, has_controlling_terminal());
+    for _ in 0..budget {
+        let password =
+            match rpassword::prompt_password(format!("{username}@{}'s password: ", config.host)) {
+                Ok(pw) => pw,
+                Err(e) => {
+                    logging::debug_log!(Io, 1, "password prompt failed: {}", e);
+                    return Ok(false);
+                }
+            };
+        match session.authenticate_password(username, &password).await {
+            Ok(result) if result.success() => return Ok(true),
+            Ok(_) => continue,
+            Err(e) => return Err(SshError::Connect(e)),
+        }
+    }
+    Ok(false)
 }
 
-/// Authenticate an SSH session using all available methods.
+/// An authentication method the embedded transport can actually perform.
 ///
-/// Tries methods in OpenSSH order:
-/// 1. SSH agent (if `config.use_agent` is true; `config.identity_agent`
-///    selects the socket, defaulting to `SSH_AUTH_SOCK`; `identities_only`
-///    restricts which of its keys may be offered)
-/// 2. Identity files (each file in `config.identity_files`)
-/// 3. Password (URL-embedded or interactive prompt)
+/// The transport implements public-key (agent and identity files) and
+/// password authentication. Upstream's other advertised methods
+/// (`keyboard-interactive`, `hostbased`, `gssapi-with-mic`) have no live
+/// implementation here, so a `PreferredAuthentications` entry naming one is
+/// simply skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthMethod {
+    /// Agent keys followed by identity-file keys.
+    Publickey,
+    /// URL-embedded or interactively prompted password.
+    Password,
+}
+
+/// The ordered list of methods to attempt, honouring `PreferredAuthentications`
+/// order and the `PubkeyAuthentication`/`PasswordAuthentication` enable gates.
+///
+/// With no `PreferredAuthentications` directive the order is upstream's
+/// default with the unsupported methods removed: public-key then password
+/// (openssh/readconf.c default
+/// `"gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"`).
+/// A directive replaces the order outright (openssh/sshconnect2.c
+/// `input_userauth_failure` walks `options.preferred_authentications`).
+/// A method disabled by its enable gate, unimplemented, or already listed is
+/// dropped.
+fn plan_auth_methods(config: &SshConfig) -> Vec<AuthMethod> {
+    let default_order = ["publickey", "password"];
+    let order: Vec<&str> = match &config.preferred_authentications {
+        Some(list) => list.iter().map(String::as_str).collect(),
+        None => default_order.to_vec(),
+    };
+    let mut plan = Vec::new();
+    for name in order {
+        let method = match name.trim().to_ascii_lowercase().as_str() {
+            "publickey" if config.pubkey_authentication => AuthMethod::Publickey,
+            "password" if config.password_authentication => AuthMethod::Password,
+            // A disabled, unimplemented, or empty method name: skip it.
+            _ => continue,
+        };
+        if !plan.contains(&method) {
+            plan.push(method);
+        }
+    }
+    plan
+}
+
+/// Authenticate an SSH session using the methods the transport supports.
+///
+/// The method order and selection follow [`plan_auth_methods`], which honours
+/// `PreferredAuthentications` and the `PubkeyAuthentication` /
+/// `PasswordAuthentication` enable gates. Within the public-key method the
+/// SSH agent is tried first (when `config.use_agent` is set;
+/// `config.identity_agent` selects the socket and `identities_only` restricts
+/// which of its keys may be offered), then each `config.identity_files` key.
+/// `BatchMode` suppresses every interactive password or passphrase prompt.
 ///
 /// Returns `Ok(())` on the first successful authentication. Returns
-/// `SshError::AuthenticationFailed` if every method is exhausted.
+/// `SshError::AuthenticationFailed` if every planned method is exhausted.
 pub async fn authenticate(
     session: &mut russh::client::Handle<SshClientHandler>,
     config: &SshConfig,
 ) -> Result<(), SshError> {
     let username = effective_username(config)?;
+    // A single terminal probe, gated by `BatchMode`, governs both the
+    // passphrase prompt inside identity-file auth and the password prompt.
+    let prompts_allowed = !config.batch_mode && has_controlling_terminal();
     let mut tried = Vec::new();
 
-    if config.use_agent {
-        if try_agent_auth(session, &username, config).await? {
-            return Ok(());
+    for method in plan_auth_methods(config) {
+        match method {
+            AuthMethod::Publickey => {
+                if config.use_agent {
+                    if try_agent_auth(session, &username, config).await? {
+                        return Ok(());
+                    }
+                    tried.push("agent");
+                }
+                if !config.identity_files.is_empty() {
+                    if try_identity_file_auth(
+                        session,
+                        &username,
+                        &config.identity_files,
+                        prompts_allowed,
+                    )
+                    .await?
+                    {
+                        return Ok(());
+                    }
+                    tried.push("publickey");
+                }
+            }
+            AuthMethod::Password => {
+                if try_password_auth(session, &username, config).await? {
+                    return Ok(());
+                }
+                tried.push("password");
+            }
         }
-        tried.push("agent");
     }
-
-    if !config.identity_files.is_empty() {
-        if try_identity_file_auth(session, &username, &config.identity_files).await? {
-            return Ok(());
-        }
-        tried.push("publickey");
-    }
-
-    if try_password_auth(session, &username, config).await? {
-        return Ok(());
-    }
-    tried.push("password");
 
     Err(SshError::AuthenticationFailed {
         tried: tried.join(", "),
@@ -607,6 +702,97 @@ mod tests {
     fn auth_methods_ordering() {
         let tried = ["agent", "publickey", "password"];
         assert_eq!(tried.join(", "), "agent, publickey, password");
+    }
+
+    #[test]
+    fn plan_defaults_to_publickey_then_password() {
+        let config = SshConfig::default();
+        assert_eq!(
+            plan_auth_methods(&config),
+            vec![AuthMethod::Publickey, AuthMethod::Password]
+        );
+    }
+
+    #[test]
+    fn plan_honours_preferred_authentications_order() {
+        let config = SshConfig {
+            preferred_authentications: Some(vec!["password".to_owned(), "publickey".to_owned()]),
+            ..SshConfig::default()
+        };
+        assert_eq!(
+            plan_auth_methods(&config),
+            vec![AuthMethod::Password, AuthMethod::Publickey]
+        );
+    }
+
+    /// Non-vacuity control: the opposite order yields the opposite plan, so
+    /// the cell above is reading the directive, not a fixed sequence.
+    #[test]
+    fn plan_order_control_reverses_with_the_directive() {
+        let pw_first = SshConfig {
+            preferred_authentications: Some(vec!["password".to_owned(), "publickey".to_owned()]),
+            ..SshConfig::default()
+        };
+        let pk_first = SshConfig {
+            preferred_authentications: Some(vec!["publickey".to_owned(), "password".to_owned()]),
+            ..SshConfig::default()
+        };
+        assert_ne!(plan_auth_methods(&pw_first), plan_auth_methods(&pk_first));
+        assert_eq!(plan_auth_methods(&pw_first)[0], AuthMethod::Password);
+        assert_eq!(plan_auth_methods(&pk_first)[0], AuthMethod::Publickey);
+    }
+
+    #[test]
+    fn plan_drops_a_disabled_method() {
+        let no_pubkey = SshConfig {
+            pubkey_authentication: false,
+            ..SshConfig::default()
+        };
+        assert_eq!(plan_auth_methods(&no_pubkey), vec![AuthMethod::Password]);
+
+        let no_password = SshConfig {
+            password_authentication: false,
+            ..SshConfig::default()
+        };
+        assert_eq!(plan_auth_methods(&no_password), vec![AuthMethod::Publickey]);
+    }
+
+    #[test]
+    fn plan_skips_unimplemented_methods_and_dedups() {
+        let config = SshConfig {
+            preferred_authentications: Some(vec![
+                "gssapi-with-mic".to_owned(),
+                "keyboard-interactive".to_owned(),
+                "publickey".to_owned(),
+                "publickey".to_owned(),
+                "password".to_owned(),
+            ]),
+            ..SshConfig::default()
+        };
+        // Unimplemented methods drop out; the repeated `publickey` appears once.
+        assert_eq!(
+            plan_auth_methods(&config),
+            vec![AuthMethod::Publickey, AuthMethod::Password]
+        );
+    }
+
+    #[test]
+    fn password_budget_zero_when_batch_or_no_terminal_or_zero_prompts() {
+        let batch = SshConfig {
+            batch_mode: true,
+            ..SshConfig::default()
+        };
+        assert_eq!(interactive_password_budget(&batch, true), 0);
+
+        let normal = SshConfig::default();
+        assert_eq!(interactive_password_budget(&normal, false), 0);
+        assert_eq!(interactive_password_budget(&normal, true), 3);
+
+        let zero = SshConfig {
+            number_of_password_prompts: 0,
+            ..SshConfig::default()
+        };
+        assert_eq!(interactive_password_budget(&zero, true), 0);
     }
 
     #[test]
@@ -894,6 +1080,89 @@ mod tests {
         assert!(result.is_ok(), "pubkey auth should succeed: {result:?}");
     }
 
+    /// Build a temp identity file the mock server accepts, returning its path
+    /// and the accept policy that carries its public key.
+    fn accepted_identity(dir: &std::path::Path) -> (std::path::PathBuf, MockAuthPolicy) {
+        let key_path = dir.join("id_ed25519");
+        let private =
+            PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519).expect("keygen");
+        let pubkey = private.public_key().clone();
+        let mut buf = Vec::new();
+        russh::keys::encode_pkcs8_pem(&private, &mut buf).expect("encode pem");
+        std::fs::write(&key_path, &buf).expect("write key");
+        (
+            key_path,
+            MockAuthPolicy {
+                accepted_keys: vec![pubkey],
+                accepted_password: None,
+            },
+        )
+    }
+
+    /// `PubkeyAuthentication no` must keep every key off the wire: the gate is
+    /// observable as an empty offer log, not merely a changed outcome.
+    #[tokio::test]
+    async fn pubkey_authentication_no_offers_no_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (key_path, policy) = accepted_identity(dir.path());
+        let (port, host_pubkey, offered) = start_recording_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        config.identity_files = vec![key_path];
+        config.pubkey_authentication = false;
+
+        let result = authenticate(&mut handle, &config).await;
+        assert!(result.is_err(), "no method should succeed with pubkey off");
+        assert!(
+            offered.lock().expect("offer log").is_empty(),
+            "no key may be offered when PubkeyAuthentication is no"
+        );
+    }
+
+    /// Non-vacuity control: with the default `PubkeyAuthentication yes` the
+    /// same key IS offered and auth succeeds, so the empty-log cell above is
+    /// exercising the gate rather than a server that ignores keys.
+    #[tokio::test]
+    async fn pubkey_authentication_yes_offers_the_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (key_path, policy) = accepted_identity(dir.path());
+        let (port, host_pubkey, offered) = start_recording_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        config.identity_files = vec![key_path];
+
+        let result = authenticate(&mut handle, &config).await;
+        assert!(result.is_ok(), "pubkey auth should succeed: {result:?}");
+        assert!(
+            !offered.lock().expect("offer log").is_empty(),
+            "the configured key should have been offered"
+        );
+    }
+
+    /// A `PreferredAuthentications` list that omits `publickey` keeps the key
+    /// off the wire even though one is configured - the ordering directive
+    /// filters methods, not just reorders them.
+    #[tokio::test]
+    async fn preferred_authentications_omitting_publickey_offers_no_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (key_path, policy) = accepted_identity(dir.path());
+        let (port, host_pubkey, offered) = start_recording_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        config.identity_files = vec![key_path];
+        config.preferred_authentications = Some(vec!["password".to_owned()]);
+
+        let result = authenticate(&mut handle, &config).await;
+        assert!(result.is_err(), "publickey excluded, no password available");
+        assert!(
+            offered.lock().expect("offer log").is_empty(),
+            "publickey is not in PreferredAuthentications, so no key may be offered"
+        );
+    }
+
     #[tokio::test]
     async fn authenticate_password_succeeds() {
         let policy = MockAuthPolicy {
@@ -909,6 +1178,33 @@ mod tests {
 
         let result = authenticate(&mut handle, &config).await;
         assert!(result.is_ok(), "password auth should succeed: {result:?}");
+    }
+
+    /// `PasswordAuthentication no` drops the only viable method, so auth fails
+    /// and `password` never appears in the tried list even though the server
+    /// would have accepted it.
+    #[tokio::test]
+    async fn password_authentication_no_is_not_attempted() {
+        let policy = MockAuthPolicy {
+            accepted_keys: Vec::new(),
+            accepted_password: Some("correct-password".to_owned()),
+        };
+        let (port, host_pubkey) = start_mock_server(policy).await;
+        let mut handle = connect_to_mock(port, &host_pubkey).await;
+
+        let mut config = test_ssh_config(port);
+        config.password = Some("correct-password".to_owned());
+        config.password_authentication = false;
+
+        match authenticate(&mut handle, &config).await {
+            Err(SshError::AuthenticationFailed { tried }) => {
+                assert!(
+                    !tried.contains("password"),
+                    "password must not be attempted when disabled: {tried:?}"
+                );
+            }
+            other => panic!("expected AuthenticationFailed, got {other:?}"),
+        }
     }
 
     #[tokio::test]

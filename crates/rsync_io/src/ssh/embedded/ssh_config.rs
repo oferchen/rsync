@@ -2,9 +2,18 @@
 //!
 //! Recognises the subset of OpenSSH client directives that the embedded
 //! transport can act on: `Host`, `Hostname`, `User`, `Port`, `IdentityFile`,
-//! `IdentitiesOnly`, `IdentityAgent`, `ConnectTimeout`, and the
+//! `IdentitiesOnly`, `IdentityAgent`, `ConnectTimeout`, the
 //! connection-establishment trio the russh transport has a knob for -
-//! `AddressFamily`, `ServerAliveInterval`, `ServerAliveCountMax`. Other
+//! `AddressFamily`, `ServerAliveInterval`, `ServerAliveCountMax` - and the
+//! authentication-control family: `PubkeyAuthentication`,
+//! `PasswordAuthentication`, `KbdInteractiveAuthentication` (with its
+//! `ChallengeResponse`/`SKey`/`TIS` aliases), `PreferredAuthentications`,
+//! `BatchMode`, `NumberOfPasswordPrompts`, `CertificateFile` and
+//! `RequiredRSASize`. The first five auth directives steer the live russh
+//! auth path (method gating, ordering and prompt suppression); the last three
+//! are resolved and surfaced to the `ssh -G` differential but have no live
+//! effect yet, because the transport implements no keyboard-interactive
+//! method, offers no certificates and enforces no RSA-size floor. Other
 //! recognised connection keywords (`BindAddress`, `BindInterface`,
 //! `ConnectionAttempts`, `IPQoS`, `TCPKeepAlive`) are accepted by the shared
 //! table but not acted on here, because the embedded transport exposes no
@@ -73,7 +82,7 @@ use crate::ssh::argv_split::argv_split;
 use crate::ssh::config_files::{ConfigFile, check_default_user_config_perms, home_dir as env_home};
 use crate::ssh::config_options::{
     AddressFamily, Opcode, glob_matches, parse_address_family, parse_flag_value, parse_int_value,
-    parse_time_value, parse_token, split_directive,
+    parse_pubkey_auth_value, parse_time_value, parse_token, split_directive,
 };
 
 /// upstream's `READCONF_MAX_DEPTH` - the nested-`Include` ceiling
@@ -153,6 +162,43 @@ pub(super) struct ResolvedHost {
     /// `RevokedHostKeys`, tilde-expanded. `None` means no active line
     /// claimed the slot (openssh/readconf.c:2444, `parse_string`).
     pub revoked_host_keys: Option<PathBuf>,
+    /// `PubkeyAuthentication`. `None` means no active line claimed the slot
+    /// (openssh/readconf.c:1264, `multistate_pubkey_auth`). Drives whether
+    /// the transport offers agent and identity-file keys.
+    pub pubkey_authentication: Option<bool>,
+    /// `PasswordAuthentication`. `None` means no active line claimed the slot
+    /// (openssh/readconf.c:1252, `parse_flag`). Drives whether the transport
+    /// attempts password authentication.
+    pub password_authentication: Option<bool>,
+    /// `KbdInteractiveAuthentication` (and its `ChallengeResponse`/`SKey`/
+    /// `TIS` aliases). `None` means no active line claimed the slot
+    /// (openssh/readconf.c:1256, `parse_flag`). Surfaced to the `ssh -G`
+    /// differential; the embedded transport implements no keyboard-interactive
+    /// method, so the value has no effect on a live connection yet.
+    pub kbd_interactive_authentication: Option<bool>,
+    /// `PreferredAuthentications`, the raw comma list taken verbatim. `None`
+    /// means no active line claimed the slot (openssh/readconf.c:1460,
+    /// `parse_string`). Orders the methods the transport attempts.
+    pub preferred_authentications: Option<String>,
+    /// `BatchMode`. `None` means no active line claimed the slot
+    /// (openssh/readconf.c:1281, `parse_flag`). When on, the transport never
+    /// prompts interactively for a password or passphrase.
+    pub batch_mode: Option<bool>,
+    /// `NumberOfPasswordPrompts`. `None` means no active line claimed the slot
+    /// (openssh/readconf.c:1312, `parse_int`). Caps the interactive
+    /// password-prompt count.
+    pub number_of_password_prompts: Option<u32>,
+    /// `CertificateFile` paths, accumulating in declaration order across
+    /// active lines with tilde expansion, deduplicated exactly as upstream
+    /// (openssh/readconf.c:1385 `add_certificate_file`). Surfaced to the
+    /// `ssh -G` differential; the embedded transport does not yet offer
+    /// certificates on a live connection.
+    pub certificate_files: Vec<PathBuf>,
+    /// `RequiredRSASize` in bits. `None` means no active line claimed the slot
+    /// (openssh/readconf.c:2366, `parse_int`). Surfaced to the `ssh -G`
+    /// differential; the embedded transport does not yet enforce a minimum
+    /// RSA key length.
+    pub required_rsa_size: Option<u32>,
 }
 
 impl ResolvedHost {
@@ -797,7 +843,15 @@ fn scan_config(
             | Opcode::ServerAliveInterval
             | Opcode::ServerAliveCountMax
             | Opcode::HostKeyAlias
-            | Opcode::RevokedHostKeys => {
+            | Opcode::RevokedHostKeys
+            | Opcode::PubkeyAuthentication
+            | Opcode::PasswordAuthentication
+            | Opcode::KbdInteractiveAuthentication
+            | Opcode::PreferredAuthentications
+            | Opcode::BatchMode
+            | Opcode::NumberOfPasswordPrompts
+            | Opcode::CertificateFile
+            | Opcode::RequiredRSASize => {
                 let Some(arg) = tokens.first() else {
                     let Some(reason) = opcode.missing_argument() else {
                         continue;
@@ -841,6 +895,35 @@ fn scan_config(
             }
             _ => None,
         };
+        // The `NumberOfPasswordPrompts`/`RequiredRSASize` `parse_int` arms
+        // refuse an out-of-band or non-decimal value with the same
+        // `integer value <errstr>.` as `ServerAliveCountMax` above
+        // (openssh/readconf.c:1312, :2366, :1579).
+        let auth_int = match opcode {
+            Opcode::NumberOfPasswordPrompts | Opcode::RequiredRSASize => {
+                Some(parse_int_value(arg).map_err(|reason| refuse(path, linenum, reason))?)
+            }
+            _ => None,
+        };
+        // The auth-control flags route through the same multistate parser as
+        // `AddressFamily`/`ProxyUseFdpass`: an out-of-set token is upstream's
+        // `unsupported option "%s".` (openssh/readconf.c:1228-1229), refused
+        // whether or not the block is active. `PubkeyAuthentication` accepts
+        // the wider `multistate_pubkey_auth` set (openssh/readconf.c:1041).
+        let auth_flag =
+            match opcode {
+                Opcode::PasswordAuthentication
+                | Opcode::KbdInteractiveAuthentication
+                | Opcode::BatchMode => Some(parse_flag_value(arg).ok_or_else(|| {
+                    refuse(path, linenum, format!("unsupported option \"{arg}\"."))
+                })?),
+                Opcode::PubkeyAuthentication => {
+                    Some(parse_pubkey_auth_value(arg).ok_or_else(|| {
+                        refuse(path, linenum, format!("unsupported option \"{arg}\"."))
+                    })?)
+                }
+                _ => None,
+            };
 
         if !in_matching_block {
             continue;
@@ -907,6 +990,48 @@ fn scan_config(
             // reader mirrors `IdentityFile` and does the tilde half here.
             Opcode::RevokedHostKeys => {
                 set_if_unset(&mut resolved.revoked_host_keys, expand_tilde(arg));
+            }
+            Opcode::PubkeyAuthentication => {
+                if let Some(flag) = auth_flag {
+                    set_if_unset(&mut resolved.pubkey_authentication, flag);
+                }
+            }
+            Opcode::PasswordAuthentication => {
+                if let Some(flag) = auth_flag {
+                    set_if_unset(&mut resolved.password_authentication, flag);
+                }
+            }
+            Opcode::KbdInteractiveAuthentication => {
+                if let Some(flag) = auth_flag {
+                    set_if_unset(&mut resolved.kbd_interactive_authentication, flag);
+                }
+            }
+            Opcode::BatchMode => {
+                if let Some(flag) = auth_flag {
+                    set_if_unset(&mut resolved.batch_mode, flag);
+                }
+            }
+            Opcode::PreferredAuthentications => {
+                set_if_unset(&mut resolved.preferred_authentications, arg.to_owned());
+            }
+            Opcode::NumberOfPasswordPrompts => {
+                if let Some(count) = auth_int {
+                    set_if_unset(&mut resolved.number_of_password_prompts, count);
+                }
+            }
+            Opcode::RequiredRSASize => {
+                if let Some(bits) = auth_int {
+                    set_if_unset(&mut resolved.required_rsa_size, bits);
+                }
+            }
+            // The one accumulating row in the family: every active line
+            // appends, deduplicated on the expanded path exactly as upstream
+            // (openssh/readconf.c:1385 `add_certificate_file`).
+            Opcode::CertificateFile => {
+                let expanded = expand_tilde(arg);
+                if !resolved.certificate_files.contains(&expanded) {
+                    resolved.certificate_files.push(expanded);
+                }
             }
             _ => unreachable!("the match above already narrowed the opcode set"),
         }
@@ -1732,6 +1857,168 @@ mod tests {
         assert!(resolved.proxy_command.is_none());
         assert!(resolved.jump_hosts.is_none());
         assert!(resolved.proxy_use_fdpass.is_none());
+    }
+
+    // --- Authentication-control family (task 237n) ---
+
+    #[test]
+    fn pubkey_authentication_parses_the_multistate() {
+        // `yes`/`no` and the two bound-key selectors, which collapse onto
+        // "enabled" because the transport negotiates no binding extension.
+        assert_eq!(
+            resolve("Host t\n  PubkeyAuthentication yes\n", "t").pubkey_authentication,
+            Some(true)
+        );
+        assert_eq!(
+            resolve("Host t\n  PubkeyAuthentication no\n", "t").pubkey_authentication,
+            Some(false)
+        );
+        assert_eq!(
+            resolve("Host t\n  PubkeyAuthentication unbound\n", "t").pubkey_authentication,
+            Some(true)
+        );
+        assert_eq!(
+            resolve("Host t\n  PubkeyAuthentication host-bound\n", "t").pubkey_authentication,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn password_kbd_and_batchmode_parse_as_flags() {
+        let r = resolve(
+            "Host t\n  PasswordAuthentication no\n  KbdInteractiveAuthentication no\n  BatchMode yes\n",
+            "t",
+        );
+        assert_eq!(r.password_authentication, Some(false));
+        assert_eq!(r.kbd_interactive_authentication, Some(false));
+        assert_eq!(r.batch_mode, Some(true));
+    }
+
+    #[test]
+    fn challenge_response_alias_sets_kbd_interactive() {
+        // The alias resolves to the same slot as `KbdInteractiveAuthentication`
+        // (openssh/readconf.c:236), so it writes `kbd_interactive_authentication`.
+        assert_eq!(
+            resolve("Host t\n  ChallengeResponseAuthentication no\n", "t")
+                .kbd_interactive_authentication,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn preferred_authentications_is_the_verbatim_comma_list() {
+        // Ordering is load-bearing, so the raw string is kept whole for the
+        // auth planner to split (openssh/readconf.c:1460 `parse_string`).
+        assert_eq!(
+            resolve(
+                "Host t\n  PreferredAuthentications publickey,password\n",
+                "t"
+            )
+            .preferred_authentications
+            .as_deref(),
+            Some("publickey,password")
+        );
+    }
+
+    #[test]
+    fn number_of_password_prompts_and_required_rsa_size_parse_as_ints() {
+        let r = resolve(
+            "Host t\n  NumberOfPasswordPrompts 5\n  RequiredRSASize 2048\n",
+            "t",
+        );
+        assert_eq!(r.number_of_password_prompts, Some(5));
+        assert_eq!(r.required_rsa_size, Some(2048));
+    }
+
+    #[test]
+    fn certificate_file_accumulates_across_lines_in_order() {
+        let r = resolve(
+            "Host t\n  CertificateFile /a/one-cert.pub\n  CertificateFile /b/two-cert.pub\n",
+            "t",
+        );
+        assert_eq!(
+            r.certificate_files,
+            vec![
+                PathBuf::from("/a/one-cert.pub"),
+                PathBuf::from("/b/two-cert.pub"),
+            ]
+        );
+    }
+
+    #[test]
+    fn certificate_file_deduplicates_a_repeated_path() {
+        // upstream avoids registering a duplicate (openssh/readconf.c:1385
+        // `add_certificate_file`), so a repeated path is stored once.
+        let r = resolve(
+            "Host t\n  CertificateFile /a/one-cert.pub\n  CertificateFile /a/one-cert.pub\n",
+            "t",
+        );
+        assert_eq!(r.certificate_files, vec![PathBuf::from("/a/one-cert.pub")]);
+    }
+
+    #[test]
+    fn scalar_auth_directives_are_first_obtained_wins() {
+        // The first active line claims each scalar slot; a later line cannot
+        // overwrite it (openssh/readconf.c:1209 `*intptr == -1`).
+        let r = resolve(
+            "Host t\n  PasswordAuthentication no\n  PasswordAuthentication yes\n",
+            "t",
+        );
+        assert_eq!(r.password_authentication, Some(false));
+    }
+
+    #[test]
+    fn pubkey_authentication_rejects_an_out_of_set_value_with_the_spelling() {
+        let msg = refusal("Host t\n  PubkeyAuthentication maybe\n", "t");
+        assert!(msg.contains("unsupported option \"maybe\"."), "{msg}");
+    }
+
+    #[test]
+    fn password_authentication_rejects_an_out_of_set_value_with_the_spelling() {
+        let msg = refusal("Host t\n  PasswordAuthentication perhaps\n", "t");
+        assert!(msg.contains("unsupported option \"perhaps\"."), "{msg}");
+    }
+
+    #[test]
+    fn number_of_password_prompts_rejects_a_non_integer() {
+        let msg = refusal("Host t\n  NumberOfPasswordPrompts five\n", "t");
+        assert!(msg.contains("integer value invalid."), "{msg}");
+    }
+
+    #[test]
+    fn certificate_file_missing_argument_is_refused() {
+        // A value that tokenises to nothing - here a lone comment - reaches
+        // the single-token arm, which refuses it with capital-M
+        // `Missing argument.` (openssh/readconf.c:1372). A keyword with no
+        // value at all is dropped earlier by `split_directive`, exactly as
+        // `Port` is, so the comment form is what exercises this arm.
+        let msg = refusal("Host t\n  CertificateFile #x\n", "t");
+        assert!(msg.contains("Missing argument."), "{msg}");
+    }
+
+    /// Non-vacuity control: a bad auth value inside a NON-matching block is
+    /// still refused, because upstream validates before the `*activep` gate
+    /// (openssh/readconf.c:1226-1231). Proves the refusal cells are exercising
+    /// the parser, not the block matcher.
+    #[test]
+    fn a_bad_auth_value_is_refused_even_from_an_unmatched_block() {
+        let msg = refusal("Host other\n  PubkeyAuthentication maybe\n", "t");
+        assert!(msg.contains("unsupported option \"maybe\"."), "{msg}");
+    }
+
+    /// Non-vacuity control for the parse cells: a host the block does not
+    /// match resolves none of the auth slots.
+    #[test]
+    fn auth_directives_ignored_outside_a_matching_block() {
+        let r = resolve(
+            "Host other\n  PubkeyAuthentication no\n  PasswordAuthentication no\n  \
+             PreferredAuthentications password\n  CertificateFile /a/c-cert.pub\n",
+            "t",
+        );
+        assert!(r.pubkey_authentication.is_none());
+        assert!(r.password_authentication.is_none());
+        assert!(r.preferred_authentications.is_none());
+        assert!(r.certificate_files.is_empty());
     }
 
     // --- Match blocks + the two-pass model (task 237g) ---
