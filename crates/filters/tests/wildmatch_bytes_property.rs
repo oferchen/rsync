@@ -31,10 +31,11 @@ fn reference_match(pattern: &[u8], text: &[u8]) -> bool {
                 if reference_match(rest, &text[split..]) {
                     return true;
                 }
-                if let Some(&b) = text.get(split) {
-                    if b == b'/' && !cross_slash {
-                        break;
-                    }
+                if let Some(&b) = text.get(split)
+                    && b == b'/'
+                    && !cross_slash
+                {
+                    break;
                 }
             }
             false
