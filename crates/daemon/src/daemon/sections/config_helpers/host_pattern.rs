@@ -66,9 +66,10 @@ impl HostPattern {
         // match upstream's `strlower(list2)` over the whole host list
         // (access.c:251).
         if let Some(name) = token.strip_prefix('@')
-            && !name.is_empty() {
-                return Ok(Self::Netgroup(name.to_ascii_lowercase()));
-            }
+            && !name.is_empty()
+        {
+            return Ok(Self::Netgroup(name.to_ascii_lowercase()));
+        }
 
         let (address_str, prefix_text) = if let Some((addr, mask)) = token.split_once('/') {
             (addr, Some(mask))

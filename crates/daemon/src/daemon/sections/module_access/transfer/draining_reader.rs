@@ -145,9 +145,10 @@ impl DrainInner {
     fn stop_and_join(&self) {
         self.stop.store(true, Ordering::Release);
         if let Ok(mut guard) = self.join.lock()
-            && let Some(handle) = guard.take() {
-                let _ = handle.join();
-            }
+            && let Some(handle) = guard.take()
+        {
+            let _ = handle.join();
+        }
     }
 }
 

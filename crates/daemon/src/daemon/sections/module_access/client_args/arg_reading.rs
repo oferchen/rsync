@@ -185,17 +185,19 @@ fn has_secluded_args_flag(args: &[String]) -> bool {
         // the remainder as its parameter (the capability string).
         // upstream: options.c uses popt which knows `-e` takes an argument.
         if let Some(rest) = a.strip_prefix('-')
-            && !rest.starts_with('-') && rest.len() > 1 {
-                for ch in rest.chars() {
-                    if ch == 'e' {
-                        // `-e` consumes the rest as its argument
-                        return false;
-                    }
-                    if ch == 's' {
-                        return true;
-                    }
+            && !rest.starts_with('-')
+            && rest.len() > 1
+        {
+            for ch in rest.chars() {
+                if ch == 'e' {
+                    // `-e` consumes the rest as its argument
+                    return false;
+                }
+                if ch == 's' {
+                    return true;
                 }
             }
+        }
         false
     })
 }
