@@ -1,4 +1,5 @@
-//! Boundary adapters between raw pattern bytes and [`Path`] values.
+//! Boundary adapters between raw pattern bytes and [`Path`](std::path::Path)
+//! values.
 //!
 //! The filter model stores patterns and matches names as raw bytes, mirroring
 //! upstream rsync's `char *` model (`exclude.c:1002` `rule_matches()`,
