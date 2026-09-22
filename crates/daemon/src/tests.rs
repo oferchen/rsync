@@ -329,6 +329,7 @@ include!("tests/chunks/runtime_options_loads_config_from_branded_environment_var
 include!("tests/chunks/runtime_options_loads_config_from_legacy_environment_variable.rs");
 include!("tests/chunks/runtime_options_loads_global_bwlimit_from_config.rs");
 include!("tests/chunks/runtime_options_loads_global_chmod_from_config.rs");
+include!("tests/chunks/runtime_options_defaults_lock_file_to_upstream_path.rs");
 include!("tests/chunks/runtime_options_loads_lock_file_from_config.rs");
 include!("tests/chunks/runtime_options_loads_max_connections_from_config.rs");
 include!("tests/chunks/runtime_options_loads_modules_from_included_config.rs");

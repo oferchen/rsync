@@ -153,6 +153,7 @@ fn write_daemon_config(
 ) -> io::Result<()> {
     let body = format!(
         "pid file = {pid}\n\
+         lock file = {lock}\n\
          log file = {log}\n\
          use chroot = false\n\
          max connections = 4\n\
@@ -164,6 +165,7 @@ fn write_daemon_config(
          write only = false\n\
          list = true\n",
         pid = pid_path.display(),
+        lock = config_path.with_file_name("rsyncd.lock").display(),
         log = log_path.display(),
         module = module_root.display(),
     );
@@ -755,6 +757,7 @@ fn daemon_dont_compress_suffix_keeps_codec_framing() {
     let config_path = workdir.path().join("rsyncd.conf");
     let body = format!(
         "pid file = {pid}\n\
+         lock file = {lock}\n\
          log file = {log}\n\
          use chroot = false\n\
          max connections = 4\n\
@@ -765,6 +768,7 @@ fn daemon_dont_compress_suffix_keeps_codec_framing() {
          dont compress = gz\n\
          list = true\n",
         pid = workdir.path().join("rsyncd.pid").display(),
+        lock = workdir.path().join("rsyncd.lock").display(),
         log = workdir.path().join("rsyncd.log").display(),
         module = module_root.display(),
     );

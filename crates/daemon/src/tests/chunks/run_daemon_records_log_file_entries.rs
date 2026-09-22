@@ -1,5 +1,4 @@
 #[test]
-#[ignore = "task 1246: module response never arrives and the client read times out"]
 fn run_daemon_records_log_file_entries() {
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
@@ -49,21 +48,23 @@ fn run_daemon_records_log_file_entries() {
     reader.read_line(&mut line).expect("module acknowledgement");
     assert_eq!(line, "@RSYNCD: OK\n");
 
-    line.clear();
-    reader.read_line(&mut line).expect("module response");
-    assert!(line.starts_with("@ERROR:"));
-
-    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
-    // returns before reading further, so the daemon sends no @RSYNCD: EXIT after
-    // the refusal; the socket just closes (next read is EOF).
-    line.clear();
-    let read = reader.read_line(&mut line).expect("eof after error");
-    assert_eq!(
-        read, 0,
-        "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}"
-    );
-
+    // upstream: clientserver.c:1152-1154 - after `@RSYNCD: OK` the daemon
+    // blocks in read_args() waiting for the client's argv; it volunteers
+    // nothing further. The log lines this test asserts are already written by
+    // module selection (clientserver.c:1526 `connect from`, :787 `rsync
+    // allowed access on module`), so the client ends the session by closing.
+    //
+    // shutdown(2) rather than drop: the daemon forks its session child from
+    // this very test process, so the child inherited duplicates of these
+    // client-side descriptors as they existed at fork time. Dropping them
+    // closes only this process's fds - the child's dup keeps the client end
+    // open and its read_args() never sees EOF. shutdown acts on the socket
+    // itself, so the FIN reaches the child regardless of the inherited dup.
+    stream
+        .shutdown(std::net::Shutdown::Both)
+        .expect("shutdown client socket");
     drop(reader);
+    drop(stream);
     // Bound the join: on Windows the daemon accept loop can linger past the
     // client disconnect. If it detaches (None) the client already saw EXIT and
     // the log contents are asserted below regardless of the daemon Result.

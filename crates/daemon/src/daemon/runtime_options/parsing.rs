@@ -151,6 +151,19 @@ impl RuntimeOptions {
             options.port = DEFAULT_PORT;
         }
 
+        // upstream: daemon-parm.h:178 pairs `lock_file` with DEFAULT_LOCK_FILE,
+        // which rsync.h:33 defines as "/var/run/rsyncd.lock", so a daemon whose
+        // configuration names no `lock file` still coordinates `max connections`
+        // slots through that path (connection.c:26-46 claim_connection). Unix
+        // only: sessions fork per connection here, matching upstream, so the
+        // lock file is the only cross-process slot ledger. The Windows daemon
+        // serves sessions on threads and enforces the cap with its in-process
+        // counter, and the POSIX default path has no meaning there.
+        #[cfg(unix)]
+        if options.lock_file.is_none() {
+            options.lock_file = Some(PathBuf::from(DEFAULT_LOCK_FILE));
+        }
+
         // QUIC listener identity is a certificate/key pair: the listener needs
         // both to present an identity, and upstream rsync-ssl keeps
         // RSYNC_SSL_CERT / RSYNC_SSL_KEY distinct (docs/design/quic-transport-

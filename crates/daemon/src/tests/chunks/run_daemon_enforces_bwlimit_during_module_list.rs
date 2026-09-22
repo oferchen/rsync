@@ -1,12 +1,8 @@
 #[test]
-#[ignore = "task 1246: bwlimit records no limiter sleeps during module list"]
 fn run_daemon_enforces_bwlimit_during_module_list() {
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
-
-    let mut recorder = bandwidth::recorded_sleep_session();
-    recorder.clear();
 
     let (port, held_listener) = allocate_test_port();
 
@@ -46,6 +42,15 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
+    // The daemon serves each session in a forked child on Unix (upstream:
+    // socket.c:753-772 start_accept_loop), so the in-process sleep recorder
+    // the bandwidth crate offers cannot observe the child's limiter. The
+    // oracle is the wire itself: ~4.1 KB of module listing at `--bwlimit 1`
+    // (1024 bytes/s; upstream io.c:962 writefd -> sleep_for_bwlimit paces
+    // every daemon write) cannot complete in well under ~4 seconds, while an
+    // unlimited daemon delivers it in milliseconds.
+    let list_started = Instant::now();
+
     let mut total_bytes = 0usize;
 
     // upstream: no @RSYNCD: OK before module listing
@@ -65,23 +70,21 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
     assert_eq!(line, "@RSYNCD: EXIT\n");
     total_bytes += line.len();
 
+    let elapsed = list_started.elapsed();
+
     drop(reader);
     let result = handle.join().expect("daemon thread");
     assert!(result.is_ok());
 
-    let recorded = recorder.take();
+    // Full pacing of `total_bytes` at 1024 bytes/s is ~4s; require at least
+    // half of it so a burst allowance cannot flake the assertion while an
+    // unpaced listing (milliseconds) still fails it by orders of magnitude.
+    // No upper bound: a loaded runner only ever makes the listing slower, and
+    // a wedged daemon is bounded by the client stream's read timeout.
+    let minimum = Duration::from_secs_f64(total_bytes as f64 / 1024.0 / 2.0);
     assert!(
-        !recorded.is_empty(),
-        "expected bandwidth limiter to record sleep intervals"
-    );
-    let total_sleep = recorded
-        .into_iter()
-        .fold(Duration::ZERO, |acc, duration| acc + duration);
-    let expected = Duration::from_secs_f64(total_bytes as f64 / 1024.0);
-    let tolerance = Duration::from_millis(250);
-    let diff = total_sleep.abs_diff(expected);
-    assert!(
-        diff <= tolerance,
-        "expected sleep around {expected:?}, got {total_sleep:?}"
+        elapsed >= minimum,
+        "module list of {total_bytes} bytes completed in {elapsed:?}; \
+         a daemon honouring --bwlimit 1 needs at least {minimum:?}"
     );
 }

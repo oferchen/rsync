@@ -99,10 +99,19 @@ jobs:
           # Raise the backlog explicitly so accept-queue overflow - which is
           # upstream-faithful behaviour and not under test here - cannot fail
           # the soak.
+          # `max connections > 0` claims a slot in the `lock file` on every
+          # connection (upstream connection.c:26-48 claim_connection; the
+          # max_connections == 0 short-circuit is the only path that skips
+          # the open). The default lock file is /var/run/rsyncd.lock, which
+          # a non-root runner cannot create, so upstream refuses every
+          # connection with `@ERROR: failed to open lock file` under this
+          # exact config. Name a writable lock file, as any non-root
+          # operator using `max connections` must.
           cat > "$WORK/oc-rsyncd.conf" <<CONF
           use chroot = no
           port = $OC_PORT
           max connections = ${DAEMON_MAX_CONNECTIONS}
+          lock file = $WORK/rsyncd.lock
           listen backlog = 128
           pid file = $WORK/oc-rsyncd.pid
           log file = $WORK/oc-rsyncd.log
