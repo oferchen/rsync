@@ -204,19 +204,26 @@ fn read_client_version(stdin: &mut dyn Read) -> io::Result<ProtocolVersion> {
     let mut buf = [0u8; 4];
     stdin.read_exact(&mut buf)?;
 
-    let version_byte = buf[0];
-    // upstream: compat.c:619-623 setup_protocol - an out-of-range remote
+    // upstream: io.c read_int() - the version advertisement is a 4-byte
+    // little-endian int, not a version byte plus padding.
+    let raw_version = u32::from_le_bytes(buf);
+    // upstream: compat.c:621-625 setup_protocol - an out-of-range remote
     // protocol version is a protocol incompatibility (RERR_PROTOCOL, exit 2),
     // distinct from a truncated stream (RERR_STREAMIO, exit 12). The
     // read_exact above keeps its stream-error mapping; only the version-value
     // checks are tagged as protocol violations.
-    if version_byte == 0 {
+    if raw_version == 0 {
         return Err(protocol::protocol_violation(
             "received invalid protocol version 0",
         ));
     }
 
-    ProtocolVersion::try_from(version_byte)
+    // upstream: compat.c:608-610 setup_protocol - `if (protocol_version >
+    // remote_protocol) protocol_version = remote_protocol;`. A NEWER peer is
+    // never refused: ours stands, so a remote version above NEWEST but within
+    // MAX_PROTOCOL_VERSION (40, rsync.h:149) clamps to NEWEST. Only a version
+    // outside [MIN, MAX] keeps the shell-clean refusal (compat.c:621-625).
+    ProtocolVersion::from_peer_advertisement(raw_version)
         .map_err(|e| protocol::protocol_violation(format!("invalid protocol version: {e}")))
 }
 
@@ -266,7 +273,7 @@ pub fn perform_legacy_handshake(
             )
         })?;
 
-    let version_number: u8 = version_str
+    let version_number: u32 = version_str
         .split('.')
         .next()
         .unwrap_or("0")
@@ -278,9 +285,13 @@ pub fn perform_legacy_handshake(
             )
         })?;
 
-    // upstream: compat.c:619-623 setup_protocol - an out-of-range peer protocol
-    // version is RERR_PROTOCOL (exit 2), not RERR_STREAMIO (12).
-    let client_version = ProtocolVersion::try_from(version_number)
+    // upstream: clientserver.c:242-255 exchange_protocols() - a NEWER peer is
+    // not refused; `protocol_version` stays at ours (release builds have
+    // SUBPROTOCOL_VERSION == 0), so an advertisement above NEWEST but within
+    // MAX_PROTOCOL_VERSION (40, rsync.h:149) clamps to NEWEST. An out-of-range
+    // peer protocol version is RERR_PROTOCOL (exit 2), not RERR_STREAMIO (12)
+    // (upstream: compat.c:621-625 setup_protocol).
+    let client_version = ProtocolVersion::from_peer_advertisement(version_number)
         .map_err(|e| protocol::protocol_violation(format!("unsupported protocol version: {e}")))?;
 
     let negotiated = select_highest_mutual([client_version]).map_err(|e| {
@@ -382,6 +393,50 @@ mod tests {
         // Should fail because version 99 is not supported
         let result = perform_handshake(&mut stdin, &mut stdout);
         assert!(result.is_err());
+    }
+
+    // WHY: forward compatibility. upstream: compat.c:608-610 setup_protocol -
+    // `if (protocol_version > remote_protocol) protocol_version =
+    // remote_protocol;` never refuses a NEWER peer; ours stands. A peer
+    // advertising 33 (rsync 3.5.1) or the hypothetical 40 (MAX_PROTOCOL_VERSION,
+    // rsync.h:149) must negotiate down to our NEWEST, not abort.
+    #[test]
+    fn binary_handshake_clamps_newer_peer_to_newest() {
+        for newer in [33u8, 40] {
+            let mut stdin = Cursor::new(vec![newer, 0, 0, 0]);
+            let mut stdout = Vec::new();
+
+            let result = perform_handshake(&mut stdin, &mut stdout)
+                .unwrap_or_else(|e| panic!("peer version {newer} must clamp, got error: {e}"));
+            assert_eq!(result.protocol, ProtocolVersion::NEWEST);
+            assert_eq!(stdout[0], ProtocolVersion::NEWEST.as_u8());
+        }
+    }
+
+    // WHY: the clamp must not widen the sanity window. upstream: compat.c:621-625
+    // setup_protocol refuses remote_protocol > MAX_PROTOCOL_VERSION (40) with the
+    // shell-clean diagnostic and RERR_PROTOCOL (2).
+    #[test]
+    fn binary_handshake_refuses_version_beyond_upstream_max() {
+        let mut stdin = Cursor::new(vec![41, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let error = perform_handshake(&mut stdin, &mut stdout)
+            .expect_err("version 41 is beyond MAX_PROTOCOL_VERSION");
+        assert_maps_to_rerr_protocol(&error);
+    }
+
+    // WHY: upstream reads the advertisement as one little-endian int
+    // (io.c:read_int), so junk in the high bytes is a garbage exchange, not a
+    // valid low-byte version. [33, 1, 0, 0] is 289, outside [MIN, MAX].
+    #[test]
+    fn binary_handshake_reads_little_endian_int_not_low_byte() {
+        let mut stdin = Cursor::new(vec![33, 1, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let error = perform_handshake(&mut stdin, &mut stdout)
+            .expect_err("289 is outside the upstream sanity window");
+        assert_maps_to_rerr_protocol(&error);
     }
 
     #[test]
@@ -494,6 +549,41 @@ mod tests {
             reconcile_subprotocol(newest, "-e31.2LsfxCIvu"),
             ProtocolVersion::V30,
         );
+    }
+
+    // WHY: forward compatibility on the ASCII greeting path. upstream:
+    // clientserver.c:242-255 exchange_protocols() leaves `protocol_version` at
+    // ours when the peer is newer (SUBPROTOCOL_VERSION == 0 in releases), so a
+    // 33.0 or 40.0 greeting negotiates to NEWEST and the response advertises it.
+    #[test]
+    fn legacy_handshake_clamps_newer_peer_to_newest() {
+        for newer in ["@RSYNCD: 33.0\n", "@RSYNCD: 40.0\n"] {
+            let mut stdin = Cursor::new(newer.as_bytes().to_vec());
+            let mut stdout = Vec::new();
+
+            let result = perform_legacy_handshake(&mut stdin, &mut stdout)
+                .unwrap_or_else(|e| panic!("greeting {newer:?} must clamp, got error: {e}"));
+            assert_eq!(result.protocol, ProtocolVersion::NEWEST);
+
+            let response = String::from_utf8_lossy(&stdout);
+            assert!(
+                response.starts_with("@RSYNCD: 32"),
+                "response must advertise the clamped version, got: {response}"
+            );
+        }
+    }
+
+    // WHY: the sanity window survives the clamp. upstream: compat.c:621-625 -
+    // a peer beyond MAX_PROTOCOL_VERSION (40) is a garbage exchange and keeps
+    // the shell-clean refusal with RERR_PROTOCOL (2).
+    #[test]
+    fn legacy_handshake_refuses_version_beyond_upstream_max() {
+        let mut stdin = Cursor::new(b"@RSYNCD: 41.0\n".to_vec());
+        let mut stdout = Vec::new();
+
+        let error = perform_legacy_handshake(&mut stdin, &mut stdout)
+            .expect_err("protocol 41 is beyond MAX_PROTOCOL_VERSION");
+        assert_maps_to_rerr_protocol(&error);
     }
 
     #[test]

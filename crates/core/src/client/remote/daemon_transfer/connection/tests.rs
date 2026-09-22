@@ -108,6 +108,95 @@ fn parse_protocol_from_greeting_handles_version_only() {
     assert_eq!(protocol.as_u8(), 28);
 }
 
+// WHY: forward compatibility with newer daemons (rsync 3.5.1 greets with
+// protocol 33). upstream: clientserver.c:251-255 exchange_protocols() - a
+// client whose `protocol_version` is below `remote_protocol` keeps its own
+// version (SUBPROTOCOL_VERSION == 0 in releases ignores the newer peer's
+// sub-protocol); the peer is never refused up to MAX_PROTOCOL_VERSION (40).
+#[test]
+fn parse_protocol_from_greeting_clamps_newer_daemon_to_newest() {
+    for greeting in [
+        "@RSYNCD: 33.0 sha512 sha256 sha1 md5 md4\n",
+        "@RSYNCD: 40.0 sha512 sha256 sha1 md5 md4\n",
+    ] {
+        let protocol = parse_protocol_from_greeting(greeting)
+            .unwrap_or_else(|e| panic!("greeting {greeting:?} must clamp, got: {e}"));
+        assert_eq!(protocol.as_u8(), 32);
+    }
+}
+
+// WHY: the clamp must not swallow a garbage exchange. upstream: compat.c:621-625
+// setup_protocol - remote_protocol > MAX_PROTOCOL_VERSION (40, rsync.h:149)
+// keeps the shell-clean refusal.
+#[test]
+fn parse_protocol_from_greeting_refuses_version_beyond_upstream_max() {
+    let err = parse_protocol_from_greeting("@RSYNCD: 41.0 sha512\n")
+        .expect_err("protocol 41 is beyond MAX_PROTOCOL_VERSION");
+    assert!(
+        err.message().to_string().contains("is your shell clean"),
+        "expected the shell-clean refusal, got: {}",
+        err.message()
+    );
+}
+
+// WHY: a too-old daemon keeps its refusal - the newer-peer clamp must stay
+// one-directional. oc's floor is protocol 28; 27 remains unsupported.
+#[test]
+fn parse_protocol_from_greeting_still_refuses_too_old_daemon() {
+    let err = parse_protocol_from_greeting("@RSYNCD: 27.0\n")
+        .expect_err("protocol 27 is below the supported floor");
+    assert!(
+        err.message().to_string().contains("is your shell clean"),
+        "expected the shell-clean refusal, got: {}",
+        err.message()
+    );
+}
+
+// LIVE PROOF at the client-path level: the whole `perform_daemon_handshake`
+// exchange against a scripted proto-33 daemon transcript must reach the
+// negotiated-version return, with the client advertising its own newest
+// version back. upstream: clientserver.c exchange_protocols() +
+// start_inband_exchange() - a 3.5.0 client against a 3.5.1 daemon negotiates
+// the common protocol instead of refusing.
+#[test]
+fn daemon_handshake_downgrades_proto_33_daemon_to_32() {
+    use std::io::{BufReader, Cursor};
+
+    let request = DaemonTransferRequest {
+        address: DaemonAddress::new("127.0.0.1".to_owned(), 873),
+        module: "mod".to_owned(),
+        path: std::ffi::OsString::new(),
+        username: None,
+    };
+    let mut reader = BufReader::new(Cursor::new(
+        b"@RSYNCD: 33.0 sha512 sha256 sha1 md5 md4\n@RSYNCD: OK\n".to_vec(),
+    ));
+    let mut writer: Vec<u8> = Vec::new();
+
+    let negotiated = perform_daemon_handshake(
+        &mut reader,
+        &mut writer,
+        &request,
+        true,
+        &[],
+        None,
+        None,
+        None,
+    )
+    .expect("a newer daemon must negotiate down, not abort");
+
+    assert_eq!(negotiated.as_u8(), 32, "negotiated MIN(ours, theirs)");
+    let sent = String::from_utf8_lossy(&writer);
+    assert!(
+        sent.starts_with("@RSYNCD: 32.0"),
+        "client must advertise its own version, got: {sent}"
+    );
+    assert!(
+        sent.contains("\nmod\n"),
+        "module request must follow the greeting, got: {sent}"
+    );
+}
+
 mod early_input_tests {
     use super::*;
 

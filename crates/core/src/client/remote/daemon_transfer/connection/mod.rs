@@ -263,14 +263,21 @@ fn parse_protocol_from_greeting(greeting: &str) -> Result<ProtocolVersion, Clien
             )
         })?;
 
-    let version_num: u8 = version_str.parse().map_err(|_| {
+    let version_num: u32 = version_str.parse().map_err(|_| {
         daemon_error(
             format!("invalid version number in greeting: {greeting}"),
             CLIENT_SERVER_PROTOCOL_EXIT_CODE,
         )
     })?;
 
-    ProtocolVersion::try_from(version_num).map_err(|e| {
+    // upstream: clientserver.c:251-255 exchange_protocols() - a daemon that is
+    // NEWER than us is not refused: `protocol_version` simply stays at ours (a
+    // release build has SUBPROTOCOL_VERSION == 0, so the newer peer's
+    // sub-protocol is ignored). The clamp mirrors that by folding any version
+    // above ours - up to MAX_PROTOCOL_VERSION (40, rsync.h:149) - down to
+    // NEWEST. Only a peer outside upstream's [MIN, MAX] sanity window keeps the
+    // shell-clean refusal (compat.c:621-625 setup_protocol).
+    ProtocolVersion::from_peer_advertisement(version_num).map_err(|e| {
         daemon_error(
             format!("unsupported protocol version {version_num}: {e}"),
             CLIENT_SERVER_PROTOCOL_EXIT_CODE,
