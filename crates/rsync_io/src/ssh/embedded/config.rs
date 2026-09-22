@@ -29,6 +29,11 @@ const DEFAULT_KEEPALIVE_INTERVAL_SECS: u64 = 60;
 /// Default keepalive max count before disconnect.
 const DEFAULT_KEEPALIVE_MAX_COUNT: u32 = 3;
 
+/// Default interactive password-prompt count.
+/// upstream: openssh/readconf.c:2xxx `fill_default_options()` leaves
+/// `number_of_password_prompts` at 3 when no directive sets it.
+const DEFAULT_PASSWORD_PROMPTS: u32 = 3;
+
 /// Configuration for an embedded SSH connection.
 ///
 /// Holds all parameters needed to establish and maintain an SSH session.
@@ -138,6 +143,27 @@ pub struct SshConfig {
     /// `true` here is surfaced as an error at dial time rather than silently
     /// ignored. upstream: openssh/sshconnect.c:151 `ssh_proxy_fdpass_connect`.
     pub proxy_use_fdpass: bool,
+    /// Whether public-key authentication (agent and identity files) may be
+    /// attempted. `PubkeyAuthentication no` turns it off.
+    /// upstream: openssh/readconf.c:1264, default `SSH_PUBKEY_AUTH_ALL`.
+    pub pubkey_authentication: bool,
+    /// Whether password authentication may be attempted.
+    /// `PasswordAuthentication no` turns it off.
+    /// upstream: openssh/readconf.c:1252, default on.
+    pub password_authentication: bool,
+    /// The order the transport offers authentication methods in, most
+    /// preferred first, from a `PreferredAuthentications` directive. `None`
+    /// uses the transport's default order (public-key then password). Method
+    /// names the transport does not implement are skipped.
+    /// upstream: openssh/readconf.c:1460.
+    pub preferred_authentications: Option<Vec<String>>,
+    /// When on (`BatchMode yes`), never prompt interactively for a password
+    /// or key passphrase. upstream: openssh/readconf.c:1281, default off.
+    pub batch_mode: bool,
+    /// How many times the transport may prompt for a password on the
+    /// controlling terminal before abandoning the method.
+    /// upstream: openssh/readconf.c:1312, default 3.
+    pub number_of_password_prompts: u32,
 }
 
 /// Returns the default identity file paths under `~/.ssh/`.
@@ -206,6 +232,11 @@ impl Default for SshConfig {
             proxy_command: None,
             jump_hosts: None,
             proxy_use_fdpass: false,
+            pubkey_authentication: true,
+            password_authentication: true,
+            preferred_authentications: None,
+            batch_mode: false,
+            number_of_password_prompts: DEFAULT_PASSWORD_PROMPTS,
         }
     }
 }
@@ -544,6 +575,65 @@ impl SshConfig {
             && let Some(ref path) = resolved.revoked_host_keys
         {
             self.revoked_host_keys = Some(path.clone());
+        }
+        // Authentication-control family. None of these has a URL or builder
+        // spelling, so a resolved value always applies; the reader has
+        // already enforced first-obtained-wins across the config load, so the
+        // first active line's value is what arrives here.
+        if let Some(pubkey) = resolved.pubkey_authentication {
+            self.pubkey_authentication = pubkey;
+        }
+        if let Some(password) = resolved.password_authentication {
+            self.password_authentication = password;
+        }
+        if self.preferred_authentications.is_none()
+            && let Some(ref list) = resolved.preferred_authentications
+        {
+            // Split the comma list into the ordered method names the auth
+            // planner walks, dropping empty entries so `,,password` cannot
+            // introduce a blank method (openssh/readconf.c:1460 stores the
+            // raw string; `authmethods_get` splits it on `,`).
+            let methods: Vec<String> = list
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect();
+            if !methods.is_empty() {
+                self.preferred_authentications = Some(methods);
+            }
+        }
+        if let Some(batch) = resolved.batch_mode {
+            self.batch_mode = batch;
+        }
+        if let Some(prompts) = resolved.number_of_password_prompts {
+            self.number_of_password_prompts = prompts;
+        }
+        // The three directives the transport resolves but has no live knob
+        // for: surface each as a debug notice rather than dropping it
+        // silently. The embedded transport implements no keyboard-interactive
+        // method, offers no certificates, and enforces no RSA-size floor.
+        if resolved.kbd_interactive_authentication == Some(false) {
+            logging::debug_log!(
+                Io,
+                1,
+                "ssh_config KbdInteractiveAuthentication no: the embedded transport performs no keyboard-interactive authentication in any case"
+            );
+        }
+        if !resolved.certificate_files.is_empty() {
+            logging::debug_log!(
+                Io,
+                1,
+                "ssh_config CertificateFile: {} certificate(s) configured, but the embedded transport does not offer certificates",
+                resolved.certificate_files.len()
+            );
+        }
+        if let Some(bits) = resolved.required_rsa_size {
+            logging::debug_log!(
+                Io,
+                1,
+                "ssh_config RequiredRSASize {bits}: the embedded transport does not enforce a minimum RSA key size"
+            );
         }
     }
 

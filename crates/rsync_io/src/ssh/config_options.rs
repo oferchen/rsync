@@ -154,6 +154,50 @@ pub(in crate::ssh) enum Opcode {
     /// upstream: openssh/readconf.c:290 `oRevokedHostKeys`, arm at :2444 via
     /// `parse_string`.
     RevokedHostKeys,
+    /// `PubkeyAuthentication yes|no|unbound|host-bound` - whether public-key
+    /// authentication (agent and identity files alike) may be attempted.
+    /// A multistate whose `unbound`/`host-bound` rows select the
+    /// session-bound-pubkey extension the embedded transport does not
+    /// negotiate, so both collapse onto "public-key enabled" here.
+    /// upstream: openssh/readconf.c:239 `oPubkeyAuthentication`, arm at
+    /// :1264 via `multistate_pubkey_auth` (:1041-1048).
+    PubkeyAuthentication,
+    /// `PasswordAuthentication yes|no` - whether password authentication may
+    /// be attempted.
+    /// upstream: openssh/readconf.c:233 `oPasswordAuthentication`, arm at
+    /// :1252 (`parse_flag`).
+    PasswordAuthentication,
+    /// `KbdInteractiveAuthentication yes|no` (aliases
+    /// `ChallengeResponseAuthentication`, `SKeyAuthentication`,
+    /// `TISAuthentication`) - whether keyboard-interactive authentication may
+    /// be attempted.
+    /// upstream: openssh/readconf.c:234 `oKbdInteractiveAuthentication`, arm
+    /// at :1256 (`parse_flag`); the three aliases are :236-238.
+    KbdInteractiveAuthentication,
+    /// `PreferredAuthentications <comma-list>` - the order the client offers
+    /// authentication methods in, most preferred first.
+    /// upstream: openssh/readconf.c:276 `oPreferredAuthentications`, arm at
+    /// :1460 (`parse_string`).
+    PreferredAuthentications,
+    /// `BatchMode yes|no` - when on, never prompt interactively for a
+    /// password or passphrase.
+    /// upstream: openssh/readconf.c:265 `oBatchMode`, arm at :1281
+    /// (`parse_flag`).
+    BatchMode,
+    /// `NumberOfPasswordPrompts <int>` - how many times a password may be
+    /// prompted for before the method is abandoned.
+    /// upstream: openssh/readconf.c:271 `oNumberOfPasswordPrompts`, arm at
+    /// :1312 (`parse_int`).
+    NumberOfPasswordPrompts,
+    /// `CertificateFile <path>` - a certificate to offer alongside a key;
+    /// accumulates across active lines.
+    /// upstream: openssh/readconf.c:245 `oCertificateFile`, arm at :1369
+    /// (`add_certificate_file`).
+    CertificateFile,
+    /// `RequiredRSASize <int>` - the minimum accepted RSA key length in bits.
+    /// upstream: openssh/readconf.c:328 `oRequiredRSASize`, arm at :2366
+    /// (`parse_int`).
+    RequiredRSASize,
     /// A keyword no reader resolves. Ignored by both.
     Unknown,
 }
@@ -166,12 +210,25 @@ pub(in crate::ssh) enum Opcode {
 /// openssh/readconf.c:964-966).
 const KEYWORDS: &[(&str, Opcode)] = &[
     ("addressfamily", Opcode::AddressFamily),
+    ("batchmode", Opcode::BatchMode),
     ("bindaddress", Opcode::BindAddress),
     ("bindinterface", Opcode::BindInterface),
+    ("certificatefile", Opcode::CertificateFile),
+    // Alias resolving to the same opcode as `KbdInteractiveAuthentication`.
+    // upstream: openssh/readconf.c:236 `{ "challengeresponseauthentication",
+    // oKbdInteractiveAuthentication }`.
+    (
+        "challengeresponseauthentication",
+        Opcode::KbdInteractiveAuthentication,
+    ),
     ("checkhostip", Opcode::CheckHostIP),
     ("compression", Opcode::Compression),
     ("connectionattempts", Opcode::ConnectionAttempts),
     ("connecttimeout", Opcode::ConnectTimeout),
+    // Alias resolving to the same opcode as `PubkeyAuthentication`.
+    // upstream: openssh/readconf.c:240 `{ "dsaauthentication",
+    // oPubkeyAuthentication }`.
+    ("dsaauthentication", Opcode::PubkeyAuthentication),
     ("globalknownhostsfile", Opcode::GlobalKnownHostsFile),
     ("hashknownhosts", Opcode::HashKnownHosts),
     ("host", Opcode::Host),
@@ -182,18 +239,35 @@ const KEYWORDS: &[(&str, Opcode)] = &[
     ("identityfile", Opcode::IdentityFile),
     ("include", Opcode::Include),
     ("ipqos", Opcode::IPQoS),
+    (
+        "kbdinteractiveauthentication",
+        Opcode::KbdInteractiveAuthentication,
+    ),
     // Obsolete alias resolving to the same opcode as `TCPKeepAlive`.
-    // upstream: openssh/readconf.c:253 `{ "keepalive", oTCPKeepAlive }`.
+    // upstream: openssh/readconf.c:270 `{ "keepalive", oTCPKeepAlive }`.
     ("keepalive", Opcode::TCPKeepAlive),
     ("match", Opcode::Match),
+    ("numberofpasswordprompts", Opcode::NumberOfPasswordPrompts),
+    ("passwordauthentication", Opcode::PasswordAuthentication),
     ("port", Opcode::Port),
+    ("preferredauthentications", Opcode::PreferredAuthentications),
     ("proxycommand", Opcode::ProxyCommand),
     ("proxyjump", Opcode::ProxyJump),
     ("proxyusefdpass", Opcode::ProxyUseFdpass),
+    ("pubkeyauthentication", Opcode::PubkeyAuthentication),
+    ("requiredrsasize", Opcode::RequiredRSASize),
     ("revokedhostkeys", Opcode::RevokedHostKeys),
     ("serveralivecountmax", Opcode::ServerAliveCountMax),
     ("serveraliveinterval", Opcode::ServerAliveInterval),
+    // Alias resolving to the same opcode as `KbdInteractiveAuthentication`.
+    // upstream: openssh/readconf.c:237 `{ "skeyauthentication",
+    // oKbdInteractiveAuthentication }`.
+    ("skeyauthentication", Opcode::KbdInteractiveAuthentication),
     ("tcpkeepalive", Opcode::TCPKeepAlive),
+    // Alias resolving to the same opcode as `KbdInteractiveAuthentication`.
+    // upstream: openssh/readconf.c:238 `{ "tisauthentication",
+    // oKbdInteractiveAuthentication }`.
+    ("tisauthentication", Opcode::KbdInteractiveAuthentication),
     ("user", Opcode::User),
     ("userknownhostsfile", Opcode::UserKnownHostsFile),
 ];
@@ -259,6 +333,11 @@ pub(in crate::ssh) enum ValueKind {
     /// `no`/`false`, `all`). upstream: the `parse_multistate` arm with
     /// `multistate_keepalives` (openssh/readconf.c:1080-1088).
     KeepAlive,
+    /// One token, read as a public-key-auth multistate
+    /// (`yes`/`true`/`no`/`false`/`unbound`/`host-bound`). upstream: the
+    /// `parse_multistate` arm with `multistate_pubkey_auth`
+    /// (openssh/readconf.c:1041-1048).
+    PubkeyAuth,
     /// One or two tokens, each an IPQoS class or DSCP value.
     /// upstream: the two-token `oIPQoS` arm (openssh/readconf.c:2148-2170).
     IpQos,
@@ -311,7 +390,11 @@ impl Opcode {
     #[cfg_attr(not(feature = "ssh-config-parse"), allow(dead_code))]
     pub(in crate::ssh) fn resolution_policy(self) -> ResolutionPolicy {
         match self {
-            Self::IdentityFile => ResolutionPolicy::Accumulate,
+            // `IdentityFile` and `CertificateFile` are the accumulating rows:
+            // both append on every active line with no unset test
+            // (openssh/readconf.c:1364 `add_identity_file`, :1385
+            // `add_certificate_file`).
+            Self::IdentityFile | Self::CertificateFile => ResolutionPolicy::Accumulate,
             _ => ResolutionPolicy::FirstObtained,
         }
     }
@@ -326,7 +409,11 @@ impl Opcode {
             | Self::IdentitiesOnly
             | Self::ProxyUseFdpass
             | Self::HashKnownHosts
-            | Self::CheckHostIP => ValueKind::Flag,
+            | Self::CheckHostIP
+            | Self::PasswordAuthentication
+            | Self::KbdInteractiveAuthentication
+            | Self::BatchMode => ValueKind::Flag,
+            Self::PubkeyAuthentication => ValueKind::PubkeyAuth,
             Self::ProxyCommand | Self::ProxyJump => ValueKind::Command,
             Self::UserKnownHostsFile | Self::GlobalKnownHostsFile => ValueKind::KnownHostsFiles,
             Self::Hostname
@@ -337,9 +424,14 @@ impl Opcode {
             | Self::BindAddress
             | Self::BindInterface
             | Self::HostKeyAlias
-            | Self::RevokedHostKeys => ValueKind::Single,
+            | Self::RevokedHostKeys
+            | Self::CertificateFile
+            | Self::PreferredAuthentications => ValueKind::Single,
             Self::ConnectTimeout | Self::ServerAliveInterval => ValueKind::Time,
-            Self::ConnectionAttempts | Self::ServerAliveCountMax => ValueKind::Int,
+            Self::ConnectionAttempts
+            | Self::ServerAliveCountMax
+            | Self::NumberOfPasswordPrompts
+            | Self::RequiredRSASize => ValueKind::Int,
             Self::AddressFamily => ValueKind::AddressFamily,
             Self::TCPKeepAlive => ValueKind::KeepAlive,
             Self::IPQoS => ValueKind::IpQos,
@@ -364,9 +456,10 @@ impl Opcode {
             // The multistate arms (`Flag`, `AddressFamily`, `KeepAlive`)
             // all route through `parse_multistate_value`, whose absent-value
             // wording is `missing argument.` (openssh/readconf.c:1106).
-            ValueKind::Flag | ValueKind::AddressFamily | ValueKind::KeepAlive => {
-                Some("missing argument.")
-            }
+            ValueKind::Flag
+            | ValueKind::AddressFamily
+            | ValueKind::KeepAlive
+            | ValueKind::PubkeyAuth => Some("missing argument."),
             ValueKind::Single => Some("Missing argument."),
             ValueKind::Time => Some("missing time value."),
             // `atoi_err(NULL)` returns `"missing"`, printed as
@@ -424,6 +517,31 @@ pub(in crate::ssh) fn split_directive(line: &str) -> Option<(&str, &str)> {
 pub(in crate::ssh) fn parse_flag_value(value: &str) -> Option<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "yes" | "true" => Some(true),
+        "no" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// Parses a [`ValueKind::PubkeyAuth`] value into "public-key auth enabled".
+/// Returns `None` for anything outside the multistate set so a typo cannot
+/// silently flip the setting.
+///
+/// upstream: `multistate_pubkey_auth` (openssh/readconf.c:1041-1048) accepts
+/// `true`/`yes` (`SSH_PUBKEY_AUTH_ALL`), `false`/`no` (`SSH_PUBKEY_AUTH_NO`)
+/// and the session-bound-key selectors `unbound`/`host-bound`, all compared
+/// with `strcasecmp` (openssh/readconf.c:1109-1112). The embedded transport
+/// negotiates neither bound-key form, so `unbound` and `host-bound` collapse
+/// onto "enabled" here - the same keys are still offered, only without the
+/// binding extension.
+///
+/// Gated to the feature of its one caller, the embedded reader's
+/// `PubkeyAuthentication` arm: without `embedded-ssh` no reader consumes the
+/// shape, and the fuzz workspace builds this crate without that feature under
+/// `-D warnings`.
+#[cfg(feature = "embedded-ssh")]
+pub(in crate::ssh) fn parse_pubkey_auth_value(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "yes" | "true" | "unbound" | "host-bound" => Some(true),
         "no" | "false" => Some(false),
         _ => None,
     }
@@ -632,12 +750,33 @@ mod tests {
         ("ProxyCommand", Opcode::ProxyCommand),
         ("ProxyJump", Opcode::ProxyJump),
         ("ProxyUseFdpass", Opcode::ProxyUseFdpass),
+        // The host-key verification family (openssh/readconf.c:237-243, :264, :290).
         ("UserKnownHostsFile", Opcode::UserKnownHostsFile),
         ("GlobalKnownHostsFile", Opcode::GlobalKnownHostsFile),
         ("HashKnownHosts", Opcode::HashKnownHosts),
         ("HostKeyAlias", Opcode::HostKeyAlias),
         ("CheckHostIP", Opcode::CheckHostIP),
         ("RevokedHostKeys", Opcode::RevokedHostKeys),
+        // The authentication-control family (openssh/readconf.c:233-276, :328).
+        ("PubkeyAuthentication", Opcode::PubkeyAuthentication),
+        ("PasswordAuthentication", Opcode::PasswordAuthentication),
+        (
+            "KbdInteractiveAuthentication",
+            Opcode::KbdInteractiveAuthentication,
+        ),
+        ("PreferredAuthentications", Opcode::PreferredAuthentications),
+        ("BatchMode", Opcode::BatchMode),
+        ("NumberOfPasswordPrompts", Opcode::NumberOfPasswordPrompts),
+        ("CertificateFile", Opcode::CertificateFile),
+        ("RequiredRSASize", Opcode::RequiredRSASize),
+        // Aliases folding into the family opcodes above.
+        (
+            "ChallengeResponseAuthentication",
+            Opcode::KbdInteractiveAuthentication,
+        ),
+        ("SKeyAuthentication", Opcode::KbdInteractiveAuthentication),
+        ("TISAuthentication", Opcode::KbdInteractiveAuthentication),
+        ("DSAAuthentication", Opcode::PubkeyAuthentication),
     ];
 
     #[test]
@@ -879,6 +1018,112 @@ mod tests {
         assert!(!ResolutionPolicy::FirstObtained.may_assign(true));
         assert!(ResolutionPolicy::Accumulate.may_assign(false));
         assert!(ResolutionPolicy::Accumulate.may_assign(true));
+    }
+
+    /// Every alias spelling readconf.c accepts in the auth-control family
+    /// resolves to the same opcode as its canonical keyword, matched
+    /// case-insensitively (openssh/readconf.c:236-240).
+    #[test]
+    fn auth_family_aliases_fold_into_their_canonical_opcode() {
+        for spelling in [
+            "challengeresponseauthentication",
+            "ChallengeResponseAuthentication",
+            "skeyauthentication",
+            "tisauthentication",
+        ] {
+            assert_eq!(
+                parse_token(spelling),
+                Opcode::KbdInteractiveAuthentication,
+                "{spelling}"
+            );
+        }
+        for spelling in ["dsaauthentication", "DSAAuthentication"] {
+            assert_eq!(
+                parse_token(spelling),
+                Opcode::PubkeyAuthentication,
+                "{spelling}"
+            );
+        }
+    }
+
+    /// The auth-control family's value shapes drive the right missing-value
+    /// wording: the flags and the pubkey multistate print `missing argument.`,
+    /// the two int keywords print `integer value missing.`, and the
+    /// string-shaped `CertificateFile`/`PreferredAuthentications` print
+    /// `Missing argument.` (openssh/readconf.c:1195, :1372, :1398, :1579).
+    #[test]
+    fn auth_family_missing_argument_wording_matches_value_shape() {
+        for opcode in [
+            Opcode::PasswordAuthentication,
+            Opcode::KbdInteractiveAuthentication,
+            Opcode::BatchMode,
+            Opcode::PubkeyAuthentication,
+        ] {
+            assert_eq!(
+                opcode.missing_argument(),
+                Some("missing argument."),
+                "{opcode:?}"
+            );
+        }
+        for opcode in [Opcode::NumberOfPasswordPrompts, Opcode::RequiredRSASize] {
+            assert_eq!(
+                opcode.missing_argument(),
+                Some("integer value missing."),
+                "{opcode:?}"
+            );
+        }
+        for opcode in [Opcode::CertificateFile, Opcode::PreferredAuthentications] {
+            assert_eq!(
+                opcode.missing_argument(),
+                Some("Missing argument."),
+                "{opcode:?}"
+            );
+        }
+    }
+
+    /// `CertificateFile` is the family's one accumulating row - it appends on
+    /// every active line (openssh/readconf.c:1385 `add_certificate_file`) -
+    /// while every other family keyword is a first-obtained scalar slot.
+    #[test]
+    fn certificatefile_accumulates_other_auth_family_rows_are_first_obtained() {
+        assert_eq!(
+            Opcode::CertificateFile.resolution_policy(),
+            ResolutionPolicy::Accumulate
+        );
+        for opcode in [
+            Opcode::PubkeyAuthentication,
+            Opcode::PasswordAuthentication,
+            Opcode::KbdInteractiveAuthentication,
+            Opcode::PreferredAuthentications,
+            Opcode::BatchMode,
+            Opcode::NumberOfPasswordPrompts,
+            Opcode::RequiredRSASize,
+        ] {
+            assert_eq!(
+                opcode.resolution_policy(),
+                ResolutionPolicy::FirstObtained,
+                "{opcode:?}"
+            );
+        }
+    }
+
+    /// `parse_pubkey_auth_value` is the `multistate_pubkey_auth` set
+    /// (openssh/readconf.c:1041-1048): the two bound-key selectors collapse
+    /// onto "enabled", and a token outside the set is `None` so the caller
+    /// can refuse it with the spelling. Gated with the helper, which exists
+    /// only for the embedded reader.
+    #[cfg(feature = "embedded-ssh")]
+    #[test]
+    fn pubkey_auth_covers_the_multistate_set() {
+        for on in ["yes", "YES", "true", "unbound", "host-bound", "HOST-BOUND"] {
+            assert_eq!(parse_pubkey_auth_value(on), Some(true), "{on}");
+        }
+        for off in ["no", "NO", "false"] {
+            assert_eq!(parse_pubkey_auth_value(off), Some(false), "{off}");
+        }
+        for bad in ["", "maybe", "1", "ask"] {
+            assert_eq!(parse_pubkey_auth_value(bad), None, "{bad}");
+        }
     }
 
     /// `convtime` accepts the documented decimal-with-qualifier forms.
