@@ -8064,6 +8064,10 @@ test_max_connections() {
   local mc_log="${work}/maxconn-oc.log"
   cat > "$mc_conf" <<CONF
 pid file = ${mc_pid}
+# max connections > 0 claims a slot in the lock file (upstream:
+# connection.c:26-46 claim_connection); the default /var/run/rsyncd.lock is
+# unopenable for a non-root harness, so name a writable one beside the config.
+lock file = ${work}/maxconn-oc.lock
 port = ${oc_port}
 use chroot = false
 max connections = 1
