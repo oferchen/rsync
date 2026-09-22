@@ -426,10 +426,10 @@ fn is_rsync_internal_attr(name: &[u8]) -> bool {
     #[cfg(target_os = "linux")]
     {
         let full_prefix = format!("user.{rpre}");
-        if name_str.len() > full_prefix.len() {
-            if let Some(rest) = name_str.strip_prefix(full_prefix.as_str()) {
-                return rest.starts_with('%');
-            }
+        if name_str.len() > full_prefix.len()
+            && let Some(rest) = name_str.strip_prefix(full_prefix.as_str())
+        {
+            return rest.starts_with('%');
         }
     }
 

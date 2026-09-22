@@ -333,12 +333,12 @@ pub fn recv_fd_to_file(
     dest_fd: std::os::fd::RawFd,
     length: u64,
 ) -> std::io::Result<u64> {
-    if length >= SPLICE_THRESHOLD {
-        if let Ok(n) = try_splice_to_file(source_fd, dest_fd, length as usize) {
-            return Ok(n as u64);
-        }
-        // Fall through to read/write fallback
+    if length >= SPLICE_THRESHOLD
+        && let Ok(n) = try_splice_to_file(source_fd, dest_fd, length as usize)
+    {
+        return Ok(n as u64);
     }
+    // Fall through to read/write fallback
     copy_fd_to_fd(source_fd, dest_fd, length)
 }
 

@@ -47,14 +47,14 @@ pub(super) fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
 
         let base_acl = exacl::from_mode(mode);
 
-        if let Err(e) = setfacl(&[path], &base_acl, None) {
-            if !is_unsupported_error(&e) {
-                return Err(MetadataError::new(
-                    "reset ACL",
-                    path,
-                    io::Error::other(e.to_string()),
-                ));
-            }
+        if let Err(e) = setfacl(&[path], &base_acl, None)
+            && !is_unsupported_error(&e)
+        {
+            return Err(MetadataError::new(
+                "reset ACL",
+                path,
+                io::Error::other(e.to_string()),
+            ));
         }
     }
 
@@ -82,14 +82,14 @@ pub(super) fn reset_acl_from_mode(path: &Path) -> Result<(), MetadataError> {
 /// Unsupported-filesystem errors are silently ignored.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(super) fn clear_default_acl(path: &Path) -> Result<(), MetadataError> {
-    if let Err(e) = setfacl(&[path], &[], Some(AclOption::DEFAULT_ACL)) {
-        if !is_unsupported_error(&e) {
-            return Err(MetadataError::new(
-                "clear default ACL",
-                path,
-                io::Error::other(e.to_string()),
-            ));
-        }
+    if let Err(e) = setfacl(&[path], &[], Some(AclOption::DEFAULT_ACL))
+        && !is_unsupported_error(&e)
+    {
+        return Err(MetadataError::new(
+            "clear default ACL",
+            path,
+            io::Error::other(e.to_string()),
+        ));
     }
     Ok(())
 }

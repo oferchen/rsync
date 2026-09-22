@@ -94,22 +94,22 @@ pub fn apply_acls_from_cache(
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    if let Some(def_ndx) = default_ndx {
-        if let Some(def_acl) = cache.get_default(def_ndx) {
-            let entries = rsync_acl_to_entries(def_acl, id_map);
-            if !entries.is_empty() {
-                if let Err(e) = setfacl(&[destination], &entries, Some(AclOption::DEFAULT_ACL)) {
-                    if !is_unsupported_error(&e) {
-                        return Err(MetadataError::new(
-                            "apply default ACL from cache",
-                            destination,
-                            io::Error::other(e.to_string()),
-                        ));
-                    }
-                }
-            } else {
-                clear_default_acl(destination)?;
+    if let Some(def_ndx) = default_ndx
+        && let Some(def_acl) = cache.get_default(def_ndx)
+    {
+        let entries = rsync_acl_to_entries(def_acl, id_map);
+        if !entries.is_empty() {
+            if let Err(e) = setfacl(&[destination], &entries, Some(AclOption::DEFAULT_ACL))
+                && !is_unsupported_error(&e)
+            {
+                return Err(MetadataError::new(
+                    "apply default ACL from cache",
+                    destination,
+                    io::Error::other(e.to_string()),
+                ));
             }
+        } else {
+            clear_default_acl(destination)?;
         }
     }
 

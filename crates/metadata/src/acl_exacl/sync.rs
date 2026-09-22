@@ -125,14 +125,14 @@ pub fn sync_acls(
     if is_dir {
         match default_acl {
             Some(acl) if !acl.is_empty() => {
-                if let Err(e) = setfacl(&[destination], &acl, Some(AclOption::DEFAULT_ACL)) {
-                    if !is_unsupported_error(&e) {
-                        return Err(MetadataError::new(
-                            "apply default ACL",
-                            destination,
-                            io::Error::other(e.to_string()),
-                        ));
-                    }
+                if let Err(e) = setfacl(&[destination], &acl, Some(AclOption::DEFAULT_ACL))
+                    && !is_unsupported_error(&e)
+                {
+                    return Err(MetadataError::new(
+                        "apply default ACL",
+                        destination,
+                        io::Error::other(e.to_string()),
+                    ));
                 }
             }
             _ => {

@@ -185,12 +185,11 @@ impl DeferredSync {
         // entire filesystem in one call. Fall back to per-file fsync on
         // platforms without syncfs or when the call fails.
         #[cfg(target_os = "linux")]
-        if self.pending_files.len() > 10 {
-            if let Some(first) = self.pending_files.first() {
-                if sync_filesystem(first).is_ok() {
-                    return Ok(());
-                }
-            }
+        if self.pending_files.len() > 10
+            && let Some(first) = self.pending_files.first()
+            && sync_filesystem(first).is_ok()
+        {
+            return Ok(());
         }
 
         for path in &self.pending_files {
