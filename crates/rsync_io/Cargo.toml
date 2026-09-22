@@ -24,6 +24,9 @@ russh = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 rpassword = { workspace = true, optional = true }
 is-terminal = { workspace = true, optional = true }
+hmac = { workspace = true, optional = true }
+sha1 = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 quinn-proto = { workspace = true, optional = true }
@@ -37,7 +40,18 @@ tempfile = { workspace = true, optional = true }
 
 [features]
 default = ["ssh-config-parse"]
-embedded-ssh = ["dep:russh", "dep:url", "dep:rpassword", "dep:is-terminal", "dep:tokio"]
+embedded-ssh = [
+    "dep:russh",
+    "dep:url",
+    "dep:rpassword",
+    "dep:is-terminal",
+    "dep:tokio",
+    # HashKnownHosts: hashed `known_hosts` entry writing.
+    "dep:hmac",
+    "dep:sha1",
+    "dep:rand",
+    "dep:base64",
+]
 # QUIC transport: quinn-proto (sans-IO) + rustls (ring provider) behind an
 # off-by-default gate, driven by a dedicated I/O thread - no async runtime.
 # Establishes a connection with an in-process self-signed certificate and

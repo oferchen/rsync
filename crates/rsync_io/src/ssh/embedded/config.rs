@@ -96,7 +96,29 @@ pub struct SshConfig {
     /// Number of missed keepalives before disconnecting.
     pub keepalive_max_count: u32,
     /// Path to the known hosts file. `None` disables host key storage.
+    /// The default single user file, used only when no `UserKnownHostsFile`
+    /// directive supplied an explicit list.
     pub known_hosts_file: Option<PathBuf>,
+    /// `UserKnownHostsFile` list. `None` falls back to [`Self::known_hosts_file`];
+    /// `Some(list)` is the ordered per-user files (empty means the user list
+    /// was explicitly disabled with `none`). The first entry is the file new
+    /// keys are learned into. upstream: openssh/readconf.c:243.
+    pub user_known_hosts_files: Option<Vec<PathBuf>>,
+    /// `GlobalKnownHostsFile` list, consulted for verification only, never
+    /// written. Empty by default. upstream: openssh/readconf.c:242.
+    pub global_known_hosts_files: Vec<PathBuf>,
+    /// `HashKnownHosts` - whether a newly learned entry is written hashed.
+    /// upstream: openssh/readconf.c:264.
+    pub hash_known_hosts: bool,
+    /// `HostKeyAlias` - the name used to look up and store the host key
+    /// instead of the connection hostname. upstream: openssh/readconf.c:237.
+    pub host_key_alias: Option<String>,
+    /// `CheckHostIP` - whether the host key is additionally verified against
+    /// the server's resolved IP address. upstream: openssh/readconf.c:238.
+    pub check_host_ip: bool,
+    /// `RevokedHostKeys` - a file of revoked host keys; a listed server key
+    /// is rejected. upstream: openssh/readconf.c:290.
+    pub revoked_host_keys: Option<PathBuf>,
     /// Host key verification policy.
     pub strict_host_key_checking: StrictHostKeyChecking,
     /// IP version preference for DNS resolution.
@@ -170,6 +192,15 @@ impl Default for SshConfig {
             keepalive_interval: Some(Duration::from_secs(DEFAULT_KEEPALIVE_INTERVAL_SECS)),
             keepalive_max_count: DEFAULT_KEEPALIVE_MAX_COUNT,
             known_hosts_file: default_known_hosts_file(),
+            user_known_hosts_files: None,
+            global_known_hosts_files: Vec::new(),
+            // upstream: openssh/readconf.c fill_default_options leaves both
+            // off unless a directive turns them on; `CheckHostIP` has
+            // defaulted to `no` since OpenSSH 8.5 (openssh/readconf.c:2907).
+            hash_known_hosts: false,
+            host_key_alias: None,
+            check_host_ip: false,
+            revoked_host_keys: None,
             strict_host_key_checking: StrictHostKeyChecking::default(),
             ip_preference: IpPreference::default(),
             proxy_command: None,
@@ -258,6 +289,44 @@ impl SshConfig {
     /// Sets the path to the known hosts file. Pass `None` to disable host key storage.
     pub fn known_hosts_file(&mut self, path: Option<PathBuf>) -> &mut Self {
         self.known_hosts_file = path;
+        self
+    }
+
+    /// Sets the `UserKnownHostsFile` list. Pass `None` to fall back to the
+    /// default single [`Self::known_hosts_file`]; an empty vec disables the
+    /// user list entirely (the `none` directive).
+    pub fn user_known_hosts_files(&mut self, files: Option<Vec<PathBuf>>) -> &mut Self {
+        self.user_known_hosts_files = files;
+        self
+    }
+
+    /// Sets the `GlobalKnownHostsFile` list (consulted for verification only).
+    pub fn global_known_hosts_files(&mut self, files: Vec<PathBuf>) -> &mut Self {
+        self.global_known_hosts_files = files;
+        self
+    }
+
+    /// Sets whether newly learned host entries are written hashed.
+    pub fn hash_known_hosts(&mut self, hash: bool) -> &mut Self {
+        self.hash_known_hosts = hash;
+        self
+    }
+
+    /// Sets the `HostKeyAlias` used for host-key lookup and storage.
+    pub fn host_key_alias(&mut self, alias: Option<String>) -> &mut Self {
+        self.host_key_alias = alias;
+        self
+    }
+
+    /// Sets whether the host key is also checked against the resolved IP.
+    pub fn check_host_ip(&mut self, check: bool) -> &mut Self {
+        self.check_host_ip = check;
+        self
+    }
+
+    /// Sets the `RevokedHostKeys` file. A listed server key is rejected.
+    pub fn revoked_host_keys(&mut self, path: Option<PathBuf>) -> &mut Self {
+        self.revoked_host_keys = path;
         self
     }
 
@@ -444,6 +513,37 @@ impl SshConfig {
         }
         if let Some(fdpass) = resolved.proxy_use_fdpass {
             self.proxy_use_fdpass = fdpass;
+        }
+        // The host-key verification family. Explicit-wins, mirroring the
+        // fields above: a resolved value fills only a slot the builder/URL
+        // left at its default, so a programmatic override is never displaced
+        // by the config file. Each field reaches the live verification path
+        // through `SshClientHandler`.
+        if self.user_known_hosts_files.is_none()
+            && let Some(ref files) = resolved.user_known_hosts_files
+        {
+            self.user_known_hosts_files = Some(files.clone());
+        }
+        if self.global_known_hosts_files.is_empty()
+            && let Some(ref files) = resolved.global_known_hosts_files
+        {
+            self.global_known_hosts_files = files.clone();
+        }
+        if let Some(hash) = resolved.hash_known_hosts {
+            self.hash_known_hosts = hash;
+        }
+        if self.host_key_alias.is_none()
+            && let Some(ref alias) = resolved.host_key_alias
+        {
+            self.host_key_alias = Some(alias.clone());
+        }
+        if let Some(check) = resolved.check_host_ip {
+            self.check_host_ip = check;
+        }
+        if self.revoked_host_keys.is_none()
+            && let Some(ref path) = resolved.revoked_host_keys
+        {
+            self.revoked_host_keys = Some(path.clone());
         }
     }
 
@@ -1089,6 +1189,82 @@ mod tests {
         assert_eq!(cfg.jump_hosts.as_deref(), Some("bastion:2222"));
         assert!(cfg.proxy_command.is_none());
         assert!(cfg.proxy_use_fdpass);
+    }
+
+    #[test]
+    fn host_key_verification_family_from_config_is_applied() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(
+            &path,
+            "Host example\n  \
+             UserKnownHostsFile /a/kh /b/kh2\n  \
+             GlobalKnownHostsFile /etc/ssh/known\n  \
+             HashKnownHosts yes\n  \
+             HostKeyAlias alias.internal\n  \
+             CheckHostIP yes\n  \
+             RevokedHostKeys /etc/ssh/revoked\n",
+        )
+        .expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(
+            cfg.user_known_hosts_files,
+            Some(vec![PathBuf::from("/a/kh"), PathBuf::from("/b/kh2")])
+        );
+        assert_eq!(
+            cfg.global_known_hosts_files,
+            vec![PathBuf::from("/etc/ssh/known")]
+        );
+        assert!(cfg.hash_known_hosts);
+        assert_eq!(cfg.host_key_alias.as_deref(), Some("alias.internal"));
+        assert!(cfg.check_host_ip);
+        assert_eq!(
+            cfg.revoked_host_keys.as_deref(),
+            Some(Path::new("/etc/ssh/revoked"))
+        );
+    }
+
+    #[test]
+    fn user_known_hosts_file_none_disables_and_explicit_wins_over_config() {
+        // `none` resolves to Some(empty): the user list is explicitly
+        // disabled rather than falling back to the default file.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  UserKnownHostsFile none\n").expect("write");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(cfg.user_known_hosts_files, Some(Vec::new()));
+
+        // A builder-set value wins over the file (explicit-wins merge).
+        let mut cfg2 = SshConfig::default();
+        cfg2.user_known_hosts_files(Some(vec![PathBuf::from("/pinned/kh")]));
+        cfg2.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(
+            cfg2.user_known_hosts_files,
+            Some(vec![PathBuf::from("/pinned/kh")])
+        );
+    }
+
+    #[test]
+    fn verification_family_defaults_when_unconfigured() {
+        // Non-vacuity: a config that mentions none of the family leaves every
+        // slot at its default, so the assertions above track real reads.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  User someone\n").expect("write");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert!(cfg.user_known_hosts_files.is_none());
+        assert!(cfg.global_known_hosts_files.is_empty());
+        assert!(!cfg.hash_known_hosts);
+        assert!(cfg.host_key_alias.is_none());
+        assert!(!cfg.check_host_ip);
+        assert!(cfg.revoked_host_keys.is_none());
     }
 
     /// Non-vacuity control: with no proxy directives the config keeps its

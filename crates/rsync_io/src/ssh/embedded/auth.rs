@@ -831,6 +831,7 @@ mod tests {
             proxy_command: None,
             jump_hosts: None,
             proxy_use_fdpass: false,
+            ..SshConfig::default()
         }
     }
 
