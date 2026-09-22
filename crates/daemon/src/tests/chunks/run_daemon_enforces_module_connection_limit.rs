@@ -1,5 +1,4 @@
 #[test]
-#[ignore = "task 1246: over-limit connection is offered auth instead of @ERROR max connections"]
 fn run_daemon_enforces_module_connection_limit() {
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
@@ -18,10 +17,19 @@ fn run_daemon_enforces_module_connection_limit() {
             .expect("chmod secrets");
     }
 
+    // Each session runs in a forked child (upstream: socket.c:753-772
+    // start_accept_loop), so the `max connections` slots must be claimed
+    // through the `lock file` - the only cross-process ledger
+    // (clientserver.c:791 claim_connection). The default lock file is
+    // /var/run/rsyncd.lock (rsync.h:33), which this unprivileged test cannot
+    // open, so the config names a writable one - exactly as an unprivileged
+    // upstream daemon must.
+    let lock_path = dir.path().join("rsyncd.lock");
     let config_path = dir.path().join("rsyncd.conf");
     writeln!(
         fs::File::create(&config_path).expect("create config"),
-        "[secure]\npath = {}\nauth users = alice\nsecrets file = {}\nmax connections = 1\n",
+        "lock file = {}\n[secure]\npath = {}\nauth users = alice\nsecrets file = {}\nmax connections = 1\n",
+        lock_path.display(),
         module_dir.display(),
         secrets_path.display()
     )

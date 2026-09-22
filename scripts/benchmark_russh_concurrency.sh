@@ -215,6 +215,10 @@ rm -f "${PID_FILE}"
 # measure oc-rsync's client-side ceiling, not the daemon's.
 cat > "${CONF}" <<CONF
 pid file = ${PID_FILE}
+# max connections > 0 claims a slot in the lock file (upstream:
+# connection.c:26-46); the default /var/run/rsyncd.lock is unopenable for a
+# non-root bench, so name a writable one under the bench root.
+lock file = ${BENCH_ROOT}/rsyncd.lock
 port = ${PORT}
 use chroot = false
 max connections = $((SESSIONS * 2 + 16))

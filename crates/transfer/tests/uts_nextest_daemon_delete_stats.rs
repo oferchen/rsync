@@ -109,6 +109,7 @@ fn write_daemon_config(
 ) -> io::Result<()> {
     let body = format!(
         "pid file = {pid}\n\
+         lock file = {lock}\n\
          log file = {log}\n\
          use chroot = false\n\
          max connections = 4\n\
@@ -119,6 +120,7 @@ fn write_daemon_config(
          read only = {ro}\n\
          list = true\n",
         pid = pid_path.display(),
+        lock = config_path.with_file_name("rsyncd.lock").display(),
         log = log_path.display(),
         module = module_name,
         root = module_root.display(),

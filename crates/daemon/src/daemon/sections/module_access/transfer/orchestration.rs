@@ -230,7 +230,16 @@ fn process_approved_module(
                     }
                 }
                 Ok(Err(error_msg)) => {
-                    let error = AtError::message(error_msg.to_string());
+                    // upstream: clientserver.c:1005-1008 - a hook that ran and
+                    // exited non-zero logs `rsyserr(FLOG, ..., "early exec
+                    // failed")` and sends the fixed `@ERROR: early exec failed`
+                    // line; the exit-code/stderr detail stays in the daemon log.
+                    if let Some(log) = ctx.log_sink {
+                        let message =
+                            rsync_error!(1, error_msg.to_string()).with_role(Role::Daemon);
+                        log_message(log, &message);
+                    }
+                    let error = AtError::message("early exec failed".to_string());
                     send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                     // upstream: clientserver.c:945-949 - early exec runs after
                     // the post-xfer-exec fork point, so its failure is a
@@ -247,10 +256,20 @@ fn process_approved_module(
                     return Ok(());
                 }
                 Err(err) => {
-                    let error = AtError::message(format!(
-                        "failed to run early exec command for module '{}': {err}",
-                        ctx.request
-                    ));
+                    // upstream: clientserver.c:999-1002 - a hook that could not
+                    // be started logs `rsyserr(FLOG, errno, "early exec
+                    // preparation failed")` and sends the fixed `@ERROR: early
+                    // exec preparation failed` line; the OS error detail stays
+                    // in the daemon log.
+                    if let Some(log) = ctx.log_sink {
+                        let text = format!(
+                            "failed to run early exec command for module '{}': {err}",
+                            ctx.request
+                        );
+                        let message = rsync_error!(1, text).with_role(Role::Daemon);
+                        log_message(log, &message);
+                    }
+                    let error = AtError::message("early exec preparation failed".to_string());
                     send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
                     let host_owned = ctx.host_display().to_owned();
                     run_post_xfer_finalizer(
