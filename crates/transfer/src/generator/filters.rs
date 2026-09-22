@@ -241,18 +241,18 @@ pub(super) fn split_files_from_entry(
 
     // Trailing-anchor form: prefix `/.` (sanitize stripped the trailing slash
     // upstream would have left). Treat it identically to `prefix/./`.
-    if let Some(head) = sanitized.strip_suffix(b"/.") {
-        if !head.is_empty() {
-            let base = join_bytes(base_dir, head);
-            return FilesFromEntry {
-                base: base.clone(),
-                path: base,
-                // Upstream DOTDIR_NAME always recurses.
-                recurse: true,
-                // The transmitted name is a bare `.`, so no implied root dir.
-                implied_dot: false,
-            };
-        }
+    if let Some(head) = sanitized.strip_suffix(b"/.")
+        && !head.is_empty()
+    {
+        let base = join_bytes(base_dir, head);
+        return FilesFromEntry {
+            base: base.clone(),
+            path: base,
+            // Upstream DOTDIR_NAME always recurses.
+            recurse: true,
+            // The transmitted name is a bare `.`, so no implied root dir.
+            implied_dot: false,
+        };
     }
 
     FilesFromEntry {

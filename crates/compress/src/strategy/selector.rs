@@ -120,10 +120,11 @@ impl CompressionStrategySelector {
         level: CompressionLevel,
     ) -> Box<dyn CompressionStrategy> {
         for &local_algo in local_algorithms {
-            if remote_algorithms.contains(&local_algo) && local_algo.is_available() {
-                if let Ok(strategy) = Self::for_algorithm_kind(local_algo, level) {
-                    return strategy;
-                }
+            if remote_algorithms.contains(&local_algo)
+                && local_algo.is_available()
+                && let Ok(strategy) = Self::for_algorithm_kind(local_algo, level)
+            {
+                return strategy;
             }
         }
 

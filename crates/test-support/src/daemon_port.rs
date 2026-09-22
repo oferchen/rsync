@@ -145,14 +145,13 @@ pub fn daemon_listen_port(pid: u32) -> Option<u16> {
 
     let mut inodes: HashSet<String> = HashSet::new();
     for entry in fs::read_dir(format!("/proc/{pid}/fd")).ok()?.flatten() {
-        if let Ok(link) = fs::read_link(entry.path()) {
-            if let Some(inode) = link
+        if let Ok(link) = fs::read_link(entry.path())
+            && let Some(inode) = link
                 .to_str()
                 .and_then(|s| s.strip_prefix("socket:["))
                 .and_then(|s| s.strip_suffix(']'))
-            {
-                inodes.insert(inode.to_owned());
-            }
+        {
+            inodes.insert(inode.to_owned());
         }
     }
     if inodes.is_empty() {

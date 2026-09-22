@@ -70,10 +70,10 @@ pub fn socket_reader_from_fd(
 
     match policy {
         crate::IoUringPolicy::Auto | crate::IoUringPolicy::SqpollOff => {
-            if is_io_uring_available() {
-                if let Ok(reader) = IoUringSocketReader::from_raw_fd(fd, &config) {
-                    return Ok(IoUringOrStdSocketReader::IoUring(reader));
-                }
+            if is_io_uring_available()
+                && let Ok(reader) = IoUringSocketReader::from_raw_fd(fd, &config)
+            {
+                return Ok(IoUringOrStdSocketReader::IoUring(reader));
             }
             let reader = FdReader(fd);
             Ok(IoUringOrStdSocketReader::Std(io::BufReader::with_capacity(
@@ -121,10 +121,10 @@ pub fn socket_writer_from_fd(
 
     match policy {
         crate::IoUringPolicy::Auto | crate::IoUringPolicy::SqpollOff => {
-            if is_io_uring_available() {
-                if let Ok(writer) = IoUringSocketWriter::from_raw_fd(fd, &config) {
-                    return Ok(IoUringOrStdSocketWriter::IoUring(writer));
-                }
+            if is_io_uring_available()
+                && let Ok(writer) = IoUringSocketWriter::from_raw_fd(fd, &config)
+            {
+                return Ok(IoUringOrStdSocketWriter::IoUring(writer));
             }
             let writer = FdWriter(fd);
             Ok(IoUringOrStdSocketWriter::Std(Box::new(writer)))
@@ -194,10 +194,10 @@ pub fn socket_writer_from_fd_zero_copy(
         zero_copy_policy: policy,
         ..IoUringConfig::default()
     };
-    if is_io_uring_available() {
-        if let Ok(writer) = IoUringSocketWriter::from_raw_fd(fd, &config) {
-            return Ok(IoUringOrStdSocketWriter::IoUring(writer));
-        }
+    if is_io_uring_available()
+        && let Ok(writer) = IoUringSocketWriter::from_raw_fd(fd, &config)
+    {
+        return Ok(IoUringOrStdSocketWriter::IoUring(writer));
     }
     let writer = FdWriter(fd);
     Ok(IoUringOrStdSocketWriter::Std(Box::new(writer)))

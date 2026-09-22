@@ -529,10 +529,10 @@ impl SshCommand {
         // Inject SSH connect timeout to prevent indefinite hangs when the
         // remote host is unreachable. Skipped when the user already specifies
         // ConnectTimeout or uses a non-SSH program.
-        if let Some(seconds) = self.connect_timeout_seconds() {
-            if self.should_inject_connect_timeout() {
-                args.push(OsString::from(format!("-oConnectTimeout={seconds}")));
-            }
+        if let Some(seconds) = self.connect_timeout_seconds()
+            && self.should_inject_connect_timeout()
+        {
+            args.push(OsString::from(format!("-oConnectTimeout={seconds}")));
         }
 
         args.extend(self.options.iter().cloned());

@@ -315,10 +315,10 @@ impl GeneratorContext {
         }
         // upstream: sender.c:186-189 - write fnamecmp_type and the extended name
         // immediately after iflags when their *_FOLLOWS bits are set.
-        if iflags.has_basis_type() {
-            if let Some(ft) = fnamecmp_type {
-                writer.write_all(&[ft.to_wire()])?;
-            }
+        if iflags.has_basis_type()
+            && let Some(ft) = fnamecmp_type
+        {
+            writer.write_all(&[ft.to_wire()])?;
         }
         if iflags.has_xname() {
             // upstream: sender.c:193 write_vstring(f_out, xname, strlen(xname)).

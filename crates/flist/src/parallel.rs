@@ -436,15 +436,13 @@ fn collect_paths_recursive(
         false
     };
 
-    if should_recurse {
-        if let Ok(entries) = fs::read_dir(current) {
-            let mut child_entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-            crate::sort::sort_dir_entries(&mut child_entries);
+    if should_recurse && let Ok(entries) = fs::read_dir(current) {
+        let mut child_entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        crate::sort::sort_dir_entries(&mut child_entries);
 
-            for entry in child_entries {
-                let child_path = entry.path();
-                paths.extend(collect_paths_recursive(root, &child_path, follow_symlinks));
-            }
+        for entry in child_entries {
+            let child_path = entry.path();
+            paths.extend(collect_paths_recursive(root, &child_path, follow_symlinks));
         }
     }
 

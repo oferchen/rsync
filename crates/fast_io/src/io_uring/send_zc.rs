@@ -409,32 +409,31 @@ impl ZeroCopySender {
         // Fast path: payload fits in a registered slot. Copy the bytes
         // into the pinned slot once, then SEND_ZC against the registered
         // memory so the kernel can DMA without another userland touch.
-        if let Some(pool) = self.buffers.as_ref() {
-            if buf.len() <= self.slot_bytes {
-                if let Some(mut slot) = pool.checkout() {
-                    // SAFETY: the slot is exclusively ours for the lifetime
-                    // of `slot` and `buf.len() <= self.slot_bytes` keeps
-                    // the copy inside the slot's registered region. No
-                    // concurrent kernel use of this slot is in flight - the
-                    // previous send has already drained both CQEs
-                    // (try_send_zc is synchronous) before we returned to
-                    // the caller.
-                    unsafe {
-                        let dst = slot.as_mut_slice(buf.len());
-                        dst.copy_from_slice(buf);
-                    }
-                    let mut ring = self
-                        .ring
-                        .lock()
-                        .map_err(|_| io::Error::other("ZeroCopySender ring mutex poisoned"))?;
-                    // SAFETY: `slot` is borrowed for the full lifetime of
-                    // this call. `try_send_zc` drains both the transfer
-                    // and notification CQEs before returning, so the
-                    // kernel has released its reference to the registered
-                    // pages by the time we drop the slot back to the pool.
-                    return try_send_zc(&mut ring, self.fd, unsafe { slot.as_slice(buf.len()) }, 0);
-                }
+        if let Some(pool) = self.buffers.as_ref()
+            && buf.len() <= self.slot_bytes
+            && let Some(mut slot) = pool.checkout()
+        {
+            // SAFETY: the slot is exclusively ours for the lifetime
+            // of `slot` and `buf.len() <= self.slot_bytes` keeps
+            // the copy inside the slot's registered region. No
+            // concurrent kernel use of this slot is in flight - the
+            // previous send has already drained both CQEs
+            // (try_send_zc is synchronous) before we returned to
+            // the caller.
+            unsafe {
+                let dst = slot.as_mut_slice(buf.len());
+                dst.copy_from_slice(buf);
             }
+            let mut ring = self
+                .ring
+                .lock()
+                .map_err(|_| io::Error::other("ZeroCopySender ring mutex poisoned"))?;
+            // SAFETY: `slot` is borrowed for the full lifetime of
+            // this call. `try_send_zc` drains both the transfer
+            // and notification CQEs before returning, so the
+            // kernel has released its reference to the registered
+            // pages by the time we drop the slot back to the pool.
+            return try_send_zc(&mut ring, self.fd, unsafe { slot.as_slice(buf.len()) }, 0);
         }
 
         // Fallback: oversized payload, or registration was rejected.

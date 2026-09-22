@@ -107,10 +107,8 @@ impl SourceOpen {
 /// upstream: syscall.c do_open (3.4.2 propagates `O_NOATIME` via the
 /// `open_noatime` global).
 pub(super) fn open_source_with_noatime(path: &Path, use_noatime: bool) -> io::Result<fs::File> {
-    if use_noatime {
-        if let Some(file) = try_open_noatime(path)? {
-            return Ok(file);
-        }
+    if use_noatime && let Some(file) = try_open_noatime(path)? {
+        return Ok(file);
     }
     fs::File::open(path)
 }
@@ -124,15 +122,13 @@ pub(super) fn open_source_with_noatime(path: &Path, use_noatime: bool) -> io::Re
 #[cfg(unix)]
 pub(super) fn open_source_nofollow(path: &Path, use_noatime: bool) -> io::Result<fs::File> {
     let nofollow = libc::O_NOFOLLOW | libc::O_CLOEXEC;
-    if use_noatime {
-        if let Some(extra) = noatime_flag() {
-            let mut options = fs::OpenOptions::new();
-            options.read(true).custom_flags(nofollow | extra);
-            match options.open(path) {
-                Ok(file) => return Ok(file),
-                Err(error) if noatime_retryable(&error) => {}
-                Err(error) => return Err(error),
-            }
+    if use_noatime && let Some(extra) = noatime_flag() {
+        let mut options = fs::OpenOptions::new();
+        options.read(true).custom_flags(nofollow | extra);
+        match options.open(path) {
+            Ok(file) => return Ok(file),
+            Err(error) if noatime_retryable(&error) => {}
+            Err(error) => return Err(error),
         }
     }
     let mut options = fs::OpenOptions::new();

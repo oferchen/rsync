@@ -190,7 +190,7 @@ pub(crate) fn validate_package_versions(
 }
 
 /// Ensures `workspace.package.rust-version` in the manifest matches the pinned
-/// CI toolchain (1.88).
+/// CI toolchain (1.89).
 pub(crate) fn validate_workspace_package_rust_version(manifest: &Value) -> TaskResult<()> {
     let workspace = manifest
         .get("workspace")
@@ -208,9 +208,9 @@ pub(crate) fn validate_workspace_package_rust_version(manifest: &Value) -> TaskR
         })?;
 
     ensure(
-        rust_version == "1.88",
+        rust_version == "1.89",
         format!(
-            "workspace.package.rust-version must match CI toolchain 1.88; found {rust_version:?}"
+            "workspace.package.rust-version must match CI toolchain 1.89; found {rust_version:?}"
         ),
     )
 }

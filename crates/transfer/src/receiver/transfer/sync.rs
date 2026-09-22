@@ -149,10 +149,10 @@ impl ReceiverContext {
             if self.config.flags.list_only {
                 break;
             }
-            if let Some(ref dl) = deadline {
-                if dl.is_reached() {
-                    break;
-                }
+            if let Some(ref dl) = deadline
+                && dl.is_reached()
+            {
+                break;
             }
 
             let file_entry = &self.file_list[file_idx];
@@ -252,10 +252,10 @@ impl ReceiverContext {
             sum_head.write(&mut *writer)?;
 
             // upstream: generator.c:775-776 - skip signature blocks in append mode
-            if !self.config.flags.append {
-                if let Some(ref signature) = signature_opt {
-                    write_signature_blocks(&mut *writer, signature, sum_head.s2length)?;
-                }
+            if !self.config.flags.append
+                && let Some(ref signature) = signature_opt
+            {
+                write_signature_blocks(&mut *writer, signature, sum_head.s2length)?;
             }
             writer.flush()?;
 

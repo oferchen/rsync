@@ -351,7 +351,7 @@ Each release also includes three toolchain variants: **stable** (recommended, no
 
 ### Build from source
 
-Requires Rust **1.88+**.
+Requires Rust **1.89+**.
 
 ```bash
 git clone https://github.com/oferchen/rsync.git
@@ -476,7 +476,7 @@ For supported options: `oc-rsync --help`
 
 ### Prerequisites
 
-- Rust 1.88.0 (managed via `rust-toolchain.toml`)
+- Rust 1.89.0 (managed via `rust-toolchain.toml`)
 - [`cargo-nextest`](https://nexte.st/): `cargo install cargo-nextest --locked`
 
 ### Build and test

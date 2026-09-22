@@ -54,11 +54,9 @@ pub(crate) fn hoist_options_before_operands(
         match classify_token(token, &flag_shorts, &value_shorts, &long_options) {
             TokenKind::Option { needs_space_value } => {
                 options.push(token.clone());
-                if needs_space_value {
-                    if let Some(value) = rest.get(index + 1) {
-                        options.push(value.clone());
-                        index += 1;
-                    }
+                if needs_space_value && let Some(value) = rest.get(index + 1) {
+                    options.push(value.clone());
+                    index += 1;
                 }
             }
             TokenKind::Operand => operands.push(token.clone()),

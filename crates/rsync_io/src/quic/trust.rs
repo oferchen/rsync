@@ -390,12 +390,11 @@ impl ServerCertVerifier for AcceptNewVerifier {
         // CA/system-root precedence: a chain that validates against a configured
         // authority wins outright, so the known-hosts store is never consulted
         // (mirrors SSH trusting a CA-signed host key without a known_hosts pin).
-        if let Some(roots) = &self.roots {
-            if let Ok(verified) =
+        if let Some(roots) = &self.roots
+            && let Ok(verified) =
                 roots.verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
-            {
-                return Ok(verified);
-            }
+        {
+            return Ok(verified);
         }
         // Otherwise the self-signed path: accept-new / verify-pin / refuse-changed.
         self.tofu

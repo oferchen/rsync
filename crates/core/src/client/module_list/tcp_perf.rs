@@ -47,11 +47,11 @@ pub(crate) fn apply_client_tcp_perf_options(
         // best-effort, non-fatal.
         let _ = set_tcp_quickack(stream);
     }
-    if let Some(rate) = pacing_bytes_per_sec {
-        if so_max_pacing_rate_supported() {
-            // Kernel pacing hint mirroring `--bwlimit`; best-effort, non-fatal.
-            let _ = set_so_max_pacing_rate(stream, rate);
-        }
+    if let Some(rate) = pacing_bytes_per_sec
+        && so_max_pacing_rate_supported()
+    {
+        // Kernel pacing hint mirroring `--bwlimit`; best-effort, non-fatal.
+        let _ = set_so_max_pacing_rate(stream, rate);
     }
 }
 

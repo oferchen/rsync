@@ -724,15 +724,14 @@ mod tests {
         // If statx is supported, the kernel must be >= 5.11.
         if statx_supported() {
             let release = super::super::config::config_detail::get_kernel_release_string();
-            if let Some(release) = release {
-                if let Some((major, minor)) =
+            if let Some(release) = release
+                && let Some((major, minor)) =
                     super::super::config::config_detail::parse_kernel_version(&release)
-                {
-                    assert!(
-                        (major, minor) >= STATX_MIN_KERNEL,
-                        "statx probe says supported but kernel {major}.{minor} < 5.11"
-                    );
-                }
+            {
+                assert!(
+                    (major, minor) >= STATX_MIN_KERNEL,
+                    "statx probe says supported but kernel {major}.{minor} < 5.11"
+                );
             }
         }
     }

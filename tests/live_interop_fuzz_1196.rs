@@ -596,10 +596,10 @@ fn budget_seconds() -> u64 {
 }
 
 fn seed_for_run() -> u64 {
-    if let Ok(s) = env::var("OC_RSYNC_FUZZ_SEED") {
-        if let Ok(v) = s.parse() {
-            return v;
-        }
+    if let Ok(s) = env::var("OC_RSYNC_FUZZ_SEED")
+        && let Ok(v) = s.parse()
+    {
+        return v;
     }
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

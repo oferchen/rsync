@@ -56,11 +56,12 @@ fn main() {
     let deadline = Instant::now() + SELF_DESTRUCT;
     let mut announced = false;
     while Instant::now() < deadline {
-        if let Some(flags) = flags.as_ref() {
-            if !announced && flags.shutdown.load(Ordering::Relaxed) {
-                announce("SIGTERM-OBSERVED");
-                announced = true;
-            }
+        if let Some(flags) = flags.as_ref()
+            && !announced
+            && flags.shutdown.load(Ordering::Relaxed)
+        {
+            announce("SIGTERM-OBSERVED");
+            announced = true;
         }
         // Deliberately keeps running after the flag is seen: a wedged daemon
         // is one that has the flag set and still never exits.

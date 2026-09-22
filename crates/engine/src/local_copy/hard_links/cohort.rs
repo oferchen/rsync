@@ -145,17 +145,17 @@ impl HardlinkApplyTracker {
             };
 
             for follower in followers {
-                if let Some(parent) = follower.parent() {
-                    if let Err(e) = fs::create_dir_all(parent) {
-                        errors.push((follower, e));
-                        continue;
-                    }
+                if let Some(parent) = follower.parent()
+                    && let Err(e) = fs::create_dir_all(parent)
+                {
+                    errors.push((follower, e));
+                    continue;
                 }
-                if follower.symlink_metadata().is_ok() {
-                    if let Err(e) = fs::remove_file(&follower) {
-                        errors.push((follower, e));
-                        continue;
-                    }
+                if follower.symlink_metadata().is_ok()
+                    && let Err(e) = fs::remove_file(&follower)
+                {
+                    errors.push((follower, e));
+                    continue;
                 }
                 match fast_io::hard_link(&leader_path, &follower) {
                     Ok(()) => linked += 1,

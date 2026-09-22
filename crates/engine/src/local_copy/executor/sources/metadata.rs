@@ -92,12 +92,12 @@ fn operand_link_stat(
     let metadata = std::fs::symlink_metadata(source_path)?;
 
     let follow_dirlinks = context.copy_dirlinks_enabled() || source.copy_contents();
-    if follow_dirlinks && metadata.file_type().is_symlink() {
-        if let Ok(followed) = std::fs::metadata(source_path) {
-            if followed.file_type().is_dir() {
-                return Ok(followed);
-            }
-        }
+    if follow_dirlinks
+        && metadata.file_type().is_symlink()
+        && let Ok(followed) = std::fs::metadata(source_path)
+        && followed.file_type().is_dir()
+    {
+        return Ok(followed);
     }
 
     Ok(metadata)

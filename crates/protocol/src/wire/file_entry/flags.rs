@@ -142,12 +142,11 @@ pub fn calculate_hardlink_flags(
                 flags |= XMIT_HLINK_FIRST;
             }
         }
-    } else if protocol_version >= 28 {
-        if let Some(dev) = hardlink_dev {
-            if dev == prev_hardlink_dev {
-                flags |= XMIT_SAME_DEV_PRE30;
-            }
-        }
+    } else if protocol_version >= 28
+        && let Some(dev) = hardlink_dev
+        && dev == prev_hardlink_dev
+    {
+        flags |= XMIT_SAME_DEV_PRE30;
     }
 
     flags

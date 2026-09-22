@@ -92,13 +92,11 @@ pub fn dest_acl_differs(
 
     // upstream: acls.c:1039-1054 - the default ACL leg runs for directories only
     // and uses strict `rsync_acl_equal`.
-    if is_dir {
-        if let Some(sender) = sender_default {
-            let dest = crate::get_rsync_acl(path, mode, true);
-            let sender = remap_named_ids(sender, id_map);
-            if !dest.equal(&sender) {
-                return true;
-            }
+    if is_dir && let Some(sender) = sender_default {
+        let dest = crate::get_rsync_acl(path, mode, true);
+        let sender = remap_named_ids(sender, id_map);
+        if !dest.equal(&sender) {
+            return true;
         }
     }
 

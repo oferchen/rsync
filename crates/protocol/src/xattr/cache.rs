@@ -146,10 +146,10 @@ impl XattrCache {
     pub fn find(&self, list: &XattrList) -> Option<u32> {
         let key = Self::hash_list(list);
         for &index in self.by_hash.get(&key)? {
-            if let Some(cached) = self.lists.get(index as usize) {
-                if Self::lists_equal(cached, list) {
-                    return Some(index);
-                }
+            if let Some(cached) = self.lists.get(index as usize)
+                && Self::lists_equal(cached, list)
+            {
+                return Some(index);
             }
         }
         None
@@ -416,20 +416,20 @@ fn is_rsync_internal_attr(name: &[u8]) -> bool {
     };
 
     let rpre = RSYNC_PREFIX;
-    if name_str.len() > rpre.len() {
-        if let Some(rest) = name_str.strip_prefix(rpre) {
-            return rest.starts_with('%');
-        }
+    if name_str.len() > rpre.len()
+        && let Some(rest) = name_str.strip_prefix(rpre)
+    {
+        return rest.starts_with('%');
     }
 
     // On Linux, check user.rsync.% form
     #[cfg(target_os = "linux")]
     {
         let full_prefix = format!("user.{rpre}");
-        if name_str.len() > full_prefix.len() {
-            if let Some(rest) = name_str.strip_prefix(full_prefix.as_str()) {
-                return rest.starts_with('%');
-            }
+        if name_str.len() > full_prefix.len()
+            && let Some(rest) = name_str.strip_prefix(full_prefix.as_str())
+        {
+            return rest.starts_with('%');
         }
     }
 

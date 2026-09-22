@@ -100,11 +100,11 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
             // never-split joined form - fixing both the path leak and the lost
             // compat negotiation in one place. See
             // `compact_flag_string_expects_split_value`.
-            if compact_flag_string_expects_split_value(&flag_string) {
-                if let Some(value) = args.get(idx + 1) {
-                    flag_string.push_str(&value.to_string_lossy());
-                    idx += 1;
-                }
+            if compact_flag_string_expects_split_value(&flag_string)
+                && let Some(value) = args.get(idx + 1)
+            {
+                flag_string.push_str(&value.to_string_lossy());
+                idx += 1;
             }
             idx += 1;
             continue;

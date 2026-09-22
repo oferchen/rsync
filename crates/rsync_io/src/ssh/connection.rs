@@ -54,10 +54,10 @@ fn arm_io_stall(
         Some(timeout) => {
             let kill_child = Arc::clone(shared_child);
             let abort = Box::new(move || {
-                if let Ok(mut guard) = kill_child.lock() {
-                    if let Some(child) = guard.as_mut() {
-                        let _ = child.kill();
-                    }
+                if let Ok(mut guard) = kill_child.lock()
+                    && let Some(child) = guard.as_mut()
+                {
+                    let _ = child.kill();
                 }
             });
             let (watchdog, handle) = IoStallWatchdog::arm(timeout, abort);
@@ -398,10 +398,10 @@ impl ConnectWatchdog {
                     // Kill the child via the shared handle. Child::kill() is safe
                     // Rust - no unsafe code needed. Killing closes the child's
                     // pipe endpoints, unblocking any blocking read/write.
-                    if let Ok(mut guard) = shared_child.lock() {
-                        if let Some(ref mut child) = *guard {
-                            let _ = child.kill();
-                        }
+                    if let Ok(mut guard) = shared_child.lock()
+                        && let Some(ref mut child) = *guard
+                    {
+                        let _ = child.kill();
                     }
                 }
             })
@@ -641,16 +641,16 @@ impl Read for SshConnection {
         // When the watchdog fires, the child will be killed by Drop, and reads
         // would return EOF or a broken pipe error. Returning TimedOut gives the
         // caller a clear signal to map to the appropriate exit code.
-        if let Some(ref watchdog) = self.connect_watchdog {
-            if watchdog.has_fired() {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    format!(
-                        "ssh connection establishment timed out after {} seconds",
-                        watchdog.timeout.as_secs()
-                    ),
-                ));
-            }
+        if let Some(ref watchdog) = self.connect_watchdog
+            && watchdog.has_fired()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "ssh connection establishment timed out after {} seconds",
+                    watchdog.timeout.as_secs()
+                ),
+            ));
         }
         let res = match self.stdout.as_mut() {
             Some(stdout) => stdout.read(buf),

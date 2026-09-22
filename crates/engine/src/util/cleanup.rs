@@ -257,10 +257,10 @@ impl CleanupManager {
     /// [`cleanup_temp_files`](Self::cleanup_temp_files) is called,
     /// unless it is unregistered first.
     pub fn register_temp_file(&self, path: PathBuf) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
-            if let Ok(mut state) = state.lock() {
-                state.temp_files.insert(path);
-            }
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
+            state.temp_files.insert(path);
         }
     }
 
@@ -270,10 +270,10 @@ impl CleanupManager {
     /// (renamed to its final destination) and should not be deleted
     /// during cleanup.
     pub fn unregister_temp_file(&self, path: &Path) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
-            if let Ok(mut state) = state.lock() {
-                state.temp_files.remove(path);
-            }
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
+            state.temp_files.remove(path);
         }
     }
 
@@ -282,10 +282,10 @@ impl CleanupManager {
     /// The callback will be executed when [`cleanup`](Self::cleanup) is called.
     /// Callbacks are run in reverse order of registration (LIFO).
     pub fn register_cleanup(&self, callback: Box<dyn FnOnce() + Send>) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
-            if let Ok(mut state) = state.lock() {
-                state.cleanup_callbacks.push(callback);
-            }
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
+            state.cleanup_callbacks.push(callback);
         }
     }
 
@@ -298,10 +298,10 @@ impl CleanupManager {
     ///
     /// Cleanup errors are logged but do not prevent other cleanup from proceeding.
     pub fn cleanup(&self) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
-            if let Ok(mut state) = state.lock() {
-                state.cleanup();
-            }
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
+            state.cleanup();
         }
     }
 
@@ -310,10 +310,10 @@ impl CleanupManager {
     /// Similar to [`cleanup`](Self::cleanup) but only removes temporary files,
     /// without running cleanup callbacks.
     pub fn cleanup_temp_files(&self) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
-            if let Ok(mut state) = state.lock() {
-                state.cleanup_temp_files();
-            }
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
+            state.cleanup_temp_files();
         }
     }
 
@@ -322,10 +322,10 @@ impl CleanupManager {
     /// Primarily useful for testing and diagnostics.
     #[must_use]
     pub fn temp_file_count(&self) -> usize {
-        if let Some(state) = CLEANUP_MANAGER.get() {
-            if let Ok(state) = state.lock() {
-                return state.temp_files.len();
-            }
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(state) = state.lock()
+        {
+            return state.temp_files.len();
         }
         0
     }
@@ -342,25 +342,25 @@ impl CleanupManager {
         partial_dest: Option<PathBuf>,
         tweak_mtime: bool,
     ) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
-            if let Ok(mut state) = state.lock() {
-                state.partials.retain(|entry| entry.temp != temp);
-                state.partials.push(PartialEntry {
-                    temp,
-                    partial_dest,
-                    tweak_mtime,
-                });
-            }
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
+            state.partials.retain(|entry| entry.temp != temp);
+            state.partials.push(PartialEntry {
+                temp,
+                partial_dest,
+                tweak_mtime,
+            });
         }
     }
 
     /// Removes a temp file from the partial registry after its guard committed
     /// or already finalised it.
     pub fn unregister_partial(&self, temp: &Path) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
-            if let Ok(mut state) = state.lock() {
-                state.partials.retain(|entry| entry.temp != temp);
-            }
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
+            state.partials.retain(|entry| entry.temp != temp);
         }
     }
 
@@ -392,12 +392,12 @@ impl CleanupManager {
     /// Primarily useful for testing.
     #[doc(hidden)]
     pub fn reset_for_testing(&self) {
-        if let Some(state) = CLEANUP_MANAGER.get() {
-            if let Ok(mut state) = state.lock() {
-                state.temp_files.clear();
-                state.cleanup_callbacks.clear();
-                state.partials.clear();
-            }
+        if let Some(state) = CLEANUP_MANAGER.get()
+            && let Ok(mut state) = state.lock()
+        {
+            state.temp_files.clear();
+            state.cleanup_callbacks.clear();
+            state.partials.clear();
         }
     }
 }

@@ -95,6 +95,7 @@ pub fn all() -> Vec<Box<dyn Check>> {
         Box::new(transfer_conditions::TransferConditions),
         Box::new(modify_window::ModifyWindow),
         Box::new(checksum::Checksum),
+        Box::new(fuzzy::Fuzzy),
         Box::new(whole_file::WholeFile),
         Box::new(append_inplace::AppendInplace),
         Box::new(verify_redo::VerifyRedo),

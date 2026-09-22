@@ -48,11 +48,11 @@ where
         // whole file into a Vec<u8>; switch to WindowsChunkedReader streaming
         // below so peak RSS stays bounded by the chunk size, not the file size.
         #[cfg(unix)]
-        if size >= MMAP_THRESHOLD {
-            if let Ok(mmap) = MmapReader::open(path) {
-                let _ = mmap.advise_sequential();
-                return Ok((D::digest(mmap.as_slice()), size));
-            }
+        if size >= MMAP_THRESHOLD
+            && let Ok(mmap) = MmapReader::open(path)
+        {
+            let _ = mmap.advise_sequential();
+            return Ok((D::digest(mmap.as_slice()), size));
         }
 
         // upstream: checksum.c - pre-sized read loop avoids trailing EOF probe.
@@ -248,11 +248,11 @@ where
         // whole file into a Vec<u8>; switch to WindowsChunkedReader streaming
         // below so peak RSS stays bounded by the chunk size, not the file size.
         #[cfg(unix)]
-        if size >= MMAP_THRESHOLD {
-            if let Ok(mmap) = MmapReader::open(path) {
-                let _ = mmap.advise_sequential();
-                return Ok((D::digest_with_seed(seed, mmap.as_slice()), size));
-            }
+        if size >= MMAP_THRESHOLD
+            && let Ok(mmap) = MmapReader::open(path)
+        {
+            let _ = mmap.advise_sequential();
+            return Ok((D::digest_with_seed(seed, mmap.as_slice()), size));
         }
 
         // upstream: checksum.c - pre-sized read loop avoids trailing EOF probe.
@@ -364,24 +364,24 @@ where
         // to WindowsChunkedReader streaming below so peak RSS stays bounded
         // by the chunk size, not the file size.
         #[cfg(unix)]
-        if size >= MMAP_THRESHOLD {
-            if let Ok(mmap) = MmapReader::open(path) {
-                let _ = mmap.advise_sequential();
-                let data = mmap.as_slice();
-                let mut signatures = Vec::with_capacity(estimated_blocks);
+        if size >= MMAP_THRESHOLD
+            && let Ok(mmap) = MmapReader::open(path)
+        {
+            let _ = mmap.advise_sequential();
+            let data = mmap.as_slice();
+            let mut signatures = Vec::with_capacity(estimated_blocks);
 
-                for chunk in data.chunks(block_size) {
-                    let mut rolling = RollingChecksum::new();
-                    rolling.update(chunk);
-                    signatures.push(BlockSignature {
-                        rolling: rolling.value(),
-                        strong: D::digest(chunk),
-                    });
-                }
-
-                let block_count = signatures.len();
-                return Ok((signatures, size, block_count));
+            for chunk in data.chunks(block_size) {
+                let mut rolling = RollingChecksum::new();
+                rolling.update(chunk);
+                signatures.push(BlockSignature {
+                    rolling: rolling.value(),
+                    strong: D::digest(chunk),
+                });
             }
+
+            let block_count = signatures.len();
+            return Ok((signatures, size, block_count));
         }
 
         // Windows shadows `file` with the bounded-RSS WindowsChunkedReader;

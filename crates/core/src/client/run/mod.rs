@@ -464,10 +464,10 @@ fn run_client_internal(
         plan.destination()
     };
 
-    if let Err(error) = fs::metadata(dest_to_check.join(".")) {
-        if error.kind() == std::io::ErrorKind::PermissionDenied {
-            return Err(super::error::destination_access_error(dest_to_check, error));
-        }
+    if let Err(error) = fs::metadata(dest_to_check.join("."))
+        && error.kind() == std::io::ErrorKind::PermissionDenied
+    {
+        return Err(super::error::destination_access_error(dest_to_check, error));
     }
 
     // upstream: main.c:1241 / main.c:1424 call `check_alt_basis_dirs()` once the

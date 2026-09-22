@@ -227,10 +227,10 @@ fn source_file_atimes(src: &Path) -> Vec<(PathBuf, String)> {
     let mut out = Vec::new();
     for rel in support::rel_entries(src) {
         let path = src.join(&rel);
-        if is_regular_file(&path) {
-            if let Some(at) = atime_of(&path) {
-                out.push((rel, at));
-            }
+        if is_regular_file(&path)
+            && let Some(at) = atime_of(&path)
+        {
+            out.push((rel, at));
         }
     }
     out

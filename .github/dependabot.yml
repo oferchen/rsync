@@ -24,7 +24,7 @@ updates:
       - "dependencies"
     ignore:
       # serial_test 4.x raises its MSRV to rustc 1.93.1; this workspace pins
-      # Rust 1.88.0 (rust-toolchain.toml), so its major bumps are not takeable
+      # Rust 1.89.0 (rust-toolchain.toml), so its major bumps are not takeable
       # without a toolchain upgrade. Hold at 3.x until the pinned toolchain moves.
       - dependency-name: "serial_test"
         update-types: ["version-update:semver-major"]

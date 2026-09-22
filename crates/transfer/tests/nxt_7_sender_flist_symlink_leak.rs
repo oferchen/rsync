@@ -112,7 +112,7 @@ fn sender_flist_does_not_leak_symlink_target_outside_root() {
     let pipeline = test_pipeline();
     let mut ctx = GeneratorContext::new(&handshake, config, pipeline);
 
-    ctx.build_file_list(&[module.clone()])
+    ctx.build_file_list(std::slice::from_ref(&module))
         .expect("build_file_list");
 
     let file_list = ctx.file_list();

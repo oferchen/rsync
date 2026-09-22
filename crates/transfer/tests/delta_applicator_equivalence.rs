@@ -266,13 +266,13 @@ fn reference_apply<R: Read>(
     if let Some(ref mut sparse) = sparse_state {
         let pos = sparse.finish(&mut out)?;
         final_pos = Some(pos);
-        if let Some(expected) = expected_size {
-            if pos != expected {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "sparse file size mismatch",
-                ));
-            }
+        if let Some(expected) = expected_size
+            && pos != expected
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "sparse file size mismatch",
+            ));
         }
     }
 

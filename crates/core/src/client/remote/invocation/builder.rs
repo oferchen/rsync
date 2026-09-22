@@ -541,10 +541,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // same deadline. Both --stop-after (duration) and --stop-at (absolute)
         // are converted to an absolute SystemTime at parse time, so only the
         // absolute form is forwarded.
-        if let Some(deadline) = self.config.stop_at() {
-            if let Some(formatted) = format_system_time_for_stop_at(deadline) {
-                args.push(OsString::from(format!("--stop-at={formatted}")));
-            }
+        if let Some(deadline) = self.config.stop_at()
+            && let Some(formatted) = format_system_time_for_stop_at(deadline)
+        {
+            args.push(OsString::from(format!("--stop-at={formatted}")));
         }
 
         // upstream: options.c:2966 - `--bwlimit=%d` forwards the rate in whole

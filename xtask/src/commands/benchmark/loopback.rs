@@ -60,16 +60,15 @@ pub(super) fn generate_loopback_data(
     let marker = data_dir.join(".profile");
 
     let profile_name = format!("{profile:?}");
-    if marker.exists() {
-        if let Ok(existing) = fs::read_to_string(&marker) {
-            if existing.trim() == profile_name {
-                println!(
-                    "Reusing existing {profile_name} test data in {}",
-                    data_dir.display()
-                );
-                return Ok(data_dir);
-            }
-        }
+    if marker.exists()
+        && let Ok(existing) = fs::read_to_string(&marker)
+        && existing.trim() == profile_name
+    {
+        println!(
+            "Reusing existing {profile_name} test data in {}",
+            data_dir.display()
+        );
+        return Ok(data_dir);
     }
 
     let _ = fs::remove_dir_all(&data_dir);

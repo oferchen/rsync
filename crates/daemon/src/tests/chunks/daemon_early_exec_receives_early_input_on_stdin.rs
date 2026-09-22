@@ -83,10 +83,10 @@ fn early_exec_hook_capture(early_input: Option<&[u8]>) -> String {
 
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if let Ok(text) = fs::read_to_string(&marker) {
-            if !text.is_empty() {
-                return text;
-            }
+        if let Ok(text) = fs::read_to_string(&marker)
+            && !text.is_empty()
+        {
+            return text;
         }
         assert!(
             Instant::now() < deadline,

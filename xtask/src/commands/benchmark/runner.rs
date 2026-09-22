@@ -96,11 +96,11 @@ pub(super) fn check_daemon_running(port: u16) -> bool {
 /// Stops any existing rsync daemon.
 fn stop_daemon(options: &BenchmarkOptions) {
     let pid_path = options.bench_dir.join("rsyncd.pid");
-    if let Ok(pid_str) = fs::read_to_string(&pid_path) {
-        if let Ok(pid) = pid_str.trim().parse::<i32>() {
-            let _ = Command::new("kill").arg(pid.to_string()).status();
-            std::thread::sleep(Duration::from_millis(100));
-        }
+    if let Ok(pid_str) = fs::read_to_string(&pid_path)
+        && let Ok(pid) = pid_str.trim().parse::<i32>()
+    {
+        let _ = Command::new("kill").arg(pid.to_string()).status();
+        std::thread::sleep(Duration::from_millis(100));
     }
     let _ = fs::remove_file(&pid_path);
 }

@@ -463,13 +463,13 @@ fn apply_fake_super_mode(
             remove_fake_super(destination).map_err(|error| {
                 MetadataError::new("remove fake-super metadata", destination, error)
             })?;
-        } else if let Some(mut stat) = recorded {
-            if stat.mode != stored_mode {
-                stat.mode = stored_mode;
-                store_fake_super(destination, &stat).map_err(|error| {
-                    MetadataError::new("store fake-super metadata", destination, error)
-                })?;
-            }
+        } else if let Some(mut stat) = recorded
+            && stat.mode != stored_mode
+        {
+            stat.mode = stored_mode;
+            store_fake_super(destination, &stat).map_err(|error| {
+                MetadataError::new("store fake-super metadata", destination, error)
+            })?;
         }
     }
 
@@ -531,10 +531,10 @@ pub(super) fn apply_permissions_with_chmod(
             );
             mode = tweak_directory_transfer_mode(mode, metadata.file_type());
 
-            if let Some(existing) = existing {
-                if permissions_match(mode, existing) {
-                    return Ok(());
-                }
+            if let Some(existing) = existing
+                && permissions_match(mode, existing)
+            {
+                return Ok(());
             }
 
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant
@@ -664,10 +664,10 @@ pub(super) fn apply_permissions_with_chmod_fd(
         );
         mode = tweak_directory_transfer_mode(mode, metadata.file_type());
 
-        if let Some(existing) = existing {
-            if permissions_match(mode, existing) {
-                return Ok(());
-            }
+        if let Some(existing) = existing
+            && permissions_match(mode, existing)
+        {
+            return Ok(());
         }
 
         if let Some(fd) = fd {
@@ -688,10 +688,10 @@ pub(super) fn apply_permissions_with_chmod_fd(
     if options.permissions() {
         let mode = metadata.permissions().mode();
 
-        if let Some(existing) = existing {
-            if permissions_match(mode, existing) {
-                return Ok(());
-            }
+        if let Some(existing) = existing
+            && permissions_match(mode, existing)
+        {
+            return Ok(());
         }
 
         if let Some(fd) = fd {
@@ -1209,10 +1209,10 @@ fn apply_permissions_without_chmod(
                 destination_permissions |= (destination_permissions & 0o444) >> 2;
             }
 
-            if let Some(existing) = existing {
-                if permissions_match(destination_permissions, existing) {
-                    return Ok(());
-                }
+            if let Some(existing) = existing
+                && permissions_match(destination_permissions, existing)
+            {
+                return Ok(());
             }
 
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.

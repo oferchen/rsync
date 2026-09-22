@@ -440,27 +440,25 @@ fn compare_metadata(
             });
         }
     }
-    if opts.check_owner {
-        if let (Some(eo), Some(ao)) = (owner(em), owner(am)) {
-            if eo != ao {
-                out.push(DirDiffEntry::OwnerMismatch {
-                    path: rel.to_path_buf(),
-                    expected: eo,
-                    actual: ao,
-                });
-            }
-        }
+    if opts.check_owner
+        && let (Some(eo), Some(ao)) = (owner(em), owner(am))
+        && eo != ao
+    {
+        out.push(DirDiffEntry::OwnerMismatch {
+            path: rel.to_path_buf(),
+            expected: eo,
+            actual: ao,
+        });
     }
-    if opts.check_mtime {
-        if let (Some(et), Some(at)) = (mtime_secs(em), mtime_secs(am)) {
-            if et != at {
-                out.push(DirDiffEntry::MtimeMismatch {
-                    path: rel.to_path_buf(),
-                    expected: et,
-                    actual: at,
-                });
-            }
-        }
+    if opts.check_mtime
+        && let (Some(et), Some(at)) = (mtime_secs(em), mtime_secs(am))
+        && et != at
+    {
+        out.push(DirDiffEntry::MtimeMismatch {
+            path: rel.to_path_buf(),
+            expected: et,
+            actual: at,
+        });
     }
 }
 

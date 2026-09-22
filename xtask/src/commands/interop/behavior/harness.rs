@@ -196,10 +196,10 @@ impl BehaviorHarness {
             scenarios.iter().collect()
         };
 
-        if scenarios_to_run.is_empty() {
-            if let Some(ref name) = self.options.scenario {
-                return Err(TaskError::Usage(format!("Scenario '{}' not found", name)));
-            }
+        if scenarios_to_run.is_empty()
+            && let Some(ref name) = self.options.scenario
+        {
+            return Err(TaskError::Usage(format!("Scenario '{}' not found", name)));
         }
 
         for (idx, scenario) in scenarios_to_run.iter().enumerate() {

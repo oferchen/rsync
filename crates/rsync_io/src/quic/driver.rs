@@ -68,10 +68,10 @@ impl Driver {
     fn run(mut self) {
         let result = self.drive();
         let mut st = self.shared.lock();
-        if st.terminal.is_none() {
-            if let Err(err) = result {
-                st.terminal = Some(Terminal::Error(error::io_fault(&err)));
-            }
+        if st.terminal.is_none()
+            && let Err(err) = result
+        {
+            st.terminal = Some(Terminal::Error(error::io_fault(&err)));
         }
         st.drained = true;
         self.shared.cond.notify_all();
@@ -85,13 +85,13 @@ impl Driver {
                 return Ok(());
             }
             let deadline = self.conn.as_mut().and_then(|c| c.conn.poll_timeout());
-            if let Some(d) = deadline {
-                if d <= now {
-                    if let Some(c) = &mut self.conn {
-                        c.conn.handle_timeout(now);
-                    }
-                    continue;
+            if let Some(d) = deadline
+                && d <= now
+            {
+                if let Some(c) = &mut self.conn {
+                    c.conn.handle_timeout(now);
                 }
+                continue;
             }
             if !self.enter_sleep() {
                 continue;
@@ -112,10 +112,10 @@ impl Driver {
                 None => {
                     if let Some(d) = deadline {
                         let now = Instant::now();
-                        if d <= now {
-                            if let Some(c) = &mut self.conn {
-                                c.conn.handle_timeout(now);
-                            }
+                        if d <= now
+                            && let Some(c) = &mut self.conn
+                        {
+                            c.conn.handle_timeout(now);
                         }
                     }
                 }
@@ -412,11 +412,11 @@ impl Driver {
         for _ in 0..BURST_MAX {
             match self.socket.recv_from(&mut self.recv_buf) {
                 Ok((len, from)) => {
-                    if from != self.wake_addr {
-                        if let Err(err) = self.handle_datagram(now, from, len) {
-                            result = Err(err);
-                            break;
-                        }
+                    if from != self.wake_addr
+                        && let Err(err) = self.handle_datagram(now, from, len)
+                    {
+                        result = Err(err);
+                        break;
                     }
                 }
                 Err(e)
@@ -450,10 +450,10 @@ impl Driver {
             .handle(now, from, None, None, data, &mut self.buf)
         {
             Some(DatagramEvent::ConnectionEvent(ch, event)) => {
-                if let Some(c) = &mut self.conn {
-                    if c.handle == ch {
-                        c.conn.handle_event(event);
-                    }
+                if let Some(c) = &mut self.conn
+                    && c.handle == ch
+                {
+                    c.conn.handle_event(event);
                 }
             }
             Some(DatagramEvent::NewConnection(incoming)) => {

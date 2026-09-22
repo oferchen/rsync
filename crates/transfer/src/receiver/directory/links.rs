@@ -703,10 +703,10 @@ impl ReceiverContext {
     ) -> Option<PathBuf> {
         // A previously recorded leader is only valid while its file is still
         // present (its transfer may have errored after we recorded it).
-        if let Some(recorded) = tracker.leader_path(gnum) {
-            if recorded.symlink_metadata().is_ok() {
-                return Some(recorded.to_path_buf());
-            }
+        if let Some(recorded) = tracker.leader_path(gnum)
+            && recorded.symlink_metadata().is_ok()
+        {
+            return Some(recorded.to_path_buf());
         }
         // upstream: hlink.c:253-265 - walk the group in list (ndx) order and
         // promote the first member whose file materialized on disk.

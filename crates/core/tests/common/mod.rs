@@ -723,10 +723,10 @@ pub fn find_temp_files(dir: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 temps.extend(find_temp_files(&path));
-            } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if is_temp_file_name(name) {
-                    temps.push(path);
-                }
+            } else if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && is_temp_file_name(name)
+            {
+                temps.push(path);
             }
         }
     }

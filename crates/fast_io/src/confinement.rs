@@ -587,10 +587,11 @@ impl Activation {
         if self.optout_allowed() {
             return false;
         }
-        if let DaemonState::Daemon(module) = &self.daemon {
-            if module.chrooted && module_root_len(module) != 0 {
-                return true;
-            }
+        if let DaemonState::Daemon(module) = &self.daemon
+            && module.chrooted
+            && module_root_len(module) != 0
+        {
+            return true;
         }
         !self.chrooted() && (self.is_daemon() || self.role == Role::Receiver)
     }

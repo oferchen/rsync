@@ -219,15 +219,15 @@ impl IdList {
             if id == 0 {
                 continue; // id=0 is handled separately
             }
-            if let Some(entry) = self.entries.get(&id) {
-                if let Some(ref name) = entry.name {
-                    let len = name.len().min(255) as u8;
-                    // Use varint30 encoding (int for proto < 30, varint for proto >= 30)
-                    crate::write_varint30_int(writer, id as i32, protocol_version)?;
-                    writer.write_all(&[len])?;
-                    if len > 0 {
-                        writer.write_all(&name[..len as usize])?;
-                    }
+            if let Some(entry) = self.entries.get(&id)
+                && let Some(ref name) = entry.name
+            {
+                let len = name.len().min(255) as u8;
+                // Use varint30 encoding (int for proto < 30, varint for proto >= 30)
+                crate::write_varint30_int(writer, id as i32, protocol_version)?;
+                writer.write_all(&[len])?;
+                if len > 0 {
+                    writer.write_all(&name[..len as usize])?;
                 }
             }
         }

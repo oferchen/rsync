@@ -637,10 +637,10 @@ impl ReceiverContext {
                 // its Shutdown message so the in-flight temp file is finalised
                 // per --partial / --partial-dir.
                 crate::shared::check_shutdown()?;
-                if let Some(ref dl) = deadline {
-                    if dl.is_reached() {
-                        break;
-                    }
+                if let Some(ref dl) = deadline
+                    && dl.is_reached()
+                {
+                    break;
                 }
 
                 // Collect a batch of files, compute signatures (potentially in

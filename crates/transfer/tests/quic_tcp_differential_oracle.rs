@@ -216,10 +216,10 @@ fn binary_supports_quic(oc_bin: &Path) -> bool {
 fn wait_for_quic_serving(log_path: &Path, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
-        if let Ok(text) = fs::read_to_string(log_path) {
-            if text.contains("QUIC listener serving on") {
-                return true;
-            }
+        if let Ok(text) = fs::read_to_string(log_path)
+            && text.contains("QUIC listener serving on")
+        {
+            return true;
         }
         if Instant::now() >= deadline {
             return false;

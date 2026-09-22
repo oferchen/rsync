@@ -298,10 +298,10 @@ pub(super) fn apply_atime_only_from_metadata(
     let source_atime =
         FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0);
 
-    if let Some(existing) = existing {
-        if FileTime::from_last_access_time(existing) == source_atime {
-            return Ok(());
-        }
+    if let Some(existing) = existing
+        && FileTime::from_last_access_time(existing) == source_atime
+    {
+        return Ok(());
     }
 
     // Preserve the destination's current mtime - only update atime.
@@ -344,10 +344,10 @@ pub(super) fn apply_atime_only_from_metadata_with_fd(
     let source_atime =
         FileTime::from_unix_time(FileTime::from_last_access_time(metadata).unix_seconds(), 0);
 
-    if let Some(existing) = existing {
-        if FileTime::from_last_access_time(existing) == source_atime {
-            return Ok(());
-        }
+    if let Some(existing) = existing
+        && FileTime::from_last_access_time(existing) == source_atime
+    {
+        return Ok(());
     }
 
     // Preserve the destination's current mtime - only update atime.
@@ -598,12 +598,12 @@ pub(super) fn apply_crtime_from_source_metadata(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
-    if let Ok(created) = metadata.created() {
-        if let Ok(duration) = created.duration_since(std::time::UNIX_EPOCH) {
-            let secs = duration.as_secs() as i64;
-            if secs > 0 {
-                set_crtime(destination, secs)?;
-            }
+    if let Ok(created) = metadata.created()
+        && let Ok(duration) = created.duration_since(std::time::UNIX_EPOCH)
+    {
+        let secs = duration.as_secs() as i64;
+        if secs > 0 {
+            set_crtime(destination, secs)?;
         }
     }
     Ok(())

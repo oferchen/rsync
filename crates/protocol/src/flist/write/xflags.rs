@@ -192,14 +192,14 @@ impl FileListWriter {
                     xflags |= (XMIT_HLINK_FIRST as u32) << 8;
                 }
             }
-        } else if self.protocol.as_u8() >= 28 {
-            if let Some(dev) = entry.hardlink_dev() {
-                // upstream: flist.c:542 - XMIT_HLINKED set for ALL hardlink entries,
-                // not just protocol 30+. Protocol 28-29 also sets this flag.
-                xflags |= (XMIT_HLINKED as u32) << 8;
-                if dev == self.state.prev_hardlink_dev() {
-                    xflags |= (XMIT_SAME_DEV_PRE30 as u32) << 8;
-                }
+        } else if self.protocol.as_u8() >= 28
+            && let Some(dev) = entry.hardlink_dev()
+        {
+            // upstream: flist.c:542 - XMIT_HLINKED set for ALL hardlink entries,
+            // not just protocol 30+. Protocol 28-29 also sets this flag.
+            xflags |= (XMIT_HLINKED as u32) << 8;
+            if dev == self.state.prev_hardlink_dev() {
+                xflags |= (XMIT_SAME_DEV_PRE30 as u32) << 8;
             }
         }
 

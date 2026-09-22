@@ -593,26 +593,25 @@ impl PipelinedReceiver {
             None => return Ok(()),
         };
 
-        if let Some(ref computed) = result.computed_checksum {
-            if computed.len != pending.len
-                || computed.bytes[..computed.len] != pending.expected[..pending.len]
-            {
-                self.warnings.extend(verification_failure_report(
-                    &pending.flist_name,
-                    &self.partial_mode,
-                    pending.is_inplace,
-                    !self.redo_enabled,
-                    self.verify_report,
-                ));
-                if self.redo_enabled {
-                    // upstream: receiver.c:1093-1096 - `send_msg_int(MSG_REDO,
-                    // ndx)` sits OUTSIDE the emit `if`, so a suppressed
-                    // diagnostic never costs the retry that corrects the file.
-                    self.redo_indices.push(pending.file_index);
-                }
-                // In phase 2, upstream logs the error but continues the transfer.
-                return Ok(());
+        if let Some(ref computed) = result.computed_checksum
+            && (computed.len != pending.len
+                || computed.bytes[..computed.len] != pending.expected[..pending.len])
+        {
+            self.warnings.extend(verification_failure_report(
+                &pending.flist_name,
+                &self.partial_mode,
+                pending.is_inplace,
+                !self.redo_enabled,
+                self.verify_report,
+            ));
+            if self.redo_enabled {
+                // upstream: receiver.c:1093-1096 - `send_msg_int(MSG_REDO,
+                // ndx)` sits OUTSIDE the emit `if`, so a suppressed
+                // diagnostic never costs the retry that corrects the file.
+                self.redo_indices.push(pending.file_index);
             }
+            // In phase 2, upstream logs the error but continues the transfer.
+            return Ok(());
         }
 
         // upstream: receiver.c:1063-1069 - the file committed cleanly

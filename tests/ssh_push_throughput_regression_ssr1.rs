@@ -127,10 +127,10 @@ fn upstream_rsync_binary() -> Option<PathBuf> {
 
 /// Resolve the SSH target (default `$USER@localhost`).
 fn ssh_target() -> Option<String> {
-    if let Ok(target) = std::env::var("SSH_TARGET") {
-        if !target.is_empty() {
-            return Some(target);
-        }
+    if let Ok(target) = std::env::var("SSH_TARGET")
+        && !target.is_empty()
+    {
+        return Some(target);
     }
     let user = std::env::var("USER").ok()?;
     if user.is_empty() {

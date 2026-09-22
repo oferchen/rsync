@@ -140,19 +140,19 @@ fn lookup_group_by_name_empty_returns_none() {
 
 #[test]
 fn lookup_user_name_and_by_name_round_trip() {
-    if let Ok(Some(name)) = lookup_user_name(0) {
-        if let Ok(Some(uid)) = lookup_user_by_name(&name) {
-            assert_eq!(uid, 0);
-        }
+    if let Ok(Some(name)) = lookup_user_name(0)
+        && let Ok(Some(uid)) = lookup_user_by_name(&name)
+    {
+        assert_eq!(uid, 0);
     }
 }
 
 #[test]
 fn lookup_group_name_and_by_name_round_trip() {
-    if let Ok(Some(name)) = lookup_group_name(0) {
-        if let Ok(Some(gid)) = lookup_group_by_name(&name) {
-            assert_eq!(gid, 0);
-        }
+    if let Ok(Some(name)) = lookup_group_name(0)
+        && let Ok(Some(gid)) = lookup_group_by_name(&name)
+    {
+        assert_eq!(gid, 0);
     }
 }
 

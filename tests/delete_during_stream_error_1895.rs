@@ -180,10 +180,10 @@ fn count_dst_tmp_files(dst: &Path) -> usize {
         {
             count += 1;
         }
-        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            if let Ok(sub) = fs::read_dir(entry.path()) {
-                stack.extend(sub.flatten());
-            }
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+            && let Ok(sub) = fs::read_dir(entry.path())
+        {
+            stack.extend(sub.flatten());
         }
     }
     count

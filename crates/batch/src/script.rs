@@ -369,13 +369,12 @@ fn shell_quote(s: &str) -> String {
     // option name being a plain token; upstream walks `p` from `arg` to the '='
     // accepting only `-`, `_` and alphanumerics, and emits the prefix only when
     // the walk reaches the '=' (`p == x`).
-    if arg.starts_with('-') {
-        if let Some(eq) = arg.find('=') {
-            if arg[..eq].bytes().all(is_plain_option_byte) {
-                result.push_str(&arg[..=eq]);
-                arg = &arg[eq + 1..];
-            }
-        }
+    if arg.starts_with('-')
+        && let Some(eq) = arg.find('=')
+        && arg[..eq].bytes().all(is_plain_option_byte)
+    {
+        result.push_str(&arg[..=eq]);
+        arg = &arg[eq + 1..];
     }
 
     // upstream: batch.c:187-195 - unconditional single-quote wrap.

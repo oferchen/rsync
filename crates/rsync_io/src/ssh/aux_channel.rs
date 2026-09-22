@@ -211,15 +211,15 @@ pub(super) trait StderrAuxChannel: Send {
         self.shutdown_read();
         self.join();
 
-        if let Ok(exit) = status {
-            if !exit.success() {
-                let stderr = self.collected();
-                if !stderr.is_empty() {
-                    let text = String::from_utf8_lossy(&stderr);
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        eprintln!("ssh process exited with status {exit}:\n{trimmed}");
-                    }
+        if let Ok(exit) = status
+            && !exit.success()
+        {
+            let stderr = self.collected();
+            if !stderr.is_empty() {
+                let text = String::from_utf8_lossy(&stderr);
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    eprintln!("ssh process exited with status {exit}:\n{trimmed}");
                 }
             }
         }

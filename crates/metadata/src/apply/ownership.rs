@@ -530,10 +530,10 @@ pub(super) fn set_owner_like(
             return Ok(false);
         }
 
-        if let Some(existing) = existing {
-            if ownership_matches(&owner, &group, existing) {
-                return Ok(false);
-            }
+        if let Some(existing) = existing
+            && ownership_matches(&owner, &group, existing)
+        {
+            return Ok(false);
         }
 
         // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
@@ -597,10 +597,10 @@ pub(super) fn set_owner_like_with_fd(
         return Ok(false);
     }
 
-    if let Some(existing) = existing {
-        if ownership_matches(&owner, &group, existing) {
-            return Ok(false);
-        }
+    if let Some(existing) = existing
+        && ownership_matches(&owner, &group, existing)
+    {
+        return Ok(false);
     }
 
     // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.

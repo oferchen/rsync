@@ -96,15 +96,15 @@ fn build_protocol_file_entry(
         // are set. The FileListWriter xflags computation checks whether the
         // entry has a name set via these accessors.
         if !numeric_ids {
-            if let Some(name) = lookup_user_name_cached(uid).ok().flatten() {
-                if let Ok(s) = String::from_utf8(name) {
-                    entry.set_user_name(s);
-                }
+            if let Some(name) = lookup_user_name_cached(uid).ok().flatten()
+                && let Ok(s) = String::from_utf8(name)
+            {
+                entry.set_user_name(s);
             }
-            if let Some(name) = lookup_group_name_cached(gid).ok().flatten() {
-                if let Ok(s) = String::from_utf8(name) {
-                    entry.set_group_name(s);
-                }
+            if let Some(name) = lookup_group_name_cached(gid).ok().flatten()
+                && let Ok(s) = String::from_utf8(name)
+            {
+                entry.set_group_name(s);
             }
         }
     }

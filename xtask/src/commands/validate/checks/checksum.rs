@@ -207,10 +207,10 @@ pub fn transferred_files(stdout: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     for raw in stdout.lines() {
         let line = raw.trim();
-        if line.starts_with(">f") || line.starts_with("<f") {
-            if let Some((_, path)) = line.split_once(' ') {
-                out.insert(path.trim().to_string());
-            }
+        if (line.starts_with(">f") || line.starts_with("<f"))
+            && let Some((_, path)) = line.split_once(' ')
+        {
+            out.insert(path.trim().to_string());
         }
     }
     out

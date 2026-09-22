@@ -638,26 +638,25 @@ fn plan_directory_entries_with_prefetch<'a>(
 
         if entry_type.is_symlink()
             && (context.copy_links_enabled() || context.copy_dirlinks_enabled())
+            && let Some(ref result) = prefetch.symlink_target_metadata
         {
-            if let Some(ref result) = prefetch.symlink_target_metadata {
-                match result {
-                    Ok(target_metadata) => {
-                        let target_type = target_metadata.file_type();
-                        if context.copy_links_enabled()
-                            || (context.copy_dirlinks_enabled() && target_type.is_dir())
-                        {
-                            effective_type = target_type;
-                            metadata_override = Some(target_metadata.clone());
-                        }
+            match result {
+                Ok(target_metadata) => {
+                    let target_type = target_metadata.file_type();
+                    if context.copy_links_enabled()
+                        || (context.copy_dirlinks_enabled() && target_type.is_dir())
+                    {
+                        effective_type = target_type;
+                        metadata_override = Some(target_metadata.clone());
                     }
-                    Err(_) if context.copy_links_enabled() => {
-                        // Re-fetch to get the actual error for reporting
-                        return Err(follow_symlink_metadata(entry.path.as_path()).expect_err(
-                            "metadata re-fetch of a just-failed symlink path fails again",
-                        ));
-                    }
-                    Err(_) => {}
                 }
+                Err(_) if context.copy_links_enabled() => {
+                    // Re-fetch to get the actual error for reporting
+                    return Err(follow_symlink_metadata(entry.path.as_path()).expect_err(
+                        "metadata re-fetch of a just-failed symlink path fails again",
+                    ));
+                }
+                Err(_) => {}
             }
         }
 
@@ -697,80 +696,81 @@ fn plan_directory_entries_with_prefetch<'a>(
         // When only --safe-links is active (no --copy-unsafe-links), we
         // leave CopySymlink so that copy_symlink() records
         // SkippedUnsafeSymlink properly.
-        if matches!(action, EntryAction::CopySymlink) && context.copy_unsafe_links_enabled() {
-            if let Some(ref result) = prefetch.symlink_target {
-                match result {
-                    Ok(target) => {
-                        let safety_rel = context.strip_safety_prefix(relative_path.as_path());
-                        if !symlink_target_is_safe(target, safety_rel) {
-                            // Use prefetched metadata or re-fetch; dangling
-                            // symlinks yield None and are skipped below.
-                            let fetched_meta;
-                            let target_metadata =
-                                if let Some(ref meta_result) = prefetch.symlink_target_metadata {
-                                    meta_result.as_ref().ok()
-                                } else {
-                                    match follow_symlink_metadata(entry.path.as_path()) {
-                                        Ok(m) => {
-                                            fetched_meta = m;
-                                            Some(&fetched_meta)
-                                        }
-                                        Err(_) => None,
+        if matches!(action, EntryAction::CopySymlink)
+            && context.copy_unsafe_links_enabled()
+            && let Some(ref result) = prefetch.symlink_target
+        {
+            match result {
+                Ok(target) => {
+                    let safety_rel = context.strip_safety_prefix(relative_path.as_path());
+                    if !symlink_target_is_safe(target, safety_rel) {
+                        // Use prefetched metadata or re-fetch; dangling
+                        // symlinks yield None and are skipped below.
+                        let fetched_meta;
+                        let target_metadata =
+                            if let Some(ref meta_result) = prefetch.symlink_target_metadata {
+                                meta_result.as_ref().ok()
+                            } else {
+                                match follow_symlink_metadata(entry.path.as_path()) {
+                                    Ok(m) => {
+                                        fetched_meta = m;
+                                        Some(&fetched_meta)
                                     }
-                                };
+                                    Err(_) => None,
+                                }
+                            };
 
-                            if let Some(target_metadata) = target_metadata {
-                                let target_type = target_metadata.file_type();
-                                if target_type.is_dir() {
-                                    action = EntryAction::CopyDirectory;
+                        if let Some(target_metadata) = target_metadata {
+                            let target_type = target_metadata.file_type();
+                            if target_type.is_dir() {
+                                action = EntryAction::CopyDirectory;
+                                metadata_override = Some(target_metadata.clone());
+                            } else if target_type.is_file() {
+                                action = EntryAction::CopyFile;
+                                metadata_override = Some(target_metadata.clone());
+                            } else if is_fifo(target_type) {
+                                if context.may_create_specials() {
+                                    action = EntryAction::CopyFifo;
                                     metadata_override = Some(target_metadata.clone());
-                                } else if target_type.is_file() {
-                                    action = EntryAction::CopyFile;
+                                } else {
+                                    keep_name = false;
+                                    action = EntryAction::SkipNonRegular;
+                                    metadata_override = None;
+                                }
+                            } else if is_device(target_type) {
+                                if context.copy_devices_as_files_enabled() {
+                                    action = EntryAction::CopyDeviceAsFile;
                                     metadata_override = Some(target_metadata.clone());
-                                } else if is_fifo(target_type) {
-                                    if context.may_create_specials() {
-                                        action = EntryAction::CopyFifo;
-                                        metadata_override = Some(target_metadata.clone());
-                                    } else {
-                                        keep_name = false;
-                                        action = EntryAction::SkipNonRegular;
-                                        metadata_override = None;
-                                    }
-                                } else if is_device(target_type) {
-                                    if context.copy_devices_as_files_enabled() {
-                                        action = EntryAction::CopyDeviceAsFile;
-                                        metadata_override = Some(target_metadata.clone());
-                                    } else if context.may_create_devices() {
-                                        action = EntryAction::CopyDevice;
-                                        metadata_override = Some(target_metadata.clone());
-                                    } else {
-                                        keep_name = false;
-                                        action = EntryAction::SkipNonRegular;
-                                        metadata_override = None;
-                                    }
+                                } else if context.may_create_devices() {
+                                    action = EntryAction::CopyDevice;
+                                    metadata_override = Some(target_metadata.clone());
                                 } else {
                                     keep_name = false;
                                     action = EntryAction::SkipNonRegular;
                                     metadata_override = None;
                                 }
                             } else {
-                                // upstream: flist.c:1277-1282 - dangling symlink
-                                // whose target was to be dereferenced by
-                                // --copy-unsafe-links; log and skip.
-                                eprintln!("symlink has no referent: {}", entry.path.display());
-                                context.record_io_error();
                                 keep_name = false;
                                 action = EntryAction::SkipNonRegular;
+                                metadata_override = None;
                             }
+                        } else {
+                            // upstream: flist.c:1277-1282 - dangling symlink
+                            // whose target was to be dereferenced by
+                            // --copy-unsafe-links; log and skip.
+                            eprintln!("symlink has no referent: {}", entry.path.display());
+                            context.record_io_error();
+                            keep_name = false;
+                            action = EntryAction::SkipNonRegular;
                         }
                     }
-                    Err(_) => {
-                        // Cannot read symlink target - skip with I/O error.
-                        eprintln!("symlink has no referent: {}", entry.path.display());
-                        context.record_io_error();
-                        keep_name = false;
-                        action = EntryAction::SkipNonRegular;
-                    }
+                }
+                Err(_) => {
+                    // Cannot read symlink target - skip with I/O error.
+                    eprintln!("symlink has no referent: {}", entry.path.display());
+                    context.record_io_error();
+                    keep_name = false;
+                    action = EntryAction::SkipNonRegular;
                 }
             }
         }

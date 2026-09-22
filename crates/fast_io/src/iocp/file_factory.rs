@@ -193,10 +193,10 @@ impl FileReaderFactory for IocpReaderFactory {
             // Files below IOCP_MIN_FILE_SIZE are read synchronously because the
             // overlapped-I/O setup overhead exceeds the async benefit at that size.
             let metadata = std::fs::metadata(path)?;
-            if metadata.len() >= IOCP_MIN_FILE_SIZE {
-                if let Ok(reader) = IocpReader::open(path, &self.config) {
-                    return Ok(IocpOrStdReader::Iocp(reader));
-                }
+            if metadata.len() >= IOCP_MIN_FILE_SIZE
+                && let Ok(reader) = IocpReader::open(path, &self.config)
+            {
+                return Ok(IocpOrStdReader::Iocp(reader));
             }
         }
         Ok(IocpOrStdReader::Std(StdFileReader::open(path)?))
@@ -247,19 +247,19 @@ impl FileWriterFactory for IocpWriterFactory {
     type Writer = IocpOrStdWriter;
 
     fn create(&self, path: &Path) -> io::Result<Self::Writer> {
-        if self.will_use_iocp() {
-            if let Ok(writer) = IocpWriter::create(path, &self.config) {
-                return Ok(IocpOrStdWriter::Iocp(writer));
-            }
+        if self.will_use_iocp()
+            && let Ok(writer) = IocpWriter::create(path, &self.config)
+        {
+            return Ok(IocpOrStdWriter::Iocp(writer));
         }
         Ok(IocpOrStdWriter::Std(StdFileWriter::create(path)?))
     }
 
     fn create_with_size(&self, path: &Path, size: u64) -> io::Result<Self::Writer> {
-        if self.will_use_iocp() {
-            if let Ok(writer) = IocpWriter::create_with_size(path, size, &self.config) {
-                return Ok(IocpOrStdWriter::Iocp(writer));
-            }
+        if self.will_use_iocp()
+            && let Ok(writer) = IocpWriter::create_with_size(path, size, &self.config)
+        {
+            return Ok(IocpOrStdWriter::Iocp(writer));
         }
         Ok(IocpOrStdWriter::Std(StdFileWriter::create_with_size(
             path, size,

@@ -6,7 +6,7 @@ This guide helps new contributors get productive with oc-rsync quickly.
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| Rust | 1.88.0 (pinned in `rust-toolchain.toml`) | Build toolchain |
+| Rust | 1.89.0 (pinned in `rust-toolchain.toml`) | Build toolchain |
 | cargo-nextest | Latest | Test runner (required - never use `cargo test`) |
 | podman | Latest | Container-based interop testing and benchmarks |
 

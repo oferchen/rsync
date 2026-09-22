@@ -438,19 +438,17 @@ pub fn metadata_unchanged(
         }
 
         // upstream: generator.c:496-497 - ownership_differs(file, sxp)
-        if options.owner() {
-            if let Some(uid) = entry.uid() {
-                if cached_meta.uid() != uid {
-                    return false;
-                }
-            }
+        if options.owner()
+            && let Some(uid) = entry.uid()
+            && cached_meta.uid() != uid
+        {
+            return false;
         }
-        if options.group() {
-            if let Some(gid) = entry.gid() {
-                if cached_meta.gid() != gid {
-                    return false;
-                }
-            }
+        if options.group()
+            && let Some(gid) = entry.gid()
+            && cached_meta.gid() != gid
+        {
+            return false;
         }
 
         // upstream: generator.c:492-493 - any_time_differs(sxp, file, fname)
@@ -539,15 +537,15 @@ pub fn metadata_unchanged(
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if let Some(uid) = options.owner_override() {
-            if cached_meta.uid() != uid {
-                return false;
-            }
+        if let Some(uid) = options.owner_override()
+            && cached_meta.uid() != uid
+        {
+            return false;
         }
-        if let Some(gid) = options.group_override() {
-            if cached_meta.gid() != gid {
-                return false;
-            }
+        if let Some(gid) = options.group_override()
+            && cached_meta.gid() != gid
+        {
+            return false;
         }
     }
     #[cfg(not(unix))]

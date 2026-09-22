@@ -87,7 +87,7 @@ fn open_writable(path: &Path) -> File {
     }
 }
 
-/// Sanity check: on Rust 1.88 the std library maps Win32 ERROR_DISK_FULL
+/// Sanity check: on Rust 1.89 the std library maps Win32 ERROR_DISK_FULL
 /// (112) and ERROR_HANDLE_DISK_FULL (39) onto `io::ErrorKind::StorageFull`.
 /// The transfer-layer error categorizer routes that kind into the fatal
 /// `DiskFull` branch, so the IOCP write path inherits the correct

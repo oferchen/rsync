@@ -159,10 +159,10 @@ impl ParallelDeltaPipeline {
     /// `OC_RSYNC_ADAPTIVE_QUEUE` disables adaptation (or, defensively, if the
     /// dynamic-queue bounds are somehow rejected).
     fn build(capacity: usize, bypass: bool) -> Self {
-        if adaptive_queue_enabled() {
-            if let Some(pipeline) = Self::try_adaptive(capacity, bypass) {
-                return pipeline;
-            }
+        if adaptive_queue_enabled()
+            && let Some(pipeline) = Self::try_adaptive(capacity, bypass)
+        {
+            return pipeline;
         }
         Self::with_static_capacity(capacity, bypass)
     }

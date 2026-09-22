@@ -74,13 +74,13 @@ fn flush_seq_match_run(
     run_len: &mut usize,
     block_len: usize,
 ) {
-    if let Some(start_idx) = start.take() {
-        if *run_len > 0 {
-            tokens.push(DeltaToken::Copy {
-                index: start_idx,
-                len: *run_len * block_len,
-            });
-        }
+    if let Some(start_idx) = start.take()
+        && *run_len > 0
+    {
+        tokens.push(DeltaToken::Copy {
+            index: start_idx,
+            len: *run_len * block_len,
+        });
     }
     *run_len = 0;
 }
@@ -846,79 +846,71 @@ impl DeltaGenerator {
         // compact lookup, which are keyed on full-block rolling sums, so it has
         // to be found by scan. This block sits OUTSIDE the scan loop and so runs
         // at most once per call; probing per window would be quadratic.
-        if tail_match {
-            if let Some(tail_len) = short_final_block_len(index, block_len) {
-                if window.len() >= tail_len {
-                    while window.len() > tail_len {
-                        if let Some(byte) = window.pop_front() {
-                            pending_literals.push(byte);
-                            offset += 1;
-                        }
-                    }
-                    let tail_hit = {
-                        let tail = window.as_slice();
-                        let digest = RollingDigest::from_bytes(tail);
-                        index
-                            .find_tail_match(
-                                digest,
-                                tail,
-                                &[],
-                                prune_matched.then_some(&matched_blocks),
-                            )
-                            // upstream: match.c:211 - the in-place guard applies
-                            // to the tail candidate like any other.
-                            .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset))
-                    };
-                    if let Some(tail_idx) = tail_hit {
-                        matches += 1;
-                        // upstream: match.c:258-262 then :133-138 - the short
-                        // final block is matched and emitted like any other,
-                        // just with its own shorter length.
-                        trace_deltasum::trace_potential_match(
-                            offset,
-                            tail_idx as u64,
-                            RollingDigest::from_bytes(window.as_slice()).value(),
-                        );
-                        trace_deltasum::trace_match(
-                            offset,
-                            last_match,
-                            index.block(tail_idx).index(),
-                            tail_len,
-                            offset.saturating_sub(last_match),
-                        );
-                        // The tail block is the last thing the scan can match,
-                        // so nothing reads `last_match` again; kept assigned so
-                        // the invariant "last_match is the end of the most
-                        // recent match" holds at every exit.
-                        let _ = last_match;
-                        if !pending_literals.is_empty() {
-                            literal_bytes += pending_literals.len() as u64;
-                            total_bytes += pending_literals.len() as u64;
-                            let filled = std::mem::replace(
-                                &mut pending_literals,
-                                Vec::with_capacity(block_len),
-                            );
-                            tokens.push(DeltaToken::Literal(filled));
-                        }
-                        let block = index.block(tail_idx);
-                        // The short block is emitted as its OWN Copy carrying its
-                        // TRUE length, never folded into a seq-match run:
-                        // `flush_seq_match_run` models a run as
-                        // `run_len * block_len`, so absorbing a shorter block
-                        // would over-state the run and desync the receiver's
-                        // compressed-token dictionary (`token.c:see_deflate_token`).
-                        tokens.push(DeltaToken::Copy {
-                            index: block.index(),
-                            len: block.len(),
-                        });
-                        total_bytes += block.len() as u64;
-                        matched_blocks.mark_matched(tail_idx);
-                        if prune_matched {
-                            index.mark_consumed(tail_idx as u32);
-                        }
-                        window.clear();
-                    }
+        if tail_match
+            && let Some(tail_len) = short_final_block_len(index, block_len)
+            && window.len() >= tail_len
+        {
+            while window.len() > tail_len {
+                if let Some(byte) = window.pop_front() {
+                    pending_literals.push(byte);
+                    offset += 1;
                 }
+            }
+            let tail_hit = {
+                let tail = window.as_slice();
+                let digest = RollingDigest::from_bytes(tail);
+                index
+                    .find_tail_match(digest, tail, &[], prune_matched.then_some(&matched_blocks))
+                    // upstream: match.c:211 - the in-place guard applies
+                    // to the tail candidate like any other.
+                    .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset))
+            };
+            if let Some(tail_idx) = tail_hit {
+                matches += 1;
+                // upstream: match.c:258-262 then :133-138 - the short
+                // final block is matched and emitted like any other,
+                // just with its own shorter length.
+                trace_deltasum::trace_potential_match(
+                    offset,
+                    tail_idx as u64,
+                    RollingDigest::from_bytes(window.as_slice()).value(),
+                );
+                trace_deltasum::trace_match(
+                    offset,
+                    last_match,
+                    index.block(tail_idx).index(),
+                    tail_len,
+                    offset.saturating_sub(last_match),
+                );
+                // The tail block is the last thing the scan can match,
+                // so nothing reads `last_match` again; kept assigned so
+                // the invariant "last_match is the end of the most
+                // recent match" holds at every exit.
+                let _ = last_match;
+                if !pending_literals.is_empty() {
+                    literal_bytes += pending_literals.len() as u64;
+                    total_bytes += pending_literals.len() as u64;
+                    let filled =
+                        std::mem::replace(&mut pending_literals, Vec::with_capacity(block_len));
+                    tokens.push(DeltaToken::Literal(filled));
+                }
+                let block = index.block(tail_idx);
+                // The short block is emitted as its OWN Copy carrying its
+                // TRUE length, never folded into a seq-match run:
+                // `flush_seq_match_run` models a run as
+                // `run_len * block_len`, so absorbing a shorter block
+                // would over-state the run and desync the receiver's
+                // compressed-token dictionary (`token.c:see_deflate_token`).
+                tokens.push(DeltaToken::Copy {
+                    index: block.index(),
+                    len: block.len(),
+                });
+                total_bytes += block.len() as u64;
+                matched_blocks.mark_matched(tail_idx);
+                if prune_matched {
+                    index.mark_consumed(tail_idx as u32);
+                }
+                window.clear();
             }
         }
 

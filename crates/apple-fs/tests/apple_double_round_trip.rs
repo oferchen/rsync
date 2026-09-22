@@ -61,14 +61,14 @@ fn macos_resource_fork_pipeline_matches_apple_double_payload() {
 
     // Probe filesystem support: skip when xattrs are unavailable (e.g. when
     // /tmp is mounted on a FAT volume).
-    if let Err(error) = xattr::set(&path, "com.apple.oc-rsync.probe", b"") {
-        if matches!(
+    if let Err(error) = xattr::set(&path, "com.apple.oc-rsync.probe", b"")
+        && matches!(
             error.kind(),
             io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
-        ) {
-            eprintln!("skipping: filesystem does not support xattrs");
-            return;
-        }
+        )
+    {
+        eprintln!("skipping: filesystem does not support xattrs");
+        return;
     }
     let _ = xattr::remove(&path, "com.apple.oc-rsync.probe");
 

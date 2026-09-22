@@ -85,15 +85,15 @@ const COPY_FILE_RANGE_THRESHOLD: u64 = 64 * 1024; // 64KB
 /// # }
 /// ```
 pub fn copy_file_contents(source: &File, destination: &File, length: u64) -> io::Result<u64> {
-    if length >= IO_URING_COPY_THRESHOLD {
-        if let Ok(copied) = try_io_uring_copy(source, destination, length) {
-            return Ok(copied);
-        }
+    if length >= IO_URING_COPY_THRESHOLD
+        && let Ok(copied) = try_io_uring_copy(source, destination, length)
+    {
+        return Ok(copied);
     }
-    if length >= COPY_FILE_RANGE_THRESHOLD {
-        if let Ok(copied) = try_copy_file_range(source, destination, length) {
-            return Ok(copied);
-        }
+    if length >= COPY_FILE_RANGE_THRESHOLD
+        && let Ok(copied) = try_copy_file_range(source, destination, length)
+    {
+        return Ok(copied);
     }
     copy_file_contents_readwrite(source, destination, length)
 }
@@ -111,15 +111,15 @@ pub fn copy_file_contents_buffered(
     length: u64,
     buffer: &mut [u8],
 ) -> io::Result<u64> {
-    if length >= IO_URING_COPY_THRESHOLD {
-        if let Ok(copied) = try_io_uring_copy(source, destination, length) {
-            return Ok(copied);
-        }
+    if length >= IO_URING_COPY_THRESHOLD
+        && let Ok(copied) = try_io_uring_copy(source, destination, length)
+    {
+        return Ok(copied);
     }
-    if length >= COPY_FILE_RANGE_THRESHOLD {
-        if let Ok(copied) = try_copy_file_range(source, destination, length) {
-            return Ok(copied);
-        }
+    if length >= COPY_FILE_RANGE_THRESHOLD
+        && let Ok(copied) = try_copy_file_range(source, destination, length)
+    {
+        return Ok(copied);
     }
     copy_file_contents_readwrite_with_buffer(source, destination, length, buffer)
 }

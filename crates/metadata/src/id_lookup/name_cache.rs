@@ -57,10 +57,10 @@ pub fn lookup_user_name_cached(uid: u32) -> LookupResult<Vec<u8>> {
         return lookup_user_name(uid);
     }
 
-    if let Ok(cache) = UID_NAME_CACHE.read() {
-        if let Some(entry) = cache.get(&uid) {
-            return Ok(entry.as_deref().map(<[u8]>::to_vec));
-        }
+    if let Ok(cache) = UID_NAME_CACHE.read()
+        && let Some(entry) = cache.get(&uid)
+    {
+        return Ok(entry.as_deref().map(<[u8]>::to_vec));
     }
 
     record_nss_lookup();
@@ -84,10 +84,10 @@ pub fn lookup_group_name_cached(gid: u32) -> LookupResult<Vec<u8>> {
         return lookup_group_name(gid);
     }
 
-    if let Ok(cache) = GID_NAME_CACHE.read() {
-        if let Some(entry) = cache.get(&gid) {
-            return Ok(entry.as_deref().map(<[u8]>::to_vec));
-        }
+    if let Ok(cache) = GID_NAME_CACHE.read()
+        && let Some(entry) = cache.get(&gid)
+    {
+        return Ok(entry.as_deref().map(<[u8]>::to_vec));
     }
 
     record_nss_lookup();

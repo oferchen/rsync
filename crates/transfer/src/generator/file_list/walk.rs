@@ -302,12 +302,12 @@ impl GeneratorContext {
                 // explicit child entries from --files-from. Files are never
                 // deduped through this path; only directories at the top
                 // level can collide with the implied-parent loop's output.
-                if metadata.is_dir() {
-                    if let Some(seen) = emitted_dirs {
-                        let relative = path.strip_prefix(base).unwrap_or(path);
-                        if !relative.as_os_str().is_empty() && seen.contains(relative) {
-                            return Ok(true);
-                        }
+                if metadata.is_dir()
+                    && let Some(seen) = emitted_dirs
+                {
+                    let relative = path.strip_prefix(base).unwrap_or(path);
+                    if !relative.as_os_str().is_empty() && seen.contains(relative) {
+                        return Ok(true);
                     }
                 }
                 // Path exists - pass pre-resolved metadata directly.
@@ -830,40 +830,41 @@ impl GeneratorContext {
         // readlink_stat() re-examines S_ISLNK. Only symlinks to directories are
         // followed; symlinks to files stay symlinks (distinct from
         // --copy-links, which follows all).
-        if !follow && self.config.flags.copy_dirlinks && meta.file_type().is_symlink() {
-            if let Ok(followed) = fast_io::pinned_root::metadata(&path) {
-                if followed.file_type().is_dir() {
-                    meta = followed;
-                }
-            }
+        if !follow
+            && self.config.flags.copy_dirlinks
+            && meta.file_type().is_symlink()
+            && let Ok(followed) = fast_io::pinned_root::metadata(&path)
+            && followed.file_type().is_dir()
+        {
+            meta = followed;
         }
 
         // upstream: flist.c:215 - follow unsafe symlinks when
         // --copy-unsafe-links. The batch used lstat, so we need to re-stat
         // symlinks whose target escapes the tree.
-        if !follow && self.config.flags.copy_unsafe_links && meta.file_type().is_symlink() {
-            if let Ok(target) = self.read_source_link(&path) {
-                let relative = path.strip_prefix(base).unwrap_or(&path);
-                if super::super::super::symlink_safety::is_unsafe_symlink(
-                    target.as_os_str(),
-                    relative,
-                ) {
-                    // upstream: flist.c:229 - INFO_GTE(SYMSAFE, 1) fires before
-                    // the target is dereferenced.
-                    info_log!(
-                        Symsafe,
-                        1,
-                        "copying unsafe symlink \"{}\" -> \"{}\"",
-                        path.display(),
-                        target.display()
-                    );
-                    match fast_io::pinned_root::metadata(&path) {
-                        Ok(followed) => meta = followed,
-                        Err(e) => {
-                            self.log_stat_error(&path, &e);
-                            self.record_io_error(&e);
-                            return None;
-                        }
+        if !follow
+            && self.config.flags.copy_unsafe_links
+            && meta.file_type().is_symlink()
+            && let Ok(target) = self.read_source_link(&path)
+        {
+            let relative = path.strip_prefix(base).unwrap_or(&path);
+            if super::super::super::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative)
+            {
+                // upstream: flist.c:229 - INFO_GTE(SYMSAFE, 1) fires before
+                // the target is dereferenced.
+                info_log!(
+                    Symsafe,
+                    1,
+                    "copying unsafe symlink \"{}\" -> \"{}\"",
+                    path.display(),
+                    target.display()
+                );
+                match fast_io::pinned_root::metadata(&path) {
+                    Ok(followed) => meta = followed,
+                    Err(e) => {
+                        self.log_stat_error(&path, &e);
+                        self.record_io_error(&e);
+                        return None;
                     }
                 }
             }
@@ -1018,12 +1019,12 @@ impl GeneratorContext {
             self.config.connection.daemon_insecure_links,
             symlink_target_is_operator_owned(&meta),
         );
-        if follow_dirlinks && meta.file_type().is_symlink() {
-            if let Ok(followed) = fast_io::pinned_root::metadata(path) {
-                if followed.file_type().is_dir() {
-                    return Ok(followed);
-                }
-            }
+        if follow_dirlinks
+            && meta.file_type().is_symlink()
+            && let Ok(followed) = fast_io::pinned_root::metadata(path)
+            && followed.file_type().is_dir()
+        {
+            return Ok(followed);
         }
 
         // upstream: flist.c:215 - follow unsafe symlinks when --copy-unsafe-links

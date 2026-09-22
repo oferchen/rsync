@@ -690,10 +690,10 @@ impl ReceiverContext {
         let mut leaders: std::collections::HashMap<u32, &protocol::flist::FileEntry> =
             std::collections::HashMap::new();
         for entry in &self.file_list {
-            if entry.hlink_first() {
-                if let Some(gnum) = entry.hardlink_idx() {
-                    leaders.entry(gnum).or_insert(entry);
-                }
+            if entry.hlink_first()
+                && let Some(gnum) = entry.hardlink_idx()
+            {
+                leaders.entry(gnum).or_insert(entry);
             }
         }
 
