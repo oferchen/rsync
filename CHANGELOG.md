@@ -189,6 +189,8 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   device and FIFO creation the sandbox is meant to permit (#7547)
 - One operator opt-out now governs both kernel sandbox layers symmetrically, so
   Landlock and seccomp cannot disagree about a single operator decision (#7546)
+- Enforce `max connections` across the forked per-connection sessions, so fork
+  isolation cannot reset the connection count (#7917)
 
 **Peer-supplied input bounds**
 - Bound peer-supplied xattr bytes and the CONNECT host (#7297)
@@ -307,6 +309,16 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   (#7859), and paces its writer through the `BandwidthLimiter` so `--bwlimit`
   applies to a QUIC transfer (#7866)
 
+- The daemon serves QUIC connections through the shared `@RSYNCD` session
+  (#7898), a self-signed QUIC daemon defaults to accept-new TOFU trust (#7910),
+  the client can present a certificate for mutual TLS (#7903), and
+  `--quic-cipher` selects the AEAD family explicitly where the default adapts
+  to hardware AES support (#7906)
+- The embedded `ssh_config` reader gained `ProxyCommand` / `ProxyJump` /
+  `ProxyUseFdpass` (#7896), the full `Match` criteria set (#7909), the
+  host-key verification family (#7913), and the authentication-control
+  family (#7915)
+
 ### Changed
 
 - Tracked upstream reference moved to rsync 3.5.0 (released 13 Aug 2026) in
@@ -414,6 +426,9 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   pre-mangled log operand (#7639)
 
 **Filters**
+- Filter patterns are compiled, matched and covers-checked as bytes end-to-end,
+  closing the lossy conversions a non-UTF-8 name could slip through (#7918)
+- Keep `/***` descendant reach under a negated rule (#7907)
 - Reject invalid filter-rule modifiers instead of stopping at the first one
   (#7361)
 - Match dir-merge modifiers and filter-rule keywords case-sensitively, per
@@ -436,6 +451,11 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 - Keep files matched by a bracket-slash filter rule (#7830)
 
 **Transfer and receiver**
+- Negotiate down from a newer-protocol peer instead of refusing, so a future
+  release such as rsync 3.5.1 (protocol 33) interoperates at protocol 32
+  (#7916)
+- Honour `--delete`, `-b` and itemize on `--read-batch` replay through the
+  real receiver pipeline (#7897)
 - Honour `-B` / `--block-size` on every wire transport; three decoders parsed the
   value and dropped it (#7301)
 - Surface `MSG_NO_SEND` so a declined file cannot hang a pull (#7371)
@@ -739,6 +759,12 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 
 ### Testing and CI
 
+- Isolated build and test coverage for the `quic` feature (#7902), and a
+  QUIC-vs-TCP daemon transfer differential oracle (#7904)
+- The daemon xattr push test is gated on the `xattr` feature (#7914), the
+  fake-super module push `%stat` test runs on all platforms (#7899), and the
+  unix-only environment guard in the ssh config tests is gated off Windows
+  (#7900)
 - The rsync 3.5.0 upstream testsuite now runs on **macOS** as well as Linux,
   across both daemon transports and both privilege levels, with a committed
   expect-manifest per leg. The macOS legs are the only ones that can observe a
@@ -901,6 +927,8 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 
 ### Documentation
 
+- The `write_ndx_and_attrs` citations converge on one canonical upstream
+  range (#7890)
 - The upstream-testsuite figures in `README.md` and `SECURITY.md` were stale in
   every row, and the leg count was understated. Both files are re-derived from
   the committed manifests, and `SECURITY.md` no longer describes
@@ -993,7 +1021,7 @@ families, and putting the 3.5.0 test suite in front of every pull request.
   {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege
   {non-root, root} - and both files described five. Every outcome row is
   re-measured: no test diverges on either full-corpus Linux leg, and **6**
-  distinct tests diverge across all nine committed manifests. The two version
+  distinct tests diverge across the committed manifests. The two version
   knobs are stated apart, since the testsuite pin and the interop peer version
   are deliberately separate: retargeting the interop matrix must not be able to
   drag the conformance gate backwards
@@ -1036,6 +1064,8 @@ families, and putting the 3.5.0 test suite in front of every pull request.
 
 ### Maintenance
 
+- Dependency and action updates (#7911, #7912), and the pinned toolchain
+  moves to Rust 1.89.0 (#7919)
 - Dependency and action updates (#7473, #7474, #7568, #7569, #7570, #7571,
   #7572, #7720, #7721)
 - Give the in-place open chain a single owner with the resolver injected,

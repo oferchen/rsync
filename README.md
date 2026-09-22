@@ -23,7 +23,7 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against the peer releases enumerated by `versions=` in [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh), plus the build-only peers in `extra_build_versions=`; that script is the source of truth, and re-listing it here is what let the list drift before. Upstream rsync's own testsuite runs in CI against `oc-rsync` as `$RSYNC` on the 3.5.0 corpus, where **no test currently diverges** on either full-corpus Linux leg (see below).
 
-**Tracking rsync 3.5.0.** Upstream released 3.5.0 on 13 Aug 2026. It is wire-identical to 3.4.4 - `PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h` - so protocol compatibility carries over unchanged and is what the "wire-compatible" claim above rests on. What 3.5.0 changes is *behaviour*: 33 CVEs concentrated in path handling and the daemon, a rewritten path resolver, five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`), three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`), and a test suite rebuilt from shell scripts into Python. Aligning oc-rsync to those behaviours is in progress and tracked openly.
+**Tracking rsync 3.5.0.** Upstream released 3.5.0 on 13 Aug 2026. It is wire-identical to 3.4.4 - `PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h` - so protocol compatibility carries over unchanged and is what the "wire-compatible" claim above rests on. What 3.5.0 changes is *behaviour*: 33 CVEs concentrated in path handling and the daemon, a rewritten path resolver, five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`), three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`), and a test suite rebuilt from shell scripts into Python. All five options and all three directives are implemented; the remaining behavioural divergences are the manifest rows below, and the per-CVE audit trail lives in [`SECURITY.md`](./SECURITY.md).
 
 The 3.5.0 **release** testsuite runs as **eight legs** on every pull request: the cells of platform x daemon transport x privilege. `runtests.py` offers two transports - the secure stdio-pipe default, which opens no listening socket, and `--use-tcp`, which binds a real `rsyncd` on 127.0.0.1 - and the root/non-root split decides whether the root-only tests (chown, device nodes, xattrs, dir-sgid, protected-regular) execute or self-skip. Each of the four [`ci.yml`](./.github/workflows/ci.yml) jobs below runs *both* privilege cells, so the leg count is 4 x 2:
 
@@ -43,10 +43,10 @@ Current outcomes, as recorded in each leg's committed manifest:
 
 | leg | pass | fail | skip | corpus |
 |---|---:|---:|---:|---:|
-| Linux, non-root, pipe | 260 | 0 | 85 | 345 |
-| Linux, root, pipe | 289 | 0 | 56 | 345 |
-| Linux, non-root, tcp | 118 | 4 | 33 | 155 |
-| Linux, root, tcp | 136 | 4 | 15 | 155 |
+| Linux, non-root, pipe | 261 | 0 | 84 | 345 |
+| Linux, root, pipe | 290 | 0 | 55 | 345 |
+| Linux, non-root, tcp | 119 | 4 | 32 | 155 |
+| Linux, root, tcp | 137 | 4 | 14 | 155 |
 | macOS, non-root, pipe | 238 | 2 | 105 | 345 |
 | macOS, root, pipe | 267 | 1 | 77 | 345 |
 | macOS, non-root, tcp | 116 | 4 | 35 | 155 |
@@ -60,7 +60,7 @@ awk '!/^#/ && NF {c[$NF]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}'
   tools/ci/upstream-3.5.0-expect.nonroot.txt
 ```
 
-**No test** diverges on either full-corpus Linux leg, and **6 distinct tests** diverge across all nine committed manifests (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). Four of the six are the `proto-*` cluster, which fails identically on every tcp leg on both platforms; the other two (`chmod-setid`, `partial-protected-regular-retry-policy`) appear only on macOS and are recorded as environmental - the real upstream 3.5.0 binary lands on the same outcome there. The ninth manifest, `-expect.root.tcp.legacy-oracles.txt`, is the root/tcp leg re-run with the old-peer oracles built, so it is a variant of an existing leg rather than a leg of its own. Every leg carries its own expected-outcome manifest, generated from a real run rather than hand-written, so only a *change* in outcome turns a badge red - and that includes an unexpected **pass**, which is what stops a divergence being quietly re-baselined instead of fixed. A fix flips its manifest rows in the same commit. The divergences are genuine and tracked openly: each was re-run against the real upstream 3.5.0 binary as a negative control, so they are oc-rsync behaviour gaps, not harness artefacts - except where that control shows upstream landing on the same outcome, which is recorded as such rather than counted against oc-rsync.
+**No test** diverges on either full-corpus Linux leg, and **6 distinct tests** diverge across all eight committed manifests (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). Four of the six are the `proto-*` cluster, which fails identically on every tcp leg on both platforms; the other two (`chmod-setid`, `partial-protected-regular-retry-policy`) appear only on macOS and are recorded as environmental - the real upstream 3.5.0 binary lands on the same outcome there. The legacy old-rsync oracles the suite looks for in `old_versions/` build by default on the Linux legs, so a test that names a historical release asserts against that release inside the same eight legs rather than through a separate manifest (#7855). Every leg carries its own expected-outcome manifest, generated from a real run rather than hand-written, so only a *change* in outcome turns a badge red - and that includes an unexpected **pass**, which is what stops a divergence being quietly re-baselined instead of fixed. A fix flips its manifest rows in the same commit. The divergences are genuine and tracked openly: each was re-run against the real upstream 3.5.0 binary as a negative control, so they are oc-rsync behaviour gaps, not harness artefacts - except where that control shows upstream landing on the same outcome, which is recorded as such rather than counted against oc-rsync.
 
 | Component | Status |
 |-----------|--------|
@@ -77,7 +77,7 @@ awk '!/^#/ && NF {c[$NF]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}'
 | **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
 | **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
 | **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
-| **3.5.0 surface** | `--confine-root`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links`, daemon `auth digest` |
+| **3.5.0 surface** | `--confine-root`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links`; daemon `auth digest`, `insecure links`, `proxy protocol hosts` |
 | **I/O** | io_uring (Linux 5.6+), `copy_file_range`, `clonefile` (macOS), adaptive buffers |
 | **Memory** | Flat file list (contiguous `Vec<FileEntry>`) for efficient scaling at high file counts |
 | **Platforms** | Linux, macOS (full); Windows (NTFS DACL partial, xattrs via NTFS ADS, IOCP file + socket I/O, symlinks with junction fallback; no POSIX device nodes) |
@@ -172,7 +172,7 @@ oc-rsync has two SSH transports, selected by the operand spelling:
 The embedded client authenticates with key-based (RSA, ED25519, ECDSA) and password methods compatible with OpenSSH, and reads per-host settings from `~/.ssh/config` (and `/etc/ssh/ssh_config`) with an in-house parser (`rsync_io::ssh::ssh_config`, on by default via the `ssh-config-parse` feature), not an external SSH-config crate. On the `ssh://` path:
 
 - All SSH state (connection, channel, auth context) lives in the oc-rsync process rather than crossing a pipe to a child.
-- `~/.ssh/config` `Match` blocks are honored for the limited subset implemented under the SSC-4 series.
+- `~/.ssh/config` semantics mirror the OpenSSH reader: `Host` and `Match` blocks (the full criteria set with the two-pass final model), `Include`, first-obtained-wins precedence, `ProxyCommand` / `ProxyJump`, and the host-key verification and authentication-control families, verified against `ssh -G` by a differential harness in CI.
 - SSH agent forwarding via `SSH_AUTH_SOCK` is honored when set.
 
 Current limitations of the embedded client:
