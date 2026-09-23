@@ -14,6 +14,7 @@ use filters::{ClearToken, RuleSource, classify_clear_token};
 
 use super::super::directive::FilterDirective;
 use super::directives::{parse_dir_merge_alias, parse_long_merge_directive};
+use super::helpers::unexpected_end_of_filter_rule;
 use super::merge::parse_short_merge_directive;
 use super::rule_line::RuleLine;
 use super::rules::{
@@ -136,15 +137,11 @@ pub(crate) fn parse_old_prefix_rule(
     };
 
     if pattern.is_empty() {
-        // The rule text crosses `rule_text` (exclude.c:88-123): an
-        // `--exclude-from`/`--include-from` line is a file's contents.
-        let message = rsync_error!(
-            1,
-            "filter rule is missing a pattern: '{}'",
-            source.rule_text(line)
-        )
-        .with_role(Role::Client);
-        return Err(message);
+        // upstream: exclude.c:1475 - a prefix with no pattern is `!len`, so it
+        // raises "unexpected end of filter rule". The rule text crosses
+        // `rule_text` (exclude.c:88-123): an `--exclude-from`/`--include-from`
+        // line is a file's contents.
+        return Err(unexpected_end_of_filter_rule(RuleLine::new(line, source)));
     }
 
     let rule = match kind {

@@ -1,9 +1,8 @@
 use core::client::FilterRuleSpec;
-use core::message::{Message, Role};
-use core::rsync_error;
+use core::message::Message;
 
 use super::super::directive::FilterDirective;
-use super::helpers::split_short_rule_modifiers;
+use super::helpers::{split_short_rule_modifiers, unexpected_end_of_filter_rule};
 use super::modifiers::{apply_rule_modifiers, parse_rule_modifiers};
 use super::rule_line::RuleLine;
 
@@ -14,7 +13,6 @@ use super::rule_line::RuleLine;
 pub(super) fn parse_filter_shorthand(
     line: RuleLine<'_>,
     short: char,
-    label: &str,
     builder: fn(String) -> FilterRuleSpec,
 ) -> Option<Result<FilterDirective, Message>> {
     let trimmed = line.text();
@@ -31,7 +29,7 @@ pub(super) fn parse_filter_shorthand(
 
     let remainder = chars.as_str();
     if remainder.is_empty() {
-        return Some(Err(missing_pattern(line, label)));
+        return Some(Err(unexpected_end_of_filter_rule(line)));
     }
 
     // upstream: exclude.c:1330-1445 - the modifier loop runs for EVERY rule
@@ -54,7 +52,7 @@ pub(super) fn parse_filter_shorthand(
     };
 
     if pattern.is_empty() {
-        return Some(Err(missing_pattern(line, label)));
+        return Some(Err(unexpected_end_of_filter_rule(line)));
     }
 
     let rule = builder(pattern.to_owned());
@@ -62,19 +60,6 @@ pub(super) fn parse_filter_shorthand(
         Ok(rule) => Some(Ok(FilterDirective::Rule(rule))),
         Err(error) => Some(Err(error)),
     }
-}
-
-/// The rule text crosses `rule_text` (exclude.c:88-123); the rule PREFIX is
-/// ours, not the peer's, so it is printed unconditionally.
-fn missing_pattern(line: RuleLine<'_>, label: &str) -> Message {
-    rsync_error!(
-        1,
-        format!(
-            "filter rule '{}' is missing a pattern after '{label}'",
-            line.shown()
-        )
-    )
-    .with_role(Role::Client)
 }
 
 #[cfg(test)]
@@ -92,7 +77,7 @@ mod tests {
 
     #[test]
     fn returns_none_for_non_matching_first_char() {
-        let result = parse_filter_shorthand(arg("x pattern"), 'e', "exclude", mock_builder);
+        let result = parse_filter_shorthand(arg("x pattern"), 'e', mock_builder);
         assert!(result.is_none());
     }
 
@@ -103,7 +88,7 @@ mod tests {
         // modifiers (helpers.rs scan_modifiers, upstream exclude.c:1214-1287),
         // so the first non-modifier byte is reported - it is NOT an unknown
         // rule, and it must not fall through to the keyword parser.
-        let result = parse_filter_shorthand(arg("epattern"), 'e', "exclude", mock_builder);
+        let result = parse_filter_shorthand(arg("epattern"), 'e', mock_builder);
         assert!(
             result
                 .expect("prefix matched, so the parser must not decline")
@@ -113,28 +98,28 @@ mod tests {
 
     #[test]
     fn parses_with_space_separator() {
-        let result = parse_filter_shorthand(arg("e pattern"), 'e', "exclude", mock_builder);
+        let result = parse_filter_shorthand(arg("e pattern"), 'e', mock_builder);
         assert!(result.is_some());
         assert!(result.unwrap().is_ok());
     }
 
     #[test]
     fn parses_with_underscore_separator() {
-        let result = parse_filter_shorthand(arg("e_pattern"), 'e', "exclude", mock_builder);
+        let result = parse_filter_shorthand(arg("e_pattern"), 'e', mock_builder);
         assert!(result.is_some());
         assert!(result.unwrap().is_ok());
     }
 
     #[test]
     fn returns_error_for_missing_pattern() {
-        let result = parse_filter_shorthand(arg("e "), 'e', "exclude", mock_builder);
+        let result = parse_filter_shorthand(arg("e "), 'e', mock_builder);
         assert!(result.is_some());
         assert!(result.unwrap().is_err());
     }
 
     #[test]
     fn returns_error_for_empty_remainder() {
-        let result = parse_filter_shorthand(arg("e"), 'e', "exclude", mock_builder);
+        let result = parse_filter_shorthand(arg("e"), 'e', mock_builder);
         assert!(result.is_some());
         assert!(result.unwrap().is_err());
     }
@@ -145,7 +130,7 @@ mod tests {
         // case-sensitive, so an uppercase char never matches a lowercase prefix
         // (and vice versa). This parser must return None so the caller can reject
         // the line as an unknown rule.
-        let result = parse_filter_shorthand(arg("E pattern"), 'e', "exclude", mock_builder);
+        let result = parse_filter_shorthand(arg("E pattern"), 'e', mock_builder);
         assert!(result.is_none());
     }
 }

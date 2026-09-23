@@ -2,6 +2,7 @@ use super::{
     modifiers::{parse_merge_modifiers, split_long_keyword_tail, split_short_merge_modifiers},
     types::{FilterParseError, ParsedFilterDirective},
 };
+use filters::RuleSource;
 use std::path::PathBuf;
 
 /// Parses a `merge` directive of the form `merge[,modifiers] PATH`.
@@ -13,6 +14,7 @@ use std::path::PathBuf;
 /// were specified, preserving inheritance of the caller's parser settings.
 pub(super) fn parse_merge_directive(
     text: &str,
+    source: RuleSource<'_>,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
     const MERGE_PREFIX: &str = "merge";
 
@@ -54,8 +56,8 @@ pub(super) fn parse_merge_directive(
         if assume_cvsignore {
             ".cvsignore"
         } else {
-            return Err(FilterParseError::new(
-                "merge directive requires a file path",
+            return Err(FilterParseError::unexpected_end_of_filter_rule(
+                source, text,
             ));
         }
     } else {
@@ -82,6 +84,7 @@ pub(super) fn parse_merge_directive(
 /// `merge` semantics, returning `None` options when no modifiers were given.
 pub(super) fn parse_short_merge_directive_line(
     text: &str,
+    source: RuleSource<'_>,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
     let mut chars = text.chars();
     let Some(first) = chars.next() else {
@@ -114,14 +117,12 @@ pub(super) fn parse_short_merge_directive_line(
     let pattern = if pattern.is_empty() {
         if assume_cvsignore {
             ".cvsignore"
-        } else if allow_extended {
-            return Err(FilterParseError::new(format!(
-                "dir-merge directive '{text}' is missing a file name"
-            )));
         } else {
-            return Err(FilterParseError::new(format!(
-                "merge directive '{text}' is missing a file path"
-            )));
+            // upstream: exclude.c:1475 - a merge/dir-merge with no file name is
+            // `!len`, the same "unexpected end of filter rule" as a bare `-`.
+            return Err(FilterParseError::unexpected_end_of_filter_rule(
+                source, text,
+            ));
         }
     } else {
         pattern
@@ -155,21 +156,21 @@ mod tests {
 
     #[test]
     fn parse_merge_directive_returns_none_for_non_merge() {
-        let result = parse_merge_directive("include *.txt");
+        let result = parse_merge_directive("include *.txt", RuleSource::Argument);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
     #[test]
     fn parse_merge_directive_returns_none_for_short_text() {
-        let result = parse_merge_directive("merg");
+        let result = parse_merge_directive("merg", RuleSource::Argument);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
     #[test]
     fn parse_merge_directive_parses_simple_merge() {
-        let result = parse_merge_directive("merge .rsync-filter");
+        let result = parse_merge_directive("merge .rsync-filter", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -187,7 +188,7 @@ mod tests {
     #[test]
     fn parse_merge_keyword_is_case_sensitive() {
         assert!(
-            parse_merge_directive("MERGE .rsync-filter")
+            parse_merge_directive("MERGE .rsync-filter", RuleSource::Argument)
                 .expect("uppercase is not a parse error, just not a merge")
                 .is_none()
         );
@@ -198,7 +199,7 @@ mod tests {
     /// spelling at all.
     #[test]
     fn parse_merge_lower_case_keyword_still_parses() {
-        let directive = parse_merge_directive("merge .rsync-filter")
+        let directive = parse_merge_directive("merge .rsync-filter", RuleSource::Argument)
             .expect("parse")
             .expect("merge directive");
         match directive {
@@ -211,7 +212,7 @@ mod tests {
 
     #[test]
     fn parse_merge_directive_with_underscore() {
-        let result = parse_merge_directive("merge_.rsync-filter");
+        let result = parse_merge_directive("merge_.rsync-filter", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -224,33 +225,55 @@ mod tests {
 
     #[test]
     fn parse_merge_directive_error_on_stdin() {
-        let result = parse_merge_directive("merge -");
+        let result = parse_merge_directive("merge -", RuleSource::Argument);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_merge_directive_error_missing_path() {
-        let result = parse_merge_directive("merge ");
-        assert!(result.is_err());
+        // upstream: exclude.c:1475 - a merge with no file name is `!len`, the
+        // same "unexpected end of filter rule" as a bare `-`. An argument is
+        // echoed verbatim; a file-sourced line is redacted (exclude.c:103-124).
+        let error = parse_merge_directive("merge ", RuleSource::Argument)
+            .expect_err("missing merge path should error");
+        assert_eq!(error.to_string(), "unexpected end of filter rule: merge ");
+
+        let file_error = parse_merge_directive(
+            "merge ",
+            RuleSource::File {
+                name: "m.rules",
+                line: 2,
+            },
+        )
+        .expect_err("missing merge path from a file should error");
+        assert_eq!(
+            file_error.to_string(),
+            "unexpected end of filter rule: <rule from m.rules line 2>"
+        );
+
+        // Non-vacuity control: a merge that names a file must still parse.
+        parse_merge_directive("merge .rsync-filter", RuleSource::Argument)
+            .expect("a valid merge must still parse")
+            .expect("must be a directive, not None");
     }
 
     #[test]
     fn parse_short_merge_returns_none_for_empty() {
-        let result = parse_short_merge_directive_line("");
+        let result = parse_short_merge_directive_line("", RuleSource::Argument);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
     #[test]
     fn parse_short_merge_returns_none_for_non_merge_prefix() {
-        let result = parse_short_merge_directive_line("+ *.txt");
+        let result = parse_short_merge_directive_line("+ *.txt", RuleSource::Argument);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
     #[test]
     fn parse_short_merge_dot_prefix() {
-        let result = parse_short_merge_directive_line(". .rsync-filter");
+        let result = parse_short_merge_directive_line(". .rsync-filter", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -264,7 +287,7 @@ mod tests {
 
     #[test]
     fn parse_short_merge_colon_prefix() {
-        let result = parse_short_merge_directive_line(": .rsync-filter");
+        let result = parse_short_merge_directive_line(": .rsync-filter", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -277,13 +300,13 @@ mod tests {
 
     #[test]
     fn parse_short_merge_colon_error_missing_filename() {
-        let result = parse_short_merge_directive_line(":");
+        let result = parse_short_merge_directive_line(":", RuleSource::Argument);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_short_merge_dot_error_missing_path() {
-        let result = parse_short_merge_directive_line(".");
+        let result = parse_short_merge_directive_line(".", RuleSource::Argument);
         assert!(result.is_err());
     }
 
@@ -298,7 +321,7 @@ mod tests {
     /// `--filter='.  '` fails to open the merge file named ` `; both prove the
     /// whitespace survives.
     fn merge_path(text: &str) -> PathBuf {
-        match parse_merge_directive(text)
+        match parse_merge_directive(text, RuleSource::Argument)
             .expect("not a parse error")
             .expect("the merge keyword matches")
         {
@@ -328,7 +351,7 @@ mod tests {
     #[test]
     fn parse_merge_directive_requires_a_separator_after_the_keyword() {
         assert!(
-            parse_merge_directive("mergeX")
+            parse_merge_directive("mergeX", RuleSource::Argument)
                 .expect("declining is not a parse error")
                 .is_none()
         );
@@ -346,7 +369,7 @@ mod tests {
 
     #[test]
     fn parse_short_merge_keeps_the_whitespace_around_its_name() {
-        let result = parse_short_merge_directive_line(".   .rsync-filter   ");
+        let result = parse_short_merge_directive_line(".   .rsync-filter   ", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
