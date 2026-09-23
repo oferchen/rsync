@@ -2161,6 +2161,7 @@ name = "logging-sink"
 version = "0.6.4"
 dependencies = [
  "core",
+ "logging",
  "platform",
  "syslog",
 ]

@@ -1,6 +1,8 @@
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex};
 
+use logging::escape::{self, EscapeStyle, escape_for_output};
+
 use crate::handshake::IoTimeoutReapply;
 
 /// Sink for the inline, wire-visible side effects that frame dispatch performs.
@@ -21,32 +23,80 @@ use crate::handshake::IoTimeoutReapply;
 pub(super) trait MuxSink {
     /// Emits an `MSG_INFO`/`MSG_CLIENT` payload to stdout and flushes.
     ///
+    /// The bytes are already escaped for the terminal by
+    /// [`escape_terminal_line`], so the sink writes them verbatim - exactly as
+    /// upstream `filtered_fwrite()` writes its escaped buffer to the FILE*.
+    ///
     /// upstream: `log.c:rwrite()` - FINFO and FCLIENT go to stdout.
-    fn info(&mut self, msg: &str);
+    fn info(&mut self, msg: &[u8]);
 
     /// Emits an `MSG_WARNING`/`MSG_LOG`/`MSG_*ERROR*` payload to stderr.
     ///
     /// upstream: `log.c:rwrite()` - FWARNING/FLOG/FERROR* go to stderr.
-    fn error(&mut self, msg: &str);
+    fn error(&mut self, msg: &[u8]);
 }
 
 /// Production [`MuxSink`] that writes to the real stdout/stderr.
 ///
-/// Byte-for-byte identical to the previous inline dispatch side effects:
-/// `print!("{msg}")` + `io::stdout().flush()` for info, `eprint!("{msg}")` for
-/// error. This is the only sink used outside tests, so the default build's
-/// demux output is unchanged.
+/// The previous inline dispatch wrote the raw peer payload with
+/// `print!`/`eprint!`; a remote peer could therefore drive the client's
+/// terminal with control bytes (ANSI escapes, `CR`) carried in a forwarded
+/// `MSG_INFO`/`MSG_ERROR`/`MSG_DELETED` frame. Escaping now happens once in
+/// [`escape_terminal_line`] before the sink is called (mirroring upstream
+/// `rwrite()` -> `filtered_fwrite()`, log.c:425), so this sink simply writes
+/// the pre-escaped bytes and flushes stdout the same way the old `print!` did.
 pub(super) struct RealSink;
 
 impl MuxSink for RealSink {
-    fn info(&mut self, msg: &str) {
-        print!("{msg}");
-        let _ = io::stdout().flush();
+    fn info(&mut self, msg: &[u8]) {
+        let mut out = io::stdout();
+        let _ = out.write_all(msg);
+        let _ = out.flush();
     }
 
-    fn error(&mut self, msg: &str) {
-        eprint!("{msg}");
+    fn error(&mut self, msg: &[u8]) {
+        let _ = io::stderr().write_all(msg);
     }
+}
+
+/// Escapes a terminal-bound line exactly as upstream `rwrite()` does before it
+/// hands the buffer to `filtered_fwrite()`.
+///
+/// A forwarded `MSG_INFO`/`MSG_ERROR`/`MSG_WARNING`/`MSG_LOG`/`MSG_DELETED`
+/// payload is peer-controlled and can carry control bytes (ANSI escapes, `CR`,
+/// `BEL`) or, without `-8`, high bytes. Upstream never writes such a buffer to
+/// the terminal raw: `rwrite()` peels one trailing `CR`/`NL` so the line
+/// terminator is preserved unescaped (log.c:380), writes a single leading `CR`
+/// raw for progress lines (log.c:382-386), then escapes the remaining bytes
+/// through `filtered_fwrite(f, buf, len, !allow_8bit_chars, 0, ..)`
+/// (log.c:425). This helper reproduces that sequence so a malicious peer cannot
+/// forge output lines or drive the operator's terminal (CWE-150 / CWE-117).
+fn escape_terminal_line(buf: &[u8], style: EscapeStyle) -> Vec<u8> {
+    // upstream: log.c:380 - peel one trailing CR/NL; it is re-appended raw.
+    let mut body = buf;
+    let mut trailing: Option<u8> = None;
+    if let Some((&last, rest)) = body.split_last()
+        && (last == b'\n' || last == b'\r')
+    {
+        trailing = Some(last);
+        body = rest;
+    }
+
+    let mut out = Vec::with_capacity(buf.len() + 8);
+    // upstream: log.c:382-386 - a single leading CR (a progress redraw) is
+    // written raw and skipped, never escaped.
+    if let Some((&first, rest)) = body.split_first()
+        && first == b'\r'
+    {
+        out.push(b'\r');
+        body = rest;
+    }
+
+    out.extend_from_slice(&escape_for_output(body, style));
+    if let Some(end) = trailing {
+        out.push(end);
+    }
+    out
 }
 
 /// Client-side rendering state for received `MSG_DELETED` frames.
@@ -632,7 +682,11 @@ impl<R> MultiplexReader<R> {
         if let Some(adopted) = reconcile_io_timeout(self.io_timeout, val) {
             // upstream: INFO_GTE(MISC, 2) gate on the "Setting --timeout" notice.
             if logging::info_gte(logging::InfoFlag::Misc, 2) {
-                sink.info(&format!("Setting --timeout={val} to match server\n"));
+                // upstream: log.c:425 rwrite() routes this rprintf(FINFO, ..)
+                // through filtered_fwrite like every other line.
+                let notice = format!("Setting --timeout={val} to match server\n");
+                let out = escape_terminal_line(notice.as_bytes(), escape::terminal_style());
+                sink.info(&out);
             }
             self.io_timeout = Some(adopted);
             // upstream: set_io_timeout(val). oc re-applies to the live socket
@@ -742,32 +796,33 @@ impl<R> MultiplexReader<R> {
                 if logging::finfo_suppressed() {
                     return false;
                 }
-                if let Ok(msg) = std::str::from_utf8(&self.buffer) {
-                    sink.info(msg);
-                }
+                // upstream: log.c:425 rwrite() escapes the peer's buffer through
+                // filtered_fwrite before it reaches the terminal. The payload is
+                // raw wire bytes (not required to be UTF-8, exactly as upstream's
+                // `char *buf`), so escape the bytes directly rather than dropping
+                // an invalid-UTF-8 frame.
+                let out = escape_terminal_line(&self.buffer, escape::terminal_style());
+                sink.info(&out);
             }
             protocol::MessageCode::Warning | protocol::MessageCode::Log => {
                 // upstream: log.c:rwrite() - FWARNING to stderr, FLOG to daemon log
-                if let Ok(msg) = std::str::from_utf8(&self.buffer) {
-                    sink.error(msg);
-                }
+                let out = escape_terminal_line(&self.buffer, escape::terminal_style());
+                sink.error(&out);
             }
             protocol::MessageCode::Error
             | protocol::MessageCode::ErrorSocket
             | protocol::MessageCode::ErrorUtf8 => {
                 // upstream: log.c:rwrite() - FERROR* to stderr
-                if let Ok(msg) = std::str::from_utf8(&self.buffer) {
-                    sink.error(msg);
-                }
+                let out = escape_terminal_line(&self.buffer, escape::terminal_style());
+                sink.error(&out);
             }
             protocol::MessageCode::ErrorXfer => {
                 // upstream: log.c:311 - receipt of FERROR_XFER sets
                 // got_xfer_error = 1. Track the count so check_error_exit
                 // can distinguish daemon filter refusals from real errors.
                 self.xfer_error_count += 1;
-                if let Ok(msg) = std::str::from_utf8(&self.buffer) {
-                    sink.error(msg);
-                }
+                let out = escape_terminal_line(&self.buffer, escape::terminal_style());
+                sink.error(&out);
             }
             protocol::MessageCode::ErrorExit => {
                 // upstream: io.c:1684-1722 - MSG_ERROR_EXIT carries a 4-byte
@@ -818,7 +873,11 @@ impl<R> MultiplexReader<R> {
                 if let Some(render) = self.deleted_render
                     && let Some(line) = render.format(&self.buffer)
                 {
-                    sink.info(&line);
+                    // upstream: log.c:920 log_delete() -> rprintf(FINFO, ..) ->
+                    // rwrite(), which escapes the peer-supplied deleted name
+                    // through filtered_fwrite before it reaches the terminal.
+                    let out = escape_terminal_line(line.as_bytes(), escape::terminal_style());
+                    sink.info(&out);
                 }
             }
             _ => {}
@@ -986,6 +1045,111 @@ impl<R: Read> Read for MultiplexReader<R> {
     }
 }
 
+/// Tests for the terminal escaping of peer-controlled `MSG_*` payloads,
+/// encoding the upstream `log.c:425 rwrite()` -> `filtered_fwrite()` contract: a
+/// forwarded frame is escaped before it reaches the client's terminal so a
+/// malicious peer cannot inject ANSI control sequences (CWE-150). Without the
+/// escape, `MSG_ERROR`/`MSG_INFO` bytes reach stdout/stderr raw.
+#[cfg(test)]
+mod terminal_escape_tests {
+    use super::*;
+
+    /// Records the exact bytes each sink method receives, tagged by stream.
+    #[derive(Default)]
+    struct ByteSink {
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+    }
+
+    impl MuxSink for ByteSink {
+        fn info(&mut self, msg: &[u8]) {
+            self.stdout.extend_from_slice(msg);
+        }
+        fn error(&mut self, msg: &[u8]) {
+            self.stderr.extend_from_slice(msg);
+        }
+    }
+
+    fn dispatch(code: protocol::MessageCode, payload: &[u8], eight_bit: bool) -> ByteSink {
+        // Mirrors upstream's process-global `allow_8bit_chars`. nextest isolates
+        // each test in its own process, so setting it here cannot race a peer.
+        escape::set_eight_bit_output(eight_bit);
+        let mut reader = MultiplexReader::new(io::empty());
+        reader.buffer = payload.to_vec();
+        let mut sink = ByteSink::default();
+        assert!(!reader.dispatch_message_with(code, &mut sink));
+        sink
+    }
+
+    /// WHY: a remote peer forwards `MSG_ERROR` text verbatim over the wire
+    /// (upstream never escapes before `send_msg`); the receiving client must
+    /// escape it in its own `rwrite()`. An unescaped `ESC [ 2 J` clears the
+    /// operator's screen and a raw `BEL` beeps - both are control-byte injection
+    /// (CWE-150). The trailing newline must survive as a real line terminator.
+    #[test]
+    fn msg_error_ansi_sequence_is_octal_escaped() {
+        let sink = dispatch(protocol::MessageCode::Error, b"\x1b[2Jboom\x07\n", false);
+        assert_eq!(sink.stderr, b"\\#033[2Jboom\\#007\n".to_vec());
+        assert!(sink.stdout.is_empty());
+    }
+
+    /// WHY: `MSG_INFO` is the same peer-controlled channel on stdout. The `CR`
+    /// carried mid-line (a classic log-forging vector) is escaped, while the
+    /// single trailing newline is preserved. upstream: log.c:425.
+    #[test]
+    fn msg_info_control_bytes_escaped_to_stdout() {
+        let sink = dispatch(protocol::MessageCode::Info, b"note\rfake\n", false);
+        assert_eq!(sink.stdout, b"note\\#015fake\n".to_vec());
+        assert!(sink.stderr.is_empty());
+    }
+
+    /// WHY: without `-8`, upstream's default terminal `filtered_fwrite` escapes
+    /// every non-`isprint` byte, so a high-byte (non-UTF-8-decodable in the C
+    /// locale) filename in a forwarded notice becomes `\#ooo`. This also proves
+    /// the fix does not silently drop a non-UTF-8 payload the way the previous
+    /// `from_utf8` gate did. upstream: log.c:425 `!allow_8bit_chars`.
+    #[test]
+    fn msg_info_high_bytes_escaped_without_8bit() {
+        let sink = dispatch(protocol::MessageCode::Info, b"caf\xc3\xa9\n", false);
+        assert_eq!(sink.stdout, b"caf\\#303\\#251\n".to_vec());
+    }
+
+    /// WHY: under `--8-bit-output` / `-8`, upstream passes high bytes to the
+    /// terminal raw (`use_isprint = 0`), so the same payload survives verbatim.
+    /// Control bytes below 0x20 are still escaped in both modes - that is the
+    /// injection defence that `-8` must never disable. upstream: log.c:425.
+    #[test]
+    fn msg_info_high_bytes_raw_under_8bit_but_controls_still_escaped() {
+        let sink = dispatch(protocol::MessageCode::Info, b"caf\xc3\xa9\x1b\n", true);
+        assert_eq!(sink.stdout, b"caf\xc3\xa9\\#033\n".to_vec());
+    }
+
+    /// WHY: a peer-supplied deleted name reaches the terminal through the same
+    /// funnel; a control byte in it must be escaped too. upstream: log.c:920
+    /// log_delete() -> rwrite().
+    #[test]
+    fn msg_deleted_name_control_byte_escaped() {
+        escape::set_eight_bit_output(false);
+        let mut reader = MultiplexReader::new(io::empty());
+        reader.set_deleted_render(DeletedRender {
+            itemize: false,
+            show_plain: true,
+        });
+        reader.buffer = b"ev\x1bil".to_vec();
+        let mut sink = ByteSink::default();
+        assert!(!reader.dispatch_message_with(protocol::MessageCode::Deleted, &mut sink));
+        assert_eq!(sink.stdout, b"deleting ev\\#033il\n".to_vec());
+    }
+
+    /// WHY: a single leading CR is a progress redraw upstream writes raw before
+    /// escaping the rest (log.c:382-386), so it must not become `\#015`.
+    #[test]
+    fn leading_cr_preserved_raw() {
+        let sink = dispatch(protocol::MessageCode::Info, b"\rprogress\n", false);
+        assert_eq!(sink.stdout, b"\rprogress\n".to_vec());
+    }
+}
+
 #[cfg(test)]
 mod remote_exit_error_tests {
     use super::*;
@@ -1037,18 +1201,18 @@ mod deleted_render_tests {
     use super::*;
 
     /// Minimal capturing sink so the render assertion is byte-exact.
-    struct CapturingSink(Vec<String>);
+    struct CapturingSink(Vec<Vec<u8>>);
 
     impl MuxSink for CapturingSink {
-        fn info(&mut self, msg: &str) {
-            self.0.push(msg.to_owned());
+        fn info(&mut self, msg: &[u8]) {
+            self.0.push(msg.to_vec());
         }
-        fn error(&mut self, _msg: &str) {
+        fn error(&mut self, _msg: &[u8]) {
             panic!("MSG_DELETED must render via info(), never error()");
         }
     }
 
-    fn render(payload: &[u8], render: DeletedRender) -> Vec<String> {
+    fn render(payload: &[u8], render: DeletedRender) -> Vec<Vec<u8>> {
         let mut reader = MultiplexReader::new(io::empty());
         reader.set_deleted_render(render);
         reader.buffer = payload.to_vec();
@@ -1066,8 +1230,8 @@ mod deleted_render_tests {
             itemize: false,
             show_plain: true,
         };
-        assert_eq!(render(b"foo", cfg), vec!["deleting foo\n".to_owned()]);
-        assert_eq!(render(b"bar\0", cfg), vec!["deleting bar/\n".to_owned()]);
+        assert_eq!(render(b"foo", cfg), vec![b"deleting foo\n".to_vec()]);
+        assert_eq!(render(b"bar\0", cfg), vec![b"deleting bar/\n".to_vec()]);
     }
 
     #[test]
@@ -1078,8 +1242,8 @@ mod deleted_render_tests {
             itemize: true,
             show_plain: true,
         };
-        assert_eq!(render(b"foo", cfg), vec!["*deleting   foo\n".to_owned()]);
-        assert_eq!(render(b"bar\0", cfg), vec!["*deleting   bar/\n".to_owned()]);
+        assert_eq!(render(b"foo", cfg), vec![b"*deleting   foo\n".to_vec()]);
+        assert_eq!(render(b"bar\0", cfg), vec![b"*deleting   bar/\n".to_vec()]);
     }
 
     #[test]
