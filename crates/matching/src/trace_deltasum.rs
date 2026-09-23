@@ -182,20 +182,38 @@ pub fn trace_match_counters(false_alarms: u64, hash_hits: u64, matches: u64) {
     );
 }
 
+/// Renders the `total:` match-report line - the ONE owner of upstream's
+/// format string (note the double spaces before `hash_hits=`/`false_alarms=`
+/// and the single space before `data=`; `data` is `big_num(stats.literal_data)`,
+/// which is plain decimal per inums.h:20-23).
+///
+/// upstream: match.c:485-488 `match_report()`.
+#[inline]
+#[must_use]
+pub fn match_totals_line(matches: u64, hash_hits: u64, false_alarms: u64, data: u64) -> String {
+    format!(
+        "total: matches={matches}  hash_hits={hash_hits}  false_alarms={false_alarms} data={data}"
+    )
+}
+
 /// Level 1 `total: matches=%d  hash_hits=%d  false_alarms=%d data=%s` - the
-/// once-per-run sender totals (note the double spaces).
+/// once-per-run sender totals.
 ///
 /// upstream: match.c:479-487 `match_report()`, called after `send_files()`
 /// finishes (sender.c:815). The LOCAL copy path renders this line directly
 /// from the client summary (`cli::frontend::progress::render`) to keep
 /// upstream's position between the name list and the summary trailer; this
-/// function is the owner for the network sender drivers only.
+/// function is the local emitter for a CLIENT-side network sender. A
+/// server-side sender frames [`match_totals_line`] as `MSG_INFO` instead
+/// (log.c:330-346 routes FINFO through the mux under `am_server`), so the
+/// far-end client renders it and counts its bytes.
 #[inline]
 pub fn trace_match_totals(matches: u64, hash_hits: u64, false_alarms: u64, data: u64) {
     debug_log!(
         Deltasum,
         1,
-        "total: matches={matches}  hash_hits={hash_hits}  false_alarms={false_alarms} data={data}"
+        "{}",
+        match_totals_line(matches, hash_hits, false_alarms, data)
     );
 }
 

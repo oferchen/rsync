@@ -364,6 +364,47 @@ impl GeneratorContext {
         Ok(())
     }
 
+    /// Reports the cumulative `total:` match counters once per sender run,
+    /// gated on `DEBUG_GTE(DELTASUM, 1)` (first active at `-vv`).
+    ///
+    /// A client-side sender (push) prints the line locally; a server-side
+    /// sender frames it as `MSG_INFO` so the far-end client renders it and
+    /// counts its bytes - the same split as the generator's
+    /// delta-transmission notice.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `match.c:480-488` - `match_report()`: the `DEBUG_GTE(DELTASUM, 1)`
+    ///   gate and the format text
+    /// - `sender.c:815` - called once after `send_files()` finishes
+    /// - `log.c:330-346` - `rwrite()` under `am_server` frames FINFO as
+    ///   `MSG_INFO` instead of writing it locally
+    pub(in crate::generator) fn emit_match_totals_report<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        writer: &mut W,
+        counters: &matching::ScanCounters,
+        literal_data: u64,
+    ) {
+        if self.config.connection.client_mode {
+            matching::trace_deltasum::trace_match_totals(
+                counters.matches,
+                counters.hash_hits,
+                counters.false_alarms,
+                literal_data,
+            );
+        } else if logging::debug_gte(logging::DebugFlag::Deltasum, 1) {
+            let line = matching::trace_deltasum::match_totals_line(
+                counters.matches,
+                counters.hash_hits,
+                counters.false_alarms,
+                literal_data,
+            );
+            let _ = writer.send_msg_info(format!("{line}\n").as_bytes());
+        }
+    }
+
     /// Runs the main file transfer loop, reading NDX requests from receiver.
     ///
     /// This method processes file transfer requests in phases until all phases complete.
@@ -1438,12 +1479,7 @@ impl GeneratorContext {
         // `stats.literal_data` (match.c:486), the cumulative literal-byte count.
         // Upstream prints it whether or not any delta ran, leaving the counters
         // at zero for a whole-file transfer.
-        matching::trace_deltasum::trace_match_totals(
-            run_scan_counters.matches,
-            run_scan_counters.hash_hits,
-            run_scan_counters.false_alarms,
-            literal_data,
-        );
+        self.emit_match_totals_report(&mut *writer, &run_scan_counters, literal_data);
 
         // Emitted immediately before NDX_DONE so a remote receiver learns of
         // vanished/unreadable source files and reports exit 24/23. MSG_NO_SEND

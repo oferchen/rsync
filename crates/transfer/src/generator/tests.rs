@@ -7062,3 +7062,111 @@ fn a_new_directory_replaces_the_cached_dirname_rather_than_aliasing_it() {
         ctx.file_list[4].dirname()
     ));
 }
+
+/// The once-per-run `total:` match report must reach the CLIENT on a wire
+/// pull. Upstream's server-side sender prints it via `rprintf(FINFO, ...)`
+/// (match.c:485-488) under the `DEBUG_GTE(DELTASUM, 1)` gate (match.c:482),
+/// and `rwrite()` under `am_server` frames FINFO as `MSG_INFO` (log.c:330-346)
+/// so the far-end client renders it and counts its bytes. A client-side
+/// sender (push) owns its own stdout and prints the line locally instead.
+mod match_totals_report {
+    use super::*;
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+    #[derive(Default)]
+    struct CaptureWriter {
+        infos: Vec<String>,
+    }
+
+    impl crate::writer::MsgInfoSender for CaptureWriter {
+        fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
+            self.infos.push(String::from_utf8_lossy(data).into_owned());
+            Ok(())
+        }
+    }
+
+    fn init_deltasum(level: u8) {
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.deltasum = level;
+        init(cfg);
+        let _ = drain_events();
+    }
+
+    fn context(client_mode: bool) -> GeneratorContext {
+        let handshake = test_handshake_with_protocol(32);
+        let mut config = test_config();
+        config.connection.client_mode = client_mode;
+        GeneratorContext::new_for_test(&handshake, config)
+    }
+
+    fn counters() -> matching::ScanCounters {
+        matching::ScanCounters {
+            matches: 374,
+            hash_hits: 377,
+            false_alarms: 2,
+        }
+    }
+
+    /// A server-side sender at `DEBUG_GTE(DELTASUM, 1)` (first active at
+    /// `-vv`) must frame the line as `MSG_INFO` with upstream's exact text,
+    /// including the double spaces (match.c:486) and the trailing newline the
+    /// FINFO payload carries on the wire.
+    #[test]
+    fn server_mode_frames_totals_as_msg_info() {
+        init_deltasum(1);
+        let mut writer = CaptureWriter::default();
+        context(false).emit_match_totals_report(&mut writer, &counters(), 700);
+        assert_eq!(
+            writer.infos,
+            vec!["total: matches=374  hash_hits=377  false_alarms=2 data=700\n".to_owned()]
+        );
+        init(VerbosityConfig::default());
+    }
+
+    /// Below the gate (plain `-v` maps DELTASUM to 0, options.c:246-247)
+    /// nothing may cross the wire - the report must not inflate quiet
+    /// transfers, matching the early return at match.c:482-483.
+    #[test]
+    fn server_mode_is_silent_below_deltasum_gate() {
+        init_deltasum(0);
+        let mut writer = CaptureWriter::default();
+        context(false).emit_match_totals_report(&mut writer, &counters(), 700);
+        assert!(
+            writer.infos.is_empty(),
+            "gated total: line leaked below DELTASUM 1: {:?}",
+            writer.infos
+        );
+        init(VerbosityConfig::default());
+    }
+
+    /// A client-side sender (push) prints locally through the Deltasum debug
+    /// channel and must NOT frame the line - framing it would send sender
+    /// chatter TO the server.
+    #[test]
+    fn client_mode_emits_locally_not_framed() {
+        init_deltasum(1);
+        let mut writer = CaptureWriter::default();
+        context(true).emit_match_totals_report(&mut writer, &counters(), 700);
+        assert!(
+            writer.infos.is_empty(),
+            "client mode must not frame: {:?}",
+            writer.infos
+        );
+        let local: Vec<String> = drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Deltasum,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            local,
+            vec!["total: matches=374  hash_hits=377  false_alarms=2 data=700".to_owned()]
+        );
+        init(VerbosityConfig::default());
+    }
+}
