@@ -136,10 +136,24 @@ fn run_session(greeting: &str) -> (String, Option<i32>) {
     writer
         .write_all(greeting.as_bytes())
         .expect("send client greeting");
-    writer
+
+    // A greeting that omits the digest name list at protocol > 31 is refused by
+    // exchange_protocols() the instant it is read: the daemon writes its @ERROR
+    // and closes the socket WITHOUT ever reading the module name (upstream
+    // clientserver.c:201-213). Under load that close can land between these two
+    // client writes, so a BrokenPipe on the module-name write is the daemon
+    // refusing early - not a failure. The @ERROR is already in our receive
+    // buffer, so the read below still observes it and the assertions still hold.
+    // The greetings that DO reach the module-name read (protocol 31, and the
+    // empty-list cases the presence gate accepts) never trip this branch.
+    match writer
         .write_all(b"protected\n")
-        .expect("send module request");
-    writer.flush().expect("flush handshake");
+        .and_then(|()| writer.flush())
+    {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(error) => panic!("send module request: {error}"),
+    }
 
     let mut answer = String::new();
     reader.read_line(&mut answer).expect("daemon answer");
