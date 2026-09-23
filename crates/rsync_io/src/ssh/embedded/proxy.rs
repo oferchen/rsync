@@ -131,9 +131,9 @@ pub(super) fn lower_jump_to_command(jump: &str) -> Result<String, SshError> {
 }
 
 /// One parsed `ProxyJump` hop.
-struct JumpHop {
+pub(super) struct JumpHop {
     user: Option<String>,
-    host: String,
+    pub(super) host: String,
     port: Option<String>,
 }
 
@@ -143,7 +143,7 @@ struct JumpHop {
 /// an optional `ssh://` scheme, a `user@` prefix, and a bracketed `[v6]:port`
 /// or bare `host:port`. A bare address literal carrying multiple colons has
 /// no port.
-fn parse_jump_hop(spec: &str) -> JumpHop {
+pub(super) fn parse_jump_hop(spec: &str) -> JumpHop {
     let spec = spec.strip_prefix("ssh://").unwrap_or(spec);
     let (user, hostport) = match spec.split_once('@') {
         Some((u, rest)) => (Some(u.to_owned()), rest),
@@ -176,11 +176,13 @@ fn split_host_port(hostport: &str) -> (String, Option<String>) {
 
 /// Expands the connection percent tokens a `ProxyCommand` may carry.
 ///
-/// Supports `%h` (target host), `%p` (target port), `%r` (remote user) and
-/// the literal `%%` - the connection set upstream expands for a proxy command
-/// (openssh/sshconnect.c:236-241). Any other `%x` is refused rather than
-/// passed to the shell verbatim, so a stray `%n`/`%C` cannot silently reach
-/// the command unexpanded.
+/// Supports exactly the proxy-command set upstream expands at dial time
+/// (openssh/sshconnect.c:89-107 `expand_proxy_command`): `%h` (target
+/// host), `%k` (`HostKeyAlias`, falling back to the typed alias), `%n`
+/// (the typed alias), `%p` (target port), `%r` (remote user) and the
+/// literal `%%`. This set is DELIBERATELY narrower than the default client
+/// tokens, and env `${}`/tilde do not apply here - any other `%x` is
+/// refused rather than passed to the shell verbatim.
 ///
 /// # Errors
 ///
@@ -189,9 +191,14 @@ fn split_host_port(hostport: &str) -> (String, Option<String>) {
 pub(super) fn expand_proxy_tokens(
     template: &str,
     host: &str,
+    host_arg: &str,
+    host_key_alias: Option<&str>,
     port: u16,
     user: Option<&str>,
 ) -> Result<String, SshError> {
+    // upstream: openssh/sshconnect.c:94-95 - the alias fallback for `%k`
+    // is the TYPED host, not the resolved one.
+    let keyalias = host_key_alias.unwrap_or(host_arg);
     let mut out = String::with_capacity(template.len());
     let mut chars = template.chars();
     while let Some(c) = chars.next() {
@@ -201,6 +208,8 @@ pub(super) fn expand_proxy_tokens(
         }
         match chars.next() {
             Some('h') => out.push_str(host),
+            Some('k') => out.push_str(keyalias),
+            Some('n') => out.push_str(host_arg),
             Some('p') => out.push_str(&port.to_string()),
             Some('r') => out.push_str(&effective_user(user)),
             Some('%') => out.push('%'),
@@ -220,16 +229,10 @@ pub(super) fn expand_proxy_tokens(
 ///
 /// upstream fills `options.user` from the local passwd entry when it is unset
 /// (openssh/ssh.c `fill_default_options` -> `getpwuid`). oc reads the same
-/// login-name environment the shell exports as a portable stand-in.
+/// login-name environment the shell exports as a portable stand-in, shared
+/// with the config-side expander.
 fn effective_user(user: Option<&str>) -> String {
-    if let Some(u) = user {
-        return u.to_owned();
-    }
-    #[cfg(windows)]
-    let var = "USERNAME";
-    #[cfg(not(windows))]
-    let var = "USER";
-    std::env::var(var).unwrap_or_default()
+    user.map_or_else(super::token_expand::local_user_name, str::to_owned)
 }
 
 /// Spawns `command` through the platform shell and captures its stdio as an
@@ -442,23 +445,49 @@ mod tests {
     #[test]
     fn expands_connection_tokens() {
         assert_eq!(
-            expand_proxy_tokens("connect %h %p %r", "host.example", 2022, Some("deploy")).unwrap(),
+            expand_proxy_tokens(
+                "connect %h %p %r",
+                "host.example",
+                "alias",
+                None,
+                2022,
+                Some("deploy")
+            )
+            .unwrap(),
             "connect host.example 2022 deploy"
+        );
+    }
+
+    /// `%n` is the TYPED alias and `%k` the `HostKeyAlias`-or-alias, the two
+    /// tokens upstream's proxy set carries beyond `%h %p %r`
+    /// (openssh/sshconnect.c:94-103).
+    #[test]
+    fn expands_alias_and_keyalias_tokens() {
+        assert_eq!(
+            expand_proxy_tokens("nc %n %k", "resolved", "typed", None, 22, None).unwrap(),
+            "nc typed typed"
+        );
+        assert_eq!(
+            expand_proxy_tokens("nc %n %k", "resolved", "typed", Some("kalias"), 22, None).unwrap(),
+            "nc typed kalias"
         );
     }
 
     #[test]
     fn expands_double_percent_to_literal() {
         assert_eq!(
-            expand_proxy_tokens("100%% %h", "h", 22, None).unwrap(),
+            expand_proxy_tokens("100%% %h", "h", "h", None, 22, None).unwrap(),
             "100% h"
         );
     }
 
+    /// The proxy set stays NARROW: a default-client token like `%C` is
+    /// refused here even though the config-side expander knows it, because
+    /// upstream's `expand_proxy_command` never receives it.
     #[test]
     fn unknown_token_is_refused() {
-        match expand_proxy_tokens("nc %n", "h", 22, None) {
-            Err(SshError::ProxyTokenUnsupported { token }) => assert_eq!(token, 'n'),
+        match expand_proxy_tokens("nc %C", "h", "h", None, 22, None) {
+            Err(SshError::ProxyTokenUnsupported { token }) => assert_eq!(token, 'C'),
             other => panic!("expected ProxyTokenUnsupported, got {other:?}"),
         }
     }
@@ -466,7 +495,7 @@ mod tests {
     #[test]
     fn trailing_percent_is_refused() {
         assert!(matches!(
-            expand_proxy_tokens("oops %", "h", 22, None),
+            expand_proxy_tokens("oops %", "h", "h", None, 22, None),
             Err(SshError::ProxyCommand { .. })
         ));
     }
@@ -476,7 +505,7 @@ mod tests {
     #[test]
     fn no_tokens_passes_through_unchanged() {
         assert_eq!(
-            expand_proxy_tokens("nc host 22", "other", 99, Some("root")).unwrap(),
+            expand_proxy_tokens("nc host 22", "other", "other", None, 99, Some("root")).unwrap(),
             "nc host 22"
         );
     }

@@ -70,6 +70,26 @@ impl Drop for EnvGuard {
     }
 }
 
+/// The local host's name, as `gethostname(2)` reports it.
+///
+/// `None` when the kernel cannot supply a name or it is not valid UTF-8.
+/// Callers that mirror OpenSSH's client percent expansion consume this for
+/// the `%l`/`%L` tokens (openssh/ssh.c:1421 `gethostname()`); `platform`
+/// owns the syscall per the unsafe-code policy, via the `nix` safe wrapper.
+#[cfg(unix)]
+#[must_use]
+pub fn hostname() -> Option<String> {
+    nix::unistd::gethostname().ok()?.into_string().ok()
+}
+
+/// Windows counterpart of [`hostname`]: the `COMPUTERNAME` environment
+/// variable, the conventional spelling of the local machine name there.
+#[cfg(windows)]
+#[must_use]
+pub fn hostname() -> Option<String> {
+    env::var("COMPUTERNAME").ok().filter(|s| !s.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +214,14 @@ mod tests {
         }
 
         assert!(env::var_os(key).is_none());
+    }
+
+    #[test]
+    fn hostname_is_nonempty_when_available() {
+        // Every supported CI host has a hostname; a `Some` must never be
+        // empty, since consumers derive `%L` by splitting at the first dot.
+        if let Some(name) = super::hostname() {
+            assert!(!name.is_empty());
+        }
     }
 }
