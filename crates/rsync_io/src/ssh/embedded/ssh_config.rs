@@ -282,7 +282,23 @@ pub(super) fn resolve_host_with_remote_user(
             )?;
         }
     }
+    expand_hostname(&mut resolved, host_alias)?;
     Ok(resolved)
+}
+
+/// Applies the one expansion upstream performs as soon as the options are
+/// filled in: `Hostname` takes ONLY `%%` and `%h`, where `%h` is the host
+/// alias the user typed (openssh/ssh.c:1216-1222, mirrored mid-parse for
+/// `match_cfg_line` at openssh/readconf.c:666-672 - no other token and no
+/// `${ENV}` reaches this option). Applied at reader exit so every consumer
+/// of a [`ResolvedHost`] - including the `ssh -G` differential harness,
+/// since `-G` dumps the hostname already expanded - sees the same value.
+fn expand_hostname(resolved: &mut ResolvedHost, host_alias: &str) -> Result<(), SshError> {
+    if let Some(ref mut hostname) = resolved.hostname {
+        *hostname =
+            super::token_expand::percent_expand(hostname, &[('h', host_alias)], "Hostname")?;
+    }
+    Ok(())
 }
 
 /// The `Include`-anchoring inputs a scan needs but a single file does not
@@ -393,6 +409,7 @@ fn resolve_host_files_with_ctx(
     if want_final_pass {
         scan_files_once(&mut resolved, files, ctx, anchors, true)?;
     }
+    expand_hostname(&mut resolved, ctx.host_alias)?;
     Ok(resolved)
 }
 
@@ -499,6 +516,7 @@ fn resolve_host_str_with_ctx(text: &str, ctx: &MatchCtx<'_>) -> Result<ResolvedH
             &mut false,
         )?;
     }
+    expand_hostname(&mut resolved, ctx.host_alias)?;
     Ok(resolved)
 }
 

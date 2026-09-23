@@ -58,9 +58,13 @@
 //!   `Host`-pattern behaviour is measured here rather than only by unit
 //!   tests asserting our own reading of the C.
 //! - `ssh::embedded::ssh_config` (this module's neighbour) is the
-//!   value-carrying resolver - [`ResolvedHost`], seven directives - but it
-//!   understands `Host` only, with no `Match`, no `Include`, and no token
-//!   expansion.
+//!   value-carrying resolver - [`ResolvedHost`] - with `Host`/`Match`
+//!   evaluation, `Include`, and `Hostname` `%h` expansion at reader exit.
+//!   The path-valued options (`IdentityAgent`, `UserKnownHostsFile`,
+//!   `RevokedHostKeys`, `IdentityFile`) are expanded at USE time in
+//!   `SshConfig::expand_use_time_tokens`, downstream of the resolver this
+//!   harness reads - so a `%` token in those options is still visible RAW
+//!   here even though the live connection sees it expanded.
 //!
 //! So a keyword-for-keyword diff against upstream's ~86-line dump is not
 //! available today and this harness does not pretend otherwise. Every
@@ -80,9 +84,12 @@
 //! - oc was expected to lowercase the alias before matching `Host`, and
 //!   therefore to diverge from upstream's case-SENSITIVE match. It does
 //!   not - both decline `Host WEB1` for alias `web1`.
-//! - The divergence that does exist is token expansion: oc stores
-//!   `HostName %h.example.com` verbatim where upstream expands it. That
-//!   is the non-vacuity fixture.
+//! - The original non-vacuity fixture was token expansion itself: oc
+//!   stored `HostName %h.example.com` verbatim where upstream expands it.
+//!   The resolver now expands `Hostname` at reader exit (that fixture is
+//!   the parity test today), so non-vacuity is re-anchored on the
+//!   use-time layer split: `IdentityAgent` with a `%` token is dumped
+//!   expanded by `-G` but read raw from [`ResolvedHost`].
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -511,27 +518,22 @@ mod tests {
         eprintln!("ssh -G differential SKIPPED for {what}: {why:?}");
     }
 
-    /// NON-VACUITY: the harness must REPORT a divergence oc has today.
+    /// PARITY: `Hostname %h` expands to the typed alias on both sides.
     ///
-    /// oc's embedded resolver performs no token expansion, so a `HostName`
-    /// carrying `%h` is stored as written. Upstream expands it during the
-    /// first pass (openssh/ssh.c:1228-1237, `%h` -> the alias) and the expanded
-    /// value is what reaches the dump.
-    ///
-    /// Measured against real ssh before this test was written: alias `t`
-    /// against `HostName %h.example.com` gives upstream `t.example.com`
-    /// and oc `%h.example.com`.
-    ///
-    /// If this test ever passes with zero mismatches, the harness has gone
-    /// blind - that is the failure it exists to prevent.
+    /// Upstream expands during the first pass (openssh/ssh.c:1216-1222,
+    /// `%h` -> the alias) and the expanded value reaches the dump; oc now
+    /// performs the same expansion at reader exit. This fixture was the
+    /// harness's original non-vacuity divergence - it flipping to Match
+    /// is the expansion landing, and the non-vacuity duty moved to
+    /// `harness_reports_the_use_time_identityagent_split`.
     #[test]
-    fn harness_reports_the_missing_token_expansion() {
+    fn hostname_percent_h_expansion_matches_upstream() {
         const FIXTURE: &str = "Host t\n  HostName %h.example.com\n";
 
         let diff = match run(FIXTURE, "t") {
             Ok(d) => d,
             Err(why) => {
-                report_skip("token-expansion non-vacuity", &why);
+                report_skip("hostname %h expansion parity", &why);
                 return;
             }
         };
@@ -541,21 +543,119 @@ mod tests {
             .expect("upstream always dumps hostname");
         assert_eq!(
             hostname.verdict,
-            Verdict::Mismatch,
-            "harness went blind: upstream {:?} vs oc {:?} on {}",
+            Verdict::Match,
+            "upstream {:?} vs oc {:?} on {}",
             hostname.upstream,
             hostname.oc,
             diff.oracle_version
         );
         assert_eq!(hostname.upstream, vec!["t.example.com".to_owned()]);
-        assert_eq!(hostname.oc, Some(vec!["%h.example.com".to_owned()]));
+        assert_eq!(hostname.oc, Some(vec!["t.example.com".to_owned()]));
+    }
+
+    /// PARITY: `%%` in a `Hostname` is a literal percent on both sides.
+    /// upstream: openssh/misc.c:1298-1303 (the `%%` arm of the expander).
+    #[test]
+    fn hostname_double_percent_is_a_literal_on_both_sides() {
+        const FIXTURE: &str = "Host t\n  HostName t%%1.example.com\n";
+
+        let diff = match run(FIXTURE, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("hostname %% literal parity", &why);
+                return;
+            }
+        };
+
+        let hostname = diff
+            .cell("hostname")
+            .expect("upstream always dumps hostname");
+        assert_eq!(
+            hostname.verdict,
+            Verdict::Match,
+            "upstream {:?} vs oc {:?} on {}",
+            hostname.upstream,
+            hostname.oc,
+            diff.oracle_version
+        );
+        assert_eq!(hostname.upstream, vec!["t%1.example.com".to_owned()]);
+    }
+
+    /// PARITY (refusal): a token `Hostname` does not take is fatal on both
+    /// sides. Upstream's `Hostname` expansion passes only `h`
+    /// (openssh/ssh.c:1216-1222), so `%p` dies in `percent_expand` with
+    /// `unknown key %p` (openssh/misc.c:1345-1363) and `ssh -G` exits
+    /// nonzero; oc's reader-exit expansion refuses the same way.
+    #[test]
+    fn hostname_rejects_tokens_outside_its_set_on_both_sides() {
+        const FIXTURE: &str = "Host t\n  HostName t-%p.example.com\n";
+
+        let outcome = match refusal(FIXTURE, "t") {
+            Ok(r) => r,
+            Err(why) => {
+                report_skip("hostname unknown-token refusal", &why);
+                return;
+            }
+        };
+        let upstream = outcome.expect("upstream must refuse %p in Hostname");
+        assert!(
+            upstream.contains("unknown key"),
+            "upstream refusal changed shape: {upstream}"
+        );
+
+        let oc = resolve_host_str(FIXTURE, "t").expect_err("oc must refuse %p in Hostname");
+        assert!(
+            oc.to_string().contains("unknown key %p"),
+            "oc refusal changed shape: {oc}"
+        );
+    }
+
+    /// NON-VACUITY: the harness must REPORT a divergence oc has today.
+    ///
+    /// The path-valued options are expanded at USE time in
+    /// `SshConfig::expand_use_time_tokens`, downstream of the
+    /// [`ResolvedHost`] this harness reads - while `ssh -G` dumps
+    /// `identityagent` AFTER upstream expanded it (openssh/ssh.c:1497-1506
+    /// runs before the `-G` dump). So an `IdentityAgent` carrying `%h` is
+    /// expanded upstream and raw here, by design.
+    ///
+    /// If this test ever passes with zero mismatches, either the dump
+    /// layering changed or the harness has gone blind - that is the
+    /// failure it exists to prevent.
+    #[test]
+    fn harness_reports_the_use_time_identityagent_split() {
+        const FIXTURE: &str = "Host t\n  IdentityAgent /tmp/agent-%h.sock\n";
+
+        let diff = match run(FIXTURE, "t") {
+            Ok(d) => d,
+            Err(why) => {
+                report_skip("identityagent use-time non-vacuity", &why);
+                return;
+            }
+        };
+
+        let agent = diff
+            .cell("identityagent")
+            .expect("upstream dumps identityagent when set");
+        assert_eq!(
+            agent.verdict,
+            Verdict::Mismatch,
+            "harness went blind: upstream {:?} vs oc {:?} on {}",
+            agent.upstream,
+            agent.oc,
+            diff.oracle_version
+        );
+        assert_eq!(agent.upstream, vec!["/tmp/agent-t.sock".to_owned()]);
+        assert_eq!(agent.oc, Some(vec!["/tmp/agent-%h.sock".to_owned()]));
 
         // The divergence must reach the REPORT, not just the cell: a
         // harness that computed the right verdict and then failed to
         // surface it would be just as blind.
         assert!(
-            diff.mismatches().iter().any(|c| c.keyword == "hostname"),
-            "hostname mismatch computed but not reported"
+            diff.mismatches()
+                .iter()
+                .any(|c| c.keyword == "identityagent"),
+            "identityagent mismatch computed but not reported"
         );
     }
 

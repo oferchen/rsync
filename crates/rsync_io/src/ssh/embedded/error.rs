@@ -153,6 +153,23 @@ pub enum SshError {
         preference: String,
     },
 
+    /// A percent token or `${ENV}` expansion in an ssh_config value could
+    /// not be performed.
+    ///
+    /// Upstream is fatal at both expansion layers: an unknown `%` key or a
+    /// trailing `%` aborts inside the expander (openssh/misc.c:1345-1363),
+    /// and a failed `${ENV}` substitution aborts at the client call sites
+    /// (openssh/ssh.c:240-241 `invalid environment variable expansion`).
+    /// The reason text carries upstream's own wording so the operator sees
+    /// the same diagnosis.
+    #[error("ssh_config token expansion failed for {option}: {reason}")]
+    TokenExpansion {
+        /// The directive whose value was being expanded.
+        option: String,
+        /// Upstream's reason wording for the refusal.
+        reason: String,
+    },
+
     /// A `ProxyCommand` (or a `ProxyJump` lowered into one) could not be
     /// spawned, or its stdin/stdout could not be captured.
     ///

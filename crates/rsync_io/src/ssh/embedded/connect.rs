@@ -489,12 +489,18 @@ async fn ssh_setup(
         }
         ProxyDial::Command(template) => {
             let handler = SshClientHandler::with_options(build_host_key_options(ssh_config, None));
-            // Expand `%h`/`%p`/`%r` against the final target, then run the
-            // command and speak SSH over its stdio (russh `connect_stream`),
-            // mirroring upstream's `ssh_proxy_connect`.
+            // Expand the dial-time token set (`%h %k %n %p %r`) against the
+            // final target, then run the command and speak SSH over its
+            // stdio (russh `connect_stream`), mirroring upstream's
+            // `ssh_proxy_connect` (openssh/sshconnect.c:89-107). The typed
+            // alias falls back to the connect host when no ssh_config load
+            // recorded one - exact, because without a load no `Hostname`
+            // rewrite can have happened.
             let command = expand_proxy_tokens(
                 &template,
                 &ssh_config.host,
+                ssh_config.host_alias.as_deref().unwrap_or(&ssh_config.host),
+                ssh_config.host_key_alias.as_deref(),
                 ssh_config.port,
                 ssh_config.username.as_deref(),
             )?;

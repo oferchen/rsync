@@ -29,6 +29,8 @@ mod ssh_config_differential;
 #[cfg(feature = "embedded-ssh")]
 pub mod sync_bridge;
 #[cfg(feature = "embedded-ssh")]
+mod token_expand;
+#[cfg(feature = "embedded-ssh")]
 mod types;
 
 #[cfg(feature = "embedded-ssh")]

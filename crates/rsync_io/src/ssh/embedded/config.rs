@@ -164,6 +164,13 @@ pub struct SshConfig {
     /// controlling terminal before abandoning the method.
     /// upstream: openssh/readconf.c:1312, default 3.
     pub number_of_password_prompts: u32,
+    /// The host token the user typed, recorded when an ssh_config load runs
+    /// so the `%n` token and the `%k` fallback expand against the ALIAS
+    /// rather than the (possibly `Hostname`-rewritten) connect target.
+    /// upstream: openssh/ssh.c:1426-1430 keeps `host_arg` beside `host`.
+    /// `None` when no config was applied; the connect target then doubles
+    /// as the alias, which is exact because no rewrite happened.
+    pub host_alias: Option<String>,
 }
 
 /// Returns the default identity file paths under `~/.ssh/`.
@@ -237,6 +244,7 @@ impl Default for SshConfig {
             preferred_authentications: None,
             batch_mode: false,
             number_of_password_prompts: DEFAULT_PASSWORD_PROMPTS,
+            host_alias: None,
         }
     }
 }
@@ -410,6 +418,7 @@ impl SshConfig {
             self.username.as_deref().unwrap_or(""),
         )?;
         self.merge_resolved_host(&resolved);
+        self.expand_use_time_tokens(host_alias)?;
         Ok(self)
     }
 
@@ -434,7 +443,56 @@ impl SshConfig {
             self.username.as_deref().unwrap_or(""),
         )?;
         self.merge_resolved_host(&resolved);
+        self.expand_use_time_tokens(host_alias)?;
         Ok(self)
+    }
+
+    /// Applies OpenSSH's use-time token expansion to the path-valued
+    /// options, once the FINAL connection parameters (post-merge host,
+    /// port, user, `HostKeyAlias`, jump chain) are known.
+    ///
+    /// The per-option applicability mirrors ssh.c's own call sites rather
+    /// than expanding uniformly: `IdentityFile` takes the default client
+    /// token set plus `${ENV}` (openssh/ssh.c:2369-2370), and so do
+    /// `IdentityAgent`, `RevokedHostKeys` and `UserKnownHostsFile`
+    /// (openssh/ssh.c:1459-1526). `GlobalKnownHostsFile` is deliberately
+    /// NOT expanded - upstream only tilde-expands it
+    /// (openssh/ssh.c:1751 `tilde_expand_paths`), so a `%` there stays
+    /// literal. `ProxyCommand` uses the narrower dial-time set and is
+    /// expanded in `connect` instead (openssh/sshconnect.c:89-107).
+    fn expand_use_time_tokens(&mut self, host_alias: &str) -> Result<(), SshError> {
+        self.host_alias = Some(host_alias.to_owned());
+        let info = super::token_expand::ConnInfo::new(
+            &self.host,
+            host_alias,
+            self.port,
+            self.username.as_deref(),
+            self.host_key_alias.as_deref(),
+            self.jump_hosts.as_deref(),
+        );
+        for path in &mut self.identity_files {
+            expand_path_option(&info, path, "IdentityFile")?;
+        }
+        if let Some(ref mut agent) = self.identity_agent {
+            // The sentinel spellings `SSH_AUTH_SOCK` and `none` carry no
+            // tokens, so expanding them is the identity - the same holds
+            // upstream, which expands the raw string before comparing it
+            // against the sentinels (openssh/ssh.c:1497-1506).
+            *agent = super::token_expand::default_client_percent_dollar_expand(
+                agent,
+                &info,
+                "IdentityAgent",
+            )?;
+        }
+        if let Some(ref mut files) = self.user_known_hosts_files {
+            for path in files.iter_mut() {
+                expand_path_option(&info, path, "UserKnownHostsFile")?;
+            }
+        }
+        if let Some(ref mut path) = self.revoked_host_keys {
+            expand_path_option(&info, path, "RevokedHostKeys")?;
+        }
+        Ok(())
     }
 
     fn merge_resolved_host(&mut self, resolved: &ResolvedHost) {
@@ -742,6 +800,25 @@ impl SshConfig {
 /// subprocess SSH transport slices `host:path` operands. Returns `None` when
 /// the URL has no path component. Preserving the raw slice keeps rsync's `/./`
 /// dot-root pivot intact for `--relative` transfers.
+/// Expands one path-valued option in place with the default client token
+/// set plus `${ENV}`, leaving a non-UTF-8 path untouched (such a path can
+/// only come from an explicit builder call; config-file text is always
+/// UTF-8 here).
+fn expand_path_option(
+    info: &super::token_expand::ConnInfo,
+    path: &mut PathBuf,
+    option: &str,
+) -> Result<(), SshError> {
+    let Some(text) = path.to_str() else {
+        return Ok(());
+    };
+    let expanded = super::token_expand::default_client_percent_dollar_expand(text, info, option)?;
+    if expanded != text {
+        *path = PathBuf::from(expanded);
+    }
+    Ok(())
+}
+
 fn raw_url_path(url_str: &str) -> Option<&str> {
     let after_scheme = &url_str[url_str.find("://")? + 3..];
     let start = after_scheme.find('/')?;
@@ -1630,5 +1707,107 @@ mod tests {
         cfg.apply_ssh_config_from(&path, "example")
             .expect("config accepted");
         assert_eq!(cfg.identity_agent.as_deref(), Some("/run/explicit.sock"));
+    }
+
+    // The per-option token applicability table, pinned through the live
+    // apply path. Upstream expands the path-valued options at USE time
+    // with the FINAL connection parameters (openssh/ssh.c:1459-1526,
+    // :2369-2370), which is why `%h` below resolves to the `Hostname`
+    // rewrite and `%p` to the `Port` directive, not to the typed alias
+    // and default port.
+
+    #[test]
+    fn identity_file_expands_tokens_against_final_parameters() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(
+            &path,
+            "Host example\n  Hostname real.example.com\n  Port 2222\n  IdentityFile /k/%h_%p_%n\n",
+        )
+        .expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert!(
+            cfg.identity_files
+                .contains(&PathBuf::from("/k/real.example.com_2222_example")),
+            "got {:?}",
+            cfg.identity_files
+        );
+        assert_eq!(cfg.host_alias.as_deref(), Some("example"));
+    }
+
+    #[test]
+    fn known_hosts_and_revoked_keys_expand_tokens() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(
+            &path,
+            "Host example\n  UserKnownHostsFile /kh/%n.known\n  RevokedHostKeys /rk/%n.rev\n",
+        )
+        .expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(
+            cfg.user_known_hosts_files,
+            Some(vec![PathBuf::from("/kh/example.known")])
+        );
+        assert_eq!(
+            cfg.revoked_host_keys,
+            Some(PathBuf::from("/rk/example.rev"))
+        );
+    }
+
+    /// `GlobalKnownHostsFile` deliberately keeps a `%` literal: upstream
+    /// only tilde-expands that option (openssh/ssh.c:1751
+    /// `tilde_expand_paths`), so expanding it here would diverge.
+    #[test]
+    fn global_known_hosts_keeps_percent_literal() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  GlobalKnownHostsFile /g/%n.known\n")
+            .expect("write config");
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(
+            cfg.global_known_hosts_files,
+            vec![PathBuf::from("/g/%n.known")]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn identity_agent_expands_env_and_tokens() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(
+            &path,
+            "Host example\n  IdentityAgent /run/${OC_T1210_AGENT_DIR}/%n.sock\n",
+        )
+        .expect("write config");
+        let _var = EnvGuard::set("OC_T1210_AGENT_DIR", std::ffi::OsStr::new("agents"));
+        let mut cfg = SshConfig::default();
+        cfg.apply_ssh_config_from(&path, "example")
+            .expect("config accepted");
+        assert_eq!(
+            cfg.identity_agent.as_deref(),
+            Some("/run/agents/example.sock")
+        );
+    }
+
+    /// An unknown `%` key in an expanded option aborts the load with
+    /// upstream's wording (openssh/misc.c:1345-1363 `unknown key`).
+    #[test]
+    fn unknown_token_in_identity_file_is_refused() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host example\n  IdentityFile /k/%q\n").expect("write config");
+        let mut cfg = SshConfig::default();
+        let err = cfg
+            .apply_ssh_config_from(&path, "example")
+            .expect_err("unknown token must refuse the load");
+        assert!(err.to_string().contains("unknown key %q"), "got {err}");
     }
 }
