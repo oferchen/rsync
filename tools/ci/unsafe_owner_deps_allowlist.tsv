@@ -1,0 +1,37 @@
+# Allowlist for the two-owner FFI dependency gate (tools/ci/unsafe_owner_deps.py).
+#
+# Each row is a crate OUTSIDE platform/fast_io that declares a direct FFI
+# dependency (libc, windows-sys, windows, nix, or rustix) today.  Four
+# tab-separated fields:
+#
+#   crate<TAB>dep<TAB>expiry (YYYY-MM-DD)<TAB>reason
+#
+# The gate fails when a row EXPIRES, when it goes STALE (the crate no longer
+# declares that dep - remove the row in the change that dropped it), when it
+# is malformed, or when its reason is empty.  A NEW direct FFI dep in any
+# non-owner crate fails the gate until it is routed through platform/fast_io's
+# safe APIs or given a row here.
+#
+# Expiry is 2026-11-07 across the board - the same review horizon as the
+# dead-code census gate (tools/ci/dead_code_allowlist.tsv).  Routing these
+# sites onto the two owners is the deferred UNSAFE-2..5 migration series; the
+# rows are pruned as that work lands, and the stale-row check makes a dropped
+# dependency a required allowlist edit rather than a silent leftover.  Baseline
+# measured 2026-09-23.
+apple-fs	libc	2026-11-07	macOS attrlist / mknod constants (S_IFIFO, dev_t, mode_t) on the AppleDouble path; production unsafe under the per-crate exemption
+apple-fs	nix	2026-11-07	safe nix::sys / nix::unistd wrappers on the macOS metadata path
+core	libc	2026-11-07	signal numbers (SIGHUP/SIGINT/SIGPIPE) and socket-option constants (IP_TOS, IPPROTO_*) for client signal and socket setup
+core	nix	2026-11-07	safe nix signal/process/socket wrappers used across the client
+core	rustix	2026-11-07	safe rustix::process wrappers on the client path
+daemon	libc	2026-11-07	errno, signal and fcntl-lock constants (EAGAIN, SIGKILL, F_WRLCK, SEEK_SET) on the daemon session and lock-file path
+daemon	nix	2026-11-07	safe nix errno/fcntl/poll/sys/unistd wrappers across the daemon
+daemon	windows	2026-11-07	windows::io bindings for the Windows daemon socket path
+engine	libc	2026-11-07	errno constants (EACCES, ELOOP, ENODATA, ...) for local-copy error mapping
+engine	rustix	2026-11-07	safe rustix::fs / fd / param / process wrappers on the local-copy path; production unsafe under the per-crate exemption
+engine	windows-sys	2026-11-07	windows_sys::Win32 bindings for the Windows local-copy path
+metadata	libc	2026-11-07	macOS attrlist (ATTR_CMN_CRTIME), errno and mode constants for the metadata apply path; 96 production unsafe blocks under the per-crate exemption
+metadata	nix	2026-11-07	safe nix errno/fcntl/sys/unistd wrappers for metadata syscalls
+metadata	rustix	2026-11-07	safe rustix::fs / process wrappers for metadata
+metadata	windows	2026-11-07	windows::Win32 ACL / SDDL / fs bindings for NTFS metadata
+test-support	libc	2026-11-07	libc::umask + mode_t for test-fixture setup; test-only crate, not linked into the shipped binary
+transfer	libc	2026-11-07	errno constants (EACCES, ELOOP, ENODATA, ...) for receiver / transfer error mapping
