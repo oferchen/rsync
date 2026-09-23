@@ -486,6 +486,90 @@ fn partial_matched_only_shutdown_preserves_destination() {
     });
 }
 
+/// Disconnect-path sibling of [`partial_matched_only_abort_preserves_destination`].
+///
+/// `process_file`'s loop head carries a THIRD copy of the matched-vs-literal
+/// retention decision the `Abort` and `Shutdown` arms make: the
+/// `file_rx.recv()` -> `Err` arm (`file_ops.rs`), taken when the network
+/// thread's sender end drops WITHOUT an explicit `Abort`/`Shutdown` - e.g. the
+/// sender unwound on a broken pipe. 402 keyed that arm on `literal_bytes` like
+/// its siblings but shipped no regression test for it: the two tests above send
+/// explicit messages and never exercise a raw disconnect. A revert of this one
+/// arm to the old written-byte counter would leave both of them green while the
+/// exact data-loss path returned - a matched-only `--partial` transfer whose
+/// peer dies mid-file renames the truncated basis copy over the intact
+/// destination. This test drops the sender to take that arm directly.
+///
+/// upstream: cleanup.c:159 gates retention on `cleanup_got_literal`, set only
+/// in the literal branch (receiver.c:392-403); a disconnect with no literal
+/// data unlinks the temp (cleanup.c:199-200) instead of renaming it into place.
+#[test]
+fn partial_matched_only_disconnect_preserves_destination() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("matched_disconnect.dat");
+
+    // A complete, correct destination. The transfer below is a delta whose
+    // tokens are ALL basis matches - no literal data is received.
+    const ORIGINAL: &[u8] = b"COMPLETE-AND-CORRECT-DESTINATION";
+    fs::write(&file_path, ORIGINAL).unwrap();
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::Partial,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config).unwrap();
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: ORIGINAL.len() as u64,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            // temp+rename, NOT in-place: the path that renames over the dest.
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+            xattr_basis: None,
+            file_entry: None,
+        })))
+        .unwrap();
+
+    // Basis copies only. Enough bytes that any written-byte gate would fire.
+    h.file_tx
+        .send(FileMessage::MatchedChunk(b"COMPLETE-AND-".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::MatchedChunk(b"CORRECT-".to_vec()))
+        .unwrap();
+
+    // Block until both matched chunks are written: the disk thread recycles a
+    // buffer only after `output.write_chunk`, so recovering both proves the
+    // temp holds the basis prefix before the disconnect - the exact state that
+    // makes a written-byte gate clobber the destination.
+    h.buf_return_rx.recv().unwrap();
+    h.buf_return_rx.recv().unwrap();
+
+    // Drop the sender WITHOUT an Abort/Shutdown: the disk thread's next
+    // `file_rx.recv()` returns `Err`, taking the disconnect retention arm.
+    drop(h.file_tx);
+
+    assert!(
+        h.result_rx.recv().unwrap().is_err(),
+        "a mid-file disconnect surfaces as an error result",
+    );
+    h.join_handle.join().unwrap();
+
+    assert_eq!(
+        fs::read(&file_path).unwrap(),
+        ORIGINAL,
+        "no literal data arrived, so the disconnect arm must unlink the temp \
+         (cleanup.c:159, :199-200) and leave the complete destination intact; \
+         renaming a truncated basis copy over it destroys a good file",
+    );
+}
+
 /// Literal data MUST still be retained. The fix narrows the retention gate;
 /// this pins that it was not narrowed to nothing - deleting the retention logic
 /// outright would otherwise pass both tests above.
