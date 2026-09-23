@@ -71,8 +71,10 @@
 //! - [`core::message`] for message construction and formatting helpers.
 //! - `logging` crate for verbosity flags and the `info_log!`/`debug_log!` macros.
 
-/// Upstream `logit()`-compatible log-file line formatting.
-pub mod escape;
+/// Filename octal escaping, re-exported from the `logging` crate so the
+/// log-file sink and the CLI keep a single `logging_sink::escape` path while
+/// the implementation lives at a level the transfer engine can also reach.
+pub use logging::escape;
 mod line_mode;
 pub mod logfile;
 mod sink;

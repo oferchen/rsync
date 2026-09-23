@@ -13,6 +13,41 @@
 
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Process-wide `--8-bit-output` / `-8` state.
+///
+/// upstream: `allow_8bit_chars` is a single file-scope global (options.c),
+/// consulted only where a buffer is written to the terminal - `rwrite()` ->
+/// `filtered_fwrite(f, buf, len, !allow_8bit_chars, 0, ..)` (log.c:425). A
+/// process global (not a thread-local) mirrors that exactly: the flag is one
+/// CLI decision that every output boundary on every transfer thread must read.
+/// Defaults to `false`, upstream's default (every non-`isprint` byte escaped).
+static ALLOW_8BIT_CHARS: AtomicBool = AtomicBool::new(false);
+
+/// Records the resolved `--8-bit-output` / `-8` setting for the whole process.
+///
+/// The CLI calls this once it has parsed the flag, before any transfer thread
+/// writes peer-controlled bytes to the terminal.
+pub fn set_eight_bit_output(value: bool) {
+    ALLOW_8BIT_CHARS.store(value, Ordering::Relaxed);
+}
+
+/// Reads the process-wide `--8-bit-output` / `-8` setting.
+#[must_use]
+pub fn eight_bit_output() -> bool {
+    ALLOW_8BIT_CHARS.load(Ordering::Relaxed)
+}
+
+/// The terminal escape style honouring the process-wide `-8` setting.
+///
+/// upstream: log.c:425 `rwrite()` selects `filtered_fwrite(.., !allow_8bit_chars,
+/// 0, ..)`, so a terminal-bound line escapes every non-`isprint` byte unless
+/// `-8` is in effect. This is the style every terminal sink should use.
+#[must_use]
+pub fn terminal_style() -> EscapeStyle {
+    EscapeStyle::terminal(eight_bit_output())
+}
 
 /// The two `filtered_fwrite` escape switches, resolved per destination.
 ///
@@ -84,7 +119,7 @@ impl EscapeStyle {
     /// upstream has no `filtered_fwrite` call in `log_formatted()` at all: the
     /// renderer builds the line and escaping happens later, once, in the
     /// writer - `log.c:132 logit()` for the log file, `log.c:425 rwrite()` for
-    /// the terminal. [`LogFileWriter`](crate::logfile::LogFileWriter) now owns
+    /// the terminal. `LogFileWriter` (in the `logging-sink` crate) now owns
     /// the log-file half, so a renderer feeding it must select this style;
     /// applying [`EscapeStyle::log_file`] there too would escape the backslash
     /// of an already-emitted `\#033` and corrupt the line.

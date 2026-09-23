@@ -78,6 +78,8 @@ mod config;
 mod errno_text;
 /// Upstream-compatible error and warning formatting.
 pub mod error_format;
+/// Terminal and log-file octal escaping, mirroring upstream `filtered_fwrite`.
+pub mod escape;
 mod levels;
 mod log_code;
 mod macros;
