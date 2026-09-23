@@ -51,9 +51,8 @@ to runtime work.
 ### 1.3 What counts as the hot path
 
 A site is hot if its rate is `O(files)` or `O(chunks)` for `N` files.
-Cold if it is `O(1)` per transfer (setup, shutdown). Retry-rate sites
-(bounded by `MAX_RETRY_COUNT = 2` at
-`crates/transfer/src/pipeline/job.rs:23`) are treated as cold.
+Cold if it is `O(1)` per transfer (setup, shutdown). Phase-2 redo sites
+(a file re-requested once after a failed verification) are treated as cold.
 
 ## 2. Channel taxonomy
 
