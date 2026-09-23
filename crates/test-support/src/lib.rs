@@ -19,6 +19,7 @@ pub mod lsh;
 pub mod quic_cert;
 pub mod reap;
 pub mod skip;
+pub mod transcript;
 #[cfg(unix)]
 pub mod umask;
 pub mod upstream_compat;
@@ -36,6 +37,7 @@ pub use skip::{
     locate_command_on_path, locate_workspace_binary, require_binary, require_command_on_path,
     require_unix,
 };
+pub use transcript::{TranscriptError, TranscriptRecorder, WireTranscript};
 #[cfg(unix)]
 pub use umask::umask_masked;
 pub use upstream_compat::{
