@@ -200,7 +200,8 @@ pub use pipeline::{
     PipelineConfig, PipelineState,
 };
 pub use progress::{
-    ItemizeCallback, ItemizeRow, OwnedItemizeRow, TransferProgressCallback, TransferProgressEvent,
+    DaemonFileLog, ItemizeCallback, ItemizeRow, OwnedItemizeRow, TransferProgressCallback,
+    TransferProgressEvent,
 };
 pub use transfer_state::{InvalidTransition, TransferPhase, TransferPipeline};
 
@@ -653,8 +654,25 @@ pub fn run_server_with_handshake<W: Write>(
             batch,
             itemize,
             io_timeout_reapply: None,
+            daemon_log: None,
         },
     )
+}
+
+/// Per-entry daemon transfer-log hook plus the module-format facts the transfer
+/// engine needs to gate it.
+///
+/// Supplied only by the daemon (via [`ServerTransferHooks`]) when a module has
+/// `transfer logging = yes`. `format_has_i` mirrors upstream's
+/// `logfile_format_has_i` (`clientserver.c:826`): the daemon logs non-transfer
+/// items (dirs, up-to-date files) only when the `log format` contains a `%i`
+/// escape, while transferred files are always logged. `sink` receives one call
+/// per logged entry after the transfer, in flist-index order.
+pub struct DaemonLog<'d> {
+    /// Whether the module's `log format` contains a `%i` escape.
+    pub format_has_i: bool,
+    /// Per-entry sink that renders and writes each daemon-log line.
+    pub sink: &'d mut dyn DaemonFileLog,
 }
 
 /// Optional side-channels for a server transfer.
@@ -663,7 +681,7 @@ pub fn run_server_with_handshake<W: Write>(
 /// a reasonable argument count: live progress, batch recording, the push
 /// itemize callback, and the client-receiver I/O-timeout re-apply hook.
 #[derive(Default)]
-pub struct ServerTransferHooks<'p, 'i> {
+pub struct ServerTransferHooks<'p, 'i, 'd> {
     /// Live per-file progress callback.
     pub progress: Option<&'p mut dyn TransferProgressCallback>,
     /// Batch recording sink for `--write-batch` / `--only-write-batch`.
@@ -674,6 +692,9 @@ pub struct ServerTransferHooks<'p, 'i> {
     /// `Some` only on the daemon-pull (client receiver) path.
     /// upstream: io.c:1551-1561 `read_a_msg()` case `MSG_IO_TIMEOUT`.
     pub io_timeout_reapply: Option<IoTimeoutReapply>,
+    /// Per-entry daemon transfer-log hook. `Some` only when a daemon module has
+    /// `transfer logging = yes`; drives the per-file `log_item(FLOG)` writes.
+    pub daemon_log: Option<DaemonLog<'d>>,
 }
 
 /// Runs a server transfer that may adopt a daemon-advertised `MSG_IO_TIMEOUT`.
@@ -692,13 +713,14 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     mut handshake: HandshakeResult,
     stdin: &mut dyn Read,
     mut stdout: W,
-    hooks: ServerTransferHooks<'_, '_>,
+    hooks: ServerTransferHooks<'_, '_, '_>,
 ) -> ServerResult {
     let ServerTransferHooks {
         progress,
         batch,
         itemize,
         io_timeout_reapply,
+        daemon_log,
     } = hooks;
     // upstream: options.c:2410 - `--append` implies `--inplace`, applied by the
     // same parse_arguments() every peer runs. This is the one path shared by
@@ -1131,6 +1153,13 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         match config.role {
             ServerRole::Receiver => {
                 let mut ctx = ReceiverContext::new(&handshake, config, pipeline);
+                // upstream: receiver.c:807 - a daemon receiver's `itemizing` is
+                // `logfile_format_has_i`, and every processed entry reaches
+                // `maybe_log_item()`/`log_item(FLOG)` for the module log file. Arm
+                // the per-entry FLOG collection before the transfer runs.
+                if let Some(dl) = daemon_log.as_ref() {
+                    ctx.enable_daemon_log(dl.format_has_i);
+                }
                 // upstream: flist.c:2615/2789 - recv_file_list() measures its span
                 // against the raw read counter to accumulate stats.flist_size.
                 ctx.set_raw_read_counter(std::sync::Arc::clone(&bytes_received_counter));
@@ -1174,6 +1203,18 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                     }
                 }
 
+                // upstream: the daemon receiver's per-file `log_item(FLOG)` writes
+                // (receiver.c:903 maybe_log_item / receiver.c:1273 log_item). oc
+                // collects them during the run and flushes them here in
+                // flist-index order, which is the order upstream logs them.
+                if let Some(dl) = daemon_log {
+                    for (_idx, rows) in ctx.drain_daemon_log_rows() {
+                        for (name, size, itemize) in rows {
+                            dl.sink.on_entry(&name, size, &itemize);
+                        }
+                    }
+                }
+
                 Ok(ServerStats::Receiver(stats))
             }
             ServerRole::Generator => {
@@ -1182,6 +1223,12 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 
                 let mut ctx = GeneratorContext::new(&handshake, config, pipeline);
                 ctx.batch_stats_sink = batch_stats_sink;
+                // upstream: sender.c:499/584 - a daemon sender's `itemizing` is
+                // `logfile_format_has_i`, and every processed entry reaches
+                // `maybe_log_item()`/`log_item(FLOG)` for the module log file.
+                if let Some(dl) = daemon_log.as_ref() {
+                    ctx.enable_daemon_log(dl.format_has_i);
+                }
                 // upstream: io.c:820/859 - the sender's handle_stats() reports the raw
                 // descriptor counters. Hand the generator the transport-level wire
                 // counters so it samples total_written/total_read at its handle_stats
@@ -1194,6 +1241,16 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                     Ok(stats) => stats,
                     Err(error) => break 'dispatch Err(error),
                 };
+
+                // upstream: the daemon sender's per-file `log_item(FLOG)` writes
+                // (sender.c:584 maybe_log_item / sender.c:461 log_item).
+                if let Some(dl) = daemon_log {
+                    for (_idx, rows) in ctx.drain_daemon_log_rows() {
+                        for (name, size, itemize) in rows {
+                            dl.sink.on_entry(&name, size, &itemize);
+                        }
+                    }
+                }
 
                 Ok(ServerStats::Generator(stats))
             }

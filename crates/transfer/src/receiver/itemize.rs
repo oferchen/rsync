@@ -621,6 +621,7 @@ impl ReceiverContext {
         entry: &protocol::flist::FileEntry,
         xname: Option<&[u8]>,
     ) -> std::io::Result<()> {
+        self.record_daemon_log(flist_idx, iflags, entry, xname);
         if self.collect_out_format_events() {
             self.record_itemize(flist_idx, iflags, entry, xname);
             return Ok(());
@@ -846,6 +847,7 @@ impl ReceiverContext {
         iflags: &crate::generator::ItemFlags,
         entry: &protocol::flist::FileEntry,
     ) -> std::io::Result<()> {
+        self.record_daemon_log(flist_idx, iflags, entry, None);
         if self.defer_itemize || self.collect_out_format_events() {
             self.record_itemize(flist_idx, iflags, entry, None);
             Ok(())
@@ -897,6 +899,76 @@ impl ReceiverContext {
                 .or_default()
                 .push(line);
         }
+    }
+
+    /// Arms per-file daemon-log collection for a server receiver whose module has
+    /// `transfer logging = yes`, recording whether the `log format` carries `%i`.
+    ///
+    /// Mirrors upstream `receiver.c:807` (`itemizing = logfile_format_has_i`),
+    /// which makes the whole per-entry itemize path run on the daemon regardless
+    /// of the client's `-i`, feeding `maybe_log_item()`/`log_item(FLOG)`.
+    pub(crate) fn enable_daemon_log(&mut self, format_has_i: bool) {
+        self.daemon_log_active = true;
+        self.daemon_logfile_format_has_i = format_has_i;
+    }
+
+    /// Collects one per-file daemon-log row when daemon transfer logging is armed.
+    ///
+    /// Independent of the client-visible itemize gate: this is the daemon's own
+    /// FLOG write. Transferred items are always logged (upstream
+    /// `receiver.c:1273` `log_item()` is unconditional given `logfile_format`);
+    /// non-transfer items follow `maybe_log_item()`'s `am_server` gate
+    /// (`log.c:875-885`): with `itemizing == logfile_format_has_i`, an item is
+    /// logged only when the format carries `%i` and the item is significant (or
+    /// carries a non-empty alternate-basis name).
+    ///
+    /// The `%i` string is rendered with `is_sender = false` so the direction
+    /// glyph is `>` (op `recv`, upstream `log.c:707-710` / `log.c:820`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:807` - `itemizing = am_server ? logfile_format_has_i : ...`
+    /// - `receiver.c:903` - `maybe_log_item(file, iflags, itemizing, xname)`
+    /// - `receiver.c:1273` - `log_item(log_code, file, iflags, NULL)` per transfer
+    /// - `log.c:875-885` - `maybe_log_item()`'s `am_server` FLOG gate
+    pub(in crate::receiver) fn record_daemon_log(
+        &self,
+        flist_idx: usize,
+        iflags: &crate::generator::ItemFlags,
+        entry: &protocol::flist::FileEntry,
+        xname: Option<&[u8]>,
+    ) {
+        if !self.daemon_log_active {
+            return;
+        }
+        let is_transfer = iflags.raw() & crate::generator::ItemFlags::ITEM_TRANSFER != 0;
+        if !is_transfer {
+            // upstream: log.c:875-885 maybe_log_item - am_server logs a
+            // non-transfer item only when `see_item` holds (itemizing, i.e.
+            // logfile_format_has_i, AND the item is significant or names an
+            // alternate basis) and `significant_flags || logfile_format_has_i`.
+            let significant = iflags.has_significant_flags();
+            let xname_nonempty = xname.is_some_and(|b| !b.is_empty());
+            if !self.daemon_logfile_format_has_i || !(significant || xname_nonempty) {
+                return;
+            }
+        }
+        let Some(effective) = self.itemize_effective_flags(iflags, entry) else {
+            return;
+        };
+        let ctx = self.itemize_context();
+        let itemize = crate::generator::itemize::format_iflags(&effective, entry, false, &ctx);
+        self.daemon_log_rows
+            .borrow_mut()
+            .entry(flist_idx)
+            .or_default()
+            .push((entry.path().to_path_buf(), entry.size(), itemize));
+    }
+
+    /// Drains the collected per-file daemon-log rows in ascending flist-index
+    /// order for the daemon driver to write to the module log file.
+    pub fn drain_daemon_log_rows(&self) -> crate::progress::DaemonLogRows {
+        std::mem::take(&mut *self.daemon_log_rows.borrow_mut())
     }
 
     /// Drains every buffered itemize row in ascending flist-index order,

@@ -135,6 +135,9 @@ pub(crate) fn run_pull_transfer(
             batch: batch_recording,
             itemize,
             io_timeout_reapply,
+            // The client end of a daemon transfer never writes the daemon's
+            // module log; that is the remote daemon's own FLOG sink.
+            daemon_log: None,
         },
     )
     .map_err(|e| map_server_transfer_error(e, Role::Receiver))?;

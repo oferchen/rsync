@@ -231,6 +231,19 @@ pub struct GeneratorContext {
     /// server-sender must not itemize a symlink time a non-Unix receiver cannot
     /// apply (upstream compat.c:755-759).
     pub(crate) receiver_symlink_times: bool,
+    /// True when this server sender must write per-file lines to a daemon
+    /// module's log file (`transfer logging = yes`), regardless of the client's
+    /// `-i`. Mirrors upstream `sender.c:499` (`itemizing = logfile_format_has_i`),
+    /// which routes every processed entry through
+    /// `maybe_log_item()`/`log_item(FLOG)`.
+    pub(crate) daemon_log_active: bool,
+    /// Whether the module's `log format` contains a `%i` escape (upstream
+    /// `logfile_format_has_i`). Gates non-transfer items; transfers always log.
+    pub(crate) daemon_logfile_format_has_i: bool,
+    /// Per-file daemon-log rows collected during the send, keyed by flist index
+    /// so they flush in the order upstream logs them. Each row is
+    /// `(transfer-relative name, file length, rendered %i string)`.
+    pub(crate) daemon_log_rows: std::cell::RefCell<crate::progress::DaemonLogRows>,
 }
 
 /// Handle on the `--write-batch` file, held by a client sender so it can write
@@ -354,7 +367,67 @@ impl GeneratorContext {
             wire_write_counter: None,
             wire_read_counter: None,
             receiver_symlink_times,
+            daemon_log_active: false,
+            daemon_logfile_format_has_i: false,
+            daemon_log_rows: std::cell::RefCell::new(std::collections::BTreeMap::new()),
         }
+    }
+
+    /// Arms per-file daemon-log collection for a server sender whose module has
+    /// `transfer logging = yes`, recording whether the `log format` carries `%i`.
+    ///
+    /// upstream: sender.c:499 `itemizing = am_server ? logfile_format_has_i : ...`.
+    pub fn enable_daemon_log(&mut self, format_has_i: bool) {
+        self.daemon_log_active = true;
+        self.daemon_logfile_format_has_i = format_has_i;
+    }
+
+    /// Collects one per-file daemon-log row when daemon transfer logging is armed.
+    ///
+    /// The daemon sender's own FLOG write, independent of the client's `-i`.
+    /// Transferred items always log (upstream `sender.c:461` `log_item()` is
+    /// unconditional given `logfile_format`); non-transfer items follow
+    /// `maybe_log_item()`'s `am_server` gate (`log.c:875-885`): logged only when
+    /// the format carries `%i` and the item is significant or names an alternate
+    /// basis. The `%i` string uses `is_sender = true` so the direction glyph is
+    /// `<` (op `send`, upstream `log.c:707-710` / `log.c:820`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:499` - `itemizing = am_server ? logfile_format_has_i : ...`
+    /// - `sender.c:584` - `maybe_log_item(file, iflags, itemizing, xname)`
+    /// - `sender.c:461` - `log_item(log_code, file, iflags, NULL)` per transfer
+    pub(crate) fn record_daemon_log(
+        &self,
+        ndx: usize,
+        iflags: &super::item_flags::ItemFlags,
+        xname: Option<&[u8]>,
+    ) {
+        if !self.daemon_log_active || ndx >= self.file_list.len() {
+            return;
+        }
+        let is_transfer = iflags.raw() & super::item_flags::ItemFlags::ITEM_TRANSFER != 0;
+        if !is_transfer {
+            let significant = iflags.has_significant_flags();
+            let xname_nonempty = xname.is_some_and(|b| !b.is_empty());
+            if !self.daemon_logfile_format_has_i || !(significant || xname_nonempty) {
+                return;
+            }
+        }
+        let entry = &self.file_list[ndx];
+        let ctx = self.itemize_context();
+        let itemize = itemize::format_iflags(iflags, entry, true, &ctx);
+        self.daemon_log_rows
+            .borrow_mut()
+            .entry(ndx)
+            .or_default()
+            .push((entry.path().to_path_buf(), entry.size(), itemize));
+    }
+
+    /// Drains the collected per-file daemon-log rows in ascending flist-index
+    /// order for the daemon driver to write to the module log file.
+    pub fn drain_daemon_log_rows(&self) -> crate::progress::DaemonLogRows {
+        std::mem::take(&mut *self.daemon_log_rows.borrow_mut())
     }
 
     /// Attaches the raw wire byte counters used for `handle_stats()` reporting.
