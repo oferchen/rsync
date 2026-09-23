@@ -362,6 +362,19 @@ pub(crate) struct CopyContext<'a> {
     batch_delta_sum_head: protocol::wire::SumHead,
     /// Byte offset of the reserved sum_head inside `batch_delta_buf`.
     batch_delta_sum_head_offset: usize,
+    /// Byte offset of the reserved iflags word inside `batch_delta_buf`,
+    /// or `None` when the current file's protocol predates iflags (< 29)
+    /// and `begin_batch_file_delta()` wrote no iflags word to patch.
+    ///
+    /// `begin_batch_file_delta()` reserves the slot with the bare
+    /// `ITEM_TRANSFER` bit; `record_batch_is_new()` patches in `ITEM_IS_NEW`
+    /// once `copy_file()` knows whether the destination pre-existed.
+    ///
+    /// upstream: `sender.c:468 write_ndx_and_attrs()` re-emits the exact
+    /// iflags word the generator computed in `generator.c:517 itemize()`,
+    /// and `sender.c:586,624` count `stats.created_files` only when
+    /// `ITEM_IS_NEW` is set in that word.
+    batch_delta_iflags_offset: Option<usize>,
     /// Sort metadata for each flist entry in traversal order: (name_bytes, is_dir).
     /// Used to compute the traversal→sorted index mapping that upstream's
     /// `flist_sort_and_clean()` produces after reading the batch flist.

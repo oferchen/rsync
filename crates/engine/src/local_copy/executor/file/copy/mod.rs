@@ -186,6 +186,14 @@ pub(crate) fn copy_file(
         existing_metadata = None;
     }
 
+    // upstream: generator.c:583-584 itemize() - `ITEM_IS_NEW` is decided by
+    // the pre-transfer destination stat, which has now settled (including
+    // the make-way overrides above). Patch it into the iflags word
+    // `begin_batch_file_delta()` already reserved for this file, before any
+    // token or `finalize_batch_file_delta()` call reads it. A no-op when
+    // batch mode is inactive.
+    context.record_batch_is_new(!destination_previously_existed);
+
     // upstream: generator.c:1758-1766 - `ignore_non_existing` (`--existing`)
     // is tested at `statret == -1 && stat_errno == ENOENT`, so it asks whether
     // the destination existed BEFORE the make-way removal. Reading the

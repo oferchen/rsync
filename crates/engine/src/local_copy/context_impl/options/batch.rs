@@ -316,6 +316,7 @@ impl<'a> CopyContext<'a> {
             .protocol_version;
         if proto >= 29 {
             const ITEM_TRANSFER: u16 = 0x8000;
+            self.batch_delta_iflags_offset = Some(delta_file.get_ref().len());
             delta_file
                 .write_all(&ITEM_TRANSFER.to_le_bytes())
                 .map_err(|e| {
@@ -325,6 +326,8 @@ impl<'a> CopyContext<'a> {
                         e,
                     )
                 })?;
+        } else {
+            self.batch_delta_iflags_offset = None;
         }
 
         // upstream: io.c:write_sum_head() - four i32 LE fields. Reserve the
@@ -360,6 +363,49 @@ impl<'a> CopyContext<'a> {
     pub(crate) fn record_batch_delta_geometry(&mut self, head: protocol::wire::SumHead) {
         if self.batch_delta_buf.is_some() {
             self.batch_delta_sum_head = head;
+        }
+    }
+
+    /// Patches `ITEM_IS_NEW` into the current file's reserved iflags word
+    /// when the destination did not exist before this transfer.
+    ///
+    /// `begin_batch_file_delta()` reserves the word with the bare
+    /// `ITEM_TRANSFER` bit because it runs before the destination has been
+    /// stat'd; `copy_file()` calls this once that stat is resolved, before
+    /// any token or `finalize_batch_file_delta()` call for the file. A no-op
+    /// when the destination pre-existed, batch mode is inactive, or the
+    /// protocol predates iflags (< 29, so `begin_batch_file_delta()` wrote no
+    /// word to patch).
+    ///
+    /// Without this bit, a batch this writer produced itemizes as
+    /// `>f.........` (unchanged) and contributes nothing to `--stats`
+    /// "Number of created files" when replayed by an upstream
+    /// `--read-batch` peer, instead of the correct `>f+++++++++` / counted
+    /// creation.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:583-584 itemize()` - `iflags |= ITEM_IS_NEW` when
+    ///   `statret < 0` (destination absent).
+    /// - `sender.c:468 write_ndx_and_attrs()` - re-emits that exact iflags
+    ///   word to the peer reading the batch.
+    /// - `sender.c:586,624` - `stats.created_files++` gated on
+    ///   `iflags & ITEM_IS_NEW`.
+    pub(crate) fn record_batch_is_new(&mut self, is_new: bool) {
+        if !is_new {
+            return;
+        }
+        let Some(offset) = self.batch_delta_iflags_offset else {
+            return;
+        };
+        let Some(delta_file) = self.batch_delta_buf.as_mut() else {
+            return;
+        };
+        const ITEM_IS_NEW: u16 = 0x2000;
+        let buf = delta_file.get_mut();
+        if let Some(slot) = buf.get_mut(offset..offset + 2) {
+            let current = u16::from_le_bytes([slot[0], slot[1]]);
+            slot.copy_from_slice(&(current | ITEM_IS_NEW).to_le_bytes());
         }
     }
 
