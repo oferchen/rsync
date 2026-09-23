@@ -330,6 +330,16 @@ jobs:
       - name: Dead-code census gate
         run: python3 tools/ci/dead_code_census.py gate
 
+      # Blocking gate over the two-owner unsafe-code rule in its checkable
+      # form: only platform and fast_io may declare a direct FFI dependency
+      # (libc, windows-sys, windows, nix, rustix). Every current violator is
+      # carried in tools/ci/unsafe_owner_deps_allowlist.tsv with a reason and
+      # an expiry; the gate fails on a new, unallowlisted, expired, or stale
+      # direct FFI dep. Routing the allowlisted sites onto the two owners is
+      # the deferred unsafe-migration series - the rows are pruned as it lands.
+      - name: Two-owner FFI dependency gate
+        run: python3 tools/ci/unsafe_owner_deps.py gate
+
   # ===========================================================================
   # Surface Diff - oc vs upstream user-facing surfaces
   # ---------------------------------------------------------------------------
