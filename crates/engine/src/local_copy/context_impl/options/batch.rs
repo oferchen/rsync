@@ -573,8 +573,32 @@ impl<'a> CopyContext<'a> {
         // must carry the payload exactly once per cluster.
         let suppressed = self.batch_hlink_suppressed_indices(&traversal_to_sorted);
 
-        let mut entries = std::mem::take(&mut self.batch_delta_entries);
-        entries.retain(|(traversal_idx, _)| !suppressed.contains(traversal_idx));
+        // A cluster's single payload must be shipped under the NDX of its
+        // sorted-first member, the one the replaying receiver flags
+        // FLAG_HLINK_FIRST and transfers (hlink.c:113-194 match_gnums()); a
+        // traversal-first recorder that sorts later would otherwise leave the
+        // real leader without data.
+        let cluster_leader_ndx = self.batch_hlink_cluster_leader_ndx(&traversal_to_sorted);
+        let emit_ndx = |traversal_idx: i32| -> i32 {
+            if let Some(Some(gnum)) = self.batch_entry_hlink_gnum.get(traversal_idx as usize)
+                && let Some(&leader) = cluster_leader_ndx.get(gnum)
+            {
+                return leader;
+            }
+            traversal_to_sorted
+                .get(traversal_idx as usize)
+                .copied()
+                .unwrap_or(traversal_idx)
+        };
+
+        // Resolve each kept entry to the NDX it will ship under before borrowing
+        // the codec, so the sorted-first-leader remap above and the codec's
+        // mutable borrow do not contend for `self`.
+        let mut entries: Vec<(i32, Vec<u8>)> = std::mem::take(&mut self.batch_delta_entries)
+            .into_iter()
+            .filter(|(traversal_idx, _)| !suppressed.contains(traversal_idx))
+            .map(|(traversal_idx, data)| (emit_ndx(traversal_idx), data))
+            .collect();
 
         // Write each file's delta data with the correct sorted NDX.
         let codec = self
@@ -583,17 +607,9 @@ impl<'a> CopyContext<'a> {
             .expect("batch_ndx_codec must exist when batch_delta_buf is set");
         // Sort entries by their post-sort NDX so the delta stream is in
         // ascending NDX order, matching what upstream's recv_files() expects.
-        entries.sort_by_key(|(traversal_idx, _)| {
-            traversal_to_sorted
-                .get(*traversal_idx as usize)
-                .copied()
-                .unwrap_or(*traversal_idx)
-        });
-        for (traversal_idx, data) in &entries {
-            let sorted_idx = traversal_to_sorted
-                .get(*traversal_idx as usize)
-                .copied()
-                .unwrap_or(*traversal_idx);
+        entries.sort_by_key(|(sorted_idx, _)| *sorted_idx);
+        for (sorted_idx, data) in &entries {
+            let sorted_idx = *sorted_idx;
 
             let mut ndx_buf = Vec::with_capacity(4);
             protocol::codec::NdxCodec::write_ndx(codec, &mut ndx_buf, sorted_idx).map_err(|e| {
@@ -731,6 +747,37 @@ impl<'a> CopyContext<'a> {
         self.batch_entry_hlink_gnum
             .push(assigned.map(|(leader, _)| leader));
         assigned
+    }
+
+    /// Maps each hardlink cluster to the sorted index of its sorted-first
+    /// member, keyed by the cluster's group number.
+    ///
+    /// After the replaying receiver runs `flist_sort_and_clean()` and
+    /// `match_hard_links()` (hlink.c:113-194), the *sorted-first* member of each
+    /// cluster is the one flagged `FLAG_HLINK_FIRST`, so upstream transfers its
+    /// payload and links every other member to it (`generator.c` ->
+    /// `hard_link_check()`). The cluster's single recorded payload must therefore
+    /// be emitted under that member's NDX, not under the NDX of whichever member
+    /// the traversal happened to reach first - otherwise the sorted-first leader
+    /// receives no data, is never written, and the cluster cannot be linked.
+    fn batch_hlink_cluster_leader_ndx(&self, traversal_to_sorted: &[i32]) -> HashMap<i32, i32> {
+        let mut leader_ndx: HashMap<i32, i32> = HashMap::new();
+        for (traversal_idx, gnum) in self.batch_entry_hlink_gnum.iter().enumerate() {
+            let Some(gnum) = gnum else { continue };
+            let sorted = traversal_to_sorted
+                .get(traversal_idx)
+                .copied()
+                .unwrap_or(traversal_idx as i32);
+            leader_ndx
+                .entry(*gnum)
+                .and_modify(|best| {
+                    if sorted < *best {
+                        *best = sorted;
+                    }
+                })
+                .or_insert(sorted);
+        }
+        leader_ndx
     }
 
     /// Traversal indices whose recorded delta data must not reach the batch
