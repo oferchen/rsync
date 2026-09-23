@@ -118,7 +118,6 @@ their provenance, not an assertion that any value is wrong.
 | --- | --- | --- |
 | Pipeline queue bounds (13 sites) | `crates/transfer/src/pipeline/mod.rs`, `disk_commit/config.rs`, `reorder_buffer/mod.rs`, `delta_pipeline/mod.rs`, `parallel_io.rs`, `generator/transfer/transfer_loop.rs` | Sweep each bound independently on the throughput harnesses. A bound whose sweep is flat should be derived by the governor or removed, not retuned. |
 | `SPIN_LIMIT` = 512 | `crates/transfer/src/pipeline/spsc.rs:30` | Sweep a decade either side recording wall-clock *and* idle CPU. The spin-then-park shape is measured; the threshold is not. |
-| `MAX_RETRY_COUNT` = 2 | `crates/transfer/src/pipeline/job.rs:23` | Not a sweep. A retry ceiling is a policy question against the standing no-retry preference: justify the mechanism or remove it. |
 | io_uring depth, session pool, registered buffers | `crates/fast_io/src/io_uring_depth.rs:31`, `io_uring/session_pool.rs:62`, `io_uring/registered_buffers/mod.rs:88` | Reachability first. Then a sweep with miss counters exposed and a shrink-the-pool negative control. |
 | `send_zc` slot sizing | `crates/fast_io/src/io_uring/send_zc.rs:282,291,301` | Blocked on reachability: this path was measured unreachable from an oc client. Prove entry with a counter or a syscall trace before any sweep. |
 | PBUF_RING shape (64 x 64 KiB) | `crates/fast_io/src/io_uring_common.rs:465-470` | High-fan-out sweep with a negative control. Without the control a flat result cannot separate "well sized" from "not on the path". |
