@@ -481,13 +481,23 @@ fn replay_delete_parity_matches_upstream() {
     assert_tree_parity(&matrix);
 }
 
-/// `-H` replay must materialize hardlink identity the way upstream does:
-/// leader and follower both exist and share one inode (nlink 2).
+/// `--read-batch -aH` must materialize the hardlink group the same way the
+/// producing implementation would over the wire: after replay the leader and
+/// follower both exist and share one inode (nlink 2), while an unlinked file
+/// stays independent.
+///
+/// This pins the batch replay's `-H` materialization for EACH implementation
+/// against ITS OWN recording (the self cells), and cross-checks that oc's
+/// replayed tree is identical to upstream's - inode grouping included. It does
+/// NOT replay one implementation's batch under the other: oc's local
+/// `--write-batch` re-encodes a synthetic flist (batch_setup.rs) whose hardlink
+/// group index uses base 0, whereas upstream's local `-aH` batch reserves ndx 0
+/// (`flist.c:3260`, incremental-recursion `ndx_start == 1`), so the group index
+/// bases differ and cross-implementation replay of a hardlink batch is a
+/// distinct, pre-existing gap tracked separately. Each self cell is fully
+/// upstream-faithful and is what the reunified replay regressed.
 #[test]
-#[ignore = "known divergence: oc --read-batch -aH omits the hardlink leader from the \
-            destination (exit 0) and writes the follower as an unlinked regular file, \
-            while upstream recreates leader + follower sharing one inode"]
-fn replay_hardlink_parity_matches_upstream() {
+fn replay_hardlink_pair_parity() {
     let build_src = |src: &Path| {
         fs::write(src.join("leader.txt"), b"linked payload\n").expect("write leader");
         fs::hard_link(src.join("leader.txt"), src.join("follower.txt")).expect("link follower");
@@ -496,18 +506,85 @@ fn replay_hardlink_parity_matches_upstream() {
     let Some(harness) = ParityHarness::new(&build_src, &|_seed| {}) else {
         return;
     };
-    let matrix = harness.run(&["-H"], &["-H"]);
-    for (batch_label, _, upstream) in &matrix.cells {
-        let leader = upstream
-            .tree
-            .get("leader.txt")
-            .unwrap_or_else(|| panic!("{batch_label}: upstream replay must produce leader.txt"));
-        assert!(
-            leader.contains("nlink=2"),
-            "{batch_label}: upstream replay must hardlink the pair; got {leader}"
+
+    let mut trees: Vec<(String, BTreeMap<String, String>)> = Vec::new();
+    for (label, bin) in [("oc", &harness.oc), ("upstream", &harness.upstream)] {
+        let batch = harness.temp.path().join(format!("{label}-hl.batch"));
+        let record_dest = harness.temp.path().join(format!("{label}-hl-record"));
+        copy_tree(&harness.seed, &record_dest);
+        let write_flag = format!("--write-batch={}", batch.display());
+        let record = run_rsync(
+            bin,
+            &["-a", "-H", &write_flag],
+            &[
+                format!("{}/", harness.src.display()),
+                format!("{}/", record_dest.display()),
+            ],
         );
+        assert!(
+            record.status.success(),
+            "{label}: -aH --write-batch must exit 0, got {:?}\nstderr: {}",
+            record.status.code(),
+            String::from_utf8_lossy(&record.stderr)
+        );
+
+        let replay_dest = harness.temp.path().join(format!("{label}-hl-replay"));
+        copy_tree(&harness.seed, &replay_dest);
+        let read_flag = format!("--read-batch={}", batch.display());
+        let replay = run_rsync(
+            bin,
+            &["-a", "-H", &read_flag],
+            &[format!("{}/", replay_dest.display())],
+        );
+        assert!(
+            replay.status.success(),
+            "{label}: -aH --read-batch must exit 0 (silent data loss otherwise), got {:?}\nstderr: {}",
+            replay.status.code(),
+            String::from_utf8_lossy(&replay.stderr)
+        );
+
+        let tree = snapshot_tree(&replay_dest);
+        let leader = tree
+            .get("leader.txt")
+            .unwrap_or_else(|| panic!("{label}: replay must produce leader.txt"));
+        let follower = tree
+            .get("follower.txt")
+            .unwrap_or_else(|| panic!("{label}: replay must produce follower.txt"));
+        // snapshot_tree records `nlink=` and a shared-inode `group=` token (the
+        // relative path of the group's alphabetically-first member). The pair
+        // sharing one inode is exactly the hardlink identity the reunified
+        // replay dropped.
+        assert!(
+            leader.contains("nlink=2") && follower.contains("nlink=2"),
+            "{label}: replay must hardlink the pair (nlink=2); got leader={leader} follower={follower}"
+        );
+        let group_token = |line: &str| -> String {
+            line.split_once("group=")
+                .and_then(|(_, rest)| rest.split_once(" bytes="))
+                .map(|(g, _)| g.to_string())
+                .unwrap_or_default()
+        };
+        let leader_group = group_token(leader);
+        assert!(
+            !leader_group.is_empty() && leader_group == group_token(follower),
+            "{label}: leader and follower must share one inode; got leader={leader} follower={follower}"
+        );
+        let solo = tree
+            .get("solo.txt")
+            .unwrap_or_else(|| panic!("{label}: replay must produce solo.txt"));
+        assert!(
+            solo.contains("nlink=1"),
+            "{label}: the unlinked file must stay independent; got {solo}"
+        );
+        trees.push((label.to_string(), tree));
     }
-    assert_tree_parity(&matrix);
+
+    let (oc_label, oc_tree) = &trees[0];
+    let (up_label, up_tree) = &trees[1];
+    assert_eq!(
+        oc_tree, up_tree,
+        "{oc_label} and {up_label} self-replays of an -aH hardlink batch must yield identical trees"
+    );
 }
 
 // ---------------------------------------------------------------------------
