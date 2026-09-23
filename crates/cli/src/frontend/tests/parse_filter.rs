@@ -194,15 +194,18 @@ fn parse_filter_directive_rejects_missing_pattern() {
     // NOT empty: `+   ` keeps the two extra spaces as the pattern "  " and is
     // accepted (verified against rsync 3.4.4), so only the single-separator
     // forms error here.
+    // upstream: exclude.c:1475 filter_rule_err("unexpected end of filter rule",
+    // *rulestr_ptr), rendered through rule_text (exclude.c:88-123). An argument
+    // is echoed verbatim, trailing space included.
     let error = parse_filter_directive(OsStr::new("+ "), filters::RuleSource::Argument)
         .expect_err("missing pattern should error");
     let rendered = error.to_string();
-    assert!(rendered.contains("missing a pattern"));
+    assert!(rendered.contains("unexpected end of filter rule: + "));
 
     let shorthand_error = parse_filter_directive(OsStr::new("P "), filters::RuleSource::Argument)
         .expect_err("shorthand protect requires pattern");
     let rendered = shorthand_error.to_string();
-    assert!(rendered.contains("missing a pattern"));
+    assert!(rendered.contains("unexpected end of filter rule: P "));
 
     // A whitespace-only remainder is a valid (if unusual) pattern, not an error.
     let accepted = parse_filter_directive(OsStr::new("+   "), filters::RuleSource::Argument)
@@ -227,10 +230,12 @@ fn parse_filter_directive_accepts_merge() {
 
 #[test]
 fn parse_filter_directive_rejects_merge_without_path() {
+    // upstream: exclude.c:1475 - a merge with no file name is `!len`, the same
+    // "unexpected end of filter rule" as a bare `-`.
     let error = parse_filter_directive(OsStr::new("merge "), filters::RuleSource::Argument)
         .expect_err("missing merge path should error");
     let rendered = error.to_string();
-    assert!(rendered.contains("missing a file path"));
+    assert!(rendered.contains("unexpected end of filter rule: merge "));
 }
 
 #[test]
@@ -408,6 +413,61 @@ fn parse_filter_directive_rejects_merge_with_unknown_modifier() {
         .expect_err("merge with unsupported modifier should error");
     let rendered = error.to_string();
     assert!(rendered.contains("uses unsupported modifier"));
+}
+
+#[test]
+fn parse_filter_directive_unknown_rule_mirrors_upstream_wording() {
+    // upstream: exclude.c:1363 filter_rule_err("Unknown filter rule",
+    // *rulestr_ptr), rendered through rule_text (exclude.c:88-123) and exiting
+    // RERR_SYNTAX. An argument is echoed verbatim so a typo is easy to fix.
+    let error = parse_filter_directive(OsStr::new("Zpat"), filters::RuleSource::Argument)
+        .expect_err("unknown prefix should error");
+    assert!(
+        error.to_string().contains("Unknown filter rule: Zpat"),
+        "argument-sourced: {error}"
+    );
+
+    // File-sourced: rule_text replaces the peer-chosen line so the diagnostic
+    // cannot echo a merged file's contents back (exclude.c:103-124).
+    let file_error = parse_filter_directive(
+        OsStr::new("Zpat"),
+        filters::RuleSource::File {
+            name: "m.rules",
+            line: 3,
+        },
+    )
+    .expect_err("unknown prefix from a file should error");
+    assert!(
+        file_error
+            .to_string()
+            .contains("Unknown filter rule: <rule from m.rules line 3>"),
+        "file-sourced: {file_error}"
+    );
+
+    // Non-vacuity control: a well-formed rule must still parse, or the two
+    // assertions above would pass against a parser that rejects everything.
+    parse_filter_directive(OsStr::new("- *.bak"), filters::RuleSource::Argument)
+        .expect("a valid exclude must still parse");
+}
+
+#[test]
+fn parse_filter_directive_unexpected_end_redacts_file_source() {
+    // upstream: exclude.c:1475 - an empty pattern from a file is redacted the
+    // same way as the "Unknown filter rule" case above.
+    let file_error = parse_filter_directive(
+        OsStr::new("-"),
+        filters::RuleSource::File {
+            name: "m.rules",
+            line: 1,
+        },
+    )
+    .expect_err("bare '-' from a file should error");
+    assert!(
+        file_error
+            .to_string()
+            .contains("unexpected end of filter rule: <rule from m.rules line 1>"),
+        "file-sourced: {file_error}"
+    );
 }
 
 #[test]

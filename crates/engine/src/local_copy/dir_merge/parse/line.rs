@@ -336,15 +336,15 @@ fn classify_filter_directive_line(
         return Ok(Some(ParsedFilterDirective::Clear));
     }
 
-    if let Some(directive) = parse_short_merge_directive_line(text)? {
+    if let Some(directive) = parse_short_merge_directive_line(text, source)? {
         return Ok(Some(directive));
     }
 
-    if let Some(directive) = parse_merge_directive(text)? {
+    if let Some(directive) = parse_merge_directive(text, source)? {
         return Ok(Some(directive));
     }
 
-    if let Some(directive) = parse_dir_merge_directive(text)? {
+    if let Some(directive) = parse_dir_merge_directive(text, source)? {
         return Ok(Some(directive));
     }
 
@@ -378,7 +378,9 @@ fn classify_filter_directive_line(
         // Trimming here made `+  a` match `a` where upstream matches ` a`.
         let pattern = remainder;
         if pattern.is_empty() {
-            return Err(FilterParseError::new("filter rule '+' requires a pattern"));
+            return Err(FilterParseError::unexpected_end_of_filter_rule(
+                source, text,
+            ));
         }
         let rule = FilterRule::include(pattern.to_owned());
         let rule = apply_rule_modifiers(rule, modifiers, text)?;
@@ -392,7 +394,9 @@ fn classify_filter_directive_line(
         // any further whitespace is pattern text (upstream exclude.c:1465).
         let pattern = remainder;
         if pattern.is_empty() {
-            return Err(FilterParseError::new("filter rule '-' requires a pattern"));
+            return Err(FilterParseError::unexpected_end_of_filter_rule(
+                source, text,
+            ));
         }
         let rule = FilterRule::exclude(pattern.to_owned());
         let rule = apply_rule_modifiers(rule, modifiers, text)?;
@@ -415,7 +419,9 @@ fn classify_filter_directive_line(
                           prefix_specifies_side: bool|
      -> Result<Option<ParsedFilterDirective>, FilterParseError> {
         if pattern.is_empty() {
-            return Err(FilterParseError::new("filter directive missing pattern"));
+            return Err(FilterParseError::unexpected_end_of_filter_rule(
+                source, text,
+            ));
         }
         let modifiers = parse_rule_modifiers(keyword_modifiers, text, prefix_specifies_side)?;
         let rule = builder(pattern.to_owned());

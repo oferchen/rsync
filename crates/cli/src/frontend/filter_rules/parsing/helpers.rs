@@ -3,6 +3,31 @@ use core::rsync_error;
 
 use super::rule_line::RuleLine;
 
+/// Builds upstream's `Unknown filter rule` refusal for `line`.
+///
+/// upstream: exclude.c:1363 `filter_rule_err("Unknown filter rule", *rulestr_ptr)`,
+/// which renders the rule through `rule_text` (exclude.c:88-123) and exits
+/// `RERR_SYNTAX`. The rule text crosses that same chokepoint here via
+/// `line.shown()`: a merged line is one the peer chose, so echoing it verbatim
+/// would make the parser a read-any-line oracle.
+pub(super) fn unknown_filter_rule(line: RuleLine<'_>) -> Message {
+    rsync_error!(1, format!("Unknown filter rule: {}", line.shown())).with_role(Role::Client)
+}
+
+/// Builds upstream's `unexpected end of filter rule` refusal for `line`.
+///
+/// upstream: exclude.c:1475 `filter_rule_err("unexpected end of filter rule",
+/// *rulestr_ptr)`, reached whenever a rule carries no pattern (`!len`) - a bare
+/// prefix, an empty include/exclude, or a merge/dir-merge with no file name.
+/// The rule text crosses `rule_text` (exclude.c:88-123) via `line.shown()`.
+pub(super) fn unexpected_end_of_filter_rule(line: RuleLine<'_>) -> Message {
+    rsync_error!(
+        1,
+        format!("unexpected end of filter rule: {}", line.shown())
+    )
+    .with_role(Role::Client)
+}
+
 /// Consumes exactly one rule separator (a single space, `_`, or `,`) that
 /// terminates the rule character and its modifiers, returning the rest of the
 /// line verbatim.

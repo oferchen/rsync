@@ -1,6 +1,7 @@
 use super::modifiers::split_long_keyword_tail;
 use super::types::{FilterParseError, ParsedFilterDirective};
 use crate::local_copy::filter_program::{DirMergeEnforcedKind, DirMergeOptions};
+use filters::RuleSource;
 use std::path::PathBuf;
 
 /// Parses `dir-merge` and `per-dir` directives.
@@ -13,6 +14,7 @@ use std::path::PathBuf;
 /// permitted, default file `.cvsignore`).
 pub(super) fn parse_dir_merge_directive(
     text: &str,
+    source: RuleSource<'_>,
 ) -> Result<Option<ParsedFilterDirective>, FilterParseError> {
     const DIR_MERGE_ALIASES: [&str; 2] = ["dir-merge", "per-dir"];
 
@@ -139,8 +141,11 @@ pub(super) fn parse_dir_merge_directive(
         if used_cvs_default {
             ".cvsignore"
         } else {
-            let message = format!("{label} directive '{text}' is missing a file name");
-            return Err(FilterParseError::new(message));
+            // upstream: exclude.c:1475 - a dir-merge with no file name is `!len`,
+            // the same "unexpected end of filter rule" as a bare `-`.
+            return Err(FilterParseError::unexpected_end_of_filter_rule(
+                source, text,
+            ));
         }
     } else {
         remainder
@@ -158,14 +163,14 @@ mod tests {
 
     #[test]
     fn parse_dir_merge_returns_none_for_non_dir_merge() {
-        let result = parse_dir_merge_directive("include *.txt");
+        let result = parse_dir_merge_directive("include *.txt", RuleSource::Argument);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
     #[test]
     fn parse_dir_merge_returns_none_for_short_text() {
-        let result = parse_dir_merge_directive("dir-");
+        let result = parse_dir_merge_directive("dir-", RuleSource::Argument);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -173,14 +178,14 @@ mod tests {
     #[test]
     fn parse_dir_merge_returns_none_for_prefix_only() {
         // dir-merge followed by non-whitespace/comma should not match
-        let result = parse_dir_merge_directive("dir-mergeXXX");
+        let result = parse_dir_merge_directive("dir-mergeXXX", RuleSource::Argument);
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
 
     #[test]
     fn parse_dir_merge_parses_dir_merge_prefix() {
-        let result = parse_dir_merge_directive("dir-merge .rsync-filter");
+        let result = parse_dir_merge_directive("dir-merge .rsync-filter", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -193,7 +198,7 @@ mod tests {
 
     #[test]
     fn parse_dir_merge_parses_per_dir_prefix() {
-        let result = parse_dir_merge_directive("per-dir .rsync-filter");
+        let result = parse_dir_merge_directive("per-dir .rsync-filter", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -211,7 +216,7 @@ mod tests {
     #[test]
     fn parse_dir_merge_keyword_is_case_sensitive() {
         assert!(
-            parse_dir_merge_directive("DIR-MERGE .rsync-filter")
+            parse_dir_merge_directive("DIR-MERGE .rsync-filter", RuleSource::Argument)
                 .expect("uppercase is not a parse error, just not a dir-merge")
                 .is_none()
         );
@@ -222,7 +227,7 @@ mod tests {
     /// spelling at all.
     #[test]
     fn parse_dir_merge_lower_case_keyword_still_parses() {
-        let directive = parse_dir_merge_directive("dir-merge .rsync-filter")
+        let directive = parse_dir_merge_directive("dir-merge .rsync-filter", RuleSource::Argument)
             .expect("parse")
             .expect("dir-merge directive");
         match directive {
@@ -235,7 +240,7 @@ mod tests {
 
     #[test]
     fn parse_dir_merge_with_n_modifier() {
-        let result = parse_dir_merge_directive("dir-merge,n .rsync-filter");
+        let result = parse_dir_merge_directive("dir-merge,n .rsync-filter", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -249,7 +254,7 @@ mod tests {
 
     #[test]
     fn parse_dir_merge_with_e_modifier() {
-        let result = parse_dir_merge_directive("dir-merge,e .rsync-filter");
+        let result = parse_dir_merge_directive("dir-merge,e .rsync-filter", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -262,7 +267,7 @@ mod tests {
 
     #[test]
     fn parse_dir_merge_with_minus_modifier() {
-        let result = parse_dir_merge_directive("dir-merge,- .rsync-filter");
+        let result = parse_dir_merge_directive("dir-merge,- .rsync-filter", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -275,7 +280,7 @@ mod tests {
 
     #[test]
     fn parse_dir_merge_with_plus_modifier() {
-        let result = parse_dir_merge_directive("dir-merge,+ .rsync-filter");
+        let result = parse_dir_merge_directive("dir-merge,+ .rsync-filter", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -288,31 +293,31 @@ mod tests {
 
     #[test]
     fn parse_dir_merge_error_plus_and_minus() {
-        let result = parse_dir_merge_directive("dir-merge,+- .rsync-filter");
+        let result = parse_dir_merge_directive("dir-merge,+- .rsync-filter", RuleSource::Argument);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_dir_merge_error_minus_and_plus() {
-        let result = parse_dir_merge_directive("dir-merge,-+ .rsync-filter");
+        let result = parse_dir_merge_directive("dir-merge,-+ .rsync-filter", RuleSource::Argument);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_dir_merge_error_unknown_modifier() {
-        let result = parse_dir_merge_directive("dir-merge,x .rsync-filter");
+        let result = parse_dir_merge_directive("dir-merge,x .rsync-filter", RuleSource::Argument);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_dir_merge_error_missing_filename() {
-        let result = parse_dir_merge_directive("dir-merge ");
+        let result = parse_dir_merge_directive("dir-merge ", RuleSource::Argument);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_dir_merge_c_modifier_defaults_cvsignore() {
-        let result = parse_dir_merge_directive("dir-merge,C");
+        let result = parse_dir_merge_directive("dir-merge,C", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -336,7 +341,7 @@ mod tests {
             "dir-merge,P f",
         ] {
             assert!(
-                parse_dir_merge_directive(directive).is_err(),
+                parse_dir_merge_directive(directive, RuleSource::Argument).is_err(),
                 "{directive} must be rejected - upstream matches modifiers case-sensitively"
             );
         }
@@ -353,7 +358,7 @@ mod tests {
             "dir-merge,p f",
         ] {
             assert!(
-                parse_dir_merge_directive(directive).is_ok(),
+                parse_dir_merge_directive(directive, RuleSource::Argument).is_ok(),
                 "{directive} is the correctly-cased spelling and must parse"
             );
         }
@@ -363,9 +368,10 @@ mod tests {
     /// FILTRULES_FROM_CONTAINER (exclude.c:1229) and so reaches the merged rules.
     #[test]
     fn parse_dir_merge_p_modifier_marks_rules_perishable() {
-        let directive = parse_dir_merge_directive("dir-merge,p .rsync-filter")
-            .expect("parses")
-            .expect("directive");
+        let directive =
+            parse_dir_merge_directive("dir-merge,p .rsync-filter", RuleSource::Argument)
+                .expect("parses")
+                .expect("directive");
         match directive {
             ParsedFilterDirective::DirMerge { options, .. } => {
                 assert!(options.perishable());
@@ -374,7 +380,7 @@ mod tests {
         }
         // Without `p` the flag must stay clear, or the assertion above holds for
         // the wrong reason.
-        let plain = parse_dir_merge_directive("dir-merge .rsync-filter")
+        let plain = parse_dir_merge_directive("dir-merge .rsync-filter", RuleSource::Argument)
             .expect("parses")
             .expect("directive");
         match plain {
@@ -390,17 +396,17 @@ mod tests {
     /// rejection is order-dependent: `:-C` is legal, `:C-` is not.
     #[test]
     fn parse_dir_merge_cvs_modifier_forbids_a_later_sign_modifier() {
-        assert!(parse_dir_merge_directive("dir-merge,C- f").is_err());
-        assert!(parse_dir_merge_directive("dir-merge,C+ f").is_err());
-        assert!(parse_dir_merge_directive("dir-merge,CC f").is_err());
+        assert!(parse_dir_merge_directive("dir-merge,C- f", RuleSource::Argument).is_err());
+        assert!(parse_dir_merge_directive("dir-merge,C+ f", RuleSource::Argument).is_err());
+        assert!(parse_dir_merge_directive("dir-merge,CC f", RuleSource::Argument).is_err());
         // The reverse order is accepted upstream - `C` only guards what follows it.
-        assert!(parse_dir_merge_directive("dir-merge,-C f").is_ok());
-        assert!(parse_dir_merge_directive("dir-merge,+C f").is_ok());
+        assert!(parse_dir_merge_directive("dir-merge,-C f", RuleSource::Argument).is_ok());
+        assert!(parse_dir_merge_directive("dir-merge,+C f", RuleSource::Argument).is_ok());
     }
 
     #[test]
     fn parse_dir_merge_multiple_modifiers() {
-        let result = parse_dir_merge_directive("dir-merge,ne .rsync-filter");
+        let result = parse_dir_merge_directive("dir-merge,ne .rsync-filter", RuleSource::Argument);
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
@@ -413,7 +419,7 @@ mod tests {
     }
 
     fn dir_merge_name(text: &str) -> PathBuf {
-        match parse_dir_merge_directive(text)
+        match parse_dir_merge_directive(text, RuleSource::Argument)
             .expect("not a parse error")
             .expect("the dir-merge keyword matches")
         {

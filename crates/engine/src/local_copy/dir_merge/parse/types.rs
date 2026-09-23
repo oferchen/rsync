@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::local_copy::filter_program::{DirMergeOptions, ExcludeIfPresentRule};
-use filters::FilterRule;
+use filters::{FilterRule, RuleSource};
 
 /// AST node produced by parsing a single line of a per-directory merge file.
 #[derive(Debug)]
@@ -58,6 +58,20 @@ impl FilterParseError {
         Self {
             message: message.into(),
         }
+    }
+
+    /// Builds upstream's `unexpected end of filter rule` refusal for `text`.
+    ///
+    /// upstream: exclude.c:1475 `filter_rule_err("unexpected end of filter
+    /// rule", *rulestr_ptr)`, reached whenever a rule carries no pattern
+    /// (`!len`) - a bare prefix, an empty include/exclude, or a merge/dir-merge
+    /// with no file name. The rule text crosses `rule_text` (exclude.c:88-123)
+    /// via `source.rule_text`, so a line read from a merged file is redacted.
+    pub(crate) fn unexpected_end_of_filter_rule(source: RuleSource<'_>, text: &str) -> Self {
+        Self::new(format!(
+            "unexpected end of filter rule: {}",
+            source.rule_text(text)
+        ))
     }
 }
 
