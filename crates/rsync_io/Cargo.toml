@@ -117,7 +117,12 @@ ssh-socketpair-stderr = ["dep:tracing"]
 [target.'cfg(unix)'.dependencies]
 platform = { path = "../platform" }
 
+# `platform` is a unix-only production dependency above, but the token-expand
+# and ssh_config test modules use `platform::env::EnvGuard` to serialise
+# env-mutating tests on every target. Declare it as an all-target dev
+# dependency so those cross-platform tests compile on Windows too.
 [dev-dependencies]
+platform = { path = "../platform" }
 proptest = { workspace = true }
 rand = { workspace = true }
 tempfile = { workspace = true }
