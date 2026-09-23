@@ -82,6 +82,7 @@ mod delta;
 mod diagnostics;
 mod file_list;
 mod filters;
+pub mod flist_segment;
 pub mod io_error_flags;
 mod item_flags;
 pub mod itemize;
