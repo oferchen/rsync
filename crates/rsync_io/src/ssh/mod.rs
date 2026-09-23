@@ -85,6 +85,7 @@
 //! `aux_channel.rs` for that path.
 
 /// The single ssh_config tokeniser, shared by both config readers.
+#[cfg(any(feature = "ssh-config-parse", feature = "embedded-ssh"))]
 mod argv_split;
 #[cfg(all(feature = "async-ssh", feature = "ssh-socketpair-stderr"))]
 mod async_stderr_drain;
