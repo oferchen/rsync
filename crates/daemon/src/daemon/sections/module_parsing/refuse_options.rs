@@ -872,3 +872,312 @@ mod capability_alias_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod short_options_drift_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    /// Every short letter in upstream's `long_options[]` (`options.c:609-870`),
+    /// paired with the `longName` on the same row. `None` marks the three rows
+    /// upstream leaves NULL - `-D` (:679), `-F` (:747) and `-P` (:773) - which
+    /// popt matches by letter only.
+    ///
+    /// This is the ground truth the [`SHORT_OPTIONS`] table must not drift from.
+    /// It is transcribed by hand, so
+    /// [`the_embedded_reference_matches_the_upstream_source`] re-derives it from
+    /// the C source whenever that source is present and fails if the two differ,
+    /// keeping this constant honest across upstream version bumps.
+    const UPSTREAM_SHORT_LETTERS: &[(char, Option<&str>)] = &[
+        ('V', Some("version")),
+        ('v', Some("verbose")),
+        ('q', Some("quiet")),
+        ('h', Some("human-readable")),
+        ('n', Some("dry-run")),
+        ('a', Some("archive")),
+        ('r', Some("recursive")),
+        ('d', Some("dirs")),
+        ('p', Some("perms")),
+        ('E', Some("executability")),
+        ('A', Some("acls")),
+        ('X', Some("xattrs")),
+        ('t', Some("times")),
+        ('U', Some("atimes")),
+        ('N', Some("crtimes")),
+        ('O', Some("omit-dir-times")),
+        ('J', Some("omit-link-times")),
+        ('@', Some("modify-window")),
+        ('o', Some("owner")),
+        ('g', Some("group")),
+        ('D', None),
+        ('l', Some("links")),
+        ('L', Some("copy-links")),
+        ('k', Some("copy-dirlinks")),
+        ('K', Some("keep-dirlinks")),
+        ('H', Some("hard-links")),
+        ('R', Some("relative")),
+        ('I', Some("ignore-times")),
+        ('x', Some("one-file-system")),
+        ('u', Some("update")),
+        ('S', Some("sparse")),
+        ('F', None),
+        ('f', Some("filter")),
+        ('C', Some("cvs-exclude")),
+        ('W', Some("whole-file")),
+        ('c', Some("checksum")),
+        ('B', Some("block-size")),
+        ('y', Some("fuzzy")),
+        ('z', Some("compress")),
+        ('P', None),
+        ('m', Some("prune-empty-dirs")),
+        ('i', Some("itemize-changes")),
+        ('b', Some("backup")),
+        ('0', Some("from0")),
+        ('s', Some("secluded-args")),
+        ('e', Some("rsh")),
+        ('T', Some("temp-dir")),
+        ('4', Some("ipv4")),
+        ('6', Some("ipv6")),
+        ('8', Some("8-bit-output")),
+        ('M', Some("remote-option")),
+    ];
+
+    /// The three letters upstream leaves NULL where oc assigns a `long_name`
+    /// anyway, each over-refusing (fail CLOSED) as documented on the
+    /// [`SHORT_OPTIONS`] rows. Any oc-specific `long_name` on a NULL upstream row
+    /// OUTSIDE this set is a bug, not a policy choice, so the drift test rejects
+    /// it.
+    const DOCUMENTED_NULL_ROW_DIVERGENCES: &[(char, &str)] =
+        &[('D', "devices"), ('F', "filter"), ('P', "partial")];
+
+    /// The refuse matcher walks `SHORT_OPTIONS` and can only refuse a bundled
+    /// letter it holds a row for, so a letter upstream ships but oc drops is a
+    /// silent refusal BYPASS, and a letter oc invents over-refuses. Neither may
+    /// happen unnoticed.
+    #[test]
+    fn short_options_covers_exactly_upstreams_short_letters() {
+        let oc: std::collections::BTreeSet<char> =
+            SHORT_OPTIONS.iter().map(|opt| opt.letter).collect();
+        let upstream: std::collections::BTreeSet<char> = UPSTREAM_SHORT_LETTERS
+            .iter()
+            .map(|(letter, _)| *letter)
+            .collect();
+
+        let missing: Vec<char> = upstream.difference(&oc).copied().collect();
+        let invented: Vec<char> = oc.difference(&upstream).copied().collect();
+        assert!(
+            missing.is_empty(),
+            "SHORT_OPTIONS drops upstream short letters (refusal bypass): {missing:?}"
+        );
+        assert!(
+            invented.is_empty(),
+            "SHORT_OPTIONS invents letters upstream lacks (over-refusal): {invented:?}"
+        );
+        assert_eq!(
+            SHORT_OPTIONS.len(),
+            UPSTREAM_SHORT_LETTERS.len(),
+            "a duplicate letter row would pass the set check but skew the count"
+        );
+    }
+
+    /// A letter's `long_name` is the spelling a `refuse options` rule matches it
+    /// by, so a wrong mapping silently refuses the wrong option. Every non-NULL
+    /// upstream row must map identically; the only tolerated divergences are the
+    /// three NULL rows oc deliberately names.
+    #[test]
+    fn short_options_long_names_match_upstream_except_documented_null_rows() {
+        let divergences: BTreeMap<char, &str> =
+            DOCUMENTED_NULL_ROW_DIVERGENCES.iter().copied().collect();
+
+        for &(letter, upstream_long) in UPSTREAM_SHORT_LETTERS {
+            let oc = lookup_short(letter)
+                .unwrap_or_else(|| panic!("SHORT_OPTIONS is missing letter {letter:?}"));
+            match upstream_long {
+                Some(name) => assert_eq!(
+                    oc.long_name,
+                    Some(name),
+                    "-{letter} must map to --{name} to match upstream long_options[]"
+                ),
+                None => {
+                    let allowed = divergences.get(&letter).copied();
+                    assert_eq!(
+                        oc.long_name, allowed,
+                        "-{letter} has a NULL longName upstream; oc may keep only its \
+                         documented over-refusing alias, nothing else"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Parses the `{"longName", 'x', ...}` / `{0, 'x', ...}` rows of upstream's
+    /// `long_options[]`, returning `(shortName, longName)` for every row that
+    /// carries a short letter. Rows whose short field is `0` (the `no-*` toggles
+    /// and the daemon-mode options) carry no letter and are skipped, matching the
+    /// subset [`SHORT_OPTIONS`] tracks.
+    fn parse_upstream_long_options(src: &str) -> BTreeMap<char, Option<String>> {
+        let start = src
+            .find("static struct poptOption long_options[] = {")
+            .expect("upstream long_options[] table not found");
+        let mut out = BTreeMap::new();
+        for line in src[start..].lines().skip(1) {
+            let line = line.trim_start();
+            let Some(body) = line.strip_prefix('{') else {
+                continue;
+            };
+            // Terminator row `{0,0,0,0, 0, 0, 0}` ends the table.
+            if body.trim_start().starts_with("0,0") {
+                break;
+            }
+            let (long_name, rest) = if let Some(after) = body.strip_prefix('"') {
+                let end = after.find('"').expect("unterminated longName string");
+                (Some(after[..end].to_owned()), &after[end + 1..])
+            } else {
+                // A bare `0` longName (the three NULL rows).
+                (None, body.trim_start().strip_prefix('0').unwrap_or(body))
+            };
+            // Advance to the short-letter field, immediately after the next `,`.
+            let Some(comma) = rest.find(',') else {
+                continue;
+            };
+            let short_field = rest[comma + 1..].trim_start();
+            let mut chars = short_field.chars();
+            if chars.next() != Some('\'') {
+                // Short field is `0`: no bundled letter for this row.
+                continue;
+            }
+            let letter = chars.next().expect("empty char literal in long_options[]");
+            out.insert(letter, long_name);
+        }
+        out
+    }
+
+    /// Re-derives [`UPSTREAM_SHORT_LETTERS`] from the upstream C source and fails
+    /// if the hand-transcribed constant has drifted from it. This is the single
+    /// source of truth: the constant is only trustworthy because this test pins
+    /// it to `options.c`. Skips (does not fail) when the interop source tree is
+    /// absent, per the project rule that tests needing external resources degrade
+    /// gracefully; the two constant-vs-`SHORT_OPTIONS` tests above still run.
+    #[test]
+    fn the_embedded_reference_matches_the_upstream_source() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/interop/upstream-src/rsync-3.5.0/options.c");
+        let Ok(src) = std::fs::read_to_string(&path) else {
+            eprintln!(
+                "skipping: upstream options.c not present at {} (fetch via tools/ci/run_interop.sh)",
+                path.display()
+            );
+            return;
+        };
+
+        let parsed = parse_upstream_long_options(&src);
+        let expected: BTreeMap<char, Option<String>> = UPSTREAM_SHORT_LETTERS
+            .iter()
+            .map(|&(letter, long)| (letter, long.map(str::to_owned)))
+            .collect();
+        assert_eq!(
+            parsed, expected,
+            "UPSTREAM_SHORT_LETTERS has drifted from options.c long_options[]; \
+             update the constant AND SHORT_OPTIONS to the new upstream table"
+        );
+    }
+}
+
+#[cfg(test)]
+mod bundle_scan_tests {
+    use super::*;
+
+    fn module_refusing(rules: &[&str]) -> ModuleDefinition {
+        ModuleDefinition {
+            refuse_options: rules.iter().map(|rule| (*rule).to_owned()).collect(),
+            ..ModuleDefinition::default()
+        }
+    }
+
+    fn refused(rules: &[&str], args: &[&str]) -> Option<String> {
+        let module = module_refusing(rules);
+        let owned: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
+        refused_client_arg(&module, &owned)
+    }
+
+    /// The five short letters the pre-consolidation 46-arm map lacked - `@`, `0`,
+    /// `4`, `6`, `8` (PR #7262 folded the drifted 46/41-arm maps into one 51-row
+    /// table). Absent from that map, `lookup_short` returned `None` for them, so
+    /// a bundled `-0`/`-4`/`-6`/`-8` slipped past the refuse list entirely. Each
+    /// tuple is (bundled arg, refuse rule, reported option).
+    #[test]
+    fn the_five_restored_letters_are_refusable_in_a_bundle() {
+        let cases = [
+            ("-@", "modify-window", "--modify-window"),
+            ("-0", "from0", "--from0"),
+            ("-4", "ipv4", "--ipv4"),
+            ("-6", "ipv6", "--ipv6"),
+            ("-8", "8-bit-output", "--8-bit-output"),
+        ];
+        for (arg, rule, reported) in cases {
+            assert_eq!(
+                refused(&[rule], &[arg]),
+                Some(reported.to_owned()),
+                "`refuse options = {rule}` must reject a bundled {arg}"
+            );
+        }
+    }
+
+    /// A byte the table has no row for must NOT end the bundle scan: upstream is
+    /// position-independent (popt marks a refused entry wherever it sits), so a
+    /// leading unknown byte cannot be used to smuggle a refused letter behind it.
+    /// `-9z` puts the unknown `9` before the refused `z`.
+    ///
+    /// upstream: options.c:1040 rewrites `op->val`, :1934 returns it - the mark
+    /// is independent of position in the bundle.
+    #[test]
+    fn an_unknown_byte_does_not_end_the_bundle_scan() {
+        assert_eq!(
+            refused(&["compress"], &["-9z"]),
+            Some("--compress".to_owned()),
+            "an unknown leading byte must not hide the refused -z behind it"
+        );
+    }
+
+    /// The dot-suffix capability string is skipped, but every byte before the `.`
+    /// is examined: the scanner must match the SUPERSET of what the option
+    /// decoder acts on, because oc's two readers of the bundle cannot be taught
+    /// arity independently without opening a bypass. So the argument digits of an
+    /// arg-taking flag (`-B4096`) are scanned as if they were option letters, and
+    /// the `4` of `4096` trips a `refuse options = ipv4` rule.
+    ///
+    /// Over-refusing an argument byte fails CLOSED and is the deliberate cost of
+    /// not modelling arity (see the `refused_client_arg` scan comment). This test
+    /// pins that behaviour: an arity-aware scan that skipped `-B`'s value would
+    /// return `None` here and reopen the bypass this guards.
+    #[test]
+    fn argument_bytes_are_scanned_as_option_letters() {
+        assert_eq!(
+            refused(&["ipv4"], &["-B4096"]),
+            Some("--ipv4".to_owned()),
+            "the `4` inside -B's argument must be scanned, proving no arity skipping"
+        );
+        assert_eq!(
+            refused(&["compress"], &["-B4096z"]),
+            Some("--compress".to_owned()),
+            "a trailing -z after an arg-taking flag must still be refused"
+        );
+    }
+
+    /// The dot-suffix (e.g. `-e.LsfxCIvu`, `.iLsfx`) is the capability string,
+    /// not options, and is skipped - matching where the decoder stops. A rule
+    /// naming a letter that appears only after the `.` must not fire.
+    #[test]
+    fn the_dot_capability_suffix_is_not_scanned() {
+        assert_eq!(
+            refused(&["xattrs"], &["-e.LsfxCIvu"]),
+            None,
+            "the X-less capability suffix carries no refusable options"
+        );
+        assert_eq!(
+            refused(&["compress"], &["-e.iLsfxCIvuz"]),
+            None,
+            "a letter after the dot is part of the capability string, not an option"
+        );
+    }
+}
