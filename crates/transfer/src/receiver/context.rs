@@ -413,6 +413,23 @@ pub struct ReceiverContext {
     ///
     /// upstream: generator.c:582-593 - `itemize()` wire emission gate.
     pub(in crate::receiver) server_no_transfer_itemize: RefCell<Vec<(usize, u16)>>,
+    /// True when this server receiver must write per-file lines to a daemon
+    /// module's log file (`transfer logging = yes`). Set by
+    /// [`Self::enable_daemon_log`] before the transfer runs. Independent of the
+    /// client's `-i`: upstream's daemon receiver logs every processed entry via
+    /// `maybe_log_item()`/`log_item(FLOG)` regardless of what the client requested
+    /// (`receiver.c:807,903,1273`).
+    pub(in crate::receiver) daemon_log_active: bool,
+    /// Whether the module's `log format` contains a `%i` escape (upstream
+    /// `logfile_format_has_i`, `clientserver.c:826`). Gates whether non-transfer
+    /// items (dirs, up-to-date files) are logged; transferred files are always
+    /// logged.
+    pub(in crate::receiver) daemon_logfile_format_has_i: bool,
+    /// Per-file daemon-log rows collected during the transfer, keyed by flist
+    /// index so they flush in the order upstream logs them. Each row is
+    /// `(transfer-relative name, file length, rendered %i string)`. Drained by
+    /// the daemon driver after the transfer into the module's `log format`.
+    pub(in crate::receiver) daemon_log_rows: RefCell<crate::progress::DaemonLogRows>,
     /// Per-type tally of entries this receiver created (destination absent
     /// before the transfer), keyed by `ITEM_IS_NEW`. Reconstructs the
     /// `--stats` "Number of created files" breakdown locally, exactly as
@@ -575,6 +592,9 @@ impl ReceiverContext {
             progress_active: false,
             hardlink_follower_echoes: std::cell::Cell::new(0),
             server_no_transfer_itemize: RefCell::new(Vec::new()),
+            daemon_log_active: false,
+            daemon_logfile_format_has_i: false,
+            daemon_log_rows: RefCell::new(BTreeMap::new()),
             created_stats: std::cell::Cell::new(protocol::stats::CreatedStats::new()),
             got_xfer_error: std::cell::Cell::new(false),
             delayed_delete_victims: Vec::new(),

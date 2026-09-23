@@ -573,6 +573,11 @@ impl GeneratorContext {
         xname: Option<&[u8]>,
         itemize_cb: &mut Option<&mut dyn super::super::ItemizeCallback>,
     ) -> io::Result<()> {
+        // upstream: sender.c:584 maybe_log_item / sender.c:461 log_item - a daemon
+        // sender writes each processed entry to its module log file regardless of
+        // the client's `-i`. Collect the FLOG row before the client-visible gate
+        // below (which upstream reaches only when !am_server).
+        self.record_daemon_log(ndx, iflags, xname);
         // upstream: log.c:822-823 - log_item renders `stdout_format` (a custom
         // `--out-format`) whenever it is set, independent of `-i`. So the sender
         // emits the itemize row under `-i` OR a custom out-format; the client

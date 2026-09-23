@@ -321,22 +321,75 @@ fn build_handshake_result(
     }
 }
 
-/// Runs the daemon server body via the threaded [`run_server_with_handshake`].
+/// Runs the daemon server body via the threaded
+/// [`run_server_with_handshake_adopting`].
+///
+/// `daemon_log` carries the per-file FLOG sink for a module with
+/// `transfer logging = yes`; every other hook stays `None` on the daemon path.
 fn run_daemon_transfer(
     config: ServerConfig,
     handshake: HandshakeResult,
     read_stream: &mut dyn Read,
     write_stream: &mut dyn Write,
+    daemon_log: Option<DaemonLog<'_>>,
 ) -> ServerResult {
-    run_server_with_handshake(
+    run_server_with_handshake_adopting(
         config,
         handshake,
         read_stream,
         write_stream,
-        None,
-        None,
-        None,
+        ServerTransferHooks {
+            daemon_log,
+            ..ServerTransferHooks::default()
+        },
     )
+}
+
+/// Renders one per-file daemon transfer-log line into the module's `log format`.
+///
+/// This is the daemon's own `log_item(FLOG)` write (upstream `log.c:866-874`),
+/// invoked once per processed entry by the transfer engine after the transfer,
+/// in flist-index order. The `%i` string is pre-rendered with the correct
+/// direction glyph by the sending/receiving context; here it only fills the
+/// per-file `%f`/`%l`/`%i` fields of the module format alongside the constant
+/// connection fields.
+struct DaemonFileLogWriter<'a> {
+    log: &'a SharedLogSink,
+    fmt: String,
+    operation: TransferOperation,
+    hostname: String,
+    remote_addr: String,
+    module_name: String,
+    module_path: String,
+    pid: u32,
+}
+
+impl DaemonFileLog for DaemonFileLogWriter<'_> {
+    fn on_entry(&mut self, name: &std::path::Path, size: u64, itemize: &str) {
+        // upstream: log.c:664 `%t` renders timestring(time(NULL)) at the moment
+        // the line is written; per-file lines flush right after the transfer.
+        let timestamp = logging_sink::logfile::format_log_timestamp(SystemTime::now());
+        let filename = name.to_string_lossy();
+        let log_ctx = LogFormatContext {
+            operation: self.operation,
+            hostname: &self.hostname,
+            remote_addr: &self.remote_addr,
+            module_name: &self.module_name,
+            username: "",
+            filename: &filename,
+            file_length: size,
+            pid: self.pid,
+            module_path: &self.module_path,
+            timestamp: &timestamp,
+            // upstream renders %b/%c from per-file byte counters; oc's per-entry
+            // FLOG row carries name/length/%i only, so byte-count escapes render
+            // as 0 for now. The default and %i-bearing formats do not use them.
+            bytes_transferred: 0,
+            bytes_checksumed: 0,
+            itemize_string: itemize,
+        };
+        log_transfer(&self.fmt, &log_ctx, self.log);
+    }
 }
 
 /// Executes the server transfer and logs the result.
@@ -367,12 +420,39 @@ fn execute_transfer(
         log_message(log, &rsync_info!(banner).with_role(Role::Daemon));
     }
 
+    // upstream: clientserver.c:823-826 - a module with `transfer logging = yes`
+    // makes the daemon write one `log_item(FLOG)` line per processed file. Build
+    // the per-file sink so the transfer engine can render each entry into the
+    // module's `log format`; `%i` renders on the daemon path whenever the format
+    // carries it, since `logfile_format_has_i` is set from the module format
+    // independently of the client's `-i`.
+    let mut daemon_log_writer = ctx.log_sink.filter(|_| module.transfer_logging).map(|log| {
+        let operation = match role {
+            ServerRole::Generator => TransferOperation::Send,
+            ServerRole::Receiver => TransferOperation::Recv,
+        };
+        DaemonFileLogWriter {
+            log,
+            fmt: effective_log_format(module).to_string(),
+            operation,
+            hostname: ctx.host_display().to_string(),
+            remote_addr: ctx.peer_ip.to_string(),
+            module_name: ctx.request.to_string(),
+            module_path: module.path.display().to_string(),
+            pid: std::process::id(),
+        }
+    });
+    let daemon_log = daemon_log_writer.as_mut().map(|w| DaemonLog {
+        format_has_i: log_format_has_i(&w.fmt),
+        sink: w,
+    });
+
     // Use standard buffered I/O for daemon socket communication.
     // io_uring SEND blocks in submit_and_wait() during bidirectional protocol
     // exchanges (NDX_DONE, stats, goodbye) when TCP backpressure occurs,
     // causing 10-second hangs. Standard I/O handles partial writes correctly,
     // matching upstream rsync's socket I/O model.
-    let result = run_daemon_transfer(config, handshake, read_stream, write_stream);
+    let result = run_daemon_transfer(config, handshake, read_stream, write_stream, daemon_log);
 
     // Diagnostics emitted while the transfer ran go to the daemon log.
     //
@@ -411,38 +491,12 @@ fn execute_transfer(
     match result {
         Ok(server_stats) => {
             if let Some(log) = ctx.log_sink {
-                if module.transfer_logging {
-                    let operation = match role {
-                        ServerRole::Generator => TransferOperation::Send,
-                        ServerRole::Receiver => TransferOperation::Recv,
-                    };
-                    let addr_str = ctx.peer_ip.to_string();
-                    let path_str = module.path.display().to_string();
-                    let pid = std::process::id();
-                    // upstream: log.c:664 `%t` renders timestring(time(NULL)) -
-                    // the same localtime formatter that stamps log-file lines.
-                    let timestamp = logging_sink::logfile::format_log_timestamp(SystemTime::now());
-
-                    let log_ctx = LogFormatContext {
-                        operation,
-                        hostname: ctx.host_display(),
-                        remote_addr: &addr_str,
-                        module_name: ctx.request,
-                        username: "",
-                        filename: "",
-                        file_length: 0,
-                        pid,
-                        module_path: &path_str,
-                        timestamp: &timestamp,
-                        bytes_transferred: 0,
-                        bytes_checksumed: 0,
-                        itemize_string: "",
-                    };
-
-                    let fmt = effective_log_format(module);
-                    log_transfer(fmt, &log_ctx, log);
-                }
-
+                // The per-file transfer-log lines are written by the transfer
+                // engine's daemon-log hook (see `DaemonFileLogWriter`), one row
+                // per processed entry in flist-index order - mirroring upstream's
+                // per-file `log_item(FLOG)` (receiver.c:1273 / sender.c:461).
+                // Only the totals trailer is emitted here.
+                //
                 // upstream: cleanup.c:222-226 - `am_daemon` always runs
                 // log_exit(), whose FLOG totals trailer
                 // `sent %s bytes  received %s bytes  total size %s`
