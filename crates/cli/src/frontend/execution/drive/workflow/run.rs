@@ -293,6 +293,11 @@ where
     // boundary escapes a filename operand's bytes with the same `use_isprint`
     // switch upstream's `rwrite()` applies (log.c:425 `!allow_8bit_chars`).
     crate::frontend::progress::diagnostic::set_eight_bit_output(eight_bit_output);
+    // Publish the same decision process-wide so the transfer engine's remote-frame
+    // sink (a demuxed MSG_INFO/MSG_ERROR from the peer, written straight to the
+    // terminal) escapes with the same switch. This mirrors upstream's file-scope
+    // `allow_8bit_chars` global, which every `rwrite()` boundary reads (log.c:425).
+    logging::escape::set_eight_bit_output(eight_bit_output);
 
     let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);
     logging::init(verbosity_config);
