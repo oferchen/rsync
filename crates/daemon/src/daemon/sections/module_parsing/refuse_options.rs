@@ -871,4 +871,104 @@ mod capability_alias_tests {
             "a wildcard rule must not reach --del, which the glob does not match"
         );
     }
+
+    /// Drift guard: oc's [`SHORT_OPTIONS`] letter column must equal upstream's
+    /// complete `long_options[]` short-name set, letter for letter. The two
+    /// derive from one popt table upstream but are transcribed by hand here, so
+    /// an upstream bump that adds or drops a short option must redden this test
+    /// rather than silently leaving oc's refuse matcher blind to a letter (or
+    /// refusing one upstream no longer knows).
+    ///
+    /// The oracle below is every non-zero `shortName` in upstream
+    /// `options.c:611-869` (`long_options[]`, opening brace at :609, terminator
+    /// `{0,0,0,0, 0, 0, 0}` at :870), in source order. Three rows carry a NULL
+    /// `longName` and are matched by letter only: `D` (options.c:679), `F`
+    /// (:751) and `P` (:785). `long_daemon_options[]` (options.c:873) is out of
+    /// scope: the refuse scan walks only `long_options[]`.
+    ///
+    /// upstream: options.c:609-871 - the single `long_options[]` popt table.
+    #[test]
+    fn short_option_letters_match_upstream_long_options_table() {
+        use std::collections::BTreeSet;
+
+        // Every non-zero shortName in options.c:611-869, in source order.
+        const UPSTREAM_SHORT_LETTERS: &[char] = &[
+            'V', // version          options.c:612
+            'v', // verbose          options.c:613
+            'q', // quiet            options.c:621
+            'h', // human-readable   options.c:625
+            'n', // dry-run          options.c:628
+            'a', // archive          options.c:629
+            'r', // recursive        options.c:630
+            'd', // dirs             options.c:637
+            'p', // perms            options.c:642
+            'E', // executability    options.c:645
+            'A', // acls             options.c:646
+            'X', // xattrs           options.c:649
+            't', // times            options.c:652
+            'U', // atimes           options.c:655
+            'N', // crtimes          options.c:660
+            'O', // omit-dir-times   options.c:663
+            'J', // omit-link-times  options.c:666
+            '@', // modify-window    options.c:669
+            'o', // owner            options.c:673
+            'g', // group            options.c:676
+            'D', // (NULL longName)  options.c:679
+            'l', // links            options.c:691
+            'L', // copy-links       options.c:694
+            'k', // copy-dirlinks    options.c:701
+            'K', // keep-dirlinks    options.c:702
+            'H', // hard-links       options.c:703
+            'R', // relative         options.c:706
+            'I', // ignore-times     options.c:714
+            'x', // one-file-system  options.c:716
+            'u', // update           options.c:719
+            'S', // sparse           options.c:726
+            'F', // (NULL longName)  options.c:751
+            'f', // filter           options.c:752
+            'C', // cvs-exclude      options.c:757
+            'W', // whole-file       options.c:758
+            'c', // checksum         options.c:761
+            'B', // block-size       options.c:766
+            'y', // fuzzy            options.c:770
+            'z', // compress         options.c:773
+            'P', // (NULL longName)  options.c:785
+            'm', // prune-empty-dirs options.c:793
+            'i', // itemize-changes  options.c:800
+            'b', // backup           options.c:805
+            '0', // from0            options.c:814
+            's', // secluded-args    options.c:818
+            'e', // rsh              options.c:837
+            'T', // temp-dir         options.c:839
+            '4', // ipv4             options.c:842
+            '6', // ipv6             options.c:843
+            '8', // 8-bit-output     options.c:844
+            'M', // remote-option    options.c:859
+        ];
+
+        let expected: BTreeSet<char> = UPSTREAM_SHORT_LETTERS.iter().copied().collect();
+        let actual: BTreeSet<char> = SHORT_OPTIONS.iter().map(|opt| opt.letter).collect();
+
+        // A collapsed duplicate would hide drift behind an equal-looking set,
+        // so pin the source lists against their own de-duplicated form first.
+        assert_eq!(
+            UPSTREAM_SHORT_LETTERS.len(),
+            expected.len(),
+            "the transcribed upstream oracle contains a duplicate letter"
+        );
+        assert_eq!(
+            SHORT_OPTIONS.len(),
+            actual.len(),
+            "oc SHORT_OPTIONS contains a duplicate letter"
+        );
+
+        let missing: Vec<char> = expected.difference(&actual).copied().collect();
+        let extra: Vec<char> = actual.difference(&expected).copied().collect();
+        assert!(
+            missing.is_empty() && extra.is_empty(),
+            "oc SHORT_OPTIONS drifted from upstream long_options[] (options.c:609-871): \
+             letters upstream has but oc lacks = {missing:?}; \
+             letters oc refuses but upstream no longer knows = {extra:?}"
+        );
+    }
 }
