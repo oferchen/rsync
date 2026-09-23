@@ -5,7 +5,7 @@ use core::message::{Message, Role};
 use core::rsync_error;
 
 use super::super::directive::{FilterDirective, MergeDirective};
-use super::helpers::split_short_merge_modifiers;
+use super::helpers::{split_short_merge_modifiers, unexpected_end_of_filter_rule};
 use super::rule_line::RuleLine;
 
 /// Parses the modifier characters that follow a `.`/`:` merge directive into
@@ -150,9 +150,9 @@ pub(super) fn parse_short_merge_directive(
     let text = line.text();
     let mut chars = text.chars();
     let first = chars.next()?;
-    let (is_dir_merge, label) = match first {
-        '.' => (false, "merge"),
-        ':' => (true, "dir-merge"),
+    let is_dir_merge = match first {
+        '.' => false,
+        ':' => true,
         _ => return None,
     };
 
@@ -184,26 +184,10 @@ pub(super) fn parse_short_merge_directive(
     let pattern = if pattern.is_empty() {
         if assume_cvsignore {
             ".cvsignore"
-        } else if is_dir_merge {
-            let message = rsync_error!(
-                1,
-                format!(
-                    "filter rule '{}' is missing a file name after '{label}'",
-                    line.shown()
-                )
-            )
-            .with_role(Role::Client);
-            return Some(Err(message));
         } else {
-            let message = rsync_error!(
-                1,
-                format!(
-                    "filter merge directive '{}' is missing a file path",
-                    line.shown()
-                )
-            )
-            .with_role(Role::Client);
-            return Some(Err(message));
+            // upstream: exclude.c:1475 - a merge/dir-merge with no file name is
+            // `!len`, the same "unexpected end of filter rule" as a bare `-`.
+            return Some(Err(unexpected_end_of_filter_rule(line)));
         }
     } else {
         pattern

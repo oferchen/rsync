@@ -7,11 +7,10 @@
 use std::ffi::OsString;
 
 use core::client::{DirMergeEnforcedKind, FilterRuleKind, FilterRuleSpec};
-use core::message::{Message, Role};
-use core::rsync_error;
+use core::message::Message;
 
 use super::super::directive::{FilterDirective, MergeDirective};
-use super::helpers::split_long_keyword_tail;
+use super::helpers::{split_long_keyword_tail, unexpected_end_of_filter_rule};
 use super::merge::parse_merge_modifiers;
 use super::rule_line::RuleLine;
 
@@ -43,15 +42,9 @@ pub(super) fn parse_long_merge_directive(
         if assume_cvsignore {
             path_text = ".cvsignore";
         } else {
-            let message = rsync_error!(
-                1,
-                format!(
-                    "filter merge directive '{}' is missing a file path",
-                    line.shown()
-                )
-            )
-            .with_role(Role::Client);
-            return Some(Err(message));
+            // upstream: exclude.c:1475 - a merge with no file name is `!len`,
+            // the same "unexpected end of filter rule" as a bare `-`.
+            return Some(Err(unexpected_end_of_filter_rule(line)));
         }
     }
 
@@ -101,11 +94,9 @@ pub(super) fn parse_dir_merge_alias(
         if assume_cvsignore {
             path_text = ".cvsignore";
         } else {
-            let text = format!(
-                "filter rule '{}' is missing a file name after '{KEYWORD}'",
-                line.shown()
-            );
-            return Some(Err(rsync_error!(1, text).with_role(Role::Client)));
+            // upstream: exclude.c:1475 - a dir-merge with no file name is `!len`,
+            // the same "unexpected end of filter rule" as a bare `-`.
+            return Some(Err(unexpected_end_of_filter_rule(line)));
         }
     }
 
