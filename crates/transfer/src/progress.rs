@@ -80,6 +80,38 @@ impl<F: FnMut(&str)> ItemizeCallback for F {
     }
 }
 
+/// Per-entry daemon transfer-log sink.
+///
+/// A daemon serving a module with `transfer logging = yes` writes one log-file
+/// line per processed file, exactly as upstream does via `log_item(FLOG, ...)`.
+/// This sink is invoked once per entry after the transfer completes, in
+/// flist-index order, with the entry's transfer-relative name, file length, and
+/// pre-rendered 11-character `%i` itemize string. The daemon-side implementation
+/// plugs those into the module's `log format` and writes the result to the log.
+///
+/// This is the daemon's OWN log-file write and is distinct from the client-side
+/// itemize forwarding driven by [`ItemizeCallback`]: upstream reaches it through
+/// `maybe_log_item()`'s `am_server` arm (`log.c:875`) and the unconditional
+/// per-transfer `log_item()` (`receiver.c:1273` / `sender.c:461`), neither of
+/// which is gated on the client's `-i`.
+///
+/// # Upstream Reference
+///
+/// - `log.c:866-874` - `log_item()` writes `FLOG` whenever `logfile_format` is set
+/// - `log.c:875-891` - `maybe_log_item()` gates non-transfer items on the daemon
+/// - `receiver.c:1273` / `sender.c:461` - the per-transfer `log_item()`
+pub trait DaemonFileLog {
+    /// Renders and writes one daemon-log line for a processed entry.
+    fn on_entry(&mut self, name: &std::path::Path, size: u64, itemize: &str);
+}
+
+/// Collected per-file daemon-log rows keyed by flist index, each row carrying
+/// the entry's `(transfer-relative name, file length, rendered %i string)`.
+///
+/// Keyed by index so a drain flushes in the order upstream logs the entries; a
+/// `Vec` per index tolerates a phase-2 redo re-recording the same entry.
+pub type DaemonLogRows = std::collections::BTreeMap<usize, Vec<(std::path::PathBuf, u64, String)>>;
+
 /// Structured per-file data for one client-visible itemize/name emission.
 ///
 /// Carries both the pre-formatted default line (`%i %n%L` or `%n%L`) and the raw

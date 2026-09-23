@@ -499,7 +499,13 @@ impl ReceiverContext {
         // the client did not request itemize output (or the receiver runs
         // in client mode, where the CLI front-end emits via local-copy
         // records instead of MSG_INFO frames).
-        if self.should_emit_itemize() {
+        // A daemon receiver with `transfer logging = yes` must itemize every
+        // directory for its FLOG write even when the client did not request `-i`
+        // (upstream receiver.c:807 `itemizing = logfile_format_has_i`). The
+        // client-visible emit and the wire-forward below stay gated on the
+        // original `should_emit_itemize()`; only `emit_or_record_itemize`'s
+        // daemon-log hook fires on the widened arm.
+        if self.should_emit_itemize() || self.daemon_log_active {
             for (pos, ((idx, _, dir_path), is_new)) in
                 dir_entries.iter().zip(dir_was_new.iter()).enumerate()
             {
@@ -536,9 +542,13 @@ impl ReceiverContext {
                 };
                 // Deferred on the run_pipelined path so the dir row lands in
                 // flist-index order (immediately before its children) at flush
-                // time; emitted immediately on every other path.
+                // time; emitted immediately on every other path. On the daemon-log
+                // arm this is a no-op client-side (server, no -i) that only feeds
+                // the FLOG hook.
                 let _ = self.emit_or_record_itemize(writer, *idx, &iflags, entry);
-                self.record_server_no_transfer_itemize(*idx, iflags.raw());
+                if self.should_emit_itemize() {
+                    self.record_server_no_transfer_itemize(*idx, iflags.raw());
+                }
             }
         }
 

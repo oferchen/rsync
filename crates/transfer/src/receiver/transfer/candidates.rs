@@ -1312,13 +1312,20 @@ impl ReceiverContext {
         // attr-comparison flags were computed against the pre-apply dest stat;
         // emit_itemize's own gate drops the row when nothing is significant
         // unless the itemize level requests unchanged rows (generator.c:574-576).
-        if emit_itemize {
+        // A daemon receiver with `transfer logging = yes` itemizes every
+        // up-to-date file for its FLOG write even without a client `-i`
+        // (upstream receiver.c:807). The client-visible emit and the wire-forward
+        // stay on the original gate; only the daemon-log hook fires on the
+        // widened arm.
+        if emit_itemize || self.daemon_log_active {
             let iflags = crate::generator::ItemFlags::from_raw(unchanged_iflags);
             // Deferred on the run_pipelined path so an up-to-date file's
             // metadata-only row interleaves with directory and transfer rows in
             // flist-index order at flush time; emitted immediately otherwise.
             let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
-            self.record_server_no_transfer_itemize(flist_idx, unchanged_iflags);
+            if emit_itemize {
+                self.record_server_no_transfer_itemize(flist_idx, unchanged_iflags);
+            }
         }
 
         // upstream: generator.c:468 unchanged_attrs() - fast-path check avoids

@@ -375,6 +375,44 @@ fn effective_log_format(module: &ModuleDefinition) -> &str {
     module.log_format.as_deref().unwrap_or(DEFAULT_LOG_FORMAT)
 }
 
+/// Returns whether the format string contains a `%i` escape.
+///
+/// Mirrors upstream `log_format_has(format, 'i')` (`log.c:829-846`), which
+/// controls `logfile_format_has_i` (`clientserver.c:826`): the daemon logs
+/// non-transfer per-file rows only when its `log format` carries `%i`. The scan
+/// skips the same `'`/`-`/digit modifier run `log_formatted()` skips, so `%-8i`
+/// and `%'i` are recognised and a literal `%%` is not mistaken for an escape.
+fn log_format_has_i(format: &str) -> bool {
+    let mut chars = format.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            continue;
+        }
+        // Skip leading apostrophes, an optional '-', width digits, then any
+        // trailing apostrophes - the modifier run before the escape letter.
+        while chars.peek() == Some(&'\'') {
+            chars.next();
+        }
+        if chars.peek() == Some(&'-') {
+            chars.next();
+        }
+        while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
+            chars.next();
+        }
+        while chars.peek() == Some(&'\'') {
+            chars.next();
+        }
+        match chars.next() {
+            None => break,
+            Some('i') => return true,
+            // `%%` is a literal '%', not the start of an escape.
+            Some('%') => {}
+            Some(_) => {}
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod log_format_tests {
     use super::*;
