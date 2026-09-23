@@ -212,29 +212,36 @@ jobs:
         run: bash tools/ci/check_fuzz_workspaces.sh
 
   # ===========================================================================
-  # Unsafe SAFETY Comment Audit - Informational (non-blocking) check
+  # Unsafe SAFETY Comment Audit - blocking ratchet
   # ---------------------------------------------------------------------------
-  # Runs `tools/audit/unsafe_safety_comment_audit.py` to surface `unsafe { ... }`
-  # blocks that lack a SAFETY justification or whose justification is a
-  # placeholder (TODO/FIXME/empty). Marked `continue-on-error: true` while the
-  # outstanding `fast_io` and `checksums` violations documented in
-  # `docs/audits/unsafe-safety-comment-audit.md` are being addressed. Promote to
-  # a required check once the violation count reaches zero (or a documented
-  # threshold) and the script exits non-zero on regression.
+  # `tools/audit/unsafe_safety_comment_audit.py` enumerates every `unsafe { ... }`
+  # block under crates/ and flags each one that lacks a SAFETY justification or
+  # whose justification is a placeholder (TODO/FIXME/empty). The `report` step is
+  # the human-readable inventory (always exits 0). The `ratchet` step is the
+  # gate: it compares per-scope violation counts against the frozen baseline
+  # (`tools/audit/unsafe_safety_comment_baseline.tsv`) and exits non-zero when
+  # any scope EXCEEDS its baseline - i.e. a new unsafe block without a SAFETY
+  # comment. This enforces the "no NEW unsafe-without-SAFETY" half of the
+  # unsafe-code policy; it is a ratchet, not a cleanup, so the outstanding
+  # violations are tolerated at their baseline level and a decrease only nudges.
+  # Blocking within the job (no continue-on-error). Registering it as a required
+  # GitHub context is a separate admin-side change.
   # ===========================================================================
   unsafe-safety-comment-audit:
-    name: unsafe-safety-comment-audit (informational)
+    name: unsafe-safety-comment-audit
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     timeout-minutes: 5
-    continue-on-error: true
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Run unsafe SAFETY comment audit
-        run: python3 tools/audit/unsafe_safety_comment_audit.py
+      - name: Unsafe SAFETY comment inventory
+        run: python3 tools/audit/unsafe_safety_comment_audit.py report
+
+      - name: Unsafe SAFETY comment ratchet
+        run: python3 tools/audit/unsafe_safety_comment_audit.py ratchet
 
   # ===========================================================================
   # Rustdoc Intra-Doc Links
