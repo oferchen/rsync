@@ -550,6 +550,15 @@ impl GeneratorContext {
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE))
     }
 
+    /// Returns `true` when the `OC_RSYNC_LAZY_FLIST` staging flag selects the
+    /// lazy flist producer (upstream `flist.c:send_extra_file_list`). Default OFF;
+    /// this oc-internal flag never changes a wire byte by itself, only which
+    /// producer fills the INC_RECURSE segments. See
+    /// `docs/design/lazy-sender-inc-recurse.md` section 8.
+    pub(crate) fn lazy_flist(&self) -> bool {
+        super::lazy_flist::lazy_flist_enabled()
+    }
+
     /// Builds the display context for itemize time-position rendering.
     ///
     /// Captures `preserve_mtimes` (from `--times` flag) and `receiver_symlink_times`
