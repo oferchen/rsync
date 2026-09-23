@@ -1007,13 +1007,27 @@ fn intended_fake_super_mode(
         )
     } else {
         let source_mode = metadata.permissions().mode();
-        compute_dest_mode(
+        match compute_dest_mode(
             source_mode,
             options.destination_is_new(),
             existing,
             destination.parent(),
-        )
-        .unwrap_or(source_mode)
+        ) {
+            Some(new_mode) => new_mode,
+            // `compute_dest_mode` returns `None` when no chmod is needed: the
+            // destination already carries the `dest_mode()` result (or none is
+            // known because the appliers passed `existing = None`). Upstream's
+            // `dest_mode()` for an existing target is
+            // `(flist_mode & ~CHMOD_BITS) | (stat_mode & CHMOD_BITS)` - the
+            // DESTINATION's own permission bits, never the raw source mode - so
+            // read the on-disk mode here. Falling back to `source_mode` would
+            // record the source's special/permission bits that `!preserve_perms`
+            // drops, diverging from upstream on every non-`-p` fake-super update.
+            // upstream: rsync.c:469-471 dest_mode() existing-file branch.
+            None => fs::symlink_metadata(destination)
+                .map(|current| current.permissions().mode())
+                .unwrap_or(source_mode),
+        }
     };
     Ok(mode)
 }
@@ -1585,6 +1599,74 @@ mod tests {
 
         let result = apply_permissions_with_chmod(&dest, &source_meta, &options, None);
         assert!(result.is_err(), "expected Err with -p active, got Ok");
+    }
+
+    /// The fake-super `%stat` mode must follow upstream's `dest_mode()`
+    /// collapse, NOT the raw source mode, whenever `--perms` is off.
+    ///
+    /// Upstream mutates `file->mode = dest_mode(...)` when `!preserve_perms`
+    /// (generator.c:1856/1939) and feeds that collapsed mode into
+    /// `set_stat_xattr()`; the existing-file branch of `dest_mode()` returns the
+    /// destination's own permission bits (rsync.c:469-471), dropping the
+    /// source's special/permission bits. A non-`-p` fake-super update over an
+    /// existing destination that carried the raw source mode into `%stat` would
+    /// diverge from upstream. This pins the mode source against `-p`:
+    /// - without `--perms`, the intended mode is the DESTINATION's on-disk perms
+    ///   (0o644), never the source's setuid 0o4755;
+    /// - with `--perms`, the source mode passes through unchanged (0o4755).
+    #[test]
+    fn fake_super_mode_follows_dest_mode_without_perms() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().expect("tempdir");
+
+        // Source carries a setuid bit + full perms; this is what `-p` would
+        // preserve but a non-`-p` transfer must collapse away.
+        let source = dir.path().join("src");
+        std::fs::write(&source, b"data").expect("write");
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o4755))
+            .expect("chmod source");
+        let source_meta = std::fs::metadata(&source).expect("source metadata");
+
+        // Destination already exists with plain 0o644 perms (the post-transfer
+        // placeholder). The local-copy appliers pass `existing = None`, so this
+        // exercises the `compute_dest_mode() == None` fallback that must read the
+        // destination rather than the source.
+        let dest = dir.path().join("dst");
+        std::fs::write(&dest, b"data").expect("write dest");
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod dest");
+
+        // Without --perms: intended mode must be the destination's own bits.
+        let no_perms = MetadataOptions::new()
+            .fake_super(true)
+            .preserve_owner(true)
+            .preserve_permissions(false)
+            .preserve_executability(false)
+            .with_destination_is_new(false);
+        let mode =
+            intended_fake_super_mode(&dest, &source_meta, &no_perms, None).expect("intended mode");
+        assert_eq!(
+            mode & 0o7777,
+            0o644,
+            "non-`-p` fake-super mode must follow dest_mode (dest 0o644), not the source's 0o4755",
+        );
+        assert_ne!(
+            mode & 0o7777,
+            0o4755,
+            "the source's setuid/perm bits must NOT leak into a non-`-p` %stat",
+        );
+
+        // With --perms: the source mode passes through unchanged (the control
+        // that keeps the test honest about the `-p` axis).
+        let with_perms = no_perms.preserve_permissions(true);
+        let mode_p = intended_fake_super_mode(&dest, &source_meta, &with_perms, None)
+            .expect("intended mode -p");
+        assert_eq!(
+            mode_p & 0o7777,
+            0o4755,
+            "with `-p` the source mode (setuid 0o4755) must be preserved in %stat",
+        );
     }
 
     /// A real umask must survive verbatim: the sanitiser exists to reject a
