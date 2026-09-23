@@ -14,19 +14,31 @@ enumerates every block under `crates/` and reports either:
 The script also tags each crate as `permitted` or `NOT PERMITTED` based on the
 project's unsafe-code policy.
 
+Two modes:
+
+- `report` (default): print the per-scope block counts and every violation.
+  Always exits 0; this is the human-readable inventory.
+- `ratchet`: compare the per-scope violation counts against the frozen
+  baseline (`unsafe_safety_comment_baseline.tsv`) and exit NON-ZERO when any
+  scope EXCEEDS its baseline. This is the CI gate: it enforces "no new
+  unsafe-without-SAFETY" without demanding the outstanding violations be driven
+  to zero first. A DECREASE never fails; it prints a nudge to lower the
+  baseline and lock in the improvement.
+
 Usage:
 
-    python3 tools/audit/unsafe_safety_comment_audit.py
+    python3 tools/audit/unsafe_safety_comment_audit.py            # report
+    python3 tools/audit/unsafe_safety_comment_audit.py ratchet    # CI gate
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 
-ROOT = Path("crates")
 PERMITTED = {"fast_io", "metadata", "checksums", "engine", "protocol"}
 # The coding standards name an explicit never-contain-unsafe set. A crate that is
 # on neither list is UNLISTED, not forbidden - reporting those two the same way
@@ -35,6 +47,11 @@ FORBIDDEN = {
     "daemon", "cli", "core", "transfer", "batch", "filters", "signature",
     "bandwidth", "logging", "logging-sink", "branding", "rsync_io", "compress",
 }
+
+# Repository root, inferred from this file's location so the gate works from any
+# cwd. The per-scope baseline lives next to this script.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BASELINE = Path(__file__).resolve().parent / "unsafe_safety_comment_baseline.tsv"
 
 
 def classify(crate: str) -> str:
@@ -45,8 +62,10 @@ def classify(crate: str) -> str:
     return "unlisted"
 
 
-def scope_of(path: Path) -> str:
+def scope_of(rel: Path) -> str:
     """Crate name, qualified by cargo target.
+
+    `rel` is a path relative to the repository root, i.e. `crates/<c>/...`.
 
     This audit answers two questions with different populations, and one walk
     can serve both only while they stay distinct:
@@ -60,9 +79,9 @@ def scope_of(path: Path) -> str:
     found there is real, and it is not unsafe *in the library*. Do not re-merge
     these keys: collapsing them makes a test binary look like a policy breach.
     """
-    crate = path.parts[1]
-    if len(path.parts) > 2 and path.parts[2] in ("tests", "benches"):
-        return f"{crate} ({path.parts[2]})"
+    crate = rel.parts[1]
+    if len(rel.parts) > 2 and rel.parts[2] in ("tests", "benches"):
+        return f"{crate} ({rel.parts[2]})"
     return crate
 
 UNSAFE_BLOCK_RE = re.compile(r"\bunsafe\s*\{")
@@ -127,34 +146,90 @@ def safety_state(lines: list[str], block_idx: int) -> tuple[bool, bool]:
     return False, False
 
 
-def main() -> int:
-    if not ROOT.is_dir():
-        print(f"error: run from workspace root (expected {ROOT}/)", file=sys.stderr)
-        return 2
+def collect(root: Path) -> tuple[dict[str, int], dict[str, int], list[tuple[str, int, str, str]]]:
+    """Walk `root/crates` and return (files-per-scope, blocks-per-scope, violations).
 
+    Each violation is (relative-path, 1-based line, kind, snippet). Paths are
+    relative to `root` so the report reads `crates/...` regardless of cwd.
+    """
+    crates = root / "crates"
     per_crate_files: dict[str, int] = defaultdict(int)
     per_crate_blocks: dict[str, int] = defaultdict(int)
     violations: list[tuple[str, int, str, str]] = []
 
-    for path in sorted(ROOT.rglob("*.rs")):
+    for path in sorted(crates.rglob("*.rs")):
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         if "unsafe {" not in text:
             continue
-        crate = scope_of(path)
-        per_crate_files[crate] += 1
+        rel = path.relative_to(root)
+        scope = scope_of(rel)
+        per_crate_files[scope] += 1
         lines = text.split("\n")
         for i, line in enumerate(lines):
             if not is_unsafe_block(line):
                 continue
-            per_crate_blocks[crate] += 1
+            per_crate_blocks[scope] += 1
             has_safety, placeholder = safety_state(lines, i)
             if not has_safety:
-                violations.append((str(path), i + 1, "missing", line.strip()))
+                violations.append((str(rel), i + 1, "missing", line.strip()))
             elif placeholder:
-                violations.append((str(path), i + 1, "placeholder", line.strip()))
+                violations.append((str(rel), i + 1, "placeholder", line.strip()))
+
+    return per_crate_files, per_crate_blocks, violations
+
+
+def violations_by_scope(violations: list[tuple[str, int, str, str]]) -> dict[str, int]:
+    """Count violations per crate-qualified scope, keyed exactly as the baseline."""
+    counts: dict[str, int] = defaultdict(int)
+    for path, _line, _kind, _snippet in violations:
+        counts[scope_of(Path(path))] += 1
+    return dict(counts)
+
+
+def parse_baseline(path: Path) -> tuple[dict[str, int], list[str]]:
+    """Parse `scope<TAB>count` rows; return (counts, errors).
+
+    Blank lines and `#` comments are ignored. Each data row must be exactly two
+    tab-separated fields: a scope key (as emitted by `scope_of`, so it may
+    contain spaces, e.g. `fast_io (tests)`) and a non-negative integer.
+    """
+    entries: dict[str, int] = {}
+    errors: list[str] = []
+    if not path.exists():
+        return entries, [f"baseline not found: {path}"]
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = raw.split("\t")
+        if len(parts) != 2:
+            errors.append(f"{path.name}:{lineno}: expected 2 tab-separated fields (scope<TAB>count)")
+            continue
+        scope, count = (p.strip() for p in parts)
+        try:
+            n = int(count)
+        except ValueError:
+            errors.append(f"{path.name}:{lineno}: {scope}: count {count!r} is not an integer")
+            continue
+        if n < 0:
+            errors.append(f"{path.name}:{lineno}: {scope}: count {n} is negative")
+            continue
+        if scope in entries:
+            errors.append(f"{path.name}:{lineno}: duplicate entry for {scope}")
+            continue
+        entries[scope] = n
+    return entries, errors
+
+
+def run_report(root: Path) -> int:
+    if not (root / "crates").is_dir():
+        print(f"error: expected {root / 'crates'}/ to exist", file=sys.stderr)
+        return 2
+
+    per_crate_files, per_crate_blocks, violations = collect(root)
 
     print("=== Per-crate unsafe block counts ===")
     for crate in sorted(per_crate_blocks, key=lambda c: -per_crate_blocks[c]):
@@ -194,6 +269,86 @@ def main() -> int:
             print(f"  {path}:{line} [{kind}] {snippet[:80]}")
 
     return 0
+
+
+def run_ratchet(root: Path, baseline_path: Path) -> int:
+    """Fail when any scope's violation count EXCEEDS its baseline.
+
+    This is a ratchet, not a cleanup: outstanding violations are tolerated at
+    their baseline level, but a NEW unsafe block without a SAFETY comment - or a
+    new crate that carries one - pushes a scope above its baseline and fails the
+    gate, naming the scope and the delta. A decrease never fails; it prints a
+    nudge to lower the baseline.
+    """
+    if not (root / "crates").is_dir():
+        print(f"error: expected {root / 'crates'}/ to exist", file=sys.stderr)
+        return 2
+
+    _files, _blocks, violations = collect(root)
+    current = violations_by_scope(violations)
+    baseline, problems = parse_baseline(baseline_path)
+    nudges: list[str] = []
+
+    for scope in sorted(current):
+        cur = current[scope]
+        base = baseline.get(scope)
+        if base is None:
+            problems.append(
+                f"{scope}: {cur} unsafe block(s) without a SAFETY comment, but "
+                f"no baseline entry. Add the SAFETY comment(s), or record a "
+                f"baseline row deliberately."
+            )
+        elif cur > base:
+            problems.append(
+                f"{scope}: {cur} violations exceeds baseline {base} "
+                f"(+{cur - base}). New unsafe block(s) missing a SAFETY comment "
+                f"- add the comment rather than raising the baseline."
+            )
+        elif cur < base:
+            nudges.append(
+                f"{scope}: {cur} < baseline {base}; lower the baseline to {cur} "
+                f"to lock in the improvement."
+            )
+
+    for scope in sorted(baseline):
+        if scope not in current and baseline[scope] != 0:
+            nudges.append(
+                f"{scope}: 0 violations now (baseline {baseline[scope]}); set the "
+                f"baseline row to 0 or remove it."
+            )
+
+    if problems:
+        print(f"unsafe SAFETY ratchet: {len(problems)} regression(s)", file=sys.stderr)
+        for p in problems:
+            print(f"error: {p}", file=sys.stderr)
+        return 1
+
+    total = sum(current.values())
+    print(
+        f"unsafe SAFETY ratchet: OK ({total} violation(s) across "
+        f"{len(current)} scope(s), none above baseline)"
+    )
+    for n in nudges:
+        print(f"nudge: {n}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "mode",
+        choices=["report", "ratchet"],
+        nargs="?",
+        default="report",
+        help="report: print the inventory (default); ratchet: enforce the baseline (CI)",
+    )
+    parser.add_argument("--root", type=Path, default=REPO_ROOT, help="repository root to scan")
+    parser.add_argument("--baseline", type=Path, default=BASELINE)
+    args = parser.parse_args(argv)
+
+    if args.mode == "ratchet":
+        return run_ratchet(args.root, args.baseline)
+    return run_report(args.root)
 
 
 if __name__ == "__main__":
