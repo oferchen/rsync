@@ -86,16 +86,16 @@ fn build_protocol_file_entry(
                 protocol::flist::FileEntry::new_block_device(
                     name,
                     permissions,
-                    rustix::fs::major(rdev),
-                    rustix::fs::minor(rdev),
+                    rdev_major(rdev),
+                    rdev_minor(rdev),
                 )
             } else if file_type.is_char_device() {
                 let rdev = metadata.rdev();
                 protocol::flist::FileEntry::new_char_device(
                     name,
                     permissions,
-                    rustix::fs::major(rdev),
-                    rustix::fs::minor(rdev),
+                    rdev_major(rdev),
+                    rdev_minor(rdev),
                 )
             } else {
                 protocol::flist::FileEntry::new_file(name, metadata.len(), permissions)
@@ -292,6 +292,33 @@ pub(crate) fn capture_batch_file_entry(
     context.increment_batch_flist_index();
 
     Ok(())
+}
+
+/// Extracts the major device number from a combined `rdev` (Linux glibc
+/// layout). `rustix::fs::major` is unavailable on Apple targets, so the split
+/// is done here, matching `flist::batched_stat` and `metadata::fake_super`.
+#[cfg(all(unix, target_os = "linux"))]
+fn rdev_major(rdev: u64) -> u32 {
+    ((rdev >> 8) & 0xfff) as u32 | (((rdev >> 32) & !0xfff) as u32)
+}
+
+/// Extracts the major device number from a combined `rdev` (BSD/macOS layout).
+#[cfg(all(unix, not(target_os = "linux")))]
+fn rdev_major(rdev: u64) -> u32 {
+    ((rdev >> 24) & 0xff) as u32
+}
+
+/// Extracts the minor device number from a combined `rdev` (Linux glibc
+/// layout, where the minor spans non-contiguous bits).
+#[cfg(all(unix, target_os = "linux"))]
+fn rdev_minor(rdev: u64) -> u32 {
+    (rdev & 0xff) as u32 | (((rdev >> 12) & !0xff) as u32)
+}
+
+/// Extracts the minor device number from a combined `rdev` (BSD/macOS layout).
+#[cfg(all(unix, not(target_os = "linux")))]
+fn rdev_minor(rdev: u64) -> u32 {
+    (rdev & 0xffffff) as u32
 }
 
 #[cfg(all(test, unix))]
