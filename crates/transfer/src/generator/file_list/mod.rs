@@ -79,6 +79,15 @@ impl GeneratorContext {
 
         self.clear_file_list();
 
+        // LF-2c: decide up front whether the lazy on-demand producer will build
+        // this transfer. When it does, the top-level walk below scans only ONE
+        // level (subdirectories are emitted but not descended, upstream
+        // FLAG_DIVERT_DIRS); each subdirectory is scanned on demand from the
+        // transfer loop. The flag is read by `walk_path_with_metadata` (scope
+        // selection) and the partition seam (tree seeding). When ineligible it
+        // stays `false` and the walk fully recurses exactly as before.
+        self.lazy_producer_active = self.lazy_producer_eligible(base_paths.len());
+
         // upstream: flist.c:2192 - pre-allocate FLIST_START pointer slots
         const FLIST_START: usize = 4096;
         self.file_list.reserve(FLIST_START);
@@ -263,6 +272,10 @@ impl GeneratorContext {
         self.timing.flist_build_start = Some(Instant::now());
 
         self.clear_file_list();
+
+        // --files-from always uses the eager whole-tree build; the lazy producer
+        // (LF-2c) covers only single-source `-r` transfers.
+        self.lazy_producer_active = false;
 
         const FLIST_START: usize = 4096;
         self.file_list.reserve(FLIST_START);

@@ -192,10 +192,52 @@ impl DirectoryTree {
     /// `DIR_FIRST_CHILD`, `DIR_NEXT_SIBLING`, `DIR_PARENT` macros.
     pub fn next_directory(&mut self) -> Option<(usize, &str)> {
         let cursor = self.cursor?;
+        let dir_ndx = self.nodes[cursor].dir_ndx;
+        self.advance_cursor();
+        // `cursor` is a local copy of the pre-advance index; `nodes` never
+        // moves, so it still names the directory just consumed - matching the
+        // `dir_ndx` returned above.
+        Some((dir_ndx, &self.nodes[cursor].path))
+    }
+
+    /// Returns the directory the depth-first cursor is on, without advancing.
+    ///
+    /// Yields `(node_handle, dir_ndx, path)` where `node_handle` indexes this
+    /// tree's `nodes` Vec (the value [`add_directory`](Self::add_directory)
+    /// returns), suitable as the `parent_node_idx` for linking children found
+    /// by scanning this directory. Returns `None` once the traversal is done.
+    ///
+    /// The lazy incremental producer (upstream `flist.c:send1extra`) needs this
+    /// peek/scan/link/advance split because it discovers a directory's child
+    /// directories only by scanning it: the children must be linked under
+    /// `node_handle` *before* [`advance_cursor`](Self::advance_cursor) so the
+    /// depth-first walk descends into them. The eager two-phase build adds every
+    /// node before traversing, so it has no need for the split and uses
+    /// [`next_directory`](Self::next_directory).
+    #[must_use]
+    pub fn peek(&self) -> Option<(usize, usize, &str)> {
+        let cursor = self.cursor?;
+        let node = &self.nodes[cursor];
+        Some((cursor, node.dir_ndx, &node.path))
+    }
+
+    /// Marks the current cursor node sent and advances the depth-first cursor.
+    ///
+    /// Split out of [`next_directory`](Self::next_directory) so a producer can
+    /// link the current node's children (discovered by scanning it) before the
+    /// cursor descends into them - see [`peek`](Self::peek).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:send_extra_file_list()` - `DIR_FIRST_CHILD` /
+    ///   `DIR_NEXT_SIBLING` / `DIR_PARENT` depth-first advance
+    pub fn advance_cursor(&mut self) {
+        let Some(cursor) = self.cursor else {
+            return;
+        };
 
         // Mark current as sent
         self.nodes[cursor].sent = true;
-        let dir_ndx = self.nodes[cursor].dir_ndx;
 
         // Advance cursor: depth-first (child → sibling → parent's sibling)
         if let Some(child) = self.nodes[cursor].first_child {
@@ -220,8 +262,15 @@ impl DirectoryTree {
                 }
             }
         }
+    }
 
-        Some((dir_ndx, &self.nodes[cursor].path))
+    /// Returns `true` once the depth-first traversal has visited every node.
+    ///
+    /// Non-test counterpart of the cursor check used by the lazy producer to
+    /// decide when no more sub-lists remain to scan.
+    #[must_use]
+    pub fn traversal_finished(&self) -> bool {
+        self.cursor.is_none()
     }
 }
 

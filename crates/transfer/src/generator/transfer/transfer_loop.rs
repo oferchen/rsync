@@ -21,6 +21,7 @@ use super::super::delta::{
 };
 use super::super::item_flags::ItemFlags;
 use super::super::protocol_io::NdxAttrs;
+use super::super::segments::{MAX_FILECNT_LOOKAHEAD, MIN_FILECNT_LOOKAHEAD};
 use super::super::{
     GeneratorContext, SegmentScheduler, SenderFstatError, TransferLoopResult, flush_with_count,
     is_early_close_error,
@@ -298,9 +299,42 @@ impl GeneratorContext {
         ndx_codec: &mut MonotonicNdxWriter,
         flist_done_remaining: &mut usize,
     ) -> io::Result<()> {
-        while let Some(seg) = scheduler.next_to_send() {
+        loop {
+            // LF-2c: under the lazy producer segments are not pre-built. Scan
+            // the next directory just before the scheduler would dispatch, so
+            // the same `next_to_send` throttle sees a queued segment. One
+            // directory per dispatched sub-list, never ahead of the floor.
+            self.refill_lazy_scheduler(scheduler, MIN_FILECNT_LOOKAHEAD)?;
+            let Some(seg) = scheduler.next_to_send() else {
+                break;
+            };
             self.encode_and_send_segment(&mut *writer, seg, flist_writer, ndx_codec.inner_mut())?;
             *flist_done_remaining += 1;
+        }
+        Ok(())
+    }
+
+    /// Scans one directory into a queued sub-list when the lazy producer
+    /// (LF-2c) is active and the scheduler is about to run dry under `ceiling`.
+    ///
+    /// A no-op on the eager path (segments are pre-built) and whenever a queued
+    /// segment already awaits dispatch or the backlog has reached `ceiling`, so
+    /// exactly one directory is scanned per sub-list the throttle admits -
+    /// upstream's `send1extra()` producing one directory per loop turn
+    /// (`flist.c:2427`).
+    fn refill_lazy_scheduler(
+        &mut self,
+        scheduler: &mut SegmentScheduler,
+        ceiling: usize,
+    ) -> io::Result<()> {
+        if !self.lazy_producer_active
+            || scheduler.has_pending_dispatch()
+            || scheduler.lookahead_total() >= ceiling
+        {
+            return Ok(());
+        }
+        if let Some(seg) = self.produce_next_lazy_segment()? {
+            scheduler.push_segment(seg);
         }
         Ok(())
     }
@@ -321,7 +355,15 @@ impl GeneratorContext {
         scheduler: &SegmentScheduler,
         ndx_codec: &mut protocol::codec::NdxCodecEnum,
     ) -> io::Result<()> {
-        if !self.incremental.flist_eof_sent && scheduler.is_exhausted() {
+        // LF-2c: the scheduler being drained is necessary but not sufficient
+        // under the lazy producer - unscanned directories still remain in the
+        // tree. `lazy_scan_exhausted` is always true on the eager path, so this
+        // keeps upstream's single condition there and adds only the tree check
+        // when producing on demand.
+        if !self.incremental.flist_eof_sent
+            && scheduler.is_exhausted()
+            && self.lazy_scan_exhausted()
+        {
             self.send_flist_eof(writer, ndx_codec)?;
         }
         Ok(())
@@ -357,6 +399,10 @@ impl GeneratorContext {
         ndx_codec: &mut MonotonicNdxWriter,
         flist_done_remaining: &mut usize,
     ) -> io::Result<()> {
+        // LF-2c: scan one directory ahead of the ceiling before growing, so the
+        // idle-time top-up has a queued segment to dispatch. Bounded by
+        // `MAX_FILECNT_LOOKAHEAD` exactly as `next_when_idle`.
+        self.refill_lazy_scheduler(scheduler, MAX_FILECNT_LOOKAHEAD)?;
         if let Some(seg) = scheduler.next_when_idle() {
             self.encode_and_send_segment(&mut *writer, seg, flist_writer, ndx_codec.inner_mut())?;
             *flist_done_remaining += 1;
@@ -1454,7 +1500,15 @@ impl GeneratorContext {
         // again. Mid-transfer increments in the NDX_DONE arm are still needed
         // for the in-loop accounting.
         if inc_recurse && !self.incremental.flist_eof_sent {
-            while let Some(seg) = scheduler.next_forced() {
+            loop {
+                // LF-2c: drain every remaining directory. `usize::MAX` disables
+                // the lookahead ceiling so the flush scans and sends the whole
+                // rest of the tree before NDX_FLIST_EOF, mirroring
+                // `next_forced` bypassing the throttle on the eager path.
+                self.refill_lazy_scheduler(&mut scheduler, usize::MAX)?;
+                let Some(seg) = scheduler.next_forced() else {
+                    break;
+                };
                 self.encode_and_send_segment(
                     &mut *writer,
                     seg,

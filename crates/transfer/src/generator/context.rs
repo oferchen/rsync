@@ -159,6 +159,26 @@ pub struct GeneratorContext {
     pub(crate) pending_source_removals: super::pending_removal::PendingSourceRemovals,
     /// Incremental recursion (INC_RECURSE) state for segmented file list sending.
     pub(crate) incremental: IncrementalState,
+    /// Whether the lazy on-demand INC_RECURSE flist producer (LF-2c) is driving
+    /// this transfer. Set by [`build_file_list`](Self::build_file_list) when the
+    /// staging flag and option set make lazy building byte-neutral (see
+    /// [`Self::lazy_producer_eligible`]); read by the partition seam and the
+    /// transfer loop to route sub-list building through the producer instead of
+    /// the eager whole-tree walk. Default `false` keeps every transfer eager.
+    pub(crate) lazy_producer_active: bool,
+    /// On-demand sub-list producer state, present only while
+    /// `lazy_producer_active`. Seeded from the initial segment by
+    /// [`partition_file_list_for_inc_recurse`](Self::partition_file_list_for_inc_recurse)
+    /// and consumed by
+    /// [`produce_next_lazy_segment`](Self::produce_next_lazy_segment).
+    pub(crate) lazy_producer: Option<super::LazyFlistProducer>,
+    /// Test-only override for [`Self::lazy_flist`], so unit tests can force the
+    /// lazy producer on or off deterministically without mutating the
+    /// process-global `OC_RSYNC_LAZY_FLIST` env var (which is `unsafe` to set
+    /// under Rust 2024 and racy across a shared process). `None` in production
+    /// and by default; only the in-crate tests set it.
+    #[cfg(test)]
+    pub(crate) lazy_flist_override: Option<bool>,
     /// Accumulated deletion statistics received via NDX_DEL_STATS messages.
     /// (upstream: main.c:238-247 `read_del_stats()`)
     pub(crate) delete_stats: DeleteStats,
@@ -358,6 +378,10 @@ impl GeneratorContext {
             pending_flist_diagnostics: Vec::new(),
             pending_source_removals: super::pending_removal::PendingSourceRemovals::default(),
             incremental: IncrementalState::new(initial_ndx_start),
+            lazy_producer_active: false,
+            lazy_producer: None,
+            #[cfg(test)]
+            lazy_flist_override: None,
             delete_stats: DeleteStats::new(),
             flist_send_stats: super::FlistSendStats::default(),
             parallel_thresholds: crate::parallel_io::ParallelThresholds::default(),
@@ -556,7 +580,42 @@ impl GeneratorContext {
     /// producer fills the INC_RECURSE segments. See
     /// `docs/design/lazy-sender-inc-recurse.md` section 8.
     pub(crate) fn lazy_flist(&self) -> bool {
+        #[cfg(test)]
+        if let Some(forced) = self.lazy_flist_override {
+            return forced;
+        }
         super::lazy_flist::lazy_flist_enabled()
+    }
+
+    /// Whether the lazy on-demand producer (LF-2c) may build this transfer's
+    /// flist, given the staging flag and the option set.
+    ///
+    /// The producer is engaged only where it is provably byte-neutral against
+    /// the eager whole-tree walk. It requires INC_RECURSE (segmented sending),
+    /// `-r` (something to recurse into) and a single source argument, and it
+    /// bows out of the modes whose flist bytes depend on a *global* post-scan
+    /// pass the incremental scan cannot reproduce entry-for-entry:
+    ///
+    /// - `--hard-links`: `assign_hardlink_indices` (hlink.c:match_hard_links)
+    ///   assigns leader NDX values across the whole sorted list at once.
+    /// - `--acls`: `collect_acl_id_mappings` (acls.c:592-595) builds the shared
+    ///   ACL id-list from the whole file list before it is transmitted.
+    /// - `--relative`: `send_implied_dirs` emits ancestor directories at mixed
+    ///   depths, so the initial segment is not simply "one level per source".
+    ///
+    /// `--files-from` takes the separate
+    /// [`build_file_list_with_base`](Self::build_file_list_with_base) path,
+    /// which never calls this. Per-entry state (owner/group names, xattrs,
+    /// times, perms) is resolved at `create_entry` time and is order-independent,
+    /// so it needs no exclusion here.
+    pub(crate) fn lazy_producer_eligible(&self, source_count: usize) -> bool {
+        self.lazy_flist()
+            && self.inc_recurse()
+            && self.config.flags.recursive
+            && source_count == 1
+            && !self.config.flags.relative
+            && !self.config.flags.hard_links
+            && !self.config.flags.acls
     }
 
     /// Builds the display context for itemize time-position rendering.
@@ -1341,7 +1400,7 @@ impl GeneratorContext {
 /// carries native separators. Extending by component - never concatenating raw
 /// path strings - keeps the result natively separated on every platform and
 /// avoids any `/`-vs-`\` byte surgery.
-fn join_source_path(base: &Path, name: &Path) -> PathBuf {
+pub(in crate::generator) fn join_source_path(base: &Path, name: &Path) -> PathBuf {
     if name == Path::new(".") {
         return base.to_path_buf();
     }
