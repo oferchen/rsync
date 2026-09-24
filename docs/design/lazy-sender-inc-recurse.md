@@ -88,6 +88,9 @@ depth-first walk cannot descend.
 - The walk cursor is `send_dir_ndx`/`send_dir_depth`; the initial list's
   dirs are rooted with `add_dirs_to_tree(-1, flist, stats.num_dirs)`
   (`flist.c:2843`) after `send_dir_depth = 1` (`:2842`).
+- Naming note: 3.5.0 has NO `F_DIR_DEFER` accessor (zero occurrences in the
+  tree); it appears only in older sources and stale notes. The 3.5.0
+  dir-node accessors are exactly the set above.
 
 ### 2.3 Initial list - `send_file_list` (`flist.c:2499`)
 
@@ -152,6 +155,26 @@ Called from the send loop top and bottom (`sender.c:515,549`) with
   filter state (`change_local_filter_dir(NULL, 0, 0)`, `:2478-2484`); else
   move to `DIR_NEXT_SIBLING` (`:2490`).
 - Deferred io_error is flushed at `finish` for protocol 30 (`:2495-2497`).
+
+### 2.4b Receiving an extra list - `recv_file_list(f, dir_ndx)` (`flist.c:2929`)
+
+The receiver frames each sub-list by `dir_ndx` - an index into ITS OWN
+`dir_flist`, not the transfer list - and defends that numbering:
+
+- dir_ndx guards (`flist.c:2895-2927`): a sub-flist after the final list was
+  freed, an out-of-range `dir_ndx`, a `dir_ndx` whose slot
+  `flist_sort_and_clean` cleared, and a duplicate flist for a dir already
+  marked FLAG_GOT_DIR_FLIST are each refused with `RERR_PROTOCOL`.
+- The hard dirname invariant (`flist.c:2976-2991`): inside the read loop,
+  whenever an entry's dirname changes to a value that is neither the cached
+  `good_dirname` nor `f_name(dir_flist->files[dir_ndx])`, the receiver
+  prints "ABORTING due to invalid path from sender: %s/%s" (`:2984-2986`)
+  and exits `RERR_UNSUPPORTED` (`:2987`). It fires when a sender smuggles an
+  entry outside the directory the sub-list announced.
+- The receiver grows its own `dir_flist` in the same read loop
+  (`flist.c:2996-2998`) and sorts just the appended range
+  (`:3041-3050`), before `flist_sort_and_clean(flist, relative_paths)`
+  (`:3065`).
 
 ### 2.5 Freeing - `flist_free` (`flist.c:3282`)
 
@@ -502,3 +525,40 @@ comment cites them.
 | CF_INC_RECURSE fold / mismatch error | `compat.c:724`, `:780` | was `:713`, `:746` |
 | `change_local_filter_dir` | `exclude.c:974` | |
 | pool primitives | `lib/pool_alloc.c:300` (`pool_free_old`), `:353` (`pool_boundary`) | |
+| `fsort` stability contract | `flist.c:1944-1958` (comment `:1944-1947`) | identical names keep original order so flist sort matches dir_flist sort |
+| `recv_file_list` dir_ndx guards | `flist.c:2895-2927` | refuses post-final sub-flist, out-of-range, cleared slot, duplicate flist |
+| receiver hard dirname invariant | `flist.c:2976-2991` (message `:2984-2986`, exit `:2987`) | "ABORTING due to invalid path from sender", RERR_UNSUPPORTED |
+| receiver dir_flist append / range sort / clean | `flist.c:2996-2998` / `:3041-3050` / `:3065` | |
+| `F_DIR_DEFER` | ABSENT in 3.5.0 | zero occurrences; older-source name, do not cite |
+
+## 11. oc divergence column (verified on master at this revision)
+
+Per mechanism: what oc has TODAY, with its own file:line (each read for this
+revision), and a verdict. PRESENT-FAITHFUL = same rule, same observable
+semantics; PRESENT-DIVERGENT = the mechanism exists but its shape or timing
+differs; ABSENT = nothing implements it. The upstream anchors are Section 2's.
+
+> **Refreshed 2026-09-24:** LF-2b/2c/2g have since landed (#7944/#7947/#7949).
+> Row 4's producer is now WIRED behind `OC_RSYNC_LAZY_FLIST` (updated below), but the
+> whole INC_RECURSE machinery - eager scheduler and lazy producer alike - stays DORMANT
+> in production because INC_RECURSE is negotiated on no live oc transfer (the client
+> advertises the `i` letter only as sender while the server sets `CF_INC_RECURSE` only
+> when it is the sender - mutually exclusive; see Section 9). The other rows are the
+> pre-LF-2 snapshot.
+
+| # | Mechanism | oc today | Verdict |
+|---|-----------|----------|---------|
+| 1a | dir_flist lifecycle, SENDER (FLIST_TEMP list of retained dir entries) | `DirectoryTree` (`crates/protocol/src/flist/dir_tree.rs:75`) holds node ids and names, built during the partition (`crates/transfer/src/generator/file_list/inc_recurse.rs:125-130`); the entries themselves stay in the flat transfer flist - no separate retained dir list, no FLIST_TEMP-style lifetime split | PRESENT-DIVERGENT (tree yes, owning dir list no - LF-1a) |
+| 1b | dir_flist lifecycle, RECEIVER (own numbering; slot survives a cleared entry) | `DirFlist` with `DirSlot::{Active,Cleared}` (`crates/transfer/src/receiver/file_list/dir_flist.rs:14-60`), grown in the read loop; two-phase `record_pre_clean`/`resolve_survivors` reproduces the slot-retention rule | PRESENT-FAITHFUL |
+| 2 | Node encoding: 3 int32 slots, `DIR_PARENT`/`DIR_FIRST_CHILD`/`DIR_NEXT_SIBLING` = node[0]/[1]/[2], -1 sentinels | `DirNode { first_child, next_sibling, parent }` as `Option<usize>` (`dir_tree.rs:51-61`) under a virtual root (`:89-95`, `ROOT = 0` `:106`); oc additionally REFUSES an out-of-range parent index (`:26-42`) where upstream trusts its own construction | PRESENT-DIVERGENT (semantics equivalent; memory-only on both sides, so no wire impact; the int32/-1 layout is deliberately not reproduced) |
+| 3 | `add_dirs_to_tree()`: link a sorted sibling run under its parent, per sub-list and for the initial list | Links are made at CLASSIFICATION time via a parent-name map (`inc_recurse.rs:91-130`), not by post-sort sibling-run linking; walk order then comes from `DirectoryTree::next_directory` (`dir_tree.rs:193`) | PRESENT-DIVERGENT (LF-1c/1d must pin that the link rule equals upstream's sorted-run rule) |
+| 4 | `send_extra_file_list(f, at_least)` + `send1extra()`: scan ONE dir on demand, one fresh `flist_new(0, ...)` per segment, at_least budget | WIRED behind `OC_RSYNC_LAZY_FLIST` (LF-2c, #7949): `LazyFlistProducer` (`crates/transfer/src/generator/segments.rs`) scans one directory per segment via `scan_extra_segment` (LF-2b) over a one-level `build_file_list` walk, driven by `produce_next_lazy_segment` (`inc_recurse.rs`) and refilled on demand from the transfer loop (`refill_lazy_scheduler`). Gated by `lazy_producer_eligible` (single-source, `!relative`/`!hard_links`/`!acls`); the eager pre-built-range path (`SegmentScheduler` + `encode_and_send_segment`) is retained for the flag-off and excluded cases | PRESENT behind flag (LF-2b/2c); DORMANT in production - INC_RECURSE not negotiated live |
+| 5 | Descend/sibling walk picking the next dir; `flist->parent_ndx = send_dir_ndx` | Walk exists: `next_directory` descend/sibling/pop (`dir_tree.rs:193`); parent recorded as `PendingSegment.parent_dir_ndx`/`parent_flat_idx` (`inc_recurse.rs:283-286`) and the initial gap via `NdxMap::set_initial_parent_flat` (`inc_recurse.rs:300`) | PRESENT-DIVERGENT (runs at build time to ORDER pre-built segments, not at send time to drive scanning) |
+| 6 | `ndx_start` arithmetic; the +1 gap IS the parent dir's own NDX | `NdxMap` (`crates/transfer/src/generator/ndx_map.rs:80`), gap applied at `:145` (`prev.ndx_start + prev_used + 1`); gap-NDX resolves to the parent for itemize via `NdxMap::resolve_itemize`; sender-side gap resolution mirrors `sender.c:551-557` | PRESENT-FAITHFUL |
+| 7 | Receiver hard dirname invariant (`flist.c:2976-2991`) and what fires it | `crates/transfer/src/receiver/file_list/receive.rs:548-575` - same predicate, byte-identical "ABORTING due to invalid path from sender" text; exercised by tests in `receiver/file_list/on_demand.rs:833-855`. Note: the in-code citation reads `flist.c:2684-2695`, which is a DRIFTED pre-3.5.0 line range (3.5.0: `:2976-2991`) - flagged for the next citation sweep, not edited in this docs change | PRESENT-FAITHFUL (one stale citation) |
+| 8 | Sort parity: stable sort so flist order matches dir_flist order (`flist.c:1944-1947`, alias comment `:1972-1974`) | `sort_file_list` sorts a key array over stable `sort_by` by default, `sort_unstable_by` only under `--qsort` (`crates/protocol/src/flist/sort.rs:209-245`), same comparator both sides (`compare_file_entries`). Cross-list parity holds today BY CONSTRUCTION (one global sort feeds both); under the lazy producer it becomes LF-1d's explicit obligation | PRESENT-FAITHFUL (parity mechanism differs; the guarantee holds) |
+| 9a | MIN lookahead floor (`sender.c:515,549`; `generator.c:2703,2775`) | `MIN_FILECNT_LOOKAHEAD` + backlog accounting in `SegmentScheduler::next_to_send`/`retire_current_flist` (`segments.rs:28,174,233`) | PRESENT-FAITHFUL (sender side) |
+| 9b | MAX ceiling (`io.c:836-844`) | `next_when_idle` (`segments.rs:202-203`) - reachable but DEAD under the eager producer (task 400: next_to_send's >=1000 subsumes >=10000) | PRESENT-INERT until LF lands |
+| 9c | Idle top-up `send_extra_file_list(sock_f_out, -1)` (`io.c:853-856`) | No analogue: nothing produces lists while blocked on input | ABSENT (LF-7b/7c territory) |
+| 9d | Receiver half-window pacing (MIN/2, `generator.c:2703,2775`) | No analogue; moot while oc's receiver never enables INC_RECURSE (Section 9). The receiver DOES have on-demand segment receive (`crates/transfer/src/receiver/file_list/on_demand.rs`) - the marker-driven receive half, not the pacing | ABSENT (pacing), PRESENT (on-demand receive) |
+| - | dir_ndx guards on a received sub-list (`flist.c:2895-2927`) | The receiver `DirFlist` resolves a wire `dir_ndx` to `DirSlot::{Active,Cleared}` (enum at `dir_flist.rs:14-20`) and refuses cleared or out-of-range slots, matching upstream's refusals | PRESENT-FAITHFUL |
