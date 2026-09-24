@@ -249,10 +249,6 @@ impl ReceiverContext {
                 // Stage 0: hand the pipeline the transfer set by flist index;
                 // the in-flight window clones each FileEntry as it is pushed
                 // (O(window)), so the loop no longer borrows `self.file_list`.
-                let files_to_transfer: Vec<(usize, PathBuf, u32)> = files_to_transfer
-                    .into_iter()
-                    .map(|(idx, _entry, path, iflags)| (idx, path, iflags))
-                    .collect();
                 let redo_config = pipeline_config.clone();
                 let redo_indices;
                 let delayed;
