@@ -77,34 +77,32 @@ jobs:
       - name: Install cargo-nextest (Windows)
         uses: ./.github/actions/install-cargo-nextest-windows
 
-      # Filter targets the four WCI-1 audit-identified protocol-crate
-      # Windows tests in `crates/protocol/src/flist/wire_path.rs`. All
-      # four function names share the `windows_` prefix, so the
-      # `windows_` substring is the narrowest filter that activates
-      # exactly the set the audit flagged without pulling in unrelated
-      # Windows tests from other modules. Running with default features
-      # mirrors how the per-PR Windows cell would link the crate after
-      # WCI-11 promotion, surfacing any gating drift early.
-      - name: Run protocol wire_path Windows tests
-        run: cargo nextest run --locked -p protocol --no-fail-fast -E 'test(windows_)'
+      # Run the full `-p protocol` test set on Windows with no name filter.
+      # The `windows_` substring allowlist would silently skip any new
+      # `#[cfg(windows)]` protocol test that did not adopt the prefix, so
+      # the cell could pass while a wire_path separator-encoder regression
+      # slipped in under a differently-named test. Running the whole package
+      # exercises every Windows-compiled protocol test, including the
+      # wire_path encoder the audit flagged, without depending on a naming
+      # convention. Running with default features mirrors how the per-PR
+      # Windows cell would link the crate after promotion.
+      - name: Run protocol Windows tests (full package)
+        run: cargo nextest run --locked -p protocol --no-fail-fast
 
-      # Filter targets the WPC-5'.10 round-trip integration tests in
-      # `crates/metadata/tests/windows_long_path_metadata.rs`. The
-      # `long_path_` prefix scopes the run to the 600+ char fixtures
-      # (`long_path_acl_round_trip`, `long_path_ads_round_trip`) and
-      # excludes the unrelated long-path tests in `fast_io`, which are
-      # already covered by the WCI-2 IOCP cell. Both ACL and ADS
-      # surfaces require the corresponding feature flags to be active
-      # at compile time.
-      # `metadata` owns tests that spawn `oc-rsync.exe` as a subprocess. They
-      # are filtered out of the run below today, but a package-scoped `-p
-      # metadata` selection never builds the binary, so build it here rather
-      # than leaving the cell one filter edit away from a hard failure.
+      # Run the full `-p metadata` test set with acl,xattr on Windows and
+      # no name filter. The `long_path_` allowlist would silently skip any
+      # new Windows ACL/ADS/long-path metadata test, so the cell could stay
+      # green while a round-trip regressed. Running the whole package with
+      # both feature flags active exercises every Windows-compiled metadata
+      # test - the 600+ char ACL and ADS round-trips plus any future
+      # capability test - without depending on a naming convention.
+      # `metadata` owns tests that spawn `oc-rsync.exe` as a subprocess, and
+      # a package-scoped run now includes them, so build the binary first.
       - name: Build oc-rsync (for subprocess integration tests)
         run: cargo build --locked -p bin --bin oc-rsync
 
-      - name: Run metadata long-path round-trip tests
-        run: cargo nextest run --locked -p metadata --features acl,xattr --no-fail-fast -E 'test(long_path_)'
+      - name: Run metadata Windows tests (full package, acl+xattr)
+        run: cargo nextest run --locked -p metadata --features acl,xattr --no-fail-fast
 
       - name: Upload nextest logs
         if: always()
