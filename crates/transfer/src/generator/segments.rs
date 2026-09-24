@@ -244,9 +244,33 @@ impl SegmentScheduler {
     }
 
     /// Entries queued in sub-lists beyond the receiver's current one.
-    #[cfg(test)]
+    ///
+    /// The lazy producer reads this to size its on-demand refill against the
+    /// same `MIN`/`MAX_FILECNT_LOOKAHEAD` bounds the dispatch gates use, so it
+    /// scans exactly one directory ahead of what the throttle will admit.
     pub(crate) fn lookahead_total(&self) -> usize {
         self.lookahead_total
+    }
+
+    /// Appends a segment produced on demand by the lazy incremental producer.
+    ///
+    /// The eager path hands the whole `Vec` to [`Self::new`] up front; the lazy
+    /// path (upstream `flist.c:send1extra`) instead scans one directory at a
+    /// time and pushes each resulting sub-list here just before it is
+    /// dispatched, so the scheduler's cursor/backlog accounting is identical
+    /// either way - only the moment the segment arrives differs.
+    pub(crate) fn push_segment(&mut self, segment: PendingSegment) {
+        self.segments.push(segment);
+    }
+
+    /// Returns `true` when a queued segment has not yet been dispatched.
+    ///
+    /// The lazy refill scans the next directory only when this is `false`: with
+    /// a segment already queued the existing `next_*` gates decide whether to
+    /// dispatch it, so one directory is scanned per dispatched sub-list, never
+    /// ahead of the throttle.
+    pub(crate) fn has_pending_dispatch(&self) -> bool {
+        self.cursor < self.segments.len()
     }
 
     /// Returns `true` when all segments have been dispatched.
@@ -290,6 +314,40 @@ pub(crate) struct IncrementalState {
     /// sends back. Without INC_RECURSE it holds a single segment and every
     /// lookup is the identity.
     pub(crate) ndx_map: NdxMap,
+}
+
+/// On-demand INC_RECURSE sub-list producer state (LF-2c).
+///
+/// Holds the directory tree seeded from the initial (top-level) segment plus
+/// the per-node bookkeeping the producer needs to scan each directory when the
+/// scheduler asks for it, instead of the eager path's up-front whole-tree walk.
+/// Present only while the lazy producer is active; `None` keeps every other
+/// transfer on the byte-identical eager path.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:send_extra_file_list()` / `send1extra()` - the per-directory
+///   scan-and-send loop this reproduces incrementally
+/// - `flist.c:add_dirs_to_tree()` - the depth-first directory tree seeded here
+#[derive(Debug)]
+pub(crate) struct LazyFlistProducer {
+    /// Depth-first directory tree. Node `dir_ndx` stores the wire `dir_ndx`
+    /// (not the eager path's internal node id), so a popped node yields its
+    /// own `parent_dir_ndx` directly.
+    pub(crate) tree: protocol::flist::DirectoryTree,
+    /// Per tree-node-handle: the transfer-root base to scan the directory
+    /// under. Captured when the node is discovered (seeding or a parent's
+    /// scan) so a later [`reclaim_oldest_segment`] overwrite of `source_bases`
+    /// can never lose it.
+    pub(crate) base_by_node: Vec<std::sync::Arc<std::path::Path>>,
+    /// Per tree-node-handle: the flat `file_list` index of the directory entry,
+    /// used as `PendingSegment::parent_flat_idx` (itemize gap-NDX resolution).
+    pub(crate) flat_by_node: Vec<usize>,
+    /// Running wire `dir_ndx` counter. Seeded past the initial-list directories
+    /// (0..N incl. `.`), then advanced one per child directory discovered, in
+    /// each segment's sorted order - reproducing the eager reorder's phase-2
+    /// depth-first assignment.
+    pub(crate) next_wire_dir_ndx: i32,
 }
 
 impl IncrementalState {

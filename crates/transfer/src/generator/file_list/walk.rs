@@ -398,7 +398,20 @@ impl GeneratorContext {
             metadata,
             is_top_level,
         }];
-        self.drive_walk(WalkScope::recursive(base), &mut stack)
+        // LF-2c: under the lazy producer the top-level source is scanned one
+        // level only - its subdirectories are emitted but not descended
+        // (upstream send_directory with FLAG_DIVERT_DIRS). The diverted dirs
+        // become the on-demand work list, seeded into the directory tree by the
+        // partition seam. A diverted directory entry carries the identical wire
+        // bytes to a recursively-walked one (content_dir is set unconditionally
+        // in `new_directory`, independent of descent), so the initial segment is
+        // byte-identical to the eager path's top-level entries.
+        let scope = if self.lazy_producer_active {
+            WalkScope::one_level(base)
+        } else {
+            WalkScope::recursive(base)
+        };
+        self.drive_walk(scope, &mut stack)
     }
 
     /// Runs the explicit walk stack to exhaustion.
