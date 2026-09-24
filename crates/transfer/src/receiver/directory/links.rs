@@ -763,6 +763,14 @@ impl ReceiverContext {
 
         // Protocol 30+: use HardlinkApplyTracker for leader/follower resolution.
         // Take the tracker temporarily to avoid borrow conflicts with itemize emission.
+        //
+        // Captured before the tracker borrow: batch replay (`--read-batch`) must
+        // reconstruct whichever member the recorded stream transferred, which -
+        // for a batch produced by upstream, or by oc after the sorted-last fix -
+        // is the sorted-LAST member (FLAG_HLINK_LAST), not the sorted-first
+        // hlink_first one. On the live path the generator makes hlink_first the
+        // transferred member, so the second-pass rule stays keyed to it there.
+        let local_replay = self.local_replay;
         if let Some(mut tracker) = self.hardlink_tracker.take() {
             // First pass: ensure all leaders are recorded in the tracker.
             // Leaders committed during pipelined transfer are already recorded;
@@ -802,9 +810,34 @@ impl ReceiverContext {
                 }
             }
 
-            // Second pass: link followers to their leaders.
+            // Second pass: link every non-source member to the group's source.
+            //
+            // A hlink_first member that materialized on disk is the group's
+            // source, so it is always skipped. An ABSENT hlink_first member is
+            // linked to the materialized member only during batch replay: the
+            // recorded stream fixes which member carries the single payload, and
+            // upstream ships it under the sorted-LAST member (FLAG_HLINK_LAST),
+            // so the sorted-first leader is absent and must be linked like any
+            // follower (upstream: hlink.c:496-565 finish_hard_link() links every
+            // non-transferred member to the one that completed). On the live path
+            // an absent hlink_first member instead means its own transfer was
+            // skipped/errored (FLAG_SKIP_HLINK), which must not be resurrected -
+            // so that path keeps skipping every hlink_first member unchanged.
             for (follower_ndx, entry) in self.file_list.iter().enumerate() {
-                if !entry.hlinked() || entry.hlink_first() {
+                if !entry.hlinked() {
+                    continue;
+                }
+                // A hlink_first member is the group's source on the LIVE
+                // path (its own transfer either completed or was
+                // skipped/errored - FLAG_SKIP_HLINK - and must not be
+                // resurrected), so keep skipping it there. During batch replay
+                // the data-holder is stream-dictated (the sorted-last member,
+                // recorded at commit above), so let a hlink_first member fall
+                // through to promote_hardlink_leader() + the self-link guard: if
+                // it IS the recorded data-holder the guard skips it, otherwise
+                // (an absent or stale pre-existing sorted-first member) it is
+                // re-linked to the fresh data-holder like any follower.
+                if entry.hlink_first() && !local_replay {
                     continue;
                 }
                 let leader_idx = match entry.hardlink_idx() {

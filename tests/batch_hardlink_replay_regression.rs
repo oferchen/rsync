@@ -164,3 +164,76 @@ fn read_batch_preserves_hardlink_cluster_when_holder_is_not_sorted_first() {
         );
     }
 }
+
+/// Replaying a hardlink batch into a PRE-EXISTING destination whose cluster
+/// members already exist as separate, stale files must re-link every member to
+/// the freshly transferred payload - not leave a stale pre-existing member as
+/// the source.
+///
+/// This is the oracle-free form of the upstream `batch-only-remove-source-
+/// regression` cell. With the cluster payload shipped under the sorted-last
+/// data-holder, the batch-replay receiver must key the group's source on the
+/// member the stream transferred (recorded at commit), not on disk presence -
+/// otherwise the stale sorted-first member wins and the fresh payload is
+/// discarded (both members end up hard-linked but carrying the stale bytes).
+#[test]
+#[cfg(unix)]
+fn read_batch_relinks_stale_preexisting_cluster_to_fresh_payload() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let src = test_dir.mkdir("src").expect("create src");
+
+    let fresh: &[u8] = b"fresh source payload\n";
+    // "a-linked" sorts before "z-linked", so the sorted-last member carries the
+    // batch payload; the stale sorted-first member must be re-linked to it.
+    fs::write(src.join("a-linked.txt"), fresh).expect("write a-linked");
+    fs::hard_link(src.join("a-linked.txt"), src.join("z-linked.txt")).expect("link z-linked");
+
+    let direct = test_dir.mkdir("direct").expect("create direct");
+    let replay = test_dir.mkdir("replay").expect("create replay");
+    let batch = test_dir.path().join("BATCH");
+
+    // The replay destination already holds both cluster names as SEPARATE stale
+    // files (distinct inodes), the case the UTS cell exercises.
+    let stale: &[u8] = b"stale destination bytes\n";
+    fs::write(replay.join("a-linked.txt"), stale).expect("seed stale a");
+    fs::write(replay.join("z-linked.txt"), stale).expect("seed stale z");
+
+    RsyncCommand::new()
+        .args([
+            "-a",
+            "-H",
+            &format!("--write-batch={}", batch.display()),
+            &format!("{}/", src.display()),
+            &format!("{}/", direct.display()),
+        ])
+        .assert_success();
+
+    let output = RsyncCommand::new()
+        .args([
+            "-a",
+            "-H",
+            &format!("--read-batch={}", batch.display()),
+            &format!("{}/", replay.display()),
+        ])
+        .assert_success();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    for name in ["a-linked.txt", "z-linked.txt"] {
+        assert_eq!(
+            fs::read(replay.join(name)).expect("read replayed cluster member"),
+            fresh,
+            "{name} must carry the freshly transferred payload, not the stale \
+             pre-existing bytes (stderr: {stderr})"
+        );
+    }
+    let a_ino = fs::metadata(replay.join("a-linked.txt"))
+        .expect("stat a-linked")
+        .ino();
+    let z_ino = fs::metadata(replay.join("z-linked.txt"))
+        .expect("stat z-linked")
+        .ino();
+    assert_eq!(
+        a_ino, z_ino,
+        "the cluster must share one inode after replay into a stale destination"
+    );
+}

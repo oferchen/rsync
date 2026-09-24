@@ -555,6 +555,21 @@ impl ReceiverContext {
                 info_log!(Name, 1, "{}", relative_path.display());
             }
 
+            // upstream: hlink.c:496-565 finish_hard_link() links a cluster to
+            // the member that completed its transfer. Record the just-committed
+            // member as this group's data-holder so create_hardlinks() links the
+            // rest to the fresh payload. Which member the batch transferred is
+            // stream-dictated - upstream (and oc, post the sorted-last fix) ships
+            // it under the sorted-last FLAG_HLINK_LAST member, not necessarily
+            // the sorted-first hlink_first one - so the source cannot be inferred
+            // from disk presence (a stale pre-existing member would win).
+            if file_entry.hlinked()
+                && let Some(gnum) = file_entry.hardlink_idx()
+                && let Some(tracker) = self.hardlink_tracker.as_mut()
+            {
+                let _ = tracker.record_leader(gnum, file_path.clone());
+            }
+
             bytes_received += literal_bytes;
             literal_data += literal_bytes;
             matched_data += result.bytes_written.saturating_sub(literal_bytes);
