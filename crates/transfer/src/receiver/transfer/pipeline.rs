@@ -843,13 +843,39 @@ impl ReceiverContext {
                 // the sender and echoed back via write_ndx_and_attrs(); consume
                 // the echo here so the response stream stays aligned with the
                 // transfer replies that follow it in FIFO order.
+                //
+                // Read through the marker-aware primitive, exactly as the main
+                // reply read does at the bottom of this loop
+                // (read_response_header -> read_ndx_and_attrs). An INC_RECURSE
+                // sub-list segment marker can interleave immediately before this
+                // echo once the eager flist drain is removed (RS-3b): the
+                // metadata-only rows are merged into the same request stream as
+                // the transfers, so the sender may emit a segment header between
+                // two replies. The receiver sink receives such a marker rather
+                // than misreading it as this echo's NDX and desyncing. Without
+                // INC_RECURSE (flist_eof set on entry) no marker ever arrives and
+                // this reads the identical bytes it did before - byte-neutral on
+                // the live path. upstream: rsync.c:322-431 read_ndx_and_attrs().
                 if base_iflags & crate::generator::ItemFlags::ITEM_TRANSFER == 0 {
-                    let _ = crate::receiver::wire::SenderAttrs::read_with_codec_xattr(
+                    if crate::receiver::ndx_stream::read_ndx_and_attrs(
                         &mut *reader,
                         &mut *ndx_read_codec,
+                        self,
                         request_config.preserve_xattrs,
                         request_config.want_xattr_optim,
-                    )?;
+                    )?
+                    .is_none()
+                    {
+                        // upstream: rsync.c:334-335 - NDX_DONE ends the phase.
+                        // Reaching it with a non-transfer echo still outstanding
+                        // means the sender dropped it; fail loudly rather than
+                        // desync the following replies.
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "sender ended the phase (NDX_DONE) while a non-transfer \
+                             itemize echo was still outstanding - protocol violation",
+                        ));
+                    }
                     continue;
                 }
 
