@@ -20,6 +20,8 @@
 //!   `receiver.c:559 no_batched_update()` (a missing special entry aborts
 //!   the replay with exit 23).
 
+#![cfg(unix)]
+
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
@@ -64,7 +66,6 @@ fn require_upstream(path: &Path) {
 }
 
 #[test]
-#[cfg(unix)]
 #[ignore = "requires a locally built upstream rsync 3.5.0; run with --ignored"]
 fn upstream_read_batch_counts_created_dirs_symlinks_and_specials() {
     let upstream = upstream_3_5_0();
