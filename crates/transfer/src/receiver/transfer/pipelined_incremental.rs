@@ -66,11 +66,26 @@ impl ReceiverContext {
             return self.finish_empty_client_flist(reader, writer);
         }
 
-        // Materialize any INC_RECURSE sub-list segments the setup no longer
-        // drains. No-op without INC_RECURSE (`flist_eof` already set).
+        // Materialize the INC_RECURSE sub-list segments the setup no longer
+        // drains, so the directory walk, delete sweep, and batched candidate
+        // build below see the complete list - each walks the whole `file_list`
+        // and cannot classify a still-pending entry (see
+        // `delete_pass_flist_complete`). Driven by a flat cursor through
+        // `ensure_flat_idx`, the same on-demand primitive the synchronous driver
+        // walks (`sync.rs`), so this batch driver now carries an index walk for
+        // the segment-boundary reclaim to hang on later; today the walk still
+        // runs to completion because those passes need the whole list. When
+        // `flist_eof` is already set at entry - every non-INC_RECURSE transfer,
+        // and the only live pull path today - `ensure_flat_idx` never touches the
+        // reader, so this is a pure in-memory bound scan that leaves `file_list`
+        // untouched and reads not one wire byte, byte-identical to the
+        // `ensure_all_segments_loaded` drain it replaces.
         // upstream: generator.c:2299-2368 fetches sub-lists on demand.
         let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
-        self.ensure_all_segments_loaded(reader, &mut flist_ndx_codec)?;
+        let mut flat_idx = 0usize;
+        while self.ensure_flat_idx(flat_idx, reader, &mut flist_ndx_codec)? {
+            flat_idx += 1;
+        }
 
         let mut stats = TransferStats {
             files_listed: file_count,
