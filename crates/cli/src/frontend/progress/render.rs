@@ -1309,16 +1309,30 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 // for directories (no ATTRS_REPORT flag), so dirs never trigger
                 // the rsync.c:676 "is uptodate" notice. Symlinks (line 1575)
                 // and regular files (line 1827) DO pass `maybe_ATTRS_REPORT`
-                // and therefore surface. Skip directory MetadataReused events
-                // here so the `-vv` golden in `testsuite/itemize.test` matches.
+                // and therefore surface.
                 if event
                     .metadata()
                     .map(ClientEntryMetadata::kind)
                     .is_some_and(|kind| matches!(kind, ClientEntryKind::Directory))
                 {
+                    // upstream: generator.c:1502-1504 - after mkdir/attr apply,
+                    // `set_file_attrs()` returning nonzero (a changed dir) prints
+                    // `"%s/\n"` at INFO_GTE(NAME, 1), i.e. from plain -v upward.
+                    // An unchanged dir returns zero there and prints nothing (it
+                    // surfaces only through the -ii / NAME>=2 itemize path as an
+                    // all-dot `.d` row). Mirror that: a changed directory prints
+                    // its bare `dir/` name (`verbose_listing_name` renders the
+                    // transfer root as `./`); an unchanged one is dropped, and a
+                    // directory never takes the rsync.c:676 "is uptodate" wording.
+                    if event.change_set().has_any_change() {
+                        let rendered = verbose_listing_name(event, escape);
+                        stdout.write_all(&rendered)?;
+                        stdout.write_all(b"\n")?;
+                    }
                     continue;
-                }
-                if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
+                } else if verbosity >= 2
+                    || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged)
+                {
                     // Same `fname`, different trailer - rsync.c:824 prints the
                     // bare name when `set_file_attrs` updated anything, and
                     // rsync.c:826 the `is uptodate` notice only when it did not.
@@ -1415,7 +1429,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::local_copy::LocalCopyChangeSet;
+    use engine::local_copy::{LocalCopyChangeSet, TimeChange};
     use std::path::PathBuf;
 
     fn render_verbose(event: ClientEvent) -> String {
@@ -1616,6 +1630,36 @@ mod tests {
         // binary's stdout by `skipping_directory_prints_without_name_output`,
         // which compares whole lines, not by this unit.
         assert_eq!(render_verbose(event), "");
+    }
+
+    #[test]
+    fn changed_directory_prints_bare_name_but_unchanged_one_is_silent() {
+        // WHY: upstream generator.c:1502-1504 prints a directory as `"%s/\n"` at
+        // INFO_GTE(NAME, 1) whenever `set_file_attrs()` changed it. A
+        // copy-contents pull into a pre-existing destination makes the transfer
+        // root such a dir - its mtime drifts from the backdated source - so
+        // upstream emits `./` at plain -v, while oc previously dropped every
+        // directory MetadataReused row and started its listing at the first
+        // file. An unchanged directory must still print nothing here (it
+        // surfaces only through the -ii / NAME>=2 itemize path as a `.d` row),
+        // and a directory never takes the rsync.c:676 "is uptodate" wording.
+        let changed_root = ClientEvent::for_test(
+            PathBuf::from("."),
+            ClientEventKind::MetadataReused,
+            false,
+            Some(ClientEntryMetadata::for_test(ClientEntryKind::Directory)),
+            LocalCopyChangeSet::new().with_time_change(Some(TimeChange::Modified)),
+        );
+        assert_eq!(render_verbose(changed_root), "./\n");
+
+        let unchanged_subdir = ClientEvent::for_test(
+            PathBuf::from("sub"),
+            ClientEventKind::MetadataReused,
+            false,
+            Some(ClientEntryMetadata::for_test(ClientEntryKind::Directory)),
+            LocalCopyChangeSet::new(),
+        );
+        assert_eq!(render_verbose(unchanged_subdir), "");
     }
 
     /// Renders the summary trailer for an empty (default) transfer at the given
