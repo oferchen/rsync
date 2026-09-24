@@ -316,6 +316,50 @@ impl GeneratorContext {
             },
         );
     }
+
+    /// Scans one directory into a single pending segment - upstream's
+    /// `send1extra()` / `send_extra_file_list()` per-directory body.
+    ///
+    /// Appends the directory's immediate children to `file_list`/`source_bases`
+    /// via [`scan_one_directory`](Self::scan_one_directory) (one level; a
+    /// sub-directory is recorded but not expanded), then sorts just that
+    /// freshly-appended run by `f_name_cmp`, co-permuting `source_bases` in
+    /// lockstep, so the segment's wire order equals the eager whole-list sort
+    /// restricted to this directory - the byte-neutrality invariant the lazy
+    /// producer must preserve. A single physical directory yields unique child
+    /// names, so no dedup pass is needed here; duplicate-directory batching
+    /// (FLAG_DUPLICATE) belongs to the producer loop (LF-2c).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:send1extra()` - one directory, one sub-list
+    /// - `flist.c:send_directory()` with `FLAG_DIVERT_DIRS` - one level, subdirs diverted
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "wired by the lazy producer loop (LF-2c)")
+    )]
+    pub(in crate::generator) fn scan_extra_segment(
+        &mut self,
+        base: &Path,
+        dir_path: &Path,
+        parent_dir_ndx: i32,
+        parent_flat_idx: usize,
+    ) -> std::io::Result<PendingSegment> {
+        let flist_start = self.file_list.len();
+        self.scan_one_directory(base, dir_path)?;
+        self.file_list.sort_tail_with_parallel(
+            flist_start,
+            &mut self.source_bases,
+            self.config.qsort,
+        );
+        let count = self.file_list.len() - flist_start;
+        Ok(PendingSegment {
+            parent_dir_ndx,
+            parent_flat_idx,
+            flist_start,
+            count,
+        })
+    }
 }
 
 /// Intermediate result from file list classification, consumed by
