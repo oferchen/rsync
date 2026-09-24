@@ -807,3 +807,175 @@ fn replay_up_to_date_skipping_notices_match_upstream() {
         "up-to-date replay skip notices diverge"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Cross-implementation hardlink batch replay (task #18)
+// ---------------------------------------------------------------------------
+
+/// Records `build_src`'s hardlink cluster with `producer`, replays the batch
+/// with `consumer` into a fresh seeded destination, and asserts the cluster is
+/// reconstructed the way upstream does: every named member present, all sharing
+/// ONE inode with `cluster.len()` links, and the unlinked control independent.
+///
+/// `cluster` lists the hardlinked names (any order), `content` is their shared
+/// payload, `solo` is an unlinked control file. Both cross directions are
+/// exercised: upstream-writes/oc-reads and oc-writes/upstream-reads.
+fn assert_cross_impl_hardlink_parity(
+    build_src: &dyn Fn(&Path),
+    cluster: &[&str],
+    content: &[u8],
+    solo: &str,
+) {
+    let Some(harness) = ParityHarness::new(build_src, &|_seed| {}) else {
+        return;
+    };
+
+    for (producer_label, producer, consumer_label, consumer) in [
+        ("upstream", &harness.upstream, "oc", &harness.oc),
+        ("oc", &harness.oc, "upstream", &harness.upstream),
+    ] {
+        let label = format!("{producer_label}-writes/{consumer_label}-reads");
+        let batch = harness
+            .temp
+            .path()
+            .join(format!("{producer_label}-x.batch"));
+        let record = harness
+            .temp
+            .path()
+            .join(format!("{producer_label}-x-record"));
+        copy_tree(&harness.seed, &record);
+
+        let write_flag = format!("--write-batch={}", batch.display());
+        let record_out = run_rsync(
+            producer,
+            &["-a", "-H", &write_flag],
+            &[
+                format!("{}/", harness.src.display()),
+                format!("{}/", record.display()),
+            ],
+        );
+        assert!(
+            record_out.status.success(),
+            "{label}: {producer_label} --write-batch -aH must exit 0, got {:?}\nstderr: {}",
+            record_out.status.code(),
+            String::from_utf8_lossy(&record_out.stderr)
+        );
+
+        let replay = harness
+            .temp
+            .path()
+            .join(format!("{producer_label}-x-replay"));
+        copy_tree(&harness.seed, &replay);
+        let read_flag = format!("--read-batch={}", batch.display());
+        let replay_out = run_rsync(
+            consumer,
+            &["-a", "-H", &read_flag],
+            &[format!("{}/", replay.display())],
+        );
+        assert!(
+            replay_out.status.success(),
+            "{label}: {consumer_label} --read-batch -aH must exit 0 (silent data loss otherwise), \
+             got {:?}\nstderr: {}",
+            replay_out.status.code(),
+            String::from_utf8_lossy(&replay_out.stderr)
+        );
+
+        // Every cluster member must exist, carry the payload, and share one inode.
+        let mut inode = None;
+        for name in cluster {
+            let path = replay.join(name);
+            assert!(
+                path.exists(),
+                "{label}: replay must produce cluster member '{name}'"
+            );
+            assert_eq!(
+                fs::read(&path).unwrap_or_else(|e| panic!("{label}: read '{name}': {e}")),
+                content,
+                "{label}: cluster member '{name}' must carry the payload"
+            );
+            let meta = fs::metadata(&path).expect("stat cluster member");
+            assert_eq!(
+                meta.nlink() as usize,
+                cluster.len(),
+                "{label}: '{name}' must report nlink={}, got {}",
+                cluster.len(),
+                meta.nlink()
+            );
+            match inode {
+                None => inode = Some(meta.ino()),
+                Some(first) => assert_eq!(
+                    meta.ino(),
+                    first,
+                    "{label}: all cluster members must share one inode"
+                ),
+            }
+        }
+
+        // The unlinked control must stay independent of the cluster.
+        let solo_path = replay.join(solo);
+        assert!(
+            solo_path.exists(),
+            "{label}: replay must produce the unlinked control '{solo}'"
+        );
+        let solo_meta = fs::metadata(&solo_path).expect("stat solo");
+        assert_eq!(
+            solo_meta.nlink(),
+            1,
+            "{label}: the unlinked control must stay independent, got nlink={}",
+            solo_meta.nlink()
+        );
+        assert_ne!(
+            Some(solo_meta.ino()),
+            inode,
+            "{label}: the unlinked control must not join the cluster"
+        );
+    }
+}
+
+/// A two-name hardlink cluster must survive cross-implementation batch replay in
+/// BOTH directions.
+///
+/// Regression guard for the cross-impl hardlink batch fix (task #18): oc's
+/// `--write-batch` ships the cluster's single payload under the sorted-LAST
+/// member's NDX - the `FLAG_HLINK_LAST` data-holder upstream's generator
+/// transfers (upstream `hlink.c:113-194 match_gnums()`, `hlink.c:496-565
+/// finish_hard_link()`) - and the receiver's `create_hardlinks` links every
+/// other group member (including an unmaterialized sorted-first leader) to
+/// whichever member actually materialized on disk. Before the fix oc shipped
+/// under the sorted-FIRST member, so oc reading an upstream batch silently
+/// dropped the leader (exit 0) and upstream reading an oc batch failed (exit 23);
+/// a plain network `-H` transfer was unaffected, which is why the divergence was
+/// specific to the batch write + batch-replay paths.
+#[test]
+fn cross_impl_hardlink_batch_pair_parity() {
+    let build_src = |src: &Path| {
+        fs::write(src.join("aaa_leader.txt"), b"linked payload\n").expect("write leader");
+        fs::hard_link(src.join("aaa_leader.txt"), src.join("zzz_holder.txt")).expect("link holder");
+        fs::write(src.join("mmm_solo.txt"), b"solo payload\n").expect("write solo");
+    };
+    assert_cross_impl_hardlink_parity(
+        &build_src,
+        &["aaa_leader.txt", "zzz_holder.txt"],
+        b"linked payload\n",
+        "mmm_solo.txt",
+    );
+}
+
+/// A three-name hardlink cluster must survive cross-implementation batch replay
+/// in BOTH directions - the same divergence as the pair case, stressed with a
+/// middle member so an off-by-one in the group index cannot pass by luck.
+#[test]
+fn cross_impl_hardlink_batch_triple_parity() {
+    let build_src = |src: &Path| {
+        fs::write(src.join("b_mid.txt"), b"triple payload\n").expect("write mid");
+        fs::hard_link(src.join("b_mid.txt"), src.join("a_first.txt")).expect("link first");
+        fs::hard_link(src.join("b_mid.txt"), src.join("z_last.txt")).expect("link last");
+        fs::write(src.join("solo.txt"), b"solo payload\n").expect("write solo");
+    };
+    assert_cross_impl_hardlink_parity(
+        &build_src,
+        &["a_first.txt", "b_mid.txt", "z_last.txt"],
+        b"triple payload\n",
+        "solo.txt",
+    );
+}

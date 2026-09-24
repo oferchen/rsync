@@ -687,10 +687,11 @@ impl<'a> CopyContext<'a> {
         let suppressed = self.batch_hlink_suppressed_indices(&traversal_to_sorted);
 
         // A cluster's single payload must be shipped under the NDX of its
-        // sorted-first member, the one the replaying receiver flags
-        // FLAG_HLINK_FIRST and transfers (hlink.c:113-194 match_gnums()); a
-        // traversal-first recorder that sorts later would otherwise leave the
-        // real leader without data.
+        // sorted-LAST member, the one match_gnums() flags FLAG_HLINK_LAST and
+        // whose transfer finish_hard_link() completes before linking every other
+        // member to it (hlink.c:113-194, hlink.c:496-565). Shipping under any
+        // other member leaves the real data-holder without data and breaks
+        // cross-implementation replay (task #18).
         let cluster_leader_ndx = self.batch_hlink_cluster_leader_ndx(&traversal_to_sorted);
         let emit_ndx = |traversal_idx: i32| -> i32 {
             if let Some(Some(gnum)) = self.batch_entry_hlink_gnum.get(traversal_idx as usize)
@@ -705,7 +706,7 @@ impl<'a> CopyContext<'a> {
         };
 
         // Resolve each kept entry to the NDX it will ship under before borrowing
-        // the codec, so the sorted-first-leader remap above and the codec's
+        // the codec, so the sorted-last-leader remap above and the codec's
         // mutable borrow do not contend for `self`.
         let mut entries: Vec<(i32, Vec<u8>)> = std::mem::take(&mut self.batch_delta_entries)
             .into_iter()
@@ -862,17 +863,19 @@ impl<'a> CopyContext<'a> {
         assigned
     }
 
-    /// Maps each hardlink cluster to the sorted index of its sorted-first
+    /// Maps each hardlink cluster to the sorted index of its sorted-LAST
     /// member, keyed by the cluster's group number.
     ///
     /// After the replaying receiver runs `flist_sort_and_clean()` and
-    /// `match_hard_links()` (hlink.c:113-194), the *sorted-first* member of each
-    /// cluster is the one flagged `FLAG_HLINK_FIRST`, so upstream transfers its
-    /// payload and links every other member to it (`generator.c` ->
-    /// `hard_link_check()`). The cluster's single recorded payload must therefore
-    /// be emitted under that member's NDX, not under the NDX of whichever member
-    /// the traversal happened to reach first - otherwise the sorted-first leader
-    /// receives no data, is never written, and the cluster cannot be linked.
+    /// `match_hard_links()` (hlink.c:113-194), the *sorted-last* member of each
+    /// cluster is the one flagged `FLAG_HLINK_LAST`; upstream's generator
+    /// transfers that member and `finish_hard_link()` (hlink.c:496-565) then
+    /// links every other member to it. The cluster's single recorded payload
+    /// must therefore be emitted under the sorted-last member's NDX, so a
+    /// replaying receiver (upstream or oc) finds the data on the member it
+    /// materialises and links the rest - including the sorted-first member - to
+    /// it. Shipping under the sorted-first member instead is what broke
+    /// cross-implementation replay (task #18).
     fn batch_hlink_cluster_leader_ndx(&self, traversal_to_sorted: &[i32]) -> HashMap<i32, i32> {
         let mut leader_ndx: HashMap<i32, i32> = HashMap::new();
         for (traversal_idx, gnum) in self.batch_entry_hlink_gnum.iter().enumerate() {
@@ -884,7 +887,7 @@ impl<'a> CopyContext<'a> {
             leader_ndx
                 .entry(*gnum)
                 .and_modify(|best| {
-                    if sorted < *best {
+                    if sorted > *best {
                         *best = sorted;
                     }
                 })
