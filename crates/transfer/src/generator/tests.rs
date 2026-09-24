@@ -7017,6 +7017,30 @@ fn scan_extra_segment_orders_children_like_the_eager_build() {
     assert_eq!(lazy, vec!["a.txt", "b.txt", "d.txt", "sub"]);
 }
 
+/// LF-2g: a directory that vanished between the initial listing and its
+/// lazy scan must be reported as vanished (IOERR_VANISHED, upstream exit
+/// 24) and yield an empty segment, never abort the scan. Mirrors upstream
+/// flist.c:2004 interpret_stat_error (stat-before-opendir on ENOENT).
+#[test]
+fn scan_extra_segment_reports_a_vanished_directory() {
+    let temp = create_test_structure(&["present.txt"]);
+    // A child directory that was never created stands in for one that
+    // disappeared between the initial listing and this lazy scan.
+    let gone = temp.path().join("gone");
+    let handshake = test_handshake_with_protocol(32);
+    let mut config = test_config();
+    config.flags.recursive = true;
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+    let seg = ctx
+        .scan_extra_segment(temp.path(), &gone, 0, 0)
+        .expect("a vanished directory yields an empty segment, not an error");
+    assert_eq!(seg.count, 0, "a vanished directory scans no children");
+    assert_ne!(
+        ctx.io_error() & io_error_flags::IOERR_VANISHED,
+        0,
+        "a vanished directory sets IOERR_VANISHED"
+    );
+}
 #[test]
 fn the_recursive_walk_still_expands_the_same_fixture() {
     let temp = nested_scan_fixture();
