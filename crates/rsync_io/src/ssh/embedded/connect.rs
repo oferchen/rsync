@@ -18,6 +18,15 @@ use super::handler::{HostKeyOptions, SshClientHandler};
 use super::proxy::{ProxyDial, expand_proxy_tokens, spawn_proxy_command};
 use super::resolve::resolve_host;
 
+/// SSH extended-data type for a channel's stderr stream.
+///
+/// `SSH_EXTENDED_DATA_STDERR` per RFC 4254 section 5.2 - the only
+/// extended-data type OpenSSH and russh emit. The remote command's stderr
+/// (here the peer `rsync --server`) arrives on the channel as extended data
+/// tagged with this code, distinct from the multiplexed protocol stream that
+/// rides ordinary `Data`.
+const SSH_EXTENDED_DATA_STDERR: u32 = 1;
+
 /// Bounded budget for the SSH goodbye phase.
 ///
 /// After the local side drops its writer half, the remote channel must
@@ -232,6 +241,34 @@ pub fn connect_and_exec(
     ))
 }
 
+/// Forwards one SSH extended-data chunk to the local process stderr when it is
+/// the remote command's stderr stream ([`SSH_EXTENDED_DATA_STDERR`]).
+///
+/// The peer `rsync --server` writes the diagnostics it does not frame into the
+/// multiplexed protocol stream - notably the `--append-verify` phase-1 `failed
+/// verification` warning, which upstream routes to fd2 (`log.c:314` maps
+/// `FWARNING` to stderr) rather than sending a `MSG_WARNING` - to its stderr,
+/// which arrives on the channel as extended data. Forwarding the stderr stream
+/// verbatim mirrors the subprocess transport's drain
+/// (`aux_channel.rs::drain_loop`) and native ssh's inherited fd2 passthrough,
+/// so a push over the embedded transport surfaces remote warnings identically.
+///
+/// Returns `true` when the chunk was the stderr stream (and was written),
+/// `false` for any other extended-data type, which has no rsync meaning and is
+/// ignored exactly as ssh ignores it.
+fn forward_remote_stderr(
+    ext: u32,
+    data: &[u8],
+    out: &mut dyn std::io::Write,
+) -> std::io::Result<bool> {
+    if ext != SSH_EXTENDED_DATA_STDERR {
+        return Ok(false);
+    }
+    out.write_all(data)?;
+    out.flush()?;
+    Ok(true)
+}
+
 /// Runs the full SSH lifecycle on the bridge thread: setup, then bridge loop.
 ///
 /// Signals setup completion (or failure) via `setup_tx`, then runs the
@@ -265,6 +302,15 @@ async fn bridge_main(
                         if data_tx.send(data.to_vec()).is_err() {
                             break;
                         }
+                    }
+                    Some(russh::ChannelMsg::ExtendedData { data, ext }) => {
+                        // The remote command's stderr, not the multiplexed
+                        // protocol stream. Forward it to the local process
+                        // stderr in real time so a push over the embedded
+                        // transport surfaces remote diagnostics identically to
+                        // the subprocess transport and native ssh - see
+                        // `forward_remote_stderr`.
+                        let _ = forward_remote_stderr(ext, &data, &mut std::io::stderr().lock());
                     }
                     Some(russh::ChannelMsg::Eof) | None => {
                         break;
@@ -545,6 +591,44 @@ async fn ssh_setup(
 mod tests {
     use super::*;
     use std::io::Read;
+
+    /// The remote command's stderr stream (`SSH_EXTENDED_DATA_STDERR`) must be
+    /// forwarded to the local stderr verbatim: this is the byte the embedded
+    /// (russh) push transport dropped, so upstream's `--append-verify` phase-1
+    /// `failed verification` warning never reached the operator while the
+    /// subprocess ssh transport surfaced it (`log.c:314` routes `FWARNING` to
+    /// fd2). Pins that parity at the routing boundary that carries the warning.
+    #[test]
+    fn forward_remote_stderr_writes_stderr_stream_verbatim() {
+        let warning =
+            b"WARNING: payload.bin failed verification -- update retained (will try again).\n";
+        let mut sink = Vec::new();
+        let wrote = forward_remote_stderr(SSH_EXTENDED_DATA_STDERR, warning, &mut sink).unwrap();
+        assert!(wrote, "the stderr stream must be forwarded");
+        assert_eq!(
+            sink, warning,
+            "remote stderr bytes must be forwarded unescaped and unaltered"
+        );
+    }
+
+    /// Non-stderr extended-data types carry no rsync diagnostic; forwarding them
+    /// to the operator's error stream would inject unrelated bytes, so they are
+    /// ignored exactly as ssh ignores them. Guards against a fix that forwards
+    /// every extended-data type indiscriminately.
+    #[test]
+    fn forward_remote_stderr_ignores_non_stderr_types() {
+        let mut sink = Vec::new();
+        let wrote =
+            forward_remote_stderr(SSH_EXTENDED_DATA_STDERR + 1, b"junk", &mut sink).unwrap();
+        assert!(
+            !wrote,
+            "a non-stderr extended-data type must not be forwarded"
+        );
+        assert!(
+            sink.is_empty(),
+            "nothing must be written for non-stderr types"
+        );
+    }
 
     #[test]
     fn channel_reader_eof_on_closed_channel() {
