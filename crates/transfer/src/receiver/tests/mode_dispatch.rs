@@ -160,8 +160,7 @@ fn drive(mode: NonTransferMode, dest: &std::path::Path) -> Vec<u8> {
         sandbox: None,
     };
 
-    let files: Vec<(usize, &FileEntry, std::path::PathBuf, u32)> =
-        vec![(0, &ctx.file_list[0], dest.join("f"), 0)];
+    let files: Vec<(usize, std::path::PathBuf, u32)> = vec![(0, dest.join("f"), 0)];
     let sent = SharedBuf::default();
     let mut reader = crate::reader::ServerReader::new_plain(Cursor::new(echo_response(0)));
     let mut writer = crate::writer::ServerWriter::new_plain(sent.clone());

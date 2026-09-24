@@ -536,9 +536,10 @@ fn requires_multiplex_output(
 /// upstream's incomplete-flist arm generator.c:304-311) with a `debug_assert!`
 /// so the conversion cannot silently sweep early. The drain conversion must
 /// either keep the predicate true at both delete sites or split the sweep
-/// per-segment the way upstream's `delete_in_dir` does;
-/// `build_files_to_transfer` also hands back borrows of the whole context, so
-/// this is not a local edit.
+/// per-segment the way upstream's `delete_in_dir` does. The candidate pass
+/// (`build_files_to_transfer`) no longer hands back borrows of the whole
+/// context - it returns owned flist indices - so that entanglement is gone,
+/// but the completeness requirement above keeps this from being a local edit.
 ///
 /// Order: completeness predicate (done - see above), then per-segment
 /// `NDX_DONE` during the walk, then the drain conversion, then re-run the A/B.
