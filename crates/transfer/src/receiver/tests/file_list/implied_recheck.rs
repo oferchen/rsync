@@ -345,3 +345,58 @@ fn a_requested_directory_keeps_its_content_flag() {
         "the client asked for `dir` itself, so --delete legitimately scopes to it"
     );
 }
+
+/// A filename that failed `--iconv` conversion is cleared to "" (upstream
+/// flist.c:842-845 sets `thisname[0] = '\0'`) but the entry stays active with
+/// its real file-type bits, and upstream still runs it through
+/// `check_filter(&implied_filter_list, "", ...)` at flist.c:1026, which returns
+/// `<= 0` for the empty name and aborts with RERR_UNSUPPORTED (exit 4). The
+/// sender kept the entry active and will send its data, so the receiver must
+/// reject it here rather than letting the request reach the per-file
+/// cleared-index guard (exit 2/23). This is the #670 pull cell: an unmappable
+/// CJK filename pulled with `--iconv=ASCII,UTF-8`.
+#[test]
+fn iconv_emptied_name_rejected_with_exit_code_4() {
+    let mut config = test_config();
+    config.flags.recursive = true;
+    config.connection.implied_source_args = vec![b"dir".to_vec()];
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    // A regular-file entry whose name iconv cleared to "": still active
+    // (retains S_IFREG bits), never requested, so it must be refused.
+    ctx.file_list
+        .push(FileEntry::new_file("".into(), 10, 0o644));
+
+    let err = ctx.recheck_received_implied_includes().unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::Unsupported);
+    assert_eq!(
+        err.to_string(),
+        "ERROR: rejecting unrequested file-list name: "
+    );
+}
+
+/// A locally cleared tombstone - an entry with an empty name AND no S_IFMT
+/// mode bits, e.g. a `--prune-empty-dirs` slot that `clear_file()` zeroed
+/// (prune.rs) - never existed at upstream's recv-time check (flist.c:1019 runs
+/// before flist_sort_and_clean's prune pass), so the receiver's post-receive
+/// recheck must treat it as a no-op. Distinguished from an iconv-emptied entry
+/// by the absence of file-type bits.
+#[test]
+fn cleared_tombstone_empty_name_is_a_noop() {
+    let mut config = test_config();
+    config.flags.recursive = true;
+    config.connection.implied_source_args = vec![b"dir".to_vec()];
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), config);
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("dir/wanted.txt".into(), 10, 0o644));
+    // A pruned/cleared tombstone: empty name, mode fully zeroed.
+    let mut tombstone = FileEntry::new_file("".into(), 0, 0o644);
+    tombstone.set_mode(0);
+    ctx.file_list.push(tombstone);
+
+    ctx.recheck_received_implied_includes()
+        .expect("a mode-0 cleared tombstone is a no-op, not an unrequested name");
+}

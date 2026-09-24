@@ -129,13 +129,17 @@ fn no_iconv_path_still_sorts_entries() {
     );
 }
 
-/// An iconv converter whose local and remote encodings are identical
-/// performs no transcoding, so the NDX-addressed array cannot diverge
-/// from the sender's wire view. Mirrors upstream's check at
-/// `options.c:2071` that nulls out `iconv_opt` on `--iconv=-`, leaving
-/// `need_unsorted_flist` unset.
+/// An identity `--iconv` spec (same local and remote encoding, e.g.
+/// `--iconv=UTF-8,UTF-8`) still sets `need_unsorted_flist = 1` upstream:
+/// `options.c:2069-2074` gates only on the presence of a non-`"-"`
+/// `iconv_opt`, with NO same-encoding short-circuit. So an upstream peer
+/// keeps `flist->files[]` in scan order even for an identity spec, and this
+/// side must do the same or the wire NDX resolves to a different entry
+/// (the "received request to transfer non-regular file" abort). Suppression
+/// therefore keys on iconv being configured at all, not on whether it
+/// transcodes.
 #[test]
-fn identity_iconv_does_not_suppress_reorder() {
+fn identity_iconv_suppresses_reorder() {
     let identity = protocol::iconv::FilenameConverter::identity();
     let mut config = build_no_iconv_config();
     config.connection.iconv = Some(identity);
@@ -156,7 +160,9 @@ fn identity_iconv_does_not_suppress_reorder() {
     let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
     assert_eq!(
         names,
-        vec!["zebra.txt", "alpha", "alpha/inner.txt"],
-        "identity iconv must behave like no iconv: the sort still runs"
+        vec!["alpha", "zebra.txt", "alpha/inner.txt"],
+        "identity iconv sets need_unsorted_flist upstream, so this side must \
+         keep sender wire-emit order too (any configured converter suppresses \
+         the reorder)"
     );
 }

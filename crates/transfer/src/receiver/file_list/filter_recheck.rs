@@ -196,16 +196,36 @@ impl ReceiverContext {
 
         for entry in entries {
             let path = entry.path().as_path();
-            // upstream: flist.c:1019 - the transfer root (`.` / `/.`) is exempt.
-            if path.as_os_str().is_empty() || path == Path::new(".") {
+            // upstream: flist.c:1019 - only the transfer root (`.` / `/.`) is
+            // exempt from the check.
+            if path == Path::new(".") || path == Path::new("/.") {
                 continue;
             }
 
-            // upstream: flist.c:1026 - check_filter(&implied_filter_list, ...)
-            // <= 0 means no include rule matched, i.e. the name was never
-            // requested. `covers` reproduces `check_filter(...) > 0` with
-            // `rule_matches()` (check_descendants = false) semantics.
-            if !implied.covers(path, entry.is_dir()) {
+            // A name emptied by a failed `--iconv` conversion is cleared to ""
+            // (upstream flist.c:842-845 sets `thisname[0] = '\0'`) but the entry
+            // stays active with its real mode, and upstream still runs it through
+            // `check_filter(&implied_filter_list, "", ...)` at flist.c:1026,
+            // which returns `<= 0` for the empty name and aborts with
+            // RERR_UNSUPPORTED (exit 4). The sender kept the entry active and
+            // will send its data, so failing to reject here lets the request
+            // reach the per-file cleared-index guard (exit 2/23) instead of
+            // upstream's clean exit 4 at file-list read. A locally cleared
+            // tombstone (mode 0 with no S_IFMT bits, e.g. a `--prune-empty-dirs`
+            // slot) never existed at upstream's recv-time check, so it stays a
+            // no-op here - distinguished from an iconv-emptied entry, which
+            // retains its wire file-type bits.
+            let has_type_bits = entry.mode() & 0o170000 != 0;
+            let covered = if path.as_os_str().is_empty() {
+                !has_type_bits
+            } else {
+                // upstream: flist.c:1026 - check_filter(&implied_filter_list,
+                // ...) <= 0 means no include rule matched, i.e. the name was
+                // never requested. `covers` reproduces `check_filter(...) > 0`
+                // with `rule_matches()` (check_descendants = false) semantics.
+                implied.covers(path, entry.is_dir())
+            };
+            if !covered {
                 // upstream: flist.c:1027-1028 - rprintf(FERROR, ...) then
                 // exit_cleanup(RERR_UNSUPPORTED).
                 return Err(io::Error::new(
