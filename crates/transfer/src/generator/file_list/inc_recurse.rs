@@ -346,6 +346,30 @@ impl GeneratorContext {
         parent_flat_idx: usize,
     ) -> std::io::Result<PendingSegment> {
         let flist_start = self.file_list.len();
+        // upstream: flist.c:2004 interpret_stat_error - a directory that
+        // vanished between the initial listing and its lazy scan is reported
+        // as vanished (IOERR_VANISHED, exit 24), not as a general opendir
+        // error, and yields an empty sub-list rather than aborting. Stat
+        // before opendir so an ENOENT is attributed here, mirroring the
+        // generator's own vanish idiom at protocol_io.rs record_open_failure.
+        match std::fs::symlink_metadata(dir_path) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.add_io_error(io_error_flags::IOERR_VANISHED);
+                let fname = crate::full_fname::full_fname_path(dir_path, self.full_fname_paths());
+                self.queue_flist_diagnostic(
+                    SenderDiagnostic::Warning,
+                    format!("file has vanished: {fname}\n"),
+                );
+                return Ok(PendingSegment {
+                    parent_dir_ndx,
+                    parent_flat_idx,
+                    flist_start,
+                    count: 0,
+                });
+            }
+            Err(e) => return Err(e),
+        }
         self.scan_one_directory(base, dir_path)?;
         self.file_list.sort_tail_with_parallel(
             flist_start,
