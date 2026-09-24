@@ -12,8 +12,9 @@ two share one wire contract (Section 6).
 > will not send without an `NDX_DONE` the eager path never emits); the fix is to
 > go per-segment (RS-3b). The MAIN pipelined reply read is already marker-aware
 > (`read_response_header` -> `read_ndx_and_attrs` with the receiver sink) and
-> merely dormant behind the drain; three AUXILIARY reply reads are still
-> positional and RS-3a routes them through the same primitive. Section 8 states
+> merely dormant behind the drain; a few AUXILIARY reply reads are still
+> positional and RS-3a routes the one on the transfer path (the no-transfer
+> echo) through the same primitive. Section 8 states
 > that correctness foundation; Section 9 designs the SEGMENT-LENGTH performance
 > layer (the broadened end goal: computed baseline + a wire-propagated opt-in
 > capability); Section 10 gives the revised task decomposition that replaces
@@ -23,7 +24,8 @@ two share one wire contract (Section 6).
 > transfer reply read was FIFO-positional and not marker-aware. That was wrong -
 > it was diagnosed off the dead `run_sync` and an auxiliary echo read. The main
 > read (`transfer_ops/mod.rs:354`) already dispatches interleaved markers; only
-> the three auxiliary reads do not. RS-3a is correspondingly small.
+> the auxiliary reads do not, and RS-3a routes just the one on the transfer path
+> (deferring dry-run/write-batch), so it is correspondingly small.
 
 ## 1. Problem
 
@@ -432,15 +434,19 @@ marker-aware" story - the MAIN reply read already IS marker-aware:
   Replies stay FIFO (the sender answers requests in order, markers interspersed),
   so `echoed_ndx == expected_ndx` still holds and the markers are absorbed - no
   desync.
-- What is actually still positional is THREE AUXILIARY reply reads that bypass
-  that primitive and read `SenderAttrs::read_with_codec_xattr` directly, so an
-  interleaved marker there would desync once the drain is gone: the no-transfer
-  itemize echo in `run_pipeline_loop_decoupled` (`pipeline.rs:847`),
+- What is actually still positional is three AUXILIARY reply reads that bypass
+  that primitive and read `SenderAttrs::read_with_codec_xattr` directly: the
+  no-transfer itemize echo in `run_pipeline_loop_decoupled` (`pipeline.rs:847`),
   `run_dry_run_loop` (`pipeline.rs:1200`), and `run_only_write_batch_loop`
-  (`pipeline.rs:1383,1395`). The dead `run_sync` (`sync.rs:262`) is also
-  positional but has no production caller (Section 8.5). RS-3a routes those
-  three through the same `read_ndx_and_attrs` primitive - a call-site change,
-  not a subsystem.
+  (`pipeline.rs:1383,1395`). Only the FIRST is on the real transfer path, so
+  RS-3a routes only the no-transfer echo (`:847`) through `read_ndx_and_attrs` -
+  a one-call-site change. The other two are `&self` methods whose inputs borrow
+  `file_list` (`plan: &[DryRunItem<'_>]`), and their modes keep the eager drain
+  (Section 10, RS-3b), so no marker interleaves there and they stay correct
+  as-is; making them marker-aware needs an owned-index restructure and is
+  deferred with the work that makes the non-transfer modes lazy. The dead
+  `run_sync` (`sync.rs:262`) is also positional but has no production caller
+  (Section 8.5).
 - The interleave the drain-removal exposes is UNAVOIDABLE for a tree larger than
   the lookahead window.
   The sender pushes sub-list segments proactively at the top of every send
@@ -506,11 +512,12 @@ already wired into the main reply read (Section 8.1):
   `InFlightRequests::retire_by_ndx` remain the mechanism for the `MSG_NO_SEND`
   decline reorder only.
 
-So RS-3a is a narrow routing change: point the three still-positional auxiliary
-reply reads (`pipeline.rs:847` no-transfer echo, `:1200` dry-run, `:1383/:1395`
-write-batch) at `read_ndx_and_attrs` with the receiver sink, exactly as the main
-reply read already does, so an interleaved marker is absorbed there too once the
-eager drain is gone. No new subsystem; the main data-transfer read is untouched.
+So RS-3a is a narrow routing change: point the no-transfer itemize echo
+(`pipeline.rs:847`) at `read_ndx_and_attrs` with the receiver sink, exactly as
+the main reply read already does, so an interleaved marker is absorbed there too
+once the eager drain is gone. No new subsystem; the main data-transfer read is
+untouched, and the dry-run / write-batch reads are deferred (they keep the eager
+drain, Section 8.5).
 
 ### 8.4 Isolation and byte-neutrality
 
@@ -526,9 +533,14 @@ but the marker branches are inert whenever `flist_eof` holds at entry.
 RS-3a stays inside the pipelined path that `run()` actually reaches
 (`transfer.rs:50-68`: `run_pipelined_incremental` with the `incremental-flist`
 feature, else `run_pipelined`). The main data-transfer reply read there is
-already marker-aware (Section 8.1); RS-3a only routes the three auxiliary reads
-in that path (`pipeline.rs:847` / `:1200` / `:1383,:1395`) through the same
-primitive. The synchronous `run_sync` (`sync.rs:262`) has NO production call
+already marker-aware (Section 8.1); RS-3a routes ONLY the no-transfer itemize
+echo (`pipeline.rs:847`) through the same primitive - the one auxiliary read on
+the real transfer path. `run_dry_run_loop` (`:1200`) and
+`run_only_write_batch_loop` (`:1383/:1395`) keep the eager drain in RS-3b (the
+non-transfer modes stay batch), so no marker interleaves there and they are
+correct as-is; making them marker-aware needs an owned-index restructure of
+their `file_list`-borrowing inputs and is deferred with the work that makes the
+non-transfer modes lazy. The synchronous `run_sync` (`sync.rs:262`) has NO production call
 site - it is exercised only by tests - so it is left as-is (surgical: do not
 touch dead code). If `run_sync` is ever revived for production, its positional
 read converts to the marker-aware one; that is a note, not a task in this chain.
@@ -644,7 +656,7 @@ standalone relocation.
 
 | Stage | Owns | Gate |
 |-------|------|------|
-| **RS-3a - marker-aware auxiliary reply reads** (correctness foundation, Section 8) | The main data-transfer reply read is already marker-aware; route the three still-positional AUXILIARY reads (`pipeline.rs:847` no-transfer echo, `:1200` dry-run, `:1383/:1395` write-batch) through `read_ndx_and_attrs` with the receiver sink so an interleaved marker is absorbed there too. Leave `run_sync` (dead code) untouched, per Section 8.5. No relocation yet - the eager drain stays, so this is wire-neutral. | #7953 PULL byte-identity base-vs-after (both fixtures) + full `transfer` nextest green + a new test feeding an interleaved segment-marker+reply stream through an auxiliary read that desyncs the positional read and passes the marker-aware read. |
+| **RS-3a - marker-aware no-transfer echo** (correctness foundation, Section 8) | The main data-transfer reply read is already marker-aware; route ONLY the no-transfer itemize echo (`pipeline.rs:847`) through `read_ndx_and_attrs` with the receiver sink so an interleaved marker is absorbed there too. Dry-run/write-batch (`:1200`, `:1383/:1395`) are deferred with the non-transfer-lazy work (they keep the eager drain, so no marker interleaves); `run_sync` (dead code) untouched, per Section 8.5. No relocation yet - the eager drain stays, so this is wire-neutral. | #7953 PULL byte-identity base-vs-after (both fixtures) + `transfer` nextest green + a forced-interleave test that desyncs the positional read and passes the marker-aware read. |
 | **RS-3b - lazy consumption + mid-walk NDX_DONE/reclaim** (Section 4 relocation, now sound on 3a) | Reroute `run_pipelined_incremental`/`run_pipelined` off the eager drain onto the on-demand cursor; emit `NDX_DONE` mid-walk gated on R13 (`first_flist` no `in_progress`/`to_redo`, honor R17: redo pins the segment); `reclaim_oldest_segment` + advance `first_segment_idx` mid-walk; pump `< MIN/2`; make `exchange_phase_done` loop `ndx_segments.len() - first_segment_idx` (byte-identical when `first_segment_idx==0`). Gate on `inc_recurse && !flist_eof`; exclude `--delete` (kept for RS-4). | strace NO deadlock forced-INC_RECURSE (compat-flag override, oc daemon-sender + oc client-receiver, no `--delete`) at >1024 AND >10000 files; #7953 byte-identity; `transfer` nextest. |
 | **RS-3c - segment-length perf** (Section 9, computed baseline + wire capability) | (a) Computed baseline (always-on): per-segment candidate/stat pre-sizing from computed `used`, per-segment batch signature parallelism, RSS-flat retention. (b) Wire-propagated `SEGMENT_LENGTH` capability (Section 9.1.1): new `-e` letter + private compat bit outside `KNOWN_MASK` + `OC_RSYNC_SEGMENT_LEN` env, both-peers opt-in, sender writes the per-segment count varint after the sub-list header when negotiated, receiver pre-sizes `file_list` extent + prefetch; add the env to `docs/oc-extension-env-reference.md`. | Capability-OFF byte-identical: #7953 both fixtures + interop vs real upstream auto-off byte-identical. Capability-ON oc-to-oc: forced/negotiated test proves the count is read, used, and validated against the terminator. 1M-file tree (containerized, non-bind-mounted data dir), both directions, receiver peak RSS O(segment window); no throughput regression on the live single-segment path. |
 | **RS-4 = A5a-4 - per-dir delete** (#31-34) | Per-dir `delete_in_dir` when a directory's sub-list is complete; make `delete_pass_flist_complete` (`transfer.rs:404`) per-dir; break the `first_segment_idx==0` coupling and drop RS-3b's `--delete` exclusion. | Bait-file delete test with opposed controls (partial-list); `--delete-during` under forced-INC_RECURSE; the `first_segment_idx==0` debug-assert tripwire never fires. |
