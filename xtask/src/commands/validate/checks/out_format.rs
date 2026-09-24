@@ -94,7 +94,7 @@ impl OutFormat {
         let oc_dst = root.join(format!("oc-{}-{}", transport.label(), direction.label()));
         let up_dst = root.join(format!("up-{}-{}", transport.label(), direction.label()));
 
-        let run_one = |client: &Path, dst: &Path| match direction {
+        let run_one = |transport: Transport, client: &Path, dst: &Path| match direction {
             Direction::Pull => {
                 pull_into(transport, client, ctx.upstream, src, dst, &flags, ctx.work)
             }
@@ -103,7 +103,7 @@ impl OutFormat {
             }
         };
 
-        let up = match run_one(ctx.upstream, &up_dst) {
+        let up = match run_one(transport.for_upstream(), ctx.upstream, &up_dst) {
             Ok(out) if out.status.success() => out,
             other => {
                 return crate::commands::validate::comparison::classify_failure(
@@ -114,7 +114,7 @@ impl OutFormat {
                 );
             }
         };
-        let oc = match run_one(ctx.oc, &oc_dst) {
+        let oc = match run_one(transport, ctx.oc, &oc_dst) {
             Ok(out) if out.status.success() => out,
             other => {
                 return crate::commands::validate::comparison::classify_failure(
