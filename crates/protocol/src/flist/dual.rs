@@ -146,6 +146,48 @@ impl DualFileList {
         super::sort::apply_permutation_in_place(&mut self.legacy, parallel, indices);
     }
 
+    /// Sort only the tail of the list - entries from `start` to the end - using
+    /// upstream `f_name_cmp` ordering, applying the same permutation to
+    /// `parallel[start..]` in lockstep. Used by the lazy flist producer to order
+    /// a single freshly-scanned directory segment identically to the eager
+    /// whole-list sort restricted to that segment, without disturbing entries
+    /// before `start` (already-sent sub-lists).
+    ///
+    /// `use_qsort` selects the unstable sort matching upstream `--qsort`,
+    /// mirroring [`sort_with_parallel`](Self::sort_with_parallel).
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds when `parallel.len() != self.len()`.
+    ///
+    /// upstream: flist.c:f_name_cmp() with indirect permutation, per sub-list
+    pub fn sort_tail_with_parallel<P>(
+        &mut self,
+        start: usize,
+        parallel: &mut [P],
+        use_qsort: bool,
+    ) {
+        let n = self.legacy.len();
+        debug_assert_eq!(parallel.len(), n);
+        if start >= n {
+            return;
+        }
+        let mut indices: Vec<usize> = (0..n - start).collect();
+        let cmp = |&a: &usize, &b: &usize| {
+            super::sort::compare_file_entries(&self.legacy[start + a], &self.legacy[start + b])
+        };
+        if use_qsort {
+            indices.sort_unstable_by(cmp);
+        } else {
+            indices.sort_by(cmp);
+        }
+        super::sort::apply_permutation_in_place(
+            &mut self.legacy[start..],
+            &mut parallel[start..],
+            indices,
+        );
+    }
+
     /// Removes duplicate-name entries in-place after sorting, keeping the
     /// upstream survivor, and applies the same removals to `parallel` in
     /// lockstep so a caller-owned array (the generator's `source_bases`) stays
