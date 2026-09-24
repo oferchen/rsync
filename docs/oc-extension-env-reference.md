@@ -360,36 +360,6 @@ bytes on the receiver-to-sender channel.
   pending a benchmark-before-default decision. Enable it only when both ends
   are oc and you have validated the win for your workload.
 
-### OC_RSYNC_SEGMENT_LEN
-
-**Planned (RS-3c, not yet wired) - documented here as the design target of
-`docs/design/receiver-inc-recurse-conversion.md` Section 9.1.1.**
-
-Opts this process in to the INC_RECURSE wire-propagated segment-length
-optimization. Set to `1` or `true` to enable; unset or any other value leaves
-it off (the default). **Both** peers must opt in - and both must be oc - for it
-to engage.
-
-When engaged, the sender writes each sub-list segment's entry count as a varint
-in the segment header, so the receiver can pre-size the file-list extent before
-decoding entries and cost-weight prefetch before pulling the next segment,
-reducing reallocation and improving pull-side scheduling on large trees. When
-off (the default, and always against upstream), nothing extra crosses the wire
-and the receiver derives the same lengths by reading each segment to its
-zero-flag terminator - byte-identical.
-
-- **Negotiated, oc-peer only.** An opted-in client advertises a private
-  capability letter in the `-e.<...>` string; upstream ignores unknown `-e`
-  letters, so it is inert against a stock peer. The private compat bit (outside
-  `KNOWN_MASK`) is set only when the oc server both sees the letter **and** is
-  itself opted in, so the extension never engages against upstream or an
-  un-opted-in oc peer - those transfers stay byte-identical.
-- **Integrity backstop.** The propagated count is a pre-sizing hint only; the
-  zero-flag terminator remains the authority on segment end, and a count that
-  disagrees with the terminator is a fail-closed protocol violation.
-- Mirrors the [`OC_CONSECUTIVE_MATCH`](#oc_consecutive_match) capability pattern;
-  folds under the planned `OC_RSYNC_PEER` umbrella.
-
 ## Legacy variables
 
 `OC_RSYNC_FALLBACK` and `OC_RSYNC_DAEMON_FALLBACK` are historical names
