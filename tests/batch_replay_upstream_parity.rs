@@ -935,25 +935,18 @@ fn assert_cross_impl_hardlink_parity(
 /// A two-name hardlink cluster must survive cross-implementation batch replay in
 /// BOTH directions.
 ///
-/// KNOWN DIVERGENCE (task #18), ignored until the fix lands: oc's `--write-batch`
-/// ships the cluster's single payload under the sorted-FIRST member's NDX (an
-/// oc-self convention introduced by #7928), while upstream ships it under the
-/// sorted-LAST member - the `FLAG_HLINK_LAST` data-holder its generator transfers
-/// (upstream `hlink.c:113-194 match_gnums()`, `hlink.c:490-565
-/// finish_hard_link()`). oc's batch replay also decodes the follower's
-/// `first_hlink_ndx` with a different base. The result is silent data loss when
-/// oc reads an upstream batch (the leader is dropped at exit 0) and an exit-23
-/// failure when upstream reads an oc batch. A plain network `-H` transfer is
-/// unaffected - oc's live wire receiver follows the sender's chosen data-holder
-/// correctly - so the gap is specific to the batch write + batch-replay paths.
-/// This test asserts the desired upstream-matching end state; the fix un-ignores
-/// it.
+/// Regression guard for the cross-impl hardlink batch fix (task #18): oc's
+/// `--write-batch` ships the cluster's single payload under the sorted-LAST
+/// member's NDX - the `FLAG_HLINK_LAST` data-holder upstream's generator
+/// transfers (upstream `hlink.c:113-194 match_gnums()`, `hlink.c:496-565
+/// finish_hard_link()`) - and the receiver's `create_hardlinks` links every
+/// other group member (including an unmaterialized sorted-first leader) to
+/// whichever member actually materialized on disk. Before the fix oc shipped
+/// under the sorted-FIRST member, so oc reading an upstream batch silently
+/// dropped the leader (exit 0) and upstream reading an oc batch failed (exit 23);
+/// a plain network `-H` transfer was unaffected, which is why the divergence was
+/// specific to the batch write + batch-replay paths.
 #[test]
-#[ignore = "known divergence (task #18): cross-impl hardlink batch replay - oc ships the \
-            cluster payload under the sorted-first member's NDX while upstream uses the \
-            sorted-last FLAG_HLINK_LAST data-holder, and the first_hlink_ndx bases differ; \
-            upstream->oc drops the leader at exit 0 and oc->upstream exits 23. Network -H is \
-            unaffected. Un-ignore when task #18 lands the batch-path fix."]
 fn cross_impl_hardlink_batch_pair_parity() {
     let build_src = |src: &Path| {
         fs::write(src.join("aaa_leader.txt"), b"linked payload\n").expect("write leader");
@@ -972,8 +965,6 @@ fn cross_impl_hardlink_batch_pair_parity() {
 /// in BOTH directions - the same divergence as the pair case, stressed with a
 /// middle member so an off-by-one in the group index cannot pass by luck.
 #[test]
-#[ignore = "known divergence (task #18): cross-impl hardlink batch replay - see \
-            cross_impl_hardlink_batch_pair_parity. Un-ignore when task #18 lands the fix."]
 fn cross_impl_hardlink_batch_triple_parity() {
     let build_src = |src: &Path| {
         fs::write(src.join("b_mid.txt"), b"triple payload\n").expect("write mid");
