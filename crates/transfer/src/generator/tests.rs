@@ -6969,6 +6969,54 @@ fn scan_one_directory_emits_the_subdirectory_but_not_its_contents() {
     assert_eq!(entry_names(&ctx), vec!["sub", "top.txt"]);
 }
 
+/// LF-2b: a single directory scanned into one segment comes back in
+/// `f_name_cmp` order, identical to the eager whole-tree build's order for
+/// that same directory's direct children. This is the byte-neutrality
+/// invariant the lazy producer must preserve (the segment wire order must
+/// equal the eager sort restricted to the segment); a comparison that could
+/// not see a reordering would be vacuous, so the fixture's children are
+/// deliberately not created in sorted order.
+#[test]
+fn scan_extra_segment_orders_children_like_the_eager_build() {
+    let temp = create_test_structure(&["d.txt", "a.txt", "sub/x.txt", "b.txt"]);
+
+    // Lazy: one directory scanned into one segment.
+    let handshake = test_handshake_with_protocol(32);
+    let mut config = test_config();
+    config.flags.recursive = true;
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+    let seg = ctx
+        .scan_extra_segment(temp.path(), temp.path(), 0, 0)
+        .expect("scan_extra_segment");
+    let lazy: Vec<String> = ctx
+        .file_list()
+        .iter()
+        .skip(seg.flist_start)
+        .take(seg.count)
+        .map(|e| e.name().to_string().replace('\\', "/"))
+        .collect();
+
+    // Eager: whole-tree build of the same fixture, keeping only this
+    // directory's direct children (no nested paths, and not the "." root).
+    let handshake2 = test_handshake_with_protocol(32);
+    let mut config2 = test_config();
+    config2.flags.recursive = true;
+    let mut eager_ctx = GeneratorContext::new_for_test(&handshake2, config2);
+    build_file_list_for_contents(&mut eager_ctx, temp.path());
+    let eager_direct: Vec<String> = eager_ctx
+        .file_list()
+        .iter()
+        .map(|e| e.name().to_string().replace('\\', "/"))
+        .filter(|n| n != "." && !n.contains('/'))
+        .collect();
+
+    assert_eq!(
+        lazy, eager_direct,
+        "lazy segment order must match eager order"
+    );
+    assert_eq!(lazy, vec!["a.txt", "b.txt", "d.txt", "sub"]);
+}
+
 #[test]
 fn the_recursive_walk_still_expands_the_same_fixture() {
     let temp = nested_scan_fixture();

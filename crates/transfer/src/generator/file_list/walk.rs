@@ -680,10 +680,6 @@ impl GeneratorContext {
     ///
     /// - `flist.c:send_directory()` - reads one directory and stats each child
     /// - `flist.c:send1extra()` - one directory, one sub-list
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "consumed by the lazy producer (LF-2c)")
-    )]
     pub(in crate::generator) fn scan_one_directory(
         &mut self,
         base: &Path,
