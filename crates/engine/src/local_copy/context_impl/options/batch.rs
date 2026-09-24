@@ -409,6 +409,73 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Records an itemize-only `NDX` + iflags entry into the batch delta
+    /// stream for a created directory, symlink, or special file
+    /// (device/FIFO).
+    ///
+    /// A regular-file transfer reserves its iflags word in
+    /// [`Self::begin_batch_file_delta`] and carries `ITEM_TRANSFER` plus a
+    /// sum_head and token body. A created non-regular entry moves no data, so
+    /// upstream writes only its `NDX` and the 16-bit iflags word. This records
+    /// that same two-byte entry, keyed to the traversal index the preceding
+    /// `capture_batch_file_entry` assigned (`batch_flist_index - 1`, stable
+    /// because the itemize record is emitted before any child entry is
+    /// captured), so [`Self::flush_batch_delta_to_batch`] ships it under the
+    /// sorted `NDX`.
+    ///
+    /// A no-op when batch mode is inactive, the protocol predates iflags
+    /// (< 29), or `iflags` carries nothing the upstream emit gate keeps.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1480-1482` (directory), `:1605-1610` (symlink),
+    ///   `:1679-1682` (device/special) - `itemize()` runs with a base of
+    ///   `ITEM_LOCAL_CHANGE` (dirs) or `ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE`
+    ///   (symlinks/specials); `generator.c:583-584` ORs in `ITEM_IS_NEW` when
+    ///   the destination is absent, and `generator.c:576-590` writes `NDX`
+    ///   then the shortint iflags with no sum_head because `ITEM_TRANSFER` is
+    ///   clear.
+    /// - `receiver.c:726-786` reads the word in the `!(iflags & ITEM_TRANSFER)`
+    ///   branch, logs the item, and bumps `stats.created_{dirs,symlinks,
+    ///   devices,specials}` under the `ITEM_IS_NEW` guard.
+    /// - `receiver.c:559-570 no_batched_update()` - a special needs this entry:
+    ///   without it the replay aborts (exit 23) and the node is never created.
+    ///   Dirs and symlinks are created from the flist regardless, but a missing
+    ///   entry makes an upstream reader under-count them and drop their
+    ///   `cd`/`cL` itemize rows.
+    pub(crate) fn record_batch_metadata_item(&mut self, iflags: u16) {
+        if self.batch_delta_buf.is_none() {
+            return;
+        }
+        let Some(writer) = self.options.get_batch_writer() else {
+            return;
+        };
+        let proto = writer
+            .lock()
+            .expect("batch writer mutex poisoned")
+            .config()
+            .protocol_version;
+        if proto < 29 {
+            return;
+        }
+        // upstream: rsync.h:258 SIGNIFICANT_ITEM_FLAGS + generator.c:582-583
+        // emit gate - only these bits (or ITEM_REPORT_XATTR) reach the wire;
+        // ITEM_LOCAL_CHANGE, ITEM_BASIS_TYPE_FOLLOWS and ITEM_XNAME_FOLLOWS do
+        // not qualify an entry on their own.
+        const ITEM_REPORT_XATTR: u16 = 1 << 8;
+        const ITEM_BASIS_TYPE_FOLLOWS: u16 = 1 << 11;
+        const ITEM_XNAME_FOLLOWS: u16 = 1 << 12;
+        const ITEM_LOCAL_CHANGE: u16 = 1 << 14;
+        const SIGNIFICANT_ITEM_FLAGS: u16 =
+            !(ITEM_BASIS_TYPE_FOLLOWS | ITEM_XNAME_FOLLOWS | ITEM_LOCAL_CHANGE);
+        if iflags & (SIGNIFICANT_ITEM_FLAGS | ITEM_REPORT_XATTR) == 0 {
+            return;
+        }
+        let idx = self.batch_flist_index - 1;
+        self.batch_delta_entries
+            .push((idx, iflags.to_le_bytes().to_vec()));
+    }
+
     /// Resolves a basis block index against the current file's recorded
     /// geometry, refusing to record a token the replaying receiver would
     /// reject.
