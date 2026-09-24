@@ -591,6 +591,36 @@ impl<'a> CopyContext<'a> {
                 _ => {}
             }
         }
+        // upstream: generator.c itemize() writes an `NDX` + iflags word into
+        // the batch stream for every created directory, symlink, and special
+        // (no `ITEM_TRANSFER`, so no sum_head follows). A regular file carries
+        // its word in the delta entry reserved by `begin_batch_file_delta()`,
+        // and the transfer root (".") is not itemized as a created entry, so
+        // record only the created non-regular ones here. Without this an
+        // upstream `--read-batch` peer under-counts created dirs/symlinks and,
+        // for a special, aborts with exit 23 (receiver.c:559 no_batched_update).
+        if record.was_created() && record.relative_path() != std::path::Path::new(".") {
+            const ITEM_REPORT_CHANGE: u16 = 1 << 1;
+            const ITEM_IS_NEW: u16 = 1 << 13;
+            const ITEM_LOCAL_CHANGE: u16 = 1 << 14;
+            let iflags = match record.action() {
+                // upstream: generator.c:1480-1482 - a created directory is
+                // itemized ITEM_LOCAL_CHANGE, and itemize() ORs in ITEM_IS_NEW.
+                LocalCopyAction::DirectoryCreated => Some(ITEM_LOCAL_CHANGE | ITEM_IS_NEW),
+                // upstream: generator.c:1605-1610 / :1679-1682 - a created
+                // symlink or special is itemized
+                // ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE + ITEM_IS_NEW.
+                LocalCopyAction::SymlinkCopied
+                | LocalCopyAction::DeviceCopied
+                | LocalCopyAction::FifoCopied => {
+                    Some(ITEM_LOCAL_CHANGE | ITEM_REPORT_CHANGE | ITEM_IS_NEW)
+                }
+                _ => None,
+            };
+            if let Some(iflags) = iflags {
+                self.record_batch_metadata_item(iflags);
+            }
+        }
         if let Some(observer) = &mut self.observer {
             observer.handle(record.clone());
         }
