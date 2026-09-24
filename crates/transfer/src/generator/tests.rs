@@ -6927,6 +6927,188 @@ fn inc_recurse_partitions_an_already_materialised_file_list() {
     );
 }
 
+/// Wire-relevant capture of an INC_RECURSE flist build, used to prove the lazy
+/// on-demand producer reproduces the eager partition byte-for-byte.
+#[derive(Debug, PartialEq, Eq)]
+struct SegCapture {
+    /// Number of entries in the initial (top-level) segment.
+    initial_count: usize,
+    /// Entry names of the initial segment, in order.
+    initial_names: Vec<String>,
+    /// Per sub-list: `(parent_dir_ndx, parent_flat_idx, child names in order)`.
+    segments: Vec<(i32, usize, Vec<String>)>,
+    /// Full flat `file_list` names in final order (initial + every sub-list).
+    full_names: Vec<String>,
+}
+
+/// Normalised wire name of `file_list[i]`.
+fn seg_name(ctx: &GeneratorContext, i: usize) -> String {
+    ctx.file_list()[i].name().to_string().replace('\\', "/")
+}
+
+/// Build an INC_RECURSE flist for the contents of `entries` and capture its
+/// wire structure, eagerly or via the lazy on-demand producer.
+///
+/// INC_RECURSE is forced via the compat flag and the lazy decision via the
+/// test override, because neither is reachable on a live oc transfer yet (the
+/// pending INC_RECURSE pull-conversion), so this is the only place the lazy
+/// producer can be exercised non-vacuously.
+fn capture_inc_recurse_segments(entries: &[&str], lazy: bool) -> SegCapture {
+    use protocol::CompatibilityFlags;
+
+    let temp = create_test_structure(entries);
+
+    let mut handshake = test_handshake_with_protocol(32);
+    handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+    let mut config = test_config();
+    config.flags.recursive = true;
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+    ctx.lazy_flist_override = Some(lazy);
+
+    build_file_list_for_contents(&mut ctx, temp.path());
+    ctx.partition_file_list_for_inc_recurse();
+
+    assert_eq!(
+        ctx.lazy_producer_active,
+        lazy,
+        "the {} path must actually engage (non-vacuity guard)",
+        if lazy { "lazy" } else { "eager" }
+    );
+
+    let initial_count = ctx
+        .incremental
+        .initial_segment_count
+        .expect("INC_RECURSE sets initial_segment_count");
+    let initial_names: Vec<String> = (0..initial_count).map(|i| seg_name(&ctx, i)).collect();
+
+    let mut segments: Vec<(i32, usize, Vec<String>)> = Vec::new();
+    if lazy {
+        // Drive the on-demand producer to exhaustion, one sub-list per call.
+        while let Some(seg) = ctx
+            .produce_next_lazy_segment()
+            .expect("lazy segment production")
+        {
+            let names: Vec<String> = (seg.flist_start..seg.flist_start + seg.count)
+                .map(|i| seg_name(&ctx, i))
+                .collect();
+            segments.push((seg.parent_dir_ndx, seg.parent_flat_idx, names));
+        }
+    } else {
+        for seg in &ctx.incremental.pending_segments {
+            let names: Vec<String> = (seg.flist_start..seg.flist_start + seg.count)
+                .map(|i| ctx.file_list()[i].name().to_string().replace('\\', "/"))
+                .collect();
+            segments.push((seg.parent_dir_ndx, seg.parent_flat_idx, names));
+        }
+    }
+
+    let full_names: Vec<String> = (0..ctx.file_list().len())
+        .map(|i| seg_name(&ctx, i))
+        .collect();
+
+    SegCapture {
+        initial_count,
+        initial_names,
+        segments,
+        full_names,
+    }
+}
+
+/// LF-2c: the lazy on-demand producer reproduces the eager partition's wire
+/// structure exactly - identical initial segment, identical sub-list sequence
+/// (each sub-list's `parent_dir_ndx`, `parent_flat_idx`, and children in
+/// order), and identical final flat `file_list`. That equivalence is what makes
+/// the two producers put byte-identical bytes on the wire, since both feed the
+/// same `encode_and_send_segment` path with the same entry sequence and
+/// threaded writer state.
+///
+/// This is the real byte-neutrality gate for the producer: INC_RECURSE is not
+/// yet negotiated on a live oc transfer (the wire-negotiation pull-conversion
+/// is a separate pending track), so the transcript harness cannot drive the
+/// producer end-to-end. Forcing the compat flag and the staging override here
+/// makes the comparison non-vacuous - the fixture is multi-level and the test
+/// asserts several nested sub-lists were actually produced.
+#[test]
+fn lazy_producer_reproduces_eager_partition_segments() {
+    // Children deliberately NOT in sorted order on disk, and nesting two levels
+    // deep, so a producer that mis-sorted a segment or mis-ordered the
+    // depth-first walk would diverge visibly.
+    let entries = &[
+        "top.txt",
+        "a_dir/a2.txt",
+        "a_dir/a1.txt",
+        "a_dir/sub/s2.txt",
+        "a_dir/sub/s1.txt",
+        "b_dir/b1.txt",
+        "b_dir/deep/deeper/x.txt",
+        "z_dir/z1.txt",
+    ];
+
+    let eager = capture_inc_recurse_segments(entries, false);
+    let lazy = capture_inc_recurse_segments(entries, true);
+
+    assert_eq!(
+        eager.initial_count, lazy.initial_count,
+        "initial segment entry count"
+    );
+    assert_eq!(
+        eager.initial_names, lazy.initial_names,
+        "initial segment entries and order"
+    );
+    assert_eq!(
+        eager.segments, lazy.segments,
+        "sub-list sequence: parent_dir_ndx, parent_flat_idx, and children order"
+    );
+    assert_eq!(
+        eager.full_names, lazy.full_names,
+        "final flat file_list order (initial + every sub-list)"
+    );
+
+    // Non-vacuity: the fixture must yield nested sub-lists (a_dir, a_dir/sub,
+    // b_dir, b_dir/deep, b_dir/deep/deeper, z_dir), so the producer's
+    // depth-first descent and child-linking are genuinely exercised.
+    assert!(
+        lazy.segments.len() >= 5,
+        "fixture must produce several nested sub-lists to be non-vacuous; got {}",
+        lazy.segments.len()
+    );
+}
+
+/// LF-2c deadlock/termination gate: the lazy producer drives more than
+/// `MIN_FILECNT_LOOKAHEAD` (1000) entries across many sub-lists to exhaustion
+/// without hanging, and still matches the eager partition exactly.
+///
+/// The task-1029 deadlock boundary is 1000 entries queued before the first
+/// blocking read; the full scheduler-throttle repro needs a live INC_RECURSE
+/// transfer (not reachable until the wire pull-conversion lands), so this
+/// exercises the producer half directly: it must terminate and reproduce the
+/// eager output over a >1000-entry, many-sub-list tree.
+#[test]
+fn lazy_producer_scales_past_lookahead_boundary_and_matches_eager() {
+    // 40 dirs x 30 files = 1200 sub-list entries, over the 1000 boundary.
+    let mut owned: Vec<String> = Vec::new();
+    for d in 0..40 {
+        for f in 0..30 {
+            owned.push(format!("d{d:02}/f{f:02}.txt"));
+        }
+    }
+    let entries: Vec<&str> = owned.iter().map(String::as_str).collect();
+
+    let eager = capture_inc_recurse_segments(&entries, false);
+    let lazy = capture_inc_recurse_segments(&entries, true);
+
+    let produced_entries: usize = lazy.segments.iter().map(|(_, _, names)| names.len()).sum();
+    assert!(
+        produced_entries > 1000,
+        "must drive >1000 sub-list entries to cover the deadlock boundary; got {produced_entries}"
+    );
+    assert_eq!(eager.segments, lazy.segments, "sub-list sequence at scale");
+    assert_eq!(
+        eager.full_names, lazy.full_names,
+        "final file_list at scale"
+    );
+}
+
 /// Sorted, wire-side relative names currently in the context's file list.
 ///
 /// The name is derived by `path.strip_prefix(base)`, so it carries the host's

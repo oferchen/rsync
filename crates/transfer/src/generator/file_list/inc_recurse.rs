@@ -23,13 +23,14 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use logging::debug_log;
 use protocol::flist::FileEntry;
 
 use super::super::io_error_flags;
 use super::super::protocol_io::SenderDiagnostic;
-use super::super::{DirSegment, GeneratorContext, PendingSegment, TaggedIndex};
+use super::super::{DirSegment, GeneratorContext, LazyFlistProducer, PendingSegment, TaggedIndex};
 
 impl GeneratorContext {
     /// Partitions the sorted file list into segments for incremental recursion.
@@ -47,16 +48,24 @@ impl GeneratorContext {
             return;
         }
 
-        // Producer-selection seam (LF-0c). The lazy producer (upstream
-        // flist.c:send_extra_file_list, LF-2f) is not built yet, so an enabled
-        // OC_RSYNC_LAZY_FLIST still runs the eager partition below - byte-identical,
-        // as the staging flag promises. LF-2f turns this into the eager/lazy branch.
-        let lazy_producer = self.lazy_flist();
-        debug_log!(
-            Flist,
-            3,
-            "inc_recurse producer: eager (OC_RSYNC_LAZY_FLIST lazy-staging requested={lazy_producer})"
-        );
+        // Producer-selection seam. `build_file_list` has already decided whether
+        // the lazy on-demand producer applies (single-source `-r`, no options
+        // whose bytes need a global post-scan pass) and, if so, scanned only the
+        // top level. In that case `file_list` holds exactly the initial segment;
+        // seed the directory tree from it and defer every sub-list to the
+        // transfer loop. Otherwise run the eager whole-list classify + reorder.
+        if self.lazy_producer_active {
+            debug_log!(Flist, 3, "inc_recurse producer: lazy (LF-2c)");
+            self.seed_lazy_producer();
+            debug_log!(
+                Flist,
+                2,
+                "seeded lazy producer: {} initial entries",
+                self.incremental.initial_segment_count.unwrap_or(0),
+            );
+            return;
+        }
+        debug_log!(Flist, 3, "inc_recurse producer: eager");
 
         let classification = Self::classify_file_list_entries(self.file_list.as_slice());
         for name in &classification.orphans {
@@ -334,10 +343,6 @@ impl GeneratorContext {
     ///
     /// - `flist.c:send1extra()` - one directory, one sub-list
     /// - `flist.c:send_directory()` with `FLAG_DIVERT_DIRS` - one level, subdirs diverted
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "wired by the lazy producer loop (LF-2c)")
-    )]
     pub(in crate::generator) fn scan_extra_segment(
         &mut self,
         base: &Path,
@@ -383,6 +388,151 @@ impl GeneratorContext {
             flist_start,
             count,
         })
+    }
+
+    /// Seeds the lazy producer from the already-built initial (top-level)
+    /// segment - the LF-2c counterpart of the eager reorder's phase 1.
+    ///
+    /// `file_list` at this point holds exactly the initial segment (the top
+    /// level was scanned one level only). Each top-level directory becomes a
+    /// tree node whose depth-first traversal drives on-demand sub-list
+    /// scanning. Wire `dir_ndx` values are assigned identically to the eager
+    /// path: every directory entry - including `.` and any duplicate - advances
+    /// the counter (matching `reorder_and_build_segments` phase 1, which counts
+    /// all dirs for `dir_flist` alignment), but only a real, non-duplicate
+    /// directory owns a tree node and a sub-list.
+    fn seed_lazy_producer(&mut self) {
+        use protocol::flist::DirectoryTree;
+
+        let mut tree = DirectoryTree::new();
+        // Index 0 is the tree's virtual root; give the parallel Vecs a matching
+        // placeholder so every node handle indexes them directly.
+        let mut base_by_node: Vec<Arc<Path>> = vec![Arc::from(Path::new(""))];
+        let mut flat_by_node: Vec<usize> = vec![usize::MAX];
+        let mut wire_dir_ndx: i32 = 0;
+
+        for i in 0..self.file_list.len() {
+            let entry = &self.file_list[i];
+            if !entry.is_dir() {
+                continue;
+            }
+            // upstream: flist.c - the initial `dir_flist` counts every directory
+            // (incl. `.` and FLAG_DUPLICATE siblings) so the receiver's dir_ndx
+            // sequence stays aligned; only a real directory owns a sub-list.
+            if entry.name() != "." && !entry.duplicate() {
+                let name = entry.name().to_string();
+                let base = self.source_bases[i].clone();
+                let handle = tree.add_directory(wire_dir_ndx as usize, name, None);
+                debug_assert_eq!(handle, base_by_node.len(), "node handle tracks Vec length");
+                base_by_node.push(base);
+                flat_by_node.push(i);
+            }
+            wire_dir_ndx += 1;
+        }
+
+        // The whole current file_list IS the initial segment; sub-lists follow.
+        self.incremental.initial_segment_count = Some(self.file_list.len());
+        // Same rule as the eager reorder: the transfer root `.` itemizes via its
+        // own gap NDX only when it is the first sorted entry.
+        self.incremental.ndx_map.set_initial_parent_flat(
+            if self.file_list.get(0).is_some_and(|e| e.name() == ".") {
+                0
+            } else {
+                -1
+            },
+        );
+
+        self.lazy_producer = Some(LazyFlistProducer {
+            tree,
+            base_by_node,
+            flat_by_node,
+            next_wire_dir_ndx: wire_dir_ndx,
+        });
+    }
+
+    /// Produces the next INC_RECURSE sub-list on demand - the LF-2c counterpart
+    /// of the eager reorder's phase 2, one directory per call.
+    ///
+    /// Pops the directory the depth-first cursor is on, scans it into one
+    /// segment via [`scan_extra_segment`](Self::scan_extra_segment) (which sorts
+    /// the freshly-appended run so its wire order equals the eager whole-list
+    /// sort restricted to this directory), then links any child directories
+    /// under the popped node - assigning each the next wire `dir_ndx` in the
+    /// segment's sorted order - before advancing the cursor so the walk descends
+    /// into them. Returns `None` once every directory has been scanned.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:send_extra_file_list()` / `send1extra()` - one directory, one
+    ///   sub-list, children's subdirectories added to the tree afterwards
+    /// - `flist.c:add_dirs_to_tree()` - depth-first child linking
+    pub(in crate::generator) fn produce_next_lazy_segment(
+        &mut self,
+    ) -> std::io::Result<Option<PendingSegment>> {
+        // Peek the current directory node (handle, wire dir_ndx, relative name)
+        // and capture the scan base, dropping the tree borrow before scanning.
+        let (handle, parent_dir_ndx, dir_rel, base) = {
+            let Some(lp) = self.lazy_producer.as_ref() else {
+                return Ok(None);
+            };
+            let Some((handle, dir_ndx, path)) = lp.tree.peek() else {
+                return Ok(None);
+            };
+            (
+                handle,
+                dir_ndx as i32,
+                std::path::PathBuf::from(path),
+                lp.base_by_node[handle].clone(),
+            )
+        };
+        let parent_flat_idx = self
+            .lazy_producer
+            .as_ref()
+            .expect("producer present")
+            .flat_by_node[handle];
+        let dir_path = super::super::context::join_source_path(&base, &dir_rel);
+
+        let segment = self.scan_extra_segment(&base, &dir_path, parent_dir_ndx, parent_flat_idx)?;
+
+        // Collect the child directories in the freshly-sorted segment run, in
+        // order, so wire dir_ndx assignment matches the eager phase-2 walk over
+        // `seg.children`.
+        let end = segment.flist_start + segment.count;
+        let mut child_dirs: Vec<(usize, String)> = Vec::new();
+        for i in segment.flist_start..end {
+            let entry = &self.file_list[i];
+            if entry.is_dir() {
+                child_dirs.push((i, entry.name().to_string()));
+            }
+        }
+
+        let lp = self.lazy_producer.as_mut().expect("producer present");
+        for (child_flat, child_name) in child_dirs {
+            let child_wire = lp.next_wire_dir_ndx;
+            lp.next_wire_dir_ndx += 1;
+            let child_handle = lp
+                .tree
+                .add_directory(child_wire as usize, child_name, Some(handle));
+            debug_assert_eq!(
+                child_handle,
+                lp.base_by_node.len(),
+                "node handle tracks Vec length"
+            );
+            lp.base_by_node.push(base.clone());
+            lp.flat_by_node.push(child_flat);
+        }
+        // Children are linked; now the depth-first cursor may descend into them.
+        lp.tree.advance_cursor();
+
+        Ok(Some(segment))
+    }
+
+    /// Whether the lazy producer has scanned every directory (no sub-lists
+    /// remain to produce). Always `true` when the producer is inactive.
+    pub(in crate::generator) fn lazy_scan_exhausted(&self) -> bool {
+        self.lazy_producer
+            .as_ref()
+            .is_none_or(|lp| lp.tree.traversal_finished())
     }
 }
 

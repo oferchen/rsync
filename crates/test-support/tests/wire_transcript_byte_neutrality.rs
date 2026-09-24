@@ -229,3 +229,34 @@ fn transcript_unchanged_by_lazy_flist_env_off() {
     });
     assert_transcripts_eq(&unset, &off, "OC_RSYNC_LAZY_FLIST=off vs unset");
 }
+
+/// Cell 4 (LF-2c): setting `OC_RSYNC_LAZY_FLIST=1` does not perturb the wire.
+///
+/// The lazy producer is gated behind BOTH the staging flag AND a negotiated
+/// INC_RECURSE (`GeneratorContext::lazy_producer_eligible`). INC_RECURSE is not
+/// yet negotiated on a live oc transfer - the wire pull-conversion is a separate
+/// pending track - so on this push the flag is inert and both arms take the same
+/// eager path. This cell therefore guards that turning the flag on never leaks a
+/// change into the currently-reachable path; it does NOT yet exercise the lazy
+/// producer end-to-end.
+///
+/// The producer's actual byte-neutrality - initial segment plus the whole
+/// sub-list sequence reproduced identically to the eager partition - is proven
+/// non-vacuously at the unit level, where INC_RECURSE and the lazy decision are
+/// forced:
+/// `transfer::generator::tests::lazy_producer_reproduces_eager_partition_segments`
+/// and `lazy_producer_scales_past_lookahead_boundary_and_matches_eager`. Once
+/// the wire negotiation lands, this cell becomes the end-to-end gate unchanged.
+#[test]
+fn transcript_unchanged_by_lazy_flist_env_on() {
+    let src = tempfile::tempdir().expect("src");
+    build_fixture(src.path(), false);
+
+    // Eager arm: variable unset (command() removes it).
+    let unset = capture(src.path(), "lazy-flist unset", |_| {});
+    // Flag-on arm: OC_RSYNC_LAZY_FLIST=1.
+    let on = capture(src.path(), "lazy-flist on", |cmd| {
+        cmd.env("OC_RSYNC_LAZY_FLIST", "1");
+    });
+    assert_transcripts_eq(&unset, &on, "OC_RSYNC_LAZY_FLIST=1 vs unset");
+}
