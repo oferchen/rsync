@@ -5,10 +5,13 @@
 //! benches, and resolving the freshly built binary through that variable is
 //! what keeps these tests immune to a stale profile-dir copy.
 
+#[cfg(unix)]
 use std::fs;
 use std::process::Command;
 
-use test_support::transcript::{TRANSCRIPT_C2S_ENV, TRANSCRIPT_S2C_ENV, TranscriptRecorder};
+#[cfg(unix)]
+use test_support::transcript::TranscriptRecorder;
+use test_support::transcript::{TRANSCRIPT_C2S_ENV, TRANSCRIPT_S2C_ENV};
 
 /// Drive the real trampoline binary with `/bin/cat` standing in for the
 /// server: what goes in must come out, and both capture files must hold
