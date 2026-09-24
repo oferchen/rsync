@@ -960,4 +960,86 @@ mod tests {
         assert_eq!(n, 2);
         assert_eq!(ctx.file_list().len(), 2);
     }
+
+    /// RS-3a: a metadata-only itemize echo (no `ITEM_TRANSFER`) can be PRECEDED
+    /// by an INC_RECURSE sub-list segment marker once the eager flist drain is
+    /// removed - the metadata-only rows are merged into the same request stream
+    /// as the transfers, so the sender may emit a segment header between two
+    /// replies. The old positional read at `pipeline.rs:847`
+    /// (`SenderAttrs::read_with_codec_xattr`) reads the FIRST NDX, which is the
+    /// `NDX_FLIST_OFFSET` marker, never consumes the segment body, and hands the
+    /// caller the marker's negative NDX - a desync. The marker-aware read
+    /// (`read_ndx_and_attrs`, what `:847` now uses) dispatches the segment via
+    /// the receiver sink and returns the real echo NDX. Both arms run the SAME
+    /// bytes, so the contrast is the whole point.
+    ///
+    /// upstream: rsync.c:322-431 `read_ndx_and_attrs()` - the marker loop the
+    /// positional helper lacks.
+    #[test]
+    fn no_transfer_echo_read_absorbs_an_interleaved_segment_marker() {
+        use crate::receiver::ndx_stream::read_ndx_and_attrs;
+        use crate::receiver::wire::SenderAttrs;
+
+        // A metadata-only echo: a positive NDX then a 2-byte iflags with no
+        // ITEM_TRANSFER and no *_FOLLOWS bit, so there is no attribute tail.
+        const ECHO_NDX: i32 = 1;
+        let echo_iflags = SenderAttrs::ITEM_LOCAL_CHANGE;
+
+        // [one sub-list segment for dir_ndx 0][the metadata-only echo].
+        let build_wire = || -> Vec<u8> {
+            let protocol = ProtocolVersion::try_from(PROTOCOL).unwrap();
+            let mut writer = FileListWriter::new(protocol);
+            let mut codec = create_ndx_codec(PROTOCOL);
+            let mut wire = Vec::new();
+            let entries = [FileEntry::new_file(PathBuf::from("x/a.txt"), 1, 0o100644)];
+            append_segment(&mut wire, &mut writer, &mut codec, 0, &entries);
+            // Echo written with the SAME codec so its diff-state follows the
+            // marker, exactly as a real sender interleaves them.
+            codec.write_ndx(&mut wire, ECHO_NDX).unwrap();
+            wire.extend_from_slice(&echo_iflags.to_le_bytes());
+            wire
+        };
+
+        // Arm A - the pre-RS-3a positional read: surfaces the marker's negative
+        // NDX and leaves the segment body unconsumed (desync).
+        let mut reader_a = Cursor::new(build_wire());
+        let mut codec_a = create_ndx_codec(PROTOCOL);
+        let (positional_ndx, _attrs) =
+            SenderAttrs::read_with_codec_xattr(&mut reader_a, &mut codec_a, false, false)
+                .expect("positional read decodes an NDX");
+        assert!(
+            positional_ndx < 0,
+            "positional read surfaces the segment marker as a negative NDX (desync), got {positional_ndx}"
+        );
+        assert_ne!(
+            positional_ndx, ECHO_NDX,
+            "positional read must NOT return the echo NDX - that is the desync being fixed"
+        );
+
+        // Arm B - the marker-aware read: dispatches the segment (file_list
+        // grows) and returns the real echo NDX, whole wire consumed.
+        let mut ctx = inc_recurse_receiver();
+        ctx.dir_flist = DirFlist::with_active(["x"]);
+        let before = ctx.file_list().len();
+        let mut reader_b = Cursor::new(build_wire());
+        let wire_len = reader_b.get_ref().len() as u64;
+        let mut codec_b = create_ndx_codec(PROTOCOL);
+        let got = read_ndx_and_attrs(&mut reader_b, &mut codec_b, &mut ctx, false, false)
+            .expect("marker-aware read succeeds");
+        assert_eq!(
+            got.map(|(ndx, _)| ndx),
+            Some(ECHO_NDX),
+            "marker-aware read must absorb the segment and return the echo NDX"
+        );
+        assert_eq!(
+            ctx.file_list().len(),
+            before + 1,
+            "the interleaved segment's single entry must be appended by the sink"
+        );
+        assert_eq!(
+            reader_b.position(),
+            wire_len,
+            "marker-aware read must consume the whole [segment][echo] frame, no under/over-read"
+        );
+    }
 }
