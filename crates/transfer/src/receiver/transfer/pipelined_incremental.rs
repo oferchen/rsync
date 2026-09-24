@@ -610,14 +610,21 @@ impl ReceiverContext {
         let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();
         let mut metadata_errors: Vec<(PathBuf, String)> = Vec::new();
 
-        // upstream: io.c::write_ndx / read_ndx keep a single connection-wide
-        // prev_positive/prev_negative; the phase-2 redo re-requests through the
-        // SAME state, so one codec pair is threaded across every segment and the
-        // redo pass. A separate codec pulls the sub-list frames (the flist
-        // stream's own NDX diff-state, distinct from the request stream).
+        // upstream: io.c read_ndx keeps ONE connection-wide read state
+        // (prev_positive/prev_negative) for f_in - every value it decodes shares
+        // it: the sub-list markers (NDX_FLIST_OFFSET/NDX_FLIST_EOF, negative) and
+        // the per-file transfer echoes (positive) are diff-encoded against the
+        // same running base. The receiver therefore reads BOTH through a single
+        // inbound codec: pulling a sub-list segment mid-walk and reading a
+        // transfer echo must not diverge, or the second stream to touch a marker
+        // decodes its diff against a stale base and misframes the wire (an
+        // interleaved NDX_FLIST_OFFSET read as NDX_FLIST_EOF, then the following
+        // bytes as a bogus file index). io.c write_ndx keeps its own single
+        // WRITE state, mirrored by `ndx_write_codec`; the phase-2 redo re-requests
+        // through that same write state, so both codecs are threaded across every
+        // segment and the redo pass.
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
-        let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
 
         let mut files_transferred = 0usize;
         let mut transferred_file_size = 0u64;
@@ -644,7 +651,7 @@ impl ReceiverContext {
             // the table has not reached it and the stream has not ended).
             while segment_idx >= self.ndx_segments.len() && !self.flist_eof {
                 let probe = self.file_list.len();
-                if !self.ensure_flat_idx(probe, reader, &mut flist_ndx_codec)? {
+                if !self.ensure_flat_idx(probe, reader, &mut ndx_read_codec)? {
                     break;
                 }
             }
@@ -653,7 +660,7 @@ impl ReceiverContext {
             }
             let seg_start = self.ndx_segments[segment_idx].0;
             let seg_end =
-                self.segment_end_pulling_next(segment_idx, reader, &mut flist_ndx_codec)?;
+                self.segment_end_pulling_next(segment_idx, reader, &mut ndx_read_codec)?;
             if seg_start >= seg_end {
                 // An empty segment (e.g. a sub-list of only tombstones): nothing
                 // to create or transfer, but it still counts toward the
