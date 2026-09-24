@@ -685,8 +685,7 @@ impl ReceiverContext {
                             self.record_created(file_entry.mode());
                         }
                         let iflags = crate::generator::ItemFlags::from_raw(iflags_raw);
-                        let _ =
-                            self.emit_or_record_itemize(writer, flist_idx, &iflags, file_entry);
+                        let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, file_entry);
                         self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                     }
                     None => {
@@ -894,10 +893,10 @@ impl ReceiverContext {
     ///
     /// - `generator.c:2219-2239` - `check_for_finished_files` frees `first_flist`
     ///   and writes `NDX_DONE`; `sender.c:246-261` echoes it.
-    fn release_completed_segment_if_older<R: Read, W: Write + ?Sized>(
+    fn release_completed_segment_if_older<Rd: Read, W: Write + ?Sized>(
         &mut self,
         cur_segment_idx: usize,
-        reader: &mut crate::reader::ServerReader<R>,
+        reader: &mut Rd,
         ndx_write_codec: &mut MonotonicNdxWriter,
         ndx_read_codec: &mut NdxCodecEnum,
         writer: &mut W,
@@ -1207,6 +1206,125 @@ mod itemize_order_tests {
             ctx.created_stats.get().dirs,
             1,
             "the created-directories stat feeding \"Number of created files\" must survive"
+        );
+    }
+
+    /// RS-3b invariant: the TOTAL per-segment `NDX_DONE`s crossing the wire equal
+    /// the segment count, whether emitted mid-walk (streaming) or in the finalize
+    /// burst (batch) - so moving the emission never double-emits or drops one.
+    ///
+    /// Drives the REAL `release_completed_segment_if_older` (mid-walk) and the
+    /// REAL `exchange_phase_done` (finalize), not reimplementations, over a
+    /// windowed segment table. For an INC_RECURSE proto-32 receiver the finalize
+    /// handshake also writes exactly 2 non-per-segment markers (the phase
+    /// transition and the final goodbye NDX_DONE), and every `NDX_DONE` written
+    /// is paired with one echo read. So serving EXACTLY `num_segments + 2`
+    /// `NDX_DONE` echoes and asserting the reader is fully consumed with no error
+    /// pins the emitted total at `num_segments + 2`: a mid-walk/finalize
+    /// double-count reads past the buffer (EOF error) and a drop leaves an echo
+    /// unread (leftover bytes) - either reddens. Runs the single-segment path
+    /// (`released == 0`, the byte-identical live/batch case) and a 4-segment
+    /// multi-segment path (3 released mid-walk, 1 at finalize).
+    #[test]
+    fn per_segment_ndx_done_total_invariant_single_and_multi_segment() {
+        use std::io::Cursor;
+
+        use protocol::CompatibilityFlags;
+        use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
+
+        const PROTO: u8 = 32;
+        // Finalize handshake's non-per-segment NDX_DONE markers for an
+        // INC_RECURSE proto-32 receiver: one phase-transition write + the final
+        // goodbye write (see exchange_phase_done).
+        const FINALIZE_MARKERS: usize = 2;
+
+        // Runs one case and returns (segments_released_mid_walk, echoes_consumed,
+        // echoes_served). The caller asserts the invariant on these.
+        fn run_case(num_segments: usize) -> (usize, usize, usize) {
+            let mut hs = handshake();
+            hs.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+            let config = ServerConfig {
+                role: ServerRole::Receiver,
+                protocol: ProtocolVersion::try_from(PROTO).unwrap(),
+                flags: ParsedServerFlags {
+                    recursive: true,
+                    ..ParsedServerFlags::default()
+                },
+                args: vec![OsString::from(".")],
+                ..Default::default()
+            };
+            let mut ctx = ReceiverContext::new_for_test(&hs, config);
+
+            // `num_segments` segments of `per` entries each; the +1 NDX gap
+            // between segments mirrors upstream flist.c:2966.
+            let per = 3usize;
+            ctx.file_list = (0..num_segments * per)
+                .map(|i| FileEntry::new_file(format!("f{i}").into(), 1, 0o100644))
+                .collect();
+            ctx.ndx_segments = (0..num_segments)
+                .map(|k| (k * per, (k * (per + 1)) as i32 + 1))
+                .collect();
+            ctx.flist_eof = true;
+            ctx.first_segment_idx = 0;
+            ctx.segments_released_mid_walk = 0;
+
+            // Serve EXACTLY num_segments + FINALIZE_MARKERS NDX_DONE echoes.
+            let echoes_served = num_segments + FINALIZE_MARKERS;
+            let mut echo_buf = Vec::new();
+            let mut enc = create_ndx_codec(PROTO);
+            for _ in 0..echoes_served {
+                enc.write_ndx_done(&mut echo_buf).unwrap();
+            }
+            let mut reader = Cursor::new(echo_buf);
+            let mut sink: Vec<u8> = Vec::new();
+
+            // Mid-walk: release every segment strictly older than the current one
+            // as the walk advances cur = 1..num_segments (the streaming driver's
+            // per-segment-boundary release).
+            let mut mid_write = MonotonicNdxWriter::new(PROTO);
+            let mut mid_read = create_ndx_codec(PROTO);
+            for cur in 1..num_segments {
+                ctx.release_completed_segment_if_older(
+                    cur,
+                    &mut reader,
+                    &mut mid_write,
+                    &mut mid_read,
+                    &mut sink,
+                )
+                .expect("mid-walk release must not error");
+            }
+            let released = ctx.segments_released_mid_walk;
+
+            // Finalize handshake, exactly as finalize_transfer drives it (fresh
+            // NDX codecs).
+            let mut fin_write = create_ndx_codec(PROTO);
+            let mut fin_read = create_ndx_codec(PROTO);
+            ctx.exchange_phase_done(&mut reader, &mut sink, &mut fin_write, &mut fin_read)
+                .expect("finalize handshake must not error");
+
+            let consumed = reader.position() as usize;
+            (released, consumed, reader.get_ref().len())
+        }
+
+        // Multi-segment: 4 segments -> 3 released mid-walk, 1 at finalize.
+        let (released, consumed, served) = run_case(4);
+        assert_eq!(released, 3, "cur advancing 1..4 releases segments 0,1,2");
+        assert_eq!(
+            consumed, served,
+            "multi-segment: receiver must consume exactly the served echoes - a \
+             double-emit reads past (EOF) and a drop leaves leftovers"
+        );
+        // released (3) + finalize per-segment (num_segments - released = 1) == 4.
+        assert_eq!(released + (4 - released), 4);
+
+        // Single-segment: released==0 (the byte-identical live/batch path); the
+        // finalize burst emits all per-segment NDX_DONEs.
+        let (released1, consumed1, served1) = run_case(1);
+        assert_eq!(released1, 0, "a single segment releases nothing mid-walk");
+        assert_eq!(
+            consumed1, served1,
+            "single-segment: finalize must emit exactly the segment count of \
+             per-segment NDX_DONEs"
         );
     }
 }
