@@ -81,6 +81,11 @@ acl = ["metadata/acl", "engine/acl", "transfer/acl"]
 # Character encoding conversion for filenames (iconv)
 iconv = ["protocol/iconv", "transfer/iconv", "engine/iconv"]
 
+# Parallel receive-side delta apply (oc extension, off by default). Forwards to
+# `transfer/parallel-receive-delta`; behavior-neutral until the receiver
+# pipeline lands.
+parallel-receive-delta = ["transfer/parallel-receive-delta"]
+
 # ============================================================================
 # Runtime Features
 # ============================================================================
