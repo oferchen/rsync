@@ -16,7 +16,10 @@
 //! - [`ReceiverContext::ensure_flat_idx`] pulls segments until a target flat
 //!   index is materialized (or the list ends), never indexing out of bounds.
 //! - [`ReceiverContext::ensure_all_segments_loaded`] drains every remaining
-//!   segment, reproducing the old up-front behaviour for the batched drivers.
+//!   segment in one pass - the explicit whole-list fallback for the callers that
+//!   have no per-file cursor to pull segments through (the recorded-stream replay
+//!   driver and `receive_extra_file_lists`). The live pipelined drivers walk the
+//!   same segments through `ensure_flat_idx`, like the synchronous driver.
 //! - [`ReceiverContext::prefetch_for_hardlinks`] pre-reads segments so a
 //!   follower's leader in a later segment is resolved before hardlinking.
 //!
@@ -99,13 +102,15 @@ impl ReceiverContext {
         }
     }
 
-    /// Drains every remaining INC_RECURSE segment until `flist_eof`.
+    /// Drains every remaining INC_RECURSE segment until `flist_eof` in one pass.
     ///
-    /// Reproduces the pre-refactor behaviour where the whole list was
-    /// materialized up front, so the batched pipelined drivers see a complete
-    /// `file_list`. A no-op (no wire read) once `flist_eof` is set, which is
-    /// always the case on a non-INC_RECURSE transfer by the time a driver calls
-    /// this.
+    /// The explicit whole-list fallback for callers that consume the entire
+    /// `file_list` at once and have no per-file cursor to pull segments through:
+    /// the recorded-stream replay driver and `receive_extra_file_lists`
+    /// (`--files-from` and the wire-parity tests). The live pipelined drivers
+    /// walk the same segments through [`ensure_flat_idx`](Self::ensure_flat_idx).
+    /// A no-op (no wire read) once `flist_eof` is set, which is always the case
+    /// on a non-INC_RECURSE transfer by the time a caller reaches this.
     pub(in crate::receiver) fn ensure_all_segments_loaded<R: Read + ?Sized>(
         &mut self,
         reader: &mut R,
@@ -458,6 +463,83 @@ mod tests {
                 "sub-list entry {expected} missing from decoded list: {names:?}"
             );
         }
+    }
+
+    /// The two pipelined drivers materialize the flist by walking a flat cursor
+    /// through `ensure_flat_idx` (like `sync.rs`) instead of the
+    /// `ensure_all_segments_loaded` drain. That swap is only sound if the cursor
+    /// walk reaches the SAME terminal state as the drain: identical entries,
+    /// identical segment count, `flist_eof` set, and the whole frame consumed
+    /// with no over- or under-read. Runs both arms over the real upstream
+    /// multi-segment frame and asserts the observable state is identical. A
+    /// future change that let `ensure_flat_idx` diverge from the drain (skip a
+    /// segment, over-read past the terminator, or stop short) fails here rather
+    /// than silently changing what a live INC_RECURSE pull loads - the single
+    /// non-obvious risk the driver conversion took on.
+    #[test]
+    fn cursor_walk_materializes_identically_to_the_drain() {
+        // Drain arm: the retired `ensure_all_segments_loaded` path the replay
+        // and `--files-from` callers still use.
+        let mut drained = archive_inc_recurse_receiver();
+        let mut drain_reader = Cursor::new(UPSTREAM_INC_RECURSE_FRAME.to_vec());
+        drained
+            .receive_file_list(&mut drain_reader)
+            .expect("initial level-1 flist decodes cleanly");
+        let mut drain_codec = create_ndx_codec(PROTOCOL);
+        drained
+            .ensure_all_segments_loaded(&mut drain_reader, &mut drain_codec)
+            .expect("drain materializes every segment");
+
+        // Cursor arm: the flat-index walk the pipelined drivers now perform.
+        let mut walked = archive_inc_recurse_receiver();
+        let mut walk_reader = Cursor::new(UPSTREAM_INC_RECURSE_FRAME.to_vec());
+        walked
+            .receive_file_list(&mut walk_reader)
+            .expect("initial level-1 flist decodes cleanly");
+        let mut walk_codec = create_ndx_codec(PROTOCOL);
+        let mut flat_idx = 0usize;
+        while walked
+            .ensure_flat_idx(flat_idx, &mut walk_reader, &mut walk_codec)
+            .expect("cursor pulls each segment on demand")
+        {
+            flat_idx += 1;
+        }
+
+        assert!(
+            walked.flist_eof && drained.flist_eof,
+            "both arms must reach the NDX_FLIST_EOF terminator"
+        );
+        assert_eq!(
+            walked.file_list().len(),
+            drained.file_list().len(),
+            "cursor and drain must materialize the same entry count"
+        );
+        assert_eq!(
+            walked.ndx_segments.len(),
+            drained.ndx_segments.len(),
+            "cursor and drain must record the same segment count"
+        );
+        let names = |ctx: &ReceiverContext| -> Vec<String> {
+            ctx.file_list()
+                .iter()
+                .map(|e| e.path().to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(
+            names(&walked),
+            names(&drained),
+            "cursor and drain must materialize identical entries in identical order"
+        );
+        // The cursor stops exactly at the terminator: it advanced to one past
+        // the last entry, and both arms consumed the whole frame to the same
+        // byte - no over-read (which would desync a live transfer) and no
+        // under-read (which would leave a segment pending).
+        assert_eq!(flat_idx, walked.file_list().len());
+        assert_eq!(
+            walk_reader.position(),
+            drain_reader.position(),
+            "cursor and drain must consume the same wire bytes"
+        );
     }
 
     /// `--debug=flist2` emissions across the REAL upstream multi-segment
