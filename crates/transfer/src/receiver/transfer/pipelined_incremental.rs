@@ -316,6 +316,8 @@ impl ReceiverContext {
                     &mut metadata_errors,
                     false,
                     total_files,
+                    0,
+                    true,
                     &mut progress,
                     &mut ndx_write_codec,
                     &mut ndx_read_codec,
@@ -364,6 +366,8 @@ impl ReceiverContext {
                         &mut metadata_errors,
                         true,
                         total_files,
+                        0,
+                        true,
                         &mut progress,
                         &mut ndx_write_codec,
                         &mut ndx_read_codec,
@@ -622,6 +626,13 @@ impl ReceiverContext {
         let mut matched_data = 0u64;
         let mut all_delayed_updates: Vec<(PathBuf, PathBuf)> = Vec::new();
         let mut all_redo_indices: Vec<usize> = Vec::new();
+        // Plain-`-v` directory NAME lines, accumulated per segment (each segment's
+        // entries are the only ones resident when it is walked). Mirrors the batch
+        // driver's up-front `verbose_dir_name_lines`, split across segments.
+        let verbose_dir_names = self.config.flags.verbose
+            && self.config.connection.client_mode
+            && !self.should_emit_itemize();
+        let mut all_verbose_dir_lines: Vec<(usize, String)> = Vec::new();
 
         // Per-segment walk. `segment_idx` addresses `ndx_segments`; `cur_idx`
         // tracks how many segments have been fully processed, which is what
@@ -649,6 +660,7 @@ impl ReceiverContext {
                 // per-segment NDX_DONE. Release it if it is not the last.
                 self.release_completed_segment_if_older(
                     segment_idx,
+                    &all_redo_indices,
                     reader,
                     &mut ndx_write_codec,
                     &mut ndx_read_codec,
@@ -658,6 +670,23 @@ impl ReceiverContext {
                 continue;
             }
             let range = seg_start..seg_end;
+
+            // Plain-`-v` directory names for this segment, computed BEFORE its
+            // directories are created so each stat is pre-transfer (the same gate
+            // the batch driver applies to the whole list up front). When
+            // interleaving, buffer each under its flist index so it is released
+            // just before its first child in the transfer loop; always accumulate
+            // for the non-interleave end-of-run block below.
+            if verbose_dir_names {
+                let seg_lines =
+                    self.verbose_dir_name_lines_in_range(range.clone(), &setup.dest_dir);
+                if self.interleave_names {
+                    for (idx, name) in &seg_lines {
+                        self.buffer_deferred_name(*idx, format!("{name}\n"));
+                    }
+                }
+                all_verbose_dir_lines.extend(seg_lines);
+            }
 
             // Directory-creation pass for this segment (a directory must exist
             // before its children are written). Mirrors the batch dir loop,
@@ -712,6 +741,13 @@ impl ReceiverContext {
                 setup.acl_id_map.as_deref(),
             );
             let total_files = files_to_transfer.len();
+            // Progress accounting: `files_transferred` is the running total from
+            // prior segments (the offset so `files_done` keeps climbing across
+            // segments), and `flist_eof` reports whether the sub-list stream has
+            // ended (false while more segments may still arrive - upstream's
+            // `ir-chk` phase).
+            let files_done_offset = files_transferred;
+            let flist_complete = self.flist_eof;
             let (
                 seg_transferred,
                 seg_size,
@@ -729,6 +765,8 @@ impl ReceiverContext {
                 &mut metadata_errors,
                 false,
                 total_files,
+                files_done_offset,
+                flist_complete,
                 &mut progress,
                 &mut ndx_write_codec,
                 &mut ndx_read_codec,
@@ -750,6 +788,7 @@ impl ReceiverContext {
             // must stay resident on the sender for the redo re-request.
             self.release_completed_segment_if_older(
                 segment_idx,
+                &all_redo_indices,
                 reader,
                 &mut ndx_write_codec,
                 &mut ndx_read_codec,
@@ -757,6 +796,18 @@ impl ReceiverContext {
             )?;
 
             segment_idx += 1;
+        }
+
+        // Non-interleave `-v` directory names: emitted as an end-of-run block
+        // exactly as the batch driver does (upstream generator.c:1503-1505). On
+        // the streaming path (Transfer mode, client pull) interleave_names is
+        // set, so these were already released alongside their children above and
+        // trailing ones flush via flush_names_all; this block covers the
+        // non-interleave configuration for parity with the batch driver.
+        if verbose_dir_names && !self.interleave_names {
+            for (_idx, name) in &all_verbose_dir_lines {
+                info_log!(Name, 1, "{name}");
+            }
         }
 
         // Whole-list post-passes over the now fully materialized list, in the
@@ -804,6 +855,10 @@ impl ReceiverContext {
                 })
                 .collect();
             let redo_total = redo_files.len();
+            // The redo pass runs after the whole walk, so the sub-list stream has
+            // ended (flist complete) and `files_transferred` is the running total
+            // across every segment.
+            let redo_files_done_offset = files_transferred;
             let (redo_tx, redo_size, redo_bytes, redo_literal, redo_matched, _, redo_delayed) =
                 self.run_pipeline_loop_decoupled(
                     reader,
@@ -814,6 +869,8 @@ impl ReceiverContext {
                     &mut metadata_errors,
                     true,
                     redo_total,
+                    redo_files_done_offset,
+                    true,
                     &mut progress,
                     &mut ndx_write_codec,
                     &mut ndx_read_codec,
@@ -896,6 +953,7 @@ impl ReceiverContext {
     fn release_completed_segment_if_older<Rd: Read, W: Write + ?Sized>(
         &mut self,
         cur_segment_idx: usize,
+        pending_redo: &[usize],
         reader: &mut Rd,
         ndx_write_codec: &mut MonotonicNdxWriter,
         ndx_read_codec: &mut NdxCodecEnum,
@@ -908,18 +966,25 @@ impl ReceiverContext {
         if self.segments_released_mid_walk >= cur_segment_idx {
             return Ok(());
         }
-        // R17: the phase-2 redo re-requests files by NDX against a resident
-        // sender flist, so a segment with pending redo must not be freed. RS-3b
-        // defers the redo pass to the end; conservatively hold every remaining
-        // per-segment NDX_DONE for the finalize handshake once any redo is
-        // outstanding by simply not releasing here when redo indices exist. In
-        // the common (no-corruption) case there are none and every older segment
-        // releases promptly. The check is cheap and keeps the sender window
-        // correct under redo.
-        //
-        // (The streaming driver has not yet accumulated redo indices at the
-        // point it calls this - the redo pass runs after the walk - so this is a
-        // forward guard for when RS-3c interleaves redo per segment.)
+        // R17: upstream check_for_finished_files stops freeing at the first
+        // flist whose files still await the phase-2 redo (generator.c:2239:
+        // `if (first_flist->to_redo) ... break`). RS-3b defers the redo pass
+        // until after the whole walk, so the oldest un-released segment's flist
+        // must stay resident on the sender until that redo re-requests it by
+        // NDX; freeing it here would strand the re-request. Pin it - and, since
+        // releases are strictly in order, pinning the oldest also holds every
+        // newer segment, exactly upstream's `break`. The pinned NDX_DONEs are
+        // emitted by the finalize handshake, which runs after the redo pass, so
+        // the total on-wire NDX_DONE count is unchanged.
+        let rel = self.segments_released_mid_walk;
+        let seg_lo = self.ndx_segments[rel].0;
+        let seg_hi = self.ndx_segments[rel + 1].0;
+        if pending_redo
+            .iter()
+            .any(|&ndx| ndx >= seg_lo && ndx < seg_hi)
+        {
+            return Ok(());
+        }
 
         // Emit one NDX_DONE (frees the sender's oldest flist) and flush so the
         // sender sees it promptly and refills its window (the pump; upstream
@@ -1286,6 +1351,7 @@ mod itemize_order_tests {
             for cur in 1..num_segments {
                 ctx.release_completed_segment_if_older(
                     cur,
+                    &[],
                     &mut reader,
                     &mut mid_write,
                     &mut mid_read,
@@ -1325,6 +1391,107 @@ mod itemize_order_tests {
             consumed1, served1,
             "single-segment: finalize must emit exactly the segment count of \
              per-segment NDX_DONEs"
+        );
+    }
+
+    /// RS-3b R17 redo-pin: a segment whose flat range holds a file awaiting the
+    /// phase-2 redo must NOT emit its per-segment `NDX_DONE` mid-walk. Upstream
+    /// `check_for_finished_files` stops freeing at the first flist with a
+    /// `to_redo` file (generator.c:2239), keeping it - and, because releases are
+    /// strictly in order, every newer flist - resident on the sender for the
+    /// deferred redo re-request. The control run (no redo) frees all three older
+    /// segments; the redo run frees only the one before the pin. The pin is what
+    /// makes the two diverge, so deleting the R17 check reddens this.
+    #[test]
+    fn r17_redo_bearing_segment_is_pinned_mid_walk() {
+        use std::io::Cursor;
+
+        use protocol::CompatibilityFlags;
+        use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
+
+        const PROTO: u8 = 32;
+        let per = 3usize;
+        let num_segments = 4usize;
+
+        // Byte length of one NDX_DONE echo on the wire at this protocol.
+        let ndx_done_len = {
+            let mut b = Vec::new();
+            create_ndx_codec(PROTO).write_ndx_done(&mut b).unwrap();
+            b.len()
+        };
+
+        // Drives the mid-walk release loop over the segment table with the given
+        // redo indices; returns (segments_released_mid_walk, mid-walk NDX_DONEs).
+        let run = |pending_redo: &[usize]| -> (usize, usize) {
+            let mut hs = handshake();
+            hs.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+            let config = ServerConfig {
+                role: ServerRole::Receiver,
+                protocol: ProtocolVersion::try_from(PROTO).unwrap(),
+                flags: ParsedServerFlags {
+                    recursive: true,
+                    ..ParsedServerFlags::default()
+                },
+                args: vec![OsString::from(".")],
+                ..Default::default()
+            };
+            let mut ctx = ReceiverContext::new_for_test(&hs, config);
+            ctx.file_list = (0..num_segments * per)
+                .map(|i| FileEntry::new_file(format!("f{i}").into(), 1, 0o100644))
+                .collect();
+            ctx.ndx_segments = (0..num_segments)
+                .map(|k| (k * per, (k * (per + 1)) as i32 + 1))
+                .collect();
+            ctx.flist_eof = true;
+            ctx.first_segment_idx = 0;
+            ctx.segments_released_mid_walk = 0;
+
+            // Plenty of echoes so a wrongly-unpinned release still finds one.
+            let mut echo_buf = Vec::new();
+            let mut enc = create_ndx_codec(PROTO);
+            for _ in 0..num_segments {
+                enc.write_ndx_done(&mut echo_buf).unwrap();
+            }
+            let mut reader = Cursor::new(echo_buf);
+            let mut sink: Vec<u8> = Vec::new();
+            let mut mid_write = MonotonicNdxWriter::new(PROTO);
+            let mut mid_read = create_ndx_codec(PROTO);
+            for cur in 1..num_segments {
+                ctx.release_completed_segment_if_older(
+                    cur,
+                    pending_redo,
+                    &mut reader,
+                    &mut mid_write,
+                    &mut mid_read,
+                    &mut sink,
+                )
+                .expect("mid-walk release must not error");
+            }
+            (ctx.segments_released_mid_walk, sink.len() / ndx_done_len)
+        };
+
+        // Control: no redo -> segments 0,1,2 all release mid-walk.
+        let (released_none, dones_none) = run(&[]);
+        assert_eq!(
+            released_none, 3,
+            "no redo: cur 1..4 releases segments 0,1,2"
+        );
+        assert_eq!(
+            dones_none, 3,
+            "no redo: three mid-walk NDX_DONEs on the wire"
+        );
+
+        // A redo file in segment 1's flat range [per, 2*per) pins segment 1,
+        // which (by in-order release) also holds segments 2 and 3; only the
+        // segment before the pin frees mid-walk.
+        let (released_redo, dones_redo) = run(&[per]);
+        assert_eq!(
+            released_redo, 1,
+            "a redo in segment 1 pins it and every newer segment; only segment 0 frees"
+        );
+        assert_eq!(
+            dones_redo, 1,
+            "the pinned segments emit no mid-walk NDX_DONE (deferred to finalize)"
         );
     }
 }

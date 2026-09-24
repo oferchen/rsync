@@ -390,6 +390,16 @@ impl ReceiverContext {
         metadata_errors: &mut Vec<(PathBuf, String)>,
         is_redo_pass: bool,
         total_files: usize,
+        // Progress accounting across multiple invocations. The batch drivers make
+        // one phase-1 call over the whole (already complete) list and pass
+        // `files_done_offset = 0`, `flist_complete = true`. The streaming
+        // INC_RECURSE driver calls once per sub-list segment and passes the
+        // running transferred-file count as the offset (so `files_done` keeps
+        // climbing across segments instead of restarting at 0) and `flist_eof`
+        // as `flist_complete` (false while more segments may still arrive - the
+        // `ir-chk` phase upstream renders before the list is final).
+        files_done_offset: usize,
+        flist_complete: bool,
         progress: &mut Option<&mut dyn crate::TransferProgressCallback>,
         // The connection-wide NDX diff-state codecs. Upstream io.c::write_ndx /
         // read_ndx keep a single static prev_positive/prev_negative for the whole
@@ -1040,13 +1050,16 @@ impl ReceiverContext {
                         path: file_entry.path(),
                         file_bytes: result.total_bytes,
                         total_file_bytes: Some(file_entry.size()),
-                        files_done: files_transferred,
+                        files_done: files_done_offset + files_transferred,
                         total_files,
-                        // Receiver-side INC_RECURSE collects every sub-list via
-                        // `receive_extra_file_lists` before the pipeline begins,
-                        // so the file list is always complete when progress is
-                        // emitted. upstream: progress.c:79-82 rprint_progress.
-                        flist_eof: true,
+                        // The batch drivers pass `flist_complete = true` (the
+                        // whole list is materialized before transfer). The
+                        // streaming INC_RECURSE driver passes `flist_eof`, which
+                        // is false until the last sub-list arrives - upstream
+                        // renders `ir-chk` while the list is still growing and
+                        // `to-chk` once complete. upstream: progress.c:79-82
+                        // rprint_progress.
+                        flist_eof: flist_complete,
                     };
                     cb.on_file_transferred(&event);
                 }
