@@ -105,6 +105,12 @@ copy_file_range = ["fast_io/copy_file_range"]
 # `docs/design/mmap-vs-sqpoll-conflict-resolution.md` for the rationale.
 mmap-free-basis = ["engine/mmap-free-basis", "fast_io/mmap-free-basis"]
 
+# Parallel receive-side delta apply (oc extension, off by default). Forwards
+# through `cli`/`core` to `transfer`, reserving the build gate for the
+# threshold-selected parallel receiver pipeline that lands in a follow-up. No
+# default build is affected and enabling it is behavior-neutral until then.
+parallel-receive-delta = ["cli/parallel-receive-delta", "core/parallel-receive-delta"]
+
 # ============================================================================
 # OpenSSL Features
 # ============================================================================

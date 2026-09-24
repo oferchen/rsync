@@ -68,6 +68,11 @@ async-daemon = ["daemon/async-daemon"]
 # follow-up. Default builds are unaffected.
 quic = ["core/quic"]
 
+# Parallel receive-side delta apply (oc extension, off by default). Forwards
+# through `core` to `transfer`; behavior-neutral until the receiver pipeline
+# lands.
+parallel-receive-delta = ["core/parallel-receive-delta"]
+
 
 
 [dependencies]
