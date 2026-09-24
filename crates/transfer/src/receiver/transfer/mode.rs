@@ -18,8 +18,6 @@
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
-use protocol::flist::FileEntry;
-
 use crate::receiver::stats::TransferStats;
 use crate::receiver::{PipelineSetup, ReceiverContext};
 
@@ -90,16 +88,15 @@ impl ReceiverContext {
     /// - `main.c:1839` - `if (write_batch < 0) dry_run = 1`, `do_xfers` stays 1.
     /// - `generator.c:1858-1959` - the `!do_xfers` dry-run request shape.
     pub(in crate::receiver) fn run_non_transfer_mode<
-        'a,
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     >(
-        &'a self,
+        &self,
         mode: NonTransferMode,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
         setup: &PipelineSetup,
-        files_to_transfer: &[(usize, &'a FileEntry, PathBuf, u32)],
+        files_to_transfer: &[(usize, PathBuf, u32)],
         stats: &mut TransferStats,
     ) -> io::Result<(usize, u64)> {
         match mode {

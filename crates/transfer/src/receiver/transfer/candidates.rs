@@ -183,10 +183,9 @@ impl ReceiverContext {
     /// disabled, and avoids per-file allocations where possible.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::receiver) fn build_files_to_transfer<
-        'a,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     >(
-        &'a self,
+        &self,
         writer: &mut W,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
@@ -196,7 +195,7 @@ impl ReceiverContext {
         stats: &mut TransferStats,
         acl_cache: Option<&protocol::acl::AclCache>,
         acl_id_map: Option<&metadata::AclIdMapper>,
-    ) -> Vec<(usize, &'a FileEntry, PathBuf, u32)> {
+    ) -> Vec<(usize, PathBuf, u32)> {
         // upstream: generator.c:1636-1637 - "recv_generator(%s,%d)" emitted at
         // the top of recv_generator() for every file the generator considers
         // (regular files, directories, symlinks, devices, specials). Skipping
@@ -301,7 +300,6 @@ impl ReceiverContext {
                 .map(|(idx, entry)| {
                     (
                         idx,
-                        entry,
                         dest_dir.join(entry.path()),
                         crate::generator::ItemFlags::ITEM_TRANSFER,
                     )
@@ -580,7 +578,7 @@ impl ReceiverContext {
                 // time; emitted immediately on every other path.
                 let _ = self.emit_or_record_itemize(writer, idx, &iflags, entry);
             }
-            files_to_transfer.push((idx, entry, file_path, base_iflags));
+            files_to_transfer.push((idx, file_path, base_iflags));
         }
         files_to_transfer
     }
@@ -628,11 +626,11 @@ impl ReceiverContext {
     ///   whose flags are significant, transfer or not.
     /// - `receiver.c:732-746` / `sender.c:293-309` - `ITEM_IS_NEW` bumps
     ///   `stats.created_files` plus the per-type counter.
-    pub(in crate::receiver) fn plan_dry_run<'a>(
-        &'a self,
+    pub(in crate::receiver) fn plan_dry_run(
+        &self,
         dest_dir: &Path,
-        candidates: &[(usize, &'a FileEntry, PathBuf, u32)],
-    ) -> Vec<DryRunItem<'a>> {
+        candidates: &[(usize, PathBuf, u32)],
+    ) -> Vec<DryRunItem<'_>> {
         // upstream: generator.c:642 - the quick-check mtime gate keys on
         // ignore_times alone; -t/--times only governs whether mtime is applied.
         let ignore_times = self.config.flags.ignore_times;
@@ -3212,7 +3210,10 @@ mod hlink_wire_flag_tests {
             "without -H a hardlink-flagged entry must transfer normally; \
              dropping it is a silent omission at exit 0"
         );
-        assert_eq!(files[0].1.path().to_string_lossy(), "victim.txt");
+        assert_eq!(
+            ctx.file_list[files[0].0].path().to_string_lossy(),
+            "victim.txt"
+        );
 
         // --dry-run must agree with the real run about the same stream: the
         // one file the real run requests is the one the dry run plans and

@@ -1268,7 +1268,7 @@ impl ReceiverContext {
         &self,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
-        files_to_transfer: &[(usize, &FileEntry, PathBuf, u32)],
+        files_to_transfer: &[(usize, PathBuf, u32)],
         setup: &PipelineSetup,
     ) -> io::Result<()> {
         if files_to_transfer.is_empty() {
@@ -1329,7 +1329,8 @@ impl ReceiverContext {
         )
         .digest_len();
 
-        for &(file_idx, file_entry, ref file_path, base_iflags) in files_to_transfer {
+        for &(file_idx, ref file_path, base_iflags) in files_to_transfer {
+            let file_entry = &self.file_list[file_idx];
             // upstream: generator.c:1961-1969 - compute the basis signature and
             // send a real sum head so the sender can diff against the receiver's
             // basis (empty when no basis exists, driving a whole-file batch).
