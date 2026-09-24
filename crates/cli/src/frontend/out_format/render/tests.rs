@@ -2148,6 +2148,29 @@ fn emit_out_format_suppresses_unchanged_metadata_reused_by_default() {
 }
 
 #[test]
+fn emit_out_format_emits_changed_directory_without_itemize() {
+    // upstream: log.c:838-841 `maybe_log_item()` - the client-side emit gate has
+    // a `(S_ISDIR(file->mode) && significant_flags)` clause, so a directory that
+    // carries any significant change (here an mtime drift) is logged under
+    // `--out-format` even when the format has no `%i`. The transfer root of a
+    // copy-contents pull into a pre-existing destination is exactly such a dir,
+    // so `%n` must render `test.txt/` rather than being dropped as a plain
+    // attribute-only change would be. An unchanged directory stays suppressed
+    // (see `emit_out_format_suppresses_unchanged_metadata_reused_by_default`).
+    let event = make_event(
+        ClientEventKind::MetadataReused,
+        false,
+        Some(ClientEntryKind::Directory),
+        LocalCopyChangeSet::new().with_time_change(Some(TimeChange::Modified)),
+    );
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%n")).unwrap();
+    let mut output = Vec::new();
+    emit_out_format(&events, &format, &OutFormatContext::default(), &mut output).unwrap();
+    assert_eq!(String::from_utf8(output).unwrap(), "test.txt/\n");
+}
+
+#[test]
 fn emit_out_format_emits_unchanged_metadata_reused_under_info_name_2() {
     // With `emit_unchanged` (mirroring `INFO_GTE(NAME, 2)`), the same
     // unchanged file row must surface as `.f          test.txt`.

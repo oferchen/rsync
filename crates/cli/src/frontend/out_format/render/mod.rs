@@ -108,9 +108,25 @@ fn should_suppress_event(
     //
     // Placed below the `-vv` / `-ii` arms above so their existing
     // force-emission precedence is unchanged.
+    //
+    // upstream: log.c:838-841 `maybe_log_item()` - the client-side emit gate is
+    // `see_item || local_change || *buf || (S_ISDIR(file->mode) && significant_flags)`.
+    // `see_item` needs `itemizing`, so a non-`%i` format drops attribute-only
+    // FILE changes (the chmod case above), but the `S_ISDIR && significant_flags`
+    // clause logs a directory that carries any significant change regardless of
+    // the format. A pre-existing destination root or subdirectory whose mtime
+    // (or perms/owner/...) drifts from the source is exactly such a dir, so it
+    // must render under `--out-format` even without `%i`. Its unchanged twin was
+    // already dropped by the `!has_any_change()` arm above.
+    let is_changed_directory = event.change_set().has_any_change()
+        && event
+            .metadata()
+            .map(ClientEntryMetadata::kind)
+            .is_some_and(|kind| matches!(kind, ClientEntryKind::Directory));
     if !format_itemizes
         && matches!(event.kind(), ClientEventKind::MetadataReused)
         && !event.was_created()
+        && !is_changed_directory
     {
         return true;
     }
