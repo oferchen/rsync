@@ -76,6 +76,14 @@ pub struct ReceiverContext {
     /// - `flist.c:101` - `first_flist` pointer
     /// - `receiver.c:683` - `flist_free(first_flist)` advances `first_flist`
     pub(in crate::receiver) first_segment_idx: usize,
+    /// Count of per-segment `NDX_DONE`s the streaming incremental driver
+    /// already emitted mid-walk (RS-3b). The finalize handshake
+    /// (`exchange_phase_done`) emits `ndx_segments.len() - segments_released_mid_walk`
+    /// so the total per-segment `NDX_DONE` count on the wire is unchanged; it is
+    /// 0 on every non-streaming transfer (the live/batch path), which keeps that
+    /// finalize byte-identical. Only the mid-walk EMISSION moves; the heap
+    /// reclaim stays at finalize until RS-3c.
+    pub(in crate::receiver) segments_released_mid_walk: usize,
     /// The receiver's directory numbering, addressed by the wire `dir_ndx` of an
     /// INC_RECURSE sub-list header (`NDX_FLIST_OFFSET - dir_ndx`).
     ///
@@ -557,6 +565,7 @@ impl ReceiverContext {
             checksum_seed: handshake.checksum_seed,
             ndx_segments: vec![(0, initial_ndx_start)],
             first_segment_idx: 0,
+            segments_released_mid_walk: 0,
             dir_flist: DirFlist::default(),
             served_dir_flists: HashSet::new(),
             flist_reader_cache: None,

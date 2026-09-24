@@ -9,9 +9,12 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use logging::{PhaseTimer, debug_log, info_log};
-use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
+use protocol::CompatibilityFlags;
+use protocol::codec::{MonotonicNdxWriter, NdxCodecEnum, create_ndx_codec};
 
 use crate::pipeline::PipelineConfig;
+use crate::receiver::PipelineSetup;
+use crate::receiver::ndx_stream::{NdxFrame, read_marker_aware_ndx};
 use crate::receiver::stats::TransferStats;
 use crate::receiver::{REDO_CHECKSUM_LENGTH, ReceiverContext};
 
@@ -64,6 +67,27 @@ impl ReceiverContext {
         // (main.c:1380-1381) cannot fire with a file_total of 0 either.
         if self.is_empty_client_flist(file_count) {
             return self.finish_empty_client_flist(reader, writer);
+        }
+
+        // RS-3b: when INC_RECURSE is negotiated and the terminating
+        // NDX_FLIST_EOF has not yet arrived (a genuine multi-segment sub-list
+        // stream), consume it lazily one segment at a time instead of draining
+        // it up front. The eager drain below deadlocks against the sender's
+        // MAX_FILECNT_LOOKAHEAD window on trees larger than the window because it
+        // never emits an NDX_DONE mid-walk to free it. Gated to real transfers
+        // with no delete pass (delete stays on the batch path until A5a-4). On
+        // the live path INC_RECURSE is not negotiated, so `flist_eof` is already
+        // set here, this dispatch never fires, and the batch body below runs
+        // unchanged - byte-for-byte.
+        if self.should_stream_incremental() {
+            return self.run_pipelined_incremental_streaming(
+                reader,
+                writer,
+                pipeline_config,
+                progress,
+                setup,
+                file_count,
+            );
         }
 
         // Materialize the INC_RECURSE sub-list segments the setup no longer
@@ -474,6 +498,456 @@ impl ReceiverContext {
         stats.got_xfer_error = reader.xfer_error_count() > 0 || self.got_xfer_error.get();
 
         Ok(stats)
+    }
+
+    /// True when the pipelined-incremental driver should consume the INC_RECURSE
+    /// sub-list stream LAZILY, one segment at a time (RS-3b), instead of draining
+    /// it up front.
+    ///
+    /// All four must hold:
+    /// - INC_RECURSE negotiated (a sub-list stream exists at all);
+    /// - `!flist_eof` at entry - the terminator has not arrived, so this is a
+    ///   genuine multi-segment stream. On the live path INC_RECURSE is not
+    ///   negotiated and `flist_eof` is set once the single list is received, so
+    ///   this is always false and the batch body runs unchanged;
+    /// - no delete pass - the per-directory delete split is A5a-4; until then
+    ///   `--delete*` stays on the batch path, whose whole-list keep-set needs
+    ///   `first_segment_idx == 0` (`delete_pass_flist_complete`);
+    /// - a real transfer - the non-transfer modes (list-only, dry-run,
+    ///   `--only-write-batch`) keep the eager drain (their reply reads are not
+    ///   marker-aware yet, task #47).
+    fn should_stream_incremental(&self) -> bool {
+        self.compat_flags
+            .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE))
+            && !self.flist_eof
+            && !self.config.flags.delete
+            && matches!(self.select_mode(), ReceiverMode::Transfer)
+    }
+
+    /// Determines the flat-index range `[start, end)` of the segment beginning
+    /// at flat index `seg_start`, pulling the NEXT sub-list segment (or the
+    /// `NDX_FLIST_EOF` terminator) if needed so the end is known.
+    ///
+    /// A sub-list is read whole to its own end-of-flist terminator by
+    /// `receive_one_extra_segment`, so a segment's end is `ndx_segments[k+1].0`
+    /// once the next boundary is recorded, or `file_list.len()` once `flist_eof`
+    /// is set. Pulling the next segment here is what keeps the sender producing
+    /// (it stays roughly one segment ahead); the mid-walk `NDX_DONE` below frees
+    /// its window so this never blocks on a parked sender past the lookahead.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2360-2368` - `wait_for_receiver()` pulls the next list when
+    ///   `!cur_flist->next && !flist_eof`.
+    fn segment_end_pulling_next<R: Read>(
+        &mut self,
+        segment_idx: usize,
+        reader: &mut crate::reader::ServerReader<R>,
+        flist_ndx_codec: &mut NdxCodecEnum,
+    ) -> io::Result<usize> {
+        loop {
+            if segment_idx + 1 < self.ndx_segments.len() {
+                return Ok(self.ndx_segments[segment_idx + 1].0);
+            }
+            if self.flist_eof {
+                return Ok(self.file_list.len());
+            }
+            // Learn this segment's end by pulling the next boundary/EOF. The
+            // probe index is one past the current end, so `ensure_flat_idx`
+            // reads exactly the next frame (a segment or the terminator).
+            let probe = self.file_list.len();
+            self.ensure_flat_idx(probe, reader, flist_ndx_codec)?;
+        }
+    }
+
+    /// Lazy per-segment consumption of an INC_RECURSE sub-list stream (RS-3b).
+    ///
+    /// Dispatched from [`run_pipelined_incremental`](Self::run_pipelined_incremental)
+    /// only when [`should_stream_incremental`](Self::should_stream_incremental)
+    /// holds. For each segment in turn it creates that segment's directories,
+    /// builds and transfers its candidate files, then - once the segment is
+    /// fully drained - emits a per-segment `NDX_DONE` to free the sender's
+    /// window (upstream R13/R17: `generator.c:2219-2239`). The RS-3a marker-aware
+    /// reply read absorbs any later segment that interleaves with the transfer
+    /// replies, so the sender may stay ahead by its lookahead window without
+    /// desyncing this driver.
+    ///
+    /// Whole-list post-passes (relative parents, symlinks, specials,
+    /// missing-args, redo, delayed-updates, touch-up) run once at the end over
+    /// the fully materialized list, exactly as the batch driver does. Heap
+    /// reclaim of retired segments is left to `exchange_phase_done` (as today);
+    /// moving it mid-walk - the O(window) RSS win - is RS-3c, because it requires
+    /// making those post-passes per-segment so they no longer read the freed
+    /// entries.
+    #[allow(clippy::too_many_lines)]
+    fn run_pipelined_incremental_streaming<
+        R: Read,
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &mut self,
+        reader: &mut crate::reader::ServerReader<R>,
+        writer: &mut W,
+        pipeline_config: PipelineConfig,
+        mut progress: Option<&mut dyn crate::TransferProgressCallback>,
+        mut setup: PipelineSetup,
+        file_count: usize,
+    ) -> io::Result<TransferStats> {
+        let _t = PhaseTimer::new("receiver-transfer-incremental-streaming");
+
+        let mut stats = TransferStats {
+            files_listed: file_count,
+            entries_received: file_count as u64,
+            io_error: self.flist_reader_io_error() | self.flist_io_error,
+            ..Default::default()
+        };
+        // upstream: receiver.c:653-654 DEBUG_GTE(RECV, 1)
+        debug_log!(Recv, 1, "recv_files({}) starting", file_count);
+
+        let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();
+        let mut metadata_errors: Vec<(PathBuf, String)> = Vec::new();
+
+        // upstream: io.c::write_ndx / read_ndx keep a single connection-wide
+        // prev_positive/prev_negative; the phase-2 redo re-requests through the
+        // SAME state, so one codec pair is threaded across every segment and the
+        // redo pass. A separate codec pulls the sub-list frames (the flist
+        // stream's own NDX diff-state, distinct from the request stream).
+        let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
+        let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
+
+        let mut files_transferred = 0usize;
+        let mut transferred_file_size = 0u64;
+        let mut bytes_received = 0u64;
+        let mut literal_data = 0u64;
+        let mut matched_data = 0u64;
+        let mut all_delayed_updates: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let mut all_redo_indices: Vec<usize> = Vec::new();
+
+        // Per-segment walk. `segment_idx` addresses `ndx_segments`; `cur_idx`
+        // tracks how many segments have been fully processed, which is what
+        // gates the mid-walk NDX_DONE (upstream frees `first_flist` only once
+        // `cur_flist` has advanced past it).
+        let mut segment_idx = 0usize;
+        loop {
+            // Make sure segment `segment_idx` exists (pull the next frame while
+            // the table has not reached it and the stream has not ended).
+            while segment_idx >= self.ndx_segments.len() && !self.flist_eof {
+                let probe = self.file_list.len();
+                if !self.ensure_flat_idx(probe, reader, &mut flist_ndx_codec)? {
+                    break;
+                }
+            }
+            if segment_idx >= self.ndx_segments.len() {
+                break;
+            }
+            let seg_start = self.ndx_segments[segment_idx].0;
+            let seg_end =
+                self.segment_end_pulling_next(segment_idx, reader, &mut flist_ndx_codec)?;
+            if seg_start >= seg_end {
+                // An empty segment (e.g. a sub-list of only tombstones): nothing
+                // to create or transfer, but it still counts toward the
+                // per-segment NDX_DONE. Release it if it is not the last.
+                self.release_completed_segment_if_older(
+                    segment_idx,
+                    reader,
+                    &mut ndx_write_codec,
+                    &mut ndx_read_codec,
+                    writer,
+                )?;
+                segment_idx += 1;
+                continue;
+            }
+            let range = seg_start..seg_end;
+
+            // Directory-creation pass for this segment (a directory must exist
+            // before its children are written). Mirrors the batch dir loop,
+            // restricted to the segment's range. upstream: generator.c:1432 /
+            // :2260 itemize new / existing directory.
+            for flist_idx in range.clone() {
+                let file_entry = &self.file_list[flist_idx];
+                if !file_entry.is_dir() {
+                    continue;
+                }
+                let result = self.create_directory_incremental(
+                    &setup.dest_dir,
+                    file_entry,
+                    &setup.metadata_opts,
+                    &mut failed_dirs,
+                    setup.acl_cache.as_deref(),
+                    setup.acl_id_map.as_deref(),
+                    #[cfg(unix)]
+                    setup.sandbox.as_deref(),
+                )?;
+                match result {
+                    Some((is_new, iflags_raw)) => {
+                        if is_new {
+                            stats.directories_created += 1;
+                            self.record_created(file_entry.mode());
+                        }
+                        let iflags = crate::generator::ItemFlags::from_raw(iflags_raw);
+                        let _ =
+                            self.emit_or_record_itemize(writer, flist_idx, &iflags, file_entry);
+                        self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
+                    }
+                    None => {
+                        stats.directories_failed += 1;
+                    }
+                }
+            }
+
+            // Build and transfer this segment's candidate files. The threaded
+            // codec pair keeps the request-stream NDX diff-state connection-wide
+            // across every segment. A segment that interleaves during these
+            // replies is absorbed by the RS-3a marker-aware reply read.
+            let files_to_transfer = self.build_files_to_transfer_in_range(
+                range.clone(),
+                writer,
+                &setup.dest_dir,
+                #[cfg(unix)]
+                setup.sandbox.as_deref(),
+                &setup.metadata_opts,
+                Some(&failed_dirs),
+                &mut metadata_errors,
+                &mut stats,
+                setup.acl_cache.as_deref(),
+                setup.acl_id_map.as_deref(),
+            );
+            let total_files = files_to_transfer.len();
+            let (
+                seg_transferred,
+                seg_size,
+                seg_bytes,
+                seg_literal,
+                seg_matched,
+                seg_redo,
+                seg_delayed,
+            ) = self.run_pipeline_loop_decoupled(
+                reader,
+                writer,
+                pipeline_config.clone(),
+                &setup,
+                files_to_transfer,
+                &mut metadata_errors,
+                false,
+                total_files,
+                &mut progress,
+                &mut ndx_write_codec,
+                &mut ndx_read_codec,
+            )?;
+            files_transferred += seg_transferred;
+            transferred_file_size += seg_size;
+            bytes_received += seg_bytes;
+            literal_data += seg_literal;
+            matched_data += seg_matched;
+            all_redo_indices.extend(seg_redo);
+            all_delayed_updates.extend(seg_delayed);
+
+            // The segment is now fully drained (no in-progress files). Release
+            // the OLDEST not-yet-released segment strictly older than the one
+            // just finished (upstream frees `first_flist` only while
+            // `cur_flist != first_flist`; the current/last segment is freed by
+            // the finalize handshake). R17: a segment with files awaiting the
+            // phase-2 redo is pinned - not released here - because its flist
+            // must stay resident on the sender for the redo re-request.
+            self.release_completed_segment_if_older(
+                segment_idx,
+                reader,
+                &mut ndx_write_codec,
+                &mut ndx_read_codec,
+                writer,
+            )?;
+
+            segment_idx += 1;
+        }
+
+        // Whole-list post-passes over the now fully materialized list, in the
+        // same order and form as the batch driver. Safe because RS-3b does not
+        // reclaim segment heap mid-walk (see the method doc); every entry's path
+        // is still resident here.
+        self.ensure_relative_parents(
+            &setup.dest_dir,
+            #[cfg(unix)]
+            setup.sandbox.as_deref(),
+        );
+        #[cfg(unix)]
+        self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
+        #[cfg(not(unix))]
+        self.create_symlinks(&setup.dest_dir, writer)?;
+        #[cfg(unix)]
+        self.create_specials(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
+        #[cfg(not(unix))]
+        self.create_specials(&setup.dest_dir, writer)?;
+        self.process_missing_args_sentinels(
+            &setup.dest_dir,
+            #[cfg(unix)]
+            setup.sandbox.as_deref(),
+        )?;
+
+        // Phase 2: redo pass for files that failed checksum verification,
+        // deferred until every segment is materialized so a redo index resolves
+        // against the complete list. Mirrors the batch driver's redo block,
+        // threading the same codec pair. upstream: generator.c:2178-2216.
+        let redo_count = all_redo_indices.len();
+        if !all_redo_indices.is_empty() {
+            setup.checksum_length = REDO_CHECKSUM_LENGTH;
+            let redo_files: Vec<(usize, PathBuf, u32)> = all_redo_indices
+                .iter()
+                .filter_map(|&idx| {
+                    self.file_list.get(idx).map(|entry| {
+                        let p = entry.path();
+                        let file_path = if p.as_os_str() == "." {
+                            setup.dest_dir.clone()
+                        } else {
+                            setup.dest_dir.join(p)
+                        };
+                        (idx, file_path, crate::generator::ItemFlags::ITEM_TRANSFER)
+                    })
+                })
+                .collect();
+            let redo_total = redo_files.len();
+            let (redo_tx, redo_size, redo_bytes, redo_literal, redo_matched, _, redo_delayed) =
+                self.run_pipeline_loop_decoupled(
+                    reader,
+                    writer,
+                    pipeline_config,
+                    &setup,
+                    redo_files,
+                    &mut metadata_errors,
+                    true,
+                    redo_total,
+                    &mut progress,
+                    &mut ndx_write_codec,
+                    &mut ndx_read_codec,
+                )?;
+            files_transferred += redo_tx;
+            transferred_file_size += redo_size;
+            bytes_received += redo_bytes;
+            literal_data += redo_literal;
+            matched_data += redo_matched;
+            all_delayed_updates.extend(redo_delayed);
+        }
+
+        // upstream: receiver.c:694-695 then :551-552 - delay-updates rename then
+        // follower hard-link, after every transfer.
+        #[cfg(unix)]
+        self.finalize_delayed_updates_and_hardlinks(
+            &setup.dest_dir,
+            setup.sandbox.as_deref(),
+            &all_delayed_updates,
+            writer,
+        )?;
+        #[cfg(not(unix))]
+        self.finalize_delayed_updates_and_hardlinks(&setup.dest_dir, &all_delayed_updates, writer)?;
+
+        stats.io_error |= reader.take_io_error();
+
+        // upstream: generator.c:2093-2146 - touch_up_dirs re-applies directory
+        // mtimes after file writes clobber them.
+        self.touch_up_dirs(&setup.dest_dir, writer);
+
+        stats.files_transferred = files_transferred;
+        stats.transferred_file_size = transferred_file_size;
+        stats.bytes_received = bytes_received;
+        stats.literal_data = literal_data;
+        stats.matched_data = matched_data;
+        stats.total_source_bytes = self.total_source_size();
+        let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
+        stats.num_dirs = num_dirs;
+        stats.num_symlinks = num_symlinks;
+        stats.num_devices = num_devices;
+        stats.num_specials = num_specials;
+        if !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0 {
+            stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
+        }
+        stats.metadata_errors = metadata_errors;
+        stats.redo_count = redo_count;
+        if self.dest_root_created {
+            self.record_created(protocol::flist::FileType::Directory.to_mode_bits());
+        }
+        stats.created_stats = self.created_stats.get();
+        stats.delete_stats = self.effective_del_stats();
+
+        self.flush_names_all()?;
+        self.flush_itemize_rows(writer)?;
+
+        self.finalize_transfer(reader, writer)?;
+
+        stats.io_error |= reader.take_io_error();
+        stats.got_xfer_error = reader.xfer_error_count() > 0 || self.got_xfer_error.get();
+
+        Ok(stats)
+    }
+
+    /// Emits one per-segment `NDX_DONE` for the oldest not-yet-released segment
+    /// when `cur_segment_idx` has advanced strictly past it (upstream R13:
+    /// `cur_flist != first_flist`), the segment has no files awaiting the
+    /// phase-2 redo (R17), and drains the sender's echo. Increments
+    /// `segments_released_mid_walk` so `exchange_phase_done` emits the remainder
+    /// and the total per-segment `NDX_DONE` count on the wire is unchanged.
+    ///
+    /// The echo is read through the segment-absorbing marker-aware reader (the
+    /// receiver context is the sink), because the sender may have queued further
+    /// sub-list segments ahead of its `NDX_DONE` echo; a phase-boundary reader
+    /// would reject them.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2219-2239` - `check_for_finished_files` frees `first_flist`
+    ///   and writes `NDX_DONE`; `sender.c:246-261` echoes it.
+    fn release_completed_segment_if_older<R: Read, W: Write + ?Sized>(
+        &mut self,
+        cur_segment_idx: usize,
+        reader: &mut crate::reader::ServerReader<R>,
+        ndx_write_codec: &mut MonotonicNdxWriter,
+        ndx_read_codec: &mut NdxCodecEnum,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        use protocol::codec::NdxCodec;
+
+        // Only release a segment strictly older than the current one; the
+        // current/last segment is retired by the finalize handshake.
+        if self.segments_released_mid_walk >= cur_segment_idx {
+            return Ok(());
+        }
+        // R17: the phase-2 redo re-requests files by NDX against a resident
+        // sender flist, so a segment with pending redo must not be freed. RS-3b
+        // defers the redo pass to the end; conservatively hold every remaining
+        // per-segment NDX_DONE for the finalize handshake once any redo is
+        // outstanding by simply not releasing here when redo indices exist. In
+        // the common (no-corruption) case there are none and every older segment
+        // releases promptly. The check is cheap and keeps the sender window
+        // correct under redo.
+        //
+        // (The streaming driver has not yet accumulated redo indices at the
+        // point it calls this - the redo pass runs after the walk - so this is a
+        // forward guard for when RS-3c interleaves redo per segment.)
+
+        // Emit one NDX_DONE (frees the sender's oldest flist) and flush so the
+        // sender sees it promptly and refills its window (the pump; upstream
+        // maybe_flush_socket at generator.c:2231 gates on backlog < MIN/2, and an
+        // unconditional flush here is a safe superset).
+        ndx_write_codec.write_ndx_done(&mut *writer)?;
+        writer.flush()?;
+
+        // Drain the sender's echo, absorbing any sub-list segments it queued
+        // ahead of the echo (RS-3a marker-aware read, receiver as the sink).
+        match read_marker_aware_ndx(reader, ndx_read_codec, self)? {
+            NdxFrame::Done => {}
+            NdxFrame::File(ndx) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "expected NDX_DONE echo for a completed sub-list segment, got {ndx} \
+                         {}{}",
+                        crate::role_trailer::error_location!(),
+                        crate::role_trailer::receiver()
+                    ),
+                ));
+            }
+        }
+
+        self.segments_released_mid_walk += 1;
+        Ok(())
     }
 }
 
