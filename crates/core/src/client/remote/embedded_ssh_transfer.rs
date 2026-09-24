@@ -42,6 +42,7 @@ use super::implied_source::implied_source_args_for_pull;
 use super::invocation::{
     RemoteInvocationBuilder, RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role,
 };
+use super::itemize_sink::ItemizeEventSink;
 use super::operand_split::split_transfer_operands;
 use super::ssh_transfer::convert_server_stats_to_summary;
 use crate::exit_code::ExitCode;
@@ -133,6 +134,7 @@ fn run_embedded_push(
         &secluded.command_line_args,
         &secluded.stdin_args,
         server_config,
+        config.render_out_format_locally(),
         observer,
         batch_ctx,
     )
@@ -189,6 +191,7 @@ fn run_embedded_pull(
         &secluded.command_line_args,
         &secluded.stdin_args,
         server_config,
+        config.render_out_format_locally(),
         observer,
         batch_ctx,
     )
@@ -341,6 +344,7 @@ fn run_transfer_over_embedded_ssh(
     invocation_args: &[OsString],
     stdin_args: &[OsString],
     server_config: ServerConfig,
+    render_out_format_locally: bool,
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_ctx: Option<super::batch_support::BatchContext>,
 ) -> Result<ClientSummary, ClientError> {
@@ -385,6 +389,22 @@ fn run_transfer_over_embedded_ssh(
     let progress: Option<&mut dyn TransferProgressCallback> = adapter
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
+    // Mirror the subprocess-ssh transport (`ssh_transfer::drive`) so the embedded
+    // russh client surfaces the same client-visible rows. On a push the local
+    // side is the sender (Generator) and prints each file's `-v`/`-i`/out-format
+    // line itself (upstream: sender.c:449-461 log_item(FCLIENT)); on a pull the
+    // receiver prints its own default `-v`/`-i` output but, under a custom
+    // `--out-format`, buffers metadata events the CLI renders. Without this sink
+    // the russh transport dropped every itemize/out-format row.
+    let wants_client_output = match server_config.role {
+        ServerRole::Generator => {
+            server_config.flags.info_flags.itemize
+                || server_config.flags.verbose
+                || render_out_format_locally
+        }
+        ServerRole::Receiver => render_out_format_locally,
+    };
+    let mut itemize_sink = ItemizeEventSink::new(render_out_format_locally);
 
     let transfer_result = crate::server::run_server_with_handshake(
         server_config,
@@ -393,7 +413,11 @@ fn run_transfer_over_embedded_ssh(
         &mut writer,
         progress,
         batch_recording,
-        None,
+        if wants_client_output {
+            Some(&mut itemize_sink as &mut dyn crate::server::ItemizeCallback)
+        } else {
+            None
+        },
     );
 
     // Goodbye phase: drop the writer to signal EOF to the russh bridge
@@ -404,6 +428,7 @@ fn run_transfer_over_embedded_ssh(
     // transfer succeeded; a failed transfer carries the more informative
     // diagnostic and should not be masked by a shutdown-phase error.
     drop(writer);
+    let collected_events = itemize_sink.take_events();
     let mut channel_reader = reader.into_inner();
     let goodbye_outcome =
         channel_reader.wait_for_eof_with_timeout(rsync_io::ssh::embedded::SSH_GOODBYE_TIMEOUT);
@@ -413,6 +438,9 @@ fn run_transfer_over_embedded_ssh(
         Ok(stats) => match goodbye_outcome {
             Ok(()) => {
                 let mut summary = convert_server_stats_to_summary(stats, elapsed);
+                if !collected_events.is_empty() {
+                    summary = summary.with_events(collected_events);
+                }
                 summary.set_protocol_version(negotiated_protocol);
                 Ok(summary)
             }
@@ -661,6 +689,17 @@ fn build_server_config_for_receiver(
     // existing mode while the local copy executor honoured -E.
     server_config.flags.preserve_executability = config.preserve_executability();
 
+    // A custom `--out-format` makes the local receiver buffer a metadata event
+    // per logged entry (instead of writing its own itemize string) so the client
+    // can render the template - mirrors
+    // `ssh_transfer::build_server_config_for_receiver` (InfoFlags::out_format_active).
+    // `run_transfer_over_embedded_ssh` drains and renders these events; without
+    // this the ssh:// pull dropped every custom `--out-format` row.
+    server_config.flags.info_flags.out_format_active = config.render_out_format_locally();
+    // upstream stdout_format_has_i - gates the receiver's `created directory`
+    // notice on a dest-creating pull; true under `-i` or a `%i`-bearing custom
+    // `--out-format`, false for a `%i`-less template.
+    server_config.flags.info_flags.out_format_forwards_i = config.out_format_forwards_i();
     flags::apply_only_write_batch_for_receiver(config, &mut server_config);
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
@@ -722,6 +761,10 @@ fn build_server_config_for_generator(
         server_config.file_selection.files_from_path = Some(path);
         server_config.file_selection.from0 = plan.sender_from0;
     }
+    // A custom `--out-format` makes the local sender emit an itemize row per
+    // logged entry so the client can render the template - mirrors
+    // `ssh_transfer::build_server_config_for_generator` (InfoFlags::out_format_active).
+    server_config.flags.info_flags.out_format_active = config.render_out_format_locally();
     flags::apply_only_write_batch_for_sender(config, &mut server_config);
 
     flags::apply_common_server_flags(config, &mut server_config);
@@ -853,6 +896,61 @@ mod tests {
             build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
 
         assert!(server_config.chmod.is_none());
+    }
+
+    /// A custom `--out-format` makes the embedded (russh) pull receiver buffer a
+    /// metadata event per logged entry so the client renders the template,
+    /// instead of writing its own itemize string - parity with
+    /// `ssh_transfer::build_server_config_for_receiver`. Regression guard for the
+    /// `ssh://` pull that dropped every custom `--out-format` row because the
+    /// receiver never set `out_format_active` (so nothing was buffered) while the
+    /// local render path suppressed the default output.
+    #[test]
+    fn embedded_receiver_config_propagates_out_format_active() {
+        let config = ClientConfig::builder()
+            .render_out_format_locally(true)
+            .out_format_forwards_i(true)
+            .build();
+        let server_config =
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
+        assert!(server_config.flags.info_flags.out_format_active);
+        assert!(server_config.flags.info_flags.out_format_forwards_i);
+    }
+
+    /// Without a custom `--out-format` the embedded receiver leaves
+    /// `out_format_active` clear, so the receiver writes its own default
+    /// `-v`/`-i` output directly.
+    #[test]
+    fn embedded_receiver_config_without_out_format_stays_clear() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_receiver(&config, &[OsString::from("dest")]).unwrap();
+        assert!(!server_config.flags.info_flags.out_format_active);
+        assert!(!server_config.flags.info_flags.out_format_forwards_i);
+    }
+
+    /// A custom `--out-format` makes the embedded (russh) push sender emit an
+    /// itemize row per logged entry so the client renders the template - parity
+    /// with `ssh_transfer::build_server_config_for_generator`. Regression guard
+    /// for the `ssh://` push that dropped every custom `--out-format` row.
+    #[test]
+    fn embedded_generator_config_propagates_out_format_active() {
+        let config = ClientConfig::builder()
+            .render_out_format_locally(true)
+            .build();
+        let server_config =
+            build_server_config_for_generator(&config, &[OsString::from("src")]).unwrap();
+        assert!(server_config.flags.info_flags.out_format_active);
+    }
+
+    /// Without a custom `--out-format` the embedded generator leaves
+    /// `out_format_active` clear.
+    #[test]
+    fn embedded_generator_config_without_out_format_stays_clear() {
+        let config = ClientConfig::builder().build();
+        let server_config =
+            build_server_config_for_generator(&config, &[OsString::from("src")]).unwrap();
+        assert!(!server_config.flags.info_flags.out_format_active);
     }
 
     /// The embedded (russh) pull receiver must carry `list_only` onto its
