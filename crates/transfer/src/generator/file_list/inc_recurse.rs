@@ -47,6 +47,17 @@ impl GeneratorContext {
             return;
         }
 
+        // Producer-selection seam (LF-0c). The lazy producer (upstream
+        // flist.c:send_extra_file_list, LF-2f) is not built yet, so an enabled
+        // OC_RSYNC_LAZY_FLIST still runs the eager partition below - byte-identical,
+        // as the staging flag promises. LF-2f turns this into the eager/lazy branch.
+        let lazy_producer = self.lazy_flist();
+        debug_log!(
+            Flist,
+            3,
+            "inc_recurse producer: eager (OC_RSYNC_LAZY_FLIST lazy-staging requested={lazy_producer})"
+        );
+
         let classification = Self::classify_file_list_entries(self.file_list.as_slice());
         for name in &classification.orphans {
             // upstream: flist.c:2691 - the receiver's wording for the same
