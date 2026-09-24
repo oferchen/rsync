@@ -246,6 +246,82 @@ pub(crate) fn copy_fifo(
         return Ok(());
     }
 
+    // upstream: generator.c:1627-1642 - a special whose destination already
+    // holds a special of the SAME `_S_IFMT` bucket quick-checks equal
+    // (quick_check_ok, generator.c:657-660): the generator applies attributes
+    // in place via set_file_attrs and itemizes `iflags=0` (`.S...`), never
+    // removing and recreating the node. Only a differing type falls through to
+    // the atomic_create recreate below. Mirror that (as symlink.rs does for a
+    // same-target symlink) so a metadata-only change is a `.S` MetadataReused,
+    // not a `cS` recreate.
+    if existing_hard_link_target.is_none()
+        && let Some(existing) = replaced_special.as_ref()
+        && !replaced_content_differs
+    {
+        apply_file_metadata_with_options(destination, metadata, metadata_options)
+            .map_err(map_metadata_error)?;
+        #[cfg(all(unix, feature = "xattr"))]
+        sync_xattrs_if_requested(
+            preserve_xattrs,
+            mode,
+            source,
+            destination,
+            true,
+            context.filter_program(),
+            Some(context.destination_root()),
+        )?;
+        #[cfg(all(any(unix, windows), feature = "acl"))]
+        sync_acls_if_requested(
+            preserve_acls,
+            context.options().fake_super_enabled(),
+            mode,
+            source,
+            destination,
+            true,
+        )?;
+        context.record_hard_link(metadata, destination);
+
+        if let Some(path) = &record_path {
+            // upstream: generator.c:1645 itemize(..., 0, ...) - a quick-check-ok
+            // special sets no ITEM_LOCAL_CHANGE / ITEM_IS_NEW, only the attribute
+            // report bits, so the row renders `.S...p...`, not `cS`.
+            let change_set = LocalCopyChangeSet::for_file(
+                metadata,
+                Some(existing),
+                metadata_options,
+                true,
+                false,
+                false,
+                false,
+                context.options().modify_window(),
+            );
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let total_bytes = Some(metadata_snapshot.len());
+            context.record(
+                LocalCopyRecord::new(
+                    path.clone(),
+                    LocalCopyAction::MetadataReused,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                )
+                .with_change_set(change_set),
+            );
+        }
+
+        context.register_progress();
+        remove_source_entry_if_requested(
+            context,
+            source,
+            destination,
+            metadata,
+            record_path.as_deref(),
+            file_type,
+        )?;
+        return Ok(());
+    }
+
     if let Some(existing) = existing_metadata.take() {
         // upstream: generator.c:2019 atomic_create() - `make_backup(fname,
         // skip_atomic)` with `skip_atomic` false here, so the hard-link tier

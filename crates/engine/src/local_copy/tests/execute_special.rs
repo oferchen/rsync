@@ -1043,7 +1043,7 @@ fn execute_symlink_replaces_existing_socket() {
 
 #[cfg(unix)]
 #[test]
-fn execute_recopy_fifo_replaces_existing_fifo() {
+fn execute_recopy_fifo_reuses_existing_same_identity_fifo() {
     use std::os::unix::fs::FileTypeExt;
 
     let temp = create_tempdir();
@@ -1060,16 +1060,43 @@ fn execute_recopy_fifo_replaces_existing_fifo() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let summary = plan
-        .execute_with_options(
+    let report = plan
+        .execute_with_report(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().specials(true).permissions(true),
+            LocalCopyOptions::default()
+                .specials(true)
+                .permissions(true)
+                .collect_events(true),
         )
         .expect("re-copy succeeds");
 
     let metadata = fs::symlink_metadata(&dest_fifo).expect("dest metadata");
     assert!(metadata.file_type().is_fifo());
-    assert_eq!(summary.fifos_created(), 1);
+    // upstream: generator.c:1627-1645 - an existing FIFO of the same _S_IFMT
+    // bucket quick-checks equal, so the generator applies attributes in place
+    // (set_file_attrs) and itemizes iflags=0 (`.S...`), never recreating the
+    // node; it is therefore NOT counted as a created special. Before the
+    // quick-check short-circuit oc removed and recreated the FIFO, wrongly
+    // reporting it created and itemizing `cS`.
+    assert_eq!(
+        report.summary().fifos_created(),
+        0,
+        "a metadata-only FIFO change is not a creation (upstream generator.c:1645)"
+    );
+    assert!(
+        report
+            .records()
+            .iter()
+            .any(|record| record.action() == &LocalCopyAction::MetadataReused),
+        "a quick-check-ok FIFO itemizes as MetadataReused (`.S`), not FifoCopied (`cS`)"
+    );
+    assert!(
+        !report
+            .records()
+            .iter()
+            .any(|record| record.action() == &LocalCopyAction::FifoCopied),
+        "a metadata-only FIFO must not be recreated (no FifoCopied `cS` row)"
+    );
 }
 
 #[cfg(unix)]
