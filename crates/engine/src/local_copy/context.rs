@@ -32,7 +32,7 @@ use super::sync_xattrs_if_requested;
 use super::{
     CopyComparison, DeleteTiming, DestinationWriteGuard, HardLinkTracker, LocalCopyAction,
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution,
-    LocalCopyMetadata, LocalCopyOptions, LocalCopyProgress, LocalCopyRecord,
+    LocalCopyFileKind, LocalCopyMetadata, LocalCopyOptions, LocalCopyProgress, LocalCopyRecord,
     LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary, MergeFileOrigin, MergeFileRegistry,
     NestedDirMerge, ReferenceDirectory, SparseWriteState, compute_backup_path,
     copy_entry_to_backup, copy_pre_image_to_backup, create_backup_parents,
