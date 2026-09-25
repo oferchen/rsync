@@ -443,6 +443,20 @@ pub(crate) fn connect_timeout_error(target: impl fmt::Display, error: io::Error)
     ClientError::with_code(code, message)
 }
 
+/// Reports that a daemon connection made through a remote shell was not
+/// established before `--contimeout` expired.
+///
+/// upstream: io.c:169-173 `handshake_poll_timeout_ms()` - `rprintf(FERROR,
+/// "[%s] connection timed out -- exiting\n", who_am_i());
+/// exit_cleanup(RERR_CONTIMEOUT);`
+#[cold]
+pub(crate) fn connection_timed_out_error() -> ClientError {
+    let code = ExitCode::ConnectionTimeout;
+    let message =
+        rsync_error!(code.as_i32(), "connection timed out -- exiting").with_role(Role::Client);
+    ClientError::with_code(code, message)
+}
+
 /// Builds the canonical "connection unexpectedly closed" diagnostic that
 /// upstream rsync emits when the protocol stream reaches EOF mid-transfer.
 ///
