@@ -301,6 +301,7 @@ pub(crate) fn build_wire_format_rules(
                     rule_type: RuleType::Exclude,
                     pattern: pattern.into(),
                     anchored,
+                    abs_path: spec.is_abs_path(),
                     directory_only,
                     // upstream: 'e' flag = FILTRULE_EXCLUDE_SELF.
                     exclude_from_merge: true,
@@ -320,6 +321,8 @@ pub(crate) fn build_wire_format_rules(
             rule_type,
             pattern: pattern.into(),
             anchored,
+            abs_path: spec.is_abs_path(),
+            implied_partial_dir: spec.is_implied_partial_dir(),
             directory_only,
             xattr_only: spec.is_xattr_only(),
             sender_side: wire_sender_side(spec),
@@ -1157,6 +1160,18 @@ mod tests {
         // the pattern body so that the wire serializer does not emit it
         // twice (once as the prefix modifier and once as a literal).
         assert_eq!(rules[0].pattern, "tmp");
+    }
+
+    /// The `/` modifier and a leading `/` both anchor, but only the modifier is
+    /// upstream's FILTRULE_ABS_PATH prefix byte (exclude.c:1392-1393, :1843),
+    /// which a protocol 28 peer cannot read.
+    #[test]
+    fn abs_path_modifier_is_distinct_from_a_leading_slash() {
+        let modifier = FilterRuleSpec::exclude("tmp").with_anchor();
+        let slash = FilterRuleSpec::exclude("/tmp");
+        let rules = build_wire_format_rules(&[modifier, slash], false).expect("convert");
+        assert!(rules[0].anchored && rules[0].abs_path);
+        assert!(rules[1].anchored && !rules[1].abs_path);
     }
 
     #[test]

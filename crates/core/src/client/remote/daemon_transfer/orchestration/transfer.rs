@@ -295,6 +295,15 @@ fn map_server_transfer_error(error: std::io::Error, role: Role) -> ClientError {
             ExitCode::Unsupported.as_i32(),
         );
     }
+    // A local wire-protocol violation is upstream's RERR_PROTOCOL (2), e.g.
+    // exclude.c:1924-1926 send_rules() "filter rules are too modern for remote
+    // rsync." - the same mapping the remote-shell path applies.
+    if ExitCode::from_io_error(&error) == ExitCode::Protocol {
+        return invalid_argument_error(
+            &format!("transfer failed: {error}"),
+            ExitCode::Protocol.as_i32(),
+        );
+    }
     invalid_argument_error(&format!("transfer failed: {error}"), 23)
 }
 
@@ -502,6 +511,23 @@ mod map_server_transfer_error_tests {
         );
         assert_eq!(err.exit_code(), 23);
         assert!(err.to_string().contains("transfer failed"), "{err}");
+    }
+
+    /// A local protocol violation exits RERR_PROTOCOL (2) like upstream, e.g.
+    /// `exclude.c:1924-1926` refusing a filter rule a pre-29 peer cannot read.
+    /// Reporting 23 would tell the user some files transferred.
+    #[test]
+    fn maps_local_protocol_violation_to_rerr_protocol() {
+        let err = map_server_transfer_error(
+            protocol::protocol_violation("filter rules are too modern for remote rsync."),
+            Role::Sender,
+        );
+        assert_eq!(err.exit_code(), 2);
+        assert!(
+            err.to_string()
+                .contains("filter rules are too modern for remote rsync."),
+            "{err}"
+        );
     }
 
     /// A signal-driven teardown must report the signal, not the I/O failure it

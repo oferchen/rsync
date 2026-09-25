@@ -96,15 +96,13 @@ fn serialize_rule_errors_with_too_modern_for_dir_merge_at_protocol_28() {
 fn each_modifier_unsendable_at_protocol_28() {
     type Setter = fn(&mut FilterRuleWireFormat);
     let cases: &[(&str, Setter)] = &[
-        ("anchored", |r| r.anchored = true),
+        ("abs_path", |r| r.abs_path = true),
         ("negate", |r| r.negate = true),
         ("cvs_exclude", |r| r.cvs_exclude = true),
         ("no_inherit", |r| r.no_inherit = true),
         ("word_split", |r| r.word_split = true),
         ("exclude_from_merge", |r| r.exclude_from_merge = true),
         ("xattr_only", |r| r.xattr_only = true),
-        ("sender_side", |r| r.sender_side = true),
-        ("receiver_side", |r| r.receiver_side = true),
     ];
 
     for (name, setter) in cases {
@@ -128,6 +126,84 @@ fn each_modifier_unsendable_at_protocol_28() {
                 .contains("filter rules are too modern for remote rsync"),
             "modifier '{name}': error must match upstream send_rules:1623-1627 wording; got {err}",
         );
+    }
+}
+
+/// The rules upstream DOES send at protocol 28, with the exact bytes.
+///
+/// Each would be refused if its flag were mistaken for a prefix modifier:
+///
+/// - A leading `/` rides in the pattern body; only the `/` modifier
+///   (`FILTRULE_ABS_PATH`) is a prefix byte (`exclude.c:1843`). A client's
+///   `--exclude=/foo` never sets that flag (`exclude.c:297-300` needs
+///   XFLG_ANCHORED2ABS), so upstream sends `/foo`.
+/// - `s` and `r` are not written below protocol 29 (`exclude.c:1865-1871`),
+///   so a one-sided, protect (`P`) or risk (`R`) rule degrades to a plain
+///   exclude or include.
+///
+/// MEASURED against rsync 3.5.0 at `--protocol=28`: `--exclude=/hello.txt`,
+/// `--include=/hello.txt`, `--filter='-r hello.txt'` and
+/// `--filter='P hello.txt'` all exit 0 on a daemon pull and push.
+#[test]
+fn anchored_and_sided_rules_are_sendable_at_protocol_28() {
+    let anchored = |mut rule: FilterRuleWireFormat| {
+        rule.anchored = true;
+        rule
+    };
+    let sided = |mut rule: FilterRuleWireFormat, sender: bool| {
+        rule.sender_side = sender;
+        rule.receiver_side = !sender;
+        rule
+    };
+    let with_type = |rule_type| FilterRuleWireFormat {
+        rule_type,
+        pattern: "foo".into(),
+        receiver_side: true,
+        ..FilterRuleWireFormat::default()
+    };
+    let cases: &[(&str, FilterRuleWireFormat, &[u8])] = &[
+        (
+            "anchored exclude",
+            anchored(FilterRuleWireFormat::exclude("foo".to_owned())),
+            b"/foo",
+        ),
+        (
+            "anchored include",
+            anchored(FilterRuleWireFormat::include("foo".to_owned())),
+            b"+ /foo",
+        ),
+        (
+            "anchored exclude of a '- ' pattern",
+            anchored(FilterRuleWireFormat::exclude("- x".to_owned())),
+            b"/- x",
+        ),
+        (
+            "unanchored '- ' pattern",
+            FilterRuleWireFormat::exclude("- x".to_owned()),
+            b"- - x",
+        ),
+        (
+            "sender-side exclude",
+            sided(FilterRuleWireFormat::exclude("foo".to_owned()), true),
+            b"foo",
+        ),
+        (
+            "receiver-side exclude",
+            sided(FilterRuleWireFormat::exclude("foo".to_owned()), false),
+            b"foo",
+        ),
+        ("protect", with_type(RuleType::Protect), b"foo"),
+        ("risk", with_type(RuleType::Risk), b"+ foo"),
+    ];
+
+    for (name, rule, expected) in cases {
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(rule), proto(PROTO_28))
+            .unwrap_or_else(|e| panic!("{name} must be sendable at protocol 28: {e}"));
+        let mut want = (expected.len() as i32).to_le_bytes().to_vec();
+        want.extend_from_slice(expected);
+        want.extend_from_slice(&0i32.to_le_bytes());
+        assert_eq!(buf, want, "{name}: wire bytes");
     }
 }
 
@@ -217,9 +293,9 @@ fn known_failures_conf_marks_merge_filter_only_up_to_proto_28() {
     let bash = which_bash().unwrap_or_else(|| "/bin/bash".to_owned());
     let conf_str = conf.to_string_lossy().into_owned();
 
-    let check = |proto: &str| -> bool {
+    let check = |direction: &str, proto: &str| -> bool {
         let script = format!(
-            "set -u; source '{conf_str}'; is_known_failure_from_conf up merge-filter '{proto}'",
+            "set -u; source '{conf_str}'; is_known_failure_from_conf {direction} merge-filter '{proto}'",
         );
         let status = Command::new(&bash)
             .args(["-c", &script])
@@ -228,17 +304,21 @@ fn known_failures_conf_marks_merge_filter_only_up_to_proto_28() {
         status.success()
     };
 
-    for proto in ["28", "27"] {
-        assert!(
-            check(proto),
-            "merge-filter must be a known failure at proto {proto}"
-        );
-    }
-    for proto in ["29", "30", "31", "32", ""] {
-        assert!(
-            !check(proto),
-            "merge-filter must NOT be a known failure at proto '{proto}' (upstream-only limitation)",
-        );
+    // Both client roles refuse a -F dir-merge below protocol 29 (upstream
+    // send_rules, exclude.c:1921-1929), so the cell is known for both.
+    for direction in ["up", "oc"] {
+        for proto in ["28", "27"] {
+            assert!(
+                check(direction, proto),
+                "{direction}:merge-filter must be a known failure at proto {proto}"
+            );
+        }
+        for proto in ["29", "30", "31", "32", ""] {
+            assert!(
+                !check(direction, proto),
+                "{direction}:merge-filter must NOT be a known failure at proto '{proto}'",
+            );
+        }
     }
 }
 

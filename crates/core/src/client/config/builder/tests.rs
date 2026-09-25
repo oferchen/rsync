@@ -962,6 +962,9 @@ fn implicit_partial_dir_filter_excludes_and_protects() {
     // Trailing slash restricts the match to directories (FILTRULE_DIRECTORY).
     assert_eq!(rule.pattern(), ".rsync-partial/");
     assert!(rule.is_perishable());
+    // Tagged so a pre-30 sender drops the perishable flag on the wire
+    // (compat.c:805-806); a user `-p` rule is refused there instead.
+    assert!(rule.is_implied_partial_dir());
     // Applies to the sender (drop from flist) and the receiver (protect from
     // deletion), matching upstream's rule with no FILTRULES_SIDES bit set.
     assert!(rule.applies_to_sender());

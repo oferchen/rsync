@@ -13,7 +13,7 @@ use protocol::filters::{FilterRuleWireFormat, RuleType};
 
 use crate::{
     TOO_MODERN_FILTER_RULES_MSG, perishable_rules_too_modern, receiver_wants_filter_list,
-    wire_rule_crosses_wire,
+    send_client_filter_list, wire_rule_crosses_wire,
 };
 
 // -- receiver_wants_list truth table (exclude.c:1647-1648, 1676-1677) --
@@ -429,5 +429,234 @@ fn too_modern_abort_message_and_exit_class() {
             .and_then(|inner| inner.downcast_ref::<protocol::ProtocolViolation>())
             .is_some(),
         "abort must be tagged ProtocolViolation so it maps to RERR_PROTOCOL (2)"
+    );
+}
+
+// -- pre-29 legality on every client path (exclude.c:1888-1956) --
+
+/// Runs the client filter-list step and returns the bytes it wrote, or the
+/// error it aborted with. `send` is the `receiver_wants_list` decision.
+fn client_filter_step(
+    rule: FilterRuleWireFormat,
+    client_is_sender: bool,
+    delete_excluded: bool,
+    protocol: ProtocolVersion,
+    send: bool,
+) -> Result<Vec<u8>, std::io::Error> {
+    let mut wire = Vec::new();
+    send_client_filter_list(
+        &mut wire,
+        &[rule],
+        client_is_sender,
+        delete_excluded,
+        protocol,
+        send,
+    )?;
+    Ok(wire)
+}
+
+fn assert_too_modern(result: Result<Vec<u8>, std::io::Error>, what: &str) {
+    let err = result.expect_err(what);
+    assert_eq!(err.to_string(), TOO_MODERN_FILTER_RULES_MSG, "{what}");
+    assert!(
+        err.get_ref()
+            .and_then(|inner| inner.downcast_ref::<protocol::ProtocolViolation>())
+            .is_some(),
+        "{what}: must map to RERR_PROTOCOL (2), not a partial transfer"
+    );
+}
+
+/// The rules upstream refuses at protocol 28, on a push that sends NO list.
+///
+/// A plain push without `--delete` or `--prune-empty-dirs` sends no filter list
+/// (`receiver_wants_list` is false), yet upstream still aborts: send_filter_list()
+/// only sets `f_out = -1` (exclude.c:1949-1950) and send_rules() runs the
+/// get_rule_prefix() NULL check before its `f_out < 0` skip (exclude.c:1921-1929).
+/// MEASURED: rsync 3.5.0 pushing to a 3.5.0 daemon at `--protocol=28` exits 2
+/// with `filter rules are too modern for remote rsync.` for `-FF`,
+/// `--filter='dir-merge .rsync-filter'`, `--filter='-! x'` and `--filter='-/ x'`.
+#[test]
+fn pre29_push_refuses_unsendable_rules_even_without_a_list() {
+    let mut negated = FilterRuleWireFormat::exclude("x".to_owned());
+    negated.negate = true;
+    let mut abs_path = FilterRuleWireFormat::exclude("x".to_owned());
+    abs_path.anchored = true;
+    abs_path.abs_path = true;
+    for (what, rule) in [
+        ("dir-merge", dir_merge(false)),
+        ("negate", negated),
+        ("abs-path modifier", abs_path),
+    ] {
+        assert_too_modern(
+            client_filter_step(rule, true, false, ProtocolVersion::V28, false),
+            what,
+        );
+    }
+}
+
+/// The pull direction refuses the same rules, before any byte is written.
+#[test]
+fn pre29_pull_refuses_unsendable_rules_before_writing() {
+    let mut wire = Vec::new();
+    let err = send_client_filter_list(
+        &mut wire,
+        &[dir_merge(false)],
+        false,
+        false,
+        ProtocolVersion::V28,
+        true,
+    )
+    .expect_err("a pre-29 pull cannot carry a dir-merge");
+    assert_eq!(err.to_string(), TOO_MODERN_FILTER_RULES_MSG);
+    assert!(
+        wire.is_empty(),
+        "nothing may reach the wire before the abort"
+    );
+}
+
+/// Control: at protocol 29 the same rules are legal in both directions.
+#[test]
+fn protocol_29_accepts_the_rules_protocol_28_refuses() {
+    let mut negated = FilterRuleWireFormat::exclude("x".to_owned());
+    negated.negate = true;
+    let mut abs_path = FilterRuleWireFormat::exclude("x".to_owned());
+    abs_path.anchored = true;
+    abs_path.abs_path = true;
+    for rule in [dir_merge(false), negated, abs_path] {
+        for (sender, send) in [(true, false), (true, true), (false, true)] {
+            client_filter_step(rule.clone(), sender, false, ProtocolVersion::V29, send)
+                .expect("protocol 29 encodes every modifier");
+        }
+    }
+}
+
+/// Control: a leading-slash pattern is not the `/` modifier. `--exclude=/foo`
+/// travels as `/foo` at protocol 28 in both directions (MEASURED: rsync 3.5.0
+/// exits 0 on a protocol-28 daemon pull and push).
+#[test]
+fn pre29_anchored_pattern_is_sent_in_the_body() {
+    let mut anchored = FilterRuleWireFormat::exclude("foo".to_owned());
+    anchored.anchored = true;
+    for client_is_sender in [true, false] {
+        let wire = client_filter_step(
+            anchored.clone(),
+            client_is_sender,
+            false,
+            ProtocolVersion::V28,
+            true,
+        )
+        .expect("an anchored pattern is legal at protocol 28");
+        let mut want = 4i32.to_le_bytes().to_vec();
+        want.extend_from_slice(b"/foo");
+        want.extend_from_slice(&0i32.to_le_bytes());
+        assert_eq!(wire, want);
+    }
+}
+
+/// A receiver-side rule is sendable at protocol 28 (no `r` is written) except
+/// from a `--delete-excluded` sender, where upstream writes `r` and overflows
+/// (exclude.c:1868-1871, then :1878-1879).
+#[test]
+fn pre29_receiver_side_rule_refused_only_for_delete_excluded_sender() {
+    let mut rule = FilterRuleWireFormat::exclude("foo".to_owned());
+    rule.receiver_side = true;
+    client_filter_step(rule.clone(), true, false, ProtocolVersion::V28, true)
+        .expect("no `r` is written without --delete-excluded");
+    assert_too_modern(
+        client_filter_step(rule.clone(), true, true, ProtocolVersion::V28, false),
+        "--delete-excluded sender writes `r`",
+    );
+    client_filter_step(rule, true, true, ProtocolVersion::V29, true)
+        .expect("protocol 29 encodes `r`");
+}
+
+/// A clear rule never reaches get_rule_prefix() upstream (the list is emptied
+/// at parse time, exclude.c:1467-1473), so it cannot make a push too modern.
+#[test]
+fn pre29_clear_rule_does_not_abort_a_push() {
+    let clear = FilterRuleWireFormat {
+        rule_type: RuleType::Clear,
+        ..FilterRuleWireFormat::default()
+    };
+    client_filter_step(clear, true, false, ProtocolVersion::V28, false)
+        .expect("a clear rule is never refused");
+}
+
+// -- implied relative --partial-dir rule (compat.c:803-807) --
+
+fn implied_partial_dir() -> FilterRuleWireFormat {
+    let mut rule = FilterRuleWireFormat::exclude(".rsync-partial".to_owned()).with_perishable(true);
+    rule.directory_only = true;
+    rule.implied_partial_dir = true;
+    rule
+}
+
+fn one_record(payload: &[u8]) -> Vec<u8> {
+    let mut want = (payload.len() as i32).to_le_bytes().to_vec();
+    want.extend_from_slice(payload);
+    want.extend_from_slice(&0i32.to_le_bytes());
+    want
+}
+
+/// Upstream sets FILTRULE_PERISHABLE on the implied partial-dir exclude only
+/// when `!am_sender || protocol_version >= 30` (compat.c:805-806). A pre-30
+/// sender therefore holds a plain directory exclude, which is legal on the
+/// pre-29 wire, so `--partial-dir` must not abort a protocol 28 push - with
+/// or without a list on the wire. Treating it as a user `-p` rule made oc
+/// refuse the upstream testsuite's `symlink-dirlink-basis` push.
+#[test]
+fn pre30_push_sends_implied_partial_dir_as_plain_exclude() {
+    for proto in [ProtocolVersion::V28, ProtocolVersion::V29] {
+        client_filter_step(implied_partial_dir(), true, false, proto, false)
+            .expect("no list: nothing to refuse");
+        let wire = client_filter_step(implied_partial_dir(), true, false, proto, true)
+            .expect("the implied rule is a plain exclude for a pre-30 sender");
+        let payload: &[u8] = if proto == ProtocolVersion::V28 {
+            b".rsync-partial/"
+        } else {
+            b"- .rsync-partial/"
+        };
+        assert_eq!(wire, one_record(payload), "protocol {proto}");
+    }
+}
+
+/// A receiving client keeps the flag (`!am_sender`); below protocol 30 the
+/// `p` byte is simply not written (exclude.c:1872-1874).
+#[test]
+fn pre30_pull_keeps_implied_partial_dir_without_refusing() {
+    let wire = client_filter_step(
+        implied_partial_dir(),
+        false,
+        false,
+        ProtocolVersion::V28,
+        true,
+    )
+    .expect("a receiver never refuses a perishable rule");
+    assert_eq!(wire, one_record(b".rsync-partial/"));
+}
+
+/// At protocol 30 the sender keeps the flag and writes `p`.
+#[test]
+fn protocol_30_push_marks_implied_partial_dir_perishable() {
+    let wire = client_filter_step(
+        implied_partial_dir(),
+        true,
+        false,
+        ProtocolVersion::V30,
+        true,
+    )
+    .expect("protocol 30 encodes `p`");
+    assert_eq!(wire, one_record(b"-p .rsync-partial/"));
+}
+
+/// Opposed control: a user's own `-p` rule is not the implied rule, and a
+/// pre-30 sender still refuses it (exclude.c:1875-1876).
+#[test]
+fn pre30_push_still_refuses_a_user_perishable_rule() {
+    let mut user = implied_partial_dir();
+    user.implied_partial_dir = false;
+    assert_too_modern(
+        client_filter_step(user, true, false, ProtocolVersion::V28, false),
+        "a user -p rule on a pre-30 push",
     );
 }
