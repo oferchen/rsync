@@ -684,6 +684,25 @@ mod tests {
         assert_eq!(active, ["a", "dup"]);
     }
 
+    /// A reclaimed segment must not cost one heap allocation per entry: every
+    /// reclaimed dirname points at the same shared empty `Arc`.
+    #[test]
+    fn reclaim_segment_shares_one_empty_dirname() {
+        let mut list = DualFileList::new();
+        for i in 0..3 {
+            list.push(FileEntry::new_file(
+                format!("dir_{i}/f.txt").into(),
+                1,
+                0o644,
+            ));
+        }
+
+        list.reclaim_segment(0, 3);
+
+        assert!(std::sync::Arc::ptr_eq(list[0].dirname(), list[1].dirname()));
+        assert!(std::sync::Arc::ptr_eq(list[1].dirname(), list[2].dirname()));
+    }
+
     #[test]
     fn reclaim_segment_empty_range_is_noop() {
         let mut list = DualFileList::new();

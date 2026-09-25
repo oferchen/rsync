@@ -1524,6 +1524,22 @@ fn reclaim_heap_data_on_symlink_drops_target() {
     assert!(entry.link_target().is_none());
 }
 
+/// Reclaim exists to shrink RSS on completed INC_RECURSE segments. If each
+/// reclaimed entry got its own empty dirname `Arc`, reclaiming N entries
+/// would perform N fresh heap allocations, so every reclaimed entry must
+/// share one empty dirname.
+#[test]
+fn reclaim_heap_data_shares_one_empty_dirname() {
+    let mut a = FileEntry::new_file("dir_a/one.txt".into(), 1, 0o644);
+    let mut b = FileEntry::new_file("dir_b/two.txt".into(), 2, 0o644);
+
+    a.reclaim_heap_data();
+    b.reclaim_heap_data();
+
+    assert_eq!(&**a.dirname(), Path::new(""));
+    assert!(Arc::ptr_eq(a.dirname(), b.dirname()));
+}
+
 #[test]
 fn reclaim_heap_data_on_minimal_entry_is_safe() {
     let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
