@@ -48,11 +48,13 @@ const COPY_BUDGET: Duration = Duration::from_secs(20);
 
 /// Set an entry's mtime via `utimensat` (through `touch`), never `filetime` -
 /// see the module doc for why `filetime` would hang the fixture on a FIFO.
-fn touch(path: &Path, args: &[&str], date: &str) {
+/// `stamp` is POSIX `-t [[CC]YY]MMDDhhmm`: BSD/macOS `touch -d` only accepts
+/// `YYYY-MM-DDThh:mm:SS`, so `-d` with a GNU free-form date is not portable.
+fn touch(path: &Path, args: &[&str], stamp: &str) {
     let ok = Command::new("touch")
         .args(args)
-        .arg("-d")
-        .arg(date)
+        .arg("-t")
+        .arg(stamp)
         .arg(path)
         .status()
         .expect("spawn touch")
@@ -97,12 +99,12 @@ fn local_copy_of_preexisting_special_and_symlink_completes_without_opening_the_n
                 .map_err(|e| e.to_string())?;
             // Source newer than destination so the mtime comparison flags a
             // change deterministically. `touch` uses utimensat - no open().
-            touch(&source.join("afifo"), &[], "2025-01-01");
-            touch(&source.join("tgt"), &[], "2025-01-01");
-            touch(&source.join("alink"), &["-h"], "2025-06-01");
-            touch(&dest.join("afifo"), &[], "2024-01-01");
-            touch(&dest.join("tgt"), &[], "2025-01-01"); // identical -> skipped
-            touch(&dest.join("alink"), &["-h"], "2024-06-01");
+            touch(&source.join("afifo"), &[], "202501010000");
+            touch(&source.join("tgt"), &[], "202501010000");
+            touch(&source.join("alink"), &["-h"], "202506010000");
+            touch(&dest.join("afifo"), &[], "202401010000");
+            touch(&dest.join("tgt"), &[], "202501010000"); // identical -> skipped
+            touch(&dest.join("alink"), &["-h"], "202406010000");
 
             let options = LocalCopyOptions::default()
                 .recursive(true)
@@ -146,7 +148,13 @@ fn local_copy_of_preexisting_special_and_symlink_completes_without_opening_the_n
             worker.join().expect("worker thread panicked");
         }
         Ok(Err(msg)) => panic!("local copy failed: {msg}"),
-        Err(_) => panic!(
+        // The worker dropped its sender without reporting: it panicked (e.g. in
+        // fixture setup). Surface that panic instead of misreporting a hang.
+        Err(mpsc::RecvTimeoutError::Disconnected) => match worker.join() {
+            Err(payload) => std::panic::resume_unwind(payload),
+            Ok(()) => panic!("worker exited without reporting a result"),
+        },
+        Err(mpsc::RecvTimeoutError::Timeout) => panic!(
             "local copy did not return within {COPY_BUDGET:?}: the special/symlink copy \
              path opened the node for content (a FIFO open with no writer blocks in \
              wait_for_partner). It must stay path-based - mkfifo/mknod + \
