@@ -278,7 +278,7 @@ impl CapturedModuleDefaults {
 /// Returns the index of the module section named `name`, creating it when no
 /// earlier header in any file of the parse named it.
 ///
-/// upstream: loadparm.c:add_a_section:431-450 - "it might already exist":
+/// upstream: loadparm.c:add_a_section:439-459 - "it might already exist":
 /// getsectionbyname() searches the whole `section_list` with the
 /// whitespace- and case-insensitive `strwiEQ`, and a match is returned as-is,
 /// so a repeated header re-opens that section instead of adding a second one.
