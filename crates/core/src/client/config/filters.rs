@@ -36,6 +36,16 @@ pub struct FilterRuleSpec {
     ///
     /// upstream: exclude.c:1652-1668 send_filter_list().
     cvs_origin: bool,
+    /// Set by the `/` modifier (`-/ foo`), upstream's `FILTRULE_ABS_PATH`.
+    ///
+    /// Tracked apart from a leading `/` in the pattern because the two
+    /// serialise differently below protocol 29: the anchor rides in the
+    /// pattern body, while the modifier is a prefix byte the pre-29 wire
+    /// cannot carry.
+    ///
+    /// upstream: exclude.c:1392-1393 parse_rule_tok(), exclude.c:1843
+    /// get_rule_prefix().
+    abs_path: bool,
 }
 
 impl FilterRuleSpec {
@@ -53,6 +63,7 @@ impl FilterRuleSpec {
             xattr_only: false,
             negate: false,
             cvs_origin: false,
+            abs_path: false,
         }
     }
 
@@ -70,6 +81,7 @@ impl FilterRuleSpec {
             xattr_only: false,
             negate: false,
             cvs_origin: false,
+            abs_path: false,
         }
     }
 
@@ -86,6 +98,7 @@ impl FilterRuleSpec {
             xattr_only: false,
             negate: false,
             cvs_origin: false,
+            abs_path: false,
         }
     }
 
@@ -102,6 +115,7 @@ impl FilterRuleSpec {
             xattr_only: false,
             negate: false,
             cvs_origin: false,
+            abs_path: false,
         }
     }
 
@@ -118,6 +132,7 @@ impl FilterRuleSpec {
             xattr_only: false,
             negate: false,
             cvs_origin: false,
+            abs_path: false,
         }
     }
 
@@ -135,6 +150,7 @@ impl FilterRuleSpec {
             xattr_only: false,
             negate: false,
             cvs_origin: false,
+            abs_path: false,
         }
     }
 
@@ -152,6 +168,7 @@ impl FilterRuleSpec {
             xattr_only: false,
             negate: false,
             cvs_origin: false,
+            abs_path: false,
         }
     }
 
@@ -168,6 +185,7 @@ impl FilterRuleSpec {
             xattr_only: false,
             negate: false,
             cvs_origin: false,
+            abs_path: false,
         }
     }
 
@@ -184,6 +202,7 @@ impl FilterRuleSpec {
             xattr_only: false,
             negate: false,
             cvs_origin: false,
+            abs_path: false,
         }
     }
 
@@ -371,13 +390,22 @@ impl FilterRuleSpec {
         self.cvs_origin
     }
 
-    /// Anchors the pattern to the root of the transfer when requested.
+    /// Applies the `/` modifier: anchors the pattern to the root of the
+    /// transfer and records the modifier for the wire (see [`Self::is_abs_path`]).
     #[must_use]
     pub fn with_anchor(mut self) -> Self {
         if !self.pattern.starts_with('/') {
             self.pattern.insert(0, '/');
         }
+        self.abs_path = true;
         self
+    }
+
+    /// Reports whether the rule carries the `/` modifier (`FILTRULE_ABS_PATH`),
+    /// as opposed to a pattern that merely starts with `/`.
+    #[must_use]
+    pub const fn is_abs_path(&self) -> bool {
+        self.abs_path
     }
 }
 

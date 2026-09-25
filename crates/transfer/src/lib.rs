@@ -430,6 +430,95 @@ fn perishable_rules_too_modern(
         && wire_rules.iter().any(|rule| rule.perishable)
 }
 
+/// Reports whether any rule that crosses the wire is unrepresentable at the
+/// negotiated protocol, so the client must abort before transferring.
+///
+/// Extends [`perishable_rules_too_modern`] with the other NULL returns of
+/// upstream `get_rule_prefix()` below protocol 29: a per-directory merge or any
+/// modifier byte overflows `legal_len = 1` ([`protocol::filters::build_rule_prefix`]),
+/// and a sending client under `--delete-excluded` writes `r` for a
+/// receiver-side rule, which overflows too. A clear rule is skipped: upstream
+/// empties the list at parse time (`exclude.c:1467-1473`), so `!` never reaches
+/// `get_rule_prefix()`.
+///
+/// # Upstream Reference
+///
+/// `exclude.c:1824-1885` (`get_rule_prefix`, NULL at :1833, :1876, :1879);
+/// `exclude.c:1921-1926` (`send_rules`, the fatal abort).
+fn filter_rules_too_modern(
+    wire_rules: &[protocol::filters::FilterRuleWireFormat],
+    client_is_sender: bool,
+    delete_excluded: bool,
+    protocol: protocol::ProtocolVersion,
+) -> bool {
+    use protocol::filters::RuleType;
+
+    if perishable_rules_too_modern(wire_rules, client_is_sender, protocol) {
+        return true;
+    }
+    if !protocol.uses_old_prefixes() {
+        return false;
+    }
+    wire_rules.iter().any(|rule| {
+        if matches!(rule.rule_type, RuleType::Clear) {
+            return false;
+        }
+        // upstream: exclude.c:1868-1871 - `r` is written below protocol 29 only
+        // for a --delete-excluded sender; a protect/risk rule carries
+        // FILTRULE_RECEIVER_SIDE implicitly.
+        let writes_receiver_side = client_is_sender
+            && delete_excluded
+            && (rule.receiver_side || matches!(rule.rule_type, RuleType::Protect | RuleType::Risk));
+        writes_receiver_side || protocol::filters::build_rule_prefix(rule, protocol).is_none()
+    })
+}
+
+/// Runs a client's half of upstream `send_filter_list()`.
+///
+/// Every rule that would cross the wire is validated against the negotiated
+/// protocol whether or not the list is transmitted: upstream `send_rules()`
+/// checks `get_rule_prefix()` before its `f_out < 0` skip, and a sending client
+/// the receiver wants no list from still runs it with `f_out = -1`. So a
+/// protocol 28 push carrying a per-directory merge (`-F`) aborts with
+/// `filter rules are too modern for remote rsync.` even without `--delete`.
+/// The list itself is written only when `send` is set.
+///
+/// `send_rules()` elides a rule that applies to the local side only (and,
+/// under `--delete-excluded`, a no-prefix per-directory merge on a push) so the
+/// peer never sees it - see [`wire_rule_crosses_wire`]. The local deletion
+/// chain reads the unfiltered rules, so the elision changes only the bytes
+/// placed on the wire.
+///
+/// # Upstream Reference
+///
+/// - `exclude.c:1888-1941` - `send_rules()`: elision, then the fatal
+///   `get_rule_prefix()` NULL check, then `if (f_out < 0) continue`.
+/// - `exclude.c:1944-1956` - `send_filter_list()`: `f_out = -1` when
+///   `am_sender && !receiver_wants_list`, yet `send_rules()` still runs.
+fn send_client_filter_list<W: Write>(
+    writer: &mut W,
+    rules: &[protocol::filters::FilterRuleWireFormat],
+    client_is_sender: bool,
+    delete_excluded: bool,
+    protocol: protocol::ProtocolVersion,
+    send: bool,
+) -> io::Result<()> {
+    let wire_rules: Vec<protocol::filters::FilterRuleWireFormat> = rules
+        .iter()
+        .filter(|rule| wire_rule_crosses_wire(rule, client_is_sender, delete_excluded, protocol))
+        .cloned()
+        .collect();
+    if filter_rules_too_modern(&wire_rules, client_is_sender, delete_excluded, protocol) {
+        // upstream: exclude.c:1924-1926 send_rules() - exit_cleanup(RERR_PROTOCOL).
+        return Err(protocol::protocol_violation(TOO_MODERN_FILTER_RULES_MSG));
+    }
+    if send {
+        protocol::filters::write_filter_list(writer, &wire_rules, protocol)?;
+        writer.flush()?;
+    }
+    Ok(())
+}
+
 /// Determines whether the output stream should use multiplexed framing.
 ///
 /// Upstream rsync activates multiplex output differently depending on
@@ -1044,34 +1133,15 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         false
     };
 
-    if should_send_filter_list {
-        // upstream: exclude.c:1605-1614 send_rules() elides any rule that applies
-        // to the local side only (and, under --delete-excluded, any no-prefix
-        // per-directory merge on a push) so the peer never sees it - see
-        // wire_rule_crosses_wire(). The local deletion chain reads
-        // `config.connection.filter_rules` directly (receiver/transfer/setup), so
-        // this elision changes only the bytes placed on the wire.
-        let client_is_sender = config.role == ServerRole::Generator;
-        let wire_rules: Vec<protocol::filters::FilterRuleWireFormat> = config
-            .connection
-            .filter_rules
-            .iter()
-            .filter(|rule| {
-                wire_rule_crosses_wire(
-                    rule,
-                    client_is_sender,
-                    config.deletion.delete_excluded,
-                    handshake.protocol,
-                )
-            })
-            .cloned()
-            .collect();
-        if perishable_rules_too_modern(&wire_rules, client_is_sender, handshake.protocol) {
-            // upstream: exclude.c:1624-1628 send_rules() aborts the transfer here.
-            return Err(protocol::protocol_violation(TOO_MODERN_FILTER_RULES_MSG));
-        }
-        protocol::filters::write_filter_list(&mut writer, &wire_rules, handshake.protocol)?;
-        writer.flush()?;
+    if config.connection.client_mode {
+        send_client_filter_list(
+            &mut writer,
+            &config.connection.filter_rules,
+            config.role == ServerRole::Generator,
+            config.deletion.delete_excluded,
+            handshake.protocol,
+            should_send_filter_list,
+        )?;
     }
 
     // upstream: main.c:1372-1374 - after sending filter list, forward
