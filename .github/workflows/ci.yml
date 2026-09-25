@@ -371,24 +371,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Cache upstream rsync source
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            target/interop/upstream-src/rsync-${{ env.UPSTREAM_VERSION }}
-          key: surface-diff-src-${{ env.UPSTREAM_VERSION }}-${{ runner.os }}
-
       - name: Fetch upstream rsync source
-        run: |
-          set -euo pipefail
-          dir="target/interop/upstream-src"
-          mkdir -p "$dir"
-          if [ ! -d "$dir/rsync-${UPSTREAM_VERSION}" ]; then
-            curl -fsSL --connect-timeout 30 --max-time 300 \
-              "https://download.samba.org/pub/rsync/src/rsync-${UPSTREAM_VERSION}.tar.gz" \
-              -o "$dir/rsync-${UPSTREAM_VERSION}.tar.gz"
-            tar xzf "$dir/rsync-${UPSTREAM_VERSION}.tar.gz" -C "$dir"
-          fi
+        uses: ./.github/actions/fetch-upstream-rsync
+        with:
+          version: ${{ env.UPSTREAM_VERSION }}
+          extract-dir: target/interop/upstream-src
 
       - name: Surface extractor self-test
         run: bash tools/ci/surface_diff.sh --self-test

@@ -124,6 +124,16 @@ pub struct TransferStats {
     /// - `flist.c:2615` - `start_read = stats.total_read;`
     /// - `flist.c:2789` - `stats.flist_size += stats.total_read - start_read;`
     pub flist_size: u64,
+    /// Sender's `flist_buildtime` in milliseconds, as read from its stats
+    /// trailer; 0 when absent (protocol < 29, or no trailer).
+    ///
+    /// A client receiver adopts the sender's figure and prints the
+    /// "File list generation time" line only when it is non-zero
+    /// (`main.c:375`, `main.c:450`).
+    pub flist_buildtime_ms: u64,
+    /// Sender's `flist_xfertime` in milliseconds, as read from its stats
+    /// trailer; 0 when absent (`main.c:376`).
+    pub flist_xfertime_ms: u64,
     /// Metadata errors encountered (path, error message).
     pub metadata_errors: Vec<(PathBuf, String)>,
     /// Accumulated I/O error flags from the sender's file list trailer.

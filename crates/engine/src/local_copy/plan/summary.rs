@@ -543,6 +543,18 @@ impl LocalCopySummary {
         self.file_list_transfer
     }
 
+    /// Sets the file list generation and transfer times, in milliseconds.
+    ///
+    /// Remote transfers take these from the sender's `flist_buildtime` and
+    /// `flist_xfertime`: the peer's stats trailer on a pull, the local
+    /// generator on a push (`main.c:374-377`, `flist.c:2773-2801`).
+    #[must_use]
+    pub const fn with_file_list_times(mut self, generation_ms: u64, transfer_ms: u64) -> Self {
+        self.file_list_generation = Duration::from_millis(generation_ms);
+        self.file_list_transfer = Duration::from_millis(transfer_ms);
+        self
+    }
+
     /// Returns `true` when the transfer materialised the destination root directory.
     ///
     /// upstream: main.c:816-817 - `rprintf(FINFO, "created directory %s\n", dest_path)`
@@ -885,6 +897,18 @@ impl LocalCopySummary {
 
     pub(in crate::local_copy) const fn record_file_list_generation(&mut self, elapsed: Duration) {
         self.file_list_generation = self.file_list_generation.saturating_add(elapsed);
+    }
+
+    /// Converts the accumulated generation span to the sender's
+    /// `flist_buildtime`: whole milliseconds, never zero.
+    ///
+    /// A local copy always runs upstream's `send_file_list()`, so its
+    /// "File list generation time" line is always printed
+    /// (`flist.c:2773-2777`, `main.c:450`).
+    pub(in crate::local_copy) fn finalize_file_list_generation(&mut self) {
+        self.file_list_generation = Duration::from_millis(protocol::stats::flist_buildtime_ms(
+            self.file_list_generation,
+        ));
     }
 
     #[allow(dead_code)] // symmetric with record_file_list_generation
@@ -1524,6 +1548,45 @@ mod tests {
             Duration::from_millis(50)
         );
         assert_eq!(summary.file_list_transfer_time(), Duration::from_millis(30));
+    }
+
+    /// A local copy whose list builds in under a millisecond must still print
+    /// "File list generation time", as upstream's clamped sender does.
+    #[test]
+    fn finalize_file_list_generation_never_reports_zero() {
+        let mut summary = LocalCopySummary::default();
+        summary.finalize_file_list_generation();
+        assert_eq!(
+            summary.file_list_generation_time(),
+            Duration::from_millis(1)
+        );
+    }
+
+    /// Upstream's `flist_buildtime` is whole milliseconds, so a sub-ms remainder
+    /// is dropped rather than rounded into the printed seconds.
+    #[test]
+    fn finalize_file_list_generation_truncates_to_milliseconds() {
+        let mut summary = LocalCopySummary::default();
+        summary.record_file_list_generation(Duration::from_micros(2_700));
+        summary.finalize_file_list_generation();
+        assert_eq!(
+            summary.file_list_generation_time(),
+            Duration::from_millis(2)
+        );
+    }
+
+    /// Remote summaries carry the sender's times verbatim, including a zero
+    /// from a peer that sent none, so the CLI suppresses the line as upstream.
+    #[test]
+    fn with_file_list_times_carries_sender_figures() {
+        let summary = LocalCopySummary::default().with_file_list_times(7, 3);
+        assert_eq!(
+            summary.file_list_generation_time(),
+            Duration::from_millis(7)
+        );
+        assert_eq!(summary.file_list_transfer_time(), Duration::from_millis(3));
+        let absent = LocalCopySummary::default().with_file_list_times(0, 0);
+        assert_eq!(absent.file_list_generation_time(), Duration::ZERO);
     }
 
     #[test]

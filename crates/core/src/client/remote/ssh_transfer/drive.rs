@@ -462,25 +462,82 @@ fn run_server_over_ssh_connection(
                 Err(remote_exit_error(child_exit_code, local_role))
             }
         }
-        Err(transfer_error) => {
-            // upstream: io.c:1892 - a received `MSG_ERROR_EXIT` ends in the
-            // NORETURN `_exit_cleanup(val)`, so the peer's code IS the client's
-            // exit code; upstream never reaches the child-status comparison
-            // below on that path. Without this arm the abort surfaces as a
-            // local `ConnectionAborted` and reports RERR_SOCKETIO (10) whatever
-            // the server actually exited with.
-            if let Some(code) = crate::server::remote_exit_code(&transfer_error) {
-                return Err(remote_exit_error(ExitCode::from_raw(code), local_role));
-            }
-            let transfer_exit = ExitCode::from_io_error(&transfer_error);
-            if child_exit_code.as_i32() > transfer_exit.as_i32() {
-                Err(remote_exit_error(child_exit_code, local_role))
-            } else {
-                Err(invalid_argument_error(
-                    &format!("transfer failed: {transfer_error}"),
-                    transfer_exit.as_i32(),
-                ))
-            }
-        }
+        Err(transfer_error) => Err(transfer_failure_error(
+            transfer_error,
+            child_exit_code,
+            local_role,
+        )),
+    }
+}
+
+/// Resolves a failed transfer's final error from the local failure and the
+/// remote-shell child's exit status.
+fn transfer_failure_error(
+    transfer_error: std::io::Error,
+    child_exit_code: ExitCode,
+    local_role: Role,
+) -> ClientError {
+    // upstream: io.c:1892 - a received `MSG_ERROR_EXIT` ends in the
+    // NORETURN `_exit_cleanup(val)`, so the peer's code IS the client's
+    // exit code; upstream never reaches the child-status comparison
+    // below on that path. Without this arm the abort surfaces as a
+    // local `ConnectionAborted` and reports RERR_SOCKETIO (10) whatever
+    // the server actually exited with.
+    if let Some(code) = crate::server::remote_exit_code(&transfer_error) {
+        return remote_exit_error(ExitCode::from_raw(code), local_role);
+    }
+    let transfer_exit = ExitCode::from_io_error(&transfer_error);
+    // upstream: cleanup.c:146-153 - _exit_cleanup() polls the child with
+    // WNOHANG. When the client itself aborts with RERR_PROTOCOL (e.g.
+    // exclude.c:1924-1926 refusing a filter rule a pre-29 peer cannot read),
+    // the remote side is still blocked on its input, so its status is not yet
+    // available and the local code stands. oc closes the pipes and waits,
+    // which makes the child exit with its own EOF code (12) and would
+    // otherwise mask the refusal.
+    let local_protocol_abort = transfer_exit == ExitCode::Protocol;
+    if !local_protocol_abort && child_exit_code.as_i32() > transfer_exit.as_i32() {
+        remote_exit_error(child_exit_code, local_role)
+    } else {
+        invalid_argument_error(
+            &format!("transfer failed: {transfer_error}"),
+            transfer_exit.as_i32(),
+        )
+    }
+}
+
+#[cfg(test)]
+mod transfer_failure_error_tests {
+    use super::*;
+
+    /// A client-side RERR_PROTOCOL abort keeps code 2 and its diagnostic even
+    /// though the remote-shell child, seeing the pipes close, exits with the
+    /// higher RERR_STREAMIO (12). Upstream's WNOHANG poll (cleanup.c:146-153)
+    /// finds that child still running, so it reports 2 with the
+    /// `filter rules are too modern for remote rsync.` text.
+    #[test]
+    fn local_protocol_abort_is_not_masked_by_the_child_eof() {
+        let err = transfer_failure_error(
+            protocol::protocol_violation("filter rules are too modern for remote rsync."),
+            ExitCode::StreamIo,
+            Role::Sender,
+        );
+        assert_eq!(err.exit_code(), 2);
+        assert!(
+            err.to_string()
+                .contains("filter rules are too modern for remote rsync."),
+            "{err}"
+        );
+    }
+
+    /// Control: any other local failure still yields to a worse child status
+    /// (upstream: cleanup.c:150-152 takes the higher code).
+    #[test]
+    fn other_local_failures_still_take_the_worse_child_code() {
+        let err = transfer_failure_error(
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe"),
+            ExitCode::StreamIo,
+            Role::Sender,
+        );
+        assert_eq!(err.exit_code(), 12);
     }
 }

@@ -603,6 +603,8 @@ impl ReceiverContext {
             total_source_bytes,
             // upstream: flist.c:2789 - accumulated across recv_file_list spans.
             flist_size: self.flist_size,
+            flist_buildtime_ms: 0,
+            flist_xfertime_ms: 0,
             metadata_errors,
             io_error: self.flist_reader_io_error() | self.flist_io_error | sender_io_error,
             // upstream: log.c:310-311 - every MSG_ERROR_XFER the sender framed
