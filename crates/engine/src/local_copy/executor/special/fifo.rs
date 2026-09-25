@@ -246,9 +246,9 @@ pub(crate) fn copy_fifo(
         return Ok(());
     }
 
-    // upstream: generator.c:1627-1642 - a special whose destination already
+    // upstream: generator.c:2032-2055 - a special whose destination already
     // holds a special of the SAME `_S_IFMT` bucket quick-checks equal
-    // (quick_check_ok, generator.c:657-660): the generator applies attributes
+    // (quick_check_ok, generator.c:671): the generator applies attributes
     // in place via set_file_attrs and itemizes `iflags=0` (`.S...`), never
     // removing and recreating the node. Only a differing type falls through to
     // the atomic_create recreate below. Mirror that (as symlink.rs does for a
@@ -282,7 +282,7 @@ pub(crate) fn copy_fifo(
         context.record_hard_link(metadata, destination);
 
         if let Some(path) = &record_path {
-            // upstream: generator.c:1645 itemize(..., 0, ...) - a quick-check-ok
+            // upstream: generator.c:2055 itemize(..., 0, ...) - a quick-check-ok
             // special sets no ITEM_LOCAL_CHANGE / ITEM_IS_NEW, only the attribute
             // report bits, so the row renders `.S...p...`, not `cS`.
             let change_set = LocalCopyChangeSet::for_file(

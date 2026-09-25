@@ -1072,7 +1072,7 @@ fn execute_recopy_fifo_reuses_existing_same_identity_fifo() {
 
     let metadata = fs::symlink_metadata(&dest_fifo).expect("dest metadata");
     assert!(metadata.file_type().is_fifo());
-    // upstream: generator.c:1627-1645 - an existing FIFO of the same _S_IFMT
+    // upstream: generator.c:2032-2055 - an existing FIFO of the same _S_IFMT
     // bucket quick-checks equal, so the generator applies attributes in place
     // (set_file_attrs) and itemizes iflags=0 (`.S...`), never recreating the
     // node; it is therefore NOT counted as a created special. Before the
@@ -1081,7 +1081,7 @@ fn execute_recopy_fifo_reuses_existing_same_identity_fifo() {
     assert_eq!(
         report.summary().fifos_created(),
         0,
-        "a metadata-only FIFO change is not a creation (upstream generator.c:1645)"
+        "a metadata-only FIFO change is not a creation (upstream generator.c:2055)"
     );
     assert!(
         report

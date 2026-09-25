@@ -236,7 +236,7 @@ pub(crate) fn copy_device(
         return Ok(());
     }
 
-    // upstream: generator.c:1627-1642 + quick_check_ok (generator.c:661-671
+    // upstream: generator.c:2032-2055 + quick_check_ok (generator.c:676
     // compares st_rdev) - a device whose destination already holds a device of
     // the SAME subtype (block/char) and SAME rdev is applied in place via
     // set_file_attrs and itemized `iflags=0` (`.D...`), never removed and
@@ -275,7 +275,7 @@ pub(crate) fn copy_device(
             context.record_hard_link(metadata, destination);
 
             if let Some(path) = &record_path {
-                // upstream: generator.c:1645 itemize(..., 0, ...) - a
+                // upstream: generator.c:2055 itemize(..., 0, ...) - a
                 // quick-check-ok device sets no ITEM_LOCAL_CHANGE / ITEM_IS_NEW,
                 // only the attribute report bits, so the row renders `.D...p...`.
                 let change_set = LocalCopyChangeSet::for_file(
