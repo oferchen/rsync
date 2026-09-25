@@ -65,6 +65,12 @@ jobs:
           restore-keys: |
             upstream-rsync-3.4.4-${{ runner.os }}-
 
+      - name: Fetch upstream rsync tarballs
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        uses: ./.github/actions/fetch-upstream-rsync
+        with:
+          versions: '2.6.9 3.0.9 3.1.3 3.4.4 3.5.0'
+
       - name: Build upstream rsync
         if: steps.cache-rsync.outputs.cache-hit != 'true'
         run: bash tools/ci/run_interop.sh build-only

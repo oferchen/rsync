@@ -65,18 +65,18 @@ jobs:
           path: target/interop/upstream-src/rsync-3.5.0
           key: upstream-rsync-3.5.0-${{ runner.os }}-full
 
+      - name: Fetch upstream rsync 3.5.0
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        uses: ./.github/actions/fetch-upstream-rsync
+        with:
+          version: '3.5.0'
+          extract-dir: target/interop/upstream-src
+
       - name: Build upstream rsync 3.5.0
         if: steps.cache-rsync.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          mkdir -p target/interop/upstream-src
-          cd target/interop/upstream-src
-
-          if [ ! -d rsync-3.5.0 ]; then
-            curl -L https://download.samba.org/pub/rsync/src/rsync-3.5.0.tar.gz | tar xz
-          fi
-
-          cd rsync-3.5.0
+          cd target/interop/upstream-src/rsync-3.5.0
           if [ ! -f rsync ]; then
             BREW_PREFIX="$(brew --prefix)"
             PKG_CONFIG_PATH="${BREW_PREFIX}/opt/openssl@3/lib/pkgconfig:${BREW_PREFIX}/opt/xxhash/lib/pkgconfig:${BREW_PREFIX}/opt/zstd/lib/pkgconfig:${BREW_PREFIX}/opt/lz4/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \

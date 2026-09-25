@@ -1,0 +1,90 @@
+name: 'Fetch upstream rsync'
+description: >-
+  Restore the pinned upstream rsync release tarballs from the Actions cache,
+  downloading and sha256-verifying only the releases this job needs on a miss,
+  and optionally extract one release.
+
+# Every job that builds or reads upstream rsync used to download its tarball
+# from download.samba.org on each run, several of them as `curl | tar xz`. A
+# transient `curl: (18) Transferred a partial file` then failed the job with a
+# gzip EOF. This action removes the per-run network dependency instead of
+# retrying it.
+#
+# ONE PRODUCER, MANY CONSUMERS. The cache entry holds every pinned tarball and
+# is keyed on the pin manifest. Only upstream-tarballs.yml saves it
+# (`versions: all`), once per manifest change, so a cold key is filled by one
+# job rather than raced by every parallel job that needs it. Consumers only
+# restore. On a miss (a PR that changes the pins, or an evicted entry) a
+# consumer downloads just the releases it names, verifies them and uses them
+# without saving, so a partial set is never stored under the full-set key.
+#
+# tools/ci/fetch_upstream_rsync.sh verifies every file against its pin before
+# it is extracted, and falls back to a second source only when a download
+# fails. The harnesses read the same default directory, so a step that only
+# restores (no `version`) is enough for them.
+#
+# Requires the repository to be checked out.
+
+inputs:
+  versions:
+    description: >-
+      Space-separated releases this job needs if the cache misses, or `all` to
+      act as the producer that fills and saves the entry. `version` is always
+      included.
+    required: false
+    default: ''
+  version:
+    description: 'Release to extract, e.g. 3.5.0. Empty = do not extract.'
+    required: false
+    default: ''
+  extract-dir:
+    description: 'Directory to extract rsync-<version>/ into (required with version).'
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Restore upstream rsync tarballs
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: target/interop/upstream-tarballs
+        key: upstream-rsync-tarballs-${{ hashFiles('tools/ci/upstream-tarballs.sha256') }}
+
+    - name: Download and verify missing upstream rsync tarballs
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VERSIONS: ${{ inputs.versions }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        if [ "$VERSIONS" = all ]; then
+          bash tools/ci/fetch_upstream_rsync.sh --all
+          exit 0
+        fi
+        for v in $VERSIONS $VERSION; do
+          bash tools/ci/fetch_upstream_rsync.sh "$v" >/dev/null
+        done
+
+    - name: Save upstream rsync tarballs
+      if: steps.restore.outputs.cache-hit != 'true' && inputs.versions == 'all'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: target/interop/upstream-tarballs
+        key: ${{ steps.restore.outputs.cache-primary-key }}
+
+    - name: Extract upstream rsync ${{ inputs.version }}
+      if: inputs.version != ''
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        EXTRACT_DIR: ${{ inputs.extract-dir }}
+      run: |
+        set -euo pipefail
+        if [ -z "$EXTRACT_DIR" ]; then
+          echo "::error::fetch-upstream-rsync: extract-dir is required with version" >&2
+          exit 2
+        fi
+        bash tools/ci/fetch_upstream_rsync.sh "$VERSION" "$EXTRACT_DIR"

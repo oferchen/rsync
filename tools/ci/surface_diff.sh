@@ -55,8 +55,7 @@ die() { printf 'surface_diff: %s\n' "$*" >&2; exit 2; }
 require_upstream() { # version
   [ -d "$(upstream_src "$1")" ] || die "upstream source missing at $(upstream_src "$1")
 Fetch it with:
-  mkdir -p target/interop/upstream-src && cd target/interop/upstream-src
-  curl -L https://download.samba.org/pub/rsync/src/rsync-$1.tar.gz | tar xz"
+  tools/ci/fetch_upstream_rsync.sh $1 target/interop/upstream-src"
 }
 
 require_upstream "$UPSTREAM_VERSION"

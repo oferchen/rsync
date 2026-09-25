@@ -283,14 +283,8 @@ ensure_upstream_src() {
         return
     fi
     echo "==> Fetching upstream rsync ${upstream_version} source..." >&2
-    mkdir -p "$upstream_src_root"
-    local tarball="${upstream_src_root}/rsync-${upstream_version}.tar.gz"
-    if [[ ! -f "$tarball" ]]; then
-        curl -fsSL --connect-timeout 30 --max-time 300 \
-            "https://download.samba.org/pub/rsync/src/rsync-${upstream_version}.tar.gz" \
-            -o "$tarball"
-    fi
-    (cd "$upstream_src_root" && tar xzf "$tarball")
+    bash "${workspace_root}/tools/ci/fetch_upstream_rsync.sh" \
+        "$upstream_version" "$upstream_src_root" >/dev/null
 }
 
 build_upstream_helpers() {

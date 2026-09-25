@@ -120,18 +120,18 @@ jobs:
           path: target/interop/upstream-src/rsync-3.5.0
           key: upstream-rsync-3.5.0-${{ runner.os }}-full
 
+      - name: Fetch upstream rsync 3.5.0
+        if: steps.cache-rsync-350.outputs.cache-hit != 'true'
+        uses: ./.github/actions/fetch-upstream-rsync
+        with:
+          version: '3.5.0'
+          extract-dir: target/interop/upstream-src
+
       - name: Build upstream rsync 3.5.0
         if: steps.cache-rsync-350.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          mkdir -p target/interop/upstream-src
-          cd target/interop/upstream-src
-
-          if [ ! -d rsync-3.5.0 ]; then
-            curl -L https://download.samba.org/pub/rsync/src/rsync-3.5.0.tar.gz | tar xz
-          fi
-
-          cd rsync-3.5.0
+          cd target/interop/upstream-src/rsync-3.5.0
           if [ ! -f rsync ]; then
             ./configure
             make -j$(nproc)
@@ -144,18 +144,18 @@ jobs:
           path: target/interop/upstream-src/rsync-3.4.4
           key: upstream-rsync-3.4.4-${{ runner.os }}-full
 
+      - name: Fetch upstream rsync 3.4.4
+        if: steps.cache-rsync-344.outputs.cache-hit != 'true'
+        uses: ./.github/actions/fetch-upstream-rsync
+        with:
+          version: '3.4.4'
+          extract-dir: target/interop/upstream-src
+
       - name: Build upstream rsync 3.4.4
         if: steps.cache-rsync-344.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          mkdir -p target/interop/upstream-src
-          cd target/interop/upstream-src
-
-          if [ ! -d rsync-3.4.4 ]; then
-            curl -L https://download.samba.org/pub/rsync/src/rsync-3.4.4.tar.gz | tar xz
-          fi
-
-          cd rsync-3.4.4
+          cd target/interop/upstream-src/rsync-3.4.4
           if [ ! -f rsync ]; then
             ./configure
             make -j$(nproc)

@@ -113,7 +113,6 @@ version_has_extended_matrix() {
 }
 
 rsync_repo_url="https://github.com/RsyncProject/rsync.git"
-rsync_tarball_base_url="${RSYNC_TARBALL_BASE_URL:-https://rsync.samba.org/ftp/rsync/src}"
 
 # Mirrors (can be overridden in CI)
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://deb.debian.org/debian}"
@@ -326,28 +325,24 @@ clone_upstream_source() {
   return 1
 }
 
+# Cached, sha256-pinned tarball via the shared fetcher. A digest mismatch
+# (exit 3) is fatal rather than a cue to fall back to a git clone: it means the
+# bytes on the mirror are not the release that was pinned.
 fetch_upstream_tarball() {
   local version=$1
   local destination=$2
-  local tarball_url="${rsync_tarball_base_url}/rsync-${version}.tar.gz"
-  local tmp_tar
-  tmp_tar=$(mktemp)
+  local rc=0
 
-  if ! retry_curl "$tarball_url" "$tmp_tar"; then
-    rm -f "$tmp_tar"
-    return 1
-  fi
-
-  mkdir -p "$upstream_src_root"
   rm -rf "$destination" "${upstream_src_root}/rsync-${version}"
-
-  if ! tar -xzf "$tmp_tar" -C "$upstream_src_root" >/dev/null 2>&1; then
-    rm -f "$tmp_tar"
+  bash "${workspace_root}/tools/ci/fetch_upstream_rsync.sh" \
+    "$version" "$upstream_src_root" >/dev/null || rc=$?
+  if [[ $rc -eq 3 ]]; then
+    exit 1
+  fi
+  if [[ $rc -ne 0 ]]; then
     rm -rf "$destination"
     return 1
   fi
-
-  rm -f "$tmp_tar"
 
   if [[ -d "$destination" ]]; then
     return 0
@@ -379,7 +374,7 @@ build_upstream_from_source() {
   mkdir -p "$interop_log_dir"
   rm -f "$build_log"
 
-  echo "Fetching upstream rsync ${version} release tarball from ${rsync_tarball_base_url} (log: ${build_log})"
+  echo "Fetching upstream rsync ${version} release tarball (log: ${build_log})"
   if ! fetch_upstream_tarball "$version" "$src_dir"; then
     echo "Falling back to cloning upstream rsync ${version} from ${rsync_repo_url}" >&2
     if ! clone_upstream_source "$version" "$src_dir"; then
