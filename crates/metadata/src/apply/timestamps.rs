@@ -21,9 +21,8 @@ use std::os::fd::BorrowedFd;
 /// `None` in a slot maps to `UTIME_OMIT` (leave that timestamp unchanged).
 /// `follow_symlinks = false` selects `AT_SYMLINK_NOFOLLOW` for the leaf.
 ///
-/// When `--keep-dirlinks` is inactive (Unix), routes through
-/// [`fast_io::secure_utimes_at`], which walks the parent through
-/// `secure_open_dir` and anchors the `utimensat` on that dirfd so a symlink
+/// When `--keep-dirlinks` is inactive (Unix), resolves the parent through
+/// [`super::confined_parent`] and anchors the `utimensat` on that dirfd so a symlink
 /// swapped into a receiver-created ancestor directory cannot redirect the
 /// write outside the module. Mirrors the chmod/chown symlink-race cutovers.
 ///
@@ -42,20 +41,23 @@ fn set_times_via(
     atime: Option<FileTime>,
     mtime: Option<FileTime>,
     follow_symlinks: bool,
-    resolve_symlinked_parent: bool,
+    parent_walk: super::ParentWalk<'_>,
     parent_dirfd: super::ParentDirFd<'_>,
 ) -> std::io::Result<()> {
-    if !resolve_symlinked_parent {
+    if !parent_walk.follows() {
         // Share the pre-resolved parent dirfd when the caller supplied one (the
-        // receiver applying several attributes to one file); the walk is
-        // byte-identical to `secure_utimes_at`'s own, so confinement is
-        // unchanged.
-        return match (parent_dirfd, destination.parent(), destination.file_name()) {
-            (Some(parent), Some(dir), Some(leaf)) if !dir.as_os_str().is_empty() => {
+        // receiver applying several attributes to one file); otherwise resolve
+        // it here, trusting the operator's destination root and confining
+        // only the names below it.
+        return super::at_confined_parent(
+            destination,
+            parent_dirfd,
+            parent_walk.root(),
+            |parent, leaf| {
                 fast_io::secure_utimes_at_dirfd(parent, leaf, atime, mtime, follow_symlinks)
-            }
-            _ => fast_io::secure_utimes_at(destination, atime, mtime, follow_symlinks),
-        };
+            },
+            || fast_io::secure_utimes_at(destination, atime, mtime, follow_symlinks),
+        );
     }
     let to_timespec = |time: Option<FileTime>| match time {
         Some(time) => rustix::fs::Timespec {
@@ -89,7 +91,7 @@ fn set_times_via(
     atime: Option<FileTime>,
     mtime: Option<FileTime>,
     follow_symlinks: bool,
-    _resolve_symlinked_parent: bool,
+    _parent_walk: super::ParentWalk<'_>,
     _parent_dirfd: super::ParentDirFd<'_>,
 ) -> std::io::Result<()> {
     match (atime, mtime) {
@@ -165,14 +167,16 @@ pub(super) fn set_timestamp_like(
     #[cfg(not(unix))]
     let open_free_path = !follow_symlinks;
 
-    let resolve_symlinked_parent =
-        options.is_some_and(|o| o.resolves_symlinked_parent(destination));
+    let parent_walk = options.map_or(
+        super::ParentWalk::Confined(None),
+        MetadataOptions::parent_walk,
+    );
     let result = set_times_via(
         destination,
         accessed,
         Some(modified),
         !open_free_path,
-        resolve_symlinked_parent,
+        parent_walk,
         None,
     );
 
@@ -292,7 +296,7 @@ pub(super) fn apply_atime_only_from_metadata(
     metadata: &fs::Metadata,
     destination: &Path,
     existing: Option<&fs::Metadata>,
-    resolve_symlinked_parent: bool,
+    parent_walk: super::ParentWalk<'_>,
 ) -> Result<(), MetadataError> {
     // upstream: rsync.c:609 - the applied access time's nanosecond field is 0.
     let source_atime =
@@ -320,7 +324,7 @@ pub(super) fn apply_atime_only_from_metadata(
         Some(source_atime),
         Some(dest_mtime),
         true,
-        resolve_symlinked_parent,
+        parent_walk,
         None,
     )
     .map_err(|error| MetadataError::new("preserve access time", destination, error))?;
@@ -425,7 +429,7 @@ pub(super) fn apply_timestamps_from_entry(
             entry,
             atime,
             mtime,
-            options.resolves_symlinked_parent(destination),
+            options.parent_walk(),
             "preserve timestamps",
             parent_dirfd,
         )?;
@@ -450,7 +454,7 @@ fn set_entry_times(
     entry: &protocol::flist::FileEntry,
     atime: Option<FileTime>,
     mtime: FileTime,
-    resolve_symlinked_parent: bool,
+    parent_walk: super::ParentWalk<'_>,
     context: &'static str,
     parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
@@ -463,7 +467,7 @@ fn set_entry_times(
         atime,
         Some(mtime),
         !is_special,
-        resolve_symlinked_parent,
+        parent_walk,
         parent_dirfd,
     );
 
@@ -526,7 +530,7 @@ pub(super) fn apply_symlink_timestamps_from_entry(
             atime,
             Some(mtime),
             false,
-            options.resolves_symlinked_parent(destination),
+            options.parent_walk(),
             None,
         )
         .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?;
@@ -548,7 +552,7 @@ pub(super) fn apply_atime_only_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     cached_meta: Option<&fs::Metadata>,
-    resolve_symlinked_parent: bool,
+    parent_walk: super::ParentWalk<'_>,
     parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
     let atime = if entry.atime() != 0 {
@@ -580,7 +584,7 @@ pub(super) fn apply_atime_only_from_entry(
             entry,
             Some(atime),
             mtime,
-            resolve_symlinked_parent,
+            parent_walk,
             "preserve access time",
             parent_dirfd,
         )?;
