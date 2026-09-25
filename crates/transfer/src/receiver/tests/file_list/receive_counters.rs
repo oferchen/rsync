@@ -107,7 +107,13 @@ fn stats_survive_reclaimed_segments() {
     write_entries(
         &mut initial,
         &mut w,
-        &[dir("."), dir("a"), dir("b"), symlink("l", "target"), file("g", 5)],
+        &[
+            dir("."),
+            dir("a"),
+            dir("b"),
+            symlink("l", "target"),
+            file("g", 5),
+        ],
     );
     ctx.receive_file_list(&mut Cursor::new(initial)).unwrap();
 
@@ -127,12 +133,21 @@ fn stats_survive_reclaimed_segments() {
         ],
     );
     codec.write_ndx(&mut subs, NDX_FLIST_EOF).unwrap();
-    ctx.receive_extra_file_lists(&mut Cursor::new(subs)).unwrap();
-    assert_eq!(ctx.ndx_segments.len(), 3, "fixture must span three segments");
+    ctx.receive_extra_file_lists(&mut Cursor::new(subs))
+        .unwrap();
+    assert_eq!(
+        ctx.ndx_segments.len(),
+        3,
+        "fixture must span three segments"
+    );
 
     let (truth_counts, truth_total) = walk(ctx.file_list());
     assert_eq!(truth_counts, (4, 1, 1, 1), "dirs . a b a/sub; l; b/c; b/p");
-    assert_eq!(truth_total, 5 + 6 + 10 + 20, "regular files plus the symlink");
+    assert_eq!(
+        truth_total,
+        5 + 6 + 10 + 20,
+        "regular files plus the symlink"
+    );
 
     ctx.reclaim_oldest_segment();
     ctx.reclaim_oldest_segment();
