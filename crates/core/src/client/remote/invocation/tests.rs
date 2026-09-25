@@ -602,7 +602,6 @@ const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
     "--write-devices",
     "--open-noatime",
     "--preallocate",
-    "--stop-at",
 ];
 
 /// Returns whether a long-form argument matches one of the upstream allowlist
@@ -3498,7 +3497,6 @@ fn all_flags_enabled_produces_valid_invocation() {
         "--link-dest=",
         "--compare-dest=",
         "--copy-dest=",
-        "--stop-at=",
     ];
     for prefix in expected_prefixed {
         assert!(
@@ -4143,61 +4141,49 @@ fn forwards_multi_rule_groupmap_verbatim() {
     );
 }
 
-// --stop-at forwarding tests
+// --stop-at / --stop-after are never forwarded
+//
+// upstream: options.c:server_options() has no stop_at_utime emission, so an
+// upstream client never puts --stop-at on the server's command line. Each
+// side enforces only its own deadline (io.c:943). Forwarding a wall-clock
+// value makes an upstream server east of UTC reject it as "--stop-at time is
+// not in the future" (options.c:2018) and fail the whole transfer.
 
 #[test]
-fn includes_stop_at_long_arg_when_set() {
+fn stop_at_is_not_forwarded_to_a_receiver_server() {
     use std::time::{Duration, SystemTime};
 
-    let deadline = SystemTime::UNIX_EPOCH + Duration::from_secs(1_893_456_000);
+    let deadline = SystemTime::now() + Duration::from_secs(3_600);
     let config = ClientConfig::builder().stop_at(Some(deadline)).build();
     let args = build_sender_args(&config);
     assert!(
-        args.iter().any(|a| a.starts_with("--stop-at=")),
-        "expected --stop-at=... in args: {args:?}"
+        !args
+            .iter()
+            .any(|a| a.starts_with("--stop-at") || a.starts_with("--stop-after")),
+        "upstream server_options() never forwards the deadline: {args:?}"
     );
 }
 
 #[test]
-fn omits_stop_at_when_none() {
-    let config = ClientConfig::builder().build();
-    let args = build_sender_args(&config);
-    assert!(
-        !args.iter().any(|a| a.starts_with("--stop-at=")),
-        "should not emit --stop-at= when none: {args:?}"
-    );
-}
-
-#[test]
-fn stop_at_forwarded_as_utc_datetime_format() {
+fn stop_at_is_not_forwarded_to_a_sender_server() {
     use std::time::{Duration, SystemTime};
 
-    // 2030-01-15T12:30:00 UTC = 1_894_796_200 unix seconds
-    // (2030-01-15 12:30:00 UTC)
-    let deadline = SystemTime::UNIX_EPOCH + Duration::from_secs(1_894_796_200);
+    let deadline = SystemTime::now() + Duration::from_secs(3_600);
     let config = ClientConfig::builder().stop_at(Some(deadline)).build();
-    let args = build_sender_args(&config);
-    let stop_arg = args
-        .iter()
-        .find(|a| a.starts_with("--stop-at="))
-        .expect("--stop-at arg");
-    // The formatted value should be a valid datetime like YYYY/MM/DDTHH:MM
-    let value = stop_arg.strip_prefix("--stop-at=").unwrap();
+    let args = build_receiver_args(&config);
     assert!(
-        value.contains('T'),
-        "stop-at value should contain 'T' separator: {value}"
-    );
-    assert!(
-        value.contains('/') || value.contains('-'),
-        "stop-at value should contain date separators: {value}"
+        !args
+            .iter()
+            .any(|a| a.starts_with("--stop-at") || a.starts_with("--stop-after")),
+        "upstream server_options() never forwards the deadline: {args:?}"
     );
 }
 
 #[test]
-fn stop_at_forwarded_in_secluded_mode() {
+fn stop_at_is_not_forwarded_in_secluded_mode() {
     use std::time::{Duration, SystemTime};
 
-    let deadline = SystemTime::UNIX_EPOCH + Duration::from_secs(1_893_456_000);
+    let deadline = SystemTime::now() + Duration::from_secs(3_600);
     let config = ClientConfig::builder()
         .stop_at(Some(deadline))
         .protect_args(Some(true))
@@ -4206,91 +4192,13 @@ fn stop_at_forwarded_in_secluded_mode() {
     let secluded = builder.build_secluded(&[std::ffi::OsStr::new("/path")]);
 
     assert!(
-        secluded
+        !secluded
             .stdin_args
             .iter()
-            .any(|a| a.to_string_lossy().starts_with("--stop-at=")),
-        "secluded stdin_args should contain --stop-at=: {:?}",
+            .any(|a| a.to_string_lossy().starts_with("--stop-at")),
+        "secluded stdin_args must not carry --stop-at: {:?}",
         secluded.stdin_args
     );
-}
-
-// format_system_time_for_stop_at and unix_secs_to_utc_components tests
-
-#[test]
-fn format_stop_at_unix_epoch() {
-    use super::builder::format_system_time_for_stop_at;
-
-    let formatted = format_system_time_for_stop_at(SystemTime::UNIX_EPOCH).unwrap();
-    assert_eq!(formatted, "1970/01/01T00:00");
-}
-
-#[test]
-fn format_stop_at_y2k() {
-    use super::builder::format_system_time_for_stop_at;
-    use std::time::Duration;
-
-    // 2000-01-01T00:00:00 UTC = 946_684_800 (well-known Y2K timestamp)
-    let time = SystemTime::UNIX_EPOCH + Duration::from_secs(946_684_800);
-    let formatted = format_system_time_for_stop_at(time).unwrap();
-    assert_eq!(formatted, "2000/01/01T00:00");
-}
-
-#[test]
-fn format_stop_at_round_trip_with_parser() {
-    use super::builder::format_system_time_for_stop_at;
-    use std::time::Duration;
-
-    // Verify the formatter output is parseable by checking the format structure.
-    // Use a future timestamp to ensure it's always valid.
-    let time = SystemTime::UNIX_EPOCH + Duration::from_secs(4_102_444_800);
-    let formatted = format_system_time_for_stop_at(time).unwrap();
-    // Must be YYYY/MM/DDTHH:MM
-    let parts: Vec<&str> = formatted.split('T').collect();
-    assert_eq!(parts.len(), 2, "must have date and time parts: {formatted}");
-    let date_parts: Vec<&str> = parts[0].split('/').collect();
-    assert_eq!(date_parts.len(), 3, "date must have 3 parts: {}", parts[0]);
-    let time_parts: Vec<&str> = parts[1].split(':').collect();
-    assert_eq!(time_parts.len(), 2, "time must have 2 parts: {}", parts[1]);
-}
-
-#[test]
-fn unix_secs_to_utc_epoch() {
-    use super::builder::unix_secs_to_utc_components;
-    let (y, m, d, h, min) = unix_secs_to_utc_components(0);
-    assert_eq!((y, m, d, h, min), (1970, 1, 1, 0, 0));
-}
-
-#[test]
-fn unix_secs_to_utc_known_date() {
-    use super::builder::unix_secs_to_utc_components;
-    // 2000-01-01T00:00:00 UTC = 946_684_800
-    let (y, m, d, h, min) = unix_secs_to_utc_components(946_684_800);
-    assert_eq!((y, m, d, h, min), (2000, 1, 1, 0, 0));
-}
-
-#[test]
-fn unix_secs_to_utc_one_day() {
-    use super::builder::unix_secs_to_utc_components;
-    // 1970-01-02T00:00:00 UTC = 86400
-    let (y, m, d, h, min) = unix_secs_to_utc_components(86_400);
-    assert_eq!((y, m, d, h, min), (1970, 1, 2, 0, 0));
-}
-
-#[test]
-fn unix_secs_to_utc_time_components() {
-    use super::builder::unix_secs_to_utc_components;
-    // 1970-01-01T23:59:00 UTC = 86340
-    let (y, m, d, h, min) = unix_secs_to_utc_components(86_340);
-    assert_eq!((y, m, d, h, min), (1970, 1, 1, 23, 59));
-}
-
-#[test]
-fn unix_secs_to_utc_y2k() {
-    use super::builder::unix_secs_to_utc_components;
-    // 2000-01-01T00:00:00 UTC = 946_684_800 (well-known Y2K timestamp)
-    let (y, m, d, h, min) = unix_secs_to_utc_components(946_684_800);
-    assert_eq!((y, m, d, h, min), (2000, 1, 1, 0, 0));
 }
 
 // Remote option (-M / --remote-option) forwarding
