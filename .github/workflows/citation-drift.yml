@@ -64,21 +64,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Cache upstream source
-        id: cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target/interop/upstream-src/rsync-3.5.0
-          key: upstream-src-rsync-3.5.0
-
       - name: Fetch upstream rsync 3.5.0
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-          mkdir -p target/interop/upstream-src
-          curl -fsSL --retry 3 --retry-delay 5 \
-            https://download.samba.org/pub/rsync/src/rsync-3.5.0.tar.gz \
-            | tar xz -C target/interop/upstream-src
+        uses: ./.github/actions/fetch-upstream-rsync
+        with:
+          version: '3.5.0'
+          extract-dir: target/interop/upstream-src
 
       - name: Audit citations against the baseline
         run: python3 tools/ci/citation_drift_audit.py --ratchet

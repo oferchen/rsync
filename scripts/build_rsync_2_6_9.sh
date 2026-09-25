@@ -20,7 +20,7 @@ PREFIX="${PREFIX:-/usr/local}"
 WORKDIR="${WORKDIR:-/tmp/rsync-2.6.9-build}"
 
 VERSION="2.6.9"
-TARBALL_URL="https://download.samba.org/pub/rsync/src/rsync-${VERSION}.tar.gz"
+FETCH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/tools/ci/fetch_upstream_rsync.sh"
 TARGET_BIN="${PREFIX}/bin/rsync-${VERSION}"
 
 if [[ -x "${TARGET_BIN}" ]] && "${TARGET_BIN}" --version 2>/dev/null | grep -q "version ${VERSION}"; then
@@ -42,7 +42,7 @@ mkdir -p "${WORKDIR}"
 cd "${WORKDIR}"
 
 if [[ ! -d "rsync-${VERSION}" ]]; then
-  curl -fsSL "${TARBALL_URL}" | tar xz
+  bash "${FETCH}" "${VERSION}" "${WORKDIR}" >/dev/null
 fi
 
 cd "rsync-${VERSION}"
