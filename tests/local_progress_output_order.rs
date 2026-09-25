@@ -35,8 +35,9 @@
 
 use std::fs;
 use std::io::Read;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -72,13 +73,19 @@ fn setup() -> tempfile::TempDir {
 /// stdout, as `2>&1 | cat` does, and returns the combined stream. `flags` is
 /// split on whitespace into separate arguments.
 fn run_merged(binary: &Path, flags: &str, workdir: &Path) -> String {
+    let args: Vec<&str> = flags.split_whitespace().chain(["zzz/", "qqq"]).collect();
+    run_merged_args(binary, &args, workdir)
+}
+
+/// Runs `<binary> <args>` inside `workdir` with stderr merged into stdout and
+/// returns the combined stream, failing the test if the transfer fails.
+fn run_merged_args(binary: &Path, args: &[&str], workdir: &Path) -> String {
+    let flags = args.join(" ");
     let mut child = Command::new("sh")
         .arg("-c")
         .arg("exec \"$0\" \"$@\" 2>&1")
         .arg(binary)
-        .args(flags.split_whitespace())
-        .arg("zzz/")
-        .arg("qqq")
+        .args(args)
         .current_dir(workdir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -349,6 +356,155 @@ fn uptodate_notice_precedes_the_symlink_entry_under_progress() {
     assert_eq!(normalize(&output), expected, "raw output:\n{output}");
 }
 
+/// Writes an `--rsh` shim that drops the options and host of an SSH-style argv
+/// and runs the remote command locally: a real two-process push over a pipe
+/// pair, without an SSH server.
+fn write_rsh_shim(dir: &Path) -> PathBuf {
+    let script = dir.join("fake_rsh.sh");
+    let body = "#!/bin/sh\n\
+         while [ $# -gt 0 ]; do\n\
+         case \"$1\" in\n\
+         -*) shift ;;\n\
+         *) break ;;\n\
+         esac\n\
+         done\n\
+         shift || true\n\
+         exec \"$@\"\n";
+    fs::write(&script, body).expect("write rsh shim");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod rsh shim");
+    script
+}
+
+/// Pushes `zzz/` to `<workdir>/qqq` over the `--rsh` shim, with `client` as
+/// the sender and `server` as the remote receiver.
+fn run_rsh_push(client: &Path, server: &Path, flags: &str, workdir: &Path) -> String {
+    let shim = write_rsh_shim(workdir);
+    let dest = format!("localhost:{}/qqq", workdir.display());
+    let mut args: Vec<&str> = flags.split_whitespace().collect();
+    args.extend([
+        "--rsh",
+        shim.to_str().expect("utf-8 shim path"),
+        "--rsync-path",
+        server.to_str().expect("utf-8 binary path"),
+        "zzz/",
+        &dest,
+    ]);
+    run_merged_args(client, &args, workdir)
+}
+
+/// upstream's `-avP` push output for the fixture: the receiver names the
+/// destination root as the client passed it.
+fn rsh_push_sequence(workdir: &Path) -> Vec<String> {
+    let created = format!("created directory {}/qqq", workdir.display());
+    upstream_sequence(true)
+        .into_iter()
+        .map(|line| {
+            if line == "created directory qqq" {
+                created.clone()
+            } else {
+                line
+            }
+        })
+        .collect()
+}
+
+/// On a push the client's sender logs every entry, directories included, from
+/// the receiver's itemize records (sender.c:292 maybe_log_item()), and names a
+/// file before its progress line (sender.c:774-777); the progress line itself
+/// carries no name. oc printed each file twice and no directory at all: the
+/// progress renderer repeated the sender's name, and the receiver forwarded no
+/// directory record unless `-i` was given, although upstream's generator
+/// itemizes every entry at protocol >= 29 (generator.c:2725-2726).
+#[test]
+fn rsh_push_names_each_entry_once_with_directory_lines() {
+    let binary = oc_rsync_binary();
+    let temp = setup();
+    let output = run_rsh_push(&binary, &binary, "-avP", temp.path());
+    assert_eq!(
+        normalize(&output),
+        rsh_push_sequence(temp.path()),
+        "raw output:\n{output}"
+    );
+}
+
+/// upstream's `-aP` push output: the client's `-P` raises NAME to 1
+/// (options.c:2511-2513), which is what makes its sender log names
+/// (options.c:2521-2523), not `-v`. `-P` is not forwarded, so the server's
+/// NAME stays 0 and it prints no `created directory` (main.c:828).
+fn rsh_push_progress_sequence() -> Vec<String> {
+    let mut lines = expected_sequence(Expected {
+        listing: Listing::Names,
+        progress: true,
+        trailer: false,
+    });
+    lines.retain(|line| line != "created directory qqq");
+    lines
+}
+
+#[test]
+fn rsh_push_progress_without_verbose_names_entries() {
+    let binary = oc_rsync_binary();
+    let temp = setup();
+    let output = run_rsh_push(&binary, &binary, "-aP", temp.path());
+    assert_eq!(
+        normalize(&output),
+        rsh_push_progress_sequence(),
+        "raw output:\n{output}"
+    );
+}
+
+/// Kills and reaps the daemon when the test ends, pass or fail.
+struct DaemonGuard(Child);
+
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// The daemon push takes the same sender and receiver paths as an `--rsh`
+/// push. The receiver also names the created destination root relative to
+/// the module, as upstream prints the operand after chdir'ing into the module
+/// (main.c:829) - never the module's path on the server.
+#[test]
+fn daemon_push_names_each_entry_once_with_directory_lines() {
+    let binary = oc_rsync_binary();
+    let temp = setup();
+    let module = temp.path().join("mod");
+    fs::create_dir(&module).expect("create module dir");
+    let config = temp.path().join("rsyncd.conf");
+    fs::write(
+        &config,
+        format!(
+            "use chroot = no\n[m]\npath = {}\nread only = no\n",
+            module.display()
+        ),
+    )
+    .expect("write daemon config");
+    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
+        Command::new(&binary)
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg(format!("--port={port}"))
+            .arg("--address=127.0.0.1")
+            .arg(format!("--config={}", config.display()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+    })
+    .expect("start daemon");
+    let _daemon = DaemonGuard(child);
+    let dest = format!("rsync://127.0.0.1:{port}/m/qqq");
+    let output = run_merged_args(&binary, &["-avP", "zzz/", &dest], temp.path());
+    assert_eq!(
+        normalize(&output),
+        upstream_sequence(true),
+        "raw output:\n{output}"
+    );
+}
+
 /// Locates an upstream rsync 3.5.0 to use as a live oracle: the
 /// `OC_RSYNC_UPSTREAM_RSYNC` override, then the interop install and build
 /// trees. Returns it only when its `--version` banner names 3.5.0.
@@ -421,6 +577,20 @@ fn local_copy_output_order_matches_live_upstream_oracle() {
              oc:\n{oc_output}\nupstream:\n{upstream_output}",
         );
     }
+    let temp = setup();
+    let output = run_rsh_push(&upstream, &upstream, "-avP", temp.path());
+    assert_eq!(
+        normalize(&output),
+        rsh_push_sequence(temp.path()),
+        "-avP push: the pinned sequence must be upstream's own output\n{output}",
+    );
+    let temp = setup();
+    let output = run_rsh_push(&upstream, &upstream, "-aP", temp.path());
+    assert_eq!(
+        normalize(&output),
+        rsh_push_progress_sequence(),
+        "-aP push: the pinned sequence must be upstream's own output\n{output}",
+    );
     let temp = setup_uptodate(&upstream);
     let output = normalize(&run_merged(&upstream, "-avvP --delete", temp.path()));
     let position = |line: &str| {

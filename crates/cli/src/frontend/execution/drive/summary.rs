@@ -235,6 +235,9 @@ where
             )
         })
     });
+    if is_sender {
+        live_progress = live_progress.map(LiveProgress::with_sender_named_files);
+    }
     // upstream writes a local copy's header and entry lines as they happen, so
     // under `--progress` they interleave with the live progress lines instead of
     // trailing them. `--list-only`, and an `--out-format` that upstream logs

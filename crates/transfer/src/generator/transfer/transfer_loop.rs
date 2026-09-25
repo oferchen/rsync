@@ -1447,9 +1447,12 @@ impl GeneratorContext {
                 // upstream: progress.c:80 - "to" once the final sub-list has been
                 // sent, "ir" while more sub-lists are still pending.
                 let flist_eof = !inc_recurse || self.incremental.flist_eof_sent;
+                // upstream: sender.c:783 `end_progress(st.st_size)` - the final
+                // line reports the file's size, not the bytes that crossed
+                // the wire for it (and never the run's running wire total).
                 let event = super::super::super::TransferProgressEvent {
                     path: file_entry.path(),
-                    file_bytes: bytes_sent,
+                    file_bytes: file_entry.size(),
                     total_file_bytes: Some(file_entry.size()),
                     files_done: files_transferred,
                     total_files: self.file_list.len(),

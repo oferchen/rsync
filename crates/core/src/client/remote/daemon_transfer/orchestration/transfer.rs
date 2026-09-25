@@ -215,8 +215,11 @@ pub(crate) fn run_push_transfer(
     // render the template; the sink then collects metadata events instead of
     // writing the default line (mirrors the SSH push driver).
     let render_out_format = config.render_out_format_locally();
-    let wants_client_output =
-        config.itemize_changes() || config.verbosity() >= 1 || render_out_format;
+    // `-v` is not the gate: upstream logs names whenever NAME >= 1 sets
+    // `stdout_format` (options.c:2521-2523), which `-P` does on its own.
+    let wants_client_output = config.itemize_changes()
+        || logging::info_gte(logging::InfoFlag::Name, 1)
+        || render_out_format;
     let mut itemize_sink = ItemizeEventSink::new(render_out_format);
 
     let result = crate::server::run_server_with_handshake(
