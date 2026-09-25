@@ -547,7 +547,7 @@ impl ReceiverContext {
         &mut self,
         segment_idx: usize,
         reader: &mut crate::reader::ServerReader<R>,
-        flist_ndx_codec: &mut NdxCodecEnum,
+        ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<usize> {
         loop {
             if segment_idx + 1 < self.ndx_segments.len() {
@@ -558,9 +558,12 @@ impl ReceiverContext {
             }
             // Learn this segment's end by pulling the next boundary/EOF. The
             // probe index is one past the current end, so `ensure_flat_idx`
-            // reads exactly the next frame (a segment or the terminator).
+            // reads exactly the next frame (a segment or the terminator). The
+            // single connection-wide inbound codec is threaded here (not a
+            // separate flist codec): a mid-walk sub-list pull and the transfer
+            // echoes share one read_ndx diff-state, matching upstream io.c.
             let probe = self.file_list.len();
-            self.ensure_flat_idx(probe, reader, flist_ndx_codec)?;
+            self.ensure_flat_idx(probe, reader, ndx_read_codec)?;
         }
     }
 
