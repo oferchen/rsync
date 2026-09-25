@@ -93,7 +93,7 @@ impl FlistBanner {
     /// `finish_filelist_progress()` emits `"done\n"` on `FINFO` (flist.c:208).
     /// Both halves land on the client's stdout, so the concatenation is
     /// byte-identical to upstream's stream.
-    fn emit(self, writer: &mut dyn Write) -> io::Result<()> {
+    pub(crate) fn emit(self, writer: &mut dyn Write) -> io::Result<()> {
         match self {
             Self::None => Ok(()),
             Self::Building => {
@@ -155,13 +155,64 @@ pub(crate) struct DeltaTransmissionSummary {
     pub emit_total: bool,
 }
 
+/// Which parts of a transfer's output the live progress renderer already wrote,
+/// so the post-transfer summary does not write them a second time.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub(crate) struct LiveRendered {
+    /// At least one progress line was written.
+    pub progress: bool,
+    /// The session header (file-list banner, `created directory`, and the
+    /// `delta-transmission` notice) was written before the first entry.
+    pub header: bool,
+    /// The per-entry name listing was written as each entry was processed.
+    pub listing: bool,
+}
+
+/// Writes the receiver and generator notices that follow the file-list banner
+/// and precede the first per-entry line.
+///
+/// `created_root` is the destination root when this run created it;
+/// `itemizing` mirrors upstream `stdout_format_has_i`.
+pub(crate) fn emit_session_notices(
+    created_root: Option<&Path>,
+    itemizing: bool,
+    delta_notice: Option<DeltaTransmissionState>,
+    escape: EscapeStyle,
+    writer: &mut dyn Write,
+) -> io::Result<()> {
+    // upstream: main.c:787-808 - when the receiver pre-flight-mkdirs the
+    // destination root because `file_total > 1 || trailing_slash`, it lops
+    // off the trailing slash (`*cp = '\0'`) and prints `created directory
+    // %s\n` gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. The print at
+    // main.c:808 precedes the `dry_run++` at main.c:810, so a dry-run still
+    // reports the directory it would create. Gate on the NAME info category
+    // rather than a raw `verbosity > 0` check so `--info=name0` suppresses the
+    // notice, while `-i`/`--out-format` still forces it.
+    if let Some(dest_root) = created_root
+        && (itemizing || info_gte(InfoFlag::Name, 1))
+    {
+        writer.write_all(b"created directory ")?;
+        writer.write_all(&display_without_trailing_separators(dest_root, escape))?;
+        writer.write_all(b"\n")?;
+    }
+
+    // upstream: generator.c:2290-2295 - the generator prints the
+    // delta-transmission status once at DEBUG_GTE(FLIST, 1) (first active at
+    // -vv), after the receiver's `created directory` notice and before the
+    // per-file generate loop.
+    if let Some(state) = delta_notice {
+        writeln!(writer, "delta-transmission {}", state.text())?;
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_transfer_summary(
     summary: &ClientSummary,
     verbosity: u8,
     progress_mode: Option<ProgressMode>,
     stats_level: u8,
-    progress_already_rendered: bool,
+    live: LiveRendered,
     list_only: bool,
     dry_run: bool,
     // `--only-write-batch` (upstream `write_batch < 0`): appends the
@@ -195,7 +246,9 @@ pub(crate) fn emit_transfer_summary(
     // `--list-only` branch below. `--list-only` resolves `xfer_dirs` to 1
     // (options.c:2329) without turning on `inc_recurse`, so it is one of the
     // cells that selects the `building file list ... done` banner.
-    flist_banner.emit(writer)?;
+    if !live.header {
+        flist_banner.emit(writer)?;
+    }
 
     if list_only {
         let mut wrote_listing = false;
@@ -244,35 +297,22 @@ pub(crate) fn emit_transfer_summary(
         return Ok(());
     }
 
-    // upstream: main.c:800-821 - when the receiver pre-flight-mkdirs the
-    // destination root because `file_total > 1 || trailing_slash`, it lops
-    // off the trailing slash (`*cp = '\0'`) and prints `created directory
-    // %s\n` gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. The print at
-    // main.c:821 precedes the `dry_run++` at main.c:823, so a dry-run still
-    // reports the directory it would create. Mirror the same gate plus
-    // trailing-slash trim here so `-i` and `-v` invocations - including
-    // `--dry-run` - emit the notice ahead of the per-entry itemize lines,
-    // matching the upstream `testsuite/itemize.test` golden. Gate on the NAME
-    // info category (`INFO_GTE(NAME, 1)`) rather than a raw `verbosity > 0`
-    // check so `--info=name0` suppresses the notice, while `-i`/`--out-format`
-    // still forces it via `stdout_format_has_i` (mirrored by `out_format`).
-    if summary.destination_root_created()
-        && (out_format.is_some() || info_gte(InfoFlag::Name, 1))
-        && let Some(dest_root) = events.iter().map(ClientEvent::destination_root).next()
-    {
-        writer.write_all(b"created directory ")?;
-        writer.write_all(&display_without_trailing_separators(dest_root, escape))?;
-        writer.write_all(b"\n")?;
-    }
-
-    // upstream: generator.c:2290-2295 - the generator prints the
-    // delta-transmission status once at DEBUG_GTE(FLIST, 1) (first active at
-    // -vv), after the receiver's `created directory` notice and before the
-    // per-file generate loop. On a local transfer oc renders the name list
-    // post-hoc here, so emit the notice at the same position rather than
-    // dead-last through the deferred diagnostic flush.
-    if let Some(state) = delta_notice.notice {
-        writeln!(writer, "delta-transmission {}", state.text())?;
+    // The live renderer writes this header at the start of a `--progress`
+    // local copy; otherwise the post-hoc name list is rendered below and the
+    // header goes here, ahead of it.
+    if !live.header {
+        let created_root = if summary.destination_root_created() {
+            events.iter().map(ClientEvent::destination_root).next()
+        } else {
+            None
+        };
+        emit_session_notices(
+            created_root,
+            out_format.is_some(),
+            delta_notice.notice,
+            escape,
+            writer,
+        )?;
     }
 
     let formatted_rendered = if let Some(format) = out_format {
@@ -286,7 +326,7 @@ pub(crate) fn emit_transfer_summary(
         false
     };
 
-    let progress_rendered = if progress_already_rendered {
+    let progress_rendered = if live.progress {
         true
     } else if matches!(progress_mode, Some(ProgressMode::PerFile)) && !events.is_empty() {
         emit_progress(events, writer, human_readable_mode, escape, pending)?
@@ -309,6 +349,7 @@ pub(crate) fn emit_transfer_summary(
         .iter()
         .any(|event| matches!(event.kind(), ClientEventKind::EntryDeleted));
     let emit_verbose_listing = out_format.is_none()
+        && !live.listing
         && !events.is_empty()
         && ((verbosity > 0
             && (!name_overridden || name_enabled)
@@ -320,7 +361,9 @@ pub(crate) fn emit_transfer_summary(
         writeln!(writer)?;
     }
 
-    if progress_rendered && (emit_verbose_listing || stats_on || verbosity > 0) {
+    // A live name listing interleaves with the progress lines, so the two form
+    // one per-file block whose separator comes after the `total:` line below.
+    if progress_rendered && !live.listing && (emit_verbose_listing || stats_on || verbosity > 0) {
         writeln!(writer)?;
     }
 
@@ -387,7 +430,9 @@ pub(crate) fn emit_transfer_summary(
     // `testsuite/itemize.test`'s `v_filt` helper relies on this empty line
     // (`sed -e '/^$/,$d'`) to strip the trailer when matching `-vv` goldens.
     let rendered_block = formatted_rendered || progress_rendered || emit_verbose_listing;
-    if (stats_on || emit_trailer_totals) && (emit_verbose_listing || !rendered_block) {
+    if (stats_on || emit_trailer_totals)
+        && (emit_verbose_listing || live.listing || !rendered_block)
+    {
         writeln!(writer)?;
     }
 
@@ -1672,7 +1717,7 @@ mod tests {
             0,     // verbosity
             None,  // progress_mode
             level, // stats_level
-            false, // progress_already_rendered
+            LiveRendered::default(),
             false, // list_only
             dry_run,
             only_write_batch,

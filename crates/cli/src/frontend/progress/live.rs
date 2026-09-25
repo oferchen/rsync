@@ -1,15 +1,20 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use core::client::{ClientProgressObserver, ClientProgressUpdate, HumanReadableMode};
+use core::client::{ClientEvent, ClientProgressObserver, ClientProgressUpdate, HumanReadableMode};
 
 use super::format::{
     RemainingTimeEstimator, format_progress_bytes, format_progress_elapsed,
     format_progress_percent, format_progress_rate, format_progress_rate_from_value,
 };
-use super::mode::ProgressMode;
+use super::interleave::PendingDiagnostics;
+use super::mode::{NameOutputLevel, ProgressMode};
+use super::render::{
+    DeltaTransmissionState, FlistBanner, LiveRendered, emit_session_notices, emit_verbose,
+};
+use crate::frontend::escape::EscapeStyle;
 use crate::frontend::outbuf::OutbufMode;
 
 /// Minimum interval between rendered in-flight progress ticks.
@@ -67,6 +72,37 @@ impl Default for ProgressOutputConfig {
     }
 }
 
+/// What a `--progress` local copy writes live besides the progress lines.
+///
+/// upstream writes every line of a local copy at the moment it happens: the
+/// session header before the first entry, then each entry's name as the
+/// generator reaches it. oc renders a local copy's output after the run, so
+/// without this the header and the non-transfer names would trail, or miss,
+/// the progress lines that are written live.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LocalSessionOutput {
+    /// The sender's file-list banner. upstream: flist.c:2521-2524.
+    pub(crate) banner: FlistBanner,
+    /// The `-vv` generator notice. upstream: generator.c:2290-2295.
+    pub(crate) delta_notice: Option<DeltaTransmissionState>,
+    /// upstream `stdout_format_has_i`: forces the `created directory` notice.
+    pub(crate) itemizing: bool,
+    /// Filename escaping for the rendered lines.
+    pub(crate) escape: EscapeStyle,
+    /// The name listing for entries without a progress block; `None` when
+    /// the post-hoc renderer owns the listing (itemize, `--out-format`, or
+    /// `--info=progress2`).
+    pub(crate) listing: Option<LiveListing>,
+}
+
+/// Settings for rendering a local copy's per-entry names as they happen.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LiveListing {
+    pub(crate) verbosity: u8,
+    pub(crate) name_level: NameOutputLevel,
+    pub(crate) name_overridden: bool,
+}
+
 /// Emits verbose, statistics, and progress-oriented output derived from a
 /// [`core::client::ClientSummary`].
 pub(crate) struct LiveProgress<'a> {
@@ -102,6 +138,10 @@ pub(crate) struct LiveProgress<'a> {
     tick_interval: Duration,
     /// Terminal and buffering configuration for progress output.
     output_config: ProgressOutputConfig,
+    /// Header and name listing written live for a local copy.
+    session: Option<LocalSessionOutput>,
+    /// Whether [`ClientProgressObserver::on_start`] wrote the session output.
+    session_started: bool,
 }
 
 impl<'a> LiveProgress<'a> {
@@ -141,12 +181,31 @@ impl<'a> LiveProgress<'a> {
             last_tick: None,
             tick_interval: TICK_INTERVAL,
             output_config,
+            session: None,
+            session_started: false,
         }
     }
 
+    /// Makes a local copy write its session header and entry names live.
+    pub(crate) const fn with_local_session(mut self, session: LocalSessionOutput) -> Self {
+        self.session = Some(session);
+        self
+    }
+
     /// Returns whether at least one progress line has been rendered.
+    #[cfg(test)]
     pub(crate) const fn rendered(&self) -> bool {
         self.rendered
+    }
+
+    /// Reports which parts of the output were written live.
+    pub(crate) fn live_rendered(&self) -> LiveRendered {
+        let started = self.session_started;
+        LiveRendered {
+            progress: self.rendered,
+            header: started,
+            listing: started && self.session.is_some_and(|s| s.listing.is_some()),
+        }
     }
 
     fn record_error(&mut self, error: io::Error) {
@@ -237,6 +296,57 @@ impl<'a> LiveProgress<'a> {
 }
 
 impl<'a> ClientProgressObserver for LiveProgress<'a> {
+    fn on_start(&mut self, created_destination_root: Option<&Path>) {
+        let Some(session) = self.session else {
+            return;
+        };
+        self.session_started = true;
+        let result = session.banner.emit(self.writer).and_then(|()| {
+            emit_session_notices(
+                created_destination_root,
+                session.itemizing,
+                session.delta_notice,
+                session.escape,
+                self.writer,
+            )
+        });
+        if let Err(error) = result.and_then(|()| self.flush_if_needed()) {
+            self.record_error(error);
+        }
+    }
+
+    fn on_entry(&mut self, event: &ClientEvent) {
+        let Some(session) = self.session else {
+            return;
+        };
+        let Some(listing) = session.listing else {
+            return;
+        };
+        if self.error.is_some() {
+            return;
+        }
+        let result = (|| -> io::Result<()> {
+            if self.line_active {
+                writeln!(self.writer)?;
+                self.line_active = false;
+            }
+            emit_verbose(
+                std::slice::from_ref(event),
+                listing.verbosity,
+                listing.name_level,
+                listing.name_overridden,
+                self.human_readable,
+                session.escape,
+                self.writer,
+                &mut PendingDiagnostics::empty(),
+            )?;
+            self.flush_if_needed()
+        })();
+        if let Err(error) = result {
+            self.record_error(error);
+        }
+    }
+
     fn on_progress(&mut self, update: &ClientProgressUpdate) {
         if self.error.is_some() {
             return;

@@ -497,6 +497,16 @@ impl ClientEvent {
         }
     }
 
+    /// Returns whether this entry opens a per-file progress block.
+    ///
+    /// Only a regular-file transfer that actually moves data does; every other
+    /// entry is checked without printing progress. upstream: receiver.c:782 -
+    /// `recv_files()` prints the progress block for each `ITEM_TRANSFER` file.
+    #[must_use]
+    pub fn opens_progress_block(&self) -> bool {
+        self.kind.is_transfer() && !self.is_uptodate()
+    }
+
     /// Returns the root directory of the destination tree.
     #[must_use]
     pub fn destination_root(&self) -> &Path {

@@ -491,6 +491,7 @@ impl ReceiverContext {
                         self.itemize_existing_flags(entry, &file_path, Some(meta), 0);
                     self.apply_no_change_metadata(
                         writer,
+                        dest_dir,
                         idx,
                         &file_path,
                         entry,
@@ -1334,6 +1335,7 @@ impl ReceiverContext {
     fn apply_no_change_metadata<W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &self,
         writer: &mut W,
+        dest_dir: &Path,
         flist_idx: usize,
         file_path: &Path,
         entry: &FileEntry,
@@ -1388,7 +1390,9 @@ impl ReceiverContext {
                 Some(stat_meta.clone()),
             )
         {
-            metadata_errors.push((file_path.to_path_buf(), e.to_string()));
+            // upstream: generator.c:1827 set_file_attrs() on a quick-check
+            // match; its chown/utimes/chmod arms are rsyserr(FERROR_XFER).
+            let _ = self.emit_generator_attrs_failure(writer, dest_dir, &e);
         }
 
         // upstream: rsync.c:set_file_attrs() -> set_acl() for ACL preservation
