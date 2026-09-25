@@ -333,6 +333,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `util1.c:1433` - `full_fname()`
+    #[cfg(unix)]
     pub(in crate::receiver) fn full_fname_in_dest(
         &self,
         dest_dir: &std::path::Path,
