@@ -640,3 +640,63 @@ fn equivalence_checksum_mismatch_both_invalid() {
     .expect_err("applicator must reject");
     assert_eq!(app_err.kind(), std::io::ErrorKind::InvalidData);
 }
+
+/// Sparse delta apply must keep every byte at its own offset when a COPY token
+/// whose block ends in zero bytes is followed by another token.
+///
+/// The block's trailing zeros stay pending as a hole with the output at the
+/// start of the run. The engine's `--inplace --sparse` path once seeked the
+/// writer to the logical offset before the next write, so the hole started
+/// late and every following byte shifted. The applicator must never reposition
+/// between tokens.
+// upstream: receiver.c:563 write_file() - no lseek between tokens;
+// fileio.c:81 flush_sparse_hole() flushes from the current position.
+#[test]
+fn sparse_copy_ending_in_zeros_keeps_following_tokens_in_place() {
+    let block_len = BLOCK_LEN as usize;
+    let mut payload = basis_payload(block_len * 4);
+    for byte in payload.iter_mut().filter(|b| **b == 0) {
+        *byte = 1;
+    }
+    // Block 0 ends in a zero run, block 2 in a single zero byte.
+    payload[block_len - 9..block_len].fill(0);
+    payload[3 * block_len - 1] = 0;
+    let ops = vec![
+        Op::Block(0),
+        Op::Literal(vec![0xC3; 300]),
+        Op::Block(2),
+        Op::Block(1),
+        Op::Literal(vec![0u8; 50]),
+        Op::Block(3),
+    ];
+    let algo = ChecksumAlgorithm::MD5;
+    let seed = 0;
+    let dir = tempdir().expect("tempdir");
+    let basis_path = write_basis(&dir, &payload);
+    let signature = make_signature(&payload);
+    let expected = expected_output(&ops, &payload, block_len);
+
+    let mut wire = encode_plain(&ops);
+    append_checksum(&mut wire, algo, seed, &expected);
+
+    let app_out = dir.path().join("app.bin");
+    let mut app_reader = TokenReader::new(None, 31).expect("plain");
+    let result = applicator_apply(
+        &app_out,
+        true,
+        Some(&signature),
+        Some(basis_path.as_path()),
+        &wire,
+        &mut app_reader,
+        algo,
+        seed,
+        Some(expected.len() as u64),
+    )
+    .expect("sparse applicator apply");
+    assert_eq!(result.final_pos, Some(expected.len() as u64));
+
+    let produced = read_file(&app_out);
+    let first_diff = produced.iter().zip(&expected).position(|(a, b)| a != b);
+    assert_eq!(produced.len(), expected.len(), "length preserved");
+    assert_eq!(first_diff, None, "sparse output must equal the source");
+}
