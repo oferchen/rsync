@@ -272,7 +272,10 @@ fn whole_list_equals_concatenated_segment_ranges() {
             sentinel("gone"),
             make_hlink_follower("d2/f1", 4, 3),
             FileEntry::new_symlink("d2/deep/ln2".into(), 0o777, "../f1".into()),
-            FileEntry::new_socket("d2/sock".into(), 0o600),
+            // Top-level: without bindat(2) a NESTED socket is skipped on
+            // macOS/BSD (upstream: syscall.c:1369-1378 do_mknod_at EOPNOTSUPP,
+            // generator.c:2506-2521), which would leave nothing to compare.
+            FileEntry::new_socket("sock".into(), 0o600),
             make_hlink_follower("d3/f2", 4, 3),
             FileEntry::new_file("d3/e/f/plain".into(), 1, 0o644),
         ]
@@ -302,7 +305,7 @@ fn whole_list_equals_concatenated_segment_ranges() {
     // Guard against a vacuous match: every pass left a mark.
     assert_eq!(whole["d2/deep/ln2"], "l:../f1");
     assert_eq!(whole["d1/fifo"], "p");
-    assert_eq!(whole["d2/sock"], "s");
+    assert_eq!(whole["sock"], "s");
     assert!(whole["d3/e/f"].starts_with('d'));
     assert!(!whole.contains_key("gone"));
     assert_eq!(whole["d2/f1"], whole["d1/lead"]);
