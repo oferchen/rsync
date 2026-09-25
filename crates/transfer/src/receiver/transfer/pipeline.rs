@@ -1214,6 +1214,15 @@ impl ReceiverContext {
                 transferred_size += file_entry.size();
             }
 
+            // upstream: generator.c:590,607-610 - below protocol 29 itemize()
+            // logs a non-transfer item locally and writes nothing; only the
+            // notify_others write_ndx() (generator.c:2376) crosses the wire.
+            // The peer's sender implies ITEM_TRANSFER for every pre-29 NDX
+            // (rsync.c:384-385), so a directory NDX here is a protocol error.
+            if !write_iflags && !needs_transfer {
+                continue;
+            }
+
             // upstream: generator.c:1938 - write_ndx(f_out, ndx)
             let wire_ndx = self.flat_to_wire_ndx(file_idx);
             ndx_write_codec.write_ndx(&mut *writer, wire_ndx)?;

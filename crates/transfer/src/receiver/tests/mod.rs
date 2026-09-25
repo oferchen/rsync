@@ -14,6 +14,7 @@
 //! - [`mode_dispatch`] - the shared drive-mode decision and the wire shape of
 //!   each mode that moves no file data, asserted under both `incremental-flist`
 //!   settings.
+//! - [`dry_run_pre29`] - a protocol 28 dry run requests regular files only.
 //! - [`errors_and_timeouts`] - error categorization, failed-directory
 //!   propagation, legacy goodbye handling, input-multiplex activation,
 //!   daemon filter set, and path-traversal rejection.
@@ -23,6 +24,7 @@
 #[cfg(unix)]
 mod create_specials;
 mod delta_apply;
+mod dry_run_pre29;
 mod errors_and_timeouts;
 mod file_list;
 mod generator_keepalive;
