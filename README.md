@@ -11,35 +11,47 @@
 
 # oc-rsync
 
-`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.5.0 (and with the whole 3.4.x series, protocol 32), works as a drop-in replacement.
+`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.5.0 and the 3.4.x series (protocol 32). Works as a drop-in replacement.
 
-Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict.
+Binary name: **`oc-rsync`**. It installs alongside the system `rsync` without conflict.
 
 ---
 
 ## Status
 
-**Release:** 0.6.4 - Wire-compatible drop-in replacement for rsync 3.5.0 and the 3.4.x series (protocols 28-32).
+**Release:** 0.6.4. **Upstream reference:** rsync 3.5.0, protocol 32, with back-negotiation to protocol 28.
 
-All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop scenarios run in CI against the peer releases enumerated by `versions=` in [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh), plus the build-only peers in `extra_build_versions=`; that script is the source of truth, and re-listing it here is what let the list drift before. Upstream rsync's own testsuite runs in CI against `oc-rsync` as `$RSYNC` on the 3.5.0 corpus, where **no test currently diverges** on either full-corpus Linux leg (see below).
+All transfer modes (local, SSH, daemon), the delta algorithm, metadata preservation and compression are complete.
 
-**Tracking rsync 3.5.0.** Upstream released 3.5.0 on 13 Aug 2026. It is wire-identical to 3.4.4 - `PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h` - so protocol compatibility carries over unchanged and is what the "wire-compatible" claim above rests on. What 3.5.0 changes is *behaviour*: 33 CVEs concentrated in path handling and the daemon, a rewritten path resolver, five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`), three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`), and a test suite rebuilt from shell scripts into Python. All five options and all three directives are implemented; the remaining behavioural divergences are the manifest rows below, and the per-CVE audit trail lives in [`SECURITY.md`](./SECURITY.md).
+**rsync 3.5.0.** Upstream released 3.5.0 on 13 Aug 2026. It keeps `PROTOCOL_VERSION` 32 and `SUBPROTOCOL_VERSION` 0, so wire compatibility carries over from 3.4.4. The changes are behavioural: 33 CVE fixes in path handling and the daemon, and new options and directives. All five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`) and all three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`) are implemented. The per-CVE audit trail is in [`SECURITY.md`](./SECURITY.md).
 
-The 3.5.0 **release** testsuite runs as **eight legs** on every pull request: the cells of platform x daemon transport x privilege. `runtests.py` offers two transports - the secure stdio-pipe default, which opens no listening socket, and `--use-tcp`, which binds a real `rsyncd` on 127.0.0.1 - and the root/non-root split decides whether the root-only tests (chown, device nodes, xattrs, dir-sgid, protected-regular) execute or self-skip. Each of the four [`ci.yml`](./.github/workflows/ci.yml) jobs below runs *both* privilege cells, so the leg count is 4 x 2:
+**rsync 3.5.1.** Upstream 3.5.1 advertises protocol 33. oc-rsync does not advertise 33. A peer that advertises a newer protocol is negotiated down to 32 instead of refused (#7916); that path is covered by unit tests. Moving the reference to 3.5.1 is in progress and not yet on master.
 
-|                | pipe (secure default) | tcp (127.0.0.1) |
-|----------------|-----------------------|-----------------|
-| Linux, non-root| [nonroot, pipe](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml) | [nonroot, tcp](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml) |
-| Linux, root    | [root, pipe](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml) | [root, tcp](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml) |
-| macOS          | `upstream-testsuite-macos` | `upstream-testsuite-macos-tcp` |
+| Component | Status |
+|-----------|--------|
+| **Transfer** | Local, SSH, daemon push/pull, daemon over remote shell (`host::module`) |
+| **Delta** | Rolling + strong checksums, block matching, parallel receive-delta pipeline |
+| **Metadata** | Permissions, timestamps, ownership, ACLs (`-A`), xattrs (`-X`) |
+| **File handling** | Sparse, hardlinks, symlinks, devices, FIFOs |
+| **Deletion** | `--delete` (before/during/after/delay), `--delete-excluded` |
+| **Compression** | zlib, zstd, lz4 with level control and negotiation |
+| **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
+| **Incremental recursion** | Advertised when oc-rsync sends. An oc-rsync client that receives (a pull) does not advertise it yet, so pulls use a full up-front file list |
+| **Batch** | `--write-batch` / `--read-batch` round trip |
+| **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
+| **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
+| **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
+| **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
+| **3.5.0 surface** | `--confine-root`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links`; daemon `auth digest`, `insecure links`, `proxy protocol hosts` |
+| **I/O** | io_uring (Linux 5.6+), `copy_file_range`, `clonefile` (macOS), adaptive buffers |
 
-The four **Linux** legs are required status checks. The four **macOS** legs run on every PR but are not yet required contexts - registering one is a repo-admin action - and they carry their own committed manifests, so they gate on drift exactly as the Linux legs do. macOS is the only platform that observes several divergences at all: some of its cells *skip* on Linux and so had never executed in this repository's CI before those jobs existed.
+### Upstream testsuite
 
-The testsuite reads its own `UPSTREAM_TESTSUITE_VERSION` (default `3.5.0`), deliberately **not** the interop matrix's `UPSTREAM_RSYNC_VERSION` - the two want different versions, and sharing one knob would let an interop retarget drag the conformance gate backwards as a side effect.
+Upstream's own 3.5.0 test suite runs against `oc-rsync` as `$RSYNC` on every pull request, in **eight legs**: platform {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege {non-root, root}. The pipe legs run the whole 345-test corpus. The TCP legs add `--daemon-tests-only` and run the 155 tests that start a daemon.
 
-The pipe legs run the whole 345-test corpus. The tcp legs add `--daemon-tests-only`, which is what upstream ships that option for - the tests it drops never call `start_test_daemon()`, so they cannot observe the transport - and so run the 155 tests that can. All four Linux legs are required status checks on every PR: `upstream-testsuite / upstream testsuite{,(root)}` and `upstream-testsuite-tcp / upstream testsuite{,(root)}`.
+The four Linux legs are required status checks. The four macOS legs run on every PR and gate on their own manifests, but are not required contexts.
 
-Current outcomes, as recorded in each leg's committed manifest:
+Outcomes, counted from each leg's committed manifest (`tools/ci/upstream-3.5.0-expect.*.txt`):
 
 | leg | pass | fail | skip | corpus |
 |---|---:|---:|---:|---:|
@@ -52,222 +64,140 @@ Current outcomes, as recorded in each leg's committed manifest:
 | macOS, non-root, tcp | 116 | 4 | 35 | 155 |
 | macOS, root, tcp | 132 | 4 | 19 | 155 |
 
-Every figure above is the outcome column of a committed manifest, not a
-transcribed run log. Re-derive any row with:
+Re-derive any row:
 
 ```sh
 awk '!/^#/ && NF {c[$NF]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' \
   tools/ci/upstream-3.5.0-expect.nonroot.txt
 ```
 
-**No test** diverges on either full-corpus Linux leg, and **6 distinct tests** diverge across all eight committed manifests (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). Four of the six are the `proto-*` cluster, which fails identically on every tcp leg on both platforms; the other two (`chmod-setid`, `partial-protected-regular-retry-policy`) appear only on macOS and are recorded as environmental - the real upstream 3.5.0 binary lands on the same outcome there. The legacy old-rsync oracles the suite looks for in `old_versions/` build by default on the Linux legs, so a test that names a historical release asserts against that release inside the same eight legs rather than through a separate manifest (#7855). Every leg carries its own expected-outcome manifest, generated from a real run rather than hand-written, so only a *change* in outcome turns a badge red - and that includes an unexpected **pass**, which is what stops a divergence being quietly re-baselined instead of fixed. A fix flips its manifest rows in the same commit. The divergences are genuine and tracked openly: each was re-run against the real upstream 3.5.0 binary as a negative control, so they are oc-rsync behaviour gaps, not harness artefacts - except where that control shows upstream landing on the same outcome, which is recorded as such rather than counted against oc-rsync.
+No test fails on either full-corpus Linux leg. **Six distinct tests** fail across all eight manifests (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). Four are the `proto-*` cluster, which fails on every TCP leg. The other two (`chmod-setid`, `partial-protected-regular-retry-policy`) fail only on macOS, where the real upstream 3.5.0 binary lands on the same outcome. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently.
 
-| Component | Status |
-|-----------|--------|
-| **Transfer** | Local, SSH, daemon push/pull, daemon-over-remote-shell (`host::module`) |
-| **Delta** | Rolling + strong checksums, block matching, parallel receive-delta pipeline |
-| **Metadata** | Permissions, timestamps, ownership, ACLs (`-A`), xattrs (`-X`) |
-| **File handling** | Sparse, hardlinks, symlinks, devices, FIFOs |
-| **Deletion** | `--delete` (before/during/after/delay), `--delete-excluded` |
-| **Compression** | zlib, zstd, lz4 with level control and auto-negotiation |
-| **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
-| **Incremental recursion** | Pull and push directions, enabled by default |
-| **Batch** | `--write-batch` / `--read-batch` roundtrip |
-| **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
-| **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
-| **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
-| **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
-| **3.5.0 surface** | `--confine-root`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links`; daemon `auth digest`, `insecure links`, `proxy protocol hosts` |
-| **I/O** | io_uring (Linux 5.6+), `copy_file_range`, `clonefile` (macOS), adaptive buffers |
-| **Memory** | Flat file list (contiguous `Vec<FileEntry>`) for efficient scaling at high file counts |
-| **Platforms** | Linux, macOS (full); Windows (NTFS DACL partial, xattrs via NTFS ADS, IOCP file + socket I/O, symlinks with junction fallback; no POSIX device nodes) |
-
-### Platform Support
+### Platform support
 
 | Platform | Tier | Notes |
 |---|---|---|
-| Linux x86_64 / aarch64 | **Tier 1** | Full `io_uring` + `splice` + `vmsplice` + Landlock. Every required CI cell runs the full nextest workspace. Production deployment target. A seccomp BPF syscall allowlist for the daemon worker is available behind `--features daemon-seccomp`; it is off in default builds and in the released binaries. |
-| macOS x86_64 / aarch64 | **Tier 1** | `kqueue` + `sendfile` + `clonefile`. Required CI cells run a crate-scoped subset (core, engine, cli, metadata, apple-fs, fast_io). Full metadata, ACL, and xattr parity including AppleDouble (`._foo`) resource-fork preservation. |
-| Windows x86_64 | **Tier 2** | IOCP file I/O, `TransmitFile`, ReFS reflink, `CopyFileExW`, `FILE_FLAG_DELETE_ON_CLOSE`. `splice` / `vmsplice` / `io_uring` are Linux-only and intentionally not implemented; the receiver uses IOCP-batched `WriteFile`, which is faster than the upstream Cygwin `read`/`write` fallback. NTFS DACL preservation, xattrs via NTFS Alternate Data Streams, and IOCP socket I/O (`WSARecv` / `WSASend`) are shipped; POSIX symlinks are materialized (directory links fall back to a junction when unprivileged, unprivileged file symlinks are skipped with a warning), while POSIX device nodes / FIFOs remain stubbed in line with NTFS limits. Required CI cells test the `core`, `engine`, and `cli` crates. See [Windows support matrix](docs/user/windows-support-matrix.md) and the [Windows Tier 2 stub inventory](docs/audits/win-tier2-stub-inventory.md). |
+| Linux x86_64 / aarch64 | **Tier 1** | io_uring, `splice`, `vmsplice`, Landlock. Required CI runs the full nextest workspace. A seccomp syscall allowlist for daemon workers is available with `--features daemon-seccomp`; it is off in default builds and in released binaries. |
+| macOS x86_64 / aarch64 | **Tier 1** | `clonefile`, `fcopyfile`, full metadata, ACL and xattr support including AppleDouble (`._foo`) resource forks. Required CI runs a crate-scoped subset (core, engine, cli, metadata, apple-fs, fast_io). |
+| Windows x86_64 | **Tier 2** | IOCP file and socket I/O, `CopyFileExW`, ReFS reflink, NTFS DACLs (partial), xattrs via NTFS Alternate Data Streams. No POSIX device nodes or FIFOs. Required CI tests the core, engine and cli crates. |
 
-Tier definitions, the per-criterion scoring of each platform, and the promotion procedure live in [Platform support tiers](docs/design/platform-tiers.md), the source of truth for tier assignments. Tier 2 is a deliberate choice, not a defect: see `docs/audits/win-tier2-stub-inventory.md` for the structural rationale and the path to Tier 1 promotion.
-
-The primary platform is Linux. macOS is well-supported with parity for all metadata, ACL, and xattr features, including AppleDouble (`._foo`) resource-fork preservation. Windows builds and runs core transfer modes with NTFS DACL preservation (via `windows-rs` `GetNamedSecurityInfoW`/`SetNamedSecurityInfoW`, currently Tier 1C partial - see `docs/platform-notes.md` for the Windows ACL behavior summary, the **--acls** entry in `docs/oc-rsync.1.md`, and `docs/design/windows-ntfs-acl-support.md` for the documented lossy cases), xattrs (via NTFS Alternate Data Streams), and IOCP socket I/O (`WSARecv`/`WSASend`); symlinks are materialized (directory links fall back to junctions when unprivileged), while POSIX device nodes remain stubbed.
+Tier definitions and criteria: [Platform support tiers](docs/design/platform-tiers.md). Windows detail: [Windows support matrix](docs/user/windows-support-matrix.md) and the [Windows Tier 2 stub inventory](docs/audits/win-tier2-stub-inventory.md).
 
 | Feature | Linux | macOS | Windows | Notes |
 |---------|:-----:|:-----:|:-------:|-------|
-| Permissions (`-p`) | ✓ | ✓ | ⚠ | Windows preserves only the read-only flag; POSIX mode bits are not applicable. |
-| Times (`-t`) | ✓ | ✓ | ✓ | Nanosecond precision via the `filetime` crate on all platforms. |
-| File ownership (`-o`/`-g`, uid/gid) | ✓ | ✓ | ✗ | `apply_ownership_from_entry` is a no-op on non-Unix; uid/gid mapping is Unix-only. |
-| ACLs (`-A`) | ✓ | ✓ | ⚠ | Uses `exacl` on Linux/macOS/FreeBSD. Windows uses `windows-rs` `GetNamedSecurityInfoW`/`SetNamedSecurityInfoW` for NTFS DACL round-trip (Tier 1C partial): deny ACEs, inherited ACEs, the SACL, non-`rwx` access bits, and unresolvable SIDs are dropped with a one-time warning. SDDL fidelity payload, `--audit-acls`, `--fail-on-windows-acl-loss`, and `--windows-acls` are planned. See `docs/user-guide/acl-id-mapping.md` for receiver-side UID/GID mapping behaviour (matching upstream 3.4.2), `docs/platform-notes.md` for the Windows ACL behavior summary, `docs/design/windows-ntfs-acl-support.md` for the full mapping matrix, and the **--acls** entry in `docs/oc-rsync.1.md`. |
-| Extended attributes (`-X`) | ✓ | ✓ | ✓ | Linux/macOS via the `xattr` crate (macOS adds AppleDouble resource-fork support); Windows stores xattrs as NTFS Alternate Data Streams. |
-| Hardlinks (`-H`) | ✓ | ✓ | ✓ | Uses portable `std::fs::hard_link`; works on NTFS. |
-| Symbolic links | ✓ | ✓ | ⚠ | Windows materializes symlinks via `create_windows_symlink`: directory links fall back to a junction (`FSCTL_SET_REPARSE_POINT`) when unprivileged, file links require Administrator or Developer Mode and are otherwise skipped with a warning (soft exit 23). See `crates/fast_io/src/win_symlink.rs`. |
-| Devices/specials (`-D`) | ✓ | ✓ | ✗ | `create_fifo` and `create_device_node` are no-ops on non-Unix. |
-| Sparse files (`-S`) | ✓ | ✓ | ⚠ | Uses portable `seek` + `set_len`; depends on filesystem (NTFS supports sparse but is not explicitly marked via `FSCTL_SET_SPARSE`). |
-| Async I/O backend | ✓ io_uring | ⚠ standard I/O | ⚠ IOCP (writes + sockets) | io_uring runtime-detected on Linux 5.6+. IOCP is wired into the disk-write pipeline (`transfer::disk_commit::Writer::Iocp`) and into the socket transports (daemon and SSH); file reads still use standard buffered I/O. |
-| Reflink / clone copy | ✓ FICLONE | ✓ clonefile | ⚠ ReFS reflink | Linux Btrfs/XFS/bcachefs via `FICLONE`; macOS via `clonefile`; Windows via `FSCTL_DUPLICATE_EXTENTS_TO_FILE` (ReFS only). |
-| Optimized file copy | ✓ `copy_file_range` | ✓ `fcopyfile` | ✓ `CopyFileExW` | All three are wired into the local-copy executor with standard-I/O fallback. |
+| Permissions (`-p`) | ✓ | ✓ | ⚠ | Windows preserves only the read-only flag. |
+| Times (`-t`) | ✓ | ✓ | ✓ | Nanosecond precision. |
+| Ownership (`-o`/`-g`) | ✓ | ✓ | ✗ | uid/gid mapping is Unix-only. |
+| ACLs (`-A`) | ✓ | ✓ | ⚠ | `exacl` on Linux/macOS. Windows round-trips NTFS DACLs; deny ACEs, inherited ACEs, the SACL, non-`rwx` bits and unresolvable SIDs are dropped with a warning. See [`docs/design/windows-ntfs-acl-support.md`](docs/design/windows-ntfs-acl-support.md). |
+| Xattrs (`-X`) | ✓ | ✓ | ✓ | Windows stores xattrs as NTFS Alternate Data Streams. |
+| Hardlinks (`-H`) | ✓ | ✓ | ✓ | |
+| Symlinks | ✓ | ✓ | ⚠ | Windows: directory links fall back to a junction when unprivileged; file links need Administrator or Developer Mode, otherwise they are skipped with a warning (exit 23). |
+| Devices/specials (`-D`) | ✓ | ✓ | ✗ | |
+| Sparse files (`-S`) | ✓ | ✓ | ⚠ | Windows does not set `FSCTL_SET_SPARSE`. |
+| Async I/O | ✓ io_uring | ⚠ standard I/O | ⚠ IOCP | io_uring is detected at runtime on Linux 5.6+. Windows uses IOCP for disk writes and sockets; file reads use buffered I/O. |
+| Reflink / clone | ✓ `FICLONE` | ✓ `clonefile` | ⚠ ReFS only | |
+| Optimized copy | ✓ `copy_file_range` | ✓ `fcopyfile` | ✓ `CopyFileExW` | Each falls back to standard I/O. |
 
-Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
+Legend: ✓ supported, ⚠ partial, ✗ not implemented.
 
-### Release Notes
+### Interop testing
 
-See the [CHANGELOG](./CHANGELOG.md) for the full, per-release change history.
+Interop scenarios run in CI against the upstream releases listed in [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh): `versions=` for the scenario matrix, `extra_build_versions=` for build-only peers, and `extended_matrix_versions=` for the extended matrix. Read the script for the current list. Push and pull are both covered, across transfer modes, deletion, compression, metadata, reference dirs, file selection, batch round trip, path handling, device nodes and daemon auth. See the [interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for detail.
 
-### Interop Testing
+| Protocol | Upstream versions | oc-rsync status | Coverage |
+|----------|-------------------|-----------------|----------|
+| 32 | 3.4.x, 3.5.0 | Full support (default) | Interop matrix against 3.4.4 and 3.5.0 |
+| 31 | 3.1.x - 3.3.x | Full support | Interop matrix against 3.1.3 |
+| 30 | 3.0.x | Full support | Interop matrix against 3.0.9 |
+| 29 | 2.6.9 | Full support | Non-blocking daemon push/pull cells against 2.6.9, plus golden-byte tests |
+| 28 | 2.6.0 - 2.6.8 | Wire-level support | Golden-byte tests in `crates/protocol/tests/` |
+| <= 27 | <= 2.5.x | Not supported | |
 
-Tested in CI across protocols 28-32 against the upstream releases [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh) enumerates - `versions=` for the scenario matrix, `extra_build_versions=` for the build-and-cache peers, `extended_matrix_versions=` for the extended matrix and forced-protocol sweep. Read the script rather than a list here; the per-version protocol and mode coverage is tabulated under [Supported rsync wire protocol versions](#supported-rsync-wire-protocol-versions) below. The 3.4.x series shares protocol 32 and is represented in the matrix by 3.4.4; 3.4.1/3.4.2/3.4.3 cells are subsumed because they run identical wire scenarios. 3.5.0 shares that same protocol 32 wire format, so it adds behavioural coverage rather than new protocol coverage. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
+A peer that advertises a protocol newer than 32 is negotiated down to 32. Per-version behaviour is implemented as `protocol_version` gates in the wire codecs, for example [`zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs).
 
-### Supported rsync protocol versions
+### Linux io_uring
 
-oc-rsync negotiates `protocol_version` per upstream, defaults to 32, and supports back-negotiation to 28 inclusive. Protocols 28-29 are exercised via wire-byte regression tests; 30-32 are exercised via the daemon and client interop matrices in CI.
+oc-rsync uses io_uring when the kernel and probed opcodes allow it. Otherwise it falls back to standard `read(2)`/`write(2)`. The kernel floor is Linux 5.6 (`MIN_KERNEL_VERSION` in [`crates/fast_io/src/io_uring/config.rs`](./crates/fast_io/src/io_uring/config.rs)). Provided buffer rings need 5.19+. `SEND_ZC` needs Linux 6.0+ and the `iouring-send-zc` cargo feature, which is not in the default set. The per-opcode kernel table is in [`docs/audit/iouring-opcode-kernel-floor.md`](./docs/audit/iouring-opcode-kernel-floor.md).
 
-| Protocol | Upstream rsync version | Status in oc-rsync | Notes |
-|----------|------------------------|--------------------|-------|
-| 32       | 3.4.x, 3.5.0 (current) | Full support        | Primary target; all features negotiated. Protocol 32 was introduced in rsync 3.4.0 and is unchanged in 3.5.0 |
-| 31       | 3.1.x - 3.3.x          | Full support        | Verified via interop matrix (3.1.3); introduced in rsync 3.1.0 and used through the 3.2.x/3.3.x series |
-| 30       | 3.0.x                  | Full support        | Verified via interop matrix (3.0.9) |
-| 29       | 2.6.9                  | Full support        | Non-blocking interop against upstream 2.6.9 (RP28.c/RP28.d); sort.rs t_PATH/t_ITEM gate (RP28.h) |
-| 28       | 2.6.0 - 2.6.8          | Wire-level support  | Validated via wire-byte regression tests (RP28.g, RP28.h) |
-| <= 27    | <= 2.5.x               | Not supported       | Pre-dates protocol cleanup; not tested |
-
-Per-version dispatch is implemented as `protocol_version` gates in the wire codecs. See [`crates/protocol/src/wire/compressed_token/zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs) and the sibling [`zstd_codec/`](./crates/protocol/src/wire/compressed_token/zstd_codec) / [`lz4_codec.rs`](./crates/protocol/src/wire/compressed_token/lz4_codec.rs) for representative examples of the gates that switch on `protocol_version`.
-
-### Supported rsync wire protocol versions
-
-| upstream rsync version | protocol | mode (push/pull/daemon)  | status (CI-verified) |
-|------------------------|----------|--------------------------|----------------------|
-| 2.6.9                  | 29       | push (daemon)            | non-blocking (RP28.c) |
-| 2.6.9                  | 29       | pull (daemon)            | non-blocking (RP28.d) |
-| 3.0.9                  | 30       | push, pull, daemon       | gating |
-| 3.1.3                  | 31       | push, pull, daemon       | gating |
-| 3.4.4                  | 32       | push, pull, daemon, SSH  | gating |
-| 3.5.0                  | 32       | push, pull, daemon, SSH  | gating |
-
-Wire format is verified byte-identical to upstream rsync via CI golden-byte tests for the listed versions. Wire differential fuzzing validates protocol-level byte equivalence against upstream. Other versions may work but are not regression-tested.
-
-### Linux io_uring kernel-tier support
-
-oc-rsync uses io_uring on Linux when the kernel and probed opcodes allow it; below the floor (or on any non-Linux platform) it falls back to standard `read(2)`/`write(2)` and platform-specific paths (IOCP on Windows). The hard kernel floor is Linux 5.6, gated by `MIN_KERNEL_VERSION = (5, 6)` in [`crates/fast_io/src/io_uring/config.rs`](./crates/fast_io/src/io_uring/config.rs); on older kernels the io_uring path is disabled entirely.
-
-| Kernel version | Tier | Opcodes available | Notes |
-|----------------|------|-------------------|-------|
-| < 5.6          | Unsupported | none - io_uring path disabled | Standard I/O fallback only |
-| 5.6 - 5.10     | Basic | READ, WRITE, READ_FIXED, WRITE_FIXED, SEND, RECV, FSYNC, NOP, POLL_ADD, ASYNC_CANCEL | Hard floor; data path enabled |
-| 5.11 - 5.14    | Extended | + STATX, RENAMEAT | Metadata fast paths enabled |
-| 5.15 - 5.18    | Mature | + LINKAT | Hardlink fast path enabled |
-| 5.19 - 6.0     | PBUF-ring | + register_pbuf_ring opcodes | Provided-buffer-ring optimisation |
-| >= 6.0         | Full | + SEND_ZC (with `iouring-send-zc` feature) | Zero-copy send tier |
-
-The full tier requires Linux 6.0+ together with the `iouring-send-zc` cargo feature for `SEND_ZC` dispatch; default builds downgrade to plain `SEND` even on 6.0+ kernels. See [`docs/audit/iouring-opcode-kernel-floor.md`](./docs/audit/iouring-opcode-kernel-floor.md) for the full per-opcode dispatch-site inventory.
+Three policies: *auto* (default; probe and fall back), `--io-uring` (require it), `--no-io-uring` (never use it). The active backend is shown in `--version` output.
 
 ### SSH transports
 
-oc-rsync has two SSH transports, selected by the operand spelling:
+- `host:path` and `user@host:path` spawn the system `ssh`, like upstream. `-e`/`--rsh` and `RSYNC_RSH` choose another remote shell. This path needs no cargo feature.
+- `ssh://[user@]host[:port]/path` is an oc-rsync extension. It uses an embedded client built on [`russh`](https://crates.io/crates/russh) and spawns no subprocess. It needs the `embedded-ssh` feature (on by default). Without the feature an `ssh://` operand fails with a diagnostic. Combining `ssh://` with `-e`/`--rsh` or `RSYNC_RSH` is rejected.
 
-- `host:path` and `user@host:path` operands (the classic rsync spelling) spawn the system `ssh` binary, exactly like upstream rsync. `-e`/`--rsh` and `RSYNC_RSH` pick a different remote shell program; `~/.ssh/config`, `ssh-agent`, `ControlMaster`, and `ProxyCommand` are handled by the spawned program itself. This path is always available and does not depend on any Cargo feature.
-- `ssh://[user@]host[:port]/path` URL operands (an oc-rsync extension; upstream rsync has no `ssh://` scheme) use an embedded SSH client built on the Rust [`russh`](https://crates.io/crates/russh) crate. This path spawns no subprocess. It requires the `embedded-ssh` feature (on by default); without the feature, an `ssh://` operand fails fast with a diagnostic instead of falling back. Combining an `ssh://` operand with `-e`/`--rsh` or `RSYNC_RSH` is rejected as a conflict.
+The embedded client supports key-based (RSA, ED25519, ECDSA) and password authentication, and `SSH_AUTH_SOCK` agents. It reads `~/.ssh/config` and `/etc/ssh/ssh_config` with an in-house parser (`ssh-config-parse` feature, on by default): `Host` and `Match` blocks, `Include`, first-obtained-wins precedence, `ProxyCommand` / `ProxyJump`, and the host-key and authentication families. A differential harness checks it against `ssh -G` in CI.
 
-The embedded client authenticates with key-based (RSA, ED25519, ECDSA) and password methods compatible with OpenSSH, and reads per-host settings from `~/.ssh/config` (and `/etc/ssh/ssh_config`) with an in-house parser (`rsync_io::ssh::ssh_config`, on by default via the `ssh-config-parse` feature), not an external SSH-config crate. On the `ssh://` path:
+Limitations: some SSH features (for example certificate-based auth) may be missing; please open an issue. The embedded client bridges a synchronous transfer pipeline to async russh through `spawn_blocking`; see [`docs/design/russh-async-native-path.md`](./docs/design/russh-async-native-path.md) for the planned async-native path.
 
-- All SSH state (connection, channel, auth context) lives in the oc-rsync process rather than crossing a pipe to a child.
-- `~/.ssh/config` semantics mirror the OpenSSH reader: `Host` and `Match` blocks (the full criteria set with the two-pass final model), `Include`, first-obtained-wins precedence, `ProxyCommand` / `ProxyJump`, and the host-key verification and authentication-control families, verified against `ssh -G` by a differential harness in CI.
-- SSH agent forwarding via `SSH_AUTH_SOCK` is honored when set.
-
-Current limitations of the embedded client:
-
-- Some exotic SSH features (for example SSH-2 keepalive intervals and certificate-based auth) may not be fully supported; please open an issue if you hit one.
-- The current `spawn_blocking` thread-pool bridge between the synchronous transfer pipeline and the async russh client throttles daemon concurrency at hundreds of concurrent sessions. The RUSSH-9..14 work moves the SSH transport to a fully async-native path; see [`docs/design/russh-async-native-path.md`](./docs/design/russh-async-native-path.md) for the planned evolution and [`docs/design/russh-async-native-back-compat-shim.md`](./docs/design/russh-async-native-back-compat-shim.md) for the back-compat shim.
-
-See also the `SSH TRANSPORT` section of `oc-rsync(1)` for the man-page summary.
+See also the `SSH TRANSPORT` section of `oc-rsync(1)`.
 
 ### QUIC transport
 
-oc-rsync can carry the rsync protocol over QUIC (RFC 9000/9001, i.e. TLS 1.3 over UDP) as an alternative to a plain `rsync://` TCP socket. QUIC is an oc-rsync extension -- upstream rsync has no QUIC transport -- so it is compile-gated behind the `quic` Cargo feature and is **off by default**; stock and release builds do not carry it. Build the client and daemon with the feature to enable it:
+oc-rsync can carry the rsync protocol over QUIC (RFC 9000/9001, TLS 1.3 over UDP) instead of a plain `rsync://` TCP socket. Upstream rsync has no QUIC transport. It is behind the `quic` cargo feature and is **off by default**; release builds do not carry it.
 
 ```sh
 cargo build --release --features quic -p cli -p daemon
 ```
 
-**Background and trust model.** QUIC always runs TLS 1.3 -- there is no unauthenticated QUIC -- and negotiates the ALPN token `rsync`. The daemon presents a certificate and the client verifies it; optionally the client also presents a certificate that the daemon verifies (mutual TLS). Selecting QUIC is hard-fail: if QUIC is requested but the feature or a listener is unavailable, the transfer errors out rather than silently falling back to TCP. By default the client validates the daemon certificate against the system root store; `--quic-ca <pem>` supplies a private CA instead, and a self-signed daemon can be pinned trust-on-first-use in `quic_known_hosts` (the SSH `known_hosts` analogue).
+QUIC always runs TLS 1.3 with the ALPN token `rsync`. The client verifies the daemon certificate against the system roots, a private CA (`--quic-ca`), or a trust-on-first-use pin in `quic_known_hosts`. Mutual TLS is optional. Selecting QUIC is hard-fail: if the feature or listener is unavailable, the transfer errors out rather than falling back to TCP. The cipher defaults to AES-GCM with hardware AES and ChaCha20-Poly1305 without; `--quic-cipher aes|chacha20` overrides it.
 
-**Cipher selection.** The AEAD suite is chosen to match the CPU: on hardware with AES acceleration (x86 AES-NI, ARMv8 crypto extensions) oc-rsync prefers AES-GCM, which is fastest there; without hardware AES it prefers ChaCha20-Poly1305. Override the family explicitly with `--quic-cipher aes|chacha20`. AES-128-GCM is always kept available because RFC 9001 mandates it for QUIC Initial packets.
-
-**Creating certificates with OpenSSL.** A self-signed certificate is enough for a private daemon (pair it with `--quic-ca` or TOFU pinning on the client). The SubjectAltName must match the host the client connects to:
+Create a self-signed daemon certificate (the SubjectAltName must match the host clients connect to):
 
 ```sh
-# Daemon server certificate + key (RSA shown; EC/Ed25519 also work).
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout quic-key.pem -out quic-cert.pem -days 365 \
   -subj "/CN=rsync.example.com" \
   -addext "subjectAltName=DNS:rsync.example.com"
 ```
 
-For **mutual TLS (quic-mtls)** you also need a CA that signs client certificates:
+For mutual TLS, also create a client CA and sign a client certificate:
 
 ```sh
-# 1. A private CA that the daemon will trust for client certs.
 openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
   -keyout ca-key.pem -out ca-cert.pem -subj "/CN=oc-rsync client CA"
-
-# 2. A client key + certificate-signing request.
 openssl req -newkey rsa:2048 -nodes \
   -keyout client-key.pem -out client.csr -subj "/CN=alice"
-
-# 3. Sign the client certificate with the CA.
 openssl x509 -req -in client.csr -CA ca-cert.pem -CAkey ca-key.pem \
   -CAcreateserial -out client-cert.pem -days 365
 ```
 
-**Daemon configuration** (`oc-rsyncd.conf`, global directives):
+Daemon configuration (`oc-rsyncd.conf`, global section):
 
 ```ini
 quic cert file = /etc/oc-rsync/quic-cert.pem
 quic key file  = /etc/oc-rsync/quic-key.pem
-# quic port defaults to the module `port` (873); override if desired:
+# quic port defaults to the module `port` (873):
 # quic port = 1873
-# For mutual TLS, require and verify a client certificate against this CA:
+# For mutual TLS:
 quic client ca file = /etc/oc-rsync/ca-cert.pem
 ```
 
-**Client usage:**
+Client usage:
 
 ```sh
-# Select QUIC for a daemon target -- the quic:// scheme or the --quic modifier.
 oc-rsync -a quic://host/module/ dest/
 oc-rsync -a --quic host::module/ dest/
-
-# Verify a self-signed daemon against a private CA.
 oc-rsync -a --quic-ca ca-cert.pem quic://host/module/ dest/
-
-# Mutual TLS: present a client certificate and key (supply both together).
-oc-rsync -a --quic --quic-cert client-cert.pem --quic-key client-key.pem \
-  host::module/ dest/
-
-# Force a cipher family (default is hardware-adaptive as described above).
+oc-rsync -a --quic --quic-cert client-cert.pem --quic-key client-key.pem host::module/ dest/
 oc-rsync -a --quic --quic-cipher chacha20 quic://host/module/ dest/
 ```
 
-Connection tuning is available via `--quic-cc` (congestion controller) and `--quic-window` (flow-control window). See [`docs/quic-transport.md`](./docs/quic-transport.md) for the full operator guide.
+`--quic-cc` selects the congestion controller and `--quic-window` the flow-control window. Full guide: [`docs/quic-transport.md`](./docs/quic-transport.md).
 
 ### Performance
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
 
-Every tagged release runs [`.github/workflows/benchmark.yml`](./.github/workflows/benchmark.yml) against **both** upstream rsync 3.5.0 (current) and 3.4.4 (what most distributions ship), across local, SSH, and daemon transfer modes. Every mode reports **elapsed time**, **peak RSS** and a **corpus rate** in MiB/s, so a throughput win bought with memory is visible rather than hidden. The elapsed figure is a median and carries the run-to-run spread that produced it as `±N%`, so a cell resting on one lucky run does not read like one that repeated to within a percent. Peak RSS is reported against the primary baseline only -- memory is a property of the binary and its workload, not of the peer it talked to, so a second column would repeat one measurement rather than add one. The chart, a per-mode breakdown per baseline, the kernel the numbers were taken on and whether it advertises io_uring `IORING_OP_SEND_ZC` are attached to the [GitHub release](https://github.com/oferchen/rsync/releases/latest) as `benchmark.png`, `benchmark_report.md` and `benchmark_results.json`.
+Each tagged release runs [`.github/workflows/benchmark.yml`](./.github/workflows/benchmark.yml) against upstream rsync 3.5.0 and 3.4.4 across local, SSH and daemon modes. It reports elapsed time (median, with run-to-run spread), peak RSS and corpus rate. Results are attached to the [GitHub release](https://github.com/oferchen/rsync/releases/latest) as `benchmark.png`, `benchmark_report.md` and `benchmark_results.json`.
 
-That describes the *harness*, and releases up to and including v0.6.4 predate it: their published chart and report compare against 3.4.4 alone, over a 148 MB corpus, with no peak-RSS, corpus-rate or spread figures. The image above is served from whichever release is latest, so read that release's own `benchmark_report.md` for what its numbers actually measured rather than assuming this paragraph.
+Releases up to and including v0.6.4 predate this harness. Their published report compares against 3.4.4 only, without peak RSS, corpus rate or spread. The chart above comes from whichever release is latest, so read that release's `benchmark_report.md` for what it measured.
 
-Threaded architecture replaces upstream's fork-based pipeline while keeping full protocol compatibility, reducing syscall overhead and context switches. Adaptive I/O buffers scale from 8KB to 1MB based on file size. Optional io_uring on Linux 5.6+ with three policies: *auto* (default; probe kernel and fall back to standard I/O), `--io-uring` (require io_uring; error if unavailable), `--no-io-uring` (always use standard buffered I/O). The active backend is reported in `--version` output. See `oc-rsync(1)` for details.
+oc-rsync uses threads where upstream forks, while keeping the same protocol. I/O buffers are sized by file size.
 
 ### Performance tuning
 
-#### Avoid SSH + rsync double-compression
-
-SSH stream compression (`-C` on the `ssh` command line, or `Compression yes` in `~/.ssh/config` or `/etc/ssh/ssh_config`) compresses every byte the SSH session carries. The rsync wire protocol has its own compression layer, enabled with `--compress` / `-z` (and tuned with `--compress-choice`, `--compress-level`, `--compress-threads`). Running both at once feeds already-compressed bytes back into a second compressor: the second pass adds CPU on both sides and frame overhead while shrinking the stream by almost nothing, and on CPU-bound hosts throughput typically drops by 20-40%.
-
-Pick one layer. For most workloads prefer rsync's own compression: `oc-rsync` negotiates zstd when both peers support it (falling back to zlib), which is usually faster and tighter than SSH's zlib stream, and it can be skipped per file via `--skip-compress`. If you have a reason to keep SSH compression on (for example, a shared SSH config you cannot edit), drop `-z` from the rsync invocation instead.
+**Avoid double compression over SSH.** SSH compression (`ssh -C`, or `Compression yes` in `ssh_config`) and rsync's own `-z` compress the same bytes twice, costing CPU for little gain. Pick one. Usually prefer rsync's `-z`: oc-rsync negotiates zstd when both peers support it, falling back to zlib, and honours `--skip-compress`.
 
 ```sh
 # Good: rsync compresses, SSH carries the bytes as-is.
@@ -277,47 +207,23 @@ oc-rsync -avz user@host:/src/ /dst/
 oc-rsync -avz -e 'ssh -C' user@host:/src/ /dst/
 ```
 
-`oc-rsync` warns when it spots `-C` (or `-o Compression=yes`) in the `--rsh` / `-e` argv it builds for the SSH child, and - with the default `ssh-config-parse` feature - also when a `Compression yes` directive applies via `~/.ssh/config`, the `-F` config file, or `/etc/ssh/ssh_config` (honouring `Host` and `Match` blocks). It warns but does not auto-disable either layer, so if throughput looks CPU-bound on an SSH transfer, drop `-z` or the SSH compression yourself.
+oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (with `ssh-config-parse`) when a `Compression yes` directive applies from `ssh_config`. It does not disable either layer.
 
-#### `--zero-copy` and io_uring `SEND_ZC`
+**`--zero-copy` and `SEND_ZC`.** `--zero-copy` may use `sendfile`, `splice`, `copy_file_range` and io_uring `SEND_ZC` on Linux. `SEND_ZC` dispatch needs the `iouring-send-zc` feature (Linux 6.0+), which is not in the default set. See [`docs/design/iouring-send-zc.md`](./docs/design/iouring-send-zc.md).
 
-`--zero-copy` advertises io_uring `SEND_ZC` as one of the zero-copy primitives it may dispatch on Linux, alongside `sendfile`, `splice`, and `copy_file_range`. The `SEND_ZC` dispatch itself is gated behind the `iouring-send-zc` cargo feature, which is **not** in the default feature set (it is kept opt-in in `crates/fast_io/Cargo.toml` pending multi-kernel benchmark numbers). Default distro builds therefore use plain io_uring `SEND` even when `--zero-copy` is set; the other zero-copy primitives still kick in where the kernel supports them.
+**SSH stderr socketpair.** The `ssh-socketpair-stderr` feature drains the SSH child's stderr through a `socketpair(AF_UNIX, SOCK_STREAM)` instead of a pipe, with event-driven shutdown. It helps with chatty remote shells and many parallel transfers. Linux is the recommended target. See [`docs/ssh-transport.md`](./docs/ssh-transport.md) and [`docs/design/socketpair-stderr-channel.md`](./docs/design/socketpair-stderr-channel.md). When the runtime cannot honour the feature, one of these warnings appears once per process:
 
-To get `SEND_ZC` dispatch, build with `cargo build --features iouring-send-zc` (requires Linux 6.0+). See [`docs/design/iouring-send-zc.md`](./docs/design/iouring-send-zc.md) for the full rationale and the path to flipping this default on.
+- `SSH stderr async drain unavailable on this platform` - `socketpair` failed; the session falls back to a pipe.
+- `SSH stderr socketpair partially set up` - `dup(2)` on the parent half failed; shutdown relies on a 50 ms timeout.
+- `SSH stderr async drain falling back to Stdio::inherit()` - stderr goes straight to the parent terminal and is not captured.
 
-#### SSH stderr socketpair channel
+### Known limitations
 
-Default builds drain the SSH child's stderr through an anonymous pipe on a dedicated reader thread. The `ssh-socketpair-stderr` cargo feature swaps that pipe for a `socketpair(AF_UNIX, SOCK_STREAM)` and, on the async transport, hands the parent end to an epoll/kqueue-integrated tokio drain. The wake-up and shutdown paths become event-driven instead of timeout-bounded, and the larger socket buffer absorbs bursty remote shells without dropping lines.
-
-Operators benefit when SSH stderr is chatty (banners, MOTDs, `ssh -v`), the network is high-latency, or many parallel transfers are in flight. In those workloads the pipe-based drain delays or truncates diagnostic output and can leave drain threads parked past child exit. The socketpair path keeps stderr capture deterministic at session boundaries.
-
-Build with:
-
-```sh
-cargo build --features ssh-socketpair-stderr
-```
-
-Linux is the recommended target; the Windows shim is tracked separately (SSE-5). See [`docs/ssh-transport.md`](./docs/ssh-transport.md) and [`docs/design/socketpair-stderr-channel.md`](./docs/design/socketpair-stderr-channel.md).
-
-Three one-shot warnings may appear on stderr (sync path) or via `tracing` target `ssh::stderr` (async path) when the runtime cannot honour the feature. Each fires at most once per process; the substrings are the operator-grep contract:
-
-- `SSH stderr async drain unavailable on this platform` - the kernel rejected `socketpair(AF_UNIX, SOCK_STREAM, 0)` (typically `EMFILE`, `ENFILE`, `EPERM`, or `ENOSYS` under seccomp). The session falls back to `Stdio::piped()`. Raise the per-process fd limit or relax the sandbox if you want the socketpair drain back.
-- `SSH stderr socketpair partially set up` - the socketpair allocated but `dup(2)` on the parent half failed (usually `EMFILE`). The drain still reads from the socketpair, but `shutdown_read` becomes a no-op and the drain thread relies on a 50 ms timeout at child exit. Investigate fd pressure in the parent process.
-- `SSH stderr async drain falling back to Stdio::inherit()` - the async transport could not stand up the socketpair, so the SSH child's stderr is wired straight to the parent terminal. `stderr_capture()` returns empty for this session; consume diagnostics from the parent's own stderr instead.
-
-### Known Limitations / Architectural Trade-offs
-
-oc-rsync is wire-compatible with upstream rsync 3.5.0, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:
-
-- **io_uring kernel requirement.** Provided buffer rings (PBUF_RING) require Linux **5.19+**; older 5.6-5.18 kernels fall back to standard buffered I/O via runtime probing.
-- **Two distinct buffer pools.** The **engine** `BufferPool` is the one the `OC_RSYNC_BUFFER_POOL_SIZE`, `OC_RSYNC_BUFFER_POOL_MEMORY_CAP` and `OC_BUFFER_POOL_BLOCK_SIZE` environment variables tune (`crates/engine/src/local_copy/buffer_pool/`). The **io_uring registered buffer pool** is separate, is sized statically, does not auto-adapt under sustained I/O pressure, and is *not* affected by those variables. Whether that static sizing costs anything in practice is **not yet measured**: a same-host comparison of the io_uring and standard-I/O backends came out within noise (+1.2% bulk, -1.2% fan-out on Linux 7.1.5/x86_64), which bounds the whole backend rather than this pool. Treat the fixed sizing as a documented limitation awaiting a fan-out-specific measurement, not as a known bottleneck.
-- **bgid namespace.** io_uring buffer-group IDs are a 16-bit namespace and the buffer-ring helpers cap at that bound, returning `BgidAllocError::Exhausted` rather than wrapping. Nothing in the transfer path allocates one today: `BufferRing` and `BgidAllocator` are constructed only inside `fast_io` and its own tests, so an accepted connection consumes no bgid at all and the namespace is untouched in the steady state. The cap is the bound that keeps exhaustion from becoming a silent condition when per-session rings are wired in; see [`docs/audits/bgid-lifecycle.md`](./docs/audits/bgid-lifecycle.md) for the lifecycle audit and its open telemetry follow-up.
-- **Delta computation is single-threaded per file by default.** The delta sender is sequential per file. Large-file delta scanning can be parallelised opt-in with `--parallel-delta-scan`, and basis-signature hashing with `--checksum-threads=N`; without those flags a large-file transfer uses one CPU for delta work.
-- **SSH compression interaction.** When the SSH transport already compresses the stream (e.g., `Compression yes` in `ssh_config`), running `oc-rsync -z` compresses payloads twice. oc-rsync warns when it detects `-C` / `-o Compression=yes` in the SSH argv it builds, and - with the default `ssh-config-parse` feature - when a `Compression yes` directive applies via `~/.ssh/config` / `-F` / `/etc/ssh/ssh_config`; it does not auto-disable either layer, so operators should pick one.
-- **Daemon encryption.** The daemon protocol is plaintext, matching upstream rsync (authentication only, no encryption). oc-rsync has no built-in TLS client - the former `--ssl` / `client-tls` path was removed to match upstream. Encrypt with the SSH transport, or place the daemon behind a TLS-terminating proxy (`stunnel`, HAProxy, nginx) and reach it through an external wrapper such as `rsync-ssl` or `stunnel`, the same model as upstream.
-- **Windows IOCP scope.** IOCP is wired for socket I/O (daemon and SSH transports) and for the receive-side disk-write pipeline (`transfer::disk_commit` dispatches `Writer::Iocp` when the IOCP backend is selected on Windows). An IOCP file *reader* also exists, but the per-file dispatch that would select it is behind the experimental, non-default `adaptive-basis-dispatch` feature, so default builds still read files via standard buffered I/O.
-- **`.rsync-filter` per-directory inheritance.** Nested merges and `!`-clear semantics work; `merge`, `filter-merge-recursion`, `filter-depth`, `exclude` and `exclude-lsh` pass in the gating 3.5.0 corpus. `filter-merge-content-echo` passes too, so the whole `.rsync-filter` group is clean in the gating corpus; the deepest anchored-vs-unanchored corner cases remain an area of ongoing hardening.
-- **`--checksum-seed` / `--fuzzy`.** Both are implemented and honoured on the common path (`--fuzzy` ports upstream's `fuzzy_distance` basis selection); deeper corner-case conformance audits against upstream rsync 3.5.0 are tracked separately.
+- **Two buffer pools.** `OC_RSYNC_BUFFER_POOL_SIZE`, `OC_RSYNC_BUFFER_POOL_MEMORY_CAP` and `OC_BUFFER_POOL_BLOCK_SIZE` tune the engine `BufferPool` only. The io_uring registered buffer pool is sized statically and does not adapt. Its cost has not been measured separately.
+- **io_uring buffer-group IDs** are a 16-bit namespace and allocation returns `BgidAllocError::Exhausted` rather than wrapping. No transfer path allocates one today. See [`docs/audits/bgid-lifecycle.md`](./docs/audits/bgid-lifecycle.md).
+- **Delta work is single-threaded per file by default.** Opt in with `--parallel-delta-scan` and `--checksum-threads=N`.
+- **Daemon traffic is plaintext**, like upstream (authentication, no encryption). There is no built-in TLS client. Use SSH, or put the daemon behind a TLS proxy (`stunnel`, HAProxy, nginx) and connect with a wrapper such as `rsync-ssl` or `stunnel`.
+- **Windows IOCP** covers sockets and disk writes. The IOCP file reader is only selected under the experimental `adaptive-basis-dispatch` feature.
 
 ---
 
@@ -336,22 +242,22 @@ Download from the [Releases](https://github.com/oferchen/rsync/releases) page:
 
 | Platform | Formats |
 |----------|---------|
-| Linux (x86_64, aarch64) | `.deb`, `.rpm` (with OpenSSL), static musl `.tar.gz` |
+| Linux (x86_64, aarch64) | `.deb`, `.rpm`, Alpine `.apk`, static musl `.tar.gz` |
 | macOS (x86_64, aarch64) | `.tar.gz` |
 | Windows (x86_64) | `.tar.gz`, `.zip` |
 
-Linux static tarballs are available in two checksum variants:
+Linux static tarballs come in two checksum variants:
 
 | Variant | Filename | Description |
 |---------|----------|-------------|
-| **Pure Rust** (recommended) | `*-musl.tar.gz` | Pure-Rust checksums, zero system dependencies |
-| **OpenSSL** | `*-musl-openssl.tar.gz` | OpenSSL-accelerated MD4/MD5 checksums (vendored, statically linked) |
+| **Pure Rust** (recommended) | `*-musl.tar.gz` | No system dependencies |
+| **OpenSSL** | `*-musl-openssl.tar.gz` | OpenSSL MD4/MD5, vendored and statically linked |
 
-Each release also includes three toolchain variants: **stable** (recommended, no suffix), **beta** (`-beta`), and **nightly** (`-nightly`).
+Each release also ships three toolchain builds: **stable** (no suffix, recommended), **beta** (`-beta`) and **nightly** (`-nightly`).
 
 ### Build from source
 
-Requires Rust **1.89+**.
+Requires Rust **1.89** or newer. The repository pins 1.89.0 in `rust-toolchain.toml`.
 
 ```bash
 git clone https://github.com/oferchen/rsync.git
@@ -361,106 +267,67 @@ cargo build --workspace --release
 
 ### Cargo features
 
-The workspace exposes the following opt-in features. Defaults are tuned for the
-release binary on modern Linux/macOS/Windows hosts; everything marked
-`experimental` is wired but not yet promoted to the default set.
-
 | Feature | Crate(s) | Default | Purpose | Status |
 |---------|----------|:-------:|---------|--------|
-| `zstd` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol`, `batch` | yes | Enables zstd compression codec and wire negotiation. | stable |
-| `lz4` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol` | yes | Enables LZ4 compression codec. | stable |
-| `zlib-ng` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol` | no | Selects the SIMD-accelerated `zlib-ng` C backend instead of pure-Rust zlib. | stable |
-| `xattr` | workspace, `cli`, `core`, `transfer`, `daemon`, `metadata` | yes | Preserves extended attributes (`-X`) on Unix and NTFS ADS on Windows. | stable |
-| `acl` | workspace, `cli`, `core`, `engine`, `transfer`, `daemon`, `metadata` | yes | Preserves POSIX/NFSv4 ACLs (`-A`) via `exacl`, NTFS ACLs via `windows-rs`. | stable |
-| `iconv` | workspace, `cli`, `core`, `transfer`, `daemon`, `protocol` | yes | Filename and symlink-target charset transcoding (`--iconv`). | stable |
-| `parallel` | workspace, `cli`, `engine`, `checksums` | yes | Rayon-based multi-core file and checksum operations. | stable |
-| `io_uring` | workspace, `transfer`, `fast_io` | yes | Linux 5.6+ batched async I/O with runtime fallback. | stable |
-| `iocp` | workspace, `transfer`, `fast_io` | yes | Windows I/O Completion Ports for overlapped file and socket I/O. | stable |
-| `copy_file_range` | workspace, `fast_io` | yes | Compat alias; the `copy_file_range` syscall is now always compiled with runtime detection. | stable |
-| `async` | workspace, `core`, `engine`, `daemon` | yes | Brings in tokio for async I/O paths across the orchestrator stack. | stable |
-| `openssl` | workspace, `checksums` | no | Routes MD4/MD5 through the system OpenSSL build. | stable |
-| `openssl-vendored` | workspace, `checksums` | no | Same as `openssl` but statically links a vendored OpenSSL. | stable |
-| `embedded-ssh` | workspace, `core`, `rsync_io` | yes | Built-in SSH client via `russh` for `ssh://` URL operands; `host:path` transfers still spawn the system `ssh`. | stable |
-| `sd-notify` | workspace, `core`, `daemon` | no | systemd `sd-notify` integration for the daemon. | stable |
-| `incremental-flist` | `transfer` | no | Incremental file-list processing with failed-directory tracking (a `transfer` crate feature, not forwarded into the default `oc-rsync` build). | stable |
-| `lazy-metadata` | `engine` | yes | Defers `stat()` calls until metadata is needed. | stable |
-| `multi-producer` | `engine` | no | Relaxes the single-producer compile-time invariant on `WorkQueueSender`. | experimental |
-| `thread-slab-pool` | `engine` | no | Per-thread bounded LIFO slab in front of `BufferPool`; pays off above ~32 workers (#1271, #1370). | experimental |
-| `vmsplice` | `fast_io`, `transfer` | no | Linux `vmsplice(2)` + `splice(2)` zero-copy writer for large page-aligned chunks. | experimental |
-| `async-ssh` | `core`, `rsync_io` | no | Wires `AsyncSshTransport` into the client remote path; opt-in at runtime via `OC_RSYNC_ASYNC_SSH=1` (#1593, #1796, #1805, #1806). | experimental |
-| `ssh-socketpair-stderr` | `rsync_io` | no | Constructs the SSH child's stderr over a `socketpair(AF_UNIX, SOCK_STREAM)` instead of an anonymous pipe, enabling epoll/kqueue-integrated async drain and a larger default buffer to absorb chatty remote shells (Linux recommended; Windows shim pending SSE-5). See [`docs/ssh-transport.md`](./docs/ssh-transport.md) and [`docs/design/socketpair-stderr-channel.md`](./docs/design/socketpair-stderr-channel.md) (#2371, #2372). | experimental |
-| `async-daemon` | `daemon` | no | Hybrid tokio accept loop dispatching sync workers via `spawn_blocking` (#1935). | experimental |
-| `concurrent-sessions` | `daemon` | no | Shared `dashmap` session state for multi-session daemons. | experimental |
-| `tracing` | `core`, `engine`, `transfer`, `daemon` | no | Structured `tracing` instrumentation for diagnostics. | stable |
+| `zstd` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol`, `batch` | yes | zstd codec and negotiation. | stable |
+| `lz4` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol` | yes | LZ4 codec. | stable |
+| `zlib-ng` | workspace, `core`, `engine`, `transfer`, `compress`, `protocol` | no | SIMD `zlib-ng` C backend instead of pure-Rust zlib. | stable |
+| `xattr` | workspace, `cli`, `core`, `transfer`, `daemon`, `metadata` | yes | Extended attributes (`-X`); NTFS ADS on Windows. | stable |
+| `acl` | workspace, `cli`, `core`, `engine`, `transfer`, `daemon`, `metadata` | yes | ACLs (`-A`) via `exacl`; NTFS ACLs via `windows-rs`. | stable |
+| `iconv` | workspace, `cli`, `core`, `transfer`, `daemon`, `protocol` | yes | Filename charset conversion (`--iconv`). | stable |
+| `parallel` | workspace, `cli`, `engine`, `checksums` | yes | Rayon-based parallel file and checksum work. | stable |
+| `io_uring` | workspace, `transfer`, `fast_io` | yes | Linux 5.6+ batched I/O with runtime fallback. | stable |
+| `iocp` | workspace, `transfer`, `fast_io` | yes | Windows I/O Completion Ports. | stable |
+| `copy_file_range` | workspace, `fast_io` | yes | Compatibility alias; the syscall is always compiled with runtime detection. | stable |
+| `async` | workspace, `core`, `engine`, `daemon` | yes | tokio for async I/O paths. | stable |
+| `embedded-ssh` | workspace, `core`, `rsync_io` | yes | Built-in SSH client for `ssh://` operands. | stable |
+| `openssl` | workspace, `checksums` | no | MD4/MD5 through system OpenSSL. | stable |
+| `openssl-vendored` | workspace, `checksums` | no | As `openssl`, statically linked. | stable |
+| `sd-notify` | workspace, `core`, `daemon` | no | systemd `sd-notify` for the daemon. | stable |
+| `quic` | workspace, `cli`, `core`, `daemon` | no | QUIC transport (see above). | opt-in |
+| `iouring-send-zc` | workspace, `fast_io` | no | io_uring `SEND_ZC` dispatch (Linux 6.0+). | opt-in |
+| `daemon-seccomp` | workspace, `daemon` | no | seccomp allowlist for daemon workers. Once compiled in, it is on at runtime; opt out with `OC_RSYNC_NO_SECCOMP=1`. | opt-in |
+| `incremental-flist` | `transfer` | no | Incremental file-list processing (not forwarded into the default binary). | stable |
+| `lazy-metadata` | `engine` | yes | Defers `stat()` until metadata is needed. | stable |
+| `multi-producer` | `engine` | no | Relaxes the single-producer invariant on `WorkQueueSender`. | experimental |
+| `thread-slab-pool` | `engine` | no | Per-thread slab in front of `BufferPool`. | experimental |
+| `vmsplice` | `fast_io`, `transfer` | no | Linux `vmsplice(2)` + `splice(2)` writer. | experimental |
+| `async-ssh` | `core`, `rsync_io` | no | Async SSH transport; enable at runtime with `OC_RSYNC_ASYNC_SSH=1`. | experimental |
+| `ssh-socketpair-stderr` | `rsync_io` | no | SSH stderr over a socketpair (see above). | experimental |
+| `async-daemon` | `daemon` | no | tokio accept loop dispatching sync workers. | experimental |
+| `concurrent-sessions` | `daemon` | no | Shared session state for multi-session daemons. | experimental |
+| `tracing` | `core`, `engine`, `transfer`, `daemon` | no | Structured `tracing` instrumentation. | stable |
 
-#### Receiver memory tuning: `SpillPolicy`
+#### Receiver spill
 
-The concurrent-delta receiver bounds its in-memory `ReorderBuffer` through a
-process-wide `SpillPolicy` knob. The default policy keeps everything in memory
-(byte-equivalent to prior releases). Opt in to disk-backed spill by setting
-`OC_RSYNC_SPILL_THRESHOLD_BYTES` (e.g. `64M`) and, optionally,
-`OC_RSYNC_SPILL_DIR` to point at a fast scratch directory. The CLI flags
-`--spill-dir` and `--spill-threshold-bytes` shadow the env vars when present.
-Full surface (env vars, reclaim mode,
-granularity, compression, validation rules, defaults table) is in
-[`docs/design/spill-policy-public-api.md`](./docs/design/spill-policy-public-api.md);
-the underlying buffer is documented in
-[`docs/design/reorderbuffer-spill-to-tempfile.md`](./docs/design/reorderbuffer-spill-to-tempfile.md).
-Operator-facing tuning guidance is in
-[`docs/operator-migration-guide-vNEXT.md`](./docs/operator-migration-guide-vNEXT.md)
-under *Receiver spill tunability*.
-
-#### Choosing features for your build
-
-```bash
-# Default release build (recommended starting point).
-cargo build --workspace --release
-
-# Enable the async network paths end-to-end. async-ssh and async-daemon are
-# crate-level features, so build the affected crates directly.
-cargo build --release -p core --features async-ssh
-cargo build --release -p daemon --features async-daemon
-
-# Squeeze out maximum parallelism on a fat machine: keep the workspace
-# defaults and add the experimental engine slab and vmsplice writer.
-cargo build --workspace --release \
-    --features "parallel async io_uring" \
-  && cargo build --release -p engine --features thread-slab-pool \
-  && cargo build --release -p fast_io --features vmsplice
-```
+The concurrent-delta receiver keeps its reorder buffer in memory by default. Set `OC_RSYNC_SPILL_THRESHOLD_BYTES` (for example `64M`) to spill to disk, and optionally `OC_RSYNC_SPILL_DIR`. The `--spill-threshold-bytes` and `--spill-dir` flags override the variables. See [`docs/design/spill-policy-public-api.md`](./docs/design/spill-policy-public-api.md) and [`docs/operator-migration-guide-vNEXT.md`](./docs/operator-migration-guide-vNEXT.md).
 
 ---
 
 ## Usage
 
-Works like `rsync` - drop-in compatible:
+Works like `rsync`:
 
 ```bash
 # Local sync
 oc-rsync -av ./source/ ./dest/
 
-# Remote pull (SSH)
+# Remote pull / push over SSH
 oc-rsync -av user@host:/remote/path/ ./local/
-
-# Remote push (SSH)
 oc-rsync -av ./local/ user@host:/remote/path/
 
-# Daemon pull
+# Daemon pull / push
 oc-rsync -av rsync://host/module/ ./local/
-
-# Daemon push
 oc-rsync -av ./local/ rsync://host/module/
 
-# Daemon over remote shell (SSH-based daemon access)
+# Daemon over remote shell
 oc-rsync -av host::module/path/ ./local/
 
-# Run as daemon
+# Run as a daemon
 oc-rsync --daemon --config=/etc/oc-rsync/oc-rsyncd.conf
 
-# Delta transfer with compression
+# Compression, checksum-based sync with deletion
 oc-rsync -avz --compress-level=3 ./source/ ./dest/
-
-# Checksum-based sync with deletion
 oc-rsync -avc --delete ./source/ ./dest/
 
 # Batch mode (record and replay)
@@ -468,7 +335,7 @@ oc-rsync -av --write-batch=changes ./source/ ./dest/
 oc-rsync -av --read-batch=changes ./other-dest/
 ```
 
-For supported options: `oc-rsync --help`
+For all options: `oc-rsync --help`. Release history: [CHANGELOG](./CHANGELOG.md).
 
 ---
 
@@ -476,7 +343,7 @@ For supported options: `oc-rsync --help`
 
 ### Prerequisites
 
-- Rust 1.89.0 (managed via `rust-toolchain.toml`)
+- Rust 1.89.0 (pinned in `rust-toolchain.toml`)
 - [`cargo-nextest`](https://nexte.st/): `cargo install cargo-nextest --locked`
 
 ### Build and test
@@ -500,7 +367,7 @@ crates/daemon/          # Daemon mode, module access control, systemd
 crates/checksums/       # Rolling and strong checksums (MD4, MD5, XXH3, SIMD)
 crates/filters/         # Include/exclude pattern engine, .rsync-filter
 crates/metadata/        # Permissions, uid/gid, mtime, ACLs, xattrs
-crates/platform/        # Platform-specific unsafe code isolation (signals, chroot)
+crates/platform/        # Process, identity, environment and signal FFI
 crates/rsync_io/        # SSH stdio, rsync:// TCP transport, handshake
 crates/fast_io/         # Platform I/O (io_uring, copy_file_range, sendfile)
 crates/compress/        # zstd, lz4, zlib compression codecs
@@ -518,7 +385,7 @@ crates/windows-gnu-eh/  # Windows GNU exception handling shims
 crates/test-support/    # Shared test utilities (dev-dependency only)
 ```
 
-See `cargo doc --workspace --no-deps --open` for API documentation.
+API documentation: `cargo doc --workspace --no-deps --open`.
 
 ### Architecture
 
@@ -528,42 +395,30 @@ cli -> core -> engine, daemon, rsync_io, logging
                                                                             -> platform
 ```
 
-Key crates: **cli** (Clap v4), **core** (orchestration facade), **protocol** (wire v28-32, multiplex framing), **transfer** (generator/receiver, delta pipeline), **engine** (local copy, sparse writes, buffer pool), **checksums** (MD4/MD5/XXH3, SIMD), **daemon** (TCP, auth, modules), **platform** (unsafe code isolation).
-
 ---
 
 ## Security
 
-All crates enforce `#![deny(unsafe_code)]`. Targeted `#[allow(unsafe_code)]` is permitted only in crates that wrap platform FFI or SIMD intrinsics:
+Every crate sets `#![deny(unsafe_code)]` at its root. Production `#[allow(unsafe_code)]` sites exist only in crates that wrap platform FFI or SIMD intrinsics: `fast_io`, `metadata`, `checksums`, `platform`, `engine`, `protocol` (one site) and `windows-gnu-eh`. Other crates allow unsafe only in tests.
 
-- **checksums** - SIMD intrinsics (AVX2, AVX-512, SSE2, SSSE3, SSE4.1, NEON, WASM) with scalar fallbacks
-- **fast_io** - io_uring, `copy_file_range`, sendfile, mmap, IOCP, `WSARecv`/`WSASend`, `setsockopt`, and the `signal::install_signal_handler` FFI wrapper, with standard I/O / no-op fallbacks
-- **metadata** - UID/GID lookup, timestamps, ownership, xattrs, ACLs
-- **platform** - chroot, daemonize, name resolution, privilege transitions (signal-handler installation moved to `fast_io::signal`)
-- **engine** - Buffer pool atomics, deferred fsync, clonefile, `CopyFileExW`
-- **protocol** - One isolated allow in `multiplex::helpers` for frame parsing
-- **windows-gnu-eh** - Windows GNU exception handling shims
+Upstream CVE status, in short:
 
-Not vulnerable to (or mitigated against) the 2024 upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747), and the rsync 3.4.3 batch (CVE-2026-29518, 43617, 43618, 43619, 43620, 45232) is closed - SEC-1, SEC-2, SEC-3 and SEC-MK series complete, TOCTOU path-based syscalls replaced with `*at` variants throughout. The rsync **3.5.0** batch of 33 CVEs is **partially closed and openly tracked**: it is a behavioural release, not a protocol one, so each item needs its own evidence rather than a blanket claim. Ten of them carry a per-CVE finding today; the other twenty-two are listed by id in [`SECURITY.md`](./SECURITY.md) as untriaged, so the gap is countable rather than implied.
+- **2024 batch** (CVE-2024-12084 to CVE-2024-12088, CVE-2024-12747): not vulnerable or mitigated.
+- **rsync 3.4.3 batch** (CVE-2026-29518, 43617, 43618, 43619, 43620, 45232): fixed or not vulnerable. Receiver filesystem calls go through `*at` syscalls anchored on a directory fd, with a Landlock layer for the daemon on Linux.
+- **rsync 3.5.0 batch** (33 CVEs): partially assessed. 14 of the 33 ids have a row in [`SECURITY.md`](./SECURITY.md), some still under audit. The other 19 are listed there by id as untriaged.
+- **rsync 3.5.1**: its security fixes are being tracked. No disposition is claimed yet.
 
-### Upstream rsync 3.4.3 hardening
-
-- **TOCTOU mitigation for path-based daemon syscalls** (CVE-2026-29518, CVE-2026-43619): the receiver routes every mutating filesystem call through a `DirSandbox` carrier anchored on an `O_DIRECTORY | O_NOFOLLOW` root dirfd, with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` runtime detection. Coverage spans the full `*at` syscall family: `unlinkat`, `mkdirat`, `symlinkat`, `linkat`, `fchmodat`, `fchownat`, `utimensat`, `renameat`, and `fstatat`. macOS provides the same `*at` semantics and is verified; Windows uses NTFS handle-based APIs, where the path TOCTOU window does not apply.
-- **Defense-in-depth (Linux only, always on)**: `crates/daemon` pins `fast_io` with its `landlock` feature under `cfg(target_os = "linux")`, so this is on in every Linux build including the released binaries rather than being something to opt into; on other targets the stub compiles and reports `Unavailable`. The daemon engages a kernel-side allowlist over the resolved module root via the Landlock LSM. A per-connection `restrict_self()` runs immediately after `apply_module_privilege_restrictions` returns, so any filesystem syscall that resolves a path outside the module root is rejected with `EACCES` regardless of which syscall the userspace code chose. The helper requests the highest Landlock ABI (up to v5) and best-effort downgrades to whatever the running kernel supports: v1 on Linux 5.13+, v2 (adds `REFER` for cross-directory renames) on 5.19+, v3 (adds `TRUNCATE`) on 6.2+, up to v5 on recent kernels. On pre-5.13 kernels the `*at` helpers remain the sole defense. See [`docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md`](./docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md).
-- **CONNECT proxy bounded-read** (CVE-2026-45232): the HTTP CONNECT response-line parser caps line length at the upstream-aligned ceiling, so the C off-by-one stack write is structurally impossible against a heap `Vec<u8>` push path.
-- **Hyphen-prefixed remote-shell hostname rejection** (rsync 3.4.3 hardening): the SSH operand parser rejects hostnames that begin with `-`, blocking the `-oProxyCommand=`-style argument-injection class.
-
-See [`SECURITY.md`](./SECURITY.md) for full status, advisory cross-references, and known-pending follow-ups.
+See [`SECURITY.md`](./SECURITY.md) for the per-CVE detail and how to report a vulnerability.
 
 ---
 
 ## Contributing
 
 1. Fork and create a feature branch.
-2. Run `cargo fmt --all` locally; CI handles `clippy` and `nextest`.
+2. Run `cargo fmt --all` locally; CI runs `clippy` and `nextest`.
 3. Open a PR with a conventional-commit prefix describing behavioural changes and interop impact.
 
-See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full local-vs-CI workflow, feature-flag conventions, and PR guidelines.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full workflow.
 
 ---
 
