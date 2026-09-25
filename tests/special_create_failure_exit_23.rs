@@ -243,6 +243,9 @@ fn symlink_create_failure_on_pull_exits_23() {
 /// Control: a nested socket that cannot be created race-safely (no `bindat()`)
 /// stays a WARNING with exit 0. Upstream skips it before the `rsyserr` arm
 /// (generator.c:2506-2519), so the exit-23 fix must not reach it.
+///
+/// The cell is a pull so the receiver is the client and writes the warning to
+/// the stderr observed here.
 #[cfg(any(
     target_os = "ios",
     target_os = "macos",
@@ -267,8 +270,8 @@ fn nested_socket_skip_still_warns_with_exit_0() {
         .arg(&shim)
         .arg("--rsync-path")
         .arg(&binary)
-        .arg(format!("{}/src/", root.display()))
-        .arg(format!("h:{}/dst/", root.display()))
+        .arg(format!("h:{}/src/", root.display()))
+        .arg(format!("{}/dst/", root.display()))
         .run()
         .expect("transfer did not finish");
     let stderr = String::from_utf8_lossy(&out.stderr);
