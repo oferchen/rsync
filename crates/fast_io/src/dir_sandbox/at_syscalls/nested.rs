@@ -94,7 +94,9 @@ pub(super) enum ParentAnchor<'a> {
 /// fall back to a path-based syscall on this error, because doing so
 /// would re-open the TOCTOU window the anchor closes. Only `ENOSYS` /
 /// `EINVAL` on the Linux resolve flags are folded into
-/// [`ParentAnchor::Fallback`] (kernel lacks the capability).
+/// [`ParentAnchor::Fallback`] (kernel lacks the capability). A Linux
+/// `EAGAIN` - a concurrent rename raced a `..` - is resolved with the
+/// confined walk instead.
 pub(super) fn anchor_parent<'a>(
     sandbox: Option<&crate::dir_sandbox::DirSandbox>,
     dest_dir: &Path,
@@ -139,6 +141,15 @@ pub(super) fn anchor_parent<'a>(
                 Ok(Some(dirfd)) => Ok(ParentAnchor::Anchored { dirfd, name: leaf }),
                 // ENOSYS / EINVAL: capability absent, degrade gracefully.
                 Ok(None) => Ok(ParentAnchor::Fallback),
+                // EAGAIN: a rename or mount elsewhere raced the kernel's
+                // resolution of a `..` in a followed symlink (openat2(2)). It
+                // is not a verdict on the path, so resolve with the confined
+                // walk - the same policy, and upstream's own resolver
+                // (`syscall.c:3032-3115`) - rather than refusing or degrading
+                // to a path-based op.
+                Err(err) if err.raw_os_error() == Some(libc::EAGAIN) => sandbox
+                    .open_subdir_confined(&parent_rel)
+                    .map(|dirfd| ParentAnchor::Anchored { dirfd, name: leaf }),
                 // Deliberate refusal (EXDEV/ELOOP/ENOENT/ENOTDIR): the
                 // op must fail, never silently re-resolve via a path.
                 Err(err) => Err(err),
