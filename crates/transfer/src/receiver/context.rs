@@ -256,6 +256,27 @@ pub struct ReceiverContext {
     ///
     /// - `flist.c:2789` - `stats.flist_size += stats.total_read - start_read;`
     pub(in crate::receiver) flist_size: u64,
+    /// Per-type tallies `(dirs, symlinks, devices, specials)` of every
+    /// received file-list entry, initial list and INC_RECURSE sub-lists alike.
+    ///
+    /// Bumped as each entry is read, before `flist_sort_and_clean()` can
+    /// tombstone a duplicate or a pruned directory, and left untouched when a
+    /// completed segment is later reclaimed - so the `--stats` breakdown never
+    /// depends on which entries are still resident.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2993-3006` - `recv_file_list()` bumps `stats.num_dirs` /
+    ///   `num_symlinks` / `num_devices` / `num_specials` in its read loop.
+    pub(in crate::receiver) received_type_counts: (u64, u64, u64, u64),
+    /// Sum of `F_LENGTH` over every received regular file and symlink, bumped
+    /// at the same point as [`Self::received_type_counts`].
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:1388-1389` - `recv_file_entry()` adds `file_length` to
+    ///   `stats.total_size` when `S_ISREG(mode) || S_ISLNK(mode)`.
+    pub(in crate::receiver) received_total_size: u64,
     /// Byte totals the remote sender transmitted in its `handle_stats()` trailer,
     /// captured by `finalize_transfer` on a client pull.
     ///
@@ -583,6 +604,8 @@ impl ReceiverContext {
             peer_flist_io_error: 0,
             raw_read_counter: None,
             flist_size: 0,
+            received_type_counts: (0, 0, 0, 0),
+            received_total_size: 0,
             sender_stats: None,
             parallel_thresholds: ParallelThresholds::default(),
             pending_del_stats: DeleteStats::new(),

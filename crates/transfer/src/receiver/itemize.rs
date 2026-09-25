@@ -25,59 +25,61 @@ impl ReceiverContext {
         self.config.flags.info_flags.itemize || self.collect_out_format_events()
     }
 
-    /// Classifies the received file list into the per-type counts the pulling
-    /// client needs to reconstruct the `--stats` "Number of files" breakdown.
+    /// Tallies one received file-list entry into the `--stats` counters.
     ///
-    /// Returns `(dirs, symlinks, devices, specials)`; the regular-file count is
-    /// the remainder (`files_listed - sum`). Mirrors upstream's per-type tally
-    /// as the file list is received, so a remote pull reports the same
-    /// `reg: R, dir: D, link: L` line as a local copy.
+    /// Called from the read loop for every entry of the initial list and of
+    /// each INC_RECURSE sub-list, before the list is sorted and cleaned, so a
+    /// duplicate the clean later tombstones and a directory `--prune-empty-dirs`
+    /// later clears are still counted, exactly as upstream counts them.
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2699-2712` - `recv_file_list()` bumps `stats.num_dirs` /
-    ///   `num_symlinks` / `num_devices` / `num_specials` per entry.
+    /// - `flist.c:2993-3006` - `recv_file_list()` bumps the per-type counters
+    ///   in its read loop; a regular file is "Already counted" by the caller's
+    ///   total.
+    /// - `flist.c:1388-1389` - `recv_file_entry()` adds the length of a regular
+    ///   file or symlink to `stats.total_size`.
+    pub(in crate::receiver) fn count_received_entry(&mut self, entry: &protocol::flist::FileEntry) {
+        let (dirs, symlinks, devices, specials) = &mut self.received_type_counts;
+        if entry.is_dir() {
+            *dirs += 1;
+        } else if entry.is_symlink() {
+            *symlinks += 1;
+        } else if entry.is_device() {
+            *devices += 1;
+        } else if entry.is_special() {
+            *specials += 1;
+        }
+        if matches!(
+            entry.file_type(),
+            protocol::flist::FileType::Regular | protocol::flist::FileType::Symlink
+        ) {
+            self.received_total_size += entry.size();
+        }
+    }
+
+    /// Per-type counts the pulling client needs to reconstruct the `--stats`
+    /// "Number of files" breakdown.
+    ///
+    /// Returns `(dirs, symlinks, devices, specials)`; the regular-file count is
+    /// the remainder (`files_listed - sum`). Reads the receive-time counters, so
+    /// the result is unaffected by reclaimed INC_RECURSE segments.
+    ///
+    /// # Upstream Reference
+    ///
     /// - `main.c:387-411` - `output_itemized_counts()` derives `reg` as the
     ///   total minus the other four categories.
-    pub(in crate::receiver) fn file_type_counts(&self) -> (u64, u64, u64, u64) {
-        let mut dirs = 0u64;
-        let mut symlinks = 0u64;
-        let mut devices = 0u64;
-        let mut specials = 0u64;
-        for entry in &self.file_list {
-            if entry.is_dir() {
-                dirs += 1;
-            } else if entry.is_symlink() {
-                symlinks += 1;
-            } else if entry.is_device() {
-                devices += 1;
-            } else if entry.is_special() {
-                specials += 1;
-            }
-        }
-        (dirs, symlinks, devices, specials)
+    pub(in crate::receiver) const fn file_type_counts(&self) -> (u64, u64, u64, u64) {
+        self.received_type_counts
     }
 
     /// Sum of source sizes counted toward the `--stats` "total size".
     ///
     /// Only regular files and symlinks contribute, never directories, devices,
     /// or FIFOs - directory `st_size` in particular would inflate the total.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `flist.c:690-691` / `flist.c:1242-1243` - `stats.total_size +=
-    ///   F_LENGTH(file)` guarded by `S_ISREG(mode) || S_ISLNK(mode)`.
-    pub(in crate::receiver) fn total_source_size(&self) -> u64 {
-        self.file_list
-            .iter()
-            .filter(|entry| {
-                matches!(
-                    entry.file_type(),
-                    protocol::flist::FileType::Regular | protocol::flist::FileType::Symlink
-                )
-            })
-            .map(|entry| entry.size())
-            .sum()
+    /// Reads the receive-time counter (see [`Self::count_received_entry`]).
+    pub(in crate::receiver) const fn total_source_size(&self) -> u64 {
+        self.received_total_size
     }
 
     /// Computes the itemize flags for an existing (already-present) directory

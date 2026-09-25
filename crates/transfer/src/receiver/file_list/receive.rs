@@ -62,6 +62,9 @@ impl ReceiverContext {
             // those names unmapped and never consult the name converter.
             #[cfg(unix)]
             self.register_inline_id_names(&entry)?;
+            // upstream: flist.c:2993-3006 - counted in the read loop, before
+            // flist_sort_and_clean() tombstones duplicates or prunes dirs.
+            self.count_received_entry(&entry);
             self.file_list.push(entry);
             count += 1;
         }
@@ -356,6 +359,9 @@ impl ReceiverContext {
         while let Some(entry) =
             flist_reader.read_entry_with_flist(reader, &self.file_list[flat_start..])?
         {
+            // upstream: flist.c:2993-3006 - same read-loop tally as the
+            // initial list; a later segment reclaim never un-counts it.
+            self.count_received_entry(&entry);
             self.file_list.push(entry);
             segment_count += 1;
         }
