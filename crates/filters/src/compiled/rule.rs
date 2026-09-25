@@ -48,6 +48,11 @@ pub(crate) struct CompiledRule {
     /// emulation, so they are consulted unconditionally when the rule is
     /// negated - see [`Self::pattern_matches_impl`].
     pub(super) wild3_suffix: bool,
+    /// The source pattern was written with a trailing `/` (upstream
+    /// `FILTRULE_DIRECTORY`, exclude.c:287-290). Unlike `directory_only`, a
+    /// bare `/***` suffix does not set it. See
+    /// [`Self::negated_directory_rule_hits_non_dir`].
+    pub(super) trailing_slash: bool,
     /// Source-definition order across the whole rule stream, assigned by
     /// [`FilterSet::from_rules`](crate::FilterSet::from_rules). Upstream keeps
     /// every rule in one list and `check_filter()` walks it first-match-wins
@@ -81,6 +86,30 @@ impl CompiledRule {
     /// into excluded directories. The receiver deletion path needs descendants
     /// because it evaluates paths individually without traversal context.
     pub(crate) fn matches(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
+        self.negated_directory_rule_hits_non_dir(is_dir)
+            || self.matches_ignoring_directory_flag(path, is_dir, check_descendants)
+    }
+
+    /// Returns `true` when this is a `!`-negated rule written with a trailing
+    /// `/` and the candidate is not a directory.
+    ///
+    /// upstream: exclude.c:1037-1038 rule_matches() - a `FILTRULE_DIRECTORY`
+    /// rule returns `!ret_match` for a non-directory before any wildmatch, and
+    /// `ret_match` is 0 under `!` (exclude.c:1005). So a negated directory rule
+    /// matches EVERY non-directory, whatever its pattern - including one whose
+    /// `/***` stem would otherwise wildmatch the file.
+    const fn negated_directory_rule_hits_non_dir(&self, is_dir: bool) -> bool {
+        self.negate && self.trailing_slash && !is_dir
+    }
+
+    /// [`Self::matches`] without the `FILTRULE_DIRECTORY` non-directory
+    /// short-circuit.
+    fn matches_ignoring_directory_flag(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        check_descendants: bool,
+    ) -> bool {
         let pattern_matched = self.pattern_matches_impl(path, is_dir, check_descendants);
 
         // upstream: exclude.c:906 - ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1
@@ -107,8 +136,14 @@ impl CompiledRule {
     /// slash keeps upstream's exact `strcmp` semantics (exclude.c:1002), so its
     /// descendants must stay dormant here. `directory_only` is exactly the
     /// record of which form the rule was written in.
+    ///
+    /// The same rewrite clears `FILTRULE_DIRECTORY` on every non-include rule
+    /// (exclude.c:308-310 `BITS_SETnUNSET`), so only an include keeps the
+    /// negated-directory short-circuit of [`Self::matches`].
     pub(crate) fn matches_name(&self, path: &Path, is_dir: bool) -> bool {
-        self.matches(path, is_dir, self.directory_only)
+        let keeps_directory_flag = matches!(self.action, FilterAction::Include);
+        (keeps_directory_flag && self.negated_directory_rule_hits_non_dir(is_dir))
+            || self.matches_ignoring_directory_flag(path, is_dir, self.directory_only)
     }
 
     /// Like [`Self::matches`] but for the receiver's deletion scan.
@@ -131,6 +166,9 @@ impl CompiledRule {
         is_dir: bool,
         check_descendants: bool,
     ) -> bool {
+        if self.negated_directory_rule_hits_non_dir(is_dir) {
+            return true;
+        }
         let pattern_matched = self.pattern_matches_impl(path, is_dir, check_descendants)
             || self.deletion_descendant_matches(path);
 

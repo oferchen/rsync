@@ -79,6 +79,10 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
                     specials: transfer_stats.num_specials,
                 },
             );
+            let s = s.with_file_list_times(
+                transfer_stats.flist_buildtime_ms,
+                transfer_stats.flist_xfertime_ms,
+            );
             (s, transfer_stats.io_error, transfer_stats.got_xfer_error)
         }
         ServerStats::Generator(ref generator_stats) => {
@@ -102,6 +106,10 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
                     devices: generator_stats.num_devices,
                     specials: generator_stats.num_specials,
                 },
+            );
+            let s = s.with_file_list_times(
+                generator_stats.flist_buildtime_ms,
+                generator_stats.flist_xfertime_ms,
             );
             (s, generator_stats.io_error, generator_stats.got_xfer_error)
         }

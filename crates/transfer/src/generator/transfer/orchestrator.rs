@@ -280,10 +280,7 @@ impl GeneratorContext {
                 .map_err(crate::fsm_error)?;
             return Ok(GeneratorStats {
                 files_listed: 0,
-                flist_buildtime_ms: calculate_duration_ms(
-                    self.timing.flist_build_start,
-                    self.timing.flist_build_end,
-                ),
+                flist_buildtime_ms: self.timing.flist_buildtime_ms(),
                 flist_xfertime_ms: calculate_duration_ms(
                     self.timing.flist_xfer_start,
                     self.timing.flist_xfer_end,
@@ -334,8 +331,7 @@ impl GeneratorContext {
             .map_or(self.timing.total_bytes_read, |c| {
                 c.load(std::sync::atomic::Ordering::Relaxed)
             });
-        let flist_buildtime =
-            calculate_duration_ms(self.timing.flist_build_start, self.timing.flist_build_end);
+        let flist_buildtime = self.timing.flist_buildtime_ms();
         let flist_xfertime =
             calculate_duration_ms(self.timing.flist_xfer_start, self.timing.flist_xfer_end);
         if !self.config.connection.client_mode {
@@ -428,8 +424,7 @@ impl GeneratorContext {
         }
 
         // Calculate timing stats for return value
-        let flist_buildtime =
-            calculate_duration_ms(self.timing.flist_build_start, self.timing.flist_build_end);
+        let flist_buildtime = self.timing.flist_buildtime_ms();
         let flist_xfertime =
             calculate_duration_ms(self.timing.flist_xfer_start, self.timing.flist_xfer_end);
 

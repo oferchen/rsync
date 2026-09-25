@@ -71,6 +71,10 @@ pub(crate) fn convert_server_stats_to_summary(
                     specials: transfer_stats.num_specials,
                 },
             );
+            let s = s.with_file_list_times(
+                transfer_stats.flist_buildtime_ms,
+                transfer_stats.flist_xfertime_ms,
+            );
             (s, transfer_stats.io_error, transfer_stats.got_xfer_error)
         }
         ServerStats::Generator(ref generator_stats) => {
@@ -96,6 +100,10 @@ pub(crate) fn convert_server_stats_to_summary(
                     devices: generator_stats.num_devices,
                     specials: generator_stats.num_specials,
                 },
+            );
+            let s = s.with_file_list_times(
+                generator_stats.flist_buildtime_ms,
+                generator_stats.flist_xfertime_ms,
             );
             (s, generator_stats.io_error, generator_stats.got_xfer_error)
         }
@@ -138,6 +146,24 @@ mod tests {
         });
         let summary = convert_server_stats_to_summary(stats, Duration::ZERO);
         assert_eq!(summary.io_error_exit_code(), Some(23));
+    }
+
+    /// A daemon pull adopts the sender's flist times, so `--stats` prints
+    /// "File list generation time" exactly when the sender sent a non-zero
+    /// value (main.c:375-376, main.c:450).
+    #[test]
+    fn pull_summary_carries_the_senders_flist_times() {
+        let stats = ServerStats::Receiver(TransferStats {
+            flist_buildtime_ms: 4,
+            flist_xfertime_ms: 2,
+            ..TransferStats::default()
+        });
+        let summary = convert_server_stats_to_summary(stats, Duration::ZERO);
+        assert_eq!(
+            summary.file_list_generation_time(),
+            Duration::from_millis(4)
+        );
+        assert_eq!(summary.file_list_transfer_time(), Duration::from_millis(2));
     }
 
     /// Non-vacuity control: a clean run with neither an io_error bit nor
