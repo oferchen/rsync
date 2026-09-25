@@ -13,9 +13,18 @@ use super::interleave::PendingDiagnostics;
 use super::mode::{NameOutputLevel, ProgressMode};
 use super::render::{
     DeltaTransmissionState, FlistBanner, LiveRendered, emit_session_notices, emit_verbose,
+    is_generator_notice,
 };
 use crate::frontend::escape::EscapeStyle;
+use crate::frontend::out_format::{OutFormat, OutFormatContext, emit_out_format};
 use crate::frontend::outbuf::OutbufMode;
+
+/// Entry lines held back before they are written regardless.
+///
+/// upstream: rsync.h:160 `IO_BUFFER_SIZE` - the generator's itemized entries
+/// reach the sender through a buffered stream of this size, so they trail the
+/// notices the generator writes directly by at most one buffer.
+const DEFERRED_ENTRY_LIMIT: usize = 32 * 1024;
 
 /// Minimum interval between rendered in-flight progress ticks.
 ///
@@ -80,7 +89,7 @@ impl Default for ProgressOutputConfig {
 /// without this the header and the non-transfer names would trail, or miss,
 /// the progress lines that are written live.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct LocalSessionOutput {
+pub(crate) struct LocalSessionOutput<'a> {
     /// The sender's file-list banner. upstream: flist.c:2521-2524.
     pub(crate) banner: FlistBanner,
     /// The `-vv` generator notice. upstream: generator.c:2290-2295.
@@ -89,18 +98,55 @@ pub(crate) struct LocalSessionOutput {
     pub(crate) itemizing: bool,
     /// Filename escaping for the rendered lines.
     pub(crate) escape: EscapeStyle,
-    /// The name listing for entries without a progress block; `None` when
-    /// the post-hoc renderer owns the listing (itemize, `--out-format`, or
-    /// `--info=progress2`).
-    pub(crate) listing: Option<LiveListing>,
+    /// The per-entry listing; `None` when the post-hoc renderer owns it (an
+    /// `--out-format` that is logged after the transfer).
+    pub(crate) listing: Option<LiveListing<'a>>,
 }
 
-/// Settings for rendering a local copy's per-entry names as they happen.
+/// How a local copy's per-entry lines are rendered as they happen.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct LiveListing {
-    pub(crate) verbosity: u8,
-    pub(crate) name_level: NameOutputLevel,
-    pub(crate) name_overridden: bool,
+pub(crate) enum LiveListing<'a> {
+    /// The `-v` / `--info=name` listing.
+    Names {
+        verbosity: u8,
+        name_level: NameOutputLevel,
+        name_overridden: bool,
+    },
+    /// An `-i` / `--out-format` line per entry, logged before its transfer.
+    /// upstream: options.c:2502-2508 `log_before_transfer`.
+    Formatted {
+        format: &'a OutFormat,
+        context: &'a OutFormatContext,
+    },
+}
+
+impl LiveListing<'_> {
+    fn render(
+        &self,
+        event: &ClientEvent,
+        human_readable: HumanReadableMode,
+        escape: EscapeStyle,
+        writer: &mut dyn Write,
+    ) -> io::Result<()> {
+        let event = std::slice::from_ref(event);
+        match *self {
+            Self::Names {
+                verbosity,
+                name_level,
+                name_overridden,
+            } => emit_verbose(
+                event,
+                verbosity,
+                name_level,
+                name_overridden,
+                human_readable,
+                escape,
+                writer,
+                &mut PendingDiagnostics::empty(),
+            ),
+            Self::Formatted { format, context } => emit_out_format(event, format, context, writer),
+        }
+    }
 }
 
 /// Emits verbose, statistics, and progress-oriented output derived from a
@@ -139,7 +185,14 @@ pub(crate) struct LiveProgress<'a> {
     /// Terminal and buffering configuration for progress output.
     output_config: ProgressOutputConfig,
     /// Header and name listing written live for a local copy.
-    session: Option<LocalSessionOutput>,
+    session: Option<LocalSessionOutput<'a>>,
+    /// Entry lines not yet written. upstream's generator writes its notices
+    /// (`is uptodate`, deletions) directly, while each itemized entry reaches
+    /// the output through the sender, which logs it when it gets to it
+    /// (sender.c:send_files() -> log_item()). The entries therefore trail the
+    /// direct notices, up to the point the sender acts: a transfer's progress,
+    /// or the end of the run.
+    deferred: Vec<u8>,
     /// Whether [`ClientProgressObserver::on_start`] wrote the session output.
     session_started: bool,
 }
@@ -183,11 +236,12 @@ impl<'a> LiveProgress<'a> {
             output_config,
             session: None,
             session_started: false,
+            deferred: Vec::new(),
         }
     }
 
     /// Makes a local copy write its session header and entry names live.
-    pub(crate) const fn with_local_session(mut self, session: LocalSessionOutput) -> Self {
+    pub(crate) const fn with_local_session(mut self, session: LocalSessionOutput<'a>) -> Self {
         self.session = Some(session);
         self
     }
@@ -214,18 +268,47 @@ impl<'a> LiveProgress<'a> {
         }
     }
 
-    /// Finalizes progress output, terminating any active line with a newline
-    /// and surfacing the first I/O error recorded during rendering.
-    pub(crate) fn finish(self) -> io::Result<()> {
+    /// Finalizes progress output, writing the held-back entry lines,
+    /// terminating any active line with a newline and surfacing the first I/O
+    /// error recorded during rendering.
+    pub(crate) fn finish(mut self) -> io::Result<()> {
         if let Some(error) = self.error {
             return Err(error);
         }
 
+        self.write_deferred()?;
         if self.line_active {
             writeln!(self.writer)?;
         }
 
         Ok(())
+    }
+
+    /// Whether the local-copy listing names each entry, so a progress block
+    /// must not repeat its name.
+    fn lists_entries(&self) -> bool {
+        self.session
+            .is_some_and(|session| session.listing.is_some())
+    }
+
+    /// Ends an in-flight progress line so the next line starts on its own.
+    fn end_active_line(&mut self) -> io::Result<()> {
+        if self.line_active {
+            writeln!(self.writer)?;
+            self.line_active = false;
+        }
+        Ok(())
+    }
+
+    /// Writes the held-back entry lines.
+    fn write_deferred(&mut self) -> io::Result<()> {
+        if self.deferred.is_empty() {
+            return Ok(());
+        }
+        self.end_active_line()?;
+        self.writer.write_all(&self.deferred)?;
+        self.deferred.clear();
+        self.flush_if_needed()
     }
 
     /// Writes the line prefix that returns the cursor to column 0 before a
@@ -326,21 +409,21 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
             return;
         }
         let result = (|| -> io::Result<()> {
-            if self.line_active {
-                writeln!(self.writer)?;
-                self.line_active = false;
+            if is_generator_notice(event) {
+                self.end_active_line()?;
+                listing.render(event, self.human_readable, session.escape, self.writer)?;
+                return self.flush_if_needed();
             }
-            emit_verbose(
-                std::slice::from_ref(event),
-                listing.verbosity,
-                listing.name_level,
-                listing.name_overridden,
+            listing.render(
+                event,
                 self.human_readable,
                 session.escape,
-                self.writer,
-                &mut PendingDiagnostics::empty(),
+                &mut self.deferred,
             )?;
-            self.flush_if_needed()
+            if self.deferred.len() >= DEFERRED_ENTRY_LIMIT {
+                self.write_deferred()?;
+            }
+            Ok(())
         })();
         if let Err(error) = result {
             self.record_error(error);
@@ -370,6 +453,14 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
         // (`from_transfer_event`) this equals the old `total - index`.
         let remaining = update.remaining().min(total);
 
+        // The sender logs an entry before it sends it, so every held-back line
+        // precedes this progress.
+        if let Err(error) = self.write_deferred() {
+            self.record_error(error);
+            return;
+        }
+
+        let lists_entries = self.lists_entries();
         let write_result = match self.mode {
             ProgressMode::PerFile => (|| -> io::Result<()> {
                 let event = update.event();
@@ -379,17 +470,17 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 let is_final = update.is_final();
 
                 if path_changed {
-                    if self.line_active {
-                        writeln!(self.writer)?;
-                        self.line_active = false;
+                    self.end_active_line()?;
+                    // A local copy's listing has already named the file.
+                    if !lists_entries {
+                        // upstream: flist.c f_name() emits POSIX forward-slash
+                        // separators regardless of host OS. Normalize Windows
+                        // native backslashes at the rendering boundary.
+                        let name = relative.display().to_string();
+                        #[cfg(windows)]
+                        let name = name.replace('\\', "/");
+                        writeln!(self.writer, "{name}")?;
                     }
-                    // upstream: flist.c f_name() emits POSIX forward-slash
-                    // separators regardless of host OS. Normalize Windows
-                    // native backslashes at the rendering boundary.
-                    let name = relative.display().to_string();
-                    #[cfg(windows)]
-                    let name = name.replace('\\', "/");
-                    writeln!(self.writer, "{name}")?;
                     self.active_path = Some(relative.to_path_buf());
                     // upstream: progress.c:205-222 - show_progress seeds
                     // ph_start to the file's transfer start, so a new file's
