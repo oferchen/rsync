@@ -1024,3 +1024,70 @@ impl DirSandbox {
         Ok(walk.into_leaf())
     }
 }
+
+/// Open the directory `tail` names beneath an already-open `anchor`, refusing
+/// every symlink and every `..` in `tail`.
+///
+/// This is the metadata appliers' parent resolution for a local-copy
+/// destination. Upstream enters the destination operand once with
+/// `change_dir()` and resolves each entry's parent relative to that cwd, so a
+/// symlink the operator put in the destination path is followed while the
+/// names below the root go through the confined resolver. Walking the fused
+/// absolute path with `RESOLVE_NO_SYMLINKS` instead refuses the operator's own
+/// `dst -> real` component. The caller opens `anchor` from the operator's path
+/// once (see `metadata::DestinationRoot`); this resolves only the
+/// transfer-controlled remainder beneath it.
+///
+/// On Linux 5.6+ the tail is one `openat2(RESOLVE_BENEATH |
+/// RESOLVE_NO_SYMLINKS)`; elsewhere it is a per-component
+/// `openat(O_NOFOLLOW | O_DIRECTORY)` walk. Either way a symlink anywhere in
+/// `tail` is refused, exactly as the fused `RESOLVE_NO_SYMLINKS` walk refused
+/// it. An empty tail yields a duplicate of `anchor`.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/main.c` `get_local_name()` -> `change_dir(dest_path,
+///   CD_NORMAL)` - the operator's destination is entered once.
+/// - `rsync-3.5.0/syscall.c:1106` `do_lchown_at()` (and `do_chmod_at()`, the
+///   utimes wrapper) - the entry's parent is resolved relative to that cwd
+///   through `secure_relative_open(NULL, dirpath, ...)`.
+///
+/// # Errors
+///
+/// - `ELOOP` or `ENOTDIR` when a `tail` component is a symlink.
+/// - `EXDEV` when `tail` contains `..`, a root, or a prefix component.
+/// - Otherwise the underlying `openat`/`openat2`/`fcntl` errno.
+pub fn open_dir_beneath_nofollow(anchor: BorrowedFd<'_>, tail: &Path) -> io::Result<OwnedFd> {
+    let mut names = Vec::new();
+    for component in tail.components() {
+        match component {
+            std::path::Component::Normal(name) => names.push(name),
+            std::path::Component::CurDir => {}
+            _ => return Err(io::Error::from_raw_os_error(libc::EXDEV)),
+        }
+    }
+    if names.is_empty() {
+        return anchor.try_clone_to_owned();
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let joined: PathBuf = names.iter().collect();
+        if openat2_supported()
+            && let Some(fd) = linux::openat2_beneath(
+                anchor,
+                joined.as_os_str(),
+                libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS,
+            )?
+        {
+            return Ok(fd);
+        }
+    }
+
+    let mut current: Option<OwnedFd> = None;
+    for name in names {
+        let parent = current.as_ref().map_or(anchor, AsFd::as_fd);
+        current = Some(openat_nofollow(parent, name)?);
+    }
+    current.map_or_else(|| anchor.try_clone_to_owned(), Ok)
+}

@@ -2639,7 +2639,9 @@ fn operator_destination_root_symlink_is_followed_without_keep_dirlinks() {
     let options = MetadataOptions::new()
         .preserve_permissions(true)
         .preserve_times(false)
-        .with_destination_root(Some(dest_root.clone()));
+        .with_destination_root(Some(std::sync::Arc::new(crate::DestinationRoot::new(
+            dest_root.clone(),
+        ))));
 
     apply_file_metadata_with_options(&dest_file, &source_meta, &options)
         .expect("the operator's own destination root must be followed");

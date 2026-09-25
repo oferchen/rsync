@@ -737,10 +737,11 @@ pub(super) fn apply_permissions_with_chmod_fd(
 
 /// Issues a path-based chmod that honors `--keep-dirlinks`.
 ///
-/// When `--keep-dirlinks` is inactive, dispatches to `fast_io::secure_chmod_at`,
-/// which anchors on the parent dirfd opened through `secure_open_dir` and
-/// rejects symlinked parents (`ELOOP`/`ENOTDIR`) to defeat chmod-symlink-race
-/// attacks against the receiver confinement.
+/// When `--keep-dirlinks` is inactive, anchors `fchmodat` on the parent
+/// resolved by [`super::confined_parent`], which rejects symlinked parents
+/// below the destination root (`ELOOP`/`ENOTDIR`) to defeat chmod-symlink-race
+/// attacks against the receiver confinement, while trusting the operator's own
+/// destination path.
 ///
 /// When `--keep-dirlinks` is active, the user has explicitly opted into
 /// following dest-side symlinks-to-dirs, so the sandbox refusal is wrong: the
@@ -773,20 +774,34 @@ fn chmod_path_honoring_keep_dirlinks(
     action: &'static str,
     parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
-    if options.resolves_symlinked_parent(destination) {
+    let parent_walk = options.parent_walk();
+    if parent_walk.follows() {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(destination, fs::Permissions::from_mode(mode))
-            .map_err(|error| MetadataError::new(action, destination, error))?;
     } else {
-        match (parent_dirfd, destination.parent(), destination.file_name()) {
-            (Some(parent), Some(dir), Some(leaf)) if !dir.as_os_str().is_empty() => {
-                fast_io::secure_chmod_at_dirfd(parent, leaf, mode, true)
-            }
-            _ => fast_io::secure_chmod_at(destination, mode, true),
-        }
-        .map_err(|error| MetadataError::new(action, destination, error))?;
+        super::at_confined_parent(
+            destination,
+            parent_dirfd,
+            parent_walk.root(),
+            |parent, leaf| fast_io::secure_chmod_at_dirfd(parent, leaf, mode, true),
+            || fast_io::secure_chmod_at(destination, mode, true),
+        )
     }
-    Ok(())
+    .map_err(|error| MetadataError::new(action, destination, error))
+}
+
+/// `fchmodat(AT_SYMLINK_NOFOLLOW)` on a symlink leaf, anchored on the parent
+/// [`super::confined_parent`] resolves (operator's destination path trusted,
+/// names below the root confined).
+#[cfg(unix)]
+fn chmod_symlink_leaf(destination: &Path, mode: u32, options: &MetadataOptions) -> io::Result<()> {
+    super::at_confined_parent(
+        destination,
+        None,
+        options.destination_root.as_deref(),
+        |parent, leaf| fast_io::secure_chmod_at_dirfd(parent, leaf, mode, false),
+        || fast_io::secure_chmod_at(destination, mode, false),
+    )
 }
 
 /// Maps a symlink apply into [`chmod_tweaked_dest_mode`]'s `pre_transfer`
@@ -881,7 +896,7 @@ fn symlink_target_mode(
 ///
 /// Only runs where [`crate::CAN_CHMOD_SYMLINK`] holds (macOS/BSD). The mode is
 /// decided by [`symlink_target_mode`]. The chmod uses
-/// `fchmodat(AT_SYMLINK_NOFOLLOW)` via [`fast_io::secure_chmod_at`]
+/// `fchmodat(AT_SYMLINK_NOFOLLOW)` via [`chmod_symlink_leaf`]
 /// (`follow_symlinks = false`) so the link itself, not its target, is modified.
 ///
 /// upstream: rsync.c:806-822 (`set_file_attrs()` chmods every file type with
@@ -920,7 +935,7 @@ pub(super) fn apply_symlink_permissions_from_entry(
             symlink_pre_transfer_stat(options, meta, pre_transfer_meta),
         );
         if current != target {
-            let _ = fast_io::secure_chmod_at(destination, target, false);
+            let _ = chmod_symlink_leaf(destination, target, options);
         }
     }
     #[cfg(not(unix))]
@@ -968,7 +983,7 @@ pub(super) fn apply_symlink_permissions_like(
             symlink_pre_transfer_stat(options, &meta, pre_transfer_meta),
         );
         if current != target {
-            let _ = fast_io::secure_chmod_at(destination, target, false);
+            let _ = chmod_symlink_leaf(destination, target, options);
         }
     }
     #[cfg(not(unix))]

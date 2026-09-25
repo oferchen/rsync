@@ -7,14 +7,16 @@
 
 mod accessors;
 mod attrs_flags;
+mod destination_root;
 mod setters;
 
 #[cfg(test)]
 mod tests;
 
 pub use attrs_flags::AttrsFlags;
+pub use destination_root::DestinationRoot;
 
-use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::chmod::ChmodModifiers;
 use crate::{GroupMapping, UserMapping};
@@ -61,11 +63,12 @@ pub struct MetadataOptions {
     /// component, so the per-entry syscalls - `do_lchown` is a bare
     /// `lchown(2)` - always see a real directory.
     ///
-    /// oc keeps absolute paths instead, so a symlinked root re-enters the
-    /// dirfd-anchored walk on every entry. Recording it here lets
-    /// `resolves_symlinked_parent` restore upstream's outcome without widening
-    /// the walk for anything below the root.
-    pub(crate) destination_root: Option<PathBuf>,
+    /// oc keeps absolute paths instead, so without the root every entry's
+    /// parent is walked from `/` and a symlink the operator put anywhere in
+    /// the destination path is refused. Recording it here lets `parent_walk`
+    /// trust the operator's prefix without widening the walk for anything
+    /// below the root.
+    pub(crate) destination_root: Option<Arc<DestinationRoot>>,
 }
 
 impl MetadataOptions {

@@ -165,6 +165,10 @@ pub(crate) struct CopyContext<'a> {
     stop_at: Option<SystemTime>,
     last_progress: Instant,
     destination_root: PathBuf,
+    /// The destination root as the metadata appliers see it: shared by every
+    /// apply of this transfer so the root directory is opened once, the way
+    /// upstream `change_dir()`s into it once (`main.c` `get_local_name()`).
+    metadata_destination_root: Arc<::metadata::DestinationRoot>,
     /// Confinement anchor for source-file content reads: the directory the
     /// sender would `chdir` into for the operand currently being walked.
     ///

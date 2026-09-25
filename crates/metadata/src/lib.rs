@@ -318,7 +318,7 @@ pub use mapping::{GroupMapping, MappingKind, MappingParseError, NameMapping, Use
 #[cfg(not(unix))]
 pub use mapping_win::{GroupMapping, MappingKind, MappingParseError, NameMapping, UserMapping};
 
-pub use options::{AttrsFlags, MetadataOptions};
+pub use options::{AttrsFlags, DestinationRoot, MetadataOptions};
 
 pub use special::{
     create_device_node, create_device_node_from_parts, create_device_node_with_fake_super,

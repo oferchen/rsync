@@ -40,6 +40,116 @@ pub(crate) type ParentDirFd<'a> = Option<BorrowedFd<'a>>;
 #[cfg(not(unix))]
 pub(crate) type ParentDirFd<'a> = Option<&'a ()>;
 
+/// How a path-based applier resolves the destination's parent directory.
+// Only the Unix appliers resolve a parent dirfd; elsewhere the value is
+// threaded through and ignored.
+#[cfg_attr(not(unix), allow(dead_code))]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ParentWalk<'a> {
+    /// `--keep-dirlinks`: resolve through `AT_FDCWD`, following dest-side
+    /// symlinked directories like upstream `generator.c:1356`'s `link_stat`.
+    Follow,
+    /// Anchor the op on a confined parent dirfd (see [`confined_parent`]).
+    ///
+    /// `Some(root)` is the operator-named destination root. The path up to and
+    /// including it is the operator's, so a symlink the operator put there is
+    /// followed; only the part below the root is confined. `None` confines the
+    /// whole path.
+    Confined(Option<&'a crate::DestinationRoot>),
+}
+
+impl<'a> ParentWalk<'a> {
+    /// Whether the walk follows symlinked parents through the ambient namespace.
+    #[cfg(unix)]
+    pub(crate) const fn follows(self) -> bool {
+        matches!(self, Self::Follow)
+    }
+
+    /// The operator-named destination root, when known and confining.
+    #[cfg(unix)]
+    pub(crate) const fn root(self) -> Option<&'a crate::DestinationRoot> {
+        match self {
+            Self::Follow => None,
+            Self::Confined(root) => root,
+        }
+    }
+}
+
+/// Opens `destination`'s parent directory for an anchored `*at` metadata op.
+///
+/// Returns `Ok(None)` when `destination` has no parent component, so the
+/// caller issues the op on the bare name.
+///
+/// Upstream enters the destination operand once with a plain `change_dir()`
+/// (`main.c` `get_local_name()`) and resolves each entry's parent relative to
+/// that cwd through `secure_relative_open(NULL, dirpath, ...)`
+/// (`syscall.c:1106` `do_lchown_at()`, likewise `do_chmod_at()` and the
+/// utimes wrapper). So the confinement covers only the names below the root;
+/// the operator's own path is never re-walked. oc keeps absolute paths, and
+/// walking the fused path with `RESOLVE_NO_SYMLINKS` refuses a symlink the
+/// operator put in the destination path (`base/link/inner/` with
+/// `link -> real`), aborting every directory, symlink and special-file
+/// metadata apply with `ENOTDIR`.
+///
+/// - Below `root`: [`fast_io::open_dir_beneath_nofollow`] on the root's pinned
+///   descriptor (see [`crate::DestinationRoot`]) - the remainder refuses every
+///   symlink.
+/// - The root entry itself: its parent is entirely operator path, opened
+///   through [`fast_io::operator_open_dir`].
+/// - No root, or a destination outside it: the strict
+///   [`fast_io::secure_open_dir`] walk over the whole parent.
+#[cfg(unix)]
+pub(crate) fn confined_parent(
+    destination: &Path,
+    root: Option<&crate::DestinationRoot>,
+) -> std::io::Result<Option<std::os::fd::OwnedFd>> {
+    let Some(parent) = destination.parent().filter(|p| !p.as_os_str().is_empty()) else {
+        return Ok(None);
+    };
+    if let Some(root) = root {
+        if let Ok(tail) = parent.strip_prefix(root.path()) {
+            return fast_io::open_dir_beneath_nofollow(root.anchor()?, tail).map(Some);
+        }
+        if destination
+            .strip_prefix(root.path())
+            .is_ok_and(|tail| tail.as_os_str().is_empty())
+        {
+            return fast_io::operator_open_dir(parent).map(Some);
+        }
+    }
+    fast_io::secure_open_dir(parent).map(Some)
+}
+
+/// Runs a metadata op anchored on `destination`'s parent dirfd.
+///
+/// `shared` is a parent the caller already resolved (the receiver applying
+/// several attributes to one file); otherwise the parent is resolved here per
+/// `root` (see [`confined_parent`]). `at` receives the parent dirfd and the
+/// leaf name. `bare` handles a destination with no parent component or leaf.
+#[cfg(unix)]
+pub(crate) fn at_confined_parent(
+    destination: &Path,
+    shared: ParentDirFd<'_>,
+    root: Option<&crate::DestinationRoot>,
+    at: impl FnOnce(BorrowedFd<'_>, &std::ffi::OsStr) -> std::io::Result<()>,
+    bare: impl FnOnce() -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    use std::os::fd::AsFd;
+
+    let owned;
+    let parent = match shared {
+        Some(parent) => Some(parent),
+        None => {
+            owned = confined_parent(destination, root)?;
+            owned.as_ref().map(AsFd::as_fd)
+        }
+    };
+    match (parent, destination.file_name()) {
+        (Some(parent), Some(leaf)) => at(parent, leaf),
+        _ => bare(),
+    }
+}
+
 /// Applies metadata from `metadata` to the destination directory.
 ///
 /// Preserves permission bits (best-effort on non-Unix targets) and
@@ -156,7 +266,7 @@ pub fn apply_file_metadata_with_options(
             metadata,
             destination,
             None,
-            options.resolves_symlinked_parent(destination),
+            options.parent_walk(),
         )?;
     }
     if options.crtimes() {
@@ -296,7 +406,7 @@ pub fn apply_file_metadata_if_changed(
             metadata,
             destination,
             Some(existing),
-            options.resolves_symlinked_parent(destination),
+            options.parent_walk(),
         )?;
     }
     if options.crtimes() {
@@ -841,7 +951,7 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     pre_transfer_meta: Option<fs::Metadata>,
 ) -> Result<(), MetadataError> {
     // Resolve the destination's parent directory ONCE through the hardened
-    // `secure_open_dir` walk and share the borrowed dirfd across the three
+    // `confined_parent` walk and share the borrowed dirfd across the three
     // metadata appliers below. Each applier would otherwise re-walk the same
     // parent (`fchownat`/`utimensat`/`fchmodat` each opening it), tripling the
     // per-file openat2+close syscall count on the receiver's hot path. Sharing
@@ -850,22 +960,16 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     //
     // The share is skipped (dirfd stays `None`, each applier keeps its existing
     // behaviour) when:
-    // - `--keep-dirlinks` / an owned symlinked destination root is in effect
-    //   (`resolves_symlinked_parent`), where the appliers deliberately follow a
-    //   symlinked parent through AT_FDCWD instead of walking it;
+    // - `--keep-dirlinks` is in effect (`ParentWalk::Follow`), where the
+    //   appliers deliberately follow a symlinked parent through AT_FDCWD
+    //   instead of walking it;
     // - the destination has no multi-component parent to walk; or
     // - the walk itself fails - then each applier re-walks and reports the
     //   failure exactly as before (unchanged error attribution).
     #[cfg(unix)]
-    let parent_dir_owned: Option<std::os::fd::OwnedFd> = if options
-        .resolves_symlinked_parent(destination)
-    {
-        None
-    } else {
-        match destination.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => fast_io::secure_open_dir(parent).ok(),
-            _ => None,
-        }
+    let parent_dir_owned: Option<std::os::fd::OwnedFd> = match options.parent_walk() {
+        ParentWalk::Follow => None,
+        ParentWalk::Confined(root) => confined_parent(destination, root).ok().flatten(),
     };
     #[cfg(unix)]
     let parent_dirfd: ParentDirFd<'_> = {
@@ -915,7 +1019,7 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
             destination,
             entry,
             cached_meta.as_ref(),
-            options.resolves_symlinked_parent(destination),
+            options.parent_walk(),
             parent_dirfd,
         )?;
     }

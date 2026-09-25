@@ -29,11 +29,9 @@ use std::os::unix::fs::MetadataExt;
 /// Applies a path-based `chown`/`lchown`, anchoring on the parent dirfd to
 /// defeat ancestor-symlink-swap TOCTOU attacks.
 ///
-/// When `--keep-dirlinks` is inactive, dispatches to
-/// [`fast_io::secure_chown_at`], which walks the parent through
-/// `secure_open_dir` (`openat2(RESOLVE_NO_SYMLINKS)` on Linux 5.6+,
-/// `open(O_NOFOLLOW | O_DIRECTORY)` elsewhere) and anchors
-/// `fchownat` on that dirfd. `AT_SYMLINK_NOFOLLOW` alone only guards the leaf;
+/// When `--keep-dirlinks` is inactive, resolves the parent through
+/// [`super::confined_parent`] (symlinks below the destination root refused,
+/// the operator's own path trusted) and anchors `fchownat` on that dirfd. `AT_SYMLINK_NOFOLLOW` alone only guards the leaf;
 /// a symlink swapped into a receiver-created ancestor directory would
 /// otherwise be followed, redirecting the chown outside the module. Mirrors
 /// the chmod-symlink-race cutover in
@@ -60,18 +58,20 @@ use std::os::unix::fs::MetadataExt;
 /// performs internally (see [`crate::apply::ParentDirFd`]). When present - the
 /// receiver applies several attributes to one file - the chown anchors on the
 /// shared dirfd instead of re-walking the parent, which is byte-identical
-/// confinement. It is only ever `Some` on the non-`resolve_symlinked_parent`
-/// path, so the `--keep-dirlinks` branch above is unaffected.
+/// confinement. It is only ever `Some` on the non-`ParentWalk::Follow` path,
+/// so the `--keep-dirlinks` branch above is unaffected. Without it the parent
+/// is resolved by [`super::confined_parent`], which trusts the operator's
+/// destination root and confines only the names below it.
 #[cfg(unix)]
 fn chown_path(
     path: &Path,
     owner: Option<unix_fs::Uid>,
     group: Option<unix_fs::Gid>,
     follow_symlinks: bool,
-    resolve_symlinked_parent: bool,
+    parent_walk: super::ParentWalk<'_>,
     parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
-    if resolve_symlinked_parent {
+    if parent_walk.follows() {
         let flag = if follow_symlinks {
             nix::fcntl::AtFlags::empty()
         } else {
@@ -91,13 +91,14 @@ fn chown_path(
     // sentinel, matching `owner`/`group` of `None`.
     let uid = owner.map(|uid| uid.as_raw()).unwrap_or(u32::MAX);
     let gid = group.map(|gid| gid.as_raw()).unwrap_or(u32::MAX);
-    let result = match (parent_dirfd, path.parent(), path.file_name()) {
-        (Some(parent), Some(dir), Some(leaf)) if !dir.as_os_str().is_empty() => {
-            fast_io::secure_chown_at_dirfd(parent, leaf, uid, gid, follow_symlinks)
-        }
-        _ => fast_io::secure_chown_at(path, uid, gid, follow_symlinks),
-    };
-    result.map_err(|error| MetadataError::new("preserve ownership", path, error))
+    super::at_confined_parent(
+        path,
+        parent_dirfd,
+        parent_walk.root(),
+        |parent, leaf| fast_io::secure_chown_at_dirfd(parent, leaf, uid, gid, follow_symlinks),
+        || fast_io::secure_chown_at(path, uid, gid, follow_symlinks),
+    )
+    .map_err(|error| MetadataError::new("preserve ownership", path, error))
 }
 
 /// fd-based counterpart to [`chown_path`] using the libc `fchown(2)` symbol via
@@ -544,7 +545,7 @@ pub(super) fn set_owner_like(
             owner,
             group,
             follow_symlinks,
-            options.resolves_symlinked_parent(destination),
+            options.parent_walk(),
             None,
         )?;
 
@@ -700,7 +701,7 @@ pub(super) fn apply_ownership_from_entry(
                 owner,
                 group,
                 true,
-                options.resolves_symlinked_parent(destination),
+                options.parent_walk(),
                 parent_dirfd,
             )?;
 
@@ -786,7 +787,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
             owner,
             group,
             false,
-            options.resolves_symlinked_parent(destination),
+            options.parent_walk(),
             None,
         )?;
 
