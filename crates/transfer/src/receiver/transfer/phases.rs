@@ -212,7 +212,10 @@ impl ReceiverContext {
     /// - `main.c:1125-1150` - daemon-recv parent process runs `generate_files`
     /// - `generator.c:2410-2415` - early `write_del_stats(f_out)` emission
     /// - `main.c:225-238` - `write_del_stats()` wire format
-    pub(in crate::receiver) fn handle_goodbye<R: Read, W: Write + ?Sized>(
+    pub(in crate::receiver) fn handle_goodbye<
+        R: Read,
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    >(
         &self,
         reader: &mut R,
         writer: &mut W,
@@ -261,11 +264,31 @@ impl ReceiverContext {
                 }
             }
 
+            // upstream: main.c:1112-1117 - the receiver sends MSG_BLOCK_STATS
+            // after its NDX_DONE + MSG_STATS, and io.c:1728-1729 has the server
+            // generator forward it to the client, landing just ahead of the
+            // generator's final goodbye NDX_DONE (main.c:1172). oc's receiver
+            // and generator are one process, so the server writes the frame to
+            // the client here. A client receiver (pull) keeps the count local,
+            // exactly as upstream's never leaves the client's error pipe.
+            if !self.config.connection.client_mode && self.protocol.supports_block_stats() {
+                writer.send_msg_block_stats(self.touched_blocks_4k)?;
+            }
+
             ndx_write_codec.write_ndx_done(&mut *writer)?;
             writer.flush()?;
         }
 
         Ok(())
+    }
+
+    /// Adds `blocks` to the run's touched-block total, saturating at
+    /// `INT64_MAX` like upstream's `int64` counter (fileio.c:236-237).
+    pub(in crate::receiver) fn record_touched_blocks(&mut self, blocks: u64) {
+        self.touched_blocks_4k = self
+            .touched_blocks_4k
+            .saturating_add(blocks)
+            .min(i64::MAX as u64);
     }
 
     /// Receives transfer statistics from the sender.
@@ -302,7 +325,10 @@ impl ReceiverContext {
     /// Exchanges phase transitions, receives stats, and handles goodbye handshake.
     ///
     /// This is the common finalization sequence shared by all transfer modes.
-    pub(in crate::receiver) fn finalize_transfer<R: Read, W: Write + ?Sized>(
+    pub(in crate::receiver) fn finalize_transfer<
+        R: Read,
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    >(
         &mut self,
         reader: &mut R,
         writer: &mut W,

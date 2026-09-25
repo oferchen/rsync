@@ -803,6 +803,15 @@ pub(in crate::local_copy) fn execute_transfer_once(
         .summary_mut()
         .record_copy_method(CopyMethodKind::Standard);
     context.summary_mut().record_elapsed(elapsed);
+    // upstream: only receive_data() -> write_file() credits touched blocks
+    // (fileio.c:251-252). A --copy-dest / match-level-2 --link-dest basis copy
+    // is upstream's copy_altdest_file() -> copy_file() (generator.c:931), which
+    // writes through full_write() and is never counted.
+    if copy_source_override.is_none() {
+        context
+            .summary_mut()
+            .record_touched_blocks(outcome.touched_blocks());
+    }
 
     let mut metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
         .virtualize_fake_super(source, metadata_options.fake_super_enabled());

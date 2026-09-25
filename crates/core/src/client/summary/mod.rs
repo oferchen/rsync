@@ -114,6 +114,22 @@ impl ClientSummary {
         }
     }
 
+    /// Builds a summary from raw statistics at a given protocol version.
+    ///
+    /// Exposed so downstream crates can test `--stats` rendering, whose lines
+    /// are protocol-gated (upstream `main.c:434-448`), without running a
+    /// transfer.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn for_stats_test(stats: LocalCopySummary, protocol_version: u8) -> Self {
+        Self {
+            stats,
+            events: Vec::new(),
+            io_error_exit_code: None,
+            protocol_version,
+        }
+    }
+
     /// Replaces the recorded events with the supplied list.
     ///
     /// Used by the daemon-pull `--list-only` path, where the receiver returns
@@ -315,6 +331,19 @@ impl ClientSummary {
     #[doc(alias = "--stats")]
     pub const fn matched_bytes(&self) -> u64 {
         self.stats.matched_bytes()
+    }
+
+    /// Returns the number of distinct 4 KiB logical blocks the receiver wrote.
+    ///
+    /// Reported as `Number of 4 KiB logical blocks touched` when the negotiated
+    /// protocol is 33 or newer; 0 when a protocol-33 peer sent no
+    /// `MSG_BLOCK_STATS`.
+    ///
+    /// upstream: `main.c:446-448` `output_summary()`, `rsync.h:1084`
+    /// `stats.touched_blocks_4k`.
+    #[must_use]
+    pub const fn touched_blocks_4k(&self) -> u64 {
+        self.stats.touched_blocks_4k()
     }
 
     /// Returns the number of basis blocks the delta matcher reused, reported as

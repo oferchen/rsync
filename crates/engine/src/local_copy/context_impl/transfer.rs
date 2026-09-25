@@ -879,7 +879,10 @@ impl<'a> CopyContext<'a> {
                 let progressed = initial_bytes.saturating_add(copied);
                 self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
             }
-            return Ok(FileCopyOutcome::new(copied, MATCHED_NONE, None));
+            // upstream writes these bytes through write_file(), which credits
+            // every block they span (fileio.c:251-252).
+            return Ok(FileCopyOutcome::new(copied, MATCHED_NONE, None)
+                .with_touched_blocks(BlockTouchTracker::blocks_spanned(initial_bytes, copied)));
         }
 
         if sparse {
@@ -993,7 +996,14 @@ impl<'a> CopyContext<'a> {
             FileCopyOutcome::new(literal_bytes, MATCHED_NONE, None)
         };
 
-        Ok(outcome)
+        // The dense loop writes one contiguous run starting at the append
+        // offset. upstream: fileio.c:251-252 credits each write_file() call.
+        Ok(
+            outcome.with_touched_blocks(BlockTouchTracker::blocks_spanned(
+                initial_bytes,
+                total_bytes,
+            )),
+        )
     }
 
     /// Sparse variant of `copy_file_contents`.
@@ -1028,6 +1038,7 @@ impl<'a> CopyContext<'a> {
         let _ = fast_io::mark_file_sparse(writer);
         let mut sparse_state = SparseWriteState::default();
         sparse_state.set_preallocated_len(preallocated_len);
+        sparse_state.set_start_offset(initial_bytes);
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress: u64 = 0;
         const TIMEOUT_CHECK_INTERVAL: u64 = 1024 * 1024;
@@ -1121,6 +1132,6 @@ impl<'a> CopyContext<'a> {
             FileCopyOutcome::new(literal_bytes, MATCHED_NONE, None)
         };
 
-        Ok(outcome)
+        Ok(outcome.with_touched_blocks(sparse_state.touched_blocks()))
     }
 }

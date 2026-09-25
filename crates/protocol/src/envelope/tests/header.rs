@@ -149,7 +149,7 @@ fn decode_rejects_tag_without_base_offset() {
 
 #[test]
 fn decode_rejects_unknown_message_codes() {
-    let unknown_code = 11u8;
+    let unknown_code = 12u8;
     let tag = u32::from(MPLEX_BASE) + u32::from(unknown_code);
     let raw = (tag << 24) | 5;
     let err = MessageHeader::decode(&raw.to_le_bytes()).unwrap_err();

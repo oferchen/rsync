@@ -19,6 +19,11 @@ debug-words:oc_only:sockopt
 exit-codes:oc_only:0:success
 exit-codes:oc_only:6:daemon unable to append to log-file
 
+# msg-codes: 11 is MSG_BLOCK_STATS, added by upstream 3.5.1 (rsync.h:302,
+# io.c:1721-1732). The gate still pins 3.5.0, whose enum stops at 10; this
+# retires when the surface gate moves to 3.5.1 (U351-5).
+msg-codes:oc_only:11
+
 # daemon-directives: upstream's parm_table carries `name` as the module
 # identity, populated from the `[module]` section header (loadparm.c
 # add_a_module() -> string_set(&s->name)), not written as a `name = value`

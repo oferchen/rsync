@@ -419,6 +419,7 @@ impl ReceiverContext {
         stats.bytes_received = bytes_received;
         stats.literal_data = literal_data;
         stats.matched_data = matched_data;
+        stats.touched_blocks_4k = self.touched_blocks_4k;
         stats.total_source_bytes = total_source_bytes;
         if !metadata_errors.is_empty() {
             stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;

@@ -135,6 +135,14 @@ impl ProtocolVersion {
     pub const BINARY_NEGOTIATION_INTRODUCED: ProtocolVersion =
         ProtocolVersion::new_const(FIRST_BINARY_NEGOTIATION_PROTOCOL);
 
+    /// Protocol version 33, introduced by upstream rsync 3.5.1 for
+    /// `MSG_BLOCK_STATS`.
+    ///
+    /// Not yet advertised: it lies outside [`Self::supported_range`], so
+    /// negotiation clamps a protocol-33 peer to [`Self::NEWEST`]. It exists so
+    /// the protocol-33 paths can be exercised in-process before they are.
+    pub const V33: ProtocolVersion = ProtocolVersion::new_const(33);
+
     /// Protocol version 32, the newest revision advertised by upstream rsync
     /// 3.4.4.
     pub const V32: ProtocolVersion = ProtocolVersion::NEWEST;

@@ -51,6 +51,11 @@ pub enum MessageCode {
     #[doc(alias = "MSG_STATS")]
     /// Transfer statistics destined for the generator.
     Stats = 10,
+    #[doc(alias = "MSG_BLOCK_STATS")]
+    /// Receiver's count of distinct 4 KiB logical blocks written, destined for
+    /// the sender (protocol >= 33). The payload is an 8-byte little-endian
+    /// `int64`. upstream: rsync.h:302, main.c:1112-1117, io.c:1721-1732.
+    BlockStats = 11,
     #[doc(alias = "MSG_IO_ERROR")]
     /// Sender encountered an I/O error while accessing the source tree.
     IoError = 22,
@@ -128,6 +133,7 @@ impl MessageCode {
             8 => Some(Self::ErrorUtf8),
             9 => Some(Self::Redo),
             10 => Some(Self::Stats),
+            11 => Some(Self::BlockStats),
             22 => Some(Self::IoError),
             33 => Some(Self::IoTimeout),
             42 => Some(Self::NoOp),
@@ -139,13 +145,13 @@ impl MessageCode {
         }
     }
 
-    /// Ordered list of all message codes understood by rsync 3.4.1.
+    /// Ordered list of all message codes understood by rsync 3.5.1.
     ///
     /// The variants are arranged by their numeric value so that callers can
     /// iterate deterministically when constructing golden multiplexed streams
     /// or exhaustively testing round-trips. The ordering mirrors upstream's
     /// `enum msgcode` definitions to preserve byte-level parity.
-    pub const ALL: [MessageCode; 18] = [
+    pub const ALL: [MessageCode; 19] = [
         MessageCode::Data,
         MessageCode::ErrorXfer,
         MessageCode::Info,
@@ -157,6 +163,7 @@ impl MessageCode {
         MessageCode::ErrorUtf8,
         MessageCode::Redo,
         MessageCode::Stats,
+        MessageCode::BlockStats,
         MessageCode::IoError,
         MessageCode::IoTimeout,
         MessageCode::NoOp,
@@ -168,7 +175,7 @@ impl MessageCode {
 
     /// Returns the ordered list of all known message codes.
     #[must_use]
-    pub const fn all() -> &'static [MessageCode; 18] {
+    pub const fn all() -> &'static [MessageCode; 19] {
         &Self::ALL
     }
 
@@ -288,6 +295,7 @@ impl MessageCode {
             MessageCode::ErrorUtf8 => "MSG_ERROR_UTF8",
             MessageCode::Redo => "MSG_REDO",
             MessageCode::Stats => "MSG_STATS",
+            MessageCode::BlockStats => "MSG_BLOCK_STATS",
             MessageCode::IoError => "MSG_IO_ERROR",
             MessageCode::IoTimeout => "MSG_IO_TIMEOUT",
             MessageCode::NoOp => "MSG_NOOP",
@@ -330,6 +338,7 @@ impl FromStr for MessageCode {
             "MSG_ERROR_UTF8" => Ok(Self::ErrorUtf8),
             "MSG_REDO" => Ok(Self::Redo),
             "MSG_STATS" => Ok(Self::Stats),
+            "MSG_BLOCK_STATS" => Ok(Self::BlockStats),
             "MSG_IO_ERROR" => Ok(Self::IoError),
             "MSG_IO_TIMEOUT" => Ok(Self::IoTimeout),
             "MSG_NOOP" => Ok(Self::NoOp),
@@ -374,15 +383,25 @@ mod tests {
 
     #[test]
     fn from_u8_returns_none_for_unknown() {
-        assert!(MessageCode::from_u8(11).is_none());
+        assert!(MessageCode::from_u8(12).is_none());
         assert!(MessageCode::from_u8(99).is_none());
         assert!(MessageCode::from_u8(200).is_none());
     }
 
     #[test]
-    fn all_contains_18_codes() {
-        assert_eq!(MessageCode::ALL.len(), 18);
-        assert_eq!(MessageCode::all().len(), 18);
+    fn all_contains_19_codes() {
+        assert_eq!(MessageCode::ALL.len(), 19);
+        assert_eq!(MessageCode::all().len(), 19);
+    }
+
+    /// WHY: tag 11 is upstream's `MSG_BLOCK_STATS` (rsync.h:302); a different
+    /// number would put the protocol-33 block count on a tag the peer rejects.
+    #[test]
+    fn block_stats_is_tag_11() {
+        assert_eq!(MessageCode::BlockStats.as_u8(), 11);
+        assert_eq!(MessageCode::from_u8(11), Some(MessageCode::BlockStats));
+        assert_eq!(MessageCode::BlockStats.name(), "MSG_BLOCK_STATS");
+        assert!(!MessageCode::BlockStats.is_logging());
     }
 
     #[test]
@@ -523,6 +542,7 @@ mod tests {
             MessageCode::ErrorUtf8,
             MessageCode::Redo,
             MessageCode::Stats,
+            MessageCode::BlockStats,
             MessageCode::IoError,
             MessageCode::IoTimeout,
             MessageCode::NoOp,

@@ -448,6 +448,10 @@ fn replay_batch(
         crate::server::ServerStats::Receiver(stats),
         start.elapsed(),
     );
+    // upstream: compat.c:604 - a replay runs at the protocol the batch was
+    // recorded under, which gates the protocol-dependent --stats lines
+    // (main.c:434-448).
+    summary.set_protocol_version(ctx.protocol().as_u8());
 
     // A custom `--out-format` made the replay receiver buffer one
     // metadata-bearing itemize event per transferred row instead of printing

@@ -43,6 +43,7 @@ use super::{
     trace_make_backup_device, trace_make_backup_hlink, trace_make_backup_rename,
     trace_make_backup_symlink, write_sparse_chunk,
 };
+use crate::block_touch::BlockTouchTracker;
 use crate::delta::{DeltaSignatureIndex, ProbeCounters};
 use crate::signature::SignatureBlock;
 use ::metadata::{
@@ -513,12 +514,13 @@ impl<'a> FinalizeMetadataParams<'a> {
 }
 
 /// Byte-level statistics from a single file copy (literal and optional
-/// compressed sizes).
+/// compressed sizes, plus the 4 KiB logical blocks written).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct FileCopyOutcome {
     literal_bytes: u64,
     matched_bytes: u64,
     compressed_bytes: Option<u64>,
+    touched_blocks: u64,
 }
 
 /// Matched-byte count for copy paths that never match a basis block.
@@ -539,7 +541,22 @@ impl FileCopyOutcome {
             literal_bytes,
             matched_bytes,
             compressed_bytes,
+            touched_blocks: 0,
         }
+    }
+
+    /// Attaches the number of distinct 4 KiB logical blocks the copy wrote.
+    ///
+    /// upstream: fileio.c:218-243 track_block_touches() - counted per write,
+    /// never for seeked sparse holes or in-place matched blocks.
+    pub(crate) const fn with_touched_blocks(mut self, touched_blocks: u64) -> Self {
+        self.touched_blocks = touched_blocks;
+        self
+    }
+
+    /// Returns the number of distinct 4 KiB logical blocks the copy wrote.
+    pub(crate) const fn touched_blocks(self) -> u64 {
+        self.touched_blocks
     }
 
     /// Returns the number of literal (unmatched) bytes transferred.

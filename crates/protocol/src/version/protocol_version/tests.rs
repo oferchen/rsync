@@ -128,6 +128,21 @@ fn supports_flist_times_boundary_at_29() {
     assert!(ProtocolVersion::V32.supports_flist_times());
 }
 
+/// WHY: MSG_BLOCK_STATS and its --stats line exist only from protocol 33
+/// (main.c:446,1112; io.c:1722). Every currently negotiable version must stay
+/// silent so a protocol-32 session is byte-identical to before.
+#[test]
+fn supports_block_stats_boundary_at_33() {
+    for version in ProtocolVersion::supported_versions() {
+        assert!(
+            !version.supports_block_stats(),
+            "version {version} must not carry MSG_BLOCK_STATS"
+        );
+    }
+    assert!(ProtocolVersion::V33.supports_block_stats());
+    assert_eq!(ProtocolVersion::V33.as_u8(), 33);
+}
+
 #[test]
 fn supports_extended_flags_for_all_supported_versions() {
     for version in ProtocolVersion::supported_versions() {

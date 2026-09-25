@@ -4,6 +4,8 @@
 
 use std::io::{self, Seek, SeekFrom, Write};
 
+use engine::BlockTouchTracker;
+
 use crate::constants::{SPARSE_WRITE_SIZE, leading_zero_count, trailing_zero_count};
 
 /// Tracks pending runs of zeros so they become holes in the output file rather
@@ -41,6 +43,11 @@ pub struct SparseWriteState {
     /// Whether [`Self::stream_offset`] has been primed from the writer's real
     /// position. Guards the single position query per file.
     offset_primed: bool,
+    /// Distinct 4 KiB blocks written by data spans at their absolute offsets.
+    /// Zero runs and [`Self::skip_matched`] spans are never credited.
+    /// upstream: fileio.c:168-169,179-180 - `if (!use_seek)
+    /// track_block_touches(f, offset + start, ...)`.
+    touched: BlockTouchTracker,
 }
 
 impl SparseWriteState {
@@ -53,7 +60,14 @@ impl SparseWriteState {
             holes: Vec::new(),
             stream_offset: 0,
             offset_primed: false,
+            touched: BlockTouchTracker::new(),
         }
+    }
+
+    /// Returns the number of distinct 4 KiB blocks the data spans wrote.
+    #[must_use]
+    pub const fn touched_blocks(&self) -> u64 {
+        self.touched.total()
     }
 
     /// Returns the writer's current stream position, priming the tracked
@@ -139,6 +153,31 @@ impl SparseWriteState {
     /// upstream does, not written as literal data.
     #[inline]
     pub fn write<W: Write + Seek>(&mut self, writer: &mut W, data: &[u8]) -> io::Result<usize> {
+        self.write_spans(writer, data, true)
+    }
+
+    /// Consumes an in-place matched block that already sits at its offset.
+    ///
+    /// The bytes take the same zero-run scan as [`Self::write`], so interior
+    /// holes are still punched, but the data spans are not credited as touched
+    /// blocks: upstream seeks over them instead of writing.
+    ///
+    /// upstream: fileio.c:298-300 skip_matched() -> `write_file(fd, 1 /*use_seek*/,
+    /// ...)`, and fileio.c:168,179 skip block accounting when `use_seek`.
+    pub fn skip_matched<W: Write + Seek>(
+        &mut self,
+        writer: &mut W,
+        data: &[u8],
+    ) -> io::Result<usize> {
+        self.write_spans(writer, data, false)
+    }
+
+    fn write_spans<W: Write + Seek>(
+        &mut self,
+        writer: &mut W,
+        data: &[u8],
+        credit_touched: bool,
+    ) -> io::Result<usize> {
         if data.is_empty() {
             return Ok(0);
         }
@@ -170,6 +209,9 @@ impl SparseWriteState {
                 self.flush(writer)?;
                 let chunk = &data[data_start..data_end];
                 writer.write_all(chunk)?;
+                if credit_touched {
+                    self.touched.record(self.stream_offset, chunk.len() as u64);
+                }
                 self.stream_offset = self.stream_offset.saturating_add(chunk.len() as u64);
             }
 
@@ -372,6 +414,37 @@ mod tests {
             w.seeked, 8192,
             "the 8 KB interior zero run is seeked (hole)"
         );
+    }
+
+    /// WHY: only written data spans are touched blocks; a zero run between them
+    /// is a seeked hole and must not be credited (upstream TEST 5 expects 2 for
+    /// `data + hole + data`). fileio.c:168-180.
+    #[test]
+    fn touched_blocks_credit_data_spans_not_holes() {
+        let mut state = SparseWriteState::new();
+        let mut cursor = Cursor::new(Vec::new());
+        let mut data = vec![0xAAu8; 4096];
+        data.extend(std::iter::repeat_n(0u8, 64 * 1024));
+        data.extend(std::iter::repeat_n(0xBBu8, 4096));
+        state.write(&mut cursor, &data).unwrap();
+        state.finish(&mut cursor).unwrap();
+        assert_eq!(state.touched_blocks(), 2);
+    }
+
+    /// WHY: an in-place matched block is seeked over upstream (`use_seek`), so
+    /// feeding it through `skip_matched` must credit nothing, while the same
+    /// bytes through `write` do. fileio.c:298-300.
+    #[test]
+    fn skip_matched_credits_no_touched_blocks() {
+        let mut skipped = SparseWriteState::new();
+        let mut cursor = Cursor::new(vec![0u8; 8192]);
+        skipped.skip_matched(&mut cursor, &[7u8; 8192]).unwrap();
+        assert_eq!(skipped.touched_blocks(), 0);
+
+        let mut written = SparseWriteState::new();
+        let mut cursor = Cursor::new(vec![0u8; 8192]);
+        written.write(&mut cursor, &[7u8; 8192]).unwrap();
+        assert_eq!(written.touched_blocks(), 2);
     }
 
     #[test]
