@@ -234,9 +234,11 @@ impl GeneratorContext {
         self.file_list
             .dedup_with_parallel(&mut self.source_bases, true, inc_recurse);
 
-        // upstream: hlink.c:match_hard_links() - must be called after sort
+        // upstream: flist.c:599-606 - numbered in send order. Under INC_RECURSE
+        // the send order only exists once the list is partitioned, so
+        // `reorder_and_build_segments` numbers it instead.
         #[cfg(unix)]
-        if self.config.flags.hard_links {
+        if self.config.flags.hard_links && !inc_recurse {
             self.assign_hardlink_indices();
         }
 
@@ -514,9 +516,11 @@ impl GeneratorContext {
         self.file_list
             .dedup_with_parallel(&mut self.source_bases, true, inc_recurse);
 
-        // upstream: hlink.c:match_hard_links() - must be called after sort
+        // upstream: flist.c:599-606 - numbered in send order. Under INC_RECURSE
+        // the send order only exists once the list is partitioned, so
+        // `reorder_and_build_segments` numbers it instead.
         #[cfg(unix)]
-        if self.config.flags.hard_links {
+        if self.config.flags.hard_links && !inc_recurse {
             self.assign_hardlink_indices();
         }
 
