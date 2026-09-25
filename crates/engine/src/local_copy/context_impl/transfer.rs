@@ -621,6 +621,78 @@ impl<'a> CopyContext<'a> {
                 self.record_batch_metadata_item(iflags);
             }
         }
+        // upstream: generator.c:517-586 itemize() ALSO writes an NDX + iflags
+        // word for a metadata-only change to an EXISTING non-regular entry (a
+        // dir, symlink, or special the quick-check kept but whose attributes
+        // changed), carrying only the ITEM_REPORT_* bits - no ITEM_IS_NEW /
+        // ITEM_LOCAL_CHANGE / ITEM_TRANSFER, so no sum_head follows. Without it
+        // an upstream `--read-batch -i` of an oc batch shows no `.d`/`.L`/`.S`
+        // row for such an entry; the metadata still applies from the flist, so
+        // this is `-i` fidelity only, not a data/exit/count change. A regular
+        // file's metadata-only change carries its word in the delta entry and is
+        // a separate, broader gap that stays out of scope here.
+        if !record.was_created()
+            && matches!(record.action(), LocalCopyAction::MetadataReused)
+            && record.relative_path() != std::path::Path::new(".")
+        {
+            // Non-regular = a directory (via the record flag, which is set even
+            // when no metadata snapshot is attached) or any snapshot whose kind
+            // is not a plain file (symlink / fifo / device / socket).
+            let is_non_regular = record.is_directory()
+                || record
+                    .metadata()
+                    .is_some_and(|meta| meta.kind() != LocalCopyFileKind::File);
+            if is_non_regular {
+                // upstream: generator.c:522-548 - the report bits itemize() sets
+                // for a kept entry (rsync.h:244-254). ITEM_REPORT_SIZE (1<<2) is
+                // deliberately excluded: upstream sets it only for a regular file
+                // (generator.c:527 `S_ISREG`), and the same bit doubles as
+                // ITEM_REPORT_TIMEFAIL for symlinks, so emitting it for a
+                // non-regular entry would diverge from the oracle.
+                const ITEM_REPORT_ATIME: u16 = 1 << 0;
+                const ITEM_REPORT_CHANGE: u16 = 1 << 1;
+                const ITEM_REPORT_TIME: u16 = 1 << 3;
+                const ITEM_REPORT_PERMS: u16 = 1 << 4;
+                const ITEM_REPORT_OWNER: u16 = 1 << 5;
+                const ITEM_REPORT_GROUP: u16 = 1 << 6;
+                const ITEM_REPORT_ACL: u16 = 1 << 7;
+                const ITEM_REPORT_XATTR: u16 = 1 << 8;
+                const ITEM_REPORT_CRTIME: u16 = 1 << 10;
+                let cs = record.change_set();
+                let mut iflags: u16 = 0;
+                if cs.checksum_changed() {
+                    iflags |= ITEM_REPORT_CHANGE;
+                }
+                if cs.time_change().is_some() {
+                    iflags |= ITEM_REPORT_TIME;
+                }
+                if cs.permissions_changed() {
+                    iflags |= ITEM_REPORT_PERMS;
+                }
+                if cs.owner_changed() {
+                    iflags |= ITEM_REPORT_OWNER;
+                }
+                if cs.group_changed() {
+                    iflags |= ITEM_REPORT_GROUP;
+                }
+                if cs.acl_changed() {
+                    iflags |= ITEM_REPORT_ACL;
+                }
+                if cs.xattr_changed() {
+                    iflags |= ITEM_REPORT_XATTR;
+                }
+                if cs.access_time_changed() {
+                    iflags |= ITEM_REPORT_ATIME;
+                }
+                if cs.create_time_changed() {
+                    iflags |= ITEM_REPORT_CRTIME;
+                }
+                // record_batch_metadata_item drops iflags == 0 (the
+                // SIGNIFICANT_ITEM_FLAGS gate), so a truly no-op MetadataReused
+                // adds nothing to the batch.
+                self.record_batch_metadata_item(iflags);
+            }
+        }
         if let Some(observer) = &mut self.observer {
             observer.handle(record.clone());
         }
