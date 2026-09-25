@@ -41,8 +41,14 @@ fn apply_long_form_args(
         }
         match arg.as_str() {
             // upstream: options.c:2836-2847 - delete mode variants
-            "--delete" | "--delete-before" | "--delete-during" => {
+            "--delete" | "--delete-during" => {
                 config.flags.delete = true;
+            }
+            // upstream: compat.c:174-176 - set_allow_inc_recurse() keys on
+            // delete_before.
+            "--delete-before" => {
+                config.flags.delete = true;
+                config.deletion.delete_before = true;
             }
             "--delete-delay" => {
                 config.flags.delete = true;

@@ -445,6 +445,8 @@ where
     // merge files it just received protect matching destination entries at delete
     // time. --delete-delay decides during the walk and only defers the unlink.
     config.deletion.delete_after = long_flags.delete_after;
+    // upstream: compat.c:174-176 - set_allow_inc_recurse() keys on delete_before.
+    config.deletion.delete_before = long_flags.delete_before;
     // upstream: exclude.c:1947-1948 / :1976-1977 - both ends compute
     // `receiver_wants_list` from the same four inputs, so a server that reads
     // `delete_excluded` as false while the client reads it as true will try to

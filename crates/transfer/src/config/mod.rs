@@ -117,6 +117,16 @@ pub struct DeletionConfig {
     ///
     /// - `generator.c:124`: `#define EARLY_DELETE_DONE_MSG() (!(delete_during == 2 || delete_after))`
     pub late_delete: bool,
+    /// Whether the user explicitly asked for `--delete-before`.
+    ///
+    /// Plain `--delete` leaves this false: upstream resolves a bare
+    /// `delete_mode` to `delete_during` at protocol >= 30 (compat.c:683-688)
+    /// only after `set_allow_inc_recurse()` has run, so it never counts as a
+    /// before-delete there.
+    ///
+    /// upstream: options.c:737 `--delete-before` sets `delete_before`;
+    /// compat.c:174-176 disallows inc-recursion for a receiver with it.
+    pub delete_before: bool,
     /// Whether the delete *pass* (the extraneous-entry decision) is deferred
     /// until after the per-file transfer completes.
     ///
@@ -848,6 +858,33 @@ impl ServerConfig {
     #[must_use]
     pub fn effective_omit_dir_times(&self) -> bool {
         self.flags.omit_dir_times || (self.flags.backup && self.backup_dir.is_none())
+    }
+
+    /// Reports whether this side's options permit incremental recursion,
+    /// mirroring upstream `set_allow_inc_recurse()`.
+    ///
+    /// Recursion must be on and `--qsort` off, and a receiver additionally
+    /// refuses it under `--delete-before`, `--delete-after`, `--delay-updates`
+    /// or `--prune-empty-dirs`, all of which need the complete file list up
+    /// front. Upstream's server-only `client_info` `'i'` clause is not part of
+    /// this predicate: it gates what a server advertises, not what its options
+    /// allow.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `compat.c:172-177` - the option and receiver clauses mirrored here.
+    /// - `compat.c:780-785` - a peer-set `CF_INC_RECURSE` this predicate
+    ///   rejects aborts with `RERR_SYNTAX`.
+    #[must_use]
+    pub fn allows_inc_recurse(&self) -> bool {
+        if !self.flags.recursive || self.qsort {
+            return false;
+        }
+        self.role == ServerRole::Generator
+            || !(self.deletion.delete_before
+                || self.deletion.delete_after
+                || self.write.delay_updates
+                || self.flags.prune_empty_dirs)
     }
 
     /// Returns the effective backup suffix, matching upstream rsync defaults.

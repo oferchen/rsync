@@ -79,6 +79,7 @@ fn ssh_server_flag_string_limits_compat_flags() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: true,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -118,6 +119,7 @@ fn ssh_server_flag_string_enables_advertised_caps() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: true,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -154,6 +156,7 @@ fn ssh_server_no_flag_string_uses_defaults() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -200,6 +203,7 @@ fn client_honors_negotiated_inc_recurse_regardless_of_local_allow() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -221,6 +225,67 @@ fn client_honors_negotiated_inc_recurse_regardless_of_local_allow() {
         flags.contains(CompatibilityFlags::INC_RECURSE),
         "client must honour the server's negotiated CF_INC_RECURSE (no silent strip)"
     );
+}
+
+/// upstream compat.c:780-785: a peer-set CF_INC_RECURSE that this side's
+/// options cannot honour aborts with RERR_SYNTAX before negotiate_the_strings(),
+/// so no negotiation bytes leave this side.
+#[test]
+fn client_refuses_inc_recurse_its_options_disallow() {
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let run = |options_allow_inc_recurse: bool, flags_to_read: CompatibilityFlags| {
+        let config = ProtocolSetupConfig {
+            protocol,
+            skip_compat_exchange: false,
+            client_args: None,
+            flag_string: None,
+            is_server: false,
+            is_daemon_mode: true,
+            do_compression: false,
+            compress_choice: None,
+            checksum_choice: None,
+            compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
+            checksum_seed: Some(42),
+            allow_inc_recurse: false,
+            options_allow_inc_recurse,
+            preserve_crtimes: false,
+            write_batch: false,
+        };
+        let mock = MockNegotiator {
+            flags_to_read,
+            ..MockNegotiator::new()
+        };
+        let mut stdin = &b""[..];
+        let mut stdout = Vec::new();
+        let result = setup_protocol_with(&mut stdout, &mut stdin, &config, &mock);
+        (result, stdout)
+    };
+    let inc = CompatibilityFlags::INC_RECURSE | CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+    let (result, stdout) = run(false, inc);
+    let err = result.expect_err("disallowed CF_INC_RECURSE must abort");
+    assert_eq!(
+        err.to_string(),
+        "Incompatible options specified for inc-recursive connection."
+    );
+    assert_eq!(crate::error::rerr_for_io_error(&err), 1, "RERR_SYNTAX");
+    assert!(stdout.is_empty(), "nothing is negotiated after the abort");
+
+    // Opposed controls: the options allow it, or the peer never set the bit.
+    assert!(run(true, inc).0.is_ok());
+    assert!(run(false, CompatibilityFlags::VARINT_FLIST_FLAGS).0.is_ok());
+}
+
+/// The batch noun differs; the abort class does not (compat.c:783-784).
+#[test]
+fn batch_refusal_names_the_batch_file() {
+    let err = refuse_incompatible_inc_recurse(false, CompatibilityFlags::INC_RECURSE, true)
+        .expect_err("batch must refuse too");
+    assert_eq!(
+        err.to_string(),
+        "Incompatible options specified for inc-recursive batch file."
+    );
+    assert_eq!(crate::error::rerr_for_io_error(&err), 1);
 }
 
 #[test]
@@ -360,6 +425,7 @@ fn setup_protocol_below_30_returns_none_for_algorithms_and_compat() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -403,6 +469,7 @@ fn setup_protocol_skip_compat_exchange_skips_flags() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -449,6 +516,7 @@ fn setup_protocol_server_writes_compat_flags_and_seed() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -508,6 +576,7 @@ fn setup_protocol_client_reads_compat_flags_from_server() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -555,6 +624,7 @@ fn setup_protocol_server_generates_deterministic_seeds() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -608,6 +678,7 @@ fn setup_protocol_ssh_mode_bidirectional_exchange() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -655,6 +726,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -690,6 +762,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -737,6 +810,7 @@ fn setup_protocol_protocol_30_minimum_for_compat_exchange() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -1128,6 +1202,7 @@ fn setup_protocol_server_v_flag_uses_single_byte_encoding() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -1178,6 +1253,7 @@ fn setup_protocol_server_v_flag_enables_negotiation() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -1214,6 +1290,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -1237,6 +1314,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -1437,6 +1515,7 @@ fn setup_protocol_with_mock_negotiator_server_mode() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -1486,6 +1565,7 @@ fn setup_protocol_with_mock_negotiator_client_mode() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -1784,6 +1864,7 @@ fn compress_choice_override_skips_vstring_and_uses_algorithm() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -1822,6 +1903,7 @@ fn compress_choice_none_allows_normal_negotiation() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -1860,6 +1942,7 @@ fn compress_choice_zlib_override_on_legacy_protocol() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -1903,6 +1986,7 @@ fn checksum_choice_override_threads_into_negotiation() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };
@@ -1941,6 +2025,7 @@ fn checksum_choice_none_allows_normal_negotiation() {
         compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
+        options_allow_inc_recurse: true,
         preserve_crtimes: false,
         write_batch: false,
     };

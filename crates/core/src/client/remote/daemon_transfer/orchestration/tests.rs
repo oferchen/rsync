@@ -2321,3 +2321,85 @@ mod raw_byte_local_paths {
         assert_eq!(server_config.args[0].as_bytes(), raw.as_slice());
     }
 }
+
+/// A pulling client whose options need the whole file list up front must
+/// refuse a server-set CF_INC_RECURSE instead of receiving an inc-recursive
+/// stream it would mis-process (upstream compat.c:174-176, 780-785). Drives the
+/// real client receiver-config builder so the option plumbing is under test,
+/// not just the predicate.
+mod inc_recurse_incompatible_options {
+    use super::*;
+    use protocol::CompatibilityFlags;
+    use transfer::setup::refuse_incompatible_inc_recurse;
+
+    const MESSAGE: &str = "Incompatible options specified for inc-recursive connection.";
+
+    fn check(config: &ClientConfig, compat: CompatibilityFlags) -> Result<(), std::io::Error> {
+        let server_config = build_server_config_for_receiver(
+            config,
+            &[std::ffi::OsString::from("dest")],
+            Vec::new(),
+        )
+        .unwrap();
+        refuse_incompatible_inc_recurse(server_config.allows_inc_recurse(), compat, false)
+    }
+
+    fn refusing_configs() -> [(&'static str, ClientConfig); 4] {
+        let base = || ClientConfig::builder().recursive(true);
+        [
+            ("--delete-before", base().delete_before(true).build()),
+            ("--delete-after", base().delete_after(true).build()),
+            ("--delay-updates", base().delay_updates(true).build()),
+            ("--prune-empty-dirs", base().prune_empty_dirs(true).build()),
+        ]
+    }
+
+    #[test]
+    fn whole_list_options_refuse_inc_recurse_with_rerr_syntax() {
+        for (name, config) in refusing_configs() {
+            let err = check(&config, CompatibilityFlags::INC_RECURSE)
+                .expect_err(&format!("{name} must refuse CF_INC_RECURSE"));
+            assert_eq!(err.to_string(), MESSAGE, "{name}");
+            assert_eq!(transfer::error::rerr_for_io_error(&err), 1, "{name}");
+        }
+    }
+
+    /// Opposed control: without CF_INC_RECURSE the same options are fine, so
+    /// the refusal is keyed on the bit, not on the options alone.
+    #[test]
+    fn whole_list_options_accept_a_flat_list() {
+        for (name, config) in refusing_configs() {
+            assert!(
+                check(&config, CompatibilityFlags::CHECKSUM_SEED_FIX).is_ok(),
+                "{name}"
+            );
+        }
+    }
+
+    /// Opposed control: bare --delete resolves to delete_during from protocol
+    /// 30 on (compat.c:683-688) and --delete-delay is a during-delete, so both
+    /// stay compatible - refusing them would break every inc-recursive pull
+    /// with --delete.
+    #[test]
+    fn during_deletes_accept_inc_recurse() {
+        for (name, config) in [
+            (
+                "--delete",
+                ClientConfig::builder().recursive(true).delete(true).build(),
+            ),
+            (
+                "--delete-delay",
+                ClientConfig::builder()
+                    .recursive(true)
+                    .delete_delay(true)
+                    .build(),
+            ),
+            ("-r", ClientConfig::builder().recursive(true).build()),
+        ] {
+            assert!(
+                check(&config, CompatibilityFlags::INC_RECURSE).is_ok(),
+                "{name}"
+            );
+        }
+    }
+}
