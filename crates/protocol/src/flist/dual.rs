@@ -121,22 +121,36 @@ impl DualFileList {
     /// [`apply_permutation_in_place`](super::sort::apply_permutation_in_place)
     /// directly on the legacy Vec.
     ///
+    /// `protocol_pre29` selects the protocol < 29 ordering (directories compare
+    /// as plain items). The receiver sorts with the negotiated protocol's rule,
+    /// so the sender must too or every NDX past the first divergence names a
+    /// different entry on each side.
+    ///
     /// # Panics
     ///
     /// Panics in debug builds when `parallel.len() != self.len()`.
     ///
-    /// upstream: flist.c:f_name_cmp() with indirect permutation
-    pub fn sort_with_parallel<P>(&mut self, parallel: &mut [P], use_qsort: bool) {
+    /// upstream: flist.c:f_name_cmp() with indirect permutation;
+    /// flist.c:3560 `t_path = protocol_version >= 29 ? t_PATH : t_ITEM`
+    pub fn sort_with_parallel<P>(
+        &mut self,
+        parallel: &mut [P],
+        use_qsort: bool,
+        protocol_pre29: bool,
+    ) {
         let n = self.legacy.len();
         if n == 0 {
             return;
         }
         debug_assert_eq!(parallel.len(), n);
 
-        let mut indices: Vec<usize> = (0..n).collect();
-        let cmp = |&a: &usize, &b: &usize| {
-            super::sort::compare_file_entries(&self.legacy[a], &self.legacy[b])
+        let compare = if protocol_pre29 {
+            super::sort::compare_file_entries_pre29
+        } else {
+            super::sort::compare_file_entries
         };
+        let mut indices: Vec<usize> = (0..n).collect();
+        let cmp = |&a: &usize, &b: &usize| compare(&self.legacy[a], &self.legacy[b]);
         if use_qsort {
             indices.sort_unstable_by(cmp);
         } else {
