@@ -25,8 +25,9 @@ use super::{SPARSE_WRITE_SIZE, leading_zero_run, trailing_zero_run};
 /// preallocated_len` decision.
 ///
 /// The start of a pending run is the writer's current stream position (the
-/// point just past the last data write), so the state stays correct even when
-/// the caller seeks the writer between chunks (the delta/inplace path).
+/// point just past the last data write), so callers must not reposition the
+/// writer while a run is pending: a seek past the run makes it start late and
+/// shifts every following byte.
 #[derive(Default)]
 pub(crate) struct SparseWriteState {
     /// Accumulated pending zero bytes (upstream `sparse_seek`).
@@ -212,8 +213,7 @@ fn write_sparse_spans(
         if data_end > data_start {
             // upstream: fileio.c:119 emit_sparse_span() flushes the pending
             // zero run (seek or punch) before emitting the data span. The
-            // flush reads the writer's current position as the run start, so
-            // an interleaved external seek stays correct.
+            // flush reads the writer's current position as the run start.
             state.flush(writer, destination)?;
             match mode {
                 SpanWrite::Data => writer

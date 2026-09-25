@@ -197,6 +197,70 @@ fn execute_inplace_sparse_punches_hole() {
     );
 }
 
+/// `--inplace --sparse` must keep every byte at its own offset when a matched
+/// block that ends in a zero byte is followed by a literal run.
+///
+/// The matched block's trailing zero is deferred as a pending hole, so the
+/// writer sits one byte short of the logical output offset. Seeking the writer
+/// to that offset before the literal write made the deferred hole start one
+/// byte late, shifting every following byte and zeroing the first byte of the
+/// next matched block. Random 1 MB data hits this once in 256 runs, which is
+/// how upstream `preallocate_test.py`'s `--inplace --sparse` leg failed
+/// intermittently.
+// upstream: receiver.c:563 write_file() - no lseek between tokens; the
+// deferred hole is flushed from the current position (fileio.c:81
+// flush_sparse_hole()).
+#[test]
+fn execute_inplace_sparse_keeps_offsets_after_block_ending_in_zero() {
+    const BLOCK: usize = 1024;
+    const LEN: usize = 64 * BLOCK;
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.bin");
+    let dest = temp.path().join("dest.bin");
+
+    // Non-zero pseudo-random bytes, except the last byte of block 15.
+    let mut seed = 0x2545_f491_u32;
+    let mut basis: Vec<u8> = (0..LEN)
+        .map(|_| {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            ((seed >> 16) as u8) | 1
+        })
+        .collect();
+    basis[16 * BLOCK - 1] = 0;
+    fs::write(&dest, &basis).expect("write basis");
+
+    // Same length, with a literal zero run right after that block.
+    let mut expected = basis.clone();
+    expected[16 * BLOCK..48 * BLOCK].fill(0);
+    fs::write(&source, &expected).expect("write source");
+
+    let past = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    fs::File::options()
+        .write(true)
+        .open(&dest)
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+
+    let plan =
+        LocalCopyPlan::from_operands(&[source.into_os_string(), dest.clone().into_os_string()])
+            .expect("plan");
+    let options = LocalCopyOptions::builder()
+        .sparse(true)
+        .inplace(true)
+        .whole_file(false)
+        .block_size(Some(std::num::NonZeroU32::new(BLOCK as u32).unwrap()))
+        .build()
+        .expect("valid options");
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("inplace sparse delta copy succeeds");
+
+    let produced = fs::read(&dest).expect("read destination");
+    assert_eq!(produced.len(), LEN, "length preserved");
+    let first_diff = produced.iter().zip(&expected).position(|(a, b)| a != b);
+    assert_eq!(first_diff, None, "destination must equal the source");
+}
+
 /// `--inplace --sparse` with `--whole-file` (the local-copy default) rewrites
 /// the whole file from offset 0, so the destination is truncated to zero first
 /// and interior zero runs become genuine holes that are *seeked* over - never

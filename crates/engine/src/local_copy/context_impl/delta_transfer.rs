@@ -73,6 +73,29 @@ fn consume_matched_in_place(
     Ok(())
 }
 
+/// Moves the in-place writer to `output_position` before a non-sparse write.
+///
+/// Only the dense path needs this: its matched-block fast path leaves the
+/// writer behind. Under `--sparse` every byte goes through the sparse
+/// processor, which leaves the writer at `output_position` minus its deferred
+/// zero run and flushes that run from the current position. Seeking there
+/// would start the run late and shift every following byte by its length.
+///
+/// upstream: receiver.c:563 `write_file()` issues no lseek between tokens;
+/// fileio.c:81 `flush_sparse_hole()` flushes from the current position.
+fn seek_inplace_writer(
+    writer: &mut fs::File,
+    output_position: u64,
+    destination: &Path,
+) -> Result<(), LocalCopyError> {
+    writer
+        .seek(SeekFrom::Start(output_position))
+        .map(drop)
+        .map_err(|error| {
+            LocalCopyError::io("seek destination file", destination.to_path_buf(), error)
+        })
+}
+
 impl<'a> CopyContext<'a> {
     /// Copies `source`'s content to `writer` by matching blocks against
     /// `index` and writing literal bytes for the unmatched runs in between.
@@ -292,16 +315,8 @@ impl<'a> CopyContext<'a> {
                 last_match = scan_offset + index.block(block_index).len() as u64;
                 if !pending_literals.is_empty() {
                     let flushed_len = pending_literals.len();
-                    if inplace_mode {
-                        writer
-                            .seek(SeekFrom::Start(output_position))
-                            .map_err(|error| {
-                                LocalCopyError::io(
-                                    "seek destination file",
-                                    destination.to_path_buf(),
-                                    error,
-                                )
-                            })?;
+                    if inplace_mode && !sparse {
+                        seek_inplace_writer(writer, output_position, destination)?;
                     }
                     let flushed = self.flush_literal_chunk(
                         writer,
@@ -370,15 +385,9 @@ impl<'a> CopyContext<'a> {
                     // strong checksums confirmed), so write the verified
                     // source bytes directly rather than re-reading from the
                     // (potentially overwritten) destination basis.
-                    writer
-                        .seek(SeekFrom::Start(output_position))
-                        .map_err(|error| {
-                            LocalCopyError::io(
-                                "seek destination file",
-                                destination.to_path_buf(),
-                                error,
-                            )
-                        })?;
+                    if !sparse {
+                        seek_inplace_writer(writer, output_position, destination)?;
+                    }
                     let matched_bytes = &scratch[..block_len];
                     if sparse {
                         let _ = write_sparse_chunk(
@@ -536,16 +545,8 @@ impl<'a> CopyContext<'a> {
             }
             if !pending_literals.is_empty() {
                 let flushed_len = pending_literals.len();
-                if inplace_mode {
-                    writer
-                        .seek(SeekFrom::Start(output_position))
-                        .map_err(|error| {
-                            LocalCopyError::io(
-                                "seek destination file",
-                                destination.to_path_buf(),
-                                error,
-                            )
-                        })?;
+                if inplace_mode && !sparse {
+                    seek_inplace_writer(writer, output_position, destination)?;
                 }
                 let flushed = self.flush_literal_chunk(
                     writer,
@@ -594,15 +595,9 @@ impl<'a> CopyContext<'a> {
                 )?;
                 output_position = output_position.saturating_add(block_len as u64);
             } else if inplace_mode {
-                writer
-                    .seek(SeekFrom::Start(output_position))
-                    .map_err(|error| {
-                        LocalCopyError::io(
-                            "seek destination file",
-                            destination.to_path_buf(),
-                            error,
-                        )
-                    })?;
+                if !sparse {
+                    seek_inplace_writer(writer, output_position, destination)?;
+                }
                 let matched_bytes = &scratch[..block_len];
                 if sparse {
                     let _ =
@@ -647,16 +642,8 @@ impl<'a> CopyContext<'a> {
 
         if !pending_literals.is_empty() {
             let flushed_len = pending_literals.len();
-            if inplace_mode {
-                writer
-                    .seek(SeekFrom::Start(output_position))
-                    .map_err(|error| {
-                        LocalCopyError::io(
-                            "seek destination file",
-                            destination.to_path_buf(),
-                            error,
-                        )
-                    })?;
+            if inplace_mode && !sparse {
+                seek_inplace_writer(writer, output_position, destination)?;
             }
             let flushed = self.flush_literal_chunk(
                 writer,
