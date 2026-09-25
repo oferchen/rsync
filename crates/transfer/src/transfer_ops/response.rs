@@ -304,10 +304,7 @@ pub fn process_file_response<R: Read>(
 
                     total_bytes += bytes_to_copy as u64;
                 } else {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("block reference {block_idx} without basis file"),
-                    ));
+                    return Err(super::block_match_without_basis(&ctx.full_fname(receiver)));
                 }
             }
         }
