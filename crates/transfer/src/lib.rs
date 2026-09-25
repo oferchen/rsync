@@ -514,6 +514,14 @@ fn send_client_filter_list<W: Write>(
             if rule.implied_partial_dir {
                 rule.perishable = !client_is_sender || protocol.supports_perishable_modifier();
             }
+            // upstream: exclude.c:1498-1500 get_cvs_excludes() - the built-in
+            // default_cvsignore() list is perishable only at protocol >= 30.
+            // It is parsed from send_filter_list() once the protocol is known
+            // (exclude.c:1951-1954), so a pre-30 `-C` push sends plain excludes.
+            // oc builds the list before negotiation; drop the flag here.
+            if rule.cvs_origin && !protocol.supports_perishable_modifier() {
+                rule.perishable = false;
+            }
             rule
         })
         .collect();
@@ -1270,6 +1278,9 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 if client_mode && let Some(sender_stats) = ctx.sender_stats() {
                     stats.bytes_sent = sender_stats.total_read;
                     stats.bytes_received = sender_stats.total_written;
+                    // upstream: main.c:374-377 - the flist times are adopted too.
+                    stats.flist_buildtime_ms = sender_stats.flist_buildtime_ms.unwrap_or(0);
+                    stats.flist_xfertime_ms = sender_stats.flist_xfertime_ms.unwrap_or(0);
                 }
 
                 // A custom `--out-format` on a pull buffered its per-file rows as

@@ -199,7 +199,8 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Consumes the context and returns the final [`CopyOutcome`].
-    pub(super) fn into_outcome(self) -> CopyOutcome {
+    pub(super) fn into_outcome(mut self) -> CopyOutcome {
+        self.summary.finalize_file_list_generation();
         CopyOutcome {
             summary: self.summary,
             events: self.events,

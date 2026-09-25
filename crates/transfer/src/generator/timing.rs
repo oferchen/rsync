@@ -44,4 +44,52 @@ impl TransferTiming {
             total_bytes_read: 0,
         }
     }
+
+    /// Returns the `flist_buildtime` statistic for the recorded build span.
+    ///
+    /// Zero when no file list was built; otherwise upstream's clamped
+    /// millisecond value (see `protocol::stats::flist_buildtime_ms`).
+    pub(crate) fn flist_buildtime_ms(&self) -> u64 {
+        match (self.flist_build_start, self.flist_build_end) {
+            (Some(start), Some(end)) => {
+                protocol::stats::flist_buildtime_ms(end.duration_since(start))
+            }
+            _ => 0,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A build that finishes within the same millisecond must still send a
+    /// non-zero `flist_buildtime`, or an upstream client pulling with
+    /// `--stats` omits its "File list generation time" line (main.c:450).
+    #[test]
+    fn instantaneous_build_reports_one_millisecond() {
+        let now = Instant::now();
+        let mut timing = TransferTiming::new();
+        timing.flist_build_start = Some(now);
+        timing.flist_build_end = Some(now);
+        assert_eq!(timing.flist_buildtime_ms(), 1);
+    }
+
+    /// No build span recorded means no file list was sent, so nothing to clamp.
+    #[test]
+    fn missing_build_span_reports_zero() {
+        let mut timing = TransferTiming::new();
+        assert_eq!(timing.flist_buildtime_ms(), 0);
+        timing.flist_build_start = Some(Instant::now());
+        assert_eq!(timing.flist_buildtime_ms(), 0);
+    }
+
+    #[test]
+    fn measured_build_reports_whole_milliseconds() {
+        let start = Instant::now();
+        let mut timing = TransferTiming::new();
+        timing.flist_build_start = Some(start);
+        timing.flist_build_end = Some(start + Duration::from_millis(42));
+        assert_eq!(timing.flist_buildtime_ms(), 42);
+    }
 }

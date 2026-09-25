@@ -263,12 +263,12 @@ pub(super) fn normalise_pattern(pattern: &[u8]) -> (bool, bool, Cow<'_, [u8]>) {
     } else if stem == b"/" {
         directory_only = true;
     }
-    if stem.len() > 4 && stem.ends_with(b"/***") {
+    if let Some(len) = slash_wild3_stem_len(stem) {
         // `/***` (SLASH_WILD3_SUFFIX) means "match both the directory and
         // everything inside it". Strip it and treat the stem as directory-only;
         // the descendant-matcher expansion then produces the `dir/**` content
         // matchers.
-        stem = &stem[..stem.len() - 4];
+        stem = &stem[..len];
         directory_only = true;
     }
     let stripped = stem;
@@ -314,7 +314,23 @@ pub(super) fn has_wild3_suffix(pattern: &[u8]) -> bool {
     if stem.len() > 1 && stem.last() == Some(&b'/') {
         stem = &stem[..stem.len() - 1];
     }
-    stem.len() > 4 && stem.ends_with(b"/***")
+    slash_wild3_stem_len(stem).is_some()
+}
+
+/// Length of the stem before a trailing `/` plus a run of three or more `*`,
+/// or `None` when `stem` has no such suffix or the stem would be empty.
+///
+/// upstream: exclude.c:340-345 sets `FILTRULE_WILD3_SUFFIX` for ANY pattern
+/// ending in `***`, and rule_matches() then appends `/` to a directory name
+/// (exclude.c:1033-1036). A run of `*` longer than two is one slash-crossing
+/// wildcard in lib/wildmatch.c, so `dir/****` matches exactly what `dir/***`
+/// does: the directory itself and every descendant. The `/` before the run is
+/// what makes the appended `/` matter; without it the run already matches the
+/// bare name.
+fn slash_wild3_stem_len(stem: &[u8]) -> Option<usize> {
+    let stars = stem.iter().rev().take_while(|&&b| b == b'*').count();
+    let len = stem.len() - stars;
+    (stars >= 3 && len > 1 && stem[len - 1] == b'/').then(|| len - 1)
 }
 
 #[cfg(test)]
@@ -338,6 +354,26 @@ mod tests {
         assert!(!has_wild3_suffix(b"foo***"));
         assert!(!has_wild3_suffix(b"foo/"));
         assert!(!has_wild3_suffix(b"foo"));
+        // A longer star run is the same slash-crossing wildcard upstream.
+        assert!(has_wild3_suffix(b"/?*/*****"));
+        assert!(has_wild3_suffix(b"dir/****/"));
+        assert!(!has_wild3_suffix(b"/****"));
+        assert!(!has_wild3_suffix(b"dir/**"));
+    }
+
+    /// upstream: `dir/****` wildmatches the same set as `dir/***` (a run of
+    /// three or more `*` is one slash-crossing wildcard) and carries
+    /// FILTRULE_WILD3_SUFFIX, so it must fold to the same directory-only stem.
+    /// Measured on rsync 3.5.0: `-! /?*/*****` keeps the directory `cI`.
+    #[test]
+    fn normalise_pattern_long_star_run_folds_like_wild3() {
+        let (anchored, dir_only, core) = normalise_pattern(b"/?*/*****");
+        assert!(anchored);
+        assert!(dir_only);
+        assert_eq!(core.as_ref(), b"?*");
+        let (_, dir_only, core) = normalise_pattern(b"dir/****/");
+        assert!(dir_only);
+        assert_eq!(core.as_ref(), b"dir");
     }
 
     #[test]
