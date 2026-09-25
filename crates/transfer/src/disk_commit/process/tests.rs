@@ -6,8 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Verifies the io_uring RENAMEAT2 fallback renames a file regardless of
-/// whether io_uring handles it or `std::fs::rename` does. Same-device
-/// rename returns `false` (no cross-device copy).
+/// whether io_uring handles it or `std::fs::rename` does.
 #[test]
 fn rename_with_io_uring_fallback_moves_file() {
     let dir = tempfile::tempdir().unwrap();
@@ -16,9 +15,8 @@ fn rename_with_io_uring_fallback_moves_file() {
 
     fs::write(&src, b"io_uring rename data").unwrap();
 
-    let was_copy = rename_with_io_uring_fallback(&src, &dst).unwrap();
+    rename_with_io_uring_fallback(&src, &dst).unwrap();
 
-    assert!(!was_copy);
     assert!(!src.exists());
     assert!(dst.exists());
     assert_eq!(fs::read(&dst).unwrap(), b"io_uring rename data");
@@ -34,9 +32,8 @@ fn rename_with_io_uring_fallback_replaces_existing() {
     fs::write(&src, b"new data").unwrap();
     fs::write(&dst, b"old data").unwrap();
 
-    let was_copy = rename_with_io_uring_fallback(&src, &dst).unwrap();
+    rename_with_io_uring_fallback(&src, &dst).unwrap();
 
-    assert!(!was_copy);
     assert!(!src.exists());
     assert_eq!(fs::read(&dst).unwrap(), b"new data");
 }
