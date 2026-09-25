@@ -270,20 +270,6 @@ fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> i
     Ok(())
 }
 
-/// Handles refused options for a module (pre-handshake path).
-///
-/// Sends an error message indicating the option is refused and logs the event.
-/// Used when refused-options are detected from `OPTION` directives sent before
-/// `@RSYNCD: OK`; at this point the client still reads raw text.
-fn handle_refused_option(ctx: &mut ModuleRequestContext<'_>, refused: &str) -> io::Result<()> {
-    let error = AtError::message(refused_option_message(refused));
-    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-    if let Some(log) = ctx.log_sink {
-        log_module_refused_option(log, refused);
-    }
-    Ok(())
-}
-
 /// Handles refused options for a module after `@RSYNCD: OK` has been emitted.
 ///
 /// upstream: clientserver.c:1146-1186 - once the daemon has acknowledged the
@@ -673,9 +659,8 @@ fn handle_module_denied(
 /// 1. Module lookup and access permission verification
 /// 2. Bandwidth limit application from module configuration
 /// 3. Connection acquisition with max-connections enforcement
-/// 4. Refused options checking
-/// 5. Authentication (if the module requires it)
-/// 6. Protocol setup and transfer execution
+/// 4. Authentication (if the module requires it)
+/// 5. Protocol setup and transfer execution
 ///
 /// Returns an I/O error if the connection fails, otherwise `Ok(())`.
 #[allow(clippy::too_many_arguments)]
@@ -686,7 +671,6 @@ fn respond_with_module_request(
     request: &str,
     peer_ip: IpAddr,
     session_peer_host: Option<&str>,
-    options: &[String],
     log_sink: Option<&SharedLogSink>,
     reverse_lookup: bool,
     messages: &LegacyMessageCache,
@@ -749,5 +733,5 @@ fn respond_with_module_request(
         return handle_module_denied(&mut ctx, module);
     }
 
-    process_approved_module(&mut ctx, module, options, negotiated_protocol)
+    process_approved_module(&mut ctx, module, negotiated_protocol)
 }

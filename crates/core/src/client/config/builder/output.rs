@@ -130,17 +130,4 @@ impl ClientConfigBuilder {
         self.password_override = password;
         self
     }
-
-    /// Configures daemon parameter overrides sent during the daemon handshake.
-    ///
-    /// Each entry should be a `key=value` string that overrides a module-level
-    /// configuration directive on the daemon. Mirrors upstream rsync's
-    /// `--dparam` / `-M` option (clientserver.c).
-    #[must_use]
-    #[doc(alias = "--dparam")]
-    #[doc(alias = "-M")]
-    pub fn daemon_params(mut self, params: Vec<String>) -> Self {
-        self.daemon_params = params;
-        self
-    }
 }
