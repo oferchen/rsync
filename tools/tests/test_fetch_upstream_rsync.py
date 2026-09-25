@@ -106,6 +106,27 @@ class FetchTests(unittest.TestCase):
         self.assertIn("nonexistent-mirror/rsync-9.9.9.tar.gz failed", result.stderr)
         self.assertTrue((self.out / "rsync-9.9.9").is_dir())
 
+    def test_a_version_placeholder_in_a_source_is_expanded(self) -> None:
+        # GitHub release assets live under a per-version tag directory
+        # (releases/download/v<version>/), so a source must be able to name
+        # the version, and a version-less source must still work after it.
+        tagged = self.tmp / "gh" / "v9.9.9"
+        tagged.mkdir(parents=True)
+        (tagged / "rsync-9.9.9.tar.gz").write_bytes(self.good.read_bytes())
+        template = (self.tmp / "gh").as_uri() + "/v%v"
+        result = self._run("9.9.9", str(self.out), mirror=template)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("gh/v9.9.9/rsync-9.9.9.tar.gz", result.stderr)
+        self.assertNotIn("%v", result.stderr)
+        self.assertTrue((self.out / "rsync-9.9.9").is_dir())
+
+    def test_the_default_sources_try_github_releases_first(self) -> None:
+        text = FETCH.read_text()
+        default = re.search(r'RSYNC_TARBALL_BASE_URL:-([^"}]+)', text)
+        self.assertIsNotNone(default)
+        self.assertTrue(default.group(1).startswith(
+            "https://github.com/RsyncProject/rsync/releases/download/v%v "))
+
     def test_a_mismatch_is_fatal_and_does_not_fall_over(self) -> None:
         # Wrong bytes are not an availability problem; trying another source
         # would hide a tampered or corrupt mirror behind a green run.

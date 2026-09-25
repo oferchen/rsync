@@ -9,11 +9,13 @@
 # directory, which the fetch-upstream-rsync action persists with actions/cache,
 # so CI reaches the network only when a pin changes.
 #
-# Sources are tried in order, moving on only when a download FAILS:
-# samba.org, then the University of Kent mirror of it (independent
-# infrastructure, byte-identical for every pinned release). Both are checked
-# against the same pin, so the second source adds availability, not trust. A
-# digest mismatch from any source is fatal, never a cue to try the next.
+# Sources are tried in order, moving on only when a download FAILS: the
+# RsyncProject GitHub release assets (published from 3.4.0 on; older versions
+# 404 and fall through), samba.org, then the University of Kent mirror of it.
+# Every pinned release is byte-identical across the sources that carry it, and
+# all are checked against the same pin, so extra sources add availability, not
+# trust. A digest mismatch from any source is fatal, never a cue to try the
+# next. A `%v` in a source is replaced by the version.
 #
 # Usage:
 #   fetch_upstream_rsync.sh <version> [extract_dir]
@@ -26,7 +28,7 @@
 #   UPSTREAM_TARBALL_CACHE     cache dir (default <repo>/target/interop/upstream-tarballs)
 #   UPSTREAM_TARBALL_MANIFEST  pin file (default tools/ci/upstream-tarballs.sha256)
 #   RSYNC_TARBALL_BASE_URL     space-separated source list, tried in order
-#                              (default: samba.org, then mirrorservice.org)
+#                              (default: GitHub releases, samba.org, mirrorservice.org)
 #
 # Exit status: 0 ok, 1 download or extraction failed, 2 usage error or version
 # not pinned, 3 digest mismatch.
@@ -36,7 +38,7 @@ set -euo pipefail
 repo_root="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 manifest="${UPSTREAM_TARBALL_MANIFEST:-${repo_root}/tools/ci/upstream-tarballs.sha256}"
 cache_dir="${UPSTREAM_TARBALL_CACHE:-${repo_root}/target/interop/upstream-tarballs}"
-read -r -a base_urls <<<"${RSYNC_TARBALL_BASE_URL:-https://download.samba.org/pub/rsync/src https://www.mirrorservice.org/sites/rsync.samba.org/src}"
+read -r -a base_urls <<<"${RSYNC_TARBALL_BASE_URL:-https://github.com/RsyncProject/rsync/releases/download/v%v https://download.samba.org/pub/rsync/src https://www.mirrorservice.org/sites/rsync.samba.org/src}"
 
 die() {
     local code=$1
@@ -86,7 +88,7 @@ ensure_tarball() {
     mkdir -p "$cache_dir" || die 1 "cannot create ${cache_dir}"
     local part="${tarball}.part.$$" base url
     for base in "${base_urls[@]}"; do
-        url="${base}/rsync-${version}.tar.gz"
+        url="${base//%v/$version}/rsync-${version}.tar.gz"
         echo "fetch_upstream_rsync: downloading ${url}" >&2
         if ! curl -fsSL --connect-timeout 30 --max-time 300 -o "$part" "$url"; then
             rm -f "$part"
