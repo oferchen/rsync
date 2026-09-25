@@ -168,14 +168,19 @@ pub(super) fn commit_file(
     }
 
     let was_copy = if needs_rename {
-        let result = rename_config_sandboxed(config, cleanup_guard.path(), &begin.file_path)
-            .map_err(|e| {
-                crate::temp_guard::attach_commit_op(
-                    crate::temp_guard::CommitOp::Rename,
-                    &begin.file_path,
-                    e,
-                )
-            })?;
+        let result = commit_rename(
+            config,
+            cleanup_guard.path(),
+            &begin.file_path,
+            configured_partial_dir(config),
+        )
+        .map_err(|e| {
+            crate::temp_guard::attach_commit_op(
+                crate::temp_guard::CommitOp::Rename,
+                &begin.file_path,
+                e,
+            )
+        })?;
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
         result
     } else if begin.is_inplace && !begin.is_device_target {
@@ -425,39 +430,23 @@ pub(super) fn retain_partial_file(
 
 /// Renames a temp file to its final destination, trying io_uring first.
 ///
-/// Returns `Ok(false)` when the rename succeeded in-place, `Ok(true)` when
-/// a cross-device copy+remove fallback was used (EXDEV). Callers use the
-/// return value to decide whether metadata must be re-applied to the
-/// destination.
-///
 /// On Linux 5.11+ with io_uring RENAMEAT2 support, submits the rename as an
 /// `IORING_OP_RENAMEAT` SQE. Falls back to `std::fs::rename` when io_uring
 /// is unavailable (non-Linux, old kernel, or feature not compiled in).
 ///
-/// Cross-device fallback mirrors upstream `util1.c:robust_rename()` which
-/// uses `copy_file()` + `do_unlink()` when `rename()` returns EXDEV. This
-/// happens when `--temp-dir` points to a different filesystem than the
-/// destination.
+/// A single attempt: the cross-filesystem copy fallback belongs to the caller
+/// (`crate::robust_rename` on Unix, [`rename_config_sandboxed`] elsewhere).
 ///
 /// On Windows the commit rename routes through
 /// `crate::temp_guard::commit_rename_no_follow` and the `#[cfg(not(windows))]`
 /// arm of [`rename_config_sandboxed`] is compiled out, so this path-based
 /// helper has no non-test caller there; the tests still exercise it.
 #[cfg_attr(windows, allow(dead_code))]
-pub(super) fn rename_with_io_uring_fallback(old_path: &Path, new_path: &Path) -> io::Result<bool> {
+pub(super) fn rename_with_io_uring_fallback(old_path: &Path, new_path: &Path) -> io::Result<()> {
     if let Some(result) = fast_io::try_rename_via_io_uring(old_path, new_path) {
-        return result.map(|()| false);
+        return result;
     }
-    match fs::rename(old_path, new_path) {
-        Ok(()) => Ok(false),
-        Err(e) if is_cross_device(&e) => {
-            // upstream: util1.c:robust_rename() - copy_file + do_unlink
-            fs::copy(old_path, new_path)?;
-            fs::remove_file(old_path)?;
-            Ok(true)
-        }
-        Err(e) => Err(e),
-    }
+    fs::rename(old_path, new_path)
 }
 
 /// SEC-1.j: dirfd-anchor the temp→final commit rename against the receiver's
@@ -500,6 +489,72 @@ pub(super) fn rename_config_sandboxed(
     old_path: &Path,
     new_path: &Path,
 ) -> io::Result<bool> {
+    commit_rename(config, old_path, new_path, None)
+}
+
+/// [`rename_config_sandboxed`] with the configured `--partial-dir`, where a
+/// relative one stages the cross-filesystem copy.
+///
+/// upstream: `rsync.c:918` `finish_transfer()` passes `temp_copy_name` to
+/// `robust_rename()`; see [`crate::robust_rename::finish_rename`].
+#[cfg(unix)]
+fn commit_rename(
+    config: &DiskCommitConfig,
+    old_path: &Path,
+    new_path: &Path,
+    partial_dir: Option<&Path>,
+) -> io::Result<bool> {
+    crate::robust_rename::finish_rename(
+        commit_anchor(config),
+        old_path,
+        new_path,
+        partial_dir,
+        |old, new| rename_sandboxed_once(config, old, new),
+    )
+}
+
+#[cfg(not(unix))]
+fn commit_rename(
+    config: &DiskCommitConfig,
+    old_path: &Path,
+    new_path: &Path,
+    _partial_dir: Option<&Path>,
+) -> io::Result<bool> {
+    rename_config_sandboxed(config, old_path, new_path)
+}
+
+/// The confinement the cross-filesystem copy resolves under: the same sandbox
+/// and root the commit rename itself is anchored on.
+#[cfg(unix)]
+fn commit_anchor(config: &DiskCommitConfig) -> crate::robust_rename::CommitAnchor<'_> {
+    match (config.sandbox.as_deref(), config.dest_dir.as_deref()) {
+        (Some(sandbox), Some(root)) => crate::robust_rename::CommitAnchor {
+            sandbox: Some(sandbox),
+            root,
+        },
+        _ => crate::robust_rename::CommitAnchor {
+            sandbox: None,
+            root: Path::new(""),
+        },
+    }
+}
+
+/// The `--partial-dir` configured for this session, if any.
+fn configured_partial_dir(config: &DiskCommitConfig) -> Option<&Path> {
+    match &config.partial_mode {
+        PartialMode::PartialDir(dir) => Some(dir),
+        _ => None,
+    }
+}
+
+/// One attempt at the commit rename, anchored on the sandbox when both
+/// endpoints live beneath it.
+#[cfg(unix)]
+fn rename_sandboxed_once(
+    config: &DiskCommitConfig,
+    old_path: &Path,
+    new_path: &Path,
+) -> io::Result<()> {
     if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref())
         && let (Ok(old_rel), Ok(new_rel)) = (
             old_path.strip_prefix(dest_dir),
@@ -511,7 +566,7 @@ pub(super) fn rename_config_sandboxed(
         // anchor per endpoint, so a nested subdir commit is confined exactly
         // like a root-level one. `replace = true` matches `fs::rename`'s
         // overwrite-the-destination semantics (upstream `do_rename`).
-        fast_io::renameat_via_sandbox_or_fallback(
+        return fast_io::renameat_via_sandbox_or_fallback(
             Some(sandbox.as_ref()),
             dest_dir,
             old_rel,
@@ -520,8 +575,7 @@ pub(super) fn rename_config_sandboxed(
             new_rel,
             new_path,
             true,
-        )?;
-        return Ok(false);
+        );
     }
     rename_with_io_uring_fallback(old_path, new_path)
 }
@@ -545,7 +599,16 @@ pub(super) fn rename_config_sandboxed(
     }
     #[cfg(not(windows))]
     {
-        rename_with_io_uring_fallback(old_path, new_path)
+        match rename_with_io_uring_fallback(old_path, new_path) {
+            Ok(()) => Ok(false),
+            Err(e) if is_cross_device(&e) => {
+                // upstream: util1.c:robust_rename() - copy_file + do_unlink
+                fs::copy(old_path, new_path)?;
+                fs::remove_file(old_path)?;
+                Ok(true)
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -565,14 +628,26 @@ pub(super) fn rename_config_sandboxed(
 /// - `rsync-3.5.0/util1.c:1518-1530` `handle_partial_dir(..., PDIR_CREATE)` -
 ///   the whole retention runs under `operator_path_resolve`.
 /// - `rsync-3.5.0/syscall.c:1891` `do_rename_at()` under that flag.
+///
+/// A `--temp-dir` on another filesystem fails that rename with `EXDEV`, so it
+/// goes through [`crate::robust_rename::robust_rename`] for the copy fallback,
+/// with no partial retarget: the staging path already is the partial name.
+/// upstream: `receiver.c:1309` `finish_transfer(partialptr, fnametmp, ...,
+/// NULL, ...)`.
 #[cfg(unix)]
 fn stage_into_partial_dir(
-    _config: &DiskCommitConfig,
+    config: &DiskCommitConfig,
     old_path: &Path,
     new_path: &Path,
 ) -> io::Result<bool> {
-    fast_io::operator_rename_confined(old_path, new_path, true)?;
-    Ok(false)
+    let renamed = crate::robust_rename::robust_rename(
+        commit_anchor(config),
+        old_path,
+        new_path,
+        None,
+        |old, new| fast_io::operator_rename_confined(old, new, true),
+    )?;
+    Ok(renamed != crate::robust_rename::Renamed::Moved)
 }
 
 #[cfg(not(unix))]
