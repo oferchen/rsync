@@ -1,7 +1,7 @@
 //! File-list surface: receiving raw and incremental file lists, sender
 //! attribute decoding, sum-head wire format, NDX-segment conversion, id
 //! lists, directory creation, the receiver-side filter chain that gates
-//! deletions, and the delete-pipeline hook fed by INC_RECURSE segments.
+//! deletions, and the per-segment parent-directory table INC_RECURSE feeds.
 //!
 //! Split into per-concern submodules to keep each file focused and within
 //! the 650-line cap:
@@ -19,12 +19,14 @@
 //!   the file-list end marker.
 //! - [`xfer_error`] - `got_xfer_error`: a `MSG_ERROR_XFER` frame on an empty
 //!   file list is the only report a missing source argument produces.
+//! - [`receive_counters`] - `--stats` type tallies and total size bumped as
+//!   entries arrive, so released INC_RECURSE segments do not change them.
 //! - [`ndx_convert`] - `flat_to_wire_ndx` / `wire_to_flat_ndx` counters
 //!   and round-trip coverage.
 //! - [`dedup`] - receiver duplicate-clean pass (`flist_sort_and_clean` step 2)
 //!   that removes duplicate received names, keeping the upstream survivor.
-//! - [`delete_pipeline_hook`] - DDP-B3 hook that publishes one delete
-//!   plan per INC_RECURSE segment.
+//! - [`segment_parent`] - each INC_RECURSE segment's parent `dir_flist`
+//!   index and the parent's post-downgrade content flag.
 //! - [`delete_timing`] - early vs late (`--delete-after` / `--delete-delay`)
 //!   delete-pass scheduling and the dest-side `.rsync-filter` protection
 //!   invariant that makes deferral load-bearing.
@@ -41,7 +43,6 @@ mod crtime_wire;
 mod dedup;
 #[cfg(unix)]
 mod delete_backup;
-mod delete_pipeline_hook;
 mod delete_timing;
 mod filter_chain;
 mod filter_recheck;
@@ -55,6 +56,8 @@ mod incremental_receiver;
 mod missing_args_sentinel;
 mod ndx_convert;
 mod proto_io_error;
+mod receive_counters;
+mod segment_parent;
 mod wire_attrs;
 mod xfer_error;
 

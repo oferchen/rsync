@@ -2,16 +2,17 @@
 //!
 //! These methods drive the receiver-side flist pipeline: read entries from
 //! the wire, normalize hardlinks, run `sort_file_list()` to match the
-//! sender's ordering, and (for INC_RECURSE) publish each segment into the
-//! parallel-deterministic-delete pipeline.
+//! sender's ordering, and (for INC_RECURSE) record each segment's parent
+//! directory in `dir_flist` numbering.
 
 use std::io::{self, Read};
 use std::path::Path;
 
-use logging::debug_log;
 use protocol::CompatibilityFlags;
 use protocol::codec::{NDX_FLIST_OFFSET, create_ndx_codec};
-use protocol::flist::{IncrementalFileListBuilder, sort_and_clean_file_list};
+use protocol::flist::{
+    FileEntry, IncrementalFileListBuilder, compare_file_entries, sort_and_clean_file_list,
+};
 
 use super::super::ReceiverContext;
 use super::dir_flist::{DirFlist, DirSlot};
@@ -61,6 +62,9 @@ impl ReceiverContext {
             // those names unmapped and never consult the name converter.
             #[cfg(unix)]
             self.register_inline_id_names(&entry)?;
+            // upstream: flist.c:2993-3006 - counted in the read loop, before
+            // flist_sort_and_clean() tombstones duplicates or prunes dirs.
+            self.count_received_entry(&entry);
             self.file_list.push(entry);
             count += 1;
         }
@@ -196,6 +200,11 @@ impl ReceiverContext {
             prune_empty_dirs_pass(&mut self.file_list, &self.filter_chain);
         }
 
+        if inc_recurse {
+            self.segment_parent_dir_ndx[0] =
+                initial_segment_parent_dir_ndx(&self.file_list[seg_start..], self.dir_flist.used());
+        }
+
         // upstream: flist.c:3085 - dump the received flist at
         // DEBUG_GTE(FLIST, 3), after flist_sort_and_clean(). uid only shows
         // for a root receiver (flist.c:3502 `(am_root || am_sender)`).
@@ -287,8 +296,8 @@ impl ReceiverContext {
     /// Validates the marker (`ndx <= NDX_FLIST_OFFSET`), decodes the segment
     /// entries with the cached [`protocol::flist::FileListReader`] (preserving
     /// compression state across sub-lists), assigns leader GNUM wire NDXes, sorts
-    /// and hardlink-matches the segment slice, pushes the `(flat_start,
-    /// ndx_start)` boundary, and publishes the segment to the delete pipeline.
+    /// and hardlink-matches the segment slice, and pushes the `(flat_start,
+    /// ndx_start)` boundary together with the segment's parent `dir_ndx`.
     ///
     /// # Upstream Reference
     ///
@@ -350,6 +359,9 @@ impl ReceiverContext {
         while let Some(entry) =
             flist_reader.read_entry_with_flist(reader, &self.file_list[flat_start..])?
         {
+            // upstream: flist.c:2993-3006 - same read-loop tally as the
+            // initial list; a later segment reclaim never un-counts it.
+            self.count_received_entry(&entry);
             self.file_list.push(entry);
             segment_count += 1;
         }
@@ -434,6 +446,14 @@ impl ReceiverContext {
 
         // upstream: flist.c:2966 - ndx_start = prev->ndx_start + prev->used + 1
         self.ndx_segments.push((flat_start, seg_ndx_start));
+        // upstream: io.c:1947-1948 / flist.c:3122-3123 - `flist->parent_ndx =
+        // ndx`, the header's dir_flist index, not a transfer NDX.
+        self.segment_parent_dir_ndx.push(Some(dir_ndx));
+        debug_assert_eq!(
+            self.ndx_segments.len(),
+            self.segment_parent_dir_ndx.len(),
+            "per-segment parent table out of step with ndx_segments"
+        );
 
         // upstream: flist.c:3085/3088 - each recv_file_list() call (sub-lists
         // included) dumps the list at DEBUG_GTE(FLIST, 3) and prints
@@ -453,14 +473,6 @@ impl ReceiverContext {
         // Restore the cached reader so the next segment continues the same
         // compression state (upstream's static recv_file_entry() variables).
         self.flist_reader_cache = Some(flist_reader);
-
-        // DDP-B3 (#2257): if a parallel-deterministic-delete context
-        // is attached, publish a DeletePlan for this segment's
-        // content directory into the shared DeletePlanMap. Failures
-        // are logged + skipped; the legacy batched-sweep path
-        // remains the active delete driver until the emitter wiring
-        // lands (tasks DDP-E1-E5).
-        self.publish_segment_to_delete_pipeline(dir_ndx, flat_start);
 
         // upstream: flist.c:2789 - each sub-list's raw wire bytes accumulate
         // into stats.flist_size via `+=` on every recv_file_list() call.
@@ -516,7 +528,7 @@ impl ReceiverContext {
                     crate::role_trailer::receiver()
                 )));
             }
-            Some(DirSlot::Active(_)) => {}
+            Some(DirSlot::Active { .. }) => {}
         }
         if !self.served_dir_flists.insert(dir_ndx) {
             return Err(protocol::protocol_violation(format!(
@@ -556,7 +568,7 @@ impl ReceiverContext {
         // cleared `dir_ndx`, so an Active slot is expected here. If it is
         // somehow absent we cannot name the parent, so skip rather than falsely
         // abort - refusing on a name we could not read would be a guess.
-        let Some(DirSlot::Active(parent)) = self.dir_flist.resolve(dir_ndx) else {
+        let Some(DirSlot::Active { name: parent, .. }) = self.dir_flist.resolve(dir_ndx) else {
             return Ok(());
         };
         let parent = strip_leading_slashes(parent);
@@ -578,71 +590,6 @@ impl ReceiverContext {
             }
         }
         Ok(())
-    }
-
-    /// Publishes one INC_RECURSE segment into the parallel-deterministic-
-    /// delete pipeline, if a [`engine::delete::DeleteContext`] has been
-    /// attached via [`super::super::ReceiverContext::set_delete_context`].
-    ///
-    /// `dir_ndx` is the wire NDX of the segment's parent directory (the
-    /// content directory the segment describes). `flat_start` is the
-    /// flat-array index where this segment's entries begin in
-    /// `self.file_list`; the entries slice is
-    /// `self.file_list[flat_start..]`.
-    ///
-    /// # Behaviour
-    ///
-    /// - When no context is attached, returns immediately.
-    /// - Otherwise, resolves the parent directory's destination-relative
-    ///   path via [`Self::wire_to_flat_ndx`] and
-    ///   [`protocol::flist::FileEntry::path`], then forwards the segment
-    ///   to [`engine::delete::DeleteContext::observe_segment_for_delete`].
-    /// - I/O failures from `compute_extras` are logged at level 2 and
-    ///   swallowed; the legacy batched-sweep path remains the
-    ///   authoritative delete driver, so a transient read_dir error here
-    ///   does not abort the transfer.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `generator.c:279-354` `delete_in_dir()` - per-directory extras
-    ///   computation that this hook publishes a plan for.
-    pub(in crate::receiver) fn publish_segment_to_delete_pipeline(
-        &self,
-        dir_ndx: i32,
-        flat_start: usize,
-    ) {
-        let Some(ctx) = self.delete_ctx.as_ref() else {
-            return;
-        };
-        let Some(parent_flat) = self.wire_to_flat_ndx(dir_ndx) else {
-            debug_log!(
-                Flist,
-                2,
-                "delete pipeline: dir_ndx={} did not resolve to a flat index; skipping segment publish",
-                dir_ndx
-            );
-            return;
-        };
-        let Some(parent) = self.file_list.get(parent_flat) else {
-            debug_log!(
-                Flist,
-                2,
-                "delete pipeline: parent flat_idx={} out of range; skipping segment publish",
-                parent_flat
-            );
-            return;
-        };
-        let dir = parent.path().to_path_buf();
-        let entries = &self.file_list[flat_start..];
-        if let Err(err) = ctx.observe_segment_for_delete(&dir, entries) {
-            debug_log!(
-                Flist,
-                2,
-                "delete pipeline: observe_segment_for_delete({}) failed: {}; legacy sweep will still run",
-                dir.display(),
-                err
-            );
-        }
     }
 
     /// Creates an incremental file list receiver for streaming processing.
@@ -695,7 +642,7 @@ impl ReceiverContext {
 /// # Upstream Reference
 ///
 /// - `flist.c:2685-2686` - `if (relative_paths && *cur_dir == '/') cur_dir++;`
-fn strip_leading_slashes(p: &Path) -> &Path {
+pub(super) fn strip_leading_slashes(p: &Path) -> &Path {
     let mut s = p;
     while let Ok(rest) = s.strip_prefix("/") {
         if rest.as_os_str().is_empty() {
@@ -704,4 +651,31 @@ fn strip_leading_slashes(p: &Path) -> &Path {
         s = rest;
     }
     s
+}
+
+/// The first INC_RECURSE list's parent in `dir_flist` numbering: `Some(0)` when
+/// the list is rooted at `.`, `None` when it has no parent directory.
+///
+/// `dir_flist_used` must already count this list's own directories. Both guards
+/// are upstream's: a list whose lowest sorted entry is not `.` has no parent, and
+/// a `.` that is not a directory never reached `dir_flist`, so slot 0 is not it.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:3071-3083` - `if (!file_total || !dir_flist->used ||
+///   strcmp(flist->sorted[flist->low]->basename, ".") != 0) parent_ndx = -1`.
+fn initial_segment_parent_dir_ndx(segment: &[FileEntry], dir_flist_used: usize) -> Option<i32> {
+    if dir_flist_used == 0 {
+        return None;
+    }
+    // `sorted[low]` is the first active entry in sorted order. Taking the
+    // minimum rather than `segment[0]` also holds when `--iconv` left the
+    // segment in wire order.
+    let lowest = segment
+        .iter()
+        .filter(|e| e.is_active())
+        .min_by(|a, b| compare_file_entries(a, b))?;
+    let name = lowest.name_bytes();
+    let is_dot = name.rsplit(|&b| b == b'/').next() == Some(b".".as_slice());
+    is_dot.then_some(0)
 }

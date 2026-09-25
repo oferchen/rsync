@@ -91,6 +91,15 @@ pub fn compare_file_entries(a: &FileEntry, b: &FileEntry) -> Ordering {
     compare_with_keys(&bytes_a, &key_a, &bytes_b, &key_b)
 }
 
+/// Compares two file entries using upstream's protocol < 29 `f_name_cmp`.
+///
+/// The pre-29 counterpart of [`compare_file_entries`]; see
+/// `compare_with_keys_pre29` for the ordering rule.
+#[must_use]
+pub(crate) fn compare_file_entries_pre29(a: &FileEntry, b: &FileEntry) -> Ordering {
+    compare_with_keys_pre29(&a.name_bytes(), &b.name_bytes())
+}
+
 /// Protocol < 29 comparison: plain byte-for-byte comparison without
 /// file-before-directory distinction or implicit trailing '/'.
 ///

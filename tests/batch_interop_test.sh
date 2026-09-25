@@ -16,6 +16,13 @@
 # batch files due to missing inflate dictionary synchronization in the batch
 # reader (token.c:608). oc-rsync does not have this limitation.
 #
+# Every --read-batch replays with the options its batch was written with, as
+# upstream's generated "<batch>.sh" companion does (batch.c
+# write_batch_shell_file). --read-batch evaluates set_allow_inc_recurse() on
+# the replay's own options (main.c:639-641), so a bare replay of an
+# inc-recursive batch is refused (compat.c:780-785) by upstream and oc-rsync
+# alike; test_inc_recurse_refusal_parity pins that.
+#
 # Environment variable overrides:
 #   OC_RSYNC              - path to oc-rsync binary
 #   UPSTREAM_INSTALL_ROOT - root of upstream installs (expects {version}/bin/rsync)
@@ -202,8 +209,9 @@ test_oc_roundtrip() {
 
     setup_test_data_with_basis "$work_dir/src" "$work_dir/dest" "$work_dir/basis"
 
+    local opts=(-av --no-whole-file --ignore-times)
     log_info "Creating batch with oc-rsync..."
-    if ! "$OC_RSYNC" -av --no-whole-file --ignore-times \
+    if ! "$OC_RSYNC" "${opts[@]}" \
         --write-batch="$work_dir/mybatch" \
         "$work_dir/src/" "$work_dir/dest/" > "$work_dir/write.log" 2>&1; then
         cat "$work_dir/write.log" >&2
@@ -220,7 +228,7 @@ test_oc_roundtrip() {
     cp "$work_dir/basis/testfile.bin" "$work_dir/final/testfile.bin"
 
     log_info "Replaying batch with oc-rsync..."
-    if ! "$OC_RSYNC" --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
+    if ! "$OC_RSYNC" "${opts[@]}" --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
         cat "$work_dir/read.log" >&2
         record_fail "" "" "$test_name" "oc-rsync --read-batch failed"
         return 0
@@ -250,8 +258,9 @@ test_oc_to_upstream() {
 
     setup_test_data_with_basis "$work_dir/src" "$work_dir/dest" "$work_dir/basis"
 
+    local opts=(-av --no-whole-file --ignore-times)
     log_info "Creating batch with oc-rsync..."
-    if ! "$OC_RSYNC" -av --no-whole-file --ignore-times \
+    if ! "$OC_RSYNC" "${opts[@]}" \
         --write-batch="$work_dir/mybatch" \
         "$work_dir/src/" "$work_dir/dest/" > "$work_dir/write.log" 2>&1; then
         cat "$work_dir/write.log" >&2
@@ -272,7 +281,7 @@ test_oc_to_upstream() {
     # crashes upstream 3.4.1 and 3.4.4 with SIGSEGV, reproducible with a batch
     # upstream wrote itself, so a bare invocation here tests the wrong thing.
     log_info "Replaying batch with upstream rsync $version..."
-    if ! "$upstream_rsync" -a --no-whole-file --ignore-times \
+    if ! "$upstream_rsync" "${opts[@]}" \
         --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
         cat "$work_dir/read.log" >&2
         record_fail "oc-to-upstream" "$version" "$test_name" \
@@ -300,8 +309,9 @@ test_upstream_to_oc() {
 
     setup_test_data_with_basis "$work_dir/src" "$work_dir/dest" "$work_dir/basis"
 
+    local opts=(-av --no-whole-file --ignore-times)
     log_info "Creating batch with upstream rsync $version..."
-    if ! "$upstream_rsync" -av --no-whole-file --ignore-times \
+    if ! "$upstream_rsync" "${opts[@]}" \
         --write-batch="$work_dir/mybatch" \
         "$work_dir/src/" "$work_dir/dest/" > "$work_dir/write.log" 2>&1; then
         cat "$work_dir/write.log" >&2
@@ -317,7 +327,7 @@ test_upstream_to_oc() {
     cp "$work_dir/basis/testfile.bin" "$work_dir/final/testfile.bin"
 
     log_info "Replaying batch with oc-rsync..."
-    if ! "$OC_RSYNC" --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
+    if ! "$OC_RSYNC" "${opts[@]}" --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
         cat "$work_dir/read.log" >&2
         record_fail "" "" "$test_name" "oc-rsync --read-batch failed"
         return 0
@@ -358,8 +368,9 @@ test_upstream_compressed_to_oc() {
 
     setup_test_data_with_basis "$work_dir/src" "$work_dir/dest" "$work_dir/basis"
 
+    local opts=(-av -z --no-whole-file --ignore-times)
     log_info "Creating compressed batch with upstream rsync $version..."
-    if ! "$upstream_rsync" -av -z --no-whole-file --ignore-times \
+    if ! "$upstream_rsync" "${opts[@]}" \
         --write-batch="$work_dir/mybatch" \
         "$work_dir/src/" "$work_dir/dest/" > "$work_dir/write.log" 2>&1; then
         cat "$work_dir/write.log" >&2
@@ -375,7 +386,7 @@ test_upstream_compressed_to_oc() {
     cp "$work_dir/basis/testfile.bin" "$work_dir/final/testfile.bin"
 
     log_info "Replaying compressed batch with oc-rsync..."
-    if ! "$OC_RSYNC" --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
+    if ! "$OC_RSYNC" "${opts[@]}" --read-batch="$work_dir/mybatch" "$work_dir/final/" > "$work_dir/read.log" 2>&1; then
         cat "$work_dir/read.log" >&2
         record_fail "" "" "$test_name" "oc-rsync --read-batch failed"
         return 0
@@ -385,6 +396,60 @@ test_upstream_compressed_to_oc() {
         record_pass "" "" "$test_name"
     else
         record_fail "" "" "$test_name" "replayed file differs from source"
+    fi
+}
+
+# =========================================================================
+# Refusal parity: a bare replay of an inc-recursive batch
+#
+# upstream: main.c:639-641 - --read-batch runs set_allow_inc_recurse() on the
+# replay's own options, where !recurse disallows inc-recursion
+# (compat.c:172-173); compat.c:780-785 then refuses a batch whose compat flags
+# carry CF_INC_RECURSE with RERR_SYNTAX. Both readers must refuse the same
+# batch the same way, and neither may touch the destination.
+# =========================================================================
+
+INC_RECURSE_BATCH_REFUSAL="Incompatible options specified for inc-recursive batch file."
+
+test_inc_recurse_refusal_parity() {
+    local upstream_rsync="$1"
+    local version="$2"
+    local test_name="upstream $version -a batch, bare --read-batch refused by both"
+
+    log_test "$test_name"
+    TESTS_RUN=$((TESTS_RUN + 1))
+
+    local work_dir="$TEST_DIR/${version//./_}_ir_parity"
+    mkdir -p "$work_dir"/{src,dest,up_out,oc_out}
+    echo "inc-recursive payload" > "$work_dir/src/file.txt"
+
+    if ! "$upstream_rsync" -a --write-batch="$work_dir/mybatch" \
+        "$work_dir/src/" "$work_dir/dest/" > "$work_dir/write.log" 2>&1; then
+        cat "$work_dir/write.log" >&2
+        record_fail "" "" "$test_name" "upstream rsync --write-batch failed"
+        return 0
+    fi
+
+    local up_rc=0 oc_rc=0
+    "$upstream_rsync" --read-batch="$work_dir/mybatch" "$work_dir/up_out/" \
+        > "$work_dir/up_read.log" 2>&1 || up_rc=$?
+    "$OC_RSYNC" --read-batch="$work_dir/mybatch" "$work_dir/oc_out/" \
+        > "$work_dir/oc_read.log" 2>&1 || oc_rc=$?
+
+    local detail=""
+    [ "$up_rc" -eq 1 ] || detail+="upstream exit $up_rc (want 1); "
+    [ "$oc_rc" -eq 1 ] || detail+="oc-rsync exit $oc_rc (want 1); "
+    grep -qF "$INC_RECURSE_BATCH_REFUSAL" "$work_dir/up_read.log" \
+        || detail+="upstream lacks the refusal text; "
+    grep -qF "$INC_RECURSE_BATCH_REFUSAL" "$work_dir/oc_read.log" \
+        || detail+="oc-rsync lacks the refusal text; "
+    [ -e "$work_dir/oc_out/file.txt" ] && detail+="oc-rsync wrote the destination; "
+
+    if [ -z "$detail" ]; then
+        record_pass "" "" "$test_name"
+    else
+        cat "$work_dir/up_read.log" "$work_dir/oc_read.log" >&2
+        record_fail "" "" "$test_name" "$detail"
     fi
 }
 
@@ -423,7 +488,7 @@ main() {
             available_versions+=("$version")
         else
             log_warn "Upstream rsync $version not found at $binary, skipping"
-            TESTS_SKIPPED=$((TESTS_SKIPPED + 3))
+            TESTS_SKIPPED=$((TESTS_SKIPPED + 4))
         fi
     done
 
@@ -436,6 +501,9 @@ main() {
         done
         for version in "${available_versions[@]}"; do
             test_upstream_compressed_to_oc "$UPSTREAM_INSTALL_ROOT/$version/bin/rsync" "$version"
+        done
+        for version in "${available_versions[@]}"; do
+            test_inc_recurse_refusal_parity "$UPSTREAM_INSTALL_ROOT/$version/bin/rsync" "$version"
         done
     else
         log_warn "No upstream rsync versions available, skipping cross-tool tests"

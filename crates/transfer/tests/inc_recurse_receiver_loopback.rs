@@ -197,6 +197,29 @@ fn inc_recurse_receiver_loopback_pulls_multi_segment_tree() {
         "every regular file must be transferred exactly once"
     );
 
+    // upstream: flist.c:2993-3006 / flist.c:1388-1389 - the `--stats` tallies
+    // are bumped as each entry arrives, so segments released mid-walk must not
+    // shrink them. Directories: `.`, `dir0..dir2`, `dir1/nested`, `.../deeper`.
+    let expected_size: u64 = (0..DIRS)
+        .flat_map(|dir| (0..FILES_PER_DIR).map(move |idx| (dir, idx)))
+        .chain((0..NESTED_FILES).map(|idx| (DIRS, idx)))
+        .map(|(dir, idx)| file_content(dir, idx).len() as u64)
+        .sum();
+    assert_eq!(
+        (
+            stats.num_dirs,
+            stats.num_symlinks,
+            stats.num_devices,
+            stats.num_specials
+        ),
+        (1 + DIRS as u64 + 2, 0, 0, 0),
+        "per-type tallies must count every received directory"
+    );
+    assert_eq!(
+        stats.total_source_bytes, expected_size,
+        "total size must sum every regular file"
+    );
+
     let src_entries = list_tree(&src);
     assert_eq!(
         src_entries,

@@ -327,6 +327,9 @@ impl ReceiverContext {
                 // FLAG_IMPLIED_DIR (oc: top_dir without content_dir).
                 entry.set_content_dir(false);
                 entry.set_top_dir(true);
+                // The initial list's `dir_flist` slot was appended before this
+                // pass ran; keep its content flag in step with the entry.
+                self.dir_flist.revoke_content_dir(entry.path());
             }
         }
 

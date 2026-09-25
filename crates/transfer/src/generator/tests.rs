@@ -7489,3 +7489,84 @@ mod match_totals_report {
         init(VerbosityConfig::default());
     }
 }
+
+/// The sender's file-list order must equal the receiver's for the negotiated
+/// protocol: both sides address entries by position (NDX), so any divergence
+/// makes the receiver request one entry and the sender answer with another.
+/// Below protocol 29 upstream sorts directories as plain items
+/// (flist.c:3560 `t_path = t_ITEM`), which reorders `empty_dir` ahead of
+/// `excluded.log` and `dir` ahead of `dir.txt`.
+mod pre29_sort_order {
+    use super::*;
+    use protocol::flist::sort_file_list;
+
+    fn names(entries: &[protocol::flist::FileEntry]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|e| String::from_utf8_lossy(&e.name_bytes()).into_owned())
+            .collect()
+    }
+
+    /// Builds the sender list at `protocol` and returns (sender order,
+    /// receiver order for the same entries).
+    fn sender_and_receiver_order(protocol: u8) -> (Vec<String>, Vec<String>) {
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path();
+        fs::create_dir_all(src.join("empty_dir")).unwrap();
+        fs::create_dir_all(src.join("dir")).unwrap();
+        fs::write(src.join("dir").join("inner.txt"), b"i").unwrap();
+        for name in ["dir.txt", "empty.txt", "excluded.log", "zeta.txt"] {
+            fs::write(src.join(name), name.as_bytes()).unwrap();
+        }
+
+        let handshake = test_handshake_with_protocol(protocol);
+        let mut config = test_config();
+        config.protocol = ProtocolVersion::try_from(protocol).unwrap();
+        config.flags.recursive = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        build_file_list_for_contents(&mut ctx, src);
+
+        let sender = ctx.file_list().to_vec();
+        let mut receiver = sender.clone();
+        sort_file_list(&mut receiver, false, protocol < 29);
+        (names(&sender), names(&receiver))
+    }
+
+    #[test]
+    fn protocol_28_sender_order_matches_receiver() {
+        let (sender, receiver) = sender_and_receiver_order(28);
+        assert_eq!(sender, receiver, "sender NDX order diverges at protocol 28");
+        assert_eq!(
+            sender,
+            [
+                ".",
+                "dir",
+                "dir.txt",
+                "dir/inner.txt",
+                "empty.txt",
+                "empty_dir",
+                "excluded.log",
+                "zeta.txt",
+            ],
+        );
+    }
+
+    #[test]
+    fn protocol_29_sender_order_matches_receiver() {
+        let (sender, receiver) = sender_and_receiver_order(29);
+        assert_eq!(sender, receiver, "sender NDX order diverges at protocol 29");
+        assert_eq!(
+            sender,
+            [
+                ".",
+                "dir.txt",
+                "empty.txt",
+                "excluded.log",
+                "zeta.txt",
+                "dir",
+                "dir/inner.txt",
+                "empty_dir",
+            ],
+        );
+    }
+}

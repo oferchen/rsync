@@ -31,78 +31,79 @@ pub fn build_rule_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion)
 /// Builds a prefix for protocol < 29 (old-style, `legal_len = 1`).
 ///
 /// Only `"+ "` (include) and `"- "` (exclude) are valid. Dir-merge and
-/// rules with any modifiers return `None` (unsendable).
+/// rules with any modifier byte return `None` (unsendable).
+///
+/// Role-dependent refusals (`p` on a sender, `r` on a `--delete-excluded`
+/// sender) are decided at the transfer call site, which knows the role.
 ///
 /// # Upstream Reference
 ///
-/// `exclude.c:1530-1582` - `legal_len = 1` branch
+/// `exclude.c:1824-1885` - `get_rule_prefix()` with `for_xfer` and
+/// `legal_len = 1`.
 fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
     use super::wire::RuleType;
 
-    // upstream: exclude.c:1532-1534 - dir-merge cannot be sent for proto < 29
+    // upstream: exclude.c:1831-1833 - a per-directory merge cannot be sent.
     if matches!(rule.rule_type, RuleType::DirMerge) {
         return None;
     }
 
     // upstream: exclude.c:1829 - `legal_len = 1`, and the final length test at
     // :1878 rejects any prefix that outgrew it. Every flag listed here is written
-    // to the buffer unconditionally (:1845-1864), so each one overflows and makes
-    // the rule unsendable.
+    // to the buffer unconditionally (:1843-1864), so each one overflows.
     //
-    // `perishable` is deliberately ABSENT. Upstream never writes `p` below
-    // protocol 30 (:1872-1874), so it cannot contribute to the overflow; the only
-    // perishable NULL is the separate `else if (am_sender) return NULL` at :1875,
-    // which oc owns at the call site (`perishable_rules_too_modern`, transfer)
-    // where the sending role is known - this function is role-blind. A receiver
-    // omits the modifier and keeps the rule, exactly as the protocol >= 29 path
-    // already does via `supports_perishable_modifier`. Including it here made a
-    // receiving client abort a pre-29 pull that upstream completes.
+    // A leading `/` in the pattern is NOT here: a command-line `- /foo` keeps the
+    // slash in `ent->pattern` without `FILTRULE_ABS_PATH` (add_rule() sets that
+    // flag from a leading slash only under XFLG_ANCHORED2ABS/XFLG_ABS_IF_SLASH,
+    // exclude.c:297-300, which the client does not pass), so the anchor rides in
+    // the body (`serialize_rule`) and `--exclude=/foo` is sendable. Only the `/`
+    // modifier (`abs_path`) writes a prefix byte.
     //
-    // `sender_side` / `receiver_side` are still listed even though upstream also
-    // gates their emission (:1865-1871): the `r` gate has a third arm
-    // (`delete_excluded && am_sender`) under which upstream DOES write the byte
-    // and DOES overflow, and neither input reaches this function today. Relaxing
-    // them needs that plumbing, so they stay conservative here rather than
-    // becoming half-right.
-    let has_modifiers = rule.anchored
+    // `s` and `r` are not here either: upstream writes `s` only at protocol >= 29
+    // (:1865-1867) and `r` only at >= 29 or under `delete_excluded && am_sender`
+    // (:1868-1871). That last arm needs the role, so the transfer call site owns
+    // it. `p` is likewise omitted below protocol 30 (:1872-1877) and refused only
+    // for a sender, also at the call site.
+    let has_modifiers = rule.abs_path
         || rule.negate
         || rule.cvs_exclude
         || rule.no_inherit
         || rule.word_split
         || rule.exclude_from_merge
         || rule.xattr_only
-        || rule.sender_side
-        || rule.receiver_side
         || rule.no_prefixes;
 
     if has_modifiers {
         return None;
     }
 
-    if matches!(rule.rule_type, RuleType::Include) {
-        return Some("+ ".to_owned());
-    }
-
-    // upstream: exclude.c:1538 - only emit "- " when the pattern would otherwise
-    // be ambiguous with another prefix; else send the bare pattern (legal_len = 0).
-    if matches!(rule.rule_type, RuleType::Exclude) {
-        // `as_encoded_bytes()` preserves ASCII bytes verbatim on every platform,
-        // so probing the ASCII `"- "`/`"+ "` prefixes on the raw bytes is sound
-        // even for a non-UTF-8 pattern body.
-        let pat = rule.pattern.as_encoded_bytes();
-        let needs_prefix = (pat.starts_with(b"- ") || pat.starts_with(b"+ "))
-            || matches!(
-                rule.rule_type,
-                RuleType::Protect | RuleType::Risk | RuleType::Merge | RuleType::Clear
-            );
-        if needs_prefix {
-            return Some("- ".to_owned());
+    match rule.rule_type {
+        // upstream: exclude.c:1835-1836 - FILTRULE_INCLUDE writes `+` (a risk
+        // rule is an include whose receiver side is not encodable here).
+        RuleType::Include | RuleType::Risk => Some("+ ".to_owned()),
+        // upstream: exclude.c:1837-1841 - an exclude (a protect rule is an
+        // exclude whose receiver side is not encodable here) writes `- ` only
+        // when the pattern itself starts with "- " or "+ "; otherwise
+        // legal_len drops to 0 and the bare pattern is sent. `ent->pattern`
+        // includes an anchoring `/`, which oc stores in `anchored`, so an
+        // anchored pattern never needs the disambiguating prefix.
+        RuleType::Exclude | RuleType::Protect => {
+            // `as_encoded_bytes()` preserves ASCII bytes verbatim on every
+            // platform, so probing the ASCII `"- "`/`"+ "` prefixes on the raw
+            // bytes is sound even for a non-UTF-8 pattern body.
+            let pat = rule.pattern.as_encoded_bytes();
+            let needs_prefix = !rule.anchored && (pat.starts_with(b"- ") || pat.starts_with(b"+ "));
+            Some(if needs_prefix {
+                "- ".to_owned()
+            } else {
+                String::new()
+            })
         }
-        return Some(String::new());
+        // A merge rule is expanded at parse time and a clear rule empties the
+        // list (exclude.c:1467-1473), so neither reaches get_rule_prefix();
+        // oc has no pre-29 encoding for either.
+        RuleType::Merge | RuleType::Clear | RuleType::DirMerge => None,
     }
-
-    // Protect/Risk/Merge/Clear use prefix chars that exceed legal_len = 1 for proto < 29.
-    None
 }
 
 /// Builds a prefix for protocol >= 29 (modern, full modifiers).
@@ -351,13 +352,17 @@ mod tests {
         assert_eq!(prefix, "-p ");
     }
 
+    /// upstream: exclude.c:1865-1871 - below protocol 29 `s` and `r` are not
+    /// written (the `--delete-excluded` sender's `r` is decided by the transfer
+    /// call site), so a sided rule degrades to a plain one instead of being
+    /// refused. MEASURED: rsync 3.5.0 exits 0 on a protocol-28 push and pull
+    /// with `--filter='-r f'`.
     #[test]
-    fn v28_cannot_represent_sender_receiver() {
+    fn v28_omits_sender_receiver_instead_of_refusing_the_rule() {
         let protocol = ProtocolVersion::from_supported(28).unwrap();
         let rule = FilterRuleWireFormat::exclude("test".to_owned()).with_sides(true, true);
 
-        // v28 uses old prefixes which cannot encode modifiers - returns None
-        assert!(build_rule_prefix(&rule, protocol).is_none());
+        assert_eq!(build_rule_prefix(&rule, protocol).as_deref(), Some(""));
     }
 
     /// upstream: exclude.c:1872-1876 - below protocol 30 the `p` byte is never

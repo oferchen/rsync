@@ -216,11 +216,13 @@ impl GeneratorContext {
         self.drop_unconvertible_entries();
 
         // upstream: flist.c:f_name_cmp() - sort both arrays via indirect permutation.
-        // --qsort uses unstable sort (flist.c:2991).
+        // --qsort uses unstable sort (flist.c:2991). flist.c:3560 - below
+        // protocol 29 a directory sorts as a plain item.
         {
+            let pre29 = self.protocol.as_u8() < 29;
             let _t = PhaseTimer::new("file-list-sort");
             self.file_list
-                .sort_with_parallel(&mut self.source_bases, self.config.qsort);
+                .sort_with_parallel(&mut self.source_bases, self.config.qsort, pre29);
         }
 
         // upstream: flist.c:3031-3042 flist_sort_and_clean() - a non-incremental
@@ -502,9 +504,10 @@ impl GeneratorContext {
 
         // upstream: flist.c:f_name_cmp() - sort via indirect permutation
         {
+            let pre29 = self.protocol.as_u8() < 29;
             let _t = PhaseTimer::new("file-list-sort");
             self.file_list
-                .sort_with_parallel(&mut self.source_bases, self.config.qsort);
+                .sort_with_parallel(&mut self.source_bases, self.config.qsort, pre29);
         }
 
         // upstream: flist.c:3031-3042 flist_sort_and_clean() - the --files-from
