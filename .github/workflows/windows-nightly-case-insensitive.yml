@@ -93,17 +93,17 @@ jobs:
       - name: Run platform crate tests
         run: cargo nextest run --locked -p platform --no-fail-fast
 
-      # Filter targets the flist walker's Windows-only
-      # `absolutize_returns_absolute_path_unchanged_windows` test in
-      # `crates/flist/src/file_list_walker.rs`. The `absolutize_` and
-      # `case_` prefixes scope the run to the path-absolutization helper
-      # plus any case-folding tests the flist crate gains in future, and
-      # exclude unrelated flist tests already covered elsewhere. The
-      # `flist` crate is otherwise never linked by a Windows CI cell on
-      # default features, so this is the only Windows test binary that
-      # exercises the walker's drive-letter and UNC path branches.
-      - name: Run flist Windows absolutize + case tests
-        run: cargo nextest run --locked -p flist --no-fail-fast -E 'test(absolutize_) or test(case_)'
+      # Run the full `-p flist` test set on Windows with no name filter.
+      # A `-E 'test(<prefix>)'` allowlist silently skips any Windows test
+      # whose name it does not match, so a newly added `#[cfg(windows)]`
+      # flist test would never run here and the cell would stay vacuously
+      # green. Running the whole package guarantees every Windows-compiled
+      # flist test is exercised - the walker's drive-letter, UNC and
+      # `absolutize` branches plus any future case-folding test - without
+      # depending on a naming convention. `flist` is otherwise never linked
+      # by a Windows CI cell on default features.
+      - name: Run flist Windows tests (full package)
+        run: cargo nextest run --locked -p flist --no-fail-fast
 
       - name: Upload nextest logs
         if: always()
