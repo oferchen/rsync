@@ -7,6 +7,7 @@
 //! upstream: generator.c - hard_link_one(), do_hard_links logic
 //! upstream: generator.c - find_fuzzy(), compare_dest handling
 
+use crate::local_copy::report_link_failure;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -417,13 +418,17 @@ pub(super) fn process_links(
                 Ok(()) => break,
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(destination)?;
-                    create_hard_link(&existing_target, destination).map_err(|link_error| {
-                        LocalCopyError::io(
-                            "create hard link",
-                            destination.to_path_buf(),
-                            link_error,
-                        )
-                    })?;
+                    if let Err(link_error) = create_hard_link(&existing_target, destination) {
+                        // upstream: hlink.c:486-487 - rsyserr(FERROR_XFER, errno,
+                        // "link %s => %s failed", ...) and the entry is skipped.
+                        report_link_failure(context, destination, &existing_target, &link_error);
+                        context.register_progress();
+                        return Ok(LinkOutcome {
+                            copy_source_override: None,
+                            reference_basis: None,
+                            completed: true,
+                        });
+                    }
                     break;
                 }
                 Err(error)
@@ -436,11 +441,13 @@ pub(super) fn process_links(
                     continue;
                 }
                 Err(error) => {
-                    return Err(LocalCopyError::io(
-                        "create hard link",
-                        destination.to_path_buf(),
-                        error,
-                    ));
+                    report_link_failure(context, destination, &existing_target, &error);
+                    context.register_progress();
+                    return Ok(LinkOutcome {
+                        copy_source_override: None,
+                        reference_basis: None,
+                        completed: true,
+                    });
                 }
             }
         }

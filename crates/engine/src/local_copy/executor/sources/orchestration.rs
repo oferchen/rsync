@@ -820,6 +820,13 @@ pub(crate) fn copy_sources(
             if context.make_way_error_occurred() {
                 return Err(LocalCopyError::partial_transfer());
             }
+            // upstream: generator.c:2490-2522 / hlink.c:486 - a FIFO, device,
+            // symlink, or hard link atomic_create() could not make is reported
+            // at FERROR_XFER and skipped; got_xfer_error then lifts the exit to
+            // RERR_PARTIAL (23). The per-entry line was already printed.
+            if context.create_error_occurred() {
+                return Err(LocalCopyError::partial_transfer());
+            }
             // upstream: sender.c:789-797 - a source that shrank mid-transfer
             // sets `io_error |= IOERR_GENERAL` and logs one `read errors
             // mapping %s` at FERROR_XFER without aborting; main.c then exits
