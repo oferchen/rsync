@@ -10,1071 +10,299 @@ oc-rsync is wire-compatible with upstream rsync 3.5.0 and the 3.4.x series
 
 ## [Unreleased]
 
-This cycle is dominated by the move to upstream rsync 3.5.0 as the reference
-implementation: retargeting the source-of-truth citations, adopting the new
-3.5.0 option and directive surface, closing the path-confinement and daemon CVE
-families, and putting the 3.5.0 test suite in front of every pull request.
+This cycle moves the reference implementation to upstream rsync 3.5.0. It adopts
+the 3.5.0 option and directive surface, works through the path-confinement and
+daemon CVE families, and gates every pull request on the 3.5.0 test suite. The
+wire protocol is unchanged at 32. One entry per change; see the linked PRs for
+detail.
 
 ### Security
 
-**Daemon and client input hardening**
-- The `proxy protocol hosts` daemon directive now gates who may supply a PROXY
-  header. A direct peer that is not on the trusted list is refused, and an
-  empty or unset list rejects every peer rather than accepting any - upstream's
-  `allow_proxy_protocol_peer()` fails closed the same way, and warns at startup
-  on the `proxy protocol = true`-with-no-list combination (#7648)
-- Refuse an over-long proxy CONNECT request, authorization header and response
-  header before writing them. Upstream has four length refusals where oc-rsync
-  had one, and an over-long *header* was reporting the *status-line* wording;
-  the 1023-byte bound is now derived from `PROXY_BUF_SIZE` rather than typed
-  twice (#7650)
-- Confine a peer-supplied alternate-basis xname to its basedir, with the
-  sanitiser and its wire-driven consumer landing together so the guard cannot
-  ship inert (#7651)
-- The macOS `clonefile` fast path bypassed the confined source open; it now
-  inherits it, so the fast path cannot resolve a component the slow path would
-  refuse (#7653)
-- Bound the client argument vector the daemon accepts, and stop logging it
-  verbatim (#7633)
-- Confine the `--delay-updates` staging path to the module. The staging path
-  was resolved to its canonical spelling while the module root was carried
-  unresolved, so a module under a symlinked ancestor escaped the guard - on
-  Linux only Landlock stopped it, leaving any pre-Landlock kernel,
-  `OC_RSYNC_NO_LANDLOCK`, or non-Linux platform exposed (#7659)
-- Escape a newline or carriage return in a daemon option value, and make the
-  daemon argument escaper byte-generic so a non-UTF-8 operand round-trips
-  through it unchanged (#7884, #7882). Non-UTF-8 daemon operand path bytes are
-  preserved end-to-end rather than lost at a lossy string boundary (#7889)
-- Pin the proxy-protocol trust gate and its log lines, following the
-  `proxy protocol hosts` allow-list (#7852)
-
 **Path confinement (CVE-2026-53795 family)**
-- Confine the destination write and the source read against symlink races, and
-  route the confined source open onto one shared per-component resolver instead
-  of two platform arms that had drifted in opposite directions (#7393, #7349)
-- Never follow a symlinked alt-dest basis entry, and read a source symlink
-  target through the confined parent rather than the raw path (#7419, #7418)
-- Resolve an absolute operator rename endpoint by ownership, closing an absolute
-  `--temp-dir` rename injection (#7398)
-- Resolve `--log-file` through the ownership walk (#7404)
-- Decide each `--relative` implied parent level on its own, so a planted
-  intermediate symlink cannot capture the rest of the path (#7415)
-- Open a daemon module root plainly and confine only the peer-supplied tail;
-  applying `RESOLVE_NO_SYMLINKS` to the fused whole made legitimate module roots
-  unreachable without adding confinement (#7304)
-- Apply the daemon filter to the destination argument, and honour
-  `--confine-root` on the server instead of taking it for the destination
-  (#7417, #7388)
-- Add the path-confinement activation predicate as four explicit decisions
-  (opt-out / hardened / root / path kind) rather than one boolean (#7322)
-- Route every operator-named auxiliary file open onto the ownership walk, which
-  refuses a symlink component owned by neither root nor the running user. This
-  is upstream's `open_no_attacker_symlinks()` applied at the call sites upstream
-  applies it: the daemon config, motd and secrets files (#7422), the daemon
-  `lock file` at mode 0600 (#7439), `--password-file` (#7424), `--log-file`
-  (#7441), `--files-from` and `--early-input` (#7442), `--exclude-from` /
-  `--include-from` and the CLI merge files (#7426), per-directory merge files
-  (#7425), and the batch read/write files at upstream's modes (#7443)
-- Stat an alt-dest basis entry through the ownership walk rather than opening
-  it, on the receiver (#7421) and on the local-copy path (#7463). The leaf is
-  `lstat`ed and never opened, matching `generator.c`; opening it instead is what
-  regressed the `--link-dest` / `--compare-dest` cells on the first attempt
-- Honour `--insecure-links` inside the operator-path walk, so the opt-out
-  reaches the resolver instead of being consulted only by its callers (#7459)
-- Confine the `--partial-dir` reuse probe and discard the temp when the
-  directory create is refused; the probe alone was inert because the abort
-  path renamed regardless (#7483)
-- Resolve an absolute `--backup-dir` against the module root, and route the
-  `--inplace` backup copy and the `--temp-dir` staging temp through the
-  ownership walk (#7493, #7494, #7496)
-- Refuse a staging directory the module filter excludes, and confine the
-  filter-file open to the module root (#7495, #7512)
-- Honour the admin symlink opt-out at the sender confinement root, so an
-  operator who opted out is not refused anyway (#7517)
-- Stop confining a *client's* own destination on a daemon pull - the
-  confinement applies to the peer-supplied side, not the operator's (#7503)
-- Confine the `--inplace` backup copy, and the `--backup-dir` link and rename,
-  to the module root (#7535, #7538)
-- Anchor the source unlink to a confined parent dirfd, so `--remove-source-files`
-  cannot be redirected by a planted path component (#7564)
-- Stop pre-empting the confined `--relative` implied-parent creation. Every
-  implied parent was created up front through a plain path, so a symlinked
-  component pointed a daemon's implied parent outside the module root and the
-  client still exited 0. Upstream's `make_path()` is a fallback, not a pre-pass,
-  and builds each component with `do_mkdir_at()` - the ownership walk plus
-  `mkdirat` - so the creation now runs after the directory pass and through the
-  confined wrapper, which also settles an itemize divergence where a real run
-  reported `.d..t......` for parents its own `--dry-run` called `cd+++++++++`.
-  The conflicting-symlink removal on the same path moves onto the confined
-  `unlink` wrapper, and a refused removal is reported instead of being recovered
-  with an `exists()` probe that follows the symlink whose removal was just
-  denied. The seccomp allowlist is `*at`-only by construction, so the `EPERM` it
-  raised named an unported call site rather than a filter that was too narrow
-  (#7565)
-- Bound a peer-named merge file by `--confine-root`. A dir-merge rule travels
-  over the protocol as a filter rule rather than in the argv an `rrsync` wrapper
-  validates, so the peer names the file; the per-directory merge open took the
-  ancillary entry point and followed a trusted symlink, and neither the client
-  nor the non-daemon server published `--confine-root` into the walk's session,
-  so even the already-confined opens measured against an empty root (#7598)
-- Issue the ownership walk's own syscalls through libc rather than rustix's
-  raw-syscall backend. Upstream's walk is plain C against libc, so an
-  interposition layer an operator has in place - `fakeroot`, an audit or sandbox
-  preload - saw upstream's resolution and did not see oc's (#7599)
-- Let the ownership walk traverse under a Landlock sandbox, open its anchor with
-  `openat` so the seccomp worker filter admits it, and fall back to the confined
-  wrappers rather than to plain syscalls when a confined open is unavailable
-  (#7541, #7545, #7548)
-- Confine the backup ladder's parent chain, copy and symlink tiers, then its
-  device tier, through the ownership walk (#7808, #7812)
-- Confine receiver FIFO and device-node creation to the destination dirfd
-  (#7872)
+- Confine destination writes and source reads against symlink races through one shared per-component resolver (#7393, #7349)
+- Never follow a symlinked alt-dest basis entry, and stat it through the ownership walk instead of opening it (#7419, #7418, #7421, #7463)
+- Resolve absolute operator rename endpoints, `--log-file`, `--temp-dir` and `--backup-dir` through the ownership walk (#7398, #7404, #7493, #7494, #7496)
+- Decide each `--relative` implied parent on its own, and create implied parents through the confined wrapper (#7415, #7565)
+- Route every operator-named auxiliary file through the ownership walk: daemon config, motd, secrets, `lock file`, `--password-file`, `--log-file`, `--files-from`, `--early-input`, `--*clude-from`, merge files and batch files (#7422, #7439, #7424, #7441, #7442, #7426, #7425, #7443)
+- Open a daemon module root plainly and confine only the peer-supplied tail (#7304)
+- Honour `--confine-root` on the server and apply the daemon filter to the destination argument (#7388, #7417)
+- Confine `--delay-updates` staging, the `--partial-dir` reuse probe and the partial-basis cleanup unlink (#7659, #7483, #7704)
+- Confine the backup ladder at every tier, including the `--inplace` backup copy (#7535, #7538, #7808, #7812)
+- Anchor the `--remove-source-files` unlink to a confined parent dirfd (#7564)
+- Bound a peer-named merge file by `--confine-root` (#7598)
+- Confine receiver FIFO and device-node creation to the destination dirfd (#7872)
+- Confine a peer-supplied alternate-basis name to its basedir (#7651)
+- Refuse a staging directory the module filter excludes, confine the filter-file open, and honour the admin symlink opt-out at the sender root (#7495, #7512, #7517)
+- Stop confining a client's own destination on a daemon pull (#7503)
+- Anchor ownership and timestamp writes against parent symlink swaps (#6808)
+- Open sender source files confined and `O_NOFOLLOW`, with a device guard (#7092); the macOS `clonefile` fast path inherits the confined open (#7653)
+- Honour `--insecure-links` inside the walk, at the destination sandbox and at the DOTDIR follow (#7459, #7695, #7734)
+- Let the walk run under Landlock and seccomp, falling back to confined wrappers (#7541, #7545, #7548)
 
 **Daemon**
-- Refuse shell metacharacters when expanding a hook variable, closing command
-  injection through the `pre-xfer exec` / `post-xfer exec` environment
-  (CVE-2026-53790, #7465). The live sink is oc's own single-character expander,
-  not the upstream-shaped one, so porting upstream's guard alone would have been
-  inert
-- Validate and quote the `RSYNC_CONNECT_PROG` `%H` substitution instead of
-  interpolating the host verbatim (#7430)
-- Enforce `max connections` on the stdio, inetd and remote-shell entry points,
-  not only the TCP accept loop, and honour the per-module `lock file` (#7440)
-- Gate the secrets-file mode check on `strict modes` rather than validating it
-  unconditionally at parse time (#7468)
-- `refuse options = delete` must also refuse a pull's `--remove-source-files`;
-  the inference is `am_sender`-gated, so a blanket refusal would have rejected
-  every push (#7448)
-- A refuse rule names a capability, not one spelling of it (#7427)
-- Apply the module `exclude` to the client's destination argument (#7450) and
-  refuse an alternate-basis directory the module excludes (#7455); clamp a
-  client's alt-dest basis into the module instead of dropping it silently
-  (#7467)
-- Close two replay-script injections in the generated batch `.sh` (#7445)
-- Resolve the real peer address on both stdio paths. The inetd and remote-shell
-  entry points fabricated `127.0.0.1`, which made every `hosts allow` /
-  `hosts deny` rule evaluate against a synthetic localhost (#7303)
-- Match upstream's peer-host naming and ACL evaluation; `hosts deny` no longer
-  fails open when a configured hostname does not resolve (CVE-2026-70452,
-  #7314)
-- Honour the leading-comma separator form in `auth users` and `gid`
-  (CVE-2026-70463, #7345)
-- Add the `auth digest` minimum-digest floor (#7350)
-- Refuse control bytes in a name-converter request, closing a newline-injection
-  desync of the converter stream (#7346)
-- Name the user and the rule in auth-failure log lines (#7395)
-- Treat a backslash in a requested path as a filename byte, not a path separator
-  (#7409)
-- Honour the per-module `insecure links` directive (#7484)
-- Pin the Landlock root after `chroot` rather than before it; the pre-chroot
-  path names a directory the confined process can no longer reach (#7567)
-- Pin the module root as a descriptor before the privilege drop, through the
-  ownership walk rather than a plain open, and resolve the sender's lookups
-  against that pin. Re-walking the absolute module path after `setuid` made a
-  module under an unsearchable parent unservable, and it failed the Landlock
-  rule-path open too - which the caller only warns about, so the module was
-  served with no kernel sandbox at all, on exactly the layout the sandbox
-  exists for (#7605)
-- Make the connection FSM's close edge total, and stop one malformed client
-  ending the listener for everybody. Four of ten call sites discarded the
-  transition result, all of them targeting `Closing`; separating teardown from
-  the handshake progression surfaced the one edge a peer can aim at, where a
-  repeated `@RSYNCD:` banner took `Greeting -> ModuleSelect` twice and the
-  resulting error killed the accept loop. Upstream reads the version line once
-  and takes the next line as the request whatever it contains, so a second
-  banner is a module name; and no per-connection outcome of any class reaches
-  the accept loop any more, matching a `sigchld_handler` that discards the
-  session status outright (#7579, #7590)
-- Admit `mknod` / `mknodat` in the seccomp worker filter, which was dropping the
-  device and FIFO creation the sandbox is meant to permit (#7547)
-- One operator opt-out now governs both kernel sandbox layers symmetrically, so
-  Landlock and seccomp cannot disagree about a single operator decision (#7546)
-- Enforce `max connections` across the forked per-connection sessions, so fork
-  isolation cannot reset the connection count (#7917)
+- `proxy protocol hosts` gates who may send a PROXY header and fails closed when unset (CVE-2026-53791, #7648)
+- Resolve the real peer address on the inetd and remote-shell entry points instead of `127.0.0.1` (#7303)
+- `hosts deny` no longer fails open when a hostname does not resolve (CVE-2026-70452, #7314)
+- Refuse shell metacharacters in `pre-xfer exec` / `post-xfer exec` hook variables (CVE-2026-53790, #7465)
+- Validate and quote the `RSYNC_CONNECT_PROG` `%H` substitution (#7430)
+- Close two injections in the generated batch replay script (#7445)
+- Honour the leading-comma form in `auth users` and `gid` (CVE-2026-70463, #7345)
+- A peer can no longer override module settings with an `@RSYNCD: OPTION` line (#7754)
+- Fork one process per connection so chroot and per-module state cannot leak between sessions (#7719, #7718, #7711)
+- Enforce `max connections` on every entry point and across forked sessions (#7440, #7917)
+- Close three `refuse options` bypasses, and refuse `--remove-source-files` under `refuse options = delete` (#7262, #7448, #7427)
+- Pin the module root before the privilege drop, and the Landlock root after `chroot` (#7605, #7567)
+- One operator opt-out governs both Landlock and seccomp; seccomp admits `mknodat` (#7546, #7547)
+- A malformed client can no longer stop the accept loop (#7579, #7590)
+- Confine an absolute alternate-basis destination to the module root (#7725, #7724)
+- Refuse control bytes in a name-converter request (#7346)
+- Apply the module `exclude` to the destination and alt-basis arguments, and clamp an alt-dest basis into the module (#7450, #7455, #7467)
+- Gate the secrets-file mode check on `strict modes` (#7468)
+- Treat a backslash in a requested path as a filename byte, and keep wildmatch escapes in the glob expander (#7409, #7788)
+- Bound the client argument vector and stop logging it verbatim (#7633)
+- Escape newlines and non-UTF-8 bytes in daemon option values (#7884, #7882, #7889)
+- Reject a pre-existing munged-symlink directory in the module root (#7080)
+- Warn when a Windows privilege drop is a no-op (#7165)
+- Bound the handshake with upstream's absolute deadline, and end a silent transfer at the reconciled `io_timeout` (#7688, #7689)
 
-**Peer-supplied input bounds**
-- Bound peer-supplied xattr bytes and the CONNECT host (#7297)
-- Bound the peer-supplied filter-rule record length (#7377)
-- Bound the equal-weak-checksum chain in the delta matcher (CVE-2026-70453,
-  #7293)
-- Mask peer-supplied `io_error` to the defined `IOERR_*` bits (#7291)
-- Reject stray negative NDX instead of skipping it (#7365)
-- Reject `--max-alloc=0` instead of disabling the guard (#7285)
+**Peer-supplied input**
+- Bound the equal-weak-checksum chain in the matcher (CVE-2026-70453, #7293, #7878)
+- Bound peer-supplied xattr bytes, filter-rule records and the CONNECT host (#7297, #7377)
+- Bound compressed-token literal length and reject zero run counts and index overflow (#6842, #6827, #6848)
+- Reject a `sum_head` strong-sum length wider than the negotiated digest (#7084)
+- Abort on malformed multiplex control payloads (#7096)
+- Reject stray negative or overflowing NDX values (#7365, #7630)
+- Reject `--max-alloc=0` locally and on the wire (#7285, #7693)
+- Mask peer `io_error` to the defined bits (#7291)
+- Reject a non-directory encoding of the `.` transfer root (#7625)
 - Sanitize received symlink targets when munging is off (#7333)
-- Escape control characters in log-file output, in the sink rather than the CLI
-  renderer so remote-controlled writes cannot reach the terminal raw (#7296,
-  #7357)
-- Redact peer-chosen rule text in filter-rule diagnostics (#7384)
-- Bound merge-file nesting by depth (`MAX_MERGE_DEPTH`), not by cycle detection;
-  a cycle set terminates a loop but not an unbounded acyclic chain (#7432)
-- Clamp every `--files-from` line through upstream's `sanitize_path`, which
-  `flist.c` applies unconditionally to a real files-from stream (#7460)
-- Don't let the sender widen the receiver's `--delete` scope through an implied
-  parent directory (#7446)
-- Reject a non-directory encoding of the synthetic `.` transfer-root entry at
-  decode time, both spellings. The root is exempt from the requested-name
-  filter checks, so a sender that encoded it with regular-file mode made every
-  make-way site see a directory where a non-directory had to be written and,
-  under `--force`, clear the destination root recursively. Refused as a
-  protocol violation where upstream refuses it, in `recv_file_entry`
-  (`flist.c:1127-1134`), not in the obstacle arm - gating the arm would leave
-  the forged entry live for mkdir, rename and backup (#7625)
-- Reject a modern NDX that overflows a signed file index rather than wrapping
-  it (#7630)
-- Charge consumed chain entries against the equal-weak-checksum DoS bound, so a
-  matched block cannot be re-walked past the cap (CVE-2026-70453, #7878)
-
-**Daemon session isolation and module confinement**
-- A peer can no longer override module configuration by sending an
-  `@RSYNCD: OPTION key=value` line. Upstream has no such line at all - it emits
-  exactly four `@RSYNCD` forms - and oc's acceptance of one let an
-  unauthenticated client land a file in a `read only` module (#7754)
-- The daemon forks per connection, so a `chroot` applied for one session cannot
-  leak into the next (#7719), and a session child is reaped by pid rather than
-  by sweeping every child (#7718)
-- The per-module symlink opt-out is scoped to its own connection instead of
-  persisting process-wide (#7711)
-- A daemon's absolute alternate-basis destination is confined to the module
-  root (#7725), and the module-root stat is anchored on every Unix rather than
-  Linux alone (#7724)
-- `--safe-links` is evaluated on the receiving side only, matching upstream's
-  two consumers. Removing the sender-side checks alone was a measured
-  regression until the `--server` argument path was taught to carry the flag
-  (#7763), and symlink targets are munged before the check rather than after
-  (#7777)
-- Daemon filter side modifiers resolve at add time and the file-list re-check
-  reads the client's rules only, matching `check_server_filter`. A push into a
-  module whose filter excludes the incoming name is now refused with upstream's
-  wording instead of being accepted (#7747)
-- The daemon glob expander splits path segments on `/` only, never on a
-  backslash, so a wildmatch escape byte survives to the matcher (#7788)
-- Module filter rules honour `merge`, `!`, `dir-merge`, the short-form
-  prefixes, `XFLG_OLD_PREFIXES` and a record's leading whitespace as pattern
-  text - each of which previously changed which files a module served
-  (#7795, #7804, #7807, #7757, #7732, #7729)
-- A module's dir-merge and merge reads are gated on the module's own filter
-  list, a merge-file open honours the `w` modifier, and the rules are walked
-  positionally like `parse_rule_tok` (#7813, #7833, #7826)
-- A module `-C` / CVS filter rule loads the CVS defaults, including the
-  patternless `:C` dir-merge form (#7862, #7850)
+- Clamp every `--files-from` line through `sanitize_path` (#7460)
+- Stop a sender widening the receiver's `--delete` scope through an implied parent (#7446)
+- Bound merge-file nesting by depth (#7432)
+- Refuse an `ITEM_TRANSFER` request for a non-regular file (#7744)
+- Refuse over-long proxy CONNECT requests and headers (#7650)
+- Escape control characters in log-file output and before terminal writes (#7296, #7357, #7933)
+- Redact peer rule text in filter diagnostics (#7384, #7662)
+- Drop to the `--copy-as` user permanently (#7073)
 
 ### Added
 
-- `--confine-root=DIR`, `--insecure-links` / `--no-insecure-links`, and
-  `--drop-D` / `--no-drop-D`, matching the new 3.5.0 option surface. Like
-  upstream, `--confine-root` and `--drop-D` are deliberately not forwarded to
-  the remote side (#7396, #7299)
-- `--chmod` now supports chmod(1)-style permission copies (`u=g`, `g=o`) (#7295)
-- The `auth digest` daemon directive (#7350)
-- The soft file-descriptor limit is raised at startup, and a deep path that
-  exhausts descriptors warns once instead of failing silently (#7324, #7323)
-- A missing or non-directory `--compare-dest` / `--copy-dest` / `--link-dest`
-  argument now warns instead of passing silently, on the local path (#7453) and
-  on the network paths (#7454)
-- `--fake-super` is accepted in a server argv, and repeated via `-M` on a
-  local transfer without being rejected (#7520, #7497, #7524)
-- `--info=stats3` emits the heap-statistics block (#7550)
-- The INC_RECURSE lookahead window is sized rather than fixed (#7539)
-- A safe `fork`/`waitpid` wrapper for daemon sessions replaces the raw calls
-  (#7523)
-- The local-copy receiver stages a `--partial-dir` resume in place, writing the
-  reconstruction into the existing partial entry and renaming that entry onto
-  the destination. This is upstream's `one_inplace`, whose in-place target is
-  the partial file and never the live destination - the comment arguing the
-  opposite was describing a hazard of oc's own implementation (#7599)
-- `--version` reports rsync 3.5.0 as the wire-compatible pin, and names four
-  features the build already carried and never surfaced: `quic`, `sd-notify`,
-  `vmsplice` and `send_zc`. `daemon-seccomp` is deliberately still unreported,
-  because it is declared on the workspace root and reaches no crate that
-  renders `--version` (#7616)
-- `--debug=flist` is wired to upstream's `DEBUG_GTE(FLIST,n)` trace sites: six
-  existing owners wired, three new ones added carrying the real filter level,
-  eleven orphaned helpers deleted and fourteen oc-invented lines removed. The
-  sender's FLIST3 output is byte-identical to upstream's (#7775)
-- `--debug=deltasum` reaches the real delta scans instead of emitting nothing
-  (#7782)
-- A first-writer-wins exit-code latch shared by the signal watcher and the
-  normal return path, mirroring `cleanup.c`'s single-entrant rule, so a signal
-  arriving mid-transfer can no longer overwrite the transfer's own exit code
-  (#7768)
-- `accept-new` is a real `StrictHostKeyChecking` policy rather than a spelling
-  that behaved as `ask`, so unattended first contact succeeds (#7783)
-- The receiver gates its delete pass on file-list completeness, so a partial
-  list cannot drive a deletion (#7828)
-- The embedded `ssh_config` reader gained `Match` blocks with the two-pass
-  evaluation model, the `Include` directive, `ConnectTimeout`, the
-  connection-establishment options, and loads the user file before the system
-  file first-obtained-wins like OpenSSH (#7865, #7863, #7829, #7880, #7849)
-- QUIC selects BBR or Cubic congestion control with BDP flow-control windows
-  (#7859), and paces its writer through the `BandwidthLimiter` so `--bwlimit`
-  applies to a QUIC transfer (#7866)
-
-- The daemon serves QUIC connections through the shared `@RSYNCD` session
-  (#7898), a self-signed QUIC daemon defaults to accept-new TOFU trust (#7910),
-  the client can present a certificate for mutual TLS (#7903), and
-  `--quic-cipher` selects the AEAD family explicitly where the default adapts
-  to hardware AES support (#7906)
-- The embedded `ssh_config` reader gained `ProxyCommand` / `ProxyJump` /
-  `ProxyUseFdpass` (#7896), the full `Match` criteria set (#7909), the
-  host-key verification family (#7913), and the authentication-control
-  family (#7915)
+- `--confine-root`, `--insecure-links` / `--no-insecure-links` and `--drop-D` / `--no-drop-D` from rsync 3.5.0 (#7396, #7299)
+- Daemon directives `auth digest` (#7350), `insecure links` (#7484) and `proxy protocol hosts` (see Security)
+- QUIC transport behind the `quic` feature (off by default): `quic://` and `--quic`, daemon listener, TOFU and private-CA trust, mutual TLS, `--quic-cipher`, BBR/Cubic congestion control and `--bwlimit` pacing (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #7910)
+- Embedded `ssh_config` reader: `Match`, `Include`, `ProxyCommand` / `ProxyJump`, host-key and authentication families, token expansion, and OpenSSH precedence (#7829, #7849, #7863, #7865, #7880, #7896, #7909, #7913, #7915, #7922)
+- `StrictHostKeyChecking accept-new` works as documented (#7783)
+- `--out-format` on SSH and daemon transfers (#6917, #6918, #6919, #6921, #6923)
+- Itemize xattr and ACL differences on remote transfers (#6913, #7012)
+- `--read-batch=-` reads the batch from stdin (#7081)
+- `--fake-super` stores ACLs instead of dropping them, and is accepted in a server argv and via `-M` (#6860, #7497, #7520, #7524)
+- `--chmod` accepts permission copies such as `u=g` (#7295)
+- `--info=stats3` heap statistics (#7550)
+- `--debug=flist` and `--debug=deltasum` reach the real trace sites (#7775, #7782)
+- `--help` is grouped by subject, with a section for oc-rsync extensions (#7110)
+- `--version` names the `quic`, `sd-notify`, `vmsplice` and `send_zc` build features (#7616)
+- Daemon auto-probes chroot capability and splits `/./` module paths (#6862)
+- Abbreviated xattr lists resolve against the basis file (#7091, #7122)
+- Apply symlink modes on macOS (#7021)
+- Raise the soft file-descriptor limit at startup (#7324, #7323)
+- Warn on a missing or non-directory `--compare-dest` / `--copy-dest` / `--link-dest` (#7453, #7454)
+- Tuning environment variables `OC_RSYNC_DISK_COMMIT_CHANNEL_CAP`, `OC_RSYNC_PIPELINE_WINDOW` and `OC_RSYNC_PARALLEL_STAT_THRESHOLD` (#7032, #7053)
 
 ### Changed
 
-- Tracked upstream reference moved to rsync 3.5.0 (released 13 Aug 2026) in
-  prose, comparison docs and the release benchmark. 3.5.0 carries the same wire
-  protocol as 3.4.4 (`PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged
-  `errcode.h`), so wire compatibility is unaffected; the release is behavioural,
-  covering 33 CVEs in path handling and the daemon.
-- Upstream source citations across the workspace retargeted at the 3.5.0 line
-  numbers, with the citation gate extended to run on docs-only changes and to
-  fail when a cited file does not exist (#7305, #7321, #7331, #7315, #7318,
-  #7308, #7286), and to range-check a citation written with an explicit
-  `rsync-3.5.0/` path prefix instead of skipping it as a foreign upstream and
-  leaving no trace in the report (#7607)
-- rsync 3.5.0 now runs the full interop scenario matrix as a gating peer,
-  alongside 3.0.9, 3.1.3 and 3.4.4 (#7290, #7337)
-- The required upstream-testsuite gate runs the rsync 3.5.0 Python corpus
-  instead of the 3.4.4 shell corpus, as four Linux legs: privilege
-  {non-root, root} x daemon transport {stdio pipe, loopback TCP}, plus a
-  non-root/pipe leg on macOS. Each leg carries an expected-
-  outcome manifest generated from a real run, so only a change in outcome - a
-  regression, or an unexpected pass - fails the gate (#7387, #7339, #7405,
-  #7408, #7392, #7391)
-- Release benchmarks now compare against upstream rsync 3.5.0 and report **peak
-  RSS alongside elapsed time for every mode**. The measurement was already being
-  collected for each run and discarded for all but the memory mode, so a speed
-  win paid for in memory was invisible in the published numbers.
-- Every upstream benchmark cell is now run against **both** rsync 3.4.4 and
-  3.5.0, because the two baselines disagree materially and a single-baseline
-  table reads upstream's own regressions as an oc-rsync win. Four harness
-  defects were fixed in the same pass: `oc_rsync_version` published the wire
-  compatibility version rather than the release, every "initial sync" cell was
-  timing a no-change sync because the destination was reset once instead of per
-  run (43x off), the RSS columns were only ever populated for the memory mode,
-  and a run that failed in a millisecond was recorded as a very fast run. The
-  SSH cells now pin both ends to the same release, and an `IORING_OP_SEND_ZC`
-  probe reports kernel capability and binary capability as two separate facts
-  (#7595)
-- io_uring stops costing more than it saves, and the zero-copy send policy
-  stops being a synonym for off. `Auto` now means what its name says and can
-  reach `IORING_OP_SEND_ZC` in builds carrying the `iouring-send-zc` feature -
-  `Enabled` is unreachable from a client, since the flag is deliberately never
-  forwarded to a peer, so the transport was dead code in practice. The SEND_ZC
-  writer no longer blocks on the notification CQE, which was 75% of the time
-  spent inside a send and had made a loopback daemon pull 5.8x slower. And a
-  write batch below the ring threshold goes out positionally, which took a
-  10,000-file daemon pull from 1106 ms to 450 ms - nothing is ever in flight
-  across batches, so a one-chunk batch paid for a ring round trip that bought
-  it no concurrency. The zero-copy feature remains in no default set, because
-  on loopback it is still behind a plain socket write (#7593, #7600, #7610)
-- `daemon-seccomp` is reachable from the `oc-rsync` binary. It was declared
-  only on the `daemon` crate and forwarded by nothing, so the worker filter was
-  compiled in only by a workspace-wide `--all-features` build and was in no
-  released artefact, while `README.md` listed it as a Tier-1 Linux capability.
-  The build-time default is unchanged - still opt-in - and a feature-matrix row
-  now pins the forwarding edge rather than the crate's own declaration (#7589)
-- Interop failures name the peer version that broke, via `--only-version`
-  (#7341)
-- The local-copy context state module is split by concern (#7358)
-- The receiver is the response-flist sink, and the backup ladder takes only the
-  fields it reads (#7536, #7553)
-- Three source files that nothing compiled were removed (#7543)
-- The four `--debug`/`--info` word-list copies collapsed onto the live parser,
-  deleting a 653-line off-path duplicate that had zero production callers and
-  eight divergent semantics (#7762)
-- One owner for the SIMD batch input cap, replacing eleven constants and one
-  bare literal, with the bound tested for the first time (#7787)
-- `MAX_XATTR_DIGEST_LEN` is derived from the hasher that fills the buffer and
-  pinned to upstream's MD5-specific 16 by a const assert, so the derivation
-  cannot drift into a wire-format break (#7786)
-- The block index table grows like upstream's `match.c` rather than treating
-  its size as a ceiling (#7790); the dead two-level tag-table search and the
-  unwired `PlatformSendFile` dispatch seam were deleted (#7798, #7794)
-- `#![deny(unsafe_code)]` added to the crates that lacked the gate (#7781)
-- The daemon accept loop gained a session-worker seam, parks the connection
-  slot in the parent, and names how a session ended (#7715, #7716)
-- One shared dirname allocation per directory on the sender, mirroring
-  upstream's lastdir cache (#7756)
-- One `ssh_config` option table serves both readers (#7823), and the flist
-  `statx` call routes through `fast_io`'s safe owner rather than a direct
-  syscall (#7827)
-- The metadata appliers share one dest-parent dirfd (#7877), and the dormant
-  file-job pipeline retry counter is removed (#7875)
+- The upstream reference is rsync 3.5.0. It keeps protocol 32, so wire compatibility is unchanged (#7305, #7321, #7331, #7607)
+- A peer that advertises a newer protocol, such as rsync 3.5.1 with 33, is negotiated down to 32 instead of refused (#7916)
+- The required upstream-testsuite gate runs the 3.5.0 Python corpus on Linux (pipe and TCP, root and non-root); macOS legs run on every PR (#7387, #7339, #7405, #7408, #7392, #7391)
+- rsync 3.5.0 joins the interop matrix as a gating peer (#7290, #7337)
+- Release benchmarks compare against both 3.4.4 and 3.5.0 and report peak RSS for every mode (#7595)
+- `daemon-seccomp` is reachable from the `oc-rsync` binary; it stays opt-in (#7589)
+- io_uring `Auto` can reach `SEND_ZC` in builds with `iouring-send-zc` (#7593)
+- `--safe-links` is evaluated on the receiver only, as upstream does (#7763, #7777)
+- Module filter rules follow upstream parsing: `merge`, `dir-merge`, `!`, `-C`, short prefixes and provenance (#7729, #7732, #7747, #7757, #7795, #7804, #7807, #7813, #7826, #7833, #7850, #7862)
+- The SSH remote shell may prompt for a key passphrase; `-oBatchMode=yes` is no longer injected (#7145, #7167)
+- Oc-specific tuning flags are no longer forwarded to the remote server (#7029)
+- `--bwlimit` follows upstream's model and quantizes to whole KiB (#6897, #7146)
+- `--inplace` with `--partial-dir` is always rejected, as upstream does (#7117)
+- `--append` implies `--inplace`, and `--write-devices` implies `--inplace` on every path (#7243, #7260)
+- `--old-args` is a counter so level 2 works (#7090)
+- Batch replay pins compression to zlib (#7168)
+- `--quiet` suppresses info output regardless of `-v` (#7277)
+- Diagnostics are routed by log code rather than always to stdout (#7242, #7042)
+- The INC_RECURSE receiver is selected at runtime from the negotiated flags, and the sender sizes its lookahead window (#7965, #7968, #7539)
+
+### Performance
+
+- Batch network sender writes to match upstream's cadence (#7009)
+- Stop waiting for the `SEND_ZC` notification, and write small batches positionally instead of through io_uring (#7600, #7610)
+- Park the SPSC pipeline and block the daemon accept loop instead of spinning (#7033, #7035)
+- Carry file metadata per file instead of cloning the file list, and own the in-flight window (#7216, #7229)
+- Share one dirname allocation per directory and one empty dirname (#7756, #7973)
+- Share the destination-parent dirfd across metadata appliers (#7877)
+- Cache the CoW probe per directory and the effective identity per process (#7071, #7072)
+- Drop per-file io_uring setup for hard links and disk batches (#7038, #7069)
+- Truncate to zero for `--inplace --sparse` whole-file writes (#7099)
+- O(1) xattr wire-cache lookup (#6826)
+- Count file types and sizes as the list arrives (#7977)
+- `--inplace --backup` uses the pre-image as the delta basis (#7752)
 
 ### Fixed
 
+**Data integrity**
+- `--inplace --sparse` local copies could write wrong content after a block ending in zeros (#7983); a related io_uring relative-seek defect is fixed and the network receiver is pinned unaffected (#7984)
+- Multi-source `--delete` no longer removes files an earlier source just copied (#7765)
+- A local copy whose source shrinks or grows mid-read is diagnosed or redone, never committed short (#7403, #7472, #7706, #7751, #7710)
+- Read the basis through windowed I/O to survive concurrent truncation (#7052)
+- Poison the file checksum after a source read error (#6948)
+- Never truncate the target under `--write-devices` (#6834, #7583, #7796)
+- Recover the phase-2 verify redo over a daemon transport, against the retained basis (#7221, #7234, #7235)
+- Keep `--partial` from committing a matched-only temp (#7261)
+- Carry hard links through `--write-batch` and `--read-batch`, in upstream's member order (#7596, #7928, #7959)
+- Skip the delayed rename when the backup fails (#7531)
+
 **3.5.0 testsuite divergences**
-- `keep_backup failed` named the source file rather than the backup
-  destination it failed to create - at both emitting sites (#7658)
-- A directory's creation time is preserved under `--crtimes` (#7656)
-- Apply the set-group-ID mode `chmod(2)` would apply: macOS `fchmodat` refuses
-  the bit that `chmod` silently masks, so the two calls disagreed (#7655)
-- Anchor the sender's directory scan on the transfer root. The daemon's flist
-  walk read a process-global root that nothing installs; the anchor is now a
-  parameter, which fixed two macOS cells with one change (#7654)
-- A trailing `/.` must not pivot the `--relative` root - two upstream
-  decisions had been conflated into one (#7652)
-- Keep the DOTDIR marker on a module operand ending in `/.` (#7635)
-- Reject an unknown `--info` / `--debug` item the way upstream does, instead
-  of accepting it silently (#7637)
-- Keep a cleared directory's `dir_flist` slot and refuse it, and refuse a
-  transfer-phase NDX naming a cleared file entry (#7641, #7642)
-- Report an oversized xattr datum and a zero block length with upstream's own
-  wording (#7647, #7646)
-- Clear the master red: a rustdoc link, a racing-converter cause, and a
-  pre-mangled log operand (#7639)
+- Backup error naming, directory crtimes, macOS set-group-ID, the sender scan anchor, trailing `/.` handling, cleared `dir_flist` slots and upstream error wording (#7635, #7641, #7642, #7646, #7647, #7652, #7654, #7655, #7656, #7658)
 
-**Filters**
-- Filter patterns are compiled, matched and covers-checked as bytes end-to-end,
-  closing the lossy conversions a non-UTF-8 name could slip through (#7918)
-- Keep `/***` descendant reach under a negated rule (#7907)
-- Reject invalid filter-rule modifiers instead of stopping at the first one
-  (#7361)
-- Match dir-merge modifiers and filter-rule keywords case-sensitively, per
-  upstream `parse_rule_tok` (#7375, #7380, #7379, #7378)
-- Accept the `x` modifier on dir-merge and on hide/show/protect/risk rules
-  without inheriting XATTR, and unstack it from the namespace screen (#7372,
-  #7373, #7374)
-- A clear filter rule goes on the wire as one byte (#7376)
-- Collapse a merge-file name's `..` before opening it (#7288)
-- Fold the pattern inside brackets for case-insensitive matching (#7292)
-- Mirror upstream's clear-list token boundary exactly (#7298)
-- Refuse a sided rule inside a sided merge file, reporting the merge file by the
-  given name rather than its resolved absolute path (#7383)
-- Terminate a self-referential dir-merge instead of hanging (#7362)
-- A receiver must not refuse a perishable rule below protocol 30 (#7381)
-- Track `--delete-excluded` distinctly in the server arg parse (#7382)
-- The dir-merge `/` modifier is a flag rather than a pattern rewrite, its anchor
-  is carried across the wire, and the merge name is taken after the last slash
-  rather than the first (#7810, #7805, #7816)
-- Keep files matched by a bracket-slash filter rule (#7830)
+**Interop**
+- Upstream clients pulling with `-H` under INC_RECURSE no longer abort on hard links that span directories (#7982)
+- `--stats` file list times reach upstream clients (#7986)
+- Honour `-B` / `--block-size` on every wire transport (#7301)
+- Send the server exit code via `MSG_ERROR_EXIT` and honour the peer's (#7609, #6935)
+- Surface `MSG_NO_SEND`, and tolerate an out-of-order decline (#7371, #7869)
+- Frame server warnings and errors to the peer (#7366, #6940, #6951, #6960)
+- A daemon `MSG_IO_TIMEOUT` of 0 no longer disables `--timeout` (#7347)
+- Protocol 28 and 29 fixes: sort order, keep-alive frames, filter rules and `RERR_PROTOCOL` exits (#6974, #7771, #7974, #7979, #7988)
+- Match upstream checksum and compression negotiation, including unknown names (#7048, #7114, #6894, #6939)
+- Preserve non-UTF-8 bytes through operands, filter rules and `--files-from` (#7169, #7178, #7196, #7198)
+- Match upstream `--iconv` file-list order on pulls, and skip unconvertible operands (#7961, #7867)
+- Stop sender hangs on per-file errors and after an empty file list (#6945, #6955)
+- Write the pending token run before literals in the zlib and lz4 encoders (#7434, #7436)
+- Gate the end-of-flist `io_error` on both encodings, fold and order `io_error` like `cleanup.c`, and carry `--ignore-errors` to local transfers (#7300, #7302, #7309, #7326, #7359, #7363, #7414)
+- Ignore hardlink wire flags without `-H` (#7842, #7854)
+- Render the info channel byte-faithfully (#7864)
+- Treat a trailing `..` operand as a DOTDIR, keep the `--relative` pivot on module operands, and keep the leading slash for a module rooted at `/` (#7707, #7709, #7714, #7728)
+- Frame server `-vv` notices as `MSG_INFO` (#7780)
+- End a filter-file record at a carriage return, and word the file-name overflow refusal as upstream does (#7708, #7712, #7713)
 
-**Transfer and receiver**
-- Negotiate down from a newer-protocol peer instead of refusing, so a future
-  release such as rsync 3.5.1 (protocol 33) interoperates at protocol 32
-  (#7916)
-- Honour `--delete`, `-b` and itemize on `--read-batch` replay through the
-  real receiver pipeline (#7897)
-- Honour `-B` / `--block-size` on every wire transport; three decoders parsed the
-  value and dropped it (#7301)
-- Surface `MSG_NO_SEND` so a declined file cannot hang a pull (#7371)
-- Frame server-side warnings to the peer instead of dropping them (#7366)
-- A daemon `MSG_IO_TIMEOUT` of 0 must not disable the client's `--timeout`
-  (#7347)
-- Gate the end-of-flist `io_error` on both wire encodings, and honour
-  `--ignore-errors` in the marker (#7414, #7309, #7300)
-- Carry `--ignore-errors` onto the local receiver and local copy (#7302)
-- Fold peer `io_error` before the late delete sweep, order `io_error` to
-  `RERR_*` the way `cleanup.c` does, and drop the redundant re-check from the
-  delayed-deletion flush (#7363, #7326, #7359)
-- Resolve a relative `--temp-dir` against the destination (#7397)
-- Local `--write-batch` must encode the flist the reader decodes (#7355)
-- Write the pending token run before flushing literals, in the zlib (#7434) and
-  lz4 (#7436) encoders. A round-trip cannot observe this - the decoder
-  reassembles either order - so the regression is pinned on wire framing
-- `--delay-updates` stages through the partial dir and is renamed onto the
-  destination only after the walk, matching `receiver.c`: the implicit `.~tmp~`
-  on the receiver (#7475) and the operator's `--partial-dir` on the local-copy
-  path, created at upstream's private 0700 (#7476)
-- TCP Fast Open must not defeat the multi-address connect fallback; deferring
-  the SYN left a dead first address looking alive (#7447)
-- Recover a read-only in-place destination instead of failing the file
-  (#7485)
-- Keep an absolute `--partial-dir` through the delayed-updates sweep, and
-  clear a non-directory occupying the `--partial-dir` name (#7499, #7500)
-- Report a failed metadata apply instead of only counting it (#7506)
-- Gate device-node creation on upstream's `am_root` predicate (#7513)
-- Follow a symlinked directory named with the DOTDIR marker, and keep that
-  marker when the `/./` remainder is empty (#7510, #7516)
-- Refuse a non-regular `--read-batch` path (#7515)
-- Skip the delayed rename when the backup fails, instead of committing over a
-  destination whose backup never landed (#7531)
-- Retain into the `--partial-dir` through the shared owner, and route the
-  delayed sweep onto the shared backup ladder (#7556, #7557)
-- Let `--no-whole-file` read the source in userspace instead of taking a kernel
-  copy path that cannot produce a delta (#7537)
-- Warn on file-descriptor exhaustion from the confined walk rather than failing
-  without naming the cause (#7534)
-- Name the commit operation that failed instead of always reporting `mkstemp`
-  (#7552)
-- Report a refused `--remove-source-files` unlink at upstream's `FERROR_XFER`,
-  and act on each confirmation where upstream would already have reacted. The
-  network sender printed the failure locally and handed back only
-  `IOERR_GENERAL`, and the single batched drain sat after the whole goodbye
-  exchange, in a window where a pulling client had stopped reading - so both an
-  ssh pull and a daemon pull exited 0 with a destructive option having silently
-  removed nothing. The drain is now two-phase: before the sender answers the
-  goodbye, which is the last moment a diagnostic still reaches the peer, and
-  after it, for the sources confirmed while the handshake ran. Moving the drain
-  earlier instead would have silently stopped removing that second set
-  (#7576, #7581)
-- A commit-path backup that cannot be placed aborts with `RERR_FILEIO` (11)
-  rather than being counted as a per-file skip, so the receiver stops instead
-  of walking the rest of a batch whose backup area is already known to be
-  unusable. The two drains held byte-identical copies of the continue-or-abort
-  decision; they now share one, split on the failing operation rather than on
-  the errno (#7582)
-- Key `--write-devices` on the destination's own type, not the file-list entry.
-  The source of a `--write-devices` transfer is a regular file by construction,
-  so the predicate was permanently false and the in-place commit ran `set_len()`
-  against the device: exit 12 where upstream exits 0 (#7583)
-- Never park on opening a non-regular destination as the delta basis. A FIFO
-  with no writer wedged the receiver indefinitely, on the default path with no
-  flag required, which for a writable daemon module is an unbounded external
-  wedge. Upstream reaches the same invariant by ordering rather than a type
-  check, so the open carries `O_NONBLOCK`, decides on the descriptor rather
-  than on a pre-open stat that a planted node could outrace, and clears the
-  flag before handing a regular file back (#7594)
-- Remove whatever stands at the destination before creating a node there, and
-  report the removal the way upstream does. A directory obstacle was backed up
-  under `--backup`, which upstream never does, and otherwise met a `File`-only
-  unlink whose result was discarded - so a FIFO over a directory reported
-  success while losing the node, and a regular file over a directory stopped
-  the whole run at `EISDIR`. All six call sites now share one
-  `make_way_for_replacement`, which owns both the `rmdir` and the unlink arm
-  (#7602)
-- Apply the pre-image's ownership, timestamps and mode to a backup made by the
-  copy tier. The hardlink and rename tiers move or share the inode so the
-  attributes travel with it; the copy tier builds a new one and carried none,
-  which is why upstream calls `set_file_attrs` on that branch alone
-  (`backup.c:420`, reached only from `backup.c:400`) (#7622)
-- Honour `--force` so a populated directory standing where a non-directory must
-  be written is cleared, matching upstream's
-  `delete_mode || force_delete ? DEL_RECURSE : 0`. `--force` was recognised by
-  the stdio server-arg parser and discarded, the daemon's long-form parser had
-  no arm for it, and the obstacle arm consulted neither term - so oc refused at
-  exit 23 in all four flag combinations where 3.5.0 replaces in three of them
-  (#7625)
-- Skip a directory operand instead of transferring it when directory transfer
-  is off, per `flist.c:2723-2726` (#7627)
-- Honour an unsided clear rule on the receiver (#7811)
-- Ignore the hardlink wire flags when `-H` is off, and read the hardlink
-  follower index on the flag alone (#7842, #7854)
-- Tolerate an out-of-order `MSG_NO_SEND` decline rather than treating it as a
-  protocol error (#7869)
-- Skip an unconvertible `--iconv` operand instead of writing it (#7867)
-- Render the info / notice channel byte-faithfully at the render boundary
-  (#7864)
-- Drive `--read-batch` through the real receiver pipeline (#7838)
-
-**Local copy and engine**
-- Size a local copy from the opened file, not the flist record, and clamp the
-  read to the declared length so a growing source cannot silently truncate
-  (#7403)
-- `--backup` must not override the quick check; it was applying `--checksum`
-  semantics and reading both trees on every run (#7364)
-- Honour `--safe-links` before the backup fast path (#7356)
-- `--link-dest` must create the node when a hard link is refused (#7327)
-- Clearing a directory obstruction is not `--force`'s job (#7416)
-- `--preallocate` with `--sparse` must punish neither: the reserved extent was
-  being punched straight back out (#7429)
-- A non-directory alt-dest argument must not fail the transfer, on the regular
-  path (#7451) and on a symlink transfer (#7458)
-- `--compare-dest` must clear a destination its basis makes redundant; upstream
-  leaves the entry absent where oc left it stale (#7464)
-- Match upstream's hardlink notices on both alt-dest paths (#7435)
-- Follow an existing destination symlink under `--no-implied-dirs` (#7461)
-- Diagnose a local-copy source that ended before its declared length instead of
-  committing the short result (#7472)
-- Itemize the `-R` implied dot-dir root against the basis (#7505)
-- Keep a directory's own metadata when `readdir` fails part-way (#7521)
-- Make `--no-zero-copy` reach the content path it documents (#7482)
-- Compare an alt-dest basis mtime the way `same_time` does, so a basis is
-  not wrongly demoted (#7479)
-- Degrade the anonymous commit to a named temp where anonymous is
-  unavailable (#7478)
-- Answer `am_root` from the process identity rather than a raw `geteuid`
-  syscall. rustix's Linux backend emits the syscall instruction directly, which
-  `fakeroot`'s `LD_PRELOAD` cannot interpose and the `--copy-as` privilege drop
-  cannot re-sample, so the `--super`, device-creation and fake-super gates
-  flipped in exactly the runs meant to validate them. Two other consumers in
-  the same crate already asked the question the upstream way (#7574)
-- Carry hard links through `--write-batch` and `--read-batch`. The writer set
-  no hardlink identity on the entries it encoded, and the replay decoded the
-  fields an upstream-written batch does carry and then acted on none of them,
-  so every cell of the writer/replayer cross-matrix except upstream-to-upstream
-  produced unlinked copies and the payload was written once per cluster member
-  (#7596)
-- Carry the pre-image ACL onto a copy-tier backup, alongside the ownership,
-  timestamps and mode that tier already applies (#7825)
-- Reuse the `--partial-dir` leaf as a local delta basis (#7868)
+**Remote pulls and pushes**
+- Apply receiver options on remote pulls: `--link-dest`, `--backup-dir`, `--chmod`, `--ignore-existing`, `--temp-dir`, `--omit-dir-times`, `-J`, `-E`, `--mkpath` (#6792, #6794, #6798, #6799, #6805, #6810, #6811, #6820)
+- Remote output fidelity: `--progress`, `-v` / `-vi` names, banners, `--stats` breakdown and dry-run itemize (#6786, #6789, #6791, #6793, #6802, #6814, #7062, #7172)
+- Preserve mtime on remote `--sparse`, and apply `dest_mode` without `-p` (#6803, #6804)
+- Apply `--chmod` on the sender for pushes (#6807)
+- Honour `-O`, `-J` and `-C` in the server argument decoder (#7183, #7195)
+- Honour `--modify-window` in the `--update` skip (#7112)
 
 **Daemon**
-- Collapse `..` in client paths instead of refusing the request (#7343)
-- Keep the trailing slash that marks the destination a directory (#7411)
-- Probe `nobody` then `nogroup` for the default privilege-drop group (#7342)
-- The Landlock root must be the destination's directory (#7316)
-- Honour a forwarded `--max-size` / `--min-size` on a push (#7449)
-- Linger before closing a refused connection, so the client reads the refusal
-  instead of an RST (#7457)
-- Frame a post-OK client-argument rejection as a multiplex error rather than a
-  bare close (#7466)
-- Route `--early-input` to the early-exec hook, not the pre-transfer one (#7471)
-- Mirror upstream's `daemon_usage` text in `--daemon --help` (#7444)
-- Honour a peer-supplied `--partial-dir` on the receiving side, and keep a
-  relative one relative as upstream does (#7498, #7501)
-- Resolve string module defaults at end of parse, so a global set *after* a
-  module section still applies to it (#7519)
-- Honour the server options the daemon parser dropped, and accept the forwarded
-  `--only-write-batch` (#7532, #7559)
-- Exit 4 on a refused option, not 1 (#7563)
-- Keep a relative `--backup-dir` relative. The daemon anchored the client's
-  value eagerly at argument-parse time against the destination operand, so a
-  push whose destination named a file died with `ENOTDIR` on a `mkdir` under
-  that file. Upstream applies its rootdir prefix only to an absolute value and
-  lets the receiver join a relative one against the directory
-  `get_local_name()` left it in - the same split `--partial-dir` already needed
-  (#7577)
-- Honour a client's forwarded `--timeout`. With no `timeout` directive in the
-  module the daemon armed nothing, so the client's own lever was inert and a
-  wedged peer held the connection indefinitely. Upstream's rule is a minimum
-  over the non-zero values, which is also what stops a peer *lengthening* a
-  short operator-set timeout; the SSH server half parsed the same value and
-  never read it (#7584)
-- Resolve the module identity before the `chroot`, not after. A root daemon
-  defaults every module without explicit numeric ids to `nobody:nobody`, and
-  those NSS lookups cannot succeed inside the jail, so every chrooted module
-  answered `@ERROR: invalid uid nobody` and served nothing. All four impure
-  arms move together - hoisting only the uid would have left
-  `@ERROR: invalid gid nobody` behind on a module with a numeric `uid` and a
-  defaulted `gid`. Only the three privilege-drop syscalls still run after the
-  chroot (#7585)
-- Keep a dead `name converter` apart from an unknown name. The query returned
-  `Option<String>`, collapsing five outcomes into one `None`: no answer, an
-  empty answer, a name carrying a control byte, an over-long request, and a
-  converter whose stream had broken. Upstream can return a bare `BOOL` only
-  because two of those exit instead of returning (`clientserver.c:1324-1334`),
-  so merging them here failed open on exactly the mechanism an operator
-  installs to take ownership decisions away from the peer (#7629)
+- Resolve module identity before `chroot`, so chrooted modules no longer fail with `invalid uid nobody` (#7585)
+- Honour a client's `--timeout`, `--partial-dir`, `--backup-dir`, `--max-size` and `--min-size` (#7584, #7498, #7501, #7577, #7449)
+- `rsyncd.conf` parser parity: section names, repeated directives, `%ENV%` expansion, and module defaults set after a module (#6924, #6930, #6933, #7088, #7519)
+- Exit 4 on a refused option (#7563, #7587)
+- Linger before closing a refused connection (#7457)
+- Match upstream log lines for connections, auth, requests and per-file transfers (#7060, #7697, #7936, #7395)
+- An unopenable motd or lock file no longer stops the daemon (#7670)
+- A relative module path is resolved instead of refused (#7669)
+- The PROXY header parse no longer consumes the greeting behind it (#7686)
+- Collapse `..` in client paths instead of refusing (#7343)
+- Keep a dead name converter apart from an unknown name (#7629)
+- Run `post-xfer exec` on abort paths (#6878)
+- Drop privileges before `@RSYNCD: OK` (#6888)
+- Match `@group` auth against the user's groups, including Windows local groups (#7086, #7190)
+- Keep the trailing slash that marks a directory destination (#7411)
+- Probe `nobody` then `nogroup` for the default group, and root Landlock at the destination's directory (#7342, #7316)
+- Frame a post-OK argument rejection as a multiplex error, and route `--early-input` to the early-exec hook (#7466, #7471)
+- Honour the server options the daemon parser dropped, including `--only-write-batch` (#7532, #7559)
+- Mirror upstream `daemon_usage` in `--daemon --help` (#7444)
+
+**Filters**
+- Match patterns as bytes end to end (#7918)
+- Match upstream for negated dir-only and long-star `***` rules (#7987)
+- Keep `/***` reach under a negated rule (#7907)
+- Match modifiers and keywords case-sensitively, and reject invalid ones (#7361, #7375, #7378, #7379, #7380)
+- Fix dir-merge `/` anchoring and name parsing (#7805, #7810, #7816)
+- Terminate a self-referential dir-merge (#7362)
+- Evaluate deletion as one first-match-wins pass, and protect backup-suffix files (#6896, #7107)
+- Stop trimming whitespace off filter-file rules (#7699, #7705)
+- Match non-wild patterns literally (#7171)
+- Accept the `x` modifier where upstream does, send a clear rule as one byte, and collapse `..` in merge-file names (#7288, #7372, #7373, #7374, #7376)
+- Bracket case folding, clear-list token boundaries, bracket-slash rules and sided merge files match upstream (#7292, #7298, #7383, #7830)
+- Perishable rules below protocol 30, `--delete-excluded` in the server parse, and an unsided clear on the receiver (#7381, #7382, #7811)
+
+**Local copy and receiver**
+- Honour `--force` when a directory stands where a file must go, and remove obstacles before creating nodes (#7625, #7602, #7701)
+- Never block opening a FIFO as a delta basis (#7594)
+- Apply ownership, timestamps, mode and ACLs to copy-tier backups (#7622, #7825)
+- Honour `--delay-updates` staging and ordering (#7475, #7476, #7271)
+- `--backup` no longer overrides the quick check (#7364)
+- `--preallocate` with `--sparse` keeps the reserved extent (#7429, #6828)
+- `--compare-dest` clears a destination its basis makes redundant (#7464)
+- Report a refused `--remove-source-files` unlink (#7576, #7581)
+- Copy a backup across filesystems when rename fails (#6831)
+- Gate the delete pass on a complete file list and on sender I/O errors (#7828, #7082)
+- `--dry-run` no longer creates destination directories (#6947)
+- Drive `--read-batch` through the real receiver, honouring `--delete`, `-b` and itemize; refuse a non-regular batch path (#7838, #7897, #7515)
+- Local `--write-batch` encodes the flist the reader decodes (#7355)
+- Resolve a relative `--temp-dir` against the destination (#7397)
+- Keep an absolute `--partial-dir` through the delayed sweep, clear a non-directory at its name, reuse its leaf as a basis, and stage a resume in place (#7499, #7500, #7556, #7557, #7599, #7868)
+- Recover a read-only in-place destination (#7485)
+- Report a failed metadata apply, name the failing commit operation, and abort with `RERR_FILEIO` when a backup cannot be placed (#7506, #7552, #7582)
+- Gate device creation on `am_root`, and follow a symlinked DOTDIR directory (#7513, #7510, #7516)
+- `--no-whole-file` reads the source in userspace, and `--no-zero-copy` reaches the content path (#7537, #7482)
+- Skip a directory operand when directory transfer is off (#7627)
+- Alt-dest fixes: non-directory arguments, hardlink notices, basis mtime comparison, and `--link-dest` fallback when a hard link is refused (#7327, #7435, #7451, #7458, #7479)
+- `--safe-links` before the backup fast path, `--no-implied-dirs` through a destination symlink, and directory metadata after a partial `readdir` (#7356, #7461, #7521)
+- Itemize the `-R` implied dot-dir root, and degrade the anonymous commit to a named temp where needed (#7505, #7478)
+- Clearing a directory obstruction no longer depends on `--force` (#7416)
+- TCP Fast Open no longer defeats the multi-address connect fallback (#7447)
+- Warn on file-descriptor exhaustion from the confined walk, and name a failed `link_stat` operand by its absolute path (#7534, #7733)
+- The io_uring data-write mover is gated on whole-file and reports short reads (#7749)
+
+**Permissions and metadata**
+- `--chmod` without `--perms`, symlink modes and directory modes follow upstream `dest_mode()` (#7748, #7755, #7760, #7766, #7773, #7774)
+- Apply timestamps before chmod (#7832, #7087)
+- Answer `am_root` from the process identity (#7574, #7562)
+- Set xattrs on read-only files (#7083, #7274)
+- Follow operator symlinks above the destination root (#7462, #7981)
+- An installed name converter replaces the host database (#7360)
+- Store the fake-super access ACL in upstream's condensed form (#7502)
 
 **CLI and output**
-- Honour the `--` end-of-options marker in server-mode argv (#7402)
-- Mirror upstream `parse_output_words` for `--info` / `--debug` tokens (#7412)
-- Bound the out-format width scan like upstream 3.5.0, and treat `%%` as a
-  literal percent in `log_format_has` (#7400, #7344)
-- Report an attribute-only change by name, not "is uptodate" - two independent
-  sites, `--info=name2` and `-vv`, each carried its own copy (#7407)
-- Don't log attribute-only changes under a non-itemizing `--out-format` (#7401)
-- Emit the non-regular skip notice once, not twice at `-v` (#7353)
-- `--iconv` with an unopenable charset must exit 4 rather than transfer (#7311)
-- Reject a `-M` value that does not start with a dash (#7413)
-- Re-port `SHELL_CHARS` to 3.5.0 and stop escaping daemon path operands (#7399)
-- `--chmod=a+s` must set both setuid and setgid (#7287)
-- Print `skipping directory` at default verbosity, in upstream's order (#7433)
-- Exit `RERR_SOCKETIO` when `RSYNC_CONNECT_PROG` refuses the host (#7437)
-- Let a connect program finish instead of killing it, which was destroying the
-  daemon's post-transfer exec (#7470)
-- Take the `rsync://` daemon host verbatim; three separate rewrites were being
-  applied to it (#7431)
-- Honour `--port` on a daemon transfer, not only on a listing (#7456)
-- Accept `--log-file` as a server long flag instead of letting it leak into
-  the destination operand (#7507)
-- Honour `--drop-D` in the server argument decoder, and consume
-  `--backup-dir` / `--temp-dir` instead of discarding them (#7508, #7511)
+- Honour `--` in server argv, and mirror upstream option parsing for `-M`, repeated options and popt arity (#7402, #7413, #7835, #7846, #7154, #7160)
+- Match upstream `--out-format` codes and `--info` / `--debug` parsing (#6914, #6915, #6916, #7412, #7637)
+- Latch the first error's exit code (#7768, #7871)
+- Print the non-incremental `building file list ... done` banner (#7580)
+- Honour `--port` on daemon transfers and take the `rsync://` host verbatim (#7456, #7431)
+- Clear errors when `ssh://` or `quic://` is used without its feature, or `ssh://` with `--rsh` (#7175, #7181, #7166)
+- Out-format width and `%%`, attribute-only change reporting, and the non-regular skip notice match upstream (#7344, #7353, #7400, #7401, #7407)
+- `--iconv` with an unopenable charset exits 4 (#7311)
+- `--chmod=a+s` sets both setuid and setgid (#7287)
+- Print `skipping directory` at default verbosity (#7433)
+- Exit `RERR_SOCKETIO` when `RSYNC_CONNECT_PROG` refuses a host, and let a connect program finish (#7437, #7470)
+- Re-port `SHELL_CHARS` to 3.5.0 (#7399)
+- Server argument decoding: `--log-file`, `--drop-D`, `--backup-dir` and `--temp-dir` (#7507, #7508, #7511)
 - List a remote source under `--list-only` (#7509)
-- Carry `--checksum-seed` as a signed int, matching upstream's type, in the CLI
-  (#7561) and in the protocol-state module, whose `u32` made half the seed
-  domain unrepresentable and which every existing test missed by using a seed
-  with the high bit clear. The local-copy options carried a second, never-read
-  copy of the seed with a getter documenting behaviour it did not have; it is
-  deleted (#7606)
-- Print the non-incremental `building file list ... done` banner. Upstream
-  picks exactly one of two banners before it lists a single entry, and oc only
-  ever produced the incremental arm, so `-dv` and `--list-only` opened with no
-  banner at all. It is two writes on two log codes, separated by the whole
-  file-list build, and it is emitted above the `--list-only` early return where
-  upstream places it - the previous emission site sat below that return, so a
-  fix there would have looked right and done nothing (#7580)
-- Send the server's exit code to the peer via `MSG_ERROR_EXIT`, and honour a
-  peer's on the SSH client as the daemon client already did. `run_server_mode`
-  collapsed every failure to a flat 1 and dropped the connection, so a client
-  graded the run by the truncated stream and reported 12 where upstream reports
-  3. Upstream's `am_receiver` half of the send gate is a forked-sibling relay
-  condition rather than a wire one, so the port gates on the protocol version
-  alone (#7609)
-- Accept `-M` duplicates of local options, and repeated long options with
-  last-wins, the way popt does (#7835, #7846)
-- Latch the run exit code at the error-site funnel, so the first error's code
-  is the one reported (#7871)
+- Carry `--checksum-seed` as a signed int (#7561, #7606)
 
-**Metadata**
-- An installed name converter must replace the host database (#7360)
-- Follow the operator's own symlinked destination root when applying metadata
-  (#7462)
-- Condense the fake-super access ACL to upstream's stored form (#7502)
-- Answer upstream's `am_root` for the receiver xattr screen (#7562)
-- Apply timestamps before chmod in the local-copy arms (#7832)
+**Embedded SSH**
+- `Host` pattern matching, `IdentitiesOnly`, `IdentityAgent`, tilde expansion, tokenising and first-obtained-wins precedence match OpenSSH (#7803, #7791, #7205, #7792, #7814, #7836, #7856)
+- Forward remote stderr and itemize rows over embedded SSH (#7951, #7952)
 
-**Permissions and destination modes**
-- `--chmod` without `--perms` is recomposed as tweak-first, collapse-second per
-  upstream, through one `chmod_tweaked_dest_mode()` owner shared by six call
-  sites. Five diverging oracle cells closed, including a `--chmod=644 -r`
-  self-lock that had escalated into an error (#7748)
-- A symlink gets upstream's `dest_mode()` and is never tweaked by `--chmod` -
-  both halves of the rule were inverted (#7755) - and the sender's file list
-  now carries the source link's real mode instead of a hardcoded `0o777`
-  (#7760)
-- Replacing a destination symlink with a regular file no longer takes the
-  symlink's own mode: the obstacle's lstat is cloned before backup and removal
-  (#7766), and all four receiver symlink apply sites take `--perms` from the
-  real flags rather than an options default (#7773)
-- Directory modes route through the same `dest_mode()` owner, and an unwritable
-  pre-existing directory is raised on first visit before its contents are
-  written (#7774)
+**Windows**
+- Compare the read-only bit, open directories for `--fsync`, honour `--one-file-system` across volumes, and warn when metadata cannot be applied (#7163, #7164, #7210, #7054)
 
-**Transfer and engine**
-- Multi-source `--delete` converges on upstream's merged-flist semantics. Nine
-  of fifteen oracle cells diverged, including data loss where a later source's
-  delete pass removed an earlier source's freshly copied files (#7765)
-- The `--inplace --backup` pre-image copy is selected as the delta basis, so a
-  block-swapped 1.3 MB file sends 1,984 literal bytes rather than 656,352
-  (#7752)
-- A local copy whose source shrank mid-read is discarded and redone (#7751);
-  the delta mover stops at the length it was sized from (#7710); a failed
-  `link_stat` operand is named by its absolute path (#7733)
-- `--write-devices` is keyed on the local-copy destination (#7796)
-- The io_uring data-write mover is gated on whole-file and reports short source
-  reads, joining the other four movers on one owner (#7749)
-- The protocol-29 keep-alive frame is tolerated and answered at both sites
-  instead of being echoed downstream (#7771)
-- A source operand ending in `..` is treated as a DOTDIR (#7709), the DOTDIR
-  marker is kept out of the local-copy operand stat (#7707), and the
-  `--relative` dot pivot survives a module operand (#7714)
-- The leading slash is kept when a daemon module is rooted at `/` (#7728)
-- Server generator `-vv` notices are framed as `MSG_INFO` (#7780)
-- The file-name overflow refusal is worded as upstream words it (#7713)
-- A filter-file record ends at a carriage return (#7712), and one separator is
-  consumed after a long filter keyword (#7708)
+### Removed
 
-**Embedded SSH configuration**
-- A comma is not a `Host` pattern separator, and `Host` matching is
-  case-sensitive (#7803)
-- `IdentitiesOnly` restricts agent keys, not just the identity-file list
-  (#7791)
-- Tilde expansion emits one separator kind rather than mixing them (#7792)
-- Tokenise `ssh_config` lines the way `argv_split` does (#7814)
-- Resolve an option first-obtained-wins like OpenSSH (#7836), and apply the
-  top-level directives that precede the first `Host` block (#7856)
+- The dead `--compress-level` help entry (#6778)
+- The unused `OC_RSYNC_FALLBACK` hint (#7030)
+- The non-upstream per-directory filter alias (#6846)
 
-### Testing and CI
+### Internal
 
-- Isolated build and test coverage for the `quic` feature (#7902), and a
-  QUIC-vs-TCP daemon transfer differential oracle (#7904)
-- The daemon xattr push test is gated on the `xattr` feature (#7914), the
-  fake-super module push `%stat` test runs on all platforms (#7899), and the
-  unix-only environment guard in the ssh config tests is gated off Windows
-  (#7900)
-- The rsync 3.5.0 upstream testsuite now runs on **macOS** as well as Linux,
-  across both daemon transports and both privilege levels, with a committed
-  expect-manifest per leg. The macOS legs are the only ones that can observe a
-  platform-conditional divergence: three of their cells *skip* on Linux, so they
-  had never executed in this repository's CI at all (#7638)
-- Build the old-rsync oracle binaries the 3.5.0 testsuite asserts against,
-  rather than silently falling back to a weaker substitute (#7636)
-- Bound the interop smoke harness's readiness probe so its deadline is real
-  (#7640)
-- Pin the `want_i` adjacent-match length re-check, the `preserve_hard_links`
-  gate on both wire encodings, and the reserved slot below the daemon-argument
-  ceiling (#7643, #7644, #7645)
-
-- The 3.5.0 expect-manifest gate is proven non-vacuous on outcomes, with a
-  whole-suite coverage guard so a silently deleted row cannot pass (#7387)
-- Guard-page over-read harness for the SIMD rolling checksum, carrying its own
-  negative control (#7294)
-- Confined-walk resolver suite; fixes three macOS failures and the CI gap that
-  hid them - the macOS cell omitted `fast_io`, the one crate whose entire
-  purpose is platform-specific I/O (#7325)
-- `test-support` rejects a stale `oc-rsync` binary instead of reporting it as a
-  regression, asserting freshness from Cargo's own depfile (#7385)
-- Umask-dependent mode expectations are derived rather than pinned to constants
-  (#7354, #7348)
-- Daemon test readiness is gated on IPv4 reachability, not any listener (#7370)
-- The required interop context no longer reports a vacuous green: a duplicated
-  copy of the upstream test suite that could only ever hide a failure was
-  deleted, and the two non-blocking 2.6.9 parity cells now report their
-  pre-`continue-on-error` outcome to the job summary (#7352)
-- CI triggers on `merge_group` so a merge queue can validate (#7312)
-- Regression tests for the benchmark report renderer, covering the peak-RSS
-  columns, the missing-measurement fallback, and the requirement that a bytes
-  metric is not described in duration language ("higher", not "slower").
-- Every required check now has exactly one publishing workflow. The skip shim
-  and the real workflow could both claim a context on a pull request that mixed
-  code and docs, and the shim's green would win - a vacuous pass on a required
-  gate (#7438)
-- The batched-writer threshold tests disarm the flush clock instead of racing
-  it, which is what made the musl beta cell flake (#7469)
-- Default the upstream testsuite runner to 3.5.0 (#7486)
-- Publish the testsuite binary to a per-run path rather than a shared one,
-  so two concurrent runs cannot test each other's build (#7514)
-- Key the parallel receive-delta fuzz oracle on every registered file, and
-  let the caller name the upstream rsync the benchmark compares against
-  (#7480, #7481)
-- The format check now covers every tracked `.rs` file. `cargo fmt` is blind to
-  files reached through `include!()`, and blind again to files reached through
-  nothing at all, so a formatted workspace was not a formatted tree (#7529,
-  #7542)
-- Unsafe blocks are attributed to the right crate and the right policy category
-  (#7544)
-- Pull-request labels are reconciled against the title instead of accumulating
-  (#7549)
-- Behaviour that was previously assumed is now witnessed: the INC_RECURSE
-  segment count and segment arrival (#7528), the fd-exhaustion hint and which
-  caller it serves (#7530, #7566), delete routing refusing on all six methods
-  (#7551), the `--delay-updates` staging sequence under the worker filter
-  (#7554), io_uring drop-contract registration failures (#7558), and protocol
-  negotiation environment overrides (#7575)
-- The local-recursion tests are named for what they actually run (#7526)
-- Three daemon integration suites ran a detaching daemon, so `become_daemon()`
-  forked and the test binary - the parent of that fork - exited 0 before any
-  assertion ran: 3 filter-directive tests, 25 server tests and the
-  max-connections cap test all reported green without executing, in hundredths
-  of a second. Turning them on surfaced the digest name list the fixtures
-  omitted - mandatory above protocol 31, so every probe was refused at the
-  greeting - a listing shape expecting a `CAP` and an `OK` line upstream never
-  sends, auth cases that negotiated md5 whatever digest they claimed to
-  exercise, guards whose conditions could not hold, and a module-refused push
-  whose outcome arrives as exit 23 rather than as an error and so was never
-  asserted at all. `check_daemon_no_detach.sh` now also counts root-level
-  tests, against a shrink-only ceiling (#7578, #7588, #7592)
-- The backup ladder's destination anchor is pinned at every consumer - the
-  hard-link tier, the rename tier, the `--backup-dir` root create, the metadata
-  options, and the three call sites that build the environment - by swapping
-  the destination root's path for an out-of-tree symlink after the sandbox has
-  pinned its dirfd. Every pre-existing test passed `BackupEnv::default()`, so
-  none of them could tell a threaded environment from a dropped one (#7608)
-- INC_RECURSE's slicing order is witnessed: the whole list is materialised
-  before it is partitioned, so peak sender-side residency is taken before the
-  first segment ships and no downstream reclaim can lower it. The two existing
-  reclaim tests hand-assign their segments and say nothing about what
-  production builds (#7611)
-- `session_error_does_not_stop_the_accept_loop` provoked its session error with
-  a repeated `@RSYNCD:` banner, which #7579 deliberately turned into a valid
-  module name; it now uses a non-UTF-8 request line, and its assertion reports
-  the greeting, both peers' results and the daemon log instead of discarding
-  them. The fixture's own non-vacuity guard is what caught the change - two
-  individually-correct commits that had never been run together (#7615, #7620)
-- A failed io_uring buffer registration carries the kernel's `ErrorKind`
-  instead of flattening it to `io::Error::other`, so the drop-contract probe
-  can tell an `ENOMEM` locked-memory refusal - which says nothing about
-  recovery - from the `EBUSY` that means a registration is still live. The
-  errno had survived only inside the message string, so no caller could branch
-  on it and the probe could not be given its siblings' tolerance (#7619)
-- The backup-directory cells probe the directory they claim to check instead of
-  asserting a condition that held whether or not the backup landed (#7621)
-- The citation drift gate scans the 42% of citations its filter could not see,
-  reported non-blocking until the backlog it exposes is worked down (#7623)
-- The APT package cache verifies the packages are installed rather than
-  trusting a cache hit, so a restored-but-empty cache fails its own job instead
-  of reddening unrelated pull requests three jobs later (#7632)
-- An unrelated apt repository's index failure no longer fails the job. Every
-  index refresh routes through one owner that exits zero only when apt's own
-  summary declares the failures ignorable, naming the skipped URLs in a warning
-  so the degradation stays visible; a lock conflict, a missing key or a failure
-  arriving alongside a real error still keeps its exit status. This is a
-  reclassification of one self-declared-recoverable failure, not a retry
-  (#7797)
-- The legacy-oracle slot proves which release filled it, so an arbitrary peer
-  binary can no longer occupy the 3.2.7 slot while the grid reports `(327)`,
-  and the probe no longer deletes the binary it has just built (#7758, #7726)
-- The legacy-oracles root/tcp expect-manifest is brought up to date with its
-  sibling so the rows the two legs share cannot drift apart (#7759)
-- The zero-caller-zero-test `pub fn` tier is a blocking gate with an
-  allowlist that carries a reason and an expiry per row. The classifier counts
-  a re-export as what it is rather than as a call site - that error had hidden
-  236 of 827 rows - and the gate fails on an expired, stale or unexplained
-  entry as well as on a new one (#7767)
-- The placeholder scanner is blocking at zero violations, with exemptions
-  keyed on annotation syntax rather than on the marker text, and the three
-  remaining hits resolved rather than exempted (#7770)
-- The rustdoc intra-doc link job is blocking, so a broken link is caught on
-  the pull request that introduces it instead of after it lands (#7776)
-- The privilege-drop ordering is driven through the real daemon path; the
-  previous coverage was a `cfg(test)` shadow copy structurally incapable of
-  reaching the ordering it appeared to pin (#7800)
-- The local-copy backup ladder's confinement is pinned at each tier, and the
-  `--debug` table is pinned as upstream's 24 words plus the four named
-  oc extensions, so neither an addition nor a removal can pass unnoticed
-  (#7802, #7753)
-- A differential harness compares oc's `ssh_config` resolution against
-  `ssh -G`, with the oracle required rather than optional so a missing `ssh`
-  fails the cell instead of silently skipping it (#7784)
-- A daemon session test waits for the session child to be reapable rather than
-  for its pipe to close; an EOF is not a reapability signal, and under load the
-  old wait failed 30 runs in 200 (#7722)
-- `fake_rsh` is gated to Unix so the Windows test build compiles (#7785)
-- The 3.5.0dev testsuite tracker workflow is retired; the committed
-  expect-manifests supersede it as the gate (#7764)
-- The parallel delta scan is pinned order-neutral under striping: the BitHash
-  prefilter, the prune and consecutive-match paths, and the `--inplace`
-  bail-out are each gated on stripe invariance (#7885, #7888, #7883, #7851)
-- Non-UTF-8 byte transparency is pinned for `send_secluded_args` and for every
-  confined operator's path through the ownership walk (#7887, #7879); QUIC
-  client trust precedence and the connect-to-handshake gaps are pinned (#7861)
-- Daemon tests run in the foreground so their assertions execute, reap their
-  children on drop, and bound a wedged test; an absent merge path is spelled the
-  way a directive spells one, and files no module declaration reaches are gated
-  (#7840, #7824, #7815, #7806)
-- The 3.5.0 suite's skip oracle fires on a full-run leg (#7837), the legacy
-  old-rsync oracles default on for the Linux legs (#7855), the scratch tree is
-  per-run with a `-j` lever (#7870), retried tests are counted rather than
-  hidden (#7845), and `ssh` interop runs against upstream 3.4.4 and 3.5.0
-  (#7857)
-- Eight verified surface extractors feed `surface_diff`, which gates oc's
-  surfaces against upstream 3.5.0 (#7839, #7874); the citation gate covers the
-  half of the corpus its filter could not see (#7822), and `xtask validate`
-  fixtures are portable on macOS (#7886)
-
-### Documentation
-
-- The `write_ndx_and_attrs` citations converge on one canonical upstream
-  range (#7890)
-- The upstream-testsuite figures in `README.md` and `SECURITY.md` were stale in
-  every row, and the leg count was understated. Both files are re-derived from
-  the committed manifests, and `SECURITY.md` no longer describes
-  `proxy protocol hosts` as unimplemented after it had shipped. The two
-  macOS-leg rationale comments in the workflows carried the same pre-fix figures
-  and are recounted from the same source
-- Replace the INC_RECURSE gate's stale rationale with the measured one. The
-  comment named a mechanism that cannot apply - every call site of the function
-  it blamed is inside `cfg(test)` - while its conclusion was nonetheless
-  correct: the deadlock boundary is exactly upstream's `MIN_FILECNT_LOOKAHEAD`
-  of 1000, bisected by entry count (#7649)
-- Document the public items rustdoc could not see (#7634)
-
-- Corrected stale upstream-version and CI-gate claims across the contributor
-  docs: five required checks where the ruleset returns eight, a claim of one
-  approving review where the count is zero, three sites naming rsync 3.4.1 as
-  the source of truth, and a hardcoded interop version list that had drifted
-  from the one the harness actually reads (#7351)
-- The upstream 3.5.0 rrsync rule set extracted into a spec; it forces `--drop-D`,
-  not `--no-D` (#7283)
-- Path-confinement resolver API design note, and a spec for the receiver
-  peer-tail confinement fail-open (#7310, #7330)
-- Corrected several upstream claims that were stated backwards or cited the
-  wrong construct: `RESOLVE_BENEATH` where the code omits it, the munge /
-  safe-links ordering, the daemon `sanitize_path` `..` behaviour, and the 3.5.0
-  new-option count (#7307, #7334, #7335, #7284)
-- Fixed the intra-doc links breaking the rustdoc and Pages builds (#7338,
-  #7406)
-- Upstream's `iobuf` / `perform_io` contract extracted into a design note, with
-  every anchor verified by reading rather than assumed (#7428)
-- Retargeted the `check_alt_basis_dirs` citations at 3.5.0 (#7452)
-- Close rustdoc gaps, repair references that no longer resolve, and add a
-  comment-policy audit (#7488, #7489, #7522)
-- Refresh the changelog and re-measure the 3.5.0 outcome figures (#7477)
-- The 3.5.0 outcome figures and divergence counts are re-derived from the
-  committed manifests rather than transcribed from a run log (#7525, #7533)
-- Upstream's `struct file_list` mapped field-by-field onto the oc types (#7527)
-- Citations retargeted at the 3.5.0 pin for the `successful_send` cluster and
-  for the backup ladder (#7540, #7560)
-- The four rustdoc links breaking the Pages build resolved (#7555)
-- Line coverage is stated as not gated by CI (#7573)
-- Upstream citations retargeted at the 3.5.0 pin across the remaining crates -
-  `matching`, `checksums`, `metadata`, `compress` and `batch`, then `engine`,
-  `daemon`, `core` and `protocol`, then `transfer` - each by locating the named
-  construct at the pin and re-deriving both ends of every range, never by
-  arithmetic. The sweep turned up citations that were wrong before they were
-  stale: a `del.c` that has existed at no release, an `rsum.c` path pointing
-  into the rsync tarball for a file that belongs to zsync, two function ranges
-  that over-spanned at their own 3.4.1 baseline, and three `options.c` ranges
-  naming the wrong construct there too. Neither existing gate can see this
-  class - one only range-checks, the other only inspects citations carrying a
-  quoted C string. 3.5.0 also rewrote the shell testsuite as Python, so the
-  cited `testsuite/*.test` locators move to their `*_test.py` counterparts
-  (#7601, #7603, #7604)
-- The daemon's two refusal exit-code citations retargeted at 3.5.0. The old
-  `clientserver.c:1183` was a closing brace that calls nothing, and `main.c:935`
-  an `exit_cleanup(RERR_PROTOCOL)` on an unrelated check. Neither gate could
-  have found them: one shared its quoted anchor with a sibling citation on the
-  same line, and the other two carry no anchor at all (#7586)
-- `README.md` and `SECURITY.md` still described a 3.4.4-gated world. The
-  testsuite outcome figures are re-derived from the committed manifests, with
-  the command that produces each row named so the next refresh is a re-run
-  rather than a re-transcription; the copied interop version lists now point at
-  the script that owns them; and the claim that the 3.4.4 corpus passes with an
-  empty known-failures roster is withdrawn, since no workflow runs that corpus
-  (#7591)
-- Item prose stranded between a rustdoc block and the item it describes is
-  promoted to `///`. rustdoc stops at the first non-doc line, so 154 upstream
-  citations were invisible in the generated docs while reading, in source, as
-  though they were part of the block. Runs above an item that has no rustdoc
-  are deliberately left alone - promoting those would newly document the item
-  (#7613)
-- `missing_docs` is denied on `matching`, `test-support` and `windows-gnu-eh`,
-  the three crates that carried only the broken-link lint. All three were
-  already fully documented - measured by compiling each with the lint, then
-  falsifying that zero with a planted undocumented item - so this adds no
-  prose; it converts "currently documented" into "cannot regress" (#7614)
-- Public documentation no longer links at private items, which had been failing
-  the Pages build, and the invocation Pages uses now also runs on every pull
-  request. Four pull requests had repaired this class post-merge because
-  `cargo doc` ran only on push-to-master, so a broken link was discoverable
-  only after it landed (#7618)
-- README and SECURITY claims that no longer matched the tree are regrounded
-  against it (#7626)
-- The `io_uring` feature no longer promises 20-40% faster I/O. Measured on
-  kernel 7.1.5 it delivers +1.2% on bulk and -1.2% on fan-out, so the number
-  described an expectation rather than the build it was attached to (#7631)
-- `README.md` and `SECURITY.md` are re-derived from the committed manifests
-  again. The upstream testsuite runs in **eight** legs, not five - platform
-  {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege
-  {non-root, root} - and both files described five. Every outcome row is
-  re-measured: no test diverges on either full-corpus Linux leg, and **6**
-  distinct tests diverge across the committed manifests. The two version
-  knobs are stated apart, since the testsuite pin and the interop peer version
-  are deliberately separate: retargeting the interop matrix must not be able to
-  drag the conformance gate backwards
-- The exit-cleanup funnel is inventoried against `cleanup.c` step by step, so
-  the sites that decide an exit code are named rather than inferred (#7778)
-- The measurement gate that must precede any buffer or queue sizing work is
-  recorded, along with the three structural-constant closures it produced
-  (#7779, #7801)
-- The checksum advertisement is pinned to upstream 3.5.0's compiled list. oc's
-  default advertisement is already byte-identical to a full-featured upstream
-  build; the shorter list that prompted the investigation was the pinned
-  interop oracle's own compile-time gating (#7769)
-- The confinement rule for path-keyed stat caches is written down, so a cache
-  wired later cannot quietly become an unconfined resolver (#7793)
-- The receiver INC_RECURSE blocking sites are attributed to a measured side
-  rather than to a named function the evidence does not identify, and the
-  drifted citation alongside them is retargeted (#7723, #7730)
-- Two daemon comments that still described the deleted acceptor threads are
-  corrected, and the accept poll's `SIGNAL_CHECK_INTERVAL` is recorded where it
-  now lives (#7717, #7745)
-- A failed `fmt + clippy` makes its seven dependent required cells *absent*
-  rather than failed, and absence blocks a merge exactly as a failure does -
-  stated at the required-checks table so the fail-fast shape reads as
-  deliberate (#7772)
-- The three rustdoc links the doc gate reports are repaired, and the
-  `ssh-config-parse` note no longer calls `Host` and `Match` blocks deferred
-  when `config_lookup` implements both (#7789, #7799)
-- The platform support tiers and their criteria are defined in a source-of-truth
-  design note (#7847), with the macOS and musl tiers and the Windows
-  commit-retry policy reconciled against it (#7853, #7873, #7876)
-- A QUIC transport operator guide is added (#7860), and the SSH transport each
-  operand spelling uses is documented (#7841)
-- The parallel-delta stripe-invariance contract is written down (#7843), the
-  io_uring buffer-sizing design notes are reconciled (#7848), and the production
-  unsafe blocks are triaged for the two-owner migration (#7834)
-- Stale citations are retargeted at 3.5.0: the `backup.c` ladder ranges (#7831)
-  and the `get_create_time` crtime version claim (#7858)
-- The changelog is refreshed and the 3.5.0 testsuite figures re-derived from the
-  manifests that produce them (#7809)
-
-### Maintenance
-
-- Dependency and action updates (#7911, #7912), and the pinned toolchain
-  moves to Rust 1.89.0 (#7919)
-- Dependency and action updates (#7473, #7474, #7568, #7569, #7570, #7571,
-  #7572, #7720, #7721)
-- Give the in-place open chain a single owner with the resolver injected,
-  and the bounded drain-and-wait helper a single owner (#7487, #7504)
-- Update the Homebrew formulas for v0.6.4 (#7492)
-- Dependency and action updates, including zstd 0.14.0 across the workspace and
-  the fuzz targets (#7817, #7818, #7819, #7820, #7821)
-- Drop the unused `flist` crate dependency from `core` (#7844), and pin the
-  BitHash sizing factor to its named owners (#7881)
+- CI: macOS testsuite legs (#7638), old-rsync oracles (#7636, #7855), a skip oracle on a full-run leg (#7837), `quic` build coverage (#7902), and one publisher per required check (#7438)
+- Tests pinning confinement, INC_RECURSE ordering, daemon session handling and SIMD over-reads
+- Upstream citations retargeted at 3.5.0, and a stricter citation gate (#7286, #7308, #7315, #7318)
+- `#![deny(unsafe_code)]` on the crates that lacked it (#7781), plus blocking gates for zero-caller public functions, placeholders and rustdoc links (#7767, #7770, #7776)
+- Refactors with no behaviour change, including one owner for the SIMD batch cap, the matcher's dead search paths, and the daemon session-worker seam (#7715, #7716, #7762, #7787, #7790, #7794, #7798)
+- Throughput-governor telemetry and control loop, off by default (#7137, #7142, #7147, #7148, #7150)
+- Dependency, action and toolchain updates (#7911, #7912)
 
 ## [0.6.4] - 2026-07-18
 
