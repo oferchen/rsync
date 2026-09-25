@@ -39,10 +39,17 @@ on:
     # nightly Windows wall-time across the runner schedule.
     - cron: '0 7 * * *'
   workflow_dispatch:
+  # Deliberately UNFILTERED, matching ci.yml: once this leg is promoted to a
+  # required context it must run on every pull request or the required check
+  # never arrives and the pull request is unmergeable. Until the branch-
+  # protection flip it runs per-PR as a non-blocking bake.
+  pull_request:
 
 concurrency:
   group: windows-nightly-long-path-${{ github.ref }}
-  cancel-in-progress: false
+  # Cancel a superseded run only on pull-request pushes; never cancel a
+  # nightly schedule run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
