@@ -195,6 +195,8 @@ pub(crate) struct LiveProgress<'a> {
     deferred: Vec<u8>,
     /// Whether [`ClientProgressObserver::on_start`] wrote the session output.
     session_started: bool,
+    /// Whether the transfer's sender names each file itself, as on a push.
+    sender_names_files: bool,
 }
 
 impl<'a> LiveProgress<'a> {
@@ -237,7 +239,17 @@ impl<'a> LiveProgress<'a> {
             session: None,
             session_started: false,
             deferred: Vec::new(),
+            sender_names_files: false,
         }
+    }
+
+    /// Leaves each file's name to the sender, which logs it ahead of the file's
+    /// progress line. upstream's progress lines never carry a name: on a push
+    /// the client's sender prints it (sender.c:774-777), and a second copy
+    /// here would repeat it.
+    pub(crate) const fn with_sender_named_files(mut self) -> Self {
+        self.sender_names_files = true;
+        self
     }
 
     /// Makes a local copy write its session header and entry names live.
@@ -284,11 +296,13 @@ impl<'a> LiveProgress<'a> {
         Ok(())
     }
 
-    /// Whether the local-copy listing names each entry, so a progress block
-    /// must not repeat its name.
+    /// Whether the sender or the local-copy listing names each entry, so a
+    /// progress block must not repeat its name.
     fn lists_entries(&self) -> bool {
-        self.session
-            .is_some_and(|session| session.listing.is_some())
+        self.sender_names_files
+            || self
+                .session
+                .is_some_and(|session| session.listing.is_some())
     }
 
     /// Ends an in-flight progress line so the next line starts on its own.
@@ -471,7 +485,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
 
                 if path_changed {
                     self.end_active_line()?;
-                    // A local copy's listing has already named the file.
+                    // The sender or a local copy's listing has named the file.
                     if !lists_entries {
                         // upstream: flist.c f_name() emits POSIX forward-slash
                         // separators regardless of host OS. Normalize Windows

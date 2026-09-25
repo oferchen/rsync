@@ -679,8 +679,9 @@ impl GeneratorContext {
     /// mirroring upstream `log_item(FCLIENT, ...)` with the default
     /// `stdout_format = "%n%L"`.
     ///
-    /// A no-op unless the local side is the client (`!am_server`), `-v` is on,
-    /// and `-i` is off (under `-i` the itemize row already carries the name).
+    /// A no-op unless the local side is the client (`!am_server`), NAME is at
+    /// least 1, and `-i` is off (under `-i` the itemize row already carries the
+    /// name).
     /// Non-transfer items are named only when significant, matching upstream's
     /// `maybe_log_item` gate.
     ///
@@ -689,7 +690,9 @@ impl GeneratorContext {
     /// - `sender.c:450-462` - `log_item(FCLIENT, ...)` prints each file's name.
     /// - `log.c:818-843` - `log_item()` renders via `stdout_format`;
     ///   `maybe_log_item()` gates non-transfer items on significant iflags.
-    /// - `options.c:2381` - plain `-v` sets `stdout_format = "%n%L"`.
+    /// - `options.c:2521-2523` - `INFO_GTE(NAME, 1)` sets `stdout_format =
+    ///   "%n%L"`, so `-P` (which raises NAME, options.c:2511-2513) names entries
+    ///   without `-v`.
     pub(super) fn maybe_emit_name(
         &self,
         iflags: &super::item_flags::ItemFlags,
@@ -703,7 +706,7 @@ impl GeneratorContext {
         // `-v` without either prints a bare name here.
         if self.config.flags.info_flags.itemize
             || self.config.flags.info_flags.out_format_active
-            || !self.config.flags.verbose
+            || !info_gte(InfoFlag::Name, 1)
         {
             return Ok(());
         }
