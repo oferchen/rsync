@@ -10,7 +10,7 @@ use super::{
     NameOutputLevel, OutFormatContext, ProgressSetting, emit_transfer_summary, parse_out_format,
 };
 use crate::frontend::escape::EscapeStyle;
-use crate::frontend::progress::FlistBanner;
+use crate::frontend::progress::{FlistBanner, LiveRendered};
 use core::client::{
     ClientConfig, ClientEntryKind, ClientEvent, ClientEventKind, ClientSummary, HumanReadableMode,
     run_client,
@@ -63,7 +63,7 @@ fn render_stats_at_level(
         0,
         None,
         level, // stats_level
-        false, // progress_already_rendered
+        LiveRendered::default(),
         false, // list_only
         false, // dry_run
         false, // only_write_batch
@@ -92,8 +92,8 @@ fn render_verbose(summary: &ClientSummary, verbosity: u8) -> String {
         summary,
         verbosity,
         None,
-        0,     // stats_level
-        false, // progress_already_rendered
+        0, // stats_level
+        LiveRendered::default(),
         false, // list_only
         false, // dry_run
         false, // only_write_batch
@@ -138,8 +138,8 @@ fn info_name_only_suppresses_stats_footer() {
         &summary,
         0, // verbosity (name-only, no -v)
         None,
-        0,     // stats_level (no --stats / --info=statsN)
-        false, // progress_already_rendered
+        0, // stats_level (no --stats / --info=statsN)
+        LiveRendered::default(),
         false, // list_only
         false, // dry_run
         false, // only_write_batch
@@ -538,7 +538,7 @@ fn parity_totals_only_without_stats_flag() {
         1, // verbosity
         None,
         0, // stats_level (off)
-        false,
+        LiveRendered::default(),
         false, // list_only
         false, // dry_run
         false, // only_write_batch
@@ -820,7 +820,7 @@ fn parity_verbose_v2_emits_bare_name_per_upstream() {
         2, // -vv
         None,
         0, // stats_level (off)
-        false,
+        LiveRendered::default(),
         false, // list_only
         false, // dry_run
         false, // only_write_batch
