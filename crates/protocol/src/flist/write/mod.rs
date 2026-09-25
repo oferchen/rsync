@@ -535,19 +535,28 @@ impl FileListWriter {
             }
         }
 
-        // upstream: flist.c:send_file_entry() line 676 - at the_end label,
-        // metadata state (modtime, mode, uid, gid) is NOT updated for
-        // abbreviated followers because the goto skips the metadata writes.
+        // upstream: flist.c:send_file_entry() advances the mode, rdev_major,
+        // uid, gid, modtime and atime statics while computing xflags (lines
+        // 750-813), before an abbreviated follower's `goto the_end`. The
+        // follower therefore leaves the compression state at its own values,
+        // which the receiver mirrors by copying them from the leader
+        // (flist.c:recv_file_entry() 1110-1134). The metadata writes that
+        // advance atime and rdev_major for other entries are skipped here.
+        self.state.update(
+            &name,
+            entry.mode(),
+            entry.mtime(),
+            entry.uid().unwrap_or(0),
+            entry.gid().unwrap_or(0),
+        );
         if abbreviated {
-            self.state.update_name(&name);
-        } else {
-            self.state.update(
-                &name,
-                entry.mode(),
-                entry.mtime(),
-                entry.uid().unwrap_or(0),
-                entry.gid().unwrap_or(0),
-            );
+            if self.preserve.atimes && !entry.is_dir() {
+                self.state.update_atime(entry.atime());
+            }
+            if self.preserve.devices && entry.is_device() {
+                self.state
+                    .update_rdev_major(entry.rdev_major().unwrap_or(0));
+            }
         }
 
         self.update_stats(entry);
