@@ -41,6 +41,7 @@ fn transfer_stats_incremental_fields_exist() {
         literal_data: 0,
         matched_data: 0,
         redo_count: 0,
+        segments_released_mid_walk: 0,
         list_only_entries: vec![],
     };
 
