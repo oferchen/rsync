@@ -123,7 +123,7 @@ fn inc_recurse_receiver_loopback_recreates_links_and_specials() {
     add_special_nodes(&src);
 
     // Sender: `--server --sender -rte.iLsfxCIvu . src/`. The `i` letter is what
-    // an upstream client sends to request INC_RECURSE (options.c:3035).
+    // an upstream client sends to request INC_RECURSE (options.c:3045).
     let mut src_arg = src.clone().into_os_string();
     src_arg.push("/");
     let sender_cfg = ServerConfig::from_flag_string_and_args(

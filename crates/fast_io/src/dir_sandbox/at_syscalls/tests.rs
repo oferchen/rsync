@@ -1731,7 +1731,7 @@ fn read_dir_view_via_sandbox_matches_std_for_subdir_listing() {
 ///
 /// Anchoring needs no kernel support off Linux: `anchor_parent` resolves
 /// the parent with `DirSandbox::open_subdir_confined`, oc's port of
-/// upstream's portable `ds_descend()` (`syscall.c:2891-2965`). So the one
+/// upstream's portable `ds_descend()` (`syscall.c:3032-3106`). So the one
 /// state that degrades to the path-based fallback is a Linux kernel
 /// without `openat2(RESOLVE_BENEATH)`. Off implies that fallback is
 /// exercised.
@@ -1952,7 +1952,7 @@ fn nested_fifo_via_sandbox_creates_under_interior_dir() {
 /// The keystone FIFO-confinement pin: an interior directory component swapped
 /// for a symlink pointing OUTSIDE the sandbox root must not let the node
 /// creation escape. This is the structural TOCTOU `do_mknod_at()`'s
-/// secure_relpath arm closes (`syscall.c:1314-1328`); reverting the wrapper's
+/// secure_relpath arm closes (`syscall.c:1453-1467`); reverting the wrapper's
 /// anchored create to a path-based `mknod` on the full path lets the symlink be
 /// followed and the node appear at the outside target, reddening this test.
 #[test]
@@ -2077,7 +2077,7 @@ fn single_component_symlinkat_unchanged_by_nested_path() {
 /// upstream 3.5.0 suite (`temp-dir-symlink-injection`); what is pinned here is
 /// that the ownership walk is *selected* at all.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:1926` (absolute -> `owner_walk_parent`),
+/// upstream: `rsync-3.5.1/syscall.c:2065` (absolute -> `owner_walk_parent`),
 /// `:1945` (relative-with-slash -> `secure_relative_open`), `:1949` (slashless
 /// -> `AT_FDCWD`).
 mod endpoint_provenance {
@@ -2265,7 +2265,7 @@ mod no_sandbox_tail {
     /// symlink. Without that pair, a broken fixture would satisfy the refusal
     /// cell for the wrong reason.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:1519` - `openat(dfd, bname,
+    /// upstream: `rsync-3.5.1/syscall.c:1658` - `openat(dfd, bname,
     /// flags | O_NOFOLLOW, mode)`.
     #[test]
     fn open_tail_honours_o_nofollow_on_the_leaf() {
@@ -2298,7 +2298,7 @@ mod no_sandbox_tail {
     ///
     /// This is the companion rather than "the same leaf without `O_NOFOLLOW`":
     /// arm 2 adds `O_NOFOLLOW` on the caller's behalf whatever the caller
-    /// asked for (`rsync-3.5.0/syscall.c:1519`), so a follow could not be
+    /// asked for (`rsync-3.5.1/syscall.c:1658`), so a follow could not be
     /// observed here without contradicting upstream. `O_DIRECTORY` is not
     /// added by either side, so it isolates the flag word itself.
     #[test]

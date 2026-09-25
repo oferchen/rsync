@@ -12,7 +12,7 @@ use protocol::effective_max_alloc;
 use protocol::read_varint;
 use protocol::xattr::{MAX_XATTR_VALUE_BYTES, XattrList};
 
-/// Upstream MAXPATHLEN ceiling for an xname vstring (io.c:1944-1960).
+/// Upstream MAXPATHLEN ceiling for an xname vstring (io.c:1982-1998).
 const MAX_XNAME_LEN: usize = 4096;
 
 /// Confines a peer-supplied basis xname to the basedir the receiver joins it to.
@@ -68,7 +68,7 @@ fn parse_fnamecmp_type(byte: u8) -> io::Result<protocol::FnameCmpType> {
 ///
 /// If the high bit of `len_byte` is set the length spans two bytes
 /// (`(len_byte & 0x7F) * 256 + second`); otherwise it is `len_byte`. Upstream
-/// `io.c:2004-2020` `read_vstring()`.
+/// `io.c:2042-2058` `read_vstring()`.
 #[inline]
 fn xname_len_from_bytes(len_byte: u8, second: Option<u8>) -> usize {
     if len_byte & 0x80 != 0 {
@@ -96,7 +96,7 @@ fn check_xname_len(xname_len: usize) -> io::Result<()> {
 
 /// Decides whether the sender-response frame carries xattr abbreviation data.
 ///
-/// Mirrors upstream `receiver.c:721-723`: read when xattrs are preserved and
+/// Mirrors upstream `receiver.c:737-739`: read when xattrs are preserved and
 /// `ITEM_REPORT_XATTR` is set, unless the xattr hardlink optimization elides it
 /// for a local-change rename.
 #[inline]
@@ -125,7 +125,7 @@ fn want_xattr_read(preserve_xattrs: bool, iflags: u16, want_xattr_optim: bool) -
 ///
 /// - `rsync.h:200` - `struct sum_struct` definition
 /// - `match.c:380` - `write_sum_head()` sends the header
-/// - `sender.c:120` - `read_sum_head()` receives the header
+/// - `sender.c:124` - `read_sum_head()` receives the header
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SumHead {
     /// Number of signature blocks.
@@ -170,7 +170,7 @@ impl SumHead {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:289-291` - `sum.flength = count * blength; if (remainder) flength -= blength - remainder`
+    /// - `receiver.c:302-304` - `sum.flength = count * blength; if (remainder) flength -= blength - remainder`
     #[must_use]
     pub const fn flength(&self) -> u64 {
         if self.count == 0 {
@@ -233,7 +233,7 @@ impl SumHead {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:2025-2067` - `read_sum_head()` validates every field and calls
+    /// - `io.c:2063-2105` - `read_sum_head()` validates every field and calls
     ///   `exit_cleanup(RERR_PROTOCOL)` on any out-of-range value.
     fn from_wire_bytes(buf: &[u8; 16]) -> io::Result<Self> {
         let head = protocol::wire::SumHead::decode(*buf).map_err(Self::malformed)?;
@@ -273,7 +273,7 @@ impl SumHead {
 
     /// Builds a `RERR_PROTOCOL`-mapped error for a malformed sum_head field.
     ///
-    /// upstream: io.c:2032-2065 `read_sum_head()` validates every field and
+    /// upstream: io.c:2070-2103 `read_sum_head()` validates every field and
     /// calls `exit_cleanup(RERR_PROTOCOL)` (exit 2) on any out-of-range value.
     /// The error is tagged so the core exit-code mapper yields RERR_PROTOCOL(2)
     /// rather than RERR_STREAMIO(12), and carries the role trailer upstream
@@ -318,7 +318,7 @@ impl SumHead {
 ///
 /// # Upstream Reference
 ///
-/// - `sender.c:468-485` - `write_ndx_and_attrs()` sends these
+/// - `sender.c:469-486` - `write_ndx_and_attrs()` sends these
 /// - `rsync.c:383` - `read_ndx_and_attrs()` reads them
 /// - `xattrs.c:623` - `send_xattr_request()` writes abbreviated xattr values
 #[derive(Debug, Clone, Default)]
@@ -382,9 +382,9 @@ impl SenderAttrs {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:2364-2393` - `read_ndx()` for NDX decoding
+    /// - `io.c:2402-2431` - `read_ndx()` for NDX decoding
     /// - `rsync.c:383` - `read_ndx_and_attrs()` reads NDX + iflags
-    /// - `receiver.c:721-723` - receiver reads xattr data when ITEM_REPORT_XATTR set
+    /// - `receiver.c:737-739` - receiver reads xattr data when ITEM_REPORT_XATTR set
     /// - `xattrs.c:681` - `recv_xattr_request()` reads abbreviated values
     pub fn read_with_codec<R: Read>(
         reader: &mut R,
@@ -430,7 +430,7 @@ impl SenderAttrs {
     /// - `rsync.c:383-384` - `iflags` via `read_shortint` for protocol >= 29
     /// - `rsync.c:403-405` - basis-type byte on `ITEM_BASIS_TYPE_FOLLOWS`
     /// - `rsync.c:407-417` - xname vstring on `ITEM_XNAME_FOLLOWS`
-    /// - `receiver.c:721-723` - xattr data on `ITEM_REPORT_XATTR`
+    /// - `receiver.c:737-739` - xattr data on `ITEM_REPORT_XATTR`
     pub fn read_attrs_after_ndx<R: Read + ?Sized>(
         reader: &mut R,
         protocol_version: u8,
@@ -463,7 +463,7 @@ impl SenderAttrs {
         };
 
         let xname = if iflags & Self::ITEM_XNAME_FOLLOWS != 0 {
-            // Read vstring: upstream io.c:2004-2020 read_vstring()
+            // Read vstring: upstream io.c:2042-2058 read_vstring()
             // Format: first byte is length; if bit 7 set, length = (byte & 0x7F) * 256 + next_byte
             let mut len_byte = [0u8; 1];
             reader.read_exact(&mut len_byte)?;
@@ -486,7 +486,7 @@ impl SenderAttrs {
             None
         };
 
-        // upstream: receiver.c:721-723 - read xattr data when ITEM_REPORT_XATTR is set
+        // upstream: receiver.c:737-739 - read xattr data when ITEM_REPORT_XATTR is set
         // Condition mirrors upstream: preserve_xattrs && iflags & ITEM_REPORT_XATTR && do_xfers
         // && !(want_xattr_optim && BITS_SET(iflags, ITEM_XNAME_FOLLOWS|ITEM_LOCAL_CHANGE))
         let xattr_values = if want_xattr_read(preserve_xattrs, iflags, want_xattr_optim) {
@@ -856,7 +856,7 @@ mod xattr_abbrev_guard_tests {
 
     #[test]
     fn malformed_sum_head_is_tagged_protocol_violation() {
-        // WHY: upstream io.c:2032 read_sum_head() aborts a negative checksum
+        // WHY: upstream io.c:2070 read_sum_head() aborts a negative checksum
         // count with exit_cleanup(RERR_PROTOCOL) (exit 2), not RERR_STREAMIO.
         // The InvalidData error must carry the ProtocolViolation marker so the
         // core exit-code mapper yields 2; otherwise a hostile sum_head collapses

@@ -32,7 +32,7 @@ use super::perms::exacl_perms_to_rsync;
 /// # Upstream Reference
 ///
 /// - `acls.c:1083-1139` `default_perms_for_dir`
-/// - `generator.c:1337-1340` and `receiver.c:846-851` - the two call sites
+/// - `generator.c:1337-1340` and `receiver.c:862-867` - the two call sites
 ///   that fold the returned bits into `dest_mode()` when `--perms` is off.
 #[allow(clippy::module_name_repetitions)]
 #[must_use]

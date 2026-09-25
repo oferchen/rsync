@@ -42,7 +42,7 @@ pub(super) const PRESENT_HLINK_FIRST: u8 = 1 << 5;
 /// non-incremental sender never removes duplicates and the receiver tombstones
 /// them, but under INC_RECURSE the sender keeps a duplicate directory alive and
 /// marks it so `send_extra_file_list()` can batch the duplicate-named dirs into
-/// a single sub-list (upstream: flist.c:3073, flist.c:2162-2168). This flag is
+/// a single sub-list (upstream: flist.c:3316, flist.c:2398-2404). This flag is
 /// internal to the sender's file-list build - it is never encoded on the wire
 /// (the wire encoder reads only `top_dir()`/`content_dir()`).
 pub(super) const PRESENT_DUPLICATE: u8 = 1 << 6;
@@ -71,7 +71,7 @@ pub(super) const PRESENT_DUPLICATE: u8 = 1 << 6;
 /// recomputed by `FileListWriter::calculate_xflags()` during send.
 ///
 /// The `mode` field uses `u16` to match upstream rsync's `uint16 mode`
-/// (rsync.h:805), saving 2 bytes vs the prior `u32`. POSIX mode values
+/// (rsync.h:806), saving 2 bytes vs the prior `u32`. POSIX mode values
 /// (4-bit type + 12-bit permissions) fit in 16 bits; the accessor returns
 /// `u32` for API compatibility.
 ///
@@ -118,7 +118,7 @@ pub struct FileEntry {
     // 2-byte aligned fields
     /// Unix mode bits (type + permissions).
     ///
-    /// Stored as `u16` matching upstream rsync's `uint16 mode` (rsync.h:805).
+    /// Stored as `u16` matching upstream rsync's `uint16 mode` (rsync.h:806).
     /// POSIX mode values fit in 16 bits (4-bit type mask `S_IFMT` = `0o170000`
     /// + 12-bit permissions `0o7777`). The accessor returns `u32` for API
     ///   compatibility with callers that use `u32` mode constants.

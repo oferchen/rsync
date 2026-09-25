@@ -320,7 +320,7 @@ fn device_round_trip_protocol_28_29() {
 }
 
 /// A special file between two same-major devices must not reset the carried
-/// rdev_major on the sender. Upstream (flist.c:462-472) transmits specials as
+/// rdev_major on the sender. Upstream (flist.c:687-697) transmits specials as
 /// MAKEDEV(rdev_major, 0) without advancing rdev_major, so the trailing device
 /// still earns XMIT_SAME_RDEV_MAJOR and omits its major from the wire. If the
 /// sender wrongly reset the carried major to 0 at the special, the trailing

@@ -116,7 +116,7 @@ fn tail_lengths_at_both_extremes_are_matched_and_reconstruct() {
 /// A basis that divides evenly has no short block, and the probe must be a clean
 /// no-op there.
 ///
-/// upstream: `sender.c:109-110` guards the substitution with
+/// upstream: `sender.c:113-114` guards the substitution with
 /// `&& s->remainder != 0`, so every block - including the last - keeps
 /// `blength`. Nothing may be emitted shorter than a full block.
 #[test]

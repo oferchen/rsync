@@ -102,14 +102,14 @@ pub fn trace_msg_checking_via_isprint(defset: &str, errno: i32) {
 ///
 /// Emitted when a lossy conversion replaces unconvertible bytes. This
 /// corresponds to upstream's `rprintf(FERROR_UTF8, ...)` or
-/// `rprintf(FERROR_XFER, ...)` warnings in `flist.c:746-749` and
-/// `flist.c:1597-1600`.
+/// `rprintf(FERROR_XFER, ...)` warnings in `flist.c:971-974` and
+/// `flist.c:1822-1825`.
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:746-749` (recv): `"[%s] cannot convert filename: %s (%s)\n"`
-/// - `flist.c:1597-1600` (send): `"[%s] cannot convert filename: %s (%s)\n"`
-/// - `flist.c:1142-1145` (symlink): `"[%s] cannot convert symlink data for: %s (%s)\n"`
+/// - `flist.c:971-974` (recv): `"[%s] cannot convert filename: %s (%s)\n"`
+/// - `flist.c:1822-1825` (send): `"[%s] cannot convert filename: %s (%s)\n"`
+/// - `flist.c:1367-1370` (symlink): `"[%s] cannot convert symlink data for: %s (%s)\n"`
 #[inline]
 pub fn trace_conversion_warning(
     role: IconvRole,

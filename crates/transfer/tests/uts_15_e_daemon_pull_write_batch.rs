@@ -37,7 +37,7 @@
 //! 3. The batch file is created and non-empty, and its header decodes to
 //!    the negotiated protocol version. The batch format has NO ASCII magic:
 //!    upstream `batch.c:113` writes the stream-flags i32 first, then
-//!    `io.c:2446` writes the protocol-version i32. So bytes 4..8 of the file
+//!    `io.c:2484` writes the protocol-version i32. So bytes 4..8 of the file
 //!    must equal the negotiated protocol (32). Emitted by
 //!    `crates/batch/src/writer.rs::write_header`.
 //! 4. A subsequent `oc-rsync --read-batch=FILE DEST_REPLAY/` (no remote
@@ -47,7 +47,7 @@
 //!    tree. Assertions 1-4 all passed while the recorded trailer was
 //!    unreadable by upstream, because oc's own `--read-batch` stops as
 //!    soon as it has the file data. Only upstream's
-//!    `read_final_goodbye()` (`main.c:893-924`) validates the tail.
+//!    `read_final_goodbye()` (`main.c:906-937`) validates the tail.
 //!    Skipped with a printed reason when no genuine 3.4.4 is installed.
 //!
 //! # Platform gate
@@ -76,9 +76,9 @@
 //! - `options.c::server_options()` - source of truth that the batch
 //!   flags are client-local. Mirrored at
 //!   `daemon_transfer/orchestration/arguments.rs:451`.
-//! - `main.c:1830-1846` (3.4.4) - `--write-batch` / `--only-write-batch`
+//! - `main.c:1857-1873` (3.4.4) - `--write-batch` / `--only-write-batch`
 //!   open the batch fd before the transfer drives the receiver.
-//! - `batch.c:113` `write_int(batch_fd, flags)` then `io.c:2446`
+//! - `batch.c:113` `write_int(batch_fd, flags)` then `io.c:2484`
 //!   `write_int(batch_fd, protocol_version)` - the header format this test
 //!   asserts against: stream-flags i32 + protocol-version i32, no ASCII magic.
 
@@ -140,7 +140,7 @@ impl Drop for DaemonGuard {
 /// until it accepts connections.
 fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
     // Acquire a race-free free port and start the daemon on it. Because the
-    // default daemon binds with SO_REUSEADDR only (upstream socket.c:447), a
+    // default daemon binds with SO_REUSEADDR only (upstream socket.c:455), a
     // port collision is a clean EADDRINUSE daemon exit - never a silent
     // SO_REUSEPORT co-bind - so the helper simply retries with a fresh port.
     // See `test_support::daemon_port`.
@@ -367,7 +367,7 @@ fn daemon_pull_write_batch_records_and_replays() {
     // the header assertion below trips.
     //
     // upstream: batch.c:113 `write_int(batch_fd, flags)` followed by
-    // io.c:2446 `write_int(batch_fd, protocol_version)`. The batch format has
+    // io.c:2484 `write_int(batch_fd, protocol_version)`. The batch format has
     // NO ASCII magic - the first field is the stream-flags i32, the second is
     // the negotiated protocol version. So the header is validated by decoding
     // the protocol-version field (bytes 4..8) rather than a magic string.
@@ -447,7 +447,7 @@ fn daemon_pull_write_batch_records_and_replays() {
 /// oc-rsync replaying its own batch is not an oracle for wire compatibility:
 /// its `--read-batch` stops as soon as it has what it needs, so a trailer with
 /// a duplicated stats block or an extra `NDX_DONE` replays clean. Upstream's
-/// `read_final_goodbye()` (`main.c:893-924`) does not - it reads one more index
+/// `read_final_goodbye()` (`main.c:906-937`) does not - it reads one more index
 /// after the goodbye and aborts with `RERR_PROTOCOL` on anything but EOF. Only
 /// upstream can tell the two apart, which is why a batch recorded over a daemon
 /// pull was unreadable by `rsync --read-batch` while every oc-side assertion

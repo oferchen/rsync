@@ -10,8 +10,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:3016 flist_sort_and_clean()` - the combined sort+dedup+prune pass
-//!   run by `recv_file_list()` at `flist.c:2771`.
+//! - `flist.c:3259 flist_sort_and_clean()` - the combined sort+dedup+prune pass
+//!   run by `recv_file_list()` at `flist.c:3014`.
 
 use std::io::Cursor;
 
@@ -35,7 +35,7 @@ fn encode(protocol: protocol::ProtocolVersion, entries: &[FileEntry]) -> Vec<u8>
 /// compacted away.
 ///
 /// WHY: upstream drops the duplicate via `clear_file()` on the dropped index
-/// (`flist.c:3089`), which zeroes the entry but leaves its slot in
+/// (`flist.c:3332`), which zeroes the entry but leaves its slot in
 /// `flist->files[]` so every following NDX is unchanged. The receiver must
 /// preserve the array length and every NDX slot; compacting/renumbering would
 /// desync the receiver's numbering from the sender's full un-deduped array
@@ -102,7 +102,7 @@ fn receiver_keeps_distinct_names() {
 /// When a file and a directory share a name, upstream keeps the directory.
 ///
 /// WHY: `flist_sort_and_clean` keeps the dir "because it might have contents in
-/// the list" (`flist.c:3060`). Dropping the dir in favour of the plain file
+/// the list" (`flist.c:3303`). Dropping the dir in favour of the plain file
 /// would orphan its children.
 #[test]
 fn receiver_keeps_directory_over_file_duplicate() {

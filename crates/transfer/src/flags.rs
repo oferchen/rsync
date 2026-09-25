@@ -13,11 +13,11 @@ use thiserror::Error;
 /// Upstream folds two independent concerns onto that single integer:
 ///
 /// - Wire: the uid/gid name-list is sent and received whenever
-///   `numeric_ids <= 0` (`flist.c:2548` send gate, `uidlist.c:465,473` recv
+///   `numeric_ids <= 0` (`flist.c:2788` send gate, `uidlist.c:465,473` recv
 ///   gate). Only an explicit client `--numeric-ids` (`> 0`) drops the list
 ///   from the wire.
 /// - Local: name-based id resolution is suppressed whenever
-///   `numeric_ids != 0` (`flist.c:478` gates `add_uid()` on `!numeric_ids`),
+///   `numeric_ids != 0` (`flist.c:703` gates `add_uid()` on `!numeric_ids`),
 ///   so both the daemon-forced and the explicit states preserve numeric
 ///   owner/group without a name lookup.
 ///
@@ -138,9 +138,9 @@ pub struct ParsedServerFlags {
     pub xattrs: bool,
     /// Count of `X` flags in the packed server flag string, capped at 2.
     ///
-    /// Upstream keeps `preserve_xattrs` as a counter (`options.c:1877`
+    /// Upstream keeps `preserve_xattrs` as a counter (`options.c:1883`
     /// `preserve_xattrs++`) and doubles the compact letter for the remote
-    /// (`options.c:2699-2702`), so the level rides the flag string rather than
+    /// (`options.c:2709-2712`), so the level rides the flag string rather than
     /// a side channel. `-XX` (level 2) transfers the `rsync.%FOO` fake-super
     /// store; collapsing to the `xattrs` bool alone makes `-XX` behave
     /// identically to `-X` (`xattrs.c:262`, `am_sender && preserve_xattrs < 2`).
@@ -168,7 +168,7 @@ pub struct ParsedServerFlags {
     /// # Upstream Reference
     ///
     /// - `options.c:746` - `{"force", 0, POPT_ARG_VAL, &force_delete, 1, 0, 0}`
-    /// - `options.c:3014-3015` - `if (force_delete) args[ac++] = "--force";`
+    /// - `options.c:3024-3025` - `if (force_delete) args[ac++] = "--force";`
     /// - `generator.c:2481` - `int del_opts = delete_mode || force_delete ? DEL_RECURSE : 0;`
     /// - `generator.c:2868` - `if (delete_mode || force_delete || read_batch) write_del_stats(f_out);`
     pub force: bool,
@@ -188,26 +188,26 @@ pub struct ParsedServerFlags {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2194` - `list_only` global / implied-list-only derivation
+    /// - `options.c:2203` - `list_only` global / implied-list-only derivation
     /// - `generator.c:1249` - `list_file_entry()` render gate
     pub list_only: bool,
     /// Only-write-batch mode on a server receiver (`--only-write-batch=X`).
     ///
     /// The push client records the batch locally and writes each file's delta
-    /// to its own batch fd, not the wire (upstream sender.c:217 `f_xfer =
+    /// to its own batch fd, not the wire (upstream sender.c:220 `f_xfer =
     /// write_batch < 0 ? batch_fd : f_out`), so the server receiver reads no
     /// delta data off the wire. It must still send REAL block checksums,
     /// because upstream forces `dry_run = 1` only AFTER `do_xfers` is computed
-    /// (main.c:1839), leaving `do_xfers = 1` so the generator emits sum heads
+    /// (main.c:1866), leaving `do_xfers = 1` so the generator emits sum heads
     /// the sender needs to build a correct batch. Implies [`dry_run`] (no
     /// destination writes) but diverges from it by sending sum heads instead
     /// of the bare NDX echo.
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:1673` - `OPT_ONLY_WRITE_BATCH` sets `write_batch = -1`
-    /// - `main.c:1839` - `if (write_batch < 0) dry_run = 1`
-    /// - `receiver.c:811-817` - `write_batch < 0` path logs the item, sends
+    /// - `options.c:1679` - `OPT_ONLY_WRITE_BATCH` sets `write_batch = -1`
+    /// - `main.c:1866` - `if (write_batch < 0) dry_run = 1`
+    /// - `receiver.c:827-833` - `write_batch < 0` path logs the item, sends
     ///   `send_msg_success` under inc_recurse, and writes nothing to the dest
     ///
     /// [`dry_run`]: Self::dry_run
@@ -220,7 +220,7 @@ pub struct ParsedServerFlags {
     pub sparse: bool,
     /// Preallocate destination file extents before writing (`--preallocate`).
     /// Long-form only (no compact letter); the receiver calls `fallocate()` on
-    /// each destination temp file. upstream: options.c:715 / receiver.c:320.
+    /// each destination temp file. upstream: options.c:715 / receiver.c:333.
     pub preallocate: bool,
     /// One file system level (`x` flag count, `--one-file-system`).
     /// 0 = off, 1 = single -x, 2 = double -xx.
@@ -237,17 +237,17 @@ pub struct ParsedServerFlags {
     /// The sender's file-list builder emits the implied parent directories of a
     /// `--relative` source only when this is `false` OR the protocol forces them
     /// on. Upstream forces `implied_dirs = 1` whenever
-    /// `relative_paths && protocol_version >= 30` (flist.c:2257-2258), so at
+    /// `relative_paths && protocol_version >= 30` (flist.c:2496-2497), so at
     /// protocol < 30 the flag is honoured and `--no-implied-dirs` omits the
-    /// implied parents from the flist (flist.c:2468 gates the non-incremental
+    /// implied parents from the flist (flist.c:2708 gates the non-incremental
     /// send on `implied_dirs`). At protocol >= 30 the implied dirs are always
     /// sent (flagged), regardless of this field.
     ///
     /// # Upstream Reference
     ///
     /// - `options.c:696` - `{"no-implied-dirs", 0, POPT_ARG_VAL, &implied_dirs, 0, ...}`
-    /// - `flist.c:2257-2258` - protocol >= 30 force-on
-    /// - `flist.c:2468` - `else if (implied_dirs && ...)` send gate
+    /// - `flist.c:2496-2497` - protocol >= 30 force-on
+    /// - `flist.c:2708` - `else if (implied_dirs && ...)` send gate
     pub no_implied_dirs: bool,
     /// Keep partially transferred files (`P` flag, `--partial`).
     pub partial: bool,
@@ -299,11 +299,11 @@ pub struct ParsedServerFlags {
     /// `--append` (`append_mode == 1`) trusts the prefix and never sums it.
     ///
     /// Upstream: `options.c:719` (`append_mode = 2`), `match.c:373` and
-    /// `receiver.c:357` (`if (append_mode == 2)` prefix `sum_update`).
+    /// `receiver.c:370` (`if (append_mode == 2)` prefix `sum_update`).
     pub append_verify: bool,
     /// Make backups before overwriting (`b` flag, `--backup`).
     ///
-    /// Upstream: `options.c:2797` - `argstr[x++] = 'b'`.
+    /// Upstream: `options.c:2807` - `argstr[x++] = 'b'`.
     pub backup: bool,
     /// Fuzzy basis file matching level (`y` flag, `--fuzzy`).
     ///
@@ -325,13 +325,13 @@ pub struct ParsedServerFlags {
     /// Remove source files after successful transfer (long-form `--remove-source-files`).
     ///
     /// Not part of the compact flag string; set via long-form args (upstream
-    /// `options.c:2982-2983` emits `--remove-source-files` whenever the client
+    /// `options.c:2992-2993` emits `--remove-source-files` whenever the client
     /// requested it). When true, the sender unlinks each source file after the
     /// receiver acknowledges a successful transfer.
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:395` `successful_send()` - performs the unlink
+    /// - `sender.c:396` `successful_send()` - performs the unlink
     /// - `options.c:765` - `remove_source_files` global definition
     pub remove_source_files: bool,
 
@@ -347,11 +347,11 @@ pub struct ParsedServerFlags {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1419-1428` `make_file()` - `copy_devices && am_sender &&
+    /// - `flist.c:1644-1653` `make_file()` - `copy_devices && am_sender &&
     ///   IS_DEVICE(st.st_mode)` converts the entry to `S_IFREG | ACCESSPERMS`,
     ///   sets `st_mtime = time(NULL)`, and records `get_device_size()`.
-    /// - `sender.c:410-418` - re-opens the device and streams its bytes.
-    /// - `options.c:2987` - `if (copy_devices && !am_sender)` forwards the flag
+    /// - `sender.c:411-419` - re-opens the device and streams its bytes.
+    /// - `options.c:2997` - `if (copy_devices && !am_sender)` forwards the flag
     ///   to the remote peer only on a pull, so the local sender must carry it
     ///   in-process on a push.
     pub copy_devices: bool,
@@ -359,17 +359,17 @@ pub struct ParsedServerFlags {
     /// Create missing destination path components (long-form `--mkpath`).
     ///
     /// Not part of the compact flag string; forwarded by the sending client
-    /// only (upstream `options.c:2996-2997` - `if (mkpath_dest_arg &&
+    /// only (upstream `options.c:3006-3007` - `if (mkpath_dest_arg &&
     /// am_sender) args[ac++] = "--mkpath"`). Gates the receiver's dest-arg
-    /// path creation: without it, upstream `main.c:788` does a single
+    /// path creation: without it, upstream `main.c:801` does a single
     /// `do_mkdir(dest_path)` (which fails when an ancestor is missing); with
-    /// it, `main.c:736` calls `make_path()` to create the whole chain.
+    /// it, `main.c:749` calls `make_path()` to create the whole chain.
     pub mkpath: bool,
 
     /// Omit directory modification times (long-form `--omit-dir-times` / `-O`).
     ///
     /// Receiver-side only. Not part of the compact flag string: upstream
-    /// `options.c:2646-2647` packs `'O'` into `server_options` only inside the
+    /// `options.c:2655-2656` packs `'O'` into `server_options` only inside the
     /// `if (am_sender)` block, so on a pull the flag is never sent over the
     /// wire and the local client (which IS the receiver) must apply it itself.
     /// When set, the receiver skips a directory's mtime both at creation
@@ -382,7 +382,7 @@ pub struct ParsedServerFlags {
     /// Omit symlink modification times (long-form `--omit-link-times` / `-J`).
     ///
     /// Receiver-side only. Not part of the compact flag string built by
-    /// `build_server_flag_string`: upstream `options.c:2648-2649` packs `'J'`
+    /// `build_server_flag_string`: upstream `options.c:2657-2658` packs `'J'`
     /// into `server_options` only inside the `if (am_sender)` block, so on a
     /// pull the flag is never sent over the wire and the local client (which IS
     /// the receiver) must apply it itself. When set, the receiver skips a
@@ -394,7 +394,7 @@ pub struct ParsedServerFlags {
     /// Preserve executability (long-form `--executability` / `-E`).
     ///
     /// Receiver-side in effect, but it reaches the receiver by two different
-    /// routes. Upstream `options.c:2692-2693` packs `'E'` into
+    /// routes. Upstream `options.c:2702-2703` packs `'E'` into
     /// `server_options` inside the `else if (preserve_executability &&
     /// am_sender)` branch: on a **push** the flag rides the compact string to
     /// the remote server, which is the receiver, so the flag parser has to
@@ -424,7 +424,7 @@ pub struct ParsedServerFlags {
 
     /// Apply the built-in CVS-ignore rule set (`C` flag, `--cvs-exclude`).
     ///
-    /// Sender-side in effect. Upstream `options.c:2709-2710` packs `'C'` into
+    /// Sender-side in effect. Upstream `options.c:2719-2720` packs `'C'` into
     /// the compact string whenever `cvs_exclude` is set, on both a push and a
     /// pull. On a **pull** the remote server is the sender and the CVS rules
     /// are NOT transmitted over the wire (`exclude.c:1652` gates the send on
@@ -447,7 +447,7 @@ pub struct ParsedServerFlags {
 /// These are NOT decoded from the compact server flag string: the `-e.<caps>`
 /// suffix carries protocol capability letters (compat.c:712-732), not `--info`
 /// output flags. Upstream sends the output request as separate long-form args
-/// (`--log-format=%i`, options.c:2770-2775), so every field here is set from
+/// (`--log-format=%i`, options.c:2780-2785), so every field here is set from
 /// those long-form args or the client config, never from the packed flag
 /// letters.
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
@@ -477,7 +477,7 @@ pub struct InfoFlags {
     ///
     /// Gates the receiver's `created directory <dest>` notice, which upstream
     /// prints on a dest-creating pull when `INFO_GTE(NAME,1) || stdout_format_has_i`
-    /// (main.c:807-808). Without this the notice was tied to the `-i` flag alone
+    /// (main.c:820-821). Without this the notice was tied to the `-i` flag alone
     /// and was dropped under a custom `%i`-bearing `--out-format`.
     pub out_format_forwards_i: bool,
 }
@@ -493,7 +493,7 @@ impl ParsedServerFlags {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2194` - `list_only` implies no transfers
+    /// - `options.c:2203` - `list_only` implies no transfers
     /// - `generator.c:1249` - `list_file_entry()` without per-file requests
     #[must_use]
     pub const fn skip_dest_writes(&self) -> bool {
@@ -507,7 +507,7 @@ impl ParsedServerFlags {
     /// the corresponding feature (`acl` or `xattr`), the flag is cleared
     /// and the feature name is returned so the caller can emit a warning.
     ///
-    /// This mirrors upstream rsync's `options.c:1858-1873` where
+    /// This mirrors upstream rsync's `options.c:1864-1879` where
     /// `SUPPORT_ACLS` / `SUPPORT_XATTRS` guards produce an error. We
     /// choose a graceful fallback instead - warn and continue without the
     /// unsupported feature.
@@ -562,13 +562,13 @@ impl ParsedServerFlags {
         // lets a filter over the flat string mistake one for the other.
         //
         // The split point is the first `e`: `maybe_add_e_option`
-        // (options.c:3021) is the only writer of an `e` into `argstr`, and it
-        // appends last (options.c:2727) after every transfer letter, so the
+        // (options.c:3031) is the only writer of an `e` into `argstr`, and it
+        // appends last (options.c:2737) after every transfer letter, so the
         // first `e` is always the capability introducer. The payload after it is
         // upstream's `client_info` (compat.c:165-169) - opaque bytes that only
         // `setup::capability` decodes, never option letters. Splitting at `e`
         // rather than at the `.` also keeps a pre-release peer's `-e32.1iLsfx...`
-        // version prefix (options.c:3036) out of the transfer-letter scan.
+        // version prefix (options.c:3046) out of the transfer-letter scan.
         let letters = match bytes[1..].iter().position(|&byte| byte == b'e') {
             Some(pos) => {
                 // upstream: popt sets `shell_cmd` when `-e` carries an argument.
@@ -576,7 +576,7 @@ impl ParsedServerFlags {
                 &bytes[1..1 + pos]
             }
             // No `-e` at all: either a protocol 28/29 peer, for which
-            // `maybe_add_e_option` emits nothing (options.c:3025-3028), or a
+            // `maybe_add_e_option` emits nothing (options.c:3035-3038), or a
             // malformed bundle. A bare `.` with no preceding `e` is the second
             // case - popt would reject `.` as an unknown option and abort, so
             // stop there rather than feed a payload to the letter scan.
@@ -627,8 +627,8 @@ impl ParsedServerFlags {
             b'H' => self.hard_links = true,
             b'I' => self.ignore_times = true,
             b'A' => self.acls = true,
-            // upstream: options.c:1877 `preserve_xattrs++` - the level is a
-            // count, doubled onto the wire as `-XX` by options.c:2699-2702.
+            // upstream: options.c:1883 `preserve_xattrs++` - the level is a
+            // count, doubled onto the wire as `-XX` by options.c:2709-2712.
             b'X' => {
                 self.xattrs = true;
                 if self.xattrs_level < 2 {
@@ -636,10 +636,10 @@ impl ParsedServerFlags {
                 }
             }
             // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.
-            // numeric_ids is long-form only (options.c:2905 sends --numeric-ids).
+            // numeric_ids is long-form only (options.c:2915 sends --numeric-ids).
             b'n' => self.dry_run = true,
             // upstream: 'd' = --dirs (xfer_dirs without recursion), NOT delete.
-            // delete is long-form only (options.c:2836-2845 sends --delete-*).
+            // delete is long-form only (options.c:2846-2855 sends --delete-*).
             b'd' => self.dirs = true,
             b'W' => self.whole_file = true,
             b'S' => self.sparse = true,
@@ -647,10 +647,10 @@ impl ParsedServerFlags {
             b'R' => self.relative = true,
             b'P' => self.partial = true,
             b'u' => self.update = true,
-            // upstream: options.c:2631 - 'b' = backup.
+            // upstream: options.c:2640 - 'b' = backup.
             b'b' => self.backup = true,
             b'N' => self.crtimes = true,
-            // upstream: options.c:2646-2649 - `if (am_sender) { if (omit_dir_times
+            // upstream: options.c:2655-2658 - `if (am_sender) { if (omit_dir_times
             // > 0) 'O'; if (omit_link_times) 'J'; }`. On a push the local client is
             // the sender, so 'O'/'J' ride to the remote server (the receiver),
             // which must skip re-setting a directory's / symlink's mtime
@@ -661,7 +661,7 @@ impl ParsedServerFlags {
             // mtimes instead of leaving them at "now".
             b'O' => self.omit_dir_times = true,
             b'J' => self.omit_link_times = true,
-            // upstream: options.c:2692-2693 - `'E'` rides the compact flag
+            // upstream: options.c:2702-2703 - `'E'` rides the compact flag
             // string in the `else if (preserve_executability && am_sender)`
             // branch, i.e. on a *push*, where the remote server IS the
             // receiver and has to honour it. (On a pull the local client is
@@ -688,18 +688,18 @@ impl ParsedServerFlags {
             // upstream: options.c:764 - fuzzy_basis++ for each 'y'
             b'y' => self.fuzzy_level = self.fuzzy_level.saturating_add(1),
             b'm' => self.prune_empty_dirs = true,
-            // upstream: options.c:2709-2710 - `if (cvs_exclude) argstr = 'C'`.
+            // upstream: options.c:2719-2720 - `if (cvs_exclude) argstr = 'C'`.
             // A pulling client forwards `C` so the server-sender re-derives the
             // CVS-ignore rules itself (they are not sent on a pull); the
             // generator wires this into its filter chain via
             // `receive_filter_list_if_server`.
             b'C' => self.cvs_exclude = true,
             // Deliberately NOT stored here (each still falls through):
-            //  - `s` (options.c:2623, `--secluded-args`) is detected by the
+            //  - `s` (options.c:2632, `--secluded-args`) is detected by the
             //    dedicated `detect_secluded_args_flag` scan in the CLI server
             //    entry, which switches argv reading to the protected stream;
             //    routing it through this struct would be redundant.
-            //  - `q` (options.c:2629, `--quiet`, sent only when
+            //  - `q` (options.c:2638, `--quiet`, sent only when
             //    `quiet && msgs2stderr`) suppresses the sender's own progress
             //    chatter; oc has no such server-side chatter to gate, so it is
             //    cosmetic with no observable effect to reproduce.
@@ -738,7 +738,7 @@ mod tests {
         // The `.iLsfxC` suffix is the `-e` capability payload (compat.c:165-169,
         // 712-732), NOT `--info` output flags: it must leave every info field at
         // its default. Genuine itemize/output rides `--log-format=%i`
-        // (options.c:2770-2775), decoded elsewhere.
+        // (options.c:2780-2785), decoded elsewhere.
         assert_eq!(flags.info_flags, InfoFlags::default());
     }
 
@@ -747,12 +747,12 @@ mod tests {
     /// `strchr`-scanned for protocol capability letters (compat.c:712-732); the
     /// `i` letter is `CF_INC_RECURSE`, not `--itemize`, and `L/s/f/x/C/v/u` are
     /// likewise capabilities. Output requests reach the server as separate
-    /// long-form args (`--log-format=%i`, options.c:2770-2775). Before the fix
+    /// long-form args (`--log-format=%i`, options.c:2780-2785). Before the fix
     /// these letters flowed through `parse_info_flag`, so a pull/push flag string
     /// spuriously set `info_flags.itemize` from the inc-recurse `i` capability.
     #[test]
     fn capability_suffix_letters_are_not_info_flags() {
-        // Upstream release capability string on a pull/push (options.c:3021).
+        // Upstream release capability string on a pull/push (options.c:3031).
         let with_caps = ParsedServerFlags::parse("-logDtpre.LsfxCIvu").unwrap();
         assert_eq!(
             with_caps.info_flags,
@@ -789,7 +789,7 @@ mod tests {
     /// upstream: options.c:823 `{"rsh", 'e', POPT_ARG_STRING, &shell_cmd, ...}` -
     /// popt binds EVERYTHING after `-e` as the option's argument. A pre-release
     /// peer emits its `VER.SUB` in front of the capability letters
-    /// (`maybe_add_e_option`, options.c:3036: `snprintf(buf + x, ..., "%d.%d",
+    /// (`maybe_add_e_option`, options.c:3046: `snprintf(buf + x, ..., "%d.%d",
     /// PROTOCOL_VERSION, SUBPROTOCOL_VERSION)`), so the payload can begin with
     /// digits and the `.` is no longer the first byte after the `e`. Stopping the
     /// transfer-letter scan at the `.` instead would feed those digits to
@@ -829,7 +829,7 @@ mod tests {
     /// sender-side omit-times letters must set `omit_dir_times`/`omit_link_times`
     /// so the receiver honours the client-negotiated request. Upstream
     /// `server_options()` packs `'O'` (omit_dir_times) and `'J'` (omit_link_times)
-    /// on a push (options.c:2646-2649); the oc receiver must decode them so a
+    /// on a push (options.c:2655-2658); the oc receiver must decode them so a
     /// pushed `-O`/`-J` leaves the destination dir/symlink mtime at "now" rather
     /// than copying the source mtime. Before the fix these letters fell through
     /// `_ => {}` and were silently dropped (measured: oc-oc push preserved the
@@ -928,7 +928,7 @@ mod tests {
         assert_eq!(double.xattrs_level, 2);
     }
 
-    /// Upstream caps the transmitted level at two letters (options.c:2699-2702),
+    /// Upstream caps the transmitted level at two letters (options.c:2709-2712),
     /// so a peer that sends more must not overflow the counter.
     #[test]
     fn xattrs_level_saturates_at_two() {
@@ -1005,7 +1005,7 @@ mod tests {
 
     #[test]
     fn parses_executability_flag_from_a_push_flag_string() {
-        // upstream: options.c:2692-2693 - a pushing client packs 'E' into the
+        // upstream: options.c:2702-2703 - a pushing client packs 'E' into the
         // compact string, e.g. `--server -tEre.iLsfxCIvu`.
         let flags = ParsedServerFlags::parse("-tEre.iLsfxCIvu").unwrap();
         assert!(flags.preserve_executability);
@@ -1107,7 +1107,7 @@ mod tests {
     /// no clearing occurs. When the feature is absent, the flag is cleared
     /// and the feature name is returned.
     ///
-    /// upstream: options.c:1858-1873 - SUPPORT_ACLS guard
+    /// upstream: options.c:1864-1879 - SUPPORT_ACLS guard
     #[test]
     fn clear_unsupported_features_handles_acls() {
         let mut flags = ParsedServerFlags::parse("-A").unwrap();
@@ -1131,7 +1131,7 @@ mod tests {
     /// no clearing occurs. When the feature is absent, the flag is cleared
     /// and the feature name is returned.
     ///
-    /// upstream: options.c:1875-1884 - SUPPORT_XATTRS guard
+    /// upstream: options.c:1881-1890 - SUPPORT_XATTRS guard
     #[test]
     fn clear_unsupported_features_handles_xattrs() {
         let mut flags = ParsedServerFlags::parse("-X").unwrap();
@@ -1154,7 +1154,7 @@ mod tests {
     /// When both ACLs and xattrs are requested but the platform lacks support,
     /// both are cleared and reported.
     ///
-    /// upstream: options.c:1858-1884 - both guards apply independently
+    /// upstream: options.c:1864-1890 - both guards apply independently
     #[test]
     fn clear_unsupported_features_handles_both_acl_and_xattr() {
         let mut flags = ParsedServerFlags::parse("-AX").unwrap();
@@ -1209,7 +1209,7 @@ mod tests {
     }
 
     /// A pulling client packs `C` into the compact string (upstream
-    /// `options.c:2709`) so the server-sender re-derives the CVS excludes.
+    /// `options.c:2719`) so the server-sender re-derives the CVS excludes.
     /// Before this arm the byte fell through to `_ => {}` and
     /// `--cvs-exclude` was silently ignored on a pull from an oc server.
     #[test]
@@ -1334,7 +1334,7 @@ mod delivery_classification {
 
             // -- EMITTED ONLY BY THE ROLE-AWARE EMITTERS. Upstream packs these
             //    inside the direction branches of server_options()
-            //    (options.c:2641-2660 `if (am_sender) { K m O J y } else { L k
+            //    (options.c:2650-2670 `if (am_sender) { K m O J y } else { L k
             //    }`, plus :2690-2693 `else if (preserve_executability &&
             //    am_sender) 'E'`), so the letter's presence depends on which
             //    side we are. `build_server_flag_string` is deliberately
@@ -1374,7 +1374,7 @@ mod delivery_classification {
             numeric_ids,
             delete,
             //    `force` is delivered the way `partial` is: `server_options()`
-            //    emits the long `--force` (options.c:3014-3015) and the server
+            //    emits the long `--force` (options.c:3024-3025) and the server
             //    long-flag parser decodes it onto the config, while a pull
             //    bridges `ClientConfig::force_replacements()` onto the local
             //    receiver alongside `delete`.

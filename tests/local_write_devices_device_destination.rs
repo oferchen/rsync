@@ -11,7 +11,7 @@
 //!         stat_errno = ENOENT;
 //! }
 //!
-//! receiver.c:1170                            (the write itself)
+//! receiver.c:1187                            (the write itself)
 //! write_to_device = write_devices && IS_DEVICE(st.st_mode);
 //! ```
 //!
@@ -22,7 +22,7 @@
 //! predicate at all and reached the right answer only because its DEFAULT write
 //! strategy stages into a temp file and renames over whatever is there. Every
 //! strategy that opens the final name instead - `--inplace`, `--append`, and
-//! the `--inplace` that `--write-devices` itself implies (`options.c:2555`) -
+//! the `--inplace` that `--write-devices` itself implies (`options.c:2564`) -
 //! wrote THROUGH a device node the operator had not authorised writing through.
 //!
 //! # Measured against rsync 3.5.0
@@ -184,7 +184,7 @@ fn inplace_without_write_devices_replaces_a_device_destination() {
 /// same decision. Keeping it separate from the `--inplace` cell above pins that
 /// the predicate lives in the make-way decision rather than in one strategy.
 ///
-/// upstream: `generator.c:2148`; `options.c:2555` is what makes `--append` and
+/// upstream: `generator.c:2148`; `options.c:2564` is what makes `--append` and
 /// `--write-devices` share the in-place write, which is exactly why the device
 /// question cannot be answered from `inplace` alone.
 #[test]
@@ -253,7 +253,7 @@ fn a_replaced_device_destination_is_backed_up_not_unlinked() {
 /// clear": with `--write-devices` the node survives and is written through.
 ///
 /// upstream: `generator.c:2148` - the `write_devices && stype == FT_DEVICE`
-/// half keeps the node; `receiver.c:1170` then writes into it.
+/// half keeps the node; `receiver.c:1187` then writes into it.
 #[test]
 fn write_devices_keeps_a_device_destination() {
     let Some(fx) = device_fixture() else { return };

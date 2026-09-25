@@ -378,7 +378,7 @@ impl DeltaGenerator {
     /// Reconstruction stays byte-identical; only the unsafe read is avoided.
     ///
     /// upstream: match.c:211 (`if (updating_basis_file && s->sums[i].offset <
-    /// offset ...)`), sender.c:337 (`updating_basis_file = ... inplace ...`).
+    /// offset ...)`), sender.c:338 (`updating_basis_file = ... inplace ...`).
     #[must_use]
     pub fn with_updating_basis_file(mut self, updating: bool) -> Self {
         self.updating_basis_file = updating;
@@ -936,7 +936,7 @@ impl DeltaGenerator {
         // Nothing is printed at DELTASUM level 1 here. upstream's only level-1
         // delta diagnostic is match_report()'s `total:` line (match.c:479-487),
         // which the sender emits ONCE for the whole run - not once per file -
-        // from a single place (sender.c:815). The run totals travel out through
+        // from a single place (sender.c:818). The run totals travel out through
         // `ScanCounters` so the driver can print that line once.
 
         Ok((

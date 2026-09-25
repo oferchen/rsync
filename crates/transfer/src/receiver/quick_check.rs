@@ -82,7 +82,7 @@ pub(super) fn quick_check_matches(
     }
     // upstream: generator.c:645 - `mtime_differs()` -> `same_time()` applies the
     // `--modify-window` tolerance. A negative window compares nanoseconds too
-    // (util1.c:1482), so pass the sub-second component from both sides.
+    // (util1.c:1577), so pass the sub-second component from both sides.
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -262,7 +262,7 @@ struct ReferenceMatch<'a> {
 /// the basis path is absolute, and the symlink opt-out. The first two are
 /// session facts and are answered here; the third is per-path and is answered
 /// by [`BasisTrust::arm_for`]; the fourth is answered inside the walk itself,
-/// exactly where upstream answers it (`syscall.c:300-302`, at the top of
+/// exactly where upstream answers it (`syscall.c:380-382`, at the top of
 /// `ona_open()`), so it is deliberately not restated at this predicate.
 ///
 /// Spelled as a three-state type rather than a `bool` because the middle state
@@ -271,7 +271,7 @@ struct ReferenceMatch<'a> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/generator.c:962-1065` `basis_link_stat()` - the arm selection.
+/// - `rsync-3.5.1/generator.c:962-1065` `basis_link_stat()` - the arm selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BasisTrust {
     /// Not a daemon: a local, SSH-server, or `rsync://`-CLIENT receiver.
@@ -402,7 +402,7 @@ mod basis_trust_tests {
     /// like. This covers the `rsync://` CLIENT too: `am_daemon` is false there,
     /// even though the transfer is a daemon connection.
     ///
-    /// upstream: `rsync-3.5.0/generator.c:979` - `!am_daemon` selects the
+    /// upstream: `rsync-3.5.1/generator.c:979` - `!am_daemon` selects the
     /// ownership walk.
     #[test]
     fn a_non_daemon_receiver_walks_the_basis_parent() {
@@ -418,7 +418,7 @@ mod basis_trust_tests {
     /// symlink pointing out of the module and so is trusted-OWNED - the
     /// ownership rule alone cannot refuse it.
     ///
-    /// upstream: `rsync-3.5.0/generator.c:1004-1018`.
+    /// upstream: `rsync-3.5.1/generator.c:1004-1018`.
     #[test]
     fn a_non_chrooted_daemon_confines_an_absolute_basis_to_the_module() {
         let trust = BasisTrust::for_receiver(true, false);
@@ -434,7 +434,7 @@ mod basis_trust_tests {
     /// "confine everything" predicate would pass the test above and break
     /// `--link-dest=../01` (#915/#930).
     ///
-    /// upstream: `rsync-3.5.0/generator.c:1004` - the `path[0] == '/'` term.
+    /// upstream: `rsync-3.5.1/generator.c:1004` - the `path[0] == '/'` term.
     #[test]
     fn a_non_chrooted_daemon_keeps_the_plain_stat_for_a_relative_basis() {
         let trust = BasisTrust::for_receiver(true, false);
@@ -447,7 +447,7 @@ mod basis_trust_tests {
     /// chroot is the confinement there. Without this the ownership walk would
     /// start applying to a shape upstream leaves alone.
     ///
-    /// upstream: `rsync-3.5.0/generator.c:1004` (`!am_chrooted`) and
+    /// upstream: `rsync-3.5.1/generator.c:1004` (`!am_chrooted`) and
     /// `generator.c:1064` (the fall-through).
     #[test]
     fn a_chrooted_daemon_falls_through_to_the_plain_stat() {
@@ -467,7 +467,7 @@ mod basis_trust_tests {
     /// client, `Some(root)` in the serving process.
     ///
     /// upstream: `clientserver.c:1093` - `am_daemon` is the serving process
-    /// only; `rsync-3.5.0/generator.c:979` reads that same global.
+    /// only; `rsync-3.5.1/generator.c:979` reads that same global.
     #[test]
     fn an_rsync_client_is_not_a_daemon_receiver() {
         install_local_session(LocalInsecureLinks::from_local_flag(false), None);
@@ -558,20 +558,20 @@ mod basis_trust_tests {
 /// The symlink opt-out (`insecure links = yes` / `--insecure-links`) is not
 /// tested here. Upstream tests it at each arm, but it reads the same global the
 /// walk itself reads: `ona_open()` short-circuits to a legacy symlink-following
-/// open before any root is consulted (`syscall.c:300-302`), which
+/// open before any root is consulted (`syscall.c:380-382`), which
 /// `fast_io::owner_walk` mirrors. Under an opt-out every walking arm therefore
 /// already degenerates to the plain resolution arm 4 performs, and restating
 /// the test here would be a second copy of one policy.
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/generator.c:979-990` `basis_link_stat()` arm 1 - the
+/// - `rsync-3.5.1/generator.c:979-990` `basis_link_stat()` arm 1 - the
 ///   non-daemon receiver: `owner_walk_parent()` for the parent components, then
 ///   `link_stat_at()` on the leaf through the returned descriptor.
-/// - `rsync-3.5.0/generator.c:1004-1018` arm 2 - the same walk with
+/// - `rsync-3.5.1/generator.c:1004-1018` arm 2 - the same walk with
 ///   `operator_path_resolve = 1`, for a non-chrooted daemon's ABSOLUTE basis.
-/// - `rsync-3.5.0/generator.c:1064` - the trailing plain `link_stat()`.
-/// - `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - the walk itself.
+/// - `rsync-3.5.1/generator.c:1064` - the trailing plain `link_stat()`.
+/// - `rsync-3.5.1/syscall.c:704` `owner_walk_parent()` - the walk itself.
 #[cfg(unix)]
 fn basis_stat(path: &Path, trust: BasisTrust) -> Option<fs::Metadata> {
     match trust.arm_for(path) {
@@ -604,7 +604,7 @@ fn basis_stat(path: &Path, _trust: BasisTrust) -> Option<fs::Metadata> {
 /// never followed - not even under `--copy-links`. `basis_link_stat()` does
 /// call `link_stat_at()`, which dispatches to `stat` when `copy_links` is set,
 /// but it only ever runs on the receiving side, and `do_recv()` clears
-/// `copy_links` before forking the generator (main.c:1009-1011). The flag is
+/// `copy_links` before forking the generator (main.c:1022-1024). The flag is
 /// therefore unobservable here: a basis symlink makes the basis look absent and
 /// the file transfers normally, which is also what keeps a peer-named entry
 /// from turning an operator's basis dir into a read oracle.
@@ -615,7 +615,7 @@ fn basis_stat(path: &Path, _trust: BasisTrust) -> Option<fs::Metadata> {
 /// - `generator.c:965` - `link_stat` + `!S_ISREG` filter
 /// - `generator.c:971` - `quick_check_ok` gate (below it stays match_level 1)
 /// - `generator.c:977` - `unchanged_attrs()` promotes to match_level 3
-/// - `main.c:1009-1011` - `do_recv()` zeroes `copy_links` for the receiving side
+/// - `main.c:1022-1024` - `do_recv()` zeroes `copy_links` for the receiving side
 #[allow(clippy::too_many_arguments)]
 fn best_reference_match<'a>(
     entry: &FileEntry,
@@ -1362,7 +1362,7 @@ mod info_copy_emission_tests {
 /// `!S_ISREG(sxp->st.st_mode)` filters out a basis-dir entry that is itself a
 /// symlink. `--copy-links` does not lift the filter: `link_stat_at()` honours
 /// `copy_links`, but `do_recv()` zeroes that flag before the generator runs
-/// (main.c:1009-1011), so on the receiving side it is always clear. Without
+/// (main.c:1022-1024), so on the receiving side it is always clear. Without
 /// this gate the receiver would silently copy or hard-link from a symlink
 /// target it should not have consumed, diverging from upstream over
 /// remote-shell transports where the upstream `alt-dest.test` exercises the
@@ -1509,7 +1509,7 @@ mod symlink_basis_tests {
     /// `fast_io::owner_walk`'s `refuses_an_owner_that_is_neither_root_nor_the_euid`.
     ///
     /// upstream: `generator.c:979-990` `basis_link_stat()` ARM 1 resolves the
-    /// basis parent with `owner_walk_parent()`; `syscall.c:406` is the
+    /// basis parent with `owner_walk_parent()`; `syscall.c:499` is the
     /// `st_uid != 0 && st_uid != trusted_uid` refusal this cell stays clear of.
     #[test]
     fn copy_dest_traverses_a_self_owned_symlinked_parent() {
@@ -1610,8 +1610,8 @@ mod symlink_basis_tests {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/generator.c:991-1003` - the comment naming this exact cell.
-/// - `rsync-3.5.0/generator.c:1004-1018` - the arm itself.
+/// - `rsync-3.5.1/generator.c:991-1003` - the comment naming this exact cell.
+/// - `rsync-3.5.1/generator.c:1004-1018` - the arm itself.
 #[cfg(unix)]
 #[cfg(test)]
 mod daemon_module_confined_basis_tests {
@@ -1875,7 +1875,7 @@ mod update_type_guard_tests {
 /// Regression tests pinning `--modify-window` in the receiver quick-check.
 ///
 /// upstream: generator.c:quick_check_ok() consults `mtime_differs()` ->
-/// `util1.c:1478 same_time()` for EVERY transfer, so a remote/daemon pull or
+/// `util1.c:1573 same_time()` for EVERY transfer, so a remote/daemon pull or
 /// push must tolerate `--modify-window` seconds of whole-second mtime drift
 /// exactly like the local-copy path. Without threading the window into the
 /// receiver, a content-identical file whose mtime differs by <= window is
@@ -1983,7 +1983,7 @@ mod modify_window_tests {
     }
 
     /// With `--modify-window=-1` the quick-check requires nanosecond-exact
-    /// equality (upstream `modify_window < 0`, util1.c:1653): two files sharing
+    /// equality (upstream `modify_window < 0`, util1.c:1748): two files sharing
     /// a whole second but differing in the sub-second component are DIFFERENT
     /// and must be transferred, whereas any non-negative window skips them.
     #[test]

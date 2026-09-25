@@ -220,11 +220,11 @@ const SHRUNK_LEN: usize = 1024;
 /// A source that ends before the length the transfer was sized from must be
 /// diagnosed, not silently reported as a complete copy.
 ///
-/// upstream: `map_ptr()` (fileio.c:359-371) records `ENODATA` when a read
-/// returns 0 before the mapped window is filled, `unmap_file()` (fileio.c:385)
+/// upstream: `map_ptr()` (fileio.c:401-413) records `ENODATA` when a read
+/// returns 0 before the mapped window is filled, `unmap_file()` (fileio.c:427)
 /// returns that status, and the sender turns it into
 /// `io_error |= IOERR_GENERAL` plus one `read errors mapping %s` line
-/// (sender.c:787-795) - which main.c reports as `RERR_PARTIAL` (23). Without
+/// (sender.c:789-797) - which main.c reports as `RERR_PARTIAL` (23). Without
 /// this the destination is silently short and the run exits 0, so data loss is
 /// indistinguishable from success.
 ///
@@ -445,7 +445,7 @@ fn mover_progress_updates(whole_file_enabled: bool) -> (usize, u64) {
 /// of the same file was not, and nothing that observes the source being read
 /// could see the transfer at all.
 ///
-/// upstream keeps the default local copy on the fast tier: `main.c:653-657`
+/// upstream keeps the default local copy on the fast tier: `main.c:666-670`
 /// forces `whole_file = 1` for a local transfer that did not ask otherwise
 /// (`if (whole_file < 0 && !write_batch) whole_file = 1;`), so only an explicit
 /// `--no-whole-file`, `--append` or `--write-batch` gets here.
@@ -675,10 +675,10 @@ fn delta_copy_outcome_with(
 /// destination - never saw it.
 ///
 /// upstream has one mover. `map_ptr()` records `ENODATA` when a read returns 0
-/// before the mapped window is filled (fileio.c:359-365), `unmap_file()` hands
-/// that status back (fileio.c:385), and the sender logs one
+/// before the mapped window is filled (fileio.c:401-407), `unmap_file()` hands
+/// that status back (fileio.c:427), and the sender logs one
 /// `read errors mapping %s` at `FERROR_XFER` with `io_error |= IOERR_GENERAL`
-/// before moving to the next entry (sender.c:787-795), which main.c reports as
+/// before moving to the next entry (sender.c:789-797), which main.c reports as
 /// `RERR_PARTIAL` (23). Measured against rsync 3.5.0 on that shape - a
 /// pre-seeded destination, `-a --no-whole-file`, the source truncated at the
 /// first read of its own fd - upstream exits 23 with that line while oc exited
@@ -733,12 +733,12 @@ fn delta_copy_of_a_complete_source_records_no_read_error() {
 /// appended tail copied on this path and dropped on the other three.
 ///
 /// upstream has one mover and sizes it from the OPENED handle:
-/// `do_fstat(fd, &st)` (sender.c:728) then
-/// `mbuf = map_file(fd, st.st_size, read_size, s->blength)` (sender.c:757), so
+/// `do_fstat(fd, &st)` (sender.c:730) then
+/// `mbuf = map_file(fd, st.st_size, read_size, s->blength)` (sender.c:759), so
 /// a tail appended after that fstat is never mapped and never sent. Nothing
 /// diagnoses it - `map_ptr()` records a status only when a read returns 0 with
 /// the mapped window still unfilled
-/// (`map->status = nread ? errno : ENODATA`, fileio.c:359-363), which is the
+/// (`map->status = nread ? errno : ENODATA`, fileio.c:401-405), which is the
 /// SHRINK case. Measured on rsync 3.5.0 with `-a --no-whole-file` over a
 /// pre-seeded destination and a source appended to between the fstat and the
 /// read: upstream exits 0, prints nothing, and leaves the destination at the
@@ -923,8 +923,8 @@ const SHRINK_NEW_LEN: usize = 512 * 1024;
 ///
 /// upstream: a source read error corrupts the whole-file checksum
 /// (match.c:454-463), the receiver discards the temp file and queues a
-/// phase-2 resend (receiver.c:1318,1355-1358 MSG_REDO), and the resend
-/// re-opens and re-fstats the shrunken file (sender.c:728-760), landing a
+/// phase-2 resend (receiver.c:1335,1372-1375 MSG_REDO), and the resend
+/// re-opens and re-fstats the shrunken file (sender.c:730-762), landing a
 /// consistent copy. Measured on rsync 3.5.0: dest == post-shrink source,
 /// exit 23, one `read errors mapping` line. Without the redo the local
 /// executor published the staged partial: a consistent prefix plus a stale
@@ -970,9 +970,9 @@ fn shrink_mid_read_redo_lands_a_consistent_destination() {
 /// re-queued.
 ///
 /// upstream: the resend arrives with `FLAG_FILE_SENT` set so the receiver
-/// runs it with `redoing = 1` (receiver.c:933-942); a second verification
+/// runs it with `redoing = 1` (receiver.c:949-958); a second verification
 /// failure logs `FERROR_XFER` and the `MSG_REDO` request is guarded by
-/// `if (!redoing)` (receiver.c:1333,1355-1358), so nothing retries a third
+/// `if (!redoing)` (receiver.c:1350,1372-1375), so nothing retries a third
 /// time and the unlinked temp file leaves the destination untouched.
 ///
 /// The schedule holds exactly two shrink steps. A third pass would find no

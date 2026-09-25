@@ -22,7 +22,7 @@
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2944-2956` - server_options() forwarding of files-from to remote
+/// - `options.c:2954-2966` - server_options() forwarding of files-from to remote
 /// - `clientserver.c` - daemon push file list construction from forwarded paths
 #[cfg(unix)]
 #[test]

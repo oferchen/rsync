@@ -9,12 +9,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/syscall.c:538` `open_no_attacker_symlinks()` - walk each
+//! - `rsync-3.5.1/syscall.c:675` `open_no_attacker_symlinks()` - walk each
 //!   component without following it; follow a symlink only when it is owned by
-//!   uid 0 or our euid, refuse any other-uid one (`syscall.c:406`).
-//! - `rsync-3.5.0/params.c:586` - the config file (and its includes).
-//! - `rsync-3.5.0/clientserver.c:188` - `motd`.
-//! - `rsync-3.5.0/authenticate.c:159` - `secrets file`.
+//!   uid 0 or our euid, refuse any other-uid one (`syscall.c:499`).
+//! - `rsync-3.5.1/params.c:586` - the config file (and its includes).
+//! - `rsync-3.5.1/clientserver.c:188` - `motd`.
+//! - `rsync-3.5.1/authenticate.c:159` - `secrets file`.
 
 use std::io;
 use std::path::Path;

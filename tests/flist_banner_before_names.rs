@@ -3,7 +3,7 @@
 //!
 //! Upstream prints the banner at the START of `send_file_list()` - before the
 //! source walk emits anything - so it is always the first stdout line of a
-//! recursive verbose push (flist.c:2248-2252, gated on `inc_recurse &&
+//! recursive verbose push (flist.c:2484-2488, gated on `inc_recurse &&
 //! INFO_GTE(FLIST, 1) && !am_server`). Verified against rsync 3.4.4
 //! (protocol 32):
 //!
@@ -151,7 +151,7 @@ fn assert_banner_first(output: &Output, label: &str) {
     assert_eq!(
         lines.first().copied(),
         Some(BANNER),
-        "{label}: banner must be the first stdout line (upstream flist.c:2248-2252 \
+        "{label}: banner must be the first stdout line (upstream flist.c:2484-2488 \
          prints it before the walk emits any per-file row)\nstdout:\n{stdout}",
     );
     assert_eq!(

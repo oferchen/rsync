@@ -47,7 +47,7 @@ pub(crate) fn load_file_list_operands(
             continue;
         }
 
-        // upstream: options.c:2654 opens `--files-from` through
+        // upstream: options.c:2664 opens `--files-from` through
         // `open_no_attacker_symlinks()`. The list is an operator-supplied path
         // that may transit attacker-writable parents, so a planted symlink
         // would redirect the read to a file the operator never named.
@@ -98,8 +98,8 @@ pub(crate) fn read_file_list_from_reader<R: BufRead>(
                 buffer.pop();
             }
 
-            // upstream: flist.c:2249 sets RL_DUMP_COMMENTS independent of
-            // eol_nulls, and io.c:1276 read_line() strips leading '#'/';'
+            // upstream: flist.c:2485 sets RL_DUMP_COMMENTS independent of
+            // eol_nulls, and io.c:1294 read_line() strips leading '#'/';'
             // comment lines even with NUL delimiters. Strip them here too.
             if buffer
                 .first()

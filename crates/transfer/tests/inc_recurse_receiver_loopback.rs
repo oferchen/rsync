@@ -21,7 +21,7 @@
 //!
 //! - `generator.c:2219-2239` - `check_for_finished_files` writes `NDX_DONE`
 //!   for each completed flist during the walk.
-//! - `sender.c:246-261` - the sender echoes it and frees the flist.
+//! - `sender.c:249-264` - the sender echoes it and frees the flist.
 //! - `rsync.h:151-152` - `MIN_FILECNT_LOOKAHEAD` / `MAX_FILECNT_LOOKAHEAD`.
 
 #![cfg(unix)]
@@ -117,7 +117,7 @@ fn run_side(config: ServerConfig, stream: UnixStream) -> std::io::Result<ServerS
 /// Panics if either side fails or the watchdog expires.
 fn forced_inc_recurse_pull(src: &Path, dst: &Path, opts: &str) -> TransferStats {
     // Sender: `--server --sender -{opts}e.iLsfxCIvu . src/`. The `i` letter is what
-    // an upstream client sends to request INC_RECURSE (options.c:3035).
+    // an upstream client sends to request INC_RECURSE (options.c:3045).
     let mut src_arg = src.to_path_buf().into_os_string();
     src_arg.push("/");
     let sender_cfg = ServerConfig::from_flag_string_and_args(
@@ -197,7 +197,7 @@ fn inc_recurse_receiver_loopback_pulls_multi_segment_tree() {
         "every regular file must be transferred exactly once"
     );
 
-    // upstream: flist.c:2993-3006 / flist.c:1388-1389 - the `--stats` tallies
+    // upstream: flist.c:3236-3249 / flist.c:1613-1614 - the `--stats` tallies
     // are bumped as each entry arrives, so segments released mid-walk must not
     // shrink them. Directories: `.`, `dir0..dir2`, `dir1/nested`, `.../deeper`.
     let expected_size: u64 = (0..DIRS)
@@ -244,7 +244,7 @@ fn inc_recurse_receiver_loopback_pulls_multi_segment_tree() {
 ///
 /// Under INC_RECURSE the sender numbers a group by the wire NDX of its first
 /// member *in send order*, and that NDX includes the one-slot gap each
-/// sub-list opens (flist.c:599-606, flist.c:2966). Numbering from the sorted
+/// sub-list opens (flist.c:824-831, flist.c:3209). Numbering from the sorted
 /// pre-partition list instead names the wrong entry: upstream's receiver
 /// aborts with `hard-link gnum N precedes flist start M` (hlink.c:125-141),
 /// and this receiver silently transfers the follower as a separate copy.

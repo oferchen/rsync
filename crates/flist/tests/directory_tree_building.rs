@@ -72,7 +72,7 @@ fn single_file_in_directory() {
 
 /// Verifies that multiple files in a directory are discovered in sorted order.
 ///
-/// Upstream rsync sorts directory entries lexicographically (flist.c line 200:
+/// Upstream rsync sorts directory entries lexicographically (flist.c line 202:
 /// `entries.sort()`). This ensures deterministic output across platforms.
 #[test]
 fn multiple_files_sorted_alphabetically() {

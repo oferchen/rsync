@@ -29,7 +29,7 @@ fn writeln_wrapped<W: Write + ?Sized>(
 }
 
 /// Renders a path with any trailing platform path separators trimmed as raw
-/// bytes, mirroring upstream rsync's `*cp = '\0'` slash-lopping in `main.c:797`
+/// bytes, mirroring upstream rsync's `*cp = '\0'` slash-lopping in `main.c:810`
 /// before the `created directory %s\n` print.
 fn display_without_trailing_separators(path: &Path, escape: EscapeStyle) -> Vec<u8> {
     let mut rendered = escape_path(path, escape);
@@ -57,7 +57,7 @@ use logging::{InfoFlag, info_gte};
 
 /// Which file-list banner the sender prints before the per-file name list.
 ///
-/// upstream: flist.c:2521-2524 - `send_file_list()` picks exactly one of the
+/// upstream: flist.c:2761-2764 - `send_file_list()` picks exactly one of the
 /// two client-facing banners:
 ///
 /// ```c
@@ -68,7 +68,7 @@ use logging::{InfoFlag, info_gte};
 /// ```
 ///
 /// with `show_filelist_progress = INFO_GTE(FLIST, 1) && xfer_dirs && !am_server
-/// && !inc_recurse` (flist.c:170). Modelling the choice as one enum keeps the
+/// && !inc_recurse` (flist.c:172). Modelling the choice as one enum keeps the
 /// two banners mutually exclusive by construction, as upstream's `if`/`else if`
 /// makes them.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -78,9 +78,9 @@ pub(crate) enum FlistBanner {
     #[default]
     None,
     /// `building file list ... done` - the non-incremental banner.
-    /// upstream: flist.c:177 + flist.c:206.
+    /// upstream: flist.c:179 + flist.c:208.
     Building,
-    /// `sending incremental file list` - upstream: flist.c:2524.
+    /// `sending incremental file list` - upstream: flist.c:2764.
     Incremental,
 }
 
@@ -89,23 +89,23 @@ impl FlistBanner {
     ///
     /// upstream splits the `Building` banner across two writes on two log
     /// codes: `start_filelist_progress()` emits `"%s ... "` on `FCLIENT` with
-    /// no trailing newline (flist.c:177) and, once the list is complete,
-    /// `finish_filelist_progress()` emits `"done\n"` on `FINFO` (flist.c:206).
+    /// no trailing newline (flist.c:179) and, once the list is complete,
+    /// `finish_filelist_progress()` emits `"done\n"` on `FINFO` (flist.c:208).
     /// Both halves land on the client's stdout, so the concatenation is
     /// byte-identical to upstream's stream.
     fn emit(self, writer: &mut dyn Write) -> io::Result<()> {
         match self {
             Self::None => Ok(()),
             Self::Building => {
-                // upstream: flist.c:177 - rprintf(FCLIENT, "%s ... ", kind),
+                // upstream: flist.c:179 - rprintf(FCLIENT, "%s ... ", kind),
                 // no newline; `output_needs_newline` is set instead.
                 write!(writer, "building file list ... ")?;
-                // upstream: flist.c:206 - rprintf(FINFO, "done\n") from
-                // finish_filelist_progress(), called at flist.c:2797 (sender)
-                // and flist.c:3023 (receiver).
+                // upstream: flist.c:208 - rprintf(FINFO, "done\n") from
+                // finish_filelist_progress(), called at flist.c:3040 (sender)
+                // and flist.c:3266 (receiver).
                 writeln!(writer, "done")
             }
-            // upstream: flist.c:2524.
+            // upstream: flist.c:2764.
             Self::Incremental => writeln!(writer, "sending incremental file list"),
         }
     }
@@ -190,10 +190,10 @@ pub(crate) fn emit_transfer_summary(
     let events = summary.events();
     let stats_on = stats_level > 0;
 
-    // upstream: flist.c:2520-2524 - both banners are written at the *start* of
+    // upstream: flist.c:2760-2764 - both banners are written at the *start* of
     // `send_file_list()`, before any entry is listed, so this has to precede the
     // `--list-only` branch below. `--list-only` resolves `xfer_dirs` to 1
-    // (options.c:2320) without turning on `inc_recurse`, so it is one of the
+    // (options.c:2329) without turning on `inc_recurse`, so it is one of the
     // cells that selects the `building file list ... done` banner.
     flist_banner.emit(writer)?;
 
@@ -244,11 +244,11 @@ pub(crate) fn emit_transfer_summary(
         return Ok(());
     }
 
-    // upstream: main.c:787-808 - when the receiver pre-flight-mkdirs the
+    // upstream: main.c:800-821 - when the receiver pre-flight-mkdirs the
     // destination root because `file_total > 1 || trailing_slash`, it lops
     // off the trailing slash (`*cp = '\0'`) and prints `created directory
     // %s\n` gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. The print at
-    // main.c:808 precedes the `dry_run++` at main.c:810, so a dry-run still
+    // main.c:821 precedes the `dry_run++` at main.c:823, so a dry-run still
     // reports the directory it would create. Mirror the same gate plus
     // trailing-slash trim here so `-i` and `-v` invocations - including
     // `--dry-run` - emit the notice ahead of the per-entry itemize lines,
@@ -344,7 +344,7 @@ pub(crate) fn emit_transfer_summary(
 
     // upstream: match.c:439-446 match_report() - the sender prints the
     // cumulative match totals once at DEBUG_GTE(DELTASUM, 1) (first active at
-    // -vv) after send_files() finishes (sender.c:491) and before
+    // -vv) after send_files() finishes (sender.c:492) and before
     // output_summary(). The gate is the debug level alone: a whole-file
     // transfer still prints the line, with the match counters left at their
     // zero initial values. `data` is the cumulative literal-byte count
@@ -367,7 +367,7 @@ pub(crate) fn emit_transfer_summary(
         )?;
     }
 
-    // upstream: main.c:459-461 output_summary() emits the
+    // upstream: main.c:462-464 output_summary() emits the
     // `sent/received/total size` trailer only when
     // `verbose > 0 || INFO_GTE(STATS, 1)`. `stats_on` already captures the
     // STATS>=1 arm (it routes to emit_stats below), so the name-only and
@@ -377,7 +377,7 @@ pub(crate) fn emit_transfer_summary(
     let _ = suppress_updated_only_totals;
     let emit_trailer_totals = !stats_on && verbosity > 0;
 
-    // upstream: main.c:427/458 - `output_summary()` unconditionally emits a
+    // upstream: main.c:427/461 - `output_summary()` unconditionally emits a
     // leading `rprintf(FCLIENT, "\n")` before both the STATS>=2 detail block and
     // the STATS>=1 sent/received trailer, separating them from any preceding
     // per-file output. When a per-file block (verbose listing, itemize, or
@@ -550,7 +550,7 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
     // directories and symlinks included); the numerator `total - checked`
     // counts down over all of them, mirroring upstream's
     // `num_files - current_file_index - 1`. Only regular-file transfers print a
-    // block and advance `xfr#` (upstream receiver.c:782), so a symlink or
+    // block and advance `xfr#` (upstream receiver.c:798), so a symlink or
     // directory is counted but silent.
     let total = flist_entries.len();
     let transferred_total = flist_entries
@@ -605,7 +605,7 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
 /// Emits a statistics summary mirroring the subset of counters supported by the local engine.
 ///
 /// Output is gated by `level`, matching upstream rsync's `INFO_GTE(STATS, N)`
-/// checks in `output_summary` (`main.c:416-465`):
+/// checks in `output_summary` (`main.c:416-468`):
 ///
 /// - level 0: emits nothing.
 /// - level 1: emits only the trailing `sent X / total size is Y` summary.
@@ -724,7 +724,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
         .saturating_add(symlinks_total)
         .saturating_add(special_total);
 
-    // upstream: receiver.c:733-746 / sender.c:295-308 - "Number of created
+    // upstream: receiver.c:749-762 / sender.c:587-600 - "Number of created
     // files" counts ITEM_IS_NEW entries per type (new dirs, symlinks, devices,
     // specials and empty files included), NOT the "copied/updated" tallies. An
     // in-place update of a pre-existing file/symlink is transferred but never
@@ -814,7 +814,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     writeln!(stdout, "Literal data: {literal_bytes_display} bytes")?;
     writeln!(stdout, "Matched data: {matched_bytes_display} bytes")?;
     writeln!(stdout, "File list size: {file_list_size_display}")?;
-    // upstream: main.c:446 `if (stats.flist_buildtime)` gates both timing
+    // upstream: main.c:449 `if (stats.flist_buildtime)` gates both timing
     // lines. The upstream counter is a millisecond integer, so sub-millisecond
     // durations suppress the lines just as on the C side.
     if file_list_generation_ms > 0 {
@@ -837,7 +837,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
 /// Mirrors upstream `main.c:418-423` `bytes_per_sec_human_dnum()`:
 /// `(total_written + total_read) / (0.5 + (endtime - starttime))`, where
 /// `endtime`/`starttime` are whole-second `time_t` values captured with
-/// `time(NULL)` (main.c:141,327,1763). The wall-clock span is therefore
+/// `time(NULL)` (main.c:141,327,1790). The wall-clock span is therefore
 /// truncated to whole seconds here so a transfer that runs 1.4 s divides by the
 /// same integer second count upstream would use, rather than a fractional span.
 /// The `0.5` floor keeps a sub-second transfer from dividing by zero, and the
@@ -892,7 +892,7 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
         stdout,
         "sent {sent_display} bytes  received {received_display} bytes  {rate_display} bytes/sec"
     )?;
-    // upstream: main.c:469 - `write_batch < 0 ? " (BATCH ONLY)" : dry_run ?
+    // upstream: main.c:472 - `write_batch < 0 ? " (BATCH ONLY)" : dry_run ?
     // " (DRY RUN)" : ""`. `--only-write-batch` sets `write_batch < 0` and takes
     // precedence over `--dry-run`.
     let speedup_suffix = if only_write_batch {
@@ -902,7 +902,7 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
     } else {
         ""
     };
-    // upstream: main.c:466-468 - speedup uses comma_dnum(_, 2), i.e. thousands
+    // upstream: main.c:469-471 - speedup uses comma_dnum(_, 2), i.e. thousands
     // grouping. Reuse the same helper the --stats path uses (stats_format.rs)
     // so both summary paths group identically.
     let speedup_display = crate::stats_format::format_speedup(speedup);
@@ -1416,7 +1416,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
         }
 
         // upstream: log.c:log_formatted() emits the default `%n%L` per-file
-        // line at every verbosity tier (set in options.c:2372). The rendered
+        // line at every verbosity tier (set in options.c:2381). The rendered
         // bytes already include the `-> target` suffix for symlinks; higher
         // tiers only add ancillary log messages, never a per-file descriptor
         // prefix or byte-count wrapper.
@@ -1697,7 +1697,7 @@ mod tests {
 
     #[test]
     fn plain_stats_trailer_starts_with_blank_line() {
-        // upstream: main.c:458 - output_summary() emits an unconditional leading
+        // upstream: main.c:461 - output_summary() emits an unconditional leading
         // `rprintf(FCLIENT, "\n")` before the STATS>=1 sent/received trailer,
         // even when no per-file output preceded it (a plain `--stats` run). oc
         // previously emitted the trailer with no leading blank.
@@ -1733,7 +1733,7 @@ mod tests {
 
     #[test]
     fn speedup_suffix_matches_upstream_precedence() {
-        // upstream: main.c:469 - `write_batch < 0 ? " (BATCH ONLY)" : dry_run ?
+        // upstream: main.c:472 - `write_batch < 0 ? " (BATCH ONLY)" : dry_run ?
         // " (DRY RUN)" : ""`. --only-write-batch wins over --dry-run.
         assert!(render_summary(1, false, false).contains("speedup is"));
         assert!(!render_summary(1, false, false).contains("(DRY RUN)"));
@@ -1755,7 +1755,7 @@ mod tests {
     fn transfer_rate_uses_whole_second_denominator() {
         // upstream: main.c:422 - rate = (written+read) / (0.5 + (endtime -
         // starttime)), where endtime/starttime are whole-second time_t values
-        // (main.c:141,327,1763 `time(NULL)`). A 1.9 s wall span must truncate to
+        // (main.c:141,327,1790 `time(NULL)`). A 1.9 s wall span must truncate to
         // 1 whole second, giving a denominator of 0.5 + 1 = 1.5 exactly like
         // upstream - never 0.5 + 1.9. Dividing by the fractional span would
         // report a rate below upstream's for any transfer crossing into a new

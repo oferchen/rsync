@@ -170,7 +170,7 @@ fn send_multiplexed_error_and_exit(
     frame_bytes.push(b'\n');
     let mut buffer = Vec::new();
     MessageFrame::new(MessageCode::ErrorXfer, frame_bytes)?.encode_into_writer(&mut buffer)?;
-    // upstream: io.c:1060 send_msg_int() - little-endian 4-byte exit code.
+    // upstream: io.c:1078 send_msg_int() - little-endian 4-byte exit code.
     MessageFrame::new(MessageCode::ErrorExit, exit_code.to_le_bytes().to_vec())?
         .encode_into_writer(&mut buffer)?;
     write_limited(stream, limiter, &buffer)?;
@@ -337,9 +337,9 @@ fn handle_refused_option_post_handshake(
 /// `read only` module or a pull from a `write only` module - through the
 /// multiplexed error path.
 ///
-/// upstream: main.c:1183-1187 `do_server_recv()` rejects a read-only push
+/// upstream: main.c:1201-1205 `do_server_recv()` rejects a read-only push
 /// with `rprintf(FERROR, "ERROR: module is read only\n")` then
-/// `exit_cleanup(RERR_SYNTAX)`; main.c:949-952 `do_server_sender()` rejects a
+/// `exit_cleanup(RERR_SYNTAX)`; main.c:962-965 `do_server_sender()` rejects a
 /// write-only pull the same way. Both fire after `setup_protocol()` and
 /// `io_start_multiplex_out()`, so the message travels as a `MSG_ERROR_XFER`
 /// frame followed by `MSG_ERROR_EXIT`. Emitting the raw text with

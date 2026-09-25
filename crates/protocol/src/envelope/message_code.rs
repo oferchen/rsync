@@ -182,8 +182,8 @@ impl MessageCode {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:965 send_msg()` - appends to `iobuf.msg` without flushing
-    /// - `io.c:680-716 perform_io()` - drains `iobuf.msg` opportunistically
+    /// - `io.c:983 send_msg()` - appends to `iobuf.msg` without flushing
+    /// - `io.c:698-734 perform_io()` - drains `iobuf.msg` opportunistically
     #[inline]
     #[must_use]
     pub const fn requires_immediate_flush(self) -> bool {

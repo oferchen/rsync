@@ -20,7 +20,7 @@ impl ClientConfigBuilder {
     /// Sets the `--port=PORT` default used when a daemon target names no port.
     ///
     /// upstream: `options.c:852` stores `--port` in `rsync_port`, which
-    /// `main.c:1591-1594` keeps unless the operand carried its own `:port`.
+    /// `main.c:1609-1612` keeps unless the operand carried its own `:port`.
     #[must_use]
     #[doc(alias = "--port")]
     pub const fn daemon_port(mut self, port: Option<u16>) -> Self {
@@ -181,7 +181,7 @@ impl ClientConfigBuilder {
         /// (`--no-old-args`); `None` uses the default (disabled unless
         /// `RSYNC_OLD_ARGS` is set).
         ///
-        /// upstream: options.c:1642 OPT_OLD_ARGS, options.c:2551 safe_arg.
+        /// upstream: options.c:1648 OPT_OLD_ARGS, options.c:2560 safe_arg.
         #[doc(alias = "--old-args")]
         #[doc(alias = "--no-old-args")]
         old_args: Option<u8>,

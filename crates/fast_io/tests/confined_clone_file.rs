@@ -58,7 +58,7 @@ fn confined_clone_file_reaches_the_platform_for_a_plain_destination() {
 }
 
 /// A relative, in-tree symlinked parent is FOLLOWED, not refused - upstream's
-/// walk descends it (`syscall.c:2961`). Pinning this stops a future
+/// walk descends it (`syscall.c:3102`). Pinning this stops a future
 /// "refuse every symlink" simplification from breaking `-K`.
 #[test]
 fn confined_clone_file_follows_a_relative_in_tree_parent_symlink() {
@@ -115,7 +115,7 @@ fn confined_clone_file_refuses_a_parent_symlinked_outside() {
 /// restoring the `&Path` signature and the `File::open(src)` inside `clone_at`
 /// makes it read `OUTSIDE-SECRET` and fail.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:2896-2961` - the confined walk refuses an
+/// upstream: `rsync-3.5.1/syscall.c:3037-3102` - the confined walk refuses an
 /// absolute symlink target, and that refusal is worthless if a later syscall
 /// resolves the same name again with the libc resolver.
 #[test]

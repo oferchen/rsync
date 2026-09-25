@@ -54,7 +54,7 @@ fn batch_sum_head(index: &DeltaSignatureIndex) -> Result<protocol::wire::SumHead
 /// otherwise-matching block is punched into a hole instead of being seeked over
 /// with the rest of the block - that is precisely what `--inplace --sparse`
 /// relies on to keep a hole-y basis file sparse.
-/// upstream: fileio.c:252-266 skip_matched() - `if (sparse_files > 0)
+/// upstream: fileio.c:294-308 skip_matched() - `if (sparse_files > 0)
 /// write_file(fd, 1 /*use_seek*/, offset, buf, len)`, else flush + lseek.
 fn consume_matched_in_place(
     writer: &mut fs::File,
@@ -81,8 +81,8 @@ fn consume_matched_in_place(
 /// zero run and flushes that run from the current position. Seeking there
 /// would start the run late and shift every following byte by its length.
 ///
-/// upstream: receiver.c:563 `write_file()` issues no lseek between tokens;
-/// fileio.c:81 `flush_sparse_hole()` flushes from the current position.
+/// upstream: receiver.c:579 `write_file()` issues no lseek between tokens;
+/// fileio.c:85 `flush_sparse_hole()` flushes from the current position.
 fn seek_inplace_writer(
     writer: &mut fs::File,
     output_position: u64,
@@ -138,7 +138,7 @@ impl<'a> CopyContext<'a> {
         // through the copy path by treating the run as non-inplace.
         //
         // `updating_in_place` is upstream's `one_inplace` (`--partial-dir` leaf
-        // rewritten in place, receiver.c:1138 `updating_basis_or_equiv`): the
+        // rewritten in place, receiver.c:1155 `updating_basis_or_equiv`): the
         // basis IS the writer's file, so it takes the in-place path even without
         // the `--inplace` flag.
         let inplace_mode =
@@ -164,7 +164,7 @@ impl<'a> CopyContext<'a> {
         // (`executor::file::comparison::build_delta_signature`); these are the
         // sender-half milestones for this file.
         // Order matches upstream's local run, which is a real sender talking to
-        // a real receiver over a socketpair: sender.c:760-763, :768-769, then
+        // a real receiver over a socketpair: sender.c:762-765, :768-769, then
         // match.c:436-437, then match.c:180-182, :199-202.
         matching::trace_deltasum::trace_send_files_mapped(&source.display(), total_size);
         matching::trace_deltasum::trace_calling_match_sums(&source.display());
@@ -175,7 +175,7 @@ impl<'a> CopyContext<'a> {
             total_size,
             index.block_count() as u64,
         );
-        // upstream: receiver.c:498-501 - the receiver half maps the same basis.
+        // upstream: receiver.c:514-517 - the receiver half maps the same basis.
         // Upstream prints this only once its receiver process reaches
         // `receive_data()`, i.e. AFTER the sender's counters; oc's fused loop
         // opens the basis here, before the scan, so this is the position at
@@ -225,7 +225,7 @@ impl<'a> CopyContext<'a> {
         let mut buffer_pos = 0usize;
         // How many source bytes this loop may still read. upstream sizes its one
         // mover from the fstat of the OPENED handle - `do_fstat(fd, &st)`
-        // (sender.c:728) feeding `map_file(fd, st.st_size, ...)` (sender.c:757)
+        // (sender.c:730) feeding `map_file(fd, st.st_size, ...)` (sender.c:759)
         // - so a tail appended after that stat is never mapped and never sent.
         //
         // `total_bytes` cannot serve as the counter here: it tallies bytes
@@ -347,7 +347,7 @@ impl<'a> CopyContext<'a> {
                 let matched = MatchedBlock::new(block, index.block_length());
                 let basis_offset = matched.offset();
 
-                // upstream: receiver.c:609-614 - the receiver half reports
+                // upstream: receiver.c:625-630 - the receiver half reports
                 // every matched block it applies: the basis offset it reads
                 // from, the output offset it lands at, and ` (seek)` when the
                 // in-place fast path means the bytes are already correct. The
@@ -361,7 +361,7 @@ impl<'a> CopyContext<'a> {
                     inplace_mode && basis_offset == output_position,
                 );
 
-                // upstream: receiver.c:624-629. The skip-fast-path only fires
+                // upstream: receiver.c:640-645. The skip-fast-path only fires
                 // when basis offset == output position. For any other matched
                 // block (re-ordered content, inserted prefix, ...) copy the
                 // basis bytes to the current write offset just like upstream
@@ -575,7 +575,7 @@ impl<'a> CopyContext<'a> {
             let matched = MatchedBlock::new(block, index.block_length());
             let basis_offset = matched.offset();
 
-            // upstream: receiver.c:609-614 - as in the main loop, the applied
+            // upstream: receiver.c:625-630 - as in the main loop, the applied
             // short final block is reported with its true length.
             matching::trace_deltasum::trace_recv_chunk(
                 block.index(),
@@ -703,10 +703,10 @@ impl<'a> CopyContext<'a> {
         // The loop stops at whatever EOF the source presented, so a source that
         // shrank after it was sized leaves `total_bytes` below the length this
         // transfer was sized from. That is upstream's `map_ptr()` read returning
-        // 0 with the window unfilled (fileio.c:359-365), which `unmap_file()`
+        // 0 with the window unfilled (fileio.c:401-407), which `unmap_file()`
         // hands back as `ENODATA` and the sender reports as one
         // `read errors mapping %s` line plus `io_error |= IOERR_GENERAL`
-        // (sender.c:787-795) - `RERR_PARTIAL` (23) at the end of the run.
+        // (sender.c:789-797) - `RERR_PARTIAL` (23) at the end of the run.
         //
         // Upstream has a single mover for every transfer, so the diagnosis is
         // unconditional there. Here it is the fourth content path to need the
@@ -724,7 +724,7 @@ impl<'a> CopyContext<'a> {
         // per-file counters. The local loop writes the reconstructed file
         // directly, so it never computes or transfers a whole-file checksum:
         // upstream's `sending file_sum` (match.c:465) and `got file_sum`
-        // (receiver.c:672) have no analogue here and are deliberately absent
+        // (receiver.c:688) have no analogue here and are deliberately absent
         // rather than faked.
         matching::trace_deltasum::trace_done_hash_search();
         matching::trace_deltasum::trace_match_counters(
@@ -777,7 +777,7 @@ impl<'a> CopyContext<'a> {
         }
         self.enforce_timeout()?;
 
-        // upstream: receiver.c:552-555 - a local transfer runs a real receiver
+        // upstream: receiver.c:568-571 - a local transfer runs a real receiver
         // over a socketpair, so it reports every literal run it applies. This
         // fused loop writes the same run at the same output offset, so it is the
         // one place the local path can say it honestly.
@@ -834,7 +834,7 @@ impl<'a> CopyContext<'a> {
 
         // The token references a basis block by index, so the sum_head this
         // file reserved must already describe that block. Anything else is the
-        // stream upstream aborts on at receiver.c:414.
+        // stream upstream aborts on at receiver.c:427.
         self.check_batch_block_index(block_index)?;
 
         let mut see_data = Vec::new();

@@ -4,7 +4,7 @@
 //! basis choice reaches the receiver by crossing the wire through the sender:
 //! `write_ndx_and_attrs()` carries `fnamecmp_type` plus, for the basis types, an
 //! `ITEM_XNAME_FOLLOWS` leaf name. `recv_files()` then rebuilds the basis path
-//! from that pair (`receiver.c:1009-1046`).
+//! from that pair (`receiver.c:1025-1062`).
 //!
 //! oc's generator and receiver share a process, so the locally selected
 //! `basis_path` is already available on the pending transfer. This module exists
@@ -35,7 +35,7 @@ pub struct WireBasis<'a> {
     /// declaration order - upstream `basis_dir[]`.
     pub basis_dirs: &'a [ReferenceDirectory],
     /// `--fuzzy` level. Upstream refuses a `FNAMECMP_FUZZY` selector outright
-    /// when `fuzzy_basis == 0` (`receiver.c:1009-1012`).
+    /// when `fuzzy_basis == 0` (`receiver.c:1025-1028`).
     pub fuzzy_level: u8,
 }
 
@@ -59,11 +59,11 @@ impl WireBasis<'_> {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1009-1018` - `FNAMECMP_FUZZY`: refuse when `fuzzy_basis == 0`,
+    /// - `receiver.c:1025-1034` - `FNAMECMP_FUZZY`: refuse when `fuzzy_basis == 0`,
     ///   else `basedir = file->dirname` and `fnamecmp = xname`
-    /// - `receiver.c:1019-1029` - `fnamecmp_type - FNAMECMP_FUZZY <= basis_dir_cnt`:
+    /// - `receiver.c:1035-1045` - `fnamecmp_type - FNAMECMP_FUZZY <= basis_dir_cnt`:
     ///   `pathjoin(basis_dir[i], file->dirname)` and `fnamecmp = xname`
-    /// - `receiver.c:1030-1034` - out-of-range index is `RERR_PROTOCOL`
+    /// - `receiver.c:1046-1050` - out-of-range index is `RERR_PROTOCOL`
     pub fn resolve(
         &self,
         fnamecmp_type: Option<protocol::FnameCmpType>,
@@ -85,12 +85,12 @@ impl WireBasis<'_> {
             .unwrap_or_else(|| Path::new(""));
 
         let basedir = if offset == 0 {
-            // upstream: receiver.c:1009-1012 - a fuzzy selector with --fuzzy off
+            // upstream: receiver.c:1025-1028 - a fuzzy selector with --fuzzy off
             // is a malicious peer, not a stale one.
             if self.fuzzy_level == 0 {
                 return Err(refusing_malicious_fuzzy(leaf));
             }
-            // upstream: receiver.c:1013-1015 - basedir = file->dirname, which
+            // upstream: receiver.c:1029-1031 - basedir = file->dirname, which
             // upstream resolves against the destination root it has chdir'd to.
             // oc carries the entry's already-resolved destination path, so the
             // same directory is that path's parent.
@@ -98,7 +98,7 @@ impl WireBasis<'_> {
         } else {
             let index = usize::from(offset - 1);
             let Some(basis_dir) = self.basis_dirs.get(index) else {
-                // upstream: receiver.c:1030-1034 "invalid basis_dir index".
+                // upstream: receiver.c:1046-1050 "invalid basis_dir index".
                 return Err(invalid_basis_dir_index(offset));
             };
             basis_dir.path.join(dirname)
@@ -126,7 +126,7 @@ fn leaf_as_path(leaf: &[u8]) -> PathBuf {
     PathBuf::from(String::from_utf8_lossy(leaf).into_owned())
 }
 
-/// upstream: `receiver.c:1010-1011` - "refusing malicious fuzzy operation".
+/// upstream: `receiver.c:1026-1027` - "refusing malicious fuzzy operation".
 fn refusing_malicious_fuzzy(leaf: &[u8]) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
@@ -139,7 +139,7 @@ fn refusing_malicious_fuzzy(leaf: &[u8]) -> io::Error {
     )
 }
 
-/// upstream: `receiver.c:1031-1033` - "invalid basis_dir index: %d.".
+/// upstream: `receiver.c:1047-1049` - "invalid basis_dir index: %d.".
 fn invalid_basis_dir_index(offset: u8) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,

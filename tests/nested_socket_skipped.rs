@@ -2,7 +2,7 @@
 //!
 //! Upstream refuses to create a socket under a parent it would have to
 //! re-resolve, on the platforms with no `bindat(2)` - the BSDs, macOS and
-//! Solaris (`syscall.c:1369-1378`, `do_mknod_at()`'s socket arm sets
+//! Solaris (`syscall.c:1508-1517`, `do_mknod_at()`'s socket arm sets
 //! `EOPNOTSUPP` whenever `dfd != AT_FDCWD`). The generator then SKIPS the
 //! entry with a warning instead of turning it into a transfer error
 //! (`generator.c:2506-2521`): a socket inode is only a placeholder, so a live

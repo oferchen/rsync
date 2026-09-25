@@ -34,11 +34,11 @@ pub(crate) enum AppendMode {
 /// Upstream appends first and only then compares whole-file checksums: the
 /// sender sums the source's first `flength` bytes and the receiver sums the
 /// destination's, both followed by the identical appended tail
-/// (match.c:372-391, receiver.c:352-379), so the comparison reduces exactly to
+/// (match.c:372-391, receiver.c:365-392), so the comparison reduces exactly to
 /// "do the two prefixes agree". A disagreement is reported through
 /// `verify_failed` rather than acted on here, because upstream keeps the
-/// appended bytes on disk (receiver.c:1029, reached because `--append` implies
-/// `--inplace` - options.c:2400-2411) and redoes the file in phase 2 against
+/// appended bytes on disk (receiver.c:1045, reached because `--append` implies
+/// `--inplace` - options.c:2409-2420) and redoes the file in phase 2 against
 /// that retained partial.
 /// upstream: receiver.c:recv_files() - append mode size comparison
 pub(crate) fn determine_append_mode(
@@ -360,7 +360,7 @@ mod tests {
 
         // Degrading to a plain whole-file copy here is exactly the bug this
         // encodes against: upstream appends the tail regardless, keeps the
-        // result (--append implies --inplace, options.c:2400-2411), and only
+        // result (--append implies --inplace, options.c:2409-2420), and only
         // then reports the failed whole-file re-checksum so the generator can
         // redo the file against the retained partial (generator.c:2175-2217).
         // Cancelling the append would leave nothing to re-delta and would make

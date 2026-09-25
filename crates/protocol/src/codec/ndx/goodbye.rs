@@ -18,9 +18,9 @@ use super::constants::{NDX_DONE, NDX_DONE_LEGACY_BYTES, NDX_DONE_MODERN_BYTE};
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:875-906` - `read_final_goodbye()` reads the goodbye sentinel
-/// - `main.c:883` - protocol < 29 uses `read_int(f_in)` (4-byte LE)
-/// - `main.c:885-886` - protocol >= 29 uses `read_ndx_and_attrs()` (still 4-byte LE for 29)
+/// - `main.c:888-919` - `read_final_goodbye()` reads the goodbye sentinel
+/// - `main.c:896` - protocol < 29 uses `read_int(f_in)` (4-byte LE)
+/// - `main.c:898-899` - protocol >= 29 uses `read_ndx_and_attrs()` (still 4-byte LE for 29)
 pub fn write_goodbye<W: Write>(writer: &mut W, protocol_version: u8) -> io::Result<()> {
     if protocol_version < 30 {
         writer.write_all(&NDX_DONE_LEGACY_BYTES)
@@ -43,8 +43,8 @@ pub fn write_goodbye<W: Write>(writer: &mut W, protocol_version: u8) -> io::Resu
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:883` - protocol < 29: `i = read_int(f_in)` then checks `i != NDX_DONE`
-/// - `main.c:885-886` - protocol >= 29: `read_ndx_and_attrs()` which calls `read_ndx()`
+/// - `main.c:896` - protocol < 29: `i = read_int(f_in)` then checks `i != NDX_DONE`
+/// - `main.c:898-899` - protocol >= 29: `read_ndx_and_attrs()` which calls `read_ndx()`
 pub fn read_goodbye<R: Read>(reader: &mut R, protocol_version: u8) -> io::Result<()> {
     if protocol_version < 30 {
         let mut buf = [0u8; 4];

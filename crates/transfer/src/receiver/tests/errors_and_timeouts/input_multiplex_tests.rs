@@ -1,7 +1,7 @@
 //! Receiver input multiplex activation by mode and protocol version.
 //!
-//! upstream: main.c:1342-1343 - client receiver activates at protocol >= 23
-//! upstream: main.c:1167-1168 - server receiver activates at protocol >= 30
+//! upstream: main.c:1360-1361 - client receiver activates at protocol >= 23
+//! upstream: main.c:1185-1186 - server receiver activates at protocol >= 30
 
 use std::ffi::OsString;
 
@@ -36,7 +36,7 @@ fn receiver_with_client_mode(protocol_version: u8, client_mode: bool) -> Receive
 
 #[test]
 fn client_mode_protocol_28_activates_input_multiplex() {
-    // upstream: main.c:1342-1343 - protocol >= 23 activates
+    // upstream: main.c:1360-1361 - protocol >= 23 activates
     let ctx = receiver_with_client_mode(28, true);
     assert!(ctx.should_activate_input_multiplex());
 }
@@ -61,7 +61,7 @@ fn client_mode_protocol_32_activates_input_multiplex() {
 
 #[test]
 fn server_mode_protocol_28_does_not_activate_input_multiplex() {
-    // upstream: main.c:1167-1168 - server only activates for >= 30
+    // upstream: main.c:1185-1186 - server only activates for >= 30
     let ctx = receiver_with_client_mode(28, false);
     assert!(!ctx.should_activate_input_multiplex());
 }

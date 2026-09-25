@@ -106,7 +106,7 @@ fn render_itemize_root_directory_emits_creation_glyph_when_freshly_created() {
     // create_directory_incremental cannot observe the pre-flight mkdir
     // performed by `ensure_dest_root_exists`. When that pre-flight actually
     // created the root (`dest_root_created == true`), mirror upstream
-    // main.c:803-805 FLAG_DIR_CREATED by forcing the created-directory glyph.
+    // main.c:816-818 FLAG_DIR_CREATED by forcing the created-directory glyph.
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
@@ -123,7 +123,7 @@ fn render_itemize_root_directory_emits_creation_glyph_when_freshly_created() {
 
 #[test]
 fn render_itemize_root_directory_no_glyph_when_dest_root_preexisted() {
-    // upstream main.c:803-805 only sets FLAG_DIR_CREATED when the receiver
+    // upstream main.c:816-818 only sets FLAG_DIR_CREATED when the receiver
     // had to mkdir the destination root. When the root already existed
     // (e.g. `up1/ -> up2/` where up2 is present), the flag stays clear and
     // the root reports a metadata-only row that the significance gate drops
@@ -159,7 +159,7 @@ fn render_itemize_up_to_date_file() {
 fn emit_itemize_server_mode_does_not_forward_msg_info() {
     // upstream: log.c:822 gates the FCLIENT itemize write on `!am_server`, and
     // generator.c:583-599 writes the iflags over the wire so the client's
-    // SENDER prints the push row (sender.c:461). A server-mode receiver (the
+    // SENDER prints the push row (sender.c:462). A server-mode receiver (the
     // remote end of a push) must therefore forward NO pre-rendered MSG_INFO
     // row, or every pushed file would itemize twice against the sender's own
     // row.
@@ -599,7 +599,7 @@ fn repointed_symlink_ctx(file_list: Vec<FileEntry>) -> ReceiverContext {
 /// upstream: generator.c:1604-1610 - after `atomic_create`, `itemize()` runs
 /// with `ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE` and `statret == 0` (the old
 /// destination entry IS a symlink), so ITEM_IS_NEW never fires and the row
-/// carries attribute dots, not `+++++++++`. receiver.c:733-741 counts creates
+/// carries attribute dots, not `+++++++++`. receiver.c:749-757 counts creates
 /// only from ITEM_IS_NEW.
 #[test]
 #[cfg(unix)]
@@ -613,7 +613,7 @@ fn replaced_symlink_itemizes_as_change_not_create() {
 
     let mut entry = FileEntry::new_symlink("mylink".into(), 0o777, "new-target".into());
     // Same whole second as the on-disk link: `t` must stay dark (same_time()
-    // compares whole seconds at modify_window 0, util1.c:1478).
+    // compares whole seconds at modify_window 0, util1.c:1573).
     entry.set_mtime(old_meta.mtime(), 0);
     let ctx = repointed_symlink_ctx(vec![entry]);
 
@@ -637,7 +637,7 @@ fn replaced_symlink_itemizes_as_change_not_create() {
     assert_eq!(
         ctx.created_stats.get().symlinks,
         0,
-        "a replaced symlink is not a creation (receiver.c:733-741)"
+        "a replaced symlink is not a creation (receiver.c:749-757)"
     );
 }
 
@@ -645,7 +645,7 @@ fn replaced_symlink_itemizes_as_change_not_create() {
 /// the all-new row (`cL+++++++++`) and bumps the created tally.
 ///
 /// upstream: generator.c:1608 with `statret < 0` -> itemize() adds ITEM_IS_NEW
-/// (generator.c:578); receiver.c:733-741 counts it.
+/// (generator.c:578); receiver.c:749-757 counts it.
 #[test]
 #[cfg(unix)]
 fn absent_symlink_still_itemizes_as_all_new() {
@@ -672,7 +672,7 @@ fn absent_symlink_still_itemizes_as_all_new() {
 /// A non-symlink obstacle replaced by a symlink renders all-new AND counts as
 /// a creation: upstream forces `statret = -1` when `stype != FT_SYMLINK`
 /// (generator.c:1606-1607), so the wire carries ITEM_IS_NEW and
-/// receiver.c:733-741 bumps created_symlinks.
+/// receiver.c:749-757 bumps created_symlinks.
 #[test]
 #[cfg(unix)]
 fn non_symlink_obstacle_replacement_itemizes_as_all_new() {

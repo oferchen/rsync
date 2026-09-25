@@ -1,6 +1,6 @@
 //! Receiver-side decoding of the `--crtimes` (`-N`) file-list field.
 //!
-//! upstream: `flist.c:743-746` - `recv_file_entry()` reads a crtime varlong
+//! upstream: `flist.c:968-971` - `recv_file_entry()` reads a crtime varlong
 //! whenever `crtimes_ndx` is set and `XMIT_CRTIME_EQ_MTIME` is clear. The field
 //! sits between the mtime block and the mode, so a receiver that does not
 //! consume it parses the crtime bytes as the mode and every following field

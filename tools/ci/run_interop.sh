@@ -1543,7 +1543,7 @@ comp_run_scenario() {
       #
       #   munge symlinks = false + a module path
       #     -> sanitize_paths is on (clientserver.c:1068) and munging is off, so
-      #        flist.c:1329 rewrites the target to the relative, in-tree
+      #        flist.c:1554 rewrites the target to the relative, in-tree
       #        "etc/hostname". --safe-links (generator.c:1951) then correctly
       #        does not skip it. Measured: rsync 3.4.4 and 3.5.0 as daemon
       #        receivers both CREATE the link under this exact config.
@@ -2261,7 +2261,7 @@ CONF
   # oc-rsync replaying its own batch is not an oracle for wire compatibility:
   # its --read-batch stops once it has the file data, so a trailer with a
   # duplicated stats block or a stray NDX_DONE replays clean. Upstream's
-  # read_final_goodbye() (main.c:893-924) reads one more index after the
+  # read_final_goodbye() (main.c:906-937) reads one more index after the
   # goodbye and aborts with RERR_PROTOCOL unless that read hits EOF.
   local rc_daemon=0
   timeout "$hard_timeout" "$upstream_binary" -av \
@@ -2651,7 +2651,7 @@ test_compressed_batch_delta_interop() {
 #   batch.c:59-76     - stream flags bitmap (bit 8 = do_compression)
 #   compat.c:181-220  - parse_compress_choice(): batch read -> CPRES_ZLIB
 #   compat.c:194-195  - fallback: "else if (do_compression) do_compression = CPRES_ZLIB"
-#   io.c:1903,2208    - write_batch_monitor tees raw wire bytes to batch_fd
+#   io.c:1941,2246    - write_batch_monitor tees raw wire bytes to batch_fd
 #
 # oc-rsync avoids this issue entirely by recording uncompressed data in
 # batch files (do_compression=false in stream flags), so oc-rsync batch
@@ -3527,8 +3527,8 @@ test_iconv() {
 #   upstream: rsync.c:130          (ic_send = iconv_open(UTF8, charset))
 #   upstream: rsync.c:136          (ic_recv = iconv_open(charset, UTF8))
 #   upstream: options.c            (recv_iconv_settings: parse LOCAL,REMOTE)
-#   upstream: flist.c:1579-1603    (sender iconvbufs(ic_send, ...))
-#   upstream: flist.c:738-754      (receiver iconvbufs(ic_recv, ...))
+#   upstream: flist.c:1804-1828    (sender iconvbufs(ic_send, ...))
+#   upstream: flist.c:963-979      (receiver iconvbufs(ic_recv, ...))
 #   oc-rsync: docs/audits/iconv-pipeline.md (Findings 1-5)
 
 # Single-file fixture so the test isolates the iconv FILENAME conversion from
@@ -3698,14 +3698,14 @@ CONF
 #   - Each peer's `charset` names the *local disk* encoding. Both peers run
 #     `ic_send = iconv_open(UTF8_CHARSET, charset)` and
 #     `ic_recv = iconv_open(charset, UTF8_CHARSET)`.
-#   - Per options.c:2716-2723 the client's server_options() forwards the
+#   - Per options.c:2726-2733 the client's server_options() forwards the
 #     post-comma half (REMOTE) to the spawned peer so the spawned peer's
 #     charset matches what the user requested.
 #
 # With --iconv=UTF-8,ISO-8859-1 over SSH/local mode:
 #   - Driver (sender) charset = UTF-8 -> ic_send is identity, wire = UTF-8.
 #   - Spawned peer (receiver) gets --iconv=ISO-8859-1 forwarded by
-#     options.c:2716-2723, so receiver charset = ISO-8859-1.
+#     options.c:2726-2733, so receiver charset = ISO-8859-1.
 #   - Receiver ic_recv (UTF-8 -> ISO-8859-1) writes single-byte Latin-1
 #     filenames to disk (caf\xe9.txt, not the UTF-8 caf\xc3\xa9.txt).
 #
@@ -3736,9 +3736,9 @@ CONF
 #   upstream: rsync.c:85-147   (setup_iconv: am_server splits LOCAL,REMOTE)
 #   upstream: rsync.c:130      (ic_send = iconv_open(UTF8, charset))
 #   upstream: rsync.c:136      (ic_recv = iconv_open(charset, UTF8))
-#   upstream: options.c:2716-2723 (server_options forwards REMOTE half)
-#   upstream: flist.c:1579-1603   (sender ic_send on filename emit)
-#   upstream: flist.c:738-754     (receiver ic_recv on filename ingest)
+#   upstream: options.c:2726-2733 (server_options forwards REMOTE half)
+#   upstream: flist.c:1804-1828   (sender ic_send on filename emit)
+#   upstream: flist.c:963-979     (receiver ic_recv on filename ingest)
 #   oc-rsync: PR #3458 (IconvSetting -> FilenameConverter bridge)
 #   oc-rsync: docs/audits/iconv-pipeline.md (Findings 1-7)
 test_iconv_local_ssh_interop() {
@@ -3799,7 +3799,7 @@ WRAPPER
   # --- Direction (a): oc-rsync sender -> upstream receiver (SSH/local mode) ---
   # oc-rsync drives the transfer (charset=UTF-8, ic_send identity, wire=UTF-8)
   # and spawns upstream as the receiver with --iconv=ISO-8859-1 forwarded
-  # per options.c:2716-2723. Upstream's ic_recv writes Latin-1 byte names
+  # per options.c:2726-2733. Upstream's ic_recv writes Latin-1 byte names
   # to disk. This is the path PR #3458 bridged: failure here is a regression
   # on the IconvSetting -> FilenameConverter wiring.
   local rc1=0
@@ -4036,7 +4036,7 @@ WRAPPER
 #
 # References:
 #   upstream: options.c:823        -e/--rsh is POPT_ARG_STRING (value-bearing)
-#   upstream: options.c:2728,3025  maybe_add_e_option() appends e.<caps>
+#   upstream: options.c:2738,3035  maybe_add_e_option() appends e.<caps>
 #   oc-rsync: crates/cli/src/frontend/server/flags.rs
 #             (compact_flag_string_expects_split_value, arg-arity model)
 test_ssh_server_mode_hostpath_interop() {
@@ -8992,7 +8992,7 @@ CONF
 # Upstream rsync pushes files to an oc-rsync daemon whose module has
 # "log format = %i" configured, then verifies exit 0 and that itemize
 # output lines appear in the client stdout.
-# upstream: options.c:2750-2762 - --log-format=%i sent when am_sender
+# upstream: options.c:2760-2772 - --log-format=%i sent when am_sender
 test_log_format_daemon() {
   local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
         oc_port=$6 upstream_port=$7

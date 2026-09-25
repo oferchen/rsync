@@ -7,7 +7,7 @@
 //! - `DELTASUM >= 2`, once per file, at the end of `match_sums()`:
 //!   `false_alarms=%d hash_hits=%d matches=%d` (match.c:428-431).
 //! - `DELTASUM >= 1`, once per RUN, from `match_report()` (match.c:439-448),
-//!   called from a single place - `sender.c:491`, after `send_files()` has
+//!   called from a single place - `sender.c:492`, after `send_files()` has
 //!   finished every file:
 //!   `total: matches=%d  hash_hits=%d  false_alarms=%d data=%s`.
 //!
@@ -112,7 +112,7 @@ fn scan() {
 /// At `-vv` (DELTASUM level 1) the scanner must stay silent.
 ///
 /// upstream: the only level-1 delta output is `match_report()`'s `total:` line,
-/// which is a once-per-run summary printed from `sender.c:491` - not from the
+/// which is a once-per-run summary printed from `sender.c:492` - not from the
 /// per-file scan. A per-file emission here is both an invented line and a
 /// second `total:` emitter competing with the one in the client renderer.
 #[test]

@@ -31,7 +31,7 @@ pub(crate) fn handle_batch_read(
         return None;
     }
 
-    // upstream: main.c:1482-1491 - reject remote destinations with --read-batch
+    // upstream: main.c:1500-1509 - reject remote destinations with --read-batch
     let has_remote_dest = config.transfer_args().iter().any(|arg| {
         let s = arg.to_string_lossy();
         s.starts_with("rsync://") || s.contains("::") || remote::operand_is_remote(arg)
@@ -155,9 +155,9 @@ pub(crate) fn write_batch_header(
 /// where upstream produces it too:
 ///
 /// - PUSH: `handle_stats(-1)` writes the stats to `batch_fd` before
-///   `read_final_goodbye()` tees the goodbye `NDX_DONE` (`main.c:1345-1347`).
+///   `read_final_goodbye()` tees the goodbye `NDX_DONE` (`main.c:1363-1365`).
 /// - PULL: both the stats (`main.c:364-373`) and the goodbye `NDX_DONE`
-///   (`main.c:904`) arrive over the wire, so the read tee records them.
+///   (`main.c:917`) arrive over the wire, so the read tee records them.
 ///
 /// Appending a second copy here would leave the batch with a trailer upstream
 /// `--read-batch` cannot parse: its `read_final_goodbye()` reads one `NDX_DONE`
@@ -203,7 +203,7 @@ pub(crate) fn finalize_batch(
                 ));
             }
 
-            // upstream: main.c:907 - write_ndx(f_out, NDX_DONE) inside
+            // upstream: main.c:920 - write_ndx(f_out, NDX_DONE) inside
             // read_final_goodbye() is the last thing a sender records, after
             // the stats. For protocol >= 30, NDX_DONE = 0x00 (single byte);
             // for protocol < 30 it is 0xFFFFFFFF (4 bytes).
@@ -367,8 +367,8 @@ fn serialize_filter_rules(rules: &[FilterRuleSpec]) -> Result<String, ClientErro
 /// recorded stream.
 ///
 /// Mirrors upstream `--read-batch`: the batch file becomes the receiving
-/// client's `f_in` (`main.c:639-651`) and the ordinary receiver decodes the
-/// recorded file list and delta stream (`main.c:1387 do_recv()`), with the
+/// client's `f_in` (`main.c:652-664`) and the ordinary receiver decodes the
+/// recorded file list and delta stream (`main.c:1405 do_recv()`), with the
 /// generator's consumer-less `f_out` swallowed by a discard sink. The
 /// receiver's negotiated state (protocol, compat flags, checksum seed) is
 /// pinned from the batch header instead of a live handshake
@@ -377,7 +377,7 @@ fn replay_batch(
     batch_cfg: &BatchConfig,
     config: &ClientConfig,
 ) -> Result<ClientSummary, ClientError> {
-    // upstream: main.c:1520-1523 - with --read-batch no source is specified;
+    // upstream: main.c:1538-1541 - with --read-batch no source is specified;
     // the destination is the last (and only counted) operand.
     let dest_root = config
         .transfer_args()
@@ -392,7 +392,7 @@ fn replay_batch(
     let replay_cfg = batch_cfg.clone().with_active_flags(active_flags);
 
     let mut reader = engine::batch::BatchReader::new(replay_cfg).map_err(map_batch_error)?;
-    // upstream: main.c:1914-1915 read_stream_flags(batch_fd), then
+    // upstream: main.c:1941-1942 read_stream_flags(batch_fd), then
     // compat.c:604-613 setup_protocol() reads protocol/compat/seed back from
     // the batch fd; the reader's single header parse covers both, and rejects
     // a too-new batch protocol with RERR_PROTOCOL (compat.c:609-613).
@@ -510,7 +510,7 @@ fn map_batch_error(e: engine::batch::BatchError) -> ClientError {
 /// the receiver, exactly the position a batch replay is in - then overrides
 /// what a recorded batch dictates:
 ///
-/// - no daemon connection is involved (upstream: main.c:1520 read_batch
+/// - no daemon connection is involved (upstream: main.c:1538 read_batch
 ///   forces `local_server = 1`), and
 /// - every data-stream-affecting option is forced to the batch's recorded
 ///   stream flag, mirroring upstream `batch.c:126-135` where
@@ -522,7 +522,7 @@ fn build_replay_server_config(
     stream_flags: &engine::batch::BatchFlags,
     compat_flags: Option<protocol::CompatibilityFlags>,
 ) -> Result<crate::server::ServerConfig, ClientError> {
-    // upstream: main.c:1408 send_filter_list(read_batch ? -1 : f_out) - the
+    // upstream: main.c:1426 send_filter_list(read_batch ? -1 : f_out) - the
     // replay parses the local filter rules without a peer to send them to.
     let filter_rules =
         remote::flags::build_wire_format_rules(config.filter_rules(), config.delete_excluded())?;
@@ -533,7 +533,7 @@ fn build_replay_server_config(
     )?;
     server_config.connection.is_daemon_connection = false;
 
-    // upstream: main.c:639-641 - read_batch calls set_allow_inc_recurse() on the
+    // upstream: main.c:652-654 - read_batch calls set_allow_inc_recurse() on the
     // invocation's own options, before compat.c:641 check_batch_flags() forces
     // them to the batch's, so evaluate before the stream-flag overrides below.
     if let Some(flags) = compat_flags {
@@ -575,7 +575,7 @@ fn build_replay_server_config(
     server_config.flags.compress = stream_flags.do_compression;
     server_config.connection.compress_choice = None;
     if server_config.flags.compress && server_config.connection.compression_level.is_none() {
-        // upstream: options.c:2755-2758 - compress_level defaults to 6.
+        // upstream: options.c:2765-2768 - compress_level defaults to 6.
         server_config.connection.compression_level =
             Some(compress::zlib::CompressionLevel::Default);
     }
@@ -682,7 +682,7 @@ mod tests {
         BatchConfig::new(BatchMode::Read, path, 32)
     }
 
-    /// upstream main.c:639-641 + compat.c:780-785: --read-batch evaluates
+    /// upstream main.c:652-654 + compat.c:780-785: --read-batch evaluates
     /// set_allow_inc_recurse() on the invocation's own options, so replaying an
     /// inc-recursive batch with options that need the whole list (or without
     /// -r, which the batch's recurse bit does not rescue) aborts RERR_SYNTAX
@@ -887,7 +887,7 @@ mod tests {
     /// every flist entry.
     ///
     /// WHY: upstream counts `stats.xferred_files` per recorded transfer row
-    /// (receiver.c:961) - directories and the root entry are itemize rows,
+    /// (receiver.c:977) - directories and the root entry are itemize rows,
     /// not transfers. The native replay fork counted every flist entry as a
     /// transferred regular file; driving dispatch through the receiver
     /// pipeline is what fixes the breakdown, so this pins the dispatch route
@@ -979,7 +979,7 @@ mod tests {
             b"inner payload"
         );
         // Flist carries ".", "sub", "top.txt", "sub/inner.txt" - only the two
-        // regular files are recorded transfers (receiver.c:961).
+        // regular files are recorded transfers (receiver.c:977).
         assert_eq!(
             summary.files_copied(),
             2,
@@ -1054,7 +1054,7 @@ mod tests {
     /// extraneous destination file is removed and the summary counts it.
     ///
     /// WHY: upstream generator.c:2753-2754 `do_delete_pass()` runs regardless of
-    /// read_batch (the replaying generator forks and runs locally, main.c:639-651).
+    /// read_batch (the replaying generator forks and runs locally, main.c:652-664).
     /// The reunified replay drive skipped every delete site, so `--delete` was a
     /// silent no-op. The paired control (no `--delete`) proves the stale file
     /// survives without the flag, so the deletion is attributable to `--delete`
@@ -1201,7 +1201,7 @@ mod tests {
     /// the template. The reunified replay drive force-cleared `out_format_active`
     /// and never itemized, so the rows were lost.
     ///
-    /// WHY: upstream receiver.c:1273 `log_item(log_code, file, iflags, NULL)`
+    /// WHY: upstream receiver.c:1290 `log_item(log_code, file, iflags, NULL)`
     /// runs per transferred row regardless of read_batch (generator.c:589's
     /// `!read_batch` guards only the wire itemize header, not the local log).
     /// The paired control (no out-format) proves no events surface without it,

@@ -683,7 +683,7 @@ mod flist_deserialization_tests {
     }
 
     /// Under `--numeric-ids` the sender emits no post-flist id-lists
-    /// (upstream `flist.c:2820` requires `numeric_ids <= 0`), so the reader
+    /// (upstream `flist.c:3063` requires `numeric_ids <= 0`), so the reader
     /// must not try to consume them even though `preserve_uid`/`preserve_gid`
     /// are set. Reading them would decode the following delta bytes as a
     /// varint id-list and desync the stream. WHY: this guards the exact
@@ -828,7 +828,7 @@ mod flist_deserialization_tests {
     /// in the flist carries a trailing checksum. If the reader doesn't consume
     /// these bytes, subsequent entries will be deserialized incorrectly.
     ///
-    /// upstream: flist.c:682 writes checksum bytes, flist.c:1230 reads them
+    /// upstream: flist.c:907 writes checksum bytes, flist.c:1455 reads them
     #[test]
     fn protocol_flist_roundtrip_with_always_checksum() {
         let temp_dir = TempDir::new().unwrap();

@@ -40,7 +40,7 @@ pub(in crate::receiver) type DryRunItem<'a> = (usize, &'a FileEntry, u32);
 /// Counts the directories a `--dry-run` plan would create, for the summary's
 /// `directories_created` field.
 ///
-/// upstream: `receiver.c:736-738` - `stats.created_dirs++` under
+/// upstream: `receiver.c:752-754` - `stats.created_dirs++` under
 /// `iflags & ITEM_IS_NEW`, which runs whether or not the mkdir happened.
 /// The itemize seed for a regular file the generator is about to request.
 ///
@@ -68,7 +68,7 @@ const fn transfer_seed(always_checksum: bool) -> u32 {
 /// (`generator.c:396-401`).
 ///
 /// The nanosecond component only participates when `--modify-window` is
-/// negative (`util1.c:1482`), but it has to be carried so that mode works.
+/// negative (`util1.c:1577`), but it has to be carried so that mode works.
 /// A destination whose mtime predates the epoch or cannot be read compares as
 /// `(0, 0)`, which differs from any real sender mtime and therefore reports the
 /// time as changed - the safe direction.
@@ -599,7 +599,7 @@ impl ReceiverContext {
             let base_iflags =
                 self.itemize_existing_flags(entry, &file_path, dest_meta.as_ref(), transfer_seed);
             if base_iflags & crate::generator::ItemFlags::ITEM_IS_NEW != 0 {
-                // upstream: receiver.c:777-778 - a regular file being received
+                // upstream: receiver.c:793-794 - a regular file being received
                 // whose destination was absent (ITEM_IS_NEW) bumps
                 // stats.created_files; reg is the implicit remainder of the
                 // "Number of created files" breakdown. Counts a new empty file
@@ -633,7 +633,7 @@ impl ReceiverContext {
     /// the identical `recv_generator()` per-entry loop under `--dry-run`; only
     /// the data transfer and the filesystem mutation are suppressed
     /// (`set_file_attrs()` returns early when `dry_run`, rsync.c:498-499;
-    /// `do_mkdir`/`do_unlink` are `if (dry_run) return 0;`, syscall.c:1010-1016).
+    /// `do_mkdir`/`do_unlink` are `if (dry_run) return 0;`, syscall.c:1149-1155).
     /// The `itemize()` call and the receiver's `created_files` tally always run,
     /// so `-ni` prints a row for every changing entry (`>f+++++++++`,
     /// `cd+++++++++`, `cL+++++++++`, ...) and `--stats` reports the counts a real
@@ -649,7 +649,7 @@ impl ReceiverContext {
     /// (no `-i`) and for a server-mode receiver (a push dry run, whose rows
     /// travel as wire iflags and are printed by the client's sender); the
     /// created-file tally is deliberately outside that gate because upstream
-    /// counts it in the receiver regardless of `-i` (receiver.c:733-746).
+    /// counts it in the receiver regardless of `-i` (receiver.c:749-762).
     ///
     /// `candidates` is the regular-file candidate list from
     /// [`Self::build_files_to_transfer`]; a regular file it dropped (daemon
@@ -666,7 +666,7 @@ impl ReceiverContext {
     /// - `generator.c:1594` / `generator.c:1462` - symlink / special `itemize()`.
     /// - `generator.c:581-600` - `itemize()` writes NDX + iflags for every entry
     ///   whose flags are significant, transfer or not.
-    /// - `receiver.c:732-746` / `sender.c:293-309` - `ITEM_IS_NEW` bumps
+    /// - `receiver.c:748-762` / `sender.c:296-310` - `ITEM_IS_NEW` bumps
     ///   `stats.created_files` plus the per-type counter.
     pub(in crate::receiver) fn plan_dry_run(
         &self,
@@ -871,7 +871,7 @@ impl ReceiverContext {
             // upstream: generator.c:396-401 - `mtime_differs()` is
             // `!same_time(...)`, which applies the `--modify-window` tolerance
             // and, for a negative window, compares nanoseconds too
-            // (util1.c:1478-1489). A raw `!=` on whole seconds ignored both.
+            // (util1.c:1573-1584). A raw `!=` on whole seconds ignored both.
             let (dest_secs, dest_nsec) = dest_mtime(dest_meta);
             !self.config.file_selection.modify_window.same_time(
                 dest_secs,
@@ -924,7 +924,7 @@ impl ReceiverContext {
                 .ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map_or(0, |d| d.as_secs() as i64);
-            // upstream: util1.c:1478 - `same_time()` honours `--modify-window`,
+            // upstream: util1.c:1573 - `same_time()` honours `--modify-window`,
             // and both crtime arguments carry a zero nsec component.
             if !self.config.file_selection.modify_window.same_time(
                 dest_crtime,
@@ -960,7 +960,7 @@ impl ReceiverContext {
             // a link (`metadata::CAN_CHMOD_SYMLINK` = macOS/BSD), so a reported
             // `p` is always backed by an applied chmod. Upstream defines
             // `CAN_CHMOD_SYMLINK` whenever HAVE_LCHMOD or HAVE_SETATTRLIST
-            // (rsync.h:438-440, probed at configure.ac:911,918); where it is
+            // (rsync.h:439-441, probed at configure.ac:911,918); where it is
             // undefined the `#ifndef` at generator.c:542-544 skips the compare.
             // On Linux the const is false and a link's `st_mode` is a fixed
             // 0777, so nothing is reported or applied. The matching apply lives
@@ -1354,7 +1354,7 @@ impl ReceiverContext {
         // unless the itemize level requests unchanged rows (generator.c:574-576).
         // A daemon receiver with `transfer logging = yes` itemizes every
         // up-to-date file for its FLOG write even without a client `-i`
-        // (upstream receiver.c:807). The client-visible emit and the wire-forward
+        // (upstream receiver.c:823). The client-visible emit and the wire-forward
         // stay on the original gate; only the daemon-log hook fires on the
         // widened arm.
         if emit_itemize || self.daemon_log_active {
@@ -1514,7 +1514,7 @@ mod itemize_order_tests {
     /// upstream: generator.c:582-593 - on a push the server-side generator
     /// writes `NDX + write_shortint(iflags)` for a quick-check-matched file
     /// whose attributes still differ; the pushing client's sender renders the
-    /// `.f...p.....` row from those wire iflags (sender.c:292-293
+    /// `.f...p.....` row from those wire iflags (sender.c:295-296
     /// `maybe_log_item`). A server receiver that drops the record makes every
     /// metadata-only change invisible under `-i` on a push - against another
     /// oc peer and against upstream 3.4.4 alike - while a pull stays correct,
@@ -2094,7 +2094,7 @@ mod itemize_order_tests {
         );
     }
 
-    /// upstream: generator.c:396-401 + util1.c:1478-1489. `mtime_differs()` is
+    /// upstream: generator.c:396-401 + util1.c:1573-1584. `mtime_differs()` is
     /// `!same_time(...)`, so the mtime comparison honours `--modify-window`
     /// (and, for a negative window, nanoseconds). oc used a raw `!=` on whole
     /// seconds and so reported `t` for a difference the user asked it to
@@ -2136,7 +2136,7 @@ mod itemize_order_tests {
             "a 200s window tolerates a 120s difference: {inside:#06x}"
         );
 
-        // upstream: util1.c:1482 - a negative window compares nanoseconds too,
+        // upstream: util1.c:1577 - a negative window compares nanoseconds too,
         // which a whole-second `!=` could never express.
         entry.set_mtime(1_600_000_000, 900);
         config.file_selection.modify_window = metadata::ModifyWindow::from_secs(-1);
@@ -2395,9 +2395,9 @@ mod itemize_order_tests {
     /// real run would - all without touching the destination.
     ///
     /// Upstream gates only the mutations: `do_mkdir` is `if (dry_run) return 0;`
-    /// (syscall.c:1010-1016) and `set_file_attrs()` returns early (rsync.c:498),
+    /// (syscall.c:1149-1155) and `set_file_attrs()` returns early (rsync.c:498),
     /// while `itemize()` (generator.c:1480-1483) and `stats.created_files++`
-    /// (receiver.c:732-746) run unconditionally. oc's receive paths early-return
+    /// (receiver.c:748-762) run unconditionally. oc's receive paths early-return
     /// out of the directory-creation, symlink, and candidate passes under
     /// `skip_dest_writes()`, so this shared pass is the only producer of all
     /// three - and it is shared precisely so the two drivers cannot answer
@@ -2470,7 +2470,7 @@ mod itemize_order_tests {
              the itemize flags a real run would have sent"
         );
 
-        // upstream: receiver.c:732-746 - created_files counts every ITEM_IS_NEW
+        // upstream: receiver.c:748-762 - created_files counts every ITEM_IS_NEW
         // entry; reg is the derived remainder (3 - 1 dir - 1 link = 1).
         let created = ctx.created_stats.get();
         assert_eq!(created.files, 3, "created_files");
@@ -2493,7 +2493,7 @@ mod itemize_order_tests {
     /// and still plan the wire request.
     ///
     /// Upstream's `stats.created_files++` sits outside the itemize gate
-    /// (receiver.c:733 runs for every `ITEM_IS_NEW`, whether or not
+    /// (receiver.c:749 runs for every `ITEM_IS_NEW`, whether or not
     /// `stdout_format_has_i`), so `-n --stats` without `-i` reports the same
     /// "Number of created files" as `-ni --stats`. Folding the tally into the
     /// `-i` gate is the easy mistake this pins.
@@ -2561,7 +2561,7 @@ mod itemize_order_tests {
     /// #241/#248 dry-run leg: a destination symlink pointing elsewhere must
     /// classify as a CHANGE (`ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE`, statret
     /// kept at 0 - generator.c:1604-1610), never ITEM_IS_NEW, and must not
-    /// bump the created tally (receiver.c:733-741 counts only ITEM_IS_NEW).
+    /// bump the created tally (receiver.c:749-757 counts only ITEM_IS_NEW).
     #[test]
     #[cfg(unix)]
     fn dry_run_plan_classifies_repointed_symlink_as_change() {
@@ -3112,12 +3112,12 @@ mod uptodate_notice_tests {
 
 /// A real hardlink follower decoded by a receiver running without -H.
 ///
-/// upstream: flist.c:875-876 reads the follower group-index varint under
+/// upstream: flist.c:1100-1101 reads the follower group-index varint under
 /// `protocol_version >= 30 && BITS_SETnUNSET(xflags, XMIT_HLINKED,
 /// XMIT_HLINK_FIRST)` with no `preserve_hard_links` check, so the no--H
 /// receiver consumes the same bytes a -H sender wrote or the flist stream
 /// desyncs. `recv_file_entry()` then records `FLAG_HLINKED` only under
-/// `preserve_hard_links` (flist.c:1175-1184) and generator.c:1943 re-checks
+/// `preserve_hard_links` (flist.c:1400-1409) and generator.c:1943 re-checks
 /// the option, so without -H the follower has no hardlink effect and must
 /// transfer normally. Pre-fix the decoded bit survived without -H,
 /// `is_hardlink_follower` (quick_check.rs) matched, and the receiver silently
@@ -3145,7 +3145,7 @@ mod hlink_wire_flag_tests {
     ///
     /// A -H sender emits a leader (`XMIT_HLINK_FIRST`, full metadata) followed
     /// by an abbreviated follower (`XMIT_HLINKED` + a group-index varint, no
-    /// metadata). upstream: flist.c:875-876 reads that varint on the flag bits
+    /// metadata). upstream: flist.c:1100-1101 reads that varint on the flag bits
     /// alone, so the no--H receiver consumes the same bytes or the stream
     /// desyncs; recv_file_entry() then clears the surviving `FLAG_HLINKED`
     /// interpretation when -H is off (read/mod.rs) so the follower stays a
@@ -3172,7 +3172,7 @@ mod hlink_wire_flag_tests {
 
         // Decode with the receiver's no--H reader, threading the growing
         // segment so the abbreviated follower resolves its leader
-        // (flist.c:888-925 `goto create_object`).
+        // (flist.c:1113-1150 `goto create_object`).
         let mut reader = FileListReader::new(protocol);
         let mut cursor = std::io::Cursor::new(&data[..]);
         let mut decoded: Vec<FileEntry> = Vec::new();

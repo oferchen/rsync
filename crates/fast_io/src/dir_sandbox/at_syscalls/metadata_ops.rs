@@ -284,7 +284,7 @@ pub fn secure_chmod_at(path: &Path, mode: u32, follow_symlinks: bool) -> io::Res
 /// `fchmodat` with the set-group-ID semantics `chmod(2)` has on this platform.
 ///
 /// Upstream reaches every mode change through `do_chmod()` -> `chmod(2)`
-/// (syscall.c:761). oc anchors the same change on a walked parent dirfd for
+/// (syscall.c:900). oc anchors the same change on a walked parent dirfd for
 /// symlink-race safety, which means it issues `fchmodat(2)` instead - and the
 /// two syscalls do NOT agree about `S_ISGID` for an unprivileged caller.
 ///
@@ -313,7 +313,7 @@ pub fn secure_chmod_at(path: &Path, mode: u32, follow_symlinks: bool) -> io::Res
 /// does not own the target is refused for the setgid-free mode too, and that
 /// error propagates.
 ///
-/// upstream: rsync-3.5.0 syscall.c:761 `do_chmod()` -> `chmod(2)`; rsync.c:658-668
+/// upstream: rsync-3.5.0 syscall.c:900 `do_chmod()` -> `chmod(2)`; rsync.c:658-668
 /// `set_file_attrs()` treats the chmod result as fatal for a non-symlink, which
 /// is why the refusal must not reach it.
 fn chmodat_with_chmod_setgid_semantics(

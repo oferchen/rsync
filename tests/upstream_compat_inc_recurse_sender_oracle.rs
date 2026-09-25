@@ -6,7 +6,7 @@
 //! produced and accepted by the same code. The "#84" family (a
 //! `--files-from` entry whose implied parent is a symlink was dropped from
 //! the list, and upstream's receiver aborted with "ABORTING due to invalid
-//! path from sender", flist.c:2691, exit 4) lived exactly in this blind
+//! path from sender", flist.c:2931, exit 4) lived exactly in this blind
 //! spot. This oracle pins the sender-facing half: oc pushes `-r` to a real
 //! upstream 3.4.4 receiver over both transports (remote-shell wrapper and
 //! daemon) and the upstream binary is the judge.
@@ -14,17 +14,17 @@
 //! # Proving INC_RECURSE actually negotiated
 //!
 //! The literal client banner `receiving incremental file list`
-//! (flist.c:2607) can never appear here: it is printed via `FCLIENT` under
+//! (flist.c:2847) can never appear here: it is printed via `FCLIENT` under
 //! an `!am_server` gate, and in both legs the upstream receiver runs as a
 //! server. The oracle therefore asserts the server-side equivalents, which
 //! are stronger because they count actual wire segments:
 //!
 //! - the capability string oc sends carries `i`
 //!   (`-re.iLsfxCIvu`; upstream compat.c:162-181 `set_allow_inc_recurse()`,
-//!   options.c:3036 `maybe_add_e_option()`) - captured from the wrapper's
+//!   options.c:3046 `maybe_add_e_option()`) - captured from the wrapper's
 //!   argv log on the remote-shell leg;
 //! - with `--debug=flist2` forwarded to the receiver, upstream prints one
-//!   `received %d names` line per `recv_file_list()` call (flist.c:2726)
+//!   `received %d names` line per `recv_file_list()` call (flist.c:2966)
 //!   and one `[receiver] receiving flist for dir %d` line per extra
 //!   sub-list (rsync.c:373). A non-INC_RECURSE transfer produces exactly
 //!   one `received %d names` line and zero `receiving flist for dir`
@@ -34,7 +34,7 @@
 //!
 //! The fixture holds more than `MIN_FILECNT_LOOKAHEAD = 1000` files
 //! (rsync.h:151) across three directory levels so the sender-side lookahead
-//! throttle (sender.c:231,265 `send_extra_file_list()`) is exercised, not
+//! throttle (sender.c:234,268 `send_extra_file_list()`) is exercised, not
 //! just the segment framing.
 //!
 //! # Gating
@@ -155,7 +155,7 @@ fn run_oc_client(args: &[&std::ffi::OsStr]) -> Output {
         .expect("spawn oc-rsync client")
 }
 
-/// Count `received %d names` receiver lines (flist.c:2726, FLIST >= 2).
+/// Count `received %d names` receiver lines (flist.c:2966, FLIST >= 2).
 /// One per `recv_file_list()` call, so exactly 1 without INC_RECURSE.
 fn count_received_names(stdout: &str) -> usize {
     stdout
@@ -247,7 +247,7 @@ fn rsh_push_negotiates_inc_recurse_and_segments_flist() {
     assert_success(&output, "oc-rsync push via rsh wrapper to upstream 3.4.4");
 
     // Negotiation evidence, sender side: oc must advertise INC_RECURSE.
-    // upstream: compat.c:162-181, options.c:3036 maybe_add_e_option().
+    // upstream: compat.c:162-181, options.c:3046 maybe_add_e_option().
     let caps = server_capabilities(&argv_log);
     assert!(
         caps.contains('i'),
@@ -263,7 +263,7 @@ fn rsh_push_negotiates_inc_recurse_and_segments_flist() {
     assert!(
         segments > 1,
         "upstream receiver must report more than one 'received N names' segment \
-         under INC_RECURSE (flist.c:2726); got {segments}\nstdout:\n{stdout}"
+         under INC_RECURSE (flist.c:2966); got {segments}\nstdout:\n{stdout}"
     );
     assert!(
         extra_lists >= 1,
@@ -440,7 +440,7 @@ fn daemon_push_negotiates_inc_recurse_and_segments_flist() {
     assert!(
         segments > 1,
         "upstream daemon receiver must report more than one 'received N names' \
-         segment under INC_RECURSE (flist.c:2726); got {segments}\nstdout:\n{stdout}"
+         segment under INC_RECURSE (flist.c:2966); got {segments}\nstdout:\n{stdout}"
     );
     assert!(
         extra_lists >= 1,
@@ -453,11 +453,11 @@ fn daemon_push_negotiates_inc_recurse_and_segments_flist() {
 
 /// Regression pin for the #84 shape: a `--files-from` entry whose implied
 /// parent is a symlink. `send_implied_dirs()` runs with `copy_links` and
-/// `xfer_dirs` forced on (flist.c:1983-1985), so upstream stats the parent
+/// `xfer_dirs` forced on (flist.c:2208-2210), so upstream stats the parent
 /// through the symlink and sends it as a directory. Before the fix, oc
 /// used `symlink_metadata`, dropped the parent, and shipped `link/file`
 /// with no `link` entry - upstream's receiver rejects that list with
-/// "ABORTING due to invalid path from sender" (flist.c:2691) and exits 4.
+/// "ABORTING due to invalid path from sender" (flist.c:2931) and exits 4.
 /// An oc<->oc run cannot see this: only the real receiver aborts.
 #[test]
 fn files_from_symlinked_implied_parent_does_not_abort() {

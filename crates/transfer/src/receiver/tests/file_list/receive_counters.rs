@@ -1,8 +1,8 @@
 //! Receive-time `--stats` counters: per-type tallies and the total size.
 //!
 //! Upstream bumps `stats.num_dirs` / `num_symlinks` / `num_devices` /
-//! `num_specials` in `recv_file_list()`'s read loop (`flist.c:2993-3006`) and
-//! `stats.total_size` in `recv_file_entry()` (`flist.c:1388-1389`), i.e. as
+//! `num_specials` in `recv_file_list()`'s read loop (`flist.c:3236-3249`) and
+//! `stats.total_size` in `recv_file_entry()` (`flist.c:1613-1614`), i.e. as
 //! each entry arrives and before `flist_sort_and_clean()` tombstones anything.
 //! The receiver mirrors that so the figures survive the release of completed
 //! INC_RECURSE segments and count exactly what upstream counts.
@@ -92,7 +92,7 @@ fn walk(list: &[FileEntry]) -> ((u64, u64, u64, u64), u64) {
 /// Releasing completed INC_RECURSE segments must not change `--stats`.
 ///
 /// WHY: the receiver frees finished sub-list segments mid-transfer (upstream
-/// `flist_free()`, receiver.c:683), zeroing their entries. A figure derived by
+/// `flist_free()`, receiver.c:699), zeroing their entries. A figure derived by
 /// walking the list at the end would then count every freed entry as nothing
 /// and print a smaller "Number of files" breakdown and "Total file size" than
 /// upstream, whose counters were bumped as the entries arrived.

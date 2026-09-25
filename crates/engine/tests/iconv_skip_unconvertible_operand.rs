@@ -23,9 +23,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1785-1799` `send_file1()` - strict `ic_send` name conversion,
+//! - `flist.c:2010-2024` `send_file1()` - strict `ic_send` name conversion,
 //!   `io_error |= IOERR_GENERAL`, and `return NULL` on failure.
-//! - `main.c:1394` - `exit_cleanup(RERR_PARTIAL)` after `io_error`.
+//! - `main.c:1412` - `exit_cleanup(RERR_PARTIAL)` after `io_error`.
 #![cfg(feature = "iconv")]
 
 use std::fs;

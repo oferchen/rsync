@@ -28,7 +28,7 @@ use rustix::fs::{FallocateFlags, fallocate};
 /// `rsyserr(FWARNING, ...)` and continue: preallocation is an optimization, and
 /// its failure (an unsupported filesystem, `ENOSPC`, ...) must never abort the
 /// transfer.
-/// upstream: syscall.c:1528 do_fallocate() / receiver.c:323
+/// upstream: syscall.c:1667 do_fallocate() / receiver.c:336
 #[cfg(target_os = "linux")]
 pub fn preallocate(file: &File, length: u64) -> io::Result<u64> {
     // fallocate's offset/length args are signed; skip when length would
@@ -36,7 +36,7 @@ pub fn preallocate(file: &File, length: u64) -> io::Result<u64> {
     if length == 0 || length >= i64::MAX as u64 {
         return Ok(0);
     }
-    // upstream: syscall.c:1534-1537 - perturb the length by one so it never
+    // upstream: syscall.c:1673-1676 - perturb the length by one so it never
     // exactly matches the file's eventual size (only observable on the
     // KEEP_SIZE-unavailable fallback, but replicated for fidelity).
     let length = if length & 1 == 1 {
@@ -44,9 +44,9 @@ pub fn preallocate(file: &File, length: u64) -> io::Result<u64> {
     } else {
         length - 1
     };
-    // upstream: syscall.c:1530 - opts == FALLOC_FL_KEEP_SIZE when preallocating.
+    // upstream: syscall.c:1669 - opts == FALLOC_FL_KEEP_SIZE when preallocating.
     match fallocate(file, FallocateFlags::KEEP_SIZE, 0, length) {
-        // upstream: syscall.c:1555 - opts != 0 returns 0 (size unchanged).
+        // upstream: syscall.c:1694 - opts != 0 returns 0 (size unchanged).
         Ok(()) => Ok(0),
         Err(err) => Err(io::Error::from_raw_os_error(err.raw_os_error())),
     }

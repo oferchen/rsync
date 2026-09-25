@@ -339,7 +339,7 @@ impl ReceiverContext {
                 let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
                 self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                 if !dest_existed {
-                    // upstream: receiver.c:743-746 - a newly created device
+                    // upstream: receiver.c:759-762 - a newly created device
                     // (created_devices) or FIFO/socket (created_specials),
                     // classified by mode.
                     self.record_created(entry.mode());

@@ -32,11 +32,11 @@
 //!
 //! # Upstream Reference
 //!
-//! - `syscall.c:100-114` - `secure_relpath_active()`
-//! - `syscall.c:122-127` - `symlink_optout_allowed()`
-//! - `syscall.c:136-144` - `confinement_root()`
-//! - `syscall.c:197-240` - `abspath_outside_confinement()`
-//! - `syscall.c:552` - `int operator_path_resolve = 0;`
+//! - `syscall.c:117-131` - `secure_relpath_active()`
+//! - `syscall.c:139-144` - `symlink_optout_allowed()`
+//! - `syscall.c:163-171` - `confinement_root()`
+//! - `syscall.c:245-291` - `abspath_outside_confinement()`
+//! - `syscall.c:697` - `int operator_path_resolve = 0;`
 
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -47,7 +47,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 ///
 /// Upstream asks the question *inside* the walk - `ona_open()` opens with
 /// `symlink_optout_allowed()` and returns a plain symlink-following `open()`
-/// when it holds (`syscall.c:300-302`) - so the answer reaches both
+/// when it holds (`syscall.c:380-382`) - so the answer reaches both
 /// `open_no_attacker_symlinks()` and `owner_walk_parent()` from one place. It
 /// can do that because `insecure_links` and `am_daemon` are process globals.
 ///
@@ -157,9 +157,9 @@ static SESSION_ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
 /// - `clientserver.c:1059-1065` - `change_dir(module_chdir, CD_NORMAL)` then
 ///   `module_dirfd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC)`, both
 ///   above the `setgid`/`setuid` at `clientserver.c:1093+`.
-/// - `flist.c:2035-2059` `secure_opendir()` - the scan anchors on it.
-/// - `sender.c:293-295` - the content open anchors on it.
-/// - `syscall.c:85-90` `open_anchor_dirfd()` - `dup(module_dirfd)` instead of
+/// - `flist.c:2271-2295` `secure_opendir()` - the scan anchors on it.
+/// - `sender.c:296-298` - the content open anchors on it.
+/// - `syscall.c:102-107` `open_anchor_dirfd()` - `dup(module_dirfd)` instead of
 ///   re-resolving the absolute root.
 #[cfg(unix)]
 static SESSION_ROOT_FD: RwLock<Option<PinnedRoot>> = RwLock::new(None);
@@ -214,7 +214,7 @@ pub fn pin_session_root_fd(root: &Path) -> std::io::Result<()> {
     // already the directory `change_dir()` entered and `change_dir()` enters a
     // non-chrooted daemon's module root with
     // `open_no_attacker_symlinks(dir, O_RDONLY | O_DIRECTORY, 0)`
-    // (`util1.c:1254-1263`). A plain open here would resolve a symlink an
+    // (`util1.c:1351-1360`). A plain open here would resolve a symlink an
     // attacker planted at a component of the configured `path =`, and the pin
     // would then answer `link_stat(".")` with the escape target's directory -
     // turning the ancestor-traversal fix into a module-root escape. The
@@ -242,7 +242,7 @@ pub fn clear_session_root_fd() {
 /// either spelling of it.
 ///
 /// This is the question [`crate::open_trusted_dir`] asks, and upstream asks it
-/// as `strcmp(path, module_dir)` (`syscall.c:87`).
+/// as `strcmp(path, module_dir)` (`syscall.c:104`).
 #[cfg(unix)]
 #[must_use]
 pub fn pinned_root_fd_for(path: &Path) -> Option<std::sync::Arc<std::os::fd::OwnedFd>> {
@@ -267,7 +267,7 @@ pub fn session_root_is_pinned() -> bool {
 /// Returns `None` - meaning "resolve `path` the ordinary way" - when no root
 /// is pinned, or when `path` does not lie beneath the pinned root. A path
 /// equal to the root yields `.`, which is the name upstream's post-`change_dir`
-/// code uses for the same directory (`flist.c:2059`).
+/// code uses for the same directory (`flist.c:2295`).
 #[cfg(unix)]
 #[must_use]
 pub fn pinned_root_relative(
@@ -308,7 +308,7 @@ pub fn pinned_root_relative(
 /// The session-scoped counterpart of [`Activation::outside_root`], for the
 /// ownership walk, which has no [`Activation`] in hand.
 ///
-/// upstream: `syscall.c:186-240` `abspath_outside_confinement()`.
+/// upstream: `syscall.c:232-291` `abspath_outside_confinement()`.
 #[must_use]
 pub fn outside_session_root(abspath: &Path, kind: PathKind) -> bool {
     SESSION_ROOT
@@ -323,7 +323,7 @@ pub fn outside_session_root(abspath: &Path, kind: PathKind) -> bool {
 /// The walk needs the value itself, not just the verdict: a *relative*
 /// operator path has to be anchored somewhere before it can be judged.
 ///
-/// upstream: `syscall.c:128-144` `confinement_root()`.
+/// upstream: `syscall.c:145-171` `confinement_root()`.
 #[must_use]
 pub fn session_confinement_root() -> Option<PathBuf> {
     SESSION_ROOT
@@ -361,9 +361,9 @@ fn path_outside_root(root: &Path, abspath: &Path, kind: PathKind) -> bool {
 ///
 /// # Upstream Reference
 ///
-/// - `syscall.c:128-132` - the `am_daemon`-false arm of
+/// - `syscall.c:145-159` - the `am_daemon`-false arm of
 ///   `symlink_optout_allowed()` is `return insecure_links;`.
-/// - `syscall.c:142-143` - the `am_daemon`-false arm of `confinement_root()`
+/// - `syscall.c:169-170` - the `am_daemon`-false arm of `confinement_root()`
 ///   returns `confine_root`.
 pub fn install_local_session(insecure_links: LocalInsecureLinks, confine_root: Option<PathBuf>) {
     install_session(&Activation {
@@ -378,10 +378,10 @@ pub fn install_local_session(insecure_links: LocalInsecureLinks, confine_root: O
 
 /// Publish the opt-out for a daemon serving `module`.
 ///
-/// upstream: `syscall.c:125` - the `am_daemon`-true arm is
+/// upstream: `syscall.c:142` - the `am_daemon`-true arm is
 /// `module_id >= 0 && lp_insecure_links(module_id)`. A peer-supplied
 /// `--insecure-links` is deliberately unreachable from here: a client cannot
-/// switch off a daemon's confinement (`syscall.c:117-121`), which is why this
+/// switch off a daemon's confinement (`syscall.c:134-138`), which is why this
 /// takes a [`ModuleState`] and not a [`LocalInsecureLinks`].
 pub fn install_daemon_session(module: ModuleState) {
     install_session(&Activation {
@@ -394,7 +394,7 @@ pub fn install_daemon_session(module: ModuleState) {
 
 /// Whether this session opted out of the operator-path symlink confinement.
 ///
-/// upstream: `syscall.c:301` - the `symlink_optout_allowed()` test at the top
+/// upstream: `syscall.c:381` - the `symlink_optout_allowed()` test at the top
 /// of `ona_open()`.
 #[must_use]
 pub fn session_optout_allowed() -> bool {
@@ -558,7 +558,7 @@ impl Activation {
     ///
     /// # Upstream Reference
     ///
-    /// - `syscall.c:122-127` - `symlink_optout_allowed()`
+    /// - `syscall.c:139-144` - `symlink_optout_allowed()`
     pub fn optout_allowed(&self) -> bool {
         match &self.daemon {
             DaemonState::Daemon(module) => module.selected && module.insecure_links.get(),
@@ -582,7 +582,7 @@ impl Activation {
     ///
     /// # Upstream Reference
     ///
-    /// - `syscall.c:100-114` - `secure_relpath_active()`
+    /// - `syscall.c:117-131` - `secure_relpath_active()`
     pub fn hardened(&self) -> bool {
         if self.optout_allowed() {
             return false;
@@ -601,7 +601,7 @@ impl Activation {
     ///
     /// # Upstream Reference
     ///
-    /// - `syscall.c:136-144` - `confinement_root()`
+    /// - `syscall.c:163-171` - `confinement_root()`
     pub fn root(&self) -> Option<&Path> {
         match &self.daemon {
             DaemonState::Daemon(module) => module.root.as_deref(),
@@ -628,7 +628,7 @@ impl Activation {
     ///
     /// # Upstream Reference
     ///
-    /// - `syscall.c:197-240` - `abspath_outside_confinement()`
+    /// - `syscall.c:245-291` - `abspath_outside_confinement()`
     pub fn outside_root(&self, abspath: &Path, kind: PathKind) -> bool {
         self.root()
             .is_some_and(|root| path_outside_root(root, abspath, kind))

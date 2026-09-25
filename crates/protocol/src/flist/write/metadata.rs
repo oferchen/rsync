@@ -92,7 +92,7 @@ impl FileListWriter {
 
     /// Writes atime field if preserving and different (non-directories only).
     ///
-    /// upstream: `flist.c:607-608` - atime is encoded as a single
+    /// upstream: `flist.c:832-833` - atime is encoded as a single
     /// `write_varlong(f, atime, 4)` regardless of protocol version. There
     /// is NO atime nsec field in the wire format - unlike mtime which has
     /// `XMIT_MOD_NSEC` (bit 14 in the extended byte) gating an optional

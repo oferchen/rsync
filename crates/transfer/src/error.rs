@@ -158,7 +158,7 @@ pub fn categorize_io_error(
 
 /// Reads exactly `buf.len()` bytes, retrying on EINTR (interrupted system call).
 ///
-/// This matches upstream rsync's behavior in `util1.c:315-317` where reads are
+/// This matches upstream rsync's behavior in `util1.c:318-320` where reads are
 /// retried immediately when interrupted by a signal.
 ///
 /// # Upstream Reference
@@ -189,7 +189,7 @@ pub fn read_exact_retry<R: Read>(reader: &mut R, buf: &mut [u8]) -> io::Result<(
 /// Writes all bytes, retrying on `EINTR` (interrupted system call) and
 /// `EAGAIN`/`EWOULDBLOCK` (transient back-pressure).
 ///
-/// This matches upstream rsync's behavior in `fileio.c:60-65` (EINTR) and
+/// This matches upstream rsync's behavior in `fileio.c:64-69` (EINTR) and
 /// `io.c::writefd_unbuffered` (EAGAIN via `select()`/`poll()`). When the
 /// kernel reports a pipe buffer is temporarily full, yield the current thread
 /// and retry instead of aborting the transfer.

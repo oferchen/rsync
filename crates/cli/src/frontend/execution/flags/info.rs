@@ -186,7 +186,7 @@ impl InfoFlagSettings {
     /// `stats` is intentionally omitted: oc conflates `--stats` and
     /// `--info=stats` into a single stats level and forwards it via the
     /// standalone `--stats` flag (upstream `if (do_stats) --stats`,
-    /// options.c:2856), so re-emitting `--info=stats` here would double-send.
+    /// options.c:2866), so re-emitting `--info=stats` here would double-send.
     /// The remote builders apply upstream's role `where` filter to this list.
     pub(crate) fn iter_enabled_flags(&self) -> Vec<(&'static str, u8)> {
         let mut out: Vec<(&'static str, u8)> = Vec::new();

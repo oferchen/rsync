@@ -66,7 +66,7 @@ pub const MIN_BLOCK_SIZE: u32 = 64;
 /// Upstream rsync uses 2-byte checksums in the initial phase to reduce
 /// signature size, then switches to full `MAX_SUM_LENGTH` (16 bytes) for
 /// phase 2 redo passes where correctness is critical.
-/// (upstream: rsync.h:714-715 `SHORT_SUM_LENGTH`)
+/// (upstream: rsync.h:715-716 `SHORT_SUM_LENGTH`)
 pub const SHORT_SUM_LENGTH: u8 = 2;
 
 /// Maximum strong checksum length supported by the protocol.
@@ -420,9 +420,9 @@ mod tests {
 
     #[test]
     fn sum_length_constants_match_upstream() {
-        // upstream: rsync.h:714 `#define SHORT_SUM_LENGTH 2`
+        // upstream: rsync.h:715 `#define SHORT_SUM_LENGTH 2`
         assert_eq!(SHORT_SUM_LENGTH, 2);
-        // upstream: rsync.h:715 `#define SUM_LENGTH 16`
+        // upstream: rsync.h:716 `#define SUM_LENGTH 16`
         assert_eq!(MAX_SUM_LENGTH, 16);
         assert!(usize::from(SHORT_SUM_LENGTH) < usize::from(MAX_SUM_LENGTH));
     }

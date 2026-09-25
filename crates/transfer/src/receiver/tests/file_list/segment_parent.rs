@@ -7,10 +7,10 @@
 //! receiver records for that consumer, through the real receive path:
 //!
 //! - the parent index, including the first list's `-1` rule
-//!   (`flist.c:3071-3083`), since a wrong `Some(0)` points the delete at a
+//!   (`flist.c:3314-3326`), since a wrong `Some(0)` points the delete at a
 //!   directory the list never described;
 //! - the content flag as it stands AFTER the implied-parent downgrade
-//!   (`flist.c:1240-1256`), since the sender's claim is what lets a hostile
+//!   (`flist.c:1465-1481`), since the sender's claim is what lets a hostile
 //!   peer widen `--delete` to siblings the client merely traversed.
 
 use std::io::Cursor;

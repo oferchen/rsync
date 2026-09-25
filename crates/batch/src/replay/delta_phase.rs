@@ -134,9 +134,9 @@ impl CodecState {
 
 /// Build the initial flist-segments table from the batch header.
 ///
-/// upstream: flist.c:2958 - with INC_RECURSE, the first flist has
+/// upstream: flist.c:3201 - with INC_RECURSE, the first flist has
 /// `ndx_start=1`. Subsequent sub-lists have `ndx_start = prev->ndx_start +
-/// prev->used + 1` (flist.c:2966), creating a +1 gap between segments in NDX
+/// prev->used + 1` (flist.c:3209), creating a +1 gap between segments in NDX
 /// space. We track per-segment (ndx_start, entries_offset, count) to map
 /// global NDX values to flat Vec indices, mirroring upstream's
 /// `flist_for_ndx()`.
@@ -199,7 +199,7 @@ fn process_file_ndx(
         return Ok(());
     }
 
-    // upstream: rsync.c:flist_for_ndx() + receiver.c:700 - map global NDX
+    // upstream: rsync.c:flist_for_ndx() + receiver.c:716 - map global NDX
     // to the flat entries Vec index by finding the segment it belongs to.
     let flat_index = match lookup_flat_index(ndx, flist_segments, entries.len())? {
         Some(idx) => idx,
@@ -224,7 +224,7 @@ fn process_file_ndx(
     // follows. Substituting a guessed block length when the header carries
     // zeros is what let a whole-file-shaped head sit in front of a body full
     // of block matches: oc replayed it happily while upstream aborted at
-    // receiver.c:414. Every copy token below is resolved through this head.
+    // receiver.c:427. Every copy token below is resolved through this head.
     let sum_head = read_sum_head(stream)?;
 
     // A non-regular dest never has a usable basis (and must not be opened as
@@ -332,17 +332,17 @@ fn handle_inc_recurse_segment(
 ) -> BatchResult<()> {
     let prev_len = entries.len();
 
-    // upstream: flist.c:2966 - ndx_start = prev->ndx_start + prev->used + 1
+    // upstream: flist.c:3209 - ndx_start = prev->ndx_start + prev->used + 1
     let prev_seg = flist_segments.last().expect("at least initial segment");
     let seg_ndx_start = prev_seg.0 + prev_seg.2 as i32 + 1;
 
     reader.read_incremental_flist_segment(entries)?;
 
-    // upstream: flist.c:1335-1341 - the group tag names a wire index, so it has
+    // upstream: flist.c:1560-1566 - the group tag names a wire index, so it has
     // to be stamped before the segment is sorted out of wire order.
     super::assign_hardlink_gnums(&mut entries[prev_len..], seg_ndx_start, proto);
 
-    // upstream: flist.c:2771 - sort each sub-list segment after receiving.
+    // upstream: flist.c:3014 - sort each sub-list segment after receiving.
     // INC_RECURSE batches require protocol >= 30, so pre29 is always false.
     sort_file_list(&mut entries[prev_len..], false, false);
 
@@ -376,9 +376,9 @@ fn handle_inc_recurse_segment(
 
 /// Map a global NDX value to a flat entries-Vec index, scanning segments.
 ///
-/// upstream: rsync.c:flist_for_ndx() + receiver.c:700 - each segment has
+/// upstream: rsync.c:flist_for_ndx() + receiver.c:716 - each segment has
 /// `(ndx_start, entries_offset, count)` with +1 gaps between segments
-/// (upstream flist.c:2966).
+/// (upstream flist.c:3209).
 ///
 /// Returns `Ok(Some(index))` for a valid match, `Ok(None)` when the NDX
 /// refers to an INC_RECURSE parent-directory metadata update (which is
@@ -400,7 +400,7 @@ fn lookup_flat_index(
     {
         return Ok(Some(idx));
     }
-    // upstream: receiver.c:700-705 - NDX < first segment's ndx_start refers
+    // upstream: receiver.c:716-721 - NDX < first segment's ndx_start refers
     // to a parent directory entry (INC_RECURSE metadata update). Skip these
     // - directories are already created.
     if ndx < flist_segments.first().map_or(0, |s| s.0) {

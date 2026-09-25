@@ -5,8 +5,8 @@
 //! Upstream accumulates `stats.total_transferred_size` by adding each
 //! transferred file's `F_LENGTH` at the exact point it bumps `xferred_files`:
 //!
-//! - `sender.c:343`   - `stats.total_transferred_size += F_LENGTH(file);`
-//! - `receiver.c:784` - `stats.total_transferred_size += F_LENGTH(file);`
+//! - `sender.c:344`   - `stats.total_transferred_size += F_LENGTH(file);`
+//! - `receiver.c:800` - `stats.total_transferred_size += F_LENGTH(file);`
 //!
 //! The value never crosses the wire: `main.c:handle_stats()` (3.4.4:325-385)
 //! exchanges only `total_read`, `total_written`, `total_size` and the two
@@ -44,7 +44,7 @@
 //!
 //! # Upstream References
 //!
-//! - `sender.c:343` / `receiver.c:784` - `total_transferred_size += F_LENGTH`.
+//! - `sender.c:344` / `receiver.c:800` - `total_transferred_size += F_LENGTH`.
 //! - `main.c:325-385` - `handle_stats()`: the stat is NOT sent on the wire.
 //! - `main.c:439` / `log.c:output_summary()` - the summary line.
 
@@ -169,8 +169,8 @@ fn assert_transferred_size(stdout: &str, stderr: &str, expected: usize) {
         stdout.contains(&needle),
         "missing `{needle}` line in --stats output.\n\
          A remote transfer that failed to accumulate total_transferred_size \
-         (push: sender.c:343) or to adopt it into the client summary (pull: \
-         receiver.c:784) prints `Total transferred file size: 0 bytes` here.\n\
+         (push: sender.c:344) or to adopt it into the client summary (pull: \
+         receiver.c:800) prints `Total transferred file size: 0 bytes` here.\n\
          stdout:\n{stdout}\nstderr:\n{stderr}",
     );
     assert!(
@@ -207,7 +207,7 @@ impl DaemonScratch {
 }
 
 /// Push direction: client is the sender, so it accumulates
-/// `total_transferred_size` itself (`sender.c:343`). Destination starts empty
+/// `total_transferred_size` itself (`sender.c:344`). Destination starts empty
 /// so all three files transfer and the summed length is deterministic.
 #[test]
 fn daemon_push_reports_total_transferred_file_size() {
@@ -263,7 +263,7 @@ fn daemon_push_reports_total_transferred_file_size() {
 }
 
 /// Pull direction: client is the receiver, so it accumulates
-/// `total_transferred_size` itself (`receiver.c:784`) and must adopt it into
+/// `total_transferred_size` itself (`receiver.c:800`) and must adopt it into
 /// the client summary. Regression guard for the opposite direction.
 #[test]
 fn daemon_pull_reports_total_transferred_file_size() {

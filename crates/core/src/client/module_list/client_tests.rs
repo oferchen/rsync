@@ -962,7 +962,7 @@ fn run_module_list_uses_connect_program_command() {
 /// syntax code.
 ///
 /// upstream: `open_socket_out_wrapped()` prints the refusal and returns -1
-/// (socket.c:490-493); `start_socket_client()` turns that into
+/// (socket.c:498-501); `start_socket_client()` turns that into
 /// `exit_cleanup(RERR_SOCKETIO)` (clientserver.c:163-165). Measured against
 /// real rsync 3.5.0: `rsync rsync://-rf/mod/` with a `%H` template reports
 /// `unsafe host characters for RSYNC_CONNECT_PROG` and exits 10, where oc

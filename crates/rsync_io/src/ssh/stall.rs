@@ -48,7 +48,7 @@ const MAX_POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// returned unchanged. This is the single point that decides whether stall
 /// detection is armed at all.
 ///
-/// upstream: io.c:226 `if (!io_timeout)` (guard returns early)
+/// upstream: io.c:244 `if (!io_timeout)` (guard returns early)
 #[must_use]
 pub(crate) fn effective_io_timeout(timeout: Option<Duration>) -> Option<Duration> {
     timeout.filter(|d| !d.is_zero())
@@ -57,7 +57,7 @@ pub(crate) fn effective_io_timeout(timeout: Option<Duration>) -> Option<Duration
 /// Computes the watchdog poll interval for a given `io_timeout`.
 ///
 /// Mirrors upstream's `allowed_lull = (int)(((int64)io_timeout + 1) / 2)`
-/// (io.c:1281), clamped to `[MIN_POLL_INTERVAL, MAX_POLL_INTERVAL]`. Polling at
+/// (io.c:1299), clamped to `[MIN_POLL_INTERVAL, MAX_POLL_INTERVAL]`. Polling at
 /// half the timeout guarantees the stall is detected within `~1.5 * io_timeout`.
 ///
 /// 3.5.0 hardened that line against a negative or `INT_MAX` `io_timeout` - a
@@ -77,7 +77,7 @@ pub(crate) fn stall_poll_interval(io_timeout: Duration) -> Duration {
 /// Both the read and write halves bump the same clock, so a keepalive write
 /// (emitted by the transfer layer's `maybe_send_keepalive`) resets it exactly
 /// like an inbound read - matching upstream's `MAX(last_io_out, last_io_in)`
-/// (io.c:195).
+/// (io.c:213).
 #[derive(Debug)]
 pub(crate) struct StallProgress {
     /// Monotonic base captured at construction. All offsets are measured from
@@ -202,7 +202,7 @@ impl IoStallWatchdog {
                         return;
                     }
 
-                    // upstream: io.c:243 `if (t - chk >= io_timeout)` aborts.
+                    // upstream: io.c:261 `if (t - chk >= io_timeout)` aborts.
                     if thread_progress.idle() >= io_timeout {
                         thread_fired.store(true, Ordering::Release);
                         if let Some(action) = abort.take() {

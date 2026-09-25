@@ -1,7 +1,7 @@
 //! Buffered writer with vectored I/O and direct-write bypass.
 //!
 //! Provides `ReusableBufWriter` which reuses an externally-owned buffer,
-//! matching upstream rsync's static `wf_writeBuf` (fileio.c:161). Large
+//! matching upstream rsync's static `wf_writeBuf` (fileio.c:165). Large
 //! chunks bypass the buffer entirely via `write_all_vectored`.
 //!
 //! The [`Writer`] enum dispatches between `ReusableBufWriter`,
@@ -16,7 +16,7 @@ use std::io::{self, IoSlice, Seek, Write};
 use std::path::Path;
 
 /// Fixed write buffer size matching upstream's `wf_writeBufSize = WRITE_SIZE * 8`
-/// (fileio.c:161). Upstream always uses 256 KB regardless of file size.
+/// (fileio.c:165). Upstream always uses 256 KB regardless of file size.
 pub(super) const WRITE_BUF_SIZE: usize = 256 * 1024;
 
 /// Minimum chunk size for direct-to-file writes, bypassing the buffer.
@@ -67,7 +67,7 @@ fn write_all_vectored(file: &mut fs::File, first: &[u8], second: &[u8]) -> io::R
 /// Buffered writer that reuses an externally-owned `Vec<u8>`, avoiding
 /// per-file allocation. The buffer is allocated once in `disk_thread_main`
 /// and cleared between files - matching upstream rsync's static `wf_writeBuf`
-/// (fileio.c:161).
+/// (fileio.c:165).
 pub(super) struct ReusableBufWriter<'a> {
     file: fs::File,
     buf: &'a mut Vec<u8>,
@@ -224,7 +224,7 @@ impl<'a> Writer<'a> {
     /// Seeks past `len` bytes that are already correct in the destination,
     /// instead of rewriting them (the `--inplace` matched-at-same-offset case).
     ///
-    /// Mirrors upstream `skip_matched()` (`fileio.c:202-209`): flush any pending
+    /// Mirrors upstream `skip_matched()` (`fileio.c:210-249`): flush any pending
     /// buffered bytes, then advance the file position by `len` via
     /// `lseek(SEEK_CUR)`. The buffered writer's [`Seek`] impl performs exactly
     /// that flush-then-seek. Only the buffered writer is used for in-place

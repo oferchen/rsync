@@ -291,7 +291,7 @@ fn perform_module_authentication(
     let response = match response_line {
         Ok(Some(line)) => line,
         Ok(None) => return Ok(AuthenticationStatus::Denied(AuthDenial::Credentials)),
-        // upstream: io.c:147-153 - an elapsed deadline exits `RERR_TIMEOUT`; the
+        // upstream: io.c:154-161 - an elapsed deadline exits `RERR_TIMEOUT`; the
         // read error is only the messenger, so the deadline decides.
         Err(_) if deadline.expired() => {
             return Err(io::Error::new(

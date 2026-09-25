@@ -23,7 +23,7 @@ impl GeneratorContext {
     /// # Upstream Reference
     ///
     /// - `main.c:347-357` - `handle_stats()` server-sender write path
-    /// - `main.c:978-980` - `do_server_sender()` calls `handle_stats(f_out)`
+    /// - `main.c:991-993` - `do_server_sender()` calls `handle_stats(f_out)`
     pub(super) fn send_stats<W: Write>(
         &self,
         writer: &mut W,
@@ -32,7 +32,7 @@ impl GeneratorContext {
         flist_buildtime_ms: u64,
         flist_xfertime_ms: u64,
     ) -> io::Result<()> {
-        // upstream: flist.c:690-691 - stats.total_size accumulates F_LENGTH for
+        // upstream: flist.c:915-916 - stats.total_size accumulates F_LENGTH for
         // regular files and symlinks only, tallied in send_file_entry() as each
         // entry is written. Read that running total rather than summing
         // `self.file_list` (which INC_RECURSE has drained down to the final
@@ -40,7 +40,7 @@ impl GeneratorContext {
         let total_size: u64 = self.flist_send_stats.total_size;
 
         // upstream: main.c:349-350 - handle_stats() writes the sender's cached raw
-        // descriptor counters (total_read, total_written; io.c:820/859) as the
+        // descriptor counters (total_read, total_written; io.c:838/877) as the
         // first two varlong30 values, sampled at the caller's handle_stats point.
         let stats = TransferStats::with_bytes(total_read, total_written, total_size)
             .with_flist_times(flist_buildtime_ms, flist_xfertime_ms);
@@ -66,7 +66,7 @@ impl GeneratorContext {
     /// # Upstream Reference
     ///
     /// - `main.c:374-383` - `handle_stats()` `else if (write_batch)` arm
-    /// - `main.c:1345-1347` - `handle_stats(-1)` then `read_final_goodbye()`
+    /// - `main.c:1363-1365` - `handle_stats(-1)` then `read_final_goodbye()`
     pub(super) fn record_batch_stats(
         &self,
         total_read: u64,
@@ -133,7 +133,7 @@ mod tests {
     ///
     /// WHY: upstream's `handle_stats()` writes the sender's cached raw descriptor
     /// counters `stats.total_read`/`stats.total_written` (main.c:349-350,
-    /// io.c:820/859), not any logical delta/token tally. The orchestrator samples
+    /// io.c:838/877), not any logical delta/token tally. The orchestrator samples
     /// those raw counters at the `handle_stats` point and passes them in; this
     /// pins that they reach the wire unchanged so a pulling client reports the
     /// exact byte totals the sender observed.

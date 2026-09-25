@@ -7,7 +7,7 @@
 // per-module cap allows, the second is refused with the upstream
 // literal even though the daemon-global cap (10) is nowhere near hit.
 //
-// upstream: target/interop/upstream-src/rsync-3.5.0/clientserver.c:791
+// upstream: target/interop/upstream-src/rsync-3.5.1/clientserver.c:791
 // applies `lp_max_connections(i)` via `claim_connection()` per module;
 // the per-module value binds independently of any daemon-wide limit.
 
@@ -30,7 +30,7 @@ fn run_daemon_per_module_cap_overrides_global_max_connections() {
             .expect("chmod secrets");
     }
 
-    // Each session runs in a forked child (upstream: socket.c:753-772
+    // Each session runs in a forked child (upstream: socket.c:761-780
     // start_accept_loop), so the per-module slot is claimed through the
     // `lock file` (clientserver.c:791 claim_connection). The default
     // /var/run/rsyncd.lock (rsync.h:33) is unopenable for this unprivileged

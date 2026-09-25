@@ -4,9 +4,9 @@
 //!
 //! # Why this matters (observable stdout-fidelity contract)
 //!
-//! Upstream `send_file_list()` (flist.c:2227) accumulates every source operand
+//! Upstream `send_file_list()` (flist.c:2463) accumulates every source operand
 //! into ONE file list and sorts it globally with `f_name_cmp`
-//! (`flist_sort_and_clean`, flist.c:2544) before the generator itemizes it, so
+//! (`flist_sort_and_clean`, flist.c:2784) before the generator itemizes it, so
 //! top-level operands are emitted in name order regardless of the order they
 //! were given on the command line. oc's local-copy executor walks each
 //! operand's subtree already in `f_name_cmp` order but, before this fix, visited
@@ -257,7 +257,7 @@ fn reordering_does_not_change_destination_contents() {
 
 /// Copy-contents (trailing-slash) sources merging into one destination.
 /// Upstream flattens every operand's CONTENTS into one flist and sorts globally
-/// (flist.c:2544 flist_sort_and_clean), interleaving files across operands by
+/// (flist.c:2784 flist_sort_and_clean), interleaving files across operands by
 /// content name (`aaa, mmm, zzz` below), NOT one operand's contents at a time
 /// (`aaa, zzz, mmm`). `merged_contents_worklist` reproduces the merge by
 /// flattening each source's children into synthetic named operands and sorting
@@ -298,7 +298,7 @@ fn copy_contents_multi_source_interleave_matches_upstream() {
 }
 
 /// The merged root sorts NON-directories before directories (upstream
-/// f_name_cmp / flist.c:3299 keys on type before name), so a subdirectory is
+/// f_name_cmp / flist.c:3542 keys on type before name), so a subdirectory is
 /// emitted after every root-level file even when its name sorts earlier. Here
 /// `b_dir` (from asrc) sorts alphabetically before the files `m_file`, `n_file`
 /// yet upstream lists it last, then descends into it. dirA contributes
@@ -388,7 +388,7 @@ fn copy_contents_collision_first_file_wins_and_dirs_merge() {
 }
 
 /// The `--stats` file/dir counts must survive the merge. Upstream sorts the
-/// combined flist WITHOUT removing duplicates (flist.c:2535-2544), so each
+/// combined flist WITHOUT removing duplicates (flist.c:2775-2784), so each
 /// trailing-slash operand's own "." entry is counted: `rsync -r --stats dirA/
 /// dirB/ dst/` reports `Number of files: 8 (reg: 5, dir: 3)` - 5 regular files
 /// plus 3 directories (one "." per source, and `sub`). Verified against

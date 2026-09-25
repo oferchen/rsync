@@ -159,7 +159,7 @@ const fn iconv_capability_compiled_in() -> bool {
 /// advertise. Used when the capability string must be a standalone argument
 /// (e.g., daemon text protocol where args are newline-separated).
 ///
-/// Mirrors upstream `options.c:3021-3068 maybe_add_e_option()`.
+/// Mirrors upstream `options.c:3031-3078 maybe_add_e_option()`.
 pub fn build_capability_string(allow_inc_recurse: bool) -> String {
     let mut result = String::from("-e.");
     append_capability_chars(&mut result, allow_inc_recurse);
@@ -168,13 +168,13 @@ pub fn build_capability_string(allow_inc_recurse: bool) -> String {
 
 /// Builds the `e.xxx` capability suffix for embedding into a compact flag string.
 ///
-/// Upstream `options.c:2728` appends the capability characters directly into
+/// Upstream `options.c:2738` appends the capability characters directly into
 /// the same argstr buffer that holds the transfer flags, producing a single
 /// argument like `-logDtprHve.iLsfxCIvu`. This function returns the `e.xxx`
 /// portion without the leading `-` so callers can concatenate it with their
 /// flag string.
 ///
-/// Mirrors upstream `options.c:3021-3068 maybe_add_e_option()`.
+/// Mirrors upstream `options.c:3031-3078 maybe_add_e_option()`.
 pub fn build_capability_string_suffix(allow_inc_recurse: bool) -> String {
     let mut result = String::from("e.");
     append_capability_chars(&mut result, allow_inc_recurse);
@@ -269,7 +269,7 @@ pub(crate) fn parse_client_info(client_args: &[String]) -> Cow<'_, str> {
 /// Upstream's `client_info` is the raw value of the client's `-e` option
 /// (`client_info = shell_cmd`, compat.c:163-164). A pre-release client
 /// negotiating the newest protocol emits `-e<proto>.<sub><caps>`
-/// (options.c:3031-3036), e.g. `-e32.7LsfxCIvu`; a release client emits
+/// (options.c:3041-3046), e.g. `-e32.7LsfxCIvu`; a release client emits
 /// `-e.<caps>`, e.g. `-e.LsfxCIvu`. `check_sub_protocol()` then computes
 /// `their_protocol = atoi(client_info)` and, when a `.` follows,
 /// `their_sub = atoi(dot+1)`. The leading `.` of a release payload makes the

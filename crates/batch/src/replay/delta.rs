@@ -84,7 +84,7 @@ pub(super) const fn block_index_as_i32(block_index: u32) -> i32 {
 /// `sum_head` is the block geometry the batch advertised for this file. Every
 /// copy token is resolved through it, so a token that references a block the
 /// header does not describe fails here rather than reconstructing the wrong
-/// bytes - the same check upstream performs at `receiver.c:414`.
+/// bytes - the same check upstream performs at `receiver.c:427`.
 ///
 /// upstream: receiver.c:recv_files() / match.c - block_length for all blocks
 /// except the last, which uses remainder.
@@ -148,7 +148,7 @@ pub fn apply_delta_ops(
                 // receiver derives the block span from the advertised
                 // geometry. Resolving through the sum_head is what rejects a
                 // header that does not describe this body.
-                // upstream: receiver.c:414-422
+                // upstream: receiver.c:427-435
                 let (offset, span) = sum_head
                     .block_span(block_index_as_i32(block_index))
                     .map_err(|error| {

@@ -507,7 +507,7 @@ fn itemize_last_toggle_wins_disabled() {
 /// against a non-existent dest emits a created-directory notice, a synthetic
 /// root `cd+++++++++ ./` row, a `cd+++++++++ <subdir>/` row for every
 /// directory entered during the recursive walk (including nested children),
-/// and then the per-file rows. Mirrors upstream `main.c:798-799` +
+/// and then the per-file rows. Mirrors upstream `main.c:811-812` +
 /// `generator.c:566-572`.
 #[test]
 fn itemize_initial_recursive_transfer_emits_dir_rows_for_each_subdir() {

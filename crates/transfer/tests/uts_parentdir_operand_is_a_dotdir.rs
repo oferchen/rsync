@@ -2,7 +2,7 @@
 //!
 //! This is the wire half of the same rule the local-copy executor carries.
 //! Upstream appends `/.` to such an operand and marks it `DOTDIR_NAME`
-//! (`flist.c:2595-2602`), so the non-relative split at `flist.c:2610-2621` cuts
+//! (`flist.c:2835-2842`), so the non-relative split at `flist.c:2850-2861` cuts
 //! `src/../.` at its LAST `/`: `dir` is `src/..`, `fn` is `.`, and the parent
 //! directory becomes the walk root whose CONTENTS ride the wire under their own
 //! names.
@@ -19,17 +19,17 @@
 //!
 //! # Scope: NOT under `--relative`
 //!
-//! `flist.c:2581-2583` short-circuits the marker chain to `NORMAL_NAME` under
-//! `--relative`, and `flist.c:2658-2667` rejects a `..` in the active part of a
+//! `flist.c:2821-2823` short-circuits the marker chain to `NORMAL_NAME` under
+//! `--relative`, and `flist.c:2898-2907` rejects a `..` in the active part of a
 //! relative operand instead. `parent_dir_rule_is_scoped_to_non_relative` pins
 //! that boundary.
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/flist.c:2595-2602` - the `/.` append and `DOTDIR_NAME`.
-//! - `rsync-3.5.0/flist.c:2581-2583` - the `--relative` short-circuit above it.
-//! - `rsync-3.5.0/flist.c:2610-2621` - the non-relative last-`/` split.
-//! - `rsync-3.5.0/flist.c:2658-2667` - the `--relative` `..` rejection.
+//! - `rsync-3.5.1/flist.c:2835-2842` - the `/.` append and `DOTDIR_NAME`.
+//! - `rsync-3.5.1/flist.c:2821-2823` - the `--relative` short-circuit above it.
+//! - `rsync-3.5.1/flist.c:2850-2861` - the non-relative last-`/` split.
+//! - `rsync-3.5.1/flist.c:2898-2907` - the `--relative` `..` rejection.
 
 #![cfg(unix)]
 
@@ -133,7 +133,7 @@ fn names(rows: &[(String, FileType)]) -> Vec<&str> {
 /// containing a `..` component.
 ///
 /// Sorted, because `build_file_list` runs before `flist_sort_and_clean()`
-/// (`flist.c:2816`) and emits in directory-walk order. The property under test
+/// (`flist.c:3059`) and emits in directory-walk order. The property under test
 /// is WHICH names the operand selects, not the order they were discovered in.
 #[test]
 fn parent_dir_operand_sends_the_parents_contents_rooted_at_dot() {
@@ -155,7 +155,7 @@ fn parent_dir_operand_sends_the_parents_contents_rooted_at_dot() {
             "realdir/sub/g.txt",
             "symdir",
         ],
-        "`<dir>/..` is DOTDIR_NAME (flist.c:2595-2602): the parent becomes the \
+        "`<dir>/..` is DOTDIR_NAME (flist.c:2835-2842): the parent becomes the \
          transfer root `.` and its contents ride under their own names",
     );
 }
@@ -179,7 +179,7 @@ fn no_transmitted_name_carries_a_parent_dir_component() {
         assert!(
             unsafe_names.is_empty(),
             "`realdir{suffix}` put {unsafe_names:?} on the wire; every conforming \
-             receiver refuses those: flist.c:851-855 aborts with RERR_UNSUPPORTED (4) when clean_fname(CFN_REFUSE_DOT_DOT_DIRS) rejects the name",
+             receiver refuses those: flist.c:1076-1080 aborts with RERR_UNSUPPORTED (4) when clean_fname(CFN_REFUSE_DOT_DOT_DIRS) rejects the name",
         );
     }
 }
@@ -204,13 +204,13 @@ fn parent_dir_operand_matches_the_trailing_slash_and_dot_spellings() {
         assert_eq!(
             got, first,
             "`realdir{suffix}` and `realdir{first_suffix}` are both DOTDIR \
-             operands (flist.c:2584-2604) and must transmit identical names",
+             operands (flist.c:2824-2844) and must transmit identical names",
         );
     }
 }
 
 /// NEGATIVE CONTROL. An ordinary directory operand is `NORMAL_NAME`
-/// (`flist.c:2605-2606`) and its names are rooted at its own basename. Nothing
+/// (`flist.c:2845-2846`) and its names are rooted at its own basename. Nothing
 /// here touches the trailing-`..` rule, so this cell must stay green whether
 /// that rule is present or reverted.
 #[test]
@@ -246,15 +246,15 @@ fn a_dotdot_that_is_not_the_last_component_is_a_normal_name() {
         rows,
         vec![("symdir".to_owned(), FileType::Symlink)],
         "upstream's guard is `fbuf[len-1] == '.' && fbuf[len-2] == '.' && \
-         (len == 2 || fbuf[len-3] == '/')` (flist.c:2595-2596) - an interior \
+         (len == 2 || fbuf[len-3] == '/')` (flist.c:2835-2836) - an interior \
          `..` never reaches the append, so the operand stays a single \
          NORMAL_NAME symlink entry",
     );
 }
 
 /// The rule is scoped to NON-relative operands. Under `--relative` upstream
-/// forces `NORMAL_NAME` (`flist.c:2581-2583`) and then rejects the operand at
-/// `flist.c:2658-2667`; it never grants it contents semantics.
+/// forces `NORMAL_NAME` (`flist.c:2821-2823`) and then rejects the operand at
+/// `flist.c:2898-2907`; it never grants it contents semantics.
 ///
 /// oc does not implement that rejection yet (MEASURED: rsync 3.5.0 exits 1 with
 /// `found ".." dir in relative path: ...`, oc does not - a KNOWN residual
@@ -283,6 +283,6 @@ fn parent_dir_rule_is_scoped_to_non_relative() {
         ],
         "`--relative` must not acquire the non-relative arm's DOTDIR contents \
          semantics - upstream rejects the operand there instead \
-         (flist.c:2658-2667)",
+         (flist.c:2898-2907)",
     );
 }

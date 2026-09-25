@@ -1,11 +1,11 @@
 //! Process file-descriptor limit management.
 //!
-//! upstream: `main.c:1793-1808` `raise_fd_limit()`, invoked as the first
-//! statement of `main()` (`main.c:1817`).
+//! upstream: `main.c:1820-1835` `raise_fd_limit()`, invoked as the first
+//! statement of `main()` (`main.c:1844`).
 
 /// Soft `RLIMIT_NOFILE` this process aims for.
 ///
-/// upstream: `main.c:1795` - "covers a MAXPATHLEN-deep walk + cache +
+/// upstream: `main.c:1822` - "covers a MAXPATHLEN-deep walk + cache +
 /// headroom". Deliberately not unbounded: some systems set an enormous
 /// hard limit (2^20 and up) that upstream declines to adopt wholesale.
 pub const FD_LIMIT_TARGET: u64 = 4096;
@@ -35,7 +35,7 @@ pub const FD_LIMIT_TARGET: u64 = 4096;
 /// thread or child process is spawned, so the raised limit is inherited by
 /// the sender, generator, receiver and daemon children.
 ///
-/// upstream: `main.c:1793-1808`.
+/// upstream: `main.c:1820-1835`.
 #[cfg(unix)]
 pub fn raise_fd_limit() {
     use rustix::process::{Resource, getrlimit, setrlimit};
@@ -115,7 +115,7 @@ mod tests {
 
     /// A soft limit already above the target is left alone.
     ///
-    /// upstream: `main.c:1804` `if (rl.rlim_cur < want)` - raise-only. An
+    /// upstream: `main.c:1831` `if (rl.rlim_cur < want)` - raise-only. An
     /// unconditional assignment would silently *lower* the limit of an
     /// operator who raised it on purpose, which is a regression the
     /// low-limit test above cannot see.
@@ -150,7 +150,7 @@ mod tests {
     /// Lowering the hard limit is irreversible for the process, which is
     /// safe here only because nextest runs each test in its own process.
     ///
-    /// upstream: `main.c:1802` `if (want > rl.rlim_max) want = rl.rlim_max;`
+    /// upstream: `main.c:1829` `if (want > rl.rlim_max) want = rl.rlim_max;`
     #[test]
     fn clamps_the_request_to_a_hard_limit_below_the_target() {
         let ceiling = 256;

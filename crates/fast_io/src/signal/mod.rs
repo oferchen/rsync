@@ -4,7 +4,7 @@
 //! pass an `extern "C" fn(c_int)` handler that must be async-signal-safe
 //! (atomic stores only, no allocation, no locking). The wrapper installs the
 //! handler with `sa_flags == 0`, matching upstream rsync's `SIGACTION` macro
-//! (`rsync.h:1258`) over its never-flagged file-static `sigact`, so a blocked
+//! (`rsync.h:1260`) over its never-flagged file-static `sigact`, so a blocked
 //! syscall fails with `EINTR` instead of restarting.
 //!
 //! This module exists so the `core` crate can keep `#![deny(unsafe_code)]`

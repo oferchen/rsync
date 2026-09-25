@@ -817,7 +817,7 @@ fn execute_copies_file_to_nonexistent_destination() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"content");
 }
 
-// upstream: main.c:738 make_path(dest_path, MKP_DROP_NAME) - creating a missing
+// upstream: main.c:751 make_path(dest_path, MKP_DROP_NAME) - creating a missing
 // intermediate prefix of the destination ARGUMENT requires --mkpath. Under
 // default options the transfer fails (see the negative control in
 // execute_no_implied_dirs.rs); with --mkpath the leading dirs are materialised.
@@ -1090,7 +1090,7 @@ fn execute_does_not_preserve_permissions_by_default() {
 }
 
 // upstream: generator.c:2148-2153 deletes a non-regular obstacle and sets
-// statret = -1, and receiver.c:1176-1191 opens the basis O_NOFOLLOW and drops
+// statret = -1, and receiver.c:1193-1208 opens the basis O_NOFOLLOW and drops
 // any non-regular fd, so a symlink obstacle takes the exists == 0 dest_mode()
 // rule: the new file lands `source_mode & ~umask`, never the symlink's own
 // lstat mode (0o755/0o777 depending on platform).

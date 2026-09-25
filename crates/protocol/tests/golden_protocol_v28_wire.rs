@@ -36,7 +36,7 @@ fn golden_v28_regular_file_first_entry() {
     // No preserve_uid/gid, no checksum mode.
     //
     // With default PreserveFlags (uid=false, gid=false), upstream sets
-    // XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:463,473).
+    // XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:688,698).
     // xflags = 0x18 (non-zero), so no XMIT_TOP_DIR substitution needed.
 
     let mut buf = Vec::new();
@@ -152,7 +152,7 @@ fn golden_v28_regular_file_large_size() {
 fn golden_v28_directory_first_entry() {
     // Directory: "mydir", mode=0o40755, mtime=1700000000
     // With default PreserveFlags (uid=false, gid=false), upstream sets
-    // XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:463,473:
+    // XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:688,698:
     // `!preserve_uid` is true). This gives xflags=0x18 (single-byte encoding).
     //
     // Expected wire format:
@@ -229,7 +229,7 @@ fn golden_v28_symlink_entry() {
     // Target length uses write_varint30_int(proto=28) = write_int (4-byte LE).
     //
     // With default PreserveFlags (uid=false, gid=false), upstream sets
-    // XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:463,473).
+    // XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:688,698).
     // xflags = 0x18 (non-zero), so no XMIT_TOP_DIR substitution needed.
 
     let mut buf = Vec::new();
@@ -537,7 +537,7 @@ fn golden_v28_flags_single_byte_non_dir() {
     writer.write_entry(&mut buf, &e2).unwrap();
 
     // Second entry flags: XMIT_SAME_MODE (0x02) | XMIT_SAME_UID (0x08) | XMIT_SAME_GID (0x10)
-    // upstream: !preserve_uid sets SAME_UID unconditionally (flist.c:463)
+    // upstream: !preserve_uid sets SAME_UID unconditionally (flist.c:688)
     assert_eq!(buf[first_len], 0x1A);
 }
 

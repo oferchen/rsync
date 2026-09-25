@@ -127,7 +127,7 @@ jobs:
       # MSG_NO_SEND out-of-order oracle: a real upstream 3.5.0 sender declines a
       # file it cannot open, emitting MSG_NO_SEND for a later NDX while oc's
       # receiver still awaits an earlier one. Pins that oc retires the declined
-      # entry by index (io.c:1207 got_flist_entry_status) and lands the readable
+      # entry by index (io.c:1225 got_flist_entry_status) and lands the readable
       # files instead of aborting the whole transfer as a desync. Same
       # OC_RSYNC_UPSTREAM_COMPAT gate; the 3.5.0 install tree was built above.
       - name: Run MSG_NO_SEND out-of-order oracle (upstream sender vs oc receiver)

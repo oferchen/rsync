@@ -57,7 +57,7 @@ fn test_rsync_protect_args_env_enables_protect_args() {
     );
 }
 
-// upstream: options.c:1986 - getenv(RSYNC_PROTECT_ARGS) != NULL && *arg
+// upstream: options.c:1992 - getenv(RSYNC_PROTECT_ARGS) != NULL && *arg
 // requires a non-empty value; an empty string falls through to the compile
 // default, which oc leaves unresolved (None) for the caller to decide.
 #[test]
@@ -177,7 +177,7 @@ fn test_no_rsync_rsh_env() {
 #[test]
 #[serial]
 fn test_rsync_partial_dir_env_sets_partial_dir_with_partial() {
-    // upstream: options.c:2448-2451 - RSYNC_PARTIAL_DIR is consulted only when
+    // upstream: options.c:2457-2460 - RSYNC_PARTIAL_DIR is consulted only when
     // keep_partial is active (--partial/-P) and no explicit --partial-dir given.
     let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/.rsync-partial");
     let args = parse_args(["oc-rsync", "--partial", "src", "dest"]).unwrap();
@@ -191,7 +191,7 @@ fn test_rsync_partial_dir_env_sets_partial_dir_with_partial() {
 #[test]
 #[serial]
 fn test_rsync_partial_dir_env_ignored_without_partial() {
-    // upstream: options.c:2448 `if (keep_partial && !partial_dir && !am_server)`
+    // upstream: options.c:2457 `if (keep_partial && !partial_dir && !am_server)`
     // - without --partial/-P the env var is ignored and does not enable partial.
     let _guard = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp/.rsync-partial");
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
@@ -258,7 +258,7 @@ fn test_multiple_env_vars_together() {
     let _guard2 = EnvGuard::set("RSYNC_RSH", "ssh");
     let _guard3 = EnvGuard::set("RSYNC_PARTIAL_DIR", "/tmp");
 
-    // upstream: options.c:2448-2456 - RSYNC_PARTIAL_DIR is consulted only when
+    // upstream: options.c:2457-2465 - RSYNC_PARTIAL_DIR is consulted only when
     // keep_partial is active (--partial/-P) and no explicit --partial-dir was
     // given, so --partial is supplied for the env dir to take effect.
     let args = parse_args(["oc-rsync", "--partial", "src", "dest"]).unwrap();

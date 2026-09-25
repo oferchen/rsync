@@ -3,8 +3,8 @@
 //! Upstream never re-walks the absolute module path after the privilege drop:
 //! `clientserver.c:1059-1065` `change_dir()`s into the module root and pins it
 //! as `module_dirfd` while still privileged, and the scan
-//! (`flist.c:2035-2059`), the content open (`sender.c:293-295`) and the anchor
-//! helper (`syscall.c:85-90`, `dup(module_dirfd)`) all resolve against that
+//! (`flist.c:2271-2295`), the content open (`sender.c:296-298`) and the anchor
+//! helper (`syscall.c:102-107`, `dup(module_dirfd)`) all resolve against that
 //! descriptor afterwards. oc keeps absolute source paths, so without the same
 //! pin every one of those lookups re-traverses the module's ancestors under
 //! the dropped identity and fails with `EACCES` on an unsearchable one - the
@@ -185,7 +185,7 @@ fn sealed_assertions(module: &Path, sub_file: &Path) {
     assert_eq!(names, vec![OsString::from("link"), OsString::from("sub")]);
 
     // Consumer 3: the anchor every confined source open resolves against.
-    // `open_trusted_dir` is oc's `open_anchor_dirfd()` (syscall.c:85-90), and
+    // `open_trusted_dir` is oc's `open_anchor_dirfd()` (syscall.c:102-107), and
     // it is what `SourceOpen::open` and `read_source_link` re-open on every
     // call.
     fast_io::open_trusted_dir(module)
@@ -239,7 +239,7 @@ fn sealed_assertions(module: &Path, sub_file: &Path) {
 ///
 /// Runs on every Unix. Linux answers from `O_PATH` + `fstat` and everywhere
 /// else from `fstatat`, which is the syscall upstream itself issues
-/// (`syscall.c:3950-3974` `do_lstat_atfd()`/`do_stat_atfd()`), so both arms
+/// (`syscall.c:4131-4155` `do_lstat_atfd()`/`do_stat_atfd()`), so both arms
 /// have to satisfy the same assertions: reach the entry through the pin, and
 /// keep `lstat` and `stat` telling different stories about a symlink. See
 /// `fast_io::pinned_root`'s Platform section.
@@ -285,7 +285,7 @@ fn sealed_stat_mutation(module: &Path) {
 ///
 /// The pin goes through the ownership walk, because upstream's `.` is the
 /// directory `change_dir()` entered and a non-chrooted daemon enters it with
-/// `open_no_attacker_symlinks()` (`util1.c:1254-1263`). That walk refuses a
+/// `open_no_attacker_symlinks()` (`util1.c:1351-1360`). That walk refuses a
 /// component symlink owned by a foreign uid and FOLLOWS one owned by uid 0 or
 /// our euid - the `/backup -> /mnt/disk` administrative pattern. Hardening the
 /// pin into a blanket `O_NOFOLLOW` would refuse that pattern too, and this is

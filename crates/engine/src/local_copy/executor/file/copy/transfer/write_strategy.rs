@@ -22,20 +22,20 @@ use super::super::super::paths::partial_dir_fname;
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/generator.c:2173-2179` - `partial_dir && (partialptr =
+/// - `rsync-3.5.1/generator.c:2173-2179` - `partial_dir && (partialptr =
 ///   partial_dir_fname(fname)) != NULL && link_stat(partialptr, &partial_st, 0)
 ///   == 0 && S_ISREG(partial_st.st_mode)`, otherwise `partialptr = NULL`.
 ///   `link_stat(..., 0)` is an `lstat`, so a symlink planted at the partial leaf
 ///   is not a regular file and is refused here exactly as it is there.
-/// - `rsync-3.5.0/receiver.c:1137-1138` - `one_inplace = inplace_partial &&
+/// - `rsync-3.5.1/receiver.c:1153-1155` - `one_inplace = inplace_partial &&
 ///   fnamecmp_type == FNAMECMP_PARTIAL_DIR && fd1 != -1`.
 ///
 /// The `inplace_partial` half of that conjunction is the protocol-30
-/// `CF_INPLACE_PARTIAL_DIR` capability (`compat.c:738`, `options.c:3221`), which
+/// `CF_INPLACE_PARTIAL_DIR` capability (`compat.c:738`, `options.c:3231`), which
 /// upstream negotiates with itself on a local transfer too - and this executor
 /// IS both ends, so it is unconditionally true here. The `fd1 != -1` half guards
 /// against a *peer* claiming a partial basis the receiver's confined open then
-/// rejects (`receiver.c:1093-1105`); nothing here is peer-supplied, the path is
+/// rejects (`receiver.c:1109-1121`); nothing here is peer-supplied, the path is
 /// derived locally from the operator's own `--partial-dir`, so the remaining
 /// condition is upstream's `partialptr != NULL` alone.
 pub(in crate::local_copy) fn one_inplace_partial_file(
@@ -63,7 +63,7 @@ pub(in crate::local_copy) enum WriteStrategy {
     /// upstream's `one_inplace`: write straight into the `--partial-dir` entry
     /// and rename that entry onto the destination on commit.
     ///
-    /// upstream: `receiver.c:1195-1196` - `fnametmp = one_inplace ? partialptr
+    /// upstream: `receiver.c:1212-1213` - `fnametmp = one_inplace ? partialptr
     /// : fname`. The in-place target is the file inside the partial dir, never
     /// the live destination.
     InplacePartialDir,
@@ -103,16 +103,16 @@ pub(in crate::local_copy) enum WriteStrategy {
 ///
 /// `one_inplace_partial_dir` outranks plain `--inplace` for the same reason
 /// upstream's `fnametmp = one_inplace ? partialptr : fname`
-/// (`receiver.c:1196`) resolves the ternary before consulting `inplace`: when a
+/// (`receiver.c:1213`) resolves the ternary before consulting `inplace`: when a
 /// partial-dir entry is the update target it IS the target, whichever other
 /// in-place mode is also on. `--inplace`/`--append` and `--partial-dir` are in
 /// fact rejected together during config validation
-/// (`core/src/client/config/builder`, upstream `options.c:2424-2432`), so the
+/// (`core/src/client/config/builder`, upstream `options.c:2433-2441`), so the
 /// precedence is not observable through the CLI; it is written this way so it
 /// stays upstream's if the two are ever wired together.
 ///
 /// ⚠ **Append is the one exception, and it is deliberate.** Upstream's ternary
-/// picks the *target*; the append seek (`receiver.c:372-373`) is a separate
+/// picks the *target*; the append seek (`receiver.c:385-386`) is a separate
 /// decision that upstream applies to whichever fd it opened, and its offset
 /// comes from `sx.st`, which the generator has already replaced with
 /// `partial_st` (`generator.c:2271`) - i.e. from the PARTIAL file's length. This
@@ -208,7 +208,7 @@ pub(in crate::local_copy) fn open_destination_writer(
             // Inplace + delta must NOT truncate: the existing blocks are the
             // basis the delta reads from.
             let should_truncate = delta_signature.is_none();
-            // upstream: receiver.c:1195-1224 - the whole three-arm chain, owned
+            // upstream: receiver.c:1212-1241 - the whole three-arm chain, owned
             // by `fast_io`. `Direct` because this is the destination leaf,
             // already anchored by the caller, not an operator path.
             fast_io::open_inplace_output(
@@ -219,10 +219,10 @@ pub(in crate::local_copy) fn open_destination_writer(
             .map_err(|error| LocalCopyError::io("copy file", destination, error))
         }
         WriteStrategy::InplacePartialDir => {
-            // upstream: receiver.c:1196 - `fnametmp = one_inplace ? partialptr
+            // upstream: receiver.c:1213 - `fnametmp = one_inplace ? partialptr
             // : fname`. The reconstruction goes into the partial-dir entry; the
             // guard's commit rename is upstream's
-            // `finish_transfer(fname, fnametmp, ...)` (receiver.c:1288).
+            // `finish_transfer(fname, fnametmp, ...)` (receiver.c:1305).
             let Some(partial_file) = one_inplace_partial_file else {
                 return Err(LocalCopyError::io(
                     "copy file",
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn existing_partial_dir_entry_selects_one_inplace_staging() {
-        // upstream: receiver.c:1195-1196 - `fnametmp = one_inplace ? partialptr
+        // upstream: receiver.c:1212-1213 - `fnametmp = one_inplace ? partialptr
         // : fname`. Without this the same inputs pick TempFileRename and the
         // partial-dir entry is never opened at all.
         assert_eq!(

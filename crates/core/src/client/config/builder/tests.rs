@@ -971,7 +971,7 @@ fn implicit_partial_dir_filter_excludes_and_protects() {
     assert!(rule.applies_to_receiver());
 }
 
-/// upstream: options.c:2421 `if (delay_updates && !partial_dir) partial_dir =
+/// upstream: options.c:2430 `if (delay_updates && !partial_dir) partial_dir =
 /// tmp_partialdir;` (`tmp_partialdir[] = ".~tmp~"`) - a bare `--delay-updates`
 /// uses the implicit `.~tmp~` staging dir, which then gets the same protective
 /// perishable exclude via compat.c:791. Without this the staging directory
@@ -1013,7 +1013,7 @@ fn implicit_partial_dir_filter_skips_absolute_dir() {
     assert!(config.filter_rules().is_empty());
 }
 
-/// upstream: options.c:2336-2339 - `--backup` (no `--backup-dir`) combined with
+/// upstream: options.c:2345-2348 - `--backup` (no `--backup-dir`) combined with
 /// `--delete` (and without `--delete-excluded`) injects a receiver-side
 /// `P *<suffix>` protect rule. Backups are written beside the destination as
 /// `name~`, so without this rule the delete pass would remove the very files
@@ -1036,7 +1036,7 @@ fn backup_with_delete_injects_default_protect_rule() {
     assert!(!rule.is_perishable());
 }
 
-/// upstream: options.c:2337-2338 `"P *%s", backup_suffix` - an explicit
+/// upstream: options.c:2346-2347 `"P *%s", backup_suffix` - an explicit
 /// `--suffix` is reflected in the injected protect pattern.
 #[test]
 fn backup_with_delete_uses_explicit_suffix() {
@@ -1053,7 +1053,7 @@ fn backup_with_delete_uses_explicit_suffix() {
     assert_eq!(rule.pattern(), "*.bak");
 }
 
-/// upstream: options.c:2336 guard `!delete_excluded` - `--delete-excluded`
+/// upstream: options.c:2345 guard `!delete_excluded` - `--delete-excluded`
 /// suppresses the protect rule so backup-suffix files remain deletion
 /// candidates. WHY: the guard is what lets `--delete-excluded` reach files the
 /// backup protect rule would otherwise shield.
@@ -1073,7 +1073,7 @@ fn backup_with_delete_excluded_omits_protect_rule() {
     );
 }
 
-/// upstream: options.c:2328-2329 `if (backup_dir) { /* No need for ... a protect
+/// upstream: options.c:2337-2338 `if (backup_dir) { /* No need for ... a protect
 /// rule. */ }` - a `--backup-dir` stores backups in a separate tree, so no
 /// protect rule is injected.
 #[test]
@@ -1091,7 +1091,7 @@ fn backup_dir_omits_protect_rule() {
     );
 }
 
-/// upstream: options.c:2478 guard `make_backups && delete_mode` - the protect
+/// upstream: options.c:2487 guard `make_backups && delete_mode` - the protect
 /// rule requires BOTH `--backup` and `--delete`; neither alone injects it.
 #[test]
 fn backup_without_delete_omits_protect_rule() {
@@ -1157,11 +1157,11 @@ fn append_sets_flag() {
     assert!(config.append());
 }
 
-// upstream: options.c:2410 - `if (append_mode) { ...; inplace = 1; }`. Nothing
+// upstream: options.c:2419 - `if (append_mode) { ...; inplace = 1; }`. Nothing
 // downstream reads `append_mode` to decide where the receiver writes: the write
-// target (receiver.c:968), the retained-vs-discarded branch for a failed
-// verification (receiver.c:1029), the keptstr wording (receiver.c:1074) and the
-// sender's updating_basis_file (sender.c:337) all read `inplace`. Materialising
+// target (receiver.c:984), the retained-vs-discarded branch for a failed
+// verification (receiver.c:1045), the keptstr wording (receiver.c:1090) and the
+// sender's updating_basis_file (sender.c:338) all read `inplace`. Materialising
 // the flag here is what lets those sites stay single-implementation.
 #[test]
 fn append_implies_inplace() {
@@ -1288,11 +1288,11 @@ fn io_uring_depth_clears_to_none() {
 }
 
 // Mutual exclusion validation tests
-// (upstream: options.c:2424-2432 - inplace/append conflicts with partial-dir/delay-updates)
+// (upstream: options.c:2433-2441 - inplace/append conflicts with partial-dir/delay-updates)
 
 #[test]
 fn validate_inplace_with_partial_dir_conflicts() {
-    // upstream: options.c:2424-2432 - `--inplace` with `--partial-dir` is
+    // upstream: options.c:2433-2441 - `--inplace` with `--partial-dir` is
     // rejected unconditionally, before any capability negotiation. The
     // `CF_INPLACE_PARTIAL_DIR` capability (compat.c:727,778) only enables the
     // receiver's internal one_inplace optimization for a basis file in the
@@ -1334,7 +1334,7 @@ fn validate_append_with_delay_updates_conflicts() {
 
 #[test]
 fn validate_append_with_whole_file_conflicts() {
-    // upstream: options.c:2400 - --append cannot be used with --whole-file.
+    // upstream: options.c:2409 - --append cannot be used with --whole-file.
     let mut b = builder().append(true).whole_file(true);
     let err = b.validate().unwrap_err();
     assert_eq!(err.option1, "append");
@@ -1344,7 +1344,7 @@ fn validate_append_with_whole_file_conflicts() {
 
 #[test]
 fn validate_old_args_with_secluded_args_conflicts() {
-    // upstream: options.c:1977 - `--old-args` and `--secluded-args`
+    // upstream: options.c:1983 - `--old-args` and `--secluded-args`
     // (`--protect-args`) are mutually exclusive and abort with this exact
     // wording, which differs from the generic "cannot be used with" template:
     // the message names --secluded-args first and ends with a period.
@@ -1551,7 +1551,7 @@ fn backup_suffix_sets_value() {
 
 #[test]
 fn backup_suffix_does_not_enable_backup() {
-    // upstream: options.c:2296-2307 - only `--backup-dir` implies `--backup`.
+    // upstream: options.c:2305-2316 - only `--backup-dir` implies `--backup`.
     // A suffix alone stores the string without enabling backups.
     let config = builder().backup_suffix(Some(".bak")).build();
     assert!(!config.backup());
@@ -1635,7 +1635,7 @@ fn compression_algorithm_sets_value() {
 
 #[test]
 fn compression_algorithm_marks_explicit_choice() {
-    // upstream: options.c:2818-2823 - explicit compress_choice is forwarded
+    // upstream: options.c:2828-2833 - explicit compress_choice is forwarded
     // to the remote peer. The explicit flag distinguishes "user chose zstd"
     // from "zstd is the default."
     let config = builder()
@@ -2249,10 +2249,10 @@ fn dirs_sets_flag() {
     assert!(config.dirs());
 }
 
-// upstream: options.c:2190-2191 - `if (files_from) { if (xfer_dirs < 0)
+// upstream: options.c:2199-2200 - `if (files_from) { if (xfer_dirs < 0)
 // xfer_dirs = 1; }`. A files-from run must resolve xfer_dirs on even when
 // `-d` was never passed, otherwise the bare directories named in the list hit
-// the `!xfer_dirs` guard (flist.c:2451) and are silently skipped.
+// the `!xfer_dirs` guard (flist.c:2691) and are silently skipped.
 #[test]
 fn dirs_folds_in_files_from_when_flag_unset() {
     let config = builder()

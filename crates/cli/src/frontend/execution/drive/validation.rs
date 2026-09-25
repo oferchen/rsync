@@ -22,7 +22,7 @@ pub(crate) const CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE: &str =
 /// this behavior (e.g., the exclude test passes `--rsync-path` on local runs).
 ///
 /// Note: `--remote-option` is likewise NOT rejected. Upstream appends its
-/// values to the argv of the server it starts (options.c:3175-3182), and a
+/// values to the argv of the server it starts (options.c:3185-3192), and a
 /// local copy still forks one, so `-M` reaches the receiving side there
 /// instead of being an error. oc reproduces that by folding the values into
 /// its own option stream when the transfer is local - see

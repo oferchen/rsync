@@ -71,7 +71,7 @@ impl ClientConfigBuilder {
     #[must_use]
     #[doc(alias = "--suffix")]
     pub fn backup_suffix<S: Into<OsString>>(mut self, suffix: Option<S>) -> Self {
-        // upstream: options.c:2296-2307 - only `--backup-dir` implies `--backup`.
+        // upstream: options.c:2305-2316 - only `--backup-dir` implies `--backup`.
         // Setting a suffix stores the string but never enables backups.
         self.backup_suffix = suffix.map(Into::into);
         self

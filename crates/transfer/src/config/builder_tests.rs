@@ -317,7 +317,7 @@ mod validation {
         ));
     }
 
-    /// upstream: options.c:2423-2431 - `--inplace` cannot be used with
+    /// upstream: options.c:2432-2440 - `--inplace` cannot be used with
     /// `--partial-dir`; the pair is refused at config-build time.
     #[test]
     fn inplace_and_partial_dir_conflict() {

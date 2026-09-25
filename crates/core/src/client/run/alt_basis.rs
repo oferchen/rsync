@@ -1,7 +1,7 @@
 //! Operator-supplied alternate-basis directory validation.
 //!
-//! upstream: `main.c:867` `check_alt_basis_dirs()`, called from both receiver
-//! entry points - `main.c:1241` (server receiver) and `main.c:1424` (client
+//! upstream: `main.c:880` `check_alt_basis_dirs()`, called from both receiver
+//! entry points - `main.c:1259` (server receiver) and `main.c:1442` (client
 //! receiver) - once the destination directory is the current directory.
 //!
 //! The check is advisory: upstream warns and continues, leaving the exit code
@@ -21,10 +21,10 @@ use logging::warn_log;
 
 /// Names the alt-dest option a basis directory came from.
 ///
-/// upstream: `options.c:1444` `alt_dest_opt()`. Upstream reads the single
+/// upstream: `options.c:1450` `alt_dest_opt()`. Upstream reads the single
 /// `alt_dest_type` in effect rather than a per-entry kind, which it can do
 /// because combining two alt-dest options is rejected outright
-/// (`main.c:1886`, exit 1) - so at most one kind is ever present and the
+/// (`main.c:1913`, exit 1) - so at most one kind is ever present and the
 /// per-entry kind carries exactly the same information.
 fn alt_dest_opt(kind: ReferenceDirectoryKind) -> &'static str {
     match kind {
@@ -36,7 +36,7 @@ fn alt_dest_opt(kind: ReferenceDirectoryKind) -> &'static str {
 
 /// Removes at most ONE trailing separator, and never from a bare root.
 ///
-/// upstream: `main.c:876-877`
+/// upstream: `main.c:889-890`
 /// `if (bd_len > 1 && bdir[bd_len-1] == '/') bdir[--bd_len] = '\0';`
 ///
 /// Exactly one, because the count decides *which* diagnostic fires. Measured
@@ -91,7 +91,7 @@ fn strip_one_trailing_separator(path: &Path) -> PathBuf {
 
 /// Resolves a basis directory to the absolute path upstream reports.
 ///
-/// upstream: `main.c:885-898` joins a relative basis onto `curr_dir`, which is
+/// upstream: `main.c:898-911` joins a relative basis onto `curr_dir`, which is
 /// the *destination* directory - upstream has already chdir'd there by the
 /// time `check_alt_basis_dirs()` runs, so `--link-dest=../prev` means
 /// "`../prev` relative to the destination", not to the invocation directory.
@@ -124,10 +124,10 @@ fn resolve_against_destination(basis: &Path, destination: &Path) -> PathBuf {
 
 /// Whether the CLIENT should run the basis-dir check for a remote transfer.
 ///
-/// upstream: `main.c:1424` runs `check_alt_basis_dirs()` on the client only
+/// upstream: `main.c:1442` runs `check_alt_basis_dirs()` on the client only
 /// when the client is the receiver, i.e. on a pull. On a push the remote server
-/// is the receiver and checks its own forwarded argv (`main.c:1241`), because
-/// `options.c:2911-2934` emits the basis-dir args only in that direction - so
+/// is the receiver and checks its own forwarded argv (`main.c:1259`), because
+/// `options.c:2921-2944` emits the basis-dir args only in that direction - so
 /// warning here too would double-report.
 ///
 /// The remote-operand conjunct keeps a purely local copy out: that path has its
@@ -140,7 +140,7 @@ pub(crate) fn client_checks_basis_dirs(is_pull: bool, has_remote_operand: bool) 
 /// Warns about each `--compare-dest` / `--copy-dest` / `--link-dest` argument
 /// that is missing or is not a directory.
 ///
-/// upstream: `main.c:900-903` - `%s arg does not exist: %s` when the stat
+/// upstream: `main.c:913-916` - `%s arg does not exist: %s` when the stat
 /// fails, `%s arg is not a dir: %s` when it succeeds on a non-directory. Both
 /// go to `FWARNING` and neither changes the exit code.
 ///
@@ -158,11 +158,11 @@ pub fn check_alt_basis_dirs(references: &[ReferenceDirectory], destination: &Pat
 /// print.
 ///
 /// Split out because the two are not always the same string. A daemon receiver
-/// has `sanitize_paths` set (`clientserver.c:1068`), so `main.c:885`'s
+/// has `sanitize_paths` set (`clientserver.c:1068`), so `main.c:898`'s
 /// `if (*bdir != '/' && (dry_run > 1 || !sanitize_paths))` skips the join onto
 /// `curr_dir` and upstream stats and prints the *sanitized* value: relative for
 /// a relative arg (`--link-dest arg does not exist: sibling`), absolute for an
-/// absolute one, because `util1.c:1145-1152` re-roots an absolute arg at
+/// absolute one, because `util1.c:1242-1249` re-roots an absolute arg at
 /// `module_dir` inside the sanitize itself. Upstream can stat that relative
 /// name because it chdir'd into the destination; oc does not, so the caller
 /// supplies the absolute equivalent to stat and keeps upstream's spelling to
@@ -226,7 +226,7 @@ mod tests {
         assert!(warnings_for(&[link(basis)], temp.path()).is_empty());
     }
 
-    /// upstream: `main.c:901` - a missing arg reports `does not exist`.
+    /// upstream: `main.c:914` - a missing arg reports `does not exist`.
     #[test]
     fn a_missing_basis_reports_does_not_exist() {
         let temp = tempdir().expect("tempdir");
@@ -241,7 +241,7 @@ mod tests {
         );
     }
 
-    /// upstream: `main.c:903` - an arg that exists but is not a directory
+    /// upstream: `main.c:916` - an arg that exists but is not a directory
     /// reports `is not a dir`.
     #[test]
     fn a_plain_file_basis_reports_is_not_a_dir() {
@@ -258,7 +258,7 @@ mod tests {
     /// ONE trailing separator is stripped, so the stat lands on the file and
     /// the message is `is not a dir` - not `does not exist`.
     ///
-    /// upstream: `main.c:876-877`; measured against real 3.5.0.
+    /// upstream: `main.c:889-890`; measured against real 3.5.0.
     #[test]
     fn one_trailing_separator_is_stripped_before_the_stat() {
         let temp = tempdir().expect("tempdir");
@@ -305,7 +305,7 @@ mod tests {
     }
 
     /// A relative basis resolves against the DESTINATION, not the invocation
-    /// directory. upstream: `main.c:885-898` joins onto `curr_dir`.
+    /// directory. upstream: `main.c:898-911` joins onto `curr_dir`.
     #[test]
     fn a_relative_basis_resolves_against_the_destination() {
         let temp = tempdir().expect("tempdir");
@@ -346,7 +346,7 @@ mod tests {
         );
     }
 
-    /// Each alt-dest option names itself. upstream: `options.c:1444`.
+    /// Each alt-dest option names itself. upstream: `options.c:1450`.
     #[test]
     fn each_alt_dest_kind_names_its_own_option() {
         let temp = tempdir().expect("tempdir");

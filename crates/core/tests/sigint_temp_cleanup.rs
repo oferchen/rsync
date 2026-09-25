@@ -23,7 +23,7 @@
 //!
 //! Upstream reference:
 //! - `rsync.c:684 sig_int()` - records the signal only
-//! - `io.c:750 got_kill_signal` - the I/O loop acts on it
+//! - `io.c:768 got_kill_signal` - the I/O loop acts on it
 //! - `cleanup.c:159-197` - `cleanup_got_literal && keep_partial` retention,
 //!   otherwise unlink
 

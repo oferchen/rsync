@@ -15,11 +15,11 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/syscall.c:538` `open_no_attacker_symlinks()` - walk each
+//! - `rsync-3.5.1/syscall.c:675` `open_no_attacker_symlinks()` - walk each
 //!   component without following it; follow a symlink only when it is owned by
-//!   uid 0 or our euid, refuse any other-uid one (`syscall.c:406`).
-//! - `rsync-3.5.0/options.c:2654` - `--files-from`.
-//! - `rsync-3.5.0/clientserver.c:303` - `--early-input`.
+//!   uid 0 or our euid, refuse any other-uid one (`syscall.c:499`).
+//! - `rsync-3.5.1/options.c:2664` - `--files-from`.
+//! - `rsync-3.5.1/clientserver.c:303` - `--early-input`.
 
 use std::fs::File;
 use std::io;

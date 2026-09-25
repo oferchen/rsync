@@ -30,9 +30,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.0/checksum.c:307` - signed
+//! - `target/interop/upstream-src/rsync-3.5.1/checksum.c:307` - signed
 //!   reinterpretation of buffer bytes for the rolling sum.
-//! - `target/interop/upstream-src/rsync-3.5.0/match.c:163-378` -
+//! - `target/interop/upstream-src/rsync-3.5.1/match.c:163-378` -
 //!   `hash_search()` consults strong checksum after a rolling-digest hit.
 
 use checksums::RollingChecksum;

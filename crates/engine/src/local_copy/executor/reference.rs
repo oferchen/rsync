@@ -70,9 +70,9 @@ pub(crate) fn resolve_reference_candidate(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/generator.c:962` `basis_link_stat()` - the non-daemon arm:
+/// - `rsync-3.5.1/generator.c:962` `basis_link_stat()` - the non-daemon arm:
 ///   `owner_walk_parent()` then `link_stat_at()` on the leaf.
-/// - `rsync-3.5.0/generator.c:1084` / `:1110` / `:1227` / `:1254` - its call
+/// - `rsync-3.5.1/generator.c:1084` / `:1110` / `:1227` / `:1254` - its call
 ///   sites in `try_dests_reg()` and `try_dests_non()`.
 #[cfg(unix)]
 fn basis_stat(path: &Path) -> io::Result<fs::Metadata> {
@@ -132,7 +132,7 @@ fn unix_time_parts(time: SystemTime) -> (i64, u32) {
 /// Whether a reference basis carries the source's modification time under
 /// `--modify-window`.
 ///
-/// upstream: `rsync-3.5.0/util1.c:1649` `same_time()` - a zero window (the
+/// upstream: `rsync-3.5.1/util1.c:1744` `same_time()` - a zero window (the
 /// default) compares whole seconds, a negative window compares seconds and
 /// nanoseconds, and a positive window is a whole-second tolerance.
 fn reference_mtime_matches(
@@ -183,7 +183,7 @@ pub(crate) fn reference_attrs_unchanged(
         return false;
     }
 
-    // upstream: generator.c:400 mtime_differs -> util1.c:1649 same_time - the
+    // upstream: generator.c:400 mtime_differs -> util1.c:1744 same_time - the
     // mtime must match for a level-3 basis, and `same_time` compares WHOLE
     // SECONDS for the default `modify_window` of 0. Nanoseconds only enter the
     // comparison for a negative window (`--modify-window` < 0, nsec-exact), and
@@ -289,7 +289,7 @@ pub(crate) fn find_reference_action(
         // :1227 and :1254. EVERY caller treats ANY stat failure as "no candidate
         // in this basis dir", not just ENOENT. An alt-dest arg that is missing
         // or is not a directory has already been reported once by
-        // check_alt_basis_dirs() (main.c:867); aborting the transfer on the
+        // check_alt_basis_dirs() (main.c:880); aborting the transfer on the
         // resulting ENOTDIR would fail a run upstream completes normally.
         let Ok(candidate_metadata) = basis_stat(&candidate) else {
             continue;

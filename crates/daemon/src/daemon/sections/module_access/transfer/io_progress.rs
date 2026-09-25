@@ -1,13 +1,13 @@
 // The transfer-phase idle deadline: upstream's `check_timeout()` clock.
 //
-// upstream: io.c:211-250 `check_timeout()`. Three clauses of that function are
+// upstream: io.c:229-268 `check_timeout()`. Three clauses of that function are
 // load-bearing and all three are reproduced here:
 //
 //  1. `if (!io_timeout) return;` - an unset timeout means NO check at all.
 //     [`TransferDeadline::arm`] returns `None` for `None`, so an unconfigured
 //     module has no deadline object to consult and pays no clock cost.
 //  2. `if (am_receiver) return;` - the RECEIVER never times out. Upstream's own
-//     comment (io.c:215-225) explains why: a receiver can spend a long time
+//     comment (io.c:233-243) explains why: a receiver can spend a long time
 //     hashing without touching the socket, so timing it out would abort healthy
 //     work. The role gate lives at the call site, which is the only place that
 //     knows the negotiated role.
@@ -83,7 +83,7 @@ impl IoProgress {
 
 /// The reconciled transfer timeout, paired with the clock it is measured against.
 ///
-/// upstream: io.c:243 `if (t - chk >= io_timeout)`. Constructed only when the
+/// upstream: io.c:261 `if (t - chk >= io_timeout)`. Constructed only when the
 /// session actually has a timeout AND the local role is one upstream checks, so
 /// its mere existence is clause 1 and clause 2 already decided.
 #[derive(Debug, Clone)]
@@ -95,7 +95,7 @@ struct TransferDeadline {
 impl TransferDeadline {
     /// Arms the deadline, or returns `None` when upstream would not check.
     ///
-    /// upstream: io.c:226-227 - `if (!io_timeout) return;`. `None` in, `None`
+    /// upstream: io.c:244-245 - `if (!io_timeout) return;`. `None` in, `None`
     /// out: an unconfigured `timeout` leaves the transfer phase unbounded, which
     /// is upstream's default (`io_timeout = 0`). The clock is owned by the
     /// deadline rather than passed alongside it, so a session with no timeout
@@ -114,7 +114,7 @@ impl TransferDeadline {
 
     /// The idle interval, if it has reached the configured timeout.
     ///
-    /// upstream: io.c:243 compares with `>=`, and io.c:246 reports the MEASURED
+    /// upstream: io.c:261 compares with `>=`, and io.c:264 reports the MEASURED
     /// elapsed time `(int)(t - chk)`, not the configured value - so the caller
     /// gets the observed interval to put in the diagnostic.
     fn expired(&self) -> Option<Duration> {
@@ -169,7 +169,7 @@ fn writer_marking_progress(
 
 /// The diagnostic upstream prints when the transfer timeout elapses.
 ///
-/// upstream: io.c:246-247 - `rprintf(FERROR, "[%s] io timeout after %d seconds
+/// upstream: io.c:264-265 - `rprintf(FERROR, "[%s] io timeout after %d seconds
 /// -- exiting\n", who_am_i(), (int)(t-chk))`, then `exit_cleanup(RERR_TIMEOUT)`.
 /// The seconds are the MEASURED idle interval, truncated to whole seconds by
 /// upstream's `(int)` cast on a `time_t` difference.
@@ -182,7 +182,7 @@ fn io_timeout_message(who: &str, idle: Duration) -> String {
 
 #[cfg(test)]
 mod io_progress_tests {
-    //! Clause-by-clause tests for upstream's `check_timeout()` (io.c:211-250).
+    //! Clause-by-clause tests for upstream's `check_timeout()` (io.c:229-268).
     //!
     //! Every assertion here is condition-based rather than sleep-based: the
     //! clock is driven by a spin on its own `elapsed()`, and expiry is decided
@@ -210,7 +210,7 @@ mod io_progress_tests {
 
     #[test]
     fn an_unset_timeout_arms_no_deadline() {
-        // upstream: io.c:226-227 `if (!io_timeout) return;` - with no timeout
+        // upstream: io.c:244-245 `if (!io_timeout) return;` - with no timeout
         // there is nothing to check, so no deadline object exists at all and
         // the transfer phase stays unbounded.
         assert!(TransferDeadline::arm(None).is_none());
@@ -231,7 +231,7 @@ mod io_progress_tests {
 
     #[test]
     fn a_deadline_at_or_past_the_bound_has_expired() {
-        // upstream: io.c:243 compares with `>=`, so an idle interval equal to
+        // upstream: io.c:261 compares with `>=`, so an idle interval equal to
         // the bound already counts as expired.
         let deadline = TransferDeadline::arm(Some(ALWAYS)).expect("armed");
         assert!(deadline.expired().is_some());
@@ -239,7 +239,7 @@ mod io_progress_tests {
 
     #[test]
     fn a_successful_write_stamps_the_clock() {
-        // upstream: io.c:242 `chk = MAX(last_io_out, last_io_in)` - the WRITE
+        // upstream: io.c:260 `chk = MAX(last_io_out, last_io_in)` - the WRITE
         // half. Without this the deadline would measure reads alone and abort
         // a healthy send whose peer is simply quiet.
         let deadline = TransferDeadline::arm(Some(NEVER)).expect("armed");
@@ -304,7 +304,7 @@ mod io_progress_tests {
 
     #[test]
     fn the_diagnostic_reports_the_measured_interval() {
-        // upstream: io.c:246 prints `(int)(t - chk)` - the OBSERVED idle time,
+        // upstream: io.c:264 prints `(int)(t - chk)` - the OBSERVED idle time,
         // not the configured timeout, truncated to whole seconds.
         assert_eq!(
             io_timeout_message("rsyncd", Duration::from_millis(7_900)),

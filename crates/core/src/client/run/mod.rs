@@ -176,18 +176,18 @@ pub fn run_client_with_observer(
 
 /// The directory the receiver resolves relative operator paths against.
 ///
-/// upstream: main.c:768-860 `get_local_name()` chdirs the receiver before any
+/// upstream: main.c:781-873 `get_local_name()` chdirs the receiver before any
 /// transfer runs - into `dest_path` itself when the destination is (or is
-/// created as) a directory (`change_dir` at main.c:765/823), and into the
-/// destination's parent when a single file is being written (main.c:852). A
-/// destination with no path component leaves the cwd alone (main.c:838).
+/// created as) a directory (`change_dir` at main.c:778/836), and into the
+/// destination's parent when a single file is being written (main.c:865). A
+/// destination with no path component leaves the cwd alone (main.c:851).
 ///
 /// oc never chdirs, so anything upstream resolves *after* that chdir has to be
 /// joined onto this directory explicitly, or a relative value silently means
 /// something different than it does upstream.
 fn receiver_working_directory(dest: &Path) -> PathBuf {
     // A trailing separator names a directory even when it does not exist yet -
-    // upstream creates it and chdirs in (main.c:804-823). Checking the lossy
+    // upstream creates it and chdirs in (main.c:817-836). Checking the lossy
     // rendering is safe for this predicate specifically: the separators are
     // ASCII, and lossy conversion never turns a non-UTF-8 byte into one, so a
     // path whose final byte is a separator still ends with one afterwards.
@@ -195,7 +195,7 @@ fn receiver_working_directory(dest: &Path) -> PathBuf {
         return dest.to_path_buf();
     }
     match dest.parent() {
-        // Upstream substitutes "/" when the destination is rooted (main.c:836).
+        // Upstream substitutes "/" when the destination is rooted (main.c:849).
         Some(parent) if parent.as_os_str().is_empty() => PathBuf::from("."),
         Some(parent) => parent.to_path_buf(),
         None => PathBuf::from("."),
@@ -216,14 +216,14 @@ fn run_client_internal(
 
     apply_max_alloc(&config);
 
-    // upstream: main.c:1046-1061 do_recv() - the receiver validates --temp-dir
+    // upstream: main.c:1059-1074 do_recv() - the receiver validates --temp-dir
     // exists and is a directory before transferring. tmpdir is a receiver-only
-    // option (options.c:2925 forwards it only when am_sender), so the check
+    // option (options.c:2935 forwards it only when am_sender), so the check
     // fires only when the local process receives: a local copy or a pull (local
     // destination), never a push (remote destination).
     //
     // do_recv() runs AFTER get_local_name() has chdir'd the receiver into the
-    // destination (main.c:765/823/852), so upstream stats - and later creates
+    // destination (main.c:778/836/865), so upstream stats - and later creates
     // its temp files under - a relative --temp-dir resolved against the
     // DESTINATION, not the process cwd. oc never chdirs, so the value is
     // anchored explicitly here, once, before the check: doing it later would
@@ -256,9 +256,9 @@ fn run_client_internal(
     };
 
     // upstream: send_file_list() announces the walk with an FLOG-only
-    // `rprintf(FLOG, "building file list\n")` (flist.c:2248), and the first
+    // `rprintf(FLOG, "building file list\n")` (flist.c:2484), and the first
     // recv_file_list() mirrors it with `rprintf(FLOG, "receiving file list\n")`
-    // (flist.c:2608). Both are unconditional (no verbosity gate): rwrite()
+    // (flist.c:2848). Both are unconditional (no verbosity gate): rwrite()
     // routes FLOG to the log file when one is active and discards it
     // otherwise (log.c:290-307), so the event is emitted here regardless of
     // `-v` and the sink decides its fate by consuming the FLOG code.
@@ -310,11 +310,11 @@ fn run_client_internal(
         .iter()
         .any(|arg| remote::operand_is_remote(arg));
 
-    // upstream: main.c:1424 - the CLIENT receiver runs `check_alt_basis_dirs()`
+    // upstream: main.c:1442 - the CLIENT receiver runs `check_alt_basis_dirs()`
     // once its destination is known. On a PULL the client is the receiver, so
     // the check belongs here, ahead of both remote transports. On a PUSH the
     // remote server is the receiver and runs its own check from the forwarded
-    // argv - `options.c:2911-2934` emits the basis-dir args only in that
+    // argv - `options.c:2921-2944` emits the basis-dir args only in that
     // direction, which is why neither side needs the other's copy.
     //
     // Gated on a remote operand so a purely local copy is not warned about
@@ -327,7 +327,7 @@ fn run_client_internal(
     }
 
     if has_daemon_url {
-        // upstream: main.c:1593-1608 - when `-e`/`--rsh` is active with `::`,
+        // upstream: main.c:1611-1626 - when `-e`/`--rsh` is active with `::`,
         // the client spawns SSH with `rsync --server --daemon .` as the remote
         // command, then speaks the daemon protocol over the SSH pipes.
         let summary = if config.remote_shell().is_some() {
@@ -421,7 +421,7 @@ fn run_client_internal(
         return Ok(summary);
     }
 
-    // upstream: main.c:708 `get_local_name()` returns NULL when `list_only` is
+    // upstream: main.c:721 `get_local_name()` returns NULL when `list_only` is
     // set, so a local listing needs no destination operand. oc-rsync's local
     // plan always requires source+destination, so for `--list-only` with a
     // single source we synthesize a placeholder destination. List-only output
@@ -438,7 +438,7 @@ fn run_client_internal(
         .unwrap_or_else(|| config.transfer_args());
 
     // `--relative` scopes upstream's trailing-`..` DOTDIR rule
-    // (flist.c:2595-2602 sits in the arm flist.c:2581-2583 short-circuits past),
+    // (flist.c:2835-2842 sits in the arm flist.c:2821-2823 short-circuits past),
     // so the plan has to be built with the flag in hand.
     let plan =
         match LocalCopyPlan::from_operands_with_relative(plan_operands, config.relative_paths()) {
@@ -446,7 +446,7 @@ fn run_client_internal(
             Err(error) => return Err(map_local_copy_error(error)),
         };
 
-    // upstream: main.c:763-768 - `get_local_name()` chdirs the receiver into
+    // upstream: main.c:776-781 - `get_local_name()` chdirs the receiver into
     // an existing destination directory before any transfer runs
     // (`change_dir(dest_path, CD_NORMAL)`), and a failure reports
     // `change_dir#1 %s failed` and exits with RERR_FILESELECT (3). `chdir`
@@ -470,7 +470,7 @@ fn run_client_internal(
         return Err(super::error::destination_access_error(dest_to_check, error));
     }
 
-    // upstream: main.c:1241 / main.c:1424 call `check_alt_basis_dirs()` once the
+    // upstream: main.c:1259 / main.c:1442 call `check_alt_basis_dirs()` once the
     // destination is known, so a stale `--link-dest` is reported rather than
     // silently costing the hard-link optimisation. Warn-only: the exit code is
     // untouched, matching upstream's FWARNING.
@@ -482,7 +482,7 @@ fn run_client_internal(
 
     // A local copy bypasses the wire, so the capability negotiator - the only
     // place trace_checksum_summary/trace_compress_summary fire on the wire path
-    // - never runs. Upstream forks a real local_child server (main.c:649-654)
+    // - never runs. Upstream forks a real local_child server (main.c:662-667)
     // whose parse_checksum_choice/parse_compress_choice still emit the NSTR
     // summary lines, so reproduce them here from the resolved algorithms.
     // upstream: checksum.c:206-211, compat.c:213-219 (DEBUG_GTE(NSTR, 1) client).
@@ -499,7 +499,7 @@ fn run_client_internal(
         options = options.batch_writer(Some(writer_arc.clone()));
     }
 
-    // upstream: main.c:1841-1842 - `--only-write-batch` forces dry_run=1 so
+    // upstream: main.c:1868-1869 - `--only-write-batch` forces dry_run=1 so
     // that the transfer runs (populating the batch file) without creating the
     // destination directory or writing any files.
     let mode = if config.dry_run() || config.list_only() || config.only_write_batch() {
@@ -548,7 +548,7 @@ fn run_client_internal(
 
     let summary = summary.map_err(map_local_copy_error)?;
 
-    // upstream: receiver.c:674-676 - emit the progress2 end-of-transfer summary
+    // upstream: receiver.c:690-692 - emit the progress2 end-of-transfer summary
     // line when the transfer moved no file data (a lone special/symlink or a
     // no-change run), which the per-file path never produces.
     if let Some(adapter) = handler_adapter.as_mut() {
@@ -586,7 +586,7 @@ fn run_client_internal(
 /// buffers are deallocated and counted via the pool's overflow counter;
 /// subsequent acquires allocate fresh outside the pool.
 ///
-/// Mirrors upstream rsync `options.c:1943-1950`, where `max_alloc` is set
+/// Mirrors upstream rsync `options.c:1949-1956`, where `max_alloc` is set
 /// once during option processing and consumed by allocation paths thereafter.
 fn apply_max_alloc(config: &ClientConfig) {
     let Some(limit) = config.max_alloc() else {
@@ -608,7 +608,7 @@ fn apply_max_alloc(config: &ClientConfig) {
         // simply remains uncapped.
         return;
     };
-    // upstream: options.c:1959-1965 rewrites the `max_alloc` global, which then
+    // upstream: options.c:1965-1971 rewrites the `max_alloc` global, which then
     // bounds every attacker-controlled wire allocation (util2.c:75), including
     // the xattr datum decoders. Publish it before any transfer decodes xattrs.
     protocol::set_max_alloc(limit_usize);
@@ -841,8 +841,8 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
     ///
     /// - `rsync.c:118-140` `setup_iconv()` - LOCAL/REMOTE split and
     ///   `ic_send`/`ic_recv` `iconv_open` calls.
-    /// - `flist.c:1579-1603` `send_file_name()` sender filename transcode.
-    /// - `flist.c:738-754` `recv_file_entry()` receiver filename transcode.
+    /// - `flist.c:1804-1828` `send_file_name()` sender filename transcode.
+    /// - `flist.c:963-979` `recv_file_entry()` receiver filename transcode.
     /// - `options.c::recv_iconv_settings`
     /// - `compat.c:716-718`
     fn apply_iconv(&self, options: LocalCopyOptions, config: &ClientConfig) -> LocalCopyOptions {
@@ -1013,7 +1013,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .prune_empty_dirs(config.prune_empty_dirs())
             .inplace(config.inplace())
             // upstream: generator.c:2148 - the local executor needs the flag
-            // itself, not just the `--inplace` it implies (options.c:2555):
+            // itself, not just the `--inplace` it implies (options.c:2564):
             // whether an existing DEVICE destination is cleared or written
             // through is decided by `write_devices`, and `--inplace` alone
             // never authorises writing through a device node.
@@ -1928,9 +1928,9 @@ mod temp_dir_anchor_tests {
         run_client_with_observer(config, None).map(|_| ())
     }
 
-    /// upstream: `do_recv()` stats `tmpdir` (main.c:1046-1061) only after
+    /// upstream: `do_recv()` stats `tmpdir` (main.c:1059-1074) only after
     /// `get_local_name()` has chdir'd the receiver into the destination
-    /// (main.c:765/823/852), so a relative `--temp-dir` names a directory
+    /// (main.c:778/836/865), so a relative `--temp-dir` names a directory
     /// under the DESTINATION. oc has no chdir; before the anchoring fix it
     /// resolved the value against the process cwd and died with
     /// "The temp-dir does not exist".
@@ -1972,7 +1972,7 @@ mod temp_dir_anchor_tests {
         assert_eq!(receiver_working_directory(&dest), dest);
     }
 
-    /// upstream main.c:852 chdirs to the parent when a single file is written.
+    /// upstream main.c:865 chdirs to the parent when a single file is written.
     #[test]
     fn working_directory_is_the_parent_for_a_file_destination() {
         let base = TempDir::new().expect("tempdir");
@@ -1984,7 +1984,7 @@ mod temp_dir_anchor_tests {
     }
 
     /// A trailing separator names a directory even before it exists: upstream
-    /// creates it and chdirs in (main.c:804-823).
+    /// creates it and chdirs in (main.c:817-836).
     #[test]
     fn working_directory_honours_a_trailing_separator_on_a_missing_directory() {
         let base = TempDir::new().expect("tempdir");
@@ -1992,7 +1992,7 @@ mod temp_dir_anchor_tests {
         assert_eq!(receiver_working_directory(&absent), absent);
     }
 
-    /// upstream main.c:838 returns without chdir'ing when the destination has
+    /// upstream main.c:851 returns without chdir'ing when the destination has
     /// no path component, leaving relative values on the process cwd.
     #[test]
     fn working_directory_is_the_cwd_for_a_bare_destination_name() {

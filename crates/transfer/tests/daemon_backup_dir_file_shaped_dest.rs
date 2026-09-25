@@ -18,11 +18,11 @@
 //!
 //! Upstream never anchors the value early. `sanitize_path(NULL, backup_dir,
 //! NULL, 0, SP_DEFAULT)` re-roots only an ABSOLUTE value at `module_dir`
-//! (`util1.c:1145-1151`, reached only inside `if (*p == '/')`); a relative one
+//! (`util1.c:1242-1248`, reached only inside `if (*p == '/')`); a relative one
 //! is merely `..`-collapsed and stays relative. It is then resolved against the
 //! receiver's cwd at backup time, and `get_local_name()` sets that cwd to the
 //! operand's PARENT when the destination names a single file
-//! (`main.c:832-859`: `change_dir()` on everything before the last slash,
+//! (`main.c:845-872`: `change_dir()` on everything before the last slash,
 //! return the basename). So `--backup-dir=bak` lands at `<module>/bak/payload`
 //! for BOTH operand shapes.
 //!
@@ -34,19 +34,19 @@
 //! Leaving the value relative moves the join to the receiver, so the daemon's
 //! `..`-collapse is the only thing left standing between a peer-supplied
 //! `--backup-dir=../bak` and a write above the module root. Upstream passes the
-//! literal depth `0` for this option (`options.c:2409`, unlike the
-//! `curr_dir_depth` at `main.c:1239` for `--partial-dir`), so no leading `..`
+//! literal depth `0` for this option (`options.c:2418`, unlike the
+//! `curr_dir_depth` at `main.c:1257` for `--partial-dir`), so no leading `..`
 //! survives at all and the backup stays in the module.
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/options.c:2408-2409` - `backup_dir = sanitize_path(NULL,
+//! - `rsync-3.5.1/options.c:2417-2418` - `backup_dir = sanitize_path(NULL,
 //!   backup_dir, NULL, 0, SP_DEFAULT)` for a sanitizing (daemon) receiver.
-//! - `rsync-3.5.0/util1.c:1145-1151` - the rootdir prefix is applied only when
+//! - `rsync-3.5.1/util1.c:1242-1248` - the rootdir prefix is applied only when
 //!   the value starts with `/`; a relative value keeps no prefix.
-//! - `rsync-3.5.0/util1.c:1184-1197` - with `depth <= 0` every `..` component is
+//! - `rsync-3.5.1/util1.c:1281-1294` - with `depth <= 0` every `..` component is
 //!   collapsed away rather than kept at the start.
-//! - `rsync-3.5.0/main.c:832-859` - `get_local_name()` mode 2: a single-file
+//! - `rsync-3.5.1/main.c:845-872` - `get_local_name()` mode 2: a single-file
 //!   destination chdirs to the operand's parent and returns its basename.
 
 #![cfg(unix)]

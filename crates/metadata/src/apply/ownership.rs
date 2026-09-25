@@ -264,7 +264,7 @@ pub(super) fn process_in_group(gid: unix_fs::Gid) -> bool {
 /// the *preserve* path (`-o`/`-a`) or an explicit `--chown`/`--usermap`
 /// override. Mirrors upstream `change_uid = am_root && ...` (rsync.c:526):
 /// `preserve_uid` is set identically by `-o`, `--chown`, and `--usermap`
-/// (options.c:1793,1811,1833), and upstream's gate makes no distinction
+/// (options.c:1799,1817,1839), and upstream's gate makes no distinction
 /// between them - a non-root process never sets a file's owner uid, so the
 /// chown is skipped rather than attempted and failed. Before this gate
 /// oc-rsync attempted it and surfaced the resulting `EPERM` as a fatal
@@ -283,7 +283,7 @@ pub(super) fn gate_preserved_owner(owner: Option<unix_fs::Uid>) -> Option<unix_f
 /// the *preserve* path (`-g`/`-a`) or an explicit `--chown`/`--groupmap`
 /// override. Mirrors upstream's `FLAG_SKIP_GROUP` gate (uidlist.c:284), which
 /// is set on the mapped id regardless of whether it was reached via
-/// `preserve_gid`, `--chown`, or `--groupmap` (options.c:1809,1832,1848): a
+/// `preserve_gid`, `--chown`, or `--groupmap` (options.c:1815,1838,1854): a
 /// non-root process may only set a group it belongs to, so a non-member group
 /// is skipped rather than attempted and failed.
 #[cfg(unix)]
@@ -331,7 +331,7 @@ pub fn group_is_settable(gid: u32) -> bool {
 /// `getpwuid(raw)` - which is wrong when the raw sender id is absent or bound to
 /// a different name locally. Without an inline name (local copy) the raw id is
 /// round-tripped through the receiver's database exactly as before.
-/// upstream: flist.c:914 recv_user_name / uidlist.c:307 match_uid
+/// upstream: flist.c:1139 recv_user_name / uidlist.c:307 match_uid
 #[cfg(unix)]
 fn resolve_owner_uid(
     entry: &protocol::flist::FileEntry,
@@ -375,7 +375,7 @@ fn resolve_owner_uid(
 /// The group counterpart of [`resolve_owner_uid`]: `--groupmap` first, then the
 /// sender-transmitted group name (INC_RECURSE `XMIT_GROUP_NAME_FOLLOWS`) resolved
 /// against the receiver's group database.
-/// upstream: flist.c:926 recv_group_name / uidlist.c:317 match_gid
+/// upstream: flist.c:1151 recv_group_name / uidlist.c:317 match_gid
 #[cfg(unix)]
 fn resolve_group_gid(
     entry: &protocol::flist::FileEntry,
@@ -1041,7 +1041,7 @@ mod own_debug_tests {
     #[test]
     #[cfg(unix)]
     fn resolves_inline_owner_name_to_local_id() {
-        // upstream: flist.c:914 recv_user_name - the receiver resolves the
+        // upstream: flist.c:1139 recv_user_name - the receiver resolves the
         // SENDER-transmitted user name to a LOCAL id so ownership follows the
         // NAME across hosts with differing id namespaces. A raw sender id that
         // does not exist locally must not leak through as the file owner.

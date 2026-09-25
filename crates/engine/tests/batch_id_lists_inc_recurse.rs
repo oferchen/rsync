@@ -3,7 +3,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:2548` - `if (numeric_ids <= 0 && !inc_recurse)
+//! - `flist.c:2788` - `if (numeric_ids <= 0 && !inc_recurse)
 //!   send_id_lists(f);`. ID lists are gated off entirely when INC_RECURSE
 //!   is negotiated; uid/gid names ride inline on each flist entry via
 //!   `XMIT_USER_NAME_FOLLOWS` / `XMIT_GROUP_NAME_FOLLOWS`.
@@ -60,7 +60,7 @@ fn make_inc_recurse_batch_writer(path: &std::path::Path) -> Arc<Mutex<BatchWrite
 }
 
 /// Under INC_RECURSE-on compat_flags the batch writer must omit the
-/// post-flist uid/gid terminators (`flist.c:2548`). With the omission in
+/// post-flist uid/gid terminators (`flist.c:2788`). With the omission in
 /// place, `BatchReader::read_protocol_flist` consumes the flist segment
 /// without drifting past it, and the entry covering the source file
 /// appears in the decoded flist.

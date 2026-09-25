@@ -2,7 +2,7 @@
 //! `--remove-source-files`.
 //!
 //! ```c
-//! /* options.c:3153-3156 - server_options() */
+//! /* options.c:3163-3166 - server_options() */
 //! if (remove_source_files == 1)
 //!         args[ac++] = "--remove-source-files";
 //! else if (remove_source_files)
@@ -179,7 +179,7 @@ fn daemon_sender_removes_sources_for_both_spellings() {
         assert!(
             !source_remains,
             "{spelling}: the daemon sender must unlink the source after the \
-             receiver acknowledges it (options.c:3153-3156)"
+             receiver acknowledges it (options.c:3163-3166)"
         );
     }
 }

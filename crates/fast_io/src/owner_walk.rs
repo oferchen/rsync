@@ -16,12 +16,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - open the parent of an
+//! - `rsync-3.5.1/syscall.c:704` `owner_walk_parent()` - open the parent of an
 //!   operator path via the ownership walk, hand back the final component.
-//! - `rsync-3.5.0/syscall.c:286` `ona_open()` - the per-component walk itself.
-//! - `rsync-3.5.0/syscall.c:406` - the ownership test:
+//! - `rsync-3.5.1/syscall.c:365` `ona_open()` - the per-component walk itself.
+//! - `rsync-3.5.1/syscall.c:499` - the ownership test:
 //!   `if (lst.st_uid != 0 && lst.st_uid != trusted_uid)` refuse with `ELOOP`.
-//! - `rsync-3.5.0/syscall.c:544-551` - "An operator path may legitimately point
+//! - `rsync-3.5.1/syscall.c:689-696` - "An operator path may legitimately point
 //!   outside the tree, so the trust signal is authority (ownership), not
 //!   location."
 
@@ -40,7 +40,7 @@ use crate::dir_sandbox::at_syscalls;
 /// Every syscall this resolver makes goes through `fast_io`'s own libc-backed
 /// `*at` primitives rather than `rustix`, whose `linux_raw` backend issues the
 /// syscall instruction directly and bypasses libc entirely. Upstream's walk is
-/// plain C - `syscall.c:469` calls `openat(2)` from libc - so anything that
+/// plain C - `syscall.c:602` calls `openat(2)` from libc - so anything that
 /// interposes on the libc symbol (an operator's `LD_PRELOAD` shim, `fakeroot`,
 /// an audit or sandbox preload) sees upstream's resolution and, before this,
 /// did NOT see oc's. That is the same class of divergence as reading the euid
@@ -81,13 +81,13 @@ fn walk_openat(
 
 /// Symlink-follow budget for one walk, spent across every component.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:361` `int loops = 40;` - "SYMLOOP_MAX-ish;
+/// upstream: `rsync-3.5.1/syscall.c:446` `int loops = 40;` - "SYMLOOP_MAX-ish;
 /// breaks symlink cycles. Counts symlink expansions only, NOT path depth."
 const MAX_SYMLINK_HOPS: u32 = 40;
 
 /// Effective uid, the second trusted owner alongside root.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:304` `const uid_t trusted_uid = geteuid();`
+/// upstream: `rsync-3.5.1/syscall.c:384` `const uid_t trusted_uid = geteuid();`
 fn trusted_uid() -> u32 {
     // SAFETY: `geteuid(2)` takes no arguments, cannot fail, and returns a plain
     // integer. It is one of the few POSIX calls with no error path at all.
@@ -107,9 +107,9 @@ fn trusted_uid() -> u32 {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/syscall.c:406` - `st_uid != 0 && st_uid != trusted_uid`
+/// - `rsync-3.5.1/syscall.c:499` - `st_uid != 0 && st_uid != trusted_uid`
 ///   refuses the symlink; otherwise the walk follows it.
-/// - `rsync-3.5.0/util1.c:1216` `change_dir()` - resolves the operator-named
+/// - `rsync-3.5.1/util1.c:1313` `change_dir()` - resolves the operator-named
 ///   destination with `open_no_attacker_symlinks()` on exactly this rule.
 #[must_use]
 pub fn symlink_owner_is_trusted(uid: u32) -> bool {
@@ -157,17 +157,17 @@ fn prepend_components(pending: &mut Vec<OsString>, path: &Path) {
 /// confinement refusal.
 ///
 /// Ownership alone cannot bound a peer-driven path: a trusted-owned symlink is
-/// FOLLOWED by design (`syscall.c:406`), so it can redirect the resolved target
+/// FOLLOWED by design (`syscall.c:499`), so it can redirect the resolved target
 /// out of the tree. Tracking where the walk has really arrived is what lets the
 /// leaf be judged against the confinement root.
 ///
 /// [`Disabled`](AbsPathTracker::Disabled) is not an optimisation but the
 /// contract: an [`Ancillary`](crate::confinement::PathKind::Ancillary) open, or
 /// a session with no root, has nothing to be outside of, and upstream's own
-/// check returns 0 for both (`syscall.c:216`, `syscall.c:239`).
+/// check returns 0 for both (`syscall.c:266`, `syscall.c:290`).
 ///
-/// upstream: `rsync-3.5.0/syscall.c:245` `abspath_step()` and the `abspath`
-/// state it advances (`syscall.c:304-329`).
+/// upstream: `rsync-3.5.1/syscall.c:324` `abspath_step()` and the `abspath`
+/// state it advances (`syscall.c:384-408`).
 enum AbsPathTracker {
     Disabled,
     Tracking { abspath: PathBuf },
@@ -179,7 +179,7 @@ impl AbsPathTracker {
     /// An absolute path starts at `/`. A relative one starts where the walk
     /// itself does, which is the process's physical working directory - read,
     /// not assumed. Upstream shortcuts the daemon arm to `module_dir` because
-    /// it knows a daemon's cwd IS the module root (`syscall.c:308-310`);
+    /// it knows a daemon's cwd IS the module root (`syscall.c:388-390`);
     /// reading the real cwd agrees with that whenever the assumption holds and
     /// is right when it does not, which is why it is used for both arms. It is
     /// the PHYSICAL cwd, as upstream's own comment requires: a lexical name
@@ -202,7 +202,7 @@ impl AbsPathTracker {
     /// Advance by one resolved component, normalising `.` and `..` exactly as
     /// `openat` does so the check sees the REAL resolved target.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:245` `abspath_step()`.
+    /// upstream: `rsync-3.5.1/syscall.c:324` `abspath_step()`.
     fn step(&mut self, name: &OsStr) {
         let Self::Tracking { abspath } = self else {
             return;
@@ -220,7 +220,7 @@ impl AbsPathTracker {
 
     /// A followed absolute symlink target restarts resolution at `/`.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:445`.
+    /// upstream: `rsync-3.5.1/syscall.c:577`.
     fn restart_at_root(&mut self) {
         if let Self::Tracking { abspath } = self {
             *abspath = PathBuf::from("/");
@@ -235,7 +235,7 @@ impl AbsPathTracker {
     /// backup landing in an ANCESTOR of the root - which the parent-only test
     /// reads as "still descending" - is still refused.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:284-286` - `ona_open()`'s `out_abs`
+    /// upstream: `rsync-3.5.1/syscall.c:363-365` - `ona_open()`'s `out_abs`
     /// out-parameter, which is what `owner_walk_parent()` builds `leafabs`
     /// from.
     fn resolved(&self) -> Option<&Path> {
@@ -252,7 +252,7 @@ impl AbsPathTracker {
     /// cross-device and fall back to copy+remove, which would launder the
     /// refusal.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:464-466`.
+    /// upstream: `rsync-3.5.1/syscall.c:597-599`.
     fn refuse_if_outside(&self) -> io::Result<()> {
         let Self::Tracking { abspath } = self else {
             return Ok(());
@@ -269,7 +269,7 @@ impl AbsPathTracker {
 ///
 /// # The divergence, and why it is not a policy change
 ///
-/// Upstream opens intermediates `O_RDONLY|O_DIRECTORY` (`syscall.c:493`). oc
+/// Upstream opens intermediates `O_RDONLY|O_DIRECTORY` (`syscall.c:626`). oc
 /// opens them `O_PATH` on Linux. That is a deliberate divergence, forced by a
 /// difference in the CONFINEMENT MECHANISM, not by a difference in policy:
 ///
@@ -307,7 +307,7 @@ fn traversal_dir_flags() -> OFlags {
 
 /// Non-Linux has no Landlock, so the walk keeps upstream's own flags.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:493`.
+/// upstream: `rsync-3.5.1/syscall.c:626`.
 #[cfg(not(target_os = "linux"))]
 fn traversal_dir_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC
@@ -324,7 +324,7 @@ const fn traversal_is_by_location() -> bool {
 /// Open the walk's starting directory: `/` for an absolute path, `.` otherwise.
 ///
 /// `flags` comes from [`traversal_dir_flags`]; upstream opens the same two
-/// directories with the same meaning at `syscall.c:349-351`.
+/// directories with the same meaning at `syscall.c:433-435`.
 fn open_start_dir(absolute: bool, flags: OFlags) -> io::Result<OwnedFd> {
     // `openat` with `CWD`, never the legacy `open`: on x86_64 rustix issues
     // the raw `SYS_open` for the no-dirfd form, and the daemon's seccomp
@@ -345,7 +345,7 @@ fn open_start_dir(absolute: bool, flags: OFlags) -> io::Result<OwnedFd> {
 /// race backstop, closing the window between the `statat` and this `openat`,
 /// not the leaf policy.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:469`.
+/// upstream: `rsync-3.5.1/syscall.c:602`.
 fn open_final(
     dirfd: BorrowedFd<'_>,
     name: &OsStr,
@@ -371,7 +371,7 @@ fn open_final(
 ///
 /// The leaf is not a special case, and that is the point. Upstream applies the
 /// ownership test to `is_last` exactly as it does to a parent - see the
-/// contract at `syscall.c:270-272`: "refusing to traverse any symlink (parent
+/// contract at `syscall.c:349-351`: "refusing to traverse any symlink (parent
 /// or leaf) not owned by uid 0 or our euid. A trusted-owned symlink (e.g.
 /// root's `/var/log -> /data/log`) is still followed; an untrusted one fails
 /// `ELOOP`." Refusing every leaf symlink instead would break the operator's own
@@ -380,13 +380,13 @@ fn open_final(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/syscall.c:286` `ona_open()` - this walk. The loop at `:367`,
+/// - `rsync-3.5.1/syscall.c:365` `ona_open()` - this walk. The loop at `:367`,
 ///   the `O_CREAT` leaf arm at `:381-396`, the ownership test at `:406`, the
 ///   splice at `:421-455`, the `is_last` open at `:460-469`, and the
 ///   `S_ISDIR`/`ENOTDIR` guard on interior components at `:479`.
-/// - `rsync-3.5.0/syscall.c:537` `open_no_attacker_symlinks()` - `ona_open` on
+/// - `rsync-3.5.1/syscall.c:674` `open_no_attacker_symlinks()` - `ona_open` on
 ///   the full path, which is `operator_open_with`.
-/// - `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - the same `ona_open` on
+/// - `rsync-3.5.1/syscall.c:704` `owner_walk_parent()` - the same `ona_open` on
 ///   the *parent directory*, which is [`owner_trusted_parent`]. One walk, two
 ///   entry points; the difference is only what path each hands it.
 ///
@@ -415,7 +415,7 @@ fn owner_walk_open(
 /// walk in a session that has a confinement root. Every other walk leaves it
 /// `None`, which is upstream's `pabs[0] == '\0'` and means "nothing to judge".
 ///
-/// upstream: `rsync-3.5.0/syscall.c:286` `ona_open()` with its `out_abs` /
+/// upstream: `rsync-3.5.1/syscall.c:365` `ona_open()` with its `out_abs` /
 /// `out_cap` pair.
 fn owner_walk_open_tracked(
     path: &Path,
@@ -424,7 +424,7 @@ fn owner_walk_open_tracked(
     kind: crate::confinement::PathKind,
     resolved: &mut Option<PathBuf>,
 ) -> io::Result<OwnedFd> {
-    // upstream: syscall.c:300-302 - "Opted out (local --insecure-links, or a
+    // upstream: syscall.c:380-382 - "Opted out (local --insecure-links, or a
     // daemon module with `insecure links = yes`): restore the legacy
     // symlink-following open." The test sits at the top of ona_open(), so it
     // covers open_no_attacker_symlinks() and owner_walk_parent() alike; the
@@ -458,7 +458,7 @@ fn owner_walk_open_tracked(
 
         let stat = match at_syscalls::fstatat_nofollow(dirfd.as_fd(), name.as_os_str()) {
             Ok(stat) => stat,
-            // upstream: syscall.c:381-396 - the leaf may legitimately not exist
+            // upstream: syscall.c:466-481 - the leaf may legitimately not exist
             // yet under O_CREAT (the `--log-file=/tmp/dir/rsync.log` shape).
             // Open it with O_NOFOLLOW so a leaf raced into a symlink between
             // this failed stat and the open is still refused.
@@ -467,7 +467,7 @@ fn owner_walk_open_tracked(
                     && error.raw_os_error() == Some(libc::ENOENT)
                     && flags.contains(OFlags::CREATE) =>
             {
-                // upstream: syscall.c:387-391 - the confinement is checked on
+                // upstream: syscall.c:472-476 - the confinement is checked on
                 // this arm too. A create is exactly where a redirected leaf
                 // does its damage, so skipping it here would leave the
                 // `--partial-dir`/`--temp-dir` shapes unconfined.
@@ -480,7 +480,7 @@ fn owner_walk_open_tracked(
         };
 
         if stat.is_symlink() {
-            // upstream: syscall.c:406 - an other-uid symlink is the attacker's
+            // upstream: syscall.c:499 - an other-uid symlink is the attacker's
             // and is refused; uid 0 or our own euid is the operator's own
             // layout and is followed. This arm is reached for the leaf too.
             if !symlink_owner_is_trusted(stat.uid()) {
@@ -493,7 +493,7 @@ fn owner_walk_open_tracked(
 
             let target = at_syscalls::readlinkat(dirfd.as_fd(), name.as_os_str())?;
             if target.is_absolute() {
-                // upstream: syscall.c:445 "followed an absolute target: restart from /".
+                // upstream: syscall.c:577 "followed an absolute target: restart from /".
                 dirfd = open_start_dir(true, traverse)?;
                 tracker.restart_at_root();
             }
@@ -502,7 +502,7 @@ fn owner_walk_open_tracked(
         }
 
         if is_last {
-            // upstream: syscall.c:460-468 - `abspath_step()` then
+            // upstream: syscall.c:593-601 - `abspath_step()` then
             // `abspath_outside_confinement()`. The check belongs HERE and not on
             // interior components: an absolute walk passes through the root's
             // own ancestors on the way down, which are not-yet-arrived rather
@@ -514,7 +514,7 @@ fn owner_walk_open_tracked(
         }
         tracker.step(&name);
 
-        // upstream: syscall.c:479 - an interior component that is not a
+        // upstream: syscall.c:612 - an interior component that is not a
         // directory is ENOTDIR, not a silent stop.
         if !stat.is_dir() {
             return Err(io::Error::from_raw_os_error(libc::ENOTDIR));
@@ -550,7 +550,7 @@ fn owner_walk_open_tracked(
 /// targets the name itself, so replacing a symlink sitting at that name is the
 /// correct outcome, not something to refuse.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - the same walk
+/// upstream: `rsync-3.5.1/syscall.c:704` `owner_walk_parent()` - the same walk
 /// as `owner_walk_open`, handed the parent directory instead of the path.
 ///
 /// # Errors
@@ -582,9 +582,9 @@ pub fn owner_trusted_parent(path: &Path) -> io::Result<(OwnedFd, OsString)> {
 /// disabled, so it reports no resolved path and that second check cannot fire
 /// for it.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:558` `owner_walk_parent()`, and
-/// `rsync-3.5.0/syscall.c:552` `int operator_path_resolve = 0;` - the flag this
-/// parameter replaces. The leaf judgement is `rsync-3.5.0/syscall.c:581-596` -
+/// upstream: `rsync-3.5.1/syscall.c:704` `owner_walk_parent()`, and
+/// `rsync-3.5.1/syscall.c:697` `int operator_path_resolve = 0;` - the flag this
+/// parameter replaces. The leaf judgement is `rsync-3.5.1/syscall.c:727-735` -
 /// the `snprintf(leafabs, "%s/%s", pabs, *bname)` and the
 /// `abspath_outside_confinement(leafabs)` that follows it, both gated on that
 /// same flag.
@@ -633,7 +633,7 @@ pub fn owner_trusted_parent_kind(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/util1.c:1501` `handle_partial_dir()` - sets
+/// - `rsync-3.5.1/util1.c:1596` `handle_partial_dir()` - sets
 ///   `operator_path_resolve = 1` around its `do_lstat_at()`/`do_mkdir_at(dir,
 ///   0700)` pair precisely so the partial dir is created through the ownership
 ///   walk rather than by a plain path-based `mkdir`.
@@ -711,17 +711,17 @@ pub fn operator_create_dir_all(path: &Path, mode: u32) -> io::Result<()> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/backup.c:437-449` `make_backup()` - `operator_path_resolve =
+/// - `rsync-3.5.1/backup.c:437-449` `make_backup()` - `operator_path_resolve =
 ///   1` around the WHOLE backup, `copy_valid_path()`'s directory creation
 ///   included.
-/// - `rsync-3.5.0/backup.c:128` `copy_valid_path()` - `do_mkdir_at(backup_dir_buf,
+/// - `rsync-3.5.1/backup.c:128` `copy_valid_path()` - `do_mkdir_at(backup_dir_buf,
 ///   ACCESSPERMS)` per new element, and `backup.c:206` `make_path()` for the
-///   backup root, which is `do_mkdir_at()` again (`util1.c:238`).
-/// - `rsync-3.5.0/util1.c:207` `make_path()` - the per-component
+///   backup root, which is `do_mkdir_at()` again (`util1.c:241`).
+/// - `rsync-3.5.1/util1.c:210` `make_path()` - the per-component
 ///   `do_mkdir_at()` loop this mirrors.
-/// - `rsync-3.5.0/syscall.c:2082-2094` `do_mkdir_at()` under
+/// - `rsync-3.5.1/syscall.c:2221-2233` `do_mkdir_at()` under
 ///   `operator_path_resolve` - `owner_walk_parent()`, then `mkdirat`.
-/// - `rsync-3.5.0/syscall.c:581-596` - the resolved-leaf confinement judgement
+/// - `rsync-3.5.1/syscall.c:727-735` - the resolved-leaf confinement judgement
 ///   inside `owner_walk_parent()`.
 ///
 /// # Errors
@@ -762,9 +762,9 @@ fn operator_create_dir_all_kind(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/syscall.c:1891` `do_rename_at()` under `operator_path_resolve`
+/// - `rsync-3.5.1/syscall.c:2030` `do_rename_at()` under `operator_path_resolve`
 ///   - `owner_walk_parent` on each side, then `renameat`.
-/// - `rsync-3.5.0/backup.c:200-219` `make_backup()` - the caller that sets the
+/// - `rsync-3.5.1/backup.c:200-219` `make_backup()` - the caller that sets the
 ///   operator-path mode around the backup rename.
 ///
 /// # Errors
@@ -794,9 +794,9 @@ pub fn operator_rename(old_path: &Path, new_path: &Path, replace: bool) -> io::R
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/backup.c:443-449` `make_backup()` - `operator_path_resolve =
+/// - `rsync-3.5.1/backup.c:443-449` `make_backup()` - `operator_path_resolve =
 ///   1` around the whole backup.
-/// - `rsync-3.5.0/syscall.c:1891` `do_rename_at()` under
+/// - `rsync-3.5.1/syscall.c:2030` `do_rename_at()` under
 ///   `operator_path_resolve`.
 ///
 /// # Errors
@@ -828,9 +828,9 @@ pub fn operator_rename_confined(old_path: &Path, new_path: &Path, replace: bool)
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/backup.c:226-247` `link_or_rename()` - `do_link_at` first,
+/// - `rsync-3.5.1/backup.c:226-247` `link_or_rename()` - `do_link_at` first,
 ///   `do_rename_at` on failure.
-/// - `rsync-3.5.0/syscall.c:961` `do_link_at()` under `operator_path_resolve` -
+/// - `rsync-3.5.1/syscall.c:1100` `do_link_at()` under `operator_path_resolve` -
 ///   `owner_walk_parent` on each side, then `linkat`.
 ///
 /// # Errors
@@ -857,11 +857,11 @@ pub fn operator_link(old_path: &Path, new_path: &Path) -> io::Result<()> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/backup.c:443-449` `make_backup()` - `operator_path_resolve =
+/// - `rsync-3.5.1/backup.c:443-449` `make_backup()` - `operator_path_resolve =
 ///   1` around the WHOLE backup, so it covers `link_or_rename()`'s link tier
 ///   and not only the rename it falls back to.
-/// - `rsync-3.5.0/backup.c:226-247` `link_or_rename()` - `do_link_at` first.
-/// - `rsync-3.5.0/syscall.c:961` `do_link_at()` under `operator_path_resolve`.
+/// - `rsync-3.5.1/backup.c:226-247` `link_or_rename()` - `do_link_at` first.
+/// - `rsync-3.5.1/syscall.c:1100` `do_link_at()` under `operator_path_resolve`.
 ///
 /// # Errors
 ///
@@ -893,10 +893,10 @@ pub fn operator_link_confined(old_path: &Path, new_path: &Path) -> io::Result<()
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/backup.c:377` `make_backup_inner()` - `do_symlink_at(sl, buf)`
+/// - `rsync-3.5.1/backup.c:377` `make_backup_inner()` - `do_symlink_at(sl, buf)`
 ///   for the copy-tier symlink branch, inside `make_backup()`'s
 ///   `operator_path_resolve = 1` window (`backup.c:437-449`).
-/// - `rsync-3.5.0/syscall.c:780-791` `do_symlink_at()` under
+/// - `rsync-3.5.1/syscall.c:919-930` `do_symlink_at()` under
 ///   `operator_path_resolve` - `owner_walk_parent()`, then the shared
 ///   `symlinkat` leaf create.
 ///
@@ -928,11 +928,11 @@ pub fn operator_symlink_confined(target: &Path, path: &Path) -> io::Result<()> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/backup.c:65-80` `validate_backup_dir()` - `do_lstat_at()`,
+/// - `rsync-3.5.1/backup.c:65-80` `validate_backup_dir()` - `do_lstat_at()`,
 ///   then `delete_item(..., DEL_FOR_BACKUP | DEL_RECURSE)` for a non-directory.
-/// - `rsync-3.5.0/syscall.c:673-684` `do_unlink_at()` under
+/// - `rsync-3.5.1/syscall.c:812-823` `do_unlink_at()` under
 ///   `operator_path_resolve` - `owner_walk_parent()`, then `unlinkat`.
-/// - `rsync-3.5.0/backup.c:437-449` `make_backup()` - the window both sit in.
+/// - `rsync-3.5.1/backup.c:437-449` `make_backup()` - the window both sit in.
 ///
 /// # Errors
 ///
@@ -972,11 +972,11 @@ pub fn operator_remove_file_confined(path: &Path) -> io::Result<()> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/backup.c:358-365` `make_backup_inner()` - the DEVICE branch
+/// - `rsync-3.5.1/backup.c:358-365` `make_backup_inner()` - the DEVICE branch
 ///   calls `do_mknod_at(buf, file->mode, sx.st.st_rdev)`.
-/// - `rsync-3.5.0/backup.c:437-449` `make_backup()` - `operator_path_resolve =
+/// - `rsync-3.5.1/backup.c:437-449` `make_backup()` - `operator_path_resolve =
 ///   1` around the WHOLE backup, so the DEVICE branch runs inside it.
-/// - `rsync-3.5.0/syscall.c:1270-1305` `do_mknod_at()` - the
+/// - `rsync-3.5.1/syscall.c:1409-1444` `do_mknod_at()` - the
 ///   `operator_path_resolve` arm this mirrors, including the opt-out
 ///   short-circuit (1271-1272), the `dfd < 0` bail (1274-1275), the fake-super
 ///   placeholder (1276-1284) and the FIFO/socket retry (1288-1300).
@@ -1015,13 +1015,13 @@ pub fn operator_mknod_confined(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/syscall.c:270-272` - the contract in upstream's own words:
+/// - `rsync-3.5.1/syscall.c:349-351` - the contract in upstream's own words:
 ///   "refusing to traverse any symlink (parent or leaf) not owned by uid 0 or
 ///   our euid. A trusted-owned symlink (e.g. root's `/var/log -> /data/log`) is
 ///   still followed; an untrusted one fails `ELOOP`."
-/// - `rsync-3.5.0/syscall.c:537` `open_no_attacker_symlinks()` - the public
+/// - `rsync-3.5.1/syscall.c:674` `open_no_attacker_symlinks()` - the public
 ///   entry point this mirrors, used for the opens that are not confined beneath
-///   a root (`--log-file`, `--*-from`, lock/motd - `syscall.c:232`).
+///   a root (`--log-file`, `--*-from`, lock/motd - `syscall.c:282`).
 ///
 /// # Errors
 ///
@@ -1063,8 +1063,8 @@ fn operator_open_kind(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/syscall.c:540` `open_no_attacker_symlinks()`
-/// - `rsync-3.5.0/util1.c:1254-1263` `change_dir()` - the `am_daemon &&
+/// - `rsync-3.5.1/syscall.c:677` `open_no_attacker_symlinks()`
+/// - `rsync-3.5.1/util1.c:1351-1360` `change_dir()` - the `am_daemon &&
 ///   !am_chrooted` arm, which opens the module root this way and `fchdir`s to
 ///   the result.
 ///
@@ -1110,10 +1110,10 @@ pub fn operator_open_read(path: &Path) -> io::Result<std::fs::File> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/exclude.c:1668-1684` `parse_filter_file()` - the comment this
+/// - `rsync-3.5.1/exclude.c:1668-1684` `parse_filter_file()` - the comment this
 ///   paraphrases, and the `if (!daemon_config_filter_file)
 ///   operator_path_resolve = 1;` that scopes it.
-/// - `rsync-3.5.0/syscall.c:186-240` `abspath_outside_confinement()`.
+/// - `rsync-3.5.1/syscall.c:232-291` `abspath_outside_confinement()`.
 ///
 /// # Errors
 ///
@@ -1161,7 +1161,7 @@ pub fn operator_open_append(path: &Path, mode: u32) -> io::Result<std::fs::File>
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/connection.c:35` `claim_connection()` -
+/// - `rsync-3.5.1/connection.c:35` `claim_connection()` -
 ///   `open_no_attacker_symlinks(fname, O_RDWR|O_CREAT, 0600)`.
 ///
 /// # Errors
@@ -1192,10 +1192,10 @@ pub fn operator_open_rw_create(path: &Path, mode: u32) -> io::Result<std::fs::Fi
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/batch.c:263` - the batch file itself:
+/// - `rsync-3.5.1/batch.c:263` - the batch file itself:
 ///   `open_no_attacker_symlinks(batch_name, O_WRONLY|O_CREAT|O_TRUNC|O_BINARY,
 ///   S_IRUSR|S_IWUSR)` - owner-only, because the batch holds the file data.
-/// - `rsync-3.5.0/batch.c:254` - the `.sh` companion, the same call with
+/// - `rsync-3.5.1/batch.c:254` - the `.sh` companion, the same call with
 ///   `S_IRUSR|S_IWUSR|S_IXUSR` so the generated script is executable.
 ///
 /// # Errors
@@ -1228,12 +1228,12 @@ pub fn operator_open_write_create(path: &Path, mode: u32) -> io::Result<std::fs:
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/backup.c:443-449` `make_backup()` - `operator_path_resolve =
+/// - `rsync-3.5.1/backup.c:443-449` `make_backup()` - `operator_path_resolve =
 ///   1` around the whole backup, naming `--backup-dir` as an operator path.
-/// - `rsync-3.5.0/generator.c:2281-2301` and `:2327-2349` - the in-place backup
+/// - `rsync-3.5.1/generator.c:2281-2301` and `:2327-2349` - the in-place backup
 ///   bypasses `make_backup()`, so the generator raises the same flag around its
 ///   own `copy_file()` / `do_open_at()`.
-/// - `rsync-3.5.0/syscall.c:186-240` `abspath_outside_confinement()`.
+/// - `rsync-3.5.1/syscall.c:232-291` `abspath_outside_confinement()`.
 ///
 /// # Errors
 ///
@@ -1262,7 +1262,7 @@ pub fn operator_open_write_create_confined(path: &Path, mode: u32) -> io::Result
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/receiver.c:426-434` `open_tmpfile()` - for any non-chrooted
+/// - `rsync-3.5.1/receiver.c:439-447` `open_tmpfile()` - for any non-chrooted
 ///   receiver, `secure_mkstemp(fnametmp, mode, tmpdir != NULL)`. The third
 ///   argument is the resolver selector, and upstream's own comment states the
 ///   rule: "An operator-supplied --temp-dir (tmpdir) gets the ownership-walk
@@ -1300,9 +1300,9 @@ pub fn operator_open_create_new(path: &Path, mode: u32) -> io::Result<std::fs::F
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/receiver.c:1204-1206` - `secure_recv_open(fnametmp,
+/// - `rsync-3.5.1/receiver.c:1221-1223` - `secure_recv_open(fnametmp,
 ///   O_WRONLY|O_CREAT, 0600, one_inplace)`, the primary arm.
-/// - `rsync-3.5.0/receiver.c:1212-1214` - the same call without `O_CREAT`, the
+/// - `rsync-3.5.1/receiver.c:1229-1231` - the same call without `O_CREAT`, the
 ///   `protected_regular` retry. Upstream threads `one_inplace` through both, so
 ///   a retry cannot silently drop to the plain resolver.
 ///
@@ -1350,10 +1350,10 @@ pub fn operator_open_recv(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/params.c:586` - the daemon config file.
-/// - `rsync-3.5.0/authenticate.c:159` / `:245` - `secrets file` and
+/// - `rsync-3.5.1/params.c:586` - the daemon config file.
+/// - `rsync-3.5.1/authenticate.c:159` / `:245` - `secrets file` and
 ///   `--password-file`.
-/// - `rsync-3.5.0/clientserver.c:188` - `motd`.
+/// - `rsync-3.5.1/clientserver.c:188` - `motd`.
 ///
 ///   Each opens with `open_no_attacker_symlinks()` and reads from the returned
 ///   descriptor; none of them resolves the path independently first.
@@ -1383,7 +1383,7 @@ pub fn operator_read_to_string(path: &Path) -> io::Result<String> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/exclude.c:1680-1684` - `parse_filter_file()` sets
+/// - `rsync-3.5.1/exclude.c:1680-1684` - `parse_filter_file()` sets
 ///   `operator_path_resolve = 1` around `open_no_attacker_symlinks()`,
 ///   exempting only the daemon's own config-supplied filter parameters.
 ///
@@ -1425,10 +1425,10 @@ pub fn operator_read_to_string_confined(path: &Path) -> io::Result<String> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/generator.c:962` `basis_link_stat()` - `owner_walk_parent()`
+/// - `rsync-3.5.1/generator.c:962` `basis_link_stat()` - `owner_walk_parent()`
 ///   for the parent components, then `link_stat_at()` on the leaf through the
 ///   returned descriptor.
-/// - `rsync-3.5.0/generator.c:1084` / `:1110` / `:1227` / `:1254` - the call
+/// - `rsync-3.5.1/generator.c:1084` / `:1110` / `:1227` / `:1254` - the call
 ///   sites, each treating a failure as "no candidate in this basis dir".
 ///
 /// # Errors
@@ -1454,7 +1454,7 @@ pub fn operator_symlink_metadata(path: &Path) -> io::Result<std::fs::Metadata> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/generator.c:1004-1018` `basis_link_stat()` arm 2 - it sets
+/// - `rsync-3.5.1/generator.c:1004-1018` `basis_link_stat()` arm 2 - it sets
 ///   `operator_path_resolve = 1` around `owner_walk_parent()` and then
 ///   `do_lstat_atfd()`s the leaf through the returned descriptor, so the walk
 ///   applies the module-root boundary that the unflagged arm 1 does not.
@@ -1605,7 +1605,7 @@ mod tests {
     /// to the ancillary walk would pass every "does it work" test and close
     /// nothing.
     ///
-    /// upstream: `rsync-3.5.0/generator.c:1004-1018` `basis_link_stat()` arm 2 -
+    /// upstream: `rsync-3.5.1/generator.c:1004-1018` `basis_link_stat()` arm 2 -
     /// the `operator_path_resolve = 1` that the ancillary arm 1 leaves clear.
     #[test]
     fn the_confined_stat_refuses_a_parent_that_leaves_the_module() {
@@ -1702,12 +1702,12 @@ mod tests {
     ///
     /// This is the `/var/log -> /data/log` layout, and upstream tests it as
     /// `operator-path-log-file` (the "SAME-UID abs leaf safe" cell). The leaf
-    /// takes the same ownership rule as every parent - `syscall.c:270-272`:
+    /// takes the same ownership rule as every parent - `syscall.c:349-351`:
     /// "refusing to traverse any symlink (parent or leaf) not owned by uid 0 or
     /// our euid. A trusted-owned symlink [...] is still followed".
     ///
     /// ⚠ This test previously asserted the OPPOSITE - that a self-owned leaf
-    /// symlink is refused - reading `syscall.c:469`'s `flags | O_NOFOLLOW` as
+    /// symlink is refused - reading `syscall.c:602`'s `flags | O_NOFOLLOW` as
     /// the leaf policy. That line sits inside the `/* Non-symlink. */ if
     /// (is_last)` arm and is only reached once the walk has established the
     /// component is not a symlink; it is a race backstop, not a policy. The old
@@ -1844,7 +1844,7 @@ mod tests {
             "the leaf must still be opened with the caller's flags"
         );
 
-        // syscall.c:479 - an interior component that is not a directory.
+        // syscall.c:612 - an interior component that is not a directory.
         assert_eq!(
             operator_read_to_string(&plain.join("below"))
                 .expect_err("an interior regular file is not traversable")
@@ -1853,7 +1853,7 @@ mod tests {
             "the interior-non-directory check must still fire"
         );
 
-        // syscall.c:406 and the hop budget. Every link here is self-owned, so
+        // syscall.c:499 and the hop budget. Every link here is self-owned, so
         // the owner test passes them and only the budget can refuse.
         let mut chain = dir.join("hop0");
         std::os::unix::fs::symlink(&plain, &chain).expect("symlink base");
@@ -1870,7 +1870,7 @@ mod tests {
             "the symlink hop budget must still fire"
         );
 
-        // syscall.c:445 - following an ABSOLUTE target restarts the walk at
+        // syscall.c:577 - following an ABSOLUTE target restarts the walk at
         // `/`. This is the arm the per-arm mutation identified as the
         // discriminating one, so it is pinned explicitly rather than left to
         // the general case.
@@ -1887,7 +1887,7 @@ mod tests {
             "PLAIN"
         );
 
-        // syscall.c:381-396 - a missing leaf under O_CREAT is still created.
+        // syscall.c:466-481 - a missing leaf under O_CREAT is still created.
         let created = dir.join("created");
         operator_open_write_create(&created, 0o600)
             .expect("O_CREAT leaf")
@@ -1904,7 +1904,7 @@ mod tests {
     /// step through components no ruleset grants; `O_PATH` needs no access
     /// right, `O_RDONLY|O_DIRECTORY` needs `READ_DIR`.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:493` - the deliberate divergence.
+    /// upstream: `rsync-3.5.1/syscall.c:626` - the deliberate divergence.
     #[cfg(target_os = "linux")]
     #[test]
     fn an_intermediate_dirfd_is_opened_by_location_on_linux() {
@@ -1935,7 +1935,7 @@ mod tests {
     /// The mirror half: no Landlock exists off Linux, so the walk keeps
     /// upstream's own flags and there is no anchor to reopen.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:493`.
+    /// upstream: `rsync-3.5.1/syscall.c:626`.
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn an_intermediate_dirfd_keeps_upstreams_flags_off_linux() {
@@ -1955,7 +1955,7 @@ mod tests {
     /// than from a sandbox that happened to stop the walk earlier. An `EACCES`
     /// here would mean the refusal is still accidental.
     ///
-    /// upstream: `syscall.c:464-466` - `abspath_outside_confinement()` fails
+    /// upstream: `syscall.c:597-599` - `abspath_outside_confinement()` fails
     /// the open with `ELOOP`.
     #[test]
     fn a_leaf_outside_the_root_is_refused_with_eloop_not_eacces() {
@@ -2018,7 +2018,7 @@ mod tests {
     /// and not per component, and why stepping by location does not need a
     /// beneath-ness test to be safe.
     ///
-    /// upstream: `syscall.c:197` `abspath_outside_confinement()` - an ancestor
+    /// upstream: `syscall.c:245` `abspath_outside_confinement()` - an ancestor
     /// of the root is not outside it.
     #[test]
     fn an_ancestor_of_the_confinement_root_still_resolves() {
@@ -2046,7 +2046,7 @@ mod tests {
     /// non-self uid"). A runtime-skipped test would report a pass having
     /// checked nothing; this checks the rule on every run.
     ///
-    /// upstream: `syscall.c:406` `if (lst.st_uid != 0 && lst.st_uid != trusted_uid)`.
+    /// upstream: `syscall.c:499` `if (lst.st_uid != 0 && lst.st_uid != trusted_uid)`.
     #[test]
     fn refuses_an_owner_that_is_neither_root_nor_the_euid() {
         assert!(symlink_owner_is_trusted(0), "uid 0 is the operator");
@@ -2085,7 +2085,7 @@ mod tests {
     /// Every cell is a triple. The ESCAPE names an operator path that resolves
     /// OUT of the root through a euid-owned (therefore trusted, therefore
     /// FOLLOWED) directory symlink, so only the root check can stop it; it must
-    /// be refused with `ELOOP` - the confinement decision (`syscall.c:464`), not
+    /// be refused with `ELOOP` - the confinement decision (`syscall.c:597`), not
     /// an incidental `EACCES`/`ENOTDIR`. The CONTAINED check proves the escape
     /// produced no out-of-root side effect (or, for the read/stat cells, that the
     /// out-of-root victim really was disclosable, so the refusal is meaningful

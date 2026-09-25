@@ -319,7 +319,7 @@ fn recv_ida_entries_exceeds_max_count_is_protocol_violation() {
 
     // A hostile ACL entry count above the cap. upstream: acls.c:700
     // recv_ida_entries() reads it via read_varint_bounded(f, 0,
-    // MAX_WIRE_ACL_COUNT, "ACL count") (io.c:1904-1913), which
+    // MAX_WIRE_ACL_COUNT, "ACL count") (io.c:1942-1951), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. WHY it matters: a drop-in
     // tool must exit 2 (protocol incompatibility) here, not RERR_STREAMIO (12);
     // the ProtocolViolation tag is what makes the core mapper reproduce exit 2.

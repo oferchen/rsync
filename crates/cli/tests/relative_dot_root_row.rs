@@ -3,9 +3,9 @@
 //! not only in the `--stats` tally.
 //!
 //! Upstream arms `implied_dot_dir` for an operand whose transmitted name begins
-//! with a bare `./` (`flist.c:2640-2641`) and then emits exactly one synthetic
+//! with a bare `./` (`flist.c:2880-2881`) and then emits exactly one synthetic
 //! entry with `send_file_name(f, flist, ".", NULL, (flags | FLAG_IMPLIED_DIR) &
-//! ~FLAG_CONTENT_DIR, ALL_FILTERS)` (`flist.c:2689-2692`). That is the same
+//! ~FLAG_CONTENT_DIR, ALL_FILTERS)` (`flist.c:2929-2932`). That is the same
 //! call the implied *ancestors* go through, so the `.` is rendered by the same
 //! rules as `sub/`: listed under `--list-only`, itemized against the basis, and
 //! shown as an all-dot `.d ./` row at `-ii` while `-i` suppresses an unchanged

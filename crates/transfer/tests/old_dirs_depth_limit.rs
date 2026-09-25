@@ -1,7 +1,7 @@
 //! Regression test for the deprecated `--old-dirs` / `--old-d` flags.
 //!
 //! upstream: options.c:631-632 declare `--old-dirs`/`--old-d` as
-//! `POPT_ARG_VAL` setting `xfer_dirs = 4`, and options.c:2197-2199 resolves
+//! `POPT_ARG_VAL` setting `xfer_dirs = 4`, and options.c:2206-2208 resolves
 //! that after the argv scan:
 //!
 //! ```c

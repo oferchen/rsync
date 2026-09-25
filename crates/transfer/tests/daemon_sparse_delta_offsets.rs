@@ -7,10 +7,10 @@
 //! run is pending makes the hole start late and shifts every following byte.
 //! The local-copy engine had exactly that defect under `--inplace --sparse`.
 //!
-//! Upstream never repositions between tokens: receiver.c:563 `write_file()`
-//! and receiver.c:625 `skip_matched()` both hand the bytes to fileio.c
-//! `write_sparse()`, whose fileio.c:81 `flush_sparse_hole()` advances from the
-//! current position before fileio.c:115 `emit_sparse_span()` writes the data.
+//! Upstream never repositions between tokens: receiver.c:579 `write_file()`
+//! and receiver.c:641 `skip_matched()` both hand the bytes to fileio.c
+//! `write_sparse()`, whose fileio.c:85 `flush_sparse_hole()` advances from the
+//! current position before fileio.c:119 `emit_sparse_span()` writes the data.
 //!
 //! These cells drive the daemon receiver (push) and the client receiver (pull)
 //! over a real `rsync://` loopback with a pinned block size, so a matched block

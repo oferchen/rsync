@@ -118,7 +118,7 @@ impl BufferedMap {
     /// Loads a new window, reusing overlapping bytes from the current window
     /// when the slide is forward (sequential access pattern).
     ///
-    /// Mirrors upstream rsync's `map_ptr()` (fileio.c:268-279) which uses
+    /// Mirrors upstream rsync's `map_ptr()` (fileio.c:310-321) which uses
     /// `memmove()` to retain bytes that overlap between the old and new window
     /// positions, avoiding redundant disk reads.
     fn load_window(&mut self, offset: u64, min_len: usize) -> io::Result<()> {
@@ -136,13 +136,13 @@ impl BufferedMap {
             ));
         }
 
-        // upstream: fileio.c:268-279 - reuse overlapping bytes when sliding
+        // upstream: fileio.c:310-321 - reuse overlapping bytes when sliding
         // forward. The new window starts at `aligned_start`; if the old window
         // overlaps the beginning of the new window AND the new window extends
         // past the old window's end, shift the overlap via copy_within and
         // only read the new portion from disk.
         //
-        // upstream: fileio.c:236 `realloc_array` only grows the backing buffer;
+        // upstream: fileio.c:278 `realloc_array` only grows the backing buffer;
         // it never shrinks. Mirror that invariant: when a smaller window is
         // requested (e.g., the new window is near EOF after a full-size load),
         // `Vec::resize` would otherwise truncate the bytes the overlap branch

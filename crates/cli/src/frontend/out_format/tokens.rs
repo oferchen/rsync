@@ -28,7 +28,7 @@ impl OutFormat {
 
     /// Returns `true` when the format renders the itemized-changes string.
     ///
-    /// upstream: options.c:2354 - `stdout_format_has_i` is derived from the
+    /// upstream: options.c:2363 - `stdout_format_has_i` is derived from the
     /// resolved format string, and it is what puts the client into itemizing
     /// mode. Read it from the parsed tokens rather than re-scanning the raw
     /// text so the emit gate and the renderer cannot disagree about whether a

@@ -158,7 +158,7 @@ manual run from your branch is equivalent.
 ## Upstream source citations
 
 Non-obvious protocol and wire behaviour is annotated with a citation to the
-upstream rsync C source, e.g. `// upstream: sender.c:477 - "sender finished"`.
+upstream rsync C source, e.g. `// upstream: sender.c:478 - "sender finished"`.
 
 - **One pinned baseline.** Every citation line number is anchored to the single
   pinned upstream tree at `target/interop/upstream-src/rsync-3.5.1/`. Do **not**
@@ -197,7 +197,7 @@ upstream rsync C source, e.g. `// upstream: sender.c:477 - "sender finished"`.
   tarball does not ship - zsync's `librcksum/` - name a different upstream and
   are out of scope.
 - **Naming a release explicitly.** A citation may spell
-  `rsync-3.5.0/flist.c:2477` or `target/interop/upstream-src/rsync-3.5.0/flist.c:2477`;
+  `rsync-3.5.1/flist.c:2717` or `target/interop/upstream-src/rsync-3.5.1/flist.c:2717`;
   the prefix is stripped and the line range is checked as if the bare name had
   been written. Spelling any *other* release is a hard failure, so
   `rsync-3.4.1/delete.c:130` fails - it names rsync at a release this tree no

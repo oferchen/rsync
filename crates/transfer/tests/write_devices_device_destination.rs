@@ -8,9 +8,9 @@
 //! which let the in-place commit run `ftruncate()` against the device and fail
 //! `EINVAL`, reporting exit 12 where upstream reports 0.
 //!
-//! upstream: `receiver.c:1170` - `write_to_device = write_devices && IS_DEVICE(st.st_mode)`,
-//! with `st` the `do_fstat()` of the opened destination (`receiver.c:1143-1145`).
-//! upstream: `receiver.c:652` - the in-place `do_ftruncate()` is gated on
+//! upstream: `receiver.c:1187` - `write_to_device = write_devices && IS_DEVICE(st.st_mode)`,
+//! with `st` the `do_fstat()` of the opened destination (`receiver.c:1160-1162`).
+//! upstream: `receiver.c:668` - the in-place `do_ftruncate()` is gated on
 //! `!IS_DEVICE(file->mode)`, which is the truncate this predicate must suppress.
 //!
 //! Why this rides a REMOTE-SHELL push and not a local copy: the predicate lives
@@ -100,7 +100,7 @@ fn write_devices_push_to_a_device_destination_succeeds() {
 
     // The device branch writes THROUGH the node; it must never have been
     // replaced by a regular file: under `inplace` upstream names the output
-    // `fname` itself (receiver.c:1195-1196), so there is no temp file to rename
+    // `fname` itself (receiver.c:1212-1213), so there is no temp file to rename
     // over the device and no unlink of it.
     let meta = fs::metadata(DEVICE_DEST).expect("stat device after transfer");
     assert!(
