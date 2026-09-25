@@ -19,6 +19,8 @@
 //!   the file-list end marker.
 //! - [`xfer_error`] - `got_xfer_error`: a `MSG_ERROR_XFER` frame on an empty
 //!   file list is the only report a missing source argument produces.
+//! - [`receive_counters`] - `--stats` type tallies and total size bumped as
+//!   entries arrive, so released INC_RECURSE segments do not change them.
 //! - [`ndx_convert`] - `flat_to_wire_ndx` / `wire_to_flat_ndx` counters
 //!   and round-trip coverage.
 //! - [`dedup`] - receiver duplicate-clean pass (`flist_sort_and_clean` step 2)
@@ -55,6 +57,7 @@ mod incremental_receiver;
 mod missing_args_sentinel;
 mod ndx_convert;
 mod proto_io_error;
+mod receive_counters;
 mod wire_attrs;
 mod xfer_error;
 

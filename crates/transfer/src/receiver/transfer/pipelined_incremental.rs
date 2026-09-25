@@ -446,11 +446,10 @@ impl ReceiverContext {
         stats.literal_data = literal_data;
         stats.matched_data = matched_data;
         stats.total_source_bytes = self.total_source_size();
-        // upstream: flist.c:2699-2712 - classify the (now fully materialized,
-        // including any INC_RECURSE sub-lists) file list into per-type tallies so
-        // the `--stats` "Number of files" breakdown matches upstream. Computed
-        // after the loop because incremental recursion appends sub-list segments
-        // as the transfer proceeds.
+        // upstream: flist.c:2993-3006 - the per-type tallies were bumped as
+        // each entry (sub-lists included) was read, so they stay exact even
+        // after completed segments are reclaimed. Read after the loop because
+        // incremental recursion keeps appending sub-list segments until then.
         let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
         stats.num_dirs = num_dirs;
         stats.num_symlinks = num_symlinks;
