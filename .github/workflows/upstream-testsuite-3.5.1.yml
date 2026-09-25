@@ -29,7 +29,7 @@ name: Upstream Testsuite 3.5.1
 # manifests below were obtained, and how a re-baseline is taken.
 on:
   push:
-    branches: [master, ci/uts-351-legs]
+    branches: [master]
   schedule:
     - cron: '0 8 * * *'
   workflow_dispatch:
