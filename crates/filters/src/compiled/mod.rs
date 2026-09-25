@@ -79,6 +79,11 @@ impl CompiledRule {
         // `-!p /?*/***` vs `I/0`).
         let wild3_suffix = has_wild3_suffix(&pattern);
 
+        // upstream: exclude.c:287-290 - only a written trailing `/` sets
+        // FILTRULE_DIRECTORY. `directory_only` is broader (a bare `/***` suffix
+        // sets it too), so the written slash is recorded separately.
+        let trailing_slash = pattern.len() > 1 && pattern.last() == Some(&b'/');
+
         // upstream: exclude.c:236 add_rule() - FILTRULE_WILD is set only when
         // the pattern contains a wildcard metacharacter (`*`, `?`, `[`). A
         // non-wild rule is matched with a literal comparison (exclude.c:967-978
@@ -134,6 +139,7 @@ impl CompiledRule {
                 perishable,
                 negate,
                 wild3_suffix,
+                trailing_slash,
                 order: 0,
                 source,
             });
@@ -260,6 +266,7 @@ impl CompiledRule {
             perishable,
             negate,
             wild3_suffix,
+            trailing_slash,
             order: 0,
             source,
         })
