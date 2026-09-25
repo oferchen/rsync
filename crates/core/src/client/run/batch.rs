@@ -1360,8 +1360,8 @@ mod tests {
         let script_path = batch_cfg.script_file_path();
         let content = std::fs::read_to_string(&script_path).unwrap();
         assert!(
-            content.contains("--filter=._-"),
-            "Script must include --filter=._- for protocol >= 29: {content}"
+            content.contains("--filter='._-'"),
+            "Script must include --filter='._-' for protocol >= 29: {content}"
         );
         assert!(content.contains("<<'#E#'"));
         assert!(content.contains("- *.tmp\n+ */\n+ *.txt\n- *\n"));
@@ -1395,7 +1395,7 @@ mod tests {
         let script_path = batch_cfg.script_file_path();
         let content = std::fs::read_to_string(&script_path).unwrap();
         assert!(
-            content.contains("--filter=._-"),
+            content.contains("--filter='._-'"),
             "Script should embed filter option: {content}"
         );
         assert!(
@@ -1407,6 +1407,53 @@ mod tests {
             "Script should contain include rule: {content}"
         );
         assert!(content.contains("<<'#E#'"), "Script should contain heredoc");
+    }
+
+    /// A filter pattern carrying a newline must abort `--write-batch` with
+    /// upstream's RERR_SYNTAX refusal and leave no replay script behind.
+    ///
+    /// Each rule is one line of the `<<'#E#'` here-doc, so a pattern such as
+    /// `"x\n#E#\ntouch PWNED"` - reachable from a dir-merge or `--exclude-from`
+    /// file in an untrusted tree - would end the here-doc early and append a
+    /// shell command that runs when the operator executes `BATCH.sh`. The rule
+    /// sits after a benign one so a check that only inspects the first rule, or
+    /// writes the good rules before refusing, is caught too.
+    ///
+    /// upstream: batch.c:222-231 write_filter_rules() - rprintf + RERR_SYNTAX.
+    #[test]
+    fn finalize_batch_refuses_newline_filter_rule_and_writes_no_script() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("inject.batch");
+        let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
+            .with_checksum_seed(1);
+
+        let writer_arc = create_batch_writer(&batch_cfg).unwrap();
+
+        let config = ClientConfig::builder()
+            .compress(false)
+            .add_filter_rule(FilterRuleSpec::exclude("*.log"))
+            .add_filter_rule(FilterRuleSpec::exclude("x\n#E#\ntouch PWNED"))
+            .batch_config(Some(batch_cfg.clone()))
+            .build();
+
+        write_batch_header(&writer_arc, &config).unwrap();
+
+        let summary = ClientSummary::from_summary(engine::local_copy::LocalCopySummary::default());
+        let err = finalize_batch(&writer_arc, &batch_cfg, &config, &summary, true)
+            .expect_err("a newline-bearing filter pattern must be refused");
+
+        assert_eq!(err.exit_code(), 1, "upstream exits RERR_SYNTAX (1)");
+        let rendered = err.message().to_string();
+        assert!(
+            rendered.contains(
+                "cannot write a filter rule containing a newline to the batch replay script"
+            ),
+            "refusal must carry upstream's text: {rendered}"
+        );
+        assert!(
+            !std::path::Path::new(&batch_cfg.script_file_path()).exists(),
+            "no replay script may be written once the rule set is refused"
+        );
     }
 
     /// Verify finalize_batch produces clean script when no filter rules.
