@@ -548,8 +548,8 @@ fn requires_multiplex_output(
 /// upstream: compat.c:161-179 set_allow_inc_recurse,
 /// rsync.h:151-152 (`MIN_FILECNT_LOOKAHEAD` / `MAX_FILECNT_LOOKAHEAD`),
 /// sender.c:515,549 (send loop tops the window up to the minimum).
-pub(crate) fn compute_allow_inc_recurse(recursive: bool, qsort: bool, role: ServerRole) -> bool {
-    recursive && !qsort && role == ServerRole::Generator
+pub(crate) fn compute_allow_inc_recurse(config: &ServerConfig) -> bool {
+    config.allows_inc_recurse() && config.role == ServerRole::Generator
 }
 
 /// Builds the sender-side bandwidth limiter for this server transfer.
@@ -820,8 +820,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 
     // Compute allow_inc_recurse matching upstream compat.c:161-179 with the
     // receiver-side restriction documented on `compute_allow_inc_recurse`.
-    let allow_inc_recurse =
-        compute_allow_inc_recurse(config.flags.recursive, config.qsort, config.role);
+    let allow_inc_recurse = compute_allow_inc_recurse(&config);
 
     // In SSH server mode (client_args is None), pass the compact flag string
     // so setup_protocol can extract the `-e.xxx` capability string from it.
@@ -853,6 +852,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         checksum_choice: config.checksum_choice,
         checksum_seed: config.checksum_seed,
         allow_inc_recurse,
+        options_allow_inc_recurse: config.allows_inc_recurse(),
         // upstream: compat.c:751-753 - abort when --crtimes is requested but the
         // negotiated peer lacks CF_VARINT_FLIST_FLAGS (rsync < 3.2.0).
         preserve_crtimes: config.flags.crtimes,
