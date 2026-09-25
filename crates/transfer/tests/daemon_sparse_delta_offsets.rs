@@ -148,7 +148,12 @@ fn transfer(direction: Direction, flags: &[&str], source: &[u8], basis: &[u8]) -
         Direction::Pull => (url, dest_file.display().to_string()),
     };
     let output = Command::new(&oc_bin)
-        .args(["--ignore-times", "--no-whole-file", "--block-size=1024", "--stats"])
+        .args([
+            "--ignore-times",
+            "--no-whole-file",
+            "--block-size=1024",
+            "--stats",
+        ])
         .args(flags)
         .arg(&from)
         .arg(&to)
@@ -162,13 +167,19 @@ fn transfer(direction: Direction, flags: &[&str], source: &[u8], basis: &[u8]) -
         output.status,
         String::from_utf8_lossy(&output.stderr),
     );
-    (fs::read(&dest_file).expect("read destination"), matched_bytes(&stdout))
+    (
+        fs::read(&dest_file).expect("read destination"),
+        matched_bytes(&stdout),
+    )
 }
 
 fn assert_identical(produced: &[u8], expected: &[u8], what: &str) {
     assert_eq!(produced.len(), expected.len(), "{what}: length preserved");
     let first_diff = produced.iter().zip(expected).position(|(a, b)| a != b);
-    assert_eq!(first_diff, None, "{what}: destination must equal the source");
+    assert_eq!(
+        first_diff, None,
+        "{what}: destination must equal the source"
+    );
 }
 
 /// `--inplace --sparse` and `--sparse` (temp file) reconstruct the source
@@ -181,7 +192,10 @@ fn sparse_delta_keeps_offsets_after_blocks_ending_in_zeros() {
         for flags in [&["--inplace", "--sparse"][..], &["--sparse"][..]] {
             let what = format!("{direction:?} {flags:?}");
             let (produced, matched) = transfer(direction, flags, &source, &basis);
-            assert!(matched > 0, "{what}: no matched data, delta path not exercised");
+            assert!(
+                matched > 0,
+                "{what}: no matched data, delta path not exercised"
+            );
             assert_identical(&produced, &source, &what);
         }
     }
@@ -193,7 +207,11 @@ fn sparse_delta_keeps_offsets_after_blocks_ending_in_zeros() {
 fn sparse_append_verify_keeps_offsets_after_prefix_ending_in_zero() {
     let source = source_from(&basis());
     let prefix = &source[..16 * BLOCK];
-    assert_eq!(prefix.last(), Some(&0), "fixture: prefix must end in a zero");
+    assert_eq!(
+        prefix.last(),
+        Some(&0),
+        "fixture: prefix must end in a zero"
+    );
     for direction in [Direction::Push, Direction::Pull] {
         let what = format!("{direction:?} --append-verify --sparse");
         let (produced, _) = transfer(direction, &["--append-verify", "--sparse"], &source, prefix);
