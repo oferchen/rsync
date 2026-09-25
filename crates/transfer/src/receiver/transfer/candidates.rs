@@ -196,12 +196,54 @@ impl ReceiverContext {
         acl_cache: Option<&protocol::acl::AclCache>,
         acl_id_map: Option<&metadata::AclIdMapper>,
     ) -> Vec<(usize, PathBuf, u32)> {
+        // Whole-list candidate build (the batch drivers). Delegates to the
+        // range-scoped core over the full list, so the batch behaviour is
+        // byte-identical (range = 0..len). The RS-3b per-segment streaming
+        // driver calls the core with one segment's range instead.
+        self.build_files_to_transfer_in_range(
+            0..self.file_list.len(),
+            writer,
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+            metadata_opts,
+            failed_dirs,
+            metadata_errors,
+            stats,
+            acl_cache,
+            acl_id_map,
+        )
+    }
+
+    /// Candidate build restricted to the flat-index range `[range.start,
+    /// range.end)`; every index in the returned tuples stays a GLOBAL flat
+    /// index. The batch path passes `0..file_list.len()` (see
+    /// [`build_files_to_transfer`](Self::build_files_to_transfer)); the RS-3b
+    /// per-segment streaming driver passes one segment's range so it can
+    /// build and transfer that segment before pulling the next.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::receiver) fn build_files_to_transfer_in_range<
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        range: std::ops::Range<usize>,
+        writer: &mut W,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        metadata_opts: &MetadataOptions,
+        failed_dirs: Option<&FailedDirectories>,
+        metadata_errors: &mut Vec<(PathBuf, String)>,
+        stats: &mut TransferStats,
+        acl_cache: Option<&protocol::acl::AclCache>,
+        acl_id_map: Option<&metadata::AclIdMapper>,
+    ) -> Vec<(usize, PathBuf, u32)> {
         // upstream: generator.c:1636-1637 - "recv_generator(%s,%d)" emitted at
         // the top of recv_generator() for every file the generator considers
         // (regular files, directories, symlinks, devices, specials). Skipping
         // the loop when the flag is off keeps the hot path allocation-free.
         if debug_gte(logging::DebugFlag::Genr, 1) {
-            for (flat_idx, entry) in self.file_list.iter().enumerate() {
+            for flat_idx in range.clone() {
+                let entry = &self.file_list[flat_idx];
                 let ndx = self.flat_to_wire_ndx(flat_idx);
                 debug_log!(
                     Genr,
@@ -223,10 +265,10 @@ impl ReceiverContext {
         let has_failed_dirs = failed_dirs.is_some();
         let verbose_client = self.config.flags.verbose && self.config.connection.client_mode;
 
-        let candidates: Vec<(usize, &FileEntry)> = self
-            .file_list
+        let candidates: Vec<(usize, &FileEntry)> = self.file_list[range.clone()]
             .iter()
             .enumerate()
+            .map(|(i, e)| (range.start + i, e))
             .filter(|(_, e)| e.is_file())
             .filter(|(_, e)| !is_hardlink_follower(e))
             .filter(|(_, e)| {
