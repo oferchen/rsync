@@ -330,6 +330,17 @@ impl FileWriter for IoUringWriter {
 impl Seek for IoUringWriter {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.flush_buffer()?;
+        // Positional io_uring writes never advance the fd offset, so a
+        // relative seek must resolve against the tracked logical position.
+        let pos =
+            match pos {
+                SeekFrom::Current(delta) => {
+                    SeekFrom::Start(self.bytes_written.checked_add_signed(delta).ok_or_else(
+                        || io::Error::new(io::ErrorKind::InvalidInput, "seek before start of file"),
+                    )?)
+                }
+                other => other,
+            };
         let new_pos = self.file.seek(pos)?;
         self.bytes_written = new_pos;
         Ok(new_pos)
@@ -432,5 +443,29 @@ mod tests {
             None => return,
         };
         assert_eq!(writer.registered_buffer_count(), None);
+    }
+
+    /// A relative seek must advance from the logical write position. The
+    /// sparse writer leaves holes with `seek(Current(n))`; resolving it
+    /// against the fd offset, which positional writes never move, would land
+    /// the next data span on top of the bytes already written.
+    #[test]
+    fn relative_seek_advances_from_logical_position() {
+        if with_ring(|_| Ok(())).is_err() {
+            return;
+        }
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("hole.bin");
+        let file = File::create(&path).expect("create");
+        let mut writer = IoUringWriter::with_ring(file, 4096, 4, -1, false, 0);
+
+        writer.write_all(b"abc").expect("write head");
+        assert_eq!(writer.seek(SeekFrom::Current(2)).expect("seek"), 5);
+        writer.write_all(b"d").expect("write tail");
+        assert_eq!(writer.stream_position().expect("position"), 6);
+        writer.flush().expect("flush");
+        drop(writer);
+
+        assert_eq!(std::fs::read(&path).expect("read"), b"abc\0\0d");
     }
 }
