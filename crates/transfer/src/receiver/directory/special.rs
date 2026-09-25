@@ -25,7 +25,7 @@ use std::fs;
 use std::path::Path;
 
 #[cfg(unix)]
-use logging::{debug_log, info_log};
+use logging::info_log;
 #[cfg(unix)]
 use metadata::{MetadataOptions, apply_metadata_from_file_entry, create_fifo_node_from_parts};
 #[cfg(unix)]
@@ -47,9 +47,9 @@ impl ReceiverContext {
     /// fresh node can be created. Fake-super substitutes a `0600` placeholder
     /// for the node, mirroring `syscall.c:do_mknod()`'s `am_root < 0` branch.
     ///
-    /// A per-entry creation failure is logged and skipped rather than aborting
-    /// the transfer, mirroring upstream's `do_mknod` failure path which records
-    /// an I/O error and continues with the next entry.
+    /// A per-entry creation failure is reported as `FERROR_XFER` and skipped
+    /// rather than aborting the transfer, so the run ends `RERR_PARTIAL` (23)
+    /// like upstream's `atomic_create()` `mknod %s failed` path.
     ///
     /// # Upstream Reference
     ///
@@ -238,7 +238,15 @@ impl ReceiverContext {
                 if entry.file_type() == FileType::Socket
                     && metadata::socket_creation_unsupported(relative_path)
                 {
-                    logging::warn_log!("{}", metadata::format_skipped_socket_message(&node_path));
+                    // upstream: log.c:rwrite() - a server frames FWARNING as
+                    // MSG_WARNING for the client, so a push reports it too.
+                    let _ = self.emit_warning_line(
+                        writer,
+                        &format!(
+                            "skipping socket (creation unsupported here): {}\n",
+                            self.full_fname_in_dest(dest_dir, &node_path)
+                        ),
+                    );
                     continue;
                 }
 
@@ -275,7 +283,7 @@ impl ReceiverContext {
                         true,
                         self.config.fake_super,
                     )
-                    .map_err(std::io::Error::other)
+                    .map_err(|error| error.into_parts().2)
                 } else {
                     let mode = metadata::fifo_mknod_mode(entry.mode() & 0o7777);
                     fast_io::mknodat_via_sandbox_or_fallback(
@@ -289,15 +297,18 @@ impl ReceiverContext {
                     )
                 };
                 if let Err(error) = create_result {
-                    // upstream: generator.c do_mknod failure - rsyserr() then
-                    // io_error |= IOERR_GENERAL and continue with the next
-                    // entry rather than aborting the whole transfer.
-                    debug_log!(
-                        Recv,
-                        1,
-                        "failed to create special file {}: {}",
-                        node_path.display(),
-                        error
+                    // upstream: generator.c:2521-2522 atomic_create() -
+                    // rsyserr(FERROR_XFER, e, "mknod %s failed",
+                    // full_fname(create_name)). FERROR_XFER sets
+                    // got_xfer_error (log.c:337-338), which lifts the exit to
+                    // RERR_PARTIAL (23); the entry is skipped, the run goes on.
+                    let _ = self.emit_generator_error_xfer(
+                        writer,
+                        &format!(
+                            "mknod {} failed",
+                            self.full_fname_in_dest(dest_dir, &node_path)
+                        ),
+                        &error,
                     );
                     continue;
                 }
@@ -315,14 +326,10 @@ impl ReceiverContext {
                 .preserve_crtimes(self.config.flags.crtimes)
                 .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
                 .fake_super(self.config.fake_super);
+            // upstream: rsync.c:set_file_attrs() - a failed chown/utimes/chmod
+            // is rsyserr(FERROR_XFER), so the run ends RERR_PARTIAL (23).
             if let Err(error) = apply_metadata_from_file_entry(&node_path, entry, &options) {
-                debug_log!(
-                    Recv,
-                    1,
-                    "failed to apply metadata for special file {}: {}",
-                    node_path.display(),
-                    error
-                );
+                let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
             }
 
             if up_to_date {
