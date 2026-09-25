@@ -8,12 +8,24 @@ use std::path::{Path, PathBuf};
 
 use protocol::flist::{FileEntry, compare_file_entries};
 
+use super::receive::strip_leading_slashes;
+
 /// What a wire `dir_ndx` resolves to, mirroring upstream's three outcomes at
 /// `flist.c:2906-2918`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::receiver) enum DirSlot {
     /// A live directory; a sub-list may name it as its parent.
-    Active(PathBuf),
+    Active {
+        /// The directory's destination-relative name.
+        name: PathBuf,
+        /// Upstream's `FLAG_CONTENT_DIR`, as the entry held it once the
+        /// implied-parent downgrade (`flist.c:1240-1256`) had run. Held on the
+        /// slot so it outlives the reclaim of the entry itself: upstream reads
+        /// it off `dir_flist->files[parent_ndx]` when the sub-list becomes
+        /// `cur_flist` (`generator.c:2780-2792`), long after the parent's own
+        /// list may have been freed.
+        content_dir: bool,
+    },
     /// The slot exists but `flist_sort_and_clean()` cleared its entry. Upstream
     /// refuses this rather than dereferencing the zeroed struct.
     Cleared,
@@ -112,14 +124,19 @@ impl DirFlist {
         for name in &pending.names {
             let is_repeat = previous == Some(name.as_path());
             previous = Some(name.as_path());
-            let survives = !is_repeat
-                && post_clean
-                    .iter()
-                    .any(|e| e.is_active() && e.is_dir() && e.path() == name);
-            self.slots.push(if survives {
-                DirSlot::Active(name.clone())
+            let survivor = if is_repeat {
+                None
             } else {
-                DirSlot::Cleared
+                post_clean
+                    .iter()
+                    .find(|e| e.is_active() && e.is_dir() && e.path() == name)
+            };
+            self.slots.push(match survivor {
+                Some(entry) => DirSlot::Active {
+                    name: name.clone(),
+                    content_dir: entry.content_dir(),
+                },
+                None => DirSlot::Cleared,
             });
         }
     }
@@ -135,8 +152,30 @@ impl DirFlist {
         Self {
             slots: names
                 .into_iter()
-                .map(|n| DirSlot::Active(n.into()))
+                .map(|n| DirSlot::Active {
+                    name: n.into(),
+                    content_dir: true,
+                })
                 .collect(),
+        }
+    }
+
+    /// Clears the content flag of the live slot named `dir`, for a directory the
+    /// implied-parent downgrade demoted after its slot was appended.
+    ///
+    /// The initial list's slots are appended before the pipeline setup runs the
+    /// downgrade, so without this they would keep the sender's claim. Names are
+    /// compared without leading slashes: a `--relative` slot is recorded before
+    /// the `strip_root` pass that the downgrade's entries have already been
+    /// through.
+    pub(in crate::receiver) fn revoke_content_dir(&mut self, dir: &Path) {
+        let dir = strip_leading_slashes(dir);
+        for slot in &mut self.slots {
+            if let DirSlot::Active { name, content_dir } = slot
+                && strip_leading_slashes(name) == dir
+            {
+                *content_dir = false;
+            }
         }
     }
 
