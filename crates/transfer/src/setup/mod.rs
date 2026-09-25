@@ -144,6 +144,10 @@ pub fn setup_protocol_with<'a>(
             // are exchanged on failure.
             require_crtimes_capability(config.preserve_crtimes, compat_flags)?;
 
+            // upstream: compat.c:780-785 - checked after the crtimes abort and
+            // before negotiate_the_strings(), so nothing more is exchanged.
+            refuse_incompatible_inc_recurse(config.options_allow_inc_recurse, compat_flags, false)?;
+
             // Determine whether capability negotiation should happen.
             // upstream compat.c:740-742 - do_negotiated_strings requires CF_VARINT_FLIST_FLAGS.
             let do_negotiation = should_negotiate(
@@ -242,6 +246,50 @@ fn require_crtimes_capability(
         return Err(protocol::protocol_violation(
             "Both rsync versions must be at least 3.2.0 for --crtimes.",
         ));
+    }
+    Ok(())
+}
+
+/// Refuses a `CF_INC_RECURSE` this side's options cannot honour.
+///
+/// A receiver running `--delete-before`, `--delete-after`, `--delay-updates`
+/// or `--prune-empty-dirs` needs the whole file list before its walk, so an
+/// inc-recursive stream would be processed wrongly. Upstream never lets its
+/// own server set the bit for such a client (the client withholds `'i'`), so
+/// in practice this fires for a batch file or a misbehaving peer.
+///
+/// `read_batch` selects upstream's noun for the message.
+///
+/// # Errors
+///
+/// A `RERR_SYNTAX`-tagged error carrying upstream's exact text.
+///
+/// # Upstream Reference
+///
+/// `compat.c:780-785`:
+/// ```c
+/// if (inc_recurse && !allow_inc_recurse) {
+///     /* This should only be able to happen in a batch. */
+///     fprintf(stderr,
+///         "Incompatible options specified for inc-recursive %s.\n",
+///         read_batch ? "batch file" : "connection");
+///     exit_cleanup(RERR_SYNTAX);
+/// }
+/// ```
+pub fn refuse_incompatible_inc_recurse(
+    options_allow_inc_recurse: bool,
+    compat_flags: CompatibilityFlags,
+    read_batch: bool,
+) -> io::Result<()> {
+    if compat_flags.contains(CompatibilityFlags::INC_RECURSE) && !options_allow_inc_recurse {
+        let what = if read_batch {
+            "batch file"
+        } else {
+            "connection"
+        };
+        return Err(protocol::syntax_violation(format!(
+            "Incompatible options specified for inc-recursive {what}."
+        )));
     }
     Ok(())
 }
