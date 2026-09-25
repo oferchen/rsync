@@ -166,7 +166,12 @@ fn capture(src: &Path, label: &str, configure: impl FnOnce(&mut Command)) -> Wir
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
-    let transcript = recorder.finish().expect("read captures");
+    let mut transcript = recorder.finish().expect("read captures");
+    // The sender's trailing flist build/transfer times are wall-clock ms and
+    // move under host load; mask them so the gate compares protocol bytes.
+    transcript
+        .mask_pull_flist_times()
+        .expect("mask pull flist times");
     // Print the sizes so a reviewer can see real bytes were captured; the
     // zero-byte case is already a loud TranscriptError in finish().
     println!(
