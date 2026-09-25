@@ -192,9 +192,27 @@ impl ReceiverContext {
         &self,
         dest_dir: &std::path::Path,
     ) -> Vec<(usize, String)> {
-        self.file_list
+        self.verbose_dir_name_lines_in_range(0..self.file_list.len(), dest_dir)
+    }
+
+    /// Range-scoped [`verbose_dir_name_lines`](Self::verbose_dir_name_lines):
+    /// builds the plain-`-v` directory name lines for the flist indices in
+    /// `range` only, keyed by the absolute flist index. The streaming
+    /// INC_RECURSE driver calls this per sub-list segment (a segment's entries
+    /// are the only ones resident when it is walked), before that segment's
+    /// directories are created, so each stat reflects pre-transfer state - the
+    /// same gate the whole-list variant applies. The batch driver delegates the
+    /// whole list (`0..len`) here, so both share one gate.
+    pub(in crate::receiver) fn verbose_dir_name_lines_in_range(
+        &self,
+        range: std::ops::Range<usize>,
+        dest_dir: &std::path::Path,
+    ) -> Vec<(usize, String)> {
+        let start = range.start;
+        self.file_list[range]
             .iter()
             .enumerate()
+            .map(|(i, entry)| (start + i, entry))
             .filter_map(|(idx, entry)| {
                 if !entry.is_dir() {
                     return None;

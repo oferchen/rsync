@@ -50,7 +50,14 @@ impl ReceiverContext {
 
         if inc_recurse {
             let num_segments = self.ndx_segments.len();
-            for _ in 0..num_segments {
+            // RS-3b: the streaming driver may already have emitted some
+            // per-segment NDX_DONEs mid-walk to free the sender's window
+            // (`segments_released_mid_walk`). Emit only the remainder here so the
+            // TOTAL per-segment NDX_DONE count on the wire is exactly
+            // `num_segments`, unchanged. On every non-streaming transfer the
+            // counter is 0 and this loop is byte-identical to before.
+            let to_emit = num_segments.saturating_sub(self.segments_released_mid_walk);
+            for _ in 0..to_emit {
                 // upstream: receiver.c:683 - flist_free(first_flist)
                 // Reclaim heap data from the oldest completed segment
                 // to reduce RSS before sending the per-segment NDX_DONE.
@@ -58,6 +65,13 @@ impl ReceiverContext {
                 ndx_write_codec.write_ndx_done(&mut *writer)?;
                 writer.flush()?;
                 self.read_expected_ndx_done(ndx_read_codec, reader, "segment completion")?;
+            }
+            // Free the heap of any segments whose NDX_DONE was already sent
+            // mid-walk (their reclaim was deferred here, since RS-3b keeps the
+            // deferred end-of-walk metadata passes reading the whole list). This
+            // is a no-op when nothing was released mid-walk.
+            while self.first_segment_idx + 1 < self.ndx_segments.len() {
+                self.reclaim_oldest_segment();
             }
 
             // upstream: generator.c:2848-2850 - phase++ then "generate_files phase=%d"

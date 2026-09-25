@@ -116,6 +116,8 @@ fn server_push_pipeline_forwards_metadata_only_record_and_drains_echo() {
             &mut metadata_errors,
             false,
             0,
+            0,
+            true,
             &mut None,
             &mut ndx_write_codec,
             &mut ndx_read_codec,

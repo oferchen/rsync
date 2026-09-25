@@ -317,6 +317,74 @@ mod tests {
         assert_eq!(reader.position(), pos_eof, "reads occurred past flist_eof");
     }
 
+    /// Regression (#55): the receiver must read the sub-list markers through the
+    /// SAME inbound codec it reads transfer echoes with. Upstream io.c keeps one
+    /// `read_ndx` state per `f_in`; each `NDX_FLIST_OFFSET` marker is diff-encoded
+    /// against a running `prev_negative`, so a codec that did not see the earlier
+    /// markers decodes the next one against a stale base and misframes the stream.
+    /// The pre-fix streaming driver pulled sub-lists on a separate `flist_ndx_codec`
+    /// while echoes used `ndx_read_codec`; once the two interleaved, the echo codec
+    /// mis-decoded an `NDX_FLIST_OFFSET` marker as `NDX_FLIST_EOF` and read the tail
+    /// as a bogus file index ("sender echoed NDX 159" live). This pins the invariant
+    /// at the read primitive: one shared codec loads the whole list; a fresh codec
+    /// handed the second pull cannot reproduce that clean state.
+    #[test]
+    fn interleaved_segment_pulls_require_one_shared_inbound_codec() {
+        let segments = vec![
+            vec![("dir0/a.txt", 10u64), ("dir0/b.txt", 20)],
+            vec![("dir1/c.txt", 30), ("dir1/d.txt", 40)],
+            vec![("dir2/e.txt", 50)],
+        ];
+        let (wire, total) = encode_segments(&segments);
+
+        // Runs the SAME two-pull sequence - segment 0 first, then a second pull
+        // for the rest - and reports whether the whole list materialized. The
+        // ONLY variable between the two calls below is whether the second pull
+        // reuses the first pull's codec (shared inbound state) or gets a fresh
+        // one (split state); everything else is identical, so the outcome
+        // isolates codec-sharing as the cause (mutation probe, not a vacuous
+        // pass).
+        fn two_pull_reaches_full_list(
+            wire: &[u8],
+            n_dirs: usize,
+            total: usize,
+            split: bool,
+        ) -> bool {
+            let mut ctx = inc_recurse_receiver();
+            ctx.dir_flist = DirFlist::with_active((0..n_dirs).map(|i| format!("dir{i}")));
+            let mut reader = Cursor::new(wire.to_vec());
+            let mut codec_a = create_ndx_codec(PROTOCOL);
+            let mut codec_b = create_ndx_codec(PROTOCOL);
+            // First pull: segment 0 (2 entries) via codec A.
+            if !ctx.ensure_flat_idx(0, &mut reader, &mut codec_a).unwrap()
+                || ctx.file_list().len() != 2
+            {
+                return false;
+            }
+            // Second pull: the rest. Shared reuses codec A (upstream's one
+            // read_ndx state); split hands it a fresh codec B whose prev_negative
+            // never saw segment 0's marker.
+            let second = if split { &mut codec_b } else { &mut codec_a };
+            ctx.ensure_flat_idx(total - 1, &mut reader, second)
+                .map(|_| ctx.file_list().len() == total)
+                .unwrap_or(false)
+        }
+
+        // Shared inbound codec across both pulls: the full list materializes.
+        assert!(
+            two_pull_reaches_full_list(&wire, segments.len(), total, false),
+            "one shared inbound codec must decode every interleaved segment"
+        );
+        // Fresh codec at the second pull (the pre-fix two-codec split): it
+        // mis-decodes segment 1's diff-encoded marker and cannot reach the full
+        // list. If this ever passes, the invariant has regressed to two codecs.
+        assert!(
+            !two_pull_reaches_full_list(&wire, segments.len(), total, true),
+            "a fresh inbound codec at the second pull must desync, not reproduce \
+             the shared-codec full-list read"
+        );
+    }
+
     #[test]
     fn ensure_all_segments_loaded_drains_every_segment() {
         let segments = vec![vec![("s0/a", 1u64)], vec![("s1/b", 2), ("s1/c", 3)]];
