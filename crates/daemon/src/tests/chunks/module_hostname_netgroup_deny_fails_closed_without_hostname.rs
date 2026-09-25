@@ -7,9 +7,9 @@
 /// would let a client evade a deny rule simply by lacking a PTR record. The
 /// fail-closed guard (GHSA-rjfm-3w2m-jf4f) must therefore treat `@netgroup`
 /// deny rules as requiring a hostname, matching upstream's `if (!host || !*host)
-/// return 0` bail-out before the membership test (access.c:37-38).
+/// return 0` bail-out before the membership test (access.c:40-41).
 ///
-/// upstream: access.c:37-38 - `match_hostname` returns no-match when the host
+/// upstream: access.c:40-41 - `match_hostname` returns no-match when the host
 /// is absent, before reaching the `innetgr` netgroup branch.
 #[test]
 fn module_hostname_netgroup_deny_fails_closed_without_hostname() {

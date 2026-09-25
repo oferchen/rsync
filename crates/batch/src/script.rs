@@ -305,7 +305,7 @@ fn is_plain_option_byte(b: u8) -> bool {
 /// upstream: options.c:check_for_hostspec / batch.c:300
 fn strip_hostspec(dest: &str) -> &str {
     const URL_PREFIX: &str = "rsync://";
-    // upstream: options.c:3134 - an rsync:// URL is matched case-insensitively.
+    // upstream: options.c:3144 - an rsync:// URL is matched case-insensitively.
     if dest.len() >= URL_PREFIX.len()
         && dest.as_bytes()[..URL_PREFIX.len()].eq_ignore_ascii_case(URL_PREFIX.as_bytes())
     {
@@ -314,10 +314,10 @@ fn strip_hostspec(dest: &str) -> &str {
             return &rest[off..];
         }
     }
-    // upstream: options.c:3143 - parse_hostspec(s, &path, NULL).
+    // upstream: options.c:3153 - parse_hostspec(s, &path, NULL).
     match parse_hostspec_path(dest, false) {
         Some(off) => {
-            // upstream: options.c:3146-3147 - a leading ':' (the daemon '::'
+            // upstream: options.c:3156-3157 - a leading ':' (the daemon '::'
             // separator) is stripped from the returned path.
             let path = &dest[off..];
             path.strip_prefix(':').unwrap_or(path)
@@ -327,7 +327,7 @@ fn strip_hostspec(dest: &str) -> &str {
 }
 
 /// Locate the path portion of a `[user@]host[:port]` spec, mirroring upstream
-/// `parse_hostspec` (options.c:3073). Returns the byte offset in `s` where the
+/// `parse_hostspec` (options.c:3083). Returns the byte offset in `s` where the
 /// path begins when `s` starts with a valid host, or `None` otherwise.
 /// `is_url` mirrors upstream's non-NULL `port_ptr` (parsing an `rsync://` host).
 fn parse_hostspec_path(s: &str, is_url: bool) -> Option<usize> {

@@ -77,7 +77,7 @@ pub struct ParsedArgs {
     ///
     /// Encodes the `old_style_args` level: `None` when unset, `Some(0)` for an
     /// explicit `--no-old-args`, and `Some(1)`/`Some(2)` for the counted
-    /// `--old-args` (doubled reaches level 2). upstream: options.c:1642.
+    /// `--old-args` (doubled reaches level 2). upstream: options.c:1648.
     pub old_args: Option<u8>,
 
     /// `--ipv4`, `-4` / `--ipv6`, `-6` - address family preference.
@@ -272,7 +272,7 @@ pub struct ParsedArgs {
     /// (clap `overrides_with` mirrors upstream's last-wins popt semantics). The
     /// deprecated spelling is forwarded verbatim on the wire.
     ///
-    /// upstream: options.c:730, 2982-2985.
+    /// upstream: options.c:730, 2992-2995.
     pub remove_sent_files: bool,
 
     /// `--trust-sender` - trust the sending side's file list.
@@ -386,13 +386,13 @@ pub struct ParsedArgs {
 
     /// `--insecure-links` / `--no-insecure-links` - drop the ownership check on
     /// operator-supplied path symlinks. Local-only: it is never forwarded to a
-    /// peer (upstream options.c:3068) and a daemon hard-refuses it
+    /// peer (upstream options.c:3078) and a daemon hard-refuses it
     /// (options.c:1084).
     pub insecure_links: bool,
 
     /// `--confine-root=DIR` - confine every operator- and peer-supplied path
     /// beneath DIR. Validated absolute at parse time
-    /// (upstream options.c:2386-2389).
+    /// (upstream options.c:2395-2398).
     pub confine_root: Option<PathBuf>,
 
     /// `--devices` / `--no-devices` - preserve device files.
@@ -609,7 +609,7 @@ pub struct ParsedArgs {
     ///
     /// Distinct from `verbosity == 0` (the default): captured separately so the
     /// server-arg builder can pack the compact `q` letter, which upstream
-    /// (`options.c:2628`) emits only when `quiet && msgs2stderr`.
+    /// (`options.c:2637`) emits only when `quiet && msgs2stderr`.
     pub quiet: bool,
 
     /// `--progress`, `--info=progress2` / `--no-progress`.
@@ -634,7 +634,7 @@ pub struct ParsedArgs {
     ///
     /// Forces the itemize line for entries whose `iflags == 0` (a quick-check
     /// match with no attribute drift), independently of `-vv`. See upstream
-    /// `generator.c:582-583` and `options.c:1581,2354`.
+    /// `generator.c:582-583` and `options.c:1587,2363`.
     pub itemize_repeated: bool,
 
     /// `--out-format` - format string for file transfer messages.

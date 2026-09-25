@@ -116,7 +116,7 @@ pub(super) fn process_remaining_tokens<R: Read>(
                     send_abort(file_tx, format!("failed to read checksum: {e}"));
                     return Err(e);
                 }
-                // upstream: receiver.c:671-673
+                // upstream: receiver.c:687-689
                 matching::trace_deltasum::trace_got_file_sum();
 
                 file_tx
@@ -152,7 +152,7 @@ pub(super) fn process_remaining_tokens<R: Read>(
                 };
                 let len = buf.len() as u64;
 
-                // upstream: receiver.c:552-555 - the literal's length and the
+                // upstream: receiver.c:568-571 - the literal's length and the
                 // output offset it lands at, before it is written.
                 matching::trace_deltasum::trace_data_recv(len as usize, total_bytes);
 
@@ -201,7 +201,7 @@ pub(super) fn process_remaining_tokens<R: Read>(
                     let mut buf = recycle_or_alloc(buf_return_rx, bytes_to_copy);
                     buf.extend_from_slice(block_data);
 
-                    // upstream: receiver.c:468-474 - when updating the basis in
+                    // upstream: receiver.c:481-490 - when updating the basis in
                     // place (fnamecmp == fname) and this matched block's basis
                     // offset equals the current output position, the bytes are
                     // already correct in the destination. Seek past them via
@@ -213,11 +213,11 @@ pub(super) fn process_remaining_tokens<R: Read>(
                     // data received from the sender, and the disk thread arms
                     // `--partial` retention off that. upstream sets
                     // `cleanup_got_literal` only in the literal branch
-                    // (receiver.c:392-403), so a temp holding nothing but basis
+                    // (receiver.c:405-416), so a temp holding nothing but basis
                     // copies is unlinked on abort (cleanup.c:159, :199-200)
                     // rather than renamed over a complete destination.
                     let seek = updating_basis && offset == total_bytes;
-                    // upstream: receiver.c:609-614 - the ` (seek)` suffix marks
+                    // upstream: receiver.c:625-630 - the ` (seek)` suffix marks
                     // the in-place skip, where the basis bytes are already
                     // correct at the output offset.
                     matching::trace_deltasum::trace_recv_chunk(

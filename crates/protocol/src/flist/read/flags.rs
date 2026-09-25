@@ -73,7 +73,7 @@ impl FileListReader {
             return Ok(FlagsResult::EndOfList);
         }
 
-        // upstream: flist.c:2663 - extended flags only exist in protocol >= 28.
+        // upstream: flist.c:2903 - extended flags only exist in protocol >= 28.
         // In protocol < 28, bit 2 is XMIT_SAME_RDEV_pre28, not XMIT_EXTENDED_FLAGS.
         let (ext_byte, ext16_byte) = if use_varint {
             (

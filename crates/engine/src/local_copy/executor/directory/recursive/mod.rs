@@ -89,7 +89,7 @@ pub(crate) fn copy_directory_recursive(
 
 /// Walks a directory's immediate children even when global recursion is off.
 ///
-/// Mirrors upstream `flist.c:2749` which honours `(xfer_dirs && name_type != NORMAL_NAME)`
+/// Mirrors upstream `flist.c:2992` which honours `(xfer_dirs && name_type != NORMAL_NAME)`
 /// to walk one level beneath SLASH_ENDING_NAME / DOTDIR_NAME source arguments
 /// (and `--files-from` entries with the corresponding markers). Subdirectories
 /// encountered during this one-level walk are NOT recursed into further,
@@ -219,13 +219,13 @@ fn copy_directory_recursive_inner(
     // carry its error to the same end-of-frame re-raise the per-entry failures
     // use.
     let mut first_entry_io_error: Option<LocalCopyError> = None;
-    // upstream: flist.c:2129-2140 - `send_directory()` emits this directory's
-    // own entry and ACL (flist.c:1847-1858) BEFORE it opens the directory, so a
+    // upstream: flist.c:2365-2376 - `send_directory()` emits this directory's
+    // own entry and ACL (flist.c:2072-2083) BEFORE it opens the directory, so a
     // failed `opendir()` is an enumeration-only failure: upstream `return`s
     // without descending and the entry it already sent still reaches the
     // receiver, which mkdir's the destination directory and applies its
     // metadata and ACLs. The three arms are:
-    //   ENOENT -> `interpret_stat_error()` (flist.c:2003-2013) warns
+    //   ENOENT -> `interpret_stat_error()` (flist.c:2228-2238) warns
     //             `directory <name> has vanished` and sets IOERR_VANISHED (24);
     //   ENOTDIR with FLAG_PERHAPS_DIR -> silent return. No counterpart here:
     //             this frame is only entered for a source already stat'd as a
@@ -243,7 +243,7 @@ fn copy_directory_recursive_inner(
         Ok(entries) => entries,
         Err(error) => {
             if error.is_vanished_error() {
-                // full_fname() wraps the path in double quotes (util1.c:1228).
+                // full_fname() wraps the path in double quotes (util1.c:1325).
                 eprintln!("directory has vanished: \"{}\"", source.display());
             } else {
                 let detail = match error.kind() {
@@ -284,7 +284,7 @@ fn copy_directory_recursive_inner(
     let mut created_directory_on_disk = false;
     let creation_record_pending = destination_missing && relative.is_some();
     let mut record_emitted = false;
-    // upstream: main.c:803-805 + generator.c:566-572 - when the receiver
+    // upstream: main.c:816-818 + generator.c:566-572 - when the receiver
     // mkdirs the destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`
     // and `itemize()` emits `cd+++++++++ ./` for the synthesized "." entry.
     // Synthesize a "." relative path for the root when the destination root
@@ -293,7 +293,7 @@ fn copy_directory_recursive_inner(
     // Subsequent runs against an existing destination still see relative=None
     // here, so no record is synthesized and the `-i` output omits the `./`
     // entry as upstream does (test line 74-79).
-    // upstream: main.c:803-805 + generator.c:566-572 - when the receiver
+    // upstream: main.c:816-818 + generator.c:566-572 - when the receiver
     // mkdirs the destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`
     // and `itemize()` emits `cd+++++++++ ./` for the synthesized "." entry.
     // The root flist entry has relative=None here because `non_empty_path("")`
@@ -329,7 +329,7 @@ fn copy_directory_recursive_inner(
         ))
     };
 
-    // upstream: main.c:794-796 + generator.c:566-572 - the root directory
+    // upstream: main.c:807-809 + generator.c:566-572 - the root directory
     // entry (".") is itemized as `cd+++++++++ ./` when the pre-flight mkdir
     // materialised the destination root. When `ensure_destination_directory`
     // already created the root above this call frame, the per-frame
@@ -499,7 +499,7 @@ fn copy_directory_recursive_inner(
         Ok(())
     };
 
-    // upstream: flist.c:2477 - global recursion off AND not a trailing-slash
+    // upstream: flist.c:2717 - global recursion off AND not a trailing-slash
     // / DOTDIR source: emit the directory entry only and stop. Trailing-slash
     // sources (`force_walk_one_level`) fall through to walk one level so
     // upstream's `(xfer_dirs && name_type != NORMAL_NAME)` semantics hold.
@@ -590,7 +590,7 @@ fn copy_directory_recursive_inner(
     // recurses into that directory's children. Emit those `*deleting` rows
     // ahead of the child transfer rows to match upstream's per-directory
     // ordering; deferred timings are handled after the child loop.
-    // upstream: main.c:1356 - a `--max-delete` limit does NOT abort the
+    // upstream: main.c:1374 - a `--max-delete` limit does NOT abort the
     // transfer; the generator stops deleting, finishes every transfer, and
     // reports the limit at cleanup (exit 25). Because the during-sweep now runs
     // before this directory's child loop, capture a limit error and re-raise it
@@ -646,9 +646,9 @@ fn copy_directory_recursive_inner(
                 }
             }
             Err(error) if error.is_vanished_error() => {
-                // upstream: flist.c:1317 / sender.c:389 - vanished files produce
+                // upstream: flist.c:1542 / sender.c:390 - vanished files produce
                 // a warning and set IOERR_VANISHED (exit code 24).
-                // full_fname() wraps the path in double quotes (util1.c:1228).
+                // full_fname() wraps the path in double quotes (util1.c:1325).
                 eprintln!("file has vanished: \"{}\"", planned.entry.path.display());
                 context.record_io_error();
                 if first_entry_io_error.is_none() {
@@ -665,7 +665,7 @@ fn copy_directory_recursive_inner(
                 }
             }
             Err(error) if error.is_delete_limit_error() => {
-                // upstream: main.c:1356 - a --max-delete limit hit while
+                // upstream: main.c:1374 - a --max-delete limit hit while
                 // recursing into a child directory must not abort the parent's
                 // remaining transfers. Defer it, letting the sibling entries
                 // finish, then re-raise at the end of this directory.

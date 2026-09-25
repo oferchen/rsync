@@ -537,7 +537,7 @@ mod tests {
     /// WHY this matters: upstream `iconvbufs()` with `ICB_INCLUDE_BAD` copies
     /// unconvertible source bytes straight to the output (`*obuf++ = *ibuf++`,
     /// rsync.c:261) instead of substituting them. Both lossy callers -
-    /// `read_line(RL_CONVERT)` (io.c:1286) and `send_protected_args`
+    /// `read_line(RL_CONVERT)` (io.c:1304) and `send_protected_args`
     /// (rsync.c:305) - rely on this: a peer must be able to reproduce the
     /// bytes we emit exactly. Substituting invalid bytes with `?`/U+FFFD would
     /// silently corrupt the byte stream, so scattered invalid source bytes

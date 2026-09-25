@@ -7,10 +7,10 @@
 //!
 //! On Unix, the child process's stdin and stdout are connected via a loopback
 //! TCP socketpair (AF_INET on `127.0.0.1`) instead of OS pipes, mirroring
-//! upstream rsync's `sock_exec()` in `socket.c:811-841`, which uses
+//! upstream rsync's `sock_exec()` in `socket.c:819-849`, which uses
 //! `socketpair_tcp()`. A socket (not a pipe) is required so the child's
 //! `STDIN_FILENO` passes the `getsockopt(SO_TYPE)` check in `is_a_socket()`
-//! (`socket.c:500`). The AF_INET loopback family (rather than an AF_UNIX
+//! (`socket.c:508`). The AF_INET loopback family (rather than an AF_UNIX
 //! socketpair) additionally gives a daemon reached this way a real `127.0.0.1`
 //! peer address via `getpeername()`, which it needs for `hosts allow` /
 //! `hosts deny` matching - an AF_UNIX peer carries no address and is rejected
@@ -25,7 +25,7 @@
 //! into a word a shell parses. The template is operator-supplied, but the host
 //! is not: it comes from the `rsync://host/module` operand. Upstream therefore
 //! applies two defences before substituting, and so does this module
-//! (upstream: socket.c:488-495):
+//! (upstream: socket.c:496-503):
 //!
 //! - the host is refused outright unless every byte stays data through a shell
 //!   pass, and its first byte is additionally restricted
@@ -63,7 +63,7 @@ use crate::client::{
 /// `127.0.0.1` peer address for the daemon's `hosts allow` / `hosts deny`
 /// matching.
 ///
-/// upstream: socket.c:811-841 - `sock_exec()` uses `socketpair_tcp()` and
+/// upstream: socket.c:819-849 - `sock_exec()` uses `socketpair_tcp()` and
 /// `dup2(fd[1], STDIN_FILENO)` / `dup2(fd[1], STDOUT_FILENO)` in the child.
 #[cfg(unix)]
 pub(crate) fn connect_via_program(
@@ -79,7 +79,7 @@ pub(crate) fn connect_via_program(
         .cloned()
         .unwrap_or_else(|| OsString::from("sh"));
 
-    // upstream: socket.c:816 sock_exec() -> socket.c:744 socketpair_tcp(fd).
+    // upstream: socket.c:824 sock_exec() -> socket.c:752 socketpair_tcp(fd).
     // A connected AF_INET pair on the loopback address, NOT a Unix-domain
     // socketpair: both ends carry a real 127.0.0.1 peer address, so a daemon
     // that derives the client address from getpeername() for `hosts allow` /
@@ -93,7 +93,7 @@ pub(crate) fn connect_via_program(
     })?;
 
     // The child gets one end of the socketpair as both stdin and stdout.
-    // upstream: socket.c:831-832 - dup2(fd[1], STDIN_FILENO), dup2(fd[1], STDOUT_FILENO)
+    // upstream: socket.c:839-840 - dup2(fd[1], STDIN_FILENO), dup2(fd[1], STDOUT_FILENO)
     //
     // We need two `Stdio` values from the same fd. `Stdio::from()` consumes
     // the `OwnedFd`, so clone the child socket for the second handle.
@@ -125,7 +125,7 @@ pub(crate) fn connect_via_program(
     })?;
 
     // Parent keeps fd[0] for reading and writing.
-    // upstream: socket.c:839-840 - close(fd[1]); return fd[0];
+    // upstream: socket.c:847-848 - close(fd[1]); return fd[0];
     Ok(super::DaemonStream::program(
         ConnectProgramStream::from_socketpair(child, parent_sock),
     ))
@@ -133,7 +133,7 @@ pub(crate) fn connect_via_program(
 
 /// Creates a connected AF_INET socket pair on the loopback address.
 ///
-/// std equivalent of upstream rsync's `socketpair_tcp()` (`socket.c:744`):
+/// std equivalent of upstream rsync's `socketpair_tcp()` (`socket.c:752`):
 /// bind a listener on `127.0.0.1:0`, connect a second socket to it, and accept.
 /// Returns `(accepted, connected)` - two TCP streams that are peers of each
 /// other, both reporting a `127.0.0.1` peer address via `getpeername()`.
@@ -268,7 +268,7 @@ impl ConnectProgramConfig {
 
     /// Whether the template contains a substitution specifier at all.
     ///
-    /// upstream: socket.c:488 - `strchr(prog, '%')`. A `%` byte is ASCII, so a
+    /// upstream: socket.c:496 - `strchr(prog, '%')`. A `%` byte is ASCII, so a
     /// lossy view answers this question identically for a non-UTF-8 template.
     fn template_has_specifier(&self) -> bool {
         self.template.to_string_lossy().contains('%')
@@ -280,7 +280,7 @@ impl ConnectProgramConfig {
     /// substituted; the rendered command is run through `sh -c`, so an
     /// unchecked host would be shell syntax rather than data.
     pub(crate) fn format_command(&self, host: &str, port: u16) -> Result<OsString, String> {
-        // upstream: socket.c:488-495 - the refusal, the quoting and the
+        // upstream: socket.c:496-503 - the refusal, the quoting and the
         // substitution all sit inside `if (prog && strchr(prog, '%'))`, so a
         // template with no specifier never inspects the host at all.
         if !self.template_has_specifier() {
@@ -587,7 +587,7 @@ impl Drop for ConnectProgramStream {
         // after the last byte - a daemon spawned through `RSYNC_CONNECT_PROG`
         // runs its `post-xfer exec` hook there - must be allowed to finish.
         //
-        // upstream: socket.c:1046 `sock_exec()` forks the connect program and
+        // upstream: socket.c:1054 `sock_exec()` forks the connect program and
         // never signals it; the child ends when the socket closes.
         drop(self.transport.take());
         if let Some(child) = &mut self.child {
@@ -598,7 +598,7 @@ impl Drop for ConnectProgramStream {
 
 /// The refusal text upstream prints when a host cannot be substituted.
 ///
-/// upstream: socket.c:492 - `rprintf(FERROR, "unsafe host characters for
+/// upstream: socket.c:500 - `rprintf(FERROR, "unsafe host characters for
 /// RSYNC_CONNECT_PROG\n")`.
 const UNSAFE_CONNECT_HOST: &str = "unsafe host characters for RSYNC_CONNECT_PROG";
 
@@ -662,7 +662,7 @@ fn shell_quote_connect_host(host: &str) -> String {
 /// `format_command` fails for exactly one reason - the host did not survive
 /// [`shell_unsafe_connect_host`] - and upstream reports that as a failure to
 /// open the connection, not as a usage error: `open_socket_out_wrapped()`
-/// returns -1 (socket.c:490-493) and `start_socket_client()` answers with
+/// returns -1 (socket.c:498-501) and `start_socket_client()` answers with
 /// `exit_cleanup(RERR_SOCKETIO)` (clientserver.c:163-165).
 ///
 /// Both `connect_via_program` arms route through here so the unix and non-unix
@@ -891,7 +891,7 @@ mod tests {
 
     /// A template with no specifier never inspects the host at all.
     ///
-    /// upstream: socket.c:488 - the refusal, the quoting and the substitution
+    /// upstream: socket.c:496 - the refusal, the quoting and the substitution
     /// all sit inside `if (prog && strchr(prog, '%'))`. Without this gate a
     /// fixed command such as `nc localhost 873` would start failing for hosts
     /// it never interpolates.
@@ -1030,7 +1030,7 @@ mod tests {
     /// delay, so a child that is killed on drop deterministically leaves no
     /// marker.
     ///
-    /// upstream: socket.c:1046 `sock_exec()` never signals the child.
+    /// upstream: socket.c:1054 `sock_exec()` never signals the child.
     #[cfg(unix)]
     #[test]
     fn dropping_the_stream_lets_the_connect_program_finish_after_eof() {

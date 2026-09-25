@@ -138,7 +138,7 @@ impl LocalCopyError {
     /// is emitted at the skip site; this error only carries the exit code and
     /// the summary message.
     ///
-    /// upstream: `main.c:1338-1345` `log_exit()` maps `io_error &
+    /// upstream: `main.c:1356-1363` `log_exit()` maps `io_error &
     /// IOERR_GENERAL` to `RERR_PARTIAL`.
     #[must_use]
     pub const fn partial_transfer() -> Self {
@@ -177,7 +177,7 @@ impl LocalCopyError {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1338-1345`: `log_exit()` maps `io_error` flags to exit codes
+    /// - `main.c:1356-1363`: `log_exit()` maps `io_error` flags to exit codes
     #[must_use]
     pub fn exit_code(&self) -> i32 {
         match &self.kind {
@@ -256,7 +256,7 @@ impl LocalCopyError {
     ///
     /// Upstream rsync does not abort the transfer when the limit is hit: it
     /// stops performing further deletions, finishes the transfer, and only
-    /// reports the limit at cleanup (`main.c:1356`, exit code 25). The
+    /// reports the limit at cleanup (`main.c:1374`, exit code 25). The
     /// delete-during path defers this error to the end of the directory so a
     /// mid-transfer `--delete-during` sweep does not skip pending copies.
     #[must_use]
@@ -352,7 +352,7 @@ pub enum LocalCopyErrorKind {
     /// `RERR_PARTIAL` (exit 23). The per-entry cause was already reported at
     /// the skip site (e.g. an unconvertible `--iconv` filename).
     ///
-    /// upstream: `main.c:1356` prints `some files/attrs were not transferred
+    /// upstream: `main.c:1374` prints `some files/attrs were not transferred
     /// (see previous errors)` when `io_error` is set at exit.
     #[error("some files/attrs were not transferred (see previous errors)")]
     PartialTransfer,

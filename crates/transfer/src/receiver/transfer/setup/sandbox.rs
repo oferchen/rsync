@@ -23,12 +23,12 @@ use std::sync::Arc;
 ///
 /// # Upstream Reference
 ///
-/// - `syscall.c:100-114` - `secure_relpath_active()` short-circuits to `0`
+/// - `syscall.c:117-131` - `secure_relpath_active()` short-circuits to `0`
 ///   under `symlink_optout_allowed()` before any of its other tests, and the
 ///   comment above it records why the receiver is included.
-/// - `receiver.c:428`, `receiver.c:1204` - the two receiver consumers, each
+/// - `receiver.c:441`, `receiver.c:1221` - the two receiver consumers, each
 ///   choosing the secure open only when that gate is active.
-/// - `syscall.c:122-127` - `symlink_optout_allowed()` reads the served
+/// - `syscall.c:139-144` - `symlink_optout_allowed()` reads the served
 ///   module's `insecure links` for a daemon and `--insecure-links` otherwise;
 ///   `fast_io::confinement::session_optout_allowed` is oc's port of it.
 #[cfg(unix)]
@@ -64,9 +64,9 @@ fn confinement_opted_out() -> bool {
 ///
 /// - `clientserver.c:1093` - `use_secure_symlinks = am_daemon &&
 ///   (!am_chrooted || module_dirlen)`
-/// - `receiver.c:152` - the `if (!am_daemon || ...)` plain-open arm of
+/// - `receiver.c:165` - the `if (!am_daemon || ...)` plain-open arm of
 ///   `secure_basis_open()`
-/// - `syscall.c:136` - `confinement_root()` is `module_dir` only for a daemon
+/// - `syscall.c:163` - `confinement_root()` is `module_dir` only for a daemon
 #[cfg(unix)]
 pub(super) fn open_sandbox_for_dest(
     dest_dir: &std::path::Path,
@@ -116,13 +116,13 @@ pub(super) fn open_sandbox_for_dest(
 ///
 /// # Upstream Reference
 ///
-/// - `syscall.c:85-90` - `open_anchor_dirfd()` uses a plain `openat`; the
-///   comment at `syscall.c:3189-3193` records why ("Absolute basedir:
+/// - `syscall.c:102-107` - `open_anchor_dirfd()` uses a plain `openat`; the
+///   comment at `syscall.c:3336-3340` records why ("Absolute basedir:
 ///   operator-trusted").
-/// - `syscall.c:2891` - `ds_descend()` walks the untrusted remainder, and
-///   `syscall.c:2961` splices a *relative* in-tree symlink target back
+/// - `syscall.c:3032` - `ds_descend()` walks the untrusted remainder, and
+///   `syscall.c:3102` splices a *relative* in-tree symlink target back
 ///   into the walk rather than refusing it.
-/// - `main.c:765` - the daemon reaches the same state by `change_dir()`
+/// - `main.c:778` - the daemon reaches the same state by `change_dir()`
 ///   onto the module root before serving.
 #[cfg(unix)]
 pub(super) fn open_sandbox_for_dest_anchored(
@@ -229,7 +229,7 @@ mod symlink_race_tests {
     /// link, so the receiver takes `None` and keeps running on the path-based
     /// syscalls - which follow the link, exactly as upstream's
     /// `secure_basis_open()` plain-open arm does for `am_daemon == 0`
-    /// (receiver.c:152).
+    /// (receiver.c:165).
     ///
     /// Returning `Err` here instead is what made `oc-rsync -a rsync://h/m/ DEST`
     /// exit 23 on a symlinked `DEST` that real rsync 3.5.0 transfers into.
@@ -263,7 +263,7 @@ mod symlink_race_tests {
 
     /// The operator's own module root may sit behind a symlink - `path =
     /// /srv/backup` where `/srv -> /mnt/srv` is an ordinary layout. Upstream
-    /// opens that anchor with a plain `openat` (`syscall.c:85-90`), so every
+    /// opens that anchor with a plain `openat` (`syscall.c:102-107`), so every
     /// transfer through it must succeed.
     ///
     /// ⚠ The symlink is planted **explicitly**. A bare `TempDir` proves
@@ -347,7 +347,7 @@ mod symlink_race_tests {
     /// and returns `Ok(None)`, and the receiver then falls back to
     /// **path-based** syscalls that resolve straight through the planted
     /// symlink. The escape is loud but it is not refused. Closing that needs
-    /// the per-component resolver (`ds_descend`, `syscall.c:2891-2965`),
+    /// the per-component resolver (`ds_descend`, `syscall.c:3032-3106`),
     /// which follows a relative in-tree target and refuses an absolute or
     /// escaping one - tracked by task 604. This test pins both arms so the
     /// gap cannot widen unnoticed and so the Linux contract cannot regress.
@@ -392,7 +392,7 @@ mod symlink_race_tests {
     /// The other half of the same policy: a symlinked *subdirectory* inside
     /// the module is ordinary content and must transfer. upstream:
     /// `ds_descend()` splices a relative in-tree target back into the walk
-    /// (`syscall.c:2961`) rather than refusing it.
+    /// (`syscall.c:3102`) rather than refusing it.
     ///
     /// ⚠ KNOWN GAP, not intended behaviour, same cause as the escape test
     /// above and the same owner (task 604). Without `openat2` the walk
@@ -452,7 +452,7 @@ mod symlink_race_tests {
 
 /// The `insecure links` opt-out reaches the RECEIVER, not just the sender.
 ///
-/// Upstream's `secure_relpath_active()` (`syscall.c:100-114`) short-circuits to
+/// Upstream's `secure_relpath_active()` (`syscall.c:117-131`) short-circuits to
 /// `0` under `symlink_optout_allowed()` before every other test, and the
 /// comment above it says why in upstream's own words: without that, "an
 /// opted-out module still confined receiver writes/stats through a pre-existing

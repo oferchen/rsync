@@ -18,7 +18,7 @@ impl<'a> CopyContext<'a> {
             .with_group_mapping(self.options.group_mapping().cloned())
             .with_keep_dirlinks(self.options.keep_dirlinks_enabled())
             // Upstream resolves the destination once via `change_dir`
-            // (`main.c:765`) and works relative to it, so a symlinked root is
+            // (`main.c:778`) and works relative to it, so a symlinked root is
             // never a path component the per-entry syscalls have to walk. oc
             // keeps absolute paths, so it hands the root over instead.
             .with_destination_root(Some(Arc::clone(&self.metadata_destination_root)))

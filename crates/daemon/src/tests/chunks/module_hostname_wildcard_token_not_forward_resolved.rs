@@ -7,7 +7,7 @@
 /// the resolver. This guards the token-classification gate that mirrors
 /// upstream's `strcspn(tok, ":/*?[")` check.
 ///
-/// upstream: access.c:52-54 `match_hostname` - "Fail quietly if tok is an
+/// upstream: access.c:63-65 `match_hostname` - "Fail quietly if tok is an
 /// address or wildcarded entry, not a simple hostname."
 #[test]
 fn module_hostname_wildcard_token_not_forward_resolved() {

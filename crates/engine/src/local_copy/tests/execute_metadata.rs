@@ -230,7 +230,7 @@ fn execute_applies_chmod_modifiers() {
 
 /// The octal-all escalation cell: `--chmod=644 -r` into an EXISTING
 /// destination root must succeed. Upstream tweaks the flist mode first
-/// (flist.c:1741-1742) and `dest_mode()` (rsync.c:470-471) then keeps every
+/// (flist.c:1966-1967) and `dest_mode()` (rsync.c:470-471) then keeps every
 /// existing entry's own bits - the root directory is never rewritten to
 /// 0o644, so it never self-locks. A directory this transfer creates lands
 /// the composed 0o644 plus the during-transfer owner-`rwx` grant

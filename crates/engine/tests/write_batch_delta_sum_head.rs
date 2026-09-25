@@ -20,7 +20,7 @@
 //!   the all-zero `null_sum`, `s2length` included.
 //! - `generator.c:sum_sizes_sqroot()` - a 100 KiB basis yields
 //!   `blength = 700`, `count = 147`, `remainder = 200`.
-//! - `receiver.c:414` - `Invalid block index %d (count=%ld)` aborts with
+//! - `receiver.c:427` - `Invalid block index %d (count=%ld)` aborts with
 //!   `RERR_PROTOCOL` when a match token names a block the header omits.
 
 use std::fs;
@@ -147,7 +147,7 @@ fn delta_write_batch_never_records_a_whole_file_header() {
 
 /// Every match token in the body must resolve against the recorded header.
 ///
-/// This is the invariant upstream enforces at `receiver.c:414`; oc-rsync's own
+/// This is the invariant upstream enforces at `receiver.c:427`; oc-rsync's own
 /// reader now enforces it too, so a writer that drifts from its header fails
 /// here rather than shipping a batch that only upstream rejects.
 #[test]

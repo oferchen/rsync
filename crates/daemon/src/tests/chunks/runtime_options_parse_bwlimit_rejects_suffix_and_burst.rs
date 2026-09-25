@@ -2,7 +2,7 @@
 /// component are both rejected.
 ///
 /// upstream: options.c:862 `{"bwlimit", 0, POPT_ARG_INT, &daemon_bwlimit, ...}`
-/// parses a plain integer. Unlike the client `--bwlimit` (options.c:1714
+/// parses a plain integer. Unlike the client `--bwlimit` (options.c:1720
 /// `parse_size_arg(bwlimit_arg, 'K', ...)`) it accepts no size suffix, and
 /// upstream has no burst component anywhere in `bwlimit` parsing.
 #[test]

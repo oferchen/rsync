@@ -7,11 +7,11 @@
 //!
 //! ## Why "multi-segment"
 //!
-//! Upstream `flist.c:1820 send_directory()` walks one directory per call
-//! and `flist.c:2104 send_extra_file_list()` writes one
+//! Upstream `flist.c:2045 send_directory()` walks one directory per call
+//! and `flist.c:2340 send_extra_file_list()` writes one
 //! `NDX_FLIST_OFFSET - dir_ndx` header per sub-list, terminating the
 //! whole flist stream with `write_ndx(f, NDX_FLIST_EOF)` only after every
-//! directory has been dispatched (`flist.c:2172`). Our generator side
+//! directory has been dispatched (`flist.c:2408`). Our generator side
 //! mirrors this in `crates/transfer/src/generator/file_list/inc_recurse.rs::
 //! partition_file_list_for_inc_recurse`, which pushes one `DirSegment`
 //! per subdirectory and lets `SegmentScheduler` flush them in

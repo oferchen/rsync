@@ -1,13 +1,13 @@
 //! The bound on each peer-driven daemon handshake phase.
 //!
-//! upstream: clientserver.c:86-100 + io.c:143-157, 1296-1305.
+//! upstream: clientserver.c:86-100 + io.c:150-165, 1314-1323.
 //!
 //! Upstream arms one deadline for the whole handshake phase and consults it
 //! inside its single I/O wait. Three properties make it what it is, and all
 //! three are load-bearing:
 //!
 //! 1. It is an ABSOLUTE deadline, not a per-read idle timeout. Upstream stamps
-//!    `time(NULL) + secs` once at arm time (io.c:1298-1305), so a peer that
+//!    `time(NULL) + secs` once at arm time (io.c:1316-1323), so a peer that
 //!    trickles one byte at a time cannot hold the phase open indefinitely. A
 //!    timer restarted on every read would be a different mechanism wearing the
 //!    same name, and a trickling client defeats it by construction.
@@ -15,7 +15,7 @@
 //!    (clientserver.c:92-100). The non-positive arm exists because `timeout` is
 //!    parsed with `atoi()`, so zero and negative values are reachable from
 //!    config; both mean "no configured bound", not "no bound".
-//! 3. On expiry upstream DIAGNOSES then exits `RERR_TIMEOUT` (io.c:150-153),
+//! 3. On expiry upstream DIAGNOSES then exits `RERR_TIMEOUT` (io.c:157-161),
 //!    rather than dropping the socket silently.
 //!
 //! ⚠ This mechanism is NEW IN 3.5.0 - `grep -c daemon_handshake` over io.c and
@@ -56,8 +56,8 @@ pub(crate) fn handshake_timeout(configured: Option<NonZeroU64>) -> Duration {
 
 /// The absolute deadline for one handshake phase.
 ///
-/// upstream: `daemon_handshake_deadline` (io.c:1296-1305) plus the check in
-/// `handshake_poll_timeout_ms()` (io.c:143-157). Upstream clamps its poll
+/// upstream: `daemon_handshake_deadline` (io.c:1314-1323) plus the check in
+/// `handshake_poll_timeout_ms()` (io.c:150-165). Upstream clamps its poll
 /// timeout down to the remaining time; [`state`](Self::state) is that clamp,
 /// and [`DeadlineBufRead`] applies it to oc's blocking reads.
 ///
@@ -72,7 +72,7 @@ pub(crate) struct HandshakeDeadline {
 
 /// What the deadline says about the wait a caller is about to enter.
 ///
-/// upstream: io.c:147-155 distinguishes exactly these two live cases -
+/// upstream: io.c:154-163 distinguishes exactly these two live cases -
 /// `left <= 0` diagnoses and exits, otherwise the wait is clamped to `left`.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum DeadlineState {
@@ -85,7 +85,7 @@ pub(crate) enum DeadlineState {
 impl HandshakeDeadline {
     /// Arms the deadline for `timeout` from now.
     ///
-    /// upstream: io.c:1298-1300 - `secs > 0` stamps `time(NULL) + secs`.
+    /// upstream: io.c:1316-1318 - `secs > 0` stamps `time(NULL) + secs`.
     pub(crate) fn armed(timeout: Duration) -> Self {
         Self {
             deadline: Instant::now() + timeout,
@@ -108,7 +108,7 @@ impl HandshakeDeadline {
 
 /// The diagnostic upstream prints when the handshake deadline elapses.
 ///
-/// upstream: io.c:150-152 - `rprintf(FERROR, "[%s] daemon handshake timeout --
+/// upstream: io.c:157-159 - `rprintf(FERROR, "[%s] daemon handshake timeout --
 /// exiting\n", who_am_i())`, then `exit_cleanup(RERR_TIMEOUT)`.
 pub(crate) fn handshake_timeout_message(who: &str) -> String {
     format!("[{who}] daemon handshake timeout -- exiting")
@@ -116,7 +116,7 @@ pub(crate) fn handshake_timeout_message(who: &str) -> String {
 
 /// A [`BufRead`] that refuses to read past a [`HandshakeDeadline`].
 ///
-/// upstream: io.c:143-157 `handshake_poll_timeout_ms()` is consulted INSIDE the
+/// upstream: io.c:150-165 `handshake_poll_timeout_ms()` is consulted INSIDE the
 /// I/O wait, before every `poll()`, not once per protocol line. That placement
 /// is the whole mechanism: a peer that trickles one byte every fraction of a
 /// second keeps a per-line timer alive forever, and only a check on each

@@ -5,9 +5,9 @@
 //!
 //! `--delay-updates` is a plain receiver-side option (upstream `options.c:777`,
 //! no `am_sender` gate). Upstream forwards `--delay-updates` to the remote only
-//! on a push (`options.c:2886-2892`, `partial_dir && am_sender`); on a pull the
+//! on a push (`options.c:2896-2902`, `partial_dir && am_sender`); on a pull the
 //! local client IS the receiver and the flag never travels over the wire, so
-//! whichever side plays the receiver must apply it itself (`receiver.c:656`,
+//! whichever side plays the receiver must apply it itself (`receiver.c:672`,
 //! `1029-1050` - stage under the partial dir, then rename in the phase-2 sweep).
 //!
 //! On a daemon pull the client-receiver's `ServerConfig` is assembled by
@@ -57,9 +57,9 @@
 //! # Upstream References
 //!
 //! - `options.c:777` - `--delay-updates` is a plain option, not transport-gated.
-//! - `options.c:2886-2892` - the flag is forwarded to the remote only on a push
+//! - `options.c:2896-2902` - the flag is forwarded to the remote only on a push
 //!   (`partial_dir && am_sender`); a pull applies it on the local receiver.
-//! - `receiver.c:656,1029-1050` - stage under the partial dir, rename in phase 2.
+//! - `receiver.c:672,1045-1066` - stage under the partial dir, rename in phase 2.
 
 #![cfg(unix)]
 

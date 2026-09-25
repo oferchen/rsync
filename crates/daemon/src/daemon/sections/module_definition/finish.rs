@@ -8,7 +8,7 @@
 /// sense, so it must be served verbatim rather than resolved against the
 /// current directory.
 ///
-/// upstream: `normalize_path()` (util1.c:1405-1426) branches on the LEADING
+/// upstream: `normalize_path()` (util1.c:1500-1521) branches on the LEADING
 /// BYTE - `if (*path != '/')` - and only then joins onto `curr_dir`. That is a
 /// property of how the operator spelled the path in rsyncd.conf, not of the
 /// host platform.
@@ -82,7 +82,7 @@ impl ModuleDefinitionBuilder {
         // A relative module `path` is RESOLVED against the daemon's current
         // directory, never refused.
         //
-        // upstream: `normalize_path` (util1.c:1405-1426) opens with
+        // upstream: `normalize_path` (util1.c:1500-1521) opens with
         // `if (*path != '/') { /* Make path absolute. */ ... }`, joining the
         // value onto `curr_dir` before cleaning it. `rsync_module()` routes
         // every module path through it on BOTH arms - the chroot arm at
@@ -118,7 +118,7 @@ impl ModuleDefinitionBuilder {
             })?;
             // upstream `normalize_path` does not stop at the join: it feeds the
             // result through `clean_fname(path, CFN_COLLAPSE_DOT_DOT_DIRS |
-            // CFN_DROP_TRAILING_DOT_DIR)` (util1.c:1420), so `path = ./data`
+            // CFN_DROP_TRAILING_DOT_DIR)` (util1.c:1515), so `path = ./data`
             // becomes `<cwd>/data`, not `<cwd>/./data`. Joining alone would
             // leave the `.` in every derived path the module reports.
             filters::collapse_dot_dot_dirs(&current_dir.join(path))

@@ -42,7 +42,7 @@ impl SparseWriteState {
     /// Records the preallocated length so zero runs inside the reserved extent
     /// are punched out rather than merely seeked over (which would leave the
     /// preallocated blocks allocated).
-    /// upstream: fileio.c:84 - if (sparse_past_write >= preallocated_len)
+    /// upstream: fileio.c:88 - if (sparse_past_write >= preallocated_len)
     pub(crate) const fn set_preallocated_len(&mut self, len: u64) {
         self.preallocated_len = len;
     }
@@ -58,7 +58,7 @@ impl SparseWriteState {
     /// forward when that position is at or beyond the preallocated extent (the
     /// natural-hole case for a fresh file), otherwise punches a hole to
     /// deallocate the blocks that preallocation reserved.
-    /// upstream: fileio.c:80-95 flush_sparse_hole()
+    /// upstream: fileio.c:84-99 flush_sparse_hole()
     fn flush(&mut self, writer: &mut fs::File, destination: &Path) -> Result<(), LocalCopyError> {
         if self.pending_zero_run == 0 {
             return Ok(());
@@ -111,7 +111,7 @@ impl SparseWriteState {
     ///
     /// Returns the final logical file position (including any trailing hole)
     /// for the caller's `set_len`.
-    /// upstream: fileio.c:43 sparse_end()
+    /// upstream: fileio.c:47 sparse_end()
     pub(crate) fn finish(
         &mut self,
         writer: &mut fs::File,
@@ -130,7 +130,7 @@ impl SparseWriteState {
 
 /// How a run of non-zero data inside a sparse chunk reaches the destination.
 ///
-/// upstream: fileio.c:117-124 `emit_sparse_span()` - the `use_seek` flag is set
+/// upstream: fileio.c:121-128 `emit_sparse_span()` - the `use_seek` flag is set
 /// when the bytes are already present at this offset (an in-place matched
 /// block), so the span is seeked over instead of rewritten. The zero-run scan
 /// is identical in both modes, and that is exactly what lets `--inplace
@@ -166,7 +166,7 @@ pub(crate) fn write_sparse_chunk(
 /// spans are seeked over rather than rewritten - but its interior zero runs are
 /// still scanned and punched. Skipping that scan is what leaves a hole-y basis
 /// file fully allocated under `--inplace --sparse`.
-/// upstream: fileio.c:256-259 skip_matched() - `if (sparse_files > 0)
+/// upstream: fileio.c:298-301 skip_matched() - `if (sparse_files > 0)
 /// write_file(fd, 1 /*use_seek*/, offset, buf, len)`, only the non-sparse arm
 /// lseeks straight past the block.
 pub(crate) fn skip_matched_sparse(
@@ -211,7 +211,7 @@ fn write_sparse_spans(
         let data_end = segment_end - trailing;
 
         if data_end > data_start {
-            // upstream: fileio.c:119 emit_sparse_span() flushes the pending
+            // upstream: fileio.c:123 emit_sparse_span() flushes the pending
             // zero run (seek or punch) before emitting the data span. The
             // flush reads the writer's current position as the run start.
             state.flush(writer, destination)?;
@@ -219,7 +219,7 @@ fn write_sparse_spans(
                 SpanWrite::Data => writer
                     .write_all(&chunk[data_start..data_end])
                     .map_err(|error| LocalCopyError::io("copy file", destination, error))?,
-                // upstream: fileio.c:121-122 - the bytes are already at this
+                // upstream: fileio.c:125-126 - the bytes are already at this
                 // offset, so advance past them instead of rewriting them.
                 SpanWrite::Seek => {
                     writer

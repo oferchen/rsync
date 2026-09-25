@@ -1,8 +1,8 @@
 //! `File list size` raw-span accounting on the receiving side.
 //!
 //! Upstream measures `stats.flist_size` as the delta of the raw wire read
-//! counter across every `recv_file_list()` span (`flist.c:2615` snapshots
-//! `stats.total_read`, `flist.c:2789` accumulates the delta). The figure is
+//! counter across every `recv_file_list()` span (`flist.c:2855` snapshots
+//! `stats.total_read`, `flist.c:3032` accumulates the delta). The figure is
 //! never sent over the wire - each role prints its own local number
 //! (`main.c:445`) - so a pulling client that never measures the span prints
 //! `File list size: 0` on every remote transfer. These tests pin the span
@@ -22,7 +22,7 @@ use crate::flags::{NumericIds, ParsedServerFlags};
 use crate::role::ServerRole;
 
 /// Raw-level counting shim mirroring the production `CountingReader`
-/// (upstream: io.c:920 `stats.total_read += n`).
+/// (upstream: io.c:938 `stats.total_read += n`).
 struct CountingRead<'a> {
     inner: Cursor<&'a [u8]>,
     counter: Arc<AtomicU64>,
@@ -50,7 +50,7 @@ fn encode(protocol: ProtocolVersion, entries: &[FileEntry]) -> Vec<u8> {
 /// The measured span must equal the raw bytes the list occupied on the wire.
 ///
 /// WHY: upstream's `File list size` is the raw-counter delta across
-/// `recv_file_list()` (flist.c:2615/2789), so the pulling client's printed
+/// `recv_file_list()` (flist.c:2855/3032), so the pulling client's printed
 /// value equals the wire bytes consumed for the list. Before the fix the
 /// receiver never measured the span and every remote pull printed
 /// `File list size: 0` while upstream printed the real size.
@@ -109,7 +109,7 @@ fn flist_size_zero_without_counter() {
 /// The protocol < 30 trailing io_error int is part of the measured span.
 ///
 /// WHY: upstream reads the 4-byte io_error trailer inside `recv_file_list()`
-/// (flist.c:2773-2777) before accumulating the span at flist.c:2789, so those
+/// (flist.c:3016-3020) before accumulating the span at flist.c:3032, so those
 /// bytes count toward `File list size`.
 #[test]
 fn flist_size_includes_pre30_io_error_int() {

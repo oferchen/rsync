@@ -18,9 +18,10 @@ use crate::frontend::escape::EscapeStyle;
 use crate::frontend::{
     out_format::{OutFormat, OutFormatContext},
     progress::{
-        DeltaTransmissionState, DeltaTransmissionSummary, FlistBanner, LiveProgress,
-        NameOutputLevel, PendingDiagnostics, ProgressMode, ProgressOutputConfig, StderrMode,
-        emit_transfer_summary, partition_by_summary_stream, render_diagnostic_events,
+        DeltaTransmissionState, DeltaTransmissionSummary, FlistBanner, LiveListing, LiveProgress,
+        LiveRendered, LocalSessionOutput, NameOutputLevel, PendingDiagnostics, ProgressMode,
+        ProgressOutputConfig, StderrMode, emit_transfer_summary, partition_by_summary_stream,
+        render_diagnostic_events,
     },
 };
 
@@ -136,7 +137,7 @@ where
     // gid_ndx); otherwise 0 / "DEFAULT".
     let preserve_owner = config.preserve_owner();
     let preserve_group = config.preserve_group();
-    // upstream: flist.c:2524 emits "sending incremental file list" only when
+    // upstream: flist.c:2764 emits "sending incremental file list" only when
     // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. Mirror each gate:
     // - compat.c:172 disables inc_recurse when `!recurse`, so a single-file
     //   `-v` transfer gets no banner (`config.recursive()`);
@@ -151,15 +152,15 @@ where
     // (generator/transfer/orchestrator.rs `announce_incremental_flist`), ahead
     // of the per-file rows that stream straight to stdout during the transfer;
     // rendering it here again would both duplicate it and print it dead last.
-    // Only a local copy - whose per-file rows are all rendered post-hoc from
-    // the collected events - still gets the banner from this deferred path.
+    // Only a local copy still takes the banner from here: the post-hoc
+    // renderer writes it, or under `--progress` the live session header below.
     //
-    // upstream: flist.c:170 - the sibling non-incremental banner is selected by
+    // upstream: flist.c:172 - the sibling non-incremental banner is selected by
     // `show_filelist_progress = INFO_GTE(FLIST, 1) && xfer_dirs && !am_server
-    // && !inc_recurse`, and flist.c:2521-2524 makes the two mutually exclusive.
-    // `xfer_dirs` is `recurse || dirs || list_only` (options.c:2317-2320); the
+    // && !inc_recurse`, and flist.c:2761-2764 makes the two mutually exclusive.
+    // `xfer_dirs` is `recurse || dirs || list_only` (options.c:2326-2329); the
     // `!inc_recurse` term already rules out the `recurse` disjunct here.
-    // upstream: flist.c:175 - `start_filelist_progress()` returns early under
+    // upstream: flist.c:177 - `start_filelist_progress()` returns early under
     // `quiet`, which `info_gte` does not model, so it needs its own term.
     let flist_banner = if config.recursive() {
         if info_gte(InfoFlag::Flist, 1) && verbosity > 0 && !config.is_pull() && !is_sender {
@@ -182,7 +183,7 @@ where
     // conjunction uniquely identifies the in-process local-copy path whose
     // generator/sender diagnostics oc renders post-hoc.
     let is_local_transfer = !config.is_pull() && !is_sender;
-    // upstream: main.c:650-653 forces whole_file=1 for a local transfer unless
+    // upstream: main.c:663-666 forces whole_file=1 for a local transfer unless
     // the user passed --[no-]whole-file; the local-copy default is therefore
     // whole-file. This decides the `delta-transmission` wording.
     let whole_file = config.whole_file();
@@ -204,6 +205,28 @@ where
         // `-rvv --no-whole-file` print the line.
         emit_total: is_local_transfer && debug_gte(DebugFlag::Deltasum, 1),
     };
+    // upstream writes a local copy's header and entry names as they happen, so
+    // under `--progress` they interleave with the live progress lines instead of
+    // trailing them. The itemize/`--out-format` listing and `--list-only` stay
+    // with the post-hoc renderer.
+    if is_local_transfer && !list_only {
+        let listing = (matches!(requested_progress_mode, Some(ProgressMode::PerFile))
+            && out_format_template.is_none())
+        .then_some(LiveListing {
+            verbosity,
+            name_level,
+            name_overridden,
+        });
+        live_progress = live_progress.map(|live| {
+            live.with_local_session(LocalSessionOutput {
+                banner: flist_banner,
+                delta_notice: delta_notice.notice,
+                itemizing: out_format_template.is_some(),
+                escape: EscapeStyle::terminal(eight_bit_output),
+                listing,
+            })
+        });
+    }
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
     // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).
@@ -227,7 +250,9 @@ where
 
     match result {
         Ok(summary) => {
-            let progress_rendered_live = live_progress.as_ref().is_some_and(LiveProgress::rendered);
+            let live_rendered = live_progress
+                .as_ref()
+                .map_or_else(LiveRendered::default, LiveProgress::live_rendered);
             let suppress_updated_only_totals =
                 itemize_changes && stats_level == 0 && verbosity == 0;
 
@@ -280,7 +305,7 @@ where
                     verbosity,
                     requested_progress_mode,
                     stats_level,
-                    progress_rendered_live,
+                    live_rendered,
                     list_only,
                     dry_run,
                     only_write_batch,
@@ -379,7 +404,7 @@ struct EmitLogOutputParams<'a> {
     summary: &'a ClientSummary,
     log: &'a mut LogFileConfig,
     /// FLOG-classified diagnostic events consumed from the thread-local queue
-    /// (e.g. `building file list`, flist.c:2248). These lines belong to the
+    /// (e.g. `building file list`, flist.c:2484). These lines belong to the
     /// log file only (upstream: log.c:304-305).
     flog_events: Vec<logging::DiagnosticEvent>,
     verbosity: u8,
@@ -451,8 +476,8 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         .with_full_checksum(full_checksum_algorithm, always_checksum);
     // upstream: log.c:290-305 - FLOG messages are written to the log file
     // before any client-stream output and never reach stdout. The queue holds
-    // them in emission order, so "building file list" (flist.c:2248) or
-    // "receiving file list" (flist.c:2608) precedes the per-file lines.
+    // them in emission order, so "building file list" (flist.c:2484) or
+    // "receiving file list" (flist.c:2848) precedes the per-file lines.
     for event in &flog_events {
         match event {
             logging::DiagnosticEvent::Info { message, .. }
@@ -470,14 +495,14 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         }
     }
     // The FCLIENT "sending incremental file list" banner is stdout only;
-    // upstream's parallel "building file list" line (flist.c:2520) is an FLOG
+    // upstream's parallel "building file list" line (flist.c:2760) is an FLOG
     // log-file message consumed from the FLOG event queue above.
     emit_transfer_summary(
         summary,
         verbosity,
         None,
         stats_level,
-        false,
+        LiveRendered::default(),
         list_only,
         false, // dry_run
         false, // only_write_batch
@@ -488,7 +513,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         human_readable_mode,
         false,
         // Both client banners are stdout-only (upstream FCLIENT/FINFO); the
-        // log file's own "building file list" line (flist.c:2520, FLOG) is
+        // log file's own "building file list" line (flist.c:2760, FLOG) is
         // replayed from the FLOG queue above.
         FlistBanner::None,
         // The delta-transmission notice and match_report `total:` line are

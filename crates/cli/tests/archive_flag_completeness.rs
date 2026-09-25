@@ -230,7 +230,7 @@ fn no_d_after_archive_disables_devices_and_specials() {
     );
 }
 
-// upstream: options.c:1546 `case 'a'` sets `preserve_* = 1` in argv order, so a
+// upstream: options.c:1552 `case 'a'` sets `preserve_* = 1` in argv order, so a
 // `--no-X` that PRECEDES `-a` is overridden by the later `-a`. At the parser
 // layer that override clears the explicit setting to `None`, and the archive
 // default (`unwrap_or(archive)` in compute.rs) then re-enables preservation.
@@ -277,7 +277,7 @@ fn no_group_before_archive_is_reenabled() {
 
 #[test]
 fn no_recursive_before_archive_is_reenabled() {
-    // upstream: options.c:1546 `if (!recurse) recurse = 1` re-enables recursion
+    // upstream: options.c:1552 `if (!recurse) recurse = 1` re-enables recursion
     // when `-a` follows `--no-recursive`; the parser resolves the effective
     // `recursive` flag directly (there is no separate archive default here).
     let args = parse_args(["oc-rsync", "--no-recursive", "-a", "src", "dest"]).unwrap();
@@ -627,7 +627,7 @@ fn combined_rlptgod_equals_full_expansion() {
     );
 }
 
-/// upstream: popt has no duplicate-occurrence diagnostic - options.c:1502
+/// upstream: popt has no duplicate-occurrence diagnostic - options.c:1508
 /// re-runs `case 'a'` per occurrence, so repeated -a flags are accepted
 /// (rsync 3.5.0 `-a -a` exits 0). clap's former rejection was oc-invented.
 #[test]
@@ -657,7 +657,7 @@ fn archive_with_checksum() {
 
 #[test]
 fn archive_respects_command_line_order() {
-    // upstream: options.c:1546 `case 'a'` expands `-a` in place during the argv
+    // upstream: options.c:1552 `case 'a'` expands `-a` in place during the argv
     // scan, so `-a --no-perms` and `--no-perms -a` are NOT equivalent: the flag
     // that appears last wins.
     let args1 = parse_args(["oc-rsync", "-a", "--no-perms", "src", "dest"]).unwrap();

@@ -23,7 +23,7 @@
 /// # Upstream Reference
 ///
 /// - `generator.c:1951` - skip unsafe symlinks when `--safe-links` is set
-/// - `util1.c:1569` - `unsafe_symlink(dest, src)` classification
+/// - `util1.c:1664` - `unsafe_symlink(dest, src)` classification
 #[cfg(unix)]
 #[test]
 fn daemon_safe_links_filters_unsafe_symlinks_on_pull() {

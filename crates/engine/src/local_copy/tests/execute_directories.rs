@@ -449,7 +449,7 @@ fn execute_dry_run_without_implied_dirs_skips_parent_check() {
     assert!(!destination.exists());
 }
 
-// upstream: main.c:736 get_local_name() - --implied-dirs (archive default) does
+// upstream: main.c:749 get_local_name() - --implied-dirs (archive default) does
 // NOT auto-create the destination arg's own missing leading prefix; only
 // --mkpath does. A single-file transfer to `.../missing/dest.txt` where
 // `missing/` is absent must fail with ENOENT and create nothing, exactly like
@@ -505,7 +505,7 @@ fn execute_with_mkpath_creates_missing_parents_without_implied_dirs() {
 
 #[test]
 fn execute_with_dry_run_silently_keeps_directory_on_conflict() {
-    // upstream: flist.c:3067-3081 keeps the directory and drops the regular
+    // upstream: flist.c:3310-3324 keeps the directory and drops the regular
     // file entry when both share a name. Dry-run reports the same outcome:
     // no error, destination directory preserved.
     let temp = create_tempdir();
@@ -1537,7 +1537,7 @@ fn execute_multiple_source_directories_to_destination() {
 /// Regression: upstream `testsuite/merge.test` runs
 /// `rsync -avv from1/ from2/ from3/ to/` where `from1/dir-and-not-dir/` is a
 /// directory and `from3/dir-and-not-dir` is a regular file of the same name.
-/// Upstream `flist.c:3067-3081 flist_sort_and_clean()` deduplicates the
+/// Upstream `flist.c:3310-3324 flist_sort_and_clean()` deduplicates the
 /// colliding entries by keeping the directory and dropping the regular file,
 /// then `generator.c:1734` falls back to silent skip when the existing
 /// directory would otherwise be replaced without `--force` or `--delete*`.
@@ -2052,7 +2052,7 @@ fn execute_mkpath_with_directory_source_creates_parents() {
     );
 }
 
-// upstream: main.c:787,796 get_local_name() - without --mkpath the destination
+// upstream: main.c:800,809 get_local_name() - without --mkpath the destination
 // root is created with a single do_mkdir(dest_path); when a leading directory is
 // absent that mkdir fails with ENOENT (mkdir_error -> RERR_FILEIO). A recursive
 // directory source into a dest with 2+ missing ancestor levels must therefore
@@ -2093,7 +2093,7 @@ fn execute_directory_source_deep_missing_dest_errors_without_mkpath() {
     assert!(!dest_root.exists());
 }
 
-// upstream: main.c:796 - a single missing final component is created by the lone
+// upstream: main.c:809 - a single missing final component is created by the lone
 // do_mkdir(dest_path) even without --mkpath (rsync always makes the immediate
 // destination directory). Only a missing PARENT is fatal.
 #[test]

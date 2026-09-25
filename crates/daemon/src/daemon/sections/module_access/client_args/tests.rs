@@ -282,7 +282,7 @@ mod daemon_module_suffix_tests {
     /// daemon-side `send_files failed to open` / `mkstemp failed` line name the
     /// module the client asked for, exactly as upstream 3.4.4 does.
     ///
-    /// upstream: clientserver.c:821 `module_id = i`; util1.c:1290
+    /// upstream: clientserver.c:821 `module_id = i`; util1.c:1387
     /// `if (module_id >= 0)`.
     #[test]
     fn module_selection_records_name_for_full_fname() {
@@ -345,16 +345,16 @@ mod daemon_clean_fname_collapse_tests {
     /// A `..` with nothing left to pop is DISCARDED, not preserved.
     ///
     /// That is upstream's rule, not a shortcut: a daemon runs
-    /// `sanitize_path()` at depth 0 (`options.c:2405`, gated on
+    /// `sanitize_path()` at depth 0 (`options.c:2414`, gated on
     /// `sanitize_paths` which `clientserver.c:1068` sets for every daemon
-    /// connection), so `util1.c:1183`'s `if (depth <= 0 || sanp != start)` arm
+    /// connection), so `util1.c:1280`'s `if (depth <= 0 || sanp != start)` arm
     /// always wins and there is no arm that refuses. Discarding is what makes
     /// the output closed under the module root by construction, which is what
     /// lets `clamp_basis_to_module` join it onto the root with no separate
     /// containment check - and it is why a client's `--link-dest=../sibling`
     /// becomes an in-module `sibling` that then draws upstream's
     /// `arg does not exist` warning instead of being dropped in silence.
-    // upstream: util1.c:1183-1191 sanitize_path(), depth 0
+    // upstream: util1.c:1280-1288 sanitize_path(), depth 0
     #[test]
     fn unpoppable_leading_dot_dot_is_discarded_at_the_root() {
         assert_eq!(
@@ -395,7 +395,7 @@ mod daemon_partial_dir_arg_tests {
 
     /// The spelling upstream actually puts on the wire.
     ///
-    /// upstream: `options.c:3052-3056` - `server_options()` emits
+    /// upstream: `options.c:3062-3066` - `server_options()` emits
     /// `--partial-dir` and its value as TWO argv entries via
     /// `safe_arg("", partial_dir)`, exactly as it does for `--temp-dir` and
     /// `--backup-dir`. Without this arm the value fell through to the
@@ -440,7 +440,7 @@ mod daemon_partial_dir_sanitize_tests {
     use super::{clamp_basis_to_module, collapse_relative_within_depth, sanitize_partial_dir};
     use std::path::{Path, PathBuf};
 
-    /// upstream: `util1.c:1184-1197` `sanitize_path()` - the `..` arms.
+    /// upstream: `util1.c:1281-1294` `sanitize_path()` - the `..` arms.
     ///
     /// `depth` budgets LEADING `..` only. Upstream keeps a virtual start that
     /// advances past each allowed `../`, so consecutive leading `..` each
@@ -494,7 +494,7 @@ mod daemon_partial_dir_sanitize_tests {
             PathBuf::from("../../pdir")
         );
 
-        // upstream: util1.c:1203-1206 - an empty result becomes ".".
+        // upstream: util1.c:1300-1303 - an empty result becomes ".".
         assert_eq!(
             collapse_relative_within_depth(Path::new("a/.."), 0),
             PathBuf::from(".")
@@ -506,7 +506,7 @@ mod daemon_partial_dir_sanitize_tests {
     /// `partial_dir_fname()` re-anchors the value at `dirname(fname)` for every
     /// entry, so an absolute result pins every entry's staging directory at the
     /// transfer root. Upstream leaves a relative value relative
-    /// (`util1.c:1145-1151` applies the rootdir only inside `if (*p == '/')`),
+    /// (`util1.c:1242-1248` applies the rootdir only inside `if (*p == '/')`),
     /// and a nested entry then stages at `<dest>/sub/pdir`.
     ///
     /// Measured against real rsync 3.5.0 over a daemon push with
@@ -565,7 +565,7 @@ mod daemon_partial_dir_sanitize_tests {
     }
 
     /// `has_root()`, NOT `is_absolute()`: upstream's test is the literal byte
-    /// `*p == '/'` (`util1.c:1145`) applied to a PEER-SUPPLIED path.
+    /// `*p == '/'` (`util1.c:1242`) applied to a PEER-SUPPLIED path.
     ///
     /// On Windows `Path::is_absolute()` is FALSE for `/pdir` because there is
     /// no drive prefix, so an `is_absolute()` gate routes a peer-sent absolute
@@ -616,7 +616,7 @@ mod daemon_partial_dir_sanitize_tests {
 /// A peer-forwarded `--max-alloc` must be parsed and refused exactly as
 /// upstream's own `parse_arguments()` does when the daemon runs it.
 ///
-/// upstream: `options.c:2065-2074`. The daemon executes the same block as the
+/// upstream: `options.c:2071-2076`. The daemon executes the same block as the
 /// client, so a client that predates 3.5.0's zero refusal - and therefore still
 /// forwards `--max-alloc=0` on the wire - is refused by the SERVER rather than
 /// silently disabling the server's own `my_alloc()` ceiling.
@@ -658,7 +658,7 @@ mod daemon_max_alloc_arg_tests {
         }
     }
 
-    /// upstream: options.c:1172-1175 - an empty value parses as 0, so it lands
+    /// upstream: options.c:1178-1181 - an empty value parses as 0, so it lands
     /// on the SAME refusal rather than a distinct parse error.
     #[test]
     fn an_empty_value_takes_the_zero_refusal() {
@@ -668,7 +668,7 @@ mod daemon_max_alloc_arg_tests {
         );
     }
 
-    /// upstream: options.c:2067 - the 1 MiB minimum is enforced on the daemon
+    /// upstream: options.c:2073 - the 1 MiB minimum is enforced on the daemon
     /// side too, so a too-small forwarded value cannot shrink the ceiling below
     /// what upstream permits.
     #[test]

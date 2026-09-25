@@ -1,6 +1,6 @@
 //! Byte-counting writer wrapper for transfer statistics.
 //!
-//! Mirrors upstream rsync's `stats.total_written` tracking in `io.c:859`.
+//! Mirrors upstream rsync's `stats.total_written` tracking in `io.c:877`.
 
 use std::io::{self, IoSlice, Write};
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// A writer wrapper that counts the total bytes written.
 ///
 /// Used to track bytes sent during transfers for statistics.
-/// Mirrors upstream rsync's `stats.total_written` tracking in `io.c:859`.
+/// Mirrors upstream rsync's `stats.total_written` tracking in `io.c:877`.
 pub struct CountingWriter<W> {
     inner: W,
     bytes_written: u64,
@@ -17,8 +17,8 @@ pub struct CountingWriter<W> {
     ///
     /// Set via [`CountingWriter::new_shared`] when the count must be sampled
     /// from a different scope than the one owning the writer - e.g. the raw
-    /// transport counter that feeds `stats.total_written` (io.c:859) but is read
-    /// at the generator's `handle_stats` point (main.c:979-980), after the writer
+    /// transport counter that feeds `stats.total_written` (io.c:877) but is read
+    /// at the generator's `handle_stats` point (main.c:992-993), after the writer
     /// has been moved into the protocol stack. The handle stays valid after the
     /// writer is moved or dropped, exactly like the read-side `CountingReader`.
     shared: Option<Arc<AtomicU64>>,
@@ -40,7 +40,7 @@ impl<W> CountingWriter<W> {
     /// Mirrors the read-side `CountingReader`: the shared handle lets a caller
     /// sample the raw wire byte total after the writer has been moved into the
     /// protocol stack, matching upstream's raw descriptor counter
-    /// `stats.total_written` (io.c:859).
+    /// `stats.total_written` (io.c:877).
     pub fn new_shared(inner: W) -> Self {
         Self {
             inner,
@@ -121,9 +121,9 @@ mod tests {
     /// The shared handle mirrors the running total and survives the writer.
     ///
     /// WHY: the generator samples raw wire bytes at its `handle_stats` point
-    /// (main.c:979-980) after the writer has been moved into the protocol stack,
+    /// (main.c:992-993) after the writer has been moved into the protocol stack,
     /// so the count must be reachable through the shared handle, matching the
-    /// read-side `CountingReader` (io.c:820/859).
+    /// read-side `CountingReader` (io.c:838/877).
     #[test]
     fn shared_counter_tracks_raw_bytes_and_outlives_writer() {
         let mut writer = CountingWriter::new_shared(Vec::new());

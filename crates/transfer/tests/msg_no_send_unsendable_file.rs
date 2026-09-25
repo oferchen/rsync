@@ -4,9 +4,9 @@
 //!
 //! When the sender cannot open a file it has already been asked for, it does
 //! not answer the request. It emits `MSG_NO_SEND` carrying the file's index and
-//! moves on to the next file (`sender.c:723`, plus `:669` for an over-long path
+//! moves on to the next file (`sender.c:725`, plus `:669` for an over-long path
 //! and `:751` for a diminished file under `--append`). Upstream's generator
-//! retires the entry on receipt (`io.c:1809-1818` ->
+//! retires the entry on receipt (`io.c:1847-1856` ->
 //! `got_flist_entry_status(FES_NO_SEND, ndx)`), and its receiver is unaffected
 //! because it is *NDX-addressed*: it reads whatever index arrives and looks the
 //! file up by it (`rsync.c:322-431`).
@@ -52,13 +52,13 @@
 //!
 //! # Upstream References
 //!
-//! - `sender.c:583-585` - non-transfer items are echoed and `continue`d
+//! - `sender.c:584-586` - non-transfer items are echoed and `continue`d
 //!   *above* every `MSG_NO_SEND` emitter, so the message only ever names a
 //!   transfer item.
-//! - `sender.c:669,723,751` - the three emitters; each `continue`s without
+//! - `sender.c:670,725,753` - the three emitters; each `continue`s without
 //!   writing a response.
-//! - `io.c:1809-1818` - `MSG_NO_SEND` -> `got_flist_entry_status(FES_NO_SEND)`.
-//! - `sender.c:668,719` - `io_error |= IOERR_GENERAL`, which is what makes the
+//! - `io.c:1847-1856` - `MSG_NO_SEND` -> `got_flist_entry_status(FES_NO_SEND)`.
+//! - `sender.c:669,721` - `io_error |= IOERR_GENERAL`, which is what makes the
 //!   run exit 23; the exit code travels via `MSG_IO_ERROR`, not `MSG_NO_SEND`.
 //! - `rsync.c:334-335` - `NDX_DONE` returns before any attribute byte.
 

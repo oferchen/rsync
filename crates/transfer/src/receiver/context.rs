@@ -62,7 +62,7 @@ pub struct ReceiverContext {
     /// Each entry is `(flat_start, ndx_start)`.
     /// Without INC_RECURSE, contains a single entry `(0, 0)`.
     ///
-    /// upstream: flist.c:3268 - `flist->ndx_start = prev->ndx_start + prev->used + 1`
+    /// upstream: flist.c:3511 - `flist->ndx_start = prev->ndx_start + prev->used + 1`
     pub(in crate::receiver) ndx_segments: Vec<(usize, i32)>,
     /// Each segment's parent directory as a `dir_flist` index, aligned 1:1
     /// with `ndx_segments` (the generator keeps `segment_parent_flat` the same
@@ -74,8 +74,8 @@ pub struct ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1947-1948`, `flist.c:3122-3123` - `flist->parent_ndx = ndx`.
-    /// - `flist.c:3071-3083` - the first list's `-1` rule.
+    /// - `io.c:1985-1986`, `flist.c:3365-3366` - `flist->parent_ndx = ndx`.
+    /// - `flist.c:3314-3326` - the first list's `-1` rule.
     /// - `generator.c:2780-2801` - the per-directory delete it selects.
     pub(in crate::receiver) segment_parent_dir_ndx: Vec<Option<i32>>,
     /// Index into `ndx_segments` of the oldest unreclaimed segment.
@@ -86,8 +86,8 @@ pub struct ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:101` - `first_flist` pointer
-    /// - `receiver.c:683` - `flist_free(first_flist)` advances `first_flist`
+    /// - `flist.c:103` - `first_flist` pointer
+    /// - `receiver.c:699` - `flist_free(first_flist)` advances `first_flist`
     pub(in crate::receiver) first_segment_idx: usize,
     /// Count of per-segment `NDX_DONE`s the streaming incremental driver
     /// already emitted mid-walk (RS-3b). The finalize handshake
@@ -107,8 +107,8 @@ pub struct ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2993-2999` - the read-loop append that builds it.
-    /// - `flist.c:2906-2918` - the bounds and cleared-slot refusals it serves.
+    /// - `flist.c:3236-3242` - the read-loop append that builds it.
+    /// - `flist.c:3149-3161` - the bounds and cleared-slot refusals it serves.
     pub(in crate::receiver) dir_flist: DirFlist,
     /// Set of `dir_ndx` values that have already been served a sub-list,
     /// mirroring upstream's per-directory `FLAG_GOT_DIR_FLIST`. A second
@@ -117,7 +117,7 @@ pub struct ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2627-2632` - `if (file->flags & FLAG_GOT_DIR_FLIST) ...
+    /// - `flist.c:2867-2872` - `if (file->flags & FLAG_GOT_DIR_FLIST) ...
     ///   "refusing malicious duplicate flist for dir %d" ...
     ///   exit_cleanup(RERR_PROTOCOL)`.
     pub(in crate::receiver) served_dir_flists: HashSet<i32>,
@@ -140,9 +140,9 @@ pub struct ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:711-716` - `check_filter(&daemon_filter_list, ...)` rejects
+    /// - `receiver.c:727-732` - `check_filter(&daemon_filter_list, ...)` rejects
     ///   excluded files before accepting transfer data
-    /// - `flist.c:266-284` - `path_is_daemon_excluded()` checks each path
+    /// - `flist.c:491-509` - `path_is_daemon_excluded()` checks each path
     ///   component against the daemon filter list
     pub(in crate::receiver) daemon_filter_set: Option<FilterSet>,
     /// The module's `dir-merge` directives, which [`Self::daemon_filter_set`]
@@ -169,7 +169,7 @@ pub struct ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1019-1024` - `check_server_filter(&filter_list, ...)`
+    /// - `flist.c:1244-1249` - `check_server_filter(&filter_list, ...)`
     ///   consults only the client-transferred list; `daemon_filter_list` is
     ///   enforced by its own consumers (`generator.c:1662-1670` per-file
     ///   refusal, `exclude.c:1111` deletion, the option screens) and never
@@ -230,7 +230,7 @@ pub struct ReceiverContext {
     /// Accumulated I/O error flags from the sender's file list for protocol < 30.
     ///
     /// For protocol < 30, the sender writes a 4-byte LE io_error flag after the
-    /// id lists (upstream: flist.c:2552-2553). Protocol >= 30 uses MSG_IO_ERROR
+    /// id lists (upstream: flist.c:2792-2793). Protocol >= 30 uses MSG_IO_ERROR
     /// or SAFE_FILE_LIST instead.
     pub(in crate::receiver) flist_io_error: i32,
     /// PEER-supplied file-list io_error bits from the protocol < 30 trailer,
@@ -244,8 +244,8 @@ pub struct ReceiverContext {
     /// file-list spans for `stats.flist_size`.
     ///
     /// Upstream snapshots `stats.total_read` (the raw descriptor counter,
-    /// io.c:820) at `recv_file_list()` entry and accumulates the delta on
-    /// return (flist.c:2615, flist.c:2789), so the figure counts raw wire
+    /// io.c:838) at `recv_file_list()` entry and accumulates the delta on
+    /// return (flist.c:2855, flist.c:3032), so the figure counts raw wire
     /// bytes - multiplex frame headers included - not decoded entry bytes.
     /// This handle is the same counter that feeds `bytes_received`.
     pub(in crate::receiver) raw_read_counter: Option<Arc<std::sync::atomic::AtomicU64>>,
@@ -254,7 +254,7 @@ pub struct ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2789` - `stats.flist_size += stats.total_read - start_read;`
+    /// - `flist.c:3032` - `stats.flist_size += stats.total_read - start_read;`
     pub(in crate::receiver) flist_size: u64,
     /// Per-type tallies `(dirs, symlinks, devices, specials)` of every
     /// received file-list entry, initial list and INC_RECURSE sub-lists alike.
@@ -266,7 +266,7 @@ pub struct ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2993-3006` - `recv_file_list()` bumps `stats.num_dirs` /
+    /// - `flist.c:3236-3249` - `recv_file_list()` bumps `stats.num_dirs` /
     ///   `num_symlinks` / `num_devices` / `num_specials` in its read loop.
     pub(in crate::receiver) received_type_counts: (u64, u64, u64, u64),
     /// Sum of `F_LENGTH` over every received regular file and symlink, bumped
@@ -274,7 +274,7 @@ pub struct ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1388-1389` - `recv_file_entry()` adds `file_length` to
+    /// - `flist.c:1613-1614` - `recv_file_entry()` adds `file_length` to
     ///   `stats.total_size` when `S_ISREG(mode) || S_ISLNK(mode)`.
     pub(in crate::receiver) received_total_size: u64,
     /// Byte totals the remote sender transmitted in its `handle_stats()` trailer,
@@ -331,7 +331,7 @@ pub struct ReceiverContext {
     /// Whether `setup_transfer`'s pre-flight mkdir actually created the
     /// destination root directory this run.
     ///
-    /// Mirrors upstream `main.c:794-796` which sets `FLAG_DIR_CREATED` on the
+    /// Mirrors upstream `main.c:807-809` which sets `FLAG_DIR_CREATED` on the
     /// first flist entry only when the receiver had to `do_mkdir()` the dest
     /// root. The generator's `itemize()` then ORs `ITEM_IS_NEW` for the root
     /// entry, emitting `cd+++++++++ ./`. When the dest root already existed
@@ -351,7 +351,7 @@ pub struct ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:101` / `io.c:1750-1786` - `flist_eof` gates the generator's
+    /// - `flist.c:103` / `io.c:1788-1824` - `flist_eof` gates the generator's
     ///   on-demand `recv_file_list()` fetch loop.
     pub(in crate::receiver) flist_eof: bool,
     /// Target `file_list` length for the INC_RECURSE hardlink look-ahead.
@@ -399,7 +399,7 @@ pub struct ReceiverContext {
     /// emitted in flist-index order as each file is reached in the transfer
     /// loop - interleaved with `--progress` - instead of being buffered in the
     /// logging event queue and rendered as a block at end of run. This restores
-    /// upstream's `log_before_transfer` behaviour (`receiver.c:1008-1012`, name
+    /// upstream's `log_before_transfer` behaviour (`receiver.c:1024-1028`, name
     /// printed per file just before its data). Only [`Self::run_pipelined`]
     /// opts in; `-i`/`-vi` itemize output is unaffected and still flows through
     /// [`Self::itemize_rows`].
@@ -420,7 +420,7 @@ pub struct ReceiverContext {
     /// names to it, avoiding a duplicate name per file.
     pub(in crate::receiver) progress_active: bool,
     /// Count of server-mode hardlink-follower itemize records emitted this phase
-    /// that the peer's sender will echo back (upstream `sender.c:286-292` echoes
+    /// that the peer's sender will echo back (upstream `sender.c:289-295` echoes
     /// every non-transfer item). The pipeline response loop is request-count
     /// driven and never reads these echoes, so they must be drained at the phase
     /// boundary - after the receiver's NDX_DONE unblocks the sender to flush -
@@ -434,10 +434,10 @@ pub struct ReceiverContext {
     /// transfer request, but upstream's generator writes `NDX +
     /// write_shortint(iflags)` for it anyway (generator.c:582-593) so the
     /// pushing client's sender can print the `.f...p.....`-style row
-    /// (sender.c:292-293 `maybe_log_item`). The candidate scan records those
+    /// (sender.c:295-296 `maybe_log_item`). The candidate scan records those
     /// rows here and the transfer loop interleaves them with the file requests
     /// in flist-index order, consuming the sender's per-record echo
-    /// (sender.c:468-485 `write_ndx_and_attrs`) inline. Empty on a pull: a
+    /// (sender.c:469-486 `write_ndx_and_attrs`) inline. Empty on a pull: a
     /// client-mode receiver prints its rows locally instead.
     ///
     /// upstream: generator.c:582-593 - `itemize()` wire emission gate.
@@ -447,7 +447,7 @@ pub struct ReceiverContext {
     /// [`Self::enable_daemon_log`] before the transfer runs. Independent of the
     /// client's `-i`: upstream's daemon receiver logs every processed entry via
     /// `maybe_log_item()`/`log_item(FLOG)` regardless of what the client requested
-    /// (`receiver.c:807,903,1273`).
+    /// (`receiver.c:823,919,1290`).
     pub(in crate::receiver) daemon_log_active: bool,
     /// Whether the module's `log format` contains a `%i` escape (upstream
     /// `logfile_format_has_i`, `clientserver.c:826`). Gates whether non-transfer
@@ -468,7 +468,7 @@ pub struct ReceiverContext {
     /// the returned `TransferStats`. `Cell` because most creation sites run
     /// behind a `&self` receiver method.
     ///
-    /// upstream: receiver.c:733-746 - `stats.created_*++` under `ITEM_IS_NEW`.
+    /// upstream: receiver.c:749-762 - `stats.created_*++` under `ITEM_IS_NEW`.
     pub(in crate::receiver) created_stats: std::cell::Cell<protocol::stats::CreatedStats>,
     /// Upstream's `got_xfer_error` as set by this receiver's *own*
     /// `FERROR_XFER` diagnostics, as opposed to the ones read off the wire.
@@ -513,9 +513,9 @@ pub struct ReceiverContext {
     /// rather than talking to a live peer. Mirrors upstream's `read_batch`
     /// global as seen by the receiving client: the batch file is fed straight
     /// in as `f_in` and the generator's `f_out` has no live consumer
-    /// (`main.c:635-651`). The flag gates the `!read_batch` decisions the
+    /// (`main.c:648-664`). The flag gates the `!read_batch` decisions the
     /// receive path shares with the network path - today only keeping the
-    /// batch `f_in` unmultiplexed (`main.c:1359-1366`). Always `false` on every
+    /// batch `f_in` unmultiplexed (`main.c:1377-1384`). Always `false` on every
     /// network transfer, so the wire path is byte-identical; set only by
     /// [`run_local_replay`](Self::run_local_replay).
     pub(in crate::receiver) local_replay: bool,
@@ -555,7 +555,7 @@ impl ReceiverContext {
         config: ServerConfig,
         pipeline: TransferPipeline,
     ) -> Self {
-        // upstream: flist.c:2958 - ndx_start = inc_recurse ? 1 : 0
+        // upstream: flist.c:3201 - ndx_start = inc_recurse ? 1 : 0
         let inc_recurse = handshake
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
@@ -667,7 +667,7 @@ impl ReceiverContext {
     /// - `compat.c:604,740` - under `read_batch`, `setup_protocol()` reads
     ///   `remote_protocol` and `compat_flags` from the batch fd rather than
     ///   exchanging them with a peer.
-    /// - `io.c:2521-2524` - `start_write_batch()` wrote those same values
+    /// - `io.c:2559-2562` - `start_write_batch()` wrote those same values
     ///   (protocol, compat varint for proto >= 30, checksum seed) into the
     ///   header at capture.
     pub fn for_batch_replay(
@@ -692,7 +692,7 @@ impl ReceiverContext {
 
         // upstream: compat.c:740 compat_flags = read_varint(f_in) - recorded
         // only for protocol >= 30, which is exactly when the header carries the
-        // varint (io.c:2522-2523). `None` below 30 leaves compat state absent,
+        // varint (io.c:2560-2561). `None` below 30 leaves compat state absent,
         // matching a legacy negotiation.
         let compat_flags = header
             .compat_flags
@@ -711,7 +711,7 @@ impl ReceiverContext {
             // (get_checksum_algorithm falls back to the protocol default).
             negotiated_algorithms: None,
             compat_flags,
-            // upstream: io.c:2524 write_int(batch_fd, checksum_seed) - the seed
+            // upstream: io.c:2562 write_int(batch_fd, checksum_seed) - the seed
             // the basis/signature checksums must reuse on replay.
             checksum_seed: header.checksum_seed,
         };
@@ -770,7 +770,7 @@ impl ReceiverContext {
     /// Attaches the raw wire byte counter used to measure file-list spans.
     ///
     /// The counter must be the raw transport counter that also feeds
-    /// `bytes_received` (upstream `stats.total_read`, io.c:820). Must be set
+    /// `bytes_received` (upstream `stats.total_read`, io.c:838). Must be set
     /// before [`run`](Self::run) for `File list size` to be reported.
     pub fn set_raw_read_counter(&mut self, counter: Arc<std::sync::atomic::AtomicU64>) {
         self.raw_read_counter = Some(counter);
@@ -780,7 +780,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2789` - `stats.flist_size += stats.total_read - start_read;`
+    /// - `flist.c:3032` - `stats.flist_size += stats.total_read - start_read;`
     #[must_use]
     pub fn flist_size(&self) -> u64 {
         self.flist_size
@@ -800,7 +800,7 @@ impl ReceiverContext {
 
     /// Snapshots the raw read counter at the start of a file-list span.
     ///
-    /// upstream: flist.c:2887 `start_read = stats.total_read;`
+    /// upstream: flist.c:3130 `start_read = stats.total_read;`
     pub(in crate::receiver) fn flist_span_start(&self) -> u64 {
         self.raw_read_counter
             .as_ref()
@@ -809,7 +809,7 @@ impl ReceiverContext {
 
     /// Accumulates the raw bytes read since `start` into `flist_size`.
     ///
-    /// upstream: flist.c:3091 `stats.flist_size += stats.total_read - start_read;`
+    /// upstream: flist.c:3334 `stats.flist_size += stats.total_read - start_read;`
     pub(in crate::receiver) fn flist_span_end(&mut self, start: u64) {
         if let Some(counter) = &self.raw_read_counter {
             self.flist_size = self
@@ -828,7 +828,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2931` - segment table layout used to do the inverse
+    /// - `flist.c:3174` - segment table layout used to do the inverse
     ///   mapping.
     pub(in crate::receiver) fn wire_to_flat_ndx(&self, wire_ndx: i32) -> Option<usize> {
         let segments = &self.ndx_segments;
@@ -972,7 +972,7 @@ impl ReceiverContext {
         // preserve_xattrs >= 2, so the level has to reach the reader.
         .with_xattr_level(u32::from(self.config.flags.xattrs_level))
         .with_preserve_atimes(self.config.flags.atimes)
-        // upstream: flist.c:743-746 - `recv_file_entry()` reads the crtime
+        // upstream: flist.c:968-971 - `recv_file_entry()` reads the crtime
         // varlong whenever `crtimes_ndx` is set and XMIT_CRTIME_EQ_MTIME is
         // clear, exactly as it reads the atime above. Without this the receiver
         // desynchronises from the sender's file list the moment a file's birth
@@ -996,7 +996,7 @@ impl ReceiverContext {
         }
 
         if let Some(ref converter) = self.config.connection.iconv {
-            // upstream: flist.c:1156 gates recv-side symlink-target conversion on
+            // upstream: flist.c:1381 gates recv-side symlink-target conversion on
             // `sender_symlink_iconv` (compat.c:765-767). Only transcode targets
             // when the peer negotiated CF_SYMLINK_ICONV; otherwise the target
             // arrives as raw local bytes and must pass through untouched.
@@ -1029,9 +1029,9 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2069-2074` - `need_unsorted_flist = 1` for any `iconv_opt`
+    /// - `options.c:2196-2201` - `need_unsorted_flist = 1` for any `iconv_opt`
     ///   except the client-side `"-"`, with no same-encoding short-circuit.
-    /// - `flist.c:2531-2544` - under `need_unsorted_flist`, `flist->files[]`
+    /// - `flist.c:2771-2784` - under `need_unsorted_flist`, `flist->files[]`
     ///   stays in scan order and only a separate `flist->sorted[]` pointer
     ///   array is sorted; "both sides will use the unsorted index number for
     ///   each item".
@@ -1075,10 +1075,10 @@ impl ReceiverContext {
     /// them:
     ///
     /// * a PEER-supplied trailer value is accumulated only when
-    ///   `--ignore-errors` is absent - `flist.c:2949`, `:2967` and `:3070` all
+    ///   `--ignore-errors` is absent - `flist.c:3192`, `:2967` and `:3070` all
     ///   read `if (!ignore_errors) io_error |= err & IOERR_VALID_MASK`;
     /// * a locally-generated decode error is accumulated unconditionally -
-    ///   `flist.c:841`'s filename-transcode failure has no `ignore_errors`
+    ///   `flist.c:1066`'s filename-transcode failure has no `ignore_errors`
     ///   check anywhere on the receiver side.
     ///
     /// Both protocol eras feed the same expression: the protocol >= 30 trailer
@@ -1134,30 +1134,30 @@ impl ReceiverContext {
     ///
     /// The activation threshold differs by mode:
     ///
-    /// **Client mode** (daemon pull - `main.c:1342-1343` `client_run !am_sender`):
+    /// **Client mode** (daemon pull - `main.c:1360-1361` `client_run !am_sender`):
     /// - `if (protocol_version >= 23) io_start_multiplex_in(f_in);`
     ///
-    /// **Server mode** (daemon/SSH receiver - `main.c:1185-1186` `do_recv`):
+    /// **Server mode** (daemon/SSH receiver - `main.c:1203-1204` `do_recv`):
     /// - `if (protocol_version >= 30) io_start_multiplex_in(f_in);`
     /// - Protocol < 30 uses `io_start_buffering_in()` instead (no multiplex).
     ///
     /// **Local replay** (`--read-batch`): never. Upstream gates every
-    /// `io_start_multiplex_in(f_in)` on `!read_batch` (`main.c:1359-1366`),
+    /// `io_start_multiplex_in(f_in)` on `!read_batch` (`main.c:1377-1384`),
     /// because the batch file is a raw, one-way recorded stream that was never
     /// framed. [`local_replay`](Self::local_replay) mirrors that gate so a
     /// batch-fed `f_in` stays in `Plain` (undemuxed) mode.
     #[must_use]
     pub(crate) const fn should_activate_input_multiplex(&self) -> bool {
         if self.local_replay {
-            // upstream: main.c:1397 `if (!read_batch)` - the recorded batch
+            // upstream: main.c:1415 `if (!read_batch)` - the recorded batch
             // stream is never multiplexed, so keep the reader Plain.
             return false;
         }
         if self.config.connection.client_mode {
-            // Client mode: >= 23 (upstream main.c:1342-1343)
+            // Client mode: >= 23 (upstream main.c:1360-1361)
             self.protocol.supports_multiplex_io()
         } else {
-            // Server mode: >= 30 (upstream main.c:1167-1168)
+            // Server mode: >= 30 (upstream main.c:1185-1186)
             self.protocol.uses_binary_negotiation()
         }
     }
@@ -1259,8 +1259,8 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2980 flist_free()` - frees completed file list segments
-    /// - `receiver.c:683` - `flist_free(first_flist)` in receiver transfer loop
+    /// - `flist.c:3223 flist_free()` - frees completed file list segments
+    /// - `receiver.c:699` - `flist_free(first_flist)` in receiver transfer loop
     pub(in crate::receiver) fn reclaim_oldest_segment(&mut self) {
         let first = self.first_segment_idx;
 

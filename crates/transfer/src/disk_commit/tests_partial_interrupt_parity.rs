@@ -18,7 +18,7 @@
 //! upstream references:
 //!   - cleanup.c:105-135  partial retention decision
 //!   - cleanup.c:174-178  mtime=0 stamp for plain --partial
-//!   - receiver.c:340-345 do_rename(partialptr, fname) on interrupt
+//!   - receiver.c:353-358 do_rename(partialptr, fname) on interrupt
 
 use std::fs;
 
@@ -422,7 +422,7 @@ fn parity_partial_dir_disconnect_retains_without_mtime_zero() {
 ///
 /// That is a property of THIS implementation, not of upstream's `one_inplace`.
 /// Upstream's in-place target under `one_inplace` is `partialptr` - the file in
-/// the partial dir - not `fname` (`rsync-3.5.0/receiver.c:1195-1196`), so the
+/// the partial dir - not `fname` (`rsync-3.5.1/receiver.c:1212-1213`), so the
 /// live name never holds a truncated file there either. What this test pins is
 /// that `resolve_use_inplace` must keep a `--partial-dir` resume on the
 /// temp+rename path for as long as the disk commit has no partial-dir staging

@@ -22,7 +22,7 @@
 //! # Root ownership is not a separate branch
 //!
 //! Upstream refuses only `st_uid != 0 && st_uid != trusted_uid`
-//! (`syscall.c:406`), so uid 0 and the euid take one identical follow path and
+//! (`syscall.c:499`), so uid 0 and the euid take one identical follow path and
 //! reach one identical confinement check. A plant owned by our own euid
 //! exercises the same code as a root-owned one and needs no privilege, which is
 //! why these run unprivileged. The distinct third-uid REFUSAL - the arm that
@@ -32,15 +32,15 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/syscall.c:286` `ona_open()` - the walk; `abspath` is seeded
+//! - `rsync-3.5.1/syscall.c:365` `ona_open()` - the walk; `abspath` is seeded
 //!   from `module_dir` for a daemon at `:308-310`.
-//! - `rsync-3.5.0/syscall.c:406` - the ownership test that follows a trusted
+//! - `rsync-3.5.1/syscall.c:499` - the ownership test that follows a trusted
 //!   symlink.
-//! - `rsync-3.5.0/syscall.c:460-468` - the leaf arm: `abspath_step()` then
+//! - `rsync-3.5.1/syscall.c:593-601` - the leaf arm: `abspath_step()` then
 //!   `abspath_outside_confinement()` -> `ELOOP`.
-//! - `rsync-3.5.0/syscall.c:186-240` `abspath_outside_confinement()` - refuses
+//! - `rsync-3.5.1/syscall.c:232-291` `abspath_outside_confinement()` - refuses
 //!   only when `operator_path_resolve` is set.
-//! - `rsync-3.5.0/exclude.c:1668-1684` `parse_filter_file()` - the merge-file
+//! - `rsync-3.5.1/exclude.c:1668-1684` `parse_filter_file()` - the merge-file
 //!   open that sets `operator_path_resolve = 1`, exempting only the daemon's
 //!   own `filter`/`include from`/`exclude from` parameters.
 
@@ -186,7 +186,7 @@ fn a_plain_path_inside_the_module_opens() {
 /// out-of-module TEXT to the peer; this one WRITES an in-module file's contents
 /// to a path outside the module, so both entry points have to carry the check.
 ///
-/// upstream: `rsync-3.5.0/backup.c:443-449` `make_backup()` and
+/// upstream: `rsync-3.5.1/backup.c:443-449` `make_backup()` and
 /// `generator.c:2281-2301` - `operator_path_resolve = 1` around the backup and
 /// around the in-place copy that bypasses it.
 #[test]
@@ -245,7 +245,7 @@ fn a_confined_create_staying_inside_the_module_is_followed() {
 /// Pinned because a blanket confinement would satisfy every assertion above
 /// while creating a new divergence in the opposite direction.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:232-239` - "other opens (--log-file,
+/// upstream: `rsync-3.5.1/syscall.c:282-290` - "other opens (--log-file,
 /// --*-from, lock/motd) may legitimately live elsewhere".
 #[test]
 fn an_ancillary_open_may_still_leave_the_module() {
@@ -264,7 +264,7 @@ fn an_ancillary_open_may_still_leave_the_module() {
 /// open behaves exactly like an unconfined one. This is the plain local client:
 /// upstream's `confinement_root()` returns `confine_root`, which is unset.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:128-144` `confinement_root()`.
+/// upstream: `rsync-3.5.1/syscall.c:145-171` `confinement_root()`.
 #[test]
 fn without_a_confinement_root_a_confined_open_still_follows() {
     let fixture = fixture();
@@ -294,8 +294,8 @@ fn without_a_confinement_root_a_confined_open_still_follows() {
 /// inode, so a refusal that fired after the syscall would leave nothing behind
 /// to read back.
 ///
-/// upstream: `rsync-3.5.0/backup.c:443-449` `make_backup()` -
-/// `operator_path_resolve = 1` around the whole backup; `syscall.c:1891`
+/// upstream: `rsync-3.5.1/backup.c:443-449` `make_backup()` -
+/// `operator_path_resolve = 1` around the whole backup; `syscall.c:2030`
 /// `do_rename_at()` walks each side with `owner_walk_parent()` while it is set.
 #[test]
 fn a_confined_rename_through_a_symlinked_dir_leaving_the_module_is_refused() {
@@ -332,8 +332,8 @@ fn a_confined_rename_through_a_symlinked_dir_leaving_the_module_is_refused() {
 /// leaves the escape open wherever the link succeeds - which is the ordinary
 /// same-filesystem case.
 ///
-/// upstream: `rsync-3.5.0/backup.c:226-247` `link_or_rename()`;
-/// `syscall.c:961` `do_link_at()` under `operator_path_resolve`.
+/// upstream: `rsync-3.5.1/backup.c:226-247` `link_or_rename()`;
+/// `syscall.c:1100` `do_link_at()` under `operator_path_resolve`.
 #[test]
 fn a_confined_link_through_a_symlinked_dir_leaving_the_module_is_refused() {
     let fixture = fixture();
@@ -394,9 +394,9 @@ fn a_confined_rename_through_a_symlinked_dir_staying_inside_the_module_is_follow
 ///
 /// This is the cell that fails if the leaf half of the check is dropped.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:581-596` `owner_walk_parent()` - the
+/// upstream: `rsync-3.5.1/syscall.c:727-735` `owner_walk_parent()` - the
 /// `snprintf(leafabs, "%s/%s", pabs, *bname)` before
-/// `abspath_outside_confinement()`; `syscall.c:233-238` - the ancestor arm that
+/// `abspath_outside_confinement()`; `syscall.c:284-289` - the ancestor arm that
 /// makes the parent-only answer permissive.
 #[test]
 fn a_confined_rename_into_the_roots_own_ancestor_is_refused() {
@@ -427,7 +427,7 @@ fn a_confined_rename_into_the_roots_own_ancestor_is_refused() {
 /// shared parent walk - which would satisfy every refusal above - is visible as
 /// the new divergence it would be.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:232-239`; `syscall.c:1891` - `do_rename_at`
+/// upstream: `rsync-3.5.1/syscall.c:282-290`; `syscall.c:2030` - `do_rename_at`
 /// takes the ownership walk only while `operator_path_resolve` is set.
 #[test]
 fn an_ancillary_rename_may_still_leave_the_module() {
@@ -462,9 +462,9 @@ fn plant_out_of_module_backup_dir(fixture: &Fixture) -> (PathBuf, PathBuf) {
 /// reaches - and creating the subtree is already an escape, whatever the tiers
 /// decide afterwards.
 ///
-/// upstream: `rsync-3.5.0/backup.c:128` `do_mkdir_at(backup_dir_buf,
+/// upstream: `rsync-3.5.1/backup.c:128` `do_mkdir_at(backup_dir_buf,
 /// ACCESSPERMS)` inside `make_backup()`'s `operator_path_resolve = 1` window
-/// (backup.c:437-449); `syscall.c:2082` `do_mkdir_at()` walks the parent with
+/// (backup.c:437-449); `syscall.c:2221` `do_mkdir_at()` walks the parent with
 /// `owner_walk_parent()` while it is set.
 #[test]
 fn a_confined_mkdir_through_a_symlinked_dir_leaving_the_module_is_refused() {
@@ -519,8 +519,8 @@ fn a_confined_mkdir_inside_the_module_still_creates_the_subtree() {
 /// follows its own leaf - an occupied name is `EEXIST` - so the whole exposure
 /// is the PARENT chain, which is what the walk resolves.
 ///
-/// upstream: `rsync-3.5.0/backup.c:377` `do_symlink_at(sl, buf)` inside
-/// `make_backup()`'s `operator_path_resolve = 1` window; `syscall.c:780`
+/// upstream: `rsync-3.5.1/backup.c:377` `do_symlink_at(sl, buf)` inside
+/// `make_backup()`'s `operator_path_resolve = 1` window; `syscall.c:919`
 /// `do_symlink_at()` walks the parent while it is set.
 #[test]
 fn a_confined_symlink_through_a_symlinked_dir_leaving_the_module_is_refused() {
@@ -563,9 +563,9 @@ fn a_confined_symlink_inside_the_module_is_still_created() {
 /// confined `lstat` that decided it does not protect the unlink itself: the
 /// component can be flipped in between. Both take the walk for that reason.
 ///
-/// upstream: `rsync-3.5.0/backup.c:65-80` `validate_backup_dir()` -
+/// upstream: `rsync-3.5.1/backup.c:65-80` `validate_backup_dir()` -
 /// `do_lstat_at()`, then `delete_item(..., DEL_FOR_BACKUP | DEL_RECURSE)`;
-/// `syscall.c:673` `do_unlink_at()` under `operator_path_resolve`.
+/// `syscall.c:812` `do_unlink_at()` under `operator_path_resolve`.
 #[test]
 fn a_confined_unlink_through_a_symlinked_dir_leaving_the_module_is_refused() {
     let fixture = fixture();

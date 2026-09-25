@@ -115,7 +115,7 @@ pub mod dir_sandbox;
 /// Active-allocator heap counters for the `--info=stats3` diagnostic block.
 pub mod heap_stats;
 /// The receiver's in-place output open: upstream's three-arm chain
-/// (`receiver.c:1195-1224`) with the path resolution injected.
+/// (`receiver.c:1212-1241`) with the path resolution injected.
 pub mod inplace_open;
 /// Kernel version parsing and io_uring probe logging.
 pub mod kernel_version;
@@ -136,7 +136,7 @@ pub mod net_reader;
 pub mod nofollow_open;
 /// Unix-only: ownership-trusted resolution for operator-supplied paths
 /// (`--backup-dir`, `--temp-dir`, alt-dests), mirroring upstream
-/// `owner_walk_parent` (`syscall.c:558`).
+/// `owner_walk_parent` (`syscall.c:704`).
 #[cfg(unix)]
 pub mod owner_walk;
 /// Page-aligned buffer pool for IOCP no-buffering mode.
@@ -151,7 +151,7 @@ pub mod physical_memory;
 /// Source lookups anchored on the daemon's pinned module root.
 pub mod pinned_root;
 /// Unix-only: read-only in-place recovery, mirroring upstream
-/// `open_readonly_inplace` (`receiver.c:200`).
+/// `open_readonly_inplace` (`receiver.c:213`).
 #[cfg(unix)]
 pub mod readonly_inplace;
 /// Same-filesystem (device) detection for reflink / copy-on-write gating.
@@ -652,7 +652,7 @@ pub use status::{
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/syscall.c:406` - `if (lst.st_uid != 0 && lst.st_uid != trusted_uid)`
+/// - `rsync-3.5.1/syscall.c:499` - `if (lst.st_uid != 0 && lst.st_uid != trusted_uid)`
 ///   refuses with `ELOOP`.
 #[must_use]
 pub fn is_symlink_refusal(error: &std::io::Error) -> bool {

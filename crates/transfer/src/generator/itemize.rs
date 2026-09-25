@@ -130,7 +130,7 @@ pub(crate) fn format_iflags(
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2354-2356` - `stdout_format = "%i %n%L"` for `-i`
+/// - `options.c:2363-2365` - `stdout_format = "%i %n%L"` for `-i`
 /// - `log.c:627-636` - `%n` expansion (filename with trailing `/` for dirs)
 /// - `log.c:643-655` - `%L` expansion: ` => hlink` when the xname is non-empty,
 ///   else ` -> target` for symlinks
@@ -164,7 +164,7 @@ pub(crate) fn format_itemize_line(
 ///
 /// - `log.c:627-636` - `%n` expansion (path, trailing `/` for directories).
 /// - `log.c:643-655` - `%L` expansion (` => hlink` wins over ` -> target`).
-/// - `options.c:2372` - `stdout_format = "%n%L"` for plain `-v` (no `-i`).
+/// - `options.c:2381` - `stdout_format = "%n%L"` for plain `-v` (no `-i`).
 pub(crate) fn format_name_line(
     entry: &FileEntry,
     xname: Option<&[u8]>,

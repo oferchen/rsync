@@ -40,7 +40,7 @@ pub struct WriteConfig {
     /// # Upstream Reference
     ///
     /// - `compat.c:777-778`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
-    /// - `receiver.c:910`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
+    /// - `receiver.c:926`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
     pub inplace_partial: bool,
     /// Write data to device files instead of creating with mknod (`--write-devices`).
     pub write_devices: bool,
@@ -53,7 +53,7 @@ pub struct WriteConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2891-2892`: `--delay-updates` option handling
+    /// - `options.c:2901-2902`: `--delay-updates` option handling
     /// - `receiver.c`: deferred rename sweep at end of transfer
     pub delay_updates: bool,
     /// Policy controlling io_uring usage for file I/O.
@@ -80,8 +80,8 @@ pub struct WriteConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `syscall.c:228` - `do_open()` ORs `O_NOATIME` into flags.
-    /// - `syscall.c:687` - `do_open_nofollow()` (added in 3.4.2).
+    /// - `syscall.c:278` - `do_open()` ORs `O_NOATIME` into flags.
+    /// - `syscall.c:826` - `do_open_nofollow()` (added in 3.4.2).
     pub open_noatime: bool,
 }
 
@@ -179,9 +179,9 @@ pub struct ConnectionConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2511` - `set_io_timeout(io_timeout)` at the end of
+    /// - `options.c:2520` - `set_io_timeout(io_timeout)` at the end of
     ///   `parse_arguments()`, which the server runs over the received argv.
-    /// - `io.c:1266` - `set_io_timeout()` derives `allowed_lull` from it.
+    /// - `io.c:1284` - `set_io_timeout()` derives `allowed_lull` from it.
     pub io_timeout: Option<u32>,
     /// Name of the daemon module this server process is serving, when any.
     ///
@@ -194,7 +194,7 @@ pub struct ConnectionConfig {
     /// # Upstream Reference
     ///
     /// - `clientserver.c:769` - `module_id = i` in `rsync_module()`.
-    /// - `util1.c:1290` - `if (module_id >= 0)` in `full_fname()`.
+    /// - `util1.c:1387` - `if (module_id >= 0)` in `full_fname()`.
     pub daemon_module: Option<String>,
     /// Absolute on-disk root of the daemon module this server process serves.
     ///
@@ -210,7 +210,7 @@ pub struct ConnectionConfig {
     ///
     /// - `clientserver.c:864` - `module_chdir = normalize_path(module_dir, ..)`
     /// - `clientserver.c:993` - `change_dir(module_chdir, CD_NORMAL)`
-    /// - `util1.c:1285` - `p1 = curr_dir + module_dirlen`
+    /// - `util1.c:1382` - `p1 = curr_dir + module_dirlen`
     pub daemon_module_root: Option<PathBuf>,
     /// The served module's `insecure links` setting, carried per connection.
     ///
@@ -231,9 +231,9 @@ pub struct ConnectionConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `syscall.c:122-127` - `symlink_optout_allowed()`; the `am_daemon` arm
+    /// - `syscall.c:139-144` - `symlink_optout_allowed()`; the `am_daemon` arm
     ///   is `module_id >= 0 && lp_insecure_links(module_id)`.
-    /// - `syscall.c:116-121` - why a forwarded `--insecure-links` is inert here.
+    /// - `syscall.c:133-138` - why a forwarded `--insecure-links` is inert here.
     pub daemon_insecure_links: bool,
     /// `--confine-root=DIR`: the confinement root for a NON-daemon server.
     ///
@@ -242,7 +242,7 @@ pub struct ConnectionConfig {
     /// at once. A daemon deliberately ignores `--confine-root`: its module
     /// directory is already the boundary, and the option arrives in a
     /// peer-supplied argv, where honouring it could only *widen* the module
-    /// (options.c:2382-2386). Mirrored by
+    /// (options.c:2391-2395). Mirrored by
     /// [`GeneratorContext::source_open`](crate::generator::GeneratorContext),
     /// which reads [`daemon_module_root`](Self::daemon_module_root) for a
     /// daemon and this field otherwise.
@@ -250,8 +250,8 @@ pub struct ConnectionConfig {
     /// # Upstream Reference
     ///
     /// - `options.c:64-65` - `confine_root` / `confine_rootlen`
-    /// - `options.c:2382-2399` - daemon-ignores / absolute / normalize rules
-    /// - `syscall.c:128-143` - `confinement_root()`
+    /// - `options.c:2391-2408` - daemon-ignores / absolute / normalize rules
+    /// - `syscall.c:145-170` - `confinement_root()`
     pub confine_root: Option<PathBuf>,
     /// Filter rules to send to remote daemon (client_mode only).
     pub filter_rules: Vec<FilterRuleWireFormat>,
@@ -268,7 +268,7 @@ pub struct ConnectionConfig {
     /// # Upstream Reference
     ///
     /// - `compat.c:543`: compression vstrings skipped when compress_choice is set
-    /// - `options.c:2818-2823`: `--compress-choice=ALGO` sent as long-form arg
+    /// - `options.c:2828-2833`: `--compress-choice=ALGO` sent as long-form arg
     pub compress_choice: Option<protocol::CompressionAlgorithm>,
     /// Worker thread count for zstd's `ZSTD_c_nbWorkers` (`--compress-threads=N`).
     ///
@@ -313,7 +313,7 @@ pub struct ConnectionConfig {
     /// # Upstream Reference
     ///
     /// - `io.c:forward_filesfrom_data()` - forwards local file to socket
-    /// - `main.c:1372-1374` - `start_filesfrom_forwarding(filesfrom_fd)`
+    /// - `main.c:1390-1392` - `start_filesfrom_forwarding(filesfrom_fd)`
     pub files_from_data: Option<Vec<u8>>,
     /// Remote source arguments the client requested on a pull, recorded as
     /// implied includes to validate the received file list (CVE-2022-29154).
@@ -327,9 +327,9 @@ pub struct ConnectionConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1525,1549` - `add_implied_include()` per requested source arg
+    /// - `main.c:1543,1567` - `add_implied_include()` per requested source arg
     /// - `exclude.c:379` `add_implied_include()`
-    /// - `flist.c:1026` `recv_file_entry()` - the receiver-side name check
+    /// - `flist.c:1251` `recv_file_entry()` - the receiver-side name check
     pub implied_source_args: Vec<Vec<u8>>,
     /// Whether the leading daemon module name must be stripped from each
     /// [`implied_source_args`] entry before it is compiled into an implied
@@ -337,9 +337,9 @@ pub struct ConnectionConfig {
     ///
     /// This mirrors the `skip_daemon_module` argument upstream passes to
     /// `add_implied_include()`: it is set only when the recorded arg is a raw
-    /// daemon `module/path` operand (`main.c:1549` passes `daemon_connection`).
+    /// daemon `module/path` operand (`main.c:1567` passes `daemon_connection`).
     /// Forwarded `--files-from` entries are already module-relative and must
-    /// never be stripped (`io.c:427,464` pass `0`), so this stays `false` for
+    /// never be stripped (`io.c:445,482` pass `0`), so this stays `false` for
     /// them even on a daemon connection.
     ///
     /// It is recorded as a stable flag rather than being re-derived at
@@ -350,8 +350,8 @@ pub struct ConnectionConfig {
     /// # Upstream Reference
     ///
     /// - `exclude.c:396-401` `add_implied_include()` - the module-name strip
-    /// - `main.c:1549` - daemon operand recorded with `skip_daemon_module=1`
-    /// - `io.c:427,464` - files-from entries recorded with `skip_daemon_module=0`
+    /// - `main.c:1567` - daemon operand recorded with `skip_daemon_module=1`
+    /// - `io.c:445,482` - files-from entries recorded with `skip_daemon_module=0`
     ///
     /// [`implied_source_args`]: Self::implied_source_args
     /// [`files_from_data`]: Self::files_from_data
@@ -362,7 +362,7 @@ pub struct ConnectionConfig {
     /// `Some` only when the local process is the sender (`am_sender`) and a
     /// non-zero limit is in effect: a client push, an SSH `--server --sender`,
     /// or a daemon-sender on a pull. The receiver leaves this `None`, mirroring
-    /// upstream `main.c:1083` where the receiver sets `bwlimit_writemax = 0`.
+    /// upstream `main.c:1096` where the receiver sets `bwlimit_writemax = 0`.
     /// A `None` value (or a zero rate) is a no-op passthrough on the wire.
     ///
     /// The live [`bandwidth::BandwidthLimiter`] is constructed from these
@@ -370,10 +370,10 @@ pub struct ConnectionConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:846,861` - clamp each write to `bwlimit_writemax`, then
+    /// - `io.c:864,879` - clamp each write to `bwlimit_writemax`, then
     ///   `sleep_for_bwlimit(n)`.
-    /// - `options.c:2394-2397` - `bwlimit_writemax = bwlimit * 128`, min 512.
-    /// - `main.c:1068` - the receiver disables its own bwlimit.
+    /// - `options.c:2403-2406` - `bwlimit_writemax = bwlimit * 128`, min 512.
+    /// - `main.c:1081` - the receiver disables its own bwlimit.
     pub bwlimit: Option<BandwidthLimitComponents>,
 }
 
@@ -393,9 +393,9 @@ impl ConnectionConfig {
     ///
     /// - `clientserver.c:1093` - `use_secure_symlinks = am_daemon &&
     ///   (!am_chrooted || module_dirlen)`
-    /// - `syscall.c:136` - `confinement_root()` yields `module_dir` only when
+    /// - `syscall.c:163` - `confinement_root()` yields `module_dir` only when
     ///   `am_daemon`
-    /// - `receiver.c:152` - `if (!am_daemon || ...)` takes the plain-open arm
+    /// - `receiver.c:165` - `if (!am_daemon || ...)` takes the plain-open arm
     #[must_use]
     pub fn served_module_root(&self) -> Option<&Path> {
         if self.is_daemon_connection {
@@ -515,9 +515,9 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:1804` - `OPT_BLOCK_SIZE` stores the parsed size in the
+    /// - `options.c:1810` - `OPT_BLOCK_SIZE` stores the parsed size in the
     ///   `block_size` global.
-    /// - `options.c:2953-2954` - the client re-emits it to the server as a
+    /// - `options.c:2963-2964` - the client re-emits it to the server as a
     ///   standalone `-B%u` token, so a server receiver parses it back into the
     ///   same global.
     /// - `generator.c:720-721` - `if (block_size) blength = block_size;` is the
@@ -535,9 +535,9 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:769`: `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)`
+    /// - `flist.c:994`: `clean_fname(thisname, CFN_REFUSE_DOT_DOT_DIRS)`
     /// - `options.c:797`: `--trust-sender` option definition
-    /// - `options.c:2493`: trust_sender logic for args and filter
+    /// - `options.c:2502`: trust_sender logic for args and filter
     pub trust_sender: bool,
     /// Optional wall-clock deadline for the transfer (`--stop-at` / `--stop-after`).
     ///
@@ -562,7 +562,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1787`: `if (use_qsort) qsort(...); else merge_sort(...);`
+    /// - `flist.c:2012`: `if (use_qsort) qsort(...); else merge_sort(...);`
     /// - `options.c`: `--qsort` flag definition
     pub qsort: bool,
     /// Whether `--partial-dir` is configured on the client.
@@ -574,7 +574,7 @@ pub struct ServerConfig {
     /// # Upstream Reference
     ///
     /// - `compat.c:777-778`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
-    /// - `receiver.c:910`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
+    /// - `receiver.c:926`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
     pub has_partial_dir: bool,
     /// Directory path for storing partial files on interrupt (`--partial-dir=DIR`).
     ///
@@ -594,7 +594,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2805-2809`: `--backup-dir=DIR` server option
+    /// - `options.c:2815-2819`: `--backup-dir=DIR` server option
     pub backup_dir: Option<String>,
     /// Backup file suffix (long-form `--backup-suffix=SUFFIX`).
     ///
@@ -603,7 +603,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2812-2813`: `--backup-suffix=SUFFIX` server option
+    /// - `options.c:2822-2823`: `--backup-suffix=SUFFIX` server option
     pub backup_suffix: Option<String>,
     /// Daemon-side filter rules from module configuration.
     ///
@@ -626,7 +626,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2064-2066`: `do_stats` sets `info_levels[INFO_STATS]` to 2+
+    /// - `options.c:2070-2072`: `do_stats` sets `info_levels[INFO_STATS]` to 2+
     /// - `generator.c:2393,2438`: `INFO_GTE(STATS, 2)` gates `write_del_stats()`
     pub do_stats: bool,
     /// Temporary directory for receiving files before final placement.
@@ -640,8 +640,8 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2924-2927`: `--temp-dir` server option
-    /// - `receiver.c:766`: `open_tmpfile()` uses `tmpdir` when set
+    /// - `options.c:2934-2937`: `--temp-dir` server option
+    /// - `receiver.c:782`: `open_tmpfile()` uses `tmpdir` when set
     /// - `loadparm.c`: `temp dir` daemon module parameter
     pub temp_dir: Option<std::path::PathBuf>,
     /// When true, store privileged metadata (uid/gid, devices, special files) in
@@ -713,8 +713,8 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:1762` - `parse_chmod(arg, &chmod_modes)` parses `--chmod`
-    /// - `flist.c:905-906` - `recv_file_entry()` calls `tweak_mode(mode,
+    /// - `options.c:1768` - `parse_chmod(arg, &chmod_modes)` parses `--chmod`
+    /// - `flist.c:1130-1131` - `recv_file_entry()` calls `tweak_mode(mode,
     ///   chmod_modes)` on the receiver as it reads each incoming entry
     /// - `chmod.c:218 tweak_mode()` - applies the AND/OR mode clauses
     pub chmod: Option<ChmodModifiers>,
@@ -727,7 +727,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2904` - `args[ac++] = safe_arg("--usermap", usermap)`
+    /// - `options.c:2914` - `args[ac++] = safe_arg("--usermap", usermap)`
     /// - `uidlist.c:parse_name_map()` - parses the spec into the recv-side map
     /// - `uidlist.c:recv_id_list()` - applies the map per file-list entry
     pub user_mapping: Option<UserMapping>,
@@ -740,7 +740,7 @@ pub struct ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2907` - `args[ac++] = safe_arg("--groupmap", groupmap)`
+    /// - `options.c:2917` - `args[ac++] = safe_arg("--groupmap", groupmap)`
     /// - `uidlist.c:parse_name_map()` - parses the spec into the recv-side map
     /// - `uidlist.c:recv_id_list()` - applies the map per file-list entry
     pub group_mapping: Option<GroupMapping>,
@@ -757,8 +757,8 @@ pub struct ServerConfig {
     ///
     /// - `clientserver.c:992-1004` - daemon sets `munge_symlinks` from
     ///   `lp_munge_symlinks()`.
-    /// - `flist.c:234-238` - sender strips the prefix.
-    /// - `flist.c:1150-1154` - receiver prepends the prefix.
+    /// - `flist.c:455-459` - sender strips the prefix.
+    /// - `flist.c:1375-1379` - receiver prepends the prefix.
     pub munge_symlinks: bool,
 }
 
@@ -769,7 +769,7 @@ pub struct ServerConfig {
 /// argv parser and the daemon's long-form parser - so the bound check exists
 /// once rather than once per decoder.
 ///
-/// upstream: options.c:1795-1805 `OPT_BLOCK_SIZE` runs the same check on the
+/// upstream: options.c:1801-1811 `OPT_BLOCK_SIZE` runs the same check on the
 /// server as on the client: `parse_size_arg(arg, 'b', "block-size", 0,
 /// max_blength, False)` with `max_blength = protocol_version < 30 ?
 /// OLD_MAX_BLOCK_SIZE : MAX_BLOCK_SIZE`. A `0` means "unset" and falls back to
@@ -850,7 +850,7 @@ impl ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2342-2343`: `if (make_backups && !backup_dir)
+    /// - `options.c:2351-2352`: `if (make_backups && !backup_dir)
     ///   omit_dir_times = -1;`
     /// - `rsync.c:583`: `omit_dir_times && S_ISDIR(...)` adds `ATTRS_SKIP_MTIME`.
     /// - `generator.c:2271`: `need_retouch_dir_times = preserve_mtimes &&
@@ -894,7 +894,7 @@ impl ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2296-2297`: `backup_suffix = backup_dir ? "" : BACKUP_SUFFIX`
+    /// - `options.c:2305-2306`: `backup_suffix = backup_dir ? "" : BACKUP_SUFFIX`
     pub fn effective_backup_suffix(&self) -> &str {
         match self.backup_suffix.as_deref() {
             Some(s) => s,
@@ -918,19 +918,19 @@ impl ServerConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2400-2411` - `if (append_mode) { ...; inplace = 1; }`.
-    /// - `options.c:2413-2419` - `if (write_devices) { ...; inplace = 1; }`, the
+    /// - `options.c:2409-2420` - `if (append_mode) { ...; inplace = 1; }`.
+    /// - `options.c:2422-2428` - `if (write_devices) { ...; inplace = 1; }`, the
     ///   adjacent block carrying the same implication for `--write-devices`.
     ///   Both are evaluated here through `implies_inplace` so the two options
     ///   cannot drift apart the way they did when only `--append` was handled.
-    /// - `receiver.c:968` - `if (inplace || one_inplace)` selects the live
+    /// - `receiver.c:984` - `if (inplace || one_inplace)` selects the live
     ///   destination as the write target instead of a temp file.
-    /// - `receiver.c:496` - `inplace_sizing` truncates the destination to the
+    /// - `receiver.c:512` - `inplace_sizing` truncates the destination to the
     ///   received length.
-    /// - `receiver.c:1029` - `|| inplace` retains a failed-verification partial
+    /// - `receiver.c:1045` - `|| inplace` retains a failed-verification partial
     ///   instead of discarding it.
-    /// - `receiver.c:1074` - `keptstr` reads "retained" off the same flag.
-    /// - `sender.c:337` - `updating_basis_file` gates `match.c:211`.
+    /// - `receiver.c:1090` - `keptstr` reads "retained" off the same flag.
+    /// - `sender.c:338` - `updating_basis_file` gates `match.c:211`.
     /// - `compat.c:688` - protocol < 29 refuses a basis dir with `inplace`.
     pub(crate) fn apply_append_implies_inplace(&mut self) {
         self.write.inplace = engine::write_strategy::implies_inplace(
@@ -962,8 +962,8 @@ impl ServerConfig {
     /// # Upstream Reference
     ///
     /// - `compat.c:653-655` - `if (protocol_version < 30) { if (append_mode == 1) append_mode = 2; }`
-    /// - `receiver.c:154` (rsync 2.6.9) - `if (append_mode)` folds the prefix into the sum,
-    ///   versus `receiver.c:357` (rsync 3.4.4) `if (append_mode == 2)`.
+    /// - `receiver.c:167` (rsync 2.6.9) - `if (append_mode)` folds the prefix into the sum,
+    ///   versus `receiver.c:370` (rsync 3.4.4) `if (append_mode == 2)`.
     pub(crate) fn promote_append_mode_for_protocol(&mut self, protocol: ProtocolVersion) {
         if protocol.as_u8() < 30 && self.flags.append && !self.flags.append_verify {
             self.flags.append_verify = true;
@@ -1178,7 +1178,7 @@ mod tests {
 
     #[test]
     fn effective_omit_dir_times_implied_by_plain_backup() {
-        // upstream: options.c:2342-2343 - make_backups && !backup_dir => -1.
+        // upstream: options.c:2351-2352 - make_backups && !backup_dir => -1.
         let config = ServerConfig {
             flags: ParsedServerFlags {
                 backup: true,
@@ -1191,7 +1191,7 @@ mod tests {
 
     #[test]
     fn effective_omit_dir_times_not_implied_with_backup_dir() {
-        // upstream: options.c:2342 - the implication is gated on `!backup_dir`.
+        // upstream: options.c:2351 - the implication is gated on `!backup_dir`.
         let config = ServerConfig {
             flags: ParsedServerFlags {
                 backup: true,
@@ -1217,7 +1217,7 @@ mod tests {
 
     #[test]
     fn effective_backup_suffix_empty_when_backup_dir_set() {
-        // upstream: options.c:2296-2297 - backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
+        // upstream: options.c:2305-2306 - backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
         let config = ServerConfig {
             backup_dir: Some(".backups".to_owned()),
             ..Default::default()
@@ -1262,12 +1262,12 @@ mod tests {
         config
     }
 
-    // upstream: options.c:2410 - every peer's parse_arguments() sets `inplace`
+    // upstream: options.c:2419 - every peer's parse_arguments() sets `inplace`
     // for any append_mode. The server-side halves (the `--server` argv parser
     // and the daemon's client_args parser) build this config themselves, so the
     // promotion has to land here or their sender would compute
-    // `updating_basis_file` (sender.c:337) off a false `inplace` and their
-    // receiver would skip the closing ftruncate (receiver.c:496).
+    // `updating_basis_file` (sender.c:338) off a false `inplace` and their
+    // receiver would skip the closing ftruncate (receiver.c:512).
     #[test]
     fn append_implies_inplace() {
         let mut config = append_config(true, false);
@@ -1340,7 +1340,7 @@ mod tests {
         assert!(config.flags.append_verify);
     }
 
-    /// upstream: options.c:1795-1805 - `max_blength = protocol_version < 30 ?
+    /// upstream: options.c:1801-1811 - `max_blength = protocol_version < 30 ?
     /// OLD_MAX_BLOCK_SIZE : MAX_BLOCK_SIZE`, so the ceiling is protocol-dependent
     /// and a value legal at protocol 29 is rejected at 30+.
     #[test]

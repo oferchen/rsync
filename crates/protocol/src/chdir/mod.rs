@@ -7,8 +7,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `util1.c:1113-1172` - `change_dir(const char *dir, int set_path_only)`.
-//! - `util1.c:1168-1169` - the sole `DEBUG_GTE(CHDIR, 1)` site emitting
+//! - `util1.c:1210-1269` - `change_dir(const char *dir, int set_path_only)`.
+//! - `util1.c:1265-1266` - the sole `DEBUG_GTE(CHDIR, 1)` site emitting
 //!   `"[%s] change_dir(%s)\n"` after a successful `chdir()` syscall.
 //! - `options.c:293` - `DEBUG_WORD(CHDIR, W_CLI|W_SRV, ...)` flag table
 //!   entry, capping useful emissions at level 1.

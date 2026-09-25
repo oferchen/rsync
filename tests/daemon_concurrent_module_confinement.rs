@@ -1,7 +1,7 @@
 //! One module's `insecure links = yes` must not unconfine a CONCURRENT
 //! connection to a module that never opted out.
 //!
-//! Upstream's `symlink_optout_allowed()` (syscall.c:122-127) answers
+//! Upstream's `symlink_optout_allowed()` (syscall.c:139-144) answers
 //! `module_id >= 0 && lp_insecure_links(module_id)` for a daemon - a property
 //! of the SERVED MODULE. Upstream may keep that in a global because it forks a
 //! child per connection (clientserver.c:1040-1122 all run in the child), so the

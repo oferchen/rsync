@@ -730,7 +730,7 @@ fn execute_empty_file_to_empty_file_skipped_with_times() {
     assert_eq!(summary.regular_files_matched(), 1);
 }
 
-// upstream: main.c:736 get_local_name() - a single empty-file transfer to
+// upstream: main.c:749 get_local_name() - a single empty-file transfer to
 // `.../newdir/dest.txt` where `newdir/` is absent must fail with ENOENT and
 // create nothing without --mkpath, exactly like a non-empty file. Empty files
 // bypass the delta path but not the dest-parent gate.

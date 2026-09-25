@@ -253,7 +253,7 @@ pub(crate) fn plan_directory_entries<'a>(
             PathBuf::from(Path::new(&file_name))
         };
 
-        // upstream: flist.c:1614-1638 send_file1() - a name that cannot be
+        // upstream: flist.c:1839-1863 send_file1() - a name that cannot be
         // strictly transcoded under --iconv is dropped from the flist with a
         // diagnostic and io_error |= IOERR_GENERAL. Detecting it during planning
         // sets io_error before this directory's delete pass runs, so deletions
@@ -325,7 +325,7 @@ pub(crate) fn plan_directory_entries<'a>(
                                 }
                             }
                             Err(_) => {
-                                // upstream: flist.c:1277-1282 - dangling symlink
+                                // upstream: flist.c:1502-1507 - dangling symlink
                                 // whose target was to be dereferenced by
                                 // --copy-unsafe-links; log and skip.
                                 eprintln!("symlink has no referent: {}", entry.path.display());
@@ -366,7 +366,7 @@ pub(crate) fn plan_directory_entries<'a>(
             // --delete-during/-after (all drive delete_in_dir), so an in-source
             // regular file must stay in the keep-set. Restricting
             // --delete-before to directories deleted then re-transferred every
-            // in-source file. upstream: flist.c:1579-1603 + flist.c:738-754 -
+            // in-source file. upstream: flist.c:1804-1828 + flist.c:963-979 -
             // the receiver hits the filesystem with the iconv-converted name;
             // align the keep-list so deletion does not wipe freshly-written
             // entries when --iconv is configured.
@@ -667,7 +667,7 @@ fn plan_directory_entries_with_prefetch<'a>(
             PathBuf::from(Path::new(&file_name))
         };
 
-        // upstream: flist.c:1614-1638 send_file1() - a name that cannot be
+        // upstream: flist.c:1839-1863 send_file1() - a name that cannot be
         // strictly transcoded under --iconv is dropped from the flist with a
         // diagnostic and io_error |= IOERR_GENERAL. Detecting it during planning
         // sets io_error before this directory's delete pass runs, so deletions
@@ -755,7 +755,7 @@ fn plan_directory_entries_with_prefetch<'a>(
                                 metadata_override = None;
                             }
                         } else {
-                            // upstream: flist.c:1277-1282 - dangling symlink
+                            // upstream: flist.c:1502-1507 - dangling symlink
                             // whose target was to be dereferenced by
                             // --copy-unsafe-links; log and skip.
                             eprintln!("symlink has no referent: {}", entry.path.display());
@@ -806,7 +806,7 @@ fn plan_directory_entries_with_prefetch<'a>(
             // --delete-during/-after (all drive delete_in_dir), so an in-source
             // regular file must stay in the keep-set. Restricting
             // --delete-before to directories deleted then re-transferred every
-            // in-source file. upstream: flist.c:1579-1603 + flist.c:738-754 -
+            // in-source file. upstream: flist.c:1804-1828 + flist.c:963-979 -
             // the receiver hits the filesystem with the iconv-converted name;
             // align the keep-list so deletion does not wipe freshly-written
             // entries when --iconv is configured.

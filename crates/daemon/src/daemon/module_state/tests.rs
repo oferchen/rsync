@@ -66,7 +66,7 @@ fn module_definition_permits_respects_hosts_deny() {
 
 #[test]
 fn module_definition_allow_match_short_circuits_deny() {
-    // upstream: access.c:277-279 - "If we match an allow-list item, we
+    // upstream: access.c:288-290 - "If we match an allow-list item, we
     // always allow access." A peer matching any allow pattern is admitted
     // before the deny list is consulted, even when a deny pattern would
     // otherwise match.
@@ -84,10 +84,10 @@ fn module_definition_allow_match_short_circuits_deny() {
 
 #[test]
 fn module_definition_deny_applies_when_allow_does_not_match() {
-    // upstream: access.c:281-291 - when the allow list is non-empty but
+    // upstream: access.c:292-302 - when the allow list is non-empty but
     // the peer matches none of its entries, fall through to the deny list.
     // A deny-list match here refuses the connection; a non-match admits
-    // (access.c:290-291 "Allow all other access").
+    // (access.c:301-302 "Allow all other access").
     let def = ModuleDefinition {
         hosts_allow: vec![HostPattern::Ipv4 {
             network: Ipv4Addr::new(192, 168, 0, 0),
@@ -102,17 +102,17 @@ fn module_definition_deny_applies_when_allow_does_not_match() {
     let denied = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
     assert!(!def.permits(denied, PeerHost::new(None, true)));
 
-    // Peer outside both allow and deny: admitted because access.c:287
-    // returns 0 only on a deny-list match; otherwise access.c:291 allows.
+    // Peer outside both allow and deny: admitted because access.c:298
+    // returns 0 only on a deny-list match; otherwise access.c:302 allows.
     // The allow-list non-match short-circuits to refuse only when the
-    // deny list is empty (access.c:281-282).
+    // deny list is empty (access.c:292-293).
     let outside_both = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
     assert!(def.permits(outside_both, PeerHost::new(None, true)));
 }
 
 #[test]
 fn module_definition_allow_short_circuit_skips_dns_fail_closed_guard() {
-    // upstream: access.c:277-283 - an allow-list match returns 1 before
+    // upstream: access.c:288-294 - an allow-list match returns 1 before
     // the deny list is consulted. A hostname-pattern deny rule combined
     // with unresolvable reverse DNS must not refuse a peer that already
     // matched an IP-based allow rule, because upstream never reaches the

@@ -189,7 +189,7 @@ pub struct RealDeleteFs;
 /// `dfd >= 0 ? do_unlink_atfd(dfd, leaf, AT_REMOVEDIR) : do_rmdir_at(fbuf)`,
 /// and the file arm at `delete.c:77` falls through to
 /// `robust_unlink(fbuf)`, which is `do_unlink_at(fname)` on both arms of its
-/// `ETXTBSY` split (`util1.c:545`). Each `do_*_at()` runs the three-arm
+/// `ETXTBSY` split (`util1.c:548`). Each `do_*_at()` runs the three-arm
 /// `owner_walk_parent` contract internally, so the held dirfd is an
 /// optimisation and a race-window closure - not the confinement.
 /// [`fast_io::ConfinedFallback`] is oc's analogue of that wrapper family, and
@@ -209,7 +209,7 @@ pub struct RealDeleteFs;
 /// remove any.
 ///
 /// Upstream goes further than "the fallback is confined": it refuses to let a
-/// runtime errno decide the arm at all. `open_dir_secure` (`syscall.c:3481`)
+/// runtime errno decide the arm at all. `open_dir_secure` (`syscall.c:3662`)
 /// returns `-1` with **errno deliberately cleared** when hardened resolution is
 /// not in effect - its own comment says "return -1 with errno cleared so the
 /// caller uses the full-path wrappers" - while a genuine refusal from

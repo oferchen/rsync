@@ -4,8 +4,8 @@
     ignore = "flaky on Windows CI: in-process daemon intermittently fails to respond; the trust gate is platform-independent and covered on Linux/macOS"
 )]
 fn daemon_proxy_protocol_empty_hosts_warns_and_fail_closes() {
-    // upstream: clientserver.c:1747-1756 - `proxy protocol = true` with no
-    // `proxy protocol hosts` is fail-closed BY DESIGN (access.c:302-303
+    // upstream: clientserver.c:1768-1777 - `proxy protocol = true` with no
+    // `proxy protocol hosts` is fail-closed BY DESIGN (access.c:313-314
     // rejects on an empty list), and because that silently drops every
     // connection the daemon warns the operator at startup, verbatim. The
     // 3.5.0 `proxy-protocol-trusted-peer` testsuite cell greps both lines.
@@ -64,7 +64,7 @@ fn daemon_proxy_protocol_empty_hosts_warns_and_fail_closes() {
     }
 
     let log_contents = fs::read_to_string(&log_path).expect("read log file");
-    // upstream: clientserver.c:1752-1755 - the startup warning, verbatim
+    // upstream: clientserver.c:1773-1776 - the startup warning, verbatim
     // (note the double space before "Set").
     assert!(
         log_contents.contains(

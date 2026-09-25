@@ -14,7 +14,7 @@
 //! Two parallel arrays whose alignment was an unwritten invariant, plus three
 //! separate searches over them - `partition_point` in two directions and a
 //! `binary_search_by` for the gap - each spelled out at its own call site. The
-//! `+ 1` gap rule (`flist.c:2966`) was open-coded where sub-lists are pushed,
+//! `+ 1` gap rule (`flist.c:3209`) was open-coded where sub-lists are pushed,
 //! away from the lookups that depend on it.
 //!
 //! [`NdxSegment`] makes the three values one record, so they cannot drift, and
@@ -38,10 +38,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:2966` - `ndx_start = prev->ndx_start + prev->used + 1`
+//! - `flist.c:3209` - `ndx_start = prev->ndx_start + prev->used + 1`
 //! - `rsync.c:437` - `i = ndx - cur_flist->ndx_start`
-//! - `sender.c:267-272` - a gap NDX resolves to the owning directory
-//! - `flist.c:flist_free()` / `sender.c:248` - segment reclaim
+//! - `sender.c:270-275` - a gap NDX resolves to the owning directory
+//! - `flist.c:flist_free()` / `sender.c:251` - segment reclaim
 
 /// One sub-list's position in both index spaces.
 ///
@@ -57,7 +57,7 @@ pub(crate) struct NdxSegment {
     /// none to itemize (an initial list whose first entry is not `.`).
     ///
     /// upstream reaches the same entry through
-    /// `dir_flist->files[cur_flist->parent_ndx]` (`sender.c:269-272`). oc has no
+    /// `dir_flist->files[cur_flist->parent_ndx]` (`sender.c:272-275`). oc has no
     /// separate `dir_flist`, so the flat index is recorded directly and needs no
     /// second translation.
     parent_flat: i32,
@@ -83,8 +83,8 @@ pub(crate) struct NdxMap {
     segments: Vec<NdxSegment>,
     /// Index of the oldest segment whose entries have not been reclaimed.
     ///
-    /// upstream `first_flist` (`flist.c:101`), advanced by `flist_free()`
-    /// (`sender.c:248`). Distinct from index 0 because the *mapping* outlives
+    /// upstream `first_flist` (`flist.c:103`), advanced by `flist_free()`
+    /// (`sender.c:251`). Distinct from index 0 because the *mapping* outlives
     /// the *storage*.
     first_live: usize,
 }
@@ -119,7 +119,7 @@ impl NdxMap {
     ///
     /// The initial segment is built before the file list is classified, so its
     /// owning entry is only known afterwards. upstream keeps the equivalent in
-    /// `flist->parent_ndx` (`flist.c:2572`), which points at `dir_flist[0]`
+    /// `flist->parent_ndx` (`flist.c:2812`), which points at `dir_flist[0]`
     /// (`.`) unless the first sorted entry's basename is not `.`.
     pub(crate) fn set_initial_parent_flat(&mut self, parent_flat: i32) {
         self.segments[0].parent_flat = parent_flat;
@@ -129,7 +129,7 @@ impl NdxMap {
     ///
     /// The wire `ndx_start` is derived here rather than by the caller, because
     /// it is the one place the `+ 1` gap can be stated once:
-    /// `ndx_start = prev->ndx_start + prev->used + 1` (`flist.c:2966`). The
+    /// `ndx_start = prev->ndx_start + prev->used + 1` (`flist.c:3209`). The
     /// skipped slot belongs to the parent directory; computing it at a call
     /// site is how it drifts from the lookups that assume it.
     ///
@@ -174,7 +174,7 @@ impl NdxMap {
     /// directory's own NDX. Feeding that through the plain mapping lands on the
     /// trailing file of the previous segment, so the row would print a file type
     /// char and the wrong path. upstream recovers the directory via
-    /// `dir_flist->files[cur_flist->parent_ndx]` (`sender.c:269-272`); this maps
+    /// `dir_flist->files[cur_flist->parent_ndx]` (`sender.c:272-275`); this maps
     /// the gap to the sub-list's recorded owning directory.
     ///
     /// Each sub-list resolves to its own directory - the initial list's gap to
@@ -184,7 +184,7 @@ impl NdxMap {
     pub(crate) fn resolve_itemize(&self, wire_ndx: i32) -> usize {
         // A gap NDX `g` satisfies `g + 1 == ndx_start` for exactly one
         // sub-list, and no regular entry's NDX can equal a sub-list start minus
-        // one because that slot is reserved (flist.c:2966). Binary search is
+        // one because that slot is reserved (flist.c:3209). Binary search is
         // valid because `ndx_start` is strictly increasing.
         if let Ok(idx) = self
             .segments
@@ -219,7 +219,7 @@ impl NdxMap {
     /// Returns `None` unless a *later* segment exists: the segment the receiver
     /// is currently working through must stay live, which is why upstream frees
     /// `first_flist` only after `cur_flist` has moved past it
-    /// (`sender.c:248`).
+    /// (`sender.c:251`).
     pub(crate) fn reclaimable_range(&self) -> Option<(usize, usize)> {
         let first = self.first_live;
         let next = self.segments.get(first + 1)?;
@@ -273,7 +273,7 @@ mod tests {
     fn ndx_start_reserves_upstream_s_one_slot_parent_gap() {
         let map = three_segments();
         // Initial list occupies wire 0..3; the next sub-list starts at 4, not 3.
-        // flist.c:2966 - the skipped slot is the parent directory's.
+        // flist.c:3209 - the skipped slot is the parent directory's.
         assert_eq!(map.first_ndx_start(), 0);
         assert_eq!(map.segments[1].ndx_start(), 4);
         // Second sub-list: prev started at flat 3, this at flat 5, so prev_used

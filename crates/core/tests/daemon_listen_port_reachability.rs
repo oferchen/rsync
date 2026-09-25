@@ -6,7 +6,7 @@
 //! daemon fixture then connects to `rsync://127.0.0.1:<port>/`.
 //!
 //! On its default bind the daemon opens one socket per address family and,
-//! mirroring upstream `socket.c:463-465`, treats a per-family `bind` failure as
+//! mirroring upstream `socket.c:471-473`, treats a per-family `bind` failure as
 //! a warning and serves on whichever families succeeded. Under parallel test
 //! load a concurrently-allocated candidate can take the IPv4 half of the port
 //! first, leaving the daemon alive and listening on IPv6 only - on the right

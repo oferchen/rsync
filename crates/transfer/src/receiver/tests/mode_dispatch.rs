@@ -21,8 +21,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:1839` - `if (write_batch < 0) dry_run = 1`, `do_xfers` stays 1.
-//! - `sender.c:766-767` - `write_ndx_and_attrs(f_out)` then
+//! - `main.c:1866` - `if (write_batch < 0) dry_run = 1`, `do_xfers` stays 1.
+//! - `sender.c:768-769` - `write_ndx_and_attrs(f_out)` then
 //!   `write_sum_head(f_xfer)`: the sender reads a sum head per file whenever
 //!   `do_xfers` is set, so `--only-write-batch` must send one and `--dry-run`
 //!   must not.
@@ -54,13 +54,13 @@ fn receiver(flags: ParsedServerFlags) -> ReceiverContext {
     ReceiverContext::new_for_test(&handshake, config)
 }
 
-/// `--only-write-batch` implies `--dry-run` upstream (`main.c:1839` sets
+/// `--only-write-batch` implies `--dry-run` upstream (`main.c:1866` sets
 /// `dry_run = 1` while leaving `do_xfers = 1`), so the two flags are always
 /// seen together and only the check ORDER tells them apart.
 ///
 /// WHY this matters rather than merely "the enum has the right variant": the
 /// dry-run body writes NDX + iflags and stops. Under `--only-write-batch` the
-/// peer's `send_files()` goes on to read a sum head (`sender.c:766-767`), so
+/// peer's `send_files()` goes on to read a sum head (`sender.c:768-769`), so
 /// taking the dry-run body deadlocks the pair - the sender blocks on a read
 /// that never arrives while the receiver blocks on the echo. Reordering these
 /// two checks is therefore a hang, not a cosmetic difference.
@@ -74,8 +74,8 @@ fn only_write_batch_outranks_the_dry_run_it_implies() {
     assert_eq!(
         ctx.select_mode(),
         ReceiverMode::NonTransfer(NonTransferMode::OnlyWriteBatch),
-        "only-write-batch sets dry_run too (main.c:1839); the dry-run body \
-         omits the sum head sender.c:766-767 requires and hangs both ends"
+        "only-write-batch sets dry_run too (main.c:1866); the dry-run body \
+         omits the sum head sender.c:768-769 requires and hangs both ends"
     );
 }
 
@@ -123,7 +123,7 @@ fn no_mode_flag_selects_the_full_transfer() {
 /// `NDX + iflags` response per request.
 ///
 /// `client_mode = false` keeps `run_only_write_batch_loop` off the
-/// `discard_receive_data()` path (`receiver.c:813` gates it on `!am_server`),
+/// `discard_receive_data()` path (`receiver.c:829` gates it on `!am_server`),
 /// so the scripted response is exactly the echo and nothing more.
 fn echo_response(ndx: i32) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -209,8 +209,8 @@ fn skip_request_header(bytes: &[u8]) -> &[u8] {
 ///
 /// WHY assert the wire and not just the enum: the enum is only a label. What
 /// the sender actually blocks on is `write_sum_head(f_xfer)`
-/// (`sender.c:766-767`), which it reads whenever `do_xfers` is set - and
-/// `--only-write-batch` leaves `do_xfers = 1` (`main.c:1839`). A receiver that
+/// (`sender.c:768-769`), which it reads whenever `do_xfers` is set - and
+/// `--only-write-batch` leaves `do_xfers = 1` (`main.c:1866`). A receiver that
 /// took the dry-run body under `--only-write-batch` produced a byte-correct
 /// prefix and then hung, which no assertion over flags or exit codes catches.
 ///
@@ -229,11 +229,11 @@ fn only_write_batch_sends_a_sum_head_and_dry_run_does_not() {
     let after_batch_header = skip_request_header(&batch);
     let mut batch_tail = Cursor::new(after_batch_header);
     let sum_head = super::super::wire::SumHead::read(&mut batch_tail)
-        .expect("only-write-batch sends a sum head, sender.c:443");
+        .expect("only-write-batch sends a sum head, sender.c:444");
     assert_eq!(
         sum_head.count, 1,
         "the sum head must describe the basis block the generator computed \
-         (do_xfers stays 1 under --only-write-batch, main.c:1839)"
+         (do_xfers stays 1 under --only-write-batch, main.c:1866)"
     );
     assert_eq!(
         sum_head.s2length as u8, 2,

@@ -33,8 +33,8 @@ pub const NDX_FLIST_OFFSET: i32 = -101;
 ///
 /// # Upstream Reference
 ///
-/// - `io.c` - `write_int()` / `read_int()` used by `main.c:883` for protocol < 29
-/// - `io.c:2243-2287` - `write_ndx()` (protocol >= 30 uses varint instead)
+/// - `io.c` - `write_int()` / `read_int()` used by `main.c:896` for protocol < 29
+/// - `io.c:2281-2325` - `write_ndx()` (protocol >= 30 uses varint instead)
 pub const NDX_DONE_LEGACY_BYTES: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
 
 /// NDX_DONE as modern varint wire byte for protocol >= 30.
@@ -44,5 +44,5 @@ pub const NDX_DONE_LEGACY_BYTES: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
 ///
 /// # Upstream Reference
 ///
-/// - `io.c:2259-2262` - `write_ndx()` encodes NDX_DONE as `0x00`
+/// - `io.c:2297-2300` - `write_ndx()` encodes NDX_DONE as `0x00`
 pub const NDX_DONE_MODERN_BYTE: u8 = 0x00;

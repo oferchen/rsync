@@ -41,7 +41,7 @@ impl ClientConfigBuilder {
     /// Calling this method marks the choice as explicit, so the invocation
     /// builder will forward it to the remote peer via `--compress-choice`,
     /// `--new-compress`, or `--old-compress` - matching upstream
-    /// `options.c:2818-2823`.
+    /// `options.c:2828-2833`.
     #[must_use]
     #[doc(alias = "--compress-choice")]
     pub const fn compression_algorithm(mut self, value: CompressionAlgorithm) -> Self {
@@ -86,7 +86,7 @@ impl ClientConfigBuilder {
     /// Records the raw `--skip-compress` spec to forward to the remote sender.
     ///
     /// `Some` marks the suffix list as explicitly set so the builder emits
-    /// `--skip-compress=<spec>` verbatim, matching upstream options.c:2858-2860.
+    /// `--skip-compress=<spec>` verbatim, matching upstream options.c:2868-2870.
     #[must_use]
     #[doc(alias = "--skip-compress")]
     pub fn skip_compress_spec(mut self, spec: Option<String>) -> Self {
@@ -238,7 +238,7 @@ impl ClientConfigBuilder {
     /// # Upstream Reference
     ///
     /// - `compat.c:720 set_allow_inc_recurse()` - capability gate.
-    /// - `options.c:3003-3050 maybe_add_e_option()` - capability string.
+    /// - `options.c:3013-3060 maybe_add_e_option()` - capability string.
     #[must_use]
     #[doc(alias = "--inc-recursive")]
     #[doc(alias = "--no-inc-recursive")]

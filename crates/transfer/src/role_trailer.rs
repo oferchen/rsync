@@ -42,6 +42,16 @@ macro_rules! error_location {
 
 pub(crate) use error_location;
 
+/// Upstream's `who_am_i()` value in the generator process.
+///
+/// oc runs upstream's generator and receiver halves in one receiver context,
+/// so the tag follows the code path rather than the process: every creation,
+/// deletion, and `set_file_attrs()` step `recv_generator()` owns is tagged
+/// with this, whichever oc thread executes it.
+///
+/// upstream: rsync.c:987-995 `who_am_i()`
+pub(crate) const GENERATOR: &str = "generator";
+
 /// Returns the role trailer suffix for the sender role.
 pub(crate) fn sender() -> String {
     format!(" [sender={VERSION}]")
@@ -57,7 +67,7 @@ pub(crate) fn receiver() -> String {
 /// Upstream rsync uses `[generator=VERSION]` for messages emitted by the
 /// generator process - see `log.c:who_am_i()`.
 pub(crate) fn generator() -> String {
-    format!(" [generator={VERSION}]")
+    format!(" [{GENERATOR}={VERSION}]")
 }
 
 /// Returns the role trailer suffix for the daemon role.

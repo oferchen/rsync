@@ -47,7 +47,7 @@ pub(crate) fn parse_bracketed_host(
 
 // The daemon host and username are taken from the URL VERBATIM.
 //
-// upstream: options.c:3295 `check_for_hostspec()` parses `rsync://HOST:PORT/PATH`
+// upstream: options.c:3305 `check_for_hostspec()` parses `rsync://HOST:PORT/PATH`
 // and never decodes anything - rsync 3.5.0 contains no percent-decoder at all,
 // so `%` is an ordinary hostname byte. That is load-bearing rather than an
 // omission: `socket.c:204-215 shell_unsafe_connect_host()` refuses a host

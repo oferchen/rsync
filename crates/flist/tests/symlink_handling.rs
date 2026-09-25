@@ -5,8 +5,8 @@
 //! `--copy-links` (follow symlinks) and default (preserve symlinks) modes.
 //!
 //! Upstream rsync handles symlinks via:
-//! - `readlink_stat()` in flist.c line 205-232
-//! - `link_stat()` in flist.c line 234-250
+//! - `readlink_stat()` in flist.c line 207-234
+//! - `link_stat()` in flist.c line 455-473
 //! - Cycle detection to prevent infinite loops
 //!
 //! Reference: rsync 3.4.1 flist.c

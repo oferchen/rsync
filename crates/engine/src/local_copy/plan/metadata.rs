@@ -194,7 +194,7 @@ impl LocalCopyMetadata {
     /// reporting, so `--list-only` and itemized output show `-rw-...` with the
     /// device's readable byte length instead of `brw-...`/`crw-...` and `0`.
     ///
-    /// Mirrors upstream `flist.c:1451-1460 make_file()`, which rewrites the
+    /// Mirrors upstream `flist.c:1676-1685 make_file()`, which rewrites the
     /// device stat to `S_IFREG | (mode & ACCESSPERMS)` with `get_device_size()`
     /// before the entry is ever itemized. A no-op for non-device kinds.
     #[must_use]
@@ -442,7 +442,7 @@ mod tests {
         assert_eq!(snapshot.mode(), Some(0o020644));
     }
 
-    // upstream: flist.c:1419-1428 - `--copy-devices` reports a device as a
+    // upstream: flist.c:1644-1653 - `--copy-devices` reports a device as a
     // regular file. The virtualisation must flip the kind to `File`, adopt the
     // supplied device size, and rewrite the mode's type bits to `S_IFREG` while
     // preserving the permission bits, so `--list-only` renders `-rw-...` with

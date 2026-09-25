@@ -95,7 +95,7 @@ pub(crate) struct ModuleDefinition {
     /// upstream: `daemon-parm.h:314` - `{"insecure links", P_BOOL, P_LOCAL,
     /// &Vars.l.insecure_links, NULL, 0}`, defaulting false (`daemon-parm.h:208`).
     /// Read only through `lp_insecure_links(module_id)` inside
-    /// `symlink_optout_allowed()` (`syscall.c:125`); a peer-supplied
+    /// `symlink_optout_allowed()` (`syscall.c:142`); a peer-supplied
     /// `--insecure-links` can never reach it, which is why the daemon and local
     /// opt-outs are distinct types in `fast_io::confinement`.
     pub(crate) insecure_links: bool,
@@ -253,7 +253,7 @@ impl ModuleDefinition {
     /// admit them regardless of DNS state, matching upstream's "allow
     /// short-circuits deny" semantics.
     ///
-    /// upstream: access.c:264 `allow_access()` - "If we match an allow-list
+    /// upstream: access.c:275 `allow_access()` - "If we match an allow-list
     /// item, we always allow access." Allow-list match returns 1
     /// unconditionally; the deny list is consulted only when the allow
     /// list either is absent or did not match.
@@ -261,7 +261,7 @@ impl ModuleDefinition {
     /// before chroot ensures `client_name()` returns a real hostname when
     /// ACLs are evaluated.
     pub(crate) fn permits(&self, addr: std::net::IpAddr, host: super::PeerHost<'_>) -> bool {
-        // upstream: access.c:277-283 - allow-list short-circuit. A peer
+        // upstream: access.c:288-294 - allow-list short-circuit. A peer
         // matching any allow pattern is admitted before the deny list is
         // consulted; a peer matching nothing in a non-empty allow list is
         // refused only when there is no deny list to fall through to.
@@ -327,16 +327,16 @@ impl ModuleDefinition {
     /// reverse-DNS name-pattern match with forward-DNS resolution of the
     /// rule's hostname token.
     ///
-    /// upstream: access.c:260 `match_hostname(host_ptr, addr, tok, deny) ||
+    /// upstream: access.c:271 `match_hostname(host_ptr, addr, tok, deny) ||
     /// match_address(addr, tok)` - a peer matches a `hosts allow`/`hosts deny`
     /// token when its reverse-DNS name matches the token pattern OR the token
     /// forward-resolves to the peer's address. Forward resolution is gated on
-    /// the module's `forward lookup` parameter (access.c:49 `allow_forward_dns`).
+    /// the module's `forward lookup` parameter (access.c:60 `allow_forward_dns`).
     ///
     /// `deny` names which list is being scanned. Upstream threads it as a
     /// per-call flag through `access_match` - 0 for the allow list
-    /// (access.c:284), 1 for the deny list (access.c:293) - and the ONE place
-    /// it is read is the unresolvable-token branch (access.c:57-63). It is a
+    /// (access.c:295), 1 for the deny list (access.c:304) - and the ONE place
+    /// it is read is the unresolvable-token branch (access.c:68-74). It is a
     /// parameter rather than module state for the same reason it is upstream:
     /// one rule, read differently per call.
     fn host_matches(

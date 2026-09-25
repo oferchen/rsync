@@ -636,7 +636,7 @@ fn decode_name_exceeds_maxpathlen() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-    // upstream: flist.c:820-822 - same wording as the file-list reader, because
+    // upstream: flist.c:1045-1047 - same wording as the file-list reader, because
     // both decoders share one owner for it.
     assert_eq!(
         err.to_string(),

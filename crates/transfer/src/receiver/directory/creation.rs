@@ -17,6 +17,14 @@ use protocol::flist::FileEntry;
 use protocol::xattr::XattrList;
 
 use super::FailedDirectories;
+
+/// Why the parallel directory-metadata phase could not finish one directory.
+enum DirApplyFailure {
+    /// A `set_file_attrs()` step failed; reported as upstream's `FERROR_XFER`.
+    Attrs(metadata::MetadataError),
+    /// An ACL or xattr apply failed; collected with the other soft errors.
+    Other(PathBuf, String),
+}
 use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
 
 /// Outcome of classifying a directory destination before creation.
@@ -159,7 +167,7 @@ impl ReceiverContext {
                     // del_opts | DEL_FOR_DIR) removes the conflicting symlink
                     // before mkdir. That reaches delete.c:71-78 del_unlink(),
                     // which takes do_unlink_atfd() against a held dirfd or else
-                    // robust_unlink() -> util1.c:545 -> do_unlink_at() - the
+                    // robust_unlink() -> util1.c:548 -> do_unlink_at() - the
                     // CONFINED wrapper. Upstream issues no plain unlink() on
                     // this path, so neither do we.
                     if !self.config.flags.skip_dest_writes() {
@@ -217,7 +225,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:693` - `dry_run` skips all filesystem modifications
+    /// - `receiver.c:709` - `dry_run` skips all filesystem modifications
     /// - `generator.c:1432-1500` - directory creation and metadata in `recv_generator()`
     /// - `generator.c:1480-1483` - `itemize()` is invoked once per directory entry,
     ///   so a freshly mkdir'd dir emits `cd+++++++++ <name>/` and an existing one
@@ -231,7 +239,7 @@ impl ReceiverContext {
         writer: &mut W,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> io::Result<Vec<(PathBuf, String)>> {
-        // upstream: receiver.c:693 - dry_run skips all filesystem modifications;
+        // upstream: receiver.c:709 - dry_run skips all filesystem modifications;
         // list-only suppresses the receiver entirely (generator.c:1249).
         if self.config.flags.skip_dest_writes() {
             return Ok(Vec::new());
@@ -477,7 +485,7 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: receiver.c:736-738 - every newly created directory
+        // upstream: receiver.c:752-754 - every newly created directory
         // (ITEM_IS_NEW) bumps stats.created_dirs, independent of itemize
         // visibility, so the "Number of created files" dir sub-count is correct
         // even without -i. Runs before (and separate from) the itemize gate
@@ -501,7 +509,7 @@ impl ReceiverContext {
         // records instead of MSG_INFO frames).
         // A daemon receiver with `transfer logging = yes` must itemize every
         // directory for its FLOG write even when the client did not request `-i`
-        // (upstream receiver.c:807 `itemizing = logfile_format_has_i`). The
+        // (upstream receiver.c:823 `itemizing = logfile_format_has_i`). The
         // client-visible emit and the wire-forward below stay gated on the
         // original `should_emit_itemize()`; only `emit_or_record_itemize`'s
         // daemon-log hook fires on the widened arm.
@@ -556,10 +564,10 @@ impl ReceiverContext {
         // upstream: rsync.c:583 - `omit_dir_times && S_ISDIR(...)` adds
         // ATTRS_SKIP_MTIME, so a directory's mtime is never applied under -O.
         // `effective_omit_dir_times` also folds in the implicit
-        // `--backup`-without-`--backup-dir` rule (options.c:2342-2343), so an
+        // `--backup`-without-`--backup-dir` rule (options.c:2351-2352), so an
         // empty backed-up directory keeps its wall-clock mtime rather than the
         // source mtime. On a pull the local client IS the receiver and -O rides
-        // no wire bit (options.c:2646-2647 gates 'O' on am_sender), so clear
+        // no wire bit (options.c:2655-2656 gates 'O' on am_sender), so clear
         // preserve_times for the directory apply here, mirroring the local
         // executor's apply_final_directory_metadata.
         let metadata_opts_clone = if self.config.effective_omit_dir_times() {
@@ -647,7 +655,7 @@ impl ReceiverContext {
                     None,
                     pre_transfer,
                 ) {
-                    return Some((dir_path, e.to_string()));
+                    return Some(DirApplyFailure::Attrs(e));
                 }
                 // Apply cached ACLs after metadata
                 if let Err(e) = apply_acls_from_receiver_cache(
@@ -657,7 +665,7 @@ impl ReceiverContext {
                     acl_id_map_clone.as_ref(),
                     true, // directories always follow symlinks
                 ) {
-                    return Some((dir_path, e.to_string()));
+                    return Some(DirApplyFailure::Other(dir_path, e.to_string()));
                 }
                 // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
                 if let Some(ref xattr_list) = xattr_list {
@@ -675,14 +683,24 @@ impl ReceiverContext {
                         filter_ref,
                         None,
                     ) {
-                        return Some((dir_path, e.to_string()));
+                        return Some(DirApplyFailure::Other(dir_path, e.to_string()));
                     }
                 }
                 None
             },
         );
 
-        let mut all_errors: Vec<(PathBuf, String)> = results.into_iter().flatten().collect();
+        let mut all_errors: Vec<(PathBuf, String)> = Vec::new();
+        for failure in results.into_iter().flatten() {
+            match failure {
+                // upstream: generator.c:1895 set_file_attrs() on the directory;
+                // its chown/utimes/chmod arms are rsyserr(FERROR_XFER).
+                DirApplyFailure::Attrs(error) => {
+                    let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
+                }
+                DirApplyFailure::Other(path, message) => all_errors.push((path, message)),
+            }
+        }
         all_errors.extend(dir_creation_errors);
         Ok(all_errors)
     }
@@ -718,9 +736,9 @@ impl ReceiverContext {
     ///   MKP_SKIP_SLASH)` for a parent that `do_stat_at()` reports missing
     /// - `generator.c:1876-1878` - retry `gen_entry_mkdir()` after `make_path()`
     ///   when `relative_paths` and the initial mkdir returns `ENOENT`
-    /// - `util1.c:238` / `util1.c:277` - every component `make_path()` creates
+    /// - `util1.c:241` / `util1.c:280` - every component `make_path()` creates
     ///   goes through `do_mkdir_at()`, i.e. the confined mkdir, never a bare
-    ///   `mkdir(2)`. `syscall.c:2066 do_mkdir_at()` opens the parent with
+    ///   `mkdir(2)`. `syscall.c:2205 do_mkdir_at()` opens the parent with
     ///   `owner_walk_parent()` and issues `mkdirat()` against that dirfd, so a
     ///   symlinked component cannot redirect the create out of the module.
     pub(in crate::receiver) fn ensure_relative_parents(
@@ -794,7 +812,7 @@ impl ReceiverContext {
 
             // Create from shallowest to deepest. Each component goes through
             // the confined mkdir, mirroring `make_path()`'s use of
-            // `do_mkdir_at()` (util1.c:238/277) rather than a bare `mkdir(2)`.
+            // `do_mkdir_at()` (util1.c:241/280) rather than a bare `mkdir(2)`.
             for (dir_path, rel_path) in ancestors_to_create.into_iter().rev() {
                 #[cfg(unix)]
                 let create_result = fast_io::mkdirat_via_sandbox_or_fallback(
@@ -846,7 +864,7 @@ impl ReceiverContext {
     /// - `generator.c:1432` - `recv_generator()` creates directories
     /// - `generator.c:1484-1487` - retry `mkdir` after `make_path()`
     /// - `generator.c:1480-1483` - `itemize()` before metadata application
-    /// - `syscall.c:1010-1016` - `do_mkdir()` is a no-op under `dry_run`, so
+    /// - `syscall.c:1149-1155` - `do_mkdir()` is a no-op under `dry_run`, so
     ///   `itemize()` and the receiver's `created_dirs` tally still run
     pub(in crate::receiver) fn create_directory_incremental(
         &self,
@@ -957,7 +975,7 @@ impl ReceiverContext {
         } else {
             self.existing_dir_iflags(entry, &dir_path)
         };
-        // upstream: syscall.c:1010-1016 - `do_mkdir()` (reached from
+        // upstream: syscall.c:1149-1155 - `do_mkdir()` (reached from
         // `do_mkdir_at()`) returns 0 without touching the filesystem when
         // `dry_run` is set, and `rsync.c:498-499 set_file_attrs()` returns early
         // the same way, while `generator.c:1480-1483 itemize()` still runs above.
@@ -986,7 +1004,7 @@ impl ReceiverContext {
             let create_result = fs::create_dir_all(&dir_path);
             if let Err(e) = create_result {
                 if e.kind() == io::ErrorKind::PermissionDenied {
-                    // upstream: receiver.c:693-700 - permission denied on
+                    // upstream: receiver.c:709-716 - permission denied on
                     // mkdir is non-fatal: increment io_error and continue
                     // with remaining entries. Matches the parallel
                     // `create_directories` path above.
@@ -1195,7 +1213,7 @@ impl ReceiverContext {
         // upstream: generator.c:2744 - need_retouch_dir_times =
         // preserve_mtimes && !omit_dir_times. `effective_omit_dir_times` folds
         // in the implicit `--backup`-without-`--backup-dir` rule
-        // (options.c:2342-2343, generator.c:2101), so the same predicate governs
+        // (options.c:2351-2352, generator.c:2101), so the same predicate governs
         // both this retouch pass and the creation-time apply above.
         let retouch_times = self.config.flags.times && !self.config.effective_omit_dir_times();
 
@@ -1689,7 +1707,7 @@ mod touch_up_dirs_tests {
     ///
     /// upstream: generator.c:2744 - `need_retouch_dir_times = preserve_mtimes
     /// && !omit_dir_times`. On a remote pull the local client IS the receiver
-    /// and `-O` never rides the wire (options.c:2646-2647 gates the compact
+    /// and `-O` never rides the wire (options.c:2655-2656 gates the compact
     /// 'O' on am_sender), so the receiver config must carry `omit_dir_times`
     /// and honor it here. Regression guard for the remote pull that applied the
     /// source directory mtime despite `-O`.

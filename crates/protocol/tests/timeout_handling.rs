@@ -763,7 +763,7 @@ fn end_to_end_io_timeout_writer_to_reader_pipeline() {
     // Verify timeout was received
     assert_eq!(*received_timeout.lock().unwrap(), Some(300));
 
-    // The empty-DATA keepalive (upstream io.c:1473) is not surfaced as MSG_NOOP.
+    // The empty-DATA keepalive (upstream io.c:1499) is not surfaced as MSG_NOOP.
     assert_eq!(*keepalive_count.lock().unwrap(), 0);
 }
 

@@ -1,7 +1,7 @@
 //! A failed `--remove-source-files` unlink must exit 23 in EVERY topology.
 //!
 //! ```c
-//! /* sender.c:455-462 - successful_send() */
+//! /* sender.c:456-463 - successful_send() */
 //!   failed:
 //!         rsyserr(FERROR_XFER, errno, "sender failed to remove %s", fname);
 //! /* log.c:337-338 - rwrite() */
@@ -13,7 +13,7 @@
 //! ```
 //!
 //! Upstream reacts to a `MSG_SUCCESS` frame the instant `read_a_msg()`
-//! demultiplexes it (`io.c:1793-1807` calls `successful_send(val)` inline), so
+//! demultiplexes it (`io.c:1831-1845` calls `successful_send(val)` inline), so
 //! the `FERROR_XFER` for a refused unlink is written wherever the sender
 //! happens to be doing I/O - always while the peer is still reading. oc's
 //! sender accumulates the confirmations and drains them in a batch instead, so
@@ -271,7 +271,7 @@ fn faults(topology: &str, attempt: &Attempt) -> Vec<String> {
     }
     if !attempt.stderr.contains("sender failed to remove") {
         faults.push(format!(
-            "{topology}: upstream's sender.c:455-459 text never reached the \
+            "{topology}: upstream's sender.c:456-460 text never reached the \
              observing process; on a pull that means it did not cross the wire \
              as MSG_ERROR_XFER while the client was still reading"
         ));
@@ -279,7 +279,7 @@ fn faults(topology: &str, attempt: &Attempt) -> Vec<String> {
     if attempt.exit_code != Some(23) {
         faults.push(format!(
             "{topology}: exit {:?}, want 23 - a refused source unlink is \
-             RERR_PARTIAL (sender.c:455-459 -> log.c:337-338 -> cleanup.c:217-218)",
+             RERR_PARTIAL (sender.c:456-460 -> log.c:337-338 -> cleanup.c:217-218)",
             attempt.exit_code
         ));
     }

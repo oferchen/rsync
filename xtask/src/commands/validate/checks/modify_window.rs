@@ -17,7 +17,7 @@
 //! seeds both destinations identically and runs the client directly without
 //! resetting the seeded tree.
 //!
-//! upstream: util1.c:1477 `same_time()` (returns equal when `|f1-f2| <=
+//! upstream: util1.c:1572 `same_time()` (returns equal when `|f1-f2| <=
 //! modify_window`); generator.c:1722 applies it in the unchanged-file path.
 
 use std::path::Path;

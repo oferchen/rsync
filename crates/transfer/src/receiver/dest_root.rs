@@ -10,7 +10,7 @@ use std::path::Path;
 /// Reports whether a destination operand was written with a trailing path
 /// separator.
 ///
-/// Upstream rsync inspects the raw `dest_path` argument (`main.c:733-734`)
+/// Upstream rsync inspects the raw `dest_path` argument (`main.c:746-747`)
 /// after a final `strrchr('/')` to decide whether the operand ends with a
 /// directory marker. The detection is byte-level on Unix and matches either
 /// `'/'` or `'\\'` on Windows so paths produced by either separator convention
@@ -34,7 +34,7 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
 
 /// Creates the destination root directory when the transfer needs one.
 ///
-/// Mirrors upstream `main.c:778-792` (`get_local_name()`): when the receiver
+/// Mirrors upstream `main.c:791-805` (`get_local_name()`): when the receiver
 /// is about to write more than one file, or the destination operand carries a
 /// trailing slash, the root must exist as a directory before per-entry mkdir
 /// dispatch. The local-mode receiver gets this for free via the file-list-
@@ -50,7 +50,7 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
 ///
 /// The existence check uses `metadata()` (stat) rather than
 /// `symlink_metadata()` (lstat) so a symlink at `dest_root` pointing at a
-/// real directory is accepted, matching upstream `main.c:745-754`
+/// real directory is accepted, matching upstream `main.c:758-767`
 /// `get_local_name()` which calls `do_stat()` (follows symlinks) and
 /// proceeds when `S_ISDIR(st.st_mode)` is true. A symlinked dest root is
 /// the upstream `symlink-dirlink-basis` interop scenario (issue #715).
@@ -64,9 +64,9 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
 /// # `--mkpath` gating
 ///
 /// Upstream creates the destination root with a *single* `do_mkdir(dest_path)`
-/// (`main.c:797-801`), which fails with `ENOENT` when an ancestor directory is
+/// (`main.c:810-814`), which fails with `ENOENT` when an ancestor directory is
 /// missing. The whole missing chain is created only under `--mkpath`, via
-/// `make_path(dest_path)` (`main.c:736`). This helper mirrors that: with
+/// `make_path(dest_path)` (`main.c:749`). This helper mirrors that: with
 /// `mkpath == false` it uses [`std::fs::create_dir`] (single level), with
 /// `mkpath == true` it uses [`std::fs::create_dir_all`] (full chain). Passing
 /// `create_dir_all` unconditionally would auto-create deep destination paths
@@ -89,10 +89,10 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
 ///
 /// ⚠ Containment alone is *not* sufficient on a `path = /` module: upstream's
 /// `abspath_outside_confinement` short-circuits when the confinement root is
-/// `/` (`rootlen <= 1`, `syscall.c:206-207`), so nothing about `module.path`
+/// `/` (`rootlen <= 1`, `syscall.c:255-257`), so nothing about `module.path`
 /// constrains a peer-supplied `..` traversal there. What upstream relies on in
 /// that configuration is the module's NAME-based `exclude`, applied to the
-/// destination argument in `get_local_name()` (`main.c:718-737`). oc mirrors
+/// destination argument in `get_local_name()` (`main.c:731-750`). oc mirrors
 /// that in `ReceiverContext::reject_daemon_excluded_destination`, which runs
 /// before this helper.
 ///
@@ -100,14 +100,14 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:745-754` - `get_local_name()` `S_ISDIR(st.st_mode)` branch:
+/// - `main.c:758-767` - `get_local_name()` `S_ISDIR(st.st_mode)` branch:
 ///   `do_stat()` follows symlinks, `change_dir()` resolves the link and
 ///   enters the target.
-/// - `main.c:736` - `get_local_name()` `--mkpath` branch:
+/// - `main.c:749` - `get_local_name()` `--mkpath` branch:
 ///   `make_path(dest_path, ...)` creates the whole missing chain.
-/// - `main.c:778-792` - `get_local_name()` pre-flight `do_mkdir(dest_path, ACCESSPERMS)`
+/// - `main.c:791-805` - `get_local_name()` pre-flight `do_mkdir(dest_path, ACCESSPERMS)`
 ///   (single level, no ancestor creation) when `--mkpath` was not requested.
-/// - `main.c:803-805` - sets `FLAG_DIR_CREATED` on the first flist entry when
+/// - `main.c:816-818` - sets `FLAG_DIR_CREATED` on the first flist entry when
 ///   its basename is `.` (deferred follow-up; oc-rsync's delete path does
 ///   not currently consume that flag).
 pub fn ensure_dest_root_exists(
@@ -120,13 +120,13 @@ pub fn ensure_dest_root_exists(
     if dry_run {
         return Ok(false);
     }
-    // upstream: main.c:797 - the non-mkpath dir branch only fires for a
+    // upstream: main.c:810 - the non-mkpath dir branch only fires for a
     // multi-file transfer or a trailing-slash operand. A single-file
     // no-slash operand names the destination file itself (the operand
     // basename was already split off by `apply_single_file_rename`), so
     // without `--mkpath` there is no root to pre-create here.
     //
-    // upstream: main.c:736 - under `--mkpath`, `make_path(dest_path, ...)`
+    // upstream: main.c:749 - under `--mkpath`, `make_path(dest_path, ...)`
     // also creates the parent chain of a single-file operand (the
     // `MKP_DROP_NAME` case), so the early no-op must not swallow the mkpath
     // path. `dest_root` here is already the parent directory for the
@@ -135,7 +135,7 @@ pub fn ensure_dest_root_exists(
         return Ok(false);
     }
     // stat (follows symlinks) so a symlinked dest pointing at a real
-    // directory is accepted, matching upstream main.c:745-754 do_stat() +
+    // directory is accepted, matching upstream main.c:758-767 do_stat() +
     // S_ISDIR + change_dir() flow. A non-directory target (regular file,
     // broken symlink, etc.) is still rejected at the call site below.
     match dest_root.metadata() {
@@ -165,8 +165,8 @@ pub fn ensure_dest_root_exists(
                     ),
                 ));
             }
-            // upstream: main.c:736 make_path (full chain) only under --mkpath;
-            // otherwise main.c:797 do_mkdir creates a single level and fails
+            // upstream: main.c:749 make_path (full chain) only under --mkpath;
+            // otherwise main.c:810 do_mkdir creates a single level and fails
             // with ENOENT when an ancestor is missing.
             if mkpath {
                 std::fs::create_dir_all(dest_root).map(|()| true)

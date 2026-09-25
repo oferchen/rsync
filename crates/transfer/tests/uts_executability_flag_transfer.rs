@@ -232,7 +232,7 @@ fn executability_applies_on_up_to_date_files_over_rsh_push() {
 /// Regression: `-rtE` over a remote shell (pull) must chmod up-to-date files.
 ///
 /// Same attribute-only scenario as the push test, but the local client is the
-/// receiver. Note `-E` never rides the wire on a pull (options.c:2858 packs
+/// receiver. Note `-E` never rides the wire on a pull (options.c:2868 packs
 /// 'E' only when `am_sender`); the local receiver must honour its own flag.
 #[test]
 fn executability_applies_on_up_to_date_files_over_rsh_pull() {
@@ -264,7 +264,7 @@ fn executability_applies_on_up_to_date_files_over_rsh_pull() {
 /// source mode copied exactly, including the read/write bits `-E` alone would
 /// leave untouched.
 ///
-/// upstream: options.c:2856-2859 - the server arg string carries 'p', never
+/// upstream: options.c:2866-2869 - the server arg string carries 'p', never
 /// 'E', when both are set; generator.c:424-427 perms_differ() compares the
 /// full mode under preserve_perms.
 #[test]

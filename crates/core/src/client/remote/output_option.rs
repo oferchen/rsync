@@ -31,7 +31,7 @@ pub(crate) enum OutputWordKind {
 // upstream table order. `stats` is deliberately not forwarded from here: oc conflates
 // `--stats` with `--info=stats` into a single stats level and forwards it via
 // the standalone `--stats` flag (mirroring upstream `if (do_stats) --stats` at
-// options.c:2856), so the caller filters `stats` out of the enabled list to
+// options.c:2866), so the caller filters `stats` out of the enabled list to
 // avoid double-sending.
 const INFO_WORDS: &[(&str, u8)] = &[
     ("backup", W_REC),
@@ -114,7 +114,7 @@ pub(crate) fn make_output_option(
         OutputWordKind::Info => (INFO_WORDS, "--info="),
         OutputWordKind::Debug => (DEBUG_WORDS, "--debug="),
     };
-    // upstream: options.c:2946 - `where = (am_server ? W_CLI : W_SRV) |
+    // upstream: options.c:2956 - `where = (am_server ? W_CLI : W_SRV) |
     // (am_sender ? W_REC : W_SND)`. We always build the peer's server args, so
     // `am_server` is false and the client-half is `W_SRV`.
     let peer_where = W_SRV | if am_sender { W_REC } else { W_SND };

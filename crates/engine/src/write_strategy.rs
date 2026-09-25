@@ -19,8 +19,8 @@
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2400-2411` - `if (append_mode) { ...; inplace = 1; }`.
-/// - `options.c:2413-2419` - `if (write_devices) { ...; inplace = 1; }`.
+/// - `options.c:2409-2420` - `if (append_mode) { ...; inplace = 1; }`.
+/// - `options.c:2422-2428` - `if (write_devices) { ...; inplace = 1; }`.
 #[must_use]
 pub const fn implies_inplace(inplace: bool, append: bool, write_devices: bool) -> bool {
     inplace || append || write_devices
@@ -56,7 +56,7 @@ mod tests {
     /// the server-side promotion covered only `--append`, so a server given
     /// `--write-devices` kept temp+rename where upstream writes in place.
     ///
-    /// upstream: `options.c:2413-2419`.
+    /// upstream: `options.c:2422-2428`.
     #[test]
     fn write_devices_alone_promotes() {
         assert!(implies_inplace(false, false, true));
@@ -65,7 +65,7 @@ mod tests {
     /// `--append` alone must promote, the sibling rule that was already
     /// handled - pinned here so collapsing the two did not drop it.
     ///
-    /// upstream: `options.c:2400-2411`.
+    /// upstream: `options.c:2409-2420`.
     #[test]
     fn append_alone_promotes() {
         assert!(implies_inplace(false, true, false));

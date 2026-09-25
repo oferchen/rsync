@@ -16,13 +16,13 @@
 //!   `delta-transmission %s` from generator.c:2763, belongs to transfer setup
 //!   and is pinned by `receiver/transfer/phases.rs` tests).
 //! - FLIST2 sender: one `[sender] make_file(%s,*,%d)` per walked entry
-//!   (flist.c:1542; filter level 0 for the named source, 2 for recursed
-//!   entries) and one `send_file_list done` (flist.c:2838).
-//! - FLIST2 receiver: one `recv_file_name(%s)` per entry (flist.c:3012), one
-//!   `received %d names` (flist.c:3019), one `recv_file_list done`
-//!   (flist.c:3088).
-//! - FLIST3 adds `[%s] flist_eof=1` (flist.c:2861/:3058) and the
-//!   `output_flist()` dump (flist.c:3489).
+//!   (flist.c:1767; filter level 0 for the named source, 2 for recursed
+//!   entries) and one `send_file_list done` (flist.c:3081).
+//! - FLIST2 receiver: one `recv_file_name(%s)` per entry (flist.c:3255), one
+//!   `received %d names` (flist.c:3262), one `recv_file_list done`
+//!   (flist.c:3331).
+//! - FLIST3 adds `[%s] flist_eof=1` (flist.c:3104/:3058) and the
+//!   `output_flist()` dump (flist.c:3732).
 
 #![cfg(unix)]
 
@@ -170,7 +170,7 @@ fn flist2_sender_emissions_exact() {
     assert_eq!(messages, expected);
 }
 
-/// upstream: flist.c:2835/2861 - at level 3 the sender additionally dumps the
+/// upstream: flist.c:3078/3104 - at level 3 the sender additionally dumps the
 /// flist and prints `[sender] flist_eof=1` (non-incremental list).
 #[test]
 fn flist3_sender_adds_dump_and_eof() {
@@ -192,7 +192,7 @@ fn flist3_sender_adds_dump_and_eof() {
         4,
         "one output_flist line per entry: {messages:?}"
     );
-    // upstream: flist.c:3524 - the sender's root column is F_PATHNAME (the
+    // upstream: flist.c:3767 - the sender's root column is F_PATHNAME (the
     // source base, without the operand's trailing slash), and a directory
     // prints a trailing slash after its name.
     let base = src.display().to_string();
@@ -268,7 +268,7 @@ fn flist2_receiver_emissions_exact() {
     );
 }
 
-/// upstream: flist.c:3058/3085 - level 3 adds `[Receiver] flist_eof=1` (the
+/// upstream: flist.c:3301/3328 - level 3 adds `[Receiver] flist_eof=1` (the
 /// pre-forked receiver capitalizes, rsync.c:994) and the output_flist dump.
 #[test]
 fn flist3_receiver_adds_dump_and_eof() {
@@ -301,7 +301,7 @@ fn flist3_receiver_adds_dump_and_eof() {
         4,
         "one output_flist line per entry: {messages:?}"
     );
-    // upstream: flist.c:3524 - the receiver's root column is the entry depth;
+    // upstream: flist.c:3767 - the receiver's root column is the entry depth;
     // with neither -o nor root, no uid column appears.
     assert_eq!(
         count(&|m| m.starts_with("[Receiver] i=1 1 a.txt mode=0100644 len=6")),

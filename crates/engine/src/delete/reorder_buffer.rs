@@ -62,12 +62,12 @@
 //!
 //! # Upstream reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.0/main.c:229-251`
+//! - `target/interop/upstream-src/rsync-3.5.1/main.c:229-251`
 //!   (`write_del_stats` / `read_del_stats`; NDX_DEL_STATS
 //!   semantics: exactly one frame per goodbye cohort, carrying five
 //!   varints; the buffer never emits the frame itself, it only
 //!   preserves the cohort identity the goodbye writer reads).
-//! - `target/interop/upstream-src/rsync-3.5.0/generator.c:285-360`
+//! - `target/interop/upstream-src/rsync-3.5.1/generator.c:285-360`
 //!   (`delete_in_dir`: one cohort per destination parent directory).
 //! - DEL-1.a audit: `docs/design/del-1a-upstream-ordering-audit.md`.
 

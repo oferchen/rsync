@@ -8,7 +8,7 @@
 /// allow rule contributes nothing and an allow-list-only module refuses the
 /// non-matching peer.
 ///
-/// upstream: access.c:57-58 `match_hostname` - `if (!(hp = gethostbyname(tok)))
+/// upstream: access.c:68-69 `match_hostname` - `if (!(hp = gethostbyname(tok)))
 /// return 0;` fails closed on resolution error.
 #[test]
 fn module_hostname_allow_forward_resolve_failure_fails_closed() {

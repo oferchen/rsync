@@ -40,9 +40,9 @@
 //!
 //! # Upstream reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.0/delete.c:191-288`
+//! - `target/interop/upstream-src/rsync-3.5.1/delete.c:191-288`
 //!   (`delete_item`): per-cohort dispatch order the consumer preserves.
-//! - `target/interop/upstream-src/rsync-3.5.0/main.c:229-251`
+//! - `target/interop/upstream-src/rsync-3.5.1/main.c:229-251`
 //!   (`write_del_stats` / `read_del_stats`): the goodbye-phase frame the
 //!   wire ordering invariant protects. The consumer never emits the frame
 //!   itself; it preserves cohort identity so the unchanged generator-side

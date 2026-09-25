@@ -572,7 +572,7 @@ impl<'a> CopyContext<'a> {
         // output channels are drained at different times.
         record.stamp();
 
-        // upstream: receiver.c:733-746 / sender.c:295-308 - every ITEM_IS_NEW
+        // upstream: receiver.c:749-762 / sender.c:587-600 - every ITEM_IS_NEW
         // entry bumps `stats.created_*` for its type, whether or not file data
         // moved. `was_created()` is the ITEM_IS_NEW mirror; classify by action
         // to hit the right per-type counter. Directories are counted separately
@@ -598,7 +598,7 @@ impl<'a> CopyContext<'a> {
         // and the transfer root (".") is not itemized as a created entry, so
         // record only the created non-regular ones here. Without this an
         // upstream `--read-batch` peer under-counts created dirs/symlinks and,
-        // for a special, aborts with exit 23 (receiver.c:559 no_batched_update).
+        // for a special, aborts with exit 23 (receiver.c:575 no_batched_update).
         if record.was_created() && record.relative_path() != std::path::Path::new(".") {
             const ITEM_REPORT_CHANGE: u16 = 1 << 1;
             const ITEM_IS_NEW: u16 = 1 << 13;
@@ -729,7 +729,7 @@ impl<'a> CopyContext<'a> {
     ///
     /// # Upstream Reference
     ///
-    /// - `fileio.c:362`: `map->status = nread ? errno : ENODATA` - a `read()`
+    /// - `fileio.c:404`: `map->status = nread ? errno : ENODATA` - a `read()`
     ///   that returns 0 with the window unfilled is reported as `ENODATA`,
     ///   which `strerror` renders as "No data available".
     /// - `fileio.c:25-26`: `#ifndef ENODATA / #define ENODATA EAGAIN` - the
@@ -763,11 +763,11 @@ impl<'a> CopyContext<'a> {
     ///
     /// # Upstream Reference
     ///
-    /// - `fileio.c:359-365`: `map_ptr()` records `ENODATA` when a `read()`
+    /// - `fileio.c:401-407`: `map_ptr()` records `ENODATA` when a `read()`
     ///   returns 0 with the window unfilled ("the file has changed mid
     ///   transfer"), or `errno` when the read fails outright; the first status
     ///   wins.
-    /// - `sender.c:787-795`: `j = unmap_file(mbuf); if (j) { io_error |=
+    /// - `sender.c:789-797`: `j = unmap_file(mbuf); if (j) { io_error |=
     ///   IOERR_GENERAL; rsyserr(FERROR_XFER, j, "read errors mapping %s",
     ///   full_fname(fname)); }` - one line, then the loop moves to the next
     ///   file-list entry, and the run finishes `RERR_PARTIAL` (23).
@@ -855,7 +855,7 @@ impl<'a> CopyContext<'a> {
         //
         // The default local copy keeps the fast path: upstream forces
         // `whole_file = 1` for a local transfer that did not ask otherwise
-        // (main.c:653-657, `if (whole_file < 0 && !write_batch) whole_file = 1;`),
+        // (main.c:666-670, `if (whole_file < 0 && !write_batch) whole_file = 1;`),
         // so only an explicit --no-whole-file, --append or --write-batch lands
         // in the read loop below.
         if whole_file_enabled

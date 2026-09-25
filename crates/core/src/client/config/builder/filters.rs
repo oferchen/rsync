@@ -68,7 +68,7 @@ impl ClientConfigBuilder {
     ///
     /// A bare `--delay-updates` (with no explicit `--partial-dir`) uses the
     /// implicit `.~tmp~` staging directory, so the same protective exclude is
-    /// injected for it. upstream: options.c:2421 `if (delay_updates &&
+    /// injected for it. upstream: options.c:2430 `if (delay_updates &&
     /// !partial_dir) partial_dir = tmp_partialdir;` (`tmp_partialdir[] =
     /// ".~tmp~"`), consumed by the compat.c:791 filter injection.
     pub(super) fn push_implicit_partial_dir_filter(&mut self) {
@@ -103,7 +103,7 @@ impl ClientConfigBuilder {
     /// Appends the implicit protect rule that upstream rsync injects to keep
     /// backup-suffix files out of a `--delete` sweep.
     ///
-    /// upstream: options.c:2336-2339. When `make_backups && delete_mode &&
+    /// upstream: options.c:2345-2348. When `make_backups && delete_mode &&
     /// !delete_excluded && !am_server` and no `--backup-dir` is set, rsync
     /// injects `P *<suffix>` (default suffix `~`) at the tail of the filter
     /// list via `parse_filter_str(&filter_list, "P *~", rule_template(0), 0)`.
@@ -115,7 +115,7 @@ impl ClientConfigBuilder {
     ///
     /// `am_server` is inherently false here: this builder constructs the client
     /// configuration only. A `--backup-dir` places backups in a separate tree,
-    /// so no protect rule is needed (upstream: options.c:2328-2329). It is not
+    /// so no protect rule is needed (upstream: options.c:2337-2338). It is not
     /// marked perishable, mirroring upstream's `rule_template(0)`.
     pub(super) fn push_backup_protect_filter(&mut self) {
         if !self.backup || self.backup_dir.is_some() {
@@ -124,7 +124,7 @@ impl ClientConfigBuilder {
         if !self.delete_mode.is_enabled() || self.delete_excluded {
             return;
         }
-        // upstream: options.c:2296-2297 - the effective suffix defaults to `~`
+        // upstream: options.c:2305-2306 - the effective suffix defaults to `~`
         // when no `--backup-dir` is set (the only branch reached here).
         let suffix = self
             .backup_suffix

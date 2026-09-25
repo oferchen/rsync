@@ -38,7 +38,7 @@ fn build_batch_ndx_codec(options: &LocalCopyOptions) -> Option<protocol::codec::
 ///
 /// Every per-entry field this writer emits must match what the reader expects.
 /// Unlike upstream - whose batch file is a byte tee of one real stream
-/// (`io.c:1962-1963`, armed at `io.c:2528-2529`), so a writer/reader
+/// (`io.c:2000-2001`, armed at `io.c:2566-2567`), so a writer/reader
 /// disagreement is unspellable - the local `--write-batch` path re-encodes the
 /// flist with a second encoder. The preserve flags therefore come from the
 /// stream flags this same writer already recorded in the header, because the
@@ -94,7 +94,7 @@ fn build_batch_flist_writer(options: &LocalCopyOptions) -> Option<protocol::flis
             // always enabled for the batch flist writer.
             .with_name_follows(true);
 
-        // upstream: flist.c:162 - under always_checksum every regular-file
+        // upstream: flist.c:164 - under always_checksum every regular-file
         // entry carries a trailing digest. The reader re-derives the length
         // from the protocol version (batch/src/reader/flist.rs
         // default_flist_csum_len), so the two must agree or the reader

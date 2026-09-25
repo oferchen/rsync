@@ -244,7 +244,7 @@ pub(crate) fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf 
 ///
 /// Upstream arrives at that string in two steps. `send_file_list()` splits each
 /// operand into a `dir`/`fn` pair and `push_dir()`s into `dir` before the
-/// `link_stat()` at `flist.c:2697`, which appends onto the `curr_dir` *string*
+/// `link_stat()` at `flist.c:2937`, which appends onto the `curr_dir` *string*
 /// and cleans it lexically - it never re-reads the path from the kernel, so a
 /// symlinked component keeps the spelling the operator typed. `full_fname()`
 /// then prefixes the surviving relative `fn` with `curr_dir` before quoting it:
@@ -271,7 +271,7 @@ pub(crate) fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf 
 /// ⚠ That arm must be spelled explicitly and must use
 /// [`Path::has_root`](std::path::Path::has_root), NOT `Path::is_absolute` and
 /// NOT the join alone. Upstream tests a leading BYTE (`*fn == '/'`,
-/// `util1.c:1445`), a question about the spelling. `is_absolute()` asks a
+/// `util1.c:1540`), a question about the spelling. `is_absolute()` asks a
 /// different question - "is this absolute on THIS host" - and on Windows a
 /// rooted but prefixless `/no/such/entry` has no drive, so it answers `false`.
 /// Relying on `join` to leave such an operand alone has the same defect from
@@ -282,9 +282,9 @@ pub(crate) fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf 
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/util1.c:1433-1464` - `full_fname()`; `:1445` is the
+/// - `rsync-3.5.1/util1.c:1528-1559` - `full_fname()`; `:1445` is the
 ///   leading-slash test this arm mirrors.
-/// - `rsync-3.5.0/flist.c:2688-2697` - the `dir`/`fn` split and the `push_dir()`
+/// - `rsync-3.5.1/flist.c:2928-2937` - the `dir`/`fn` split and the `push_dir()`
 ///   that makes `curr_dir` the operand's parent before `link_stat()` runs.
 pub(crate) fn operand_diagnostic_name(path: &std::path::Path) -> std::path::PathBuf {
     if path.has_root() {

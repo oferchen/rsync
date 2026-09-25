@@ -44,7 +44,7 @@ fn limit_output_verbosity(requested: u8, max_verbosity: i32) -> u8 {
 ///
 /// The requested level is whatever `ParsedServerFlags` counted, and that scan
 /// stops at the `-e` capability separator, so the `v` that
-/// `maybe_add_e_option` (options.c:3040) always appends inside `-e.<caps>` is
+/// `maybe_add_e_option` (options.c:3050) always appends inside `-e.<caps>` is
 /// never mistaken for a `-v`. That letter is the client's
 /// `CF_VARINT_FLIST_FLAGS` / negotiated-strings advertisement
 /// (compat.c:730-733); upstream's popt hands everything after `-e` to
@@ -87,19 +87,19 @@ fn apply_output_verbosity_limit(cfg: &mut ServerConfig, max_verbosity: i32) -> u
 fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerConfig) {
     // upstream: clientserver.c:821 `module_id = i` - selecting a module makes
     // `module_id >= 0` for the rest of the server process, and that is the sole
-    // condition under which `full_fname()` (util1.c:1290) appends
+    // condition under which `full_fname()` (util1.c:1387) appends
     // ` (in MODULE)` after the closing quote of every path it renders into an
     // error or warning. Record the name so the transfer layer reproduces it.
     cfg.connection.daemon_module = Some(module.name.clone());
 
     // upstream: clientserver.c:864,993 - `module_chdir` is the normalized
     // module path and the server `chdir()`s into it before serving, which is
-    // why `full_fname()` (util1.c:1285) only ever prints the part of a path
+    // why `full_fname()` (util1.c:1382) only ever prints the part of a path
     // below `module_dirlen`. oc-rsync keeps absolute paths, so record the root
     // and let the transfer layer strip it.
     cfg.connection.daemon_module_root = Some(module.path.clone());
 
-    // upstream: syscall.c:122-127 `symlink_optout_allowed()` - the `am_daemon`
+    // upstream: syscall.c:139-144 `symlink_optout_allowed()` - the `am_daemon`
     // arm is `module_id >= 0 && lp_insecure_links(module_id)`, so the opt-out
     // is a property of the SERVED MODULE and never of the forwarded argv.
     // Recording it on the connection is what makes it per-connection: upstream
@@ -164,11 +164,11 @@ fn build_server_config(
         .cloned()
         .unwrap_or_default();
 
-    // upstream: io.c:1497 + util1.c:881 (glob_expand_module) - receivers
+    // upstream: io.c:1523 + util1.c:884 (glob_expand_module) - receivers
     // resolve their destination by joining the module path with the client's
     // module-relative tail (e.g. `upload/realdir/` -> module + `realdir/`).
     // Senders (pull requests) split each positional the same way so the
-    // sender's per-source `dir/fn` (flist.c:2610-2621) walks the requested
+    // sender's per-source `dir/fn` (flist.c:2850-2861) walks the requested
     // sub-tree instead of the entire module root. The original argv[0] is
     // always the module root; legacy tests that push straight into the module
     // root keep that behaviour.
@@ -176,17 +176,17 @@ fn build_server_config(
     // `sanitize_path` does at depth 0, so no traversing SPELLING survives and
     // there is no "resolves outside module root" rejection to represent.
     // Upstream has no such daemon error either - a traversing tail is
-    // rewritten and served (util1.c:1183).
+    // rewritten and served (util1.c:1280).
     // ⚠ Total is not confined. The collapse is a string operation and says
     // nothing about where the path resolves; a symlink beneath the module root
     // still points wherever it points. Resolved containment is enforced where
     // the syscalls are issued - the confined source open and the file-list
     // scan anchored on the transfer's confinement root - not by these
     // resolvers.
-    // upstream: options.c:2402-2405 - the daemon sanitizes EVERY positional with
-    // `SP_KEEP_DOT_DIRS`, and `util1.c:1143` then reduces that flag to
+    // upstream: options.c:2411-2414 - the daemon sanitizes EVERY positional with
+    // `SP_KEEP_DOT_DIRS`, and `util1.c:1240` then reduces that flag to
     // `drop_dot_dirs = !relative_paths`. The axis is the transfer's `--relative`
-    // (`options.c:2880` packs it into the compact argstr as `R`), not the role
+    // (`options.c:2890` packs it into the compact argstr as `R`), not the role
     // and not the daemon-ness, so it is decided once here and handed to both
     // resolvers. `ParsedServerFlags::parse` is the single decoder of that
     // string - it already stops at the `-e` capability separator, so a
@@ -230,7 +230,7 @@ fn build_server_config(
             ));
 
             // Parse long-form arguments that upstream rsync sends via server_options()
-            // (options.c:2737-2980). The compact flag string only covers single-char
+            // (options.c:2747-2990). The compact flag string only covers single-char
             // flags; these long-form options must be parsed separately.
             //
             // Rule 12 fail-loud: when a client-only batch flag slips past the
@@ -238,9 +238,9 @@ fn build_server_config(
             // than silently dropping the option and continuing into a wire
             // path that closes mid file-list framing.
             //
-            // upstream: options.c:1460-1465 - daemon-mode unknown option
+            // upstream: options.c:1466-1471 - daemon-mode unknown option
             // emits `rsync: <BAD>: <err> (in daemon mode)` and exits
-            // `RERR_SYNTAX` via `daemon_error:` (options.c:1480-1482).
+            // `RERR_SYNTAX` via `daemon_error:` (options.c:1486-1488).
             if let Some(rejection) = apply_long_form_args(client_args, &mut cfg) {
                 let (log_text, error_text) = match rejection {
                     ClientArgRejection::Unrecognized(offender) => (
@@ -275,7 +275,7 @@ fn build_server_config(
                 return Ok(None);
             }
 
-            // upstream: options.c:2755-2758 - when -z is in the compact flag string
+            // upstream: options.c:2765-2768 - when -z is in the compact flag string
             // but no explicit --compress-level=N was sent, default to level 6 (the
             // upstream default). Without this, compression_level stays None and the
             // transfer pipeline won't activate token-level compression.
@@ -283,7 +283,7 @@ fn build_server_config(
                 cfg.connection.compression_level = Some(compress::zlib::CompressionLevel::Default);
             }
 
-            // upstream: main.c:1230-1241 calls `check_alt_basis_dirs()` after
+            // upstream: main.c:1248-1259 calls `check_alt_basis_dirs()` after
             // `get_local_name(flist, argv[0])` chdir's into the dest directory,
             // so relative basis paths like `--link-dest=../01` resolve against
             // the receiver's destination (a sibling of `dest/00/`), not against
@@ -312,10 +312,10 @@ fn build_server_config(
                 std::path::PathBuf::from(&module.path)
             };
             cfg.reference_directories.retain_mut(|ref_dir| {
-                // upstream prints the SANITIZED value verbatim (main.c:885
+                // upstream prints the SANITIZED value verbatim (main.c:898
                 // skips the `curr_dir` join under `sanitize_paths`), which is
                 // relative for a relative arg and absolute for an absolute one
-                // - `util1.c:1145-1152` re-roots the latter at `module_dir`
+                // - `util1.c:1242-1249` re-roots the latter at `module_dir`
                 // during the sanitize itself. oc has no chdir, so it keeps the
                 // absolute form for the basis lookup and reproduces upstream's
                 // spelling only for the diagnostic.
@@ -345,7 +345,7 @@ fn build_server_config(
                 // at `generator.c:1064` and FOLLOWS a basis that resolves out
                 // of the module tree. The lexical clamp above is
                 // `sanitize_path()` and stays unconditional - upstream applies
-                // it whatever the opt-out says (`util1.c:1145-1152`); only this
+                // it whatever the opt-out says (`util1.c:1242-1249`); only this
                 // symlink-escape refusal is opted out of.
                 if !module.insecure_links
                     && basis_resolves_outside_module(&clamped, &module_root_canonical)
@@ -353,7 +353,7 @@ fn build_server_config(
                     return false;
                 }
 
-                // upstream: main.c:1241 - the server receiver runs
+                // upstream: main.c:1259 - the server receiver runs
                 // `check_alt_basis_dirs()` immediately after that sanitize
                 // loop. Warn-only; the exit code is untouched.
                 if role == ServerRole::Receiver {
@@ -372,11 +372,11 @@ fn build_server_config(
                 true
             });
 
-            // upstream: options.c:2402-2409 - the same `if (sanitize_paths)`
+            // upstream: options.c:2411-2418 - the same `if (sanitize_paths)`
             // block that sanitises the alt-dest dirs also runs `backup_dir`
             // through `sanitize_path(NULL, backup_dir, NULL, 0, SP_DEFAULT)`.
             // An ABSOLUTE --backup-dir therefore re-roots at `module_dir`
-            // (util1.c:1145-1151, the `if (!rootdir) rootdir = module_dir`
+            // (util1.c:1242-1248, the `if (!rootdir) rootdir = module_dir`
             // arm), while a RELATIVE one stays relative for the receiver to
             // anchor at its own destination - see `sanitize_backup_dir` for why
             // the relative arm must not go through `clamp_basis_to_module`.
@@ -397,12 +397,12 @@ fn build_server_config(
                 // drops whole components, so every retained byte stays UTF-8.
                 cfg.backup_dir = Some(sanitized.to_string_lossy().into_owned());
             }
-            // upstream: main.c:1233-1240 - the server receiver runs the very
+            // upstream: main.c:1251-1258 - the server receiver runs the very
             // same `if (sanitize_paths)` block over `partial_dir`
             // (`sanitize_path(NULL, partial_dir, NULL, curr_dir_depth,
             // SP_DEFAULT)`), and `clientserver.c` sets `sanitize_paths` for
             // every daemon connection. An ABSOLUTE `--partial-dir` therefore
-            // re-roots at `module_dir` (util1.c:1145-1152) instead of naming a
+            // re-roots at `module_dir` (util1.c:1242-1249) instead of naming a
             // filesystem-absolute path, exactly as `--backup-dir` above.
             //
             // Without it an absolute `--partial-dir=/pdir` resolved against the
@@ -461,15 +461,15 @@ fn build_server_config(
             // window once the original CVE-2026-29518 fix landed.
             cfg.connection.is_daemon_connection = true;
 
-            // upstream: options.c:2390-2397 - the daemon sender paces its own
-            // outbound socket writes (io.c:846,861) at the client's forwarded
+            // upstream: options.c:2399-2406 - the daemon sender paces its own
+            // outbound socket writes (io.c:864,879) at the client's forwarded
             // `--bwlimit` capped by the daemon-wide bwlimit. `ctx.limiter`
             // already holds that daemon-side cap, and it is the SAME limiter that
             // throttles the pre-transfer `@RSYNCD:` text phase
             // (session_runtime.rs `write_limited`); the bulk phase runs on the
             // separate `run_server_with_handshake` writer stack, so carrying the
             // rate here installs one limiter per phase with no double-throttle.
-            // A receiver ignores this (main.c:1068), so it is set unconditionally.
+            // A receiver ignores this (main.c:1081), so it is set unconditionally.
             {
                 let client_rate = client_args.iter().find_map(|arg| {
                     arg.strip_prefix("--bwlimit=")
@@ -477,7 +477,7 @@ fn build_server_config(
                         .and_then(|components| components.rate())
                 });
                 let daemon_cap = ctx.limiter.as_ref().map(BandwidthLimiter::limit_bytes);
-                // upstream: options.c:2390 `if (daemon_bwlimit && (!bwlimit ||
+                // upstream: options.c:2399 `if (daemon_bwlimit && (!bwlimit ||
                 // bwlimit > daemon_bwlimit)) bwlimit = daemon_bwlimit;`
                 let effective = match (client_rate, daemon_cap) {
                     (Some(client), Some(cap)) => Some(client.min(cap)),

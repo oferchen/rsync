@@ -9,7 +9,7 @@
 //! OLD versions of the source files, then transfers the NEW source over them so
 //! `--backup` keeps the old copies. Giving each side its own cell directory
 //! isolates the two runs: a relative `--backup-dir=../bak` resolves against the
-//! receiver's destination directory (upstream main.c:1178 `change_dir`), so it
+//! receiver's destination directory (upstream main.c:1196 `change_dir`), so it
 //! lands in that side's own `bak/` rather than a shared one. oc and upstream are
 //! seeded identically, so only the client under test varies. Upstream rsync is
 //! the ground truth for both the refreshed files and their backups. The ssh

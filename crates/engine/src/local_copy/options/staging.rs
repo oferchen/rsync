@@ -136,7 +136,7 @@ impl LocalCopyOptions {
     ///
     /// - `options.c:684` - `{"write-devices", 0, POPT_ARG_VAL, &write_devices, 1, 0, 0}`
     /// - `generator.c:2148` - `!(stype == FT_REG || (write_devices && stype == FT_DEVICE))`
-    /// - `receiver.c:1170` - `write_to_device = write_devices && IS_DEVICE(st.st_mode)`
+    /// - `receiver.c:1187` - `write_to_device = write_devices && IS_DEVICE(st.st_mode)`
     #[must_use]
     #[doc(alias = "--write-devices")]
     pub const fn write_devices(mut self, write_devices: bool) -> Self {

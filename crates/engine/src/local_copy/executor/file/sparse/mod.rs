@@ -150,7 +150,7 @@ impl SparseRegion {
 /// Scan window for sparse zero-run detection during file writes.
 ///
 /// Upstream `write_file()` hands `write_sparse()` at most this many bytes per
-/// call (`fileio.c:156`, `int len1 = MIN(len, SPARSE_WRITE_SIZE)`), so only the
+/// call (`fileio.c:160`, `int len1 = MIN(len, SPARSE_WRITE_SIZE)`), so only the
 /// leading and trailing zeros of each 1 KB window become holes. Matching the
 /// window is required for allocated-block parity with upstream: a larger window
 /// writes sub-window interior zero runs as literal data, leaving them allocated

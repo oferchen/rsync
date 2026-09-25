@@ -14,7 +14,7 @@ use super::constants::{NDX_DONE, NDX_FLIST_EOF};
 ///
 /// # Upstream Reference
 ///
-/// `io.c:2245` - `static int32 prev_positive = -1, prev_negative = 1;`
+/// `io.c:2283` - `static int32 prev_positive = -1, prev_negative = 1;`
 #[derive(Debug, Clone)]
 pub struct NdxState {
     /// Previous positive index value for delta encoding.

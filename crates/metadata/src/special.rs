@@ -166,7 +166,7 @@ pub fn create_device_node_from_parts(
 ///
 /// Always `false` where `mknodat(2)` handles `S_IFSOCK` directly (Linux),
 /// matching the platform split the rest of this module already draws.
-// upstream: syscall.c:1369-1378 do_mknod_at() - the socket arm
+// upstream: syscall.c:1508-1517 do_mknod_at() - the socket arm
 #[must_use]
 #[cfg(all(
     unix,
@@ -185,7 +185,7 @@ pub fn socket_creation_unsupported(relative: &Path) -> bool {
 
 /// Reports whether a socket node named `relative` cannot be created on this
 /// platform. `mknodat(2)` materialises `S_IFSOCK` here, so nothing is refused.
-// upstream: syscall.c:1362 do_mknod_at() - mknodat handles every type on Linux
+// upstream: syscall.c:1501 do_mknod_at() - mknodat handles every type on Linux
 #[must_use]
 #[cfg(not(all(
     unix,
@@ -221,7 +221,7 @@ pub fn format_skipped_socket_message(destination: &Path) -> String {
 /// pre-existing entry at `destination` is removed first to mirror the
 /// `unlink + create` semantics used by upstream when overwriting an existing
 /// special-file destination.
-/// upstream: syscall.c:90-174 - do_mknod() routes to do_open when am_root < 0
+/// upstream: syscall.c:107-220 - do_mknod() routes to do_open when am_root < 0
 fn create_fake_super_placeholder(
     destination: &Path,
     context: &'static str,
@@ -569,7 +569,7 @@ fn create_fifo_parts_inner(
 /// The bind path is bounded by `sizeof(sun_path)` (104 bytes on Apple); an
 /// over-long path surfaces as an `ENAMETOOLONG` error rather than silently
 /// truncating, matching upstream's `strlcpy` length check.
-// upstream: syscall.c:489-513 do_mknod() - !MKNOD_CREATES_SOCKETS socket branch
+// upstream: syscall.c:622-646 do_mknod() - !MKNOD_CREATES_SOCKETS socket branch
 #[cfg(all(
     unix,
     any(
@@ -883,7 +883,7 @@ mod tests {
     // nested one is refused. Pinned on the platforms that HAVE the refusal,
     // so a regression that widens or narrows it is caught rather than merely
     // observed through a testsuite cell.
-    // upstream: syscall.c:1369-1378 do_mknod_at() - the socket arm
+    // upstream: syscall.c:1508-1517 do_mknod_at() - the socket arm
     #[cfg(all(
         unix,
         any(
@@ -902,7 +902,7 @@ mod tests {
 
     // `mknodat(2)` materialises S_IFSOCK where it is available, so nothing is
     // refused there and the caller must never skip.
-    // upstream: syscall.c:1362 do_mknod_at() - mknodat handles every type
+    // upstream: syscall.c:1501 do_mknod_at() - mknodat handles every type
     #[cfg(not(all(
         unix,
         any(
@@ -931,7 +931,7 @@ mod tests {
 
     // On Apple targets, `mknod(2)` with `S_IFSOCK` is unsupported, so a
     // socket destination must be materialised via socket()+bind()+chmod,
-    // mirroring upstream's !MKNOD_CREATES_SOCKETS branch (syscall.c:489-513).
+    // mirroring upstream's !MKNOD_CREATES_SOCKETS branch (syscall.c:622-646).
     // The result must be a real socket node carrying the requested mode, and
     // a stale entry at the destination must be replaced rather than error.
     #[cfg(all(

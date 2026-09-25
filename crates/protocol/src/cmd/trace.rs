@@ -8,7 +8,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `util1.c:98-117` - `print_child_argv` prefix + quoted-argv + `(N args)`
+//! - `util1.c:101-120` - `print_child_argv` prefix + quoted-argv + `(N args)`
 //!   suffix used by every level-1 CMD emission.
 //! - `pipe.c:54-55` - `print_child_argv("opening connection using:", command)`
 //!   inside `piped_child()` before `fork()`/`execvp()`.
@@ -16,7 +16,7 @@
 //!   immediately before writing the argument list to the daemon socket.
 //! - `rsync.c:296-297` - `print_child_argv("protected args:", args + i + 1)`
 //!   inside `send_protected_args()` before the per-arg iconv loop.
-//! - `main.c:629-633` - per-argument enumeration `cmd[%d]=%s ...\n` emitted
+//! - `main.c:642-646` - per-argument enumeration `cmd[%d]=%s ...\n` emitted
 //!   from `do_cmd()` once the final remote argv has been assembled.
 
 use std::ffi::OsStr;
@@ -25,13 +25,13 @@ use logging::debug_log;
 
 /// Characters upstream `print_child_argv` treats as safe-to-print unquoted.
 ///
-/// upstream: util1.c:106-109 - the exact `strspn` whitelist used to decide
+/// upstream: util1.c:109-112 - the exact `strspn` whitelist used to decide
 /// whether to wrap an argv element in double quotes.
 const SAFE_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.-_=+@/";
 
 /// Returns the argv element rendered with upstream's quoting rules.
 ///
-/// Mirrors upstream `util1.c:103-113`: an element is wrapped in literal
+/// Mirrors upstream `util1.c:106-116`: an element is wrapped in literal
 /// double quotes whenever any byte falls outside the `SAFE_CHARS` whitelist;
 /// otherwise the element is emitted verbatim. Non-UTF8 bytes are rendered
 /// through [`String::from_utf8_lossy`] so the diagnostic remains printable.
@@ -49,10 +49,10 @@ fn quote_arg(arg: &OsStr) -> String {
 /// Renders an argv slice with the upstream `print_child_argv` shape.
 ///
 /// Returns `"<prefix> arg1 arg2 ...  (N args)"`. The double space before
-/// `(N args)` mirrors upstream `util1.c:101,112,116` which writes each
+/// `(N args)` mirrors upstream `util1.c:104,115,119` which writes each
 /// element with a trailing space and then prints the literal `" (%d args)\n"`.
 ///
-/// upstream: util1.c:98-117 - reference implementation reused by every
+/// upstream: util1.c:101-120 - reference implementation reused by every
 /// level-1 CMD emission.
 #[must_use]
 pub fn print_child_argv<S: AsRef<OsStr>>(prefix: &str, argv: &[S]) -> String {
@@ -112,7 +112,7 @@ pub fn trace_protected_args<S: AsRef<OsStr>>(args: &[S]) {
 
 /// Traces the assembled remote argv element-by-element (level 2).
 ///
-/// upstream: main.c:629-633 - inside `do_cmd()` once `args[]` has been
+/// upstream: main.c:642-646 - inside `do_cmd()` once `args[]` has been
 /// finalised:
 ///
 /// ```text
@@ -174,7 +174,7 @@ mod tests {
 
     /// Safe characters render without quotes.
     ///
-    /// upstream: util1.c:106-113 - `strspn` against the safe-char set.
+    /// upstream: util1.c:109-116 - `strspn` against the safe-char set.
     #[test]
     fn quote_arg_passes_safe_argv_through() {
         assert_eq!(quote_arg(OsStr::new("--server")), "--server");
@@ -186,7 +186,7 @@ mod tests {
     /// Whitespace, shell metacharacters, and colons trigger upstream's
     /// double-quote wrapping.
     ///
-    /// upstream: util1.c:106-113 - any byte outside `SAFE_CHARS` forces
+    /// upstream: util1.c:109-116 - any byte outside `SAFE_CHARS` forces
     /// the `"%s"` branch.
     #[test]
     fn quote_arg_wraps_unsafe_argv() {
@@ -197,7 +197,7 @@ mod tests {
 
     /// An empty argv element renders without quotes, matching upstream.
     ///
-    /// upstream: util1.c:106-113 - `strspn("", _) == strlen("") == 0`, so the
+    /// upstream: util1.c:109-116 - `strspn("", _) == strlen("") == 0`, so the
     /// `!=` test fails and the unquoted `%s` branch runs (which prints
     /// nothing, then the trailing space).
     #[test]
@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(quote_arg(OsStr::new("")), "");
     }
 
-    /// `print_child_argv` reproduces upstream `util1.c:98-117` formatting:
+    /// `print_child_argv` reproduces upstream `util1.c:101-120` formatting:
     /// prefix, space, quoted argv elements separated by single spaces, a
     /// double space, and `(N args)`.
     #[test]
@@ -220,7 +220,7 @@ mod tests {
 
     /// An empty argv still emits the prefix, the double space, and `(0 args)`.
     ///
-    /// upstream: util1.c:101 + util1.c:116 - prefix prints first, then the
+    /// upstream: util1.c:104 + util1.c:119 - prefix prints first, then the
     /// loop is skipped, then the `(N args)` literal closes the line.
     #[test]
     fn print_child_argv_with_empty_argv() {
@@ -276,7 +276,7 @@ mod tests {
     }
 
     /// Pins the level 2 `cmd[i]=value` enumeration for the upstream
-    /// `main.c:629-633` site.
+    /// `main.c:642-646` site.
     #[test]
     fn trace_cmd_argv_matches_upstream_enumeration() {
         init_cmd(2);

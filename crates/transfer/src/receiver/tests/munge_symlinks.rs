@@ -1,6 +1,6 @@
 //! Receiver-side `munge symlinks` regression tests.
 //!
-//! Mirrors the on-disk transform upstream applies in `flist.c:1150-1154`:
+//! Mirrors the on-disk transform upstream applies in `flist.c:1375-1379`:
 //! when the daemon module has `munge symlinks = yes`, every symlink that the
 //! receiver materializes carries the `/rsyncd-munged/` prefix so that
 //! following the link cannot escape the module root. The complementary
@@ -11,7 +11,7 @@
 //! - `clientserver.c:997-1009` - daemon resolves `munge_symlinks` from
 //!   `lp_munge_symlinks()` and aborts if `rsyncd-munged` already exists at
 //!   the module root.
-//! - `flist.c:1150-1154` - receiver prepends `SYMLINK_PREFIX` to the wire
+//! - `flist.c:1375-1379` - receiver prepends `SYMLINK_PREFIX` to the wire
 //!   target before the link is written to disk.
 
 use std::ffi::OsString;
@@ -77,7 +77,7 @@ fn plain_receiver_config() -> ServerConfig {
 
 #[test]
 fn receiver_prepends_munge_prefix_to_on_disk_symlink() {
-    // upstream: flist.c:1122-1126 - the receiver-side prepend is the only
+    // upstream: flist.c:1347-1351 - the receiver-side prepend is the only
     // signal that the daemon enabled `munge symlinks`. Verify the on-disk
     // link carries the `/rsyncd-munged/` prefix so following it lands inside
     // the module root.
@@ -101,7 +101,7 @@ fn receiver_prepends_munge_prefix_to_on_disk_symlink() {
         on_disk,
         std::path::Path::new("/rsyncd-munged//etc/passwd"),
         "receiver must prepend `/rsyncd-munged/` so following the link \
-         cannot escape the module root (upstream flist.c:1122-1126)",
+         cannot escape the module root (upstream flist.c:1347-1351)",
     );
 }
 
@@ -279,10 +279,10 @@ fn receiver_writes_unmunged_target_when_disabled() {
 /// prefix is applied at decode time and the safety check reads the munged
 /// value, which is always absolute.
 ///
-/// upstream: flist.c:1070,1296-1299 - the receiver prepends `SYMLINK_PREFIX`
+/// upstream: flist.c:1295,1521-1524 - the receiver prepends `SYMLINK_PREFIX`
 /// while decoding the file list; generator.c:1951 then evaluates
 /// `safe_symlinks && unsafe_symlink(sl, fname)` on that stored value, and
-/// util1.c:1569 rejects every absolute target. Measured against rsync 3.5.0:
+/// util1.c:1664 rejects every absolute target. Measured against rsync 3.5.0:
 /// a push into a `munge symlinks = yes` module with client `--safe-links`
 /// creates no symlinks at all, and each notice quotes the munged target.
 /// Checking the pre-munge wire target instead would create the safe ones -
@@ -340,7 +340,7 @@ fn munging_receiver_without_safe_links_still_creates_the_munged_link() {
         on_disk,
         std::path::Path::new("/rsyncd-munged/real_file.txt"),
         "without --safe-links the munged link is created \
-         (upstream flist.c:1070,1296-1299; measured against rsync 3.5.0)",
+         (upstream flist.c:1295,1521-1524; measured against rsync 3.5.0)",
     );
 }
 
@@ -371,6 +371,6 @@ fn plain_receiver_with_safe_links_creates_a_safe_relative_target() {
         on_disk,
         std::path::Path::new("real_file.txt"),
         "an in-tree relative target is safe and must be created \
-         (generator.c:1951 / util1.c:1569)",
+         (generator.c:1951 / util1.c:1664)",
     );
 }

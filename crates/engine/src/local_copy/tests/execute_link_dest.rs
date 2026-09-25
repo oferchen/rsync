@@ -1650,8 +1650,8 @@ fn link_dest_links_special_when_the_destination_accepts_it() {
 // An alt-dest arg naming something that is NOT a directory must degrade to a
 // normal transfer, not fail the run.
 //
-// upstream: main.c:867 check_alt_basis_dirs() warns `%s arg is not a dir: %s`
-// (main.c:903) and keeps going, and every basis_link_stat() caller in
+// upstream: main.c:880 check_alt_basis_dirs() warns `%s arg is not a dir: %s`
+// (main.c:916) and keeps going, and every basis_link_stat() caller in
 // generator.c (:1084, :1110, :1227, :1254) treats ANY stat failure as "no
 // candidate here". Joining a non-directory basis with the relative name yields
 // ENOTDIR, which is not NotFound - oc used to surface that as a fatal
@@ -1917,7 +1917,7 @@ fn alt_dest_arg_that_is_not_a_directory_does_not_fail_a_symlink_transfer() {
 /// the full `SystemTime` demoted such a basis from match_level 3 to 2, copying
 /// the file into a fresh inode instead of linking it - silently, with exit 0.
 ///
-/// upstream: `rsync-3.5.0/util1.c:1649` `same_time()`;
+/// upstream: `rsync-3.5.1/util1.c:1744` `same_time()`;
 /// `generator.c:400` `mtime_differs()` -> `generator.c:1090` `try_dests_reg()`.
 #[cfg(unix)]
 #[test]

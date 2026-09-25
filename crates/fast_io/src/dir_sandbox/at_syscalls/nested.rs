@@ -29,11 +29,11 @@
 //! Off Linux there is no `openat2`, so the anchor is resolved by
 //! [`DirSandbox::open_subdir_confined`](crate::dir_sandbox::DirSandbox::open_subdir_confined),
 //! oc's port of upstream's own portable resolver `ds_descend()`
-//! (`syscall.c:2891-2965`). It reaches the same decision on the same
+//! (`syscall.c:3032-3106`). It reaches the same decision on the same
 //! inputs and refuses with `ELOOP` rather than `EXDEV`. The confinement
 //! is the anchor descriptor itself, so it needs no confinement root -
 //! which is why it works for a non-daemon client, where upstream also
-//! leaves `confine_root` NULL (`syscall.c:142-143`).
+//! leaves `confine_root` NULL (`syscall.c:169-170`).
 
 use std::ffi::OsStr;
 use std::io;
@@ -152,7 +152,7 @@ pub(super) fn anchor_parent<'a>(
         // No `openat2` here, but confinement does not require it: upstream's
         // own resolver is a portable per-component walk, and oc already ports
         // it as `DirSandbox::open_subdir_confined` (upstream `ds_descend`,
-        // `syscall.c:2891-2965`). It admits and refuses exactly what
+        // `syscall.c:3032-3106`). It admits and refuses exactly what
         // `RESOLVE_BENEATH` does - a relative in-tree directory symlink is
         // followed, an absolute target or a `..` above the anchor is refused -
         // so the two arms agree on policy and differ only in errno (`ELOOP`
@@ -185,7 +185,7 @@ pub(super) fn anchor_parent<'a>(
 ///
 /// - **Off Linux** anchoring is always available: the parent resolves through
 ///   [`DirSandbox::open_subdir_confined`](crate::dir_sandbox::DirSandbox::open_subdir_confined),
-///   oc's port of upstream's portable `ds_descend()` (`syscall.c:2891-2965`),
+///   oc's port of upstream's portable `ds_descend()` (`syscall.c:3032-3106`),
 ///   which needs no kernel support.
 /// - **On Linux** anchoring uses `openat2(RESOLVE_BENEATH)`, so it tracks
 ///   `openat2_supported()`. A kernel below 5.6 is the one state that degrades.

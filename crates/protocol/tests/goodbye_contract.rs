@@ -21,7 +21,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:875-906` - `read_final_goodbye()`
+//! - `main.c:888-919` - `read_final_goodbye()`
 //! - `generator.c:2376-2381` - early del_stats path
 //! - `generator.c:2420-2425` - late del_stats path
 //! - `rsync.c:337-342` - NDX_DEL_STATS handling in `read_ndx_and_attrs()`
@@ -118,7 +118,7 @@ fn golden_plain_push_proto29_ends_with_legacy_ndx_done() {
 ///
 /// - Modern NDX encoding for `NDX_DEL_STATS` (-3). Negative NDX values
 ///   start with the `0xFF` prefix and a delta against `prev_negative`
-///   (initialised to 1). upstream: io.c:2259-2284 - `write_ndx()`.
+///   (initialised to 1). upstream: io.c:2297-2322 - `write_ndx()`.
 /// - 5 varints: `files`, `dirs`, `symlinks`, `devices`, `specials`.
 /// - `0x00`: modern NDX encoding for `NDX_DONE` (-1).
 #[test]
@@ -185,7 +185,7 @@ fn golden_compression_does_not_alter_goodbye() {
 ///
 /// The `supports_extended_goodbye()` gate suppresses NDX_DEL_STATS on
 /// protocol < 31, so the wire stream is identical to a plain push.
-/// upstream: main.c:875-906 - extended exchange added in protocol 31.
+/// upstream: main.c:888-919 - extended exchange added in protocol 31.
 #[test]
 fn golden_proto30_delete_does_not_emit_del_stats() {
     let stats = DeleteStats {

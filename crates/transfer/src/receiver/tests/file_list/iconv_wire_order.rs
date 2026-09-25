@@ -9,11 +9,11 @@
 //!
 //! # Upstream Reference
 //!
-//! - `options.c:2069-2074` - sets `need_unsorted_flist = 1` when `--iconv`
+//! - `options.c:2196-2201` - sets `need_unsorted_flist = 1` when `--iconv`
 //!   is in effect (and not disabled by `--iconv=-`).
-//! - `flist.c:2496-2498` - "both sides keep an unsorted file-list array
+//! - `flist.c:2736-2738` - "both sides keep an unsorted file-list array
 //!   because the names will differ on the sending and receiving sides".
-//! - `flist.c:2184-2188` - allocates a separate `flist->sorted[]` pointer
+//! - `flist.c:2420-2424` - allocates a separate `flist->sorted[]` pointer
 //!   array so `flist->files[]` (NDX-addressed) stays in scan order.
 
 use std::ffi::OsString;
@@ -131,7 +131,7 @@ fn no_iconv_path_still_sorts_entries() {
 
 /// An identity `--iconv` spec (same local and remote encoding, e.g.
 /// `--iconv=UTF-8,UTF-8`) still sets `need_unsorted_flist = 1` upstream:
-/// `options.c:2069-2074` gates only on the presence of a non-`"-"`
+/// `options.c:2196-2201` gates only on the presence of a non-`"-"`
 /// `iconv_opt`, with NO same-encoding short-circuit. So an upstream peer
 /// keeps `flist->files[]` in scan order even for an identity spec, and this
 /// side must do the same or the wire NDX resolves to a different entry

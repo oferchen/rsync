@@ -44,7 +44,7 @@
 //!
 //! Both terms reach `ReceiverContext` now: `--delete` as `flags.delete` and
 //! `--force` as `flags.force`, the latter decoded from the long arg
-//! `server_options()` emits (`options.c:3014-3015`) and bridged onto the local
+//! `server_options()` emits (`options.c:3024-3025`) and bridged onto the local
 //! receiver on a pull. Neither term recurses on its own - the recursion lives
 //! in one place, `clear_obstacle_dir_contents`, which is the delete pass's own
 //! per-entry walk, so a nested mount point, `--max-delete`, and `--backup`
@@ -372,13 +372,10 @@ impl ReceiverContext {
         } else {
             // upstream: delete.c:264-266 - rsyserr(FERROR_XFER, errno,
             // "delete_file: %s(%s) failed", what, fbuf).
-            let _ = self.emit_error_xfer_line(
+            let _ = self.emit_generator_error_xfer(
                 writer,
-                &format!(
-                    "rsync: [receiver] delete_file: rmdir({}) failed: {}\n",
-                    relative_path.display(),
-                    logging::upstream_errno_text(&error)
-                ),
+                &format!("delete_file: rmdir({}) failed", relative_path.display()),
+                &error,
             );
         }
         self.report_make_way_failure(writer, relative_path, make_way_for, error)
@@ -402,13 +399,10 @@ impl ReceiverContext {
         if error.kind() == io::ErrorKind::NotFound {
             return Ok(());
         }
-        let _ = self.emit_error_xfer_line(
+        let _ = self.emit_generator_error_xfer(
             writer,
-            &format!(
-                "rsync: [receiver] delete_file: unlink({}) failed: {}\n",
-                relative_path.display(),
-                logging::upstream_errno_text(&error)
-            ),
+            &format!("delete_file: unlink({}) failed", relative_path.display()),
+            &error,
         );
         self.report_make_way_failure(writer, relative_path, make_way_for, error)
     }

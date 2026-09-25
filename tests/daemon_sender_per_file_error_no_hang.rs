@@ -10,9 +10,9 @@
 //!    first `eprintln!` on a worker - for example the `opendir` failure raised
 //!    from the flist walk - blocked forever on a lock that was never released.
 //! 2. The server sender entered `send_files()` even when the file list came
-//!    out empty. Upstream bails out first (`main.c:968-974`), because a peer
+//!    out empty. Upstream bails out first (`main.c:981-987`), because a peer
 //!    that received an empty list skips `do_recv()` entirely
-//!    (`main.c:1379-1391`): it never writes an ndx, so the sender's next
+//!    (`main.c:1397-1409`): it never writes an ndx, so the sender's next
 //!    `read_ndx()` blocked until the peer's I/O timeout.
 //!
 //! Neither defect is reachable from a unit test: both need a real daemon
@@ -350,7 +350,7 @@ fn assert_bounded_partial_transfer(fixture: &Fixture, module: &str, path: &str, 
 
 #[test]
 fn unreadable_source_file_reports_partial_transfer_without_hanging() {
-    // upstream: sender.c:383-400 reports the open failure, sends MSG_NO_SEND,
+    // upstream: sender.c:384-401 reports the open failure, sends MSG_NO_SEND,
     // and continues with the next ndx.
     if running_as_root() {
         eprintln!("skip: root bypasses the chmod 000 read denial");
@@ -396,7 +396,7 @@ fn unreadable_source_directory_reports_partial_transfer_without_hanging() {
 #[test]
 fn missing_requested_path_reports_partial_transfer_without_hanging() {
     // Deadlock 2: the requested path does not exist, so the file list is empty
-    // and the peer never enters its receive loop. upstream main.c:968-974
+    // and the peer never enters its receive loop. upstream main.c:981-987
     // returns from the server sender instead of calling send_files().
     let root = TempDir::new().expect("tempdir");
     let module_root = root.path().join("src");

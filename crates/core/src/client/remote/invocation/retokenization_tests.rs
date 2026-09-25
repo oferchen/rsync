@@ -30,7 +30,7 @@
 //! `--secluded-args` (`-s`, formerly `--protect-args`), which stops emitting the
 //! path/option arguments on the command line entirely and ships them
 //! null-separated over the protocol stream after connection
-//! (`rsync.c:283-320 send_protected_args()`, `options.c:2744` NULL cutoff). The
+//! (`rsync.c:283-320 send_protected_args()`, `options.c:2754` NULL cutoff). The
 //! null-separated stream is immune to ANY shell/argv re-tokenizer.
 //!
 //! These tests pin, as a black-box contract over the invocation builder:
@@ -241,7 +241,7 @@ const HOSTILE_PATH: &str = r#"/remote/dir with\slash and"quote/file"#;
 fn default_command_line_survives_posix_but_not_windows_retokenization() {
     // Default config: protect_args unset -> oc emits the paths on the command
     // line, backslash-escaped exactly like upstream `options.c:safe_arg()`
-    // (`options.c:1983-1993`: both oc and upstream default protect_args to 0).
+    // (`options.c:1989-1999`: both oc and upstream default protect_args to 0).
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let cmd_args = builder.build_with_paths(&[OsStr::new(HOSTILE_PATH)]);

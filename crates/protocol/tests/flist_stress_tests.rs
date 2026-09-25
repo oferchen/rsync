@@ -258,7 +258,7 @@ fn stress_10k_sort_and_clean_with_duplicates() {
 
     // Duplicates are TOMBSTONED in place, not compacted: the receiver preserves
     // every NDX slot so its numbering stays aligned with the sender's full
-    // un-deduped array. upstream: flist.c:3089 clear_file().
+    // un-deduped array. upstream: flist.c:3332 clear_file().
     assert_eq!(
         cleaned.len(),
         original_count,

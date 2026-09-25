@@ -52,7 +52,7 @@ fn golden_v29_regular_file_entry() {
     writer.write_entry(&mut buf, &entry).unwrap();
 
     // Flags byte: with default PreserveFlags (uid=false, gid=false), upstream
-    // sets XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:463,473).
+    // sets XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:688,698).
     // xflags = 0x18 (non-zero), so no XMIT_TOP_DIR substitution needed.
     let flags = buf[0];
     assert_eq!(
@@ -115,7 +115,7 @@ fn golden_v29_directory_entry() {
     writer.write_entry(&mut buf, &entry).unwrap();
 
     // Flags: with default PreserveFlags (uid=false, gid=false), upstream sets
-    // XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:463,473).
+    // XMIT_SAME_UID and XMIT_SAME_GID unconditionally (flist.c:688,698).
     // xflags = 0x18 (non-zero, no extended flags), so single-byte encoding.
     assert_eq!(buf[0], 0x18, "XMIT_SAME_UID | XMIT_SAME_GID");
 
@@ -253,7 +253,7 @@ fn golden_v29_uid_encoding() {
     writer.write_entry(&mut buf, &entry).unwrap();
 
     // Layout: flags(1) + name_len(1) + name(5) + size(4) + mtime(4) + mode(4) + uid(4)
-    // flags: XMIT_SAME_GID(0x10) since !preserve_gid is true (flist.c:473)
+    // flags: XMIT_SAME_GID(0x10) since !preserve_gid is true (flist.c:698)
     // XMIT_SAME_UID NOT set (preserve_uid=true, first entry, uid != prev_uid)
     assert_eq!(buf[0], 0x10, "XMIT_SAME_GID set");
 

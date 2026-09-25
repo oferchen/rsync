@@ -6,7 +6,7 @@
 //! direct `fprintf(stderr, ...)` calls left in the message path are five sites
 //! that are either pre-`log_init` (clientserver.c:1520,1563) or reporting that
 //! the message machinery itself is broken (log.c's own bad-logcode arm,
-//! io.c:596,614 - both immediately `exit_cleanup`).
+//! io.c:614,632 - both immediately `exit_cleanup`).
 //!
 //! oc had the rule written down in nine doc comments on [`LogCode`] and
 //! implemented in exactly one leaf crate. This module is the implementation.
