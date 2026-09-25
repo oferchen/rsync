@@ -506,7 +506,16 @@ fn send_client_filter_list<W: Write>(
     let wire_rules: Vec<protocol::filters::FilterRuleWireFormat> = rules
         .iter()
         .filter(|rule| wire_rule_crosses_wire(rule, client_is_sender, delete_excluded, protocol))
-        .cloned()
+        .map(|rule| {
+            let mut rule = rule.clone();
+            // upstream: compat.c:803-807 - the implied relative --partial-dir
+            // exclude is perishable only for a receiver or at protocol >= 30,
+            // so a pre-30 sender sends it as a plain directory exclude.
+            if rule.implied_partial_dir {
+                rule.perishable = !client_is_sender || protocol.supports_perishable_modifier();
+            }
+            rule
+        })
         .collect();
     if filter_rules_too_modern(&wire_rules, client_is_sender, delete_excluded, protocol) {
         // upstream: exclude.c:1924-1926 send_rules() - exit_cleanup(RERR_PROTOCOL).

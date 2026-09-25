@@ -581,3 +581,82 @@ fn pre29_clear_rule_does_not_abort_a_push() {
     client_filter_step(clear, true, false, ProtocolVersion::V28, false)
         .expect("a clear rule is never refused");
 }
+
+// -- implied relative --partial-dir rule (compat.c:803-807) --
+
+fn implied_partial_dir() -> FilterRuleWireFormat {
+    let mut rule = FilterRuleWireFormat::exclude(".rsync-partial".to_owned()).with_perishable(true);
+    rule.directory_only = true;
+    rule.implied_partial_dir = true;
+    rule
+}
+
+fn one_record(payload: &[u8]) -> Vec<u8> {
+    let mut want = (payload.len() as i32).to_le_bytes().to_vec();
+    want.extend_from_slice(payload);
+    want.extend_from_slice(&0i32.to_le_bytes());
+    want
+}
+
+/// Upstream sets FILTRULE_PERISHABLE on the implied partial-dir exclude only
+/// when `!am_sender || protocol_version >= 30` (compat.c:805-806). A pre-30
+/// sender therefore holds a plain directory exclude, which is legal on the
+/// pre-29 wire, so `--partial-dir` must not abort a protocol 28 push - with
+/// or without a list on the wire. Treating it as a user `-p` rule made oc
+/// refuse the upstream testsuite's `symlink-dirlink-basis` push.
+#[test]
+fn pre30_push_sends_implied_partial_dir_as_plain_exclude() {
+    for proto in [ProtocolVersion::V28, ProtocolVersion::V29] {
+        client_filter_step(implied_partial_dir(), true, false, proto, false)
+            .expect("no list: nothing to refuse");
+        let wire = client_filter_step(implied_partial_dir(), true, false, proto, true)
+            .expect("the implied rule is a plain exclude for a pre-30 sender");
+        let payload: &[u8] = if proto == ProtocolVersion::V28 {
+            b".rsync-partial/"
+        } else {
+            b"- .rsync-partial/"
+        };
+        assert_eq!(wire, one_record(payload), "protocol {proto}");
+    }
+}
+
+/// A receiving client keeps the flag (`!am_sender`); below protocol 30 the
+/// `p` byte is simply not written (exclude.c:1872-1874).
+#[test]
+fn pre30_pull_keeps_implied_partial_dir_without_refusing() {
+    let wire = client_filter_step(
+        implied_partial_dir(),
+        false,
+        false,
+        ProtocolVersion::V28,
+        true,
+    )
+    .expect("a receiver never refuses a perishable rule");
+    assert_eq!(wire, one_record(b".rsync-partial/"));
+}
+
+/// At protocol 30 the sender keeps the flag and writes `p`.
+#[test]
+fn protocol_30_push_marks_implied_partial_dir_perishable() {
+    let wire = client_filter_step(
+        implied_partial_dir(),
+        true,
+        false,
+        ProtocolVersion::V30,
+        true,
+    )
+    .expect("protocol 30 encodes `p`");
+    assert_eq!(wire, one_record(b"-p .rsync-partial/"));
+}
+
+/// Opposed control: a user's own `-p` rule is not the implied rule, and a
+/// pre-30 sender still refuses it (exclude.c:1875-1876).
+#[test]
+fn pre30_push_still_refuses_a_user_perishable_rule() {
+    let mut user = implied_partial_dir();
+    user.implied_partial_dir = false;
+    assert_too_modern(
+        client_filter_step(user, true, false, ProtocolVersion::V28, false),
+        "a user -p rule on a pre-30 push",
+    );
+}

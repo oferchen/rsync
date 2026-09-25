@@ -322,6 +322,7 @@ pub(crate) fn build_wire_format_rules(
             pattern: pattern.into(),
             anchored,
             abs_path: spec.is_abs_path(),
+            implied_partial_dir: spec.is_implied_partial_dir(),
             directory_only,
             xattr_only: spec.is_xattr_only(),
             sender_side: wire_sender_side(spec),

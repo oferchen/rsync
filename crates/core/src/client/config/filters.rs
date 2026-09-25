@@ -46,6 +46,12 @@ pub struct FilterRuleSpec {
     /// upstream: exclude.c:1392-1393 parse_rule_tok(), exclude.c:1843
     /// get_rule_prefix().
     abs_path: bool,
+    /// Marks the rule upstream implies for a relative `--partial-dir`, whose
+    /// perishable flag depends on the negotiated role and protocol.
+    ///
+    /// upstream: compat.c:803-807 - `FILTRULE_PERISHABLE` is set only when
+    /// `!am_sender || protocol_version >= 30`.
+    implied_partial_dir: bool,
 }
 
 impl FilterRuleSpec {
@@ -64,6 +70,7 @@ impl FilterRuleSpec {
             negate: false,
             cvs_origin: false,
             abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
@@ -82,6 +89,7 @@ impl FilterRuleSpec {
             negate: false,
             cvs_origin: false,
             abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
@@ -99,6 +107,7 @@ impl FilterRuleSpec {
             negate: false,
             cvs_origin: false,
             abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
@@ -116,6 +125,7 @@ impl FilterRuleSpec {
             negate: false,
             cvs_origin: false,
             abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
@@ -133,6 +143,7 @@ impl FilterRuleSpec {
             negate: false,
             cvs_origin: false,
             abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
@@ -151,6 +162,7 @@ impl FilterRuleSpec {
             negate: false,
             cvs_origin: false,
             abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
@@ -169,6 +181,7 @@ impl FilterRuleSpec {
             negate: false,
             cvs_origin: false,
             abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
@@ -186,6 +199,7 @@ impl FilterRuleSpec {
             negate: false,
             cvs_origin: false,
             abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
@@ -203,6 +217,7 @@ impl FilterRuleSpec {
             negate: false,
             cvs_origin: false,
             abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
@@ -399,6 +414,22 @@ impl FilterRuleSpec {
         }
         self.abs_path = true;
         self
+    }
+
+    /// Marks the rule as the implied relative `--partial-dir` exclude
+    /// (see [`Self::is_implied_partial_dir`]).
+    #[must_use]
+    pub const fn with_implied_partial_dir(mut self) -> Self {
+        self.implied_partial_dir = true;
+        self
+    }
+
+    /// Reports whether the rule is the implied relative `--partial-dir`
+    /// exclude, whose perishable flag is resolved once the role and protocol
+    /// are known (upstream: compat.c:803-807).
+    #[must_use]
+    pub const fn is_implied_partial_dir(&self) -> bool {
+        self.implied_partial_dir
     }
 
     /// Reports whether the rule carries the `/` modifier (`FILTRULE_ABS_PATH`),

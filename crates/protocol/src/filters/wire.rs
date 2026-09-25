@@ -92,6 +92,14 @@ pub struct FilterRuleWireFormat {
     /// exclude.c:1843-1844,1878 get_rule_prefix() writes `/` and returns NULL
     /// once the prefix outgrows `legal_len`.
     pub abs_path: bool,
+    /// Marks the rule upstream implies for a relative `--partial-dir`.
+    ///
+    /// Transfer-decision metadata like [`Self::cvs_origin`]: never serialized,
+    /// always parses back as `false`. Its `perishable` flag is resolved by the
+    /// sending client once the protocol is known, because upstream sets
+    /// `FILTRULE_PERISHABLE` on it only when `!am_sender || protocol_version
+    /// >= 30` (compat.c:803-807).
+    pub implied_partial_dir: bool,
     /// Directory-only pattern (trailing `/`).
     pub directory_only: bool,
     /// No-inherit modifier (`n` flag).
@@ -159,6 +167,7 @@ impl FilterRuleWireFormat {
             no_prefixes_include: false,
             cvs_origin: false,
             abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
@@ -182,6 +191,7 @@ impl FilterRuleWireFormat {
             no_prefixes_include: false,
             cvs_origin: false,
             abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
