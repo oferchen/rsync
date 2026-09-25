@@ -7,6 +7,8 @@
 //!   conversion, sparse writes, and checksum verifier coverage.
 //! - [`hard_links`] - `create_hardlinks` behaviour and the
 //!   `HardlinkApplyTracker` lifecycle.
+//! - [`ranged_post_passes`] - the `*_in_range` post-pass cores: range
+//!   isolation, cross-segment hardlinks, and whole-list equivalence.
 //! - [`symlinks_and_devices`] - itemize emission for files, directories,
 //!   symlinks, and other special entries.
 //! - [`partial_resume`] - temp-file guard, relative-parent creation, and
@@ -37,6 +39,8 @@ mod parallel_delta_notice;
 mod partial_resume;
 mod post_decision_name_emission;
 mod push_metadata_itemize;
+#[cfg(unix)]
+mod ranged_post_passes;
 #[cfg(unix)]
 mod sanitize_symlink_targets;
 mod sender_stats;

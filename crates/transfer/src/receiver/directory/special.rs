@@ -55,9 +55,31 @@ impl ReceiverContext {
     ///
     /// - `generator.c:1627` - `if (preserve_devices && IS_DEVICE(file->mode))`
     /// - `generator.c:1675` - `atomic_create(file, fname, NULL, ...)`
-    #[cfg(unix)]
     pub(in crate::receiver) fn create_specials<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        self.create_specials_in_range(
+            0..self.file_list.len(),
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+            writer,
+        )
+    }
+
+    /// [`create_specials`](Self::create_specials) restricted to the flat-index
+    /// range `[range.start, range.end)`. Upstream creates each node inline as
+    /// `recv_generator()` reaches it (generator.c:2031-2060), so per-segment
+    /// calls that tile the list match one whole-list call.
+    #[cfg(unix)]
+    pub(in crate::receiver) fn create_specials_in_range<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        range: std::ops::Range<usize>,
         dest_dir: &Path,
         sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
@@ -74,7 +96,9 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        for (flist_idx, entry) in self.file_list.iter().enumerate() {
+        let start = range.start;
+        for (i, entry) in self.file_list[range].iter().enumerate() {
+            let flist_idx = start + i;
             let is_device = entry.is_device();
             let is_special = entry.is_special();
             if is_device {
@@ -332,8 +356,11 @@ impl ReceiverContext {
     /// skipped entry and leave the destination untouched, per the WIND-2
     /// contract in `docs/user/windows-support-matrix.md`.
     #[cfg(not(unix))]
-    pub(in crate::receiver) fn create_specials<W: crate::writer::MsgInfoSender + ?Sized>(
+    pub(in crate::receiver) fn create_specials_in_range<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
         &self,
+        range: std::ops::Range<usize>,
         _dest_dir: &Path,
         _writer: &mut W,
     ) -> std::io::Result<()> {
@@ -345,7 +372,7 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        for entry in &self.file_list {
+        for entry in &self.file_list[range] {
             let gated = (entry.is_device() && self.config.flags.devices)
                 || (entry.is_special() && self.config.flags.specials);
             if !gated {

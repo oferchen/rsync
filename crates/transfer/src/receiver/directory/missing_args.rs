@@ -59,6 +59,23 @@ impl ReceiverContext {
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> io::Result<()> {
+        self.process_missing_args_sentinels_in_range(
+            0..self.file_list.len(),
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+        )
+    }
+
+    /// [`process_missing_args_sentinels`](Self::process_missing_args_sentinels)
+    /// restricted to the flat-index range `[range.start, range.end)`. Upstream
+    /// handles each sentinel inline in `recv_generator()` (generator.c:1749-1755).
+    pub(in crate::receiver) fn process_missing_args_sentinels_in_range(
+        &self,
+        range: std::ops::Range<usize>,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    ) -> io::Result<()> {
         if !self.config.file_selection.delete_missing_args {
             return Ok(());
         }
@@ -66,7 +83,7 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        for entry in &self.file_list {
+        for entry in &self.file_list[range] {
             // upstream: generator.c:1348 - sentinel is identified by mode == 0.
             if entry.mode() != 0 {
                 continue;

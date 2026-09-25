@@ -91,9 +91,32 @@ impl ReceiverContext {
     ///
     /// - `generator.c:1948` - `if (preserve_links && ftype == FT_SYMLINK)`
     /// - `generator.c:2002` - `atomic_create(file, fname, sl, ...)`
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     pub(in crate::receiver) fn create_symlinks<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
+        self.create_symlinks_in_range(
+            0..self.file_list.len(),
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+            writer,
+        )
+    }
+
+    /// [`create_symlinks`](Self::create_symlinks) restricted to the flat-index
+    /// range `[range.start, range.end)`. Upstream creates each symlink inline
+    /// as `recv_generator()` reaches it (generator.c:1948-2002), so a
+    /// per-segment caller covers the whole list once the ranges tile it.
+    #[cfg(unix)]
+    pub(in crate::receiver) fn create_symlinks_in_range<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        range: std::ops::Range<usize>,
         dest_dir: &Path,
         sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
@@ -102,7 +125,9 @@ impl ReceiverContext {
             return Ok(());
         }
 
-        for (flist_idx, entry) in self.file_list.iter().enumerate() {
+        let start = range.start;
+        for (i, entry) in self.file_list[range].iter().enumerate() {
+            let flist_idx = start + i;
             if !entry.is_symlink() {
                 continue;
             }
@@ -425,6 +450,20 @@ impl ReceiverContext {
         dest_dir: &Path,
         writer: &mut W,
     ) -> std::io::Result<()> {
+        self.create_symlinks_in_range(0..self.file_list.len(), dest_dir, writer)
+    }
+
+    /// Windows [`create_symlinks`](Self::create_symlinks) restricted to the
+    /// flat-index range `[range.start, range.end)`.
+    #[cfg(windows)]
+    pub(in crate::receiver) fn create_symlinks_in_range<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &mut self,
+        range: std::ops::Range<usize>,
+        dest_dir: &Path,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
         if !self.config.flags.links || self.config.flags.skip_dest_writes() {
             return Ok(());
         }
@@ -434,7 +473,9 @@ impl ReceiverContext {
         // borrow of `self.file_list` never overlaps the mutable field write.
         let mut unsupported_skip = false;
 
-        for (flist_idx, entry) in self.file_list.iter().enumerate() {
+        let start = range.start;
+        for (i, entry) in self.file_list[range].iter().enumerate() {
+            let flist_idx = start + i;
             if !entry.is_symlink() {
                 continue;
             }
@@ -669,8 +710,11 @@ impl ReceiverContext {
 
     /// No-op on platforms that are neither Unix nor Windows.
     #[cfg(not(any(unix, windows)))]
-    pub(in crate::receiver) fn create_symlinks<W: crate::writer::MsgInfoSender + ?Sized>(
+    pub(in crate::receiver) fn create_symlinks_in_range<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
         &self,
+        _range: std::ops::Range<usize>,
         _dest_dir: &Path,
         _writer: &mut W,
     ) -> std::io::Result<()> {
@@ -695,6 +739,13 @@ impl ReceiverContext {
     /// Returns the promoted leader's path - recording it in the tracker so the
     /// remaining followers reuse it - or `None` when no member of the group
     /// materialized on disk.
+    ///
+    /// `file_list` is the prefix up to the caller's range end: upstream
+    /// `check_prior()` only ever walks members before the follower, and a
+    /// reclaimed segment's entries carry no `hardlink_idx`, so they are skipped
+    /// and the tracker's recorded path stands in for them (upstream keeps the
+    /// finished name in `prior_hlinks`: stored at hlink.c:546-563, read by
+    /// `check_prior()` at hlink.c:281-291).
     fn promote_hardlink_leader(
         file_list: &[protocol::flist::FileEntry],
         tracker: &mut engine::HardlinkApplyTracker,
@@ -757,6 +808,57 @@ impl ReceiverContext {
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
     ) -> std::io::Result<()> {
+        self.create_hardlinks_in_range(
+            0..self.file_list.len(),
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+            writer,
+        )?;
+        // Resolve any remaining deferred followers from incremental commits.
+        // upstream: hlink.c:finish_hard_link() - final pass
+        if let Some(tracker) = self.hardlink_tracker.as_mut()
+            && self.config.flags.hard_links
+            && !self.config.flags.skip_dest_writes()
+        {
+            let (linked, errors) = tracker.resolve_deferred();
+            if linked > 0 {
+                debug_log!(Recv, 2, "resolved {} deferred hardlink followers", linked);
+            }
+            for (path, err) in errors {
+                debug_log!(
+                    Recv,
+                    1,
+                    "failed to resolve deferred hardlink {}: {}",
+                    path.display(),
+                    err
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// [`create_hardlinks`](Self::create_hardlinks) restricted to the
+    /// flat-index range `[range.start, range.end)`, without the final
+    /// deferred-follower drain (the whole-list wrapper runs it once, after the
+    /// last range).
+    ///
+    /// A leader in an earlier range is resolved through the
+    /// `HardlinkApplyTracker` path recorded when that range was processed, never
+    /// by reading its (possibly reclaimed) file-list entry - the counterpart of
+    /// upstream's `prior_hlinks` gnum table (created hlink.c:126-160, named by
+    /// `finish_hard_link()` hlink.c:546-563, read by `check_prior()` hlink.c:281-291),
+    /// which keeps a finished leader's name after `flist_free()` drops its
+    /// segment.
+    pub(in crate::receiver) fn create_hardlinks_in_range<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &mut self,
+        range: std::ops::Range<usize>,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+        writer: &mut W,
+    ) -> std::io::Result<()> {
         if !self.config.flags.hard_links || self.config.flags.skip_dest_writes() {
             return Ok(());
         }
@@ -776,7 +878,7 @@ impl ReceiverContext {
             // Leaders committed during pipelined transfer are already recorded;
             // this covers leaders that matched quick-check (not transferred) or
             // were processed via the sync path.
-            for entry in &self.file_list {
+            for entry in &self.file_list[range.clone()] {
                 if entry.hlink_first() {
                     let gnum = match entry.hardlink_idx() {
                         Some(idx) => idx,
@@ -823,7 +925,9 @@ impl ReceiverContext {
             // an absent hlink_first member instead means its own transfer was
             // skipped/errored (FLAG_SKIP_HLINK), which must not be resurrected -
             // so that path keeps skipping every hlink_first member unchanged.
-            for (follower_ndx, entry) in self.file_list.iter().enumerate() {
+            let start = range.start;
+            for (i, entry) in self.file_list[range.clone()].iter().enumerate() {
+                let follower_ndx = start + i;
                 if !entry.hlinked() {
                     continue;
                 }
@@ -847,7 +951,7 @@ impl ReceiverContext {
 
                 let entry_name = entry.path().display().to_string();
                 let leader_path = match Self::promote_hardlink_leader(
-                    &self.file_list,
+                    &self.file_list[..range.end],
                     &mut tracker,
                     leader_idx,
                     dest_dir,
@@ -1071,22 +1175,6 @@ impl ReceiverContext {
                     "{} => {}",
                     relative_path.display(),
                     leader_path.display()
-                );
-            }
-
-            // Resolve any remaining deferred followers from incremental commits.
-            // upstream: hlink.c:finish_hard_link() - final pass
-            let (linked, errors) = tracker.resolve_deferred();
-            if linked > 0 {
-                debug_log!(Recv, 2, "resolved {} deferred hardlink followers", linked);
-            }
-            for (path, err) in errors {
-                debug_log!(
-                    Recv,
-                    1,
-                    "failed to resolve deferred hardlink {}: {}",
-                    path.display(),
-                    err
                 );
             }
 

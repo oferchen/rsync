@@ -728,13 +728,31 @@ impl ReceiverContext {
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) {
+        self.ensure_relative_parents_in_range(
+            0..self.file_list.len(),
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+        );
+    }
+
+    /// [`ensure_relative_parents`](Self::ensure_relative_parents) restricted to
+    /// the flat-index range `[range.start, range.end)`. The dedupe set is
+    /// per call; an ancestor an earlier range already created is caught by
+    /// the `exists()` probe instead, so the directories made are the same.
+    pub(in crate::receiver) fn ensure_relative_parents_in_range(
+        &self,
+        range: std::ops::Range<usize>,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    ) {
         if !self.config.flags.relative || self.config.flags.skip_dest_writes() {
             return;
         }
 
         let mut created: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
-        for entry in &self.file_list {
+        for entry in &self.file_list[range] {
             let relative_path = entry.path();
             if relative_path.as_os_str() == "." {
                 continue;
