@@ -10,7 +10,7 @@ impl ClientConfig {
     /// Reports whether `-C` / `--cvs-exclude` was requested.
     ///
     /// Forwarded to the remote peer as the compact `C` letter so it runs
-    /// `get_cvs_excludes()` itself, mirroring upstream `options.c:2709`.
+    /// `get_cvs_excludes()` itself, mirroring upstream `options.c:2719`.
     #[must_use]
     #[doc(alias = "--cvs-exclude")]
     #[doc(alias = "-C")]

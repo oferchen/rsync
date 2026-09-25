@@ -3,11 +3,11 @@
 //! oc-rsync serves each accepted connection on a thread, so a session error
 //! travels back to the accept loop through a `JoinHandle`. Upstream serves
 //! each connection in a forked child and the parent reaps it with
-//! `waitpid(-1, NULL, WNOHANG)` (socket.c:679) - a NULL status pointer, so the
+//! `waitpid(-1, NULL, WNOHANG)` (socket.c:687) - a NULL status pointer, so the
 //! child's outcome is discarded outright. The parent's `while (1)` accept loop
-//! (socket.c:724-778) has no error exit at all: `poll` failure, `accept`
+//! (socket.c:732-786) has no error exit at all: `poll` failure, `accept`
 //! failure and `fork` failure each `continue`. Only listener setup can end the
-//! daemon (`exit_cleanup(RERR_SOCKETIO)` at socket.c:699 and socket.c:715).
+//! daemon (`exit_cleanup(RERR_SOCKETIO)` at socket.c:707 and socket.c:723).
 //!
 //! This test pins that contract for the threaded model: client one drives a
 //! genuine session error, and client two must still complete a real transfer

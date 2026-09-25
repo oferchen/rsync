@@ -8,9 +8,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `receiver.c:1093-1099` - `send_msg_int(MSG_REDO, ndx)` on checksum failure
+//! - `receiver.c:1109-1115` - `send_msg_int(MSG_REDO, ndx)` on checksum failure
 //! - `generator.c:2160-2199` - `check_for_finished_files()` processes redo queue
-//! - `receiver.c:580-587` - phase transition on `NDX_DONE`
+//! - `receiver.c:596-603` - phase transition on `NDX_DONE`
 
 use std::collections::VecDeque;
 use std::io;
@@ -45,8 +45,8 @@ struct PendingChecksum {
     /// receiver does - relative to the destination root it `change_dir()`ed
     /// into, never as an absolute path.
     ///
-    /// upstream: receiver.c:882 - `fname = local_name ? local_name : f_name(file, fbuf)`
-    /// upstream: receiver.c:1352 - `local_name ? f_name(file, NULL) : fname`, so
+    /// upstream: receiver.c:898 - `fname = local_name ? local_name : f_name(file, fbuf)`
+    /// upstream: receiver.c:1369 - `local_name ? f_name(file, NULL) : fname`, so
     /// the flist name is printed in both the `local_name` and the plain case.
     flist_name: PathBuf,
     /// File list index for this file, used to identify which file to redo.
@@ -57,7 +57,7 @@ struct PendingChecksum {
     /// in-place update is "retained" rather than "discarded", because the
     /// destination inode was overwritten and cannot be rolled back.
     ///
-    /// upstream: receiver.c:1073-1078 - `!inplace` gates the "discarded" word.
+    /// upstream: receiver.c:1089-1094 - `!inplace` gates the "discarded" word.
     is_inplace: bool,
 }
 
@@ -82,7 +82,7 @@ pub struct PipelinedReceiver {
     /// processes files in the same order they are submitted.
     expected_checksums: VecDeque<PendingChecksum>,
     /// File indices that failed checksum verification and should be retried.
-    /// Mirrors upstream `redo_list` in `io.c:158`.
+    /// Mirrors upstream `redo_list` in `io.c:166`.
     redo_indices: Vec<usize>,
     /// Whether the redo mechanism is active (phase 1). When false (phase 2),
     /// checksum mismatches are hard errors.
@@ -106,8 +106,8 @@ pub struct PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:546-547`: `delayed_bits = bitbag_create()`
-    /// - `receiver.c:694-695`: `handle_delayed_updates()` sweep
+    /// - `receiver.c:562-563`: `delayed_bits = bitbag_create()`
+    /// - `receiver.c:710-711`: `handle_delayed_updates()` sweep
     delayed_updates: Vec<(PathBuf, PathBuf)>,
     /// Flat file indices whose commit was confirmed (finish_transfer succeeded,
     /// checksum verified). The receiver drains these and, when
@@ -117,26 +117,26 @@ pub struct PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1063-1069`: `send_msg_success(fname, ndx)` on `recv_ok == 1`.
+    /// - `receiver.c:1079-1085`: `send_msg_success(fname, ndx)` on `recv_ok == 1`.
     success_indices: Vec<usize>,
     /// Partial-retention mode for the session, captured from the disk-commit
     /// config before it is moved into the disk thread. Selects the upstream
     /// `keptstr` wording on a verification failure.
     ///
-    /// upstream: receiver.c:1073-1078 - `keep_partial`/`partial_dir` gating.
+    /// upstream: receiver.c:1089-1094 - `keep_partial`/`partial_dir` gating.
     partial_mode: PartialMode,
     /// Daemon module served by this process, captured from the disk-commit
     /// config. Gates the ` (in MODULE)` suffix that `full_fname()` appends to
     /// the quoted path in the `mkstemp` failure line.
     ///
-    /// upstream: util1.c:1453 - `if (module_id >= 0)` in `full_fname()`.
+    /// upstream: util1.c:1548 - `if (module_id >= 0)` in `full_fname()`.
     daemon_module: Option<String>,
     /// Module root and destination directory, i.e. upstream's `module_dir` and
-    /// the `curr_dir` the receiver `chdir()`ed into (`main.c:815`
+    /// the `curr_dir` the receiver `chdir()`ed into (`main.c:828`
     /// `change_dir(dest_path, ..)`). Together they make the `mkstemp` failure
     /// name its temp file relative to the module root.
     ///
-    /// upstream: util1.c:1448 - `p1 = curr_dir + module_dirlen`.
+    /// upstream: util1.c:1543 - `p1 = curr_dir + module_dirlen`.
     daemon_module_root: Option<PathBuf>,
     dest_dir: Option<PathBuf>,
     /// Session state behind the verification-failure report, seeded by
@@ -151,27 +151,27 @@ pub struct PipelinedReceiver {
 /// there, so [`Default`] reproduces a plain, non-batch run with no `%i` in the
 /// per-file format.
 ///
-/// upstream: receiver.c:1072,1085 - the two globals read by `case 0:`.
+/// upstream: receiver.c:1088,1101 - the two globals read by `case 0:`.
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 pub struct VerifyReport {
     /// The resolved per-file output format carries `%i`, i.e. upstream's
     /// `stdout_format_has_i`. Together with `INFO_GTE(NAME, 1)` it is what
     /// lets the `FWARNING` form print at all.
     ///
-    /// upstream: receiver.c:1072 - `msgtype == FERROR_XFER || INFO_GTE(NAME, 1)
+    /// upstream: receiver.c:1088 - `msgtype == FERROR_XFER || INFO_GTE(NAME, 1)
     /// || stdout_format_has_i`.
     pub out_format_forwards_i: bool,
     /// This receiver is replaying a recorded batch (`--read-batch`), i.e.
     /// upstream's `read_batch`. Selects the retry wording: a batch replay may
     /// only *try* the redo, because the recorded stream may not carry it.
     ///
-    /// upstream: receiver.c:1347 - `redostr = read_batch ? " (may try again)"
+    /// upstream: receiver.c:1364 - `redostr = read_batch ? " (may try again)"
     /// : " (will try again)"`.
     pub read_batch: bool,
 }
 
 /// Projects this receiver's partial-retention mode onto the three upstream
-/// variables `receiver.c:1074-1076` reads.
+/// variables `receiver.c:1090-1092` reads.
 ///
 /// Upstream keeps `keep_partial`, `partialptr` and `partial_dir` separately;
 /// oc collapses them into one session-wide [`PartialMode`], so a mode other
@@ -194,7 +194,7 @@ fn partial_state(partial_mode: &PartialMode) -> (bool, bool, bool) {
 /// wording, the severity or the emission gate away from the other.
 ///
 /// `name` is the file's *file list* name. Upstream's receiver has already
-/// `change_dir()`ed into the destination root (`main.c:815`), so `fname` - and
+/// `change_dir()`ed into the destination root (`main.c:828`), so `fname` - and
 /// `f_name(file, NULL)` in the `local_name` case - renders relative to it; the
 /// joined absolute destination path is never what a user sees here.
 ///
@@ -202,7 +202,7 @@ fn partial_state(partial_mode: &PartialMode) -> (bool, bool, bool) {
 /// failure is a retryable `FWARNING`, and true in the phase-2 redo, where the
 /// same failure is a fatal `FERROR_XFER` with no retry left to promise.
 ///
-/// upstream: receiver.c:1071-1091.
+/// upstream: receiver.c:1087-1107.
 fn verification_failure_report(
     name: &std::path::Path,
     partial_mode: &PartialMode,
@@ -306,7 +306,7 @@ impl PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:452-453` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed",
+    /// - `receiver.c:465-466` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed",
     ///   full_fname(fnametmp))`
     fn commit_failure(&self, dest: &std::path::Path, error: &io::Error) -> String {
         let (op, named) = match crate::temp_guard::commit_op_failure(error) {
@@ -316,14 +316,14 @@ impl PipelinedReceiver {
         let name = full_fname_path(named, self.full_fname_paths());
         let reason = logging::upstream_errno_text(error);
         match op {
-            // upstream: rsync-3.5.0/receiver.c:452-453
+            // upstream: rsync-3.5.1/receiver.c:465-466
             Some(crate::temp_guard::CommitOp::Mkstemp) | None => {
                 format!("rsync: [receiver] mkstemp {name} failed: {reason}")
             }
             Some(crate::temp_guard::CommitOp::Backup) => {
                 keep_backup_failed_line(&name, error, &reason)
             }
-            // upstream: rsync-3.5.0/receiver.c:710-712 `rename failed for %s
+            // upstream: rsync-3.5.1/receiver.c:726-728 `rename failed for %s
             // (from %s)`. oc names the destination only; the `from` operand is
             // the internal temp name, which upstream prints and oc omits.
             Some(crate::temp_guard::CommitOp::Rename) => {
@@ -411,7 +411,7 @@ impl PipelinedReceiver {
     /// Upstream answers the two commit failures differently, and the
     /// discriminator is the operation, not the errno:
     ///
-    /// - a denied `mkstemp()` is per-file. `receiver.c:452-455` reports it and
+    /// - a denied `mkstemp()` is per-file. `receiver.c:465-468` reports it and
     ///   `recv_files()` moves to the next file, so the run ends at
     ///   `RERR_PARTIAL` (23) through `io_error`.
     /// - a failed backup is fatal. `finish_transfer()` answers
@@ -424,14 +424,14 @@ impl PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/rsync.c:897-900` - `finish_transfer()`:
+    /// - `rsync-3.5.1/rsync.c:897-900` - `finish_transfer()`:
     ///   `if (!ok) exit_cleanup(RERR_FILEIO);`
-    /// - `rsync-3.5.0/cleanup.c:103` - `_exit_cleanup()` is `NORETURN`.
-    /// - `rsync-3.5.0/cleanup.c:113-117` - the first code in wins, and
+    /// - `rsync-3.5.1/cleanup.c:103` - `_exit_cleanup()` is `NORETURN`.
+    /// - `rsync-3.5.1/cleanup.c:113-117` - the first code in wins, and
     ///   `cleanup.c:210-218` only reaches for `RERR_PARTIAL` when no code has
     ///   been claimed, so `RERR_FILEIO` (11) outranks the 23 the accumulated
     ///   `got_xfer_error` would otherwise produce.
-    /// - `rsync-3.5.0/receiver.c:452-455` - the contrasting per-file `mkstemp`
+    /// - `rsync-3.5.1/receiver.c:465-468` - the contrasting per-file `mkstemp`
     ///   failure that does continue.
     fn absorb_commit_error(
         &mut self,
@@ -455,7 +455,7 @@ impl PipelinedReceiver {
             return Some(error);
         }
 
-        // upstream: receiver.c:452-453 - rsyserr(FERROR_XFER, errno,
+        // upstream: receiver.c:465-466 - rsyserr(FERROR_XFER, errno,
         // "mkstemp %s failed", full_fname(fnametmp)). Emitting this as
         // FERROR_XFER (not FINFO) makes the peer's rwrite() set
         // got_xfer_error, so the run exits 23 (RERR_PARTIAL) instead of 0
@@ -478,7 +478,7 @@ impl PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:720` - `recv_files()` continues on EACCES/EPERM, sets io_error
+    /// - `receiver.c:736` - `recv_files()` continues on EACCES/EPERM, sets io_error
     pub fn drain_ready_results(&mut self) -> io::Result<(u64, Vec<(PathBuf, String)>)> {
         let mut bytes = 0u64;
         let mut meta_errors = Vec::new();
@@ -530,7 +530,7 @@ impl PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:720` - `recv_files()` continues on EACCES/EPERM, sets io_error
+    /// - `receiver.c:736` - `recv_files()` continues on EACCES/EPERM, sets io_error
     pub fn drain_all_results(&mut self) -> io::Result<(u64, Vec<(PathBuf, String)>)> {
         let mut bytes = 0u64;
         let mut meta_errors = Vec::new();
@@ -582,11 +582,11 @@ impl PipelinedReceiver {
     ///
     /// When `redo_enabled` is true (phase 1), checksum mismatches queue the file
     /// index into `redo_indices` and log a warning - mirroring upstream
-    /// `receiver.c:1083-1096` which sends `MSG_REDO` and continues.
+    /// `receiver.c:1099-1112` which sends `MSG_REDO` and continues.
     ///
     /// When `redo_enabled` is false (phase 2), checksum mismatches are logged
     /// as errors but do not abort the transfer - mirroring upstream
-    /// `receiver.c:1071-1080` where `redoing=1` uses `FERROR_XFER`.
+    /// `receiver.c:1087-1096` where `redoing=1` uses `FERROR_XFER`.
     fn verify_checksum(&mut self, result: &CommitResult) -> io::Result<()> {
         let pending = match self.expected_checksums.pop_front() {
             Some(p) => p,
@@ -605,7 +605,7 @@ impl PipelinedReceiver {
                 self.verify_report,
             ));
             if self.redo_enabled {
-                // upstream: receiver.c:1093-1096 - `send_msg_int(MSG_REDO,
+                // upstream: receiver.c:1109-1112 - `send_msg_int(MSG_REDO,
                 // ndx)` sits OUTSIDE the emit `if`, so a suppressed
                 // diagnostic never costs the retry that corrects the file.
                 self.redo_indices.push(pending.file_index);
@@ -614,7 +614,7 @@ impl PipelinedReceiver {
             return Ok(());
         }
 
-        // upstream: receiver.c:1063-1069 - the file committed cleanly
+        // upstream: receiver.c:1079-1085 - the file committed cleanly
         // (finish_transfer succeeded and any wire checksum verified), i.e.
         // `recv_ok == 1`. Record it as a confirmed success so the receiver can
         // emit MSG_SUCCESS(ndx) to the sender, which drives the deferred
@@ -671,7 +671,7 @@ impl PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:694-695`: `handle_delayed_updates()` at phase 2
+    /// - `receiver.c:710-711`: `handle_delayed_updates()` at phase 2
     pub fn take_delayed_updates(&mut self) -> Vec<(PathBuf, PathBuf)> {
         std::mem::take(&mut self.delayed_updates)
     }
@@ -687,7 +687,7 @@ impl PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1093-1097`: `send_msg_int(MSG_REDO, ndx)` sent immediately
+    /// - `receiver.c:1109-1113`: `send_msg_int(MSG_REDO, ndx)` sent immediately
     ///   when a checksum mismatch is detected during phase 1.
     pub fn drain_new_redo_indices(&mut self) -> Vec<usize> {
         std::mem::take(&mut self.redo_indices)
@@ -704,8 +704,8 @@ impl PipelinedReceiver {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1063-1069`: `send_msg_success(fname, ndx)` on `recv_ok == 1`.
-    /// - `io.c:1623-1637`: sender-side `MSG_SUCCESS` handler -> `successful_send`.
+    /// - `receiver.c:1079-1085`: `send_msg_success(fname, ndx)` on `recv_ok == 1`.
+    /// - `io.c:1649-1663`: sender-side `MSG_SUCCESS` handler -> `successful_send`.
     pub fn drain_new_success_indices(&mut self) -> Vec<usize> {
         std::mem::take(&mut self.success_indices)
     }
@@ -760,7 +760,7 @@ impl PipelinedReceiver {
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:825-832` - `do_open()` failure handling logs and continues
+/// - `receiver.c:841-848` - `do_open()` failure handling logs and continues
 fn is_permission_error(err: &io::Error) -> bool {
     err.kind() == io::ErrorKind::PermissionDenied
 }
@@ -775,7 +775,7 @@ fn is_permission_error(err: &io::Error) -> bool {
 /// second; a failure raised before a destination was chosen has only the one
 /// operand to name, so it renders without the arrow.
 ///
-/// upstream: `rsync-3.5.0/backup.c:402-403` - `rsyserr(FERROR, errno,
+/// upstream: `rsync-3.5.1/backup.c:402-403` - `rsyserr(FERROR, errno,
 /// "keep_backup failed: %s -> \"%s\"", full_fname(fname), buf)`.
 pub(crate) fn keep_backup_failed_line(name: &str, error: &io::Error, reason: &str) -> String {
     match crate::temp_guard::commit_op_destination(error) {
@@ -805,7 +805,7 @@ mod tests {
     ///
     /// `--delay-updates` always stages through a partial directory: upstream
     /// substitutes the implicit `.~tmp~` when the operator named none
-    /// (options.c:2563-2564), and oc mirrors that where the receiver derives
+    /// (options.c:2572-2573), and oc mirrors that where the receiver derives
     /// its `PartialMode`. A `delay_updates` config carrying no partial mode is
     /// a state the production path cannot produce.
     fn delay_updates_config() -> DiskCommitConfig {
@@ -1054,7 +1054,7 @@ mod tests {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1063-1069` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
+    /// - `receiver.c:1079-1085` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
     #[test]
     fn clean_commit_records_msg_success_once() {
         use crate::pipeline::messages::ComputedChecksum;
@@ -1117,8 +1117,8 @@ mod tests {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:965-968` - checksum failure discards the update and redoes it.
-    /// - `receiver.c:1063-1069` - `send_msg_success` runs only on `recv_ok == 1`.
+    /// - `receiver.c:981-984` - checksum failure discards the update and redoes it.
+    /// - `receiver.c:1079-1085` - `send_msg_success` runs only on `recv_ok == 1`.
     #[test]
     fn checksum_mismatch_withholds_msg_success() {
         use crate::pipeline::messages::ComputedChecksum;
@@ -1236,7 +1236,7 @@ mod tests {
     /// lifted the whole delta off the wire and enqueued it as `Begin` + several
     /// `Chunk`s + `Commit`; when `open_tmpfile()` fails, the disk thread must
     /// drain those queued messages (the channel analog of upstream
-    /// `discard_receive_data`, receiver.c:999-1006) rather than returning
+    /// `discard_receive_data`, receiver.c:1015-1022) rather than returning
     /// immediately and mis-parsing the next `Chunk` as a "message without
     /// Begin". The file is marked failed and folded to a per-file partial
     /// (IOERR_GENERAL -> RERR_PARTIAL, exit 23), never a fatal desync (exit 12).
@@ -1608,8 +1608,8 @@ mod tests {
     /// The commit path runs mkstemp, backup, rename and metadata behind one
     /// `Result`, so a `PermissionDenied` from any of them reaches the same
     /// reporting arm. Upstream gives each site its own text - `mkstemp %s
-    /// failed` (`rsync-3.5.0/receiver.c:452-453`), `rename failed for %s`
-    /// (`:710-712`), `keep_backup failed` (`rsync-3.5.0/backup.c:402-403`) -
+    /// failed` (`rsync-3.5.1/receiver.c:465-466`), `rename failed for %s`
+    /// (`:710-712`), `keep_backup failed` (`rsync-3.5.1/backup.c:402-403`) -
     /// and oc must not label all three `mkstemp`.
     ///
     /// The untagged arm is the one that matters for regressions: an error
@@ -1676,7 +1676,7 @@ mod tests {
 
     /// upstream prints BOTH operands of the failing copy: `keep_backup failed:
     /// %s -> "%s"` over `full_fname(fname)` and the backup destination `buf`
-    /// (`rsync-3.5.0/backup.c:402-403`). Naming only the pre-image loses the
+    /// (`rsync-3.5.1/backup.c:402-403`). Naming only the pre-image loses the
     /// path the backup was going TO, which is the half that identifies WHERE
     /// the failure happened - under a restricted shell that path is the pinned
     /// `/proc/self/fd/N/...` handle, and without it the message cannot be told
@@ -1926,7 +1926,7 @@ mod tests {
         // Outside a daemon module upstream's module_id is -1 and module_dirlen
         // is 0, so full_fname() neither strips a prefix nor appends a suffix:
         // the absolute temp path stays exactly as a local or SSH run prints it
-        // (util1.c:1285-1290).
+        // (util1.c:1382-1387).
         let expected_prefix = format!(
             "rsync: [receiver] mkstemp \"{}/.denied.dat.",
             readonly_dir.display()
@@ -1934,7 +1934,7 @@ mod tests {
         assert!(
             warnings[0].1.starts_with(&expected_prefix)
                 && warnings[0].1.ends_with("\" failed: Permission denied (13)"),
-            "message should mirror upstream receiver.c:452-453 \"mkstemp %s failed\" \
+            "message should mirror upstream receiver.c:465-466 \"mkstemp %s failed\" \
              with the absolute temp name: {}",
             warnings[0].1
         );
@@ -2013,8 +2013,8 @@ mod tests {
     /// rsync: [receiver] mkstemp ".new.txt.a2dBeL" (in romod) failed: Permission denied (13)
     /// ```
     ///
-    /// upstream: util1.c:1285-1290 inside `full_fname()`, reached from
-    /// receiver.c:452-453 `rsyserr(..., "mkstemp %s failed", full_fname(fnametmp))`.
+    /// upstream: util1.c:1382-1387 inside `full_fname()`, reached from
+    /// receiver.c:465-466 `rsyserr(..., "mkstemp %s failed", full_fname(fnametmp))`.
     #[cfg(unix)]
     #[test]
     fn output_open_failure_names_daemon_module() {
@@ -2118,11 +2118,11 @@ mod tests {
     /// as the file list does.
     ///
     /// The flist name is what upstream renders: its receiver has already
-    /// `change_dir()`ed into the destination root (`main.c:815`), so `fname` -
+    /// `change_dir()`ed into the destination root (`main.c:828`), so `fname` -
     /// and `f_name(file, NULL)` in the `local_name` case - is destination
     /// relative. An absolute path here is a real divergence a user sees.
     ///
-    /// upstream: receiver.c:1088-1091.
+    /// upstream: receiver.c:1104-1107.
     #[test]
     fn verbose_phase1_warning_matches_upstream_verbatim() {
         let msgs = queued_verification_messages(1, VerifyReport::default(), true);
@@ -2142,8 +2142,8 @@ mod tests {
     /// Both halves matter: suppressing the line must not suppress the retry, or
     /// the destination is left wrong without any diagnostic at all.
     ///
-    /// upstream: receiver.c:1072 gates only the `rprintf`; the
-    /// `send_msg_int(MSG_REDO, ndx)` at receiver.c:1093-1096 sits outside it.
+    /// upstream: receiver.c:1088 gates only the `rprintf`; the
+    /// `send_msg_int(MSG_REDO, ndx)` at receiver.c:1109-1112 sits outside it.
     #[test]
     fn default_verbosity_suppresses_the_phase1_warning_but_not_the_redo() {
         use crate::pipeline::messages::ComputedChecksum;
@@ -2190,7 +2190,7 @@ mod tests {
     /// `-i` (or any `--out-format` carrying `%i`) satisfies the gate on its own,
     /// with no `-v`: upstream ORs `stdout_format_has_i` with `INFO_GTE(NAME, 1)`.
     ///
-    /// upstream: receiver.c:1072.
+    /// upstream: receiver.c:1088.
     #[test]
     fn out_format_i_alone_reports_the_phase1_warning() {
         let report = VerifyReport {
@@ -2205,7 +2205,7 @@ mod tests {
     /// A `--read-batch` replay says "may try again": the recorded stream is not
     /// guaranteed to carry the redo the way a live sender does.
     ///
-    /// upstream: receiver.c:1347 - `redostr = read_batch ? " (may try again)"
+    /// upstream: receiver.c:1364 - `redostr = read_batch ? " (may try again)"
     /// : " (will try again)"`.
     #[test]
     fn read_batch_replay_says_may_try_again() {
@@ -2227,7 +2227,7 @@ mod tests {
     /// The phase-2 form is a `FERROR_XFER`, which short-circuits the emit gate,
     /// so it prints at default verbosity and carries no retry suffix.
     ///
-    /// upstream: receiver.c:1334-1335,1083-1084 - `msgtype == FERROR_XFER` is the
+    /// upstream: receiver.c:1351-1352,1099-1100 - `msgtype == FERROR_XFER` is the
     /// first disjunct, and `redostr = ""` on that branch.
     #[test]
     fn phase2_error_is_ungated_and_has_no_retry_suffix() {
@@ -2242,7 +2242,7 @@ mod tests {
     }
 
     /// Each [`PartialMode`] must project onto the three upstream variables
-    /// `receiver.c:1074-1076` reads. The `keptstr` chain those variables drive
+    /// `receiver.c:1090-1092` reads. The `keptstr` chain those variables drive
     /// is pinned by the table in `logging::verify_failure`; what this test owns
     /// is the projection, the only part of the rule that is oc-specific.
     ///
@@ -2270,7 +2270,7 @@ mod tests {
     /// The projection and the shared rule together must still produce every
     /// upstream `keptstr`, reached through this receiver's own types.
     ///
-    /// upstream: receiver.c:1073-1079.
+    /// upstream: receiver.c:1089-1095.
     #[test]
     fn every_kept_str_is_reachable_through_partial_mode() {
         for (partial_mode, is_inplace, expected) in [
@@ -2348,7 +2348,7 @@ mod tests {
     /// renamed. The caller never calls `handle_delayed_updates()`, so files
     /// persist as valid partials for resume.
     ///
-    /// upstream: receiver.c:694-695 - handle_delayed_updates() only after
+    /// upstream: receiver.c:710-711 - handle_delayed_updates() only after
     /// successful transfer; interruption leaves staged files intact.
     #[test]
     fn delay_updates_drop_without_sweep_preserves_staged_files() {

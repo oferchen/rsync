@@ -7,7 +7,7 @@
 //!
 //! - `acls.c:1083-1139` `default_perms_for_dir` - reads a parent directory's
 //!   default ACL to derive `dest_mode()`'s `dflt_perms` argument when
-//!   `--perms` is off (`generator.c:1338-1339`, `receiver.c:846-847`).
+//!   `--perms` is off (`generator.c:1338-1339`, `receiver.c:862-863`).
 //! - `acls.c:1133-1134` (`DEBUG_GTE(ACL, 1)`) - `"got ACL-based default perms
 //!   %o for directory %s\n"` - the sole upstream ACL debug emission.
 //! - `options.c:290` - `DEBUG_WORD(ACL, W_SND|W_REC, "Debug extra ACL info")`

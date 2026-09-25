@@ -10,8 +10,8 @@
 /// name that does NOT match the deny token, so the block can only come from
 /// forward-resolving the token to the peer's address.
 ///
-/// upstream: access.c:254 `match_hostname(...) || match_address(...)` is the
-/// shared per-token predicate; access.c:287 applies it to the deny list.
+/// upstream: access.c:265 `match_hostname(...) || match_address(...)` is the
+/// shared per-token predicate; access.c:298 applies it to the deny list.
 #[test]
 fn module_hostname_deny_forward_resolves_token_to_peer() {
     clear_test_hostname_overrides();

@@ -18,8 +18,8 @@
 //!
 //! - `rsync.c:179` `iconvbufs()` - central conversion with `ICB_INCLUDE_BAD`
 //!   flag controlling whether invalid bytes are passed through or cause errors.
-//! - `flist.c:745` - recv uses `ICB_INIT` only (strict).
-//! - `io.c:1283` - `read_line(RL_CONVERT)` uses `ICB_INCLUDE_BAD` (lossy).
+//! - `flist.c:970` - recv uses `ICB_INIT` only (strict).
+//! - `io.c:1301` - `read_line(RL_CONVERT)` uses `ICB_INCLUDE_BAD` (lossy).
 //! - `rsync.c:305` - `send_protected_args` uses `ICB_INCLUDE_BAD` (lossy).
 
 use std::borrow::Cow;
@@ -311,7 +311,7 @@ impl FilenameConverter {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1286` - `read_line(RL_CONVERT)` uses `ICB_INCLUDE_BAD`
+    /// - `io.c:1304` - `read_line(RL_CONVERT)` uses `ICB_INCLUDE_BAD`
     /// - `rsync.c:305` - `send_protected_args` uses `ICB_INCLUDE_BAD`
     #[cfg(feature = "iconv")]
     pub fn remote_to_local_lossy<'a>(&self, bytes: &'a [u8]) -> ConversionOutcome<'a> {
@@ -518,7 +518,7 @@ impl FilenameConverter {
 /// (rsync.c:261): it copies the offending source byte straight into the
 /// output and advances one byte, then resumes conversion. Trailing incomplete
 /// multibyte sequences are likewise passed through under
-/// `ICB_INCLUDE_INCOMPLETE`, which both lossy callers set (io.c:1286
+/// `ICB_INCLUDE_INCOMPLETE`, which both lossy callers set (io.c:1304
 /// `read_line(RL_CONVERT)`, rsync.c:305 `send_protected_args`).
 ///
 /// Because `encoding_rs` converts through a Unicode intermediate rather than a

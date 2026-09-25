@@ -213,8 +213,8 @@ impl DaemonStreamWriter {
 /// so either updates the pair). Returns `None` for connect-program transports,
 /// which have no socket timeout to adjust.
 ///
-/// upstream: io.c:1148-1157 `set_io_timeout()` - the client-side effect of
-/// adopting a daemon `MSG_IO_TIMEOUT` (io.c:1551-1561).
+/// upstream: io.c:1166-1175 `set_io_timeout()` - the client-side effect of
+/// adopting a daemon `MSG_IO_TIMEOUT` (io.c:1577-1587).
 pub(crate) fn build_io_timeout_reapply(
     reader: &DaemonStreamReader,
     writer: &DaemonStreamWriter,
@@ -249,7 +249,7 @@ pub(crate) fn build_io_timeout_reapply(
 /// path. Returns `None` for connect-program (pipe) transports, which own no
 /// socket to shut down.
 ///
-/// upstream: `io.c:750` polls `got_kill_signal` from `perform_io()` once its
+/// upstream: `io.c:768` polls `got_kill_signal` from `perform_io()` once its
 /// `select()` returns; a multi-threaded process cannot rely on the signal
 /// reaching the thread that is blocked on the wire, so the socket is closed
 /// from the watcher instead.
@@ -691,7 +691,7 @@ impl DaemonStreamGuard {
     /// reached through `RSYNC_CONNECT_PROG` runs its `post-xfer exec` hook
     /// after the last transfer byte - before exiting.
     ///
-    /// upstream: socket.c:1046 `sock_exec()` forks the connect program and
+    /// upstream: socket.c:1054 `sock_exec()` forks the connect program and
     /// never signals it; the child ends when the socket closes.
     pub(crate) fn finish(mut self) {
         if let Self::Child(child) = &mut self

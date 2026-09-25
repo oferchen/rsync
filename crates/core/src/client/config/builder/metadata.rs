@@ -15,7 +15,7 @@ impl ClientConfigBuilder {
     ///
     /// On Windows `-X` maps onto NTFS Alternate Data Streams. Level 2 doubles
     /// the compact `X` letter forwarded to the remote peer (upstream
-    /// options.c:2698-2704).
+    /// options.c:2708-2714).
     #[must_use]
     #[doc(alias = "--xattrs")]
     #[doc(alias = "-X")]
@@ -116,10 +116,10 @@ impl ClientConfigBuilder {
     builder_setter! {
         /// Records an explicit `--super` request.
         ///
-        /// Mirrors upstream's `am_root > 1` state (`options.c:3018`): set only by
+        /// Mirrors upstream's `am_root > 1` state (`options.c:3028`): set only by
         /// an explicit `--super`, never by merely running as root. Used by the
         /// remote-invocation builder to forward `--super` on a push
-        /// (`options.c:2852`).
+        /// (`options.c:2862`).
         #[doc(alias = "--super")]
         super_user: bool,
     }
@@ -137,7 +137,7 @@ impl ClientConfigBuilder {
     /// The source file's access time (atime) is preserved on the destination.
     /// This corresponds to the `-U` / `--atimes` flag in upstream rsync; level 2
     /// doubles the compact `U` letter forwarded to the remote peer (upstream
-    /// options.c:2681-2685).
+    /// options.c:2691-2695).
     #[must_use]
     #[doc(alias = "--atimes")]
     #[doc(alias = "-U")]

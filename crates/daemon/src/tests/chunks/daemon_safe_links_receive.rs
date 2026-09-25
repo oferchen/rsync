@@ -31,7 +31,7 @@
 /// # Upstream Reference
 ///
 /// - `receiver.c` / `generator.c:1951` - skip unsafe symlinks when `--safe-links`
-/// - `util1.c:1569` - `unsafe_symlink(dest, src)` classification
+/// - `util1.c:1664` - `unsafe_symlink(dest, src)` classification
 /// - `clientserver.c` - `munge_symlinks` defaults to `!use_chroot`
 #[cfg(unix)]
 #[test]

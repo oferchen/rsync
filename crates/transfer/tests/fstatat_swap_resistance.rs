@@ -98,7 +98,7 @@ fn multi_component_path_anchors_or_falls_back_lstat() {
     // A multi-component relative path resolves its parent beneath the
     // sandbox anchor wherever anchoring is available - via
     // openat2(RESOLVE_BENEATH) on Linux, via the portable per-component
-    // walk (upstream `ds_descend`, syscall.c:2891-2965) elsewhere - and
+    // walk (upstream `ds_descend`, syscall.c:3032-3106) elsewhere - and
     // degrades to the path-based fallback only on a Linux kernel without
     // openat2. Gate on fast_io's own predicate rather than re-deriving it
     // from openat2_supported(): anchoring off Linux does not follow from

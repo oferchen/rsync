@@ -25,7 +25,7 @@ fn test_backup_dir_implies_backup() {
 
 #[test]
 fn test_backup_suffix_does_not_imply_backup() {
-    // upstream: options.c:2296-2307 - `--suffix` sets the suffix string but does
+    // upstream: options.c:2305-2316 - `--suffix` sets the suffix string but does
     // not enable backups; only `--backup`/`--backup-dir` do.
     let args = parse_args(["oc-rsync", "--suffix=.bak", "src", "dest"]).unwrap();
     assert!(

@@ -113,8 +113,8 @@ fn transfer_request_with_sparse_copies_all_zero_source_without_extra_blocks() {
 /// always true and the zero run was seeked over rather than punched - and
 /// seeking does not free blocks the reservation already allocated. 3.5.0
 /// withdrew that behaviour and names the regression in its own source.
-// upstream: fileio.c:84 flush_sparse_hole() - `sparse_past_write >= preallocated_len`
-// upstream: syscall.c:2597 do_fallocate() - KEEP_SIZE only when no holes are punched
+// upstream: fileio.c:88 flush_sparse_hole() - `sparse_past_write >= preallocated_len`
+// upstream: syscall.c:2736 do_fallocate() - KEEP_SIZE only when no holes are punched
 #[cfg(target_os = "linux")]
 #[test]
 fn transfer_request_with_sparse_and_preallocate_punches_the_reserved_extent() {
@@ -392,7 +392,7 @@ fn transfer_request_with_sparse_and_inplace_punches_hole() {
     );
 }
 
-/// upstream: options.c:2413-2419 - `--write-devices` forces the global inplace
+/// upstream: options.c:2422-2428 - `--write-devices` forces the global inplace
 /// flag on. An inplace update rewrites the destination file in place (same
 /// inode), whereas the default atomic mode writes a temp file and renames it
 /// (new inode). Comparing the destination inode before and after a

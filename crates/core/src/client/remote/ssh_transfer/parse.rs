@@ -88,7 +88,7 @@ pub(in crate::client::remote) fn parse_remote_operands(
 /// These paths are recorded as implied includes so the receiver can reject any
 /// file-list name the remote sender was never asked for (CVE-2022-29154).
 /// Mirrors upstream `check_for_hostspec()`, which returns the operand's path
-/// portion before `add_implied_include()` records it (main.c:1525,1549).
+/// portion before `add_implied_include()` records it (main.c:1543,1567).
 pub(in crate::client::remote) fn remote_operand_source_paths(
     operands: &RemoteOperands,
 ) -> Result<Vec<String>, ClientError> {

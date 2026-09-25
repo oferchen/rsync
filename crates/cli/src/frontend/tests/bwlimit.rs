@@ -37,14 +37,14 @@ fn bwlimit_accepts_decimal_base_specifier() {
     let limit = parse_bandwidth_limit(OsStr::new("10KB"))
         .expect("parse succeeds")
         .expect("limit available");
-    // upstream: options.c:1718 quantizes --bwlimit to whole KiB, so 10000 bytes
+    // upstream: options.c:1724 quantizes --bwlimit to whole KiB, so 10000 bytes
     // rounds to 10 KiB (10240 B/s) rather than pacing at the exact decimal value.
     assert_eq!(limit.bytes_per_second().get(), 10_240);
 }
 
 #[test]
 fn bwlimit_rejects_burst_component() {
-    // upstream: options.c:1714 parse_size_arg(bwlimit_arg, 'K', ...) - the client
+    // upstream: options.c:1720 parse_size_arg(bwlimit_arg, 'K', ...) - the client
     // --bwlimit is a bare size; a `:BURST` suffix is not valid size syntax.
     let error = parse_bandwidth_limit(OsStr::new("4M:32K"))
         .expect_err("a colon/burst component must be rejected");

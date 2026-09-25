@@ -8,7 +8,7 @@
 //! # Upstream Reference
 //!
 //! - `match.c` - Block matching and delta generation
-//! - `sender.c:354-430` - File transfer with delta or whole-file paths
+//! - `sender.c:355-431` - File transfer with delta or whole-file paths
 //! - `token.c` - Token encoding with optional compression
 
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -173,7 +173,7 @@ pub(super) struct StreamResult {
 ///
 /// # Upstream Reference
 ///
-/// - `fileio.c:302` - `map->status = nread ? errno : ENODATA`
+/// - `fileio.c:344` - `map->status = nread ? errno : ENODATA`
 fn short_read_error() -> io::Error {
     #[cfg(unix)]
     {
@@ -197,7 +197,7 @@ fn short_read_error() -> io::Error {
 ///
 /// # Upstream Reference
 ///
-/// - `fileio.c:299-306` - `if (nread <= 0) { status = ...; memset(...); break; }`
+/// - `fileio.c:341-348` - `if (nread <= 0) { status = ...; memset(...); break; }`
 fn read_window<R: Read>(source: &mut R, dst: &mut [u8]) -> Option<io::Error> {
     let mut filled = 0;
     while filled < dst.len() {
@@ -252,13 +252,13 @@ pub(super) fn poison_file_checksum(checksum_buf: &mut [u8], checksum_len: usize)
 /// on to `file_size`.
 ///
 /// A clean EOF is *not* an error here. Upstream maps the size it fstat'ed at
-/// send time (`sender.c:404`), so a source that shrank after the file list was
+/// send time (`sender.c:405`), so a source that shrank after the file list was
 /// built is simply sent short; the scan must keep stopping at the real EOF and
 /// leave the digest untouched.
 ///
 /// # Upstream Reference
 ///
-/// - `fileio.c:299-306 map_ptr()` - zero-fill and continue on a failed read
+/// - `fileio.c:341-348 map_ptr()` - zero-fill and continue on a failed read
 pub(super) struct ScanSource<R> {
     inner: R,
     /// File-list size, used only after an error to know how far to zero-fill.
@@ -328,7 +328,7 @@ impl<R: Read> Read for ScanSource<R> {
 ///
 /// # Upstream Reference
 ///
-/// - `sender.c:389-430` - delta generation path after `receive_sums()`
+/// - `sender.c:390-431` - delta generation path after `receive_sums()`
 /// - `match.c:hash_search()` - rolling checksum block matching
 pub fn generate_delta_from_signature<R: Read>(
     source: R,
@@ -441,7 +441,7 @@ pub fn generate_delta_from_signature_chunked(
 ///
 /// # Upstream Reference
 ///
-/// - `sender.c:389-430` - delta generation path after `receive_sums()`
+/// - `sender.c:390-431` - delta generation path after `receive_sums()`
 fn build_signature_index(config: DeltaGeneratorConfig<'_>) -> io::Result<DeltaSignatureIndex> {
     use checksums::RollingDigest;
     use engine::delta::SignatureLayout;
@@ -474,13 +474,13 @@ fn build_signature_index(config: DeltaGeneratorConfig<'_>) -> io::Result<DeltaSi
     let block_count = config.sig_blocks.len() as u64;
 
     // The remainder is NOT unknown from the wire format. The receiver sends it
-    // in the sum_head - `io.c:2061` `sum->remainder = read_int(f);` - and
-    // `io.c:2062-2064` range-checks it, rejecting `< 0` or `> blength` with
+    // in the sum_head - `io.c:2099` `sum->remainder = read_int(f);` - and
+    // `io.c:2100-2102` range-checks it, rejecting `< 0` or `> blength` with
     // "Invalid remainder length". It is the only field that distinguishes the
     // last block's true length from `blength`, and upstream's sender applies it
     // to exactly one block, and only when non-zero:
     //
-    //   sender.c:109-110 (receive_sums)
+    //   sender.c:113-114 (receive_sums)
     //     if (i == s->count-1 && s->remainder != 0) s->sums[i].len = s->remainder;
     //     else                                      s->sums[i].len = s->blength;
     //
@@ -570,7 +570,7 @@ fn consecutive_match_needed(config: &DeltaGeneratorConfig<'_>) -> u8 {
     }
 }
 
-/// Computes upstream's per-file `updating_basis_file` flag (`sender.c:337`).
+/// Computes upstream's per-file `updating_basis_file` flag (`sender.c:338`).
 ///
 /// This gates the delta generator's backward-`Copy` suppression
 /// ([`DeltaGenerator::with_updating_basis_file`], `match.c:211`): when the
@@ -601,7 +601,7 @@ fn consecutive_match_needed(config: &DeltaGeneratorConfig<'_>) -> u8 {
 /// clause carries the same rule for the legacy protocol < 29 path, which has
 /// no basis-type byte on the wire.
 ///
-/// upstream: sender.c:337 `updating_basis_file`.
+/// upstream: sender.c:338 `updating_basis_file`.
 pub(crate) fn updating_basis_file(
     inplace: bool,
     inplace_partial: bool,
@@ -683,9 +683,9 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     let read_size = (file_size as usize).clamp(1, MAX_READ_SIZE);
 
     let mut remaining = file_size;
-    // upstream: fileio.c:299-306 - a failed source read zeroes the window and
+    // upstream: fileio.c:341-348 - a failed source read zeroes the window and
     // the send continues; the error only surfaces later as a poisoned file
-    // checksum plus `read errors mapping` (sender.c:464-471).
+    // checksum plus `read errors mapping` (sender.c:465-472).
     let mut read_error: Option<io::Error> = None;
 
     if let Some(encoder) = encoder {
@@ -752,7 +752,7 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
 ///
 /// - `match.c:371-390 match_sums()` - prefix `sum_update` gated on `append_mode == 2`,
 ///   `s->count = 0`, `last_match = s->flength`.
-/// - `sender.c:89-95 receive_sums()` - append mode derives `flength` and reads no blocks.
+/// - `sender.c:90-99 receive_sums()` - append mode derives `flength` and reads no blocks.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn stream_append_transfer<R: Read, W: Write>(
     writer: &mut W,
@@ -775,7 +775,7 @@ pub(super) fn stream_append_transfer<R: Read, W: Write>(
     // folds it into the whole-file checksum (verify); append_mode == 1 skips the
     // sum (trust). Either way the prefix bytes are never sent as tokens.
     let mut prefix_remaining = flength.min(file_size);
-    // upstream: fileio.c:299-306 - a failed source read zeroes the window and
+    // upstream: fileio.c:341-348 - a failed source read zeroes the window and
     // the send continues; the error surfaces as a poisoned file checksum.
     let mut read_error: Option<io::Error> = None;
     if prefix_remaining > 0 {
@@ -1020,7 +1020,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
     // and stats.literal_data as each token is emitted on the sender.
     let mut matched_data: u64 = 0;
     let mut literal_data: u64 = 0;
-    // upstream: fileio.c:299-306 - a failed source read zeroes the window and
+    // upstream: fileio.c:341-348 - a failed source read zeroes the window and
     // token emission continues; the file checksum is poisoned by the caller.
     let mut read_error: Option<io::Error> = None;
 
@@ -1047,7 +1047,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
                         read_buf.clear();
                         read_buf.resize(len, 0);
                         if let Some(ref mut file) = source_file {
-                            // upstream: fileio.c:288-294 - an lseek failure is
+                            // upstream: fileio.c:330-336 - an lseek failure is
                             // still fatal (exit_cleanup(RERR_FILEIO)); only the
                             // read is tolerated.
                             file.seek(SeekFrom::Start(source_offset))?;
@@ -1093,7 +1093,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
                         read_buf.clear();
                         read_buf.resize(len, 0);
                         if let Some(ref mut file) = source_file {
-                            // upstream: fileio.c:288-294 - an lseek failure is
+                            // upstream: fileio.c:330-336 - an lseek failure is
                             // still fatal (exit_cleanup(RERR_FILEIO)); only the
                             // read is tolerated.
                             file.seek(SeekFrom::Start(source_offset))?;
@@ -1533,7 +1533,7 @@ mod tests {
 
     // WHY: the sender must activate the in-place guard exactly when the receiver
     // rewrites the basis (the destination) in place, i.e. it is matching against
-    // FNAMECMP_FNAME under --inplace. This is the core of upstream sender.c:337
+    // FNAMECMP_FNAME under --inplace. This is the core of upstream sender.c:338
     // at protocol >= 29 (proto 32 here): a missing basis-type byte and an
     // explicit FNAMECMP_FNAME both mean "the destination itself", so the guard
     // must engage. Without it a backward Copy would tell the receiver to read a
@@ -1607,7 +1607,7 @@ mod tests {
         );
     }
 
-    // WHY: the partial-dir branch of sender.c:337 is independent of --inplace: it
+    // WHY: the partial-dir branch of sender.c:338 is independent of --inplace: it
     // fires only when the CF_INPLACE_PARTIAL_DIR capability was negotiated
     // (inplace_partial) AND the basis is the partial file (FNAMECMP_PARTIAL_DIR),
     // which the receiver resumes into in place. Without the negotiated capability
@@ -1806,12 +1806,12 @@ mod tests {
     /// The wire `remainder` must land on the LAST reconstructed block, and only
     /// there.
     ///
-    /// upstream: `sender.c:109-110` (receive_sums)
+    /// upstream: `sender.c:113-114` (receive_sums)
     ///   `if (i == s->count-1 && s->remainder != 0) s->sums[i].len = s->remainder;`
     ///   `else                                      s->sums[i].len = s->blength;`
     ///
-    /// The field is on the wire (`io.c:2061`) and range-checked
-    /// (`io.c:2062-2064`); dropping it made every block claim `blength`, which
+    /// The field is on the wire (`io.c:2099`) and range-checked
+    /// (`io.c:2100-2102`); dropping it made every block claim `blength`, which
     /// is what left the basis's short final block unmatchable.
     #[test]
     fn wire_remainder_shortens_only_the_final_reconstructed_block() {
@@ -2059,7 +2059,7 @@ mod tests {
     /// both halves: the caller sees exactly file_size bytes (zeros where the
     /// device failed) and the error is remembered instead of propagated.
     ///
-    /// upstream: fileio.c:299-306.
+    /// upstream: fileio.c:341-348.
     #[test]
     fn scan_source_zero_fills_and_records_the_read_error() {
         let mut inner = FailingReader::new(vec![7u8; 100], 1);
@@ -2083,7 +2083,7 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::Other);
     }
 
-    /// WHY: upstream maps the size it fstat'ed at send time (sender.c:404), so a
+    /// WHY: upstream maps the size it fstat'ed at send time (sender.c:405), so a
     /// source that shrank after the file list was built is simply sent short and
     /// verifies normally. Treating that clean EOF as a read error would poison
     /// - and so discard - every legitimately shrinking file.
@@ -2109,8 +2109,8 @@ mod tests {
     /// the peer stays in lockstep, then poisons the checksum so the receiver
     /// discards the file and the run continues to the next entry (exit 23).
     ///
-    /// upstream: fileio.c:299-306 (zero-fill and continue), match.c:414-423
-    /// (poison), sender.c:464-471 (io_error |= IOERR_GENERAL, keep going).
+    /// upstream: fileio.c:341-348 (zero-fill and continue), match.c:414-423
+    /// (poison), sender.c:465-472 (io_error |= IOERR_GENERAL, keep going).
     #[test]
     fn stream_whole_file_transfer_survives_a_read_error_and_poisons() {
         let file_size: u64 = 8 * 1024;
@@ -2202,7 +2202,7 @@ mod tests {
     /// source is shorter than the script claims, which upstream records as
     /// ENODATA) must zero-fill, finish the token stream and poison - not abort.
     ///
-    /// upstream: fileio.c:302 `map->status = nread ? errno : ENODATA`.
+    /// upstream: fileio.c:344 `map->status = nread ? errno : ENODATA`.
     #[test]
     fn write_delta_inline_checksum_survives_a_read_error_and_poisons() {
         use std::io::Write;

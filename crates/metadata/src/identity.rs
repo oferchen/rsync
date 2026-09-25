@@ -5,7 +5,7 @@
 //! reuses it for every per-file ownership/permission decision:
 //!
 //! ```c
-//! // main.c:1764-1766
+//! // main.c:1791-1793
 //! our_uid = MY_UID();          // geteuid()
 //! our_gid = MY_GID();          // getegid()
 //! am_root = our_uid == ROOT_UID;
@@ -88,7 +88,7 @@ pub fn effective_gid() -> u32 {
 }
 
 /// Whether the process effective uid is root (uid 0). The oc analog of
-/// upstream's cached `am_root` (main.c:1766).
+/// upstream's cached `am_root` (main.c:1793).
 #[must_use]
 pub fn is_root() -> bool {
     effective_uid() == 0
@@ -115,7 +115,7 @@ mod tests {
     ///
     /// The two disagree under `fakeroot`, which intercepts the libc symbol and
     /// reports uid 0 while the raw syscall still reports the real unprivileged
-    /// uid. Upstream reads libc (`main.c:1764 our_uid = MY_UID()`), so a
+    /// uid. Upstream reads libc (`main.c:1791 our_uid = MY_UID()`), so a
     /// raw-syscall `am_root` refuses device creation and ownership changes in
     /// exactly the runs where upstream performs them - which is how the 3.5.0
     /// `devices` testsuite cell, whose non-root leg re-execs under fakeroot,

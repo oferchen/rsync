@@ -80,8 +80,8 @@ fn list_only_formats_directory_without_trailing_slash() {
 
 /// `--list-only <dir>` with no `-r`/`-d` and no trailing slash must still list
 /// the directory operand's own entry, mirroring upstream's
-/// `xfer_dirs = list_only ? 1 : 0` default (options.c:2203). Without this,
-/// `xfer_dirs` stays 0 and `flist.c:2451` skips the bare directory, so the
+/// `xfer_dirs = list_only ? 1 : 0` default (options.c:2212). Without this,
+/// `xfer_dirs` stays 0 and `flist.c:2691` skips the bare directory, so the
 /// listing is empty - diverging from upstream which prints the `src` row.
 #[test]
 fn list_only_lists_bare_directory_without_recursion_or_slash() {
@@ -114,7 +114,7 @@ fn list_only_lists_bare_directory_without_recursion_or_slash() {
 }
 
 /// A bare source operand with no destination and no `--list-only` flag implies
-/// list-only mode regardless of transport. upstream: options.c:2194-2195 -
+/// list-only mode regardless of transport. upstream: options.c:2203-2204 -
 /// `if (argc < 2 && !read_batch && !am_server) list_only |= 1;`. The rule is not
 /// gated on the transport, so a local `oc-rsync src/` lists the directory and
 /// exits 0 (RERR_OK) rather than erroring "need source and destination" (which
@@ -1085,7 +1085,7 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
 
 /// Verifies that `--list-only` lists entries without transferring any files.
 ///
-/// upstream: options.c:2366-2367 - list_only does NOT set dry_run, but the
+/// upstream: options.c:2375-2376 - list_only does NOT set dry_run, but the
 /// receiver skips destination writes under list_only independently
 /// (`run_client` mode selection + `TransferFlags::skip_dest_writes`).
 #[test]

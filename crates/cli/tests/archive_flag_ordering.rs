@@ -1,6 +1,6 @@
 //! `-a` expands in command-line order: a later individual flag overrides it.
 //!
-//! upstream: options.c:1546 `case 'a'` assigns `preserve_* = 1` inline during the
+//! upstream: options.c:1552 `case 'a'` assigns `preserve_* = 1` inline during the
 //! left-to-right argv scan, so `-a --no-perms` clears permission preservation
 //! while `--no-perms -a` re-enables it. These tests exercise the observable
 //! outcome (the destination's permission bits after a real local transfer)

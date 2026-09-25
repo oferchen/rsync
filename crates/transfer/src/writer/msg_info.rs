@@ -43,7 +43,7 @@ pub trait MsgInfoSender {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:297` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed", ...)`
+    /// - `receiver.c:310` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed", ...)`
     /// - `log.c:311` - receipt of `FERROR_XFER` sets `got_xfer_error = 1`
     fn send_msg_error_xfer(&mut self, _data: &[u8]) -> io::Result<()> {
         Ok(())
@@ -92,7 +92,7 @@ pub trait MsgInfoSender {
     /// A server generator emits one frame per deletion so the client renders the
     /// `deleting <path>` line itself (the client owns the verbosity and itemize
     /// gating). Directories carry a trailing NUL in `data` so the peer can tell
-    /// a directory from a regular file (upstream `io.c:1616`).
+    /// a directory from a regular file (upstream `io.c:1642`).
     ///
     /// The default implementation is a no-op, matching [`Self::send_msg_info`].
     ///
@@ -115,8 +115,8 @@ pub trait MsgInfoSender {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1063-1069` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
-    /// - `io.c:1071-1086` - `send_msg_int(MSG_SUCCESS, ndx)` wire framing.
+    /// - `receiver.c:1079-1085` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
+    /// - `io.c:1089-1104` - `send_msg_int(MSG_SUCCESS, ndx)` wire framing.
     fn send_msg_success(&mut self, _ndx: i32) -> io::Result<()> {
         Ok(())
     }
@@ -155,7 +155,7 @@ pub trait MsgInfoSender {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:217` - `int f_xfer = write_batch < 0 ? batch_fd : f_out;`
+    /// - `sender.c:220` - `int f_xfer = write_batch < 0 ? batch_fd : f_out;`
     fn set_batch_route(&mut self, _route: BatchRoute) {}
 
     /// Returns `true` when ordinary writes are wrapped in `MSG_DATA` multiplex
@@ -181,7 +181,7 @@ pub trait MsgInfoSender {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1228` `start_filesfrom_forwarding` - `io_end_multiplex_out(MPLX_TO_BUFFERED)`.
+    /// - `io.c:1246` `start_filesfrom_forwarding` - `io_end_multiplex_out(MPLX_TO_BUFFERED)`.
     fn write_files_from_unframed(&mut self, _data: &[u8]) -> io::Result<()> {
         Ok(())
     }
@@ -233,7 +233,7 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
     }
 
     fn send_msg_success(&mut self, ndx: i32) -> io::Result<()> {
-        // upstream: receiver.c:1063-1069 - MSG_SUCCESS only rides the
+        // upstream: receiver.c:1079-1085 - MSG_SUCCESS only rides the
         // multiplexed server stream back to the sender; plain mode (e.g. tests)
         // never reaches this branch.
         if self.is_multiplexed() {
@@ -265,7 +265,7 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
     }
 
     fn write_files_from_unframed(&mut self, data: &[u8]) -> io::Result<()> {
-        // upstream: io.c:1228 start_filesfrom_forwarding switches the stream to
+        // upstream: io.c:1246 start_filesfrom_forwarding switches the stream to
         // MPLX_TO_BUFFERED; write_raw flushes the pending frame and emits the
         // payload without MSG_DATA framing, leaving the stream multiplexed.
         self.write_raw(data)

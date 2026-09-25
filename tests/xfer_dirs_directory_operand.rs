@@ -4,7 +4,7 @@
 //! outright when `xfer_dirs` is off:
 //!
 //! ```c
-//! /* rsync-3.5.0/flist.c:2723-2726 */
+//! /* rsync-3.5.1/flist.c:2963-2966 */
 //! if (S_ISDIR(st.st_mode) && !xfer_dirs) {
 //!         rprintf(FINFO, "skipping directory %s\n", fbuf);
 //!         continue;
@@ -12,12 +12,12 @@
 //! ```
 //!
 //! `xfer_dirs` resolves to `-d`, or `-r`, or `--list-only` when neither was
-//! given (`options.c:2314-2320`); `--files-from` forces it on
-//! (`options.c:2307-2308`). The `continue` is total: no directory entry, no
+//! given (`options.c:2323-2329`); `--files-from` forces it on
+//! (`options.c:2316-2317`). The `continue` is total: no directory entry, no
 //! children, and - under `--relative` - none of the operand's implied parents.
 //!
 //! The DOTDIR spellings are NOT exempt. `dir/` and `dir/.` are rewritten to
-//! `dir/.` with `name_type = DOTDIR_NAME` (`flist.c:2586-2604`), but they still
+//! `dir/.` with `name_type = DOTDIR_NAME` (`flist.c:2826-2844`), but they still
 //! `link_stat` as a directory, so they hit this same skip. The marker decides
 //! "contents of" only once directories are being transferred at all.
 //!
@@ -148,7 +148,7 @@ fn a_dotdir_operand_without_xfer_dirs_transfers_nothing() {
         let (entries, stdout) = pull(operand, &["-lptgoD"]);
         assert!(
             entries.is_empty(),
-            "`{operand}` without -r/-d must deliver nothing (upstream flist.c:2723 \
+            "`{operand}` without -r/-d must deliver nothing (upstream flist.c:2963 \
              `continue`s the argument); got {entries:?}"
         );
         assert!(
@@ -180,7 +180,7 @@ fn a_relative_directory_operand_emits_no_implied_parents() {
     let (entries, _) = pull("sub/", &["-lptgoD", "-R"]);
     assert!(
         entries.is_empty(),
-        "the flist.c:2723 `continue` runs BEFORE send_implied_dirs (flist.c:2735), \
+        "the flist.c:2963 `continue` runs BEFORE send_implied_dirs (flist.c:2978), \
          so a skipped operand contributes no ancestor chain either; got {entries:?}"
     );
 }
@@ -217,7 +217,7 @@ fn recursion_still_delivers_the_whole_subtree() {
     );
 }
 
-/// `--list-only` is upstream's third `xfer_dirs` source (`options.c:2320`), so
+/// `--list-only` is upstream's third `xfer_dirs` source (`options.c:2329`), so
 /// the same operand with no `-r`/`-d` still lists.
 #[test]
 fn list_only_keeps_xfer_dirs_on() {
@@ -238,7 +238,7 @@ fn list_only_keeps_xfer_dirs_on() {
     let stdout = output.stdout_str();
     assert!(
         stdout.contains("top.txt"),
-        "--list-only sets xfer_dirs (options.c:2320), so the listing must still \
+        "--list-only sets xfer_dirs (options.c:2329), so the listing must still \
          happen; got stdout {stdout:?}"
     );
     assert!(
@@ -297,7 +297,7 @@ fn the_local_executor_names_a_skipped_dotdir_operand() {
         assert!(entries.is_empty(), "got {entries:?}");
         assert!(
             stdout.contains("skipping directory .\n"),
-            "`{operand}` must name the skip `.` (upstream flist.c:2725 with the \
+            "`{operand}` must name the skip `.` (upstream flist.c:2965 with the \
              `fn` half of the dir/fn split); got stdout {stdout:?}"
         );
     }

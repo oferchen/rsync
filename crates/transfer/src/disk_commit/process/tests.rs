@@ -6,8 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Verifies the io_uring RENAMEAT2 fallback renames a file regardless of
-/// whether io_uring handles it or `std::fs::rename` does. Same-device
-/// rename returns `false` (no cross-device copy).
+/// whether io_uring handles it or `std::fs::rename` does.
 #[test]
 fn rename_with_io_uring_fallback_moves_file() {
     let dir = tempfile::tempdir().unwrap();
@@ -16,9 +15,8 @@ fn rename_with_io_uring_fallback_moves_file() {
 
     fs::write(&src, b"io_uring rename data").unwrap();
 
-    let was_copy = rename_with_io_uring_fallback(&src, &dst).unwrap();
+    rename_with_io_uring_fallback(&src, &dst).unwrap();
 
-    assert!(!was_copy);
     assert!(!src.exists());
     assert!(dst.exists());
     assert_eq!(fs::read(&dst).unwrap(), b"io_uring rename data");
@@ -34,9 +32,8 @@ fn rename_with_io_uring_fallback_replaces_existing() {
     fs::write(&src, b"new data").unwrap();
     fs::write(&dst, b"old data").unwrap();
 
-    let was_copy = rename_with_io_uring_fallback(&src, &dst).unwrap();
+    rename_with_io_uring_fallback(&src, &dst).unwrap();
 
-    assert!(!was_copy);
     assert!(!src.exists());
     assert_eq!(fs::read(&dst).unwrap(), b"new data");
 }
@@ -313,7 +310,7 @@ fn delay_updates_config(partial_mode: crate::disk_commit::PartialMode) -> DiskCo
 }
 
 /// Verifies a bare `--delay-updates` stages into `.~tmp~/<basename>` beside
-/// the destination file, matching upstream `options.c:2563-2564`, which the
+/// the destination file, matching upstream `options.c:2572-2573`, which the
 /// receiver applies when deriving its `PartialMode`.
 #[test]
 fn delay_updates_stages_into_implicit_tmp_dir() {
@@ -331,7 +328,7 @@ fn delay_updates_stages_into_implicit_tmp_dir() {
 /// Verifies an operator-named relative `--partial-dir` is honoured instead of
 /// the implicit `.~tmp~`. This is the case a hardcoded staging name silently
 /// got wrong: upstream stages `--delay-updates` into whatever `--partial-dir`
-/// names (options.c:2563-2564 only substitutes when none was given).
+/// names (options.c:2572-2573 only substitutes when none was given).
 #[test]
 fn delay_updates_honours_an_explicit_relative_partial_dir() {
     let config = delay_updates_config(crate::disk_commit::PartialMode::PartialDir(PathBuf::from(
@@ -704,7 +701,7 @@ fn make_backup_backup_dir_subdir_inherits_source_mode() {
     let config = BackupConfig {
         dest_dir: dest_dir.clone(),
         backup_dir: Some(backup_dir.clone()),
-        // upstream: options.c:2296-2297 - the default suffix is empty when a
+        // upstream: options.c:2305-2306 - the default suffix is empty when a
         // backup directory is set.
         suffix: OsString::new(),
     };
@@ -955,7 +952,7 @@ fn commit_rename_refuses_parent_symlink_escape() {
 /// (its symlink target escapes beneath the root), so the rename fails safe and
 /// nothing lands outside the module.
 ///
-/// upstream: `syscall.c:910` `do_rename_at()` opens each slashed path's parent
+/// upstream: `syscall.c:1049` `do_rename_at()` opens each slashed path's parent
 /// via `secure_relative_open()` before `renameat()`.
 ///
 /// Linux + openat2 only, by test scope rather than by capability: off Linux the
@@ -1094,7 +1091,7 @@ fn truncate_for_whole_file_sparse_zeroes_existing_inplace_destination() {
 
 /// Append mode must never truncate: the existing prefix is exactly what the tail
 /// is appended to. Upstream forbids `--append` with `--whole-file`
-/// (options.c:2400), so the `do_ftruncate(fd, 0)` branch is unreachable there;
+/// (options.c:2409), so the `do_ftruncate(fd, 0)` branch is unreachable there;
 /// this guards against it explicitly by keeping the basis length (stale interior
 /// zero runs are punched, never seeked, when the prefix is retained).
 #[test]
@@ -1264,7 +1261,7 @@ fn make_backup_backup_dir_parent_honours_the_supplied_metadata_options() {
 /// anchored on `sandbox.current_dirfd()` lands in `pinned`, while any
 /// path-based resolution of the same string lands in `outside`. The ownership
 /// walk in the fallback follows the swapped symlink by design - it is owned by
-/// our own euid (`syscall.c:270-272`) - which is why the dirfd anchor, not the
+/// our own euid (`syscall.c:349-351`) - which is why the dirfd anchor, not the
 /// walk, is what keeps the backup inside the tree here.
 #[cfg(unix)]
 struct SwappedDestRoot {
@@ -1426,7 +1423,7 @@ fn make_backup_without_the_destination_anchor_follows_the_root_swap() {
 /// endpoints and lands the backup out of tree.
 ///
 /// upstream: `backup.c:249` `do_rename_at()` under `operator_path_resolve`;
-/// `syscall.c:1918-1923` confines each side independently.
+/// `syscall.c:2057-2062` confines each side independently.
 #[cfg(unix)]
 #[test]
 fn make_backup_rename_tier_anchors_both_endpoints_on_the_pinned_destination() {

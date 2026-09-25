@@ -7,17 +7,17 @@
 //!   parent components are walked confined beneath the operand's transfer root
 //!   and the leaf is opened `O_NOFOLLOW`. A directory flipped to a symlink
 //!   pointing outside the source tree between scan and read cannot redirect the
-//!   read, and a raced leaf symlink is refused. upstream: `sender.c:685-705`
+//!   read, and a raced leaf symlink is refused. upstream: `sender.c:686-705`
 //!   `sender_open_confined(NULL, fname, O_RDONLY)` - a NULL anchor means
 //!   relative-to-cwd, and upstream chdirs to the transfer root, so the two
 //!   anchors name the same directory.
 //! - **A symlink-following mode** - `-L` / `--copy-unsafe-links` / `-k`: the
-//!   legacy open, following the leaf, NOT confined. upstream: `sender.c:706`
+//!   legacy open, following the leaf, NOT confined. upstream: `sender.c:708`
 //!   falls through to `do_open_checklinks(fname)`. Confining here would break
 //!   the option outright: `--copy-unsafe-links` exists precisely to materialise
 //!   links whose targets lie OUTSIDE the tree.
 //!
-//! The confined/copy-links pairing upstream also keeps (`sender.c:682`
+//! The confined/copy-links pairing upstream also keeps (`sender.c:683`
 //! `sender_open_copylinks_confined`) belongs to the DAEMON branch only, where
 //! the anchor is the module root and leaving it is a module escape. The
 //! non-daemon sender this module implements takes the plain
@@ -86,7 +86,7 @@ fn open_source_handle(
     follow_symlinks: bool,
 ) -> io::Result<fs::File> {
     if follow_symlinks {
-        // upstream: sender.c:706 - a symlink-following mode takes
+        // upstream: sender.c:708 - a symlink-following mode takes
         // do_open_checklinks, an unconfined open that follows the leaf.
         return open_plain(path, use_noatime);
     }
@@ -305,7 +305,7 @@ mod tests {
     /// A symlink-following mode keeps the legacy unconfined open, so the same
     /// out-of-tree target IS read.
     ///
-    /// WHY: upstream `sender.c:685` gates the confined open on
+    /// WHY: upstream `sender.c:686` gates the confined open on
     /// `!copy_links && !copy_unsafe_links && !copy_dirlinks`, falling through to
     /// `do_open_checklinks`. `--copy-unsafe-links` exists precisely to
     /// materialise links pointing outside the tree; confining it would break the

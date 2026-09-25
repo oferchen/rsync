@@ -171,7 +171,7 @@ fn serve_connections(
 
     // upstream: socket.c:set_socket_options() - the `socket options =` /
     // `--sockopts` string is parsed once up front so it can be applied to
-    // each listener socket before bind(2) (socket.c:449-452 - after
+    // each listener socket before bind(2) (socket.c:457-460 - after
     // SO_REUSEADDR, before bind), and later to each accepted client
     // connection before the session handler runs.
     let parsed_socket_options: Vec<SocketOption> = if let Some(ref opts_str) = socket_options_str {
@@ -306,7 +306,7 @@ fn serve_connections(
 
     // Announce the daemon BEFORE any readiness signal an observer can act on.
     //
-    // upstream: clientserver.c:1770 logs "rsyncd version %s starting, listening
+    // upstream: clientserver.c:1791 logs "rsyncd version %s starting, listening
     // on port %d" and only then calls start_accept_loop() (:1776), which is
     // where socket.c binds AND listens. So upstream guarantees the banner is in
     // the log before the port can complete a handshake.

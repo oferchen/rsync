@@ -6,7 +6,7 @@
 //! the confined walk produced.
 //!
 //! upstream: `rsync-3.5.0/flist.c` `send_directory()` enumerates the
-//! descriptor its confined open produced; `syscall.c:2891` `ds_descend()` is
+//! descriptor its confined open produced; `syscall.c:3032` `ds_descend()` is
 //! the walk being anchored on.
 
 #![cfg(unix)]
@@ -64,7 +64,7 @@ fn read_dir_confined_omits_dot_and_dotdot() {
 }
 
 /// A relative, in-tree symlinked parent is FOLLOWED, not refused - upstream's
-/// walk descends it (`syscall.c:2961`). Pinning this stops a future
+/// walk descends it (`syscall.c:3102`). Pinning this stops a future
 /// "refuse every symlink" simplification from breaking an ordinary recursive
 /// copy whose source contains a directory symlink.
 #[test]

@@ -1,8 +1,8 @@
 //! Read-only in-place recovery: open a mode-0444 regular file for writing by
 //! granting owner-write only for as long as the open takes.
 //!
-//! upstream: `open_readonly_inplace()` (receiver.c:200-287), the third arm of
-//! the in-place open chain at receiver.c:1219-1224 - after the primary
+//! upstream: `open_readonly_inplace()` (receiver.c:213-300), the third arm of
+//! the in-place open chain at receiver.c:1236-1241 - after the primary
 //! `O_WRONLY|O_CREAT` and after Linux's `protected_regular` retry.
 //!
 //! Reached through [`crate::inplace_open::open_inplace_output`], which owns the
@@ -34,7 +34,7 @@ const OWNER_WRITE: u32 = 0o200;
 /// strand the file at 0600. That is what makes a cleanup path unnecessary, and
 /// why the restore must never be deferred to commit time.
 ///
-/// Upstream has two branches, fd-based (receiver.c:214) and path-based (:253).
+/// Upstream has two branches, fd-based (receiver.c:227) and path-based (:253).
 /// This mirrors the fd-based one unconditionally: upstream keeps the path arm
 /// only to retain existing pathname semantics for local and chrooted transfers,
 /// and notes the fd branch is the one that pins an inode. Observable behaviour
@@ -55,19 +55,19 @@ pub fn open_readonly_inplace(
 ) -> io::Result<fs::File> {
     let eacces = || io::Error::from_raw_os_error(libc::EACCES);
 
-    // upstream: receiver.c:214-216 - the probe honours `one_inplace` exactly as
+    // upstream: receiver.c:227-229 - the probe honours `one_inplace` exactly as
     // the write open does, so a raced operator path is refused here too rather
     // than silently walked by the plain resolver.
     let probe = resolution.open_probe(path)?;
 
     let metadata = probe.metadata()?;
-    // upstream: receiver.c:219-222 - not the read-only regular file we recover.
+    // upstream: receiver.c:232-235 - not the read-only regular file we recover.
     if !metadata.is_file() {
         return Err(eacces());
     }
 
     let prior_mode = metadata.permissions().mode() & CHMOD_BITS;
-    // upstream: receiver.c:224-230 - each chmod risks losing a special bit, so
+    // upstream: receiver.c:237-243 - each chmod risks losing a special bit, so
     // do not spend one when it cannot help.
     if prior_mode & OWNER_WRITE != 0 {
         return Err(eacces());
@@ -77,7 +77,7 @@ pub fn open_readonly_inplace(
 
     let opened = resolution.open_write(path, false, truncate);
 
-    // upstream: receiver.c:235-241 - restore unconditionally, and a failed
+    // upstream: receiver.c:248-254 - restore unconditionally, and a failed
     // restore WINS: drop the descriptor and report the restore error.
     match probe.set_permissions(fs::Permissions::from_mode(prior_mode)) {
         Ok(()) => opened,

@@ -84,7 +84,9 @@ fn chown_path(
             group.map(|gid| nix::unistd::Gid::from_raw(gid.as_raw())),
             flag,
         )
-        .map_err(|errno| MetadataError::new("preserve ownership", path, io::Error::from(errno)));
+        .map_err(|errno| {
+            MetadataError::new(crate::error::CHOWN_CONTEXT, path, io::Error::from(errno))
+        });
     }
 
     // `u32::MAX` is `fchownat`'s `(uid_t)-1` / `(gid_t)-1` "leave unchanged"
@@ -98,7 +100,23 @@ fn chown_path(
         |parent, leaf| fast_io::secure_chown_at_dirfd(parent, leaf, uid, gid, follow_symlinks),
         || fast_io::secure_chown_at(path, uid, gid, follow_symlinks),
     )
-    .map_err(|error| MetadataError::new("preserve ownership", path, error))
+    .map_err(|error| MetadataError::new(crate::error::CHOWN_CONTEXT, path, error))
+}
+
+/// Names a failed ownership change after what it altered, as upstream does:
+/// `chown` when the owner changes, `chgrp` when only the group does.
+///
+/// upstream: rsync.c:682-684 - `change_uid ? "chown" : "chgrp"`, where
+/// `change_uid` compares the wanted owner with the current one (rsync.c:655).
+#[cfg(unix)]
+fn ownership_context(owner: Option<unix_fs::Uid>, current: Option<&fs::Metadata>) -> &'static str {
+    let changes_owner =
+        owner.is_some_and(|uid| current.is_none_or(|meta| meta.uid() != uid.as_raw()));
+    if changes_owner {
+        crate::error::CHOWN_CONTEXT
+    } else {
+        crate::error::CHGRP_CONTEXT
+    }
 }
 
 /// fd-based counterpart to [`chown_path`] using the libc `fchown(2)` symbol via
@@ -117,7 +135,7 @@ fn chown_fd(
         owner.map(|uid| nix::unistd::Uid::from_raw(uid.as_raw())),
         group.map(|gid| nix::unistd::Gid::from_raw(gid.as_raw())),
     )
-    .map_err(|errno| MetadataError::new("preserve ownership", path, io::Error::from(errno)))
+    .map_err(|errno| MetadataError::new(crate::error::CHOWN_CONTEXT, path, io::Error::from(errno)))
 }
 
 /// Emits the upstream level-1 `set uid of`/`set gid of` traces for a chown.
@@ -264,7 +282,7 @@ pub(super) fn process_in_group(gid: unix_fs::Gid) -> bool {
 /// the *preserve* path (`-o`/`-a`) or an explicit `--chown`/`--usermap`
 /// override. Mirrors upstream `change_uid = am_root && ...` (rsync.c:526):
 /// `preserve_uid` is set identically by `-o`, `--chown`, and `--usermap`
-/// (options.c:1793,1811,1833), and upstream's gate makes no distinction
+/// (options.c:1799,1817,1839), and upstream's gate makes no distinction
 /// between them - a non-root process never sets a file's owner uid, so the
 /// chown is skipped rather than attempted and failed. Before this gate
 /// oc-rsync attempted it and surfaced the resulting `EPERM` as a fatal
@@ -283,7 +301,7 @@ pub(super) fn gate_preserved_owner(owner: Option<unix_fs::Uid>) -> Option<unix_f
 /// the *preserve* path (`-g`/`-a`) or an explicit `--chown`/`--groupmap`
 /// override. Mirrors upstream's `FLAG_SKIP_GROUP` gate (uidlist.c:284), which
 /// is set on the mapped id regardless of whether it was reached via
-/// `preserve_gid`, `--chown`, or `--groupmap` (options.c:1809,1832,1848): a
+/// `preserve_gid`, `--chown`, or `--groupmap` (options.c:1815,1838,1854): a
 /// non-root process may only set a group it belongs to, so a non-member group
 /// is skipped rather than attempted and failed.
 #[cfg(unix)]
@@ -331,7 +349,7 @@ pub fn group_is_settable(gid: u32) -> bool {
 /// `getpwuid(raw)` - which is wrong when the raw sender id is absent or bound to
 /// a different name locally. Without an inline name (local copy) the raw id is
 /// round-tripped through the receiver's database exactly as before.
-/// upstream: flist.c:914 recv_user_name / uidlist.c:307 match_uid
+/// upstream: flist.c:1139 recv_user_name / uidlist.c:307 match_uid
 #[cfg(unix)]
 fn resolve_owner_uid(
     entry: &protocol::flist::FileEntry,
@@ -375,7 +393,7 @@ fn resolve_owner_uid(
 /// The group counterpart of [`resolve_owner_uid`]: `--groupmap` first, then the
 /// sender-transmitted group name (INC_RECURSE `XMIT_GROUP_NAME_FOLLOWS`) resolved
 /// against the receiver's group database.
-/// upstream: flist.c:926 recv_group_name / uidlist.c:317 match_gid
+/// upstream: flist.c:1151 recv_group_name / uidlist.c:317 match_gid
 #[cfg(unix)]
 fn resolve_group_gid(
     entry: &protocol::flist::FileEntry,
@@ -547,7 +565,8 @@ pub(super) fn set_owner_like(
             follow_symlinks,
             options.parent_walk(),
             None,
-        )?;
+        )
+        .map_err(|error| error.with_context(ownership_context(owner, existing)))?;
 
         // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
         Ok(post_chown_bookkeeping(destination, owner, group, existing))
@@ -607,7 +626,8 @@ pub(super) fn set_owner_like_with_fd(
     // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
     trace_chown_change(destination, owner, group, existing);
 
-    chown_fd(fd, destination, owner, group)?;
+    chown_fd(fd, destination, owner, group)
+        .map_err(|error| error.with_context(ownership_context(owner, existing)))?;
 
     // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
     Ok(post_chown_bookkeeping(destination, owner, group, existing))
@@ -703,7 +723,8 @@ pub(super) fn apply_ownership_from_entry(
                 true,
                 options.parent_walk(),
                 parent_dirfd,
-            )?;
+            )
+            .map_err(|error| error.with_context(ownership_context(owner, cached_meta)))?;
 
             // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
             return Ok(post_chown_bookkeeping(
@@ -789,7 +810,8 @@ pub(super) fn apply_symlink_ownership_from_entry(
             false,
             options.parent_walk(),
             None,
-        )?;
+        )
+        .map_err(|error| error.with_context(ownership_context(owner, cached_meta)))?;
 
         // upstream: rsync.c:558-561 - impossible-id warning also fires for
         // symlink chowns. The suid/sgid re-stat is irrelevant here because
@@ -1041,7 +1063,7 @@ mod own_debug_tests {
     #[test]
     #[cfg(unix)]
     fn resolves_inline_owner_name_to_local_id() {
-        // upstream: flist.c:914 recv_user_name - the receiver resolves the
+        // upstream: flist.c:1139 recv_user_name - the receiver resolves the
         // SENDER-transmitted user name to a LOCAL id so ownership follows the
         // NAME across hosts with differing id namespaces. A raw sender id that
         // does not exist locally must not leak through as the file owner.

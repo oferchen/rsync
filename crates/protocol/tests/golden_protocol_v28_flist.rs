@@ -32,7 +32,7 @@ fn proto30() -> ProtocolVersion {
 
 // ---------------------------------------------------------------------------
 // Sort order: protocol 28 uses plain lexicographic, no file-before-directory
-// upstream: flist.c:3223 - protocol_version >= 29 ? t_PATH : t_ITEM
+// upstream: flist.c:3466 - protocol_version >= 29 ? t_PATH : t_ITEM
 // ---------------------------------------------------------------------------
 
 /// Protocol 28 sorts directories and files by plain byte order, without
@@ -378,7 +378,7 @@ fn golden_v28_long_name_roundtrip() {
     let mut reader = FileListReader::new(protocol);
 
     let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
-    // upstream: flist.c:757 clean_fname() strips trailing slashes
+    // upstream: flist.c:982 clean_fname() strips trailing slashes
     // (CFN_KEEP_TRAILING_SLASH is NOT set in recv_file_entry)
     let expected_name = long_name.trim_end_matches('/');
     assert_eq!(

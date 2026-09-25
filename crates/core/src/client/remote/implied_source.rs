@@ -6,11 +6,11 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:1524-1549` - each requested remote source arg is recorded, but
+//! - `main.c:1542-1567` - each requested remote source arg is recorded, but
 //!   only when `filesfrom_fd < 0` (no `--files-from`).
-//! - `io.c:427,464` - with a local `--files-from`, each forwarded list entry is
+//! - `io.c:445,482` - with a local `--files-from`, each forwarded list entry is
 //!   recorded instead (as the bytes are streamed to the remote sender).
-//! - `options.c:2510-2513` - `trust_sender_args` (which makes
+//! - `options.c:2519-2522` - `trust_sender_args` (which makes
 //!   `add_implied_include()` a no-op) is set for `--old-args`/`RSYNC_OLD_ARGS`
 //!   (`old_style_args`) and for a remote `--files-from` (`filesfrom_host`).
 
@@ -30,7 +30,7 @@ pub(crate) fn implied_source_args_for_pull(
     source_paths: &[String],
     files_from_data: Option<&[u8]>,
 ) -> Vec<Vec<u8>> {
-    // upstream: options.c:2513 - a non-zero old_style_args sets
+    // upstream: options.c:2522 - a non-zero old_style_args sets
     // trust_sender_args, so add_implied_include() returns early and the implied
     // list stays empty. Any active level (>= 1) qualifies.
     if config.old_args().unwrap_or(0) >= 1 {
@@ -38,12 +38,12 @@ pub(crate) fn implied_source_args_for_pull(
     }
 
     if config.files_from().is_active() {
-        // upstream: main.c:1524 - the source arg is NOT recorded when
-        // --files-from is active; io.c:427/464 records each forwarded entry.
+        // upstream: main.c:1542 - the source arg is NOT recorded when
+        // --files-from is active; io.c:445/482 records each forwarded entry.
         return match files_from_data {
             Some(bytes) => files_from_entries(bytes),
             // Remote --files-from (filesfrom_host != NULL) sets trust_sender_args
-            // (options.c:2513): no local entries, mechanism disabled.
+            // (options.c:2522): no local entries, mechanism disabled.
             None => Vec::new(),
         };
     }
@@ -58,7 +58,7 @@ pub(crate) fn implied_source_args_for_pull(
 /// terminated) into individual entries, preserving each entry's `/./` pivots
 /// and trailing slashes so [`filters::ImpliedIncludes`] reproduces upstream's
 /// per-entry `add_implied_include()` processing. Entries are raw bytes:
-/// upstream records each forwarded name verbatim (`io.c:427,464`), so a
+/// upstream records each forwarded name verbatim (`io.c:445,482`), so a
 /// non-UTF-8 filename must survive to the implied-include rules unaltered.
 fn files_from_entries(bytes: &[u8]) -> Vec<Vec<u8>> {
     bytes
@@ -95,14 +95,14 @@ mod tests {
 
     #[test]
     fn old_args_disables_the_mechanism() {
-        // upstream: options.c:2513 - a non-zero old_style_args sets trust_sender_args.
+        // upstream: options.c:2522 - a non-zero old_style_args sets trust_sender_args.
         let config = config_with(Some(1), FilesFromSource::None);
         assert!(implied_source_args_for_pull(&config, &["dir".to_owned()], None).is_empty());
     }
 
     #[test]
     fn local_files_from_folds_entries_and_drops_source_arg() {
-        // upstream: main.c:1524 skips the source arg; io.c:427/464 records each
+        // upstream: main.c:1542 skips the source arg; io.c:445/482 records each
         // forwarded entry instead.
         let config = config_with(None, FilesFromSource::Stdin);
         let bytes = b"from/./\0from/./dir/subdir\0\0";
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn remote_files_from_disables_the_mechanism() {
-        // upstream: options.c:2513 - filesfrom_host != NULL sets trust_sender_args;
+        // upstream: options.c:2522 - filesfrom_host != NULL sets trust_sender_args;
         // no bytes are staged locally.
         let config = config_with(None, FilesFromSource::RemoteFile("list".to_owned()));
         assert!(implied_source_args_for_pull(&config, &["dir".to_owned()], None).is_empty());

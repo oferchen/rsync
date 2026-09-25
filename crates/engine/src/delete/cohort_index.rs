@@ -34,13 +34,13 @@
 //!
 //! # Upstream reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.0/hlink.c:59-65`
+//! - `target/interop/upstream-src/rsync-3.5.1/hlink.c:59-65`
 //!   (`init_hard_links`): builds the dev/ino table before the delete
 //!   sweep runs.
-//! - `target/interop/upstream-src/rsync-3.5.0/hlink.c:200-222`
+//! - `target/interop/upstream-src/rsync-3.5.1/hlink.c:200-222`
 //!   (`match_hard_links`): freezes leader assignments before
 //!   `do_delete_pass`.
-//! - `target/interop/upstream-src/rsync-3.5.0/delete.c:191-288`
+//! - `target/interop/upstream-src/rsync-3.5.1/delete.c:191-288`
 //!   (`delete_item`): the dispatch is unconditional `do_unlink`; the
 //!   kernel reconciles ref counts. Our [`CohortIndex`] therefore exists
 //!   to power itemize tagging and cohort-aware diagnostics, not to skip

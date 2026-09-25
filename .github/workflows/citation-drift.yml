@@ -1,7 +1,7 @@
 # Guard: `// upstream: <file>.c:<line>` comments must keep pointing at the
 # pinned upstream rsync source.
 #
-# The Rust tree cites specific line numbers in rsync 3.5.0. Those numbers go
+# The Rust tree cites specific line numbers in rsync 3.5.1. Those numbers go
 # stale whenever the pinned upstream release is bumped, and a stale citation is
 # worse than none: it sends a reader verifying protocol fidelity to a line that
 # says something else. Three of the citations repaired in the 3.4.4 sweep did
@@ -57,17 +57,17 @@ concurrency:
 
 jobs:
   check:
-    name: Upstream citations track 3.5.0
+    name: Upstream citations track 3.5.1
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Fetch upstream rsync 3.5.0
+      - name: Fetch upstream rsync 3.5.1
         uses: ./.github/actions/fetch-upstream-rsync
         with:
-          version: '3.5.0'
+          version: '3.5.1'
           extract-dir: target/interop/upstream-src
 
       - name: Audit citations against the baseline

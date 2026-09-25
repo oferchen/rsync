@@ -239,7 +239,7 @@ fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
 /// dir/sub/`, ...). The directory type is taken from the lstat'd metadata, so
 /// an unfollowed symlink-to-directory is a non-directory here, matching
 /// upstream's `S_ISDIR` test on the flist entry.
-/// upstream: flist.c:3299 f_name_cmp() - type-then-name ordering
+/// upstream: flist.c:3542 f_name_cmp() - type-then-name ordering
 fn compare_directory_entries(a: &DirectoryEntry, b: &DirectoryEntry) -> Ordering {
     // `false < true`, so non-directories (is_dir == false) sort first.
     a.metadata
@@ -598,7 +598,7 @@ mod tests {
 
     #[test]
     fn directory_entries_sort_non_directories_before_subdirectories() {
-        // upstream: flist.c:3299 f_name_cmp() - within a directory, every
+        // upstream: flist.c:3542 f_name_cmp() - within a directory, every
         // non-directory sorts before any subdirectory. Plain byte ordering
         // would interleave these as a_dir, b_file, c_dir, d_file; the upstream
         // key yields the two files first, then the two directories.

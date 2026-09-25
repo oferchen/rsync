@@ -35,7 +35,7 @@ trait AcceptEngine {
     /// serves. Borrowed, never transferred: the engine keeps accepting on
     /// these in the parent.
     ///
-    /// upstream: `socket.c:753-760` `start_accept_loop()` closes `fds[i]` for
+    /// upstream: `socket.c:761-768` `start_accept_loop()` closes `fds[i]` for
     /// every listener in the child.
     #[cfg(unix)]
     fn listener_fds(&self) -> Vec<std::os::fd::RawFd>;
@@ -157,7 +157,7 @@ fn poll_ready(
 ///
 /// # Accept errors are transient
 ///
-/// upstream: socket.c:593 `if (fd < 0) continue;` - the accept loop ignores
+/// upstream: socket.c:601 `if (fd < 0) continue;` - the accept loop ignores
 /// every `accept(2)` failure and keeps serving. A transient per-connection
 /// error (ECONNABORTED when a client resets between handshake and accept, or
 /// EMFILE/ENFILE under a burst) must never tear the daemon down, and a failure

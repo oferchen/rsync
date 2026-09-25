@@ -17,7 +17,7 @@
 //!
 //! - `rsync-3.5.0/flist.c` `send_directory()` enumerates the descriptor its
 //!   confined open produced, not the path it was asked for.
-//! - `rsync-3.5.0/syscall.c:2891` `ds_descend()` - the per-component walk this
+//! - `rsync-3.5.1/syscall.c:3032` `ds_descend()` - the per-component walk this
 //!   anchors on, shared with the content open.
 
 use std::ffi::OsString;

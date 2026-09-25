@@ -30,15 +30,15 @@
 //!
 //! # Upstream reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.0/delete.c:91-183`
+//! - `target/interop/upstream-src/rsync-3.5.1/delete.c:91-183`
 //!   (`delete_dir_contents`): recursive directory peel used when an
 //!   `rmdir` would fail with `ENOTEMPTY`.
-//! - `target/interop/upstream-src/rsync-3.5.0/delete.c:191-288`
+//! - `target/interop/upstream-src/rsync-3.5.1/delete.c:191-288`
 //!   (`delete_item`): dispatch by `S_ISDIR` / `S_ISLNK` / `IS_DEVICE` /
 //!   `IS_SPECIAL`, with `do_rmdir` for directories and `robust_unlink`
 //!   for everything else; `ENOTEMPTY` recurses, other errors are logged
 //!   and reported via `DR_FAILURE`.
-//! - `target/interop/upstream-src/rsync-3.5.0/generator.c:285-360`
+//! - `target/interop/upstream-src/rsync-3.5.1/generator.c:285-360`
 //!   (`delete_in_dir`): reverse iteration over the sorted destination
 //!   listing, one `delete_item` call per non-matched entry.
 //! - `target/interop/upstream-src/rsync-3.5.0/errcode.h`: `RERR_PARTIAL`

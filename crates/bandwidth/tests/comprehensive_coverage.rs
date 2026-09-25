@@ -763,7 +763,7 @@ mod parsing_coverage {
 
     #[test]
     fn parse_various_units() {
-        // upstream: options.c:1718 quantizes --bwlimit to whole KiB via
+        // upstream: options.c:1724 quantizes --bwlimit to whole KiB via
         // `bwlimit = (size + 512) / 1024`, so decimal-suffix and byte values
         // round to the nearest 1024 multiple (binary suffixes are already
         // whole-KiB multiples and stay unchanged).
@@ -793,7 +793,7 @@ mod parsing_coverage {
 
     #[test]
     fn parse_fractional_values() {
-        // upstream: options.c:1718 rounds --bwlimit to the nearest whole KiB.
+        // upstream: options.c:1724 rounds --bwlimit to the nearest whole KiB.
         // Binary-suffix fractions land on exact 1024 multiples; decimal-suffix
         // fractions quantize (0.5MB=500000 -> 488 KiB, 1.5MB=1500000 -> 1465 KiB).
         let cases: Vec<(&str, u64)> = vec![

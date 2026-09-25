@@ -48,7 +48,7 @@ pub(in crate::generator) fn batch_stat_dir_entries(
         // Anchored on the daemon's pinned module root when the entry lies
         // beneath it, so the per-child stat does not re-walk the module's
         // ancestors as the dropped uid. The ordinary `lstat`/`stat` otherwise.
-        // upstream: `flist.c:2035-2059` `secure_opendir()`.
+        // upstream: `flist.c:2271-2295` `secure_opendir()`.
         let metadata = if follow_symlinks {
             fast_io::pinned_root::metadata(&path)
         } else {

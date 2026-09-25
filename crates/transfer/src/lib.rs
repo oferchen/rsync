@@ -158,6 +158,8 @@ pub mod map_file;
 pub mod pipeline;
 pub mod progress;
 pub mod reorder_buffer;
+#[cfg(unix)]
+pub(crate) mod robust_rename;
 pub mod token_buffer;
 pub mod token_reader;
 pub mod transfer_ops;
@@ -541,10 +543,10 @@ fn send_client_filter_list<W: Write>(
 /// Upstream rsync activates multiplex output differently depending on
 /// the execution context:
 ///
-/// - **Server mode** (`--server`): always for protocol >= 23 (main.c:1265-1266).
-/// - **Client sender** (push): always for protocol >= 30 (main.c:1318-1319).
+/// - **Server mode** (`--server`): always for protocol >= 23 (main.c:1283-1284).
+/// - **Client sender** (push): always for protocol >= 30 (main.c:1336-1337).
 /// - **Client receiver** (pull): when `need_messages_from_generator` is set
-///   (main.c:1362-1365). Upstream sets this unconditionally for protocol >= 30
+///   (main.c:1380-1383). Upstream sets this unconditionally for protocol >= 30
 ///   (compat.c:776), so the client always activates multiplex output for pull.
 fn requires_multiplex_output(
     client_mode: bool,
@@ -553,7 +555,7 @@ fn requires_multiplex_output(
     _compat_flags: Option<protocol::CompatibilityFlags>,
 ) -> bool {
     if client_mode {
-        // upstream: both sender (main.c:1318) and receiver (main.c:1362)
+        // upstream: both sender (main.c:1336) and receiver (main.c:1380)
         // activate multiplex output when need_messages_from_generator is set,
         // which is unconditional for protocol >= 30 (compat.c:776).
         protocol.supports_generator_messages()
@@ -653,7 +655,7 @@ fn requires_multiplex_output(
 ///
 /// upstream: compat.c:161-179 set_allow_inc_recurse,
 /// rsync.h:151-152 (`MIN_FILECNT_LOOKAHEAD` / `MAX_FILECNT_LOOKAHEAD`),
-/// sender.c:515,549 (send loop tops the window up to the minimum).
+/// sender.c:516,550 (send loop tops the window up to the minimum).
 pub(crate) fn compute_allow_inc_recurse(config: &ServerConfig) -> bool {
     config.allows_inc_recurse() && config.role == ServerRole::Generator
 }
@@ -663,14 +665,14 @@ pub(crate) fn compute_allow_inc_recurse(config: &ServerConfig) -> bool {
 /// Returns `Some` only when the local role is the sender
 /// ([`ServerRole::Generator`], i.e. an SSH `--server --sender`, a client push,
 /// or a daemon-sender on a pull) and a non-zero `--bwlimit` is in effect. The
-/// receiver always returns `None`: upstream `main.c:1068` sets
+/// receiver always returns `None`: upstream `main.c:1081` sets
 /// `bwlimit_writemax = 0` on the receiver, so it never paces its own writes. A
 /// `None` result makes the sender's socket writer a zero-overhead passthrough.
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:1068` - the receiver disables its own bwlimit.
-/// - `io.c:846,861` / `options.c:2394-2397` - the sender clamps each write to
+/// - `main.c:1081` - the receiver disables its own bwlimit.
+/// - `io.c:864,879` / `options.c:2403-2406` - the sender clamps each write to
 ///   `bwlimit_writemax` then `sleep_for_bwlimit(n)`.
 fn sender_bandwidth_limiter(config: &ServerConfig) -> Option<bandwidth::BandwidthLimiter> {
     if config.role != ServerRole::Generator {
@@ -709,7 +711,7 @@ pub fn run_server_stdio(
     // writes its protocol version. For a stock release peer this is a no-op and
     // the version exchange is byte-identical to a plain `perform_handshake`.
     let mut handshake = perform_server_handshake(stdin, stdout, &config.flag_string)?;
-    // upstream: options.c:2511 - the server's own `parse_arguments()` run over
+    // upstream: options.c:2520 - the server's own `parse_arguments()` run over
     // the argv the client forwarded ends in `set_io_timeout(io_timeout)`, so a
     // `--timeout=N` on the client arms this process too. The CLI's server-mode
     // parser lands the value in `connection.io_timeout`; carrying it onto the
@@ -797,7 +799,7 @@ pub struct ServerTransferHooks<'p, 'i, 'd> {
     pub itemize: Option<&'i mut dyn ItemizeCallback>,
     /// Re-applies a daemon-advertised `MSG_IO_TIMEOUT` to the live socket.
     /// `Some` only on the daemon-pull (client receiver) path.
-    /// upstream: io.c:1551-1561 `read_a_msg()` case `MSG_IO_TIMEOUT`.
+    /// upstream: io.c:1577-1587 `read_a_msg()` case `MSG_IO_TIMEOUT`.
     pub io_timeout_reapply: Option<IoTimeoutReapply>,
     /// Per-entry daemon transfer-log hook. `Some` only when a daemon module has
     /// `transfer logging = yes`; drives the per-file `log_item(FLOG)` writes.
@@ -811,7 +813,7 @@ pub struct ServerTransferHooks<'p, 'i, 'd> {
 /// is the client receiver of a daemon transfer
 /// (`config.connection.client_mode && role == Receiver`) and a hook is supplied,
 /// the demultiplexer adopts a daemon-advertised timeout and re-applies it to the
-/// live socket, mirroring upstream `io.c:1551-1561`. Every other caller passes
+/// live socket, mirroring upstream `io.c:1577-1587`. Every other caller passes
 /// `None` through the thin wrapper above, so the default path is unchanged and
 /// wire-identical.
 #[cfg_attr(feature = "tracing", instrument(skip(stdin, stdout, hooks), fields(role = ?config.role, protocol = %handshake.protocol)))]
@@ -829,7 +831,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         io_timeout_reapply,
         daemon_log,
     } = hooks;
-    // upstream: options.c:2410 - `--append` implies `--inplace`, applied by the
+    // upstream: options.c:2419 - `--append` implies `--inplace`, applied by the
     // same parse_arguments() every peer runs. This is the one path shared by
     // the client's in-process half, the `--server` process and the daemon, so
     // the implication lands before setup_protocol()'s protocol < 29 checks.
@@ -852,7 +854,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         Box::new(buffered.chain(stdin))
     };
 
-    // upstream: main.c:1263 start_server() → setup_protocol(f_out, f_in)
+    // upstream: main.c:1281 start_server() → setup_protocol(f_out, f_in)
     // Performs compat flags exchange + capability negotiation in RAW mode,
     // before multiplex activation.
     let is_server = !config.connection.client_mode;
@@ -863,7 +865,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 
     // upstream: compat.c - do_compression is set by -z (short option) or by
     // --new-compress, --old-compress, --compress-choice=ALGO (long options).
-    // upstream: options.c:2722 only puts 'z' in argstr for CPRES_ZLIB.
+    // upstream: options.c:2732 only puts 'z' in argstr for CPRES_ZLIB.
     // For zlibx, zstd, lz4, upstream sends long options instead.
     let (do_compression, compress_choice) = if config.connection.client_mode {
         // upstream: compat.c - client knows its own compress_choice from CLI args.
@@ -880,7 +882,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
             .iter()
             .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg.contains('z'));
 
-        // upstream: options.c:2818-2823 - long options for non-ZLIB compression:
+        // upstream: options.c:2828-2833 - long options for non-ZLIB compression:
         //   CPRES_ZLIBX → --new-compress
         //   CPRES_ZLIB with explicit choice → --old-compress
         //   other (zstd/lz4) → --compress-choice=ALGO
@@ -903,7 +905,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         // compression intent from the parsed flag string (`config.flags.compress`
         // for `-z`) and the explicit `--compress-choice` / `--new-compress` /
         // `--old-compress` long options preserved on `config.connection`.
-        // upstream: options.c:2714-2823 - server_options() emits `-z` in the
+        // upstream: options.c:2724-2833 - server_options() emits `-z` in the
         // compact arg string for CPRES_ZLIB, and the long-form variants for
         // other algorithms. Both flow through to ServerConfig here.
         let choice = config.connection.compress_choice.map(|algo| algo.as_str());
@@ -991,7 +993,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // off case needs handling: every non-off level already reaches the encoder
     // correctly through the negotiated codec's own clamp. This runs identically
     // on both peers (each holds the negotiated codec and the forwarded
-    // do_compression_level, options.c:2755), so the framing decision stays
+    // do_compression_level, options.c:2765), so the framing decision stays
     // symmetric.
     if do_compression
         && let Some(negotiated) = handshake.negotiated_algorithms.as_mut()
@@ -1008,7 +1010,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // upstream: compat.c:777-778 - apply CF_INPLACE_PARTIAL_DIR after compat exchange.
     // When the server advertises this flag and a partial directory is configured,
     // enable per-file inplace for partial-dir basis files.
-    // upstream: receiver.c:910 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
+    // upstream: receiver.c:926 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
     if let Some(flags) = setup_result.compat_flags
         && flags.contains(protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR)
         && config.has_partial_dir
@@ -1021,12 +1023,12 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // gated on protocol_version >= 31. Its absence does NOT mean the peer
     // lacks xattr support: proto-30 peers (rsync 3.0.x) never define the
     // flag yet fully preserve xattrs, and the 'x' capability that drives it
-    // is emitted unconditionally (options.c:3048). A remote genuinely built
+    // is emitted unconditionally (options.c:3058). A remote genuinely built
     // without SUPPORT_XATTRS rejects -X at option-parse time instead. So we
     // must NOT disable xattr preservation here - doing so half-disabled the
     // sender and desynced the proto-30 flist ("xa index out of range").
 
-    // upstream: options.c:1858-1884 - when compiled without SUPPORT_ACLS or
+    // upstream: options.c:1864-1890 - when compiled without SUPPORT_ACLS or
     // SUPPORT_XATTRS, the server rejects -A/-X from the client. We mirror this
     // by clearing feature-gated flags and warning instead of hard-failing, so
     // the transfer proceeds without the unsupported metadata type.
@@ -1046,24 +1048,24 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // Flush raw-mode data before wrapping in multiplexed writer.
     stdout.flush()?;
 
-    // upstream: io.c:1401 iobuf.in is a fixed 32KB circular buffer that is never
-    // resized (io.c:579). IoBufReader is that buffer, and it sits beneath the
+    // upstream: io.c:1427 iobuf.in is a fixed 32KB circular buffer that is never
+    // resized (io.c:597). IoBufReader is that buffer, and it sits beneath the
     // multiplex demuxer so no decoder ever touches the descriptor - the layering
-    // upstream enforces with `assert(fd != iobuf.in_fd)` (io.c:296).
+    // upstream enforces with `assert(fd != iobuf.in_fd)` (io.c:314).
     // The CountingReader wraps the raw transport (below the multiplex demuxer and
     // token decompression) so the running total reflects compressed wire bytes,
-    // matching upstream's `stats.total_read` (io.c:820).
+    // matching upstream's `stats.total_read` (io.c:838).
     let counting_stdin = reader::CountingReader::new(chained_stdin);
     let bytes_received_counter = counting_stdin.counter();
     let mut reader =
         reader::ServerReader::new_plain(protocol::iobuf::IoBufReader::new(counting_stdin));
 
-    // upstream: io.c:1551-1561 - only the client receiver adopts a
+    // upstream: io.c:1577-1587 - only the client receiver adopts a
     // daemon-advertised MSG_IO_TIMEOUT (`am_server || am_generator` treat it as
     // an invalid message). The re-apply hook is supplied only on the daemon-pull
     // path, so its presence plus the client-receiver role gates adoption exactly
     // as upstream does. The client's own --timeout is the current value the
-    // adoption test compares against (upstream io.c:1726 `!io_timeout || io_timeout > val`).
+    // adoption test compares against (upstream io.c:1764 `!io_timeout || io_timeout > val`).
     if let Some(reapply) = io_timeout_reapply
         && config.connection.client_mode
         && config.role == crate::role::ServerRole::Receiver
@@ -1086,19 +1088,19 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         });
     }
 
-    // upstream: main.c:1068 - only the sender paces its outbound writes; the
+    // upstream: main.c:1081 - only the sender paces its outbound writes; the
     // receiver sets `bwlimit_writemax = 0`. On this server body that is the
     // Generator role (SSH `--server --sender`, a client push, or a daemon-sender
     // on a pull). Install the limiter at the bottom of the writer stack so it
-    // paces the exact wire bytes the descriptor accepts (io.c:846,861), below
+    // paces the exact wire bytes the descriptor accepts (io.c:864,879), below
     // the multiplex framer.
     let throttled_stdout = writer::ThrottlingWriter::new(stdout, sender_bandwidth_limiter(&config));
 
-    // upstream: io.c:859 - stats.total_written counts every byte the raw
+    // upstream: io.c:877 - stats.total_written counts every byte the raw
     // descriptor accepts, multiplex frame headers included, in perform_io().
     // Wrap the transport below the multiplex framer so the shared counter
     // mirrors that raw wire total; the sender samples it at its handle_stats
-    // point (main.c:979-980) and reports it as "Total bytes sent".
+    // point (main.c:992-993) and reports it as "Total bytes sent".
     let counting_stdout = writer::CountingWriter::new_shared(throttled_stdout);
     let bytes_sent_counter = counting_stdout.counter();
 
@@ -1116,7 +1118,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     }
 
     // upstream: io.c:set_io_timeout() derives allowed_lull = (io_timeout + 1) / 2
-    // (io.c:1281). Once configured, the generator/sender loop emits an empty
+    // (io.c:1299). Once configured, the generator/sender loop emits an empty
     // MSG_DATA keepalive during an I/O lull so the peer's timeout does not fire.
     // Without --timeout there is no lull tracking and the wire stays identical.
     if let Some(timeout_secs) = handshake.io_timeout {
@@ -1140,7 +1142,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         handshake.protocol,
     );
 
-    // upstream: main.c:1276 - daemon sender always calls recv_filter_list(f_in).
+    // upstream: main.c:1294 - daemon sender always calls recv_filter_list(f_in).
     let should_send_filter_list = if config.connection.client_mode {
         match config.role {
             ServerRole::Generator => receiver_wants_filter_list,
@@ -1161,7 +1163,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         )?;
     }
 
-    // upstream: main.c:1372-1374 - after sending filter list, forward
+    // upstream: main.c:1390-1392 - after sending filter list, forward
     // pre-read --files-from data to the remote daemon's generator so it
     // can build the file list from the forwarded filenames.
     // This applies only in client-mode pull (Receiver), where the daemon's
@@ -1170,10 +1172,10 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         && config.role == ServerRole::Receiver
         && let Some(data) = config.connection.files_from_data.take()
     {
-        // upstream: io.c:1228 start_filesfrom_forwarding - below protocol 31
+        // upstream: io.c:1246 start_filesfrom_forwarding - below protocol 31
         // the client-receiver forwards its files-from names un-multiplexed
         // (MPLX_TO_BUFFERED). At protocol 30 the client's output IS
-        // multiplexed (need_messages_from_generator, main.c:1362-1363), so
+        // multiplexed (need_messages_from_generator, main.c:1380-1381), so
         // without this bypass the names would be MSG_DATA-framed while a
         // real upstream sender reads them raw. At protocol >= 31 they stay
         // framed; below 30 the stream is already plain so both paths match.
@@ -1185,7 +1187,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         }
     }
 
-    // upstream: main.c:1294-1295 - `if (am_daemon && io_timeout &&
+    // upstream: main.c:1312-1313 - `if (am_daemon && io_timeout &&
     // protocol_version >= 31) send_msg_int(MSG_IO_TIMEOUT, io_timeout)`. The
     // gate is `am_daemon`, not "server": an SSH server process has an
     // `io_timeout` of its own once the client forwards `--timeout`, and it must
@@ -1241,17 +1243,17 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         match config.role {
             ServerRole::Receiver => {
                 let mut ctx = ReceiverContext::new(&handshake, config, pipeline);
-                // upstream: receiver.c:807 - a daemon receiver's `itemizing` is
+                // upstream: receiver.c:823 - a daemon receiver's `itemizing` is
                 // `logfile_format_has_i`, and every processed entry reaches
                 // `maybe_log_item()`/`log_item(FLOG)` for the module log file. Arm
                 // the per-entry FLOG collection before the transfer runs.
                 if let Some(dl) = daemon_log.as_ref() {
                     ctx.enable_daemon_log(dl.format_has_i);
                 }
-                // upstream: flist.c:2615/2789 - recv_file_list() measures its span
+                // upstream: flist.c:2855/3032 - recv_file_list() measures its span
                 // against the raw read counter to accumulate stats.flist_size.
                 ctx.set_raw_read_counter(std::sync::Arc::clone(&bytes_received_counter));
-                // upstream: io.c:859 - stats.total_written tracking
+                // upstream: io.c:877 - stats.total_written tracking
                 let mut counting_writer = writer::CountingWriter::new(&mut writer);
                 let mut stats = match ctx.run(chained_reader, &mut counting_writer, progress) {
                     Ok(stats) => stats,
@@ -1259,7 +1261,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 };
                 stats.flist_size = ctx.flist_size();
                 stats.bytes_sent = counting_writer.bytes_written();
-                // upstream: io.c:820 - stats.total_read counts raw bytes read off the
+                // upstream: io.c:838 - stats.total_read counts raw bytes read off the
                 // socket (mux frames + compressed tokens), below decompression. Source
                 // bytes_received from the wire counter so --stats reports compressed
                 // wire bytes, not the post-decompression literal byte total.
@@ -1295,7 +1297,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 }
 
                 // upstream: the daemon receiver's per-file `log_item(FLOG)` writes
-                // (receiver.c:903 maybe_log_item / receiver.c:1273 log_item). oc
+                // (receiver.c:919 maybe_log_item / receiver.c:1290 log_item). oc
                 // collects them during the run and flushes them here in
                 // flist-index order, which is the order upstream logs them.
                 if let Some(dl) = daemon_log {
@@ -1314,16 +1316,16 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 
                 let mut ctx = GeneratorContext::new(&handshake, config, pipeline);
                 ctx.batch_stats_sink = batch_stats_sink;
-                // upstream: sender.c:499/584 - a daemon sender's `itemizing` is
+                // upstream: sender.c:500/585 - a daemon sender's `itemizing` is
                 // `logfile_format_has_i`, and every processed entry reaches
                 // `maybe_log_item()`/`log_item(FLOG)` for the module log file.
                 if let Some(dl) = daemon_log.as_ref() {
                     ctx.enable_daemon_log(dl.format_has_i);
                 }
-                // upstream: io.c:820/859 - the sender's handle_stats() reports the raw
+                // upstream: io.c:838/877 - the sender's handle_stats() reports the raw
                 // descriptor counters. Hand the generator the transport-level wire
                 // counters so it samples total_written/total_read at its handle_stats
-                // point (main.c:979-980), below multiplex framing, matching upstream.
+                // point (main.c:992-993), below multiplex framing, matching upstream.
                 ctx.set_wire_counters(
                     std::sync::Arc::clone(&bytes_sent_counter),
                     std::sync::Arc::clone(&bytes_received_counter),
@@ -1334,7 +1336,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 };
 
                 // upstream: the daemon sender's per-file `log_item(FLOG)` writes
-                // (sender.c:584 maybe_log_item / sender.c:461 log_item).
+                // (sender.c:585 maybe_log_item / sender.c:462 log_item).
                 if let Some(dl) = daemon_log {
                     for (_idx, rows) in ctx.drain_daemon_log_rows() {
                         for (name, size, itemize) in rows {
@@ -1374,7 +1376,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 /// The four excluded codes are the ones whose own failure mode is the transport,
 /// so writing another frame down it is pointless. `line > 0` is upstream's guard
 /// against echoing an exit that a *received* `MSG_ERROR_EXIT` caused
-/// (io.c:1892 re-enters `_exit_cleanup` with a negative line); oc's equivalent
+/// (io.c:1930 re-enters `_exit_cleanup` with a negative line); oc's equivalent
 /// is a [`RemoteExitError`] anywhere in the failure's source chain.
 ///
 /// Upstream's gate reads `protocol_version >= 31 || am_receiver`, but only the
@@ -1437,7 +1439,7 @@ fn announce_error_exit<W: Write>(
 /// Walks the source chain of an `io::Error` looking for a [`RemoteExitError`],
 /// which marks a failure that a peer's own `MSG_ERROR_EXIT` produced.
 ///
-/// upstream: io.c:1892 - the handler re-enters `_exit_cleanup` with a negative
+/// upstream: io.c:1930 - the handler re-enters `_exit_cleanup` with a negative
 /// line so the same code is not sent straight back out.
 ///
 /// The client side reads the same chain to exit with the peer's code rather than

@@ -6,8 +6,8 @@ use std::path::PathBuf;
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2499` - `send_file_list()` - Recursive directory scanning
-/// - `flist.c:1731` - `send_file_name()` - Per-entry traversal
+/// - `flist.c:2739` - `send_file_list()` - Recursive directory scanning
+/// - `flist.c:1956` - `send_file_name()` - Per-entry traversal
 #[derive(Clone, Debug)]
 pub struct FileListBuilder {
     root: PathBuf,
@@ -51,7 +51,7 @@ impl FileListBuilder {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:205-232` - `readlink_stat()` uses `do_stat()` when
+    /// - `flist.c:207-234` - `readlink_stat()` uses `do_stat()` when
     ///   `copy_links` is set.
     #[must_use]
     pub const fn copy_links(mut self, copy: bool) -> Self {

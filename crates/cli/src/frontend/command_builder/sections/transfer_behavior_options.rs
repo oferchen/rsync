@@ -102,7 +102,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .overrides_with("remove-source-files"),
             )
             .arg(
-                // upstream: options.c:1722-1726 - OPT_APPEND increments
+                // upstream: options.c:1728-1732 - OPT_APPEND increments
                 // append_mode on the server side; two `--append` flags mean
                 // append_mode == 2 (verify). Count occurrences so the server
                 // parser can recover that from the wire, where a repeated

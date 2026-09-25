@@ -15,7 +15,7 @@ fn parse_args_recognises_block_size_argument() {
 
 /// The argv layer carries the value through verbatim; it is not the validator.
 ///
-/// upstream: options.c:1802 hands the raw string to `parse_size_arg`, which
+/// upstream: options.c:1808 hands the raw string to `parse_size_arg`, which
 /// owns the whole grammar - `1K`, `1KB`, `1KiB`, `1.5K`, `1K+1`. A bare-integer
 /// check here would reject all of those before the real parser ran, which is
 /// exactly the defect this replaces: `--min-size` and `--max-size`, parsed by
@@ -41,7 +41,7 @@ fn parse_args_carries_suffixed_block_size_through_to_the_size_parser() {
 /// must not, so they now assert the outcome: a syntax-error exit with the
 /// offending value named.
 ///
-/// upstream: options.c:1253-1264 - `--block-size=abc is invalid`, exit 1.
+/// upstream: options.c:1259-1270 - `--block-size=abc is invalid`, exit 1.
 #[test]
 fn non_numeric_block_size_is_rejected_with_the_value_named() {
     let (code, _stdout, stderr) = run_with_args([
@@ -59,7 +59,7 @@ fn non_numeric_block_size_is_rejected_with_the_value_named() {
     );
 }
 
-/// upstream: options.c:1216-1221 - a negative size fails the `dsize < 0` check.
+/// upstream: options.c:1222-1227 - a negative size fails the `dsize < 0` check.
 #[test]
 fn negative_block_size_is_rejected_with_the_value_named() {
     let (code, _stdout, stderr) = run_with_args([

@@ -152,7 +152,7 @@ fn send_client_greeting(stream: &mut TcpStream, protocol: u32) {
 /// after the connect, never runs - all 25 tests reported PASSED with 14 such
 /// panics in place.
 ///
-/// upstream: clientserver.c:1758-1761 - `if (no_detach) create_pid_file(); else
+/// upstream: clientserver.c:1779-1782 - `if (no_detach) create_pid_file(); else
 /// become_daemon();` runs before the listener is set up, which is why
 /// `--no-detach` is the daemon's own opt-out rather than a test-only knob.
 fn no_detach() -> OsString {

@@ -13,7 +13,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:1839-1840` - `--only-write-batch` sets `dry_run = 1` so the
+//! - `main.c:1866-1867` - `--only-write-batch` sets `dry_run = 1` so the
 //!   destination tree is never touched. The batch-fd capture path still
 //!   runs and writes the same byte stream upstream would tee to disk
 //!   during a non-dry-run transfer.

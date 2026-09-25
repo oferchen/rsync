@@ -30,7 +30,7 @@ impl LocalCopyOptions {
     /// Overrides the suffix appended to backup file names.
     ///
     /// When `None`, the default is `""` if a backup directory is set, or `"~"`
-    /// otherwise - matching upstream `options.c:2278-2279`.
+    /// otherwise - matching upstream `options.c:2287-2288`.
     #[must_use]
     #[doc(alias = "--suffix")]
     pub fn with_backup_suffix<S: Into<OsString>>(mut self, suffix: Option<S>) -> Self {
@@ -40,7 +40,7 @@ impl LocalCopyOptions {
                 self.backup = true;
             }
             None => {
-                // upstream: options.c:2296-2297
+                // upstream: options.c:2305-2306
                 // backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
                 if self.backup_dir.is_some() {
                     self.backup_suffix = OsString::new();
@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn with_backup_suffix_none_empty_when_backup_dir_set() {
-        // upstream: options.c:2296-2297 - backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
+        // upstream: options.c:2305-2306 - backup_suffix = backup_dir ? "" : BACKUP_SUFFIX
         let opts = LocalCopyOptions::new()
             .with_backup_directory(Some("/backups"))
             .with_backup_suffix::<OsString>(None);

@@ -1,7 +1,7 @@
 //! Integration coverage for the receiver-side pre-flight destination root
 //! mkdir.
 //!
-//! Mirrors upstream `main.c:778-792` (`get_local_name()`): when the receiver
+//! Mirrors upstream `main.c:791-805` (`get_local_name()`): when the receiver
 //! is about to handle more than one file, or the destination operand carries
 //! a trailing slash, the root must exist before per-entry mkdir dispatch.
 //! Local-mode receivers got this for free through the file-list-driven
@@ -21,7 +21,7 @@ use transfer::receiver::ensure_dest_root_exists;
 
 /// Multi-file transfer into a non-existent destination must create the root.
 ///
-/// Mirrors `main.c:778` (`file_total > 1`).
+/// Mirrors `main.c:791` (`file_total > 1`).
 #[test]
 fn creates_dest_root_for_multi_file_transfer() {
     let tmp = tempdir().expect("tempdir");
@@ -35,7 +35,7 @@ fn creates_dest_root_for_multi_file_transfer() {
 }
 
 /// Trailing-slash on the operand creates the dest even for a single file,
-/// matching `main.c:778` (`trailing_slash`).
+/// matching `main.c:791` (`trailing_slash`).
 #[test]
 fn creates_dest_root_for_trailing_slash_single_file() {
     let tmp = tempdir().expect("tempdir");
@@ -81,7 +81,7 @@ fn pre_existing_directory_is_noop() {
     assert!(dest.is_dir());
 }
 
-/// `dry_run` must never touch the filesystem; upstream `main.c:802-803`
+/// `dry_run` must never touch the filesystem; upstream `main.c:815-816`
 /// signals the missing dir by incrementing `dry_run`, not by mkdir.
 #[test]
 fn dry_run_never_creates_dest_root() {
@@ -96,7 +96,7 @@ fn dry_run_never_creates_dest_root() {
 }
 
 /// A multi-component destination whose ancestors do not exist must fail
-/// WITHOUT `--mkpath`: upstream `main.c:788` does a single
+/// WITHOUT `--mkpath`: upstream `main.c:801` does a single
 /// `do_mkdir(dest_path)` that returns `ENOENT` when the parent chain is
 /// missing. Auto-creating the whole chain here (the old `create_dir_all`
 /// behavior) diverged from upstream by materializing a deep destination path
@@ -119,7 +119,7 @@ fn deep_missing_dest_root_without_mkpath_errors() {
 }
 
 /// WITH `--mkpath`, the same multi-component destination materializes the
-/// whole missing chain, mirroring upstream `main.c:736`
+/// whole missing chain, mirroring upstream `main.c:749`
 /// `make_path(dest_path, ...)`.
 #[test]
 fn deep_missing_dest_root_with_mkpath_creates_chain() {
@@ -134,7 +134,7 @@ fn deep_missing_dest_root_with_mkpath_creates_chain() {
 }
 
 /// A single-level destination whose parent already exists is created even
-/// without `--mkpath`: upstream `main.c:788` `do_mkdir(dest_path)` succeeds
+/// without `--mkpath`: upstream `main.c:801` `do_mkdir(dest_path)` succeeds
 /// when only the final component is missing. This is the common recursive
 /// `rsync -a src/ newdst/` shape and must never regress.
 #[test]
@@ -152,7 +152,7 @@ fn single_level_dest_root_without_mkpath_creates() {
 /// Broken (dangling) symlink at the dest root must error rather than
 /// auto-create a directory at the missing link target.
 ///
-/// Upstream `main.c:745-754` accepts a symlinked dest only when
+/// Upstream `main.c:758-767` accepts a symlinked dest only when
 /// `do_stat()` resolves to a directory. A dangling link returns `ENOENT`
 /// from `do_stat`, falling through to `do_mkdir(dest_path, ACCESSPERMS)`
 /// which would resolve the link and materialize a directory at the
@@ -192,7 +192,7 @@ fn rejects_broken_symlink_dest_root() {
 }
 
 /// Symlink to an existing directory at the dest root must be accepted -
-/// upstream `main.c:745-754` follows the symlink via `do_stat` + `S_ISDIR`
+/// upstream `main.c:758-767` follows the symlink via `do_stat` + `S_ISDIR`
 /// and enters the resolved directory. This is the UTS-SLDB interop scenario
 /// (issue #715): `$HOME/dir -> $HOME/real-dir` with `-K` so every write
 /// lands inside the real directory.
@@ -261,7 +261,7 @@ fn accepts_symlink_to_existing_directory_outside_parent() {
 }
 
 /// A regular file at the dest root must still be rejected: stat succeeds
-/// but `is_dir()` is false. Upstream `main.c:756-761` errors out with
+/// but `is_dir()` is false. Upstream `main.c:769-774` errors out with
 /// "destination must be a directory when copying more than 1 file".
 #[test]
 fn rejects_existing_non_directory_at_dest_root() {

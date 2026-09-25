@@ -97,7 +97,7 @@ pub fn openat(dirfd: BorrowedFd<'_>, name: &OsStr, flags: i32, mode: u32) -> io:
 /// open and no error. `ConfinedFallback::open_at` issues a real `openat(2)`,
 /// which honours the whole flag word on both arms, and on arm 2 adds
 /// `O_NOFOLLOW` the way upstream does
-/// (`rsync-3.5.0/syscall.c:1519`).
+/// (`rsync-3.5.1/syscall.c:1658`).
 ///
 /// Typical temp-file creation passes
 /// `flags = libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW`,

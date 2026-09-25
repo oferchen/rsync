@@ -50,7 +50,7 @@ impl SourceSpec {
 
     /// Returns `true` when the operand contained an explicit `./` dot-dir
     /// marker used to anchor `--relative` paths. Mirrors upstream
-    /// `flist.c:2368` which flips `implied_dot_dir` for `./xxx`-style args.
+    /// `flist.c:2608` which flips `implied_dot_dir` for `./xxx`-style args.
     pub(crate) const fn has_dot_dir_marker(&self) -> bool {
         self.has_dot_dir_marker
     }
@@ -118,7 +118,7 @@ impl SourceSpec {
 
     /// Builds a synthetic NAMED operand from a copy-contents source's immediate
     /// child, used by the local-copy executor to reproduce upstream's global
-    /// merge of multiple copy-contents sources' contents (flist.c:2544
+    /// merge of multiple copy-contents sources' contents (flist.c:2784
     /// flist_sort_and_clean). The child maps to `dest/<basename>` exactly like a
     /// real named operand of the same basename, so it carries no copy-contents,
     /// relative-prefix, or dot-dir markers.
@@ -253,10 +253,10 @@ fn detect_marker_components_unix(operand: &OsStr) -> Option<usize> {
             if start != index {
                 let component = &bytes[start..index];
                 if component == b"." {
-                    // upstream: `flist.c:2623` - the `--relative` root pivot
+                    // upstream: `flist.c:2863` - the `--relative` root pivot
                     // keys on the literal `/./` sequence, so the dot only
                     // moves the root when a separator FOLLOWS it. A trailing
-                    // `/.` is a different decision: `flist.c:2603-2604` sets
+                    // `/.` is a different decision: `flist.c:2843-2844` sets
                     // `name_type = DOTDIR_NAME`, which feeds filtering, and
                     // leaves the relative path whole. Conflating the two sends
                     // `tree/.` to `dst/` instead of `dst/tree/`.
@@ -335,8 +335,8 @@ fn detect_marker_components_windows(operand: &OsStr) -> Option<usize> {
                 if is_single_dot(component) {
                     // Same rule as the unix scan: upstream's `--relative` root
                     // pivot needs the dot to be FOLLOWED by a separator
-                    // (`flist.c:2623`, the literal `/./`). A trailing `\.` or
-                    // `/.` only sets `DOTDIR_NAME` (`flist.c:2603-2604`).
+                    // (`flist.c:2863`, the literal `/./`). A trailing `\.` or
+                    // `/.` only sets `DOTDIR_NAME` (`flist.c:2843-2844`).
                     if index < len {
                         return Some(count);
                     }
@@ -405,7 +405,7 @@ pub(crate) fn has_trailing_separator(path: &OsStr) -> bool {
 ///         name_type = DOTDIR_NAME;
 /// ```
 ///
-/// The append is what makes the non-relative split at `flist.c:2610-2621` cut
+/// The append is what makes the non-relative split at `flist.c:2850-2861` cut
 /// `src/../.` at its LAST `/`, yielding `dir = "src/.."` and `fn = "."`: the
 /// parent directory is chdir()ed into and its CONTENTS are transferred, exactly
 /// as a trailing `/` does. oc reaches the same place by flagging the operand
@@ -414,10 +414,10 @@ pub(crate) fn has_trailing_separator(path: &OsStr) -> bool {
 ///
 /// # Scope: NOT under `--relative`
 ///
-/// The rule sits in the arm `--relative` never reaches. `flist.c:2581-2583`
+/// The rule sits in the arm `--relative` never reaches. `flist.c:2821-2823`
 /// short-circuits the whole marker chain to `NORMAL_NAME` when
 /// `relative_paths` is set, and a `..` in the ACTIVE part of a `--relative`
-/// operand is instead rejected outright at `flist.c:2658-2667`
+/// operand is instead rejected outright at `flist.c:2898-2907`
 /// (`found ".." dir in relative path: %s`, `exit_cleanup(RERR_SYNTAX)`).
 /// Callers must gate on `!--relative`; oc does not yet implement that
 /// rejection, so under `--relative` such an operand keeps its existing
@@ -425,9 +425,9 @@ pub(crate) fn has_trailing_separator(path: &OsStr) -> bool {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2595-2602` - the append and the `DOTDIR_NAME` assignment.
-/// - `flist.c:2581-2583` - the `--relative` short-circuit above it.
-/// - `flist.c:2658-2667` - the `--relative` `..` rejection.
+/// - `flist.c:2835-2842` - the append and the `DOTDIR_NAME` assignment.
+/// - `flist.c:2821-2823` - the `--relative` short-circuit above it.
+/// - `flist.c:2898-2907` - the `--relative` `..` rejection.
 pub(crate) fn operand_ends_in_parent_dir(path: &OsStr) -> bool {
     #[cfg(unix)]
     {
@@ -467,7 +467,7 @@ pub(crate) fn operand_ends_in_parent_dir(path: &OsStr) -> bool {
 /// Returns `true` when the operand's final path component is a bare `.`
 /// (the operand is exactly `.` or ends with `/.`). Upstream treats such a
 /// source as contents-only, identical to a trailing slash. See upstream
-/// flist.c:2331 where a `DOTDIR_NAME` last component sets the
+/// flist.c:2571 where a `DOTDIR_NAME` last component sets the
 /// "copy directory contents" semantics.
 pub(crate) fn operand_is_dot_dir(path: &OsStr) -> bool {
     #[cfg(unix)]
@@ -593,7 +593,7 @@ mod tests {
 
     #[test]
     fn source_spec_from_operand_dot_dir_copies_contents() {
-        // upstream flist.c:2331 treats a `.` last component as contents-only,
+        // upstream flist.c:2571 treats a `.` last component as contents-only,
         // identical to a trailing slash; a bare `.` must not error out trying
         // to derive a directory name from `file_name()`.
         for operand in [".", "foo/.", "/tmp/dir/."] {
@@ -602,7 +602,7 @@ mod tests {
         }
     }
 
-    /// upstream flist.c:2595-2602 - a trailing `..` component is a DOTDIR
+    /// upstream flist.c:2835-2842 - a trailing `..` component is a DOTDIR
     /// operand: upstream appends `/.` and sets `DOTDIR_NAME`, so the parent's
     /// contents are what gets transferred.
     #[test]
@@ -613,8 +613,8 @@ mod tests {
         }
     }
 
-    /// upstream flist.c:2581-2583 forces `NORMAL_NAME` before the `..` arm is
-    /// reached, and flist.c:2658-2667 rejects the operand instead. `--relative`
+    /// upstream flist.c:2821-2823 forces `NORMAL_NAME` before the `..` arm is
+    /// reached, and flist.c:2898-2907 rejects the operand instead. `--relative`
     /// therefore never acquires the contents semantics.
     #[test]
     fn source_spec_from_operand_parent_dir_is_scoped_to_non_relative() {
@@ -628,7 +628,7 @@ mod tests {
     }
 
     /// The guard is `fbuf[len-1] == '.' && fbuf[len-2] == '.' &&
-    /// (len == 2 || fbuf[len-3] == '/')` (flist.c:2595-2596): a whole trailing
+    /// (len == 2 || fbuf[len-3] == '/')` (flist.c:2835-2836): a whole trailing
     /// COMPONENT, not the two bytes.
     #[test]
     fn operand_ends_in_parent_dir_classification() {
@@ -735,9 +735,9 @@ mod tests {
     /// Upstream makes two separate decisions about a `.` component, and only
     /// one of them moves the relative root:
     ///
-    /// - `flist.c:2603-2604` sets `name_type = DOTDIR_NAME` for a trailing `/.`.
+    /// - `flist.c:2843-2844` sets `name_type = DOTDIR_NAME` for a trailing `/.`.
     ///   That feeds filtering, not the root.
-    /// - `flist.c:2623` performs the root pivot, and it keys on
+    /// - `flist.c:2863` performs the root pivot, and it keys on
     ///   `strstr(fbuf, "/./")` - the literal three-character sequence, which
     ///   requires a separator AFTER the dot.
     ///

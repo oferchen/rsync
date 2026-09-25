@@ -3,7 +3,7 @@
 //! When two `--relative` operands overlap - one an ancestor of the other, e.g.
 //! `-R a/b a/b/c` - upstream rsync merges every source arg into one shared
 //! flist and then collapses the overlap in `flist_sort_and_clean()`
-//! (flist.c:3016), so each directory and file in the shared subtree appears
+//! (flist.c:3259), so each directory and file in the shared subtree appears
 //! exactly once. oc's streaming local-copy executor emits each operand's rows
 //! as it walks, so before this fix the descendant operand re-listed the whole
 //! overlapping subtree (its implied parents, itself, and its recursive
@@ -16,7 +16,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:3016 flist_sort_and_clean()` - collapses duplicate/overlapping
+//! - `flist.c:3259 flist_sort_and_clean()` - collapses duplicate/overlapping
 //!   entries in the shared flist so each name appears once.
 
 #![cfg(unix)]

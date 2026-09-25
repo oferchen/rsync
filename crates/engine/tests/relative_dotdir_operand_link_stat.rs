@@ -5,15 +5,15 @@
 //! into one decision is what this pins:
 //!
 //! 1. The NAME it stats is the operand with the marker stripped
-//!    (`flist.c:2652-2657` - `fn[--len] = '\0'` before `name_type` is set).
+//!    (`flist.c:2892-2897` - `fn[--len] = '\0'` before `name_type` is set).
 //!    Stating the raw `operand/` form instead makes the kernel resolve the
 //!    trailing slash, which silently turns the `lstat` into a `stat` that also
 //!    demands a directory: a symlink to a FILE came back `ENOTDIR` and a
 //!    dangling symlink came back `ENOENT`, so both operands aborted the
 //!    transfer at exit 23 instead of being sent.
 //! 2. The marker itself survives as `name_type` and feeds the stat's follow
-//!    decision (`flist.c:2697` - `copy_dirlinks || name_type != NORMAL_NAME`).
-//!    `link_stat()` (`flist.c:286-301`) is then a two-step: `lstat` first, and
+//!    decision (`flist.c:2937` - `copy_dirlinks || name_type != NORMAL_NAME`).
+//!    `link_stat()` (`flist.c:511-526`) is then a two-step: `lstat` first, and
 //!    the `stat` result replaces it ONLY when the target is a directory.
 //!
 //! So `sym-to-dir/` is the directory it points at, while `sym-to-file/`,
@@ -23,10 +23,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:115-118` - `NORMAL_NAME` / `SLASH_ENDING_NAME` / `DOTDIR_NAME`.
-//! - `flist.c:286-301` - `link_stat()`, the lstat-then-dir-only-upgrade pair.
-//! - `flist.c:2652-2657` - the marker is stripped from the name it stats.
-//! - `flist.c:2697` - `link_stat(fbuf, &st, copy_dirlinks || name_type != NORMAL_NAME)`.
+//! - `flist.c:117-120` - `NORMAL_NAME` / `SLASH_ENDING_NAME` / `DOTDIR_NAME`.
+//! - `flist.c:511-526` - `link_stat()`, the lstat-then-dir-only-upgrade pair.
+//! - `flist.c:2892-2897` - the marker is stripped from the name it stats.
+//! - `flist.c:2937` - `link_stat(fbuf, &st, copy_dirlinks || name_type != NORMAL_NAME)`.
 
 #![cfg(unix)]
 

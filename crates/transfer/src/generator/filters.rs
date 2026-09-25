@@ -10,8 +10,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:1276` - `recv_filter_list()` in server mode
-//! - `flist.c:2240-2264` - `--files-from` filename reading and resolution
+//! - `main.c:1294` - `recv_filter_list()` in server mode
+//! - `flist.c:2476-2503` - `--files-from` filename reading and resolution
 //! - `exclude.c:push_local_filters()` - per-directory merge file loading
 
 use std::env;
@@ -32,7 +32,7 @@ use ::filters::{FilterAction, FilterRule};
 
 /// A resolved `--files-from` entry split into a walk base and a full path.
 ///
-/// Upstream rsync's `flist.c:2316-2330` splits each `--files-from` line on its
+/// Upstream rsync's `flist.c:2556-2570` splits each `--files-from` line on its
 /// first `/./` anchor: characters before the anchor name the directory the
 /// sender chdirs into, and characters after become the transmitted relative
 /// name. Entries without an anchor share the original source argument as
@@ -54,24 +54,24 @@ pub struct FilesFromEntry {
     /// transmitted relative name.
     pub path: PathBuf,
     /// True when the original `--files-from` line ended with `/` or with the
-    /// `/./` DOTDIR anchor. Upstream `flist.c:2329` flags these as
+    /// `/./` DOTDIR anchor. Upstream `flist.c:2569` flags these as
     /// `SLASH_ENDING_NAME`/`DOTDIR_NAME`, which causes the sender to recurse
     /// into the directory's children even when global `-r` is disabled
-    /// (`options.c:2189` clears `recurse` whenever `--files-from` is active).
+    /// (`options.c:2198` clears `recurse` whenever `--files-from` is active).
     pub recurse: bool,
     /// True when the transmitted relative name (after any `/./` split) begins
     /// with a leading `./` anchor followed by more path, mirroring upstream's
-    /// `implied_dot_dir` trigger (`flist.c:2368`:
+    /// `implied_dot_dir` trigger (`flist.c:2608`:
     /// `*fn == '.' && fn[1] == '/' && fn[2]`). In `--relative` mode this makes
     /// the sender emit a single transfer-root `.` entry with `FLAG_IMPLIED_DIR`
-    /// (`flist.c:2417-2419`). Plain entries without a leading `./` leave it
+    /// (`flist.c:2657-2659`). Plain entries without a leading `./` leave it
     /// unset so no root `.` is emitted.
     pub implied_dot: bool,
 }
 
 /// Returns true when a transmitted relative name carries a leading `./`
 /// anchor with content after it, mirroring upstream's `implied_dot_dir`
-/// detection at `flist.c:2368` (`*fn == '.' && fn[1] == '/' && fn[2]`). The
+/// detection at `flist.c:2608` (`*fn == '.' && fn[1] == '/' && fn[2]`). The
 /// third-byte requirement excludes a bare `.` or `./`.
 fn has_leading_dot_anchor(name: &[u8]) -> bool {
     name.len() > 2 && name[0] == b'.' && name[1] == b'/'
@@ -126,15 +126,15 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// Splits a sanitized `--files-from` entry on its first `/./` anchor.
 ///
-/// Mirrors upstream `flist.c:2316-2330`: anything before the anchor becomes
+/// Mirrors upstream `flist.c:2556-2570`: anything before the anchor becomes
 /// part of the per-entry walk base; anything after is the transmitted
 /// relative name. Entries without an anchor inherit `base_dir` unchanged.
 ///
 /// `raw_trailing_slash` records whether the original `--files-from` line
 /// (before sanitisation) ended with `/`, including the `/./` DOTDIR form.
-/// Upstream `flist.c:2329` flags those lines as `SLASH_ENDING_NAME` /
+/// Upstream `flist.c:2569` flags those lines as `SLASH_ENDING_NAME` /
 /// `DOTDIR_NAME` and recurses into their children even when global `-r` is
-/// off (`options.c:2207` clears `recurse` whenever `--files-from` is
+/// off (`options.c:2216` clears `recurse` whenever `--files-from` is
 /// active), so we propagate the flag onto [`FilesFromEntry::recurse`] for
 /// `build_file_list_with_base` to honour.
 ///
@@ -146,8 +146,8 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// instead of promoting `from` to the per-entry walk base.
 ///
 /// `relative_paths` selects the upstream split branch. In relative mode
-/// (`flist.c:2385-2400`) the entry is split on its first `/./` anchor as
-/// above. Under `--no-relative` (`relative_paths == 0`, `flist.c:2338-2349`)
+/// (`flist.c:2625-2640`) the entry is split on its first `/./` anchor as
+/// above. Under `--no-relative` (`relative_paths == 0`, `flist.c:2578-2589`)
 /// upstream instead splits on the entry's LAST `/`: the parent becomes the
 /// chdir target (walk base) and only the basename is transmitted, so nested
 /// entries FLATTEN (`sub/file` transmits as `file`, no implied `sub` dir).
@@ -158,14 +158,14 @@ pub(super) fn split_files_from_entry(
     raw_trailing_slash: bool,
     relative_paths: bool,
 ) -> FilesFromEntry {
-    // upstream: flist.c:2338-2349 - `if (!relative_paths) { p = strrchr(fbuf,
+    // upstream: flist.c:2578-2589 - `if (!relative_paths) { p = strrchr(fbuf,
     // '/'); ... dir = fbuf; fn = p + 1; }`. Non-relative mode drops every
     // leading path component: the walk base absorbs the parent directory and
     // the transmitted name is the trailing basename. No implied parent dirs.
     if !relative_paths {
         let trimmed = trim_end_slashes(sanitized);
         if raw_trailing_slash {
-            // upstream: flist.c:2312-2322 - a trailing `/` turns `X/` into the
+            // upstream: flist.c:2552-2562 - a trailing `/` turns `X/` into the
             // DOTDIR `X/.`; the strrchr split then makes the WHOLE directory the
             // chdir target (`dir = X`, `fn = "."`) and recurses, so the entry's
             // contents flatten into the transfer root (`sub/` sends `file`,
@@ -180,7 +180,7 @@ pub(super) fn split_files_from_entry(
                 base: base.clone(),
                 path: base,
                 recurse: true,
-                // upstream: flist.c:2367 - `implied_dot_dir` is set only in the
+                // upstream: flist.c:2607 - `implied_dot_dir` is set only in the
                 // relative-mode branch; non-relative entries never trip it.
                 implied_dot: false,
             };
@@ -203,7 +203,7 @@ pub(super) fn split_files_from_entry(
             base,
             path,
             recurse: false,
-            // upstream: flist.c:2367 - `implied_dot_dir` is relative-mode only.
+            // upstream: flist.c:2607 - `implied_dot_dir` is relative-mode only.
             implied_dot: false,
         };
     }
@@ -211,7 +211,7 @@ pub(super) fn split_files_from_entry(
     // Anchored form: prefix `/./` suffix.
     if let Some(anchor) = find_subslice(sanitized, b"/./") {
         let (head, tail) = sanitized.split_at(anchor);
-        // upstream: flist.c:2321 - skip the `/./` separator and any redundant
+        // upstream: flist.c:2561 - skip the `/./` separator and any redundant
         // leading slashes on the suffix so `dir/./subdir` and `dir/././subdir`
         // both collapse to a relative name of `subdir`.
         let rest = trim_start_slashes(&tail[3..]);
@@ -228,7 +228,7 @@ pub(super) fn split_files_from_entry(
         // An empty suffix (e.g. `from/./`) is upstream's DOTDIR_NAME case,
         // which always recurses. Otherwise honour the raw trailing slash.
         let recurse = rest.is_empty() || raw_trailing_slash;
-        // upstream: flist.c:2359-2368 - after the `/./` split, `fn` is `rest`;
+        // upstream: flist.c:2599-2608 - after the `/./` split, `fn` is `rest`;
         // a further leading `./` on it still trips `implied_dot_dir`.
         let implied_dot = has_leading_dot_anchor(rest);
         return FilesFromEntry {
@@ -274,8 +274,8 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - Server mode: `recv_filter_list()` at `main.c:1276`
-    /// - Client mode: `send_filter_list()` at `main.c:1326` (done in mod.rs)
+    /// - Server mode: `recv_filter_list()` at `main.c:1294`
+    /// - Client mode: `send_filter_list()` at `main.c:1344` (done in mod.rs)
     pub(super) fn receive_filter_list_if_server<R: Read>(
         &mut self,
         reader: &mut R,
@@ -283,7 +283,7 @@ impl GeneratorContext {
         if self.config.connection.client_mode {
             // Client mode: apply filters from config for local file list building.
             // Filter rules were already sent to the daemon in mod.rs.
-            // upstream: flist.c:1360 - is_excluded() applied during make_file()
+            // upstream: flist.c:1585 - is_excluded() applied during make_file()
             if !self.config.connection.filter_rules.is_empty() {
                 let (filter_set, merge_configs) =
                     self.parse_received_filters(&self.config.connection.filter_rules.clone())?;
@@ -358,7 +358,7 @@ impl GeneratorContext {
     ///
     /// Each filename is resolved relative to the first positional argument (the
     /// base source directory). Entries containing a `/./` anchor are split per
-    /// upstream `flist.c:2316`: the prefix before the anchor is joined onto the
+    /// upstream `flist.c:2556`: the prefix before the anchor is joined onto the
     /// base to form the entry's effective walk base, and the suffix becomes the
     /// transmitted relative name. Entries without an anchor share `base_dir` as
     /// their effective base. Returns an empty `Vec` when no `--files-from` is
@@ -366,9 +366,9 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2297` - `read_line(filesfrom_fd, ...)` reads one name at a time
-    /// - `flist.c:2316-2330` - `/./` anchor split for relative-name emission
-    /// - `main.c:681-685` - `filesfrom_fd` set to `STDIN_FILENO` for `--files-from=-`
+    /// - `flist.c:2537` - `read_line(filesfrom_fd, ...)` reads one name at a time
+    /// - `flist.c:2556-2570` - `/./` anchor split for relative-name emission
+    /// - `main.c:694-698` - `filesfrom_fd` set to `STDIN_FILENO` for `--files-from=-`
     /// - `io.c:start_filesfrom_forwarding()` - client forwards local file over socket
     pub fn resolve_files_from_paths<R: Read>(
         &self,
@@ -381,7 +381,7 @@ impl GeneratorContext {
         };
 
         // Determine base directory: use the first positional arg (source dir).
-        // upstream: flist.c:2275-2279 - change_dir(argv[0]) before reading filenames.
+        // upstream: flist.c:2514-2518 - change_dir(argv[0]) before reading filenames.
         let base_dir = original_paths
             .first()
             .cloned()
@@ -390,7 +390,7 @@ impl GeneratorContext {
         let filenames = if files_from_path == "-" {
             // Read from protocol stream (stdin). The client forwards the file
             // list as NUL-separated entries with a double-NUL terminator.
-            // upstream: main.c:681 - filesfrom_fd = STDIN_FILENO
+            // upstream: main.c:694 - filesfrom_fd = STDIN_FILENO
             // upstream: io.c:read_line(RL_CONVERT) - wire bytes are UTF-8 and
             // must be transcoded to the local charset via ic_recv when
             // protect_args && --iconv are both in effect (compat.c:799-806).
@@ -406,7 +406,7 @@ impl GeneratorContext {
             )?
         } else {
             // Read from a local file on the server.
-            // upstream: main.c:675-679 - open(files_from, O_RDONLY)
+            // upstream: main.c:688-692 - open(files_from, O_RDONLY)
             // The file lives in the server's local charset, so no wire iconv
             // applies - read it as-is, mirroring upstream's omission of
             // RL_CONVERT for the local-file fd.
@@ -414,16 +414,16 @@ impl GeneratorContext {
             read_files_from_local_path(&files_from_path, from0)?
         };
 
-        // upstream: flist.c:2240-2264 - chdir to argv[0] then read relative
+        // upstream: flist.c:2476-2503 - chdir to argv[0] then read relative
         // filenames. Each entry's effective base is base_dir plus any prefix
-        // before its `/./` anchor (upstream's `dir` variable in flist.c:2316),
+        // before its `/./` anchor (upstream's `dir` variable in flist.c:2556),
         // so the wire-side relative name is the path after the anchor.
         let mut resolved = Vec::with_capacity(filenames.len());
         for name in &filenames {
             if name.is_empty() {
                 continue;
             }
-            // upstream: flist.c:2299 - sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)
+            // upstream: flist.c:2539 - sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)
             // Always sanitize files_from entries to prevent directory traversal.
             // This collapses ".." components and strips leading "/" to confine
             // paths within the transfer root. `SP_KEEP_DOT_DIRS` preserves the
@@ -431,7 +431,7 @@ impl GeneratorContext {
             // byte variant keeps non-UTF-8 names intact (upstream carries the
             // name as raw `char*`).
             let sanitized = crate::sanitize_path::sanitize_path_keep_dot_dirs_bytes(name);
-            // upstream: flist.c:2329 - a raw trailing slash flags the entry
+            // upstream: flist.c:2569 - a raw trailing slash flags the entry
             // as SLASH_ENDING_NAME, which forces recursion even when global
             // `-r` is off. Capture it from the original (pre-sanitisation)
             // line so the split can propagate the flag.
@@ -853,8 +853,8 @@ fn append_cvsignore_tokens(rules: &mut Vec<FilterRule>, source: &str, perishable
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:675-679` - `open(files_from, O_RDONLY)` for local file
-/// - `flist.c:2297` - `read_line(filesfrom_fd, ...)` reads lines
+/// - `main.c:688-692` - `open(files_from, O_RDONLY)` for local file
+/// - `flist.c:2537` - `read_line(filesfrom_fd, ...)` reads lines
 pub(super) fn read_files_from_local_path(path: &str, from0: bool) -> io::Result<Vec<Vec<u8>>> {
     let file = std::fs::File::open(path)?;
     let mut reader = io::BufReader::new(file);
@@ -865,8 +865,8 @@ pub(super) fn read_files_from_local_path(path: &str, from0: bool) -> io::Result<
         // reads it without RL_CONVERT (compat.c:799-806 only sets
         // filesfrom_convert when the file is being forwarded over the wire).
         //
-        // upstream: flist.c:2249 sets RL_DUMP_COMMENTS independent of eol_nulls
-        // (it is gated only on reading_remotely), and io.c:1276 read_line()
+        // upstream: flist.c:2485 sets RL_DUMP_COMMENTS independent of eol_nulls
+        // (it is gated only on reading_remotely), and io.c:1294 read_line()
         // strips leading '#'/';' comment lines even with NUL delimiters. A
         // local file open is not "reading remotely", so comments are stripped.
         let mut filenames = protocol::read_files_from_stream(&mut reader, None)?;
@@ -890,8 +890,8 @@ pub(super) fn read_files_from_local_path(path: &str, from0: bool) -> io::Result<
             if line.is_empty() {
                 continue;
             }
-            // upstream: io.c:1276 - RL_DUMP_COMMENTS strips leading '#'/';'
-            // comment lines for local files (flist.c:2249, reading_remotely
+            // upstream: io.c:1294 - RL_DUMP_COMMENTS strips leading '#'/';'
+            // comment lines for local files (flist.c:2485, reading_remotely
             // false), regardless of eol_nulls.
             if matches!(line.first(), Some(b'#' | b';')) {
                 continue;
@@ -1068,7 +1068,7 @@ mod tests {
 
     #[test]
     fn split_files_from_entry_no_relative_flattens_to_basename() {
-        // Task #292: upstream flist.c:2338-2349 - under --no-relative the entry
+        // Task #292: upstream flist.c:2578-2589 - under --no-relative the entry
         // splits on its LAST `/`, so the walk base absorbs every parent
         // component and only the basename is transmitted. `sub/file` must
         // resolve to base `/src/sub`, path `/src/sub/file`, wire name `file` -
@@ -1127,7 +1127,7 @@ mod tests {
         // UTS-21.REOPEN regression: `from/./dir/subdir` must split so that
         // the wire-side relative name (path.strip_prefix(base)) is just
         // `dir/subdir`. Otherwise upstream's `implied_filter_list` check
-        // (flist.c:1026) rejects `from/dir/subdir` as "unrequested".
+        // (flist.c:1251) rejects `from/dir/subdir` as "unrequested".
         let base = PathBuf::from("/src");
         let split = split_files_from_entry(&base, b"from/./dir/subdir", false, true);
         assert_eq!(split.base, PathBuf::from("/src/from"));
@@ -1139,7 +1139,7 @@ mod tests {
 
     #[test]
     fn split_files_from_entry_with_trailing_anchor_keeps_base_as_path() {
-        // upstream: flist.c:2321-2324 - `from/./` (trailing `/.`) emits the
+        // upstream: flist.c:2561-2564 - `from/./` (trailing `/.`) emits the
         // anchor directory itself, with the relative name collapsing to `.`,
         // and is always recursed into.
         let base = PathBuf::from("/src");
@@ -1212,7 +1212,7 @@ mod tests {
 
     #[test]
     fn split_files_from_entry_plain_name_is_not_implied_dot() {
-        // upstream: flist.c:2368 - `implied_dot_dir` only trips on a leading
+        // upstream: flist.c:2608 - `implied_dot_dir` only trips on a leading
         // `./`; a plain relative name never emits the transfer-root `.`.
         let base = PathBuf::from("/src");
         let split = split_files_from_entry(&base, b"dir/file.txt", false, true);
@@ -1221,7 +1221,7 @@ mod tests {
 
     #[test]
     fn split_files_from_entry_leading_dot_anchor_sets_implied_dot() {
-        // upstream: flist.c:2640 - `*fn == '.' && fn[1] == '/' && fn[2]`. A
+        // upstream: flist.c:2880 - `*fn == '.' && fn[1] == '/' && fn[2]`. A
         // leading `./foo` files-from line (no embedded `/./`) marks the entry
         // so `--relative` mode emits a single FLAG_IMPLIED_DIR root `.`.
         let base = PathBuf::from("/src");
@@ -1239,7 +1239,7 @@ mod tests {
 
     #[test]
     fn split_files_from_entry_anchor_then_leading_dot_sets_implied_dot() {
-        // upstream: flist.c:2359-2368 - after the `/./` split, `fn` is the
+        // upstream: flist.c:2599-2608 - after the `/./` split, `fn` is the
         // suffix; `dir/././sub` leaves `rest == "./sub"`, which still trips
         // `implied_dot_dir`.
         let base = PathBuf::from("/src");

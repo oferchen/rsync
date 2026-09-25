@@ -18,11 +18,11 @@
 //! rather than hard failures:
 //!
 //! * local receiver: oc creates the whole missing dest parent chain even
-//!   WITHOUT `--mkpath`, where upstream errors (upstream main.c:796 does a
+//!   WITHOUT `--mkpath`, where upstream errors (upstream main.c:809 does a
 //!   single `do_mkdir` that fails when a parent is absent);
 //! * remote sender (ssh / russh / daemon): the oc receiver ignores `--mkpath`
 //!   and fails to create the missing parents, where upstream succeeds (upstream
-//!   main.c:736 `make_path`). Only local single-process transfers honor it.
+//!   main.c:749 `make_path`). Only local single-process transfers honor it.
 //!
 //! The transfer command is built directly per transport (local / ssh / russh /
 //! daemon) so the destination operand is the non-existent deep path. oc runs
@@ -130,7 +130,7 @@ impl Mkpath {
             Ok(out) if out.status.success() => out,
             // Known oc divergence: with a remote sender the oc receiver ignores
             // --mkpath and fails to create the missing dest parents that
-            // upstream builds via make_path (main.c:736). Reported as an
+            // upstream builds via make_path (main.c:749). Reported as an
             // expected-fail; a fixed oc succeeds here and the cell PASSes.
             Ok(out) if is_remote(transport) => {
                 return known_divergence(
@@ -240,7 +240,7 @@ impl Mkpath {
         if oc.status.success() {
             // Known oc divergence (local receiver): oc creates the full missing
             // dest parent chain even without --mkpath, where upstream errors
-            // (main.c:796 single do_mkdir). Reported as an expected-fail; a
+            // (main.c:809 single do_mkdir). Reported as an expected-fail; a
             // fixed oc errors here and the cell PASSes.
             return known_divergence(
                 self.name(),

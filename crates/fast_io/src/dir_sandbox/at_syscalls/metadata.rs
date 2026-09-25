@@ -111,7 +111,7 @@ impl AtMetadata {
     /// a parent descriptor can decide "still the entry I chose" without a
     /// second, path-based stat.
     ///
-    /// upstream: `rsync-3.5.0/sender.c:442` - `st.st_mtime != file->modtime`.
+    /// upstream: `rsync-3.5.1/sender.c:443` - `st.st_mtime != file->modtime`.
     #[must_use]
     pub fn mtime(&self) -> i64 {
         widen_time(self.stat.st_mtime)
@@ -120,7 +120,7 @@ impl AtMetadata {
     /// Sub-second component of the modification time (`st_mtime_nsec`),
     /// matching [`std::os::unix::fs::MetadataExt::mtime_nsec`].
     ///
-    /// upstream: `rsync-3.5.0/sender.c:445` - the `ST_MTIME_NSEC` compare.
+    /// upstream: `rsync-3.5.1/sender.c:446` - the `ST_MTIME_NSEC` compare.
     #[must_use]
     pub fn mtime_nsec(&self) -> i64 {
         widen_time(self.stat.st_mtime_nsec)
@@ -169,7 +169,7 @@ impl AtMetadata {
     /// [`std::fs::Metadata::created`] returning `Err` on a filesystem that does
     /// not record one.
     ///
-    /// upstream: `rsync-3.5.0/rsync.h:1013` - `ST_CRTIME` is defined only where
+    /// upstream: `rsync-3.5.1/rsync.h:1014` - `ST_CRTIME` is defined only where
     /// configure found `st_birthtime`, which is what gates `--crtimes`.
     #[must_use]
     pub fn birthtime(&self) -> Option<(i64, i64)> {
@@ -310,7 +310,7 @@ pub fn fstatat_nofollow(dirfd: BorrowedFd<'_>, name: &OsStr) -> io::Result<AtMet
 /// half is [`fstatat_nofollow`], mirroring upstream's one call site that
 /// chooses between the two by that flag.
 ///
-/// upstream: `rsync-3.5.0/sender.c:426-428` - `copy_links ? do_stat_atfd(dfd,
+/// upstream: `rsync-3.5.1/sender.c:427-429` - `copy_links ? do_stat_atfd(dfd,
 /// bname, &st) : do_lstat_atfd(dfd, bname, &st)`.
 ///
 /// `name` must not contain an interior NUL byte; callers that pull names from

@@ -597,7 +597,7 @@ mod handle_at_error_tests {
 
     #[test]
     fn maps_to_client_server_protocol_exit_code() {
-        // upstream: main.c:1879 - @ERROR client-server handshake failures
+        // upstream: main.c:1906 - @ERROR client-server handshake failures
         // exit with RERR_PROTOCOL (code 5).
         let err = handle_daemon_at_error("@ERROR: auth failed on module foo");
         assert_eq!(err.exit_code(), CLIENT_SERVER_PROTOCOL_EXIT_CODE);

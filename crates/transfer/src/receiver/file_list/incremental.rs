@@ -49,8 +49,8 @@ pub struct IncrementalFileListReceiver<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2069-2074` - `need_unsorted_flist = 1` when `iconv_opt`
-    /// - `flist.c:2496-2498` - "both sides keep an unsorted file-list array
+    /// - `options.c:2196-2201` - `need_unsorted_flist = 1` when `iconv_opt`
+    /// - `flist.c:2736-2738` - "both sides keep an unsorted file-list array
     ///   because the names will differ on the sending and receiving sides"
     pub(in crate::receiver) iconv_reorder_suppressed: bool,
 }
@@ -200,7 +200,7 @@ impl<R: Read> IncrementalFileListReceiver<R> {
 
         entries.extend(self.incremental.drain_ready());
 
-        // upstream: flist.c:2736 - sort to match sender's order for NDX indexing.
+        // upstream: flist.c:2979 - sort to match sender's order for NDX indexing.
         // IncrementalFileListReceiver is only used for INC_RECURSE (protocol >= 30).
         // When iconv would reorder the NDX-addressed array away from sender
         // scan order, skip the in-place sort - upstream's `need_unsorted_flist`

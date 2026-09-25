@@ -82,10 +82,10 @@ mod tests;
 pub use at_syscalls::{
     AtMetadata, CloneAttempt, DirEntryView, EntryKind, LstatOutcome, ReadDirOutcome, UnlinkFlags,
     UnlinkResidue, confined_clone_file, confined_create_new, confined_link_anonymous,
-    confined_rename, fchmodat, fchmodat_via_sandbox_or_fallback, fchownat,
-    fchownat_via_sandbox_or_fallback, fstatat_follow, fstatat_nofollow, linkat,
-    linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback, mkdirat,
-    mkdirat_via_sandbox_or_fallback, mknodat_via_sandbox_or_fallback,
+    confined_rename, copy_then_unlink_via_sandbox_or_fallback, fchmodat,
+    fchmodat_via_sandbox_or_fallback, fchownat, fchownat_via_sandbox_or_fallback, fstatat_follow,
+    fstatat_nofollow, linkat, linkat_via_sandbox_or_fallback, lstat_via_sandbox_or_fallback,
+    mkdirat, mkdirat_via_sandbox_or_fallback, mknodat_via_sandbox_or_fallback,
     nested_parent_anchoring_supported, openat, openat_via_sandbox_or_fallback,
     read_dir_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,
     recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback, renameat,
@@ -158,10 +158,10 @@ impl DirSandbox {
     ///
     /// # Upstream Reference
     ///
-    /// - `syscall.c:85-90` `open_anchor_dirfd()` - plain `openat` for an
+    /// - `syscall.c:102-107` `open_anchor_dirfd()` - plain `openat` for an
     ///   operator anchor.
-    /// - `syscall.c:3189-3193` - "Absolute basedir: operator-trusted."
-    /// - `syscall.c:2891` `ds_descend()` - the per-component walk that
+    /// - `syscall.c:3336-3340` - "Absolute basedir: operator-trusted."
+    /// - `syscall.c:3032` `ds_descend()` - the per-component walk that
     ///   confines the peer-supplied remainder.
     ///
     /// # Errors
@@ -419,7 +419,7 @@ static FD_EXHAUSTION_WARNED: AtomicBool = AtomicBool::new(false);
 
 /// The hint text, byte-for-byte as upstream prints it.
 ///
-/// upstream: syscall.c:2930-2931 - a bare `rprintf(FWARNING, ...)`, which
+/// upstream: syscall.c:3071-3072 - a bare `rprintf(FWARNING, ...)`, which
 /// `rwrite()` routes to stderr verbatim (log.c:341). The
 /// `rsync warning: ... (code N) at FILE(LINE) [role=version]` envelope is
 /// **not** applied here; that wording is spelled out literally at its own
@@ -454,7 +454,7 @@ fn should_warn_fd_exhaustion(err: &io::Error, warned: &AtomicBool) -> bool {
 /// descent and the peer-tail walk under an operator anchor go through it, so
 /// there is one implementation of one upstream rule.
 ///
-/// The policy is upstream's `ds_descend()` (`syscall.c:2891`): a relative
+/// The policy is upstream's `ds_descend()` (`syscall.c:3032`): a relative
 /// in-tree symlink target is spliced back into the walk, while an absolute
 /// target or a climb above the anchor is refused. `RESOLVE_BENEATH` gives
 /// exactly that, and `RESOLVE_NO_MAGICLINKS` blocks the `/proc` magic-link
@@ -487,7 +487,7 @@ fn should_warn_fd_exhaustion(err: &io::Error, warned: &AtomicBool) -> bool {
 ///   (`the_anchor_walk_cannot_exhaust_but_the_entered_walk_can`).
 ///
 /// Upstream prints a one-shot hint on `EMFILE`/`ENFILE` for exactly the
-/// accumulating shape (upstream: syscall.c:2924-2936); without it the bare
+/// accumulating shape (upstream: syscall.c:3065-3077); without it the bare
 /// "Too many open files" is opaque about which limit to raise.
 /// [`warn_once_on_fd_exhaustion`] owns that decision for both accumulating
 /// walks - this one and `ConfinedWalk::descend`.
@@ -651,7 +651,7 @@ mod linux {
 ///
 /// # Upstream Reference
 ///
-/// - `syscall.c:2891-2965` `ds_descend()` - extends `ds.abspath` per component
+/// - `syscall.c:3032-3106` `ds_descend()` - extends `ds.abspath` per component
 ///   and refuses when `abspath_outside_confinement()` says the resolved path
 ///   left the module.
 pub trait ConfinementOracle {
@@ -664,7 +664,7 @@ pub trait ConfinementOracle {
 /// Zero-sized, so a `ConfinePolicy<NoExclude>` carries no state and the
 /// exclude check compiles out entirely. This mirrors upstream leaving
 /// `ds.abspath` unseeded for a non-daemon caller, where the comment at
-/// `syscall.c:2989-2991` notes such callers "pay nothing".
+/// `syscall.c:3130-3132` notes such callers "pay nothing".
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoExclude;
 
@@ -702,8 +702,8 @@ impl ConfinePolicy<NoExclude> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/syscall.c:2794` `SECURE_OPEN_MAXSYMLINKS`
-/// - `rsync-3.5.0/syscall.c:2966` `ds_walk_path()` takes `hops` by pointer,
+/// - `rsync-3.5.1/syscall.c:2933` `SECURE_OPEN_MAXSYMLINKS`
+/// - `rsync-3.5.1/syscall.c:3107` `ds_walk_path()` takes `hops` by pointer,
 ///   which is what makes one budget span the whole walk.
 const SECURE_OPEN_MAXSYMLINKS: u32 = 40;
 
@@ -711,7 +711,7 @@ const SECURE_OPEN_MAXSYMLINKS: u32 = 40;
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/syscall.c:2801` `DS_MAXDEPTH`
+/// - `rsync-3.5.1/syscall.c:2940` `DS_MAXDEPTH`
 const DS_MAXDEPTH: usize = 1024;
 
 impl<O: ConfinementOracle> ConfinePolicy<O> {
@@ -736,7 +736,7 @@ impl<O: ConfinementOracle> ConfinePolicy<O> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/rsync.h:438-441` `NOFOLLOW_HIT_SYMLINK()`
+/// - `rsync-3.5.1/rsync.h:439-442` `NOFOLLOW_HIT_SYMLINK()`
 #[cfg(unix)]
 fn nofollow_hit_symlink(err: &io::Error) -> bool {
     let Some(code) = err.raw_os_error() else {
@@ -762,7 +762,7 @@ fn nofollow_hit_symlink(err: &io::Error) -> bool {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/syscall.c:2803-2811` `struct dirstack`
+/// - `rsync-3.5.1/syscall.c:2942-2950` `struct dirstack`
 #[cfg(unix)]
 struct ConfinedWalk<'oracle, O: ConfinementOracle> {
     anchor: OwnedFd,
@@ -805,7 +805,7 @@ impl<O: ConfinementOracle> ConfinedWalk<'_, O> {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:2896-2901`
+    /// - `rsync-3.5.1/syscall.c:3037-3042`
     fn pop(&mut self) -> io::Result<()> {
         if self.pushed.pop().is_none() {
             return Err(io::Error::from_raw_os_error(libc::ELOOP));
@@ -833,8 +833,8 @@ impl<O: ConfinementOracle> ConfinedWalk<'_, O> {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:2891-2965` `ds_descend()`
-    /// - `rsync-3.5.0/syscall.c:2924-2936` - the hint itself
+    /// - `rsync-3.5.1/syscall.c:3032-3106` `ds_descend()`
+    /// - `rsync-3.5.1/syscall.c:3065-3077` - the hint itself
     fn descend(&mut self, part: &std::ffi::OsStr) -> io::Result<()> {
         if part == "." {
             return Ok(());
@@ -872,7 +872,7 @@ impl<O: ConfinementOracle> ConfinedWalk<'_, O> {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:2937-2961`
+    /// - `rsync-3.5.1/syscall.c:3078-3102`
     fn follow_symlink(&mut self, part: &std::ffi::OsStr, open_err: io::Error) -> io::Result<()> {
         let target = match crate::dir_sandbox::at_syscalls::readlinkat(self.cur(), part) {
             Ok(target) => target,
@@ -905,7 +905,7 @@ impl<O: ConfinementOracle> ConfinedWalk<'_, O> {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:2966-2977` `ds_walk_path()`
+    /// - `rsync-3.5.1/syscall.c:3107-3118` `ds_walk_path()`
     fn walk_relative(&mut self, path: &Path) -> io::Result<()> {
         use std::os::unix::ffi::OsStrExt;
 
@@ -962,7 +962,7 @@ impl DirSandbox {
             // Seeded only for an absolute anchor. A relative one leaves the
             // tracker empty and the exclude check inert, mirroring upstream's
             // note that non-daemon callers "pay nothing"
-            // (rsync-3.5.0/syscall.c:2989-2991).
+            // (rsync-3.5.1/syscall.c:3130-3132).
             abspath: if anchor.is_absolute() {
                 anchor.to_path_buf()
             } else {
@@ -986,17 +986,17 @@ impl DirSandbox {
     ///
     /// This is the portable sibling of `openat2(RESOLVE_BENEATH)`: same
     /// admissions, same refusals, no kernel support required. A relative
-    /// in-tree directory symlink is FOLLOWED (upstream `syscall.c:2961`), an
-    /// absolute symlink target is REFUSED (`syscall.c:2953-2956`), and a `..`
-    /// that would rise above the anchor is refused (`syscall.c:2896-2899`).
+    /// in-tree directory symlink is FOLLOWED (upstream `syscall.c:3102`), an
+    /// absolute symlink target is REFUSED (`syscall.c:3094-3097`), and a `..`
+    /// that would rise above the anchor is refused (`syscall.c:3037-3040`).
     ///
     /// No confinement root is consulted and none is needed: the anchor
     /// descriptor IS the confinement, exactly as upstream's
     /// `secure_relative_open(NULL, ...)` anchors on `AT_FDCWD` for a receiver
     /// that has already `change_dir()`d onto its destination
-    /// (`receiver.c:1065-1071`). `abspath` is left unseeded, which makes the
+    /// (`receiver.c:1081-1087`). `abspath` is left unseeded, which makes the
     /// exclude oracle inert - upstream's own note that a non-daemon caller
-    /// "pays nothing" (`syscall.c:2989-2991`).
+    /// "pays nothing" (`syscall.c:3130-3132`).
     ///
     /// # Errors
     ///
@@ -1008,8 +1008,8 @@ impl DirSandbox {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:2891-2965` `ds_descend()`
-    /// - `rsync-3.5.0/syscall.c:2966-2977` `ds_walk_path()`
+    /// - `rsync-3.5.1/syscall.c:3032-3106` `ds_descend()`
+    /// - `rsync-3.5.1/syscall.c:3107-3118` `ds_walk_path()`
     #[cfg(unix)]
     pub fn open_subdir_confined(&self, relative: &Path) -> io::Result<OwnedFd> {
         let exclude = NoExclude;
@@ -1048,7 +1048,7 @@ impl DirSandbox {
 ///
 /// - `rsync-3.5.0/main.c` `get_local_name()` -> `change_dir(dest_path,
 ///   CD_NORMAL)` - the operator's destination is entered once.
-/// - `rsync-3.5.0/syscall.c:1106` `do_lchown_at()` (and `do_chmod_at()`, the
+/// - `rsync-3.5.1/syscall.c:1245` `do_lchown_at()` (and `do_chmod_at()`, the
 ///   utimes wrapper) - the entry's parent is resolved relative to that cwd
 ///   through `secure_relative_open(NULL, dirpath, ...)`.
 ///

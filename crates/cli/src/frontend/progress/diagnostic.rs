@@ -104,7 +104,7 @@ fn stream_context(msgs2stderr: bool) -> logging::StreamContext {
         // without writing when quiet is set. Folding `--quiet` into
         // `verbose = 0` at parse time silences only the verbosity-gated
         // events; a notice upstream prints at DEFAULT verbosity - `skipping
-        // directory %s` (flist.c:1338), `skipping non-regular file "%s"` under
+        // directory %s` (flist.c:1563), `skipping non-regular file "%s"` under
         // `INFO_GTE(NONREG, 1)` - still reaches this renderer and has to be
         // suppressed here, where upstream suppresses it.
         quiet: logging::finfo_suppressed(),

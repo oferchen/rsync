@@ -79,7 +79,7 @@ static ORIG_UMASK: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:1797` - `umask(orig_umask = umask(0));` runs in `main()` before
+/// - `main.c:1824` - `umask(orig_umask = umask(0));` runs in `main()` before
 ///   any privilege drop or sandbox setup.
 #[cfg(unix)]
 #[allow(unsafe_code)]
@@ -242,11 +242,11 @@ fn compute_dest_mode(
 /// Returns without acting when `-p` is in effect: that path drives the
 /// chmod through `metadata.permissions().mode()` directly. A `--chmod`
 /// without `--perms` stays on this path: upstream tweaks the flist mode at
-/// build time (flist.c:1741-1742) and `dest_mode()` then still collapses it
+/// build time (flist.c:1966-1967) and `dest_mode()` then still collapses it
 /// against the pre-transfer destination, so the tweak must feed the exists
 /// split here rather than bypass it.
 ///
-/// upstream: receiver.c:964 (`dest_mode()` invocation) + rsync.c:449-472
+/// upstream: receiver.c:980 (`dest_mode()` invocation) + rsync.c:449-472
 /// (`dest_mode()` body)
 #[cfg(unix)]
 pub fn apply_dest_mode_pre_transfer(
@@ -264,7 +264,7 @@ pub fn apply_dest_mode_pre_transfer(
         return Ok(());
     }
 
-    // upstream: receiver.c:1176-1191 - the basis file is opened with O_NOFOLLOW
+    // upstream: receiver.c:1193-1208 - the basis file is opened with O_NOFOLLOW
     // and the fd is dropped again unless it is a regular file, so a symlink /
     // fifo / device obstacle leaves `exists = fd1 != -1` false and the incoming
     // file takes the new-destination rule (its lstat mode - 0o755 for a symlink
@@ -585,7 +585,7 @@ pub(super) fn apply_permissions_with_chmod(
                     new_mode |= 0o2000;
                 }
                 if (current_mode & 0o7777) != new_mode {
-                    // upstream: syscall.c:do_chmod():800-802 - when neither
+                    // upstream: syscall.c:do_chmod():939-941 - when neither
                     // --perms nor --executability is active, chmod failure is
                     // non-fatal. upstream returns 0 so set_file_attrs()
                     // continues.
@@ -604,7 +604,7 @@ pub(super) fn apply_permissions_with_chmod(
             existing,
             destination.parent(),
         ) {
-            // upstream: syscall.c:do_chmod():800-802 - when neither --perms
+            // upstream: syscall.c:do_chmod():939-941 - when neither --perms
             // nor --executability is active, chmod failure is non-fatal.
             // upstream returns 0 so set_file_attrs() continues.
             let _ = chmod_path_honoring_keep_dirlinks(
@@ -716,7 +716,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
         existing,
         destination.parent(),
     ) {
-        // upstream: syscall.c:do_chmod():800-802 - when neither --perms
+        // upstream: syscall.c:do_chmod():939-941 - when neither --perms
         // nor --executability is active, chmod failure is non-fatal.
         // upstream returns 0 so set_file_attrs() continues.
         if let Some(fd) = fd {
@@ -845,9 +845,9 @@ fn symlink_pre_transfer_stat<'a>(
 /// * **`modifiers = None` - the `!S_ISLNK` gate.** `--chmod` reaches
 ///   `tweak_mode()` at exactly three places and every one of them excludes a
 ///   link, so a link's mode is never tweaked:
-///   - `flist.c:1741-1742` `send_file_name()` -
+///   - `flist.c:1966-1967` `send_file_name()` -
 ///     `if (chmod_modes && !S_ISLNK(file->mode) && file->mode)`
-///   - `flist.c:996-997` `recv_file_entry()` -
+///   - `flist.c:1221-1222` `recv_file_entry()` -
 ///     `if (chmod_modes && !S_ISLNK(mode) && mode)`
 ///   - `rsync.c:647-648` `set_file_attrs()` (daemon `outgoing chmod`) -
 ///     `if (daemon_chmod_modes && !S_ISLNK(new_mode))`
@@ -1090,8 +1090,8 @@ pub(super) fn chmod_directory_target_mode(
 /// A directory walks the same `tweak_mode()`-then-`dest_mode()` pipeline every
 /// other type walks, so this is a thin adapter over
 /// [`chmod_tweaked_dest_mode`] supplying the two directory facts: `--chmod`
-/// DOES reach a directory (the `!S_ISLNK` gates at flist.c:1741-1742 and
-/// flist.c:996-997 pass it through, with `is_dir = true` selecting the `D`
+/// DOES reach a directory (the `!S_ISLNK` gates at flist.c:1966-1967 and
+/// flist.c:1221-1222 pass it through, with `is_dir = true` selecting the `D`
 /// clauses), and `dest_mode()`'s `-E` tweak never fires
 /// (`S_ISREG(flist_mode)`, rsync.c:472).
 ///
@@ -1128,8 +1128,8 @@ pub(super) fn directory_dest_mode(
 /// tweak FIRST, collapse SECOND.
 ///
 /// Upstream applies `--chmod` (CLI or daemon `incoming chmod = ...`) to the
-/// flist mode when the list is built (flist.c:1741-1742 sender,
-/// flist.c:996-997 `recv_file_entry`). Only then, when `!preserve_perms`,
+/// flist mode when the list is built (flist.c:1966-1967 sender,
+/// flist.c:1221-1222 `recv_file_entry`). Only then, when `!preserve_perms`,
 /// does `dest_mode()` (rsync.c:464-486) collapse the result: an existing
 /// destination keeps its own permission bits - the tweak is discarded -
 /// while a fresh one masks the tweaked mode by `dflt_perms` and drops the
@@ -1158,7 +1158,7 @@ fn chmod_tweaked_dest_mode(
         None => source_mode,
     };
     if options.permissions() {
-        // upstream: receiver.c:1181 / generator.c:1855 - `dest_mode()` only
+        // upstream: receiver.c:1198 / generator.c:1855 - `dest_mode()` only
         // runs when `!preserve_perms`; with `--perms` the tweaked mode is
         // applied as-is.
         return tweaked;
@@ -1287,7 +1287,7 @@ pub(super) fn apply_permissions_from_entry(
         use std::os::unix::fs::PermissionsExt;
 
         if !options.permissions() && !options.executability() && options.chmod().is_none() {
-            // upstream: receiver.c:964 - even when `!preserve_perms` and
+            // upstream: receiver.c:980 - even when `!preserve_perms` and
             // `!preserve_executability`, the receiver mutates `file->mode` via
             // `dest_mode()` and `set_file_attrs()` chmods the post-rename
             // destination to it. For an existing destination this preserves
@@ -1328,7 +1328,7 @@ pub(super) fn apply_permissions_from_entry(
                     &fresh_meta
                 };
                 if (current_meta.permissions().mode() & 0o7777) != (new_mode & 0o7777) {
-                    // upstream: syscall.c:do_chmod():800-802 - when neither
+                    // upstream: syscall.c:do_chmod():939-941 - when neither
                     // --perms nor --executability is active, chmod failure is
                     // non-fatal. upstream returns 0 so set_file_attrs() continues.
                     let _ = chmod_path_honoring_keep_dirlinks(
@@ -1387,7 +1387,7 @@ pub(super) fn apply_permissions_from_entry(
                     new_mode |= 0o700;
                 }
                 if (current_mode & 0o7777) != (new_mode & 0o7777) {
-                    // upstream: syscall.c:do_chmod():800-802 - when neither
+                    // upstream: syscall.c:do_chmod():939-941 - when neither
                     // --perms nor --executability is active, chmod failure is
                     // non-fatal. upstream returns 0 so set_file_attrs() continues.
                     let _ = chmod_path_honoring_keep_dirlinks(
@@ -1433,7 +1433,7 @@ pub(super) fn apply_permissions_from_entry(
         }
 
         if let Some(chmod) = options.chmod() {
-            // upstream: flist.c:996-997 - `recv_file_entry` runs
+            // upstream: flist.c:1221-1222 - `recv_file_entry` runs
             // `tweak_mode(mode, chmod_modes)` while the flist is built, and
             // `dest_mode()` (rsync.c:464-486) then collapses the TWEAKED
             // mode when `!preserve_perms`. The chmod baseline is therefore
@@ -1457,7 +1457,7 @@ pub(super) fn apply_permissions_from_entry(
             let current_mode = current_meta.permissions().mode();
 
             // The exists split consumes the PRE-transfer destination stat
-            // (upstream receiver.c:1181-1192 judges `exists` by the basis
+            // (upstream receiver.c:1198-1209 judges `exists` by the basis
             // fd). When the caller tracked none (quick-check skip, public
             // `apply_metadata_from_file_entry` API), no rename happened and
             // the cached current stat IS the pre-transfer stat.
@@ -1569,7 +1569,7 @@ mod tests {
     use crate::MetadataOptions;
     use tempfile::tempdir;
 
-    /// upstream: syscall.c:do_chmod():800-802 - when neither --perms nor
+    /// upstream: syscall.c:do_chmod():939-941 - when neither --perms nor
     /// --executability is active, do_chmod returns 0 on failure.
     /// Verify that a chmod ENOENT is swallowed in the !perms path.
     #[test]
@@ -1753,7 +1753,7 @@ mod tests {
                 symlink_target_mode(&link, 0o120000 | source, &with_chmod, None),
                 source,
                 "--chmod must not reach a link (upstream gates tweak_mode on \
-                 !S_ISLNK at flist.c:1741-1742); go-rwx would have given {:o}",
+                 !S_ISLNK at flist.c:1966-1967); go-rwx would have given {:o}",
                 source & 0o700
             );
         }
@@ -1947,7 +1947,7 @@ mod tests {
         std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755)).expect("unlock");
     }
 
-    /// upstream: flist.c:1741-1742 gates `tweak_mode()` on `!S_ISLNK`, so a
+    /// upstream: flist.c:1966-1967 gates `tweak_mode()` on `!S_ISLNK`, so a
     /// directory IS tweaked (with `is_dir` selecting the `D` clauses), and with
     /// `--perms` the tweaked mode passes through with no collapse
     /// (generator.c:1856 runs only under `!preserve_perms`).
@@ -1975,7 +1975,7 @@ mod tests {
         assert_eq!(
             directory_dest_mode(&dest, 0o040755, &no_perms, None),
             0o700 & dflt,
-            "tweak FIRST, dest_mode() collapse SECOND (flist.c:1741-1742)"
+            "tweak FIRST, dest_mode() collapse SECOND (flist.c:1966-1967)"
         );
     }
 }

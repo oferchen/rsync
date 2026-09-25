@@ -5,7 +5,7 @@
 // is a socket (inetd invocation or `RSYNC_CONNECT_PROG` pipe), the daemon
 // serves a single session over stdin/stdout instead of binding a TCP listener.
 //
-// upstream: socket.c:500-518 - `is_a_socket(fd)` calls
+// upstream: socket.c:508-526 - `is_a_socket(fd)` calls
 // `getsockopt(fd, SOL_SOCKET, SO_TYPE, ...)` and returns 1 on success.
 
 /// Checks whether stdin is a socket (inetd/connect-program invocation).
@@ -14,12 +14,12 @@
 /// socket activation, or `RSYNC_CONNECT_PROG` with a socketpair - all of
 /// which set stdin to an `AF_UNIX` or `AF_INET` socket. The check uses
 /// `getsockopt(SO_TYPE)` via `socket2::SockRef`, matching upstream rsync's
-/// `is_a_socket()` in `socket.c:500`.
+/// `is_a_socket()` in `socket.c:508`.
 ///
 /// On non-Unix platforms this always returns `false` since inetd-style
 /// invocation does not apply.
 ///
-/// upstream: socket.c:500-518 - `is_a_socket(fd)`.
+/// upstream: socket.c:508-526 - `is_a_socket(fd)`.
 #[cfg(unix)]
 fn is_stdin_socket() -> bool {
     // socket2::SockRef::from() on Unix takes &impl AsFd. std::io::Stdin
@@ -96,7 +96,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     }
 
     // Build a DaemonStream::Stdio from process stdin/stdout.
-    // upstream: clientserver.c:1738 - start_daemon(STDIN_FILENO, STDIN_FILENO)
+    // upstream: clientserver.c:1759 - start_daemon(STDIN_FILENO, STDIN_FILENO)
     // passes the same fd for both read and write. We use separate stdin/stdout
     // handles since Rust's std::io separates them.
     let stdin = io::stdin();
@@ -104,7 +104,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
     let stream = DaemonStream::stdio(pair);
 
-    // upstream: clientserver.c:1738 - `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
+    // upstream: clientserver.c:1759 - `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
     // Under inetd, fd 0 IS the connected socket, so `client_addr()` skips the
     // environment arm entirely and `client_sockaddr()` reads the real peer via
     // `getpeername` (clientname.c:37-45).

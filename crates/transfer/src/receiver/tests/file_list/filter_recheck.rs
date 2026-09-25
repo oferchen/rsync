@@ -1,7 +1,7 @@
 //! Receiver-side re-filter of received file-list names.
 //!
 //! A receiver must never be forced to materialize a path its own filter rules
-//! exclude. Upstream `recv_file_entry()` (flist.c:1019-1030) re-runs every
+//! exclude. Upstream `recv_file_entry()` (flist.c:1244-1255) re-runs every
 //! received name through `check_server_filter` and aborts with
 //! `RERR_UNSUPPORTED` when a sender smuggles an excluded name into the list.
 //! These tests encode that invariant for both the server-receiver
@@ -61,7 +61,7 @@ fn included_names_pass_via_filter_chain() {
 
 #[test]
 fn trust_sender_skips_recheck() {
-    // upstream: flist.c:1021 - `!trust_sender_filter` guards the re-check; a
+    // upstream: flist.c:1246 - `!trust_sender_filter` guards the re-check; a
     // local transfer or `--trust-sender` skips it entirely.
     let mut config = test_config();
     config.trust_sender = true;
@@ -226,7 +226,7 @@ fn directory_only_wire_rule_still_rejects_a_smuggled_directory() {
 
 #[test]
 fn daemon_rules_merged_into_the_chain_are_screened_out_of_the_recheck() {
-    // upstream: flist.c:1022 - `check_server_filter(&filter_list, ...)` runs
+    // upstream: flist.c:1247 - `check_server_filter(&filter_list, ...)` runs
     // the CLIENT's rules only; `daemon_filter_list` never joins that list. oc
     // prepends the daemon rules to `filter_chain`, so the re-check must use
     // the client-only view captured before the merge.
@@ -302,7 +302,7 @@ fn client_rules_still_reject_alongside_daemon_rules() {
 
 #[test]
 fn transfer_root_never_rejected() {
-    // upstream: flist.c:1019 - the transfer root (`.`) is exempt from the
+    // upstream: flist.c:1244 - the transfer root (`.`) is exempt from the
     // re-check even when a catch-all exclude would otherwise match it.
     let mut ctx = ReceiverContext::new_for_test(&test_handshake(), test_config());
     ctx.set_filter_chain(chain_excluding("*"));

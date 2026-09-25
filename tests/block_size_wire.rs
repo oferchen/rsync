@@ -14,7 +14,7 @@
 //! reaches the same `blength`:
 //!
 //! ```c
-//! /* options.c:2953-2954 */
+//! /* options.c:2963-2964 */
 //! if (block_size) {
 //!     if (asprintf(&arg, "-B%u", (int)block_size) < 0)
 //! ```

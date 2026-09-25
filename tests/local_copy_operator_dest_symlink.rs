@@ -3,7 +3,7 @@
 //! `oc-rsync -a src/ base/link/inner/` with `base/link -> real` is an ordinary
 //! admin layout (`/backup -> /mnt/disk`). Upstream 3.5.0 enters the destination
 //! once with a plain `change_dir()` (`main.c` `get_local_name()`) and resolves
-//! each entry's parent relative to that cwd (`syscall.c:1106` `do_lchown_at()`
+//! each entry's parent relative to that cwd (`syscall.c:1245` `do_lchown_at()`
 //! -> `secure_relative_open(NULL, dirpath, ...)`), so the operator's own path is
 //! never re-walked and only names below the root are confined. It exits 0 with
 //! every attribute preserved.

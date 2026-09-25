@@ -2,8 +2,8 @@
 //!
 //! Upstream splits a `--relative` operand on the first `/./`; when the part
 //! after the anchor is empty it is forced to `"."` with `DOTDIR_NAME`
-//! (`flist.c:2670-2673`), which then makes `link_stat()` follow the operand
-//! unconditionally (`flist.c:2697` - `copy_dirlinks || name_type !=
+//! (`flist.c:2910-2913`), which then makes `link_stat()` follow the operand
+//! unconditionally (`flist.c:2937` - `copy_dirlinks || name_type !=
 //! NORMAL_NAME`). Losing the marker turns `-R <symlinked-dir>/./` into an
 //! `lstat` that records the operand as a symlink under its own basename
 //! instead of descending into the directory it names.
@@ -14,9 +14,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/flist.c:2670-2673` - empty remainder becomes `"."` /
+//! - `rsync-3.5.1/flist.c:2910-2913` - empty remainder becomes `"."` /
 //!   `DOTDIR_NAME`.
-//! - `rsync-3.5.0/flist.c:2697` - `link_stat(fbuf, &st, copy_dirlinks ||
+//! - `rsync-3.5.1/flist.c:2937` - `link_stat(fbuf, &st, copy_dirlinks ||
 //!   name_type != NORMAL_NAME)`.
 
 #![cfg(unix)]
@@ -138,7 +138,7 @@ fn relative_dotdir_operand_follows_symlinked_dir_for_every_remainder() {
         !failed,
         "a `/./` operand must follow the symlinked directory it names and \
          deliver its CONTENTS, never send it as a symlink under its own \
-         basename (upstream flist.c:2670-2673 + flist.c:2697):\n{}",
+         basename (upstream flist.c:2910-2913 + flist.c:2937):\n{}",
         report.join("\n"),
     );
 }

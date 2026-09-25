@@ -24,7 +24,7 @@ fn module_definition_mixed_ip_and_hostname_acl() {
     ));
     // IP outside allowed range, hostname not in allow, IP not in deny -
     // fall-through after a non-matching allow list with a non-empty deny
-    // list admits the peer per upstream access.c:290.
+    // list admits the peer per upstream access.c:301.
     assert!(module.permits(
         IpAddr::V4(Ipv4Addr::new(203, 0, 113, 5)),
         PeerHost::new(Some("build.untrusted.org"), true)

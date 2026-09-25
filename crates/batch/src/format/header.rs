@@ -52,23 +52,23 @@ impl BatchHeader {
     ///
     /// Format matches upstream rsync batch file layout:
     /// 1. Stream flags bitmap (i32) - `batch.c:113 write_int(fd, flags)`
-    /// 2. Protocol version (i32) - `io.c:2521 write_int(batch_fd, protocol_version)`
-    /// 3. Compat flags (varint, if protocol >= 30) - `io.c:2523 write_varint(batch_fd, compat_flags)`
-    /// 4. Checksum seed (i32) - `io.c:2524 write_int(batch_fd, checksum_seed)`
+    /// 2. Protocol version (i32) - `io.c:2559 write_int(batch_fd, protocol_version)`
+    /// 3. Compat flags (varint, if protocol >= 30) - `io.c:2561 write_varint(batch_fd, compat_flags)`
+    /// 4. Checksum seed (i32) - `io.c:2562 write_int(batch_fd, checksum_seed)`
     pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
         // upstream: batch.c:113 write_int(fd, flags)
         self.stream_flags
             .write_to_versioned(writer, self.protocol_version)?;
 
-        // upstream: io.c:2521 write_int(batch_fd, protocol_version)
+        // upstream: io.c:2559 write_int(batch_fd, protocol_version)
         write_i32(writer, self.protocol_version)?;
 
-        // upstream: io.c:2522-2523
+        // upstream: io.c:2560-2561
         if let Some(flags) = self.compat_flags {
             write_varint(writer, flags)?;
         }
 
-        // upstream: io.c:2524 write_int(batch_fd, checksum_seed)
+        // upstream: io.c:2562 write_int(batch_fd, checksum_seed)
         write_i32(writer, self.checksum_seed)?;
 
         Ok(())

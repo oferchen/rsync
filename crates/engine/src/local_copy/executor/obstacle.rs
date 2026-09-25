@@ -281,7 +281,7 @@ fn report_make_way_failure(
 /// # Upstream Reference
 ///
 /// - `generator.c:2148` - `if (statret == 0 && !(stype == FT_REG || (write_devices && stype == FT_DEVICE)))`
-/// - `rsync.h:1394` - `#define IS_DEVICE(mode) (S_ISCHR(mode) || S_ISBLK(mode))`
+/// - `rsync.h:1396` - `#define IS_DEVICE(mode) (S_ISCHR(mode) || S_ISBLK(mode))`
 #[cfg(unix)]
 pub(crate) fn device_destination_blocks_regular_file(
     metadata: &fs::Metadata,

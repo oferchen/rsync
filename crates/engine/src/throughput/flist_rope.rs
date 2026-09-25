@@ -6,7 +6,7 @@
 //! Upstream rsync never materialises the whole file list up front. In
 //! incremental-recursion mode the sender extends the list lazily, one segment at
 //! a time, only when the receiver signals it needs more
-//! (upstream: `flist.c:send_extra_file_list(f, at_least)`, flist.c:2124). That
+//! (upstream: `flist.c:send_extra_file_list(f, at_least)`, flist.c:2360). That
 //! on-demand pacing is what keeps sender memory flat on a ten-million-file tree.
 //!
 //! oc's producer can, by contrast, run arbitrarily far ahead of the consumer,

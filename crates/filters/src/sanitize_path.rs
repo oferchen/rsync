@@ -11,10 +11,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `util1.c:1138` - `sanitize_path(dest, p, rootdir, depth, flags)`
-//! - `flist.c:774` - applied to received file names in daemon mode
-//! - `flist.c:2299` - applied to `--files-from` entries
-//! - `flist.c:1182` - applied to symlink targets when `sanitize_paths && !munge_symlinks`
+//! - `util1.c:1235` - `sanitize_path(dest, p, rootdir, depth, flags)`
+//! - `flist.c:999` - applied to received file names in daemon mode
+//! - `flist.c:2539` - applied to `--files-from` entries
+//! - `flist.c:1407` - applied to symlink targets when `sanitize_paths && !munge_symlinks`
 
 /// Sanitizes a path to prevent directory traversal beyond the module root.
 ///
@@ -30,7 +30,7 @@
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1138-1211` - `sanitize_path()`
+/// - `util1.c:1235-1308` - `sanitize_path()`
 pub fn sanitize_path(path: &str) -> String {
     sanitize_path_with_depth(path, 0, false)
 }
@@ -42,7 +42,7 @@ pub fn sanitize_path(path: &str) -> String {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2299` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`
+/// - `flist.c:2539` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`
 pub fn sanitize_path_keep_dot_dirs(path: &str) -> String {
     sanitize_path_with_depth(path, 0, true)
 }
@@ -59,7 +59,7 @@ pub fn sanitize_path_keep_dot_dirs(path: &str) -> String {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2299` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`
+/// - `flist.c:2539` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`
 pub fn sanitize_path_keep_dot_dirs_bytes(path: &[u8]) -> Vec<u8> {
     sanitize_path_bytes(path, 0, true)
 }
@@ -85,10 +85,10 @@ pub fn sanitize_path_keep_dot_dirs_bytes(path: &[u8]) -> Vec<u8> {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:1329` - `sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`
+/// - `flist.c:1554` - `sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`
 ///   applied to a received symlink target when `sanitize_paths &&
 ///   !munge_symlinks`.
-/// - `flist.c:867` - `lastdir_depth = count_dir_elements(lastdir)`.
+/// - `flist.c:1092` - `lastdir_depth = count_dir_elements(lastdir)`.
 pub fn sanitize_path_bytes_default(path: &[u8], depth: usize) -> Vec<u8> {
     sanitize_path_bytes(path, i32::try_from(depth).unwrap_or(i32::MAX), false)
 }
@@ -103,7 +103,7 @@ pub fn sanitize_path_bytes_default(path: &[u8], depth: usize) -> Vec<u8> {
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1138-1211`
+/// - `util1.c:1235-1308`
 fn sanitize_path_with_depth(path: &str, depth: i32, keep_dot_dirs: bool) -> String {
     let out = sanitize_path_bytes(path.as_bytes(), depth, keep_dot_dirs);
     String::from_utf8(out).unwrap_or_else(|_| ".".to_string())
@@ -119,16 +119,16 @@ fn sanitize_path_with_depth(path: &str, depth: i32, keep_dot_dirs: bool) -> Stri
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1138-1211`
+/// - `util1.c:1235-1308`
 fn sanitize_path_bytes(bytes: &[u8], mut depth: i32, keep_dot_dirs: bool) -> Vec<u8> {
     let mut p = 0usize;
 
-    // upstream: util1.c:1051 - strip leading slash (absolute -> relative)
+    // upstream: util1.c:1148 - strip leading slash (absolute -> relative)
     if p < bytes.len() && bytes[p] == b'/' {
         p += 1;
     }
 
-    // upstream: util1.c:1061 - drop leading "./" unless SP_KEEP_DOT_DIRS
+    // upstream: util1.c:1158 - drop leading "./" unless SP_KEEP_DOT_DIRS
     if !keep_dot_dirs {
         while p + 1 < bytes.len() && bytes[p] == b'.' && bytes[p + 1] == b'/' {
             p += 2;
@@ -195,7 +195,7 @@ fn sanitize_path_bytes(bytes: &[u8], mut depth: i32, keep_dot_dirs: bool) -> Vec
     // slash is meaningful - on a `--files-from` line it selects a directory's
     // contents rather than the directory itself - so it must not be stripped.
     if result.is_empty() {
-        // upstream: util1.c:1103 - an empty result becomes ".".
+        // upstream: util1.c:1200 - an empty result becomes ".".
         b".".to_vec()
     } else {
         result

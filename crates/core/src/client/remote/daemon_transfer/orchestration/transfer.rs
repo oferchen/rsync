@@ -61,7 +61,7 @@ pub(crate) fn run_pull_transfer(
 
     let mut server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
 
-    // upstream: main.c:1372-1374 - when pulling with --files-from pointing to a
+    // upstream: main.c:1390-1392 - when pulling with --files-from pointing to a
     // local file or stdin, the client reads the file list locally and forwards
     // it to the daemon's generator over the protocol stream.
     if config
@@ -76,7 +76,7 @@ pub(crate) fn run_pull_transfer(
         server_config.connection.files_from_data = Some(data);
     }
 
-    // upstream: main.c:1549 / io.c:427,464 / flist.c:1026 - the requested daemon
+    // upstream: main.c:1567 / io.c:445,482 / flist.c:1251 - the requested daemon
     // source (module/path), or each local --files-from entry, is recorded as an
     // implied include; the receiver rejects any file-list name it does not cover
     // (CVE-2022-29154). is_daemon_connection drives the module-name strip on the
@@ -86,9 +86,9 @@ pub(crate) fn run_pull_transfer(
         implied_source_args,
         server_config.connection.files_from_data.as_deref(),
     );
-    // upstream: exclude.c:396-401 / main.c:1549 - only a raw daemon module/path
+    // upstream: exclude.c:396-401 / main.c:1567 - only a raw daemon module/path
     // operand is recorded with skip_daemon_module=1; forwarded --files-from
-    // entries (io.c:427,464) are already module-relative and keep
+    // entries (io.c:445,482) are already module-relative and keep
     // skip_daemon_module=0. Record the decision now, from the stable
     // files-from-active signal, because files_from_data is later taken while
     // forwarding the list and would read as absent at validation time.
@@ -106,8 +106,8 @@ pub(crate) fn run_pull_transfer(
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
 
-    // upstream: io.c:1551-1561 - the daemon sends MSG_IO_TIMEOUT once, right
-    // after io_start_multiplex_out (main.c:1267-1268). As the client receiver we
+    // upstream: io.c:1577-1587 - the daemon sends MSG_IO_TIMEOUT once, right
+    // after io_start_multiplex_out (main.c:1285-1286). As the client receiver we
     // adopt it and re-apply to the live socket. Build the re-apply hook from the
     // split socket halves; connect-program (pipe) transports yield None.
     let io_timeout_reapply = build_io_timeout_reapply(reader, writer);
@@ -198,7 +198,7 @@ pub(crate) fn run_push_transfer(
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
 
-    // upstream: sender.c:461 log_item(FCLIENT) - on a push the client is the
+    // upstream: sender.c:462 log_item(FCLIENT) - on a push the client is the
     // sender, and the client-visible itemize row is printed by the SENDER from
     // the iflags the remote receiver's generator writes over the wire
     // (generator.c:583-599 write_shortint(sock_f_out, iflags) for protocol >=
@@ -208,7 +208,7 @@ pub(crate) fn run_push_transfer(
     // pre-rendered MSG_INFO line (see receiver::emit_itemize). This restores
     // output for oc-client -> upstream-daemon pushes, where upstream never
     // forwards oc's itemize.
-    // upstream: sender.c:449 - plain `-v` (no `-i`) prints the bare `%n%L` name
+    // upstream: sender.c:450 - plain `-v` (no `-i`) prints the bare `%n%L` name
     // per file too, so the callback must be wired whenever the sender has any
     // client-visible per-file output, not only under `-i`. A custom
     // `--out-format` also wants the rows even without `-v`/`-i` so the client can
@@ -269,7 +269,7 @@ pub(crate) fn run_push_transfer(
 /// Failures with no embedded remote code (local I/O, protocol desync) keep the
 /// prior generic `transfer failed: ...` (23) diagnostic.
 ///
-/// upstream: io.c:1663-1701 - `MSG_ERROR_EXIT` drives the NORETURN
+/// upstream: io.c:1689-1739 - `MSG_ERROR_EXIT` drives the NORETURN
 /// `_exit_cleanup(val)`, so the client's final exit code is the peer's code.
 fn map_server_transfer_error(error: std::io::Error, role: Role) -> ClientError {
     // An interrupted transfer surfaces as whatever I/O failure the teardown
@@ -283,7 +283,7 @@ fn map_server_transfer_error(error: std::io::Error, role: Role) -> ClientError {
         let exit = ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer);
         return remote_exit_error(exit, role);
     }
-    // upstream: flist.c:1140-1146 - the receiver's own file-list validation
+    // upstream: flist.c:1365-1371 - the receiver's own file-list validation
     // (excluded / unrequested name, offset overflow) exits
     // RERR_UNSUPPORTED, not the generic partial-transfer code. Those local
     // rejects surface here as `ErrorKind::Unsupported` (filter_recheck.rs,
@@ -411,7 +411,7 @@ impl TransferProgressCallback for DaemonProgressAdapter<'_> {
 /// # Upstream Reference
 ///
 /// - `io.c:forward_filesfrom_data()` - reads from local fd, writes to socket
-/// - `main.c:1372-1374` - `start_filesfrom_forwarding(filesfrom_fd)`
+/// - `main.c:1390-1392` - `start_filesfrom_forwarding(filesfrom_fd)`
 #[cfg(test)]
 pub(super) use crate::client::remote::files_from_forwarding::read_local_files_from_for_forwarding as read_files_from_for_forwarding;
 
@@ -484,7 +484,7 @@ mod map_server_transfer_error_tests {
 
     /// A receiver-side file-list validation rejection (implied-include or
     /// daemon-filter recheck, offset overflow) mirrors upstream
-    /// `exit_cleanup(RERR_UNSUPPORTED)` (flist.c:1141,1145): the client exits
+    /// `exit_cleanup(RERR_UNSUPPORTED)` (flist.c:1366,1370): the client exits
     /// 4, not the generic 23. Measured against upstream 3.5.0: pulling
     /// `mod/a\b*` from a daemon whose glob serves `ab.txt` prints "rejecting
     /// unrequested file-list name: ab.txt" and exits 4.

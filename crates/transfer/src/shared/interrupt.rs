@@ -4,8 +4,8 @@
 //! loops that must react to it poll the flag at a boundary where stopping
 //! cannot leave the wire mid-frame. This mirrors upstream, whose `sig_int`
 //! records the signal in `got_kill_signal` (`rsync.c:709-712`) and whose
-//! `perform_io()` acts on it only at its own loop boundaries (`io.c:750`,
-//! `io.c:879`, `io.c:901`).
+//! `perform_io()` acts on it only at its own loop boundaries (`io.c:768`,
+//! `io.c:897`, `io.c:919`).
 //!
 //! The check is *not* what unblocks a transfer parked in a transport read -
 //! the client's signal watcher does that by closing the socket
@@ -22,7 +22,7 @@ use std::io;
 /// connection, so in-progress temp files are finalised by their guards
 /// according to `--partial` / `--partial-dir`.
 ///
-/// upstream: `io.c:515 handle_kill_signal()` -> `exit_cleanup(RERR_SIGNAL)`.
+/// upstream: `io.c:533 handle_kill_signal()` -> `exit_cleanup(RERR_SIGNAL)`.
 #[inline]
 pub fn check_shutdown() -> io::Result<()> {
     if fast_io::signal::shutdown_requested() {

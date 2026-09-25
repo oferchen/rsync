@@ -24,7 +24,7 @@ use crate::role_trailer::error_location;
 ///
 /// - `rsync.h:214-233` - Item flag definitions
 /// - `rsync.c:227` - `read_ndx_and_attrs()` reads iflags
-/// - `sender.c:324` - Sender processes these flags
+/// - `sender.c:325` - Sender processes these flags
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ItemFlags {
     /// Raw flags value. Lower 16 bits are on-wire; bits 16-18 are log-only.
@@ -196,7 +196,7 @@ impl ItemFlags {
     ///
     /// - `rsync.c:403-418` - `read_ndx_and_attrs()` reads the basis-type byte,
     ///   then the xname via `read_vstring(f_in, buf, MAXPATHLEN)`.
-    /// - `io.c:2004-2020` - `read_vstring()`: the length prefix is a 1- or
+    /// - `io.c:2042-2058` - `read_vstring()`: the length prefix is a 1- or
     ///   2-byte vstring (NOT a varint). The high bit of the first byte flags a
     ///   second byte and `len = (first & ~0x80) * 0x100 + second`. A length of
     ///   `>= MAXPATHLEN` (4096) is a protocol error, not a value to truncate.
@@ -226,7 +226,7 @@ impl ItemFlags {
         };
 
         let xname = if self.has_xname() {
-            // upstream: io.c:2004 read_vstring() - a 1- or 2-byte length prefix,
+            // upstream: io.c:2042 read_vstring() - a 1- or 2-byte length prefix,
             // not a varint. Using read_varint here desyncs the wire stream for
             // any xname whose length prefix differs between the two encodings.
             let mut first = [0u8; 1];
@@ -241,7 +241,7 @@ impl ItemFlags {
                 first[0] as usize
             };
 
-            // upstream: io.c:2181-2185 - `len >= bufsize` (MAXPATHLEN) aborts
+            // upstream: io.c:2219-2223 - `len >= bufsize` (MAXPATHLEN) aborts
             // with RERR_PROTOCOL. Truncating instead would leave the unread
             // tail on the wire and desync every subsequent read.
             if xlen >= MAX_XNAME_VSTRING_LEN {
@@ -273,5 +273,5 @@ impl ItemFlags {
 
 /// Upstream `MAXPATHLEN` ceiling passed to `read_vstring()` for the xname
 /// field (`rsync.c:408`). A vstring whose length reaches this bound is a
-/// protocol error (`io.c:2010-2014`).
+/// protocol error (`io.c:2048-2052`).
 const MAX_XNAME_VSTRING_LEN: usize = 4096;

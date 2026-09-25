@@ -458,14 +458,14 @@ fn golden_v28_ndx_sequence_roundtrip() {
 
 // ---------------------------------------------------------------------------
 // Transfer stats exact wire bytes (protocol 28 - legacy longint encoding)
-// upstream: main.c:handle_stats() + io.h:46 write_varlong30() -> io.c:2222 write_longint()
+// upstream: main.c:handle_stats() + io.h:46 write_varlong30() -> io.c:2260 write_longint()
 // ---------------------------------------------------------------------------
 
 #[test]
 fn golden_v28_stats_exact_wire_bytes_known_values() {
     // Protocol 28: 3 fields (total_read, total_written, total_size). No flist
     // timing fields. upstream io.h:46 write_varlong30() routes protocol < 30
-    // through io.c:2222 write_longint(), which writes each small value
+    // through io.c:2260 write_longint(), which writes each small value
     // (0..=0x7FFFFFFF) as a fixed 4-byte little-endian int:
     //   longint(1024) = 1024 as i32 LE = [0x00, 0x04, 0x00, 0x00]
     let stats = TransferStats::with_bytes(1024, 2048, 4096);

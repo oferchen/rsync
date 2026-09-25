@@ -56,7 +56,7 @@ fn emit_delete_notification<W: crate::writer::MsgInfoSender + ?Sized>(
         let name = path_wire_bytes(rel);
         if name.len() < MAXPATHLEN {
             // upstream: log.c:867-868 - a directory carries a trailing NUL so
-            // the reader (io.c:1616) can distinguish it from a regular file.
+            // the reader (io.c:1642) can distinguish it from a regular file.
             let mut payload = name;
             if is_dir {
                 payload.push(0);
@@ -572,7 +572,7 @@ impl ReceiverContext {
     ///
     /// - `generator.c:delete_in_dir()` - scans one directory, removes unlisted entries
     /// - `generator.c:do_delete_pass()` - full tree walk deletion sweep
-    /// - `main.c:1367` - `deletion_count >= max_delete` check
+    /// - `main.c:1385` - `deletion_count >= max_delete` check
     /// - `exclude.c:check_filter()` - is_excluded() before deletion
     fn run_delete_scan<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
@@ -607,7 +607,7 @@ impl ReceiverContext {
         // the serial executor below.
         //
         // upstream: generator.c:310-321 delete_in_dir() tracks `filesystem_dev`
-        // and flist.c:1344-1356 sets FLAG_MOUNT_DIR on a dest dirlist entry
+        // and flist.c:1569-1581 sets FLAG_MOUNT_DIR on a dest dirlist entry
         // whose `st_dev` differs from that boundary; delete_in_dir() then skips
         // it ("cannot delete mount point") and delete.c:89-97
         // delete_dir_contents() pins the parent directory as non-empty.
@@ -657,10 +657,10 @@ impl ReceiverContext {
         // change_local_filter_dir() instead and is never scanned for deletion.
         // The transfer root "." is a content dir for a recursive transfer but
         // not for --files-from, where the root is sent as an implied dir
-        // (flist.c:2419 send_file_name(".", ... & ~FLAG_CONTENT_DIR), decoded as
+        // (flist.c:2659 send_file_name(".", ... & ~FLAG_CONTENT_DIR), decoded as
         // content_dir() == false). Likewise every implied parent dir created
         // under --files-from / --relative clears FLAG_CONTENT_DIR
-        // (flist.c:1949). Only content dirs are scan targets; scanning an
+        // (flist.c:2174). Only content dirs are scan targets; scanning an
         // implied dir would delete a stale destination file inside it that
         // upstream preserves (DATA-LOSS).
         //
@@ -809,7 +809,7 @@ impl ReceiverContext {
         }
 
         // Atomic counter for max_delete enforcement across parallel workers.
-        // upstream: main.c:1367 - deletion_count >= max_delete
+        // upstream: main.c:1385 - deletion_count >= max_delete
         let deletions_performed = Arc::new(AtomicU64::new(0));
 
         // Share directory children map and filter chains across workers.
@@ -1865,7 +1865,7 @@ fn fail_loud_unlink_error(e: io::Error) -> Option<io::Error> {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:1344` - `one_file_system && st.st_dev != filesystem_dev` sets
+/// - `flist.c:1569` - `one_file_system && st.st_dev != filesystem_dev` sets
 ///   `FLAG_MOUNT_DIR` on the dest dirlist entry.
 /// - `generator.c:331` - `delete_in_dir()` skips a `FLAG_MOUNT_DIR` directory.
 #[cfg(unix)]
@@ -2125,7 +2125,7 @@ mod tests {
     /// the boundary device is an ordinary deletion candidate; an entry on any
     /// other device is a mount point that must be preserved.
     ///
-    /// upstream: flist.c:1490 (`st.st_dev != filesystem_dev` -> FLAG_MOUNT_DIR),
+    /// upstream: flist.c:1715 (`st.st_dev != filesystem_dev` -> FLAG_MOUNT_DIR),
     /// generator.c:331 (delete_in_dir skips it).
     #[test]
     fn mount_boundary_predicate_preserves_foreign_device_entries() {

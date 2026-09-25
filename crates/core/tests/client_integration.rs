@@ -139,7 +139,7 @@ fn run_client_copies_with_delete_and_filters() {
     });
 }
 
-/// upstream: options.c:2336-2339 - `rsync -a --delete --backup` (no
+/// upstream: options.c:2345-2348 - `rsync -a --delete --backup` (no
 /// `--backup-dir`) injects a `P *~` protect rule so files matching the backup
 /// suffix are NOT candidates for deletion. Backups are written beside the
 /// destination as `name~`; without the protect rule the delete pass would
@@ -200,7 +200,7 @@ fn backup_with_delete_protects_suffix_files_from_deletion() {
     });
 }
 
-/// upstream: options.c:2336 guard `!delete_excluded` - `--delete-excluded`
+/// upstream: options.c:2345 guard `!delete_excluded` - `--delete-excluded`
 /// suppresses the backup protect rule, so a pre-existing `*~` again becomes a
 /// deletion candidate. Control for `backup_with_delete_protects_suffix_files_from_deletion`:
 /// proves the survival there is the injected rule, not some unrelated skip.
@@ -483,7 +483,7 @@ fn test_crtimes_preservation() {
     });
 }
 
-// upstream: main.c:708 `get_local_name()` returns NULL when `list_only` is set,
+// upstream: main.c:721 `get_local_name()` returns NULL when `list_only` is set,
 // so a local `--list-only` run needs no destination operand and exits 0 on
 // success. oc-rsync's local plan always requires source+destination, so a single
 // source operand previously errored with RERR_PARTIAL (23). A successful

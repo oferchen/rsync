@@ -32,7 +32,7 @@
 //! # Why these cells run unprivileged
 //!
 //! Upstream refuses only `st_uid != 0 && st_uid != trusted_uid`
-//! (`syscall.c:406`), so uid 0 and the euid take one identical follow path into
+//! (`syscall.c:499`), so uid 0 and the euid take one identical follow path into
 //! one identical confinement check. The daemon spawned here runs as the test's
 //! own uid, so a plant owned by that uid is exactly the root-owned case a
 //! privileged daemon would see, and needs no privilege to stage. The distinct
@@ -41,15 +41,15 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/backup.c:443-449` `make_backup()` - `operator_path_resolve =
+//! - `rsync-3.5.1/backup.c:443-449` `make_backup()` - `operator_path_resolve =
 //!   1` around the entire backup.
-//! - `rsync-3.5.0/generator.c:2281-2301` and `:2327-2349` - the in-place backup
+//! - `rsync-3.5.1/generator.c:2281-2301` and `:2327-2349` - the in-place backup
 //!   bypasses `make_backup()`, so the generator raises the flag around
 //!   `get_backup_name()` and the `copy_file()` / `do_open_at()` that follow.
-//! - `rsync-3.5.0/syscall.c:186-240` `abspath_outside_confinement()` - refuses a
+//! - `rsync-3.5.1/syscall.c:232-291` `abspath_outside_confinement()` - refuses a
 //!   resolved path outside `confinement_root()`, but only while
 //!   `operator_path_resolve` is set.
-//! - `rsync-3.5.0/syscall.c:136-144` `confinement_root()` - a daemon's root is
+//! - `rsync-3.5.1/syscall.c:163-171` `confinement_root()` - a daemon's root is
 //!   `module_dir`.
 
 #![cfg(unix)]

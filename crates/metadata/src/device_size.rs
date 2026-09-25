@@ -25,15 +25,15 @@ use std::path::Path;
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:1419-1424` `make_file()` - opens the device and calls
+/// - `flist.c:1644-1649` `make_file()` - opens the device and calls
 ///   `get_device_size()` when a `--copy-devices` entry reports `st_size == 0`.
-/// - `flist.c:1550-1562` `get_device_size()` - `lseek(fd, 0, SEEK_END)`.
+/// - `flist.c:1775-1787` `get_device_size()` - `lseek(fd, 0, SEEK_END)`.
 #[cfg(unix)]
 pub fn device_readable_size(path: &Path) -> io::Result<u64> {
     use std::io::{Seek, SeekFrom};
 
     let mut file = std::fs::File::open(path)?;
-    // upstream: flist.c:1552 - lseek(fd, 0, SEEK_END). Authoritative on Linux.
+    // upstream: flist.c:1777 - lseek(fd, 0, SEEK_END). Authoritative on Linux.
     let via_seek = file.seek(SeekFrom::End(0)).unwrap_or(0);
     if via_seek > 0 {
         return Ok(via_seek);

@@ -438,10 +438,10 @@ fn delete_pass_without_dest_rsync_filter_deletes_bak() {
 ///   `flist_eof` right after the initial receive), complete by construction;
 /// - INC_RECURSE before `NDX_FLIST_EOF`: a later segment could still list any
 ///   destination entry - incomplete;
-/// - INC_RECURSE after `NDX_FLIST_EOF`: all file lists known (flist.c:112) -
+/// - INC_RECURSE after `NDX_FLIST_EOF`: all file lists known (flist.c:114) -
 ///   complete;
 /// - a reclaimed segment (`reclaim_oldest_segment` freed its entries' names,
-///   mirroring flist.c:2980 `flist_free`): those entries can no longer protect
+///   mirroring flist.c:3223 `flist_free`): those entries can no longer protect
 ///   their files - incomplete again even though every list arrived.
 #[test]
 fn delete_pass_completeness_predicate_tracks_flist_state() {

@@ -21,9 +21,9 @@ use std::sync::Arc;
 /// names that operation instead of labelling every failure `mkstemp`.
 ///
 /// Upstream emits one message per site, each naming its own operation:
-/// `mkstemp %s failed` (`rsync-3.5.0/receiver.c:452-453`),
-/// `rename failed for %s (from %s)` (`rsync-3.5.0/receiver.c:710-712`) and
-/// `keep_backup failed: %s -> "%s"` (`rsync-3.5.0/backup.c:402-403`). oc runs
+/// `mkstemp %s failed` (`rsync-3.5.1/receiver.c:465-466`),
+/// `rename failed for %s (from %s)` (`rsync-3.5.1/receiver.c:726-728`) and
+/// `keep_backup failed: %s -> "%s"` (`rsync-3.5.1/backup.c:402-403`). oc runs
 /// these stages behind one `Result`, so the operation identity has to ride on
 /// the error to survive the trip back to the reporting thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,14 +41,14 @@ pub enum CommitOp {
 ///
 /// Upstream reports the operand of the failing call, not the final
 /// destination: `rsyserr(FERROR_XFER, errno, "mkstemp %s failed",
-/// full_fname(fnametmp))` (`rsync-3.5.0/receiver.c:452-453`). The disk-commit
+/// full_fname(fnametmp))` (`rsync-3.5.1/receiver.c:465-466`). The disk-commit
 /// thread hands failures back as a plain [`io::Error`], so the operation and
 /// its operand ride along inside it and are recovered with
 /// [`commit_op_failure`].
 ///
 /// Upstream reports the temp name, not the final destination:
 /// `rsyserr(FERROR_XFER, errno, "mkstemp %s failed", full_fname(fnametmp))`
-/// (receiver.c:452-453). The disk-commit thread hands the failure back as a plain
+/// (receiver.c:465-466). The disk-commit thread hands the failure back as a plain
 /// [`io::Error`], so the attempted name rides along inside it and is recovered
 /// with [`attempted_temp_path`].
 ///
@@ -173,7 +173,7 @@ const MAXPATHLEN: usize = 4096;
 ///   double-dot prefixes (upstream macOS compatibility).
 /// - Long filenames are truncated under a dual cap so both the basename stays
 ///   within `NAME_MAX` (255) and the full path within `MAXPATHLEN`, with UTF-8
-///   multi-byte sequence safety (upstream `receiver.c:195-196`).
+///   multi-byte sequence safety (upstream `receiver.c:208-209`).
 /// - When `temp_dir` is provided, the temp file is placed there without an
 ///   extra leading dot (matching upstream `--temp-dir` behavior).
 ///
@@ -207,7 +207,7 @@ fn get_tmpname(dest: &Path, temp_dir: Option<&Path>) -> io::Result<PathBuf> {
 
     let dir = temp_dir.unwrap_or_else(|| dest.parent().unwrap_or(Path::new(".")));
 
-    // upstream: receiver.c:195-196 - the basename is bounded by a DUAL cap:
+    // upstream: receiver.c:208-209 - the basename is bounded by a DUAL cap:
     //   maxname = MIN(MAXPATHLEN - length - TMPNAME_SUFFIX_LEN,
     //                 NAME_MAX - 1 - TMPNAME_SUFFIX_LEN)
     // `length` is the directory-prefix byte count (including the path
@@ -329,7 +329,7 @@ fn open_tmpfile_inner(
             }
             Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                // upstream: receiver.c:283-293 - the ENOENT-recovery that
+                // upstream: receiver.c:296-306 - the ENOENT-recovery that
                 // called `make_path(fnametmp, ...)` before re-`do_mkstemp()`
                 // is compiled out (`#if 0`). Upstream never creates a missing
                 // parent chain at temp-file open time; a missing destination
@@ -337,13 +337,13 @@ fn open_tmpfile_inner(
                 // subdirectories are created up-front by the receiver's
                 // directory pass (generator.c:1329-1338 / create_directories),
                 // and the dest-arg path is created only under `--mkpath` in
-                // `ensure_dest_root_exists` (upstream main.c:736). Auto-creating
+                // `ensure_dest_root_exists` (upstream main.c:749). Auto-creating
                 // here would resurrect the no-`--mkpath` deep-path bug, so we
                 // surface the ENOENT verbatim to match upstream.
                 return Err(io::Error::new(e.kind(), e.to_string()));
             }
             // Carry the attempted name so the receiver's diagnostic can print
-            // `fnametmp` the way receiver.c:452-453 does. The wrapper keeps both
+            // `fnametmp` the way receiver.c:465-466 does. The wrapper keeps both
             // `kind()` and the Display text of the original error.
             Err(e) => {
                 return Err(io::Error::new(
@@ -406,7 +406,7 @@ fn try_create_new(
     // `do_open_at()` contract so the parent walk is the same one the sandbox
     // branch gets.
     //
-    // upstream: `rsync-3.5.0/syscall.c:3344` `do_mkstemp_atfd()` -
+    // upstream: `rsync-3.5.1/syscall.c:3505` `do_mkstemp_atfd()` -
     // `openat(dfd, filename, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW, perms)`.
     // `O_NOFOLLOW` is unconditional there, and `perms` is the mode the caller
     // asks for; the replaced `OpenOptions` create could express neither, and
@@ -503,7 +503,7 @@ impl TempFileGuard {
     /// file (not a temp file), so the guard is constructed already
     /// keep-on-drop: an aborted `--inplace` or device transfer leaves the
     /// partial write in place instead of deleting the user's existing file.
-    /// This mirrors upstream `receiver.c:1054`, which gates the destination
+    /// This mirrors upstream `receiver.c:1070`, which gates the destination
     /// unlink on `!one_inplace` and so never unlinks an in-place target.
     /// The success path still calls [`keep`](TempFileGuard::keep), which is
     /// an idempotent no-op here.
@@ -609,7 +609,7 @@ impl TempFileGuard {
 
         // Create the partial directory through the shared owner, which runs
         // upstream's confined reuse probe before the confined `mkdirat`
-        // (util1.c:1518-1530 `handle_partial_dir(PDIR_CREATE)`). A bare
+        // (util1.c:1613-1625 `handle_partial_dir(PDIR_CREATE)`). A bare
         // `parent.exists()` guard here would be a FOLLOWING stat, skipping the
         // create - and therefore the walk - on exactly the case that matters:
         // a foreign-owned symlink already standing at the partial-dir name.
@@ -648,7 +648,7 @@ impl TempFileGuard {
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1300` - `partial_dir_fname()` joins `partial_dir` and the basename
+/// - `util1.c:1397` - `partial_dir_fname()` joins `partial_dir` and the basename
 /// - `generator.c:1759` - `partialptr = partial_dir_fname(fname)` basis lookup
 pub fn partial_dir_fname(dest_path: &Path, partial_dir: &Path) -> Option<PathBuf> {
     let file_name = dest_path.file_name()?;
@@ -674,7 +674,7 @@ fn is_cross_device_error(e: &io::Error) -> bool {
 ///
 /// Unix issues `renameat` for the same reason
 /// [`engine::create_partial_dir`] issues `mkdirat`: upstream wraps the whole
-/// retention in `operator_path_resolve` (util1.c:1518-1530), so a foreign-owned
+/// retention in `operator_path_resolve` (util1.c:1613-1625), so a foreign-owned
 /// symlink on the way to the partial dir cannot redirect the staged file - a
 /// complete copy of the source - out of the tree. It is also what the daemon
 /// worker's seccomp allowlist admits: that filter carries only the `*at`
@@ -779,7 +779,7 @@ mod tests {
     use tempfile::tempdir;
 
     /// upstream names `fnametmp`, not the destination, in the `mkstemp %s
-    /// failed` diagnostic (receiver.c:452-453), so a failed open must hand the
+    /// failed` diagnostic (receiver.c:465-466), so a failed open must hand the
     /// attempted `.name.XXXXXX` back to the caller while keeping the error's
     /// `kind()` and rendered text untouched.
     #[cfg(unix)]
@@ -977,7 +977,7 @@ mod tests {
 
     #[test]
     fn tmpname_deep_dir_bounds_full_path_and_basename() {
-        // upstream: receiver.c:195-196 - the MAXPATHLEN term of the dual cap
+        // upstream: receiver.c:208-209 - the MAXPATHLEN term of the dual cap
         // must bind when the directory prefix is long, keeping the full temp
         // path within MAXPATHLEN even though the basename alone would fit under
         // NAME_MAX. Build a directory prefix long enough that the path budget
@@ -1435,7 +1435,7 @@ mod tests {
 /// the LEAF, so the exposure was never the temp name itself: it was a symlink
 /// at a PARENT component redirecting the create out of the tree.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:3344` `do_mkstemp_atfd()`.
+/// upstream: `rsync-3.5.1/syscall.c:3505` `do_mkstemp_atfd()`.
 #[cfg(all(test, unix))]
 mod confined_temp_create {
     use super::try_create_new;

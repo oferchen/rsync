@@ -303,7 +303,7 @@ impl metadata::id_lookup::NameConverterCallbacks for ResolvingConverter {
 
 /// THE INLINE-NAME PATH. A peer may describe ownership on the file-list ENTRY
 /// (`XMIT_USER_NAME_FOLLOWS`) instead of in the trailing id list, and upstream
-/// resolves it right there - `flist.c:1004` calls `recv_user_name()`, the same
+/// resolves it right there - `flist.c:1229` calls `recv_user_name()`, the same
 /// `recv_add_id()` path `recv_id_list()` uses.
 ///
 /// The wire here is exactly what such a peer sends: one entry carrying the
@@ -313,7 +313,7 @@ impl metadata::id_lookup::NameConverterCallbacks for ResolvingConverter {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:998-1010` - `recv_file_entry()` inline user-name arm
+/// - `flist.c:1223-1235` - `recv_file_entry()` inline user-name arm
 /// - `uidlist.c:418-433` - `recv_user_name()` -> `recv_add_id()`
 #[cfg(unix)]
 #[test]
@@ -327,7 +327,7 @@ fn an_inline_entry_name_is_resolved_without_a_trailing_id_list() {
         .with_preserve_uid(true)
         .with_name_follows(true);
     writer.write_entry(&mut wire, &entry).expect("write entry");
-    // upstream: flist.c:2384 write_end_of_flist() - a single 0 flag byte ends
+    // upstream: flist.c:2624 write_end_of_flist() - a single 0 flag byte ends
     // the list in byte-flags mode.
     wire.push(0);
     // An EMPTY trailing id list: the terminator and nothing else. This is what

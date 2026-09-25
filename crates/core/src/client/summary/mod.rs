@@ -233,7 +233,7 @@ impl ClientSummary {
     /// `reg:` sub-count. Distinct from [`Self::files_copied`], which also
     /// counts in-place updates.
     ///
-    /// upstream: receiver.c:733-746 / sender.c:295-308 - the reg portion of
+    /// upstream: receiver.c:749-762 / sender.c:587-600 - the reg portion of
     /// `stats.created_files`.
     #[must_use]
     pub const fn created_regular_files(&self) -> u64 {
@@ -243,7 +243,7 @@ impl ClientSummary {
     /// Returns the number of newly created symbolic links for the `link:`
     /// sub-count of "Number of created files".
     ///
-    /// upstream: receiver.c:740-741 `stats.created_symlinks++`.
+    /// upstream: receiver.c:756-757 `stats.created_symlinks++`.
     #[must_use]
     pub const fn created_symlinks(&self) -> u64 {
         self.stats.created_symlinks()
@@ -252,7 +252,7 @@ impl ClientSummary {
     /// Returns the number of newly created device nodes for the `dev:`
     /// sub-count of "Number of created files".
     ///
-    /// upstream: receiver.c:743-744 `stats.created_devices++`.
+    /// upstream: receiver.c:759-760 `stats.created_devices++`.
     #[must_use]
     pub const fn created_devices(&self) -> u64 {
         self.stats.created_devices()
@@ -261,7 +261,7 @@ impl ClientSummary {
     /// Returns the number of newly created special files (FIFOs, sockets) for
     /// the `special:` sub-count of "Number of created files".
     ///
-    /// upstream: receiver.c:745-746 `stats.created_specials++`.
+    /// upstream: receiver.c:761-762 `stats.created_specials++`.
     #[must_use]
     pub const fn created_specials(&self) -> u64 {
         self.stats.created_specials()
@@ -446,7 +446,7 @@ impl ClientSummary {
     ///
     /// Used by the CLI to emit upstream's `created directory <dest>` notice
     /// before per-entry itemize lines when itemize-changes is enabled.
-    /// upstream: main.c:816-817 - `rprintf(FINFO, "created directory %s\n", dest_path)`
+    /// upstream: main.c:829-830 - `rprintf(FINFO, "created directory %s\n", dest_path)`
     /// gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`.
     #[must_use]
     pub const fn destination_root_created(&self) -> bool {

@@ -235,7 +235,7 @@ impl<W: Write> MplexWriter<W> {
         // before data the caller has already written.
         self.flush_buffer()?;
         send_msg(&mut self.inner, code, payload)?;
-        // upstream: io.c:965 send_msg() appends to iobuf.msg without flushing.
+        // upstream: io.c:983 send_msg() appends to iobuf.msg without flushing.
         // Only latency-sensitive codes need an immediate flush.
         if code.requires_immediate_flush() {
             self.inner.flush()?;
@@ -320,8 +320,8 @@ impl<W: Write> MplexWriter<W> {
     /// the peer, so it needs no forwarding and works with every rsync version.
     /// Any buffered DATA is flushed first to maintain proper message ordering.
     ///
-    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1453-1481) sends
-    /// `send_msg(MSG_DATA, "", 0, 0)`; see the comment at io.c:1446-1452.
+    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1479-1507) sends
+    /// `send_msg(MSG_DATA, "", 0, 0)`; see the comment at io.c:1472-1478.
     ///
     /// # Examples
     ///

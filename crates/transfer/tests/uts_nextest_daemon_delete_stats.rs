@@ -148,7 +148,7 @@ impl Drop for DaemonGuard {
 /// until it accepts connections.
 fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
     // Acquire a race-free free port and start the daemon on it. Because the
-    // default daemon binds with SO_REUSEADDR only (upstream socket.c:597), a
+    // default daemon binds with SO_REUSEADDR only (upstream socket.c:605), a
     // port collision is a clean EADDRINUSE daemon exit - never a silent
     // SO_REUSEPORT co-bind - so the helper simply retries with a fresh port.
     // See `test_support::daemon_port`.

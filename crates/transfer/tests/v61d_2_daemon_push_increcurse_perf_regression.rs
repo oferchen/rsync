@@ -177,7 +177,7 @@ impl Drop for DaemonGuard {
 /// Spawn `rsync --daemon` on `port` against `config_path`. Waits for the
 /// port to accept connections before returning.
 fn spawn_upstream_daemon(rsync_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
-    // Race-free free port: upstream rsync binds SO_REUSEADDR only (socket.c:447),
+    // Race-free free port: upstream rsync binds SO_REUSEADDR only (socket.c:455),
     // so a collision is a clean EADDRINUSE exit the helper retries. See
     // `test_support::daemon_port`.
     let (child, port) = test_support::spawn_daemon_on_free_port(|port| {

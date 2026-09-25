@@ -54,7 +54,7 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
     if let Some(mut guard) = guard {
         if delay_updates_enabled {
             drop(writer_for_metadata.take());
-            // upstream: receiver.c:1301-1314 - a delayed update is published into
+            // upstream: receiver.c:1318-1331 - a delayed update is published into
             // the --partial-dir first and only renamed onto its real name by
             // handle_delayed_updates() after the walk. Staging here (rather than
             // simply holding the temp back) is what creates the partial dir, and

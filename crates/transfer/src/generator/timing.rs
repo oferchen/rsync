@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 /// # Upstream Reference
 ///
 /// - `main.c:356-384` - `handle_stats()` sends build/xfer times
-/// - `flist.c:2192` - `stats.flist_buildtime` timing
+/// - `flist.c:2428` - `stats.flist_buildtime` timing
 #[derive(Debug)]
 pub(crate) struct TransferTiming {
     /// When file list building started (for flist_buildtime statistic).
@@ -65,7 +65,7 @@ mod tests {
 
     /// A build that finishes within the same millisecond must still send a
     /// non-zero `flist_buildtime`, or an upstream client pulling with
-    /// `--stats` omits its "File list generation time" line (main.c:450).
+    /// `--stats` omits its "File list generation time" line (main.c:453).
     #[test]
     fn instantaneous_build_reports_one_millisecond() {
         let now = Instant::now();

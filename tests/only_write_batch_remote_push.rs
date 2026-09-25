@@ -5,19 +5,19 @@
 //! mechanisms:
 //!
 //! ```c
-//! /* options.c:2850-2851, inside the am_sender block */
+//! /* options.c:2860-2861, inside the am_sender block */
 //! if (write_batch < 0)
 //!     args[ac++] = "--only-write-batch=X";
 //!
-//! /* main.c:1839 - on the remote, the placeholder means write_batch < 0 */
+//! /* main.c:1866 - on the remote, the placeholder means write_batch < 0 */
 //! if (write_batch < 0)
 //!     dry_run = 1;
 //!
-//! /* sender.c:217 - the local sender records instead of sending */
+//! /* sender.c:220 - the local sender records instead of sending */
 //! int f_xfer = write_batch < 0 ? batch_fd : f_out;
 //! ```
 //!
-//! The receiver therefore makes no destination updates (`receiver.c:811-817`
+//! The receiver therefore makes no destination updates (`receiver.c:827-833`
 //! logs the item and continues) and reads no payload, which is only safe
 //! because the sender diverted that payload into the batch file. Get one half
 //! without the other and the push either writes the destination or stalls on an
@@ -188,8 +188,8 @@ fn run_push(shim: &Path, binary: &Path, batch_flag: &str, src: &Path, dest: &Pat
 
 /// The headline bug: a `--only-write-batch` push updated the remote
 /// destination. Upstream writes nothing there - `--only-write-batch=X` puts the
-/// remote receiver into `dry_run` (options.c:2850, main.c:1839) and the sender
-/// records the payload instead of transmitting it (sender.c:217).
+/// remote receiver into `dry_run` (options.c:2860, main.c:1866) and the sender
+/// records the payload instead of transmitting it (sender.c:220).
 ///
 /// Exit 0 is asserted separately from the file count because the two halves fail
 /// differently: forwarding the placeholder without diverting the stream leaves
@@ -279,7 +279,7 @@ fn write_batch_push_still_transfers_and_records() {
 /// oc-rsync replaying its own batch proves nothing about wire compatibility:
 /// its `--read-batch` stops once it has the file data, so a trailer carrying a
 /// duplicated stats block or a stray `NDX_DONE` still replays clean. Upstream's
-/// `read_final_goodbye()` (`main.c:893-924`) reads one more index after the
+/// `read_final_goodbye()` (`main.c:906-937`) reads one more index after the
 /// goodbye and aborts with `RERR_PROTOCOL` unless that read hits EOF, so only
 /// upstream can tell a well-formed trailer from a malformed one.
 ///

@@ -13,7 +13,7 @@
 //!   dropped from the `--stats` created breakdown and lose their `cd`/`cL`
 //!   itemize rows;
 //! - a special is worse - the generator expects the entry and, finding none,
-//!   aborts the replay with exit 23 (`receiver.c:559 no_batched_update()`)
+//!   aborts the replay with exit 23 (`receiver.c:575 no_batched_update()`)
 //!   and never creates the node.
 //!
 //! This pins the fix at the byte level without an external upstream binary:
@@ -31,7 +31,7 @@
 //!   (symlinks/specials) and ORs in `ITEM_IS_NEW` for an absent destination
 //!   (`generator.c:583-584`); the word is written with no sum_head because
 //!   `ITEM_TRANSFER` is clear.
-//! - `receiver.c:726-786` reads the word in the `!(iflags & ITEM_TRANSFER)`
+//! - `receiver.c:742-802` reads the word in the `!(iflags & ITEM_TRANSFER)`
 //!   branch and bumps `stats.created_{dirs,symlinks,devices,specials}` under
 //!   the `ITEM_IS_NEW` guard.
 
@@ -189,7 +189,7 @@ fn write_batch_records_iflags_for_created_dirs_symlinks_and_specials() {
          (ITEM_LOCAL_CHANGE|ITEM_IS_NEW) and the symlink + FIFO at {CREATED_NONREG:#06x} \
          (ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE|ITEM_IS_NEW). A missing entry makes an \
          upstream --read-batch peer under-count dirs/symlinks and abort on the special \
-         (receiver.c:559 no_batched_update). The transfer root \".\" is not itemized as \
+         (receiver.c:575 no_batched_update). The transfer root \".\" is not itemized as \
          created and must not appear. Got {iflags_seen:?}"
     );
 }

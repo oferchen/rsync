@@ -46,10 +46,10 @@ impl DaemonTransferRequest {
 
     /// Resolves the port an operand that names none connects to.
     ///
-    /// upstream: `main.c:1591-1594` - `--port` seeds `rsync_port`, and only the
+    /// upstream: `main.c:1609-1612` - `--port` seeds `rsync_port`, and only the
     /// `-1` sentinel (no `--port` and no `:port` in the operand) falls back to
     /// `RSYNC_PORT`. An explicit `:port` in the operand still wins, because
-    /// `check_for_hostspec()` (`options.c:3301-3327`) overwrites `rsync_port`
+    /// `check_for_hostspec()` (`options.c:3311-3337`) overwrites `rsync_port`
     /// while parsing it.
     pub(crate) const fn resolve_default_port(configured: Option<u16>) -> u16 {
         match configured {
@@ -459,8 +459,8 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
     // (clientserver.c:1152) and `EXIT` (clientserver.c:1385). `--dparam`/`-M` is
     // a DAEMON-side, process-local option (`options.c:875` in
     // `long_daemon_options[]` -> `dparam_list` -> `loadparm.c:667 set_dparams()`,
-    // called only from `loadparm.c:621` and `clientserver.c:1745`), and a client
-    // that passes it is refused by `options.c:1584-1589` with "Daemon option(s)
+    // called only from `loadparm.c:621` and `clientserver.c:1766`), and a client
+    // that passes it is refused by `options.c:1590-1595` with "Daemon option(s)
     // used without --daemon." Client-mode `-M` is `--remote-option`
     // (`options.c:859`).
     //

@@ -90,7 +90,7 @@ fn local_transfer_respects_custom_log_format() {
     assert!(stderr.is_empty());
 
     // upstream routing for a verbosity-0 `--log-file` run: the FLOG banner
-    // (flist.c:2248), the per-file logfile-format line (log.c:818-826), and
+    // (flist.c:2484), the per-file logfile-format line (log.c:818-826), and
     // the FLOG totals trailer (log.c:894-899 via the cleanup.c:222-226
     // `!INFO_GTE(STATS, 1)` gate) - each stamped by logit() (log.c:122-132).
     let logged = std::fs::read_to_string(&log_path).expect("read log file");
@@ -160,7 +160,7 @@ fn log_file_multiple_files_produce_multiple_entries() {
     let mut source_trailing = source_dir.into_os_string();
     source_trailing.push(std::path::MAIN_SEPARATOR.to_string());
 
-    // upstream: options.c:117 defaults `recurse = 0` and flist.c:3743 prints
+    // upstream: options.c:117 defaults `recurse = 0` and flist.c:3986 prints
     // `skipping directory %s` for a directory operand without -r/-a/-d, so a
     // trailing-slash directory source must be paired with --recursive to fan
     // out into the per-child %f log entries this test verifies. Mirrors the
