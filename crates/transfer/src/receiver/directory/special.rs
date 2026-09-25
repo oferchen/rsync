@@ -25,7 +25,7 @@ use std::fs;
 use std::path::Path;
 
 #[cfg(unix)]
-use logging::{debug_log, info_log};
+use logging::info_log;
 #[cfg(unix)]
 use metadata::{MetadataOptions, apply_metadata_from_file_entry, create_fifo_node_from_parts};
 #[cfg(unix)]
@@ -238,7 +238,15 @@ impl ReceiverContext {
                 if entry.file_type() == FileType::Socket
                     && metadata::socket_creation_unsupported(relative_path)
                 {
-                    logging::warn_log!("{}", metadata::format_skipped_socket_message(&node_path));
+                    // upstream: log.c:rwrite() - a server frames FWARNING as
+                    // MSG_WARNING for the client, so a push reports it too.
+                    let _ = self.emit_warning_line(
+                        writer,
+                        &format!(
+                            "skipping socket (creation unsupported here): {}\n",
+                            self.full_fname_in_dest(dest_dir, &node_path)
+                        ),
+                    );
                     continue;
                 }
 
@@ -294,13 +302,13 @@ impl ReceiverContext {
                     // full_fname(create_name)). FERROR_XFER sets
                     // got_xfer_error (log.c:337-338), which lifts the exit to
                     // RERR_PARTIAL (23); the entry is skipped, the run goes on.
-                    let _ = self.emit_error_xfer_line(
+                    let _ = self.emit_generator_error_xfer(
                         writer,
                         &format!(
-                            "rsync: [generator] mknod {} failed: {}\n",
-                            self.full_fname_in_dest(dest_dir, &node_path),
-                            logging::upstream_errno_text(&error)
+                            "mknod {} failed",
+                            self.full_fname_in_dest(dest_dir, &node_path)
                         ),
+                        &error,
                     );
                     continue;
                 }
@@ -318,14 +326,10 @@ impl ReceiverContext {
                 .preserve_crtimes(self.config.flags.crtimes)
                 .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
                 .fake_super(self.config.fake_super);
+            // upstream: rsync.c:set_file_attrs() - a failed chown/utimes/chmod
+            // is rsyserr(FERROR_XFER), so the run ends RERR_PARTIAL (23).
             if let Err(error) = apply_metadata_from_file_entry(&node_path, entry, &options) {
-                debug_log!(
-                    Recv,
-                    1,
-                    "failed to apply metadata for special file {}: {}",
-                    node_path.display(),
-                    error
-                );
+                let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
             }
 
             if up_to_date {

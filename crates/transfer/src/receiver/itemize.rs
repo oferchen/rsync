@@ -322,6 +322,65 @@ impl ReceiverContext {
         }
     }
 
+    /// Reports a failed generator-side operation the way upstream's
+    /// `rsyserr(FERROR_XFER, errno, ...)` does: `rsync: [generator] <what>:
+    /// <strerror> (<errno>)`, routed and counted by
+    /// [`Self::emit_error_xfer_line`].
+    ///
+    /// `what` is the already-formatted operation text, e.g. `mknod "<path>"
+    /// failed`. The role tag comes from one place, [`crate::role_trailer::GENERATOR`].
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:480-506` - `rsyserr()` prefixes `RSYNC_NAME ": [%s] "` with
+    ///   `who_am_i()` and appends `": %s (%d)\n"`
+    pub(in crate::receiver) fn emit_generator_error_xfer<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        writer: &mut W,
+        what: &str,
+        error: &std::io::Error,
+    ) -> std::io::Result<()> {
+        self.emit_error_xfer_line(
+            writer,
+            &format!(
+                "rsync: [{}] {what}: {}\n",
+                crate::role_trailer::GENERATOR,
+                logging::upstream_errno_text(error)
+            ),
+        )
+    }
+
+    /// Reports a failed generator-side `set_file_attrs()` step as the
+    /// `FERROR_XFER` line upstream prints for it, naming the path the way
+    /// `full_fname()` does.
+    ///
+    /// An operation `set_file_attrs()` has no `rsyserr()` arm for keeps the
+    /// error's own rendering, still as `FERROR_XFER`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:682-684`, `rsync.c:781`, `rsync.c:811-813` - the chown/chgrp,
+    ///   times, and permissions arms, each `rsyserr(FERROR_XFER, ...)`
+    pub(in crate::receiver) fn emit_generator_attrs_failure<
+        W: crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &self,
+        writer: &mut W,
+        dest_dir: &std::path::Path,
+        error: &metadata::MetadataError,
+    ) -> std::io::Result<()> {
+        let fname = self.full_fname_in_dest(dest_dir, error.path());
+        let text = error
+            .set_file_attrs_text(&fname)
+            .unwrap_or_else(|| error.to_string());
+        self.emit_error_xfer_line(
+            writer,
+            &format!("rsync: [{}] {text}\n", crate::role_trailer::GENERATOR),
+        )
+    }
+
     /// Renders `path` the way upstream `full_fname()` does from the generator,
     /// whose `curr_dir` is the destination directory.
     ///
@@ -333,7 +392,6 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `util1.c:1433` - `full_fname()`
-    #[cfg(unix)]
     pub(in crate::receiver) fn full_fname_in_dest(
         &self,
         dest_dir: &std::path::Path,
