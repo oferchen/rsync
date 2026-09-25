@@ -917,7 +917,10 @@ mod tests {
         );
         assert_eq!(
             ctx.dir_flist.resolve(1),
-            Some(&DirSlot::Active(PathBuf::from("x/d"))),
+            Some(&DirSlot::Active {
+                name: PathBuf::from("x/d"),
+                content_dir: true,
+            }),
             "the surviving duplicate keeps the slot"
         );
         assert_eq!(
@@ -971,7 +974,10 @@ mod tests {
         );
         assert_eq!(
             ctx.dir_flist.resolve(4),
-            Some(&DirSlot::Active(PathBuf::from("x/z"))),
+            Some(&DirSlot::Active {
+                name: PathBuf::from("x/z"),
+                content_dir: true,
+            }),
             "the sibling keeps its own, later slot"
         );
     }
