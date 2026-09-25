@@ -120,7 +120,11 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        for formula in openssl@3 xxhash; do
+        # libidn2: rsync 3.5.1's configure aborts without idn2.h unless
+        # --disable-idn is passed (configure.ac:16, :637-672). Installed so the
+        # oracle keeps upstream's default (IDN on), matching the Linux legs'
+        # libidn2-dev. Inert for 3.5.0, which has no IDN support.
+        for formula in openssl@3 xxhash libidn2; do
           if brew list --versions "$formula" >/dev/null 2>&1; then
             printf '%-10s present\n' "$formula"
           else
@@ -152,10 +156,11 @@ runs:
           '#include <openssl/md4.h>' \
           '#include <openssl/md5.h>' \
           '#include <openssl/evp.h>' \
-          'int main(void) { XXH64_createState(); EVP_MD_CTX_new(); return 0; }' \
+          '#include <idn2.h>' \
+          'int main(void) { char *o; XXH64_createState(); EVP_MD_CTX_new(); idn2_lookup_ul("a", &o, 0); return 0; }' \
           >"${probe}/probe.c"
         # shellcheck disable=SC2086
-        cc $CPPFLAGS $LDFLAGS "${probe}/probe.c" -lxxhash -lcrypto -o "${probe}/probe"
+        cc $CPPFLAGS $LDFLAGS "${probe}/probe.c" -lxxhash -lcrypto -lidn2 -o "${probe}/probe"
         echo "checksum library probe: compiled and linked"
 
         # Published under UPSTREAM_-prefixed names, NOT as CPPFLAGS/LDFLAGS.

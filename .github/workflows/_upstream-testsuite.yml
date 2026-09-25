@@ -99,7 +99,12 @@ permissions:
   contents: read
 
 env:
-  APT_PACKAGES: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev
+  # libidn2-dev: rsync 3.5.1's configure ABORTS without idn2.h unless
+  # --disable-idn is passed (configure.ac:16, :637-672 - `no_lib` is fatal, so
+  # a missing library is never silently compiled out). Installing it keeps
+  # upstream's default (IDN on), so the idn and daemon-access-idn cells run
+  # against the same oracle upstream ships. Inert for 3.5.0, which has no IDN.
+  APT_PACKAGES: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev libidn2-dev
 
 jobs:
   upstream-testsuite:

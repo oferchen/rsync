@@ -7,6 +7,7 @@
 [![Upstream Testsuite 3.5.0 (root, pipe)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml)
 [![Upstream Testsuite 3.5.0 (nonroot, tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml)
 [![Upstream Testsuite 3.5.0 (root, tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml)
+[![Upstream Testsuite 3.5.1 (Linux + macOS, root + nonroot, pipe + tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml)
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
 # oc-rsync
@@ -72,6 +73,8 @@ awk '!/^#/ && NF {c[$NF]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}'
 ```
 
 No test fails on either full-corpus Linux leg. **Six distinct tests** fail across all eight manifests (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). Four are the `proto-*` cluster, which fails on every TCP leg. The other two (`chmod-setid`, `partial-protected-regular-retry-policy`) fail only on macOS, where the real upstream 3.5.0 binary lands on the same outcome. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently.
+
+The 3.5.1 test suite runs the same eight legs from [`upstream-testsuite-3.5.1.yml`](./.github/workflows/upstream-testsuite-3.5.1.yml) on push to master, nightly, and on demand. It does not run on pull requests and is not a required check. Every expected failure in its manifests (`tools/ci/upstream-3.5.1-expect.*.txt`) names the task that owns it. An unexpected pass fails the leg, so the PR that fixes a cell must also flip its row to `pass`.
 
 ### Platform support
 
