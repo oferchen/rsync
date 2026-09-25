@@ -61,6 +61,8 @@ impl<'a> CopyContext<'a> {
             )),
             destination_root,
             source_anchor: None,
+            #[cfg(unix)]
+            files_from_base: None,
             safety_depth_offset: 0,
             use_buffer_pool: true,
             buffer_pool,
@@ -275,6 +277,70 @@ impl<'a> CopyContext<'a> {
     /// Returns the source-tree confinement anchor for the current operand.
     pub(in crate::local_copy) fn source_anchor(&self) -> Option<&Path> {
         self.source_anchor.as_deref()
+    }
+
+    /// Whether `--files-from` entries resolve through the ownership walk.
+    ///
+    /// That is a non-daemon sender with `files_from` set and none of
+    /// `--copy-unsafe-links`, `--copy-dirlinks`, `--insecure-links` or
+    /// `--copy-links`; each of those restores the path-following sender.
+    ///
+    /// upstream: `rsync-3.5.1/syscall.c:149-154` `filesfrom_owner_walk_active()`.
+    #[cfg(unix)]
+    fn filesfrom_owner_walk_active(&self) -> bool {
+        self.options.files_from_enabled()
+            && !self.follow_source_symlinks()
+            && !fast_io::confinement::session_optout_allowed()
+    }
+
+    /// Holds the `--files-from` base for the operand about to be walked.
+    ///
+    /// The base is the part of the operand before its `/./` marker - the
+    /// directory upstream's sender `chdir`s into before it reads the list.
+    /// Failing to open it fails the operand rather than degrading to the
+    /// path-following resolver the walk exists to replace.
+    #[cfg(unix)]
+    pub(in crate::local_copy) fn set_files_from_base(
+        &mut self,
+        source: &SourceSpec,
+    ) -> Result<(), LocalCopyError> {
+        let anchor = self
+            .filesfrom_owner_walk_active()
+            .then(|| source.dot_dir_anchor())
+            .flatten();
+        let Some(anchor) = anchor else {
+            self.files_from_base = None;
+            return Ok(());
+        };
+        if self
+            .files_from_base
+            .as_ref()
+            .is_some_and(|base| base.path() == anchor)
+        {
+            return Ok(());
+        }
+        self.files_from_base = None;
+        let base = fast_io::FilesFromBase::open(&anchor)
+            .map_err(|error| LocalCopyError::io("change directory", anchor, error))?;
+        self.files_from_base = Some(base);
+        Ok(())
+    }
+
+    /// Non-Unix: upstream's walk needs `openat`/`O_NOFOLLOW`, and without them
+    /// `filesfrom_link_stat()` degrades to the plain `link_stat()`
+    /// (`rsync-3.5.1/flist.c:430-432`).
+    #[cfg(not(unix))]
+    pub(in crate::local_copy) fn set_files_from_base(
+        &mut self,
+        _source: &SourceSpec,
+    ) -> Result<(), LocalCopyError> {
+        Ok(())
+    }
+
+    /// The held `--files-from` base, while the ownership walk is active.
+    #[cfg(unix)]
+    pub(in crate::local_copy) fn files_from_base(&self) -> Option<&fast_io::FilesFromBase> {
+        self.files_from_base.as_ref()
     }
 
     /// Returns the root destination directory for the transfer.
@@ -509,14 +575,22 @@ impl<'a> CopyContext<'a> {
     /// so confining it would refuse the traversal the operator asked for.
     ///
     /// [`follow_source_symlinks`]: Self::follow_source_symlinks
+    /// A `--files-from` scan takes the ownership walk ahead of the anchor, as
+    /// upstream's `secure_opendir()` tests `filesfrom_owner_walk_active()`
+    /// first (`rsync-3.5.1/flist.c:2262-2265`).
     pub(super) fn readdir_buf_with_confined_anchor(
         &mut self,
-    ) -> (&mut Vec<(OsString, PathBuf)>, Option<&Path>) {
+    ) -> (&mut Vec<(OsString, PathBuf)>, ScanRoot<'_>) {
+        #[cfg(unix)]
+        if let Some(base) = self.files_from_base.as_ref() {
+            return (&mut self.readdir_buf, ScanRoot::FilesFrom(base));
+        }
         let confine = !self.follow_source_symlinks();
-        (
-            &mut self.readdir_buf,
-            confine.then_some(self.source_anchor.as_deref()).flatten(),
-        )
+        let root = match confine.then_some(self.source_anchor.as_deref()).flatten() {
+            Some(anchor) => ScanRoot::Beneath(anchor),
+            None => ScanRoot::Unconfined,
+        };
+        (&mut self.readdir_buf, root)
     }
 
     /// Clears the checksum cache to free memory after directory processing.

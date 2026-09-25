@@ -115,6 +115,17 @@ pub fn open_source_confined(
     imp::open_source_confined(root, relative, leaf, noatime)
 }
 
+/// Open `leaf` beneath an already-resolved `parent` for reading, `O_NOFOLLOW`,
+/// honouring `--open-noatime`.
+#[cfg(unix)]
+pub(crate) fn open_source_leaf(
+    parent: std::os::fd::BorrowedFd<'_>,
+    leaf: &std::ffi::OsStr,
+    noatime: bool,
+) -> io::Result<File> {
+    imp::open_leaf(parent, leaf, noatime)
+}
+
 /// What the destination leaf is expected to be, so the pin can ask for
 /// `O_DIRECTORY` where upstream does.
 ///
@@ -442,7 +453,7 @@ mod imp {
 
     /// Opens the leaf `O_RDONLY | O_NOFOLLOW`, honouring `--open-noatime`
     /// with the same graceful fallback the plain source open uses.
-    fn open_leaf(
+    pub(super) fn open_leaf(
         parent: std::os::fd::BorrowedFd<'_>,
         leaf: &std::ffi::OsStr,
         noatime: bool,

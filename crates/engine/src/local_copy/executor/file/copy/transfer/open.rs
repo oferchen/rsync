@@ -39,6 +39,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use crate::local_copy::CopyContext;
+
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 
@@ -53,6 +55,30 @@ use crate::local_copy::LocalCopyError;
 
 #[cfg(test)]
 static FSYNC_CALL_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+impl CopyContext<'_> {
+    /// Opens a source file's content under the current operand's resolver.
+    ///
+    /// A `--files-from` entry takes the ownership walk from the held base;
+    /// every other operand takes [`open_source_file`]. upstream:
+    /// `rsync-3.5.1/sender.c:692-693` routes a `files_from` open to
+    /// `do_open_checklinks()`, whose `files_from` arm is
+    /// `rsync-3.5.1/syscall.c:3623-3640`.
+    pub(in crate::local_copy) fn open_source_content(&self, path: &Path) -> io::Result<fs::File> {
+        #[cfg(unix)]
+        if let Some(base) = self.files_from_base() {
+            let file = base.open_read(path, self.open_noatime_enabled())?;
+            apply_macos_read_hint(&file);
+            return Ok(file);
+        }
+        open_source_file(
+            path,
+            self.open_noatime_enabled(),
+            self.source_anchor(),
+            self.follow_source_symlinks(),
+        )
+    }
+}
 
 /// Opens a source file for reading, optionally with `O_NOATIME`.
 ///
