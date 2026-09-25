@@ -40,30 +40,42 @@ impl ReceiverContext {
     /// Runs the receiver role to completion.
     ///
     /// Orchestrates the full receive operation: file list reception, signature
-    /// generation, delta application, and metadata finalization. Delegates to
-    /// `run_pipelined_incremental` (with `incremental-flist`) or `run_pipelined`.
+    /// generation, delta application, and metadata finalization.
+    ///
+    /// The incremental sub-list receiver is selected at RUNTIME on the negotiated
+    /// `CF_INC_RECURSE`, not at build time: incremental recursion is a
+    /// per-connection protocol property, so one binary must serve both a peer that
+    /// negotiated it and one that did not. When INC_RECURSE is negotiated the
+    /// transfer is driven by
+    /// [`run_pipelined_incremental`](Self::run_pipelined_incremental), which itself
+    /// chooses its lazy per-segment path via `should_stream_incremental` (a genuine
+    /// multi-segment sub-list stream) or its batch body otherwise. A transfer that
+    /// never negotiated INC_RECURSE keeps the plain
+    /// [`run_pipelined`](Self::run_pipelined) receiver, byte-for-byte as before.
     ///
     /// # Upstream Reference
     ///
     /// - `receiver.c:720` - `recv_files()` main reception loop
     /// - `main.c:1160-1200` - `do_recv()` orchestration
+    /// - `compat.c:740` - `inc_recurse` is read from the negotiated compat flags,
+    ///   the same runtime signal gated on here.
     pub fn run<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
         &mut self,
         reader: crate::reader::ServerReader<R>,
         writer: &mut W,
         progress: Option<&mut dyn crate::TransferProgressCallback>,
     ) -> io::Result<TransferStats> {
-        #[cfg(feature = "incremental-flist")]
-        {
+        let inc_recurse = self
+            .compat_flags
+            .is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE));
+        if inc_recurse {
             self.run_pipelined_incremental(
                 reader,
                 writer,
                 crate::pipeline::PipelineConfig::default(),
                 progress,
             )
-        }
-        #[cfg(not(feature = "incremental-flist"))]
-        {
+        } else {
             self.run_pipelined(
                 reader,
                 writer,
