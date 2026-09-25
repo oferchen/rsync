@@ -55,7 +55,7 @@ Usage:
 """
 import re, os, sys, glob
 
-VER = "3.5.0"
+VER = "3.5.1"
 S = f"target/interop/upstream-src/rsync-{VER}"
 HIGH = {"flist","generator","receiver","io","token","sender","clientserver","options","main",
         "exclude","delete","backup","acls","rsync","batch","compat","log","socket","util1","util2","xattrs","checksum","match"}
