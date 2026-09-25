@@ -337,44 +337,52 @@ mod tests {
         ];
         let (wire, total) = encode_segments(&segments);
 
-        // Shared codec: the correct single-state read decodes all three segments
-        // and reaches flist_eof with the full list.
-        {
+        // Runs the SAME two-pull sequence - segment 0 first, then a second pull
+        // for the rest - and reports whether the whole list materialized. The
+        // ONLY variable between the two calls below is whether the second pull
+        // reuses the first pull's codec (shared inbound state) or gets a fresh
+        // one (split state); everything else is identical, so the outcome
+        // isolates codec-sharing as the cause (mutation probe, not a vacuous
+        // pass).
+        fn two_pull_reaches_full_list(
+            wire: &[u8],
+            n_dirs: usize,
+            total: usize,
+            split: bool,
+        ) -> bool {
             let mut ctx = inc_recurse_receiver();
-            ctx.dir_flist = DirFlist::with_active((0..segments.len()).map(|i| format!("dir{i}")));
-            let mut reader = Cursor::new(wire.clone());
-            let mut codec = create_ndx_codec(PROTOCOL);
-            assert!(
-                ctx.ensure_flat_idx(total - 1, &mut reader, &mut codec)
-                    .unwrap()
-            );
-            assert_eq!(ctx.file_list().len(), total);
-            assert!(!ctx.ensure_flat_idx(total, &mut reader, &mut codec).unwrap());
-            assert!(ctx.flist_eof, "shared codec reaches EOF with the full list");
-        }
-
-        // Split codec: first segment via A, then a FRESH codec B for the next
-        // pull. B never saw segment 0's marker, so it mis-decodes segment 1's
-        // diff-encoded marker - the exact desync seen live. It must NOT reproduce
-        // the clean full-list state.
-        {
-            let mut ctx = inc_recurse_receiver();
-            ctx.dir_flist = DirFlist::with_active((0..segments.len()).map(|i| format!("dir{i}")));
-            let mut reader = Cursor::new(wire.clone());
+            ctx.dir_flist = DirFlist::with_active((0..n_dirs).map(|i| format!("dir{i}")));
+            let mut reader = Cursor::new(wire.to_vec());
             let mut codec_a = create_ndx_codec(PROTOCOL);
             let mut codec_b = create_ndx_codec(PROTOCOL);
-            assert!(ctx.ensure_flat_idx(0, &mut reader, &mut codec_a).unwrap());
-            assert_eq!(ctx.file_list().len(), 2);
-            let split_reaches_full_list = ctx
-                .ensure_flat_idx(total - 1, &mut reader, &mut codec_b)
+            // First pull: segment 0 (2 entries) via codec A.
+            if !ctx.ensure_flat_idx(0, &mut reader, &mut codec_a).unwrap()
+                || ctx.file_list().len() != 2
+            {
+                return false;
+            }
+            // Second pull: the rest. Shared reuses codec A (upstream's one
+            // read_ndx state); split hands it a fresh codec B whose prev_negative
+            // never saw segment 0's marker.
+            let second = if split { &mut codec_b } else { &mut codec_a };
+            ctx.ensure_flat_idx(total - 1, &mut reader, second)
                 .map(|_| ctx.file_list().len() == total)
-                .unwrap_or(false);
-            assert!(
-                !split_reaches_full_list,
-                "a fresh inbound codec at the second segment must desync, not \
-                 reproduce the shared-codec full-list read"
-            );
+                .unwrap_or(false)
         }
+
+        // Shared inbound codec across both pulls: the full list materializes.
+        assert!(
+            two_pull_reaches_full_list(&wire, segments.len(), total, false),
+            "one shared inbound codec must decode every interleaved segment"
+        );
+        // Fresh codec at the second pull (the pre-fix two-codec split): it
+        // mis-decodes segment 1's diff-encoded marker and cannot reach the full
+        // list. If this ever passes, the invariant has regressed to two codecs.
+        assert!(
+            !two_pull_reaches_full_list(&wire, segments.len(), total, true),
+            "a fresh inbound codec at the second pull must desync, not reproduce \
+             the shared-codec full-list read"
+        );
     }
 
     #[test]
