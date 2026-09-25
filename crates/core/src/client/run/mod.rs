@@ -517,6 +517,9 @@ fn run_client_internal(
     let mut handler_adapter = observer
         .map(|observer| ClientProgressForwarder::new(observer, &plan, options.clone()))
         .transpose()?;
+    if let Some(adapter) = handler_adapter.as_mut() {
+        adapter.start();
+    }
 
     let summary = if collect_events {
         plan.execute_with_report_and_handler(

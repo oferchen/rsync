@@ -18,9 +18,10 @@ use crate::frontend::escape::EscapeStyle;
 use crate::frontend::{
     out_format::{OutFormat, OutFormatContext},
     progress::{
-        DeltaTransmissionState, DeltaTransmissionSummary, FlistBanner, LiveProgress,
-        NameOutputLevel, PendingDiagnostics, ProgressMode, ProgressOutputConfig, StderrMode,
-        emit_transfer_summary, partition_by_summary_stream, render_diagnostic_events,
+        DeltaTransmissionState, DeltaTransmissionSummary, FlistBanner, LiveListing, LiveProgress,
+        LiveRendered, LocalSessionOutput, NameOutputLevel, PendingDiagnostics, ProgressMode,
+        ProgressOutputConfig, StderrMode, emit_transfer_summary, partition_by_summary_stream,
+        render_diagnostic_events,
     },
 };
 
@@ -151,8 +152,8 @@ where
     // (generator/transfer/orchestrator.rs `announce_incremental_flist`), ahead
     // of the per-file rows that stream straight to stdout during the transfer;
     // rendering it here again would both duplicate it and print it dead last.
-    // Only a local copy - whose per-file rows are all rendered post-hoc from
-    // the collected events - still gets the banner from this deferred path.
+    // Only a local copy still takes the banner from here: the post-hoc
+    // renderer writes it, or under `--progress` the live session header below.
     //
     // upstream: flist.c:170 - the sibling non-incremental banner is selected by
     // `show_filelist_progress = INFO_GTE(FLIST, 1) && xfer_dirs && !am_server
@@ -204,6 +205,28 @@ where
         // `-rvv --no-whole-file` print the line.
         emit_total: is_local_transfer && debug_gte(DebugFlag::Deltasum, 1),
     };
+    // upstream writes a local copy's header and entry names as they happen, so
+    // under `--progress` they interleave with the live progress lines instead of
+    // trailing them. The itemize/`--out-format` listing and `--list-only` stay
+    // with the post-hoc renderer.
+    if is_local_transfer && !list_only {
+        let listing = (matches!(requested_progress_mode, Some(ProgressMode::PerFile))
+            && out_format_template.is_none())
+        .then_some(LiveListing {
+            verbosity,
+            name_level,
+            name_overridden,
+        });
+        live_progress = live_progress.map(|live| {
+            live.with_local_session(LocalSessionOutput {
+                banner: flist_banner,
+                delta_notice: delta_notice.notice,
+                itemizing: out_format_template.is_some(),
+                escape: EscapeStyle::terminal(eight_bit_output),
+                listing,
+            })
+        });
+    }
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
     // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).
@@ -227,7 +250,9 @@ where
 
     match result {
         Ok(summary) => {
-            let progress_rendered_live = live_progress.as_ref().is_some_and(LiveProgress::rendered);
+            let live_rendered = live_progress
+                .as_ref()
+                .map_or_else(LiveRendered::default, LiveProgress::live_rendered);
             let suppress_updated_only_totals =
                 itemize_changes && stats_level == 0 && verbosity == 0;
 
@@ -280,7 +305,7 @@ where
                     verbosity,
                     requested_progress_mode,
                     stats_level,
-                    progress_rendered_live,
+                    live_rendered,
                     list_only,
                     dry_run,
                     only_write_batch,
@@ -477,7 +502,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         verbosity,
         None,
         stats_level,
-        false,
+        LiveRendered::default(),
         list_only,
         false, // dry_run
         false, // only_write_batch

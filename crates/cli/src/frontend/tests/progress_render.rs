@@ -3,7 +3,7 @@ use super::{
     NameOutputLevel, OutFormatContext, ProgressSetting, emit_transfer_summary, parse_out_format,
 };
 use crate::frontend::escape::EscapeStyle;
-use crate::frontend::progress::FlistBanner;
+use crate::frontend::progress::{FlistBanner, LiveRendered};
 use core::client::{ClientConfig, ClientSummary, HumanReadableMode, run_client};
 use tempfile::TempDir;
 
@@ -47,7 +47,7 @@ fn emit_transfer_summary_list_only_emits_listing_and_stats() {
         1,
         None,
         2, // stats_level
-        false,
+        LiveRendered::default(),
         true,
         false, // dry_run
         false, // only_write_batch
@@ -85,7 +85,7 @@ fn emit_transfer_summary_with_progress_and_verbose_listing() {
         2,
         ProgressSetting::PerFile.resolved(),
         0, // stats_level
-        false,
+        LiveRendered::default(),
         false,
         false, // dry_run
         false, // only_write_batch
@@ -131,7 +131,7 @@ fn emit_transfer_summary_out_format_adds_separator_before_stats() {
         1,
         None,
         2, // stats_level
-        false,
+        LiveRendered::default(),
         false,
         false, // dry_run
         false, // only_write_batch

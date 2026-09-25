@@ -21,11 +21,12 @@ pub(crate) use self::format::{
     format_stat_categories, format_summary_rate, is_progress_event, list_only_event,
 };
 pub(crate) use self::interleave::PendingDiagnostics;
-pub(crate) use self::live::{LiveProgress, ProgressOutputConfig};
+pub(crate) use self::live::{LiveListing, LiveProgress, LocalSessionOutput, ProgressOutputConfig};
 pub(crate) use self::mode::ProgressMode;
 pub use self::mode::{NameOutputLevel, ProgressSetting, StderrMode}; // Changed to pub for test_utils
 pub(crate) use self::render::{
-    DeltaTransmissionState, DeltaTransmissionSummary, FlistBanner, emit_transfer_summary,
+    DeltaTransmissionState, DeltaTransmissionSummary, FlistBanner, LiveRendered,
+    emit_transfer_summary,
 };
 #[cfg(test)]
 pub(crate) use self::render::{emit_list_only, emit_stats};

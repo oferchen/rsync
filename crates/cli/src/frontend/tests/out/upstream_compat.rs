@@ -12,7 +12,7 @@
 
 use super::*;
 use crate::frontend::escape::EscapeStyle;
-use crate::frontend::progress::FlistBanner;
+use crate::frontend::progress::{FlistBanner, LiveRendered};
 use core::client::run_client;
 
 #[test]
@@ -232,7 +232,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         1,
         None,
         0, // stats_level
-        false,
+        LiveRendered::default(),
         false,
         false, // dry_run
         false, // only_write_batch
@@ -259,7 +259,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         1,
         None,
         0, // stats_level
-        false,
+        LiveRendered::default(),
         false,
         false, // dry_run
         false, // only_write_batch
