@@ -207,13 +207,6 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_trailing_chars_after_header() {
-        let file = write_config("[module] extra\npath = /tmp\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("unexpected characters"));
-    }
-
-    #[test]
     fn parse_trailing_comment_after_header() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
@@ -4271,5 +4264,234 @@ mod config_parsing_tests {
         assert_eq!(result.modules.len(), 1);
         assert_eq!(result.modules[0].name, "mod");
         assert_eq!(result.modules[0].comment.as_deref(), Some("from include"));
+    }
+
+    #[test]
+    fn line_without_equals_is_skipped_not_fatal() {
+        // upstream: params.c:Parameter() - a line that ends before any '=' is
+        // logged as "Ignoring badly formed line" and parsing continues, so a
+        // stray line must not stop the daemon from starting.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\nthis line has no equals sign\n[mod]\npath = {data}\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+    }
+
+    #[test]
+    fn text_after_a_section_header_is_ignored() {
+        // upstream: params.c:Section() - EatComment() discards the rest of the
+        // line once the ']' closes the name.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\n[mod] trailing words\npath = {data}\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].name, "mod");
+    }
+
+    #[test]
+    fn unknown_amp_directive_fails_the_load() {
+        // upstream: params.c:parse_directives - only &include and &merge exist;
+        // any other name logs "Unknown directive" and fails pm_process(), so a
+        // misspelt `&incldue` cannot silently drop the file it names.
+        let file = write_config("&incldue /nonexistent.conf\n");
+        let error = parse_config_modules(file.path()).expect_err("unknown directive");
+        assert!(
+            error.to_string().contains("Unknown directive: &incldue."),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn amp_directive_without_a_separator_is_skipped() {
+        // upstream: params.c:Parameter() - a directive name that runs into the
+        // end of the line never reaches parse_directives(); it is a badly
+        // formed line and is skipped.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!("&include\n[mod]\npath = {data}\n"));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+    }
+
+    #[test]
+    fn empty_parameter_name_fails_the_load() {
+        // upstream: params.c:Parameter() - "Invalid parameter name in config
+        // file." returns False, which fails the whole load.
+        let file = write_config("= value\n");
+        parse_config_modules(file.path()).expect_err("empty parameter name");
+    }
+
+    #[test]
+    fn empty_values_are_accepted_everywhere() {
+        // upstream: loadparm.c:do_parameter - P_STRING/P_PATH values are
+        // stored with string_set() and never checked for emptiness, and an
+        // empty P_ENUM leaves the setting unchanged. Every line below loads.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\nrefuse options =\nmotd file =\npid file =\nsecrets file =\n\
+             incoming chmod =\noutgoing chmod =\nlock file =\nsyslog facility =\n\
+             syslog tag =\naddress =\nuid =\ngid =\ndaemon uid =\ndaemon gid =\n\
+             socket options =\ndaemon chroot =\n[mod]\npath = {data}\nsecrets file =\n\
+             incoming chmod =\noutgoing chmod =\nlog file =\nexclude from =\n\
+             include from =\nlock file =\nsyslog tag =\nsyslog facility =\n\
+             refuse options =\nuid =\ngid =\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let module = &result.modules[0];
+        assert!(module.refuse_options.is_empty());
+        assert!(module.incoming_chmod.is_none());
+        assert!(module.log_file.is_none());
+        assert!(result.pid_file.is_none());
+    }
+
+    #[test]
+    fn empty_value_clears_an_earlier_global() {
+        // upstream: string_set() overwrites the earlier value with "", which
+        // every consumer treats as unset (clientserver.c:1584 create_pid_file
+        // and :1786 `*lp_bind_address()`).
+        let file =
+            write_config("pid file = /run/first.pid\npid file =\naddress = 127.0.0.1\naddress =\n");
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.pid_file.is_none());
+        assert!(result.bind_address.is_none());
+    }
+
+    #[test]
+    fn empty_chmod_in_a_module_clears_the_global_default() {
+        // upstream: clientserver.c:1294-1302 `if (*p && ...)` - an empty
+        // module `incoming chmod` overrides the global one with no chmod.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\nincoming chmod = Dg+s\n[mod]\npath = {data}\nincoming chmod =\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].incoming_chmod.is_none());
+    }
+
+    #[test]
+    fn missing_secrets_file_is_not_a_config_error() {
+        // upstream: authenticate.c:143-160 check_secret() opens the secrets
+        // file per login, so a file that does not exist yet fails only that
+        // login. The daemon must still start and serve its other modules.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let missing = dir.path().join("not-yet.secrets");
+        let file = write_config(&format!(
+            "use chroot = no\nsecrets file = {missing}\n[auth]\npath = {data}\n\
+             auth users = alice\n[mod_own]\npath = {data}\nauth users = bob\n\
+             secrets file = {missing}\n",
+            missing = missing.display()
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            module_named(&result, "auth").secrets_file.as_deref(),
+            Some(missing.as_path())
+        );
+    }
+
+    #[test]
+    fn auth_users_without_any_secrets_file_is_not_a_config_error() {
+        // upstream: authenticate.c:143-146 - with no secrets file every login
+        // fails with "no secrets file"; the config itself still loads.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\n[auth]\npath = {data}\nauth users = alice\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].secrets_file.is_none());
+        assert_eq!(result.modules[0].auth_users.len(), 1);
+    }
+
+    #[test]
+    fn name_parameter_renames_the_module() {
+        // upstream: daemon-parm.txt `STRING name` is P_LOCAL; lp_number() and
+        // the listing (clientserver.c:1381) use the section's `name` value.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\nname = ignored\n[foo]\npath = {data}\nname = bar\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "bar");
+    }
+
+    #[test]
+    fn proxy_protocol_hosts_is_a_global_only_parameter() {
+        // upstream: daemon-parm.txt lists `proxy_protocol_hosts` under
+        // Globals, so loadparm.c:do_parameter reports it in a module section
+        // as a global parameter and ignores it.
+        assert!(is_global_only_directive("proxyprotocolhosts"));
+    }
+
+    #[test]
+    fn invalid_global_syslog_facility_keeps_the_earlier_value() {
+        // upstream: loadparm.c:575-586 `case P_ENUM` - a value that is neither
+        // a facility name nor a positive number leaves the setting unchanged,
+        // and a positive number is stored as the raw facility.
+        let file = write_config("syslog facility = local3\nsyslog facility = bogus\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result
+                .syslog_facility
+                .map(|(facility, _)| facility)
+                .as_deref(),
+            Some("local3")
+        );
+
+        let file = write_config("syslog facility = 19abc\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result
+                .syslog_facility
+                .map(|(facility, _)| facility)
+                .as_deref(),
+            Some("19")
+        );
+    }
+
+    #[test]
+    fn relative_motd_secrets_and_lock_files_are_stored_verbatim() {
+        // upstream: clientserver.c:183-188 (motd), authenticate.c:143
+        // (secrets) and connection.c claim_connection (lock) open the value as
+        // given, so a relative path resolves against the daemon's cwd - never
+        // against the directory the config file lives in.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\nsecrets file = rel.secrets\nlock file = rel.lock\n\
+             [mod]\npath = {data}\nlock file = mod.lock\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            result.global_secrets_file.map(|(path, _)| path),
+            Some(PathBuf::from("rel.secrets"))
+        );
+        assert_eq!(
+            result.lock_file.map(|(path, _)| path),
+            Some(PathBuf::from("rel.lock"))
+        );
+        assert_eq!(
+            result.modules[0].lock_file.as_deref(),
+            Some(Path::new("mod.lock"))
+        );
     }
 }

@@ -95,9 +95,12 @@ impl SyslogFacility {
     /// Parses a facility name string into the corresponding constant.
     ///
     /// Recognised names are case-insensitive and match the values accepted by
-    /// upstream rsync's `syslog facility` configuration directive.
+    /// upstream rsync's `syslog facility` configuration directive. A positive
+    /// decimal number is a raw `LOG_*` facility value, as upstream stores
+    /// `atoi(value)` for a value that names no facility.
     ///
-    /// Returns `None` for unrecognised names.
+    /// Returns `None` for unrecognised names and for a number whose facility
+    /// bits select no known facility.
     ///
     /// # Examples
     ///
@@ -144,8 +147,41 @@ impl SyslogFacility {
             "local5" => Some(Self::Local5),
             "local6" => Some(Self::Local6),
             "local7" => Some(Self::Local7),
-            _ => None,
+            // upstream: loadparm.c:575-586 `case P_ENUM` - openlog() receives
+            // the raw number, and syslog(3) keeps only its facility bits.
+            _ => name
+                .parse::<i32>()
+                .ok()
+                .filter(|&value| value > 0)
+                .and_then(|value| Self::from_code((value & 0x03f8) >> 3)),
         }
+    }
+
+    /// Maps a facility code (a `LOG_*` value shifted right by 3) to its facility.
+    const fn from_code(code: i32) -> Option<Self> {
+        Some(match code {
+            0 => Self::Kern,
+            1 => Self::User,
+            2 => Self::Mail,
+            3 => Self::Daemon,
+            4 => Self::Auth,
+            5 => Self::Syslog,
+            6 => Self::Lpr,
+            7 => Self::News,
+            8 => Self::Uucp,
+            9 => Self::Cron,
+            10 => Self::AuthPriv,
+            11 => Self::Ftp,
+            16 => Self::Local0,
+            17 => Self::Local1,
+            18 => Self::Local2,
+            19 => Self::Local3,
+            20 => Self::Local4,
+            21 => Self::Local5,
+            22 => Self::Local6,
+            23 => Self::Local7,
+            _ => return None,
+        })
     }
 
     /// Returns the facility name as it would appear in `rsyncd.conf`.
@@ -527,6 +563,24 @@ mod tests {
             SyslogFacility::from_name("Local0"),
             Some(SyslogFacility::Local0)
         );
+    }
+
+    #[test]
+    fn from_name_maps_a_positive_number_through_its_facility_bits() {
+        // upstream: loadparm.c:575-586 stores atoi(value) for a value that
+        // names no facility, and openlog() uses it as the raw LOG_* value, so
+        // `syslog facility = 152` (LOG_LOCAL3) must not fall back to daemon.
+        assert_eq!(
+            SyslogFacility::from_name("152"),
+            Some(SyslogFacility::Local3)
+        );
+        assert_eq!(
+            SyslogFacility::from_name("24"),
+            Some(SyslogFacility::Daemon)
+        );
+        assert_eq!(SyslogFacility::from_name("0"), None);
+        assert_eq!(SyslogFacility::from_name("-8"), None);
+        assert_eq!(SyslogFacility::from_name("120"), None);
     }
 
     #[test]
