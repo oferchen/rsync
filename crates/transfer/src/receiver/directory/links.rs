@@ -364,6 +364,18 @@ impl ReceiverContext {
                 // so the receiver surfaces a non-zero exit instead of
                 // silently skipping the symlink.
                 if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    // upstream: generator.c:2492-2493 - rsyserr(FERROR_XFER,
+                    // errno, "symlink %s -> \"%s\" failed", full_fname(...),
+                    // slnk). FERROR_XFER lifts the exit to RERR_PARTIAL (23).
+                    let _ = self.emit_error_xfer_line(
+                        writer,
+                        &format!(
+                            "rsync: [generator] symlink {} -> \"{}\" failed: {}\n",
+                            self.full_fname_in_dest(dest_dir, &link_path),
+                            target.display(),
+                            logging::upstream_errno_text(&e)
+                        ),
+                    );
                     continue;
                 }
                 return Err(e);

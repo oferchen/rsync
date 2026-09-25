@@ -322,6 +322,35 @@ impl ReceiverContext {
         }
     }
 
+    /// Renders `path` the way upstream `full_fname()` does from the generator,
+    /// whose `curr_dir` is the destination directory.
+    ///
+    /// A daemon receiver strips the module root and appends ` (in MODULE)`;
+    /// any other receiver renders against the process working directory, so a
+    /// relative destination still prints absolute, as upstream does after its
+    /// `change_dir()` into the destination.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `util1.c:1433` - `full_fname()`
+    pub(in crate::receiver) fn full_fname_in_dest(
+        &self,
+        dest_dir: &std::path::Path,
+        path: &std::path::Path,
+    ) -> String {
+        let connection = &self.config.connection;
+        let paths = match (
+            connection.daemon_module.as_deref(),
+            connection.daemon_module_root.as_deref(),
+        ) {
+            (Some(module), Some(root)) => {
+                crate::full_fname::FullFnamePaths::daemon(module, root, dest_dir)
+            }
+            _ => crate::full_fname::FullFnamePaths::non_daemon(),
+        };
+        crate::full_fname::full_fname_path(path, paths)
+    }
+
     /// Routes an already-formatted `FWARNING` diagnostic to the correct sink.
     ///
     /// Same routing as [`Self::emit_error_line`]: a server receiver frames the

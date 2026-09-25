@@ -47,9 +47,9 @@ impl ReceiverContext {
     /// fresh node can be created. Fake-super substitutes a `0600` placeholder
     /// for the node, mirroring `syscall.c:do_mknod()`'s `am_root < 0` branch.
     ///
-    /// A per-entry creation failure is logged and skipped rather than aborting
-    /// the transfer, mirroring upstream's `do_mknod` failure path which records
-    /// an I/O error and continues with the next entry.
+    /// A per-entry creation failure is reported as `FERROR_XFER` and skipped
+    /// rather than aborting the transfer, so the run ends `RERR_PARTIAL` (23)
+    /// like upstream's `atomic_create()` `mknod %s failed` path.
     ///
     /// # Upstream Reference
     ///
@@ -275,7 +275,7 @@ impl ReceiverContext {
                         true,
                         self.config.fake_super,
                     )
-                    .map_err(std::io::Error::other)
+                    .map_err(|error| error.into_parts().2)
                 } else {
                     let mode = metadata::fifo_mknod_mode(entry.mode() & 0o7777);
                     fast_io::mknodat_via_sandbox_or_fallback(
@@ -289,15 +289,18 @@ impl ReceiverContext {
                     )
                 };
                 if let Err(error) = create_result {
-                    // upstream: generator.c do_mknod failure - rsyserr() then
-                    // io_error |= IOERR_GENERAL and continue with the next
-                    // entry rather than aborting the whole transfer.
-                    debug_log!(
-                        Recv,
-                        1,
-                        "failed to create special file {}: {}",
-                        node_path.display(),
-                        error
+                    // upstream: generator.c:2521-2522 atomic_create() -
+                    // rsyserr(FERROR_XFER, e, "mknod %s failed",
+                    // full_fname(create_name)). FERROR_XFER sets
+                    // got_xfer_error (log.c:337-338), which lifts the exit to
+                    // RERR_PARTIAL (23); the entry is skipped, the run goes on.
+                    let _ = self.emit_error_xfer_line(
+                        writer,
+                        &format!(
+                            "rsync: [generator] mknod {} failed: {}\n",
+                            self.full_fname_in_dest(dest_dir, &node_path),
+                            logging::upstream_errno_text(&error)
+                        ),
                     );
                     continue;
                 }
