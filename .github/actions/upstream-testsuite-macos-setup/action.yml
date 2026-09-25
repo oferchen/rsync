@@ -170,5 +170,9 @@ runs:
           echo "UPSTREAM_LDFLAGS=${LDFLAGS}"
         } >> "$GITHUB_ENV"
 
+    - name: Fetch upstream rsync tarballs
+      if: steps.cache-upstream.outputs.cache-hit != 'true'
+      uses: ./.github/actions/fetch-upstream-rsync
+
     - name: Build oc-rsync (release)
       uses: ./.github/actions/build-oc-rsync

@@ -181,6 +181,10 @@ jobs:
             target/interop/upstream-src/rsync-${{ env.UPSTREAM_RSYNC_VERSION }}
           key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ hashFiles('tools/ci/run_upstream_testsuite.sh', 'tools/ci/build_old_rsync_oracle.sh') }}-${{ runner.os }}
 
+      - name: Fetch upstream rsync tarballs
+        if: steps.cache-upstream.outputs.cache-hit != 'true'
+        uses: ./.github/actions/fetch-upstream-rsync
+
       - name: Build oc-rsync (release)
         uses: ./.github/actions/build-oc-rsync
 
@@ -372,6 +376,10 @@ jobs:
           path: |
             target/interop/upstream-src/rsync-${{ env.UPSTREAM_RSYNC_VERSION }}
           key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ hashFiles('tools/ci/run_upstream_testsuite.sh', 'tools/ci/build_old_rsync_oracle.sh') }}-${{ runner.os }}
+
+      - name: Fetch upstream rsync tarballs
+        if: steps.cache-upstream.outputs.cache-hit != 'true'
+        uses: ./.github/actions/fetch-upstream-rsync
 
       - name: Build oc-rsync (release)
         uses: ./.github/actions/build-oc-rsync

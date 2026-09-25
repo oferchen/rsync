@@ -75,6 +75,10 @@ jobs:
           restore-keys: |
             upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-
 
+      - name: Fetch upstream rsync tarballs
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        uses: ./.github/actions/fetch-upstream-rsync
+
       - name: Build upstream rsync
         if: steps.cache-rsync.outputs.cache-hit != 'true'
         run: |

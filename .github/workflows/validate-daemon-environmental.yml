@@ -58,6 +58,9 @@ jobs:
             target/interop/upstream-src/rsync-${{ env.UPSTREAM_RSYNC_VERSION }}
           key: validate-daemon-env-${{ env.UPSTREAM_RSYNC_VERSION }}
 
+      - name: Fetch upstream rsync tarballs
+        uses: ./.github/actions/fetch-upstream-rsync
+
       - name: Build oc-rsync (release) - needed by harness even when validating upstream
         uses: ./.github/actions/build-oc-rsync
 
