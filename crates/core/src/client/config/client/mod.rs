@@ -346,7 +346,6 @@ pub struct ClientConfig {
     /// upstream: `options.c:server_options()` appends `remote_options[]` at the
     /// end of the server argument vector.
     pub(super) remote_options: Vec<OsString>,
-    pub(super) daemon_params: Vec<String>,
     pub(super) protocol_version: Option<protocol::ProtocolVersion>,
     #[cfg(feature = "embedded-ssh")]
     pub(super) embedded_ssh_config: Option<EmbeddedSshOptions>,
@@ -550,7 +549,6 @@ impl Default for ClientConfig {
             no_motd: false,
             password_override: None,
             remote_options: Vec::new(),
-            daemon_params: Vec::new(),
             protocol_version: None,
             #[cfg(feature = "embedded-ssh")]
             embedded_ssh_config: None,

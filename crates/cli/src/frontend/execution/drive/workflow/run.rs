@@ -233,7 +233,9 @@ where
         stop_after,
         stop_at,
         out_format,
-        dparam,
+        // `--dparam` never reaches here: `run` routes it to the daemon-option
+        // check first, as upstream's OPT_DAEMON does (options.c:867).
+        dparam: _,
         no_iconv,
         prefer_aes_gcm,
         ssh_cipher: _ssh_cipher,
@@ -1122,10 +1124,6 @@ where
         no_motd,
         password_override,
         remote_options,
-        daemon_params: dparam
-            .into_iter()
-            .map(|s| s.to_string_lossy().into_owned())
-            .collect(),
         files_from: files_from_resolved.clone(),
         from0,
         spill_dir,

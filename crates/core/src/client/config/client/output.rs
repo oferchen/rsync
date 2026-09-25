@@ -131,17 +131,6 @@ impl ClientConfig {
     pub fn password_override(&self) -> Option<&[u8]> {
         self.password_override.as_deref()
     }
-
-    /// Returns the daemon parameter overrides to send during the daemon handshake.
-    ///
-    /// Each entry is a `key=value` string that overrides a module-level
-    /// configuration directive. Mirrors upstream rsync's `--dparam` / `-M` option.
-    #[must_use]
-    #[doc(alias = "--dparam")]
-    #[doc(alias = "-M")]
-    pub fn daemon_params(&self) -> &[String] {
-        &self.daemon_params
-    }
 }
 
 #[cfg(test)]
@@ -192,11 +181,5 @@ mod tests {
     fn collect_events_default_is_false() {
         let config = default_config();
         assert!(!config.collect_events());
-    }
-
-    #[test]
-    fn daemon_params_default_is_empty() {
-        let config = default_config();
-        assert!(config.daemon_params().is_empty());
     }
 }

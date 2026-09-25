@@ -233,7 +233,6 @@ pub(crate) struct ConfigInputs {
     pub(crate) password_override: Option<Vec<u8>>,
     /// Extra options forwarded to the remote rsync process via `-M`.
     pub(crate) remote_options: Vec<OsString>,
-    pub(crate) daemon_params: Vec<String>,
     pub(crate) files_from: FilesFromSource,
     pub(crate) from0: bool,
     /// CLI override for the reorder-buffer spill directory.
@@ -544,5 +543,4 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .no_motd(inputs.no_motd)
         .password_override(inputs.password_override)
         .remote_options(inputs.remote_options)
-        .daemon_params(inputs.daemon_params)
 }

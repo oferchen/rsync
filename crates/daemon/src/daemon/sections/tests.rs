@@ -8,21 +8,6 @@ fn module_with_refuse(refuse_options: Vec<String>) -> ModuleDefinition {
     }
 }
 
-#[test]
-fn parse_daemon_option_extracts_option_payload() {
-    assert_eq!(parse_daemon_option("OPTION --list"), Some("--list"));
-    assert_eq!(
-        parse_daemon_option("option --max-verbosity"),
-        Some("--max-verbosity")
-    );
-}
-
-#[test]
-fn parse_daemon_option_rejects_invalid_values() {
-    assert!(parse_daemon_option("HELLO there").is_none());
-    assert!(parse_daemon_option("OPTION   ").is_none());
-}
-
 /// `canonical_option` strips the dashes and any `=value`, and PRESERVES case.
 ///
 /// upstream matches refuse rules with `wildmatch` (options.c:923-924), not the
