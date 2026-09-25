@@ -39,18 +39,18 @@ oc-rsync leverages Rust's memory safety to eliminate entire vulnerability classe
 ### Unsafe Code Policy
 
 Crates that enforce `#![deny(unsafe_code)]` with no allow-listed exceptions in production code:
-- `daemon`, `cli`, `core`, `transfer`, `batch`, `filters`, `signature`, `matching`, `bandwidth`, `logging`, `logging-sink`, `branding`, `rsync_io`, `compress`, `apple-fs`, `flist`, `embedding`, `test-support` - business logic, parsers, orchestration, and high-level I/O wrappers. `embedding` carries one `#[cfg(test)]`-only `#[allow(unsafe_code)]` on a `tests::EnvGuard` helper that wraps `std::env::set_var` under a process-wide mutex.
+- `daemon`, `cli`, `core`, `transfer`, `batch`, `filters`, `signature`, `matching`, `bandwidth`, `logging`, `logging-sink`, `branding`, `rsync_io`, `compress`, `apple-fs`, `flist`, `embedding`, `test-support` - business logic, parsers, orchestration, and high-level I/O wrappers. Some of these crates carry `#[allow(unsafe_code)]` inside `#[cfg(test)]` modules only, for example to set environment variables in tests.
 
 Crates with `#![deny(unsafe_code)]` and targeted `#[allow(unsafe_code)]` for documented FFI/SIMD boundaries:
 - `metadata` - Ownership and privilege FFI (UID/GID lookup via `getpwuid_r`/`getgrnam_r`, `setuid`/`setgid`, `setattrlist`)
 - `protocol` - One isolated `#[allow]` in `multiplex::helpers` for performance-critical frame parsing
 - `engine` - Denies unsafe outside tests (`#![cfg_attr(not(test), deny(unsafe_code))]`) with targeted `#[allow(unsafe_code)]` on platform FFI (prefetch, buffer pool, `CopyFileExW`)
-- `platform` - Daemonization, name resolution (`getpwnam_r`/`getgrnam_r`), privilege transitions (`setuid`/`setgid`/`initgroups`), and chroot syscalls. Signal-handler installation has been hoisted out into `fast_io::signal::install_signal_handler`; the handlers themselves are defined in `core::signal` under a plain `#![deny(unsafe_code)]`.
+- `platform` - Daemonization, per-connection `fork`/`waitpid`, name and group resolution, privilege transitions (`setuid`/`setgid`/`initgroups`), chroot, environment access, local time, signal disposition, and Windows service dispatch
 - `checksums` - SIMD intrinsics for MD4/MD5 and rolling checksums (AVX2, AVX-512, SSE2, SSSE3, SSE4.1, NEON, WASM), with scalar fallbacks and parity tests
 - `fast_io` - Platform I/O syscalls (sendfile, io_uring, mmap, `copy_file_range`, IOCP, `WSARecv`/`WSASend`, `setsockopt`) and the `signal::install_signal_handler` FFI wrapper, with standard I/O / no-op fallbacks
 - `windows-gnu-eh` - Windows GNU exception handling shims (properly documented)
 
-**Long-term direction.** Unsafe code is being consolidated into `fast_io` as the single crate permitted to wrap platform FFI directly; new unsafe code goes there and is exposed via safe public APIs. New `#[allow(unsafe_code)]` annotations in any other crate require explicit review.
+**Long-term direction.** Unsafe code is being consolidated into two owning crates: `fast_io` for I/O syscalls and `platform` for process, identity, environment and signals. Both expose safe public APIs. `metadata`, `checksums`, `engine` and `protocol` still hold production unsafe until their sites migrate. New `#[allow(unsafe_code)]` annotations in any other crate require explicit review.
 
 **Note:** OS-level race conditions (TOCTOU) remain possible at filesystem boundaries; Rust's memory safety does not prevent them.
 
@@ -70,7 +70,7 @@ oc-rsync monitors upstream rsync CVEs to verify continued non-applicability. Rec
 | CVE-2024-12747 | Symlink race condition | Mitigated | TOCTOU is OS-level |
 | CVE-2026-29518 | TOCTOU symlink race in daemon receiver (`use chroot = no`) | **Fixed** | All path-based syscalls have been migrated to `*at` variants routed through `DirSandbox` with `openat2(RESOLVE_BENEATH \| RESOLVE_NO_SYMLINKS)` runtime detection (SEC-1.a..q2). Device/FIFO node creation uses `mknodat`/`mkfifoat` (SEC-MK.a..h). A Landlock LSM defense-in-depth layer (SEC-1.p, PR #4702) allowlists `module.path` on the daemon receiver via Landlock 0.4 (requests up to ABI v5 with best-effort downgrade; v1 on kernel 5.13+). Umbrella tracking issue #2516. |
 | CVE-2026-43617 / GHSA-rjfm-3w2m-jf4f | Reverse-DNS lookup after daemon chroot causes hostname ACL bypass | **Fixed** | Hostname resolution runs before chroot at two levels: session-level `resolve_peer_hostname()` in `session_runtime.rs::handle_session` (at accept time, before any module selection), and module-level `module_peer_hostname()` in `module_access::request.rs::respond_with_module_request` / `listing.rs::respond_with_module_list` (during ACL evaluation). Per-module chroot is applied later in `transfer.rs::apply_privilege_restrictions_with_upstream_errors` (after auth and argument reading). The `daemon chroot` global directive is applied once at startup in `accept_loop.rs::serve_connections` (before the accept loop), so per-connection DNS post-chroot can fail when the chroot lacks NSS configuration. To close that path without depending on the chroot containing `/etc/resolv.conf`/`/etc/nsswitch.conf`/`/etc/hosts`/NSS shared objects, `ModuleDefinition::permits` fails closed when reverse DNS returns `None` and any `hosts deny` rule is hostname-based - an attacker who controls their PTR record (or simply blackholes reverse DNS) cannot bypass a hostname-pattern deny rule. Regression tests: `module_peer_hostname_resolution_before_chroot_denies_unknown` (allow-side fail-closed), `module_hostname_deny_fails_closed_when_dns_unresolved` (GHSA scenario A: deny-side fail-closed under daemon chroot), `module_ip_deny_unaffected_by_dns_failure` (scope guard: IP-only rules retain their original semantics). |
-| CVE-2026-43618 | Integer overflow in compressed-token decoder causes memory disclosure | **Fixed** | The upstream C vulnerability uses a multiplexed signed-integer return from `recv_deflated_token()` where a negative `rx_token` is misinterpreted as a literal length, leaking memory via a stale `*data` pointer. oc-rsync's decoder returns a typed `CompressedToken` enum (`Literal(Vec<u8>)` / `BlockMatch(u32)` / `End`), structurally eliminating the return-value misinterpretation vector. The residual risk - a malicious sender injecting a negative absolute token via `TOKEN_LONG` that wraps to a valid-looking block index after `as u32` cast - is closed by an explicit sign-check (`if self.rx_token < 0 { return Err(...) }`) in all three wire decoders: `zlib_codec.rs:419`, `zstd_codec.rs:460`, `lz4_codec.rs:346`. Regression tests: `zlib_decoder_rejects_negative_absolute_token`, `zstd_decoder_rejects_negative_absolute_token`, `lz4_decoder_rejects_negative_absolute_token`, `zlib_decoder_rejects_i32_min_token` in `crates/protocol/src/wire/compressed_token/tests.rs`. Audit doc: `docs/audits/upstream-3.4.2-token-decoder-parity.md`. |
+| CVE-2026-43618 | Integer overflow in compressed-token decoder causes memory disclosure | **Fixed** | The upstream C vulnerability uses a multiplexed signed-integer return from `recv_deflated_token()` where a negative `rx_token` is misinterpreted as a literal length, leaking memory via a stale `*data` pointer. oc-rsync's decoder returns a typed `CompressedToken` enum (`Literal(Vec<u8>)` / `BlockMatch(u32)` / `End`), structurally eliminating the return-value misinterpretation vector. The residual risk - a malicious sender injecting a negative absolute token via `TOKEN_LONG` that wraps to a valid-looking block index after `as u32` cast - is closed by an explicit sign check in all three wire decoders (zlib, zstd, lz4). Regression tests: `zlib_decoder_rejects_negative_absolute_token`, `zstd_decoder_rejects_negative_absolute_token`, `lz4_decoder_rejects_negative_absolute_token`, `zlib_decoder_rejects_i32_min_token` in `crates/protocol/src/wire/compressed_token/tests.rs`. Audit doc: `docs/audits/upstream-3.4.2-token-decoder-parity.md`. |
 | CVE-2026-43619 | Symlink races on chmod/lchown/utimes/rename/unlink/mkdir/symlink/mknod/link/rmdir/lstat | **Fixed** | Same root cause as CVE-2026-29518. All `*at` helpers shipped and receiver call sites fully wired: `lstat` / `unlink` / `rmdir` / `mkdir` / `symlink` / `link` migrated to `fstatat` / `unlinkat` / `mkdirat` / `symlinkat` / `linkat`; `chmod` / `lchown` / `utimes` migrated to `fchmodat` / `fchownat` / `utimensat` (SEC-1.i, PR #4690); `rename` migrated to `renameat` (SEC-1.j, PR #4693); `mknod` / `mkfifo` migrated to `mknodat` / `mkfifoat` (SEC-MK.a..h). Receiver wiring for SEC-1.i/j helpers completed (SEC-1.q/q2). The `recursive_unlinkat` helper shipped (SEC-1.s). The SEC-1.p Landlock LSM defense-in-depth layer (PR #4702) confines the daemon receiver to the configured `module.path` via Landlock 0.4 (kernel 5.13+). Umbrella tracking issue #2516. |
 | CVE-2026-43620 | OOB read in `recv_files` via negative `parent_ndx` → client SIGSEGV | Not vulnerable | oc-rsync consumes the parent reference as `Option<usize>` and indexes into a bounds-checked `Vec` (`crates/protocol/src/flist/dir_tree.rs`). The validating entry point `DirectoryTree::try_add_directory` returns `DirTreeError::OutOfBoundsParent` on a malformed wire index; the unchecked `add_directory` aborts via Rust's bounds-check panic. Regression coverage: `try_add_directory_rejects_out_of_range_parent_idx`, `try_add_directory_rejects_boundary_off_by_one`, `add_directory_panics_safely_on_oob_parent_idx` in `crates/protocol/src/flist/dir_tree.rs`. SEC-4 closed. |
 | CVE-2026-45232 | Off-by-one stack write in HTTP CONNECT proxy response handler | **Fixed** | `read_proxy_line()` in `crates/core/src/client/module_list/connect/proxy.rs` reads byte-by-byte into a heap `Vec<u8>` and explicitly caps the response line at `MAX_PROXY_LINE_BYTES = 1023` bytes, matching upstream's 1024-byte `establish_proxy_connection()` stack buffer (socket.c:86). The C off-by-one stack-write is structurally impossible (bounds-checked `Vec::push`), and indefinite buffering is bounded by the explicit cap. Audit: SEC-2.a (PR #4609); upstream-parity alignment SEC-2.b (PR #4812). |
@@ -79,58 +79,31 @@ oc-rsync monitors upstream rsync CVEs to verify continued non-applicability. Rec
 
 rsync 3.5.0 is a major security release closing **33 CVEs**, concentrated in path handling and the daemon. That figure is upstream's own: "This release fixes 33 security issues found during a focused audit of rsync's..." (`NEWS.md:37` in the 3.5.0 tarball). Unlike the 3.4.2/3.4.3 batches below, this set is **not yet fully audited against oc-rsync**, and this section states that plainly rather than implying coverage that does not exist.
 
-**How much is audited: 10 of them.** A disclaimer that does not carry a number cannot be checked, so here is the count. Ten of the 3.5.0 CVEs have a per-CVE finding recorded in this document; the twenty-two below have **no entry yet** - they are neither claimed fixed nor claimed inapplicable:
+**How much is assessed: 14 of 33.** A disclaimer without a number cannot be checked, so here is the count. 14 of the 3.5.0 CVE ids appear in a table row below, and some of those rows are still marked "under audit". The other 19 have **no entry yet**. They are neither claimed fixed nor claimed inapplicable:
 
 ```
 CVE-2026-53785  CVE-2026-53786  CVE-2026-53788  CVE-2026-53789
-CVE-2026-53792  CVE-2026-53793  CVE-2026-53796  CVE-2026-53797
+CVE-2026-53792  CVE-2026-53794  CVE-2026-53796  CVE-2026-53797
 CVE-2026-53798  CVE-2026-53799  CVE-2026-53800  CVE-2026-53801
-CVE-2026-53802  CVE-2026-53803  CVE-2026-70454  CVE-2026-70456
-CVE-2026-70457  CVE-2026-70458  CVE-2026-70459  CVE-2026-70460
-CVE-2026-70461  CVE-2026-70462
+CVE-2026-53802  CVE-2026-53803  CVE-2026-70454  CVE-2026-70457
+CVE-2026-70459  CVE-2026-70460  CVE-2026-70462
 ```
 
-Re-derive the roster from the pinned tarball rather than trusting this list. Note
-the predicate: an id counts as assessed only when it has a **table row** here, not
-merely a mention - the roster above mentions all twenty-two, so a plain `grep` for
-CVE ids in this file matches them and reports nothing missing:
+Re-derive the roster from the pinned tarball rather than trusting this list. An id counts as assessed only when it appears in the first cell of a **table row**, not merely in the text, because the roster above mentions every untriaged id:
 
 ```sh
 sed -n '1,451p' target/interop/upstream-src/rsync-3.5.0/NEWS.md \
   | grep -o 'CVE-2026-[0-9]*' | sort -u > /tmp/batch
-grep -o '^| CVE-2026-[0-9]*' SECURITY.md | sed 's/^| //' | sort -u > /tmp/assessed
-comm -23 /tmp/batch /tmp/assessed          # ids with no per-CVE row
+grep '^| CVE-2026-' SECURITY.md | cut -d'|' -f2 \
+  | grep -oE '[0-9]{5}' | sed 's/^/CVE-2026-/' | sort -u > /tmp/assessed
+comm -23 /tmp/batch /tmp/assessed          # ids with no table row
 ```
 
-That prints 23 lines. Twenty-two are the roster above; the twenty-third,
-`CVE-2026-53794`, is a back-reference - it appears in upstream's 3.5.0 section but
-also in an older one, alongside `CVE-2026-43617` and `CVE-2026-43620`, and
-`CVE-2024-12084` is cited there only as prior art. Upstream's own sentence, not this subtraction, is the authority for **33**; the discrepancy is in how back-references are counted, not in the roster of untriaged ids.
+Lines 1-451 are upstream's 3.5.0 section. They name 35 ids: upstream's 33 plus two back-references to 3.4.3 fixes (`CVE-2026-43617`, `CVE-2026-43620`), which have their own rows above. The command prints the 19 ids listed here.
 
 **What is established.** 3.5.0 is wire-identical to 3.4.4 (`PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h`), so none of these CVEs stem from a protocol change and none require a wire-format response. They are implementation vulnerabilities in areas oc-rsync reimplements independently, which means neither "inherited" nor "not applicable" can be assumed for any of them - each needs its own evidence.
 
-**What is measured.** Upstream's 3.5.0 test suite runs against oc-rsync as a gate on every pull request, in eight legs - platform {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege {non-root, root}. Each leg carries an expected-outcome manifest generated from a real run, so the divergence set is a committed, per-test ledger rather than an estimate:
-
-| leg | pass | fail | skip | corpus |
-|---|---:|---:|---:|---:|
-| Linux, non-root, pipe | 261 | 0 | 84 | 345 |
-| Linux, root, pipe | 290 | 0 | 55 | 345 |
-| Linux, non-root, tcp | 119 | 4 | 32 | 155 |
-| Linux, root, tcp | 137 | 4 | 14 | 155 |
-| macOS, non-root, pipe | 238 | 2 | 105 | 345 |
-| macOS, root, pipe | 267 | 1 | 77 | 345 |
-| macOS, non-root, tcp | 116 | 4 | 35 | 155 |
-| macOS, root, tcp | 132 | 4 | 19 | 155 |
-
-Each row is the outcome column of the corresponding
-`tools/ci/upstream-3.5.0-expect.*.txt`, counted rather than transcribed:
-
-```sh
-awk '!/^#/ && NF {c[$NF]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' \
-  tools/ci/upstream-3.5.0-expect.nonroot.txt
-```
-
-The pipe legs run the whole 345-test corpus; the tcp legs add `--daemon-tests-only`, so they re-run the 155 tests that can observe the transport. **No test** diverges on either full-corpus Linux leg, and **6 distinct tests** diverge across all eight committed manifests (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). That set is the triage input, not a vulnerability count: it mixes real behavioural gaps, harness differences, and probes for C-level memory errors that have no Rust analogue. Classification requires per-test evidence, and a fix flips its manifest rows in the same commit - re-baselining a row without a fix would be a waiver, and the gate fails on an unexpected *pass* for exactly that reason.
+**What is measured.** Upstream's 3.5.0 test suite runs against oc-rsync on every pull request in eight legs: platform {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege {non-root, root}. Each leg carries an expected-outcome manifest generated from a real run (`tools/ci/upstream-3.5.0-expect.*.txt`). The per-leg counts and the command that re-derives them are in the [README](./README.md#upstream-testsuite). No test fails on either full-corpus Linux leg, and **6 distinct tests** fail across all eight manifests (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). That set is triage input, not a vulnerability count. A fix flips its manifest rows in the same commit, and the gate fails on an unexpected *pass* so a row cannot be re-baselined without a fix.
 
 **Highest-severity items and their oc-rsync bearing:**
 
@@ -153,6 +126,10 @@ The pipe legs run the whole 345-test corpus; the tcp legs add `--daemon-tests-on
 
 A Rust reimplementation is immune to the *memory-corruption* half of several of these by construction. It is **not** immune to the logic half - a fail-open access check, an unconfined path, or an unbounded peer-supplied count is equally reachable in safe Rust. This section will be updated per-CVE as each is closed or evidenced as non-applicable.
 
+### Upstream rsync 3.5.1
+
+Upstream has released rsync 3.5.1, which advertises protocol 33. Its security fixes are being tracked against oc-rsync. No disposition is claimed for any of them yet. oc-rsync still pins 3.5.0 as its reference; a peer advertising protocol 33 is negotiated down to 32 (PR #7916).
+
 ### Upstream rsync 3.4.3 audits (2026-05-20)
 
 rsync 3.4.3 (released 2026-05-20) is a major security release closing six CVEs and a defense-in-depth batch. Per-CVE applicability is captured in the table above (CVE-2026-29518 / 43617 / 43618 / 43619 / 43620 / 45232). The defense-in-depth items were audited as follows:
@@ -162,7 +139,7 @@ rsync 3.4.3 (released 2026-05-20) is a major security release closing six CVEs a
 - **Parent block-index bounds check on receiver** - addressed by CVE-2026-43620 entry above.
 - **NULL check in `read_delay_line()`** - oc-rsync uses `Option<&str>` so the C null-dereference is impossible.
 - **Lower ceiling on `MAX_WIRE_DEL_STAT`** - re-audited against the tree: the delete-stats reader lives at `crates/protocol/src/stats/delete.rs`, reads each category as a varint, and caps every one at `MAX_WIRE_DEL_STAT = 1 << 28` - the same value upstream lowered to (`rsync.h:187`, unchanged in 3.4.4 and 3.5.0), rejecting anything above it rather than clamping.
-- **Reject hyphen-prefixed remote-shell hostnames** - tracked under SEC-3 (`crates/rsync_io/src/ssh/operand.rs` + `parse.rs` already had hostname validation; verify it includes leading-hyphen rejection).
+- **Reject hyphen-prefixed remote-shell hostnames** - fixed under SEC-3 below; `crates/rsync_io/src/ssh/operand.rs` rejects a leading `-`.
 - **NULL-check on `localtime_r()` in `timestring()`** - oc-rsync uses `chrono`/`time` for timestamp formatting; out-of-range timestamps return `Err` rather than dereferencing a null pointer.
 
 Open follow-ups:
@@ -196,7 +173,7 @@ Additionally shipped since the last update:
 
 **Status: Fixed.** All receiver call sites are wired through `DirSandbox`, and the SEC-1.m / SEC-1.n regression suites pass against the fully-wired pipeline. The SEC-1.p Landlock layer provides defense-in-depth.
 
-CI integration: upstream rsync's own testsuite runs against oc-rsync as `$RSYNC` on every pull request. The gating corpus has been the rewritten **3.5.0 Python suite** since 2026-08-19 (PR #7387), with the two loopback-TCP legs added on 2026-08-20 (PR #7408); it runs as the eight legs tabulated above. All four Linux legs are required status checks - `upstream-testsuite / upstream testsuite{,(root)}` and `upstream-testsuite-tcp / upstream testsuite{,(root)}` - since PR #7408 wired the TCP pair into PR CI. The four macOS legs run on every PR as the `upstream-testsuite-macos` and `upstream-testsuite-macos-tcp` jobs but are not yet required contexts, because registering one is a repo-admin action; their manifests gate them on drift regardless. Each leg is gated by its committed expected-outcome manifest (`tools/ci/upstream-3.5.0-expect.*.txt`, eight files), generated from a real run and never hand-typed. The 3.4.4 shell corpus is no longer run on any pull request or schedule: `.github/workflows/_interop.yml` states plainly that it does not drive it, `tools/ci/run_upstream_testsuite.sh` defaults to `UPSTREAM_VERSION=3.5.0`, and the testsuite jobs read their own `UPSTREAM_TESTSUITE_VERSION` (default `3.5.0`) rather than the interop matrix's `UPSTREAM_RSYNC_VERSION`, so retargeting interop cannot drag the conformance gate backwards. Three workflows still name 3.4.4, but only one of them concerns the testsuite: `ci.yml` and `interop-validation.yml` default the *interop peer* to 3.4.4, which is a legitimate protocol-32 peer in that matrix. The one workflow that pins the *testsuite* to 3.4.4, `validate-daemon-environmental.yml`, is `workflow_dispatch`-only and exists to decide whether a single named test fails environmentally. The roster it would consult, `tools/ci/upstream_testsuite_known_failures.conf`, is empty and reaches only the shell-script path, so it is a historical record rather than a live measurement.
+CI integration: upstream rsync's own testsuite runs against oc-rsync as `$RSYNC` on every pull request. The gating corpus has been the rewritten **3.5.0 Python suite** since PR #7387, with the loopback-TCP legs added in PR #7408. All four Linux legs are required status checks: `upstream-testsuite / upstream testsuite{,(root)}` and `upstream-testsuite-tcp / upstream testsuite{,(root)}`. The four macOS legs run on every PR but are not required contexts; their manifests still gate them on drift. The testsuite jobs read their own `UPSTREAM_TESTSUITE_VERSION` (default `3.5.0`) rather than the interop matrix's `UPSTREAM_RSYNC_VERSION`, so retargeting interop cannot move the conformance gate.
 
 ### Upstream rsync 3.4.2 audits
 

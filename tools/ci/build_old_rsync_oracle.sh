@@ -48,7 +48,7 @@ WORKDIR="${3:-${DEST_DIR}/.build}"
 # exact path. upstream: rsync-3.5.0/old_versions/README.md ("named
 # `rsync_<version>`").
 TARGET_BIN="${DEST_DIR}/rsync_${VERSION}"
-TARBALL_BASE_URL="${RSYNC_TARBALL_BASE_URL:-https://rsync.samba.org/ftp/rsync/src}"
+FETCH="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/fetch_upstream_rsync.sh"
 
 # The banner's first line, or non-zero if the binary would not run at all.
 #
@@ -102,18 +102,10 @@ build_jobs() {
 }
 
 mkdir -p "$DEST_DIR" "$WORKDIR"
-tarball="${WORKDIR}/rsync-${VERSION}.tar.gz"
 srcdir="${WORKDIR}/rsync-${VERSION}"
 
-if [[ ! -f "$tarball" ]]; then
-    echo "==> Fetching rsync ${VERSION} source..." >&2
-    curl -fsSL --connect-timeout 30 --max-time 300 \
-        "${TARBALL_BASE_URL}/rsync-${VERSION}.tar.gz" -o "${tarball}.part"
-    mv "${tarball}.part" "$tarball"
-fi
-
 rm -rf "$srcdir"
-tar xzf "$tarball" -C "$WORKDIR"
+bash "$FETCH" "$VERSION" "$WORKDIR" >/dev/null
 
 # _FORTIFY_SOURCE=0 is LOAD-BEARING, not tidiness. Modern distributions default
 # it to =3, whose object-size checks turn latent (historically benign)
