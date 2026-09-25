@@ -13,9 +13,25 @@
 //! The meaning of read/write swaps between sender and receiver perspectives.
 
 use std::io::{self, Read, Write};
+use std::time::Duration;
 
 use crate::varint::{read_longint, read_varlong, write_longint, write_varlong};
 use crate::version::ProtocolVersion;
+
+/// Converts a measured file-list build span into the sender's `flist_buildtime`.
+///
+/// The value is whole milliseconds, and a zero measurement is reported as 1.
+/// The peer prints "File list generation time" only for a non-zero value, so
+/// without the clamp a fast build would suppress that `--stats` line.
+///
+/// upstream: flist.c:2773-2777 send_file_list(), gate at main.c:450
+/// output_summary().
+#[must_use]
+pub fn flist_buildtime_ms(elapsed: Duration) -> u64 {
+    u64::try_from(elapsed.as_millis())
+        .unwrap_or(u64::MAX)
+        .max(1)
+}
 
 /// Writes one stats field using upstream's `write_varlong30` macro semantics.
 ///

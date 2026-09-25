@@ -1,7 +1,25 @@
 use std::io::Cursor;
 
-use crate::stats::{DeleteStats, TransferStats};
+use crate::stats::{DeleteStats, TransferStats, flist_buildtime_ms};
 use crate::version::ProtocolVersion;
+
+/// A sub-millisecond build must still reach the peer as non-zero, or an
+/// upstream client drops its "File list generation time" line (main.c:450).
+#[test]
+fn flist_buildtime_ms_reports_a_zero_measurement_as_one() {
+    assert_eq!(flist_buildtime_ms(std::time::Duration::ZERO), 1);
+    assert_eq!(flist_buildtime_ms(std::time::Duration::from_micros(999)), 1);
+}
+
+/// Real measurements pass through as truncated whole milliseconds.
+#[test]
+fn flist_buildtime_ms_truncates_to_whole_milliseconds() {
+    assert_eq!(
+        flist_buildtime_ms(std::time::Duration::from_micros(2_999)),
+        2
+    );
+    assert_eq!(flist_buildtime_ms(std::time::Duration::from_secs(3)), 3_000);
+}
 
 #[test]
 fn test_transfer_stats_roundtrip_proto30() {

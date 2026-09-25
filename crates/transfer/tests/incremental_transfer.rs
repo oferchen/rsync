@@ -28,6 +28,8 @@ fn transfer_stats_incremental_fields_exist() {
         bytes_sent: 100,
         total_source_bytes: 5000,
         flist_size: 0,
+        flist_buildtime_ms: 0,
+        flist_xfertime_ms: 0,
         metadata_errors: vec![],
         io_error: 0,
         got_xfer_error: false,

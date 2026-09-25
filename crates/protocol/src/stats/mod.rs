@@ -15,4 +15,4 @@ mod tests;
 
 pub use created::CreatedStats;
 pub use delete::DeleteStats;
-pub use transfer::TransferStats;
+pub use transfer::{TransferStats, flist_buildtime_ms};

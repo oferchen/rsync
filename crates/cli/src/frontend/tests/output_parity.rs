@@ -222,18 +222,18 @@ fn parity_stats_output_contains_all_upstream_field_labels() {
         output.contains("File list size:"),
         "missing 'File list size:' label in:\n{output}"
     );
-    // Both File list timing lines are emitted together only when the flist
-    // build time exceeds 1 ms, matching upstream's single
-    // `if (stats.flist_buildtime)` guard (main.c:437). Local-only transfers may
-    // complete sub-millisecond, in which case both lines are absent (this
-    // matches upstream rsync behaviour, so the assertion below tolerates either
-    // presence).
-    if output.contains("File list generation time:") {
-        assert!(
-            output.contains("File list transfer time:"),
-            "transfer-time line must accompany generation-time line:\n{output}"
-        );
-    }
+    // A local copy runs upstream's send_file_list(), which clamps a zero
+    // flist_buildtime to 1 ms (flist.c:2773-2777), so the
+    // `if (stats.flist_buildtime)` gate (main.c:450) always passes and both
+    // timing lines are printed even for a sub-millisecond build.
+    assert!(
+        output.contains("File list generation time:"),
+        "missing 'File list generation time:' label in:\n{output}"
+    );
+    assert!(
+        output.contains("File list transfer time:"),
+        "missing 'File list transfer time:' label in:\n{output}"
+    );
     assert!(
         output.contains("Total bytes sent:"),
         "missing 'Total bytes sent:' label in:\n{output}"
@@ -249,9 +249,7 @@ fn parity_stats_output_field_order_matches_upstream() {
     let (summary, _temp) = create_known_summary(&[("order.txt", b"test content")]);
     let output = render_stats(&summary, HumanReadableMode::Grouped);
 
-    // Upstream rsync emits stats in a fixed order. The File-list timing
-    // lines are conditional on `stats.flist_buildtime > 0` (main.c:437);
-    // when both are sub-millisecond they are omitted on both sides.
+    // Upstream rsync emits stats in a fixed order.
     let labels = [
         "Number of files:",
         "Number of created files:",
@@ -271,12 +269,6 @@ fn parity_stats_output_field_order_matches_upstream() {
     let mut last_pos = 0;
     for label in &labels {
         let Some(pos) = output.find(label) else {
-            // Tolerate absent flist-timing labels (sub-ms transfers).
-            if label.starts_with("File list generation time:")
-                || label.starts_with("File list transfer time:")
-            {
-                continue;
-            }
             panic!("label {label:?} not found in stats output:\n{output}");
         };
         assert!(
