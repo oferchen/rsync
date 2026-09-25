@@ -1605,42 +1605,6 @@ mod script_generation {
     }
 
     #[test]
-    fn generate_script_with_args_preserves_options() {
-        let temp_dir = TempDir::new().unwrap();
-        let batch_path = temp_dir.path().join("args_test.batch");
-
-        let config = BatchConfig::new(
-            BatchMode::Write,
-            batch_path.to_string_lossy().to_string(),
-            30,
-        );
-
-        let args = vec![
-            "oc-rsync".to_owned(),
-            "-avz".to_owned(),
-            "--progress".to_owned(),
-            "--write-batch=args_test.batch".to_owned(),
-            "source/".to_owned(),
-            "dest/".to_owned(),
-        ];
-
-        script::generate_script_with_args(&config, &args, None).unwrap();
-
-        let script_path = config.script_file_path();
-        let content = fs::read_to_string(&script_path).unwrap();
-
-        assert!(
-            content.contains("--read-batch="),
-            "Should convert to read-batch"
-        );
-        assert!(content.contains("-avz"), "Should preserve -avz option");
-        assert!(
-            content.contains("--progress"),
-            "Should preserve --progress option"
-        );
-    }
-
-    #[test]
     fn generate_script_with_filter_rules() {
         let temp_dir = TempDir::new().unwrap();
         let batch_path = temp_dir.path().join("filter_test.batch");
@@ -1651,17 +1615,9 @@ mod script_generation {
             30,
         );
 
-        let args = vec![
-            "oc-rsync".to_owned(),
-            "-av".to_owned(),
-            "--write-batch=filter_test.batch".to_owned(),
-            "source/".to_owned(),
-            "dest/".to_owned(),
-        ];
-
         let filter_rules = "- *.tmp\n- *.log\n+ */\n+ *.rs\n- *\n";
 
-        script::generate_script_with_args(&config, &args, Some(filter_rules)).unwrap();
+        script::generate_script_with_filters(&config, Some(filter_rules), None).unwrap();
 
         let script_path = config.script_file_path();
         let content = fs::read_to_string(&script_path).unwrap();

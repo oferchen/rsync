@@ -403,7 +403,7 @@ fn daemon_pull_write_batch_records_and_replays() {
     // destination root from `transfer_args().last()`, so the canonical
     // single-positional form `oc-rsync --read-batch=FILE DEST/` is the
     // safest invocation: it matches what
-    // `generate_script_with_args` emits into the trailing batch.sh and
+    // `generate_script_with_filters` emits into the trailing batch.sh and
     // what upstream's `rsync(1)` documents for `--read-batch`.
     let read_batch_arg = {
         let mut s = std::ffi::OsString::from("--read-batch=");
