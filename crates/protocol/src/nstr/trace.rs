@@ -125,7 +125,7 @@ impl NstrCategory {
 /// Upstream sentinel for `do_compression_level` when the user did not
 /// pass `--compress-level=N`.
 ///
-/// upstream: `rsync.h:1151` `#define CLVL_NOT_SPECIFIED INT_MIN`.
+/// upstream: `rsync.h:1153` `#define CLVL_NOT_SPECIFIED INT_MIN`.
 /// This is the raw wire value before resolution; it is NOT what upstream
 /// prints. `parse_compress_choice(1)` calls `init_compression_level()`
 /// (`token.c:55`) first, which substitutes the codec `def_level` for this
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn clvl_not_specified_matches_upstream_int_min() {
-        // upstream: rsync.h:1151 - `#define CLVL_NOT_SPECIFIED INT_MIN`.
+        // upstream: rsync.h:1153 - `#define CLVL_NOT_SPECIFIED INT_MIN`.
         assert_eq!(CLVL_NOT_SPECIFIED, i32::MIN);
     }
 

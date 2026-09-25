@@ -1,6 +1,6 @@
 //! Traversal must not put upstream's log-file-only file-list banner on stdout.
 //!
-//! upstream: flist.c:2248 announces the walk with
+//! upstream: flist.c:2484 announces the walk with
 //! `rprintf(FLOG, "building file list\n")`. log.c:rwrite() handles FLOG by
 //! writing to the log and returning (`if (code == FLOG || ...) return;`), and
 //! by returning outright (`else if (code == FLOG) return;`) when the client has

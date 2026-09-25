@@ -87,7 +87,7 @@ fn golden_v29_stats_zero_flist_times() {
 /// Verifies exact wire bytes for protocol 29 transfer stats.
 ///
 /// Protocol 29 is below 30, so upstream io.h:46 write_varlong30() routes each
-/// field through io.c:2222 write_longint(): a small value (0..=0x7FFFFFFF) is
+/// field through io.c:2260 write_longint(): a small value (0..=0x7FFFFFFF) is
 /// written as a fixed 4-byte little-endian int. A zero field is 4 zero bytes.
 #[test]
 fn golden_v29_stats_exact_wire_bytes() {

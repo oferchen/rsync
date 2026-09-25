@@ -331,7 +331,7 @@ impl ServerConfigBuilder {
     /// Enables `--open-noatime` propagation for source-file reads.
     ///
     /// Linux/Android only; ignored on other platforms. Mirrors upstream
-    /// `syscall.c:228 do_open` / `syscall.c:687 do_open_nofollow`.
+    /// `syscall.c:278 do_open` / `syscall.c:826 do_open_nofollow`.
     pub fn open_noatime(&mut self, enabled: bool) -> &mut Self {
         self.write.open_noatime = enabled;
         self
@@ -460,7 +460,7 @@ impl ServerConfigBuilder {
     /// Sets the `--modify-window` mtime comparison tolerance in whole seconds.
     ///
     /// A negative `seconds` selects upstream's nanosecond-exact comparison
-    /// (`modify_window < 0`, util1.c:1482).
+    /// (`modify_window < 0`, util1.c:1577).
     pub fn modify_window(&mut self, seconds: i64) -> &mut Self {
         self.file_selection.modify_window = ModifyWindow::from_secs(seconds);
         self
@@ -563,8 +563,8 @@ impl ServerConfigBuilder {
     ///
     /// - `clientserver.c:992-1004` - daemon resolves `munge_symlinks` from
     ///   `lp_munge_symlinks()` and the `use_chroot` auto default.
-    /// - `flist.c:234-238` - sender-side strip.
-    /// - `flist.c:1150-1154` - receiver-side prepend.
+    /// - `flist.c:455-459` - sender-side strip.
+    /// - `flist.c:1375-1379` - receiver-side prepend.
     pub fn munge_symlinks(&mut self, enabled: bool) -> &mut Self {
         self.munge_symlinks = enabled;
         self
@@ -572,7 +572,7 @@ impl ServerConfigBuilder {
 
     /// Validates the builder configuration.
     fn validate(&self) -> Result<(), BuilderError> {
-        // upstream: options.c:2934 - --inplace and --delay-updates are mutually exclusive
+        // upstream: options.c:2944 - --inplace and --delay-updates are mutually exclusive
         if self.write.inplace && self.write.delay_updates {
             return Err(BuilderError::ConflictingOptions {
                 option1: "--inplace",
@@ -588,7 +588,7 @@ impl ServerConfigBuilder {
             });
         }
 
-        // upstream: options.c:2423-2431 - `if (inplace) { if (partial_dir) {
+        // upstream: options.c:2432-2440 - `if (inplace) { if (partial_dir) {
         // "--inplace cannot be used with --partial-dir" }}`. --inplace writes
         // straight into the destination, so a partial-dir staging basis is
         // meaningless; upstream refuses the combination outright.

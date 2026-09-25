@@ -273,7 +273,7 @@ fn whole_list_equals_concatenated_segment_ranges() {
             make_hlink_follower("d2/f1", 4, 3),
             FileEntry::new_symlink("d2/deep/ln2".into(), 0o777, "../f1".into()),
             // Top-level: without bindat(2) a NESTED socket is skipped on
-            // macOS/BSD (upstream: syscall.c:1369-1378 do_mknod_at EOPNOTSUPP,
+            // macOS/BSD (upstream: syscall.c:1508-1517 do_mknod_at EOPNOTSUPP,
             // generator.c:2506-2521), which would leave nothing to compare.
             FileEntry::new_socket("sock".into(), 0o600),
             make_hlink_follower("d3/f2", 4, 3),

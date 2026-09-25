@@ -35,7 +35,7 @@ def _manifests() -> list[Path]:
 def _tally(text: str) -> Counter:
     """Count the outcome of every non-comment row, upstream's parse order.
 
-    Mirrors runtests.py's `parse_expect_result` (rsync-3.5.0/runtests.py:332):
+    Mirrors runtests.py's `parse_expect_result` (rsync-3.5.1/runtests.py:332):
     strip from '#', skip blanks, then split into exactly two fields.
     """
     counts: Counter = Counter()

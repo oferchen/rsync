@@ -23,7 +23,7 @@
 //! paired with a companion proving the fixture is capable of ordinary,
 //! non-escaping behaviour, so no assertion here can pass vacuously.
 //!
-//! upstream: `rsync-3.5.0/syscall.c:1918-1923` `do_rename_at()` and
+//! upstream: `rsync-3.5.1/syscall.c:2057-2062` `do_rename_at()` and
 //! `:2896-2961` `ds_descend()` - upstream confines each endpoint per
 //! component rather than handing a full path to the kernel.
 

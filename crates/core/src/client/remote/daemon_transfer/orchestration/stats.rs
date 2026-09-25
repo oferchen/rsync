@@ -150,7 +150,7 @@ mod tests {
 
     /// A daemon pull adopts the sender's flist times, so `--stats` prints
     /// "File list generation time" exactly when the sender sent a non-zero
-    /// value (main.c:375-376, main.c:450).
+    /// value (main.c:375-376, main.c:453).
     #[test]
     fn pull_summary_carries_the_senders_flist_times() {
         let stats = ServerStats::Receiver(TransferStats {

@@ -35,7 +35,7 @@ fn encode_flist(entries: &[FileEntry]) -> Vec<u8> {
 }
 
 /// Constructs a mode-0 sentinel entry whose name matches a top-level
-/// destination path (`flist.c:2254-2258`, `make_file()` + `file->mode = 0`).
+/// destination path (`flist.c:2491-2497`, `make_file()` + `file->mode = 0`).
 fn sentinel_entry(name: &str) -> FileEntry {
     let mut entry = FileEntry::new_file(name.into(), 0, 0);
     entry.set_mode(0);
@@ -154,7 +154,7 @@ fn receiver_sentinel_for_missing_destination_is_noop() {
 }
 
 /// `--dry-run` short-circuits all filesystem mutations (mirrors upstream's
-/// receiver.c:693).
+/// receiver.c:709).
 #[test]
 fn receiver_sentinel_dry_run_skips_deletion() {
     let temp_dir = TempDir::new().unwrap();

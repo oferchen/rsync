@@ -30,13 +30,13 @@
 //! before writing or after reading: the writer converts local-charset bytes
 //! to the wire encoding (`iconvbufs(ic_send, ...)` in `rsync.c:283-320`)
 //! and the reader converts wire bytes back to local-charset
-//! (`read_line(RL_CONVERT)` in `io.c:1240-1289`). The conversion is applied
+//! (`read_line(RL_CONVERT)` in `io.c:1258-1307`). The conversion is applied
 //! per argument so the NUL delimiters and terminator stay verbatim.
 //!
 //! # Upstream Reference
 //!
 //! - `rsync.c:283-320`: `send_protected_args()` per-arg `iconvbufs(ic_send, ...)`
-//! - `io.c:1240-1289`: `read_line()` with `RL_CONVERT` -> `iconvbufs(ic_recv, ...)`
+//! - `io.c:1258-1307`: `read_line()` with `RL_CONVERT` -> `iconvbufs(ic_recv, ...)`
 //! - `compat.c:799-806`: `filesfrom_convert` / protect-args iconv gating
 
 use std::borrow::Cow;
@@ -129,18 +129,18 @@ pub const MAX_ARGS: usize = 1000;
 /// Upstream's ceiling on the argument vector a *daemon module* connection may
 /// send.
 ///
-/// upstream: `io.c:1452` - `#define MAX_DAEMON_ARGS (MAX_ARGS * 16)`
+/// upstream: `io.c:1478` - `#define MAX_DAEMON_ARGS (MAX_ARGS * 16)`
 ///
 /// This bounds a peer-controlled allocation: without it a client can make the
 /// daemon accumulate an unbounded argument vector before any of it is parsed.
-/// Upstream applies the ceiling only when serving a module (`io.c:1476`), so
+/// Upstream applies the ceiling only when serving a module (`io.c:1502`), so
 /// this constant must reach the reader as a caller-supplied bound rather than
 /// being enforced unconditionally - see [`recv_secluded_args`].
 pub const MAX_DAEMON_ARGS: usize = MAX_ARGS * 16;
 
 /// The refusal upstream emits when a daemon client sends too many arguments.
 ///
-/// upstream: `io.c:1477-1478` - `rprintf(FERROR, "too many daemon arguments\n")`
+/// upstream: `io.c:1503-1504` - `rprintf(FERROR, "too many daemon arguments\n")`
 /// followed by `exit_cleanup(RERR_PROTOCOL)`.
 ///
 /// The wording is upstream's verbatim, so a peer or a log reader sees the same
@@ -166,7 +166,7 @@ pub fn too_many_daemon_arguments() -> io::Error {
 /// `max_args` bounds how many arguments will be accumulated. It is
 /// `Some(MAX_DAEMON_ARGS)` for a daemon module connection and `None`
 /// everywhere else, mirroring upstream's `mod_name` gate: `read_args()`
-/// applies its ceiling only under `if (mod_name && ...)` (`io.c:1476`), so
+/// applies its ceiling only under `if (mod_name && ...)` (`io.c:1502`), so
 /// the rsh/server argument read is deliberately unbounded on both
 /// implementations. The bound is a parameter rather than a constant here for
 /// exactly that reason - the caller decides, because only the caller knows
@@ -174,9 +174,9 @@ pub fn too_many_daemon_arguments() -> io::Error {
 ///
 /// # Upstream Reference
 ///
-/// Mirrors the protected-args reading logic in upstream `io.c:1240-1289`
+/// Mirrors the protected-args reading logic in upstream `io.c:1258-1307`
 /// `read_line()` with the `RL_CONVERT` flag, plus the `MAX_DAEMON_ARGS`
-/// ceiling at `io.c:1476-1479`.
+/// ceiling at `io.c:1502-1505`.
 ///
 /// # Errors
 ///
@@ -224,7 +224,7 @@ pub fn recv_secluded_args<R: Read>(
                     format!("invalid UTF-8 in secluded arg: {e}"),
                 )
             })?;
-            // upstream: io.c:1476-1479 - the ceiling is checked before the
+            // upstream: io.c:1502-1505 - the ceiling is checked before the
             // argument is appended, so the vector never exceeds the bound.
             // Refusing here rather than after the loop is what makes this a
             // memory bound and not just a report: a peer that keeps sending
@@ -554,7 +554,7 @@ mod tests {
 
     // Drain-invariant tests for the secluded-args terminator.
     //
-    // Upstream `io.c:1308-1367` `read_args()` consumes the input stream one
+    // Upstream `io.c:1334-1393` `read_args()` consumes the input stream one
     // line at a time via `read_line()`; the loop terminates when an empty
     // line (the lone `\0` terminator) is read. After termination, the input
     // file descriptor is positioned immediately after the terminator NUL, so
@@ -733,7 +733,7 @@ mod daemon_arg_ceiling_tests {
         let err = recv_secluded_args(&mut cursor, None, Some(MAX_DAEMON_ARGS))
             .expect_err("a daemon connection must refuse an oversized argument vector");
 
-        // upstream: io.c:1477 - the wording is upstream's, verbatim.
+        // upstream: io.c:1503 - the wording is upstream's, verbatim.
         assert_eq!(err.to_string(), "too many daemon arguments");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
@@ -742,7 +742,7 @@ mod daemon_arg_ceiling_tests {
     /// ceiling is supplied. Without this the refusal test would also pass if
     /// the reader had simply become unable to read a long vector at all, and
     /// it pins the deliberate rsh/server divergence - upstream gates the
-    /// ceiling on `mod_name` (`io.c:1476`), so the non-daemon read is
+    /// ceiling on `mod_name` (`io.c:1502`), so the non-daemon read is
     /// unbounded on both implementations.
     #[test]
     fn b_no_ceiling_accepts_the_same_oversized_vector() {
@@ -781,7 +781,7 @@ mod daemon_arg_ceiling_tests {
     /// `max_args` must admit at most `max - 1` arguments: the ceiling reserves
     /// one slot, and the reservation is the whole point of the bound.
     ///
-    /// upstream: `io.c:1476-1479` bounds `read_args()` at `MAX_DAEMON_ARGS`,
+    /// upstream: `io.c:1502-1505` bounds `read_args()` at `MAX_DAEMON_ARGS`,
     /// but `glob_expand()` reserves room only for the entry it appends
     /// (`ENSURE_MEMSPACE(..., glob.argc + 1)`) and not for the trailing NULL
     /// that `read_args()` stores after the loop - so an argument vector landing

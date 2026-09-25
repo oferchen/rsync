@@ -128,7 +128,7 @@ impl ClientProgressUpdate {
     /// summary rather than a per-file tick.
     ///
     /// Mirrors upstream's `end_progress(0)` call at `NDX_DONE`
-    /// (receiver.c:674-676), which prints one final
+    /// (receiver.c:690-692), which prints one final
     /// `(xfr#N, to-chk=0/total)` line under `--info=progress2` even when the
     /// transfer moved no file data (a lone special/symlink, or a no-change
     /// run). It fires only in overall/progress2 rendering; per-file progress
@@ -331,7 +331,7 @@ impl<'a> ClientProgressForwarder<'a> {
     /// Emits the progress2 end-of-transfer summary line when no regular-file
     /// transfer produced one.
     ///
-    /// upstream: receiver.c:674-676 - at `NDX_DONE` the receiver calls
+    /// upstream: receiver.c:690-692 - at `NDX_DONE` the receiver calls
     /// `end_progress(0)` under `--info=progress2`, printing one
     /// `<bytes> <pct>% <rate> <time> (xfr#<n>, to-chk=0/<total>)` line even
     /// when the transfer moved no file data (a lone special/symlink, or a
@@ -390,7 +390,7 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
         // directories and symlinks too, even though they print nothing.
         self.checked = self.checked.saturating_add(1);
 
-        // upstream: receiver.c:731-782 - only ITEM_TRANSFER (regular file data)
+        // upstream: receiver.c:747-798 - only ITEM_TRANSFER (regular file data)
         // entries print a per-file block and bump `xfr#`. Directories, symlinks,
         // devices, FIFOs and hard links are walked (counted above) but return
         // here. An up-to-date match is likewise silent under `--progress`/`-P`

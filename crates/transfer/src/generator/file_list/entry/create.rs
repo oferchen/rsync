@@ -37,7 +37,7 @@ impl GeneratorContext {
         metadata: &fast_io::pinned_root::SourceMetadata,
         filter_level: u8,
     ) -> io::Result<FileEntry> {
-        // upstream: flist.c:1542 DEBUG_GTE(FLIST, 2) `[%s] make_file(%s,*,%d)`.
+        // upstream: flist.c:1767 DEBUG_GTE(FLIST, 2) `[%s] make_file(%s,*,%d)`.
         // The filter level is NO_FILTERS (0) for named sources and ALL_FILTERS
         // (2) for recursed/implied entries (rsync.h:212-214).
         protocol::flist::trace_make_file(
@@ -91,7 +91,7 @@ impl GeneratorContext {
             None
         };
 
-        // upstream: flist.c:1419-1428 - `copy_devices && am_sender &&
+        // upstream: flist.c:1644-1653 - `copy_devices && am_sender &&
         // IS_DEVICE(st.st_mode)` rewrites a block/char device into a regular
         // file: mode becomes `S_IFREG | ACCESSPERMS`, mtime is forced to "now",
         // and the size is the device's readable byte length. The device's
@@ -103,7 +103,7 @@ impl GeneratorContext {
                 && (file_type.is_block_device() || file_type.is_char_device())
             {
                 let mode = metadata.mode() & 0o7777;
-                // upstream: flist.c:1421-1424 - open the device and size it when
+                // upstream: flist.c:1646-1649 - open the device and size it when
                 // st_size is 0 (block devices report 0). `device_readable_size`
                 // mirrors get_device_size() with a macOS ioctl fallback.
                 let size = if metadata.is_empty() {
@@ -120,7 +120,7 @@ impl GeneratorContext {
         let copy_device_override: Option<(u64, u32)> = None;
 
         let mut entry = if let Some((dev_size, dev_mode)) = copy_device_override {
-            // upstream: flist.c:1425 - st.st_mode = S_IFREG | (mode & ACCESSPERMS)
+            // upstream: flist.c:1650 - st.st_mode = S_IFREG | (mode & ACCESSPERMS)
             FileEntry::new_file(relative_path, dev_size, dev_mode)
         } else if file_type.is_file() && {
             #[cfg(windows)]
@@ -159,8 +159,8 @@ impl GeneratorContext {
             #[cfg(not(unix))]
             let mode = 0o755;
 
-            // upstream: flist.c:1662 - `file->len32 = (uint32)st.st_size` runs for
-            // every entry; only devices/specials are zeroed (flist.c:1484-1486).
+            // upstream: flist.c:1887 - `file->len32 = (uint32)st.st_size` runs for
+            // every entry; only devices/specials are zeroed (flist.c:1709-1711).
             // Directories therefore carry their on-disk inode size on the wire,
             // which feeds `--list-only`, `%l`, and the `--stats` total.
             let mut entry = FileEntry::new_directory(relative_path, mode);
@@ -202,19 +202,19 @@ impl GeneratorContext {
                 .read_source_link(full_path)
                 .unwrap_or_else(|_| PathBuf::from(""));
 
-            // upstream: flist.c:222-226 - sender strips the `/rsyncd-munged/`
+            // upstream: flist.c:224-228 - sender strips the `/rsyncd-munged/`
             // prefix from the readlink result when the daemon module has
             // `munge symlinks = yes`, restoring the original target before it
             // is sent on the wire. The matching prepend on the receive side
             // re-applies the prefix when the link is materialized on disk.
             let target = strip_symlink_munge_prefix(self.config.munge_symlinks, raw_target);
 
-            // upstream: flist.c:1669 - `file->mode = st.st_mode` runs verbatim
+            // upstream: flist.c:1894 - `file->mode = st.st_mode` runs verbatim
             // for every type, symlinks included; there is no symlink special
             // case at the flist layer. On Linux a link's permission bits are
             // pinned to 0o777 by the kernel so this reads back as 0o777 anyway,
             // but on the platforms where `CAN_CHMOD_SYMLINK` holds
-            // (rsync.h:455-456: `HAVE_LCHMOD || HAVE_SETATTRLIST`, i.e. macOS
+            // (rsync.h:456-457: `HAVE_LCHMOD || HAVE_SETATTRLIST`, i.e. macOS
             // and the BSDs) a link carries a real, settable mode that the
             // receiver's `-p` apply must be able to reproduce.
             #[cfg(unix)]
@@ -224,7 +224,7 @@ impl GeneratorContext {
             #[cfg(not(unix))]
             let link_mode = 0o777;
 
-            // upstream: flist.c:1501 - symlinks carry `st_size`, which lstat
+            // upstream: flist.c:1726 - symlinks carry `st_size`, which lstat
             // reports as the byte length of the link target. The receiver gets
             // the target separately, so this length is purely the size shown by
             // `--list-only`/`%l` and summed into the `--stats` total.
@@ -270,7 +270,7 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: flist.c:1427 - the device mtime is not up-to-date, so a
+        // upstream: flist.c:1652 - the device mtime is not up-to-date, so a
         // `--copy-devices` entry carries `time(NULL)` instead of the on-disk
         // stat time. This is a no-op on non-device entries and on non-Unix.
         if copy_device_override.is_some() {
@@ -280,7 +280,7 @@ impl GeneratorContext {
             entry.set_mtime(now, 0);
         }
 
-        // Set access time if preserving (upstream: flist.c:489-494)
+        // Set access time if preserving (upstream: flist.c:714-719)
         #[cfg(unix)]
         if self.config.flags.atimes && !entry.is_dir() {
             entry.set_atime(metadata.atime());
@@ -294,7 +294,7 @@ impl GeneratorContext {
             }
         }
 
-        // Set creation time if preserving (upstream: flist.c:495-498)
+        // Set creation time if preserving (upstream: flist.c:720-723)
         if self.config.flags.crtimes
             && let Ok(crtime) = metadata.created()
             && let Ok(duration) = crtime.duration_since(std::time::UNIX_EPOCH)
@@ -312,7 +312,7 @@ impl GeneratorContext {
                 .as_ref()
                 .map_or_else(|| metadata.uid(), |s| s.uid);
             entry.set_uid(uid);
-            // upstream: flist.c:478-482 - add_uid() looks up name for inline
+            // upstream: flist.c:703-707 - add_uid() looks up name for inline
             // sending via XMIT_USER_NAME_FOLLOWS when INC_RECURSE is active.
             // Without names, the receiver can't map uid->name on the remote.
             if self.config.flags.numeric_ids.is_off() {
@@ -332,7 +332,7 @@ impl GeneratorContext {
                 .as_ref()
                 .map_or_else(|| metadata.gid(), |s| s.gid);
             entry.set_gid(gid);
-            // upstream: flist.c:488-492 - add_gid() looks up name for inline
+            // upstream: flist.c:713-717 - add_gid() looks up name for inline
             // sending via XMIT_GROUP_NAME_FOLLOWS when INC_RECURSE is active.
             if self.config.flags.numeric_ids.is_off() {
                 // As above: only a host-database miss means "no name".
@@ -416,7 +416,7 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: flist.c:1580-1581 send_file_name() applies the client
+        // upstream: flist.c:1805-1806 send_file_name() applies the client
         // `--chmod` (chmod_modes) to each entry's mode as the sender builds the
         // file list, and clientserver.c:1217 appends the daemon module
         // `outgoing chmod` to that same `chmod_modes` list. On a push oc is the
@@ -441,11 +441,11 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: flist.c:1444-1447 - `always_checksum && am_sender &&
+        // upstream: flist.c:1669-1672 - `always_checksum && am_sender &&
         // S_ISREG(st.st_mode)` computes the per-file checksum with
         // `file_checksum()` (checksum.c:401, unseeded) and stores it in
         // `F_SUM(file)` so it travels in the flist (send_file_entry writes it
-        // at flist.c:1003). The receiver's quick-check (generator.c:633,
+        // at flist.c:1228). The receiver's quick-check (generator.c:633,
         // quick_check_ok) compares its own `file_checksum()` of the basis file
         // against this value to decide whether the file is unchanged. Without
         // it the sender emits an all-zero checksum, the receiver's `-c`
@@ -698,7 +698,7 @@ mod fake_super_round_trip_tests {
         GeneratorContext::new_for_test(&handshake, config)
     }
 
-    /// upstream: flist.c:1419-1428 - with `--copy-devices` the sender must emit a
+    /// upstream: flist.c:1644-1653 - with `--copy-devices` the sender must emit a
     /// character/block device as a regular file (its contents are streamed like a
     /// plain file), not as a device node. Verified against `/dev/zero`, a char
     /// device present on every supported Unix. Without the conversion the receiver
@@ -914,7 +914,7 @@ mod client_chmod_tests {
     //! Client `--chmod` push regression: on a push the local client IS the
     //! sender, so `create_entry` must rewrite each outgoing flist entry's mode
     //! with the parsed `--chmod` modifiers. Mirrors upstream
-    //! `flist.c:1580-1581 send_file_name() -> tweak_mode()`, where the sender
+    //! `flist.c:1805-1806 send_file_name() -> tweak_mode()`, where the sender
     //! applies `chmod_modes` to `file->mode` before serialising the entry. The
     //! transformed mode is what the remote receiver materialises on disk and
     //! compares against for the itemize `p` (perms-changed) flag; without the
@@ -1052,7 +1052,7 @@ mod client_chmod_tests {
     }
 
     /// Symlinks are exempt from `--chmod` on the sender, matching upstream's
-    /// `!S_ISLNK(file->mode)` guard at flist.c:1580. The link entry's mode must
+    /// `!S_ISLNK(file->mode)` guard at flist.c:1805. The link entry's mode must
     /// survive the rewrite unchanged.
     #[test]
     fn client_chmod_skips_symlinks() {
@@ -1114,7 +1114,7 @@ mod client_chmod_tests {
 mod munge_symlinks_tests {
     //! Sender-side `munge symlinks` regression tests.
     //!
-    //! upstream: flist.c:222-226 - when the daemon enabled `munge symlinks`,
+    //! upstream: flist.c:224-228 - when the daemon enabled `munge symlinks`,
     //! the sender strips the `/rsyncd-munged/` prefix after `readlink()` so
     //! the wire format carries the original target. The matching prepend on
     //! the receive side lives in `crate::receiver::directory::links`.
@@ -1153,7 +1153,7 @@ mod munge_symlinks_tests {
 
     #[test]
     fn sender_strips_munge_prefix_before_emitting_wire_target() {
-        // upstream: flist.c:222-226 - when the daemon enabled `munge symlinks`,
+        // upstream: flist.c:224-228 - when the daemon enabled `munge symlinks`,
         // the sender restores the original target before encoding the flist
         // entry. Verify the in-memory `FileEntry` carries the stripped path so
         // the wire format never leaks `/rsyncd-munged/`.
@@ -1176,7 +1176,7 @@ mod munge_symlinks_tests {
             entry.link_target().map(PathBuf::as_path),
             Some(Path::new("/etc/passwd")),
             "sender must strip `/rsyncd-munged/` before transmission \
-             (upstream flist.c:222-226)",
+             (upstream flist.c:224-228)",
         );
     }
 
@@ -1213,10 +1213,10 @@ mod munge_symlinks_tests {
 mod symlink_mode_tests {
     //! Sender-side symlink mode fidelity.
     //!
-    //! upstream: flist.c:1669 - `file->mode = st.st_mode` is one assignment
+    //! upstream: flist.c:1894 - `file->mode = st.st_mode` is one assignment
     //! covering every file type; there is no symlink special case at the flist
     //! layer. Whether that mode carries information is a platform property:
-    //! rsync.h:455-456 defines `CAN_CHMOD_SYMLINK` when
+    //! rsync.h:456-457 defines `CAN_CHMOD_SYMLINK` when
     //! `HAVE_LCHMOD || HAVE_SETATTRLIST` (configure.ac:942,950), which holds on
     //! macOS and the BSDs. On Linux the kernel pins a link's permission bits to
     //! 0o777, so forwarding the stat mode is value-identical there; the
@@ -1283,7 +1283,7 @@ mod symlink_mode_tests {
         let (entry_perms, disk_perms) = entry_and_disk_perms(&link);
         assert_eq!(
             entry_perms, disk_perms,
-            "upstream flist.c:1669 assigns st_mode verbatim for symlinks too",
+            "upstream flist.c:1894 assigns st_mode verbatim for symlinks too",
         );
     }
 
@@ -1542,11 +1542,11 @@ mod windows_reparse_tests {
 mod entry_length_tests {
     //! `F_LENGTH` parity regression for directory and symlink entries.
     //!
-    //! upstream: flist.c:1662 - `file->len32 = (uint32)st.st_size` runs for
-    //! every entry type; only devices and specials are zeroed at flist.c:1484
-    //! and flist.c:1486. Directories therefore carry their on-disk inode size
+    //! upstream: flist.c:1887 - `file->len32 = (uint32)st.st_size` runs for
+    //! every entry type; only devices and specials are zeroed at flist.c:1709
+    //! and flist.c:1711. Directories therefore carry their on-disk inode size
     //! and symlinks carry `st_size` (the target byte length). That field is
-    //! summed into the `--stats` "Total file size" total at flist.c:691 and
+    //! summed into the `--stats` "Total file size" total at flist.c:916 and
     //! rendered by `--list-only` and `%l`, so emitting 0 here would diverge
     //! from upstream's observable output byte-for-byte.
 
@@ -1608,7 +1608,7 @@ mod entry_length_tests {
         assert_eq!(
             entry.size(),
             meta.len(),
-            "directory F_LENGTH must mirror st_size (upstream flist.c:1501), \
+            "directory F_LENGTH must mirror st_size (upstream flist.c:1726), \
              not the hardcoded 0 from FileEntry::new_directory",
         );
     }
@@ -1637,7 +1637,7 @@ mod entry_length_tests {
             entry.size(),
             target.len() as u64,
             "symlink F_LENGTH must equal the target byte length \
-             (upstream flist.c:1465), not the hardcoded 0 from \
+             (upstream flist.c:1690), not the hardcoded 0 from \
              FileEntry::new_symlink",
         );
         assert_eq!(
@@ -1652,9 +1652,9 @@ mod entry_length_tests {
 mod flist_checksum_tests {
     //! Sender-side `--checksum` (`-c`) per-file flist checksum regression.
     //!
-    //! upstream: flist.c:1590 - `always_checksum && am_sender && S_ISREG`
+    //! upstream: flist.c:1815 - `always_checksum && am_sender && S_ISREG`
     //! computes `file_checksum()` (checksum.c:401, unseeded) and stores it in
-    //! `F_SUM(file)`; send_file_entry (flist.c:1003) writes it into the flist.
+    //! `F_SUM(file)`; send_file_entry (flist.c:1228) writes it into the flist.
     //! The receiver's quick-check (generator.c:633 `quick_check_ok`) compares
     //! its own unseeded `file_checksum()` of the basis against this value to
     //! decide the file is unchanged and skip the transfer.
@@ -1731,7 +1731,7 @@ mod flist_checksum_tests {
             entry.checksum().map(<[u8]>::to_vec),
             Some(expected_sum(&ctx, data)),
             "sender must store the unseeded per-file checksum the receiver \
-             recomputes (upstream flist.c:1444); otherwise -c re-transfers \
+             recomputes (upstream flist.c:1669); otherwise -c re-transfers \
              content-identical files",
         );
     }

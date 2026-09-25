@@ -1182,7 +1182,7 @@ fn test_write_goodbye_roundtrip_all_versions() {
 /// `modern_ndx_sequential_never_panics` to. It first drives `prev_positive` to
 /// near `i32::MAX` through the `0xFE`/high-bit full form, then adds a `0xFE`
 /// 2-byte diff on top. Upstream accumulates that in `uint32` and rejects the
-/// result at `io.c:2582-2586`; oc summed it in `i32`, which is an overflow
+/// result at `io.c:2620-2624`; oc summed it in `i32`, which is an overflow
 /// panic under debug assertions on bytes the peer chooses.
 #[test]
 fn modern_ndx_rejects_a_diff_that_overflows_the_index() {

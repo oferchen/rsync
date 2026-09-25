@@ -15,7 +15,7 @@
 //! saw `d.ndx != awaited` and aborted the whole transfer as a desync, dropping
 //! EVERY readable file (exit 23, `request stream desynchronised`). Upstream's
 //! generator is NDX-addressed and retires the declined entry by index regardless
-//! of order (`io.c:1207-1256` `got_flist_entry_status(FES_NO_SEND, ndx)`), so it
+//! of order (`io.c:1225-1274` `got_flist_entry_status(FES_NO_SEND, ndx)`), so it
 //! skips only the one file and lands the rest.
 //!
 //! # Fixture design
@@ -47,11 +47,11 @@
 //!
 //! # Upstream references
 //!
-//! - `sender.c:669,723,751` - the three `MSG_NO_SEND` emitters; each `continue`s
+//! - `sender.c:670,725,753` - the three `MSG_NO_SEND` emitters; each `continue`s
 //!   without writing a response.
-//! - `io.c:1809-1818` -> `got_flist_entry_status(FES_NO_SEND, ndx)` retires the
-//!   declined entry by index, not by any window front (`io.c:1207-1256`).
-//! - `sender.c:668,719` - `io_error |= IOERR_GENERAL`, which travels via
+//! - `io.c:1847-1856` -> `got_flist_entry_status(FES_NO_SEND, ndx)` retires the
+//!   declined entry by index, not by any window front (`io.c:1225-1274`).
+//! - `sender.c:669,721` - `io_error |= IOERR_GENERAL`, which travels via
 //!   `MSG_IO_ERROR` and makes the run exit 23.
 
 #![cfg(unix)]

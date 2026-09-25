@@ -25,7 +25,7 @@ use protocol::{
 ///
 /// Upstream `io.c:set_io_timeout` updates the global `io_timeout` so the select
 /// loop's stall detection changes immediately after the client adopts a
-/// daemon-advertised timeout (upstream: `io.c:1551-1561` `read_a_msg()` case
+/// daemon-advertised timeout (upstream: `io.c:1577-1587` `read_a_msg()` case
 /// `MSG_IO_TIMEOUT`). The oc client has no global; instead the daemon-pull path
 /// installs this hook, which re-applies the adopted value to the socket's read
 /// and write timeouts. Only the client receiver of a daemon transfer installs
@@ -47,7 +47,7 @@ impl std::fmt::Debug for IoTimeoutReapply {
 impl IoTimeoutReapply {
     /// Re-applies `secs` as the live socket's read and write I/O timeout.
     ///
-    /// upstream: `io.c:1148-1157` `set_io_timeout()`.
+    /// upstream: `io.c:1166-1175` `set_io_timeout()`.
     pub fn apply(&self, secs: u32) -> io::Result<()> {
         (self.0)(secs)
     }

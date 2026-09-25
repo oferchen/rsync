@@ -107,7 +107,7 @@ pub(super) fn read_iflags_and_skip_meta(stream: &mut BatchStream, proto: i32) ->
 
 /// Read the 16-byte `sum_head` describing the delta body that follows.
 ///
-/// upstream: receiver.c:338 - `read_sum_head()` reads 4 x i32 and rejects any
+/// upstream: receiver.c:351 - `read_sum_head()` reads 4 x i32 and rejects any
 /// field that cannot describe a block layout. Decoding through
 /// [`protocol::wire::SumHead`] applies those same rules, and every copy token
 /// in the body is later resolved through the returned geometry, so a header
@@ -123,7 +123,7 @@ pub(super) fn read_sum_head(stream: &mut BatchStream) -> BatchResult<protocol::w
 
 /// Read the per-file transfer checksum and discard it.
 ///
-/// upstream: receiver.c:671 - `read_buf(f_in, sender_file_sum, xfer_sum_len)`.
+/// upstream: receiver.c:687 - `read_buf(f_in, sender_file_sum, xfer_sum_len)`.
 /// The sender ALWAYS writes `xfer_sum_len` bytes of file checksum after the
 /// delta stream, regardless of `sum_head.s2length`. For protocol 32 the
 /// default xfer checksum is XXH3-128 or MD5 - both 16 bytes. For protocol

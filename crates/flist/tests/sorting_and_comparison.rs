@@ -3,7 +3,7 @@
 //! These tests verify that [`FileListWalker`] produces entries in a
 //! deterministic, sorted order, matching upstream rsync's behavior.
 //! Upstream rsync sorts directory entries lexicographically before
-//! processing them (flist.c line 200: `entries.sort()`), ensuring
+//! processing them (flist.c line 202: `entries.sort()`), ensuring
 //! consistent ordering across platforms.
 //!
 //! Reference: rsync 3.4.1 flist.c

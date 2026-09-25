@@ -210,7 +210,7 @@ impl DeletePlan {
     /// temporary [`FileEntry`] per entry (using the plan's `directory` as
     /// the parent), then reversed in place. The comparator is
     /// [`compare_file_entries`], which honours the `t_PATH`/`t_ITEM`
-    /// distinction (upstream: `flist.c:3223`): within a directory,
+    /// distinction (upstream: `flist.c:3466`): within a directory,
     /// non-directories sort before directories, so `get_dirlist`'s sorted
     /// order places files first and directories last. A plain byte sort
     /// would instead order dirs and files by name alone, so an
@@ -218,7 +218,7 @@ impl DeletePlan {
     /// file `a` - diverging from upstream's traversal and, under
     /// `--max-delete`, changing which entries survive when the cap trips.
     /// The sort is unstable to match upstream's `qsort` choice (upstream:
-    /// `flist.c:3252-3378`, `generator.c:320`).
+    /// `flist.c:3495-3621`, `generator.c:320`).
     pub fn sort_by_name(&mut self) {
         let dir = &self.directory;
         self.extras.sort_unstable_by(|a, b| {

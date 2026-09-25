@@ -6,7 +6,7 @@ use thiserror::Error;
 ///
 /// Upstream `rsync` tracks `human_readable` as an integer with four distinct
 /// levels (`options.c:111` defaults it to `1`; `-h`/`--human-readable`
-/// increment it at `options.c:1573`; `--no-human-readable`/`--no-h` reset it to
+/// increment it at `options.c:1579`; `--no-human-readable`/`--no-h` reset it to
 /// `0` at `options.c:617`). Each level changes both the digit grouping and the
 /// `--list-only` size-column width in `lib/compat.c:do_big_num` and
 /// `generator.c:1159`:

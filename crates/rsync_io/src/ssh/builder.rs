@@ -44,7 +44,7 @@ const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 30;
 /// whose program is `ssh`, the corresponding flag is appended to the spawned
 /// argv so the ssh client restricts host resolution to that family.
 ///
-/// upstream: main.c:587-594 `do_cmd()` appends `-4`/`-6` when
+/// upstream: main.c:600-607 `do_cmd()` appends `-4`/`-6` when
 /// `default_af_hint` is `AF_INET`/`AF_INET6` and the remote-shell basename is
 /// `ssh`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,7 +62,7 @@ pub enum SshAddressFamily {
 /// The comparison is exact (like upstream `strcmp`), so ssh-family wrappers or
 /// paths embedding those names are not matched.
 ///
-/// upstream: main.c:600 `do_cmd()` - `strcmp(t, "rsh") == 0 || strcmp(t,
+/// upstream: main.c:613 `do_cmd()` - `strcmp(t, "rsh") == 0 || strcmp(t,
 /// "remsh") == 0`.
 fn program_forces_blocking_io(basename: &str) -> bool {
     matches!(basename, "rsh" | "remsh")
@@ -150,7 +150,7 @@ impl SshCommand {
     /// `SshCommand::is_ssh_program`); a user-supplied non-ssh `-e` wrapper is
     /// left untouched.
     ///
-    /// upstream: main.c:587-594 `do_cmd()` - `if (default_af_hint == AF_INET &&
+    /// upstream: main.c:600-607 `do_cmd()` - `if (default_af_hint == AF_INET &&
     /// strcmp(t, "ssh") == 0) args[argc++] = "-4";` (and the `AF_INET6`/`-6`
     /// counterpart).
     pub const fn set_address_family(&mut self, family: Option<SshAddressFamily>) -> &mut Self {
@@ -420,7 +420,7 @@ impl SshCommand {
         // upstream: pipe.c:54-55 - "opening connection using:" precedes every
         // remote-shell spawn. The argv passed to upstream is the full child
         // command (program + args), so we prepend the program here.
-        // upstream: main.c:629-633 - DEBUG_GTE(CMD, 2) follows with the
+        // upstream: main.c:642-646 - DEBUG_GTE(CMD, 2) follows with the
         // per-index `cmd[i]=value` enumeration once argv is finalised. Both
         // helpers gate internally on `DebugFlag::Cmd`; the surrounding
         // `debug_gte` check avoids the Vec allocation when CMD is disabled.
@@ -432,7 +432,7 @@ impl SshCommand {
             trace_cmd_argv(&full_argv);
         }
 
-        // upstream: main.c:600-601 do_cmd() forces blocking_io for rsh/remsh
+        // upstream: main.c:613-614 do_cmd() forces blocking_io for rsh/remsh
         // when unset; pipe.c:80-82 then sets the child stdout blocking. Our
         // `Stdio::piped()` child descriptors are already unconditionally
         // blocking, so this only records the resolved mode for diagnostics.
@@ -566,7 +566,7 @@ impl SshCommand {
         // (ssh, rsh, or a custom `-e` wrapper), which matters for wrappers
         // such as the testsuite's `lsh.sh` that parse `-l <user>` but do not
         // understand `user@host`.
-        // upstream: main.c:569-586 `do_cmd()` - `if (user &&
+        // upstream: main.c:582-599 `do_cmd()` - `if (user &&
         // !(daemon_connection && dash_l_set)) { args[argc++] = "-l";
         // args[argc++] = user; }`. `SshCommand` never drives a
         // `daemon_connection` invocation (that path is
@@ -585,7 +585,7 @@ impl SshCommand {
         // Force IPv4/IPv6 host resolution by appending `-4`/`-6` right before
         // the destination operand, matching upstream's placement. Gated on the
         // program basename being `ssh` so non-ssh `-e` wrappers are untouched.
-        // upstream: main.c:588-593 do_cmd() - `-4`/`-6` are only added when
+        // upstream: main.c:601-606 do_cmd() - `-4`/`-6` are only added when
         // `default_af_hint` is set and `strcmp(t, "ssh") == 0`.
         if self.is_ssh_program()
             && let Some(family) = self.address_family
@@ -670,7 +670,7 @@ impl SshCommand {
     /// stripped of any directory prefix. Uses case-folding on Windows where
     /// `SSH.EXE` or `Ssh.exe` are common depending on how the path is resolved.
     ///
-    /// upstream: main.c:564-567 `do_cmd()` - `if ((t = strrchr(cmd, '/')) !=
+    /// upstream: main.c:577-580 `do_cmd()` - `if ((t = strrchr(cmd, '/')) !=
     /// NULL) t++; else t = cmd;`.
     fn program_basename(&self) -> String {
         let program = self.program.to_string_lossy();
@@ -706,7 +706,7 @@ impl SshCommand {
     /// upstream. `blocking_io` is a purely local child-fd concern and is never
     /// forwarded on the wire (upstream `server_options()` does not emit it).
     ///
-    /// upstream: main.c:600-601 `do_cmd()` - `if (blocking_io < 0 && (strcmp(t,
+    /// upstream: main.c:613-614 `do_cmd()` - `if (blocking_io < 0 && (strcmp(t,
     /// "rsh") == 0 || strcmp(t, "remsh") == 0)) blocking_io = 1;` and
     /// pipe.c:80-82 where `blocking_io > 0` sets the child stdout blocking.
     pub(crate) fn resolved_blocking_io(&self) -> bool {

@@ -1,6 +1,6 @@
 //! Protocol 28/29 trailing `io_error` int after the file-list end marker.
 //!
-//! upstream: flist.c:2773-2777 - the sender writes `write_int(f, io_error)`
+//! upstream: flist.c:3016-3020 - the sender writes `write_int(f, io_error)`
 //! after the id lists. Without this read, subsequent wire data is misaligned,
 //! causing "received request to transfer non-regular file" errors.
 
@@ -111,7 +111,7 @@ fn receive_file_list_skips_io_error_for_proto30() {
 /// of purely undefined bits must accumulate to nothing, and defined bits must
 /// still survive.
 ///
-/// upstream: flist.c:3068-3072 - `io_error |= err & IOERR_VALID_MASK`.
+/// upstream: flist.c:3311-3315 - `io_error |= err & IOERR_VALID_MASK`.
 #[test]
 fn receive_file_list_masks_hostile_io_error_for_proto28() {
     for (wire_value, expected) in [
@@ -184,8 +184,8 @@ fn receive_file_list_ignore_errors_suppresses_io_error() {
 /// `--ignore-errors` must suppress a PEER-supplied file-list trailer, and must
 /// NOT suppress an error this receiver generated itself.
 ///
-/// upstream keeps the two apart: `flist.c:2949`, `:2967` and `:3070` accumulate
-/// the peer's trailer only `if (!ignore_errors)`, while `flist.c:841`'s
+/// upstream keeps the two apart: `flist.c:3192`, `:2967` and `:3070` accumulate
+/// the peer's trailer only `if (!ignore_errors)`, while `flist.c:1066`'s
 /// filename-transcode failure is accumulated with no such check.
 ///
 /// This asserts the value the four transfer drivers actually read
@@ -230,8 +230,8 @@ fn ignore_errors_gates_the_peer_trailer_only() {
 /// on identical inputs.
 ///
 /// Pre-30 carries the value as a fixed 4-byte LE trailer after the end marker
-/// (`flist.c:3068-3072`); 30+ carries it in the end marker itself
-/// (`flist.c:2960-2970`), which the file-list writer emits.
+/// (`flist.c:3311-3315`); 30+ carries it in the end marker itself
+/// (`flist.c:3203-3213`), which the file-list writer emits.
 fn decode_peer_io_error(protocol: u8, value: i32, ignore_errors: bool) -> i32 {
     let handshake = test_handshake_with_protocol(protocol);
     let mut config = ServerConfig {
@@ -266,7 +266,7 @@ fn decode_peer_io_error(protocol: u8, value: i32, ignore_errors: bool) -> i32 {
 /// CROSS-IMPLEMENTATION: oc decodes the peer's file-list `io_error` in two
 /// independent places - the pre-30 fixed trailer in `file_list/receive.rs` and
 /// the 30+ end marker in `protocol::flist::read`. Upstream applies ONE rule to
-/// both: `flist.c:2949`, `:2967` and `:3070` are three copies of
+/// both: `flist.c:3192`, `:2967` and `:3070` are three copies of
 /// `if (!ignore_errors) io_error |= err & IOERR_VALID_MASK`.
 ///
 /// So the two eras must agree cell for cell. The pre-30 decoder was already
@@ -303,7 +303,7 @@ fn both_protocol_eras_mask_the_peer_trailer_identically() {
 
 /// A locally-generated file-list error survives `--ignore-errors`.
 ///
-/// upstream: `flist.c:841` has no `ignore_errors` check, so a filename this
+/// upstream: `flist.c:1066` has no `ignore_errors` check, so a filename this
 /// receiver could not transcode still exits 23. Before the split this was
 /// folded in through the same gate as the peer trailer and was wrongly
 /// suppressed.

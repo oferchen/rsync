@@ -90,7 +90,7 @@ impl ClientEventKind {
     ///
     /// Upstream only counts `ITEM_TRANSFER` entries (regular file data) into
     /// `stats.xferred_files` and only those emit a progress block
-    /// (receiver.c:782 `stats.xferred_files++` sits *after* the
+    /// (receiver.c:798 `stats.xferred_files++` sits *after* the
     /// `!(iflags & ITEM_TRANSFER)` early-continue that handles directories,
     /// symlinks, devices and specials). So a symlink, device, FIFO, hard link
     /// or directory is walked (counted in the `to-chk` denominator via
@@ -700,7 +700,7 @@ mod tests {
 
     #[test]
     fn client_event_kind_is_progress_returns_true_for_directory_created() {
-        // upstream: stats.num_files counts directories (flist.c:2561), so they
+        // upstream: stats.num_files counts directories (flist.c:2801), so they
         // belong in the `to-chk` denominator even though they never transfer.
         assert!(ClientEventKind::DirectoryCreated.is_progress());
     }
@@ -709,7 +709,7 @@ mod tests {
     fn client_event_kind_is_transfer_only_for_regular_data() {
         assert!(ClientEventKind::DataCopied.is_transfer());
         assert!(ClientEventKind::ReferenceCopied.is_transfer());
-        // upstream: receiver.c:782 `stats.xferred_files++` sits after the
+        // upstream: receiver.c:798 `stats.xferred_files++` sits after the
         // `!(iflags & ITEM_TRANSFER)` continue, so symlinks, directories,
         // devices, FIFOs and hard links are walked but never advance `xfr#`
         // nor print a per-file progress block.

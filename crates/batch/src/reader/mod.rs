@@ -334,7 +334,7 @@ impl BatchReader {
     /// Mirrors upstream `--read-batch`, where the batch fd itself becomes the
     /// receiving client's `f_in` once `read_stream_flags()` and
     /// `setup_protocol()` have consumed the header values
-    /// (`main.c:639-651`, `compat.c:604-613`).
+    /// (`main.c:652-664`, `compat.c:604-613`).
     ///
     /// # Errors
     ///

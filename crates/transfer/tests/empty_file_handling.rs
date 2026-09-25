@@ -246,7 +246,7 @@ fn sparse_state_accumulate_then_finish_creates_hole() {
     // finish() returns the logical length and seeks over the hole without
     // materializing a byte; the caller establishes the size via set_len
     // (ftruncate), leaving the region a true hole that reads back as zeros.
-    // upstream: fileio.c:43 sparse_end() -> do_ftruncate(f, size).
+    // upstream: fileio.c:47 sparse_end() -> do_ftruncate(f, size).
     let pos = state.finish(&mut cursor).expect("finish");
     assert_eq!(pos, 50);
 

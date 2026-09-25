@@ -101,8 +101,8 @@
 //! The required `nextest` cell does not fetch the upstream tarball, so a gate
 //! that reads `target/interop/upstream-src/` there would skip - and a gate that
 //! skips in the one place it must run is not a gate. `tools/ci/
-//! upstream-3.5.0-lines.tsv` carries one line count per upstream file. rsync
-//! 3.5.0 is a released tarball and is immutable, so the manifest cannot drift
+//! upstream-3.5.1-lines.tsv` carries one line count per upstream file. rsync
+//! 3.5.1 is a released tarball and is immutable, so the manifest cannot drift
 //! from it; `tests::manifest_matches_the_pinned_source` re-derives it wherever
 //! the source is present.
 
@@ -114,13 +114,13 @@ use std::path::Path;
 
 /// Committed line counts for every citable source file in the pinned upstream
 /// release: `.c`, `.h`, `.py` and `.sh`.
-pub const MANIFEST_PATH: &str = "tools/ci/upstream-3.5.0-lines.tsv";
+pub const MANIFEST_PATH: &str = "tools/ci/upstream-3.5.1-lines.tsv";
 
 /// The pinned upstream source, present only where the interop tarball was fetched.
-pub const PINNED_SOURCE_DIR: &str = "target/interop/upstream-src/rsync-3.5.0";
+pub const PINNED_SOURCE_DIR: &str = "target/interop/upstream-src/rsync-3.5.1";
 
 /// The pinned release, as the `rsync-<VER>/` component of a cited path spells it.
-pub const PINNED_VERSION: &str = "3.5.0";
+pub const PINNED_VERSION: &str = "3.5.1";
 
 /// Where `tools/ci/run_interop.sh` unpacks the tarball. Citations written while
 /// reading the unpacked tree routinely paste this whole prefix, so the resolver
@@ -166,9 +166,9 @@ const CITED_EXTENSIONS: [&str; 4] = ["c", "h", "py", "sh"];
 
 /// Header written above the generated counts, explaining why the file exists.
 const MANIFEST_HEADER: &str = "\
-# Line counts for every .c/.h/.py/.sh in rsync 3.5.0, the pinned upstream source.
+# Line counts for every .c/.h/.py/.sh in rsync 3.5.1, the pinned upstream source.
 # Lets the citation gate run where the source tree is absent (the required
-# nextest cell does not fetch it). rsync 3.5.0 is a released tarball and is
+# nextest cell does not fetch it). rsync 3.5.1 is a released tarball and is
 # immutable, so this cannot drift; it is regenerated only when the pin moves.
 # The key set is also the gate's answer to \"does this upstream file exist\", so
 # a name missing here is a citation defect, not a manifest gap.
@@ -262,7 +262,7 @@ impl std::fmt::Display for Violation {
                 cited,
             } => write!(
                 f,
-                "{source}:{line}: cites {upstream}:{cited} but rsync 3.5.0 has no {upstream}"
+                "{source}:{line}: cites {upstream}:{cited} but rsync {PINNED_VERSION} has no {upstream}"
             ),
             Self::UnpinnedRelease {
                 source,
@@ -373,7 +373,7 @@ fn split_release_prefix(cited: &str) -> Option<(&str, &str)> {
 
 /// Resolves a cited path against the manifest.
 ///
-/// A release prefix is stripped first, so `rsync-3.5.0/flist.c:2477` is checked
+/// A release prefix is stripped first, so `rsync-3.5.1/flist.c:2477` is checked
 /// exactly as `flist.c:2477` is instead of being skipped as foreign; naming a
 /// release other than the pin is a violation rather than a skip. Resolution of
 /// what is left is by exact path first so `lib/wildmatch.c` beats a bare-name
@@ -1014,24 +1014,27 @@ mod tests {
 
     #[test]
     fn a_pinned_release_prefix_is_stripped_and_the_range_is_checked() {
-        // THE HOLE THIS CLOSES, half one. `rsync-3.5.0/rsync.c:954` names the
+        // THE HOLE THIS CLOSES, half one. `rsync-<PIN>/rsync.c:954` names the
         // pinned release, yet the old resolver saw a `/` in a path that is not
         // a manifest key and skipped it as foreign - so the range check, the
         // entire point of the gate, never ran on it.
         let m = manifest();
         for spelling in [
-            "rsync-3.5.0/rsync.c",
-            "target/interop/upstream-src/rsync-3.5.0/rsync.c",
+            format!("rsync-{PINNED_VERSION}/rsync.c"),
+            format!("{UNPACK_PREFIX}rsync-{PINNED_VERSION}/rsync.c"),
         ] {
             assert_eq!(
-                resolve_upstream_path(spelling, &m),
+                resolve_upstream_path(&spelling, &m),
                 Resolution::Pinned("rsync.c".to_owned()),
                 "{spelling}"
             );
         }
         let v = scan(
             "a.rs",
-            &cite("target/interop/upstream-src/rsync-3.5.0/rsync.c", "954-965"),
+            &cite(
+                &format!("{UNPACK_PREFIX}rsync-{PINNED_VERSION}/rsync.c"),
+                "954-965",
+            ),
             &m,
         );
         assert_eq!(v.len(), 1);
@@ -1078,6 +1081,20 @@ mod tests {
     }
 
     #[test]
+    fn the_previous_pin_is_an_unpinned_release_after_the_pin_moves() {
+        // A retarget that leaves one `rsync-3.5.0/` prefix behind must fail
+        // here, not pass as a citation of the release it no longer builds
+        // against: moving the pin is what turns the old prefix into a defect.
+        assert_eq!(
+            resolve_upstream_path("rsync-3.5.0/flist.c", &manifest()),
+            Resolution::UnpinnedRelease {
+                version: "3.5.0".to_owned(),
+                path: "flist.c".to_owned(),
+            }
+        );
+    }
+
+    #[test]
     fn a_non_pinned_release_is_permitted_only_where_the_rule_is_documented() {
         // The exemption is scoped, and the scope is the point: `docs/` mixes
         // live reference with historical record, and the two files that
@@ -1112,7 +1129,10 @@ mod tests {
         // The prefix asserts the pinned release outright, so an unresolvable
         // tail cannot be "some other project" the way `librcksum/rsum.c` can.
         assert_eq!(
-            resolve_upstream_path("rsync-3.5.0/nowhere/phantom.c", &manifest()),
+            resolve_upstream_path(
+                &format!("rsync-{PINNED_VERSION}/nowhere/phantom.c"),
+                &manifest()
+            ),
             Resolution::Missing
         );
     }
@@ -1454,7 +1474,7 @@ mod tests {
         let report = collect_violations(&workspace).expect("scan succeeds");
         assert!(
             report.violations.is_empty(),
-            "upstream citations that cannot be followed to rsync 3.5.0:\n{}",
+            "upstream citations that cannot be followed to rsync {PINNED_VERSION}:\n{}",
             report
                 .violations
                 .iter()

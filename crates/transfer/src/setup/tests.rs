@@ -30,7 +30,7 @@ fn parse_client_info_returns_empty_when_not_found() {
 
 #[test]
 fn parse_client_info_from_compact_server_flag_string() {
-    // upstream: options.c:2728 - maybe_add_e_option appends -e.LsfxCIvu
+    // upstream: options.c:2738 - maybe_add_e_option appends -e.LsfxCIvu
     // to the compact flag string. parse_client_info must extract it.
     let args = vec!["-logDtprze.iLsfxCIvu".to_owned()];
     let info = parse_client_info(&args);
@@ -987,7 +987,7 @@ fn setup_protocol_server_seed_zero_uses_time_based_generation() {
 #[test]
 fn setup_protocol_server_negative_seed() {
     // upstream: options.c:151 `int checksum_seed` - `--checksum-seed=-1` is a
-    // legal value an upstream client can forward (options.c:3047 prints `%d`),
+    // legal value an upstream client can forward (options.c:3057 prints `%d`),
     // so the server must carry it to the wire unchanged rather than refuse it.
     let protocol = ProtocolVersion::try_from(29).unwrap();
     let mut stdin = &b""[..];
@@ -1810,7 +1810,7 @@ fn server_parses_client_acl_and_xattr_flags() {
 /// (CF_AVOID_XATTR_OPTIM), since our build always compiles with xattr wire
 /// protocol support. This is how remote peers detect xattr awareness.
 ///
-/// upstream: options.c:3021-3068 - maybe_add_e_option() builds -e.xxx
+/// upstream: options.c:3031-3078 - maybe_add_e_option() builds -e.xxx
 #[test]
 fn capability_string_always_includes_xattr_marker() {
     use super::build_capability_string;

@@ -203,10 +203,10 @@ fn refusal(ctx: &ReceiverContext, dest: &str) -> Option<String> {
 /// THE ESCAPE (task 819): on a `path = /` module the daemon `exclude` is the
 /// only thing stopping a peer-supplied `..` traversal, because upstream's
 /// `abspath_outside_confinement` short-circuits at `rootlen <= 1`
-/// (`syscall.c:206-207`). The name check must therefore run on the collapsed
+/// (`syscall.c:255-257`). The name check must therefore run on the collapsed
 /// path, so `pub/../secret` is refused exactly as a bare `secret` is.
 ///
-/// upstream: `main.c:718-737` `get_local_name()`.
+/// upstream: `main.c:731-750` `get_local_name()`.
 #[test]
 fn daemon_excluded_destination_is_refused_after_dot_dot_collapse() {
     let ctx = ctx_excluding("secret");
@@ -271,7 +271,7 @@ fn daemon_excluded_destination_honours_dir_only_rules() {
 /// the given `--temp-dir` / `--backup-dir` values.
 ///
 /// Both are given as the module-rooted paths oc stores, because that is what
-/// upstream matches: `options.c:2400-2407` sanitises both options IN PLACE
+/// upstream matches: `options.c:2409-2416` sanitises both options IN PLACE
 /// (rootdir `NULL` = `module_dir`) BEFORE the filter block at `:2409-2436`
 /// re-cleans them for the check. Unlike a basis directory there is no
 /// "requested" form to preserve.
@@ -306,7 +306,7 @@ fn assert_options_rejected(err: std::io::Error) {
     );
 }
 
-/// upstream: `options.c:2427-2435` - a peer-supplied `--backup-dir` naming a
+/// upstream: `options.c:2436-2444` - a peer-supplied `--backup-dir` naming a
 /// directory the module excludes refuses the whole session.
 ///
 /// Measured against a real 3.5.0 daemon before the fix: oc wrote the
@@ -321,7 +321,7 @@ fn daemon_excluded_backup_dir_is_refused() {
     );
 }
 
-/// upstream: `options.c:2419-2425` - the SAME block applies the identical rule
+/// upstream: `options.c:2428-2434` - the SAME block applies the identical rule
 /// to `tmpdir`. Pinned separately because a fix that covered only `backup_dir`
 /// would leave this operand live, and both tests share one implementation.
 #[test]
@@ -333,7 +333,7 @@ fn daemon_excluded_temp_dir_is_refused() {
     );
 }
 
-/// upstream: `options.c:2421` / `:2429` - `if (!*tmpdir)` / `if (!*backup_dir)`
+/// upstream: `options.c:2430` / `:2429` - `if (!*tmpdir)` / `if (!*backup_dir)`
 /// jumps straight to `options_rejected`. An empty value is refused OUTRIGHT,
 /// before any filter match, so it cannot slip through on a module whose rules
 /// happen not to match the empty name.
@@ -359,7 +359,7 @@ fn daemon_allows_staging_dirs_the_module_does_not_exclude() {
 }
 
 /// upstream gates the whole block on `daemon_filter_list.head`
-/// (`options.c:2409`), so a receiver with no module filter list - every client
+/// (`options.c:2418`), so a receiver with no module filter list - every client
 /// and SSH-server receiver - must never refuse, even on a name that would
 /// otherwise match.
 #[test]
@@ -407,7 +407,7 @@ fn ctx_with_basis(requested: &str) -> ReceiverContext {
     ReceiverContext::new_for_test(&handshake, config)
 }
 
-/// upstream: `main.c:1243-1270` - a daemon receiver runs every `basis_dir[]`
+/// upstream: `main.c:1261-1288` - a daemon receiver runs every `basis_dir[]`
 /// entry through the module filter list and refuses the whole session when one
 /// matches, with `"Your options have been rejected by the server."` and
 /// `RERR_SYNTAX`.
@@ -430,7 +430,7 @@ fn daemon_excluded_basis_dir_is_refused_by_requested_name() {
     assert_eq!(
         err.to_string(),
         "Your options have been rejected by the server.",
-        "upstream's exact refusal text (main.c:1267)"
+        "upstream's exact refusal text (main.c:1285)"
     );
     // `crates/transfer` sits below `crates/core`, so the ExitCode mapping
     // itself is pinned in `core::exit_code`. What is observable here is the
@@ -456,7 +456,7 @@ fn daemon_allows_a_basis_dir_the_module_does_not_exclude() {
 }
 
 /// A receiver with no daemon filter list at all must never refuse: upstream
-/// gates the whole block on `daemon_filter_list.head` (`main.c:1243`), so the
+/// gates the whole block on `daemon_filter_list.head` (`main.c:1261`), so the
 /// client and SSH-server receivers keep passing basis dirs through untouched.
 #[test]
 fn no_daemon_filter_list_never_refuses_a_basis_dir() {

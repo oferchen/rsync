@@ -42,7 +42,7 @@ pub(super) fn handle_dry_run(
         existing_metadata,
     } = request;
     let destination_previously_existed = existing_metadata.is_some();
-    // upstream: flist.c:1419-1424 - a `--copy-devices` device is reported and
+    // upstream: flist.c:1644-1649 - a `--copy-devices` device is reported and
     // sized as a regular file. `Some(size)` also signals the snapshot below to
     // virtualize the kind/mode so `--list-only` shows `-rw-...` not `brw-...`.
     let device_as_file_size = context.copy_device_as_file_size(source, metadata);
@@ -162,7 +162,7 @@ pub(super) fn handle_dry_run(
     }
     // A dry run never writes, so the phase-2 redo a failed `--append-verify`
     // would trigger has nothing to report: upstream's `if (!do_xfers)` leg
-    // (receiver.c:805-810) logs the item and `continue`s, never reaching the
+    // (receiver.c:821-826) logs the item and `continue`s, never reaching the
     // `recv_ok` switch that queues the redo.
     let append_offset = match append_mode {
         AppendMode::Append { offset, .. } => offset,
@@ -170,7 +170,7 @@ pub(super) fn handle_dry_run(
     };
     let bytes_transferred = file_size.saturating_sub(append_offset);
 
-    // upstream: main.c:1839-1840 - `--only-write-batch` forces dry_run=1 but the
+    // upstream: main.c:1866-1867 - `--only-write-batch` forces dry_run=1 but the
     // batch_fd capture path still runs so the recorded stream contains the
     // file's token data. Mirror that by capturing the whole file into the per-
     // file batch delta buffer and finalising it (token end + xfer checksum)
@@ -180,7 +180,7 @@ pub(super) fn handle_dry_run(
     context.capture_batch_whole_file(source, file_size)?;
     context.finalize_batch_file_delta(source)?;
 
-    // upstream: sender.c:342-343 counts the file into stats.xferred_files and
+    // upstream: sender.c:343-344 counts the file into stats.xferred_files and
     // stats.total_transferred_size, then the `if (!do_xfers)` guard `continue`s
     // before match_sums(), so stats.literal_data (match.c:436) and
     // stats.matched_data (match.c:121) stay 0 under --dry-run. record_file would

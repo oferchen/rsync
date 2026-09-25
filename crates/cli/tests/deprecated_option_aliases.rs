@@ -7,7 +7,7 @@ use cli::test_utils::parse_args;
 
 #[test]
 fn test_old_dirs_forces_recursion() {
-    // upstream: options.c:2197-2199 - --old-dirs sets xfer_dirs=4 -> recurse=1.
+    // upstream: options.c:2206-2208 - --old-dirs sets xfer_dirs=4 -> recurse=1.
     // It is unrelated to --mkpath (which stays at its default of false).
     let args = parse_args(["oc-rsync", "--old-dirs", "src", "dest"]).unwrap();
     assert!(args.recursive, "--old-dirs should force recursion on");
@@ -317,7 +317,7 @@ fn test_del_and_delete_before_are_mutually_exclusive() {
 fn test_tmp_dir_and_temp_dir_are_same_option() {
     // --tmp-dir and --temp-dir are the same option (alias), so using both is
     // a plain repeat; popt resolves repeats to the LAST occurrence
-    // (options.c:1502 re-runs the case per occurrence, no duplicate error).
+    // (options.c:1508 re-runs the case per occurrence, no duplicate error).
     let result = parse_args([
         "oc-rsync",
         "--temp-dir=/tmp1",

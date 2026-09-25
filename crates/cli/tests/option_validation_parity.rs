@@ -7,7 +7,7 @@
 use cli::test_utils::parse_args;
 use core::client::DeleteMode;
 
-// upstream: options.c:2182-2185,2215-2217 - `--max-delete` only caps the count
+// upstream: options.c:2191-2194,2224-2226 - `--max-delete` only caps the count
 // and must never enable deletion. Promoting it silently deletes extraneous
 // destination files (data loss).
 #[test]
@@ -33,7 +33,7 @@ fn max_delete_with_delete_caps_and_enables() {
     assert_eq!(args.max_delete, Some("5".into()));
 }
 
-// upstream: options.c:2182-2185 - a negative `--max-delete` is clamped to a 0
+// upstream: options.c:2191-2194 - a negative `--max-delete` is clamped to a 0
 // cap and parsing continues; it is not an error and does not enable deletion.
 #[test]
 fn negative_max_delete_is_accepted_and_does_not_enable_deletion() {
@@ -42,7 +42,7 @@ fn negative_max_delete_is_accepted_and_does_not_enable_deletion() {
     assert_eq!(args.max_delete, Some("-1".into()));
 }
 
-// upstream: options.c:724-725,2210 - `--delete-during`/`--del` and
+// upstream: options.c:724-725,2219 - `--delete-during`/`--del` and
 // `--delete-delay` share the single `delete_during` term, so combining them is
 // NOT a conflict.
 #[test]
@@ -58,7 +58,7 @@ fn delete_during_and_delay_share_a_when_term() {
     assert!(result.is_ok(), "unexpected error: {:?}", result.err());
 }
 
-// upstream: options.c:2210-2213 - distinct WHEN phases conflict with the exact
+// upstream: options.c:2219-2222 - distinct WHEN phases conflict with the exact
 // wording below.
 #[test]
 fn multiple_delete_when_phases_use_upstream_wording() {
@@ -79,7 +79,7 @@ fn multiple_delete_when_phases_use_upstream_wording() {
     );
 }
 
-// upstream: options.c:2187-2203,2230-2234 - `--delete` needs a resolved
+// upstream: options.c:2196-2212,2239-2243 - `--delete` needs a resolved
 // xfer_dirs. `--files-from` sets xfer_dirs=1, so `--delete --files-from` is
 // permitted even without `-r`/`-d`.
 #[test]
@@ -94,7 +94,7 @@ fn delete_with_files_from_is_permitted_without_recursive() {
     assert!(result.is_ok(), "unexpected error: {:?}", result.err());
 }
 
-// upstream: options.c:2203 - `--list-only` also resolves xfer_dirs, permitting
+// upstream: options.c:2212 - `--list-only` also resolves xfer_dirs, permitting
 // `--delete` without `-r`/`-d`.
 #[test]
 fn delete_with_list_only_is_permitted_without_recursive() {
@@ -102,7 +102,7 @@ fn delete_with_list_only_is_permitted_without_recursive() {
     assert!(result.is_ok(), "unexpected error: {:?}", result.err());
 }
 
-// upstream: options.c:2230-2234 - without `-r`/`-d` (and no files-from/list-only
+// upstream: options.c:2239-2243 - without `-r`/`-d` (and no files-from/list-only
 // to resolve xfer_dirs), `--delete` is rejected.
 #[test]
 fn delete_without_dirs_is_rejected() {
@@ -114,7 +114,7 @@ fn delete_without_dirs_is_rejected() {
     );
 }
 
-// upstream: options.c:2126-2130 - `--fake-super` conflicts with `-XX`.
+// upstream: options.c:2135-2139 - `--fake-super` conflicts with `-XX`.
 #[test]
 fn fake_super_conflicts_with_double_x() {
     let err = parse_args(["oc-rsync", "--fake-super", "-XX", "src", "dest"]).unwrap_err();
@@ -132,7 +132,7 @@ fn fake_super_with_single_x_is_accepted() {
     assert!(result.is_ok(), "unexpected error: {:?}", result.err());
 }
 
-// upstream: options.c:2158-2162 - `--read-batch` with `--files-from` is an error.
+// upstream: options.c:2167-2171 - `--read-batch` with `--files-from` is an error.
 #[test]
 fn read_batch_conflicts_with_files_from() {
     let err = parse_args([
@@ -150,7 +150,7 @@ fn read_batch_conflicts_with_files_from() {
     );
 }
 
-// upstream: options.c:2163-2167 - `--read-batch` with `--remove-source-files`.
+// upstream: options.c:2172-2176 - `--read-batch` with `--remove-source-files`.
 #[test]
 fn read_batch_conflicts_with_remove_source_files() {
     let err = parse_args([
@@ -168,7 +168,7 @@ fn read_batch_conflicts_with_remove_source_files() {
     );
 }
 
-// upstream: options.c:2169-2174 - a batch-file name longer than
+// upstream: options.c:2178-2183 - a batch-file name longer than
 // MAX_BATCH_NAME_LEN (rsync.h/options.c:225 = 256) is rejected verbatim and
 // exits RERR_SYNTAX (1). A name of exactly 256 bytes is the boundary and must
 // be accepted (the check is `strlen(batch_name) > MAX_BATCH_NAME_LEN`).
@@ -188,7 +188,7 @@ fn write_batch_name_length_cap_matches_upstream() {
     );
 }
 
-// upstream: options.c:2299-2304 - a `--suffix` containing a slash is rejected.
+// upstream: options.c:2308-2313 - a `--suffix` containing a slash is rejected.
 #[test]
 fn suffix_with_slash_is_rejected() {
     let err = parse_args(["oc-rsync", "--suffix=a/b", "src", "dest"]).unwrap_err();
@@ -199,7 +199,7 @@ fn suffix_with_slash_is_rejected() {
     );
 }
 
-// upstream: options.c:2328-2335 - an empty `--suffix` without `--backup-dir`.
+// upstream: options.c:2337-2344 - an empty `--suffix` without `--backup-dir`.
 #[test]
 fn empty_suffix_without_backup_dir_is_rejected() {
     let err = parse_args(["oc-rsync", "--suffix=", "src", "dest"]).unwrap_err();
@@ -217,7 +217,7 @@ fn empty_suffix_with_backup_dir_is_accepted() {
     assert!(result.is_ok(), "unexpected error: {:?}", result.err());
 }
 
-// upstream: options.c:2296-2307 - `--suffix` alone does not enable backups.
+// upstream: options.c:2305-2316 - `--suffix` alone does not enable backups.
 #[test]
 fn suffix_alone_does_not_enable_backup() {
     let args = parse_args(["oc-rsync", "--suffix=.bak", "src", "dest"]).unwrap();

@@ -56,7 +56,7 @@ pub(super) fn process_planned_entry(
             return Ok(true);
         }
         EntryAction::SkipMountPoint => {
-            // upstream: flist.c:1347 - INFO_GTE(MOUNT, 1) gates
+            // upstream: flist.c:1572 - INFO_GTE(MOUNT, 1) gates
             // `rprintf(FINFO, "[%s] skipping mount-point dir %s", who_am_i(), thisname)`
             // when `--one-file-system` (`-xx`) prunes a cross-device directory.
             // The role prefix (`[sender]`) is added downstream by the renderer.
@@ -72,7 +72,7 @@ pub(super) fn process_planned_entry(
         _ => {}
     }
 
-    // upstream: flist.c:1579-1603 (sender) + flist.c:738-754 (receiver) -
+    // upstream: flist.c:1804-1828 (sender) + flist.c:963-979 (receiver) -
     // the receiver opens the file with the iconv-converted name. For
     // local-copy the two contexts compose to LOCAL -> REMOTE; apply that
     // transcoding here before joining onto the destination directory.
@@ -106,7 +106,7 @@ fn dispatch_copy_action(
     ensure_directory: &mut impl FnMut(&mut CopyContext) -> Result<(), LocalCopyError>,
     root_device: Option<u64>,
 ) -> Result<bool, LocalCopyError> {
-    // upstream: flist.c:3364-3382 flist_sort_and_clean() - a later duplicate
+    // upstream: flist.c:3607-3625 flist_sort_and_clean() - a later duplicate
     // name in the merged multi-source list is dropped ("Otherwise keep the
     // first one"): the first operand's copy wins and the duplicate is neither
     // transferred, itemized, counted, nor batch-captured. oc walks each

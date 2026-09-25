@@ -4,12 +4,12 @@
 //! upstream: access.c `match_hostname` - when a `hosts allow`/`hosts deny`
 //! token begins with `@`, rsync tests the connecting client's resolved
 //! hostname for membership in the named netgroup:
-//! `innetgr(tok + 1, host, NULL, NULL)` (access.c:41-42). The netgroup name is
+//! `innetgr(tok + 1, host, NULL, NULL)` (access.c:44-45). The netgroup name is
 //! `tok + 1` (the text after `@`); the second argument is the client host; the
 //! user and domain arguments are `NULL`. A non-zero return means the host is a
 //! member.
 //!
-//! The whole branch is compiled only under `HAVE_INNETGR` (access.c:40-43): on
+//! The whole branch is compiled only under `HAVE_INNETGR` (access.c:43-54): on
 //! platforms whose C library ships no `innetgr`/netgroup database - notably
 //! musl - upstream simply omits netgroup support, so a `@netgroup` token can
 //! never match. This module mirrors that exactly: where `innetgr` is available
@@ -63,7 +63,7 @@ mod imp {
         };
         // SAFETY: `netgroup` and `host` are valid NUL-terminated C strings that
         // outlive the call; `user` and `domain` are NULL, matching upstream
-        // access.c:42 `innetgr(tok + 1, host, NULL, NULL)`. `innetgr` reads the
+        // access.c:45 `innetgr(tok + 1, host, NULL, NULL)`. `innetgr` reads the
         // pointers but retains no references past the call.
         let member = unsafe { innetgr(netgroup.as_ptr(), host.as_ptr(), ptr::null(), ptr::null()) };
         member != 0
@@ -95,7 +95,7 @@ mod imp {
 
 /// Returns whether `host` is a member of the named `netgroup`.
 ///
-/// Mirrors upstream `innetgr(netgroup, host, NULL, NULL)` (access.c:42): only
+/// Mirrors upstream `innetgr(netgroup, host, NULL, NULL)` (access.c:45): only
 /// the netgroup's host field is consulted; the user and domain fields are
 /// ignored. Used by the daemon to evaluate `hosts allow`/`hosts deny`
 /// `@netgroup` tokens against a connecting client's resolved hostname.
@@ -116,7 +116,7 @@ pub fn host_in_netgroup(netgroup: &str, host: &str) -> bool {
 mod tests {
     use super::host_in_netgroup;
 
-    // WHY: upstream access.c:37-38 bails out (`return 0`) before calling
+    // WHY: upstream access.c:40-41 bails out (`return 0`) before calling
     // innetgr when the host is empty; and an empty netgroup name is never a
     // real group. Guard both so callers get a deterministic non-match instead
     // of forwarding degenerate input to the C library.

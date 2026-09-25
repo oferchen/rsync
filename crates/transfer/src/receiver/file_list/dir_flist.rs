@@ -11,7 +11,7 @@ use protocol::flist::{FileEntry, compare_file_entries};
 use super::receive::strip_leading_slashes;
 
 /// What a wire `dir_ndx` resolves to, mirroring upstream's three outcomes at
-/// `flist.c:2906-2918`.
+/// `flist.c:3149-3161`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::receiver) enum DirSlot {
     /// A live directory; a sub-list may name it as its parent.
@@ -19,7 +19,7 @@ pub(in crate::receiver) enum DirSlot {
         /// The directory's destination-relative name.
         name: PathBuf,
         /// Upstream's `FLAG_CONTENT_DIR`, as the entry held it once the
-        /// implied-parent downgrade (`flist.c:1240-1256`) had run. Held on the
+        /// implied-parent downgrade (`flist.c:1465-1481`) had run. Held on the
         /// slot so it outlives the reclaim of the entry itself: upstream reads
         /// it off `dir_flist->files[parent_ndx]` when the sub-list becomes
         /// `cur_flist` (`generator.c:2780-2792`), long after the parent's own
@@ -36,8 +36,8 @@ pub(in crate::receiver) enum DirSlot {
 /// # Why a cleared directory must keep its slot
 ///
 /// Upstream appends every directory to `dir_flist` **in the read loop**
-/// (`flist.c:2993-2999`), sorts just that appended range (`flist.c:3049`), and
-/// only *then* cleans the transfer list (`flist.c:3065`). Each slot holds a
+/// (`flist.c:3236-3242`), sorts just that appended range (`flist.c:3292`), and
+/// only *then* cleans the transfer list (`flist.c:3308`). Each slot holds a
 /// **pointer** to the same `file_struct` as the transfer list, so when the
 /// clean `clear_file()`s a duplicate directory the shared struct is zeroed and
 /// the slot survives, now **inactive**.
@@ -48,18 +48,18 @@ pub(in crate::receiver) enum DirSlot {
 ///   numbering shifts each subsequent directory down by one, so a `dir_ndx`
 ///   upstream refuses as cleared resolves to a different, live directory here
 ///   and the sub-list is accepted under the wrong parent.
-/// - **The inactive marker** is what `flist.c:2911-2918` refuses, because
+/// - **The inactive marker** is what `flist.c:3154-3161` refuses, because
 ///   `f_name()` on a cleared entry returns NULL into the dirname comparison.
 ///
 /// # Why the slot is not a flat index into `file_list`
 ///
 /// That would be the literal transcription of upstream's pointer, and it is
 /// unsafe here. `sorted` is an **alias** of `files` in the default arm
-/// (`flist.c:2460`, `:3046`), so upstream's sort is in-place too and its
+/// (`flist.c:2700`, `:3046`), so upstream's sort is in-place too and its
 /// pointers simply follow the struct - oc's owned entries move instead, and an
 /// index recorded before the sort would address a different entry after it.
 /// The separate `sorted[]` array exists only under `need_unsorted_flist`
-/// (`--iconv`), for the reason `flist.c:3026-3030` gives.
+/// (`--iconv`), for the reason `flist.c:3269-3273` gives.
 ///
 /// So the slot records a **name**, captured in two phases that each read real
 /// state rather than re-deriving the clean's tie-break:
@@ -96,8 +96,8 @@ impl DirFlist {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2993-2999` - the read-loop append.
-    /// - `flist.c:3049` - `fsort(dir_flist->sorted + dstart, ...)` orders just
+    /// - `flist.c:3236-3242` - the read-loop append.
+    /// - `flist.c:3292` - `fsort(dir_flist->sorted + dstart, ...)` orders just
     ///   the newly appended range.
     pub(in crate::receiver) fn record_pre_clean(
         file_list: &[FileEntry],
@@ -116,7 +116,7 @@ impl DirFlist {
     /// `post_clean` is the same range after `sort_and_clean_file_list`. Survival
     /// is read from it rather than re-derived, so this cannot drift from the
     /// clean's own duplicate tie-break (a directory outranks a same-named
-    /// regular file, `flist.c:3355-3360`). Duplicates are adjacent after the
+    /// regular file, `flist.c:3598-3603`). Duplicates are adjacent after the
     /// phase-1 sort and the clean keeps at most one, so the first occurrence of
     /// a name claims the survivor and every later occurrence is a cleared slot.
     pub(in crate::receiver) fn append(&mut self, pending: PendingDirs, post_clean: &[FileEntry]) {
@@ -180,8 +180,8 @@ impl DirFlist {
     }
 
     /// Resolves a wire `dir_ndx`. `None` is upstream's `dir_ndx >=
-    /// dir_flist->used` refusal (`flist.c:2906-2909`); `Some(Cleared)` is the
-    /// inactive-slot refusal (`flist.c:2910-2918`).
+    /// dir_flist->used` refusal (`flist.c:3149-3152`); `Some(Cleared)` is the
+    /// inactive-slot refusal (`flist.c:3153-3161`).
     pub(in crate::receiver) fn resolve(&self, dir_ndx: i32) -> Option<&DirSlot> {
         usize::try_from(dir_ndx)
             .ok()

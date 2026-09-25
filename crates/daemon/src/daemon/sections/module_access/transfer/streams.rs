@@ -313,7 +313,7 @@ fn build_handshake_result(
         client_args: Some(client_args),
         // upstream: clientserver.c:1288-1289 - the reconciled minimum of the
         // client's forwarded `--timeout` and the module's `timeout` directive,
-        // which is what `main.c:1295` then advertises as `MSG_IO_TIMEOUT`.
+        // which is what `main.c:1313` then advertises as `MSG_IO_TIMEOUT`.
         io_timeout: io_timeout.map(NonZeroU64::get),
         negotiated_algorithms: None,
         compat_flags: None,
@@ -410,8 +410,8 @@ fn execute_transfer(
 ) -> i32 {
     if let Some(log) = ctx.log_sink {
         // upstream: the daemon sender announces the walk with the FLOG-only
-        // `building file list` (flist.c:2248) and the daemon receiver mirrors
-        // it with `receiving file list` (flist.c:2608); both land in the
+        // `building file list` (flist.c:2484) and the daemon receiver mirrors
+        // it with `receiving file list` (flist.c:2848); both land in the
         // daemon log via rwrite()'s am_daemon branch (log.c:290-303).
         let banner = match role {
             ServerRole::Generator => "building file list",
@@ -494,7 +494,7 @@ fn execute_transfer(
                 // The per-file transfer-log lines are written by the transfer
                 // engine's daemon-log hook (see `DaemonFileLogWriter`), one row
                 // per processed entry in flist-index order - mirroring upstream's
-                // per-file `log_item(FLOG)` (receiver.c:1273 / sender.c:461).
+                // per-file `log_item(FLOG)` (receiver.c:1290 / sender.c:462).
                 // Only the totals trailer is emitted here.
                 //
                 // upstream: cleanup.c:222-226 - `am_daemon` always runs

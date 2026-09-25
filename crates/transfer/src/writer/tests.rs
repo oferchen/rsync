@@ -481,7 +481,7 @@ fn server_writer_send_redo_plain_mode_fails() {
 
 /// A remote receiver only learns of vanished/unreadable source files - and thus
 /// reports exit 24/23 - if the sender emits `MSG_IO_ERROR` with the io_error
-/// bits as a 4-byte LE payload (upstream sender.c:485-486, io.c:1542-1549).
+/// bits as a 4-byte LE payload (upstream sender.c:486-487, io.c:1568-1575).
 /// `MSG_NO_SEND` alone carries no exit-code bits. This pins the wire encoding a
 /// real upstream receiver folds via `io_error |= val`.
 #[test]
@@ -613,7 +613,7 @@ fn multiplex_writer_no_recorder_still_works() {
     assert!(!wire.is_empty());
 }
 
-/// upstream `sender.c:217` picks the token stream's destination:
+/// upstream `sender.c:220` picks the token stream's destination:
 /// `f_xfer = write_batch < 0 ? batch_fd : f_out`. Under `--only-write-batch`
 /// the payload goes into the batch INSTEAD of the socket, which is what allows
 /// the remote receiver to run dry and read nothing. Teeing it as well would

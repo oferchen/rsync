@@ -77,7 +77,7 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:422-438` / `flist.c:2699-2712` - `stats.num_dirs++` etc.
+    /// - `flist.c:647-663` / `flist.c:2939-2952` - `stats.num_dirs++` etc.
     /// - `main.c:387-411` - `output_itemized_counts()` derives `reg` as the
     ///   total minus the other four categories.
     pub num_dirs: u64,
@@ -93,7 +93,7 @@ pub struct TransferStats {
     pub files_transferred: usize,
     /// Summed length of every transferred file (upstream: `total_transferred_size`).
     ///
-    /// On a pull the local receiver computes this itself (`receiver.c:784`
+    /// On a pull the local receiver computes this itself (`receiver.c:800`
     /// `stats.total_transferred_size += F_LENGTH(file)`); upstream never sends
     /// it over the wire in `handle_stats()`, so the pulling client reports it
     /// straight from this locally accumulated total.
@@ -104,7 +104,7 @@ pub struct TransferStats {
     ///
     /// This tracks data sent back during the transfer, such as signature blocks
     /// for delta generation and file index requests. Mirrors upstream rsync's
-    /// `stats.total_written` tracking in io.c:859.
+    /// `stats.total_written` tracking in io.c:877.
     pub bytes_sent: u64,
     /// Total size of all source files in the file list.
     ///
@@ -121,15 +121,15 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2615` - `start_read = stats.total_read;`
-    /// - `flist.c:2789` - `stats.flist_size += stats.total_read - start_read;`
+    /// - `flist.c:2855` - `start_read = stats.total_read;`
+    /// - `flist.c:3032` - `stats.flist_size += stats.total_read - start_read;`
     pub flist_size: u64,
     /// Sender's `flist_buildtime` in milliseconds, as read from its stats
     /// trailer; 0 when absent (protocol < 29, or no trailer).
     ///
     /// A client receiver adopts the sender's figure and prints the
     /// "File list generation time" line only when it is non-zero
-    /// (`main.c:375`, `main.c:450`).
+    /// (`main.c:375`, `main.c:453`).
     pub flist_buildtime_ms: u64,
     /// Sender's `flist_xfertime` in milliseconds, as read from its stats
     /// trailer; 0 when absent (`main.c:376`).
@@ -144,19 +144,19 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2553`: `write_int(f, ignore_errors ? 0 : io_error);`
+    /// - `flist.c:2793`: `write_int(f, ignore_errors ? 0 : io_error);`
     pub io_error: i32,
     /// Upstream's `got_xfer_error`: at least one `MSG_ERROR_XFER` frame arrived
     /// from the peer.
     ///
     /// This is the only thing that reports a missing source argument: upstream
-    /// deliberately leaves `io_error` clear for `ENOENT` (`flist.c:2431`), so
+    /// deliberately leaves `io_error` clear for `ENOENT` (`flist.c:2671`), so
     /// the sender's `FERROR_XFER` frame is the sole carrier of the failure and
     /// this flag is what turns it into exit 23.
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1660`: `MSG_ERROR_XFER` -> `rwrite(FERROR_XFER, ...)`
+    /// - `io.c:1686`: `MSG_ERROR_XFER` -> `rwrite(FERROR_XFER, ...)`
     /// - `log.c:310-311`: `case FERROR_XFER: got_xfer_error = 1;`
     /// - `cleanup.c:217-218`: `io_error & IOERR_GENERAL || got_xfer_error` -> 23
     pub got_xfer_error: bool,
@@ -182,7 +182,7 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:733-746` - `stats.created_*++` under `ITEM_IS_NEW`.
+    /// - `receiver.c:749-762` - `stats.created_*++` under `ITEM_IS_NEW`.
     pub created_stats: CreatedStats,
 
     /// Whether deletion was stopped due to `--max-delete` limit.
@@ -191,7 +191,7 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1367` - `deletion_count >= max_delete` triggers exit 25
+    /// - `main.c:1385` - `deletion_count >= max_delete` triggers exit 25
     pub delete_limit_exceeded: bool,
 
     /// Total literal (new) data bytes written during delta application.
@@ -222,7 +222,7 @@ pub struct TransferStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1093-1097` - `send_msg_int(MSG_REDO, ndx)` queues for redo
+    /// - `receiver.c:1109-1113` - `send_msg_int(MSG_REDO, ndx)` queues for redo
     /// - `generator.c:2160-2199` - generator processes redo queue in phase 2
     pub redo_count: usize,
 

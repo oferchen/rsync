@@ -1,6 +1,6 @@
 /// The daemon-argument ceiling must be recorded, not only sent to the peer.
 ///
-/// upstream: `io.c:1476-1479` - `read_args()` cuts the peer off at
+/// upstream: `io.c:1502-1505` - `read_args()` cuts the peer off at
 /// `MAX_DAEMON_ARGS` with `rprintf(FERROR, "too many daemon arguments\n")`, and
 /// a daemon's `FERROR` reaches the log file. oc answered the peer and logged
 /// nothing, so the guard fired invisibly: an operator saw a connection cut with
@@ -60,7 +60,7 @@ fn run_daemon_logs_an_oversized_client_argv() {
     reader.read_line(&mut line).expect("module acknowledgement");
     assert_eq!(line, "@RSYNCD: OK\n");
 
-    // upstream: io.c:1476 - the ceiling is checked before an argument is
+    // upstream: io.c:1502 - the ceiling is checked before an argument is
     // appended, so the refusal fires once the vector already holds
     // `MAX_DAEMON_ARGS - 1` entries. Sending exactly that many leaves no
     // unconsumed bytes in flight.
@@ -85,7 +85,7 @@ fn run_daemon_logs_an_oversized_client_argv() {
     }
 
     let log_contents = fs::read_to_string(&log_path).expect("read log file");
-    // upstream: io.c:1477-1478 emits the refusal bare - unlike `option_error()`
+    // upstream: io.c:1503-1504 emits the refusal bare - unlike `option_error()`
     // (`options.c:915`) this site adds no `rsync: ` prefix.
     assert!(
         log_contents

@@ -8,7 +8,7 @@
 
 /// The value upstream's `MAXPATHLEN` resolves to on this platform.
 ///
-/// upstream: `rsync.h:760-762` takes `MAXPATHLEN` from `<sys/param.h>` and
+/// upstream: `rsync.h:761-763` takes `MAXPATHLEN` from `<sys/param.h>` and
 /// supplies 1024 only when that header did not define one. Every Unix oc
 /// supports *does* define it, so reading the platform's own value is what
 /// mirrors upstream - not the fallback.

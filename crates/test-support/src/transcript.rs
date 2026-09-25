@@ -36,7 +36,7 @@
 //! One input cannot be pinned from outside: on a PULL the server sender ends
 //! its stream with `flist_buildtime` and `flist_xfertime`, wall-clock
 //! milliseconds (upstream: main.c:357-358 handle_stats(), timed in
-//! flist.c:2773-2801 send_file_list()). A pull comparison masks them with
+//! flist.c:3016-3044 send_file_list()). A pull comparison masks them with
 //! [`WireTranscript::mask_pull_flist_times`].
 //!
 //! The trampoline is resolved through [`crate::workspace_bin`], so a missing
@@ -98,7 +98,7 @@ impl WireTranscript {
     /// demultiplexed from the end of the unmultiplexed handshake (the last
     /// handshake write is the fixed checksum seed; upstream: compat.c
     /// setup_protocol()); the final `MSG_DATA` frame must be the sender's
-    /// lone `NDX_DONE` goodbye (upstream: main.c:920-922
+    /// lone `NDX_DONE` goodbye (upstream: main.c:933-935
     /// read_final_goodbye(), protocol >= 31), preceded by the two 3-byte
     /// time fields.
     /// Anything else is refused rather than guessed at, so a layout change

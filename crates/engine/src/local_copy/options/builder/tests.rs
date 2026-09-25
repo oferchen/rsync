@@ -641,7 +641,7 @@ mod validation {
 
     #[test]
     fn append_and_whole_file_conflict() {
-        // upstream: options.c:2382 - --append cannot be used with --whole-file.
+        // upstream: options.c:2391 - --append cannot be used with --whole-file.
         let result = LocalCopyOptionsBuilder::new()
             .append(true)
             .whole_file(true)

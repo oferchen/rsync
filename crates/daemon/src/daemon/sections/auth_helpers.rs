@@ -63,7 +63,7 @@ fn log_module_lock_error(
 /// The refusal text upstream builds once and delivers to BOTH the peer and the
 /// daemon log.
 ///
-/// upstream: `options.c:1409-1423` `create_refuse_error()` fills `err_buf` with
+/// upstream: `options.c:1415-1429` `create_refuse_error()` fills `err_buf` with
 /// `"The server is configured to refuse --<longName>\n"`, and the post-`@RSYNCD:
 /// OK` failure branch at `clientserver.c:1254` reaches `option_error()`
 /// (`options.c:907-918`), which emits that same buffer via
@@ -100,7 +100,7 @@ fn log_module_refused_option(log: &SharedLogSink, refused: &str) {
 
 /// Logs a failure to read the client's argument vector.
 ///
-/// upstream: `io.c:1477-1478` - `read_args()` reports the refusal where it
+/// upstream: `io.c:1503-1504` - `read_args()` reports the refusal where it
 /// happens, e.g. `rprintf(FERROR, "too many daemon arguments\n")`, and a
 /// daemon's `FERROR` reaches the log file. oc sent that refusal to the peer and
 /// logged nothing at all, so an operator watching the log could not see why a

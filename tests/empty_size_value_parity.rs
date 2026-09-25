@@ -1,7 +1,7 @@
 //! An empty size value means `0`, per option, exactly as upstream resolves it.
 //!
 //! ```c
-//! /* options.c:1172-1175 - the digit scan stops on the terminator, so the
+//! /* options.c:1178-1181 - the digit scan stops on the terminator, so the
 //!    suffix switch takes def_suf and strtod("") gives 0. */
 //! for (arg = size_arg; isDigit(arg); arg++) {}
 //! ...
@@ -14,7 +14,7 @@
 //!
 //! | option | upstream call | empty resolves to |
 //! |---|---|---|
-//! | `--block-size` | min 0 (options.c:1802) | 0 -> default block size |
+//! | `--block-size` | min 0 (options.c:1808) | 0 -> default block size |
 //! | `--min-size` | min 0 (:1809) | 0 -> no lower bound |
 //! | `--max-size` | min 0 (:1815) | 0 -> **excludes every non-empty file** |
 //! | `--bwlimit` | min 512, `unlimited_0` (:1821) | 0 -> unlimited |
@@ -176,7 +176,7 @@ fn a_non_empty_size_value_still_parses_and_applies() {
 /// applied per option precisely so this stays rejected; putting it in the
 /// shared string parser would have quietly re-opened it.
 ///
-/// upstream: options.c:2067 `parse_size_arg(..., "max-alloc", 1024*1024, ...)`.
+/// upstream: options.c:2073 `parse_size_arg(..., "max-alloc", 1024*1024, ...)`.
 #[test]
 fn an_empty_max_alloc_is_still_rejected() {
     let fixture = Fixture::new();

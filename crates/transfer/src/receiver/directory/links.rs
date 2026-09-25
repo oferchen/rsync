@@ -32,7 +32,7 @@ impl ReceiverContext {
     ///   ATTRS_SKIP_ATIME | ATTRS_SKIP_CRTIME` when `omit_link_times &&
     ///   S_ISLNK(file->mode)`, so a symlink keeps its wall-clock creation time
     ///   instead of the sender-supplied mtime.
-    /// - `options.c:2648-2649` - `-J` is packed into `server_options` only on a
+    /// - `options.c:2657-2658` - `-J` is packed into `server_options` only on a
     ///   push (`am_sender`), so on a pull the local receiver applies it itself.
     ///
     /// Mirrors the local-copy executor, which builds symlink options as
@@ -145,12 +145,12 @@ impl ReceiverContext {
             // while decoding the file list and everything downstream reads the
             // stored `F_SYMLINK(file)`:
             //
-            // - upstream: flist.c:1070,1296-1299 - a receiver running with
+            // - upstream: flist.c:1295,1521-1524 - a receiver running with
             //   `munge_symlinks` (a daemon module with `munge symlinks = yes`,
             //   or --munge-links) prepends `/rsyncd-munged/` (rsync.h:36) so
             //   the on-disk link cannot resolve outside the module root when
             //   followed.
-            // - upstream: flist.c:1328 - `if (sanitize_paths && !munge_symlinks
+            // - upstream: flist.c:1553 - `if (sanitize_paths && !munge_symlinks
             //   && *bp) sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`.
             //   `sanitize_paths` is live only in the daemon server process
             //   (clientserver.c:1067-1068; a non-chroot module records its full
@@ -176,7 +176,7 @@ impl ReceiverContext {
             // skips unsafe symlinks when --safe-links is set. The check stays
             // here (not in sanitize_file_list) to preserve protocol index
             // alignment with the sender. `sl` is the decoded target, i.e. the
-            // post-munge/post-sanitize value: `unsafe_symlink()` (util1.c:1569)
+            // post-munge/post-sanitize value: `unsafe_symlink()` (util1.c:1664)
             // rejects every absolute target and munging makes every target
             // absolute, so a munging receiver under --safe-links skips every
             // symlink - safe ones included - and the notice quotes the munged
@@ -422,7 +422,7 @@ impl ReceiverContext {
             let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
             self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
             if raw & ItemFlags::ITEM_IS_NEW != 0 {
-                // upstream: receiver.c:733-741 - only an ITEM_IS_NEW row bumps
+                // upstream: receiver.c:749-757 - only an ITEM_IS_NEW row bumps
                 // stats.created_files / created_symlinks.
                 self.record_created(entry.mode());
             }
@@ -489,7 +489,7 @@ impl ReceiverContext {
 
             let relative_path = entry.path();
 
-            // upstream: flist.c:1070,1296-1299 - prepend the `/rsyncd-munged/`
+            // upstream: flist.c:1295,1521-1524 - prepend the `/rsyncd-munged/`
             // prefix at decode time when the daemon enabled `munge symlinks`,
             // so the on-disk link cannot resolve outside the module root when
             // followed.
@@ -686,7 +686,7 @@ impl ReceiverContext {
             let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
             self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
             if raw & ItemFlags::ITEM_IS_NEW != 0 {
-                // upstream: receiver.c:733-741 - only an ITEM_IS_NEW row bumps
+                // upstream: receiver.c:749-757 - only an ITEM_IS_NEW row bumps
                 // stats.created_files / created_symlinks.
                 self.record_created(entry.mode());
             }
@@ -1199,7 +1199,7 @@ impl ReceiverContext {
 /// Sanitizes a received symlink target so it cannot resolve above the module
 /// root, for daemon modules that disabled `munge symlinks`.
 ///
-/// Mirrors upstream `flist.c:1328`, which applies `sanitize_path(...,
+/// Mirrors upstream `flist.c:1553`, which applies `sanitize_path(...,
 /// SP_DEFAULT)` to the target whenever `sanitize_paths && !munge_symlinks`.
 /// `sanitize_paths` is set for a daemon module with a path
 /// (`clientserver.c:1067-1068`), so the two transforms between them leave no
@@ -1235,8 +1235,8 @@ fn sanitize_received_symlink_target(target: &Path, entry_path: &Path) -> std::pa
 
 /// Number of directory levels the entry sits below the transfer root.
 ///
-/// Mirrors upstream `util1.c:1015 count_dir_elements()` applied to `lastdir`,
-/// the entry's own directory (`flist.c:867`). `count_dir_elements` skips `.`
+/// Mirrors upstream `util1.c:1112 count_dir_elements()` applied to `lastdir`,
+/// the entry's own directory (`flist.c:1092`). `count_dir_elements` skips `.`
 /// elements, which is what filtering to `Component::Normal` reproduces; the
 /// received name is already sanitized by this point, so no `..` remains for the
 /// two to disagree about.
@@ -1252,7 +1252,7 @@ fn containing_dir_depth(entry_path: &Path) -> usize {
 
 /// Prepends the `/rsyncd-munged/` prefix to a symlink target.
 ///
-/// Mirrors upstream `flist.c:1150-1154` where the receiver prepends
+/// Mirrors upstream `flist.c:1375-1379` where the receiver prepends
 /// `SYMLINK_PREFIX` to the wire target so the on-disk symlink cannot resolve
 /// outside the module root when followed. Only invoked when the daemon module
 /// has `munge symlinks = yes` (or the `!use_chroot` auto default).
@@ -1311,7 +1311,7 @@ mod tests {
     /// `omit_link_times_enabled()`.
     ///
     /// upstream: rsync.c:583 - `set_file_attrs()` adds `ATTRS_SKIP_MTIME` for a
-    /// symlink when `omit_link_times`. options.c:2648-2649 packs the compact 'J'
+    /// symlink when `omit_link_times`. options.c:2657-2658 packs the compact 'J'
     /// only on a push (`am_sender`), so on a pull the receiver applies it itself.
     #[cfg(any(unix, windows))]
     #[test]

@@ -3,7 +3,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:1839-1840` - `if (write_batch < 0) dry_run = 1;` forces dry-run
+//! - `main.c:1866-1867` - `if (write_batch < 0) dry_run = 1;` forces dry-run
 //!   when `--only-write-batch` is set so the receiver never invokes
 //!   `do_recv()` / `finish_transfer()`. The batch file is the sole output.
 //!

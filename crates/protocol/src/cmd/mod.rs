@@ -13,7 +13,7 @@
 //!   immediately before writing the daemon argument list to the socket.
 //! - `rsync.c:296` (level 1) - `print_child_argv("protected args:", args + i + 1)`
 //!   in `send_protected_args()` before the per-arg iconv loop.
-//! - `main.c:620` (level 2) - per-argument `cmd[%d]=%s` enumeration inside
+//! - `main.c:633` (level 2) - per-argument `cmd[%d]=%s` enumeration inside
 //!   `do_cmd()` once the final remote argv has been assembled.
 
 pub mod trace;

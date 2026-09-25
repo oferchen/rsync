@@ -133,7 +133,7 @@ fn extended_flags_hardlink_flag_combinations() {
     }
 
     // Test: XMIT_HLINKED only (hardlink follower). A follower must reference an
-    // already-seen leader (upstream flist.c:794), so write the leader at NDX 0
+    // already-seen leader (upstream flist.c:1019), so write the leader at NDX 0
     // and the follower at NDX 1 pointing back to it.
     {
         let mut buf = Vec::new();
@@ -301,7 +301,7 @@ fn extended_flags_owner_name_flags() {
 
 #[test]
 fn name_follows_gated_on_inc_recurse() {
-    // upstream: flist.c:564-565,491-492 - `if (inc_recurse && user_name)` gates
+    // upstream: flist.c:789-790,716-717 - `if (inc_recurse && user_name)` gates
     // the inline XMIT_*_NAME_FOLLOWS flags. Without inc_recurse the sender must
     // NOT emit inline owner names (they ride only in the trailing id-list), so
     // `with_name_follows(false)` (the default) must produce a strictly shorter

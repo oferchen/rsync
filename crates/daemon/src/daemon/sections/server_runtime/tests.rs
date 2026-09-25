@@ -229,7 +229,7 @@ fn every_session_outcome_reports_without_propagating() {
 /// exit is success, any other status is the child having already said why, and
 /// a fatal signal is a crash the parent must name itself.
 ///
-/// upstream: `socket.c:679` reaps with a NULL status pointer, so it draws no
+/// upstream: `socket.c:687` reaps with a NULL status pointer, so it draws no
 /// distinction at all; oc reports session outcomes and therefore must.
 #[cfg(unix)]
 #[test]
@@ -329,7 +329,7 @@ fn reap_until_empty(workers: &mut Vec<SessionWorker>) {
 /// worklist of session failures must drain it and hand nothing back the accept
 /// loop could act on.
 ///
-/// upstream: socket.c:679 `waitpid(-1, NULL, WNOHANG)` - the parent reaps the
+/// upstream: socket.c:687 `waitpid(-1, NULL, WNOHANG)` - the parent reaps the
 /// per-connection child with a NULL status pointer and never inspects the
 /// session's outcome at all.
 #[test]
@@ -703,7 +703,7 @@ fn parse_socket_options_empty_string() {
     assert!(opts.is_empty());
 }
 
-/// upstream: socket.c:704-707 - an unknown option name warns (`Unknown socket
+/// upstream: socket.c:712-715 - an unknown option name warns (`Unknown socket
 /// option %s`) and `continue`s; `set_socket_options()` is `void`, so the daemon
 /// must not treat a bogus `socket options =` entry as a fatal config error. A
 /// following valid entry in the same string must still parse, proving the loop
@@ -739,7 +739,7 @@ fn parse_socket_options_unknown_option_logs_warning() {
     );
 }
 
-/// upstream: socket.c:717-727 - an `OPT_ON` preset given a value logs `syntax
+/// upstream: socket.c:725-735 - an `OPT_ON` preset given a value logs `syntax
 /// error -- %s does not take a value` at warning level but still yields the
 /// preset, so the daemon keeps the option instead of aborting.
 #[cfg(not(target_family = "windows"))]
@@ -926,7 +926,7 @@ fn apply_stream_socket_options_empty_is_noop() {
     apply_socket_options_to_stream(&stream, &[], None);
 }
 
-/// upstream: socket.c:730-733 - `set_socket_options()` responds to a failed
+/// upstream: socket.c:738-741 - `set_socket_options()` responds to a failed
 /// `setsockopt(2)` with `rsyserr(FERROR, errno, "failed to set socket option
 /// %s")` and then `continue`s the loop; one failed option must never abort the
 /// connection or skip the remaining options. Applying `IP_TOS` to an AF_UNIX
@@ -1015,7 +1015,7 @@ fn parse_socket_options_accepts_all_upstream_options() {
             parse_socket_options("IPTOS_THROUGHPUT", None).expect("parse"),
             vec![SocketOption::IpTos(0x08)]
         );
-        // upstream: socket.c:717-727 - an OPT_ON preset given a value warns but
+        // upstream: socket.c:725-735 - an OPT_ON preset given a value warns but
         // still applies its fixed byte; it is not a fatal error.
         assert_eq!(
             parse_socket_options("IPTOS_LOWDELAY=5", None).expect("value warns, still applies"),
@@ -1387,7 +1387,7 @@ fn admission_reaps_before_consulting_the_connection_cap() {
 #[test]
 fn default_listen_backlog_matches_upstream() {
     // upstream: daemon-parm.txt declares `INTEGER listen_backlog 5` and
-    // socket.c:554 passes `lp_listen_backlog()` to listen(2). The absent-
+    // socket.c:562 passes `lp_listen_backlog()` to listen(2). The absent-
     // directive default must match upstream's 5 so a drop-in daemon presents
     // the same accept-queue depth; operators raise it via `listen backlog`.
     assert_eq!(DEFAULT_LISTEN_BACKLOG, 5);
@@ -1398,7 +1398,7 @@ fn warn_per_family_bind_failure_labels_ipv6() {
     // The dual-stack startup must surface per-family failure with the
     // correct address-family label so operators investigating partial
     // listener reachability can identify which family degraded. This
-    // mirrors upstream socket.c:618-620's `(address-family %d)` diagnostic.
+    // mirrors upstream socket.c:626-628's `(address-family %d)` diagnostic.
     let addr: SocketAddr = "[::]:8873".parse().unwrap();
     let error = io::Error::new(io::ErrorKind::AddrNotAvailable, "test failure");
 
@@ -1463,7 +1463,7 @@ fn bind_listeners_per_family_falls_back_when_first_family_unreachable() {
 
 #[test]
 fn bind_listeners_per_family_applies_socket_options_before_listen() {
-    // upstream: socket.c:449-452 - set_socket_options(s, sockopts) runs before
+    // upstream: socket.c:457-460 - set_socket_options(s, sockopts) runs before
     // bind(2)/listen(2), so options that shape the SYN-ACK (e.g.
     // SO_SNDBUF/SO_RCVBUF window scaling) take effect from the very first
     // connection. Prior to this fix the daemon applied `socket options =` /
@@ -1546,7 +1546,7 @@ fn default_acceptor_threads_is_one() {
 #[cfg(unix)]
 #[test]
 fn default_single_listener_refuses_a_second_bind_on_the_same_port() {
-    // upstream: socket.c:447 - open_socket_in() sets SO_REUSEADDR only. The
+    // upstream: socket.c:455 - open_socket_in() sets SO_REUSEADDR only. The
     // default single-listener daemon (acceptor_threads == 1) must therefore NOT
     // set SO_REUSEPORT, so a second bind on the same in-use port is refused with
     // EADDRINUSE rather than co-binding. This is what makes concurrent daemon
@@ -1642,7 +1642,7 @@ fn bind_listeners_per_family_fails_only_when_all_families_unreachable() {
     // when no family in the input list can bind. Both addresses here are
     // TEST-NET-1 documentation prefixes (RFC 5737) which the kernel cannot
     // assign to a local socket, so every bind attempt returns
-    // `EADDRNOTAVAIL`. Matches upstream socket.c:492-498 which returns NULL
+    // `EADDRNOTAVAIL`. Matches upstream socket.c:500-506 which returns NULL
     // ("unable to bind any inbound sockets") only when the per-family loop
     // produced zero usable sockets.
     let bind_addresses = vec![
@@ -2192,7 +2192,7 @@ fn poll_accept_engine_poll_returns_connection_with_blocking_reset() {
 fn poll_accept_engine_poll_survives_transient_accept_error() {
     // Regression: a transient per-connection accept(2) failure (EMFILE under a
     // descriptor shortage, or ECONNABORTED when a client resets during the
-    // accept window) must NOT tear the daemon down. Upstream socket.c:593
+    // accept window) must NOT tear the daemon down. Upstream socket.c:601
     // `if (fd < 0) continue;` ignores every accept failure and keeps serving.
     // Before the fix, SingleListenerEngine::poll escalated such errors to a
     // fatal DaemonError, so one aborted connection under a burst killed the

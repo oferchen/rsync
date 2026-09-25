@@ -27,7 +27,7 @@
 //! `O_PATH` names a location and requires no right, which is the minimum
 //! privilege traversal actually needs.
 //!
-//! upstream: `rsync-3.5.0/syscall.c:493` opens intermediates
+//! upstream: `rsync-3.5.1/syscall.c:626` opens intermediates
 //! `O_RDONLY|O_DIRECTORY`. Upstream confines with chroot, which RELOCATES `/`
 //! so its walk starts inside the jail; Landlock does not relocate `/`. The
 //! divergence is forced by the mechanism, not by a difference in policy.

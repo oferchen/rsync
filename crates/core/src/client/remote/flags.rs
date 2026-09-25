@@ -25,7 +25,7 @@ use crate::server::ServerConfig;
 pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     let mut flags = String::from("-");
 
-    // upstream: options.c:2625-2626 - `for (i = 0; i < verbose; i++)
+    // upstream: options.c:2634-2635 - `for (i = 0; i < verbose; i++)
     // argstr[x++] = 'v';` packs one 'v' per verbosity level, first after the
     // leading '-'. server_options() sends the count to the remote so its
     // generator/receiver emits matching verbose diagnostics; the daemon wire
@@ -36,7 +36,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('v');
     }
 
-    // upstream: options.c:2646-2647 - `if (quiet && msgs2stderr) 'q'`. The
+    // upstream: options.c:2655-2656 - `if (quiet && msgs2stderr) 'q'`. The
     // default `msgs2stderr` is 2 (nonzero), so plain `-q` packs 'q';
     // `--no-msgs2stderr` (msgs2stderr == 0) suppresses it. The local-half
     // ServerConfig parser ignores 'q' (transfer/flags.rs), so packing it here
@@ -45,7 +45,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('q');
     }
 
-    // upstream: options.c:2648-2649 - `make_backups` rides in the compact
+    // upstream: options.c:2657-2658 - `make_backups` rides in the compact
     // flag string as `b`. Emitting `--backup` as a separate long arg lands
     // as a positional path on upstream server arg parsers that do not
     // consult popt for long flags.
@@ -56,7 +56,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('u');
     }
     // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.
-    // numeric_ids is always sent as long-form --numeric-ids (options.c:2905-2906).
+    // numeric_ids is always sent as long-form --numeric-ids (options.c:2915-2916).
     if config.dry_run() {
         flags.push('n');
     }
@@ -64,7 +64,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('l');
     }
 
-    // upstream: options.c:2188-2191 - `if (files_from) { if (recurse == 1)
+    // upstream: options.c:2197-2200 - `if (files_from) { if (recurse == 1)
     // recurse = 0; if (xfer_dirs < 0) xfer_dirs = 1; }`. Only the recursion `-a`
     // implies is cleared; an explicit `-r` (recurse == 2) survives --files-from.
     // That resolution happens once at the CLI, so `config.recursive()` is
@@ -72,25 +72,25 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     // re-cleared here - doing so dropped the compact `r` letter AND, because the
     // local half re-parses this same string, stopped the sender from recursing
     // into a directory named in the list at all.
-    // options.c:2205-2206 - --files-from defaults relative_paths=1.
+    // options.c:2214-2215 - --files-from defaults relative_paths=1.
     let effective_recursive = config.recursive();
-    // upstream: options.c:2713-2714 - `if (relative_paths) argstr[x++] = 'R';`
+    // upstream: options.c:2723-2724 - `if (relative_paths) argstr[x++] = 'R';`
     // packs the compact `R` for the RESOLVED relative_paths. `relative_paths()`
-    // already folds in the --files-from default (options.c:2205-2206: relative
+    // already folds in the --files-from default (options.c:2214-2215: relative
     // defaults to 1 under --files-from) at the CLI layer, so it must NOT be
     // re-forced with `|| files_from_active` - that wrongly packs `R` even when
     // the user passed --no-relative, telling the remote peer relative is on and
-    // making the client-sender flatten (flist.c:2338-2349) diverge from the
+    // making the client-sender flatten (flist.c:2578-2589) diverge from the
     // wire signal (`sub/file` implied dir instead of the flattened `file`).
     let effective_relative = config.relative_paths();
 
-    // upstream: options.c:2638-2640 - `if ((xfer_dirs >= 2 && xfer_dirs < 4) ||
+    // upstream: options.c:2647-2649 - `if ((xfer_dirs >= 2 && xfer_dirs < 4) ||
     // (xfer_dirs && !recurse && (list_only || (delete_mode && am_sender))))
     // argstr[x++] = 'd';`. The letter tracks an EXPLICIT `-d` (xfer_dirs == 2),
     // not the `xfer_dirs = 1` that --files-from or recursion implies - packing
     // it for the implied level told the peer `--dirs` for every --files-from
     // transfer. `d` = --dirs; the delete variants always travel long-form
-    // (options.c:2818-2827).
+    // (options.c:2828-2837).
     if config.dirs_explicit()
         || (config.dirs()
             && !effective_recursive
@@ -100,7 +100,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('d');
     }
 
-    // upstream: options.c:2655-2660 - `if (am_sender) { ... } else { if
+    // upstream: options.c:2665-2670 - `if (am_sender) { ... } else { if
     // (copy_links) 'L'; if (copy_dirlinks) 'k'; }`. The compact L/k letters are
     // role-specific: server_options() emits them ONLY when the local side is
     // NOT the sender (a pull), because copy_links/copy_dirlinks dereference
@@ -111,7 +111,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     // `flags.copy_dirlinks` directly in apply_common_server_flags so a push
     // generator still dereferences.
 
-    // upstream: options.c:2662-2666 - only send 'W' when explicitly set
+    // upstream: options.c:2672-2676 - only send 'W' when explicitly set
     // (whole_file > 0). The default for remote transfers is no-whole-file
     // (delta mode); upstream never sends --no-whole-file because it is the
     // default. Sending 'W' unconditionally when the tri-state defaults to
@@ -130,7 +130,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.preserve_group() {
         flags.push('g');
     }
-    // upstream: options.c:2677-2678 - `if (preserve_devices) argstr[x++] = 'D';
+    // upstream: options.c:2687-2688 - `if (preserve_devices) argstr[x++] = 'D';
     // /* ignore preserve_specials here */`. The compact 'D' tracks devices only;
     // specials ride as long-form --specials/--no-specials on the wire.
     if config.preserve_devices() {
@@ -139,7 +139,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.preserve_times() {
         flags.push('t');
     }
-    // upstream: options.c:2681-2685 - `-UU` doubles the letter at level 2.
+    // upstream: options.c:2691-2695 - `-UU` doubles the letter at level 2.
     for _ in 0..config.preserve_atimes_level().min(2) {
         flags.push('U');
     }
@@ -154,7 +154,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
         flags.push('A');
     }
     #[cfg(all(unix, feature = "xattr"))]
-    // upstream: options.c:2698-2704 - `-XX` doubles the letter at level 2.
+    // upstream: options.c:2708-2714 - `-XX` doubles the letter at level 2.
     for _ in 0..config.preserve_xattrs_level().min(2) {
         flags.push('X');
     }
@@ -164,7 +164,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.checksum() {
         flags.push('c');
     }
-    // upstream: options.c:2709-2710 - `if (cvs_exclude) 'C'`. Forwarded so the
+    // upstream: options.c:2719-2720 - `if (cvs_exclude) 'C'`. Forwarded so the
     // remote peer runs get_cvs_excludes() itself; duplicate excludes are
     // idempotent with the transmitted CVS filter rules.
     if config.cvs_exclude() {
@@ -182,7 +182,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.sparse() {
         flags.push('S');
     }
-    // upstream: options.c:2722 - the compact 'z' is packed only when
+    // upstream: options.c:2732 - the compact 'z' is packed only when
     // `do_compression == CPRES_ZLIB`. Plain `-z` defaults to zlib and explicit
     // `--compress-choice=zlib` also packs 'z', but zlibx/zstd/lz4 are forwarded
     // via the long-form `--new-compress`/`--compress-choice` instead and must
@@ -202,7 +202,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     // long-form --partial (daemon: build_full_daemon_args; local ServerConfig:
     // propagated via server_config.flags.partial in the *_server_config sites).
 
-    // upstream: options.c:2768-2780 - itemize-changes is forwarded via
+    // upstream: options.c:2778-2790 - itemize-changes is forwarded via
     // --log-format=%i in the long-form args, not as a compact flag.
 
     flags
@@ -211,7 +211,7 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
 /// Sender-only `--super`/`--stats` server args, shared by the SSH and
 /// daemon-push argument builders.
 ///
-/// upstream: options.c:3018-3023 server_options() - `args[ac++] = "--super"`
+/// upstream: options.c:3028-3033 server_options() - `args[ac++] = "--super"`
 /// when `am_root > 1` (an explicit `--super`, never mere root) and
 /// `args[ac++] = "--stats"` when `do_stats`, both inside the am_sender block.
 /// Both are forwarded only on a push,
@@ -403,7 +403,7 @@ fn split_pattern_modifiers(raw: &str) -> (String, bool, bool) {
 /// Carries `--only-write-batch` onto a remote-shell PUSH sender's config.
 ///
 /// Upstream binds `f_xfer` once per `send_files()` run from the global
-/// `write_batch` (`sender.c:217`); oc's sender reads the same decision off its
+/// `write_batch` (`sender.c:220`); oc's sender reads the same decision off its
 /// in-process `ServerConfig`, which is parsed from the compact flag string and
 /// so never sees this long-form-only option. Without it the sender would keep
 /// streaming tokens at a remote receiver that `--only-write-batch=X` has just
@@ -416,8 +416,8 @@ fn split_pattern_modifiers(raw: &str) -> (String, bool, bool) {
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2850-2851` - `if (write_batch < 0) "--only-write-batch=X"`
-/// - `main.c:1839` - `if (write_batch < 0) dry_run = 1`
+/// - `options.c:2860-2861` - `if (write_batch < 0) "--only-write-batch=X"`
+/// - `main.c:1866` - `if (write_batch < 0) dry_run = 1`
 pub(crate) fn apply_only_write_batch_for_sender(
     config: &ClientConfig,
     server_config: &mut ServerConfig,
@@ -429,13 +429,13 @@ pub(crate) fn apply_only_write_batch_for_sender(
 ///
 /// On a pull the local client IS the receiver, and upstream never forwards the
 /// option to the remote sender (`server_options()` emits the `X` placeholder
-/// inside its `am_sender` block, options.c:2850). Instead `main.c:1839` turns
+/// inside its `am_sender` block, options.c:2860). Instead `main.c:1866` turns
 /// `write_batch < 0` into `dry_run = 1` on this side - suppressing every
 /// filesystem mutation via the `do_mkdir`/`do_open`/`do_unlink` guards - while
 /// `do_xfers` stays 1 (it was computed before that assignment), so the remote
 /// sender is an ordinary one that still streams sum head, delta and file
 /// checksum. The receiver logs the item and calls `discard_receive_data()` to
-/// drain that stream without writing anything (receiver.c:811-817).
+/// drain that stream without writing anything (receiver.c:827-833).
 ///
 /// Both flags are needed: `only_write_batch` selects the drain-and-discard loop
 /// (which is checked ahead of `dry_run` in the receiver's dispatch), and
@@ -446,9 +446,9 @@ pub(crate) fn apply_only_write_batch_for_sender(
 ///
 /// # Upstream Reference
 ///
-/// - `main.c:1839` - `if (write_batch < 0) dry_run = 1`
-/// - `options.c:2850-2851` - placeholder forwarded on a push only
-/// - `receiver.c:811-817` - log the item, `discard_receive_data()`, no write
+/// - `main.c:1866` - `if (write_batch < 0) dry_run = 1`
+/// - `options.c:2860-2861` - placeholder forwarded on a push only
+/// - `receiver.c:827-833` - log the item, `discard_receive_data()`, no write
 pub(crate) fn apply_only_write_batch_for_receiver(
     config: &ClientConfig,
     server_config: &mut ServerConfig,
@@ -480,7 +480,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // server half needs the forwarded `-B%u` for a push. Both roles share this
     // function, so one assignment covers SSH, daemon and embedded-SSH.
     server_config.block_size = config.block_size_override();
-    // upstream: options.c:690 / syscall.c:128-143 - `--confine-root` is a
+    // upstream: options.c:690 / syscall.c:145-170 - `--confine-root` is a
     // LOCAL global consulted by `confinement_root()` on whichever side parsed
     // it; it is never forwarded, so the client's own in-process sender/receiver
     // half must carry it. Both roles share this function, so one assignment
@@ -488,10 +488,10 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // construction (`GeneratorContext::source_open` reads the module root
     // instead), matching upstream's `am_daemon ? module_dir : confine_root`.
     server_config.connection.confine_root = config.confine_root().map(std::path::Path::to_path_buf);
-    // upstream: options.c:2190-2203 - `xfer_dirs` is resolved locally by each
+    // upstream: options.c:2199-2212 - `xfer_dirs` is resolved locally by each
     // side (`--files-from`, recursion and `--list-only` all imply level 1), and
     // the compact `d` letter is packed only for an EXPLICIT `-d`
-    // (options.c:2638-2640), so the peer re-derives the implied level itself and
+    // (options.c:2647-2649), so the peer re-derives the implied level itself and
     // it never needs to ride the wire.
     //
     // oc's in-process half is parsed back out of that same flag string, so the
@@ -500,13 +500,13 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // directory in the file list at all. Carry the resolved value directly.
     server_config.flags.dirs = config.dirs();
     server_config.write.inplace = config.inplace();
-    // upstream: receiver.c:968 - append mode implies inplace; the sum_head
-    // block-skip (generator.c:786) and flength derivation (sender.c:89) on both
+    // upstream: receiver.c:984 - append mode implies inplace; the sum_head
+    // block-skip (generator.c:786) and flength derivation (sender.c:90) on both
     // the local sender (push) and receiver (pull) roles gate on these flags, so
     // they must be carried onto the in-process ServerConfig for SSH and daemon.
     server_config.flags.append = config.append();
     server_config.flags.append_verify = config.append_verify();
-    // upstream: receiver.c:320 - `--preallocate` (preallocate_files) is a
+    // upstream: receiver.c:333 - `--preallocate` (preallocate_files) is a
     // long-form-only flag with no compact letter, so build_server_flag_string
     // never packs it into the capability string this local ServerConfig is
     // parsed from. On a remote-shell/daemon pull the LOCAL client is the
@@ -519,9 +519,9 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // into the capability string this local ServerConfig is parsed from. It
     // governs the local half of BOTH roles: on a push the local client is the
     // sender and must run the deferred unlink of its own sources once the remote
-    // receiver confirms each commit with MSG_SUCCESS (sender.c:395); on a
+    // receiver confirms each commit with MSG_SUCCESS (sender.c:396); on a
     // pull the local client is the generator/receiver and must emit MSG_SUCCESS
-    // to the remote sender so it can unlink the remote sources (receiver.c:1063-1069).
+    // to the remote sender so it can unlink the remote sources (receiver.c:1079-1085).
     // Without carrying it here the removal is silently skipped for every remote
     // transfer, so it must ride onto the local config exactly like `--preallocate`.
     server_config.flags.remove_source_files = config.remove_source_files();
@@ -538,7 +538,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
         ::metadata::ModifyWindow::ZERO,
         ::metadata::ModifyWindow::from_secs,
     );
-    // upstream: options.c:2064-2066 - do_stats sets INFO_STATS to level 2+
+    // upstream: options.c:2070-2072 - do_stats sets INFO_STATS to level 2+
     server_config.do_stats = config.stats();
     // upstream: generator.c:124 - EARLY_DELETE_DONE_MSG = !(delete_during==2 || delete_after)
     server_config.deletion.late_delete =
@@ -566,7 +566,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // parsed from that string never sees it. On a pull the LOCAL client is the
     // receiver and owns the delete pass, so the flag has to be carried here; on
     // a push the remote receiver picks it up from the forwarded `--ignore-errors`
-    // arg (options.c:3062), which is why only the pull direction was affected.
+    // arg (options.c:3072), which is why only the pull direction was affected.
     server_config.deletion.ignore_errors = config.ignore_errors();
     // upstream: delete.c:156 - `--max-delete` is enforced by the generator,
     // which for a remote-shell pull runs on the local client (the receiver).
@@ -582,14 +582,14 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
         config.delete_mode(),
         config.max_delete()
     );
-    // upstream: flist.c:2257-2258 / options.c:2976 - `--no-implied-dirs` is
+    // upstream: flist.c:2496-2497 / options.c:2986 - `--no-implied-dirs` is
     // forwarded to the remote peer, but the in-process sender half (SSH/daemon
     // push) builds the wire flist locally and must honour the flag too. Its
     // generator emits implied parent dirs only when implied_dirs is on OR the
     // protocol >= 30 forces them. `implied_dirs()` defaults true, so this stays
     // false (implied dirs on) unless the client passed --no-implied-dirs.
     server_config.flags.no_implied_dirs = !config.implied_dirs();
-    // upstream: options.c:2655-2660 - `if (!am_sender) { if (copy_links) 'L';
+    // upstream: options.c:2665-2670 - `if (!am_sender) { if (copy_links) 'L';
     // if (copy_dirlinks) 'k'; }`. The compact L/k letters are wire-role-gated
     // (see build_server_flag_string, which no longer packs them). The in-process
     // half still needs the flags set directly: on a push the LOCAL generator IS
@@ -599,10 +599,10 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // sender does the dereferencing.
     server_config.flags.copy_links = config.copy_links();
     server_config.flags.copy_dirlinks = config.copy_dirlinks();
-    // upstream: options.c:2899-2903 - copy_unsafe_links and safe_links are long-form only
+    // upstream: options.c:2909-2913 - copy_unsafe_links and safe_links are long-form only
     server_config.flags.copy_unsafe_links = config.copy_unsafe_links();
     server_config.flags.safe_links = config.safe_links();
-    // upstream: flist.c:1419 / options.c:2987 - `--copy-devices` converts device
+    // upstream: flist.c:1644 / options.c:2997 - `--copy-devices` converts device
     // entries into regular files on the SENDER so their contents stream like a
     // file. The flag is long-form only; on a push the local client IS the sender
     // and never sends `--copy-devices` over the wire (`if (copy_devices &&
@@ -612,7 +612,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     server_config.flags.copy_devices = config.copy_devices();
     // upstream: syscall.c do_open / do_open_nofollow propagate O_NOATIME when set.
     server_config.write.open_noatime = config.open_noatime();
-    // upstream: options.c:2768-2780 - itemize_changes is forwarded to the remote
+    // upstream: options.c:2778-2790 - itemize_changes is forwarded to the remote
     // as --log-format=%i, but the local ServerConfig also needs the flag set so
     // the generator's maybe_emit_itemize() produces client-side output via callback.
     server_config.flags.info_flags.itemize = config.itemize_changes();
@@ -648,7 +648,7 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     server_config.file_selection.delete_missing_args = config.delete_missing_args();
     // upstream: generator.c:2481 - `int del_opts = delete_mode || force_delete ?
     // DEL_RECURSE : 0`. On a pull the local client IS the receiver, so the
-    // `--force` it forwards to the remote sender (options.c:3014-3015) has to
+    // `--force` it forwards to the remote sender (options.c:3024-3025) has to
     // land on this config too; otherwise the DEL_RECURSE term is only ever set
     // on a push and a populated directory obstacle is refused locally at 23.
     server_config.flags.force = config.force_replacements();
@@ -704,7 +704,7 @@ mod tests {
         assert!(!flags.contains('P'), "must not pack compact 'P': {flags}");
     }
 
-    // upstream: options.c:2677-2678 - the compact 'D' tracks preserve_devices
+    // upstream: options.c:2687-2688 - the compact 'D' tracks preserve_devices
     // only. specials-only must NOT pack 'D' (it rides as --specials long-form).
     #[test]
     fn server_flag_string_specials_only_omits_d() {
@@ -748,7 +748,7 @@ mod tests {
 
     #[test]
     fn server_flag_string_includes_z_for_default_compression() {
-        // upstream: options.c:2722 - plain `-z` (no explicit --compress-choice)
+        // upstream: options.c:2732 - plain `-z` (no explicit --compress-choice)
         // defaults to zlib, so the compact 'z' is packed. Note default_algorithm()
         // is the best-available codec (zstd), which is NOT zlib - an explicit
         // choice of it would omit 'z' (see the zstd test) - so the default case
@@ -764,7 +764,7 @@ mod tests {
     #[cfg(feature = "lz4")]
     #[test]
     fn server_flag_string_omits_z_for_lz4() {
-        // upstream: options.c:2722 - 'z' NOT sent for non-default algorithms.
+        // upstream: options.c:2732 - 'z' NOT sent for non-default algorithms.
         // LZ4 uses --compress-choice=lz4 as a long-form arg instead.
         let config = ClientConfig::builder()
             .compress(true)
@@ -777,7 +777,7 @@ mod tests {
     #[cfg(feature = "zstd")]
     #[test]
     fn server_flag_string_omits_z_for_zstd() {
-        // upstream: options.c:2722 - 'z' NOT sent for zstd; the codec rides as
+        // upstream: options.c:2732 - 'z' NOT sent for zstd; the codec rides as
         // the long-form --compress-choice=zstd instead.
         let config = ClientConfig::builder()
             .compress(true)
@@ -806,7 +806,7 @@ mod tests {
         );
     }
 
-    // upstream: options.c:2625-2626 - `for (i = 0; i < verbose; i++)
+    // upstream: options.c:2634-2635 - `for (i = 0; i < verbose; i++)
     // argstr[x++] = 'v';` packs one 'v' per verbosity level, and none at all
     // when verbose == 0. server_options() sends the count to the remote so its
     // half emits matching verbose diagnostics; a builder that dropped 'v'
@@ -838,7 +838,7 @@ mod tests {
         );
     }
 
-    // upstream: options.c:2655-2660 - L/k live in the `!am_sender` (else) branch
+    // upstream: options.c:2665-2670 - L/k live in the `!am_sender` (else) branch
     // of server_options(), so they are role-specific and must NOT be packed by
     // this role-agnostic builder. Packing them unconditionally sent 'L'/'k' to a
     // remote RECEIVER on a push, diverging from upstream which only sends them to
@@ -860,7 +860,7 @@ mod tests {
         );
     }
 
-    // upstream: options.c:2655-2660 - the in-process half no longer learns
+    // upstream: options.c:2665-2670 - the in-process half no longer learns
     // copy_links/copy_dirlinks from the compact string (build_server_flag_string
     // dropped L/k), so apply_common_server_flags must carry them directly. On a
     // push the local generator IS the sender and must dereference symlinks.
@@ -932,7 +932,7 @@ mod tests {
 
     #[test]
     fn server_flag_string_omits_itemize_compact_flag() {
-        // upstream: options.c:2768-2780 - itemize is sent via --log-format=%i,
+        // upstream: options.c:2778-2790 - itemize is sent via --log-format=%i,
         // not as a compact flag character in the flag string.
         let config = ClientConfig::builder().itemize_changes(true).build();
         let flags = build_server_flag_string(&config);
@@ -1533,14 +1533,14 @@ mod tests {
 
     #[test]
     fn server_flag_string_files_from_keeps_explicit_r_and_omits_d() {
-        // upstream: options.c:2188-2191 - `if (files_from) { if (recurse == 1)
+        // upstream: options.c:2197-2200 - `if (files_from) { if (recurse == 1)
         // recurse = 0; if (xfer_dirs < 0) xfer_dirs = 1; }`. Only the recursion
         // `-a` implies (recurse == 1) is cleared; an explicit `-r` sets
         // recurse == 2 (options.c:621) and survives, so the compact `r` is still
-        // packed (options.c:2705). The implied `xfer_dirs = 1` is NOT the
+        // packed (options.c:2715). The implied `xfer_dirs = 1` is NOT the
         // explicit `-d` level (xfer_dirs >= 2), so no `d` is packed
-        // (options.c:2638-2640). `--files-from` defaults relative_paths=1
-        // (options.c:2205-2206), resolved by the CLI before this stage.
+        // (options.c:2647-2649). `--files-from` defaults relative_paths=1
+        // (options.c:2214-2215), resolved by the CLI before this stage.
         //
         // `recursive(true)` here models the post-resolution `recurse != 0` the
         // CLI hands over for an explicit `-r --files-from`.
@@ -1572,7 +1572,7 @@ mod tests {
         // upstream: a bare `--files-from` (no `-r`, no `-d`) resolves recurse=0
         // and xfer_dirs=1, so neither letter is packed - `d` needs the explicit
         // level (xfer_dirs >= 2) or `list_only`/`delete_mode && am_sender`
-        // (options.c:2638-2640).
+        // (options.c:2647-2649).
         use crate::client::config::FilesFromSource;
 
         // `ClientConfig::builder()` presets `recursive(true)`, so a bare
@@ -1594,7 +1594,7 @@ mod tests {
 
     #[test]
     fn server_flag_string_explicit_dirs_packs_d() {
-        // upstream: options.c:628 `-d` sets xfer_dirs = 2, and options.c:2638
+        // upstream: options.c:628 `-d` sets xfer_dirs = 2, and options.c:2647
         // packs `d` for `xfer_dirs >= 2 && xfer_dirs < 4`.
         use crate::client::config::FilesFromSource;
 
@@ -1615,13 +1615,13 @@ mod tests {
 
     #[test]
     fn server_flag_string_files_from_no_relative_omits_r_upper() {
-        // upstream: options.c:2713-2714 - `if (relative_paths) argstr[x++] =
+        // upstream: options.c:2723-2724 - `if (relative_paths) argstr[x++] =
         // 'R';` packs the compact `R` only for the RESOLVED relative_paths.
         // Under --no-relative --files-from the CLI resolves relative_paths=0
         // (options.c:368-369, 693), so no `R` is packed even though files-from
         // is active. This is the PUSH client-sender wire signal: without `R`
         // the peer knows relative is off and no implied `sub` parent dir is
-        // expected, matching the client-sender flatten (flist.c:2338-2349) that
+        // expected, matching the client-sender flatten (flist.c:2578-2589) that
         // splits each entry on its last `/` down to the basename.
         use crate::client::config::FilesFromSource;
 
@@ -1642,7 +1642,7 @@ mod tests {
         );
         // The `d`/`r` letters are independent of `--no-relative`: the implied
         // `xfer_dirs = 1` never packs `d`, and the explicit `-r` modelled here
-        // survives --files-from (options.c:2189, 2638-2640, 2705).
+        // survives --files-from (options.c:2198, 2647-2649, 2715).
         assert!(
             !flags.contains('d'),
             "implied xfer_dirs=1 must not pack 'd': {flags}"
@@ -1669,7 +1669,7 @@ mod tests {
 
     #[test]
     fn server_flag_string_explicit_dirs_with_recursion_packs_d_and_r() {
-        // upstream: options.c:2638-2639 - clause 1 `(xfer_dirs >= 2 && xfer_dirs
+        // upstream: options.c:2647-2648 - clause 1 `(xfer_dirs >= 2 && xfer_dirs
         // < 4)` packs `d` for an explicit `-d` (xfer_dirs == 2) regardless of
         // recursion, so `-d -r` (xfer_dirs == 2, recurse == 1) emits BOTH letters.
         // The `!recurse` guard belongs only to clause 2, not to clause 1; gating
@@ -1689,7 +1689,7 @@ mod tests {
 
     #[test]
     fn server_flag_string_files_from_delete_sender_packs_d() {
-        // upstream: options.c:2639 - clause 2 `(xfer_dirs && !recurse &&
+        // upstream: options.c:2648 - clause 2 `(xfer_dirs && !recurse &&
         // (list_only || (delete_mode && am_sender)))` packs `d` when the implied
         // `xfer_dirs = 1` (here from --files-from) rides with a delete sweep on
         // the sender. A plain --files-from omits `d`, but --files-from --delete on
@@ -1714,7 +1714,7 @@ mod tests {
         );
     }
 
-    // upstream: options.c:2662-2666 - 'W' is only sent when whole_file > 0
+    // upstream: options.c:2672-2676 - 'W' is only sent when whole_file > 0
     // (explicitly forced). The default for remote transfers is auto (-1),
     // which does NOT send 'W'. Sending 'W' unconditionally causes the
     // remote generator to skip basis-file checksums, defeating delta.
@@ -1756,7 +1756,7 @@ mod tests {
     /// own client - packet captures, `--server` invocation logs, and
     /// interop diffing all compare this string byte-for-byte. Exercising one
     /// flag from each upstream `server_options()` grouping pins the full
-    /// emission sequence (options.c:2619-2723) so a future edit cannot
+    /// emission sequence (options.c:2628-2733) so a future edit cannot
     /// silently reorder it back out of parity.
     #[test]
     fn server_flag_string_matches_upstream_letter_order() {

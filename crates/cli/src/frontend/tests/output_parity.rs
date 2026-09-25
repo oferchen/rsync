@@ -127,7 +127,7 @@ fn render_itemize(event: &ClientEvent) -> String {
 
 #[test]
 fn info_name_only_suppresses_stats_footer() {
-    // upstream: main.c:459-461 output_summary() gates the
+    // upstream: main.c:462-464 output_summary() gates the
     // `sent %s bytes  received %s bytes` / `total size is %s` trailer on
     // `verbose > 0 || INFO_GTE(STATS, 1)`. `--info=name2` raises only the NAME
     // level, so the trailer must NOT print - previously oc emitted it whenever
@@ -163,7 +163,7 @@ fn info_name_only_suppresses_stats_footer() {
     assert!(
         !out.contains("sent ") && !out.contains("total size is"),
         "name-only output (verbose 0, stats 0) must not print the summary \
-         trailer, matching upstream main.c:459-461:\n{out}"
+         trailer, matching upstream main.c:462-464:\n{out}"
     );
 }
 
@@ -223,8 +223,8 @@ fn parity_stats_output_contains_all_upstream_field_labels() {
         "missing 'File list size:' label in:\n{output}"
     );
     // A local copy runs upstream's send_file_list(), which clamps a zero
-    // flist_buildtime to 1 ms (flist.c:2773-2777), so the
-    // `if (stats.flist_buildtime)` gate (main.c:450) always passes and both
+    // flist_buildtime to 1 ms (flist.c:3016-3020), so the
+    // `if (stats.flist_buildtime)` gate (main.c:453) always passes and both
     // timing lines are printed even for a sub-millisecond build.
     assert!(
         output.contains("File list generation time:"),
@@ -617,7 +617,7 @@ fn parity_stats_level_1_emits_only_summary_lines() {
     let output = render_stats_at_level(&summary, HumanReadableMode::Grouped, 1);
 
     // Level 1 emits only the "sent X bytes received Y bytes" + "total size"
-    // pair, matching upstream's INFO_GTE(STATS, 1) block (main.c:451-461).
+    // pair, matching upstream's INFO_GTE(STATS, 1) block (main.c:454-464).
     assert!(
         output.contains("sent "),
         "level 1 must include 'sent' summary line:\n{output}"
@@ -657,8 +657,8 @@ fn parity_stats_level_2_emits_full_detail_block_plus_summary() {
     let (summary, _temp) = create_known_summary(&[("lvl2.txt", b"level two")]);
     let output = render_stats_at_level(&summary, HumanReadableMode::Grouped, 2);
 
-    // Level 2 emits the full INFO_GTE(STATS, 2) detail block (main.c:418-449)
-    // followed by the level-1 summary (main.c:451-461).
+    // Level 2 emits the full INFO_GTE(STATS, 2) detail block (main.c:418-452)
+    // followed by the level-1 summary (main.c:454-464).
     for required in [
         "Number of files:",
         "Number of created files:",
@@ -681,7 +681,7 @@ fn parity_stats_level_2_emits_full_detail_block_plus_summary() {
     }
 
     // The detail block must precede the summary lines (single blank line
-    // separator, matching upstream's `rprintf(FCLIENT, "\n")` at main.c:452).
+    // separator, matching upstream's `rprintf(FCLIENT, "\n")` at main.c:455).
     let bytes_received_pos = output
         .find("Total bytes received:")
         .expect("Total bytes received: must be present at level 2");
@@ -700,7 +700,7 @@ fn parity_stats_level_3_is_level_2_prefixed_by_the_heap_block() {
     // under INFO_GTE(STATS, 3) BEFORE output_summary(), so level 3 is level 2
     // with the heap block prefixed - not equal to it. The block is absent
     // wherever the allocator cannot report, which is upstream's
-    // `#ifdef MEM_ALLOC_INFO` case (rsync.h:1543); there the two levels do
+    // `#ifdef MEM_ALLOC_INFO` case (rsync.h:1545); there the two levels do
     // coincide. Both arms are asserted so neither can pass vacuously.
     let (summary, _temp) = create_known_summary(&[("lvl3.txt", b"level three")]);
     let level_2 = render_stats_at_level(&summary, HumanReadableMode::Grouped, 2);
@@ -798,7 +798,7 @@ fn parity_verbose_directory_names_end_with_slash() {
 #[test]
 fn parity_verbose_v2_emits_bare_name_per_upstream() {
     // upstream: log.c:log_formatted() at NAME>=1 emits the default
-    // `%n%L` format set by options.c:2372 - bare name plus optional
+    // `%n%L` format set by options.c:2381 - bare name plus optional
     // ` -> target` for symlinks or ` => hardlink` for hardlinks. Higher
     // verbosity adds ancillary log frames, never a per-file descriptor
     // prefix or byte-count wrapper. The upstream testsuite

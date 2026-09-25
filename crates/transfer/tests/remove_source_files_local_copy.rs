@@ -12,8 +12,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `sender.c:395` - `successful_send()` performs the unlink
-//! - `options.c:765,2964-2965` - `remove_source_files` global and
+//! - `sender.c:396` - `successful_send()` performs the unlink
+//! - `options.c:765,2974-2975` - `remove_source_files` global and
 //!   `--remove-source-files` forwarding to the server-side sender
 //! - `testsuite/delete.test` - end-to-end coverage
 
@@ -78,7 +78,7 @@ fn remove_source_files_unlinks_transferred_files() {
         "source dir/subdir/leaf.txt should have been removed"
     );
 
-    // upstream: sender.c:152-156 - successful_send() never removes the
+    // upstream: sender.c:155-159 - successful_send() never removes the
     // directory entry itself, so the empty dir hierarchy must survive.
     assert!(from.join("dir").is_dir(), "source dir/ should remain");
     assert!(
@@ -93,7 +93,7 @@ fn remove_source_files_unlinks_transferred_files() {
 
 /// `--remove-source-files` under `--dry-run` must NOT touch the source
 /// tree. Upstream `successful_send()` returns early when `do_xfers` is
-/// false (sender.c:405-406 via the `!remove_source_files` short-circuit
+/// false (sender.c:406-407 via the `!remove_source_files` short-circuit
 /// combined with the global `do_xfers` gate).
 #[test]
 fn remove_source_files_dry_run_preserves_source() {

@@ -5,7 +5,7 @@
 //! `am_sender` block:
 //!
 //! ```c
-//! /* options.c:2850-2851, inside `if (am_sender)` */
+//! /* options.c:2860-2861, inside `if (am_sender)` */
 //! if (write_batch < 0)
 //!     args[ac++] = "--only-write-batch=X";
 //! ```
@@ -15,11 +15,11 @@
 //! untouched is the LOCAL receiver:
 //!
 //! ```c
-//! /* main.c:1839 - do_xfers was already computed, so it stays 1 */
+//! /* main.c:1866 - do_xfers was already computed, so it stays 1 */
 //! if (write_batch < 0)
 //!     dry_run = 1;
 //!
-//! /* receiver.c:811-817 */
+//! /* receiver.c:827-833 */
 //! if (write_batch < 0) {
 //!     log_item(FCLIENT, file, iflags, NULL);
 //!     if (!am_server)
@@ -29,7 +29,7 @@
 //! }
 //! ```
 //!
-//! `discard_receive_data()` (receiver.c:524-527) drains the delta the sender is
+//! `discard_receive_data()` (receiver.c:540-543) drains the delta the sender is
 //! still writing. Going dry WITHOUT draining would desync the connection: the
 //! next NDX read would parse delta bytes as a frame header. Writing the
 //! destination anyway - what oc did before this fix - contradicts the
@@ -204,8 +204,8 @@ fn run_pull(shim: &Path, binary: &Path, batch_flag: &str, src: &Path, dest: &Pat
 }
 
 /// The headline bug: a `--only-write-batch` PULL updated the local destination.
-/// Upstream writes nothing there - `main.c:1839` puts the local receiver into
-/// `dry_run` and `receiver.c:813-814` drains the sender's stream with
+/// Upstream writes nothing there - `main.c:1866` puts the local receiver into
+/// `dry_run` and `receiver.c:829-830` drains the sender's stream with
 /// `discard_receive_data()` instead of applying it.
 ///
 /// Exit 0 is asserted separately from the file count because the two halves fail
@@ -312,7 +312,7 @@ fn write_batch_pull_still_transfers_and_records() {
 /// The oc-side replay above is not an oracle for wire compatibility: oc's
 /// `--read-batch` stops once it has the file data, so a trailer carrying a
 /// duplicated stats block or a stray `NDX_DONE` still replays clean. Upstream's
-/// `read_final_goodbye()` (`main.c:893-924`) reads one more index after the
+/// `read_final_goodbye()` (`main.c:906-937`) reads one more index after the
 /// goodbye and aborts with `RERR_PROTOCOL` unless that read hits EOF, so only
 /// upstream can tell a well-formed trailer from a malformed one.
 ///

@@ -6,8 +6,8 @@
 //! patched in `ITEM_IS_NEW` (0x2000), regardless of whether the destination
 //! existed before the transfer. Because upstream's sender re-emits this
 //! exact iflags word to whichever peer is reading the batch
-//! (`sender.c:468 write_ndx_and_attrs()`), and only increments
-//! `stats.created_files` when `ITEM_IS_NEW` is set (`sender.c:586,624`), an
+//! (`sender.c:469 write_ndx_and_attrs()`), and only increments
+//! `stats.created_files` when `ITEM_IS_NEW` is set (`sender.c:587,625`), an
 //! upstream `--read-batch` replay of an oc-produced batch itemized a brand
 //! new file as unchanged (`>f.........`) and counted zero created files
 //! instead of `>f+++++++++` / one created file.
@@ -24,9 +24,9 @@
 //!
 //! - `generator.c:583-584 itemize()` - `iflags |= ITEM_IS_NEW` when
 //!   `statret < 0` (destination absent).
-//! - `sender.c:468 write_ndx_and_attrs()` - re-emits the iflags word to the
+//! - `sender.c:469 write_ndx_and_attrs()` - re-emits the iflags word to the
 //!   peer, which is what a batch file tees.
-//! - `sender.c:586,624` - `stats.created_files++` gated on
+//! - `sender.c:587,625` - `stats.created_files++` gated on
 //!   `iflags & ITEM_IS_NEW`.
 
 use std::fs;
@@ -152,7 +152,7 @@ fn write_batch_marks_new_file_item_is_new() {
         ITEM_IS_NEW,
         "a file created at a destination that did not previously exist must carry \
          ITEM_IS_NEW (0x2000) in the recorded iflags word (upstream generator.c:583-584 \
-         itemize() / sender.c:468 write_ndx_and_attrs()); without it a replaying \
+         itemize() / sender.c:469 write_ndx_and_attrs()); without it a replaying \
          upstream --read-batch itemizes the file as unchanged (`>f.........`) and \
          counts zero created files; got {iflags:#06x}"
     );

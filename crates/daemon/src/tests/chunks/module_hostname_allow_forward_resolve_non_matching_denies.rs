@@ -7,7 +7,7 @@
 /// otherwise the allow list would be meaningless. Mirrors upstream's per-record
 /// `strcmp(addr, ...)` comparison.
 ///
-/// upstream: access.c:60-61 `match_hostname` - each resolved address is
+/// upstream: access.c:71-72 `match_hostname` - each resolved address is
 /// compared to the connecting address; a mismatch contributes no match.
 #[test]
 fn module_hostname_allow_forward_resolve_non_matching_denies() {

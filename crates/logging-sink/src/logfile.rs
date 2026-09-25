@@ -4,7 +4,7 @@
 //! `logit()` prefixes the message with `timestring(time(NULL))` and the
 //! writer's pid - `"%s [%d] %s"` (upstream: log.c:122-132). `timestring()`
 //! renders local time as `%4d/%02d/%02d %02d:%02d:%02d`
-//! (upstream: util1.c:1456-1473). Both the client `--log-file` sink and the
+//! (upstream: util1.c:1551-1568). Both the client `--log-file` sink and the
 //! daemon `log file` sink share that formatter; this module is its single
 //! oc-rsync counterpart.
 
@@ -16,13 +16,13 @@ use crate::escape::{EscapeStyle, escape_for_output};
 /// Maximum epoch seconds accepted for timestamp formatting.
 ///
 /// Corresponds to 9999-12-31 23:59:59 UTC - the last representable date in a
-/// 4-digit-year `YYYY/MM/DD HH:MM:SS` layout. upstream: util1.c:1463-1466
+/// 4-digit-year `YYYY/MM/DD HH:MM:SS` layout. upstream: util1.c:1558-1561
 /// `timestring()` falls back to a placeholder when `localtime_r()` fails.
 const MAX_TIMESTAMP_EPOCH_SECS: i64 = 253_402_300_799;
 
 /// Formats an instant as `YYYY/MM/DD HH:MM:SS` in the local timezone.
 ///
-/// upstream: util1.c:1456-1473 `timestring()` - `localtime_r()` followed by
+/// upstream: util1.c:1551-1568 `timestring()` - `localtime_r()` followed by
 /// `"%4d/%02d/%02d %02d:%02d:%02d"`. The local offset is computed per instant
 /// (DST-correct) via `platform::local_time`, matching `localtime_r`.
 /// Out-of-range instants render the placeholder `0000/00/00 00:00:00`,
@@ -36,7 +36,7 @@ pub fn format_log_timestamp(instant: SystemTime) -> String {
     let offset = i64::from(platform::local_time::local_utc_offset_seconds(unix_secs));
     let local_secs = unix_secs.saturating_add(offset);
     if !(0..=MAX_TIMESTAMP_EPOCH_SECS).contains(&local_secs) {
-        // upstream: util1.c:1463-1466 timestring() NULL-check equivalent.
+        // upstream: util1.c:1558-1561 timestring() NULL-check equivalent.
         return "0000/00/00 00:00:00".to_owned();
     }
 
@@ -87,7 +87,7 @@ pub fn log_line_prefix_now() -> String {
 /// `"YYYY/MM/DD HH:MM:SS [pid] "` (upstream: log.c:122-132 `logit()`), with
 /// the timestamp taken when the line starts. Lines that would be empty are
 /// dropped: upstream emits cosmetic blank separators as `FCLIENT` messages
-/// (e.g. main.c:427/461 `rprintf(FCLIENT, "\n")`), and `rwrite()` converts
+/// (e.g. main.c:427/464 `rprintf(FCLIENT, "\n")`), and `rwrite()` converts
 /// `FCLIENT` to `FINFO` *after* skipping the log-file branch
 /// (upstream: log.c:288-289), so a blank line never reaches the log file.
 #[derive(Debug)]
@@ -220,7 +220,7 @@ mod tests {
         assert!(prefix.contains(&format!("[{}] ", std::process::id())));
     }
 
-    /// upstream: util1.c:1467-1469 - zero-padded `%4d/%02d/%02d %02d:%02d:%02d`.
+    /// upstream: util1.c:1562-1564 - zero-padded `%4d/%02d/%02d %02d:%02d:%02d`.
     #[test]
     fn timestamp_is_zero_padded() {
         let rendered = format_log_timestamp(UNIX_EPOCH + std::time::Duration::from_secs(3_723));
@@ -232,7 +232,7 @@ mod tests {
         assert_eq!(&rendered[10..11], " ");
     }
 
-    /// upstream: util1.c:1461 - `localtime_r`, not UTC: the rendered hour
+    /// upstream: util1.c:1556 - `localtime_r`, not UTC: the rendered hour
     /// must reflect the host offset for the instant.
     #[test]
     fn timestamp_applies_local_offset() {
@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(&rendered[11..13], format!("{expected_hour:02}").as_str());
     }
 
-    /// upstream: util1.c:1463-1466 - out-of-range instants render the
+    /// upstream: util1.c:1558-1561 - out-of-range instants render the
     /// placeholder instead of overflowing the fixed-width year.
     #[test]
     fn timestamp_out_of_range_renders_placeholder() {
@@ -292,7 +292,7 @@ mod tests {
         assert!(lines[0].ends_with("sent 42 bytes  total size 7"));
     }
 
-    /// upstream: main.c:427/461 emit blank separators as FCLIENT, which never
+    /// upstream: main.c:427/464 emit blank separators as FCLIENT, which never
     /// reaches the log file (log.c:288-289): an empty line must vanish rather
     /// than appear as a bare prefix.
     #[test]

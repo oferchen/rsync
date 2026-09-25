@@ -29,9 +29,9 @@
 //!
 //! ## Upstream Reference
 //!
-//! - `main.c:778-792 get_local_name()` - pre-flight `do_mkdir(dest_path, ACCESSPERMS)`
+//! - `main.c:791-805 get_local_name()` - pre-flight `do_mkdir(dest_path, ACCESSPERMS)`
 //!   when `file_total > 1 || trailing_slash`.
-//! - `options.c:2939-2940` - `alt_dest_opt(0)` + `safe_arg("", basis_dir[i])`
+//! - `options.c:2949-2950` - `alt_dest_opt(0)` + `safe_arg("", basis_dir[i])`
 //!   emits `--copy-dest`, `--link-dest`, `--compare-dest` as two argv slots.
 
 use std::fs;
@@ -50,20 +50,20 @@ use transfer::receiver::ensure_dest_root_exists;
 /// resolves the post-`.` positional as the dest (pinned by the cli
 /// unit tests), the helper must create the missing root before the
 /// per-entry mkdir dispatch runs.
-// upstream: main.c:778-792 get_local_name() pre-flight, exercised by
+// upstream: main.c:791-805 get_local_name() pre-flight, exercised by
 // the upstream alt-dest test over lsh.sh.
 #[test]
 fn alt_dest_server_chain_creates_missing_dest_root() {
     let tmp = tempdir().expect("tempdir");
     let alt_basis = tmp.path().join("alt3");
-    // Single missing leaf whose parent already exists: upstream `main.c:788`
+    // Single missing leaf whose parent already exists: upstream `main.c:801`
     // does a single `do_mkdir(dest_path)`, which creates one level. A deeper
     // chain (`missing/dest/root`) would fail without `--mkpath` (verified
     // against upstream 3.4.4: `mkdir ... failed: No such file or directory`),
     // so the pre-flight only owns the final component here.
     let dest_root = tmp.path().join("to");
 
-    // Operator-seeded alt-dest basis: upstream's main.c:798-806 only
+    // Operator-seeded alt-dest basis: upstream's main.c:811-819 only
     // checks that the basis path resolves. The pre-flight owns the
     // destination root, NOT the basis.
     fs::create_dir_all(&alt_basis).expect("seed alt-dest basis");
@@ -110,12 +110,12 @@ fn alt_dest_server_chain_creates_missing_dest_root() {
 
 /// UTS-12.REOPEN-V2 + EDG-DESTROOT.1: the helper must NOT mkdir when the
 /// transfer is exactly one non-directory entry without a trailing-slash
-/// dest. This is the upstream `main.c:805-832 get_local_name()` rename
+/// dest. This is the upstream `main.c:818-845 get_local_name()` rename
 /// branch, where the lone payload is written to the operand path under
 /// `change_dir(parent)`. The pre-flight returning `Ok(false)` here is
 /// the contract: `setup_transfer::apply_single_file_rename` then rewrites
 /// the lone flist entry's name to the operand basename.
-// upstream: main.c:805-832 single-file rename branch
+// upstream: main.c:818-845 single-file rename branch
 #[test]
 fn single_file_without_trailing_slash_does_not_mkdir_destroot() {
     let tmp = tempdir().expect("tempdir");
@@ -137,11 +137,11 @@ fn single_file_without_trailing_slash_does_not_mkdir_destroot() {
 
 /// UTS-12.REOPEN-V2 + EDG-DESTROOT.4: the helper rejects a destination
 /// that resolves to a regular file with a typed error. Mirrors upstream
-/// `main.c:756-761`: when `file_total > 1` and `S_ISDIR` fails, upstream
+/// `main.c:769-774`: when `file_total > 1` and `S_ISDIR` fails, upstream
 /// emits "destination must be a directory" and exits with
 /// `RERR_FILESELECT`. The Rust port produces an `io::Error::InvalidInput`
 /// with the same semantic.
-// upstream: main.c:756-761
+// upstream: main.c:769-774
 #[test]
 fn dest_existing_as_file_returns_typed_error() {
     let tmp = tempdir().expect("tempdir");

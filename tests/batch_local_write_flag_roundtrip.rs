@@ -1,8 +1,8 @@
 //! Local `--write-batch` must produce a batch its own `--read-batch` can decode.
 //!
 //! The local write-batch path is not a byte tee of a real wire stream the way
-//! upstream's is (`io.c:1962-1963`, armed at `io.c:2528-2529`; upstream forks a
-//! real `local_child` server at `main.c:648-654` precisely so a stream exists to
+//! upstream's is (`io.c:2000-2001`, armed at `io.c:2566-2567`; upstream forks a
+//! real `local_child` server at `main.c:661-667` precisely so a stream exists to
 //! tee). oc re-encodes the file list with a second `FileListWriter`, which must
 //! agree with the reader entry field for entry field. Every option exercised
 //! here gates a per-entry field, so a disagreement makes the reader decode the

@@ -50,7 +50,7 @@ pub struct BasisFileResult {
     /// The alternate-basis name sent as an `ITEM_XNAME_FOLLOWS` vstring, present
     /// only for a fuzzy match. Upstream sends `fuzzy_file->basename` - the bare
     /// basename, resolved by the receiver relative to the target's directory
-    /// (upstream: generator.c:1948, receiver.c:838-841).
+    /// (upstream: generator.c:1948, receiver.c:854-857).
     pub xname: Option<Vec<u8>>,
     /// The `INFO_GTE(BACKUP, 1)` "backed up X to Y" notice for the
     /// `--inplace --backup` delta-path pre-image copy made while selecting the
@@ -150,7 +150,7 @@ pub struct BasisFileConfig<'a> {
     /// pre-image is copied to the backup path RIGHT HERE and the backup - not
     /// the destination - is selected as the delta basis, tagged
     /// [`protocol::FnameCmpType::Backup`] (generator.c:2328-2356). The tag
-    /// clears the sender's `updating_basis_file` (sender.c:628-629), letting
+    /// clears the sender's `updating_basis_file` (sender.c:629-630), letting
     /// it match blocks in any order because matched data is later read from
     /// the pristine copy while the destination is overwritten in place.
     pub inplace_backup: Option<InplaceBackupSpec<'a>>,
@@ -238,7 +238,7 @@ impl<'a> SignatureGenerationConfig<'a> {
 /// came from, which becomes the `FNAMECMP_BASIS_DIR_LOW + j` wire tag. The basis
 /// open goes through [`fast_io::open_basis_nofollow`], which follows directory
 /// symlinks (so `--copy-dirlinks` continues to work) but refuses to follow
-/// a symlinked leaf component, mirroring upstream `syscall.c:705`
+/// a symlinked leaf component, mirroring upstream `syscall.c:844`
 /// (`do_open_at`).
 ///
 /// # Upstream Reference
@@ -247,7 +247,7 @@ impl<'a> SignatureGenerationConfig<'a> {
 ///   the first existing regular file sets `best_match = j` (match_level 1).
 /// - `generator.c:1054` - `return FNAMECMP_BASIS_DIR_LOW + j` when the file
 ///   exists in the reference dir but its content differs (match_level 1).
-/// - `syscall.c:705` (`do_open_at`) - dirname/basename split with
+/// - `syscall.c:844` (`do_open_at`) - dirname/basename split with
 ///   `O_NOFOLLOW` on the basename.
 pub(super) fn try_reference_directories(
     relative_path: &std::path::Path,
@@ -334,7 +334,7 @@ struct FuzzyBasis {
 ///
 /// - `generator.c:861,903` - `find_fuzzy()`; `*fnamecmp_type_ptr = FNAMECMP_FUZZY + i`
 /// - `generator.c:1945-1948` - `ITEM_XNAME_FOLLOWS` + `fuzzy_file->basename`
-/// - `options.c:2120` - `fuzzy_basis = basis_dir_cnt + 1` for level 2
+/// - `options.c:2129` - `fuzzy_basis = basis_dir_cnt + 1` for level 2
 fn try_fuzzy_match(
     relative_path: &std::path::Path,
     dest_dir: &std::path::Path,
@@ -538,7 +538,7 @@ fn generate_basis_signature(
     // recovery. A read(2) past the shrunk EOF instead returns short, which the
     // signature generator reports as an I/O error; the caller then drops the
     // basis and falls back to a whole-file transfer.
-    // upstream: fileio.c:214-217 comment + map_ptr() deliberately use read(2)
+    // upstream: fileio.c:256-259 comment + map_ptr() deliberately use read(2)
     // instead of mmap(2) on basis files for exactly this reason.
     // upstream: generator.c:2358-2361, :2363-2364, then :765-770 - the generator
     // names the basis it mapped, announces the file it is producing sums for,
@@ -715,7 +715,7 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
         // first in-place write. Selecting the copy as `basis_path` is what
         // lets matched blocks be read from the pristine pre-image while the
         // destination is overwritten in place, in any order (the BACKUP tag
-        // clears the sender's `updating_basis_file`, sender.c:628-629).
+        // clears the sender's `updating_basis_file`, sender.c:629-630).
         if let Some(spec) = &config.inplace_backup
             && let Some(backup_basis) = try_inplace_backup_basis(config, spec, sig_config)
         {
@@ -931,7 +931,7 @@ mod tests {
     /// Issue #715 regression (`symlink-dirlink-basis.test` test 1): when
     /// the destination directory is a symlink to a real directory, the
     /// receiver must open the basis file through the directory symlink.
-    /// Upstream sets this expectation in `syscall.c:705 do_open_at()` -
+    /// Upstream sets this expectation in `syscall.c:844 do_open_at()` -
     /// the dirname is resolved with normal symlink-following semantics.
     #[cfg(unix)]
     #[test]
@@ -983,7 +983,7 @@ mod tests {
 
     /// Top-level basis path (`symlink-dirlink-basis.test` test 6): no
     /// dirname split needed. Equivalent to upstream's `if (!slash)
-    /// return do_open(...)` short-circuit at `syscall.c:727`.
+    /// return do_open(...)` short-circuit at `syscall.c:866`.
     #[test]
     fn try_open_file_handles_top_level_path() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1976,7 +1976,7 @@ mod tests {
     /// the spec set and the destination present, the basis selection must
     /// create the pre-image copy, select IT as the basis, and tag the result
     /// `FNAMECMP_BACKUP` (0x82) so the sender clears `updating_basis_file`
-    /// (sender.c:628-629) and may match blocks in any order.
+    /// (sender.c:629-630) and may match blocks in any order.
     #[test]
     fn inplace_backup_spec_retags_fname_basis_as_backup_and_creates_the_copy() {
         use std::ffi::OsString;

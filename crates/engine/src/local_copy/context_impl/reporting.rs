@@ -87,7 +87,7 @@ impl<'a> CopyContext<'a> {
     /// arm alone is unreachable in exactly the case upstream prints. `--quiet`
     /// still suppresses it, at `rwrite()`'s FINFO arm, which
     /// `logging::message_stream` owns.
-    /// upstream: flist.c:1338 and flist.c:2452 -
+    /// upstream: flist.c:1563 and flist.c:2692 -
     /// `rprintf(FINFO, "skipping directory %s\n", ...)`: the bare relative name
     /// with no surrounding quotes and no trailing "(no recursion)" suffix.
     pub(super) fn record_skipped_directory(&mut self, relative: Option<&Path>) {
@@ -159,7 +159,7 @@ impl<'a> CopyContext<'a> {
     /// `--stats` counters, verbose line), `false` when an earlier source arg
     /// already surfaced the same ancestor.
     ///
-    /// upstream: flist.c:1937 `send_implied_dirs()` dedups shared ancestors via
+    /// upstream: flist.c:2162 `send_implied_dirs()` dedups shared ancestors via
     /// its `lastpath` cache and the later `flist_sort_and_clean()` pass so each
     /// implied directory appears once even when several `--relative` operands
     /// share a prefix. The local-copy executor never builds a shared sorted
@@ -181,7 +181,7 @@ impl<'a> CopyContext<'a> {
     /// extra/./down/3/deep/extra.added.value`), and only the one physically
     /// living inside an already-walked source directory is redundant. Matching
     /// on the source path reproduces upstream's `flist_sort_and_clean()`
-    /// (flist.c:3016) collapse - which drops an entry only when an earlier
+    /// (flist.c:3259) collapse - which drops an entry only when an earlier
     /// operand already contributed that exact file/subtree - without wrongly
     /// dropping a distinct source that merely shares the relative suffix.
     pub(super) fn source_root_already_covered(&self, source_path: &Path) -> bool {
@@ -526,7 +526,7 @@ impl<'a> CopyContext<'a> {
 /// source filesystem paths, so a descendant match means `candidate`'s bytes were
 /// physically walked when `root`'s subtree was expanded.
 ///
-/// upstream: flist.c:3016 flist_sort_and_clean() collapses an operand that
+/// upstream: flist.c:3259 flist_sort_and_clean() collapses an operand that
 /// duplicates a subtree already contributed by an earlier `--relative` operand.
 fn source_root_covers(root: &Path, candidate: &Path) -> bool {
     candidate == root || candidate.starts_with(root)

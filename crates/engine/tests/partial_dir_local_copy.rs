@@ -14,12 +14,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/generator.c:2172-2179` - `partialptr = partial_dir_fname(fname)`
+//! - `rsync-3.5.1/generator.c:2172-2179` - `partialptr = partial_dir_fname(fname)`
 //!   when the leaf exists as a regular file.
-//! - `rsync-3.5.0/generator.c:2270-2274` `prepare_to_open` - `fnamecmp =
+//! - `rsync-3.5.1/generator.c:2270-2274` `prepare_to_open` - `fnamecmp =
 //!   partialptr; fnamecmp_type = FNAMECMP_PARTIAL_DIR`, overriding the
 //!   destination and fuzzy basis.
-//! - `rsync-3.5.0/receiver.c:1137-1138` - `one_inplace = inplace_partial &&
+//! - `rsync-3.5.1/receiver.c:1153-1155` - `one_inplace = inplace_partial &&
 //!   fnamecmp_type == FNAMECMP_PARTIAL_DIR`, the reconstruction rewrites the leaf.
 
 use std::fs;
@@ -112,7 +112,7 @@ fn partial_dir_leaf_drives_delta_and_reconstructs_source() {
         "partial-dir delta must reconstruct the source exactly"
     );
 
-    // upstream: receiver.c:1288 finish_transfer renames partialptr onto fname,
+    // upstream: receiver.c:1305 finish_transfer renames partialptr onto fname,
     // so the leaf no longer occupies the partial dir after a successful resume.
     assert!(
         !leaf.exists(),

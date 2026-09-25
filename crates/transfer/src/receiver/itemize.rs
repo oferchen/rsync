@@ -34,10 +34,10 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2993-3006` - `recv_file_list()` bumps the per-type counters
+    /// - `flist.c:3236-3249` - `recv_file_list()` bumps the per-type counters
     ///   in its read loop; a regular file is "Already counted" by the caller's
     ///   total.
-    /// - `flist.c:1388-1389` - `recv_file_entry()` adds the length of a regular
+    /// - `flist.c:1613-1614` - `recv_file_entry()` adds the length of a regular
     ///   file or symlink to `stats.total_size`.
     pub(in crate::receiver) fn count_received_entry(&mut self, entry: &protocol::flist::FileEntry) {
         let (dirs, symlinks, devices, specials) = &mut self.received_type_counts;
@@ -145,18 +145,18 @@ impl ReceiverContext {
     /// Upstream emits a directory's `-v` name only when `set_file_attrs()`
     /// changed it (`generator.c:1503-1505`). For the implied root `.` that is
     /// true when oc created the destination root (`FLAG_DIR_CREATED`,
-    /// `main.c:803-805`) or when the root's pre-transfer attributes differ from
+    /// `main.c:816-818`) or when the root's pre-transfer attributes differ from
     /// the source entry. Must be consulted BEFORE `create_directories` applies
     /// the root's metadata (and before child mkdirs bump the root mtime), so the
     /// stat reflects the pre-transfer state - the same pre-mkdir gate the `-i`
     /// root row uses (see `existing_dir_iflags`).
     ///
     /// A destination root that is absent pre-transfer is still named: upstream
-    /// "creates" it even under `--dry-run` (`main.c:796-808`; `do_mkdir` is a
+    /// "creates" it even under `--dry-run` (`main.c:809-821`; `do_mkdir` is a
     /// dry-run no-op, syscall.c), `FLAG_DIR_CREATED` then forces `statret = -1`
     /// (`generator.c:1465-1466`) and `set_file_attrs()` returns 1 for the
     /// missing dest under dry-run (`rsync.c:498-499`), so the `./` row prints.
-    /// `--list-only` never reaches `get_local_name()`'s mkdir (`main.c:743`),
+    /// `--list-only` never reaches `get_local_name()`'s mkdir (`main.c:756`),
     /// so no row is added there.
     pub(in crate::receiver) fn root_verbose_name_emit(&self, dest_dir: &std::path::Path) -> bool {
         if self.dest_root_created {
@@ -258,7 +258,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:733-746` - `stats.created_files++` plus the per-mode
+    /// - `receiver.c:749-762` - `stats.created_files++` plus the per-mode
     ///   `created_dirs`/`created_symlinks`/`created_devices`/`created_specials`
     ///   cascade under the `iflags & ITEM_IS_NEW` guard.
     pub(in crate::receiver) fn record_created(&self, mode: u32) {
@@ -306,7 +306,7 @@ impl ReceiverContext {
     /// - `log.c:310-311` - `case FERROR_XFER: got_xfer_error = 1;`, before the
     ///   `am_server` branch
     /// - `log.c:330-346` - `am_server` sends the frame and returns
-    /// - `io.c:1660` - the peer maps `MSG_ERROR_XFER` back to `FERROR_XFER`
+    /// - `io.c:1686` - the peer maps `MSG_ERROR_XFER` back to `FERROR_XFER`
     /// - `cleanup.c:217-218` - `got_xfer_error` lifts a zero exit to `RERR_PARTIAL`
     pub(in crate::receiver) fn emit_error_xfer_line<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
@@ -493,7 +493,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `generator.c:574-576` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
-    /// - `main.c:803-805` - `FLAG_DIR_CREATED` for a pre-flight-mkdir'd root
+    /// - `main.c:816-818` - `FLAG_DIR_CREATED` for a pre-flight-mkdir'd root
     /// - `log.c:643-655` - `%L` renders ` => hlink` for a non-empty xname
     /// - `log.c:707-710` - direction glyph selection
     pub(in crate::receiver) fn render_itemize_line(
@@ -525,7 +525,7 @@ impl ReceiverContext {
         iflags: &crate::generator::ItemFlags,
         entry: &protocol::flist::FileEntry,
     ) -> Option<crate::generator::ItemFlags> {
-        // upstream: main.c:803-805 - when the receiver pre-flight-mkdirs the
+        // upstream: main.c:816-818 - when the receiver pre-flight-mkdirs the
         // destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`. The
         // generator's `itemize()` then sees `statret < 0` for the root entry,
         // ORs in `ITEM_IS_NEW`, and emits `cd+++++++++ ./`. oc-rsync's
@@ -662,7 +662,7 @@ impl ReceiverContext {
     /// `FCLIENT` write on `!am_server`, so the remote receiver's generator never
     /// prints the client-visible row. Instead it writes the iflags over the wire
     /// (`generator.c:583-599 write_shortint(sock_f_out, iflags)`) and the
-    /// client's SENDER prints them (`sender.c:461 log_item(FCLIENT)`). Forwarding
+    /// client's SENDER prints them (`sender.c:462 log_item(FCLIENT)`). Forwarding
     /// a pre-rendered MSG_INFO row from here would double every pushed file
     /// against the client sender's own row.
     ///
@@ -670,7 +670,7 @@ impl ReceiverContext {
     ///
     /// - `log.c:818-826` - `log_item()` only writes `FCLIENT` when `!am_server`
     /// - `generator.c:583-599` - the generator forwards iflags over the wire
-    /// - `sender.c:461` - the sender prints the push itemize row
+    /// - `sender.c:462` - the sender prints the push itemize row
     pub(in crate::receiver) fn emit_itemize<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         writer: &mut W,
@@ -745,7 +745,7 @@ impl ReceiverContext {
     /// each follower from `finish_hard_link()` -> `maybe_hard_link()`, which
     /// writes `NDX + write_shortint(iflags) + write_vstring(xname)` to
     /// `sock_f_out`; the peer's sender reads those attrs and logs the row
-    /// (`sender.c:293` `maybe_log_item`). Without this a server-mode receiver
+    /// (`sender.c:296` `maybe_log_item`). Without this a server-mode receiver
     /// (the remote end of a push) drops every follower row, because
     /// [`emit_itemize`](Self::emit_itemize) is a no-op off the client.
     ///
@@ -850,7 +850,7 @@ impl ReceiverContext {
             // create_hardlinks pass that follows.
             writer.flush()?;
             // The peer's sender echoes every non-transfer item back
-            // (upstream sender.c:286-292). Record the count so the phase-done
+            // (upstream sender.c:289-295). Record the count so the phase-done
             // read drains those echoes before expecting NDX_DONE - the pipeline
             // response loop is request-count driven and never reads them.
             self.hardlink_follower_echoes
@@ -914,7 +914,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `generator.c:582-593` - `itemize()` wire emission and its gate
-    /// - `sender.c:292-294` - the sender logs the row and echoes the attrs
+    /// - `sender.c:295-297` - the sender logs the row and echoes the attrs
     pub(in crate::receiver) fn record_server_no_transfer_itemize(
         &self,
         flist_idx: usize,
@@ -1012,7 +1012,7 @@ impl ReceiverContext {
     /// Arms per-file daemon-log collection for a server receiver whose module has
     /// `transfer logging = yes`, recording whether the `log format` carries `%i`.
     ///
-    /// Mirrors upstream `receiver.c:807` (`itemizing = logfile_format_has_i`),
+    /// Mirrors upstream `receiver.c:823` (`itemizing = logfile_format_has_i`),
     /// which makes the whole per-entry itemize path run on the daemon regardless
     /// of the client's `-i`, feeding `maybe_log_item()`/`log_item(FLOG)`.
     pub(crate) fn enable_daemon_log(&mut self, format_has_i: bool) {
@@ -1024,7 +1024,7 @@ impl ReceiverContext {
     ///
     /// Independent of the client-visible itemize gate: this is the daemon's own
     /// FLOG write. Transferred items are always logged (upstream
-    /// `receiver.c:1273` `log_item()` is unconditional given `logfile_format`);
+    /// `receiver.c:1290` `log_item()` is unconditional given `logfile_format`);
     /// non-transfer items follow `maybe_log_item()`'s `am_server` gate
     /// (`log.c:875-885`): with `itemizing == logfile_format_has_i`, an item is
     /// logged only when the format carries `%i` and the item is significant (or
@@ -1035,9 +1035,9 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:807` - `itemizing = am_server ? logfile_format_has_i : ...`
-    /// - `receiver.c:903` - `maybe_log_item(file, iflags, itemizing, xname)`
-    /// - `receiver.c:1273` - `log_item(log_code, file, iflags, NULL)` per transfer
+    /// - `receiver.c:823` - `itemizing = am_server ? logfile_format_has_i : ...`
+    /// - `receiver.c:919` - `maybe_log_item(file, iflags, itemizing, xname)`
+    /// - `receiver.c:1290` - `log_item(log_code, file, iflags, NULL)` per transfer
     /// - `log.c:875-885` - `maybe_log_item()`'s `am_server` FLOG gate
     pub(in crate::receiver) fn record_daemon_log(
         &self,
@@ -1139,7 +1139,7 @@ impl ReceiverContext {
     /// every buffered name up to and including that index, in ascending order,
     /// so any directories that precede the file print immediately before it -
     /// interleaved with `--progress`. Mirrors upstream `log_before_transfer`
-    /// (`receiver.c:1008-1012`, name printed per file just before its data).
+    /// (`receiver.c:1024-1028`, name printed per file just before its data).
     pub(in crate::receiver) fn emit_name_in_order(
         &self,
         flist_idx: usize,

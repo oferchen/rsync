@@ -396,7 +396,7 @@ impl IdList {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1004` - `uid = recv_user_name(f, uid)` on the entry decode
+    /// - `flist.c:1229` - `uid = recv_user_name(f, uid)` on the entry decode
     /// - `uidlist.c:418-433` - `recv_user_name()` -> `recv_add_id()`
     pub fn register_inline_name<F>(&mut self, id: u32, name: &[u8], name_to_id: F) -> io::Result<()>
     where

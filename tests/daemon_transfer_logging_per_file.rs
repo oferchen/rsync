@@ -5,10 +5,10 @@
 //! inside both transfer roles:
 //!
 //! ```c
-//! /* receiver.c:807 */  int itemizing = am_server ? logfile_format_has_i : ...;
-//! /* receiver.c:903 */  maybe_log_item(file, iflags, itemizing, xname);   /* non-transfer */
-//! /* receiver.c:1273 */ log_item(log_code, file, iflags, NULL);           /* per transfer */
-//! /* sender.c:499/584 */ ... mirror on the daemon-sender (pull) side.
+//! /* receiver.c:823 */  int itemizing = am_server ? logfile_format_has_i : ...;
+//! /* receiver.c:919 */  maybe_log_item(file, iflags, itemizing, xname);   /* non-transfer */
+//! /* receiver.c:1290 */ log_item(log_code, file, iflags, NULL);           /* per transfer */
+//! /* sender.c:500/585 */ ... mirror on the daemon-sender (pull) side.
 //! ```
 //!
 //! With `log format = %o %f %l %i` a push of three new files therefore logs the

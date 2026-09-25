@@ -12,7 +12,7 @@
 //!
 //! In every case the receiver must return a typed `io::Error` rather
 //! than panic. Upstream rsync handles the same conditions in
-//! `main.c:893-924 read_final_goodbye()` by either propagating an I/O
+//! `main.c:906-937 read_final_goodbye()` by either propagating an I/O
 //! error from `read_int` / `read_ndx_and_attrs` or by hitting the
 //! `if (i != NDX_DONE)` branch that calls `exit_cleanup(RERR_PROTOCOL)`.
 //! Our equivalents are `io::ErrorKind::UnexpectedEof` (propagated from
@@ -21,7 +21,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:893-924` - `read_final_goodbye()` reads the final NDX and
+//! - `main.c:906-937` - `read_final_goodbye()` reads the final NDX and
 //!   exits with `RERR_PROTOCOL` if the value is not `NDX_DONE`.
 //! - `io.c:read_ndx()` - the upstream parser likewise treats short reads
 //!   as fatal.
@@ -91,7 +91,7 @@ fn drive_handle_goodbye(ctx: &ReceiverContext, sender_bytes: Vec<u8>) -> io::Res
 /// sequence must surface `UnexpectedEof` from the underlying `read_exact`,
 /// not a panic.
 ///
-/// Upstream behaviour: `main.c:902` calls `read_int(f_in)` which short-
+/// Upstream behaviour: `main.c:915` calls `read_int(f_in)` which short-
 /// reads to a fatal I/O error. Same shape on our side.
 #[test]
 fn read_expected_ndx_done_proto29_eof_mid_legacy_ndx_done() {
@@ -169,7 +169,7 @@ fn read_expected_ndx_done_proto29_immediate_eof() {
 /// index) instead of `NDX_DONE`. The receiver must reject it with
 /// `InvalidData`, mirroring upstream's `RERR_PROTOCOL` exit.
 ///
-/// Upstream: `main.c:919-923` - `if (i != NDX_DONE) ... exit_cleanup(RERR_PROTOCOL);`.
+/// Upstream: `main.c:932-936` - `if (i != NDX_DONE) ... exit_cleanup(RERR_PROTOCOL);`.
 #[test]
 fn handle_goodbye_proto32_rejects_garbage_in_place_of_ndx_done() {
     let ctx = receiver_for(32);
@@ -187,7 +187,7 @@ fn handle_goodbye_proto32_rejects_garbage_in_place_of_ndx_done() {
         io::ErrorKind::InvalidData,
         "non-NDX_DONE garbage must surface InvalidData, got {err:?}",
     );
-    // upstream main.c:922 exit_cleanup(RERR_PROTOCOL) (exit 2): the error must
+    // upstream main.c:935 exit_cleanup(RERR_PROTOCOL) (exit 2): the error must
     // carry the ProtocolViolation marker so the mapper yields 2 not streamio(12).
     assert!(
         err.get_ref()

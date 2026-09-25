@@ -8,7 +8,7 @@
 /// default) must be ignored once forward lookup is turned off - proving the
 /// branch is controlled by the parameter, not always-on.
 ///
-/// upstream: access.c:49 `if (!allow_forward_dns) return 0;` short-circuits the
+/// upstream: access.c:60 `if (!allow_forward_dns) return 0;` short-circuits the
 /// forward lookup when the `forward lookup` parameter is disabled.
 #[test]
 fn module_hostname_forward_lookup_off_skips_token_resolution() {

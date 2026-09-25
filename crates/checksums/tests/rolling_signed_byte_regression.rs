@@ -11,7 +11,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.0/checksum.c:307` casts the
+//! - `target/interop/upstream-src/rsync-3.5.1/checksum.c:307` casts the
 //!   buffer to `schar *`, so each byte contributes `(byte as i8) as i32`.
 //! - `match.c:hash_search()` consumes the rolling digest as
 //!   `(s2 << 16) | s1`, both terms masked to 16 bits.

@@ -5,7 +5,7 @@
 /// requested isolation.
 ///
 /// On success, fires the `--debug=CHDIR` emission to mirror upstream
-/// `util1.c:1168-1169` (`[%s] change_dir(%s)`). Upstream's
+/// `util1.c:1265-1266` (`[%s] change_dir(%s)`). Upstream's
 /// `clientserver.c:987` calls `change_dir(module_chdir, CD_NORMAL)`
 /// immediately after `chroot(module_chdir)`; in oc-rsync the
 /// `platform::privilege::apply_chroot` call performs both the chroot and the
@@ -337,7 +337,7 @@ fn resolve_nobody_uid() -> io::Result<u32> {
 
 /// Candidate names for the unprivileged default group, in upstream's order.
 ///
-/// upstream: configure.sh:7376-7386 picks NOBODY_GROUP by probing `/etc/group`
+/// upstream: configure.sh:7388-7398 picks NOBODY_GROUP by probing `/etc/group`
 /// at BUILD time - `nobody` if that group exists, else `nogroup`, else `nobody`
 /// as a last resort. Debian and Ubuntu ship `nogroup`; most others ship
 /// `nobody`, which is why a build configured on one family names a group the
@@ -938,7 +938,7 @@ mod privilege_tests {
     }
 
     /// WHY: upstream picks NOBODY_GROUP at BUILD time by probing /etc/group -
-    /// `nobody` if present, else `nogroup` (configure.sh:7376-7386). Debian and
+    /// `nobody` if present, else `nogroup` (configure.sh:7388-7398). Debian and
     /// Ubuntu ship only `nogroup`. oc ships one binary for every distribution,
     /// so it must probe the same names in the same order at RUNTIME or a root
     /// daemon on those distributions dies with `@ERROR: invalid gid nobody`
@@ -974,7 +974,7 @@ mod privilege_tests {
         assert_eq!(
             NOBODY_GROUP_CANDIDATES,
             [b"nobody".as_slice(), b"nogroup".as_slice()],
-            "order mirrors configure.sh:7376-7386 (nobody, then nogroup)"
+            "order mirrors configure.sh:7388-7398 (nobody, then nogroup)"
         );
     }
 

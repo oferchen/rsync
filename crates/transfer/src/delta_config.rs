@@ -65,28 +65,28 @@ pub struct DeltaGeneratorConfig<'a> {
     /// the delta generator's backward-`Copy` suppression guard.
     ///
     /// Set per file by the sender loop from upstream's `updating_basis_file`
-    /// condition (`sender.c:337`): the basis being matched is the destination
+    /// condition (`sender.c:338`): the basis being matched is the destination
     /// itself, which the receiver overwrites as it applies the delta, so any
     /// `Copy` whose basis offset precedes the source cursor would read a region
     /// already clobbered. When `true` the generator demotes such a candidate to
     /// a literal; the reconstructed file stays byte-identical.
     ///
     /// upstream: match.c:211 (`updating_basis_file && s->sums[i].offset <
-    /// offset`), sender.c:337 (the per-file assignment).
+    /// offset`), sender.c:338 (the per-file assignment).
     pub updating_basis_file: bool,
 
     /// Length of the basis's final block when it is short, or `0` when the
     /// basis divides evenly into `block_length`-sized blocks.
     ///
     /// Carried straight off the wire: the receiver puts it in the `sum_head`
-    /// (`io.c:2061` `sum->remainder = read_int(f);`, range-checked at
-    /// `io.c:2062-2064`, which rejects `< 0` or `> blength` with "Invalid
+    /// (`io.c:2099` `sum->remainder = read_int(f);`, range-checked at
+    /// `io.c:2100-2102`, which rejects `< 0` or `> blength` with "Invalid
     /// remainder length"). It is the only thing that distinguishes the last
     /// block's true length from `blength`, and upstream's sender applies it in
     /// `receive_sums()`:
     ///
     /// ```text
-    /// sender.c:109-110
+    /// sender.c:113-114
     ///     if (i == s->count-1 && s->remainder != 0) s->sums[i].len = s->remainder;
     ///     else                                      s->sums[i].len = s->blength;
     /// ```
@@ -122,7 +122,7 @@ impl<'a> DeltaGeneratorConfig<'a> {
 
     /// Sets the basis's short-final-block length from the wire `sum_head`.
     ///
-    /// upstream: `sender.c:109-110` (`receive_sums()` applies it to the last
+    /// upstream: `sender.c:113-114` (`receive_sums()` applies it to the last
     /// block only, and only when non-zero).
     #[must_use]
     pub fn with_remainder(mut self, remainder: u32) -> Self {
@@ -154,7 +154,7 @@ impl<'a> DeltaGeneratorConfig<'a> {
     /// Marks the transfer as an in-place basis update so the delta generator
     /// activates upstream's backward-`Copy` suppression guard.
     ///
-    /// upstream: sender.c:337 `updating_basis_file`.
+    /// upstream: sender.c:338 `updating_basis_file`.
     #[must_use]
     pub fn with_updating_basis_file(mut self, updating: bool) -> Self {
         self.updating_basis_file = updating;

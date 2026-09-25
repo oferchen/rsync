@@ -3,7 +3,7 @@
 //! `--append-verify` re-checksums the bytes already present in the destination
 //! after appending the tail. When that re-checksum fails the receiver keeps the
 //! partial update, warns, and asks the generator to redo the file in phase 2
-//! (upstream `receiver.c:1070` `case 0:` -> `send_msg_int(MSG_REDO, ndx)`). The
+//! (upstream `receiver.c:1086` `case 0:` -> `send_msg_int(MSG_REDO, ndx)`). The
 //! sibling `append-inplace` check seeds a *matching* prefix, so its re-checksum
 //! succeeds and the redo path is never entered; this check seeds a destination
 //! that is both shorter than the source and wrong, which forces the redo on
@@ -22,7 +22,7 @@
 //! 2. the destination is byte-identical to the source *and* to upstream's.
 //! 3. the `failed verification` warning lines are exactly upstream's *on each
 //!    stream separately*, at each verbosity - upstream gates the line behind
-//!    `INFO_GTE(NAME, 1)` (`receiver.c:1072`), so it is silent by default, and
+//!    `INFO_GTE(NAME, 1)` (`receiver.c:1088`), so it is silent by default, and
 //!    under `-v` it emits the bare *relative* name as an `FWARNING`, which
 //!    `log.c:314` routes to **stderr**. Comparing the union of the two streams
 //!    would accept a line that is present but misrouted; the observable-fidelity
@@ -145,7 +145,7 @@ impl Verbosity {
     /// stream.
     ///
     /// Upstream prints the line only when `msgtype == FERROR_XFER ||
-    /// INFO_GTE(NAME, 1) || stdout_format_has_i` (`receiver.c:1072`). The first
+    /// INFO_GTE(NAME, 1) || stdout_format_has_i` (`receiver.c:1088`). The first
     /// failure is a `FWARNING` and the redo then succeeds, so nothing reaches
     /// the ungated `FERROR_XFER` form: without `-v` the transfer is silent on
     /// both streams, and with `-v` it emits exactly [`WARNING`] - on stderr,
@@ -676,7 +676,7 @@ mod tests {
 
     #[test]
     fn verbosity_oracle_matches_the_upstream_gate() {
-        // upstream: receiver.c:1072 gates the FWARNING behind INFO_GTE(NAME, 1),
+        // upstream: receiver.c:1088 gates the FWARNING behind INFO_GTE(NAME, 1),
         // so the line exists only under -v; the redo then succeeds, so it never
         // escalates to the ungated FERROR_XFER form. upstream: log.c:314 maps
         // FWARNING to stderr, so stdout stays empty at every verbosity.

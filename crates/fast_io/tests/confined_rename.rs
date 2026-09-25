@@ -5,7 +5,7 @@
 //! flipped to a symlink pointing outside the tree, and an unconfined
 //! `rename(2)` follows it.
 //!
-//! upstream: `rsync-3.5.0/syscall.c:1866` `do_rename_at()`.
+//! upstream: `rsync-3.5.1/syscall.c:2005` `do_rename_at()`.
 
 #![cfg(unix)]
 
@@ -104,7 +104,7 @@ fn an_out_of_tree_source_does_not_disable_destination_confinement() {
 /// must still *follow* a component the operator owns, because an operator path
 /// may legitimately live behind their own symlink.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:1926` `do_rename_at()`.
+/// upstream: `rsync-3.5.1/syscall.c:2065` `do_rename_at()`.
 #[test]
 fn an_out_of_tree_source_behind_an_owned_symlink_still_commits() {
     let base = TempDir::new().expect("tempdir");

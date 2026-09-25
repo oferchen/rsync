@@ -242,8 +242,8 @@ fn copy_as_clear() {
 /// The `am_root` gate must read the identity oc-rsync believes it has, not the
 /// kernel's raw answer.
 ///
-/// upstream: `main.c:1844` `our_uid = MY_UID()` - the **libc** `geteuid()`
-/// (`rsync.h:1455`) - and `become_copy_as_user()`, which re-samples it after
+/// upstream: `main.c:1871` `our_uid = MY_UID()` - the **libc** `geteuid()`
+/// (`rsync.h:1457`) - and `become_copy_as_user()`, which re-samples it after
 /// the permanent `--copy-as` drop. Two consequences a raw `geteuid` syscall
 /// cannot reproduce: `fakeroot` interposes the libc symbol and not the
 /// syscall, so on the upstream testsuite's fakeroot legs a raw answer reports

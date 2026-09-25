@@ -15,8 +15,8 @@ use super::types::SourceMetadataResult;
 /// Whether this operand's trailing DOTDIR marker still governs its own stat.
 ///
 /// Under `--relative` the marker rides on the name upstream stats directly
-/// (`flist.c:2652-2657` strips it and records it in `name_type`). Without
-/// `--relative` upstream splits the operand at its last `/` (`flist.c:2607-2618`),
+/// (`flist.c:2892-2897` strips it and records it in `name_type`). Without
+/// `--relative` upstream splits the operand at its last `/` (`flist.c:2847-2858`),
 /// so a trailing marker makes the WHOLE operand the directory
 /// `change_pathname()` chdir()s into before `.` is stat'd - and that chdir
 /// follows symlinks and demands a real directory, which is exactly what the
@@ -29,8 +29,8 @@ fn marker_governs_operand_stat(context: &CopyContext, source: &SourceSpec) -> bo
 /// trailing DOTDIR marker removed.
 ///
 /// Upstream keeps TWO facts about a command-line operand apart: the name it
-/// works on (`fbuf`, stripped of the marker at `flist.c:2652-2657`) and
-/// `name_type`, the marker itself (`flist.c:115-118` - `NORMAL_NAME`,
+/// works on (`fbuf`, stripped of the marker at `flist.c:2892-2897`) and
+/// `name_type`, the marker itself (`flist.c:117-120` - `NORMAL_NAME`,
 /// `SLASH_ENDING_NAME`, `DOTDIR_NAME`). `SourceSpec::copy_contents` is oc's
 /// `name_type != NORMAL_NAME`, so the marker survives the strip.
 ///
@@ -60,20 +60,20 @@ pub(super) fn operand_stat_path<'a>(
 
 /// Stats a source operand the way upstream's `link_stat()` does.
 ///
-/// `flist.c:2697` feeds the operand's marker into the stat as the second
+/// `flist.c:2937` feeds the operand's marker into the stat as the second
 /// disjunct of `follow_dirlinks`:
 ///
 /// ```text
 /// link_stat(fbuf, &st, copy_dirlinks || name_type != NORMAL_NAME)
 /// ```
 ///
-/// and `link_stat()` itself (`flist.c:286-301`) is a two-step, not one
+/// and `link_stat()` itself (`flist.c:511-526`) is a two-step, not one
 /// decision: it lstat()s first, and replaces that result with the stat ONLY
 /// when the target is a directory. A symlink to a file, a dangling symlink, or
 /// a plain non-directory operand therefore keeps its lstat result and is
 /// transferred as itself - which is what distinguishes this from `--copy-links`.
 ///
-/// Upstream's `copy_links` short-circuit (`flist.c:289`) is applied only to a
+/// Upstream's `copy_links` short-circuit (`flist.c:514`) is applied only to a
 /// marked operand. Every other operand keeps reaching
 /// [`resolve_effective_metadata`], which already reproduces both it and the
 /// dir-only `--copy-dirlinks` rule from the lstat result returned here; the

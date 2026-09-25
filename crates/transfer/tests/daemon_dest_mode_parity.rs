@@ -4,9 +4,9 @@
 //! the decision turns on whether the destination already existed:
 //!
 //! ```text
-//! int exists = fd1 != -1;                                      // receiver.c:955
+//! int exists = fd1 != -1;                                      // receiver.c:971
 //! file->mode = dest_mode(file->mode, st.st_mode, dflt_perms, exists);
-//! if (inplace || one_inplace) { ... }                          // receiver.c:967
+//! if (inplace || one_inplace) { ... }                          // receiver.c:983
 //! ```
 //!
 //! and `dest_mode()` itself (rsync.c:449-472):
@@ -172,7 +172,7 @@ fn existing_destination_keeps_its_mode_on_every_write_path() {
     for extra in [
         &[][..],                  // temp + rename
         &["--inplace"][..],       // writes through the destination
-        &["--append-verify"][..], // implies --inplace (options.c:2400-2411)
+        &["--append-verify"][..], // implies --inplace (options.c:2409-2420)
     ] {
         let Some(mode) = dest_mode_after_push(extra, true) else {
             panic!("{extra:?}: could not start the daemon, so nothing was measured");
@@ -201,7 +201,7 @@ fn existing_destination_keeps_its_mode_on_every_write_path() {
 /// `flist_mode & (~CHMOD_BITS | dflt_perms)` to mode 000 on every write path.
 /// The existing-destination cell was unaffected because its branch never reads
 /// `dflt_perms`. Fixed by capturing the umask at startup as upstream does
-/// (`main.c:1797`), before any sandbox is installed.
+/// (`main.c:1824`), before any sandbox is installed.
 #[test]
 fn new_destination_takes_the_masked_source_mode_on_every_write_path() {
     let expected = masked_source_mode();

@@ -6,7 +6,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:893-924` - `read_final_goodbye()` with extended goodbye
+//! - `main.c:906-937` - `read_final_goodbye()` with extended goodbye
 //! - `main.c:356-384` - `handle_stats()` sends/receives statistics
 //! - `io.c:read_ndx()` / `write_ndx()` - NDX wire encoding
 
@@ -58,7 +58,7 @@ impl ReceiverContext {
             // counter is 0 and this loop is byte-identical to before.
             let to_emit = num_segments.saturating_sub(self.segments_released_mid_walk);
             for _ in 0..to_emit {
-                // upstream: receiver.c:683 - flist_free(first_flist)
+                // upstream: receiver.c:699 - flist_free(first_flist)
                 // Reclaim heap data from the oldest completed segment
                 // to reduce RSS before sending the per-segment NDX_DONE.
                 self.reclaim_oldest_segment();
@@ -77,7 +77,7 @@ impl ReceiverContext {
             // upstream: generator.c:2848-2850 - phase++ then "generate_files phase=%d"
             // The first `phase++` after the per-segment loop advances 0 -> 1.
             let mut phase: i32 = 1;
-            // upstream: receiver.c:692-693 DEBUG_GTE(RECV, 1)
+            // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
             debug_log!(Recv, 1, "recv_files phase={}", phase);
             debug_log!(Genr, 1, "generate_files phase={}", phase);
 
@@ -88,7 +88,7 @@ impl ReceiverContext {
                 // upstream: generator.c:2366-2368 - phase++ on each additional
                 // iteration (covers the redo phase).
                 phase += 1;
-                // upstream: receiver.c:692-693 DEBUG_GTE(RECV, 1)
+                // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
                 debug_log!(Recv, 1, "recv_files phase={}", phase);
                 debug_log!(Genr, 1, "generate_files phase={}", phase);
             }
@@ -109,7 +109,7 @@ impl ReceiverContext {
                 ndx_write_codec.write_ndx_done(&mut *writer)?;
                 writer.flush()?;
                 phase += 1;
-                // upstream: receiver.c:692-693 DEBUG_GTE(RECV, 1)
+                // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
                 debug_log!(Recv, 1, "recv_files phase={}", phase);
                 // upstream: generator.c:2372-2374, 2366-2368, 2392-2394
                 // "generate_files phase=%d" emitted after each phase++.
@@ -131,7 +131,7 @@ impl ReceiverContext {
     ///
     /// A server-mode push forwards `NDX + iflags + xname` for each hardlink
     /// follower (see `emit_server_hardlink_follower_itemize`); the peer's sender
-    /// echoes every non-transfer item back (upstream `sender.c:286-292`), yet the
+    /// echoes every non-transfer item back (upstream `sender.c:289-295`), yet the
     /// request-count-driven pipeline response loop never reads them. The sender
     /// buffers those echoes until it reads the receiver's NDX_DONE, so this runs
     /// on the first NDX_DONE read - once the sender has flushed - consuming each
@@ -209,7 +209,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1107-1132` - daemon-recv parent process runs `generate_files`
+    /// - `main.c:1125-1150` - daemon-recv parent process runs `generate_files`
     /// - `generator.c:2410-2415` - early `write_del_stats(f_out)` emission
     /// - `main.c:225-238` - `write_del_stats()` wire format
     pub(in crate::receiver) fn handle_goodbye<R: Read, W: Write + ?Sized>(
@@ -244,12 +244,12 @@ impl ReceiverContext {
         writer.flush()?;
 
         if self.protocol.supports_extended_goodbye() {
-            // upstream: main.c:904 read_final_goodbye() calls read_ndx_and_attrs(),
+            // upstream: main.c:917 read_final_goodbye() calls read_ndx_and_attrs(),
             // which is where the sender's NDX_DEL_STATS frame gets drained
             // (rsync.c:336-342) before NDX_DONE surfaces.
             match read_marker_aware_ndx(reader, ndx_read_codec, &mut self.no_lazy_flist_sink())? {
                 NdxFrame::Done => {}
-                // upstream: main.c:922 exit_cleanup(RERR_PROTOCOL) (exit 2) - a
+                // upstream: main.c:935 exit_cleanup(RERR_PROTOCOL) (exit 2) - a
                 // non-NDX_DONE goodbye echo is a protocol violation, tagged so
                 // the core exit-code mapper yields 2 rather than RERR_STREAMIO(12).
                 NdxFrame::File(ndx) => {
@@ -328,7 +328,7 @@ impl ReceiverContext {
 
         self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
 
-        // upstream: main.c:1085 do_recv() child path and main.c:1135/1123
+        // upstream: main.c:1098 do_recv() child path and main.c:1153/1141
         // do_recv() parent path both call io_flush(FULL_FLUSH) immediately
         // after the final NDX_DONE write so the kernel ships the goodbye
         // frame (and any trailing multiplexed MSG_INFO frames) before the
@@ -350,7 +350,7 @@ impl ReceiverContext {
             return Err(e);
         }
 
-        // upstream: receiver.c:1114-1115 DEBUG_GTE(RECV, 1)
+        // upstream: receiver.c:1130-1131 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files finished");
 
         // upstream: generator.c:2928-2929 - "generate_files finished" emitted at

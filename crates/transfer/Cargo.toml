@@ -41,7 +41,7 @@ apple-fs = { path = "../apple-fs" }
 
 [target.'cfg(unix)'.dependencies]
 checksums = { path = "../checksums" }
-# libc is needed for O_NOATIME (Linux source-file open, upstream syscall.c:228,687)
+# libc is needed for O_NOATIME (Linux source-file open, upstream syscall.c:278,826)
 # and for openat flag constants (O_WRONLY/O_CREAT/O_EXCL/O_NOFOLLOW) used by the
 # SEC-1.r temp-file sandbox in temp_guard.rs.
 libc = { workspace = true }

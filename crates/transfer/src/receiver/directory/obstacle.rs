@@ -44,7 +44,7 @@
 //!
 //! Both terms reach `ReceiverContext` now: `--delete` as `flags.delete` and
 //! `--force` as `flags.force`, the latter decoded from the long arg
-//! `server_options()` emits (`options.c:3014-3015`) and bridged onto the local
+//! `server_options()` emits (`options.c:3024-3025`) and bridged onto the local
 //! receiver on a pull. Neither term recurses on its own - the recursion lives
 //! in one place, `clear_obstacle_dir_contents`, which is the delete pass's own
 //! per-entry walk, so a nested mount point, `--max-delete`, and `--backup`

@@ -41,7 +41,7 @@ impl BandwidthLimit {
 
     /// Parses a textual `--bwlimit` value into an optional [`BandwidthLimit`].
     ///
-    /// upstream: options.c:1714 `parse_size_arg(bwlimit_arg, 'K', "bwlimit",
+    /// upstream: options.c:1720 `parse_size_arg(bwlimit_arg, 'K', "bwlimit",
     /// 512, -1, True)` - the client `--bwlimit` accepts a size suffix.
     pub fn parse(text: &str) -> Result<Option<Self>, BandwidthParseError> {
         let components = bandwidth::parse_bandwidth_limit(text)?;
@@ -117,10 +117,10 @@ impl BandwidthLimit {
     /// Returns the whole-KiB value that `server_options()` forwards as
     /// `--bwlimit=N` to a remote peer.
     ///
-    /// upstream: options.c:1825 - `bwlimit = (size + 512) / 1024` converts the
-    /// parsed byte-per-second rate into whole KiB, and options.c:2799 forwards
+    /// upstream: options.c:1831 - `bwlimit = (size + 512) / 1024` converts the
+    /// parsed byte-per-second rate into whole KiB, and options.c:2809 forwards
     /// that integer as `--bwlimit=%d`. The remote side re-parses the value with
-    /// a default `K` suffix (options.c:1714 `parse_size_arg(bwlimit_arg, 'K',
+    /// a default `K` suffix (options.c:1720 `parse_size_arg(bwlimit_arg, 'K',
     /// ...)`, mirrored here by `size_arg::parse_size_arg(.., b'K')`), so the
     /// wire value MUST be KiB. Forwarding the raw byte count would be scaled up
     /// 1024x by the peer, effectively removing the throttle.
@@ -182,7 +182,7 @@ mod tests {
 
         #[test]
         fn parse_with_suffix_k() {
-            // upstream: options.c:1714 - client --bwlimit accepts a size suffix.
+            // upstream: options.c:1720 - client --bwlimit accepts a size suffix.
             let result = BandwidthLimit::parse("100k").unwrap();
             assert!(result.is_some());
             let limit = result.unwrap();

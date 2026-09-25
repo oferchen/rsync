@@ -1,8 +1,8 @@
 //! Process heap statistics for the `--info=stats3` diagnostic block.
 //!
-//! upstream: `main.c:484` `show_malloc_stats()`, called from `handle_stats()`
+//! upstream: `main.c:487` `show_malloc_stats()`, called from `handle_stats()`
 //! (`main.c:337-340`) under `INFO_GTE(STATS, 3)`. Upstream reads glibc's
-//! `mallinfo2()` behind `#ifdef MEM_ALLOC_INFO` (`rsync.h:1543`), so the block
+//! `mallinfo2()` behind `#ifdef MEM_ALLOC_INFO` (`rsync.h:1545`), so the block
 //! is absent on platforms whose allocator cannot report.
 //!
 //! oc installs jemalloc as its global allocator on unix

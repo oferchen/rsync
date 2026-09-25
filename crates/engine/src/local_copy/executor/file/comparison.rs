@@ -356,9 +356,9 @@ fn unix_sec_nsec(time: SystemTime) -> (i64, u32) {
 ///   modify_window` -- i.e. `|a_sec - b_sec| <= window_secs`. Nanoseconds do not
 ///   figure into the window check ("time windows don't care about that").
 /// - `window < 0`: a nanosecond-exact comparison applies - the seconds AND the
-///   nanoseconds must match (upstream `modify_window < 0`, util1.c:1653).
+///   nanoseconds must match (upstream `modify_window < 0`, util1.c:1748).
 ///
-/// upstream: util1.c:1478 same_time() (via generator.c unchanged_file()).
+/// upstream: util1.c:1573 same_time() (via generator.c unchanged_file()).
 pub(crate) fn system_time_within_window(
     a: SystemTime,
     b: SystemTime,
@@ -580,7 +580,7 @@ mod tests {
 
     #[test]
     fn system_time_window_is_symmetric_on_whole_seconds() {
-        // WHY: upstream util1.c:1478 same_time() treats two mtimes as equal when
+        // WHY: upstream util1.c:1573 same_time() treats two mtimes as equal when
         // their whole-second delta is within `--modify-window`, and the window is
         // SYMMETRIC (|a_sec - b_sec| <= window) regardless of which side is newer.
         // A window of 2 must treat mtimes exactly 2s apart as the same file in
@@ -600,7 +600,7 @@ mod tests {
         assert!(system_time_within_window(minus_two, base, window));
 
         // Sub-second parts must not tip a within-window pair over the edge:
-        // upstream ignores nanoseconds for the window check (util1.c:1484). Source
+        // upstream ignores nanoseconds for the window check (util1.c:1579). Source
         // at .0s vs destination at +2.9s is a whole-second delta of 2 -> same.
         let base_frac = base + Duration::from_millis(0);
         let plus_two_frac = base + Duration::new(2, 900_000_000);
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn system_time_negative_window_requires_nanosecond_exactness() {
-        // WHY: upstream util1.c:1482 - a negative `modify_window` compares the
+        // WHY: upstream util1.c:1577 - a negative `modify_window` compares the
         // nanosecond component too (`f1_sec == f2_sec && f1_nsec == f2_nsec`).
         // Two mtimes in the same second but a different fraction are therefore
         // DIFFERENT and the local copy must proceed, whereas any non-negative
@@ -728,7 +728,7 @@ mod tests {
         // its fractional second (same whole second as the source) collapses to a
         // zero-second delta, so at the default zero window it is NOT "newer" and
         // `--update` must not skip it. The generator then falls through to the
-        // quick check, whose same_time() (util1.c:1478) also compares seconds and
+        // quick check, whose same_time() (util1.c:1573) also compares seconds and
         // reports the file unchanged -> itemized `.f`.
         //
         // This is the exclude testsuite `same-newness` case: up1/up2 are touched

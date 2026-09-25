@@ -522,7 +522,7 @@ mod create_directory_incremental_tests {
     /// exit-code path.
     ///
     /// EACCES is the only non-fatal `mkdir` class (upstream
-    /// `receiver.c:693-700` folds it into `io_error` and continues); every
+    /// `receiver.c:709-716` folds it into `io_error` and continues); every
     /// other errno is a hard failure. This shapes an `ENOTDIR` by placing a
     /// regular file in the middle of the directory path (`afile/sub`, where
     /// `afile` is a file), so `mkdir` on `afile/sub` fails because a path
@@ -574,7 +574,7 @@ mod create_directory_incremental_tests {
         );
     }
 
-    /// Upstream-parity guard for `receiver.c:693-700`: a
+    /// Upstream-parity guard for `receiver.c:709-716`: a
     /// `PermissionDenied` error on mkdir is non-fatal. The receiver
     /// must mark the directory as failed and return `Ok(None)` so the
     /// rest of the transfer can proceed (mirrors upstream's
@@ -630,7 +630,7 @@ mod create_directory_incremental_tests {
             return;
         }
 
-        let value = result.expect("EACCES must remain non-fatal per upstream receiver.c:693-700");
+        let value = result.expect("EACCES must remain non-fatal per upstream receiver.c:709-716");
         assert_eq!(
             value, None,
             "EACCES must produce Ok(None) so the receiver continues with the rest of the transfer"

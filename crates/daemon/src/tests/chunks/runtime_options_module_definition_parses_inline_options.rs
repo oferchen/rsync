@@ -15,7 +15,7 @@ fn runtime_options_module_definition_parses_inline_options() {
     // `./data` is resolved against the current directory and cleaned, so the
     // leading `.` does not survive: upstream `normalize_path` joins onto
     // `curr_dir` and then runs `clean_fname(..., CFN_COLLAPSE_DOT_DOT_DIRS |
-    // CFN_DROP_TRAILING_DOT_DIR)` (util1.c:1409-1420).
+    // CFN_DROP_TRAILING_DOT_DIR)` (util1.c:1504-1515).
     assert_eq!(
         module.path,
         std::env::current_dir().expect("current dir").join("data")
