@@ -311,6 +311,14 @@ impl GeneratorContext {
 
         self.incremental.pending_segments = pending;
 
+        // upstream: flist.c:599-606 - hard-link leaders and gnums follow the
+        // send order this reorder just fixed, gaps included. The lazy producer
+        // never reaches here: `--hard-links` makes it ineligible.
+        #[cfg(unix)]
+        if self.config.flags.hard_links {
+            self.assign_hardlink_indices();
+        }
+
         // The initial list itemizes the transfer root `.` via its own gap NDX
         // (`ndx_start - 1`) when the first entry is `.`. upstream flist.c:2572
         // keeps `flist->parent_ndx` (pointing at dir_flist[0] == `.`) unless the

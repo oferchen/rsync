@@ -6927,6 +6927,71 @@ fn inc_recurse_partitions_an_already_materialised_file_list() {
     );
 }
 
+/// Under INC_RECURSE a hard-link follower names its leader by the wire NDX the
+/// send path gives that leader, and the leader is the group's first member in
+/// send order.
+///
+/// upstream: flist.c:599-606 numbers groups in `send_file_entry()`, so the gnum
+/// is `first_ndx + ndx` of the first member *sent*, gaps included
+/// (flist.c:2966). The sorted, pre-partition position is not a wire NDX: an
+/// upstream receiver rejects it (`hard-link gnum N precedes flist start M`,
+/// hlink.c:125-141) and exits with a protocol error.
+#[cfg(unix)]
+#[test]
+fn inc_recurse_hardlink_gnum_is_the_leaders_send_order_wire_ndx() {
+    use protocol::CompatibilityFlags;
+
+    let temp = create_test_structure(&["dir0/f0", "dir0/f1", "dir0/sub/x", "dir1/g", "dir2/h"]);
+    let root = temp.path();
+    // Leader in an earlier sibling sub-list.
+    std::fs::hard_link(root.join("dir0/f1"), root.join("dir2/hl")).unwrap();
+    // Leader in the parent directory's sub-list, follower in a nested one.
+    std::fs::hard_link(root.join("dir0/sub/x"), root.join("dir0/y")).unwrap();
+
+    let mut handshake = test_handshake_with_protocol(32);
+    handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+    let mut config = test_config();
+    config.flags.recursive = true;
+    config.flags.hard_links = true;
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+    build_file_list_for_contents(&mut ctx, root);
+    ctx.partition_file_list_for_inc_recurse();
+
+    // Replay the send path's NDX bookkeeping (encode_and_send_segment).
+    let segments: Vec<(usize, i32)> = ctx
+        .incremental
+        .pending_segments
+        .iter()
+        .map(|seg| (seg.flist_start, seg.parent_flat_idx as i32))
+        .collect();
+    for (flist_start, parent_flat) in segments {
+        ctx.incremental
+            .ndx_map
+            .push_sublist(flist_start, parent_flat);
+    }
+    let flat_of = |name: &str| {
+        (0..ctx.file_list().len())
+            .find(|&i| seg_name(&ctx, i) == name)
+            .unwrap_or_else(|| panic!("{name} missing from the file list"))
+    };
+
+    for (leader, follower) in [("dir0/f1", "dir2/hl"), ("dir0/y", "dir0/sub/x")] {
+        let (l, f) = (flat_of(leader), flat_of(follower));
+        assert!(l < f, "{leader} must be sent before {follower}");
+        assert_eq!(
+            ctx.file_list()[l].hardlink_idx(),
+            Some(u32::MAX),
+            "{leader} is the first member sent, so it carries XMIT_HLINK_FIRST"
+        );
+        assert_eq!(
+            ctx.file_list()[f].hardlink_idx(),
+            Some(ctx.incremental.ndx_map.flat_to_wire(l) as u32),
+            "{follower} must name {leader}'s wire NDX"
+        );
+    }
+}
+
 /// Wire-relevant capture of an INC_RECURSE flist build, used to prove the lazy
 /// on-demand producer reproduces the eager partition byte-for-byte.
 #[derive(Debug, PartialEq, Eq)]

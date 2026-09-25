@@ -30,6 +30,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::BufReader;
 use std::net::Shutdown;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -38,7 +39,8 @@ use std::time::{Duration, Instant};
 
 use protocol::ProtocolVersion;
 use transfer::{
-    ServerConfig, ServerRole, ServerStats, perform_handshake_with_max, run_server_with_handshake,
+    ServerConfig, ServerRole, ServerStats, TransferStats, perform_handshake_with_max,
+    run_server_with_handshake,
 };
 
 const DIRS: usize = 3;
@@ -109,25 +111,18 @@ fn run_side(config: ServerConfig, stream: UnixStream) -> std::io::Result<ServerS
     run_server_with_handshake(config, handshake, &mut reader, writer, None, None, None)
 }
 
-/// A forced-INC_RECURSE pull of a multi-segment tree completes through the
-/// streaming receiver, reproduces the source byte for byte, and releases
-/// sub-list segments mid-walk - the release is what keeps the sender's
-/// lookahead window open, so a zero count means the streaming path never ran.
-#[test]
-fn inc_recurse_receiver_loopback_pulls_multi_segment_tree() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let src = tmp.path().join("src");
-    let dst = tmp.path().join("dst");
-    fs::create_dir_all(&dst).expect("create dst");
-    let expected_files = build_tree(&src);
-
-    // Sender: `--server --sender -rte.iLsfxCIvu . src/`. The `i` letter is what
+/// Pulls `src/` into `dst` over a socket pair with INC_RECURSE forced, using
+/// the short options `opts` on both sides, and returns the receiver's stats.
+///
+/// Panics if either side fails or the watchdog expires.
+fn forced_inc_recurse_pull(src: &Path, dst: &Path, opts: &str) -> TransferStats {
+    // Sender: `--server --sender -{opts}e.iLsfxCIvu . src/`. The `i` letter is what
     // an upstream client sends to request INC_RECURSE (options.c:3035).
-    let mut src_arg = src.clone().into_os_string();
+    let mut src_arg = src.to_path_buf().into_os_string();
     src_arg.push("/");
     let sender_cfg = ServerConfig::from_flag_string_and_args(
         ServerRole::Generator,
-        "-rte.iLsfxCIvu".to_owned(),
+        format!("-{opts}e.iLsfxCIvu"),
         vec![src_arg],
     )
     .expect("sender config");
@@ -135,7 +130,7 @@ fn inc_recurse_receiver_loopback_pulls_multi_segment_tree() {
     // Receiver: the client half of an SSH pull (drive.rs `run_pull_transfer`).
     let mut receiver_cfg = ServerConfig::from_flag_string_and_args(
         ServerRole::Receiver,
-        "-rte.LsfxCIvu".to_owned(),
+        format!("-{opts}e.LsfxCIvu"),
         vec![OsString::from(dst.as_os_str())],
     )
     .expect("receiver config");
@@ -175,7 +170,22 @@ fn inc_recurse_receiver_loopback_pulls_multi_segment_tree() {
             receiver_stats = Some(stats);
         }
     }
-    let stats = receiver_stats.expect("receiver returned receiver stats");
+    receiver_stats.expect("receiver returned receiver stats")
+}
+
+/// A forced-INC_RECURSE pull of a multi-segment tree completes through the
+/// streaming receiver, reproduces the source byte for byte, and releases
+/// sub-list segments mid-walk - the release is what keeps the sender's
+/// lookahead window open, so a zero count means the streaming path never ran.
+#[test]
+fn inc_recurse_receiver_loopback_pulls_multi_segment_tree() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    fs::create_dir_all(&dst).expect("create dst");
+    let expected_files = build_tree(&src);
+
+    let stats = forced_inc_recurse_pull(&src, &dst, "rt");
 
     assert!(
         stats.segments_released_mid_walk > 0,
@@ -227,4 +237,66 @@ fn inc_recurse_receiver_loopback_pulls_multi_segment_tree() {
             );
         }
     }
+}
+
+/// Hard-link groups that span INC_RECURSE sub-lists keep one inode on the
+/// receiver.
+///
+/// Under INC_RECURSE the sender numbers a group by the wire NDX of its first
+/// member *in send order*, and that NDX includes the one-slot gap each
+/// sub-list opens (flist.c:599-606, flist.c:2966). Numbering from the sorted
+/// pre-partition list instead names the wrong entry: upstream's receiver
+/// aborts with `hard-link gnum N precedes flist start M` (hlink.c:125-141),
+/// and this receiver silently transfers the follower as a separate copy.
+///
+/// Two shapes are pinned:
+/// - `dir2/hl_to_dir0` -> `dir0/f00003`: the leader is in an earlier sibling
+///   sub-list, so the follower is unabbreviated.
+/// - `dir0/sub/x` -> `dir0/y`: the leader is in the parent directory's
+///   sub-list and the follower in a nested one.
+#[test]
+fn inc_recurse_receiver_loopback_links_hard_links_across_segments() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    fs::create_dir_all(&dst).expect("create dst");
+    for dir in 0..DIRS {
+        let d = src.join(format!("dir{dir}"));
+        fs::create_dir_all(&d).expect("create dir");
+        for idx in 0..5 {
+            fs::write(d.join(format!("f{idx:05}")), file_content(dir, idx)).expect("write file");
+        }
+    }
+    let sub = src.join("dir0").join("sub");
+    fs::create_dir_all(&sub).expect("create sub dir");
+    fs::write(sub.join("x"), b"shared by dir0/y").expect("write sub/x");
+    fs::hard_link(sub.join("x"), src.join("dir0").join("y")).expect("link dir0/y");
+    fs::hard_link(
+        src.join("dir0").join("f00003"),
+        src.join("dir2").join("hl_to_dir0"),
+    )
+    .expect("link dir2/hl_to_dir0");
+    // 15 plain files + sub/x; the two followers are linked, not transferred.
+    let unique_files = DIRS * 5 + 1;
+
+    let stats = forced_inc_recurse_pull(&src, &dst, "rtH");
+
+    for (leader, follower) in [("dir0/f00003", "dir2/hl_to_dir0"), ("dir0/y", "dir0/sub/x")] {
+        let a = fs::metadata(dst.join(leader)).expect("stat leader");
+        let b = fs::metadata(dst.join(follower)).expect("stat follower");
+        assert_eq!(
+            (a.dev(), a.ino()),
+            (b.dev(), b.ino()),
+            "{follower} must be a hard link to {leader}"
+        );
+        assert_eq!(
+            fs::read(dst.join(follower)).expect("read follower"),
+            fs::read(src.join(follower)).expect("read source"),
+            "content mismatch for {follower}"
+        );
+    }
+    assert_eq!(
+        stats.files_transferred, unique_files,
+        "each hard-link group's data must be transferred exactly once"
+    );
 }
