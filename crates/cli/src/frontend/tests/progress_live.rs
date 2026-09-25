@@ -842,3 +842,95 @@ fn format_progress_elapsed_millis_truncated() {
         "0:00:02"
     );
 }
+
+/// Runs a nested local copy through a `LiveProgress` that owns the session
+/// header and the name listing, returning the output and what it reported as
+/// written live.
+fn run_with_local_session() -> (String, crate::frontend::progress::LiveRendered) {
+    use crate::frontend::escape::EscapeStyle;
+    use crate::frontend::progress::{
+        FlistBanner, LiveListing, LocalSessionOutput, NameOutputLevel,
+    };
+
+    let (tmp, source_dir) = setup_multiple_files(&[("top.txt", 3), ("sub/inner.txt", 5)]);
+    let mut source_arg = source_dir.as_os_str().to_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+    let config = ClientConfig::builder()
+        .transfer_args([source_arg, tmp.path().join("dest").into_os_string()])
+        .recursive(true)
+        .progress(true)
+        .force_event_collection(true)
+        .build();
+
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut live = LiveProgress::new(
+        &mut buffer,
+        ProgressMode::PerFile,
+        HumanReadableMode::Grouped,
+    )
+    .with_local_session(LocalSessionOutput {
+        banner: FlistBanner::Incremental,
+        delta_notice: None,
+        itemizing: false,
+        escape: EscapeStyle::terminal(false),
+        listing: Some(LiveListing {
+            verbosity: 1,
+            name_level: NameOutputLevel::UpdatedOnly,
+            name_overridden: false,
+        }),
+    });
+    run_client_with_observer(config, Some(&mut live as &mut dyn ClientProgressObserver))
+        .expect("transfer succeeds");
+    let rendered = live.live_rendered();
+    live.finish().expect("finish succeeds");
+    (
+        String::from_utf8(buffer).expect("output is valid UTF-8"),
+        rendered,
+    )
+}
+
+/// upstream writes the banner of a local copy before any entry, and each
+/// directory name as the generator reaches it (flist.c:2521-2524,
+/// generator.c recv_generator() -> itemize()). Under `--progress` oc must do
+/// the same live, or the banner trails the progress lines and the directory
+/// names are lost.
+#[test]
+fn live_progress_local_session_writes_banner_and_dirs_in_event_order() {
+    let (output, rendered) = run_with_local_session();
+    let lines: Vec<&str> = output.lines().collect();
+    assert_eq!(
+        lines.first().copied(),
+        Some("sending incremental file list"),
+        "{output}"
+    );
+    let position = |needle: &str| {
+        lines
+            .iter()
+            .position(|line| *line == needle)
+            .unwrap_or_else(|| panic!("missing `{needle}` in:\n{output}"))
+    };
+    assert!(position("./") < position("top.txt"), "{output}");
+    assert!(position("top.txt") < position("sub/"), "{output}");
+    assert!(position("sub/") < position("sub/inner.txt"), "{output}");
+    assert!(
+        rendered.header && rendered.listing && rendered.progress,
+        "the summary must know all three were written live: {rendered:?}"
+    );
+}
+
+/// Without a local session (a remote transfer) the entry hooks stay silent and
+/// the summary keeps ownership of the header and the listing.
+#[test]
+fn live_progress_without_session_leaves_header_and_listing_to_summary() {
+    let mut buffer: Vec<u8> = Vec::new();
+    let mut live = LiveProgress::new(
+        &mut buffer,
+        ProgressMode::PerFile,
+        HumanReadableMode::Grouped,
+    );
+    live.on_start(Some(std::path::Path::new("dest")));
+    let rendered = live.live_rendered();
+    live.finish().expect("finish succeeds");
+    assert!(buffer.is_empty(), "{:?}", String::from_utf8_lossy(&buffer));
+    assert!(!rendered.header && !rendered.listing, "{rendered:?}");
+}
