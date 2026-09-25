@@ -1270,6 +1270,9 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 if client_mode && let Some(sender_stats) = ctx.sender_stats() {
                     stats.bytes_sent = sender_stats.total_read;
                     stats.bytes_received = sender_stats.total_written;
+                    // upstream: main.c:374-377 - the flist times are adopted too.
+                    stats.flist_buildtime_ms = sender_stats.flist_buildtime_ms.unwrap_or(0);
+                    stats.flist_xfertime_ms = sender_stats.flist_xfertime_ms.unwrap_or(0);
                 }
 
                 // A custom `--out-format` on a pull buffered its per-file rows as
