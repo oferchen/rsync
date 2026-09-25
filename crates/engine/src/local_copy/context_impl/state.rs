@@ -56,6 +56,9 @@ impl<'a> CopyContext<'a> {
             stop_deadline,
             stop_at: stop_at_wallclock,
             last_progress: Instant::now(),
+            metadata_destination_root: Arc::new(::metadata::DestinationRoot::new(
+                destination_root.clone(),
+            )),
             destination_root,
             source_anchor: None,
             safety_depth_offset: 0,

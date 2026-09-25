@@ -21,7 +21,7 @@ impl<'a> CopyContext<'a> {
             // (`main.c:765`) and works relative to it, so a symlinked root is
             // never a path component the per-entry syscalls have to walk. oc
             // keeps absolute paths, so it hands the root over instead.
-            .with_destination_root(Some(self.destination_root().to_path_buf()))
+            .with_destination_root(Some(Arc::clone(&self.metadata_destination_root)))
     }
 
     /// Reports whether ACL preservation is enabled.
