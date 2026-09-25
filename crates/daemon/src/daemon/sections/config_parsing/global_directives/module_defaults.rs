@@ -71,42 +71,49 @@ impl GlobalModuleDefaults {
     /// the globals in force when its `[name]` header was read (`snapshot`) and
     /// the globals in force once the whole config has been parsed (`latest`).
     ///
-    /// upstream: loadparm.c:347-348 - `FN_LOCAL_STRING(fn, val)` expands to
+    /// upstream: loadparm.c:394-398 init_section() copies `Vars.l` into the new
+    /// section, and loadparm.c:347-348 `FN_LOCAL_STRING(fn, val)` expands to
     /// `if (LP_SNUM_OK(i) && iSECTION(i).val) RETURN_EXPANDED(iSECTION(i).val)
-    /// else RETURN_EXPANDED(Vars.l.val)`, and clientserver.c:781-783 calls
-    /// `lp_uid(i)` only when a client selects the module - long after
-    /// `lp_load()` finished. A string-typed P_LOCAL parameter therefore
-    /// resolves its default at ACCESS time, so a global set *after* a section
-    /// (or after the `&include`/`&merge` that declared it) still applies to
-    /// that section. `FN_LOCAL_BOOL`/`FN_LOCAL_INTEGER` (loadparm.c:351-356)
-    /// carry no such fallback: they read `iSECTION(i).val`, which
-    /// `init_section()` filled from `Vars.l` when the section was created, so
-    /// those keep creation-time semantics.
+    /// else RETURN_EXPANDED(Vars.l.val)`. clientserver.c:781-783 calls it only
+    /// when a client selects the module - long after `lp_load()` finished. So
+    /// a string-typed P_LOCAL parameter whose default is NULL takes the copied
+    /// value when there is one, and the final global value only when there is
+    /// not. A string whose built-in default is non-NULL (`dont compress`,
+    /// `log format`, `syslog tag`) always has a copied value, as do the
+    /// `FN_LOCAL_BOOL`/`FN_LOCAL_INTEGER` ones (loadparm.c:351-356): those keep
+    /// creation-time semantics.
     fn resolve(snapshot: &Self, latest: &Self) -> Self {
+        fn copied_or_latest<T: Clone>(copied: &Option<T>, latest: &Option<T>) -> Option<T> {
+            copied.as_ref().or(latest.as_ref()).cloned()
+        }
+        fn copied_or_latest_list(copied: &[String], latest: &[String]) -> Vec<String> {
+            if copied.is_empty() { latest } else { copied }.to_vec()
+        }
         Self {
-            // Access-time (FN_LOCAL_STRING / FN_LOCAL_STRING_SHELL).
-            exclude: latest.exclude.clone(),
-            include: latest.include.clone(),
-            filter: latest.filter.clone(),
-            log_format: latest.log_format.clone(),
-            log_file: latest.log_file.clone(),
-            hosts_allow: latest.hosts_allow.clone(),
-            hosts_deny: latest.hosts_deny.clone(),
-            dont_compress: latest.dont_compress.clone(),
-            syslog_tag: latest.syslog_tag.clone(),
-            exclude_from: latest.exclude_from.clone(),
-            include_from: latest.include_from.clone(),
-            comment: latest.comment.clone(),
-            early_exec: latest.early_exec.clone(),
-            pre_xfer_exec: latest.pre_xfer_exec.clone(),
-            post_xfer_exec: latest.post_xfer_exec.clone(),
-            name_converter: latest.name_converter.clone(),
-            temp_dir: latest.temp_dir.clone(),
-            charset: latest.charset.clone(),
-            uid: latest.uid,
-            gid: latest.gid.clone(),
-            auth_users: latest.auth_users.clone(),
-            auth_digest: latest.auth_digest.clone(),
+            // FN_LOCAL_STRING with a NULL default.
+            exclude: copied_or_latest_list(&snapshot.exclude, &latest.exclude),
+            include: copied_or_latest_list(&snapshot.include, &latest.include),
+            filter: copied_or_latest_list(&snapshot.filter, &latest.filter),
+            log_file: copied_or_latest(&snapshot.log_file, &latest.log_file),
+            hosts_allow: copied_or_latest(&snapshot.hosts_allow, &latest.hosts_allow),
+            hosts_deny: copied_or_latest(&snapshot.hosts_deny, &latest.hosts_deny),
+            exclude_from: copied_or_latest(&snapshot.exclude_from, &latest.exclude_from),
+            include_from: copied_or_latest(&snapshot.include_from, &latest.include_from),
+            comment: copied_or_latest(&snapshot.comment, &latest.comment),
+            early_exec: copied_or_latest(&snapshot.early_exec, &latest.early_exec),
+            pre_xfer_exec: copied_or_latest(&snapshot.pre_xfer_exec, &latest.pre_xfer_exec),
+            post_xfer_exec: copied_or_latest(&snapshot.post_xfer_exec, &latest.post_xfer_exec),
+            name_converter: copied_or_latest(&snapshot.name_converter, &latest.name_converter),
+            temp_dir: copied_or_latest(&snapshot.temp_dir, &latest.temp_dir),
+            charset: copied_or_latest(&snapshot.charset, &latest.charset),
+            uid: copied_or_latest(&snapshot.uid, &latest.uid),
+            gid: copied_or_latest(&snapshot.gid, &latest.gid),
+            auth_users: copied_or_latest(&snapshot.auth_users, &latest.auth_users),
+            auth_digest: copied_or_latest(&snapshot.auth_digest, &latest.auth_digest),
+            // FN_LOCAL_STRING with a non-NULL built-in default.
+            log_format: snapshot.log_format.clone(),
+            dont_compress: snapshot.dont_compress.clone(),
+            syslog_tag: snapshot.syslog_tag.clone(),
             // Creation-time (FN_LOCAL_BOOL / FN_LOCAL_INTEGER).
             max_verbosity: snapshot.max_verbosity,
             transfer_logging: snapshot.transfer_logging,

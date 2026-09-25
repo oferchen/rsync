@@ -1,9 +1,8 @@
 // Global-section directive dispatch.
 //
-// Routes a `key = value` directive that appears before any `[module]` header
-// to its handler, including the `include` directive that triggers recursive
-// config file parsing and result merging, the daemon-wide socket/auth/logging
-// directives, and the P_LOCAL parameter defaults inherited by all modules.
+// Routes a `key = value` directive that appears in the global section to its
+// handler: the daemon-wide socket/auth/logging directives and the P_LOCAL
+// parameter defaults inherited by modules.
 
 /// Records a global-section directive value, overwriting whatever an earlier
 /// occurrence of the same directive stored.
@@ -29,8 +28,6 @@ fn store_global_directive<T>(
 }
 
 /// Applies a single global-section directive, updating `state` accordingly.
-///
-/// The `stack` parameter is threaded through for recursive `include` handling.
 fn apply_global_directive(
     state: &mut GlobalParseState,
     key: &str,
@@ -38,7 +35,6 @@ fn apply_global_directive(
     path: &Path,
     line_number: usize,
     canonical: &Path,
-    stack: &mut Vec<PathBuf>,
 ) -> Result<(), DaemonError> {
     match key {
         "refuseoptions" => {
@@ -68,16 +64,6 @@ fn apply_global_directive(
                     line: line_number,
                 },
             ));
-        }
-        "&include" | "&merge" => {
-            // upstream: params.c:parse_directives - `&include` and `&merge` both
-            // pull configuration from another file. `&include` runs under a
-            // private global scope (`]push`/`]pop`) so the included file's globals
-            // do not leak back, and a directory target globs `*.conf`; `&merge`
-            // shares the current scope and globs `*.inc`. `apply_include_directive`
-            // implements both. A bare `include` (no `&`) is NOT file inclusion -
-            // it is the P_LOCAL `include` filter parameter, handled below.
-            apply_include_directive(state, key, value, path, line_number, canonical, stack)?;
         }
         "motdfile" => {
             let trimmed = value.trim();

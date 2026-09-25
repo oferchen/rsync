@@ -1,13 +1,17 @@
 // Global-section parse state.
 //
 // Mutable container accumulating all global-section directives during parsing,
-// plus the constructors that seed inherited defaults across `&include`/`&merge`
-// boundaries and the conversion into the final parsed result.
+// and the conversion into the final parsed result.
 
 /// Mutable context holding all global-section state accumulated during parsing.
 ///
 /// Passed by reference into `apply_global_directive` to avoid a long parameter
 /// list on every call.
+///
+/// upstream: loadparm.c `Vars` - one block shared by every file the parse
+/// reads. `Clone` is upstream's `]push`: `&include` saves a copy and restores it
+/// afterwards (loadparm.c:do_section:598-614).
+#[derive(Clone)]
 struct GlobalParseState {
     global_refuse_directives: Vec<(Vec<String>, ConfigDirectiveOrigin)>,
     motd_lines: Vec<String>,
@@ -64,24 +68,11 @@ struct GlobalParseState {
     proxy_protocol_hosts: Option<(Vec<HostPattern>, ConfigDirectiveOrigin)>,
     rsync_port: Option<(u16, ConfigDirectiveOrigin)>,
     daemon_chroot: Option<(PathBuf, ConfigDirectiveOrigin)>,
-    /// Module sections read so far, still unfinalized: a string-typed P_LOCAL
-    /// default is not resolved until the whole config tree has been parsed.
-    modules: Vec<PendingModule>,
     /// P_LOCAL parameter defaults from the global section.
     ///
     /// upstream: loadparm.c - P_LOCAL parameters in the global section set
     /// defaults inherited by all modules that don't override them.
     module_defaults: GlobalModuleDefaults,
-    /// Snapshot of the parent file's globals when this state is the body
-    /// of an `&include`/`&merge` target. Modules declared in the included
-    /// file use these as fallbacks when no value is set in this file, so
-    /// they inherit the parent's defaults the same way upstream's shared
-    /// `Vars` block carries the parent state across the `]push`/`]pop`
-    /// boundary in `params.c::Parse`.
-    inherited_use_chroot: Option<bool>,
-    inherited_secrets_file: Option<PathBuf>,
-    inherited_incoming_chmod: Option<String>,
-    inherited_outgoing_chmod: Option<String>,
 }
 
 impl GlobalParseState {
@@ -119,77 +110,38 @@ impl GlobalParseState {
             proxy_protocol_hosts: None,
             rsync_port: None,
             daemon_chroot: None,
-            modules: Vec::new(),
             module_defaults: GlobalModuleDefaults::default(),
-            inherited_use_chroot: None,
-            inherited_secrets_file: None,
-            inherited_incoming_chmod: None,
-            inherited_outgoing_chmod: None,
         }
     }
 
-    /// Builds a fresh parse state seeded with the parent file's global
-    /// defaults so modules declared inside an `&include`/`&merge` target
-    /// inherit the same P_LOCAL defaults the parent file already
-    /// established.
-    ///
-    /// upstream: params.c:Parse / loadparm.c::do_section - `&include`
-    /// wraps the recursive parse in `]push`/`]pop` calls that snapshot
-    /// the shared `Vars` block; modules added by the included file
-    /// finalize against the live `Vars` state, which still carries the
-    /// parent file's defaults until the matching `]pop` restores the
-    /// snapshot. Mirror that by stashing the inheritable defaults into
-    /// dedicated fallback slots, leaving the explicit per-file directive
-    /// slots empty so the include can redeclare a global without
-    /// inheriting the parent's origin.
-    fn inherited_from(parent: &Self) -> Self {
-        let mut state = Self::new();
-        state.inherited_use_chroot = parent
-            .global_use_chroot
-            .as_ref()
-            .map(|(value, _)| *value)
-            .or(parent.inherited_use_chroot);
-        state.inherited_secrets_file = parent
-            .global_secrets_file
-            .as_ref()
-            .map(|(value, _)| value.clone())
-            .or_else(|| parent.inherited_secrets_file.clone());
-        state.inherited_incoming_chmod = parent
-            .global_incoming_chmod
-            .as_ref()
-            .map(|(value, _)| value.clone())
-            .or_else(|| parent.inherited_incoming_chmod.clone());
-        state.inherited_outgoing_chmod = parent
-            .global_outgoing_chmod
-            .as_ref()
-            .map(|(value, _)| value.clone())
-            .or_else(|| parent.inherited_outgoing_chmod.clone());
-        state.module_defaults = parent.module_defaults.clone();
-        state
-    }
-
-    /// Converts the accumulated global state into the final parsed result,
-    /// finalizing every module section against the globals left standing at the
-    /// end of the parse.
+    /// Converts the final `Vars` into the parsed result, finalizing every
+    /// module section in `sections` against it.
     ///
     /// upstream: loadparm.c:347-348 - `FN_LOCAL_STRING` falls back to
-    /// `Vars.l.<param>` when the section itself never set the parameter, and
+    /// `Vars.l.<param>` when the section's own copy is NULL, and
     /// clientserver.c:781-783 performs that lookup when a client picks the
     /// module, i.e. after `lp_load()` has read the whole file. A global
-    /// declared below a `[section]` - or below the `&include`/`&merge` that
-    /// declared it - therefore still supplies that section's default.
-    fn into_result(self) -> Result<ParsedConfigModules, DaemonError> {
-        let latest = self.module_defaults;
-        let mut modules = Vec::with_capacity(self.modules.len());
-        for module in self.modules {
+    /// declared below a `[section]` therefore still supplies a string the
+    /// section never had, but never replaces one the section copied or set.
+    fn into_result(self, sections: Vec<PendingModule>) -> Result<ParsedConfigModules, DaemonError> {
+        let latest = &self.module_defaults;
+        let latest_secrets = self.global_secrets_file.as_ref().map(|(v, _)| v.as_path());
+        let latest_incoming = self.global_incoming_chmod.as_ref().map(|(v, _)| v.as_str());
+        let latest_outgoing = self.global_outgoing_chmod.as_ref().map(|(v, _)| v.as_str());
+        let mut modules = Vec::with_capacity(sections.len());
+        for module in sections {
             let defaults = module.defaults;
-            modules.push(module.builder.finish(
+            let mut builder = module.builder;
+            if builder.refuse_options.is_none() {
+                builder.refuse_options = defaults.refuse_options;
+            }
+            modules.push(builder.finish(
                 &module.config_path,
-                defaults.secrets_file.as_deref(),
-                defaults.incoming_chmod.as_deref(),
-                defaults.outgoing_chmod.as_deref(),
+                defaults.secrets_file.as_deref().or(latest_secrets),
+                defaults.incoming_chmod.as_deref().or(latest_incoming),
+                defaults.outgoing_chmod.as_deref().or(latest_outgoing),
                 defaults.use_chroot,
-                &GlobalModuleDefaults::resolve(&defaults.module_defaults, &latest),
+                &GlobalModuleDefaults::resolve(&defaults.module_defaults, latest),
             )?);
         }
 
