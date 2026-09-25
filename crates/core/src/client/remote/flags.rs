@@ -545,6 +545,9 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // delete time). --delete-delay decides during the walk (generator.c:2315),
     // deferring only the unlink, so it is NOT flagged here.
     server_config.deletion.delete_after = matches!(config.delete_mode(), DeleteMode::After);
+    // upstream: compat.c:174-176 - set_allow_inc_recurse() keys on an explicit
+    // --delete-before; bare --delete (DuringDefault) is not one.
+    server_config.deletion.delete_before = matches!(config.delete_mode(), DeleteMode::Before);
     // upstream: options.c `delete_excluded` - the receiver's delete pass must
     // treat filter-excluded (non-protected) entries as deletable. For a
     // remote-shell pull the receiver builds its deletion chain from the local
@@ -1000,6 +1003,7 @@ mod tests {
             max_delete,
             ignore_errors,
             late_delete,
+            delete_before,
             delete_after,
             delete_excluded,
         } = server_config.deletion;
@@ -1009,6 +1013,15 @@ mod tests {
         assert!(late_delete, "late_delete");
         assert!(delete_after, "delete_after");
         assert!(delete_excluded, "delete_excluded");
+        // --delete-after and --delete-before are exclusive modes, so this one
+        // is exercised by its own config.
+        assert!(!delete_before, "delete_before");
+        let mut before = ServerConfig::default();
+        apply_common_server_flags(
+            &ClientConfig::builder().delete_before(true).build(),
+            &mut before,
+        );
+        assert!(before.deletion.delete_before, "delete_before");
     }
 
     #[test]

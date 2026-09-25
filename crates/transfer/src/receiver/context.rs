@@ -17,7 +17,6 @@ use protocol::stats::DeleteStats;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 use engine::HardlinkApplyTracker;
-use engine::delete::DeleteContext;
 
 use crate::config::ServerConfig;
 use crate::handshake::HandshakeResult;
@@ -65,6 +64,20 @@ pub struct ReceiverContext {
     ///
     /// upstream: flist.c:3268 - `flist->ndx_start = prev->ndx_start + prev->used + 1`
     pub(in crate::receiver) ndx_segments: Vec<(usize, i32)>,
+    /// Each segment's parent directory as a `dir_flist` index, aligned 1:1
+    /// with `ndx_segments` (the generator keeps `segment_parent_flat` the same
+    /// way). `None` is upstream's `parent_ndx = -1`: a list with no parent.
+    ///
+    /// This is the `dir_flist` numbering, NOT a transfer NDX - see
+    /// [`DirFlist`]. A sub-list records its header's `dir_ndx`; the first
+    /// INC_RECURSE list records `Some(0)` only when rooted at `.`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1947-1948`, `flist.c:3122-3123` - `flist->parent_ndx = ndx`.
+    /// - `flist.c:3071-3083` - the first list's `-1` rule.
+    /// - `generator.c:2780-2801` - the per-directory delete it selects.
+    pub(in crate::receiver) segment_parent_dir_ndx: Vec<Option<i32>>,
     /// Index into `ndx_segments` of the oldest unreclaimed segment.
     ///
     /// Advances by one each time a completed segment is reclaimed via
@@ -279,19 +292,6 @@ pub struct ReceiverContext {
     /// Different operations have different overhead profiles: CPU-bound signature
     /// computation benefits from parallelism at lower counts than I/O-bound stat calls.
     pub(in crate::receiver) parallel_thresholds: ParallelThresholds,
-    /// Optional handle into the parallel-deterministic-delete pipeline.
-    ///
-    /// When `Some`, the receiver publishes a [`engine::delete::DeletePlan`]
-    /// for every INC_RECURSE segment via
-    /// [`DeleteContext::observe_segment_for_delete`]. The plans accumulate
-    /// in the shared [`engine::delete::DeletePlanMap`] for the (not-yet-
-    /// active) emitter to drain. When `None`, the receiver behaves
-    /// identically to the legacy batched-sweep path; nothing in the
-    /// segment loop calls into the delete pipeline.
-    ///
-    /// This is wired by task DDP-B3 (#2257) and consumed by the emitter
-    /// wiring in tasks DDP-E1-E5.
-    pub(in crate::receiver) delete_ctx: Option<Arc<DeleteContext>>,
     /// Deletion stats produced by the receiver's pre-transfer `--delete` sweep.
     ///
     /// Populated by `delete_extraneous_files` from both `run_pipelined` and
@@ -585,6 +585,7 @@ impl ReceiverContext {
             compat_flags: handshake.compat_flags,
             checksum_seed: handshake.checksum_seed,
             ndx_segments: vec![(0, initial_ndx_start)],
+            segment_parent_dir_ndx: vec![None],
             first_segment_idx: 0,
             segments_released_mid_walk: 0,
             dir_flist: DirFlist::default(),
@@ -607,7 +608,6 @@ impl ReceiverContext {
             received_total_size: 0,
             sender_stats: None,
             parallel_thresholds: ParallelThresholds::default(),
-            delete_ctx: None,
             pending_del_stats: DeleteStats::new(),
             make_room_delete_stats: std::cell::Cell::new(DeleteStats::new()),
             pipeline,
@@ -765,28 +765,6 @@ impl ReceiverContext {
         self.pipeline
             .advance_to(crate::transfer_state::TransferPhase::DeltaTransfer)
             .expect("test pipeline advance to DeltaTransfer");
-    }
-
-    /// Attaches a [`DeleteContext`] to the receiver.
-    ///
-    /// When set, the receiver's per-segment hook publishes one
-    /// [`engine::delete::DeletePlan`] per INC_RECURSE segment into the
-    /// context's shared [`engine::delete::DeletePlanMap`]. Plans
-    /// accumulate for later consumption by the emitter (tasks
-    /// DDP-E1-E5); the legacy batched-sweep path remains active and
-    /// continues to drive observable deletions until the emitter takes
-    /// over.
-    ///
-    /// Pass `None` to detach the context. Must be called before
-    /// [`run`](Self::run) - the context is consumed on each segment.
-    pub fn set_delete_context(&mut self, ctx: Option<Arc<DeleteContext>>) {
-        self.delete_ctx = ctx;
-    }
-
-    /// Returns a clone of the current [`DeleteContext`] handle, if any.
-    #[must_use]
-    pub fn delete_context(&self) -> Option<Arc<DeleteContext>> {
-        self.delete_ctx.as_ref().map(Arc::clone)
     }
 
     /// Attaches the raw wire byte counter used to measure file-list spans.

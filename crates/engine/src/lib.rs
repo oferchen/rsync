@@ -154,9 +154,7 @@ pub mod batch {
 
     /// Script generation for batch replay.
     pub mod script {
-        pub use batch::script::{
-            generate_script, generate_script_with_args, generate_script_with_filters,
-        };
+        pub use batch::script::{generate_script, generate_script_with_filters};
     }
 }
 

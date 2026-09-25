@@ -179,9 +179,13 @@ impl MetadataOptions {
     /// Only callers that genuinely know the operator's destination argument
     /// should set this; leaving it unset keeps every path fully confined. See
     /// `MetadataOptions::destination_root` for why upstream never needs the
-    /// equivalent.
+    /// equivalent. Share one [`DestinationRoot`](crate::DestinationRoot) across
+    /// a transfer so its directory is pinned once.
     #[must_use]
-    pub fn with_destination_root(mut self, root: Option<std::path::PathBuf>) -> Self {
+    pub fn with_destination_root(
+        mut self,
+        root: Option<std::sync::Arc<crate::DestinationRoot>>,
+    ) -> Self {
         self.destination_root = root;
         self
     }

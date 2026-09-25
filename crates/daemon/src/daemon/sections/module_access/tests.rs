@@ -247,6 +247,23 @@ mod module_access_tests {
     // significant items; `%i%I` is the `-ii` level that also itemizes unchanged
     // entries. Without the `%I` -> itemize_unchanged mapping a `-ii` push to an
     // oc daemon drops every unchanged row.
+    // upstream: compat.c:174-176 - set_allow_inc_recurse() keys on an explicit
+    // --delete-before, so a daemon receiver must keep it apart from the plain
+    // --delete / --delete-during it used to fold it into.
+    #[test]
+    fn apply_long_form_args_keeps_delete_before_distinct() {
+        let mut before = ServerConfig::default();
+        assert!(apply_long_form_args(&["--delete-before".to_owned()], &mut before).is_none());
+        assert!(before.flags.delete && before.deletion.delete_before);
+
+        for arg in ["--delete", "--delete-during"] {
+            let mut cfg = ServerConfig::default();
+            assert!(apply_long_form_args(&[arg.to_owned()], &mut cfg).is_none());
+            assert!(cfg.flags.delete, "{arg}");
+            assert!(!cfg.deletion.delete_before, "{arg} is not a before-delete");
+        }
+    }
+
     #[test]
     fn apply_long_form_args_maps_log_format_itemize_levels() {
         let single = vec!["--log-format=%i".to_owned()];

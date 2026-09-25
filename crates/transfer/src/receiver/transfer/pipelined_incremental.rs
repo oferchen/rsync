@@ -926,6 +926,7 @@ impl ReceiverContext {
         }
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
+        stats.segments_released_mid_walk = self.segments_released_mid_walk;
         if self.dest_root_created {
             self.record_created(protocol::flist::FileType::Directory.to_mode_bits());
         }

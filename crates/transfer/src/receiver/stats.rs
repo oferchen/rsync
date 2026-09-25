@@ -216,6 +216,19 @@ pub struct TransferStats {
     /// - `generator.c:2160-2199` - generator processes redo queue in phase 2
     pub redo_count: usize,
 
+    /// Sub-list segments the INC_RECURSE streaming driver released mid-walk.
+    ///
+    /// Counts the per-segment `NDX_DONE`s written during the transfer walk to
+    /// free the sender's lookahead window, before the finalize handshake emits
+    /// the remainder. Always 0 on the batch drivers. Local diagnostic only;
+    /// never sent over the wire.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2219-2239` - `check_for_finished_files` writes `NDX_DONE`
+    ///   for each completed flist while the walk is still running.
+    pub segments_released_mid_walk: usize,
+
     /// File-list entries captured for `--list-only` rendering.
     ///
     /// Populated only in list-only mode; empty otherwise. The client converts

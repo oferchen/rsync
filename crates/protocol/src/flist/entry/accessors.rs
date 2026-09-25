@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::super::wire_path::path_bytes_to_wire;
 use super::FileEntry;
@@ -723,8 +723,7 @@ impl FileEntry {
     pub fn reclaim_heap_data(&mut self) {
         // Drop the path buffer contents without deallocating.
         self.name = PathBuf::new();
-        // Reset dirname to a shared empty arc.
-        self.dirname = Arc::from(Path::new(""));
+        self.dirname = empty_dirname();
         // Drop the extras box.
         self.extras = None;
         // Zero scalar fields - not strictly necessary for memory but
@@ -737,4 +736,14 @@ impl FileEntry {
         self.mtime_nsec = 0;
         self.present = 0;
     }
+}
+
+/// Returns the process-wide empty dirname shared by every reclaimed entry.
+///
+/// A fresh `Arc::from(Path::new(""))` per entry would allocate an `ArcInner`
+/// each time, so reclaiming N entries could grow the heap instead of
+/// shrinking it.
+fn empty_dirname() -> Arc<Path> {
+    static EMPTY: OnceLock<Arc<Path>> = OnceLock::new();
+    Arc::clone(EMPTY.get_or_init(|| Arc::from(Path::new(""))))
 }

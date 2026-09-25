@@ -138,6 +138,17 @@ pub struct ProtocolSetupConfig<'a> {
     /// `delete_before`/`delete_after`/`delay_updates`/`prune_empty_dirs`.
     pub allow_inc_recurse: bool,
 
+    /// Whether this side's options permit incremental recursion
+    /// (`ServerConfig::allows_inc_recurse`).
+    ///
+    /// Distinct from `allow_inc_recurse`, which additionally carries oc's
+    /// never-advertise-from-a-receiver restriction: this one decides whether a
+    /// peer-set `CF_INC_RECURSE` is accepted.
+    ///
+    /// upstream: compat.c:780-785 - `inc_recurse && !allow_inc_recurse`
+    /// aborts with `RERR_SYNTAX`.
+    pub options_allow_inc_recurse: bool,
+
     /// Whether `--crtimes` / `-N` create-time preservation is requested.
     ///
     /// Create-times ride the extended varint file-list flags, so a peer that
@@ -189,6 +200,8 @@ impl<'a> ProtocolSetupConfig<'a> {
             checksum_choice: None,
             checksum_seed: None,
             allow_inc_recurse: false,
+            // Accept a peer-set CF_INC_RECURSE unless the caller says otherwise.
+            options_allow_inc_recurse: true,
             preserve_crtimes: false,
             write_batch: false,
         }

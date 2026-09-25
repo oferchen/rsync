@@ -530,6 +530,23 @@ fn parse_server_args_skips_append_flag() {
     );
 }
 
+/// `--delete-before` must be recorded distinctly: upstream's
+/// set_allow_inc_recurse() (compat.c:174-176) refuses inc-recursion for a
+/// receiver with `delete_before`, while bare `--delete` resolves to
+/// `delete_during` (compat.c:683-688) and keeps it.
+#[test]
+fn long_flags_captures_delete_before_distinctly() {
+    let parse =
+        |arg: &str| parse_server_long_flags(&[OsString::from("--server"), OsString::from(arg)]);
+    let before = parse("--delete-before");
+    assert!(before.delete && before.delete_before);
+    for arg in ["--delete", "--delete-during"] {
+        let flags = parse(arg);
+        assert!(flags.delete, "{arg}");
+        assert!(!flags.delete_before, "{arg} is not a before-delete");
+    }
+}
+
 /// `--delete-excluded` must be recorded distinctly, not folded into `delete`.
 ///
 /// It is an input to `receiver_wants_filter_list` (exclude.c:1947-1948), which

@@ -1557,3 +1557,56 @@ mod open_subdir_confined {
         fstatat_nofollow(dirfd.as_fd(), OsStr::new("marker")).expect("the walk must land in a/b");
     }
 }
+
+/// `open_dir_beneath_nofollow` confines only the tail beneath its anchor.
+///
+/// The anchor `base/link/inner` sits under an operator symlink `link -> real`
+/// and is opened the way the metadata appliers open the destination root,
+/// through the ownership walk - upstream enters it with a plain `change_dir()`
+/// (`main.c` `get_local_name()`). The tail is transfer-controlled, so a
+/// symlink there - even one that stays inside the anchor - and a `..` are both
+/// refused, matching the fused `RESOLVE_NO_SYMLINKS` walk it replaces.
+#[test]
+fn dir_beneath_nofollow_confines_only_the_tail() {
+    use std::os::fd::AsFd;
+    use std::os::unix::fs::MetadataExt;
+    use std::path::Path;
+
+    let tmp = tempdir().expect("tempdir");
+    let base = tmp.path().join("base");
+    std::fs::create_dir_all(base.join("real/inner/sub/deeper")).expect("mkdir tree");
+    symlink("real", base.join("link")).expect("operator symlink");
+    symlink("sub", base.join("real/inner/in_tree")).expect("in-tree symlink");
+    let anchor = crate::operator_open_dir(&base.join("link/inner"))
+        .expect("the operator's own symlink is followed");
+    let anchor = anchor.as_fd();
+
+    let fd = super::open_dir_beneath_nofollow(anchor, Path::new("sub/deeper"))
+        .expect("a symlink-free tail opens");
+    let expected = std::fs::metadata(base.join("real/inner/sub/deeper")).expect("stat");
+    assert_eq!(
+        rustix::fs::fstat(&fd).expect("fstat").st_ino,
+        expected.ino(),
+        "opened the resolved directory"
+    );
+    let dup = super::open_dir_beneath_nofollow(anchor, Path::new(""))
+        .expect("an empty tail is the anchor itself");
+    assert_eq!(
+        rustix::fs::fstat(&dup).expect("fstat").st_ino,
+        std::fs::metadata(base.join("real/inner"))
+            .expect("stat")
+            .ino(),
+    );
+
+    for tail in ["in_tree", "in_tree/deeper"] {
+        let err = super::open_dir_beneath_nofollow(anchor, Path::new(tail))
+            .expect_err("a symlink in the tail must be refused");
+        assert!(
+            matches!(err.raw_os_error(), Some(libc::ELOOP | libc::ENOTDIR)),
+            "{tail}: expected ELOOP/ENOTDIR, got {err}"
+        );
+    }
+    let err = super::open_dir_beneath_nofollow(anchor, Path::new("sub/../.."))
+        .expect_err("a `..` in the tail must be refused");
+    assert_eq!(err.raw_os_error(), Some(libc::EXDEV));
+}

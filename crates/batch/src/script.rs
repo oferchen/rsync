@@ -75,11 +75,12 @@ pub fn generate_script_with_filters(
     // so the heredoc at the end of the script feeds rules into stdin
     if filter_rules.is_some() {
         if config.protocol_version >= 29 {
-            // upstream: batch.c:263-264 write_opt("--filter", "._-")
-            write!(file, " --filter=._-")?;
+            // upstream: batch.c:263-264 write_opt("--filter", "._-") - the value
+            // goes through write_arg(), so it is quoted like any other.
+            write!(file, " --filter={}", shell_quote("._-"))?;
         } else {
             // upstream: batch.c:265-266 write_opt("--exclude-from", "-")
-            write!(file, " --exclude-from=-")?;
+            write!(file, " --exclude-from={}", shell_quote("-"))?;
         }
     }
 
@@ -150,114 +151,6 @@ fn write_filter_heredoc(file: &mut File, rules: &str, eol_nulls: bool) -> io::Re
     }
     // upstream: batch.c:221 write_sbuf(fd, "#E#")
     write!(file, "#E#")?;
-    Ok(())
-}
-
-/// Generate a shell script for replaying a batch file with full argument preservation.
-///
-/// Converts `--write-batch` / `--only-write-batch` arguments to `--read-batch`,
-/// preserves relevant options, and embeds filter rules if present. The output
-/// matches upstream rsync's `batch.c:write_batch_shell_file()` format.
-///
-/// # Upstream Reference
-///
-/// - `batch.c:255-312`: `write_batch_shell_file()` elides filename args,
-///   converts write-batch to read-batch, and embeds filter rules via heredoc.
-/// - `batch.c:258-267`: filter rules use `--filter=._-` (protocol >= 29) or
-///   `--exclude-from=-` (protocol < 29) to consume the heredoc from stdin.
-pub fn generate_script_with_args(
-    config: &BatchConfig,
-    original_args: &[String],
-    filter_rules: Option<&str>,
-) -> BatchResult<()> {
-    let script_path = config.script_file_path();
-    // upstream: batch.c:254 creates the `.sh` companion through
-    // `open_no_attacker_symlinks()` at `S_IRUSR|S_IWUSR|S_IXUSR`. Passing the
-    // mode to the create is what makes the script executable; upstream never
-    // chmods afterwards, so an existing file keeps whatever mode it had.
-    let mut file = crate::operator_file::create_write(
-        std::path::Path::new(&script_path),
-        crate::operator_file::BATCH_SCRIPT_MODE,
-    )
-    .map_err(|e| {
-        BatchError::Io(io::Error::new(
-            e.kind(),
-            format!("Failed to create script file '{script_path}': {e}"),
-        ))
-    })?;
-
-    // upstream: batch.c:261 write_arg(raw_argv[0]) - binary name, no shebang
-    write!(file, "{}", original_args[0])?;
-
-    // upstream: batch.c:262-267 - if filter rules are present, add the option
-    // that tells rsync to read them from stdin (the heredoc appended below)
-    if filter_rules.is_some() {
-        if config.protocol_version >= 29 {
-            // upstream: batch.c:263-264 write_opt("--filter", "._-")
-            write!(file, " --filter=._-")?;
-        } else {
-            // upstream: batch.c:265-266 write_opt("--exclude-from", "-")
-            write!(file, " --exclude-from=-")?;
-        }
-    }
-
-    // upstream: batch.c:270-298 - process arguments, skipping filenames and
-    // converting write-batch to read-batch. We iterate with an index to
-    // handle bare options that consume the following value argument.
-    let args = &original_args[1..];
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-
-        if let Some(batch_name) = arg.strip_prefix("--write-batch=") {
-            // upstream: batch.c:292-294 convert --write-batch to --read-batch
-            write!(file, " --read-batch={}", shell_quote(batch_name))?;
-        } else if let Some(batch_name) = arg.strip_prefix("--only-write-batch=") {
-            // upstream: batch.c:292-294 convert --only-write-batch to --read-batch
-            write!(file, " --read-batch={}", shell_quote(batch_name))?;
-        } else if arg == "--write-batch" || arg == "--only-write-batch" {
-            // upstream: batch.c:292-294 bare form - next arg is the batch name
-            i += 1;
-            if i < args.len() {
-                write!(file, " --read-batch={}", shell_quote(&args[i]))?;
-            }
-        } else if arg.starts_with("--files-from")
-            || arg.starts_with("--filter")
-            || arg.starts_with("--include")
-            || arg.starts_with("--exclude")
-        {
-            // upstream: batch.c:280-283 skip filter/include/exclude options
-            if !arg.contains('=') {
-                i += 1; // skip the following value argument
-            }
-        } else if arg == "-f" {
-            // upstream: batch.c:288-289 skip -f (filter shortcut) + its value
-            i += 1;
-        } else {
-            // upstream: batch.c:296-297 pass through other arguments
-            write!(file, " {}", shell_quote(arg))?;
-        }
-
-        i += 1;
-    }
-
-    // upstream: batch.c:300-304 write destination placeholder
-    // write_opt("${1:-", NULL) + write_arg(dest) + "}"
-    write!(file, " ${{1:-")?;
-    if let Some(dest) = find_destination(original_args) {
-        write!(file, "{}", shell_quote(strip_hostspec(dest)))?;
-    }
-    write!(file, "}}")?;
-
-    // upstream: batch.c:305-306 write_filter_rules() uses heredoc with #E# delimiter
-    if let Some(rules) = filter_rules {
-        write_filter_heredoc(&mut file, rules, config.eol_nulls)?;
-    }
-
-    writeln!(file)?;
-
-    file.flush()?;
-
     Ok(())
 }
 
@@ -396,14 +289,6 @@ fn shell_quote(s: &str) -> String {
 /// upstream: batch.c:174-178 - `'-' || '_' || 0-9 || A-Z || a-z`.
 fn is_plain_option_byte(b: u8) -> bool {
     b == b'-' || b == b'_' || b.is_ascii_alphanumeric()
-}
-
-/// Find the destination path from the argument list (last non-option argument).
-fn find_destination(args: &[String]) -> Option<&str> {
-    args.iter()
-        .rev()
-        .find(|arg| !arg.starts_with('-') && !arg.is_empty())
-        .map(|s| s.as_str())
 }
 
 /// Strip a `host:` / `host::` / `rsync://` prefix from a destination operand,
@@ -593,25 +478,6 @@ mod tests {
         assert_eq!(shell_quote("-4=x"), "-4='x'");
     }
 
-    #[test]
-    fn test_find_destination() {
-        let args = vec![
-            "rsync".to_owned(),
-            "-av".to_owned(),
-            "source/".to_owned(),
-            "dest/".to_owned(),
-        ];
-        assert_eq!(find_destination(&args), Some("dest/"));
-
-        let args2 = vec![
-            "rsync".to_owned(),
-            "--write-batch=batch".to_owned(),
-            "-av".to_owned(),
-            "src".to_owned(),
-        ];
-        assert_eq!(find_destination(&args2), Some("src"));
-    }
-
     /// Verify `strip_hostspec` mirrors upstream `check_for_hostspec`, writing
     /// only the local path into the generated `.sh` `${1:-<dest>}` default.
     ///
@@ -774,81 +640,11 @@ mod tests {
         assert!(content.starts_with("'oc-rsync' "));
     }
 
-    #[test]
-    fn test_generate_script_with_filters() {
-        let temp_dir = TempDir::new().unwrap();
-        let batch_path = temp_dir.path().join("test.batch");
-
-        let config = BatchConfig::new(
-            BatchMode::Write,
-            batch_path.to_string_lossy().to_string(),
-            30,
-        );
-
-        let args = vec![
-            "oc-rsync".to_owned(),
-            "-av".to_owned(),
-            "--write-batch=test.batch".to_owned(),
-            "source/".to_owned(),
-            "dest/".to_owned(),
-        ];
-
-        let filter_rules = "- *.tmp\n+ */\n+ *.txt\n- *\n";
-
-        let result = generate_script_with_args(&config, &args, Some(filter_rules));
-        assert!(result.is_ok());
-
-        let script_path = config.script_file_path();
-        let content = fs::read_to_string(&script_path).unwrap();
-        // upstream: batch.c:263-264 adds --filter=._- for protocol >= 29
-        assert!(
-            content.contains("--filter=._-"),
-            "Script must include --filter=._- for protocol >= 29 to consume heredoc: {content}"
-        );
-        assert!(content.contains("<<'#E#'"));
-        assert!(content.contains(filter_rules));
-        assert!(content.contains("#E#"));
-    }
-
-    /// Verify that filter rules use --exclude-from=- for protocol < 29.
+    /// Verify that a bare `--write-batch NAME` pair becomes `--read-batch NAME`
+    /// on the production replay path, with the name emitted exactly once.
     ///
-    /// upstream: batch.c:265-266 write_opt("--exclude-from", "-")
-    #[test]
-    fn test_generate_script_with_filters_protocol_28() {
-        let temp_dir = TempDir::new().unwrap();
-        let batch_path = temp_dir.path().join("test.batch");
-
-        let config = BatchConfig::new(
-            BatchMode::Write,
-            batch_path.to_string_lossy().to_string(),
-            28, // protocol < 29
-        );
-
-        let args = vec![
-            "oc-rsync".to_owned(),
-            "-av".to_owned(),
-            "--write-batch=test.batch".to_owned(),
-            "source/".to_owned(),
-            "dest/".to_owned(),
-        ];
-
-        let filter_rules = "- *.log\n";
-
-        let result = generate_script_with_args(&config, &args, Some(filter_rules));
-        assert!(result.is_ok());
-
-        let script_path = config.script_file_path();
-        let content = fs::read_to_string(&script_path).unwrap();
-        assert!(
-            content.contains("--exclude-from=-"),
-            "Script must include --exclude-from=- for protocol < 29: {content}"
-        );
-        assert!(!content.contains("--filter=._-"));
-    }
-
-    /// Verify that bare --write-batch (without =) is handled correctly.
-    ///
-    /// upstream: batch.c:292-294 handles both --write-batch=NAME and bare forms.
+    /// upstream: batch.c:292-294 write_opt("--read-batch", NULL) - the bare form
+    /// leaves the following argument to be passed through as its own token.
     #[test]
     fn test_generate_script_bare_write_batch() {
         let temp_dir = TempDir::new().unwrap();
@@ -858,73 +654,33 @@ mod tests {
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
             31,
-        );
-
-        let args = vec![
+        )
+        .with_replay_args([
             "oc-rsync".to_owned(),
             "-av".to_owned(),
             "--write-batch".to_owned(),
             "mybatch".to_owned(),
             "source/".to_owned(),
             "dest/".to_owned(),
-        ];
+        ])
+        .with_operands(["source/".to_owned(), "dest/".to_owned()]);
 
-        let result = generate_script_with_args(&config, &args, None);
-        assert!(result.is_ok());
+        generate_script_with_filters(&config, None, Some("dest/")).unwrap();
 
-        let script_path = config.script_file_path();
-        let content = fs::read_to_string(&script_path).unwrap();
+        let content = fs::read_to_string(config.script_file_path()).unwrap();
         assert!(
-            content.contains("--read-batch='mybatch'"),
-            "Bare --write-batch should be converted to --read-batch=<name>: {content}"
+            content.contains(" --read-batch 'mybatch'"),
+            "bare --write-batch must become --read-batch NAME: {content}"
         );
-        let occurrences = content.matches("mybatch").count();
         assert_eq!(
-            occurrences, 1,
-            "Batch name should appear exactly once (in --read-batch=): {content}"
+            content.matches("mybatch").count(),
+            1,
+            "batch name must appear exactly once: {content}"
         );
     }
 
-    /// Verify that no filter option is added when no filter rules are present.
-    #[test]
-    fn test_generate_script_no_filters() {
-        let temp_dir = TempDir::new().unwrap();
-        let batch_path = temp_dir.path().join("test.batch");
-
-        let config = BatchConfig::new(
-            BatchMode::Write,
-            batch_path.to_string_lossy().to_string(),
-            31,
-        );
-
-        let args = vec![
-            "oc-rsync".to_owned(),
-            "-av".to_owned(),
-            "--write-batch=mybatch".to_owned(),
-            "source/".to_owned(),
-            "dest/".to_owned(),
-        ];
-
-        let result = generate_script_with_args(&config, &args, None);
-        assert!(result.is_ok());
-
-        let script_path = config.script_file_path();
-        let content = fs::read_to_string(&script_path).unwrap();
-        assert!(
-            !content.contains("--filter"),
-            "No --filter option without filter rules: {content}"
-        );
-        assert!(
-            !content.contains("--exclude-from"),
-            "No --exclude-from without filter rules: {content}"
-        );
-        assert!(
-            !content.contains("#E#"),
-            "No heredoc without filter rules: {content}"
-        );
-    }
-
-    /// Verify that --filter and -f args from original command are stripped.
+    /// Verify that `--exclude X`, `-f X` and `--include=` are stripped together
+    /// with their value arguments on the production replay path.
     ///
     /// upstream: batch.c:280-289 skips --filter, --include, --exclude, -f args.
     #[test]
@@ -936,9 +692,8 @@ mod tests {
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
             31,
-        );
-
-        let args = vec![
+        )
+        .with_replay_args([
             "oc-rsync".to_owned(),
             "-av".to_owned(),
             "--filter=._-".to_owned(),
@@ -950,25 +705,19 @@ mod tests {
             "--write-batch=mybatch".to_owned(),
             "source/".to_owned(),
             "dest/".to_owned(),
-        ];
+        ])
+        .with_operands(["source/".to_owned(), "dest/".to_owned()]);
 
-        let result = generate_script_with_args(&config, &args, None);
-        assert!(result.is_ok());
+        generate_script_with_filters(&config, None, Some("dest/")).unwrap();
 
-        let script_path = config.script_file_path();
-        let content = fs::read_to_string(&script_path).unwrap();
-        assert!(
-            !content.contains("*.tmp"),
-            "Excluded patterns should be stripped: {content}"
-        );
-        assert!(
-            !content.contains("+ */"),
-            "Filter rule values should be stripped: {content}"
-        );
-        assert!(
-            !content.contains("--include=*.txt"),
-            "Include args should be stripped: {content}"
-        );
+        let content = fs::read_to_string(config.script_file_path()).unwrap();
+        for stripped in ["*.tmp", "+ */", "--include", "--exclude", "--filter"] {
+            assert!(
+                !content.contains(stripped),
+                "{stripped:?} must be stripped: {content}"
+            );
+        }
+        assert!(content.contains(" '-av'"), "{content}");
     }
 
     /// Verify that `generate_script_with_filters` embeds filter rules via heredoc
@@ -995,7 +744,7 @@ mod tests {
         let content = fs::read_to_string(&script_path).unwrap();
 
         assert!(
-            content.contains("--filter=._-"),
+            content.contains("--filter='._-'"),
             "Script must include --filter=._- for protocol >= 29: {content}"
         );
         assert!(content.contains("--read-batch="));
@@ -1062,11 +811,11 @@ mod tests {
         let content = fs::read_to_string(&script_path).unwrap();
 
         assert!(
-            content.contains("--exclude-from=-"),
+            content.contains("--exclude-from='-'"),
             "Script must include --exclude-from=- for protocol < 29: {content}"
         );
         assert!(
-            !content.contains("--filter=._-"),
+            !content.contains("--filter"),
             "Should not use --filter for protocol < 29: {content}"
         );
         assert!(content.contains("<<'#E#'"));
@@ -1216,7 +965,7 @@ mod tests {
             "raw --filter option must be elided from the command line: {content}"
         );
         assert!(
-            content.contains("--filter=._-"),
+            content.contains("--filter='._-'"),
             "heredoc filter option must be present: {content}"
         );
         // Filename operands are elided; the destination returns via ${1:-<dest>}.

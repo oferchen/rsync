@@ -225,6 +225,12 @@ pub(super) struct ServerLongFlags {
     ///
     /// [`late_delete`]: Self::late_delete
     pub(super) delete_after: bool,
+    /// Explicit `--delete-before` (upstream `delete_before`). Plain `--delete`
+    /// and `--delete-during` leave it false.
+    ///
+    /// upstream: compat.c:174-176 - a receiver with `delete_before` refuses
+    /// inc-recursion.
+    pub(super) delete_before: bool,
     /// Also delete destination entries the filter list excludes (upstream:
     /// `--delete-excluded`, long-form only).
     ///
@@ -538,6 +544,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         force: false,
         late_delete: false,
         delete_after: false,
+        delete_before: false,
         delete_excluded: false,
         remove_source_files: false,
         copy_devices: false,
@@ -700,8 +707,14 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // upstream: --numeric-ids is long-form only (options.c:2887-2888)
             "--numeric-ids" => flags.numeric_ids = true,
             // upstream: --delete variants are long-form only (options.c:2818-2827)
-            "--delete" | "--delete-before" | "--delete-during" => {
+            "--delete" | "--delete-during" => {
                 flags.delete = true;
+            }
+            // upstream: options.c:3002-3003 server_options() forwards an explicit
+            // --delete-before verbatim; compat.c:174-176 keys on it.
+            "--delete-before" => {
+                flags.delete = true;
+                flags.delete_before = true;
             }
             // upstream: options.c:3010-3013 server_options() emits `--delete`
             // only in the `else if (delete_mode && !delete_excluded)` arm, then

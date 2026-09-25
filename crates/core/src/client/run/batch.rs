@@ -422,7 +422,10 @@ fn replay_batch(
     })?;
     let body = reader.into_body().map_err(map_batch_error)?;
 
-    let server_config = build_replay_server_config(config, dest_root, &stream_flags)?;
+    let compat_flags = header
+        .compat_flags
+        .map(|bits| protocol::CompatibilityFlags::from_bits(bits as u32));
+    let server_config = build_replay_server_config(config, dest_root, &stream_flags, compat_flags)?;
 
     let mut ctx = crate::server::ReceiverContext::for_batch_replay(&header, server_config)
         .map_err(|e| {
@@ -517,6 +520,7 @@ fn build_replay_server_config(
     config: &ClientConfig,
     dest_root: std::ffi::OsString,
     stream_flags: &engine::batch::BatchFlags,
+    compat_flags: Option<protocol::CompatibilityFlags>,
 ) -> Result<crate::server::ServerConfig, ClientError> {
     // upstream: main.c:1408 send_filter_list(read_batch ? -1 : f_out) - the
     // replay parses the local filter rules without a peer to send them to.
@@ -528,6 +532,22 @@ fn build_replay_server_config(
         filter_rules,
     )?;
     server_config.connection.is_daemon_connection = false;
+
+    // upstream: main.c:639-641 - read_batch calls set_allow_inc_recurse() on the
+    // invocation's own options, before compat.c:641 check_batch_flags() forces
+    // them to the batch's, so evaluate before the stream-flag overrides below.
+    if let Some(flags) = compat_flags {
+        crate::server::setup::refuse_incompatible_inc_recurse(
+            server_config.allows_inc_recurse(),
+            flags,
+            true,
+        )
+        .map_err(|e| {
+            let code = crate::server::error::rerr_for_io_error(&e);
+            ClientError::new(code, rsync_error!(code, "{}", e).with_role(Role::Client))
+        })?;
+    }
+
     // A custom `--out-format` makes the replay receiver buffer one
     // metadata-bearing itemize event per transferred row (it suppresses its own
     // stdout); `handle_batch_read` drains and renders these, mirroring the
@@ -640,6 +660,76 @@ mod tests {
             err.to_string().contains("too new"),
             "expected upstream 'too new' diagnostic, got: {err}"
         );
+    }
+
+    /// Writes a header-only protocol-32 batch whose compat flags carry
+    /// CF_INC_RECURSE.
+    fn inc_recurse_batch(dir: &std::path::Path) -> BatchConfig {
+        let path = dir.join("inc_recurse.batch").to_string_lossy().into_owned();
+        let compat = protocol::CompatibilityFlags::INC_RECURSE
+            | protocol::CompatibilityFlags::VARINT_FLIST_FLAGS;
+        let write_cfg = BatchConfig::new(BatchMode::Write, path.clone(), 32)
+            .with_compat_flags(compat.bits() as i32)
+            .with_checksum_seed(1);
+        let mut writer = BatchWriter::new(write_cfg).unwrap();
+        writer
+            .write_header(engine::batch::BatchFlags {
+                recurse: true,
+                ..Default::default()
+            })
+            .unwrap();
+        writer.finalize().unwrap();
+        BatchConfig::new(BatchMode::Read, path, 32)
+    }
+
+    /// upstream main.c:639-641 + compat.c:780-785: --read-batch evaluates
+    /// set_allow_inc_recurse() on the invocation's own options, so replaying an
+    /// inc-recursive batch with options that need the whole list (or without
+    /// -r, which the batch's recurse bit does not rescue) aborts RERR_SYNTAX
+    /// instead of mis-replaying the stream.
+    #[test]
+    fn read_batch_refuses_inc_recurse_its_options_disallow() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let read_cfg = inc_recurse_batch(temp.path());
+        let dest = temp.path().join("dest").to_string_lossy().into_owned();
+        for (name, config) in [
+            (
+                "--delete-after",
+                ClientConfig::builder()
+                    .recursive(true)
+                    .delete_after(true)
+                    .transfer_args([dest.clone()])
+                    .build(),
+            ),
+            (
+                "no -r",
+                ClientConfig::builder()
+                    .recursive(false)
+                    .transfer_args([dest.clone()])
+                    .build(),
+            ),
+        ] {
+            let err = handle_batch_read(&read_cfg, &config)
+                .expect("read mode handled")
+                .expect_err(name);
+            assert_eq!(err.exit_code(), 1, "{name}: RERR_SYNTAX");
+            assert!(
+                err.to_string()
+                    .contains("Incompatible options specified for inc-recursive batch file."),
+                "{name}: {err}"
+            );
+        }
+
+        // Opposed control: plain -r with --delete is allowed, so whatever the
+        // header-only replay does next, it is not this refusal.
+        let config = ClientConfig::builder()
+            .recursive(true)
+            .delete(true)
+            .transfer_args([dest])
+            .build();
+        if let Err(err) = handle_batch_read(&read_cfg, &config).expect("read mode handled") {
+            assert!(!err.to_string().contains("Incompatible options"), "{err}");
+        }
     }
 
     /// Control: an in-range batch (protocol 32) round-trips through the same
@@ -1360,8 +1450,8 @@ mod tests {
         let script_path = batch_cfg.script_file_path();
         let content = std::fs::read_to_string(&script_path).unwrap();
         assert!(
-            content.contains("--filter=._-"),
-            "Script must include --filter=._- for protocol >= 29: {content}"
+            content.contains("--filter='._-'"),
+            "Script must include --filter='._-' for protocol >= 29: {content}"
         );
         assert!(content.contains("<<'#E#'"));
         assert!(content.contains("- *.tmp\n+ */\n+ *.txt\n- *\n"));
@@ -1395,7 +1485,7 @@ mod tests {
         let script_path = batch_cfg.script_file_path();
         let content = std::fs::read_to_string(&script_path).unwrap();
         assert!(
-            content.contains("--filter=._-"),
+            content.contains("--filter='._-'"),
             "Script should embed filter option: {content}"
         );
         assert!(
@@ -1407,6 +1497,53 @@ mod tests {
             "Script should contain include rule: {content}"
         );
         assert!(content.contains("<<'#E#'"), "Script should contain heredoc");
+    }
+
+    /// A filter pattern carrying a newline must abort `--write-batch` with
+    /// upstream's RERR_SYNTAX refusal and leave no replay script behind.
+    ///
+    /// Each rule is one line of the `<<'#E#'` here-doc, so a pattern such as
+    /// `"x\n#E#\ntouch PWNED"` - reachable from a dir-merge or `--exclude-from`
+    /// file in an untrusted tree - would end the here-doc early and append a
+    /// shell command that runs when the operator executes `BATCH.sh`. The rule
+    /// sits after a benign one so a check that only inspects the first rule, or
+    /// writes the good rules before refusing, is caught too.
+    ///
+    /// upstream: batch.c:222-231 write_filter_rules() - rprintf + RERR_SYNTAX.
+    #[test]
+    fn finalize_batch_refuses_newline_filter_rule_and_writes_no_script() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("inject.batch");
+        let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
+            .with_checksum_seed(1);
+
+        let writer_arc = create_batch_writer(&batch_cfg).unwrap();
+
+        let config = ClientConfig::builder()
+            .compress(false)
+            .add_filter_rule(FilterRuleSpec::exclude("*.log"))
+            .add_filter_rule(FilterRuleSpec::exclude("x\n#E#\ntouch PWNED"))
+            .batch_config(Some(batch_cfg.clone()))
+            .build();
+
+        write_batch_header(&writer_arc, &config).unwrap();
+
+        let summary = ClientSummary::from_summary(engine::local_copy::LocalCopySummary::default());
+        let err = finalize_batch(&writer_arc, &batch_cfg, &config, &summary, true)
+            .expect_err("a newline-bearing filter pattern must be refused");
+
+        assert_eq!(err.exit_code(), 1, "upstream exits RERR_SYNTAX (1)");
+        let rendered = err.message().to_string();
+        assert!(
+            rendered.contains(
+                "cannot write a filter rule containing a newline to the batch replay script"
+            ),
+            "refusal must carry upstream's text: {rendered}"
+        );
+        assert!(
+            !std::path::Path::new(&batch_cfg.script_file_path()).exists(),
+            "no replay script may be written once the rule set is refused"
+        );
     }
 
     /// Verify finalize_batch produces clean script when no filter rules.
