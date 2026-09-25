@@ -7,7 +7,13 @@
 # turns a truncated transfer (curl exit 18) into a half-extracted tree and a
 # gzip error that names neither cause. Verified tarballs are kept in a cache
 # directory, which the fetch-upstream-rsync action persists with actions/cache,
-# so CI reaches download.samba.org only when a pin changes.
+# so CI reaches the network only when a pin changes.
+#
+# Sources are tried in order, moving on only when a download FAILS:
+# samba.org, then the University of Kent mirror of it (independent
+# infrastructure, byte-identical for every pinned release). Both are checked
+# against the same pin, so the second source adds availability, not trust. A
+# digest mismatch from any source is fatal, never a cue to try the next.
 #
 # Usage:
 #   fetch_upstream_rsync.sh <version> [extract_dir]
@@ -19,7 +25,8 @@
 # Environment:
 #   UPSTREAM_TARBALL_CACHE     cache dir (default <repo>/target/interop/upstream-tarballs)
 #   UPSTREAM_TARBALL_MANIFEST  pin file (default tools/ci/upstream-tarballs.sha256)
-#   RSYNC_TARBALL_BASE_URL     mirror (default https://download.samba.org/pub/rsync/src)
+#   RSYNC_TARBALL_BASE_URL     space-separated source list, tried in order
+#                              (default: samba.org, then mirrorservice.org)
 #
 # Exit status: 0 ok, 1 download or extraction failed, 2 usage error or version
 # not pinned, 3 digest mismatch.
@@ -29,7 +36,7 @@ set -euo pipefail
 repo_root="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 manifest="${UPSTREAM_TARBALL_MANIFEST:-${repo_root}/tools/ci/upstream-tarballs.sha256}"
 cache_dir="${UPSTREAM_TARBALL_CACHE:-${repo_root}/target/interop/upstream-tarballs}"
-base_url="${RSYNC_TARBALL_BASE_URL:-https://download.samba.org/pub/rsync/src}"
+read -r -a base_urls <<<"${RSYNC_TARBALL_BASE_URL:-https://download.samba.org/pub/rsync/src https://www.mirrorservice.org/sites/rsync.samba.org/src}"
 
 die() {
     local code=$1
@@ -77,20 +84,25 @@ ensure_tarball() {
     fi
 
     mkdir -p "$cache_dir" || die 1 "cannot create ${cache_dir}"
-    local part="${tarball}.part.$$"
-    local url="${base_url}/rsync-${version}.tar.gz"
-    echo "fetch_upstream_rsync: downloading ${url}" >&2
-    if ! curl -fsSL --connect-timeout 30 --max-time 300 -o "$part" "$url"; then
-        rm -f "$part"
-        die 1 "download of ${url} failed"
-    fi
-    got=$(sha256_of "$part") || die 1 "cannot hash ${part}"
-    if [[ "$got" != "$want" ]]; then
-        rm -f "$part"
-        die 3 "sha256 mismatch for ${url}: got ${got}, pinned ${want} in ${manifest}"
-    fi
-    mv -f "$part" "$tarball" || die 1 "cannot move ${part} into place"
-    printf '%s\n' "$tarball"
+    local part="${tarball}.part.$$" base url
+    for base in "${base_urls[@]}"; do
+        url="${base}/rsync-${version}.tar.gz"
+        echo "fetch_upstream_rsync: downloading ${url}" >&2
+        if ! curl -fsSL --connect-timeout 30 --max-time 300 -o "$part" "$url"; then
+            rm -f "$part"
+            echo "fetch_upstream_rsync: download of ${url} failed" >&2
+            continue
+        fi
+        got=$(sha256_of "$part") || die 1 "cannot hash ${part}"
+        if [[ "$got" != "$want" ]]; then
+            rm -f "$part"
+            die 3 "sha256 mismatch for ${url}: got ${got}, pinned ${want} in ${manifest}"
+        fi
+        mv -f "$part" "$tarball" || die 1 "cannot move ${part} into place"
+        printf '%s\n' "$tarball"
+        return
+    done
+    die 1 "rsync ${version} could not be downloaded from any source: ${base_urls[*]}"
 }
 
 case "${1:-}" in

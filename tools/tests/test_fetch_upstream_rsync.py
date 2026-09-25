@@ -96,6 +96,32 @@ class FetchTests(unittest.TestCase):
         self.assertEqual((self.cache / "rsync-9.9.9.tar.gz").read_bytes(),
                          self.good.read_bytes())
 
+    def test_a_failed_download_falls_over_to_the_next_source(self) -> None:
+        # A single mirror was the single point of failure: one partial
+        # transfer failed the job. The next source is tried, and its bytes
+        # must still match the same pin.
+        result = self._run("9.9.9", str(self.out),
+                           mirror=f"file:///nonexistent-mirror {self.mirror.as_uri()}")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("nonexistent-mirror/rsync-9.9.9.tar.gz failed", result.stderr)
+        self.assertTrue((self.out / "rsync-9.9.9").is_dir())
+
+    def test_a_mismatch_is_fatal_and_does_not_fall_over(self) -> None:
+        # Wrong bytes are not an availability problem; trying another source
+        # would hide a tampered or corrupt mirror behind a green run.
+        other = self.tmp / "other"
+        other.mkdir()
+        (other / "rsync-9.9.9.tar.gz").write_bytes(self.good.read_bytes())
+        (self.mirror / "rsync-9.9.9.tar.gz").write_bytes(b"not the release")
+        result = self._run("9.9.9", mirror=f"{self.mirror.as_uri()} {other.as_uri()}")
+        self.assertEqual(result.returncode, 3)
+        self.assertNotIn(other.as_uri(), result.stderr)
+
+    def test_every_source_failing_is_reported(self) -> None:
+        result = self._run("9.9.9", mirror="file:///nope-a file:///nope-b")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("could not be downloaded from any source", result.stderr)
+
     def test_an_unpinned_version_is_refused(self) -> None:
         result = self._run("1.2.3")
         self.assertEqual(result.returncode, 2)
@@ -130,9 +156,8 @@ class ManifestCoverageTests(unittest.TestCase):
             text = wf.read_text()
             for block in re.findall(r"uses: \./\.github/actions/fetch-upstream-rsync\n"
                                     r"(?:\s+with:\n(?:\s+\S+:.*\n)+)?", text):
-                m = re.search(r"version: '([0-9.]+)'", block)
-                if m:
-                    wanted.add(m.group(1))
+                for m in re.finditer(r"versions?: '?([0-9. ]+)'?$", block, re.M):
+                    wanted.update(m.group(1).split())
         self.assertIn("3.5.0", wanted, "the scan found no literal versions")
         self.assertLessEqual(wanted, _pinned_versions())
 

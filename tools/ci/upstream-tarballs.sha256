@@ -18,6 +18,8 @@
 #      Keys fetched from keyserver.ubuntu.com by full fingerprint.
 #   3. gzip -t passed, then shasum -a 256 produced the digests below.
 # samba.org publishes no .sha files; the signature is the upstream attestation.
+# The fallback source, https://www.mirrorservice.org/sites/rsync.samba.org/src,
+# was downloaded the same way and matched every digest below byte for byte.
 #
 # To add a version: repeat steps 1-3 and append its line.
 ca437301becd890e73300bc69a39189ff1564baa761948ff149b3dd7bde633f9  rsync-2.6.9.tar.gz
