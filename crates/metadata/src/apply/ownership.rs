@@ -84,7 +84,9 @@ fn chown_path(
             group.map(|gid| nix::unistd::Gid::from_raw(gid.as_raw())),
             flag,
         )
-        .map_err(|errno| MetadataError::new("preserve ownership", path, io::Error::from(errno)));
+        .map_err(|errno| {
+            MetadataError::new(crate::error::CHOWN_CONTEXT, path, io::Error::from(errno))
+        });
     }
 
     // `u32::MAX` is `fchownat`'s `(uid_t)-1` / `(gid_t)-1` "leave unchanged"
@@ -98,7 +100,23 @@ fn chown_path(
         |parent, leaf| fast_io::secure_chown_at_dirfd(parent, leaf, uid, gid, follow_symlinks),
         || fast_io::secure_chown_at(path, uid, gid, follow_symlinks),
     )
-    .map_err(|error| MetadataError::new("preserve ownership", path, error))
+    .map_err(|error| MetadataError::new(crate::error::CHOWN_CONTEXT, path, error))
+}
+
+/// Names a failed ownership change after what it altered, as upstream does:
+/// `chown` when the owner changes, `chgrp` when only the group does.
+///
+/// upstream: rsync.c:682-684 - `change_uid ? "chown" : "chgrp"`, where
+/// `change_uid` compares the wanted owner with the current one (rsync.c:655).
+#[cfg(unix)]
+fn ownership_context(owner: Option<unix_fs::Uid>, current: Option<&fs::Metadata>) -> &'static str {
+    let changes_owner =
+        owner.is_some_and(|uid| current.is_none_or(|meta| meta.uid() != uid.as_raw()));
+    if changes_owner {
+        crate::error::CHOWN_CONTEXT
+    } else {
+        crate::error::CHGRP_CONTEXT
+    }
 }
 
 /// fd-based counterpart to [`chown_path`] using the libc `fchown(2)` symbol via
@@ -117,7 +135,7 @@ fn chown_fd(
         owner.map(|uid| nix::unistd::Uid::from_raw(uid.as_raw())),
         group.map(|gid| nix::unistd::Gid::from_raw(gid.as_raw())),
     )
-    .map_err(|errno| MetadataError::new("preserve ownership", path, io::Error::from(errno)))
+    .map_err(|errno| MetadataError::new(crate::error::CHOWN_CONTEXT, path, io::Error::from(errno)))
 }
 
 /// Emits the upstream level-1 `set uid of`/`set gid of` traces for a chown.
@@ -547,7 +565,8 @@ pub(super) fn set_owner_like(
             follow_symlinks,
             options.parent_walk(),
             None,
-        )?;
+        )
+        .map_err(|error| error.with_context(ownership_context(owner, existing)))?;
 
         // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
         Ok(post_chown_bookkeeping(destination, owner, group, existing))
@@ -607,7 +626,8 @@ pub(super) fn set_owner_like_with_fd(
     // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
     trace_chown_change(destination, owner, group, existing);
 
-    chown_fd(fd, destination, owner, group)?;
+    chown_fd(fd, destination, owner, group)
+        .map_err(|error| error.with_context(ownership_context(owner, existing)))?;
 
     // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
     Ok(post_chown_bookkeeping(destination, owner, group, existing))
@@ -703,7 +723,8 @@ pub(super) fn apply_ownership_from_entry(
                 true,
                 options.parent_walk(),
                 parent_dirfd,
-            )?;
+            )
+            .map_err(|error| error.with_context(ownership_context(owner, cached_meta)))?;
 
             // upstream: rsync.c:558-568 - impossible-id warning + suid/sgid re-stat.
             return Ok(post_chown_bookkeeping(
@@ -789,7 +810,8 @@ pub(super) fn apply_symlink_ownership_from_entry(
             false,
             options.parent_walk(),
             None,
-        )?;
+        )
+        .map_err(|error| error.with_context(ownership_context(owner, cached_meta)))?;
 
         // upstream: rsync.c:558-561 - impossible-id warning also fires for
         // symlink chowns. The suid/sgid re-stat is irrelevant here because

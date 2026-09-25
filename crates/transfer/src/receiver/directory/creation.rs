@@ -17,6 +17,14 @@ use protocol::flist::FileEntry;
 use protocol::xattr::XattrList;
 
 use super::FailedDirectories;
+
+/// Why the parallel directory-metadata phase could not finish one directory.
+enum DirApplyFailure {
+    /// A `set_file_attrs()` step failed; reported as upstream's `FERROR_XFER`.
+    Attrs(metadata::MetadataError),
+    /// An ACL or xattr apply failed; collected with the other soft errors.
+    Other(PathBuf, String),
+}
 use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
 
 /// Outcome of classifying a directory destination before creation.
@@ -647,7 +655,7 @@ impl ReceiverContext {
                     None,
                     pre_transfer,
                 ) {
-                    return Some((dir_path, e.to_string()));
+                    return Some(DirApplyFailure::Attrs(e));
                 }
                 // Apply cached ACLs after metadata
                 if let Err(e) = apply_acls_from_receiver_cache(
@@ -657,7 +665,7 @@ impl ReceiverContext {
                     acl_id_map_clone.as_ref(),
                     true, // directories always follow symlinks
                 ) {
-                    return Some((dir_path, e.to_string()));
+                    return Some(DirApplyFailure::Other(dir_path, e.to_string()));
                 }
                 // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
                 if let Some(ref xattr_list) = xattr_list {
@@ -675,14 +683,24 @@ impl ReceiverContext {
                         filter_ref,
                         None,
                     ) {
-                        return Some((dir_path, e.to_string()));
+                        return Some(DirApplyFailure::Other(dir_path, e.to_string()));
                     }
                 }
                 None
             },
         );
 
-        let mut all_errors: Vec<(PathBuf, String)> = results.into_iter().flatten().collect();
+        let mut all_errors: Vec<(PathBuf, String)> = Vec::new();
+        for failure in results.into_iter().flatten() {
+            match failure {
+                // upstream: generator.c:1895 set_file_attrs() on the directory;
+                // its chown/utimes/chmod arms are rsyserr(FERROR_XFER).
+                DirApplyFailure::Attrs(error) => {
+                    let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
+                }
+                DirApplyFailure::Other(path, message) => all_errors.push((path, message)),
+            }
+        }
         all_errors.extend(dir_creation_errors);
         Ok(all_errors)
     }

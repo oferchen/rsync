@@ -8,6 +8,12 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+/// Context of a failed ownership change that alters the owner.
+pub(crate) const CHOWN_CONTEXT: &str = "preserve ownership";
+
+/// Context of a failed ownership change that alters only the group.
+pub(crate) const CHGRP_CONTEXT: &str = "preserve group";
+
 /// Error produced when metadata preservation fails.
 #[derive(Debug, Error)]
 #[error("failed to {context} '{}': {source}", path.display())]
@@ -46,6 +52,42 @@ impl MetadataError {
         &self.source
     }
 
+    /// Relabels the failing operation, keeping the path and source error.
+    #[cfg(unix)]
+    pub(crate) fn with_context(mut self, context: &'static str) -> Self {
+        self.context = context;
+        self
+    }
+
+    /// Renders the `rsyserr()` text upstream's `set_file_attrs()` prints for
+    /// this failure, given the caller's `full_fname()` rendering of the path.
+    ///
+    /// Returns `None` for an operation `set_file_attrs()` has no `rsyserr()`
+    /// arm for; the caller keeps its own rendering for those.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:682-684` - `"%s %s failed"` with `chown` or `chgrp`
+    /// - `rsync.c:781` - `"failed to set times on %s"`
+    /// - `rsync.c:811-813` - `"failed to set permissions on %s"`
+    /// - `log.c:499-500` - `rsyserr()` appends `": %s (%d)"`
+    #[must_use]
+    pub fn set_file_attrs_text(&self, full_fname: &str) -> Option<String> {
+        let operation = match self.context {
+            CHOWN_CONTEXT => format!("chown {full_fname} failed"),
+            CHGRP_CONTEXT => format!("chgrp {full_fname} failed"),
+            "preserve timestamps" | "preserve access time" => {
+                format!("failed to set times on {full_fname}")
+            }
+            "preserve permissions" => format!("failed to set permissions on {full_fname}"),
+            _ => return None,
+        };
+        Some(format!(
+            "{operation}: {}",
+            logging::upstream_errno_text(&self.source)
+        ))
+    }
+
     /// Consumes the error and returns its constituent parts.
     #[must_use]
     pub fn into_parts(self) -> (&'static str, PathBuf, io::Error) {
@@ -75,5 +117,33 @@ mod tests {
         assert_eq!(context, "set xattr");
         assert_eq!(path, Path::new("/tmp/file"));
         assert_eq!(inner.kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    /// Each `set_file_attrs()` arm keeps upstream's wording, because the peer
+    /// renders the line verbatim and operators grep for the upstream text.
+    #[cfg(unix)]
+    #[test]
+    fn set_file_attrs_text_uses_upstream_wording_per_operation() {
+        let text = |context| {
+            MetadataError::new(context, Path::new("/d/x"), io::Error::from_raw_os_error(1))
+                .set_file_attrs_text("\"/d/x\"")
+        };
+        assert_eq!(
+            text(super::CHOWN_CONTEXT).as_deref(),
+            Some("chown \"/d/x\" failed: Operation not permitted (1)")
+        );
+        assert_eq!(
+            text(super::CHGRP_CONTEXT).as_deref(),
+            Some("chgrp \"/d/x\" failed: Operation not permitted (1)")
+        );
+        assert_eq!(
+            text("preserve timestamps").as_deref(),
+            Some("failed to set times on \"/d/x\": Operation not permitted (1)")
+        );
+        assert_eq!(
+            text("preserve permissions").as_deref(),
+            Some("failed to set permissions on \"/d/x\": Operation not permitted (1)")
+        );
+        assert_eq!(text("set xattr"), None);
     }
 }

@@ -234,16 +234,11 @@ impl ReceiverContext {
                         .preserve_atimes(self.config.flags.atimes)
                         .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
                         .fake_super(self.config.fake_super);
+                    // upstream: rsync.c:set_file_attrs() - rsyserr(FERROR_XFER)
                     if let Err(error) =
                         apply_symlink_metadata_from_entry(&link_path, entry, &symlink_options)
                     {
-                        debug_log!(
-                            Recv,
-                            1,
-                            "failed to refresh symlink metadata for {}: {}",
-                            link_path.display(),
-                            error
-                        );
+                        let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
                     }
                     let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
                     self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
@@ -364,6 +359,18 @@ impl ReceiverContext {
                 // so the receiver surfaces a non-zero exit instead of
                 // silently skipping the symlink.
                 if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    // upstream: generator.c:2492-2493 - rsyserr(FERROR_XFER,
+                    // errno, "symlink %s -> \"%s\" failed", full_fname(...),
+                    // slnk). FERROR_XFER lifts the exit to RERR_PARTIAL (23).
+                    let _ = self.emit_generator_error_xfer(
+                        writer,
+                        &format!(
+                            "symlink {} -> \"{}\" failed",
+                            self.full_fname_in_dest(dest_dir, &link_path),
+                            target.display()
+                        ),
+                        &e,
+                    );
                     continue;
                 }
                 return Err(e);
@@ -397,13 +404,8 @@ impl ReceiverContext {
                 &symlink_options,
                 pre_replace_meta.as_ref(),
             ) {
-                debug_log!(
-                    Recv,
-                    1,
-                    "failed to apply symlink metadata for {}: {}",
-                    link_path.display(),
-                    error
-                );
+                // upstream: rsync.c:set_file_attrs() - rsyserr(FERROR_XFER)
+                let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
             }
             // upstream: generator.c:1604-1610 - itemize after atomic_create
             // with base ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE: a replaced
@@ -555,16 +557,11 @@ impl ReceiverContext {
                         .preserve_atimes(self.config.flags.atimes)
                         .numeric_ids(self.config.flags.numeric_ids.maps_numeric())
                         .fake_super(self.config.fake_super);
+                    // upstream: rsync.c:set_file_attrs() - rsyserr(FERROR_XFER)
                     if let Err(error) =
                         apply_symlink_metadata_from_entry(&link_path, entry, &symlink_options)
                     {
-                        debug_log!(
-                            Recv,
-                            1,
-                            "failed to refresh symlink metadata for {}: {}",
-                            link_path.display(),
-                            error
-                        );
+                        let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
                     }
                     let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
                     self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
@@ -671,13 +668,8 @@ impl ReceiverContext {
                 &symlink_options,
                 pre_replace_meta.as_ref(),
             ) {
-                debug_log!(
-                    Recv,
-                    1,
-                    "failed to apply symlink metadata for {}: {}",
-                    link_path.display(),
-                    error
-                );
+                // upstream: rsync.c:set_file_attrs() - rsyserr(FERROR_XFER)
+                let _ = self.emit_generator_attrs_failure(writer, dest_dir, &error);
             }
             // upstream: generator.c:1604-1610 - itemize after atomic_create
             // with base ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE: a replaced
@@ -1130,6 +1122,22 @@ impl ReceiverContext {
                     // the follower silently missing. ELOOP / EOPNOTSUPP
                     // from sandbox-anchored refusals are also fail-loud.
                     if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        // upstream: hlink.c:486-487 hard_link_one() -
+                        // rsyserr(FERROR_XFER, errno, "link %s => %s failed",
+                        // full_fname(fname), oldname); FERROR_XFER lifts the
+                        // exit to RERR_PARTIAL (23) and the next member goes on.
+                        let _ = self.emit_generator_error_xfer(
+                            writer,
+                            &format!(
+                                "link {} => {} failed",
+                                self.full_fname_in_dest(dest_dir, &link_path),
+                                leader_path
+                                    .strip_prefix(dest_dir)
+                                    .unwrap_or(&leader_path)
+                                    .display()
+                            ),
+                            &e,
+                        );
                         continue;
                     }
                     // upstream: hlink.c:246-282 check_prior() re-derives a group
