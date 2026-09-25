@@ -79,6 +79,27 @@ pub struct FilterRuleWireFormat {
     pub pattern: OsString,
     /// Anchored pattern (`/` modifier).
     pub anchored: bool,
+    /// The `/` modifier on a non-merge rule (upstream `FILTRULE_ABS_PATH`),
+    /// as opposed to a pattern that merely starts with `/`.
+    ///
+    /// Transfer-decision metadata like [`Self::cvs_origin`]: it is never
+    /// serialized and always parses back as `false`. Below protocol 29 it
+    /// makes the rule unsendable, because the modifier is a prefix byte that
+    /// overflows `legal_len = 1`, while a leading `/` in the pattern rides in
+    /// the body and is legal.
+    ///
+    /// upstream: exclude.c:1392-1393 parse_rule_tok() sets the flag;
+    /// exclude.c:1843-1844,1878 get_rule_prefix() writes `/` and returns NULL
+    /// once the prefix outgrows `legal_len`.
+    pub abs_path: bool,
+    /// Marks the rule upstream implies for a relative `--partial-dir`.
+    ///
+    /// Transfer-decision metadata like [`Self::cvs_origin`]: never serialized,
+    /// always parses back as `false`. Its `perishable` flag is resolved by the
+    /// sending client once the protocol is known, because upstream sets
+    /// `FILTRULE_PERISHABLE` on it only when `!am_sender || protocol_version
+    /// >= 30` (compat.c:803-807).
+    pub implied_partial_dir: bool,
     /// Directory-only pattern (trailing `/`).
     pub directory_only: bool,
     /// No-inherit modifier (`n` flag).
@@ -145,6 +166,8 @@ impl FilterRuleWireFormat {
             no_prefixes: false,
             no_prefixes_include: false,
             cvs_origin: false,
+            abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
@@ -167,6 +190,8 @@ impl FilterRuleWireFormat {
             no_prefixes: false,
             no_prefixes_include: false,
             cvs_origin: false,
+            abs_path: false,
+            implied_partial_dir: false,
         }
     }
 
@@ -1062,18 +1087,36 @@ mod tests {
         assert_eq!(rules[0].pattern, ".excl");
     }
 
+    /// A protocol 28 peer gets the bare pattern: upstream writes no `s`
+    /// (exclude.c:1865-1867) and no `p` (exclude.c:1872-1874) below protocol
+    /// 29/30, and the role-dependent refusals live at the transfer call site.
+    /// A modifier that IS written still refuses - see
+    /// `protocol_downgrade_rejects_written_modifier`.
     #[test]
-    fn protocol_downgrade_rejects_unrepresentable_rules() {
-        // v28 prefixes cannot encode v30 s/r/p modifiers, so write_filter_list
-        // must reject the rule rather than silently dropping the flags.
+    fn protocol_downgrade_omits_unwritten_modifiers() {
         let rule = FilterRuleWireFormat::exclude("test".to_owned())
             .with_sides(true, false)
             .with_perishable(true);
 
         let protocol_v28 = ProtocolVersion::from_supported(28).unwrap();
         let mut buf = Vec::new();
-        let result = write_filter_list(&mut buf, &[rule], protocol_v28);
-        assert!(result.is_err());
+        write_filter_list(&mut buf, &[rule], protocol_v28).unwrap();
+        let mut expected = 4i32.to_le_bytes().to_vec();
+        expected.extend_from_slice(b"test");
+        expected.extend_from_slice(&0i32.to_le_bytes());
+        assert_eq!(buf, expected);
+    }
+
+    /// upstream: exclude.c:1845-1846 writes `!` whatever the protocol, which
+    /// overflows `legal_len = 1` (:1878-1879), so the rule cannot be sent.
+    #[test]
+    fn protocol_downgrade_rejects_written_modifier() {
+        let mut rule = FilterRuleWireFormat::exclude("test".to_owned());
+        rule.negate = true;
+
+        let protocol_v28 = ProtocolVersion::from_supported(28).unwrap();
+        let mut buf = Vec::new();
+        assert!(write_filter_list(&mut buf, &[rule], protocol_v28).is_err());
     }
 
     /// A filter rule whose pattern contains a non-UTF-8 byte must round-trip

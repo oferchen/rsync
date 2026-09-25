@@ -58,9 +58,10 @@ impl ClientConfigBuilder {
     /// under first-match evaluation. The rule keeps the partial directory out
     /// of the sender's file list (it is neither listed nor transferred) and
     /// protects it from `--delete` on the receiver. It is marked perishable
-    /// so an otherwise-empty parent directory can still be reaped
-    /// (upstream sets `FILTRULE_PERISHABLE` at protocol >= 30, which is the
-    /// negotiated default).
+    /// so an otherwise-empty parent directory can still be reaped. Upstream
+    /// sets `FILTRULE_PERISHABLE` only for a receiver or at protocol >= 30
+    /// (compat.c:805-806); the rule is tagged so the wire projection can drop
+    /// the flag for a pre-30 sender once the protocol is negotiated.
     ///
     /// An absolute partial directory is left untouched, matching upstream's
     /// `*partial_dir != '/'` guard.
@@ -92,8 +93,11 @@ impl ClientConfigBuilder {
         if !pattern.ends_with('/') {
             pattern.push('/');
         }
-        self.filter_rules
-            .push(FilterRuleSpec::exclude(pattern).with_perishable(true));
+        self.filter_rules.push(
+            FilterRuleSpec::exclude(pattern)
+                .with_perishable(true)
+                .with_implied_partial_dir(),
+        );
     }
 
     /// Appends the implicit protect rule that upstream rsync injects to keep
