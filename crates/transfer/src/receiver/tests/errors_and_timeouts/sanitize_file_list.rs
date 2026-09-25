@@ -212,7 +212,7 @@ fn windows_drive_relative_path_allowed_when_trusted() {
 
 // --- sanitize_segment_paths: per-INC_RECURSE-sub-list, abort-based variant. ---
 // Unlike sanitize_file_list (level-1, drop-and-continue), sub-list entries
-// mirror upstream recv_file_entry (flist.c:769-771): the first unsafe path
+// mirror upstream recv_file_entry (flist.c:994-996): the first unsafe path
 // ABORTS with RERR_UNSUPPORTED so no Vec compaction runs on the multi-segment
 // file_list. These drive the check in isolation (no live peer needed).
 

@@ -2,7 +2,7 @@
 //!
 //! This module encapsulates the logic for applying delta data received from a sender
 //! to reconstruct files. It mirrors upstream rsync's `receive_data()` function from
-//! `receiver.c:305`.
+//! `receiver.c:318`.
 //!
 //! # Submodules
 //!
@@ -21,10 +21,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `receiver.c:305` - `receive_data()` - Main delta application loop
-//! - `receiver.c:315` - Token processing loop (literal vs block reference)
-//! - `receiver.c:374-382` - Sparse file finalization
-//! - `receiver.c:408` - File checksum verification
+//! - `receiver.c:318` - `receive_data()` - Main delta application loop
+//! - `receiver.c:328` - Token processing loop (literal vs block reference)
+//! - `receiver.c:387-395` - Sparse file finalization
+//! - `receiver.c:421` - File checksum verification
 
 mod applicator;
 mod checksum;

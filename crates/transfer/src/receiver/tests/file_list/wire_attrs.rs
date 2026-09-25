@@ -123,7 +123,7 @@ fn sum_head_rejects_oversized_s2length() {
 }
 
 /// A crafted sum_head with a negative block count must be rejected, mirroring
-/// upstream io.c:2029, so `Vec::with_capacity(count)` never sees garbage.
+/// upstream io.c:2067, so `Vec::with_capacity(count)` never sees garbage.
 #[test]
 fn sum_head_rejects_negative_count() {
     let data = sum_head_bytes(-1, 512, 16, 0);
@@ -132,7 +132,7 @@ fn sum_head_rejects_negative_count() {
 }
 
 /// A block length beyond the legacy MAX_BLOCK_SIZE ceiling is rejected
-/// (upstream io.c:2050).
+/// (upstream io.c:2088).
 #[test]
 fn sum_head_rejects_oversized_blength() {
     let data = sum_head_bytes(1, i32::MAX, 16, 0);
@@ -149,7 +149,7 @@ fn sum_head_rejects_zero_blength_with_blocks() {
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
-/// A remainder larger than the block length is rejected (upstream io.c:2062).
+/// A remainder larger than the block length is rejected (upstream io.c:2100).
 #[test]
 fn sum_head_rejects_remainder_over_blength() {
     let data = sum_head_bytes(1, 512, 16, 513);

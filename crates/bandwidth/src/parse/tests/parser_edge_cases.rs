@@ -244,7 +244,7 @@ fn parse_b_suffix_bytes() {
 #[test]
 fn parse_kb_decimal_suffix() {
     // 1KB = 1000 bytes (decimal), rounded to the 1 KiB pacing rate
-    // (options.c:1718 `(1000 + 512) / 1024`).
+    // (options.c:1724 `(1000 + 512) / 1024`).
     let result = parse_bandwidth_argument("1KB").unwrap();
     assert_eq!(result, Some(NonZeroU64::new(1024).unwrap()));
 }
@@ -259,7 +259,7 @@ fn parse_kib_binary_suffix() {
 #[test]
 fn parse_mb_decimal() {
     // 1MB = 1,000,000 bytes (decimal), rounded to whole KiB for pacing
-    // (options.c:1718 -> 977 KiB).
+    // (options.c:1724 -> 977 KiB).
     let result = parse_bandwidth_argument("1MB").unwrap();
     assert_eq!(result, Some(NonZeroU64::new(1_000_448).unwrap()));
 }
@@ -274,7 +274,7 @@ fn parse_mib_binary() {
 #[test]
 fn parse_gb_decimal() {
     // 1GB = 1,000,000,000 bytes (decimal), rounded to whole KiB for pacing
-    // (options.c:1718 -> 976_563 KiB).
+    // (options.c:1724 -> 976_563 KiB).
     let result = parse_bandwidth_argument("1GB").unwrap();
     assert_eq!(result, Some(NonZeroU64::new(1_000_000_512).unwrap()));
 }

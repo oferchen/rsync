@@ -16,7 +16,7 @@
 //! ```
 //!
 //! CLASS, not one option: `XFLG_FATAL_ERRORS` is passed by every operator-named
-//! filter file - `--exclude-from` and `--include-from` (options.c:1648) and the
+//! filter file - `--exclude-from` and `--include-from` (options.c:1654) and the
 //! non-per-directory merge rules `merge FILE` / `. FILE` (exclude.c:1587). All
 //! of them therefore share one rule, and the table below drives them together.
 //!
@@ -28,7 +28,7 @@
 //!   off "filter file missing" rather than off the call site would break every
 //!   `-F` transfer.
 //! - `--files-from` is a different site with a different code: upstream exits 1
-//!   there (main.c:1886), measured. Folding both onto one helper because the
+//!   there (main.c:1913), measured. Folding both onto one helper because the
 //!   messages look alike would change an exit code nobody asked to change.
 //!
 //! Skip conditions (test passes with a printed reason):

@@ -293,7 +293,7 @@ impl DirMergeOptions {
     ///
     /// upstream: exclude.c:1447 `template->rflags & FILTRULES_SIDES`, where
     /// `FILTRULES_SIDES` is `FILTRULE_SENDER_SIDE | FILTRULE_RECEIVER_SIDE`
-    /// (rsync.h:1050-1057). `SideState::Unspecified` is oc's spelling of "the
+    /// (rsync.h:1051-1058). `SideState::Unspecified` is oc's spelling of "the
     /// bit is clear", so a side counts as named whenever either state moved
     /// off `Unspecified` - including the `Disabled` direction, which upstream
     /// also records by setting the opposite side's bit.

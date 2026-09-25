@@ -4,7 +4,7 @@
 //! Upstream's `_exit_cleanup()` writes the code it is about to exit with onto
 //! the multiplexed stream before the process ends (cleanup.c:242-258), and the
 //! peer's `read_a_msg()` turns receipt of that frame into the NORETURN
-//! `_exit_cleanup(val, __FILE__, 0 - __LINE__)` (io.c:1854-1892). The client
+//! `_exit_cleanup(val, __FILE__, 0 - __LINE__)` (io.c:1892-1930). The client
 //! therefore exits with the *server's* code, not with whatever the connection
 //! dropping happened to look like locally.
 //!
@@ -158,7 +158,7 @@ fn push_into_unwritable_parent(extra: &[&str]) -> (i32, String) {
 /// client only saw the stream end and reported `RERR_STREAMIO` (12).
 ///
 /// upstream: cleanup.c:250 `send_msg_int(MSG_ERROR_EXIT, exit_code)`;
-/// io.c:1892 `_exit_cleanup(val, __FILE__, 0 - __LINE__)`.
+/// io.c:1930 `_exit_cleanup(val, __FILE__, 0 - __LINE__)`.
 #[test]
 fn server_fatal_exit_code_reaches_the_client() {
     if is_root() {

@@ -83,7 +83,7 @@ pub fn exit_child(code: i32) -> ! {
 /// the port stays bound for as long as any child lives, so a daemon restart
 /// races its own outgoing sessions for the address.
 ///
-/// upstream: `socket.c:753-760` `start_accept_loop()` closes each listener in
+/// upstream: `socket.c:761-768` `start_accept_loop()` closes each listener in
 /// the child, immediately after the fork and before serving.
 ///
 /// # Which descriptors this must NOT be given
@@ -156,7 +156,7 @@ impl ChildEnd {
 /// Taking the pid as a parameter makes that impossible to get wrong: this
 /// call can only ever collect the child the caller already owns.
 ///
-/// upstream: `socket.c:676-684` `sigchld_handler()` does use
+/// upstream: `socket.c:684-692` `sigchld_handler()` does use
 /// `waitpid(-1, NULL, WNOHANG)`, but it can afford to - it discards the status
 /// (a NULL status pointer) and upstream's helper children are waited for in
 /// contexts that tolerate it. oc reports session outcomes, so it needs the

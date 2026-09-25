@@ -136,7 +136,7 @@ fn request_module(stream: &TcpStream) -> Result<ClientOutcome, ClientError> {
     // a protocol refusal, so the module request - and the cap under test - is
     // never reached.
     //
-    // upstream: rsync-3.5.0/clientserver.c:228-238 `exchange_protocols()`.
+    // upstream: rsync-3.5.1/clientserver.c:228-238 `exchange_protocols()`.
     writer
         .write_all(b"@RSYNCD: 32.0 md5 md4\n")
         .map_err(|err| exchange("send handshake", err))?;
@@ -206,7 +206,7 @@ fn run_client(
 /// and a level assertion written that way cannot distinguish a warning from an
 /// error.
 ///
-/// upstream: rsync-3.5.0/log.c:135 `logit()` -
+/// upstream: rsync-3.5.1/log.c:135 `logit()` -
 /// `fprintf(logfile_fp, "%s [%d] ", timestring(time(NULL)), (int)getpid())`.
 fn daemon_log_message(line: &str) -> Option<&str> {
     let (date, rest) = line.split_once(' ')?;

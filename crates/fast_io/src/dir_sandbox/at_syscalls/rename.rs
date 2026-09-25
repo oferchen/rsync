@@ -191,7 +191,7 @@ pub fn renameat_via_sandbox_or_fallback(
     // outside the tree. That is the escape upstream's
     // `rename-fullpath-symlink-race` test demonstrates.
     //
-    // upstream: `rsync-3.5.0/syscall.c:1918-1923` `do_rename_at()` - "Confine
+    // upstream: `rsync-3.5.1/syscall.c:2057-2062` `do_rename_at()` - "Confine
     // each side independently. [...] Doing each side independently means an
     // absolute source never disables confinement of a relative destination."
     if sandbox.is_some() {
@@ -261,9 +261,9 @@ impl ConfinedEndpoint<'_> {
 ///
 /// | endpoint | resolver | upstream |
 /// |---|---|---|
-/// | beneath `root` | confined per-component walk | `secure_relative_open()`, `syscall.c:1945` |
-/// | absolute, outside `root` | ownership walk | `owner_walk_parent()`, `syscall.c:1926` |
-/// | otherwise | `AT_FDCWD` + whole path | `syscall.c:1949` |
+/// | beneath `root` | confined per-component walk | `secure_relative_open()`, `syscall.c:2084` |
+/// | absolute, outside `root` | ownership walk | `owner_walk_parent()`, `syscall.c:2065` |
+/// | otherwise | `AT_FDCWD` + whole path | `syscall.c:2088` |
 ///
 /// The split matters because location cannot be the trust signal for an
 /// operator path - it may legitimately point outside the tree - so authority
@@ -320,10 +320,10 @@ pub(super) fn anchor_confined_endpoint<'a>(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/syscall.c:1866` `do_rename_at()` - "Confine each side
+/// - `rsync-3.5.1/syscall.c:2005` `do_rename_at()` - "Confine each side
 ///   independently. [...] Doing each side independently means an absolute
 ///   source never disables confinement of a relative destination."
-/// - `rsync-3.5.0/syscall.c:2891` `ds_descend()` - the per-component walk.
+/// - `rsync-3.5.1/syscall.c:3032` `ds_descend()` - the per-component walk.
 ///
 /// # Errors
 ///

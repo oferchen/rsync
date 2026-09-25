@@ -8,7 +8,7 @@
 /// injected via the `module_state` netgroup seam so the test is deterministic
 /// without a real netgroup database.
 ///
-/// upstream: access.c:41-42 `match_hostname` - `innetgr(tok + 1, host, NULL,
+/// upstream: access.c:44-45 `match_hostname` - `innetgr(tok + 1, host, NULL,
 /// NULL)` tests the client hostname for membership in the `@`-prefixed group.
 #[test]
 fn module_hostname_allow_netgroup_admits_member() {

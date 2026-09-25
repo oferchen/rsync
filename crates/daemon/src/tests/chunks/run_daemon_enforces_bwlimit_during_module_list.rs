@@ -43,10 +43,10 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
     stream.flush().expect("flush list request");
 
     // The daemon serves each session in a forked child on Unix (upstream:
-    // socket.c:753-772 start_accept_loop), so the in-process sleep recorder
+    // socket.c:761-780 start_accept_loop), so the in-process sleep recorder
     // the bandwidth crate offers cannot observe the child's limiter. The
     // oracle is the wire itself: ~4.1 KB of module listing at `--bwlimit 1`
-    // (1024 bytes/s; upstream io.c:962 writefd -> sleep_for_bwlimit paces
+    // (1024 bytes/s; upstream io.c:980 writefd -> sleep_for_bwlimit paces
     // every daemon write) cannot complete in well under ~4 seconds, while an
     // unlimited daemon delivers it in milliseconds.
     let list_started = Instant::now();

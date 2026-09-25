@@ -70,7 +70,7 @@ pub use completion::{
 };
 
 /// Default write buffer capacity matching upstream's `wf_writeBufSize`
-/// (`fileio.c:161` -> `WRITE_SIZE * 8` = 256 KB).
+/// (`fileio.c:165` -> `WRITE_SIZE * 8` = 256 KB).
 const DEFAULT_BUFFER_CAPACITY: usize = 256 * 1024;
 
 /// Batched IOCP disk writer for the disk commit phase.

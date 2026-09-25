@@ -68,7 +68,7 @@ fn transport_class_codes_are_not_announced() {
     }
 }
 
-/// upstream: io.c:1892 - receipt of `MSG_ERROR_EXIT` re-enters `_exit_cleanup`
+/// upstream: io.c:1930 - receipt of `MSG_ERROR_EXIT` re-enters `_exit_cleanup`
 /// with a negative line precisely so the code is not echoed straight back.
 #[test]
 fn an_exit_the_peer_asked_for_is_not_echoed_back() {

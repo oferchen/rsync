@@ -139,7 +139,7 @@ fn flag_bytes(buf: &[u8], offsets: [usize; 3]) -> [u8; 3] {
 /// Golden flag-byte sequence at protocol 28.
 ///
 /// Protocol 28 takes the `protocol_version >= 28` branch in upstream
-/// `flist.c:551-558` and never sets `XMIT_USER_NAME_FOLLOWS`
+/// `flist.c:776-783` and never sets `XMIT_USER_NAME_FOLLOWS`
 /// (`calculate_owner_name_flags` early-returns for `< 30`), so the prelude is
 /// a single byte per entry equal to the primary xflag mask.
 #[test]

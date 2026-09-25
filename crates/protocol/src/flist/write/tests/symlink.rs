@@ -144,7 +144,7 @@ fn wire_encoded_symlink_target_never_contains_backslash_byte() {
 /// appear on the wire as ISO-8859-1 bytes when the converter is configured
 /// `(local=UTF-8, remote=ISO-8859-1)`.
 ///
-/// upstream: flist.c:1642 send_file1() - `sender_symlink_iconv` path.
+/// upstream: flist.c:1867 send_file1() - `sender_symlink_iconv` path.
 #[cfg(feature = "iconv")]
 #[test]
 fn write_symlink_target_transcodes_with_iconv_to_remote_charset() {
@@ -178,11 +178,11 @@ fn write_symlink_target_transcodes_with_iconv_to_remote_charset() {
 
 /// A converter WITHOUT negotiated CF_SYMLINK_ICONV (e.g. a proto-30 / rsync
 /// 3.0.x peer) must leave symlink targets as raw local bytes even while
-/// filenames are transcoded. This is the `else` branch at upstream flist.c:1659
+/// filenames are transcoded. This is the `else` branch at upstream flist.c:1884
 /// where `sender_symlink_iconv` is 0.
 ///
 /// upstream: compat.c:765-767 - `sender_symlink_iconv = iconv_opt &&
-/// (... CF_SYMLINK_ICONV)`; flist.c:1642 gate.
+/// (... CF_SYMLINK_ICONV)`; flist.c:1867 gate.
 #[cfg(feature = "iconv")]
 #[test]
 fn write_symlink_target_without_negotiated_flag_passes_raw_local_bytes() {

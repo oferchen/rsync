@@ -1,7 +1,7 @@
 //! A local `--dry-run` must report `Literal data: 0` and `Matched data: 0`.
 //!
 //! upstream: the sender counts the file into `stats.xferred_files` and
-//! `stats.total_transferred_size` (`sender.c:342-343`) before the
+//! `stats.total_transferred_size` (`sender.c:343-344`) before the
 //! `if (!do_xfers)` guard, but that guard `continue`s before `match_sums()`,
 //! the sole accumulator of `stats.literal_data` (`match.c:436`) and
 //! `stats.matched_data` (`match.c:121`). So a dry run that WOULD transfer a

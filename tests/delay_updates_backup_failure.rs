@@ -1,7 +1,7 @@
 //! `--delay-updates --backup`: a failed backup must NOT be followed by the
 //! staged rename.
 //!
-//! upstream `receiver.c:694`:
+//! upstream `receiver.c:710`:
 //!
 //! ```text
 //! if (make_backups > 0 && !make_backup(fname, False))
@@ -85,7 +85,7 @@ struct Fixture {
 /// back up.
 ///
 /// The backup lives at `dst/bak/sub/f` (upstream clears the suffix when a
-/// `--backup-dir` is named, options.c:2438-2439), and `dst/bak` is mode 555: the leaf
+/// `--backup-dir` is named, options.c:2447-2448), and `dst/bak` is mode 555: the leaf
 /// `mkdir` of `dst/bak/sub` is the step that fails with `EACCES`, which is
 /// upstream's `backup mkdir %s failed` (`backup.c:128-139`). Nesting the file
 /// one level down is load-bearing - a top-level file would need no new backup
@@ -150,7 +150,7 @@ fn a_failed_backup_leaves_the_destination_untouched() {
     assert_eq!(
         fs::read_to_string(fx.root.join("dst/sub/f")).expect("read dst"),
         OLD,
-        "upstream's receiver.c:694 `continue` skips the delayed rename when the \
+        "upstream's receiver.c:710 `continue` skips the delayed rename when the \
          backup fails; overwriting the destination here leaves the pre-image \
          nowhere - not at dst/sub/f, and not in the backup dir either"
     );

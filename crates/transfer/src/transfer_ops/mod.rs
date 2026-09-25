@@ -100,7 +100,7 @@ pub struct RequestConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:968-984`: opens destination directly when inplace
+    /// - `receiver.c:984-1000`: opens destination directly when inplace
     pub inplace: bool,
     /// Per-file inplace for partial-dir basis files (CF_INPLACE_PARTIAL_DIR).
     ///
@@ -109,7 +109,7 @@ pub struct RequestConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:910`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR`
+    /// - `receiver.c:926`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR`
     pub inplace_partial: bool,
     /// Policy controlling io_uring usage for file I/O (`--io-uring` / `--no-io-uring`).
     pub io_uring_policy: fast_io::IoUringPolicy,
@@ -143,7 +143,7 @@ pub struct RequestConfig {
     /// # Upstream Reference
     ///
     /// - `generator.c:787-788` - generator skips writing signature blocks in append mode
-    /// - `sender.c:87-92` - `receive_sums()` returns early without reading blocks
+    /// - `sender.c:88-96` - `receive_sums()` returns early without reading blocks
     pub append: bool,
     /// Whether append-verify mode is active (`--append-verify`, append_mode == 2).
     ///
@@ -153,7 +153,7 @@ pub struct RequestConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:357-373` - `if (append_mode == 2)` prefix `sum_update`
+    /// - `receiver.c:370-386` - `if (append_mode == 2)` prefix `sum_update`
     pub append_verify: bool,
 }
 
@@ -215,7 +215,7 @@ pub struct ResponseContext<'a> {
     pub dest_dir: Option<&'a std::path::Path>,
     /// Operator inputs for resolving a peer-supplied alternate-basis selector.
     ///
-    /// upstream: `receiver.c:1009-1046` - `recv_files()` rebuilds the basis path
+    /// upstream: `receiver.c:1025-1062` - `recv_files()` rebuilds the basis path
     /// from the wire `(fnamecmp_type, xname)` pair for the fuzzy and alt-dest
     /// types. See [`wire_basis::WireBasis`].
     pub wire_basis: wire_basis::WireBasis<'a>,
@@ -239,14 +239,14 @@ pub struct ResponseContext<'a> {
 /// under `one_inplace` is not the destination at all:
 ///
 /// ```c
-/// /* receiver.c:1195-1196 */
+/// /* receiver.c:1212-1213 */
 /// if (inplace || one_inplace)  {
 ///         fnametmp = one_inplace ? partialptr : fname;
 /// ```
 ///
 /// `partialptr` is the file inside the `--partial-dir`, so the reconstruction
 /// grows there and only `finish_transfer(fname, fnametmp, ...)`
-/// (`receiver.c:1288`) puts it at the destination name. An interrupt therefore
+/// (`receiver.c:1305`) puts it at the destination name. An interrupt therefore
 /// leaves the grown partial in the partial dir and never a truncated file at the
 /// live name - the hazard the old rationale described was a property of writing
 /// to `fname`, which upstream does not do on this branch. It is upstream's whole
@@ -281,17 +281,17 @@ pub struct ResponseContext<'a> {
 /// # Upstream Reference
 ///
 /// `inplace` already carries `--append`: `ServerConfig::apply_append_implies_inplace`
-/// materialises upstream's `options.c:2410` promotion before the transfer starts,
-/// so this reads the single flag exactly as `receiver.c:1195` does.
+/// materialises upstream's `options.c:2419` promotion before the transfer starts,
+/// so this reads the single flag exactly as `receiver.c:1212` does.
 ///
-/// - `rsync-3.5.0/receiver.c:1195` - `if (inplace || one_inplace)`.
-/// - `rsync-3.5.0/receiver.c:1137-1138` - `one_inplace = inplace_partial &&
+/// - `rsync-3.5.1/receiver.c:1212` - `if (inplace || one_inplace)`.
+/// - `rsync-3.5.1/receiver.c:1153-1155` - `one_inplace = inplace_partial &&
 ///   fnamecmp_type == FNAMECMP_PARTIAL_DIR && fd1 != -1`.
-/// - `rsync-3.5.0/receiver.c:1196` - `fnametmp = one_inplace ? partialptr : fname`.
-/// - `rsync-3.5.0/receiver.c:1288-1299` - `finish_transfer(fname, fnametmp, ...)`
+/// - `rsync-3.5.1/receiver.c:1213` - `fnametmp = one_inplace ? partialptr : fname`.
+/// - `rsync-3.5.1/receiver.c:1305-1316` - `finish_transfer(fname, fnametmp, ...)`
 ///   then `handle_partial_dir(partialptr, PDIR_DELETE)`, with the
 ///   `do_unlink_at(partialptr)` skipped under `one_inplace`.
-/// - `rsync-3.5.0/cleanup.c:169-170` - `_exit_cleanup()` calls
+/// - `rsync-3.5.1/cleanup.c:169-170` - `_exit_cleanup()` calls
 ///   `handle_partial_dir(cleanup_new_fname, PDIR_CREATE)` on the abort path; that
 ///   is what moves an interrupted temp into the partial dir.
 fn resolve_use_inplace(
@@ -314,8 +314,8 @@ fn resolve_use_inplace(
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:1141-1143` - `fd1 == -1` leaves `st.st_size = 0`, i.e. no basis
-/// - `receiver.c:1174-1177` - `!S_ISREG(st.st_mode)` closes the fd and clears it
+/// - `receiver.c:1158-1160` - `fd1 == -1` leaves `st.st_size = 0`, i.e. no basis
+/// - `receiver.c:1191-1194` - `!S_ISREG(st.st_mode)` closes the fd and clears it
 pub(crate) fn usable_basis(path: &std::path::Path) -> Option<std::path::PathBuf> {
     let file = fast_io::open_basis_nofollow(path).ok()?;
     file.metadata().ok()?.is_file().then(|| path.to_path_buf())
@@ -330,7 +330,7 @@ pub(crate) fn usable_basis(path: &std::path::Path) -> Option<std::path::PathBuf>
 /// by NDX, which - against an upstream sender - may name a still-outstanding
 /// later request rather than the awaited front.
 ///
-/// upstream: io.c:1207-1256 `got_flist_entry_status(FES_NO_SEND, ndx)`.
+/// upstream: io.c:1225-1274 `got_flist_entry_status(FES_NO_SEND, ndx)`.
 pub(crate) enum HeaderOutcome {
     /// The awaited file's validated response header.
     Header(ResponseHeader),
@@ -388,7 +388,7 @@ fn read_response_header<R: Read>(
             // upstream: rsync.c:334-335 - `NDX_DONE` ends the phase. Reaching it
             // with a transfer still outstanding means the sender dropped a file
             // without the receiver retiring it (e.g. an unconsumed `MSG_NO_SEND`,
-            // io.c:1639 -> got_flist_entry_status(), io.c:1089). Fail loudly here
+            // io.c:1665 -> got_flist_entry_status(), io.c:1107). Fail loudly here
             // rather than reading attributes that were never sent.
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -399,9 +399,9 @@ fn read_response_header<R: Read>(
             ));
         }
         Err(err) => {
-            // upstream: io.c:1809-1818 -> got_flist_entry_status(FES_NO_SEND, ndx)
+            // upstream: io.c:1847-1856 -> got_flist_entry_status(FES_NO_SEND, ndx)
             // retires the declined entry by index. The sender emits MSG_NO_SEND
-            // the moment it fails to open a file (sender.c:669,723,751), which -
+            // the moment it fails to open a file (sender.c:670,725,753), which -
             // against an upstream sender - can name a still-outstanding later
             // request while this front is awaited. Hand `pending` back untouched
             // so the caller retires the named entry by NDX instead of aborting;
@@ -419,7 +419,7 @@ fn read_response_header<R: Read>(
         }
     };
 
-    // upstream: receiver.c:871-881 - `recv_files()` tests `F_IS_ACTIVE` on the
+    // upstream: receiver.c:887-897 - `recv_files()` tests `F_IS_ACTIVE` on the
     // entry the peer's index resolves to, before doing anything else with it. A
     // peer that sent a duplicate name had one of the two slots `clear_file()`d
     // by `flist_sort_and_clean()`; naming that slot again yields an entry with
@@ -448,7 +448,7 @@ fn read_response_header<R: Read>(
 
     let (file_path, local_basis_path, signature, target_size) = pending.into_parts();
 
-    // upstream: receiver.c:1009-1046 - a fuzzy or alt-dest selector names the
+    // upstream: receiver.c:1025-1062 - a fuzzy or alt-dest selector names the
     // basis on the wire, and the receiver joins the sanitized xname to the
     // operator's basedir rather than reusing its own choice. Every other basis
     // type keeps the locally selected path.
@@ -467,7 +467,7 @@ fn read_response_header<R: Read>(
         sender_attrs.fnamecmp_type,
     );
 
-    // upstream: receiver.c:352-372 - in append mode, seek output fd to existing file length
+    // upstream: receiver.c:365-385 - in append mode, seek output fd to existing file length
     // (derived from echoed sum_head) before writing new data
     let append_offset = if ctx.config.append {
         echoed_sum_head.flength()
@@ -505,7 +505,7 @@ pub(crate) struct ResponseHeader {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:372-373` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
+    /// - `receiver.c:385-386` - `offset = sum.flength; do_lseek(fd, offset, SEEK_SET)`
     append_offset: u64,
     /// Abbreviated xattr values from the sender (1-based num, value pairs).
     ///
@@ -520,9 +520,9 @@ mod tests {
 
     #[test]
     fn resolve_use_inplace_writes_to_destination_for_inplace() {
-        // upstream: receiver.c:968 - `inplace` selects the live destination as
+        // upstream: receiver.c:984 - `inplace` selects the live destination as
         // the write target. `--append` reaches this through the same flag,
-        // promoted by apply_append_implies_inplace (options.c:2410).
+        // promoted by apply_append_implies_inplace (options.c:2419).
         assert!(resolve_use_inplace(true, false, None));
     }
 
@@ -543,7 +543,7 @@ mod tests {
         // needs_rename == true so an interrupt relocates the in-flight temp into
         // the partial dir (retain_partial_file's PartialDir branch) instead of
         // leaving a full-size but incomplete file at the live destination name.
-        // upstream: receiver.c:910,969 write one_inplace to partialptr, never fname.
+        // upstream: receiver.c:926,985 write one_inplace to partialptr, never fname.
         assert!(!resolve_use_inplace(
             false,
             true,
@@ -756,7 +756,7 @@ mod tests {
     /// basename as a vstring. Without this the sender/receiver never learn the
     /// fuzzy basis over the wire, diverging from a real rsync generator.
     /// upstream: generator.c:1944-1948 (iflags + fnamecmp_type + write_vstring),
-    /// io.c:2297 (vstring length prefix).
+    /// io.c:2335 (vstring length prefix).
     #[test]
     fn fuzzy_request_emits_fnamecmp_fuzzy_and_xname_vstring() {
         let bytes = request_bytes_basis(protocol::FnameCmpType::Fuzzy(0), Some(b"old.txt"));
@@ -962,7 +962,7 @@ mod tests {
     /// `recv_files()` ever tests `F_IS_ACTIVE`. The cleared-entry diagnostic
     /// therefore owns the non-transfer frames.
     ///
-    /// upstream: receiver.c:871-881 - `recv_files()` `!F_IS_ACTIVE(file)`.
+    /// upstream: receiver.c:887-897 - `recv_files()` `!F_IS_ACTIVE(file)`.
     #[test]
     fn cleared_file_index_is_refused_with_upstream_wording() {
         let mut receiver = receiver_with_file_list(&["a.txt", "dup.txt"], Some(1));

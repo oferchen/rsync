@@ -2208,7 +2208,7 @@ fn has_ssh_compression_default_is_false() {
 fn forces_ipv4_flag_for_ssh_program() {
     // #227: `rsync -4 -e ssh host:path` must force IPv4 on the ssh child so it
     // cannot connect over IPv6, matching upstream do_cmd().
-    // upstream: main.c:588-589 - `-4` is appended when default_af_hint ==
+    // upstream: main.c:601-602 - `-4` is appended when default_af_hint ==
     // AF_INET and the remote-shell basename is `ssh`.
     let mut command = SshCommand::new("example.com");
     command.set_prefer_aes_gcm(Some(false));
@@ -2236,7 +2236,7 @@ fn forces_ipv4_flag_for_ssh_program() {
 
 #[test]
 fn dash_l_user_precedes_address_family_and_host() {
-    // upstream: main.c:569-593 do_cmd() emits `-l user` then `-4`/`-6` then
+    // upstream: main.c:582-606 do_cmd() emits `-l user` then `-4`/`-6` then
     // the bare host, in that order, never `user@host`.
     let mut command = SshCommand::new("example.com");
     command.set_prefer_aes_gcm(Some(false));
@@ -2274,7 +2274,7 @@ fn dash_l_user_precedes_address_family_and_host() {
 
 #[test]
 fn dash_l_user_applies_to_non_ssh_shell_too() {
-    // upstream: main.c:569-586 do_cmd() emits `-l user` unconditionally, not
+    // upstream: main.c:582-599 do_cmd() emits `-l user` unconditionally, not
     // gated on the remote-shell program being `ssh`. A custom `-e` wrapper
     // (e.g. the testsuite's `lsh.sh`) parses `-l USER` and does not
     // understand `user@host`.
@@ -2301,7 +2301,7 @@ fn dash_l_user_applies_to_non_ssh_shell_too() {
 
 #[test]
 fn forces_ipv6_flag_for_ssh_program() {
-    // upstream: main.c:592-593 - `-6` is appended when default_af_hint ==
+    // upstream: main.c:605-606 - `-6` is appended when default_af_hint ==
     // AF_INET6 and the remote-shell basename is `ssh`.
     let mut command = SshCommand::new("example.com");
     command.set_prefer_aes_gcm(Some(false));
@@ -2323,7 +2323,7 @@ fn forces_ipv6_flag_for_ssh_program() {
 #[test]
 fn omits_address_family_flag_when_unset() {
     // Default address mode leaves the ssh child free to pick a family, so no
-    // -4/-6 is injected. upstream: main.c:588/592 gate on default_af_hint
+    // -4/-6 is injected. upstream: main.c:601/605 gate on default_af_hint
     // being set.
     let mut command = SshCommand::new("example.com");
     command.set_prefer_aes_gcm(Some(false));
@@ -2344,7 +2344,7 @@ fn omits_address_family_flag_when_unset() {
 
 #[test]
 fn does_not_force_address_family_for_non_ssh_shell() {
-    // upstream: main.c:588/592 - the `-4`/`-6` append is gated on
+    // upstream: main.c:601/605 - the `-4`/`-6` append is gated on
     // `strcmp(t, "ssh") == 0`, so a non-ssh `-e` wrapper (here `rsh`) must
     // never receive a family flag it cannot understand.
     let mut command = SshCommand::new("example.com");
@@ -2373,7 +2373,7 @@ fn blocking_io_auto_enabled_for_rsh_when_unset() {
     // WHY: rsh mishandles a non-blocking child stdout, so upstream forces
     // blocking I/O for it whenever the user left the flag unset. Regressing to
     // non-blocking would corrupt the stream over a real rsh transport.
-    // upstream: main.c:600-601 do_cmd() - blocking_io = 1 for rsh when unset.
+    // upstream: main.c:613-614 do_cmd() - blocking_io = 1 for rsh when unset.
     let mut command = SshCommand::new("example.com");
     command.set_program("rsh");
     assert!(command.resolved_blocking_io());
@@ -2383,7 +2383,7 @@ fn blocking_io_auto_enabled_for_rsh_when_unset() {
 fn blocking_io_auto_enabled_for_remsh_when_unset() {
     // WHY: remsh (HP-UX) shares rsh's non-blocking-stdout defect, so upstream
     // forces blocking I/O for it too when the flag is unset.
-    // upstream: main.c:600-601 do_cmd() - `strcmp(t, "remsh") == 0`.
+    // upstream: main.c:613-614 do_cmd() - `strcmp(t, "remsh") == 0`.
     let mut command = SshCommand::new("example.com");
     command.set_program("remsh");
     assert!(command.resolved_blocking_io());
@@ -2393,7 +2393,7 @@ fn blocking_io_auto_enabled_for_remsh_when_unset() {
 fn blocking_io_auto_enabled_for_path_qualified_rsh() {
     // WHY: upstream compares the command basename (`t`), so `/usr/bin/rsh`
     // triggers the same forced-blocking rule.
-    // upstream: main.c:564-567 do_cmd() strips the directory before the strcmp.
+    // upstream: main.c:577-580 do_cmd() strips the directory before the strcmp.
     let mut command = SshCommand::new("example.com");
     command.set_program("/usr/bin/rsh");
     assert!(command.resolved_blocking_io());
@@ -2403,7 +2403,7 @@ fn blocking_io_auto_enabled_for_path_qualified_rsh() {
 fn blocking_io_stays_disabled_for_ssh_when_unset() {
     // WHY: ssh relies on a non-blocking child stdout, so upstream leaves
     // blocking_io off for it when the user did not request it.
-    // upstream: main.c:600 do_cmd() - only rsh/remsh match the auto-enable.
+    // upstream: main.c:613 do_cmd() - only rsh/remsh match the auto-enable.
     let command = SshCommand::new("example.com");
     assert!(!command.resolved_blocking_io());
 }
@@ -2412,7 +2412,7 @@ fn blocking_io_stays_disabled_for_ssh_when_unset() {
 fn explicit_no_blocking_io_wins_over_rsh_auto_enable() {
     // WHY: an explicit `--no-blocking-io` is a user override that must beat the
     // rsh/remsh auto-enable; upstream only auto-enables when `blocking_io < 0`
-    // (still unset). upstream: main.c:600 do_cmd() gate `blocking_io < 0`.
+    // (still unset). upstream: main.c:613 do_cmd() gate `blocking_io < 0`.
     let mut command = SshCommand::new("example.com");
     command.set_program("rsh");
     command.set_blocking_io(Some(false));

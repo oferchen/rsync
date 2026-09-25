@@ -50,7 +50,7 @@ pub(crate) fn apply_socket_options(socket: &socket2::Socket, options: &OsStr) {
         };
 
         let Some(kind) = lookup_socket_option(name) else {
-            // upstream: socket.c:704-707 - an unknown option name reports
+            // upstream: socket.c:712-715 - an unknown option name reports
             // `rprintf(FERROR,"Unknown socket option %s\n",tok)` and `continue`s.
             eprintln!("Unknown socket option {name}");
             continue;
@@ -60,7 +60,7 @@ pub(crate) fn apply_socket_options(socket: &socket2::Socket, options: &OsStr) {
         {
             match kind {
                 SocketOptionKind::On { .. } => {
-                    // upstream: socket.c:717-727 - an OPT_ON option given a
+                    // upstream: socket.c:725-735 - an OPT_ON option given a
                     // value warns (`syntax error -- %s does not take a value`)
                     // but still applies its fixed value.
                     if value_str.is_some() {
@@ -98,7 +98,7 @@ pub(crate) fn apply_socket_options(socket: &socket2::Socket, options: &OsStr) {
 
     for option in parsed {
         if let Err(error) = option.apply(socket) {
-            // upstream: socket.c:730-733 - a failed `setsockopt(2)` reports
+            // upstream: socket.c:738-741 - a failed `setsockopt(2)` reports
             // `rsyserr(FERROR, errno, "failed to set socket option %s")` and
             // keeps applying the remaining options.
             eprintln!("failed to set socket option {}: {error}", option.name());
@@ -141,7 +141,7 @@ mod tests {
         handle.join().expect("accept thread completes");
     }
 
-    /// upstream: socket.c:704-707 - an unknown option name warns
+    /// upstream: socket.c:712-715 - an unknown option name warns
     /// (`Unknown socket option %s`) and `continue`s; `set_socket_options()` is
     /// `void`, so a bogus name must never abort the connection. A later valid
     /// option in the same string must still be applied, proving the loop
@@ -164,7 +164,7 @@ mod tests {
         handle.join().expect("accept thread completes");
     }
 
-    /// upstream: socket.c:717-727 - an OPT_ON option (e.g. `IPTOS_LOWDELAY`) given
+    /// upstream: socket.c:725-735 - an OPT_ON option (e.g. `IPTOS_LOWDELAY`) given
     /// a value warns (`syntax error -- %s does not take a value`) but still applies
     /// its fixed value. The value must not turn the option into a fatal error.
     #[cfg(not(target_family = "windows"))]

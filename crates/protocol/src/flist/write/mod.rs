@@ -101,7 +101,7 @@ pub struct FileListWriter {
     /// sent as raw local bytes even while filenames are transcoded.
     ///
     /// upstream: compat.c:765-767 `sender_symlink_iconv = iconv_opt && (...)`,
-    /// applied at flist.c:1642.
+    /// applied at flist.c:1867.
     symlink_iconv: bool,
     /// Cached: whether varint flag encoding is enabled (computed once at construction).
     use_varint_flags: bool,
@@ -134,7 +134,7 @@ pub struct FileListWriter {
     /// owner names in each file entry.
     ///
     /// Upstream sets these flags only under incremental recursion
-    /// (`flist.c:481-482,491-492`: `if (inc_recurse && user_name)`). Without
+    /// (`flist.c:706-707,716-717`: `if (inc_recurse && user_name)`). Without
     /// `inc_recurse` the names ride exclusively in the trailing id-list
     /// (`send_id_lists`/`recv_id_list`, uidlist.c), so emitting them inline as
     /// well diverges from upstream's wire encoding. Defaults to `false`; the
@@ -294,7 +294,7 @@ impl FileListWriter {
     /// `XMIT_GROUP_NAME_FOLLOWS`) are emitted per file entry.
     ///
     /// Upstream sets these flags only under incremental recursion
-    /// (`flist.c:481-482,491-492`: `if (inc_recurse && user_name)`). Callers
+    /// (`flist.c:706-707,716-717`: `if (inc_recurse && user_name)`). Callers
     /// pass the negotiated `inc_recurse` value. When `false`, owner names are
     /// carried solely by the trailing id-list (`send_id_lists`), matching
     /// upstream's non-incremental encoding.
@@ -381,7 +381,7 @@ impl FileListWriter {
     /// `--iconv`. When `false`, symlink targets are written as raw local bytes
     /// even if a filename converter is attached.
     ///
-    /// upstream: compat.c:765-767 `sender_symlink_iconv`, applied at flist.c:1642.
+    /// upstream: compat.c:765-767 `sender_symlink_iconv`, applied at flist.c:1867.
     #[inline]
     #[must_use]
     pub const fn with_symlink_iconv(mut self, symlink_iconv: bool) -> Self {
@@ -426,7 +426,7 @@ impl FileListWriter {
     ///
     /// Abbreviation is a protocol 30+ feature: upstream only skips metadata
     /// after writing `first_hlink_ndx` (`goto the_end`), and `first_hlink_ndx`
-    /// is set only when `protocol_version >= 30` (flist.c:517-587). For
+    /// is set only when `protocol_version >= 30` (flist.c:742-812). For
     /// protocols 28-29 hardlinks are identified by trailing `(dev, ino)` pairs
     /// and every entry carries full metadata; abbreviating a follower there
     /// desyncs the receiver (it still reads full metadata + dev/ino).

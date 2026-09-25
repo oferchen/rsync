@@ -71,7 +71,7 @@ fn test_delete_during_and_after_conflict() {
 
 #[test]
 fn test_delete_during_and_delay_are_same_when_term() {
-    // upstream: options.c:724-725,2210 - `--delete-during` and `--delete-delay`
+    // upstream: options.c:724-725,2219 - `--delete-during` and `--delete-delay`
     // both write the single `delete_during` counter, so combining them is not a
     // conflict (`!!delete_during` counts once).
     let result = parse_args([
@@ -124,7 +124,7 @@ fn test_multiple_groupmap_concatenated() {
 #[test]
 fn test_temp_dir_and_tmp_dir_last_wins() {
     // --tmp-dir is an alias of --temp-dir, so this is one option repeated;
-    // popt has no duplicate diagnostic (options.c:1502 re-runs the case per
+    // popt has no duplicate diagnostic (options.c:1508 re-runs the case per
     // occurrence), so the last occurrence wins like any other repeat.
     let result = parse_args([
         "oc-rsync",

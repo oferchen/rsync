@@ -59,7 +59,7 @@ pub struct StreamingResult {
 /// outstanding request rather than the awaited front, and that front's response
 /// is still on its way.
 ///
-/// upstream: io.c:1207-1256 `got_flist_entry_status(FES_NO_SEND, ndx)`.
+/// upstream: io.c:1225-1274 `got_flist_entry_status(FES_NO_SEND, ndx)`.
 pub enum ResponseProgress {
     /// The awaited file's delta arrived and was streamed to the disk thread.
     Received(StreamingResult),
@@ -128,7 +128,7 @@ pub fn process_file_response_streaming<R: Read>(
         }
     };
 
-    // upstream: receiver.c:911-912 - updating_basis_or_equiv is set when the
+    // upstream: receiver.c:927-928 - updating_basis_or_equiv is set when the
     // basis file IS the destination being updated in place (fnamecmp == fname).
     // We take the provably-safe subset: --inplace with the basis path equal to
     // the output path. Matched blocks whose basis offset equals the output
@@ -165,7 +165,7 @@ pub fn process_file_response_streaming<R: Read>(
         file_entry_index,
         checksum_verifier: Some(disk_verifier),
         is_device_target,
-        // upstream: receiver.c:910 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
+        // upstream: receiver.c:926 - one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR
         is_inplace: header.use_inplace,
         append_offset: header.append_offset,
         xattr_list,
@@ -186,7 +186,7 @@ pub fn process_file_response_streaming<R: Read>(
         let map = MapFile::open(path).map_err(|e| {
             io::Error::new(e.kind(), format!("failed to open basis file {path:?}: {e}"))
         })?;
-        // upstream: receiver.c:498-501 - `receive_data()` names the basis it
+        // upstream: receiver.c:514-517 - `receive_data()` names the basis it
         // mapped, and its size, before consuming the first token. Upstream's
         // `fname_r` is the flist-relative name (it chdir'd into the destination
         // root), so print that spelling rather than the absolute path. The size
@@ -226,13 +226,13 @@ pub fn process_file_response_streaming<R: Read>(
 
             if matches!(next_delta, DeltaToken::End) {
                 total_bytes = len as u64;
-                // upstream: receiver.c:552-555 - the coalesced single-literal
+                // upstream: receiver.c:568-571 - the coalesced single-literal
                 // file is still one literal token arriving at offset 0.
                 matching::trace_deltasum::trace_data_recv(len, 0);
                 let checksum_len = checksum_verifier.digest_len();
                 let mut expected_checksum = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
                 reader.read_exact(&mut expected_checksum[..checksum_len])?;
-                // upstream: receiver.c:671-673
+                // upstream: receiver.c:687-689
                 matching::trace_deltasum::trace_got_file_sum();
 
                 file_tx
@@ -260,7 +260,7 @@ pub fn process_file_response_streaming<R: Read>(
 
             // Not a single-chunk file - send Begin + first Chunk,
             // then continue the regular loop starting with the peeked token.
-            // upstream: receiver.c:552-555 - this first literal lands at 0.
+            // upstream: receiver.c:568-571 - this first literal lands at 0.
             matching::trace_deltasum::trace_data_recv(len, 0);
             file_tx.send(FileMessage::Begin(begin_msg)).map_err(|_| {
                 io::Error::new(io::ErrorKind::BrokenPipe, "disk commit thread disconnected")

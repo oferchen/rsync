@@ -15,12 +15,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/syscall.c:538` `open_no_attacker_symlinks()` - walk each
+//! - `rsync-3.5.1/syscall.c:675` `open_no_attacker_symlinks()` - walk each
 //!   component without following it; follow a symlink only when it is owned by
-//!   uid 0 or our euid, refuse any other-uid one (`syscall.c:406`).
-//! - `rsync-3.5.0/batch.c:254` - the `.sh` companion, created `0700`.
-//! - `rsync-3.5.0/batch.c:263` - `--write-batch`, created `0600`.
-//! - `rsync-3.5.0/batch.c:267` - `--read-batch`, opened read-only.
+//!   uid 0 or our euid, refuse any other-uid one (`syscall.c:499`).
+//! - `rsync-3.5.1/batch.c:254` - the `.sh` companion, created `0700`.
+//! - `rsync-3.5.1/batch.c:263` - `--write-batch`, created `0600`.
+//! - `rsync-3.5.1/batch.c:267` - `--read-batch`, opened read-only.
 
 use std::fs::File;
 use std::io;

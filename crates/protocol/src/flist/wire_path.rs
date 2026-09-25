@@ -15,9 +15,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:534-570` `send_file_entry()` filename emission - the wire bytes
+//! - `flist.c:759-795` `send_file_entry()` filename emission - the wire bytes
 //!   are written verbatim with no separator normalisation.
-//! - `util1.c:955-961` `__CYGWIN__` block - the only `\` handling in upstream
+//! - `util1.c:1052-1058` `__CYGWIN__` block - the only `\` handling in upstream
 //!   lives on the Cygwin POSIX boundary, which oc-rsync does not run under.
 
 use std::borrow::Cow;

@@ -88,10 +88,10 @@ fn names_only_created_or_changed_dirs() {
 /// A dry run against a missing destination root still names `./`, on both
 /// receiver drivers (this helper is shared; the CI feature matrix runs it with
 /// `incremental-flist` on and off). Upstream "creates" the missing root even
-/// under `-n` (`main.c:796-808`; `do_mkdir` is a dry-run no-op), and
+/// under `-n` (`main.c:809-821`; `do_mkdir` is a dry-run no-op), and
 /// `FLAG_DIR_CREATED` then forces the NAME row (`generator.c:1465-1466`,
 /// `generator.c:1503-1505`; `rsync.c:498-499` returns 1 for the missing dest
-/// under dry-run). `--list-only` never reaches that mkdir (`main.c:743`), so
+/// under dry-run). `--list-only` never reaches that mkdir (`main.c:756`), so
 /// the root stays silent there.
 #[test]
 fn missing_dest_root_is_named_on_dry_run_but_not_list_only() {

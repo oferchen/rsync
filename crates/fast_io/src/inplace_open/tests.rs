@@ -12,7 +12,7 @@ fn mode_of(path: &Path) -> u32 {
 }
 
 /// Arm 1: the ordinary case. An absent target is created, an existing one is
-/// opened without truncation. upstream: receiver.c:1204-1209.
+/// opened without truncation. upstream: receiver.c:1221-1226.
 #[test]
 fn the_first_arm_creates_an_absent_target_and_keeps_an_existing_one() {
     let dir = tempfile::tempdir().unwrap();
@@ -34,7 +34,7 @@ fn the_first_arm_creates_an_absent_target_and_keeps_an_existing_one() {
 /// Arm 3 reached through the chain: a 0444 target is recovered, and its mode is
 /// restored by the time the descriptor arrives. Severing the third arm makes
 /// this fail with the bare `EACCES` the chain exists to absorb.
-/// upstream: receiver.c:1219-1224.
+/// upstream: receiver.c:1236-1241.
 #[test]
 fn the_third_arm_recovers_a_read_only_target() {
     let dir = tempfile::tempdir().unwrap();
@@ -79,7 +79,7 @@ fn the_truncate_choice_survives_the_recovery_arm() {
 ///
 /// A symlink cannot serve as the discriminator here: `ona_open` FOLLOWS a link
 /// owned by uid 0 or our euid at every component, the leaf included - authority
-/// is the trust signal, not the presence of a link (`syscall.c:406`). Both
+/// is the trust signal, not the presence of a link (`syscall.c:499`). Both
 /// resolutions therefore follow a self-owned link, and refusing a foreign-owned
 /// one needs a second uid, which `owner_walk`'s own tests already cover.
 #[test]

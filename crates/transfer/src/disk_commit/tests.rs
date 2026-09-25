@@ -13,7 +13,7 @@ use super::thread::spawn_disk_thread;
 ///
 /// `--delay-updates` always stages through a partial directory: upstream
 /// substitutes the implicit `.~tmp~` when the operator named none
-/// (options.c:2563-2564) and oc mirrors that in
+/// (options.c:2572-2573) and oc mirrors that in
 /// `TransferConfigBuilder::effective_partial_dir`. Constructing
 /// `delay_updates` without a partial mode would exercise a state the
 /// production config cannot produce.
@@ -223,7 +223,7 @@ fn write_file_with_io_uring_auto_policy() {
 
 #[test]
 fn device_target_inplace_commit_does_not_truncate() {
-    // upstream: receiver.c:496 gates the in-place ftruncate on !IS_DEVICE, so
+    // upstream: receiver.c:512 gates the in-place ftruncate on !IS_DEVICE, so
     // --write-devices writes into the device without ever truncating it (a
     // block/char device has no settable length; ftruncate would fail EINVAL).
     // A pre-populated regular file stands in for the device open path: with
@@ -453,8 +453,8 @@ fn matched_only_abort_must_not_clobber_dest(
 /// must leave the destination untouched.
 ///
 /// WHY: upstream arms partial retention from `cleanup_got_literal`, set ONLY in
-/// the literal branch (`receiver.c:392-403`); the matched branch at
-/// `receiver.c:413+` deliberately never sets it. `cleanup.c:159` keeps the temp
+/// the literal branch (`receiver.c:405-416`); the matched branch at
+/// `receiver.c:426+` deliberately never sets it. `cleanup.c:159` keeps the temp
 /// only when that latch is set and `cleanup.c:199-200` unlinks it otherwise, so
 /// "no literal data received" means the destination is never disturbed.
 ///
@@ -501,7 +501,7 @@ fn partial_matched_only_shutdown_preserves_destination() {
 /// destination. This test drops the sender to take that arm directly.
 ///
 /// upstream: cleanup.c:159 gates retention on `cleanup_got_literal`, set only
-/// in the literal branch (receiver.c:392-403); a disconnect with no literal
+/// in the literal branch (receiver.c:405-416); a disconnect with no literal
 /// data unlinks the temp (cleanup.c:199-200) instead of renaming it into place.
 #[test]
 fn partial_matched_only_disconnect_preserves_destination() {
@@ -627,7 +627,7 @@ fn partial_literal_data_is_still_retained_on_abort() {
 
 /// A `SkipMatched` message in an in-place update must SEEK past the matched
 /// bytes, not rewrite them. This is upstream's `skip_matched()` optimization
-/// (receiver.c:468-474 -> fileio.c:202-209): a block that already sits at its
+/// (receiver.c:481-490 -> fileio.c:210-249): a block that already sits at its
 /// destination offset is left untouched on disk while the write position still
 /// advances so the following data lands at the correct offset.
 ///
@@ -1020,7 +1020,7 @@ fn commit_file_rename_replaces_existing_via_io_uring_or_fallback() {
 /// to `.~tmp~/<filename>` instead of renaming to the final destination.
 /// The final rename is deferred to the receiver's phase 2 sweep.
 ///
-/// upstream: receiver.c:1029-1052 - delay_updates stages to partial dir
+/// upstream: receiver.c:1045-1068 - delay_updates stages to partial dir
 #[test]
 fn delay_updates_stages_to_partial_dir() {
     let _registry_lock = test_support::cleanup_registry_test_guard();
@@ -1089,7 +1089,7 @@ fn delay_updates_stages_to_partial_dir() {
 /// A non-directory standing where the `--delay-updates` staging directory
 /// belongs must be cleared, not reported as a failure.
 ///
-/// upstream: util1.c:1521-1528 `handle_partial_dir()` lstats the name and,
+/// upstream: util1.c:1616-1623 `handle_partial_dir()` lstats the name and,
 /// when it exists and is not a directory, unlinks it before `do_mkdir_at`.
 /// oc's `create_dir_all` returns `AlreadyExists` for that shape, and the `?`
 /// turned an obstruction upstream clears into a failed transfer. Measured
@@ -1154,7 +1154,7 @@ fn delay_updates_clears_a_non_directory_at_the_partial_dir() {
 /// Without this the pin above would also hold for an over-broad fix that
 /// removed the name unconditionally (a `remove_dir_all`), which would destroy
 /// partials retained from an earlier interrupted run - upstream reuses an
-/// existing directory untouched (util1.c:1522, `S_ISDIR` skips the mkdir).
+/// existing directory untouched (util1.c:1617, `S_ISDIR` skips the mkdir).
 #[test]
 fn delay_updates_reuses_an_existing_partial_dir_untouched() {
     let _registry_lock = test_support::cleanup_registry_test_guard();
@@ -2024,7 +2024,7 @@ fn cleanup_manager_inplace_skips_registration() {
 /// implementation dropped that guard on the error path, which unlinked the
 /// user's destination - non-adversarial data loss from a network drop.
 ///
-/// WHY it matters: upstream `receiver.c:1054` gates the destination unlink
+/// WHY it matters: upstream `receiver.c:1070` gates the destination unlink
 /// on `!one_inplace`, so an interrupted inplace transfer never removes the
 /// dest; the partial write stays (the documented `--inplace` risk the user
 /// opted into). This test fails if the guard ever unlinks the inplace dest
@@ -2705,7 +2705,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
 /// temp-creation mtime intact - it must NOT be reset to the epoch. Upstream
 /// separates the two retention paths: the signal/abort cleanup
 /// (`cleanup.c:174-180`) zeros the modtime, but the ordinary failed-verify keep
-/// (`receiver.c:1047`) calls `finish_transfer(..., recv_ok, ...)` with
+/// (`receiver.c:1063`) calls `finish_transfer(..., recv_ok, ...)` with
 /// `recv_ok == 0`, which maps to `ATTRS_SKIP_MTIME` (`rsync.c:748-749`) and so
 /// keeps the temp mtime. Stamping the epoch here (as oc previously did) is an
 /// observable divergence: after a verify failure a `stat` shows 1970 vs
@@ -2766,7 +2766,7 @@ fn verify_failure_keeps_recent_mtime_on_plain_partial() {
     assert_ne!(
         mtime, unix_epoch,
         "failed-verify keep must NOT reset the stub mtime to the epoch \
-         (receiver.c:1047 ok_to_set_time=0 -> ATTRS_SKIP_MTIME keeps the temp mtime)"
+         (receiver.c:1063 ok_to_set_time=0 -> ATTRS_SKIP_MTIME keeps the temp mtime)"
     );
     assert!(
         mtime.unix_seconds() >= before.unix_seconds() - 5,
@@ -2785,7 +2785,7 @@ fn verify_failure_keeps_recent_mtime_on_plain_partial() {
 /// when the transfer is interrupted, so partially-transferred files stay in
 /// the staging directory as valid partials for resume.
 ///
-/// upstream: receiver.c:694-695 - handle_delayed_updates() only at phase 2
+/// upstream: receiver.c:710-711 - handle_delayed_updates() only at phase 2
 #[test]
 fn delay_updates_interrupt_leaves_committed_files_in_staging() {
     let _registry_lock = test_support::cleanup_registry_test_guard();
@@ -2879,7 +2879,7 @@ fn delay_updates_interrupt_leaves_committed_files_in_staging() {
 /// file's temp file is cleaned up but any previously committed files remain
 /// staged in `.~tmp~/`.
 ///
-/// upstream: receiver.c:694 - handle_delayed_updates() only after successful
+/// upstream: receiver.c:710 - handle_delayed_updates() only after successful
 /// completion; interrupted transfers leave staged files for resume.
 #[test]
 fn delay_updates_interrupt_mid_file_retains_prior_staged_files() {
@@ -2962,7 +2962,7 @@ fn delay_updates_interrupt_mid_file_retains_prior_staged_files() {
 /// staged content is valid and complete. Without the sweep, files remain
 /// as partials for resume.
 ///
-/// upstream: receiver.c:529-557 - handle_delayed_updates() bulk rename
+/// upstream: receiver.c:545-573 - handle_delayed_updates() bulk rename
 #[test]
 fn delay_updates_manual_sweep_after_commit_moves_to_final() {
     let _registry_lock = test_support::cleanup_registry_test_guard();
@@ -3338,8 +3338,8 @@ fn md5_verifier() -> crate::delta_apply::ChecksumVerifier {
 
 /// WHY: a file whose whole-file checksum fails verification must NOT be renamed
 /// over the destination. Upstream `receive_data()` returns `recv_ok = 0` on a
-/// `memcmp` mismatch (receiver.c:518) and `recv_files()` then skips
-/// `finish_transfer()` (receiver.c:1029), so a corrupted transfer never lands
+/// `memcmp` mismatch (receiver.c:534) and `recv_files()` then skips
+/// `finish_transfer()` (receiver.c:1045), so a corrupted transfer never lands
 /// at the destination. This pins the coalesced whole-file path.
 #[test]
 fn whole_file_checksum_mismatch_is_not_committed_to_dest() {
@@ -3566,7 +3566,7 @@ fn sparse_payload() -> Vec<u8> {
 /// A sparse transfer over the pipelined (remote) receive path must still apply
 /// the source mtime. `finalize_sparse` (set_len + punch_hole) runs before
 /// `apply_file_metadata` on the temp+rename path, matching upstream ordering:
-/// `fileio.c:43 sparse_end()` inside `receive_data()` precedes
+/// `fileio.c:47 sparse_end()` inside `receive_data()` precedes
 /// `receiver.c` -> `finish_transfer()` -> `set_file_attrs()`. Regression for a
 /// remote `-a --sparse` transfer leaving every destination mtime at wall clock.
 #[test]

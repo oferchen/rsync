@@ -217,7 +217,7 @@ fn multiplex_reader_buffered_partial_read() {
 
 #[test]
 fn multiplex_reader_accumulates_msg_io_error() {
-    // upstream: io.c:1542-1547
+    // upstream: io.c:1568-1573
     let mut stream = Vec::new();
 
     let io_err_val: i32 = 1; // IOERR_GENERAL
@@ -267,7 +267,7 @@ fn multiplex_reader_io_error_wrong_payload_length_aborts() {
     // to invalid_msg and exit_cleanup(RERR_STREAMIO) (exit 12). Silently dropping
     // it would lose the io_error flags the frame carries and desynchronise the
     // demultiplexer, so the read must abort rather than deliver later data.
-    // upstream: io.c:1543 `if (msg_bytes != 4) goto invalid_msg;`
+    // upstream: io.c:1569 `if (msg_bytes != 4) goto invalid_msg;`
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::IoError, &[1, 0, 0]).unwrap();
@@ -307,7 +307,7 @@ fn accumulate_one_msg_io_error(value: i32) -> i32 {
 /// the value to the defined bits at the read site, so undefined bits are never
 /// stored locally and never re-forwarded to the next hop.
 ///
-/// upstream: io.c:1703-1710 - `val &= IOERR_VALID_MASK; io_error |= val;`
+/// upstream: io.c:1741-1748 - `val &= IOERR_VALID_MASK; io_error |= val;`
 #[test]
 fn msg_io_error_masks_undefined_bits_from_a_hostile_peer() {
     use protocol::{IOERR_GENERAL, IOERR_VALID_MASK, IOERR_VANISHED};
@@ -376,7 +376,7 @@ fn server_reader_take_io_error_plain_returns_zero() {
 /// remote pull that loses a source file mid-transfer reports the right code:
 /// IOERR_VANISHED -> 24, IOERR_GENERAL -> 23. This is the value the receiver
 /// transfer path ORs via `stats.io_error |= reader.take_io_error()`.
-/// upstream: io.c:1707 `io_error |= val`; log.c `log_exit` maps to RERR_*.
+/// upstream: io.c:1745 `io_error |= val`; log.c `log_exit` maps to RERR_*.
 #[test]
 fn server_reader_io_error_drives_receiver_exit_code() {
     use crate::generator::io_error_flags::{IOERR_GENERAL, IOERR_VANISHED, to_exit_code};
@@ -438,7 +438,7 @@ fn msg_io_error_round_trip_through_multiplex_layer() {
     // 3. Receiver forwards accumulated flags via multiplex writer
     // 4. Generator receives the forwarded MSG_IO_ERROR
     //
-    // upstream: io.c:1542-1549
+    // upstream: io.c:1568-1575
     use crate::io_error_flags;
     use protocol::{MessageCode, MplexWriter};
     use std::io::Write;
@@ -521,8 +521,8 @@ fn multiplex_reader_surfaces_each_msg_no_send_before_the_data_after_it() {
     // exactly one file at a time, so draining them together would report the
     // first and silently strand the rest.
     //
-    // upstream: io.c:1809-1818 - MSG_NO_SEND retires the entry on the generator
-    // upstream: sender.c:669,723,751 - each emitter `continue`s, writing no response
+    // upstream: io.c:1847-1856 - MSG_NO_SEND retires the entry on the generator
+    // upstream: sender.c:670,725,753 - each emitter `continue`s, writing no response
     let mut stream = Vec::new();
     let ndx1: i32 = 42;
     protocol::send_msg(
@@ -579,7 +579,7 @@ fn multiplex_reader_no_send_wrong_payload_length_aborts() {
     // A wrong-sized MSG_NO_SEND is fatal upstream (invalid_msg ->
     // exit_cleanup(RERR_STREAMIO)). Dropping it would lose the no-send file index
     // the generator needs, so the read must abort instead of continuing.
-    // upstream: io.c:1640 `if (msg_bytes != 4) goto invalid_msg;`
+    // upstream: io.c:1666 `if (msg_bytes != 4) goto invalid_msg;`
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::NoSend, &[1, 0, 0]).unwrap();
@@ -625,7 +625,7 @@ fn server_reader_surfaces_msg_no_send_through_the_multiplex_arm() {
 
 #[test]
 fn multiplex_reader_accumulates_msg_redo() {
-    // upstream: io.c:1535-1540, receiver.c:1093-1097
+    // upstream: io.c:1561-1566, receiver.c:1109-1113
     let mut stream = Vec::new();
 
     let ndx1: i32 = 5;
@@ -673,7 +673,7 @@ fn multiplex_reader_redo_wrong_payload_length_aborts() {
     // A wrong-sized MSG_REDO is fatal upstream (invalid_msg ->
     // exit_cleanup(RERR_STREAMIO)). Dropping it would lose the redo file index
     // the generator must reprocess, so the read must abort instead of continuing.
-    // upstream: io.c:1536 `if (msg_bytes != 4 || !am_generator) goto invalid_msg;`
+    // upstream: io.c:1562 `if (msg_bytes != 4 || !am_generator) goto invalid_msg;`
     let mut stream = Vec::new();
 
     protocol::send_msg(&mut stream, protocol::MessageCode::Redo, &[1, 0, 0]).unwrap();

@@ -333,7 +333,7 @@ mod runtime_options_tests {
     /// upstream: `log file` is `P_LOCAL` (daemon-parm.h:289), but
     /// `FN_LOCAL_STRING(lp_log_file, log_file)` falls back to the global value
     /// at `module_id < 0` and `daemon_main` calls `log_init(0)`
-    /// (clientserver.c:1768) before accepting anything. So the global value
+    /// (clientserver.c:1789) before accepting anything. So the global value
     /// opens a log at startup, and every diagnostic emitted before a module is
     /// selected - the listening banner, the proxy-protocol rejection at
     /// clientserver.c:1394 - lands in it.
@@ -666,7 +666,7 @@ mod runtime_options_tests {
 
     #[test]
     fn parse_config_listen_backlog_directive_overrides_default() {
-        // upstream: socket.c:554 passes lp_listen_backlog() to listen(2), so
+        // upstream: socket.c:562 passes lp_listen_backlog() to listen(2), so
         // a configured `listen backlog` must reach RuntimeOptions intact or
         // the directive is cosmetic and the accept queue silently stays at 5.
         let mut file = NamedTempFile::new().expect("config file");

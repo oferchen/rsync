@@ -62,7 +62,7 @@ fn main() -> ExitCode {
     // is load-bearing rather than stylistic: raising it later would leave
     // already-spawned workers on the old limit.
     //
-    // upstream: main.c:1817 - the first statement of main().
+    // upstream: main.c:1844 - the first statement of main().
     core::fd_limit::raise_fd_limit();
 
     // Do NOT hold `StdoutLock`/`StderrLock` here. Both are process-wide

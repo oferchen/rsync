@@ -21,7 +21,7 @@ fn plant_readonly(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
 
 /// The recovery itself: a 0444 regular file becomes writable, and the mode is
 /// already restored by the time the descriptor is returned - which is why no
-/// abort path can strand it at 0600. upstream: receiver.c:200-241.
+/// abort path can strand it at 0600. upstream: receiver.c:213-254.
 #[test]
 fn a_read_only_file_is_writable_and_its_mode_is_restored_on_return() {
     let dir = tempfile::tempdir().unwrap();
@@ -44,7 +44,7 @@ fn a_read_only_file_is_writable_and_its_mode_is_restored_on_return() {
 
 /// Upstream refuses rather than chmods when the file is already owner-writable:
 /// the EACCES came from an ACL or the parent directory, so a chmod cannot help
-/// and would risk dropping a special bit. upstream: receiver.c:224-230.
+/// and would risk dropping a special bit. upstream: receiver.c:237-243.
 #[test]
 fn an_owner_writable_file_is_refused_instead_of_chmodded() {
     let dir = tempfile::tempdir().unwrap();
@@ -61,7 +61,7 @@ fn an_owner_writable_file_is_refused_instead_of_chmodded() {
 
 /// The recovery pins an inode: `O_NOFOLLOW` refuses a symlink at the leaf, so a
 /// planted link cannot redirect the owner-write grant onto another file.
-/// upstream: receiver.c:216.
+/// upstream: receiver.c:229.
 #[test]
 fn a_symlink_at_the_leaf_is_refused_without_touching_its_target() {
     let dir = tempfile::tempdir().unwrap();
@@ -79,7 +79,7 @@ fn a_symlink_at_the_leaf_is_refused_without_touching_its_target() {
 /// Only a regular file is recoverable. The directory is planted 0555 so that it
 /// is *not* owner-writable: EACCES can then only come from the type check, which
 /// pins that the type check runs before the owner-write rule.
-/// upstream: receiver.c:219-222.
+/// upstream: receiver.c:232-235.
 #[test]
 fn a_non_regular_target_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -118,7 +118,7 @@ fn the_callers_truncate_choice_is_honoured() {
 /// The symlink is planted owned by *this* euid, which the walk trusts, so the
 /// refusal cannot come from ownership - it has to come from the walk running at
 /// all versus not. See the companion below for the discriminator.
-/// upstream: receiver.c:214 passes `one_inplace` into `secure_recv_open()`.
+/// upstream: receiver.c:227 passes `one_inplace` into `secure_recv_open()`.
 #[test]
 fn the_operator_walk_resolution_reaches_the_recovery() {
     let dir = tempfile::tempdir().unwrap();

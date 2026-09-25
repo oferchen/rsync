@@ -1,11 +1,11 @@
-# Line counts for every .c/.h/.py/.sh in rsync 3.5.0, the pinned upstream source.
+# Line counts for every .c/.h/.py/.sh in rsync 3.5.1, the pinned upstream source.
 # Lets the citation gate run where the source tree is absent (the required
-# nextest cell does not fetch it). rsync 3.5.0 is a released tarball and is
+# nextest cell does not fetch it). rsync 3.5.1 is a released tarball and is
 # immutable, so this cannot drift; it is regenerated only when the pin moves.
 # The key set is also the gate's answer to "does this upstream file exist", so
 # a name missing here is a citation defect, not a manifest gap.
 # Regenerate: cargo xtask citations --write-manifest  (needs the source present)
-access.c	306
+access.c	317
 acls.c	1510
 authenticate.c	474
 backup.c	449
@@ -16,10 +16,10 @@ checksum.c	821
 chmod.c	331
 cleanup.c	306
 clientname.c	538
-clientserver.c	1778
+clientserver.c	1799
 compat.c	903
-config.h	910
-configure.sh	14230
+config.h	916
+configure.sh	14217
 connection.c	49
 daemon-parm.h	397
 default-cvsignore.h	3
@@ -27,8 +27,8 @@ default-dont-compress.h	3
 delete.c	303
 errcode.h	64
 exclude.c	1997
-fileio.c	392
-flist.c	3760
+fileio.c	434
+flist.c	4003
 generator.c	2929
 getfsdev.c	22
 getgroups.c	62
@@ -39,7 +39,7 @@ help-rsyncd.h	16
 hlink.c	587
 ifuncs.h	112
 inums.h	57
-io.c	2731
+io.c	2769
 io.h	52
 itypes.h	71
 latest-year.h	1
@@ -68,10 +68,10 @@ lib/wildmatch.c	381
 lib/wildmatch.h	6
 loadparm.c	711
 log.c	963
-main.c	1959
+main.c	1986
 match.c	489
 old_versions/build_static.sh	128
-options.c	3327
+options.c	3337
 packaging/pkglib.py	262
 packaging/release.py	714
 packaging/solaris/build_pkg.sh	94
@@ -87,20 +87,20 @@ popt/poptint.h	158
 popt/poptparse.c	241
 popt/system.h	70
 progress.c	241
-proto.h	538
-receiver.c	1380
+proto.h	549
+receiver.c	1397
 rounding.c	38
 rounding.h	1
 rsync.c	995
-rsync.h	1546
+rsync.h	1548
 runtests.py	1024
-sender.c	818
-socket.c	1076
-support/install_deps_ubuntu.sh	11
+sender.c	821
+socket.c	1084
+support/install_deps_ubuntu.sh	12
 support/lsh.sh	37
 support/rrsh.sh	21
 support/savetransfer.c	175
-syscall.c	3975
+syscall.c	4156
 t_acl.c	532
 t_chmod_secure.c	156
 t_clean_fname.c	46
@@ -108,8 +108,8 @@ t_hashtable_overflow.c	50
 t_iwildmatch.c	44
 t_rename_secure.c	206
 t_safe_arg.c	56
-t_secure_relpath.c	231
-t_stub.c	132
+t_secure_relpath.c	230
+t_stub.c	134
 t_symlink_secure.c	160
 t_unsafe.c	47
 testrun.c	61
@@ -136,7 +136,7 @@ testsuite/backup-dir-symlink-race_test.py	127
 testsuite/backup-incremental_test.py	114
 testsuite/backup_test.py	133
 testsuite/bare-do-open-symlink-race_test.py	156
-testsuite/basis-xname-traversal_test.py	222
+testsuite/basis-xname-traversal_test.py	146
 testsuite/batch-file-symlink_test.py	219
 testsuite/batch-mode_test.py	95
 testsuite/batch-only-remove-source-regression_test.py	73
@@ -166,11 +166,13 @@ testsuite/compress-options_test.py	88
 testsuite/compress-zlib-insert_test.py	72
 testsuite/connect-prog-host-quoting_test.py	27
 testsuite/connect-prog-nested-singlequote-host-injection_test.py	105
+testsuite/contimeout-rsh_test.py	69
 testsuite/copy-dest-source-symlink_test.py	95
 testsuite/copy-dest-symlink-readleak_test.py	110
 testsuite/copy-xattrs-symlink-race_test.py	160
 testsuite/crtimes_test.py	38
 testsuite/cvs-exclude_test.py	46
+testsuite/daemon-access-idn_test.py	169
 testsuite/daemon-access-ip_test.py	64
 testsuite/daemon-access_test.py	82
 testsuite/daemon-argv-limit_test.py	46
@@ -209,7 +211,6 @@ testsuite/daemon-http-proxy_test.py	159
 testsuite/daemon-include-maxconn_test.py	118
 testsuite/daemon-leaf-type-race-fchmod_test.py	444
 testsuite/daemon-link-dest-escape_test.py	73
-testsuite/daemon-max-alloc-zero_test.py	83
 testsuite/daemon-module-chdir-symlink_test.py	99
 testsuite/daemon-module-options_test.py	146
 testsuite/daemon-module-private-parent_test.py	103
@@ -228,6 +229,7 @@ testsuite/daemon-scan-dir-escape_test.py	99
 testsuite/daemon-secrets-file-symlink_test.py	157
 testsuite/daemon-size-arg-overflow_test.py	76
 testsuite/daemon-standalone-detach_test.py	137
+testsuite/daemon-stdin-local-socket_test.py	35
 testsuite/daemon-strict-modes-matrix_test.py	141
 testsuite/daemon-subdir-climb-symlink_test.py	63
 testsuite/daemon-symlink-escape-matrix_test.py	286
@@ -257,7 +259,7 @@ testsuite/fake-super-acl-xattr_test.py	112
 testsuite/fake-super-backup-fifo-regression_test.py	207
 testsuite/file-to-file-mkpath-dry-run_test.py	62
 testsuite/files-from-depth_test.py	94
-testsuite/files-from-leak_test.py	181
+testsuite/files-from-leak_test.py	207
 testsuite/files-from-path-clamp_test.py	65
 testsuite/files-from_test.py	51
 testsuite/filter-depth_test.py	71
@@ -276,9 +278,11 @@ testsuite/hardlinks_test.py	113
 testsuite/hashsearch-chain_test.py	108
 testsuite/hashtable-overflow_test.py	37
 testsuite/highfd-hang_test.py	130
+testsuite/idn_test.py	186
 testsuite/inband-modname-leak_test.py	67
 testsuite/inplace_test.py	71
 testsuite/insecure-links-admin-optout_test.py	90
+testsuite/install-strip_test.py	97
 testsuite/io-noop-flood-recursion_test.py	90
 testsuite/io-nosend-flood-recursion_test.py	100
 testsuite/io-readargs-argv-nullwrite_test.py	90
@@ -301,11 +305,11 @@ testsuite/longdir_test.py	34
 testsuite/macos-setgid-ordinary-mode-regression_test.py	116
 testsuite/malicious-dot-dir-delete-scope_test.py	98
 testsuite/malicious-dot-file-delete-scope_test.py	94
-testsuite/malicious-sender-delete-scope_test.py	180
+testsuite/malicious-sender-delete-scope_test.py	188
 testsuite/malicious-server-partial-basis-symlink-overwrite_test.py	231
 testsuite/match-append-empty-nullmap_test.py	84
 testsuite/match-want-i-nolen_test.py	94
-testsuite/max-alloc-zero-rejected_test.py	9
+testsuite/max-alloc-zero_test.py	88
 testsuite/merge_test.py	89
 testsuite/metadata-depth_test.py	57
 testsuite/misc-coverage_test.py	125
@@ -349,15 +353,15 @@ testsuite/operator-path-write-batch_test.py	27
 testsuite/output-options_test.py	146
 testsuite/ownership-depth_test.py	121
 testsuite/partial-dir-abs-delta_test.py	76
-testsuite/partial-protected-regular-retry-linux_test.py	385
+testsuite/partial-protected-regular-retry-linux_test.py	512
 testsuite/partial-protected-regular-retry-policy_test.py	265
 testsuite/partial_nowrite_test.py	70
 testsuite/partial_test.py	139
 testsuite/password-file-symlink_test.py	155
 testsuite/peer-legacy-implied-delete-scope_test.py	122
 testsuite/perftest.py	506
-testsuite/preallocate_test.py	156
-testsuite/protected-regular_test.py	80
+testsuite/preallocate_test.py	184
+testsuite/protected-regular_test.py	86
 testsuite/proto-cleared-dirflist_test.py	85
 testsuite/proto-cleared-ndx_test.py	77
 testsuite/proto-hlink-flag-oob_test.py	88
@@ -372,6 +376,9 @@ testsuite/proxy-protocol-trusted-peer_test.py	46
 testsuite/proxy-response-header-too-long_test.py	10
 testsuite/proxy-response-line-too-long_test.py	102
 testsuite/prune-empty-dirs_test.py	45
+testsuite/pseudo-paths-daemon_test.py	226
+testsuite/pseudo-paths_test.py	365
+testsuite/read-batch-pipe_test.py	85
 testsuite/readonly-partial-abort-mode-regression_test.py	171
 testsuite/recv-discard-nullderef_test.py	126
 testsuite/recv-generator-acl-leak_test.py	68
@@ -380,6 +387,7 @@ testsuite/relative-implied-symlink_test.py	49
 testsuite/relative-implied_test.py	54
 testsuite/relative-mkpath-dir-symlink_test.py	64
 testsuite/relative-mkpath-symlink_test.py	74
+testsuite/relative-source-ancestor_test.py	296
 testsuite/relative-symlinked-parent-dotdot_test.py	37
 testsuite/relative-symlinked-parent_test.py	35
 testsuite/relative_test.py	111
@@ -403,17 +411,20 @@ testsuite/rrsync-no-overwrite-logfile_test.py	73
 testsuite/rrsync-no-overwrite-partial-dir_test.py	75
 testsuite/rrsync-pull-arg-shapes_test.py	220
 testsuite/rrsync-pull-delivers-content_test.py	105
+testsuite/rrsync-root-relative-paths_test.py	128
 testsuite/rrsync-sender-leaf-flip_test.py	136
 testsuite/rrsync-sender-parent-pin_test.py	184
 testsuite/rrsync-specials-denied_test.py	225
 testsuite/rrsync-symlink_test.py	151
+testsuite/rrsync-userns-procfs_test.py	145
 testsuite/rrsync-write-only-files-from_test.py	68
 testsuite/rsync-ssl-hostname-validation_test.py	59
 testsuite/rsync-ssl-openssl-hostname-check_test.py	58
 testsuite/rsync-ssl-stunnel-ca-required_test.py	56
 testsuite/rsync-ssl-stunnel-hostname-check_test.py	73
+testsuite/rsync-ssl-type-option_test.py	95
 testsuite/rsync_proto.py	1073
-testsuite/rsyncfns.py	2904
+testsuite/rsyncfns.py	2906
 testsuite/safe-arg-leak_test.py	22
 testsuite/safe-links-absolute-intree_test.py	86
 testsuite/safe-links-unsafe-def_test.py	130
@@ -422,12 +433,14 @@ testsuite/scanner-argv-bounds_test.py	50
 testsuite/scanner-batch-flag-mismatch_test.py	54
 testsuite/scanner-daemon-log-checksum_test.py	42
 testsuite/scanner-delete-delay-overread_test.py	34
+testsuite/search-only-destination_test.py	77
+testsuite/search-only-held-dirfd_test.py	215
 testsuite/secure-relpath-validation_test.py	30
 testsuite/sender-flist-symlink-leak_test.py	100
 testsuite/sender-readlink-atfd_test.py	54
 testsuite/sender-remove-source-relative-anchor_test.py	39
 testsuite/sender-remove-source-root-anchor_test.py	80
-testsuite/sender-remove-source-secure_test.py	70
+testsuite/sender-remove-source-secure_test.py	74
 testsuite/sender-scan-dir-escape_test.py	110
 testsuite/simd-checksum_test.py	20
 testsuite/size-filter_test.py	54
@@ -435,8 +448,9 @@ testsuite/skiplist-spec_test.py	174
 testsuite/source-change-size-continues_test.py	213
 testsuite/sparse_test.py	59
 testsuite/ssh-basic_test.py	56
-testsuite/stdio_daemon.py	63
+testsuite/stdio_daemon.py	74
 testsuite/stop-time_test.py	45
+testsuite/strict-basis_test.py	253
 testsuite/symlink-dest-backupdir_test.py	73
 testsuite/symlink-dirlink-basis_test.py	201
 testsuite/symlink-exclude-chdir-alias_test.py	61
@@ -448,7 +462,7 @@ testsuite/symlink-exclude-xattr_test.py	70
 testsuite/symlink-exclude_test.py	54
 testsuite/symlink-ignore_test.py	28
 testsuite/symlink-mknod-fakesuper-symlink-race_test.py	104
-testsuite/symlink-race-dest_test.py	76
+testsuite/symlink-race-dest_test.py	88
 testsuite/symlink-race-relative-dest_test.py	85
 testsuite/symlink-race-source_test.py	121
 testsuite/temp-dir-symlink-injection_test.py	143
@@ -463,6 +477,7 @@ testsuite/variety_test.py	237
 testsuite/wildmatch_test.py	49
 testsuite/write-batch-filter-injection_test.py	54
 testsuite/write-batch-quoting_test.py	54
+testsuite/write-touched-blocks_test.py	171
 testsuite/xattr-wire-cap_test.py	97
 testsuite/xattrs-depth_test.py	52
 testsuite/xattrs-hlink_test.py	265
@@ -473,8 +488,8 @@ tls.c	299
 token.c	1146
 trimslash.c	47
 uidlist.c	623
-usage.c	390
-util1.c	1974
+usage.c	395
+util1.c	2069
 util2.c	145
 version.h	2
 wildtest.c	228
@@ -489,7 +504,7 @@ zlib/gzguts.h	209
 zlib/inffast.c	319
 zlib/inffast.h	11
 zlib/inffixed.h	94
-zlib/inflate.c	1497
+zlib/inflate.c	1499
 zlib/inflate.h	126
 zlib/inftrees.c	300
 zlib/inftrees.h	62

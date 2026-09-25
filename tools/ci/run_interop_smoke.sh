@@ -194,7 +194,7 @@ pick_port() {
 # workflow cancels it, ~25 minutes later, with no output.
 #
 # `--contimeout` bounds the connect itself (options.c:831 declares it;
-# socket.c:422 arms a SIGALRM around the connect) and `--timeout` bounds
+# socket.c:430 arms a SIGALRM around the connect) and `--timeout` bounds
 # everything after it, so each iteration costs at most a couple of
 # seconds and the 15-second deadline means what it says.
 wait_for_port() {

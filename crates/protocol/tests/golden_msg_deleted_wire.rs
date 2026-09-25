@@ -13,7 +13,7 @@
 //!   tag byte is `7 + 101 = 108 = 0x6C`.
 //! - `log.c:866-869` - `send_msg(MSG_DELETED, fname, len, ...)`; a directory
 //!   bumps `len` to include its trailing NUL (`log.c:867-868`).
-//! - `io.c:1616` - the reader treats a trailing NUL as a directory marker.
+//! - `io.c:1642` - the reader treats a trailing NUL as a directory marker.
 
 use std::io::Cursor;
 

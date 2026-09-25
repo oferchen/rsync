@@ -475,8 +475,8 @@ mod config_helpers_tests {
 
     // WHY: operators centrally manage trusted hosts via netgroups. A `@name`
     // token must parse into the dedicated netgroup variant (upstream
-    // access.c:41-42) rather than a literal hostname, and the name must be
-    // lowercased to match upstream's `strlower(list2)` (access.c:251).
+    // access.c:44-45) rather than a literal hostname, and the name must be
+    // lowercased to match upstream's `strlower(list2)` (access.c:262).
     #[test]
     fn host_pattern_parse_netgroup_token() {
         let pattern = HostPattern::parse("@Trusted").unwrap();
@@ -484,7 +484,7 @@ mod config_helpers_tests {
     }
 
     // WHY: upstream requires `tok[1]` before treating `@` as a netgroup
-    // (access.c:41). A bare `@` is therefore not a netgroup; it falls through
+    // (access.c:44). A bare `@` is therefore not a netgroup; it falls through
     // to an ordinary hostname token that can never match a real hostname.
     #[test]
     fn host_pattern_parse_bare_at_is_not_netgroup() {
@@ -557,7 +557,7 @@ mod config_helpers_tests {
     }
 
     /// WHY: upstream matches every `hosts allow`/`hosts deny` token with
-    /// `iwildmatch()` (access.c:46), so a bracket expression is a glob. oc used
+    /// `iwildmatch()` (access.c:57), so a bracket expression is a glob. oc used
     /// to classify a bracket token as a literal name, which no real hostname
     /// can equal - a deny rule written `bad[0-9].example.com` matched nothing
     /// and the access check failed open.
@@ -574,7 +574,7 @@ mod config_helpers_tests {
     }
 
     /// WHY: the config token is lower-cased at parse (mirroring upstream's
-    /// `strlower(list2)`, access.c:257) and the resolved peer name is
+    /// `strlower(list2)`, access.c:268) and the resolved peer name is
     /// lower-cased at lookup, so an operator's capitalisation must not change
     /// which peers a rule covers - on either side, and inside brackets.
     #[test]
@@ -653,8 +653,8 @@ mod config_helpers_tests {
 
     #[test]
     fn proxy_protocol_with_no_trusted_hosts_rejects_every_peer() {
-        // upstream: access.c:302-303 `if (!list || !*list) return 0;` - the
-        // empty list is fail-closed, and clientserver.c:1750 warns about it
+        // upstream: access.c:313-314 `if (!list || !*list) return 0;` - the
+        // empty list is fail-closed, and clientserver.c:1771 warns about it
         // precisely because it is silent otherwise.
         let policy = ProxyProtocolPolicy::new(true, Vec::new());
 
@@ -696,7 +696,7 @@ mod config_helpers_tests {
 
     #[test]
     fn a_hostname_trusted_proxy_token_matches_no_real_peer() {
-        // upstream: access.c:302 sets `allow_forward_dns = 0` and
+        // upstream: access.c:313 sets `allow_forward_dns = 0` and
         // clientserver.c:1391-1393 passes the `UNDETERMINED` sentinel rather
         // than a resolved name, so `match_hostname` can only ever compare a
         // token against that sentinel. A name-based trusted-proxy token is

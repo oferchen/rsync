@@ -566,7 +566,7 @@ fn finish_fails_without_path() {
 }
 
 /// A relative path under `use chroot` is RESOLVED against the current
-/// directory, not refused. upstream: `normalize_path` (util1.c:1409-1416)
+/// directory, not refused. upstream: `normalize_path` (util1.c:1504-1511)
 /// makes a non-`/` path absolute by joining it onto `curr_dir`, and
 /// `rsync_module()` routes the chroot arm through it (clientserver.c:898-916).
 #[test]

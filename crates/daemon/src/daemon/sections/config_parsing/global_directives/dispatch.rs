@@ -529,7 +529,7 @@ fn apply_global_directive(
             store_global_directive(&mut state.proxy_protocol, parsed, canonical, line_number);
         }
         "proxyprotocolhosts" => {
-            // upstream: access.c:300-306 `allow_proxy_protocol_peer()` reads
+            // upstream: access.c:311-317 `allow_proxy_protocol_peer()` reads
             // the list with `if (!list || !*list) return 0;`, so an empty
             // value is legal config that trusts nobody - which the empty
             // pattern set expresses, since nothing matches against it.
@@ -611,7 +611,7 @@ fn apply_global_directive(
         // value is the default every module inherits - that is the
         // `module_defaults` half. But `FN_LOCAL_STRING(lp_log_file, log_file)`
         // also resolves to the global value at `module_id < 0`, and
-        // `daemon_main` calls `log_init(0)` (clientserver.c:1768) at startup,
+        // `daemon_main` calls `log_init(0)` (clientserver.c:1789) at startup,
         // before any connection selects a module. That startup read is the
         // `state.log_file` half, and it is what opens the daemon-wide log that
         // carries the listening banner and every pre-module diagnostic

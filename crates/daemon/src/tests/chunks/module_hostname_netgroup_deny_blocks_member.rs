@@ -6,7 +6,7 @@
 /// block members. Verifying a non-member is still admitted proves the deny is
 /// membership-scoped, not a blanket refusal.
 ///
-/// upstream: access.c:41-42 via `access_match` over the deny list - a matching
+/// upstream: access.c:44-45 via `access_match` over the deny list - a matching
 /// `@netgroup` deny token returns 0 (access denied).
 #[test]
 fn module_hostname_netgroup_deny_blocks_member() {

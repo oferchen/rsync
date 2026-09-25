@@ -45,33 +45,33 @@ upstream: io.c:101-110.
 
 | construct | meaning | anchor |
 |---|---|---|
-| `PIO_NEED_INPUT` / `PIO_NEED_OUTROOM` / `PIO_NEED_MSGROOM` | what this `perform_io` call is waiting for; mutually exclusive | io.c:189-191 |
-| `PIO_NEED_FLAGS` | the mask of those three | io.c:196 |
-| `IN_MULTIPLEXED` | `in_multiplexed != 0` | io.c:185 |
-| `IN_MULTIPLEXED_AND_READY` | `in_multiplexed > 0` | io.c:186 |
-| read-error branch | reports and exits; **does not drain** | io.c:900-907 |
-| write-error branch | reports, **drains**, then exits | io.c:943-949 |
-| `drain_multiplex_messages()` | the drain itself | io.c:1902-1918 |
-| no-fd-for-output branch | the **second** drain site | io.c:816-822 |
+| `PIO_NEED_INPUT` / `PIO_NEED_OUTROOM` / `PIO_NEED_MSGROOM` | what this `perform_io` call is waiting for; mutually exclusive | io.c:207-209 |
+| `PIO_NEED_FLAGS` | the mask of those three | io.c:214 |
+| `IN_MULTIPLEXED` | `in_multiplexed != 0` | io.c:203 |
+| `IN_MULTIPLEXED_AND_READY` | `in_multiplexed > 0` | io.c:204 |
+| read-error branch | reports and exits; **does not drain** | io.c:918-925 |
+| write-error branch | reports, **drains**, then exits | io.c:961-967 |
+| `drain_multiplex_messages()` | the drain itself | io.c:1940-1956 |
+| no-fd-for-output branch | the **second** drain site | io.c:834-840 |
 
 The asymmetry between the two error branches is deliberate and worth stating:
-the read branch (io.c:900-907) exits without draining, because if the *read* is
+the read branch (io.c:918-925) exits without draining, because if the *read* is
 what failed there is nothing left to drain. Only the write branch drains.
 
 ### `in_multiplexed` is a tri-state, and the third state is the point
 
 It is an `int`, not a flag:
 
-- `0` - raw mode. Set by `io_end_multiplex_in` (io.c:2677).
+- `0` - raw mode. Set by `io_end_multiplex_in` (io.c:2715).
 - `1` - multiplexed, not currently inside a message. Set by
-  `io_start_multiplex_in` (io.c:2666) and restored at **every** exit arm of
-  `read_a_msg` (io.c:1687, :1693, :1699, :1710, :1716, :1738, :1746, :1791,
+  `io_start_multiplex_in` (io.c:2704) and restored at **every** exit arm of
+  `read_a_msg` (io.c:1713, :1693, :1699, :1710, :1716, :1738, :1746, :1791,
   :1803, :1817, :1845, :1861).
-- `-1` - **inside `read_a_msg`**. Set once at its top (io.c:1665).
+- `-1` - **inside `read_a_msg`**. Set once at its top (io.c:1691).
 
 So `IN_MULTIPLEXED_AND_READY` (`> 0`) is a **reentrancy guard**, not a
 readiness hint: it means "not already inside `read_a_msg`". `read_a_msg` asserts
-the invariant on the way out (`assert(iobuf.in_multiplexed > 0)`, io.c:1899).
+the invariant on the way out (`assert(iobuf.in_multiplexed > 0)`, io.c:1937).
 
 This is the single most important thing to carry over. Modelling it as a `bool`
 collapses `1` and `-1` into "true" and makes the drain re-enter the reader from
@@ -89,7 +89,7 @@ static void drain_multiplex_messages(void)
 }
 ```
 
-upstream: io.c:1902-1918, loop condition at io.c:1904. Two properties are
+upstream: io.c:1940-1956, loop condition at io.c:1942. Two properties are
 load-bearing:
 
 1. **It never blocks.** The loop condition is `iobuf.in.len` - bytes *already
@@ -99,8 +99,8 @@ load-bearing:
    message the usual way, so `MSG_ERROR_XFER` prints and `MSG_ERROR_EXIT`
    records the peer's exit code. The drain adds no rendering of its own.
 
-Both call sites set `msgs2stderr = 1` immediately before draining (io.c:818,
-io.c:944) so the drained messages are written locally rather than forwarded to a
+Both call sites set `msgs2stderr = 1` immediately before draining (io.c:836,
+io.c:962) so the drained messages are written locally rather than forwarded to a
 peer that is no longer there.
 
 ### The write-error branch in full
@@ -115,15 +115,15 @@ drain_multiplex_messages();
 exit_cleanup(RERR_SOCKETIO);
 ```
 
-upstream: io.c:943-949. Note the ordering: upstream prints *its own* write error
+upstream: io.c:961-967. Note the ordering: upstream prints *its own* write error
 first and drains second. In the measurement above the peer's message appeared
 *before* the write error - because it had already been read by an earlier
 `perform_io` pass, not by this drain. Both orderings are upstream-consistent;
 the drain is the backstop, not the primary path.
 
-`out_fd = -2` is a sentinel distinct from `-1`: `whine_about_eof` (io.c:264)
-keys off it, and both drain sites check it (io.c:820, and the read side sets
-`in_fd = -2` at io.c:893).
+`out_fd = -2` is a sentinel distinct from `-1`: `whine_about_eof` (io.c:282)
+keys off it, and both drain sites check it (io.c:838, and the read side sets
+`in_fd = -2` at io.c:911).
 
 ### Where the exit code comes from
 

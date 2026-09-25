@@ -12,7 +12,7 @@ impl ClientConfig {
     /// Returns the `--port=PORT` default for daemon targets that name no port.
     ///
     /// `None` means the operator supplied no `--port`, so the connection falls
-    /// back to 873 (upstream `RSYNC_PORT`, `main.c:1591`).
+    /// back to 873 (upstream `RSYNC_PORT`, `main.c:1609`).
     #[must_use]
     #[doc(alias = "--port")]
     pub const fn daemon_port(&self) -> Option<u16> {
@@ -152,7 +152,7 @@ impl ClientConfig {
     /// that many seconds. Upstream applies the same `io_timeout` uniformly to
     /// every transport (the SSH pipe included) via `set_io_timeout(io_timeout)`.
     ///
-    /// upstream: options.c:2369 `set_io_timeout(io_timeout)`, io.c:1148-1160.
+    /// upstream: options.c:2378 `set_io_timeout(io_timeout)`, io.c:1166-1178.
     #[must_use]
     pub fn ssh_io_timeout(&self) -> Option<std::time::Duration> {
         self.timeout
@@ -246,7 +246,7 @@ impl ClientConfig {
     /// old-args, and `None` uses the default (disabled unless `RSYNC_OLD_ARGS`
     /// is set in the environment).
     ///
-    /// upstream: options.c:1642 OPT_OLD_ARGS, `RSYNC_OLD_ARGS` env var.
+    /// upstream: options.c:1648 OPT_OLD_ARGS, `RSYNC_OLD_ARGS` env var.
     #[doc(alias = "--old-args")]
     #[doc(alias = "--no-old-args")]
     pub const fn old_args(&self) -> Option<u8> {
@@ -352,7 +352,7 @@ mod tests {
     fn ssh_io_timeout_maps_positive_timeout_to_seconds() {
         // WHY: --timeout N must reach the SSH stall watchdog so a hung remote
         // aborts after N seconds instead of hanging the client forever.
-        // upstream: options.c:815 --timeout sets io_timeout; options.c:2369
+        // upstream: options.c:815 --timeout sets io_timeout; options.c:2378
         // set_io_timeout applies it to every transport, the SSH pipe included.
         let mut config = default_config();
         config.timeout = TransferTimeout::Seconds(std::num::NonZeroU64::new(45).unwrap());
@@ -366,7 +366,7 @@ mod tests {
     fn ssh_io_timeout_absent_or_disabled_stays_off() {
         // WHY: io_timeout == 0 (unset or --no-timeout) disables the check, so
         // the SSH watchdog must remain in its default-off state and never abort
-        // an otherwise-healthy transfer. upstream: io.c:179-180 - `check_timeout()`
+        // an otherwise-healthy transfer. upstream: io.c:197-198 - `check_timeout()`
         // returns immediately on `if (!io_timeout)`.
         let default = default_config();
         assert_eq!(default.ssh_io_timeout(), None);

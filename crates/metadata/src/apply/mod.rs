@@ -83,7 +83,7 @@ impl<'a> ParentWalk<'a> {
 /// Upstream enters the destination operand once with a plain `change_dir()`
 /// (`main.c` `get_local_name()`) and resolves each entry's parent relative to
 /// that cwd through `secure_relative_open(NULL, dirpath, ...)`
-/// (`syscall.c:1106` `do_lchown_at()`, likewise `do_chmod_at()` and the
+/// (`syscall.c:1245` `do_lchown_at()`, likewise `do_chmod_at()` and the
 /// utimes wrapper). So the confinement covers only the names below the root;
 /// the operator's own path is never re-walked. oc keeps absolute paths, and
 /// walking the fused path with `RESOLVE_NO_SYMLINKS` refuses a symlink the
@@ -513,7 +513,7 @@ pub(crate) fn windows_readonly_differs(entry_permissions: u32, current_readonly:
 ///   differs)
 ///
 /// `modify_window` carries the `--modify-window` tolerance so the mtime leg
-/// matches upstream `mtime_differs()` -> `same_time()` (util1.c:1478) exactly:
+/// matches upstream `mtime_differs()` -> `same_time()` (util1.c:1573) exactly:
 /// the default zero window keeps whole-second equality, a positive window
 /// tolerates that many seconds of drift, and a negative window compares
 /// nanoseconds too. Passing the same `ModifyWindow` the quick-check used keeps
@@ -564,7 +564,7 @@ pub fn metadata_unchanged(
         // upstream: generator.c:492-493 - any_time_differs(sxp, file, fname)
         // -> mtime_differs() -> same_time(), so the `--modify-window` tolerance
         // governs this leg. Pass the sub-second component from both sides; a
-        // negative window compares it (util1.c:1482) while the default zero
+        // negative window compares it (util1.c:1577) while the default zero
         // window reduces to whole-second equality.
         if options.times()
             && !modify_window.same_time(
@@ -603,7 +603,7 @@ pub fn metadata_unchanged(
 
         if options.times() {
             let current_mtime = filetime::FileTime::from_last_modification_time(cached_meta);
-            // upstream: util1.c:1478 same_time() - apply the `--modify-window`
+            // upstream: util1.c:1573 same_time() - apply the `--modify-window`
             // tolerance rather than an exact FileTime compare.
             if !modify_window.same_time(
                 current_mtime.unix_seconds(),
@@ -624,7 +624,7 @@ pub fn metadata_unchanged(
         }
     }
 
-    // upstream: flist.c:996-997 - the `--chmod` tweak rides the flist mode,
+    // upstream: flist.c:1221-1222 - the `--chmod` tweak rides the flist mode,
     // and dest_mode() (rsync.c:470-471) then keeps an EXISTING destination's
     // own permission bits when `!preserve_perms`. On this quick-check path
     // the destination exists by definition, so only the `--perms` compare
@@ -687,13 +687,13 @@ pub fn apply_symlink_metadata(
 /// `rsync.c:806-822` calls `do_chmod_at()` for every file type with no
 /// `S_ISLNK` gate (the comment at `rsync.c:819`, "ret == 1 if symlink could
 /// not be set", shows a failed symlink chmod is a soft outcome). All the
-/// portability lives in `syscall.c:1566-1604 do_chmod()`, which tries
+/// portability lives in `syscall.c:1705-1743 do_chmod()`, which tries
 /// `lchmod()`, falls through to `setattrlist(FSOPT_NOFOLLOW)` for `S_ISLNK`,
 /// and only then gives up.
 ///
 /// The mode itself never carries a `--chmod` tweak for a link: upstream gates
-/// all three `tweak_mode()` sites on `!S_ISLNK` (flist.c:1741-1742,
-/// flist.c:996-997, rsync.c:647-648).
+/// all three `tweak_mode()` sites on `!S_ISLNK` (flist.c:1966-1967,
+/// flist.c:1221-1222, rsync.c:647-648).
 pub fn apply_symlink_metadata_with_options(
     destination: &Path,
     metadata: &fs::Metadata,
@@ -752,10 +752,10 @@ pub fn apply_symlink_metadata_with_options_and_pre_transfer(
 ///
 /// - `rsync.c:806-822` - upstream chmods every file type with no `S_ISLNK`
 ///   gate; oc mirrors this on platforms where [`crate::CAN_CHMOD_SYMLINK`]
-///   holds. Symlink portability lives in `syscall.c:1566-1604 do_chmod()`
+///   holds. Symlink portability lives in `syscall.c:1705-1743 do_chmod()`
 ///   (`lchmod()`, then `setattrlist(FSOPT_NOFOLLOW)`). The mode reaching that
-///   chmod is never `--chmod`-tweaked for a link (flist.c:1741-1742,
-///   flist.c:996-997 and rsync.c:647-648 all gate on `!S_ISLNK`).
+///   chmod is never `--chmod`-tweaked for a link (flist.c:1966-1967,
+///   flist.c:1221-1222 and rsync.c:647-648 all gate on `!S_ISLNK`).
 /// - `rsync.c:set_times()` - uses `lutimes` when the target is a symlink
 /// - `generator.c:1604` - `set_file_attrs(fname, file, NULL, NULL, 0)` runs
 ///   after `atomic_create` -> `do_symlink` so the new symlink's mtime matches

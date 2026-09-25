@@ -7,8 +7,8 @@
 //! and works with every rsync version because a zero-length data frame adds no
 //! bytes to the raw data stream and is silently absorbed by the peer.
 //!
-//! upstream: `io.c:maybe_send_keepalive()` (io.c:1453-1481) sends
-//! `send_msg(MSG_DATA, "", 0, 0)`; the rationale is documented at io.c:1446-1452.
+//! upstream: `io.c:maybe_send_keepalive()` (io.c:1479-1507) sends
+//! `send_msg(MSG_DATA, "", 0, 0)`; the rationale is documented at io.c:1472-1478.
 //!
 //! These tests verify:
 //!
@@ -50,7 +50,7 @@ fn keepalive_header_encodes_data_tag() {
     let tag = (raw_header >> 24) as u8;
     let payload_len = raw_header & 0x00FF_FFFF;
 
-    // upstream: io.c:1473 send_msg(MSG_DATA, "", 0, 0). MSG_DATA is code 0, so
+    // upstream: io.c:1499 send_msg(MSG_DATA, "", 0, 0). MSG_DATA is code 0, so
     // the multiplex tag is MPLEX_BASE (7), NOT the legacy MSG_NOOP tag (49).
     assert_eq!(
         tag,

@@ -59,7 +59,7 @@ pub fn write_varint<W: Write + ?Sized>(writer: &mut W, value: i32) -> io::Result
     writer.write_all(&bytes[..len])
 }
 
-/// Maximum vstring payload length. Upstream `io.c:2301-2307` aborts with
+/// Maximum vstring payload length. Upstream `io.c:2339-2345` aborts with
 /// `RERR_PROTOCOL` for a length above `0x7FFF`.
 const VSTRING_MAX_LEN: usize = 0x7FFF;
 
@@ -78,7 +78,7 @@ const VSTRING_MAX_LEN: usize = 0x7FFF;
 ///
 /// # Upstream Reference
 ///
-/// - `io.c:2297-2315` - `write_vstring()`
+/// - `io.c:2335-2353` - `write_vstring()`
 #[inline]
 pub fn write_vstring<W: Write + ?Sized>(writer: &mut W, bytes: &[u8]) -> io::Result<()> {
     let len = bytes.len();
@@ -88,7 +88,7 @@ pub fn write_vstring<W: Write + ?Sized>(writer: &mut W, bytes: &[u8]) -> io::Res
             format!("attempting to send over-long vstring ({len} > {VSTRING_MAX_LEN})"),
         ));
     }
-    // upstream: io.c:2299-2312 - one length byte for len <= 0x7F, else the high
+    // upstream: io.c:2337-2350 - one length byte for len <= 0x7F, else the high
     // byte carries `len / 0x100 + 0x80` followed by the low byte.
     if len > 0x7F {
         writer.write_all(&[(len / 0x100 + 0x80) as u8, (len & 0xFF) as u8])?;
@@ -210,10 +210,10 @@ mod vstring_tests {
 
     /// Golden bytes for the vstring length prefix. WHY: the itemize xname (fuzzy
     /// basis basename, hard-link leader name) is framed with this exact encoding,
-    /// and the receiver decodes it as a 1-or-2-byte prefix (`io.c:2004`
+    /// and the receiver decodes it as a 1-or-2-byte prefix (`io.c:2042`
     /// `read_vstring`). A varint prefix would agree only for `len <= 0x7F` and
     /// silently desync the wire for any longer name, so these cases pin the
-    /// boundary bytes upstream `io.c:2297` emits.
+    /// boundary bytes upstream `io.c:2335` emits.
     #[test]
     fn write_vstring_golden_bytes() {
         let mut buf = Vec::new();
@@ -254,7 +254,7 @@ mod vstring_tests {
         assert_eq!(buf.len(), 2 + 0x1234);
     }
 
-    /// upstream: io.c:2301-2307 aborts with RERR_PROTOCOL for len > 0x7FFF; oc
+    /// upstream: io.c:2339-2345 aborts with RERR_PROTOCOL for len > 0x7FFF; oc
     /// surfaces the same over-long case as an error rather than emitting a
     /// truncated prefix that would desync the reader.
     #[test]

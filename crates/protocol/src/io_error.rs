@@ -32,14 +32,14 @@ pub const IOERR_DEL_LIMIT: i32 = 1 << 2;
 /// to steer local decisions. Apply it at each point the value is read off the
 /// wire, not at the consumers.
 ///
-/// upstream: `rsync.h:200` - `IOERR_VALID_MASK`, applied at `io.c:1706`
-/// (`MSG_IO_ERROR`) and `flist.c:2950`, `flist.c:2968`, `flist.c:3071`
+/// upstream: `rsync.h:200` - `IOERR_VALID_MASK`, applied at `io.c:1744`
+/// (`MSG_IO_ERROR`) and `flist.c:3193`, `flist.c:3211`, `flist.c:3314`
 /// (`recv_file_list()`).
 pub const IOERR_VALID_MASK: i32 = IOERR_GENERAL | IOERR_VANISHED | IOERR_DEL_LIMIT;
 
 /// Reduces a peer-supplied `io_error` value to the defined `IOERR_*` bits.
 ///
-/// upstream: `flist.c:2950` - `io_error |= err & IOERR_VALID_MASK;`
+/// upstream: `flist.c:3193` - `io_error |= err & IOERR_VALID_MASK;`
 #[must_use]
 pub const fn sanitize_peer_io_error(value: i32) -> i32 {
     value & IOERR_VALID_MASK
@@ -92,10 +92,10 @@ mod tests {
 /// exactly on `--ignore-errors`:
 ///
 /// * a value the PEER sent in the file-list trailer is accumulated only when
-///   `ignore_errors` is clear - `flist.c:2949`, `:2967`, `:3070` are all
+///   `ignore_errors` is clear - `flist.c:3192`, `:2967`, `:3070` are all
 ///   `if (!ignore_errors) io_error |= err & IOERR_VALID_MASK`;
 /// * a value this side generated while decoding is accumulated unconditionally
-///   - `flist.c:841`'s filename-transcode failure has no `ignore_errors` check.
+///   - `flist.c:1066`'s filename-transcode failure has no `ignore_errors` check.
 ///
 /// Storing both in one accumulator is what let four of five consumers apply the
 /// wrong rule, so the rule is expressed here and consumers are tested against
@@ -115,7 +115,7 @@ mod combine_tests {
     /// The `(peer=set, local=0, ignore=true)` row is the one that regressed:
     /// four of five drains re-admitted the peer value after the gate had
     /// filtered it, so a peer-reported error still reached the exit code under
-    /// `--ignore-errors`. upstream: flist.c:2949/2967/3070.
+    /// `--ignore-errors`. upstream: flist.c:3192/3210/3313.
     #[test]
     fn ignore_errors_suppresses_only_the_peer_half() {
         for &(peer, local, ignore, want) in &[

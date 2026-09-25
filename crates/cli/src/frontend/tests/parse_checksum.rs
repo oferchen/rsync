@@ -16,7 +16,7 @@ fn parse_checksum_seed_argument_accepts_max_i32() {
 /// upstream: options.c:861 uses `POPT_ARG_INT`, which popt bounds to
 /// `INT_MIN..=INT_MAX` (popt/popt.c poptSaveArg returns `POPT_ERROR_OVERFLOW`
 /// otherwise). Accepting a larger value would have us forward
-/// `--checksum-seed=4294967295` (options.c:3047) to a peer that answers
+/// `--checksum-seed=4294967295` (options.c:3057) to a peer that answers
 /// "number too large or too small" and exits 1.
 #[test]
 fn parse_checksum_seed_argument_rejects_above_i32_max() {

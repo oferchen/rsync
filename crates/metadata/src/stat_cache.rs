@@ -43,7 +43,7 @@ use std::path::{Path, PathBuf};
 /// `Option<&fs::Metadata>` down the call chain, so the stat it consults belongs
 /// to the operation in flight rather than to a map with an unbounded lifetime.
 /// That mirrors upstream, which passes a `stat_x *` into `set_file_attrs()` and
-/// re-stats where staleness would be dangerous (`sender.c:428`, `failed_op =
+/// re-stats where staleness would be dangerous (`sender.c:429`, `failed_op =
 /// "re-lstat"`). Upstream keeps no pathname-keyed metadata cache at all.
 ///
 /// Any future wiring must key on a resolved handle - a held fd, or an anchor

@@ -1,10 +1,10 @@
 //! Regression coverage for the `--stats` "created dirs" tally of the
 //! destination root on a fresh, non-relative transfer.
 //!
-//! Upstream `main.c:802-808` (`get_local_name`) pre-flight-mkdirs the
+//! Upstream `main.c:815-821` (`get_local_name`) pre-flight-mkdirs the
 //! destination root and unconditionally prints `created directory <dest>`, but
 //! only flags the flist top entry `FLAG_DIR_CREATED` - and thus counts the root
-//! toward `stats.created_dirs` (receiver.c:733-738) - when that entry's basename
+//! toward `stats.created_dirs` (receiver.c:749-754) - when that entry's basename
 //! is `"."`:
 //!
 //! ```c

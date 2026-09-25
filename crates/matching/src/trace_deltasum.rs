@@ -15,7 +15,7 @@
 //! - `receiver.c` - basis map, literal/match application, file_sum receipt.
 //!
 //! Upstream forwards only `--info` words to the remote server
-//! (`options.c:3117-3120` builds the server's output option from `info_words`
+//! (`options.c:3127-3130` builds the server's output option from `info_words`
 //! alone), so DELTASUM output is CLIENT-side only: a pull prints the
 //! generator+receiver lines, a push prints the sender lines, and a local copy
 //! prints both sets. The server-side roles stay silent unless the server
@@ -47,9 +47,9 @@
 //!   merged [`crate::DeltaScript`].
 //! - The local fused delta loop writes the reconstructed file directly and
 //!   never computes or transfers a whole-file checksum, so it has no analogue
-//!   for `sending file_sum` (match.c:465) or `got file_sum` (receiver.c:672).
+//!   for `sending file_sum` (match.c:465) or `got file_sum` (receiver.c:688).
 //! - The local path has no analogue for the sender's `receive_sums()` block
-//!   trace (`chunk[%d] len=%d offset=%s sum1=%08x`, sender.c:382-386): nothing
+//!   trace (`chunk[%d] len=%d offset=%s sum1=%08x`, sender.c:383-387): nothing
 //!   is received: the one in-process signature index serves both roles. Upstream
 //!   prints those 375 lines locally only because its local run really does drive
 //!   two processes over a socketpair. Nor does it have one for `generating and
@@ -200,7 +200,7 @@ pub fn match_totals_line(matches: u64, hash_hits: u64, false_alarms: u64, data: 
 /// once-per-run sender totals.
 ///
 /// upstream: match.c:479-487 `match_report()`, called after `send_files()`
-/// finishes (sender.c:815). The LOCAL copy path renders this line directly
+/// finishes (sender.c:818). The LOCAL copy path renders this line directly
 /// from the client summary (`cli::frontend::progress::render`) to keep
 /// upstream's position between the name list and the summary trailer; this
 /// function is the local emitter for a CLIENT-side network sender. A
@@ -220,7 +220,7 @@ pub fn trace_match_totals(matches: u64, hash_hits: u64, false_alarms: u64, data:
 /// Level 3 `count=%s n=%ld rem=%ld` - the sender's view of the received sum
 /// header.
 ///
-/// upstream: sender.c:348-350 `receive_sums()`.
+/// upstream: sender.c:349-351 `receive_sums()`.
 #[inline]
 pub fn trace_receive_sums_head(count: u64, block_length: usize, remainder: u32) {
     debug_log!(
@@ -233,7 +233,7 @@ pub fn trace_receive_sums_head(count: u64, block_length: usize, remainder: u32) 
 /// Level 3 `chunk[%d] len=%d offset=%s sum1=%08x` - one received signature
 /// block on the sender.
 ///
-/// upstream: sender.c:382-386 `receive_sums()`.
+/// upstream: sender.c:383-387 `receive_sums()`.
 #[inline]
 pub fn trace_receive_sums_chunk(i: u64, len: usize, offset: u64, sum1: u32) {
     debug_log!(
@@ -246,7 +246,7 @@ pub fn trace_receive_sums_chunk(i: u64, len: usize, offset: u64, sum1: u32) {
 /// Level 2 `send_files mapped %s%s%s of size %s` - the sender opened its
 /// source for scanning.
 ///
-/// upstream: sender.c:760-763 `send_files()` (the `%s%s%s` is
+/// upstream: sender.c:762-765 `send_files()` (the `%s%s%s` is
 /// path/slash/fname; oc passes the joined path).
 #[inline]
 pub fn trace_send_files_mapped(path: &dyn std::fmt::Display, size: u64) {
@@ -256,7 +256,7 @@ pub fn trace_send_files_mapped(path: &dyn std::fmt::Display, size: u64) {
 /// Level 2 `calling match_sums %s%s%s` - the sender is entering the delta
 /// scan for this file.
 ///
-/// upstream: sender.c:768-769 `send_files()`.
+/// upstream: sender.c:770-771 `send_files()`.
 #[inline]
 pub fn trace_calling_match_sums(path: &dyn std::fmt::Display) {
     debug_log!(Deltasum, 2, "calling match_sums {path}");
@@ -315,7 +315,7 @@ pub fn trace_gen_chunk(i: u64, offset: u64, len: usize, sum1: u32) {
 /// Level 2 `recv mapped %s of size %s` - the receiver opened the basis it
 /// will copy matched blocks from.
 ///
-/// upstream: receiver.c:498-501 `receive_data()`.
+/// upstream: receiver.c:514-517 `receive_data()`.
 #[inline]
 pub fn trace_recv_mapped(path: &dyn std::fmt::Display, size: u64) {
     debug_log!(Deltasum, 2, "recv mapped {path} of size {size}");
@@ -324,7 +324,7 @@ pub fn trace_recv_mapped(path: &dyn std::fmt::Display, size: u64) {
 /// Level 3 `data recv %d at %s` - a literal run arrived at output offset
 /// `offset`.
 ///
-/// upstream: receiver.c:552-555 `receive_data()`.
+/// upstream: receiver.c:568-571 `receive_data()`.
 #[inline]
 pub fn trace_data_recv(len: usize, offset: u64) {
     debug_log!(Deltasum, 3, "data recv {len} at {offset}");
@@ -334,7 +334,7 @@ pub fn trace_data_recv(len: usize, offset: u64) {
 /// applied from basis offset `offset2` at output offset `offset`; `seek` adds
 /// upstream's ` (seek)` marker for the in-place skip fast path.
 ///
-/// upstream: receiver.c:609-614 `receive_data()`.
+/// upstream: receiver.c:625-630 `receive_data()`.
 #[inline]
 pub fn trace_recv_chunk(i: u64, len: usize, offset2: u64, offset: u64, seek: bool) {
     debug_log!(
@@ -348,7 +348,7 @@ pub fn trace_recv_chunk(i: u64, len: usize, offset2: u64, offset: u64, seek: boo
 /// Level 2 `got file_sum` - the receiver consumed the sender's whole-file
 /// checksum trailer.
 ///
-/// upstream: receiver.c:671-673 `receive_data()`.
+/// upstream: receiver.c:687-689 `receive_data()`.
 #[inline]
 pub fn trace_got_file_sum() {
     debug_log!(Deltasum, 2, "got file_sum");

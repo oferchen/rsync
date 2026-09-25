@@ -294,7 +294,7 @@ mod tests {
         let result = codec.decode(&mut buf);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        // upstream: io.c:1667 - an incoming multiplexed message whose byte count
+        // upstream: io.c:1693 - an incoming multiplexed message whose byte count
         // exceeds the receive buffer prints "multiplexing overflow" and calls
         // exit_cleanup(RERR_STREAMIO) (exit 12), a stream error, NOT a protocol
         // violation (2). WHY it matters: a drop-in tool must classify an

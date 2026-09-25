@@ -576,8 +576,8 @@ fn refused_client_arg_expands_bundled_short() {
     // matches against the refuse list.
     //
     // The letter order matters and is NOT arbitrary: upstream appends `z`
-    // (options.c:2722-2723) and only then calls `maybe_add_e_option()`
-    // (options.c:2728), so `e` is always LAST - everything after it is `-e`'s
+    // (options.c:2732-2733) and only then calls `maybe_add_e_option()`
+    // (options.c:2738), so `e` is always LAST - everything after it is `-e`'s
     // argument. oc emits the same order (the capability suffix is appended
     // last, `invocation/builder.rs:233`). This fixture previously wrote
     // `...ez.iLsfxCIvu`, an order no conforming rsync produces.
@@ -602,7 +602,7 @@ fn refused_client_arg_scans_past_non_option_bytes() {
     // A non-option byte must NOT end the bundle scan. Upstream is
     // position-independent by construction: refusal rewrites `op->val` to
     // OPT_REFUSED_BASE+idx (options.c:1040) and popt returns the refused entry
-    // (options.c:1934) wherever it sits.
+    // (options.c:1940) wherever it sits.
     //
     // Breaking at the first non-alphabetic byte let a client prefix its bundle
     // with any digit and slip the rest past the refuse list SILENTLY - `-4z`
@@ -669,7 +669,7 @@ fn refused_client_arg_examines_every_letter_the_decoder_acts_on() {
 fn refused_client_arg_matches_modify_window_short_form() {
     // `refuse options = modify-window` must match the short wire form `-@-1`,
     // which oc's OWN client emits (invocation/builder.rs:477, mirroring
-    // options.c:2873-2875). `@` was missing from the short-letter map, so this
+    // options.c:2883-2885). `@` was missing from the short-letter map, so this
     // silently failed to refuse.
     let module = ModuleDefinition {
         refuse_options: vec!["modify-window".to_owned()],
@@ -872,7 +872,7 @@ fn refused_client_arg_delete_rule_refuses_timing_variant() {
     // `refuse options = delete` must reject a client `-a --delete` even though
     // the client encodes it on the wire as `--delete-during`.
     //
-    // upstream: options.c:2238 - `if (refused_delete && (delete_mode || ...))`
+    // upstream: options.c:2247 - `if (refused_delete && (delete_mode || ...))`
     // refuses the transfer whenever any delete-timing variant is active, and
     // reports the canonical `--delete` regardless of which variant arrived.
     let module = ModuleDefinition {
@@ -901,7 +901,7 @@ fn refused_client_arg_delete_rule_refuses_timing_variant() {
 #[test]
 fn refused_client_arg_delete_rule_allows_non_delete_transfer() {
     // A `refuse options = delete` module must still accept a plain push that
-    // carries no delete flag. upstream: options.c:2238 only fires when
+    // carries no delete flag. upstream: options.c:2247 only fires when
     // `delete_mode` (or `missing_args == 2`) is set.
     let module = ModuleDefinition {
         refuse_options: vec!["delete".to_owned()],
@@ -913,7 +913,7 @@ fn refused_client_arg_delete_rule_allows_non_delete_transfer() {
 
 #[test]
 fn refused_client_arg_delete_rule_refuses_remove_source_files_on_a_pull() {
-    // upstream: options.c:2359-2367 - `--remove-source-files` inherits the
+    // upstream: options.c:2368-2376 - `--remove-source-files` inherits the
     // refusal of `delete` when `am_sender`, because on a pull the daemon would
     // be deleting its own module contents. Reported as `--delete`, from the
     // same `create_refuse_error(refused_delete)`.
@@ -973,7 +973,7 @@ fn refused_client_arg_delete_negation_clears_semantic_refusal() {
     // semantic delete-mode pass must not fire. With no other refuse rule a
     // bare `--delete` transfer is allowed. upstream: options.c:989-1003 - the
     // negated rule flips the `delete` descrip back to accepted, clearing
-    // `refused_delete`, so options.c:2238 never triggers.
+    // `refused_delete`, so options.c:2247 never triggers.
     let module = ModuleDefinition {
         refuse_options: vec!["!delete".to_owned()],
         ..Default::default()
@@ -1274,7 +1274,7 @@ fn refuse_emits_msg_error_xfer_post_handshake() {
     );
 
     // The remaining bytes must be a MSG_ERROR_EXIT frame carrying the exit
-    // code in little-endian form (upstream io.c:1060 send_msg_int).
+    // code in little-endian form (upstream io.c:1078 send_msg_int).
     let mut expected_exit = Vec::new();
     MessageFrame::new(
         MessageCode::ErrorExit,
@@ -1343,7 +1343,7 @@ fn client_timeout_is_read_from_the_forwarded_argv() {
 /// A forwarded `--timeout=0` (upstream's "no timeout") and a negative or
 /// unparsable value all read as "no timeout".
 ///
-/// upstream: `io.c:1266-1271` `set_io_timeout()` clamps a negative to `0`, and
+/// upstream: `io.c:1284-1289` `set_io_timeout()` clamps a negative to `0`, and
 /// `0` short-circuits every timeout check.
 #[test]
 fn non_positive_client_timeout_reads_as_no_timeout() {

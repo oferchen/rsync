@@ -2,7 +2,7 @@
 //! symlink-to-directory, with no `--copy-dirlinks` required.
 //!
 //! Upstream sets `name_type = DOTDIR_NAME` for an operand ending in `/`
-//! (`flist.c:2589-2594`) or `/.` (`:2604`), and `flist.c:2697` passes
+//! (`flist.c:2829-2834`) or `/.` (`:2604`), and `flist.c:2937` passes
 //! `copy_dirlinks || name_type != NORMAL_NAME` as `link_stat()`'s
 //! follow_dirlinks argument. The marker therefore does two things: it selects
 //! "contents of", and it resolves the operand before the walk decides what it
@@ -114,7 +114,7 @@ fn trailing_dot_on_a_symlinked_dir_transfers_its_contents() {
     assert_eq!(
         pull("alias/.", &[]),
         vec!["deep".to_string(), "deep/f2".to_string()],
-        "`/.` is upstream's other DOTDIR spelling (flist.c:2604); transmitting \
+        "`/.` is upstream's other DOTDIR spelling (flist.c:2844); transmitting \
          `alias` itself publishes the link instead of the tree it names"
     );
 }

@@ -707,7 +707,7 @@ fn for_existing_directory_flags_time_change_when_mtimes_differ() {
     assert!(change_set.has_any_change());
 }
 
-/// upstream: generator.c:533 via same_time() (util1.c:1478) - directory
+/// upstream: generator.c:533 via same_time() (util1.c:1573) - directory
 /// itemize compares whole seconds under modify_window == 0, so a sub-second
 /// mtime drift within the same whole second must NOT report a time change.
 /// This mirrors the file/symlink paths, which already ignore sub-second drift.
@@ -865,7 +865,7 @@ fn for_recreated_symlink_ignores_sub_second_mtime_drift() {
     symlink("target-b", &dst_link).expect("create dst");
 
     // Same whole second, different nanoseconds. Upstream same_time()
-    // (util1.c:1478) with the default modify_window == 0 compares whole seconds
+    // (util1.c:1573) with the default modify_window == 0 compares whole seconds
     // only, so this must NOT light the `t` glyph (itemize `cLc........`, not
     // `cLc.t......`).
     set_symlink_file_times(
@@ -1116,7 +1116,7 @@ fn for_file_atimes_differing_access_time_sets_u_glyph() {
 /// A `--chmod` spec must not raise the `p` column for a SYMLINK.
 ///
 /// Upstream gates every `tweak_mode()` call on `!S_ISLNK`
-/// (flist.c:1741-1742 `send_file_name`, flist.c:996-997 `recv_file_entry`,
+/// (flist.c:1966-1967 `send_file_name`, flist.c:1221-1222 `recv_file_entry`,
 /// rsync.c:647-648 the daemon `outgoing chmod`), so a link's mode reaches
 /// `itemize()` untweaked and the `p` decision there is the plain `-p` / `-E`
 /// compare (generator.c:424-433 `perms_differ`, inlined at

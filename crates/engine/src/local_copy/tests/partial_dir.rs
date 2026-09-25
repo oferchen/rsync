@@ -1531,7 +1531,7 @@ fn partial_dir_idempotent_transfer_with_existing_dest() {
 
 // upstream's `one_inplace`: an existing --partial-dir entry is the file the
 // reconstruction is written into, and it is renamed onto the destination on
-// commit (receiver.c:1195-1196, :1286-1300).
+// commit (receiver.c:1212-1213, :1286-1300).
 
 /// Sets up `dest/pdir/<name>` holding `old`, and `source` holding `new`.
 fn one_inplace_fixture(
@@ -1583,7 +1583,7 @@ fn partial_dir_one_inplace_staging_is_byte_correct() {
     run_one_inplace_copy(&source, &destination, true);
 
     assert_eq!(fs::read(&destination).expect("read dest"), new);
-    // upstream: receiver.c:1299 - handle_partial_dir(partialptr, PDIR_DELETE)
+    // upstream: receiver.c:1316 - handle_partial_dir(partialptr, PDIR_DELETE)
     // still runs under one_inplace, so the emptied relative dir goes away.
     assert!(
         !partial_dir.exists(),
@@ -1611,7 +1611,7 @@ fn partial_dir_one_inplace_staging_is_byte_correct_with_delta() {
 /// partial-dir entry rather than through a temp beside the destination.
 ///
 /// `finish_transfer(fname, fnametmp, ...)` with `fnametmp == partialptr`
-/// (receiver.c:1288) is a rename, so the destination must end up wearing the
+/// (receiver.c:1305) is a rename, so the destination must end up wearing the
 /// inode the partial entry had. Before this staging existed the destination was
 /// a freshly created temp inode and the partial entry was unlinked, so this
 /// assertion fails on the old behaviour.

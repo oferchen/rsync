@@ -1,6 +1,6 @@
 // Stdio daemon session - runs a single daemon session over stdin/stdout.
 //
-// upstream: main.c:1867-1868 - when both `am_server` and `am_daemon` are set,
+// upstream: main.c:1894-1895 - when both `am_server` and `am_daemon` are set,
 // upstream rsync calls `start_daemon(STDIN_FILENO, STDOUT_FILENO)`. This runs
 // the daemon protocol over the process's stdin and stdout, used by remote-shell
 // daemon mode (`rsync -e ssh host::module`) and by `RSYNC_CONNECT_PROG`.

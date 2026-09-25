@@ -22,7 +22,7 @@
 //! closest name. Reproducing it faithfully needs the receiver to thread a
 //! per-run "already generated" set down into candidate collection.
 //!
-//! upstream: generator.c:831 `find_fuzzy()`, util1.c:1588 `fuzzy_distance()`.
+//! upstream: generator.c:831 `find_fuzzy()`, util1.c:1683 `fuzzy_distance()`.
 
 mod distance;
 mod search;
@@ -44,7 +44,7 @@ pub const FUZZY_LEVEL_1: u8 = 1;
 /// Fuzzy level for `-yy`; searches destination directory plus reference
 /// directories (`--compare-dest`, `--copy-dest`, `--link-dest`).
 ///
-/// upstream: options.c:2199 - when `fuzzy_basis > 1`, the value is set to
+/// upstream: options.c:2208 - when `fuzzy_basis > 1`, the value is set to
 /// `basis_dir_cnt + 1` so the search iterates over the dest dir (index 0)
 /// plus each reference directory.
 pub const FUZZY_LEVEL_2: u8 = 2;

@@ -421,7 +421,7 @@ fn execute_whole_file_dry_run_reports_transfer() {
         .expect("dry run succeeds");
 
     // Dry run should report what would be done. upstream: a dry run counts the
-    // file size (sender.c:342-343) but never reaches match_sums(), so both
+    // file size (sender.c:343-344) but never reaches match_sums(), so both
     // literal_data (match.c:436) and matched_data (match.c:121) stay 0.
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), 0);

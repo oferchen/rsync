@@ -284,7 +284,7 @@ fn a_special_file_is_creatable_under_the_worker_filter() {
 /// the worker filter.
 ///
 /// `--delay-updates` substitutes the implicit `.~tmp~` partial directory
-/// (upstream `options.c:2563-2564`), which puts the receiver on a strictly
+/// (upstream `options.c:2572-2573`), which puts the receiver on a strictly
 /// larger set of operations than a plain push: it creates a staging
 /// directory, opens the temp through the operator-path fallback rather
 /// than the destination sandbox, moves the pre-image aside for
@@ -360,7 +360,7 @@ fn the_delay_updates_staging_sequence_runs_under_the_worker_filter() {
             step
         };
 
-        // upstream: util1.c:1518-1530 handle_partial_dir(PDIR_CREATE).
+        // upstream: util1.c:1613-1625 handle_partial_dir(PDIR_CREATE).
         // The receiver creates this through the ownership walk, so the probe
         // calls the same primitive rather than `std::fs::create_dir_all`:
         // glibc lowers `mkdir()` to the legacy `mkdir(2)` on x86_64, which
@@ -370,7 +370,7 @@ fn the_delay_updates_staging_sequence_runs_under_the_worker_filter() {
         if let Err(e) = fast_io::operator_mkdir(&staging, 0o777) {
             return report(10, &e);
         }
-        // upstream: receiver.c:426-434 open_tmpfile() -> secure_mkstemp().
+        // upstream: receiver.c:439-447 open_tmpfile() -> secure_mkstemp().
         // The temp's parent is the staging dir, not the destination root,
         // so this takes the operator-path fallback rather than the
         // destination `DirSandbox` the plain push uses.
@@ -381,7 +381,7 @@ fn the_delay_updates_staging_sequence_runs_under_the_worker_filter() {
         ) {
             return report(11, &e);
         }
-        // upstream: receiver.c:694 make_backup(fname, False) - the delayed
+        // upstream: receiver.c:710 make_backup(fname, False) - the delayed
         // sweep's own backup tier. `operator_rename` is the ownership walk
         // plus `renameat`, which is the syscall shape the allowlist has to
         // admit; the confinement variant the sweep uses adds a root check in
@@ -389,7 +389,7 @@ fn the_delay_updates_staging_sequence_runs_under_the_worker_filter() {
         if let Err(e) = fast_io::operator_rename(&destination, &backup, true) {
             return report(12, &e);
         }
-        // upstream: receiver.c:709 do_rename(partialptr, fname). The sweep
+        // upstream: receiver.c:725 do_rename(partialptr, fname). The sweep
         // issues this through the ownership walk (`operator_rename`), so the
         // probe does too: a bare `std::fs::rename` reaches glibc's wrapper,
         // lowered to the legacy `rename(2)` on x86_64, which this allowlist

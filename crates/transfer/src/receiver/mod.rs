@@ -9,8 +9,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `receiver.c:340` - `receive_data()` - Delta application logic
-//! - `receiver.c:720` - `recv_files()` - Main file reception loop
+//! - `receiver.c:353` - `receive_data()` - Delta application logic
+//! - `receiver.c:736` - `recv_files()` - Main file reception loop
 //! - `generator.c:1450` - `recv_generator()` - Signature generation
 //!
 //! Mirrors upstream rsync's receiver behavior with block-by-block delta

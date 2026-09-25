@@ -173,7 +173,7 @@ pub fn remove_attribute(path: &Path, name: &[u8], follow_symlinks: bool) -> io::
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/xattrs.c:386-390` - `fd >= 0 ? sys_fsetxattr : sys_lsetxattr`
+/// - `rsync-3.5.1/xattrs.c:386-390` - `fd >= 0 ? sys_fsetxattr : sys_lsetxattr`
 pub fn write_attribute_at(file: &File, name: &[u8], value: &[u8]) -> io::Result<()> {
     xattr::FileExt::set_xattr(file, OsStr::from_bytes(name), value)
 }
@@ -182,7 +182,7 @@ pub fn write_attribute_at(file: &File, name: &[u8], value: &[u8]) -> io::Result<
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/xattrs.c:1041-1045` - the same fd-vs-path choice on removal
+/// - `rsync-3.5.1/xattrs.c:1041-1045` - the same fd-vs-path choice on removal
 pub fn remove_attribute_at(file: &File, name: &[u8]) -> io::Result<()> {
     xattr::FileExt::remove_xattr(file, OsStr::from_bytes(name))
 }

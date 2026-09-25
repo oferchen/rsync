@@ -27,7 +27,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:893-924` - `read_final_goodbye()` reads the final NDX and
+//! - `main.c:906-937` - `read_final_goodbye()` reads the final NDX and
 //!   exits with `RERR_PROTOCOL` for a wrong value, propagates I/O
 //!   errors for short reads.
 //! - `io.c:read_timeout()` - upstream's socket-level read deadline

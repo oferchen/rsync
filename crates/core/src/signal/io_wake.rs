@@ -4,9 +4,9 @@
 //! it is usually parked inside a blocking `read()` on the transport socket and
 //! will never look at the flag on its own. Upstream does not have this problem
 //! because it is multi-process and single-threaded per process: the signal
-//! interrupts the one `select()` in `perform_io()`, which `io.c:766-779`
+//! interrupts the one `select()` in `perform_io()`, which `io.c:784-797`
 //! handles exactly like a timeout before re-checking `got_kill_signal`
-//! (`io.c:750`). In a multi-threaded process the kernel delivers the signal to
+//! (`io.c:768`). In a multi-threaded process the kernel delivers the signal to
 //! an arbitrary thread, so `EINTR` alone cannot be relied on to reach the
 //! thread that is actually blocked on the wire.
 //!

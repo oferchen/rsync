@@ -60,9 +60,9 @@ impl FileEntry {
     /// Creates a new symlink entry with `S_IFLNK` mode and the given permissions.
     ///
     /// A symlink's permission bits are *not* universally 0o777. Upstream
-    /// `flist.c:1669` stores `file->mode = st.st_mode` verbatim for every file
+    /// `flist.c:1894` stores `file->mode = st.st_mode` verbatim for every file
     /// type, symlinks included, and whether that carries a meaningful value is
-    /// a platform property: `rsync.h:455-456` defines `CAN_CHMOD_SYMLINK` when
+    /// a platform property: `rsync.h:456-457` defines `CAN_CHMOD_SYMLINK` when
     /// `HAVE_LCHMOD || HAVE_SETATTRLIST`, which holds on macOS and the BSDs,
     /// where `lchmod`/`setattrlist` give a link a real, settable mode. On Linux
     /// the kernel pins a link's `st_mode` permission bits to 0o777 and nothing

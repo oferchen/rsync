@@ -12,7 +12,7 @@
 //! caller's retry loop depends on, and the FOLLOW direction - without that last
 //! one a future "refuse every symlink" simplification would look correct.
 //!
-//! upstream: `rsync-3.5.0/syscall.c:3379` `secure_mkstemp()`.
+//! upstream: `rsync-3.5.1/syscall.c:3540` `secure_mkstemp()`.
 #![cfg(unix)]
 
 use std::fs;
@@ -85,7 +85,7 @@ fn operator_open_create_new_refuses_a_symlinked_leaf() {
 }
 
 /// FOLLOW direction: a parent symlink owned by our own euid is trusted and
-/// descended (`syscall.c:406` trusts uid 0 or the euid). Without this pin, a
+/// descended (`syscall.c:499` trusts uid 0 or the euid). Without this pin, a
 /// "refuse every parent symlink" change would pass the refusal tests while
 /// breaking a legitimate operator `--temp-dir` that happens to be a symlink -
 /// which is precisely the case upstream's comment says must keep working.

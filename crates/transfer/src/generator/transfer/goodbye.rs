@@ -8,7 +8,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `main.c:893-924` - `read_final_goodbye()` with del_stats handling
+//! - `main.c:906-937` - `read_final_goodbye()` with del_stats handling
 
 use std::io::{self, Read, Write};
 
@@ -28,7 +28,7 @@ use crate::role_trailer::error_location;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::generator) enum GoodbyeArrival {
     /// The receiver's goodbye `NDX_DONE` arrived and is waiting for the
-    /// sender's reply (upstream: `main.c:919-922` - the sender echoes it back).
+    /// sender's reply (upstream: `main.c:932-935` - the sender echoes it back).
     Done,
     /// This protocol version exchanges no goodbye, or the peer closed the
     /// connection before sending one. Nothing is owed to the peer.
@@ -63,7 +63,7 @@ impl FlistMarkerSink for GoodbyeNdxSink<'_> {
     }
 
     fn ndx_is_active(&self, ndx: i32) -> bool {
-        // upstream: sender.c:558-563 - `send_files()` tests F_IS_ACTIVE on the
+        // upstream: sender.c:559-564 - `send_files()` tests F_IS_ACTIVE on the
         // entry the peer named. An out-of-range index is a different fault and
         // is owned by `last_file_ndx`, so it is not reported as cleared here.
         usize::try_from(ndx)
@@ -118,9 +118,9 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:893-924` - `read_final_goodbye()`
-    /// - `main.c:901` - protocol < 29 uses `read_int(f_in)`
-    /// - `main.c:903-904` - protocol >= 29 uses `read_ndx_and_attrs()`
+    /// - `main.c:906-937` - `read_final_goodbye()`
+    /// - `main.c:914` - protocol < 29 uses `read_int(f_in)`
+    /// - `main.c:916-917` - protocol >= 29 uses `read_ndx_and_attrs()`
     /// - `rsync.c:337-342` - NDX_DEL_STATS handling in `read_ndx_and_attrs()`
     /// - `main.c:225-238` - `write_del_stats()` format
     /// - `generator.c:2376-2381` - early del_stats path
@@ -153,11 +153,11 @@ impl GeneratorContext {
     /// closing deflate block that the sender has not yet emitted, while the
     /// sender simultaneously waits on the receiver's final NDX_DONE.
     ///
-    /// upstream: `main.c:979-983 do_server_sender()` runs
+    /// upstream: `main.c:992-996 do_server_sender()` runs
     /// `io_flush(FULL_FLUSH)` immediately before `read_final_goodbye()` so
     /// the FIN is preceded by every buffered byte. Under `-zz` upstream's
     /// `write_buf()` bypasses the deflate stream entirely (see
-    /// `io.c:2255 write_buf()`), so no codec finalisation is required there.
+    /// `io.c:2293 write_buf()`), so no codec finalisation is required there.
     /// In our writer-graph the goodbye NDX_DONE rides through
     /// `CompressedWriter`, so we additionally need the finalizer to emit
     /// `Z_FINISH` (`token.c:367 send_deflated_token()` performs the matching
@@ -199,7 +199,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:916-919` - `read_final_goodbye()` reads the receiver's NDX first
+    /// - `main.c:929-932` - `read_final_goodbye()` reads the receiver's NDX first
     pub(in crate::generator) fn read_receiver_goodbye<R: Read>(
         &mut self,
         reader: &mut R,
@@ -210,7 +210,7 @@ impl GeneratorContext {
         }
 
         // Read first NDX_DONE from receiver, skipping any NDX_DEL_STATS.
-        // upstream: main.c:904 - read_ndx_and_attrs() handles NDX_DEL_STATS internally.
+        // upstream: main.c:917 - read_ndx_and_attrs() handles NDX_DEL_STATS internally.
         // Connection may close early in dry-run or when the remote daemon exits before
         // completing the goodbye exchange - treat this as acceptable.
         let ndx = match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
@@ -221,7 +221,7 @@ impl GeneratorContext {
             Err(e) => return Err(e),
         };
         if ndx != NDX_DONE {
-            // upstream: main.c:1097 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
+            // upstream: main.c:1110 exit_cleanup(RERR_PROTOCOL) (exit 2). Tag the
             // error so the core exit-code mapper yields 2, not RERR_STREAMIO(12).
             return Err(protocol::protocol_violation(format!(
                 "expected goodbye NDX_DONE (-1) from receiver, got {ndx} {}{}",
@@ -294,7 +294,7 @@ impl GeneratorContext {
             // end-of-stream trailer before the receiver tries to advance.
             //
             // upstream: token.c:367 send_deflated_token() emits the
-            // Z_FINISH-terminated stream at end of transfer; main.c:982
+            // Z_FINISH-terminated stream at end of transfer; main.c:995
             // read_final_goodbye() is bracketed by io_flush(FULL_FLUSH).
             if let Err(e) = finalize_between_write_and_read(writer) {
                 if is_early_close_error(&e) {
@@ -307,7 +307,7 @@ impl GeneratorContext {
             match self.read_ndx_skipping_del_stats(reader, ndx_read_codec) {
                 Ok(final_ndx) => {
                     if final_ndx != NDX_DONE {
-                        // upstream: main.c:1097 exit_cleanup(RERR_PROTOCOL)
+                        // upstream: main.c:1110 exit_cleanup(RERR_PROTOCOL)
                         // (exit 2); tagged so the mapper yields 2 not streamio.
                         return Err(protocol::protocol_violation(format!(
                             "expected final goodbye NDX_DONE (-1) from receiver, got {final_ndx} {}{}",

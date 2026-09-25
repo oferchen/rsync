@@ -172,7 +172,7 @@ pub fn send_xattr_values<W: Write>(writer: &mut W, list: &XattrList) -> io::Resu
 /// # Upstream Reference
 ///
 /// - `xattrs.c:623-675` - `send_xattr_request()` sender path (`fname != NULL`)
-/// - `sender.c:468-485` - called from `write_ndx_and_attrs()` on the sender
+/// - `sender.c:469-486` - called from `write_ndx_and_attrs()` on the sender
 ///   when echoing iflags that include `ITEM_REPORT_XATTR`.
 pub fn send_sender_xattr_response<W: Write>(
     writer: &mut W,

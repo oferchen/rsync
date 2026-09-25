@@ -2,14 +2,14 @@
 //!
 //! upstream: `compat.c:162-179 set_allow_inc_recurse()` runs
 //! `if (!recurse || use_qsort) allow_inc_recurse = 0;` from `server_options()`
-//! (options.c:2725), immediately before `maybe_add_e_option()` decides whether
-//! to append `i` (options.c:3039). `allow_inc_recurse` initialises to 1
+//! (options.c:2735), immediately before `maybe_add_e_option()` decides whether
+//! to append `i` (options.c:3049). `allow_inc_recurse` initialises to 1
 //! (options.c:114), so without that gate every non-recursive push advertises a
 //! capability upstream withholds.
 //!
 //! `recurse` is a level, not a flag: `-r` sets 2 (options.c:621), `-a` sets 1
-//! (options.c:1551), `--files-from` clears only level 1 (options.c:2188-2189)
-//! and `--old-dirs` re-forces 1 afterwards (options.c:2197-2199). The gate is a
+//! (options.c:1557), `--files-from` clears only level 1 (options.c:2197-2198)
+//! and `--old-dirs` re-forces 1 afterwards (options.c:2206-2208). The gate is a
 //! plain non-zero test, so `-r --files-from` still advertises `i` while
 //! `-a --files-from` does not.
 //!
@@ -119,7 +119,7 @@ fn recursive_push_still_advertises_inc_recurse_capability() {
 fn files_from_keeps_inc_recurse_only_for_explicit_recursion() {
     // rsync 3.4.4: `-r --files-from` -> `-rRe.iLsfxCIvu`, but
     // `-a --files-from` -> `-logDtpRe.LsfxCIvu` and a bare `--files-from` ->
-    // `-Re.LsfxCIvu`, because only `recurse == 1` is cleared at options.c:2189.
+    // `-Re.LsfxCIvu`, because only `recurse == 1` is cleared at options.c:2198.
     let explicit = server_flag_string(&["-r", "--files-from=list.txt"]);
     assert!(
         capabilities(&explicit).contains('i'),

@@ -1,11 +1,11 @@
 //! A shell metacharacter in a filename survives an `rsync://` transfer.
 //!
 //! Upstream backslash-escapes filename operands with `safe_arg(NULL, ...)` only
-//! under `if (!daemon_connection)` (main.c:619) - that escaping exists for a
+//! under `if (!daemon_connection)` (main.c:632) - that escaping exists for a
 //! remote shell that will `eval` the argv, and a daemon connection has no
 //! shell. Its daemon agrees: `read_args()` un-escapes just the args preceding
 //! the `.` and routes everything after it through `glob_expand()` untouched
-//! (io.c:1500-1506).
+//! (io.c:1526-1532).
 //!
 //! oc-rsync escaped the operands on both transports, so every character in
 //! `SHELL_CHARS` reached the peer as a literal backslash that no peer removes.
@@ -39,7 +39,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use test_support::ReapOnDrop;
 
-/// `SHELL_CHARS` (options.c:2693) minus `WILD_CHARS`, which `glob_expand()`
+/// `SHELL_CHARS` (options.c:2703) minus `WILD_CHARS`, which `glob_expand()`
 /// legitimately expands on the daemon side, and minus the backslash covered by
 /// the module note above. Tab and newline are included because they are the
 /// two bytes 3.5.0 added to the set, so they are the least-exercised members.

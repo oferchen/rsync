@@ -1,6 +1,6 @@
 /// A refused option must reach the daemon log, in the words upstream uses.
 ///
-/// upstream: `options.c:1409-1423` builds the refusal into `err_buf` once, and
+/// upstream: `options.c:1415-1429` builds the refusal into `err_buf` once, and
 /// `option_error()` (`options.c:907-918`) emits that same buffer via
 /// `rprintf(FERROR, RSYNC_NAME ": %s", err_buf)`. A daemon's `FERROR` lands in
 /// the log file, so the peer's `@ERROR` payload and the logged line are the

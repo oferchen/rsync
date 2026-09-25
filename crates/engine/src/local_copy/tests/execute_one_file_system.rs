@@ -988,7 +988,7 @@ fn level_zero_does_not_skip_any_mount_points() {
 /// Verifies that pruning a cross-device child directory emits the upstream
 /// `--info=MOUNT` notice through the diagnostic event queue.
 ///
-/// Mirrors `flist.c:1319-1323` in upstream rsync 3.4.1:
+/// Mirrors `flist.c:1544-1548` in upstream rsync 3.4.1:
 /// ```c
 /// if (INFO_GTE(MOUNT, 1)) {
 ///     rprintf(FINFO, "[%s] skipping mount-point dir %s\n",
@@ -1069,7 +1069,7 @@ fn one_file_system_emits_info_mount_notice() {
 
 /// Verifies that the default verbosity configuration (no `--info=MOUNT`)
 /// suppresses the notice, matching upstream's `INFO_GTE(MOUNT, 1)` gate
-/// (flist.c:1347). MOUNT is not in `info_verbosity[0]`, so it stays silent
+/// (flist.c:1572). MOUNT is not in `info_verbosity[0]`, so it stays silent
 /// unless explicitly enabled.
 #[test]
 fn one_file_system_default_verbosity_suppresses_info_mount_notice() {

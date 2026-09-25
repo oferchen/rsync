@@ -108,7 +108,7 @@ pub(crate) const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
 ///
 /// upstream: errcode.h:25 - `#define RERR_SYNTAX 1`. The daemon's read-only
 /// push and write-only pull rejections call `exit_cleanup(RERR_SYNTAX)`
-/// (main.c:951 in `do_server_sender()`, main.c:1185 in `do_server_recv()`).
+/// (main.c:964 in `do_server_sender()`, main.c:1203 in `do_server_recv()`).
 pub(crate) const RERR_SYNTAX_EXIT_CODE: i32 = 1;
 /// Exit code for a refused option or a failed `pre-xfer exec` script,
 /// mirroring upstream `RERR_UNSUPPORTED`.
@@ -247,14 +247,14 @@ pub(crate) const INVALID_UID_PAYLOAD: &str = "@ERROR: invalid uid {uid}";
 pub(crate) const INVALID_GID_PAYLOAD: &str = "@ERROR: invalid gid {gid}";
 /// Error payload returned when a module is read-only and the client pushes.
 ///
-/// upstream: main.c:1184 `do_server_recv()` - `rprintf(FERROR, "ERROR:
+/// upstream: main.c:1202 `do_server_recv()` - `rprintf(FERROR, "ERROR:
 /// module is read only\n")`. This fires after `setup_protocol()` and
 /// `io_start_multiplex_out()`, so the text is a plain `FERROR` message (no
 /// `@ERROR:` greeting prefix) delivered inside a `MSG_ERROR_XFER` frame.
 pub(crate) const MODULE_READ_ONLY_PAYLOAD: &str = "ERROR: module is read only";
 /// Error payload returned when a module is write-only and the client pulls.
 ///
-/// upstream: main.c:950 `do_server_sender()` - `rprintf(FERROR, "ERROR:
+/// upstream: main.c:963 `do_server_sender()` - `rprintf(FERROR, "ERROR:
 /// module is write only\n")`, delivered post-multiplex like the read-only
 /// rejection above.
 pub(crate) const MODULE_WRITE_ONLY_PAYLOAD: &str = "ERROR: module is write only";
@@ -325,7 +325,7 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
 
     apply_verbosity(options.verbosity());
 
-    // upstream: clientserver.c:1727 - `if (is_a_socket(STDIN_FILENO))`
+    // upstream: clientserver.c:1748 - `if (is_a_socket(STDIN_FILENO))`
     // When stdin is a socket, serve a single session over stdio (inetd mode)
     // instead of binding a TCP listener.
     if is_stdin_socket() {
@@ -340,7 +340,7 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
 /// emitted from the protocol and transfer crates respect the operator's
 /// requested verbosity.
 ///
-/// upstream: options.c:2179 `set_output_verbosity(verbose, DEFAULT_PRIORITY)`
+/// upstream: options.c:2188 `set_output_verbosity(verbose, DEFAULT_PRIORITY)`
 /// is invoked once after option parsing in `main.c`/`daemon-main` startup.
 /// Without this seeding the daemon's `INFO_GTE`/`DEBUG_GTE` checks short-
 /// circuit at level 0 regardless of how many `-v` flags were stacked on the
@@ -363,7 +363,7 @@ pub(crate) fn apply_verbosity(level: u8) {
 /// the module table, and serves a single connection on the provided
 /// stdin/stdout streams. No TCP binding or signal handler registration occurs.
 ///
-/// upstream: main.c:1867-1868 - `if (am_server && am_daemon) return
+/// upstream: main.c:1894-1895 - `if (am_server && am_daemon) return
 /// start_daemon(STDIN_FILENO, STDOUT_FILENO);`
 ///
 /// # Errors
@@ -639,7 +639,7 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
 
     // The async accept path carries the same trust gate as the sync one: a
     // PROXY header is read only from a listed trusted proxy, and an enabled
-    // feature with no list warns once at startup (clientserver.c:1747-1756).
+    // feature with no list warns once at startup (clientserver.c:1768-1777).
     let proxy_policy = ProxyProtocolPolicy::new(proxy_protocol, proxy_protocol_hosts);
     warn_if_proxy_protocol_trusts_nobody(&proxy_policy, log_sink.as_ref());
 

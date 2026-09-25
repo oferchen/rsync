@@ -15,12 +15,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/syscall.c:538` `open_no_attacker_symlinks()` - walk each
+//! - `rsync-3.5.1/syscall.c:675` `open_no_attacker_symlinks()` - walk each
 //!   component without following it; follow a symlink only when it is owned by
-//!   uid 0 or our euid, refuse any other-uid one (`syscall.c:406`).
-//! - `rsync-3.5.0/options.c:2654` - `--files-from`.
-//! - `rsync-3.5.0/exclude.c:1683` - `--*clude-from` and `merge`.
-//! - `rsync-3.5.0/authenticate.c:245` - `--password-file`.
+//!   uid 0 or our euid, refuse any other-uid one (`syscall.c:499`).
+//! - `rsync-3.5.1/options.c:2664` - `--files-from`.
+//! - `rsync-3.5.1/exclude.c:1683` - `--*clude-from` and `merge`.
+//! - `rsync-3.5.1/authenticate.c:245` - `--password-file`.
 
 use std::fs::File;
 use std::io;
@@ -51,7 +51,7 @@ pub(crate) fn open_read(path: &Path) -> io::Result<File> {
 /// not merely a wrong file. Ownership alone cannot stop it: a root-owned
 /// symlink is trusted by the walk by design.
 ///
-/// upstream: `rsync-3.5.0/exclude.c:1680-1684` - `parse_filter_file()` sets
+/// upstream: `rsync-3.5.1/exclude.c:1680-1684` - `parse_filter_file()` sets
 /// `operator_path_resolve = 1` around its open, exempting only the daemon's own
 /// `filter` / `include from` / `exclude from` parameters.
 pub(crate) fn open_read_confined(path: &Path) -> io::Result<File> {

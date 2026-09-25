@@ -376,12 +376,12 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
     // device options (`copy-devices`/`write-devices`) even with no `refuse
     // options` line. upstream: options.c:984-987.
 
-    // upstream: options.c:2215-2241 - a `refuse options = delete` rule matches
-    // the single `delete` popt entry, but the enforcement at options.c:2238 is
+    // upstream: options.c:2224-2250 - a `refuse options = delete` rule matches
+    // the single `delete` popt entry, but the enforcement at options.c:2247 is
     // semantic: `if (refused_delete && (delete_mode || missing_args == 2))`.
     // Every delete-timing variant (`--delete-before/during/after/delay`),
     // `--delete-excluded`, `--del`, and `--delete-missing-args` sets
-    // `delete_mode` (options.c:2215-2229), so refusing `delete` refuses them
+    // `delete_mode` (options.c:2224-2238), so refusing `delete` refuses them
     // all. The lexical per-arg scan below only matches e.g. `delete-during`
     // against a `delete*` glob, never the bare `delete` rule, so this semantic
     // pass catches the timing variants the client actually sends on the wire
@@ -392,7 +392,7 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
             return Some("--delete".to_owned());
         }
 
-        // upstream: options.c:2359-2367 - `--remove-source-files` inherits the
+        // upstream: options.c:2368-2376 - `--remove-source-files` inherits the
         // refusal of `delete`, but ONLY when this process is the sender:
         // `if (refused_delete && am_sender)`. On a pull the daemon is the
         // sender and would be deleting its OWN module contents, which is what
@@ -435,7 +435,7 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
                 let Some(option) = lookup_short(letter) else {
                     // Not an option letter. Upstream is position-independent -
                     // popt marks a refused entry wherever it sits in the bundle
-                    // (options.c:1040 rewrites `op->val`, options.c:1934
+                    // (options.c:1040 rewrites `op->val`, options.c:1940
                     // returns it) - so an unrecognised byte must NOT end the
                     // scan. Breaking here let a client prefix its bundle with
                     // any non-letter and slip the rest past the refuse list
@@ -482,9 +482,9 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
 /// `refuse options = delete` rule can reject it regardless of which timing
 /// variant the client sent.
 ///
-/// upstream: options.c:2215-2229 - `--delete`, `--del`, every
+/// upstream: options.c:2224-2238 - `--delete`, `--del`, every
 /// `--delete-WHEN` variant, and `--delete-excluded` all set `delete_mode`;
-/// `--delete-missing-args` sets `missing_args = 2`. options.c:2238 then
+/// `--delete-missing-args` sets `missing_args = 2`. options.c:2247 then
 /// refuses the transfer whenever `refused_delete` is set and any of those is
 /// active. `--delete-missing-args` also needs the `missing_args == 2` guard
 /// there, which matches this option once it has been requested.

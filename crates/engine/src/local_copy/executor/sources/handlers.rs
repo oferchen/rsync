@@ -84,10 +84,10 @@ pub(super) fn handle_directory_contents_copy(
     }
 
     if !recursion_enabled && !dirs_enabled {
-        // upstream: flist.c:2725 - `rprintf(FINFO, "skipping directory %s\n",
+        // upstream: flist.c:2965 - `rprintf(FINFO, "skipping directory %s\n",
         // fbuf)`, where `fbuf` is the operand AFTER the `dir`/`fn` split. A
         // trailing-slash operand is split into `dir = <path>` and `fn = "."`
-        // (flist.c:2586-2594), so the name upstream prints is a bare `.` - not
+        // (flist.c:2826-2834), so the name upstream prints is a bare `.` - not
         // nothing. Without the fallback the whole line disappeared for every
         // DOTDIR spelling (`dir/`, `dir/.`), which is the one shape this
         // handler exists to serve.
@@ -113,7 +113,7 @@ pub(super) fn handle_directory_contents_copy(
     // so the batch file matches upstream's wire format.
     capture_batch_file_entry(context, source_path, Path::new("."), metadata, true)?;
 
-    // upstream: flist.c:2442 - trailing-slash sources (DOTDIR_NAME /
+    // upstream: flist.c:2682 - trailing-slash sources (DOTDIR_NAME /
     // SLASH_ENDING_NAME) walk their immediate children even when global
     // recursion is off, so `--files-from` entries like `from/./` and
     // `subsubdir2/` populate the destination with one level of contents.
@@ -181,7 +181,7 @@ pub(super) fn handle_directory_copy(
         return Ok(());
     }
 
-    // upstream: main.c:787 get_local_name() - when `file_total > 1 ||
+    // upstream: main.c:800 get_local_name() - when `file_total > 1 ||
     // trailing_slash` the destination is treated as a directory and the source
     // directory name is kept as a path component. For a no-trailing-slash
     // directory source `file_total > 1` holds exactly when the directory is
@@ -192,7 +192,7 @@ pub(super) fn handle_directory_copy(
     // (file_total == 1) keeps the flag false and is materialised AS the
     // destination (its own name dropped), matching `rsync -r empty n` -> `n/`.
     let target = if destination_behaves_like_directory || multiple_sources {
-        // upstream: flist.c:1579-1603 + flist.c:738-754 - filename is
+        // upstream: flist.c:1804-1828 + flist.c:963-979 - filename is
         // transcoded LOCAL -> wire -> REMOTE; for local-copy this
         // collapses to LOCAL -> REMOTE applied here before joining.
         let converted = transcode_filename_component(name, context.options().iconv());
@@ -415,7 +415,7 @@ pub(super) fn handle_non_directory_source(
             false,
             context.options().iconv(),
         );
-        // upstream: flist.c:3364-3382 flist_sort_and_clean() - a later
+        // upstream: flist.c:3607-3625 flist_sort_and_clean() - a later
         // duplicate name in the merged multi-source list is dropped ("keep
         // the first one"): the first operand's copy wins and the duplicate is
         // neither transferred, itemized, nor batch-captured.

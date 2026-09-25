@@ -69,7 +69,7 @@ impl RuntimeOptions {
     /// `apply_verbosity` at startup to seed the thread-local
     /// `logging::VerbosityConfig` so subsequent `info_gte` / `debug_gte`
     /// checks gate log output per upstream's `set_output_verbosity()`
-    /// semantics (upstream: options.c:2062).
+    /// semantics (upstream: options.c:2068).
     pub(crate) fn verbosity(&self) -> u8 {
         self.verbosity
     }

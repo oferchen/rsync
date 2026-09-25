@@ -1,5 +1,5 @@
 //! Tests for the in-place output open chain, in particular upstream's read-only
-//! recovery arm (`receiver.c:1219-1224`).
+//! recovery arm (`receiver.c:1236-1241`).
 
 use std::fs;
 use std::io::Write;
@@ -39,7 +39,7 @@ fn plant_readonly(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
 /// A read-only in-place destination must still be updated, as upstream 3.5.0
 /// does through the third arm of its open chain. Without that arm oc failed the
 /// whole transfer with `Permission denied (13)` and left the file untouched.
-/// upstream: receiver.c:1219-1224.
+/// upstream: receiver.c:1236-1241.
 #[test]
 fn a_read_only_inplace_destination_is_opened_for_writing() {
     let dir = tempfile::tempdir().unwrap();
@@ -65,7 +65,7 @@ fn a_read_only_inplace_destination_is_opened_for_writing() {
 /// part-way through the transfer - peer EOF, checksum failure, a signal - cannot
 /// strand the file owner-writable. That is what makes a cleanup path unnecessary,
 /// and why the restore must never be deferred to commit time.
-/// upstream: receiver.c:200-206.
+/// upstream: receiver.c:213-219.
 #[test]
 fn the_prior_mode_is_restored_before_the_descriptor_is_returned() {
     let dir = tempfile::tempdir().unwrap();

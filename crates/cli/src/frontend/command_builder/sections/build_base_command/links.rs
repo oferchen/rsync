@@ -87,7 +87,7 @@ pub(super) fn add_link_args(command: ClapCommand) -> ClapCommand {
         )
         // upstream: options.c:697-698 - a POPT_ARG_VAL pair that sets
         // `insecure_links` to 1/0; :134 defaults it to 0. It is a LOCAL-ONLY
-        // opt-out: options.c:3068 deliberately does not forward it, and
+        // opt-out: options.c:3078 deliberately does not forward it, and
         // options.c:1084 makes the daemon hard-refuse it, so a client can never
         // relax a server's path confinement with it.
         .arg(

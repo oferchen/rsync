@@ -5,7 +5,7 @@
 //! privileged, pins that directory as `module_dirfd`
 //! (`clientserver.c:1059-1065`), and every later lookup is either relative to
 //! the resulting cwd or explicitly anchored on that descriptor
-//! (`flist.c:2035-2059` for the scan, `sender.c:293-295` for the content
+//! (`flist.c:2271-2295` for the scan, `sender.c:296-298` for the content
 //! open). oc keeps source paths absolute instead, which is fine until the
 //! module sits under a directory the dropped uid cannot search: then every
 //! `stat`/`opendir` on an absolute in-module path re-traverses that ancestor
@@ -27,7 +27,7 @@
 //! resolves to and nothing else. It is:
 //! [`pin_session_root_fd`](crate::confinement::pin_session_root_fd) opens the
 //! root through the ownership walk, which is what upstream's `change_dir()`
-//! does for a non-chrooted daemon (`util1.c:1254-1263`), so a symlink an
+//! does for a non-chrooted daemon (`util1.c:1351-1360`), so a symlink an
 //! attacker planted at a component of the configured `path =` is refused and
 //! no pin is taken at all. Every helper here then falls back to the absolute
 //! path, which is where the sender's own foreign-symlink refusal still lives.
@@ -38,9 +38,9 @@
 //! differs between platforms, and neither arm has to open the entry.
 //!
 //! Off Linux the stat is `fstatat`, which is what upstream itself issues:
-//! `do_lstat_atfd()` and `do_stat_atfd()` (`syscall.c:3951-3972`) are plain
+//! `do_lstat_atfd()` and `do_stat_atfd()` (`syscall.c:4132-4153`) are plain
 //! `fstatat(dfd, name, &st, AT_SYMLINK_NOFOLLOW)` / `fstatat(dfd, name, &st,
-//! 0)`, chosen between by `link_stat_at()` at `flist.c:310-315` on the same
+//! 0)`, chosen between by `link_stat_at()` at `flist.c:535-540` on the same
 //! `copy_links` this module's `follow` argument carries. The scan is
 //! `openat(O_RDONLY|O_DIRECTORY)` plus `fdopendir` everywhere.
 //!
@@ -73,9 +73,9 @@
 //! # Upstream Reference
 //!
 //! - `clientserver.c:1059-1065` - the pin, taken before the privilege drop.
-//! - `flist.c:2028-2059` `secure_opendir()` - the scan anchored on it.
-//! - `flist.c:1362-1370` `link_stat()` - the per-entry stat the scan drives.
-//! - `flist.c:310` `link_stat_at()`, `syscall.c:3950-3974`
+//! - `flist.c:2256-2295` `secure_opendir()` - the scan anchored on it.
+//! - `flist.c:1587-1595` `link_stat()` - the per-entry stat the scan drives.
+//! - `flist.c:535` `link_stat_at()`, `syscall.c:4131-4155`
 //!   `do_lstat_atfd()`/`do_stat_atfd()` - the anchored stat itself.
 
 use std::io;
@@ -177,9 +177,9 @@ pub fn read_dir(path: &Path) -> io::Result<ReadDir> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/flist.c:2028-2059` `secure_opendir()` - the confined open that
+/// - `rsync-3.5.1/flist.c:2256-2295` `secure_opendir()` - the confined open that
 ///   produces `scan_dirfd` for a daemon's directory scan.
-/// - `rsync-3.5.0/syscall.c:136` `confinement_root()` - `am_daemon ? module_dir
+/// - `rsync-3.5.1/syscall.c:163` `confinement_root()` - `am_daemon ? module_dir
 ///   : confine_root`, the value this parameter carries.
 #[cfg(unix)]
 pub fn read_dir_under(root: &Path, path: &Path) -> io::Result<ReadDir> {
@@ -188,7 +188,7 @@ pub fn read_dir_under(root: &Path, path: &Path) -> io::Result<ReadDir> {
     };
     // `strip_prefix` yields an empty path when `path` IS the root; the walk
     // spells that directory `.`, matching what upstream's post-`change_dir`
-    // code uses for the same directory (`flist.c:2059`).
+    // code uses for the same directory (`flist.c:2295`).
     let relative = if relative.as_os_str().is_empty() {
         Path::new(".")
     } else {
@@ -324,13 +324,13 @@ mod imp {
     /// confinement decision and no `AT_` resolve flag is passed: upstream is
     /// explicit that the anchored stat is reach, not policy - "Pure
     /// performance and sender-side only ... no confinement is implied or
-    /// needed" (`flist.c:223-228`). Refusing here would make an availability
+    /// needed" (`flist.c:225-230`). Refusing here would make an availability
     /// fix into a behaviour change.
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:3950-3974` `do_lstat_atfd()` / `do_stat_atfd()`.
-    /// - `rsync-3.5.0/flist.c:310` `link_stat_at()` - the caller that picks
+    /// - `rsync-3.5.1/syscall.c:4131-4155` `do_lstat_atfd()` / `do_stat_atfd()`.
+    /// - `rsync-3.5.1/flist.c:535` `link_stat_at()` - the caller that picks
     ///   between them.
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub(super) fn fstatat_relative(
@@ -339,7 +339,7 @@ mod imp {
         follow: bool,
     ) -> io::Result<crate::dir_sandbox::AtMetadata> {
         // `pinned_root_relative` already spells "the root itself" as `.`, which
-        // is the name upstream uses for that same directory (`flist.c:2059`).
+        // is the name upstream uses for that same directory (`flist.c:2295`).
         let name = relative.as_os_str();
         if follow {
             crate::dir_sandbox::fstatat_follow(dirfd, name)

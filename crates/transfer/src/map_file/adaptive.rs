@@ -62,7 +62,7 @@ impl AdaptiveMapStrategy {
     /// `docs/audits/mmap-iouring-co-usage.md` finding F1.
     ///
     /// Mirrors upstream rsync's deliberate avoidance of `mmap(2)` for basis
-    /// files (`fileio.c:214-217`).
+    /// files (`fileio.c:256-259`).
     ///
     /// # Errors
     ///

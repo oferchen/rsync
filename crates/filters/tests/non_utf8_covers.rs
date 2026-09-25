@@ -24,7 +24,7 @@ fn bytes_path(bytes: &[u8]) -> &Path {
 /// latin-1 name `caf\xe9`. Core's operand plumbing historically lossy-decoded
 /// it to `caf\u{FFFD}` before the implied-include rules were built. A
 /// malicious sender then injects the DIFFERENT name `caf\x80`: upstream's
-/// byte matcher rejects it (`\x80` != `\xe9`, flist.c:1144 "rejecting
+/// byte matcher rejects it (`\x80` != `\xe9`, flist.c:1369 "rejecting
 /// unrequested file-list name"), but a lossy match input also folds `\x80`
 /// to U+FFFD and falsely accepts the injected name.
 #[test]

@@ -14,7 +14,7 @@
 //! as the walk base the daemon's own filesystem prefix goes out on the wire.
 //! Measured against rsync 3.5.0 serving the same fixture, every one of sixteen
 //! operand shapes diverged: the receiver either refused the file list
-//! (`rejecting unrequested file-list name`, flist.c:1144) or materialised the
+//! (`rejecting unrequested file-list name`, flist.c:1369) or materialised the
 //! server's absolute path under the destination.
 //!
 //! Ground truth for the two pinned shapes, captured from rsync 3.5.0 serving
@@ -32,16 +32,16 @@
 //! independent reason: the daemon's own argv sanitize dropped the `.`
 //! component before the sender could split on it.
 //!
-//! Upstream keeps that decision on ONE axis. `options.c:2405` sanitizes every
-//! daemon positional with `SP_KEEP_DOT_DIRS`, and `util1.c:1143` reduces the
+//! Upstream keeps that decision on ONE axis. `options.c:2414` sanitizes every
+//! daemon positional with `SP_KEEP_DOT_DIRS`, and `util1.c:1240` reduces the
 //! flag to `drop_dot_dirs = !relative_paths || !(flags & SP_KEEP_DOT_DIRS)` -
 //! so on this path the surviving condition is `!relative_paths`. Under
-//! `--relative` the `.` therefore reaches `flist.c:2623`'s
+//! `--relative` the `.` therefore reaches `flist.c:2863`'s
 //! `strstr(fbuf, "/./")`, which splits the operand into the `dir` the sender
 //! walks from and the `fn` it transmits. oc hard-coded the drop, which made
 //! the axis "daemon-ness" instead of `--relative`: the pivot was erased, the
 //! sender transmitted the pre-pivot prefix too, and the receiver refused the
-//! list with `rejecting unrequested file-list name` (flist.c:1145, exit 4).
+//! list with `rejecting unrequested file-list name` (flist.c:1370, exit 4).
 //!
 //! Ground truth for the pivot shapes, captured from the same 3.5.0 daemon:
 //!
@@ -53,13 +53,13 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/clientserver.c:1059` - `change_dir(module_chdir, CD_NORMAL)`
-//! - `rsync-3.5.0/util1.c:881` - `glob_expand_module()` strips `MODULE/`
-//! - `rsync-3.5.0/options.c:2405` - `sanitize_path(NULL, argv[i], "", 0, ..)`
-//! - `rsync-3.5.0/flist.c:2610-2660` - the per-positional `dir`/`fn` split
-//! - `rsync-3.5.0/flist.c:1144` - `rejecting unrequested file-list name`
-//! - `rsync-3.5.0/util1.c:1143` - `drop_dot_dirs = !relative_paths || ..`
-//! - `rsync-3.5.0/flist.c:2623` - `if ((p = strstr(fbuf, "/./")) != NULL)`
+//! - `rsync-3.5.1/clientserver.c:1059` - `change_dir(module_chdir, CD_NORMAL)`
+//! - `rsync-3.5.1/util1.c:884` - `glob_expand_module()` strips `MODULE/`
+//! - `rsync-3.5.1/options.c:2414` - `sanitize_path(NULL, argv[i], "", 0, ..)`
+//! - `rsync-3.5.1/flist.c:2850-2900` - the per-positional `dir`/`fn` split
+//! - `rsync-3.5.1/flist.c:1369` - `rejecting unrequested file-list name`
+//! - `rsync-3.5.1/util1.c:1240` - `drop_dot_dirs = !relative_paths || ..`
+//! - `rsync-3.5.1/flist.c:2863` - `if ((p = strstr(fbuf, "/./")) != NULL)`
 
 #![cfg(unix)]
 
@@ -272,7 +272,7 @@ fn collect_tree(root: &Path, dir: &Path) -> Vec<String> {
 ///
 /// Before the walk base was re-anchored, the sender transmitted the daemon's
 /// absolute path, and the receiver's `rejecting unrequested file-list name`
-/// check (flist.c:1144) refused the whole list - so this cell fails on the
+/// check (flist.c:1369) refused the whole list - so this cell fails on the
 /// status line, promptly, rather than hanging.
 #[test]
 fn relative_pull_of_a_subpath_names_it_from_the_module_root() {
@@ -327,7 +327,7 @@ fn relative_pull_of_the_module_root_names_its_contents_from_the_module_root() {
 }
 
 /// Negative control: the non-`--relative` path is a different upstream branch
-/// (`flist.c:2610-2620` splits on the LAST `/`) and must be unaffected. It is
+/// (`flist.c:2850-2860` splits on the LAST `/`) and must be unaffected. It is
 /// green before and after the re-anchoring, so a red pin beside a green
 /// control proves the change is scoped to `--relative`.
 #[test]
@@ -351,13 +351,13 @@ fn a_non_relative_pull_of_the_same_subpath_is_unchanged() {
 /// An interior `/./` pivots the transmitted name: everything before it is the
 /// directory the sender walks from, and only the tail rides the wire.
 ///
-/// upstream: `flist.c:2623-2634` splits `a/./b/file.txt` into `dir = "a"` and
+/// upstream: `flist.c:2863-2874` splits `a/./b/file.txt` into `dir = "a"` and
 /// `fn = "b/file.txt"`. The split can only happen if the `.` survived the
-/// daemon's `options.c:2405` sanitize, which it does exactly when
-/// `relative_paths` is on (`util1.c:1143`).
+/// daemon's `options.c:2414` sanitize, which it does exactly when
+/// `relative_paths` is on (`util1.c:1240`).
 ///
 /// With the `.` dropped the sender transmitted `a/b/file.txt`, and the
-/// receiver refused the unrequested `a` (`flist.c:1145`), so this cell fails
+/// receiver refused the unrequested `a` (`flist.c:1370`), so this cell fails
 /// on the status line rather than hanging.
 #[test]
 fn relative_pull_pivots_the_name_at_an_interior_dot_dir() {
@@ -375,7 +375,7 @@ fn relative_pull_pivots_the_name_at_an_interior_dot_dir() {
         vec!["b".to_owned(), "b/file.txt".to_owned()],
         "the `/./` names `a` as the sender's directory, so only `b/file.txt` \
          rides the wire; an `a/` component here means the pivot was erased \
-         before `flist.c:2623` could split on it",
+         before `flist.c:2863` could split on it",
     );
 }
 
@@ -403,9 +403,9 @@ fn relative_pull_pivots_at_the_leafs_parent() {
 /// Negative control for the axis itself: the SAME pivot operand without
 /// `--relative` must still lose its `.`.
 ///
-/// upstream: `util1.c:1143` makes `drop_dot_dirs` true whenever
+/// upstream: `util1.c:1240` makes `drop_dot_dirs` true whenever
 /// `relative_paths` is off, whatever `SP_KEEP_DOT_DIRS` says, and
-/// `flist.c:2608` then splits on the LAST `/` - so the wire name is the bare
+/// `flist.c:2848` then splits on the LAST `/` - so the wire name is the bare
 /// basename. A green pin beside the two red ones above proves the fix rides
 /// `--relative` and not the daemon-ness of the process.
 #[test]
@@ -513,12 +513,12 @@ fn concurrent_connections_do_not_share_the_relative_pivot() {
 /// Negative control for the DESTINATION half of the axis: a non-`--relative`
 /// push into a `/.`-terminated daemon destination must still collapse the dot.
 ///
-/// Upstream sanitizes the dest positional through the same `options.c:2405`
-/// call as the sources, so `util1.c:1143` applies there too: with
+/// Upstream sanitizes the dest positional through the same `options.c:2414`
+/// call as the sources, so `util1.c:1240` applies there too: with
 /// `relative_paths` off the `.` is dropped and `wrmod/dest/.` becomes
-/// `dest/`, which `get_local_name()` (main.c:794) reads as the
+/// `dest/`, which `get_local_name()` (main.c:807) reads as the
 /// make-a-directory form and the tree lands inside. Keeping the dot instead
-/// pushes `dest/.` into the single-file arm at main.c:852, whose
+/// pushes `dest/.` into the single-file arm at main.c:865, whose
 /// `change_dir#3` on the not-yet-existing `dest` fails.
 ///
 /// Measured against the 3.5.0 daemon: `rsync -r <src>/a

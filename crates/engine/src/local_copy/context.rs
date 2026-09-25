@@ -217,7 +217,7 @@ pub(crate) struct CopyContext<'a> {
     /// from - it shrank after the file list recorded it. Drives the final
     /// `RERR_PARTIAL` (exit 23) exit code without aborting the remaining
     /// file-list entries.
-    // upstream: sender.c:787-795 - `unmap_file()` returns the status
+    // upstream: sender.c:789-797 - `unmap_file()` returns the status
     // `map_ptr()` recorded, and the sender sets `io_error |= IOERR_GENERAL`
     // plus one `read errors mapping %s` line before continuing.
     source_read_error: bool,
@@ -226,13 +226,13 @@ pub(crate) struct CopyContext<'a> {
     /// transfer executor snapshots this counter around a copy pass to decide
     /// whether THIS pass read a source that shrank and must be redone.
     // upstream: the per-file equivalent is `mbuf->status` handed back by
-    // `unmap_file()` (fileio.c:385) - per-map, not global.
+    // `unmap_file()` (fileio.c:427) - per-map, not global.
     source_read_events: u64,
     /// Set when an `--iconv` filename could not be strictly transcoded to the
     /// remote charset and its entry was skipped. Drives the final
     /// `RERR_PARTIAL` (exit 23) exit code, mirroring upstream's
     /// `io_error |= IOERR_GENERAL` on a failed `iconvbufs(ic_send, ...)`.
-    // upstream: flist.c:1631 send_file1()
+    // upstream: flist.c:1856 send_file1()
     iconv_conversion_error: bool,
     /// Set when a file entry could not be materialised because the operation is
     /// unsupported on this platform without privilege (currently a Windows file
@@ -247,7 +247,7 @@ pub(crate) struct CopyContext<'a> {
     /// but this flag drives the final `RERR_PARTIAL` (exit 23) exit code,
     /// mirroring upstream `successful_send()` where every such `FERROR_XFER`
     /// sets `got_xfer_error` without aborting the transfer.
-    // upstream: sender.c:395 successful_send(); log.c:311 got_xfer_error
+    // upstream: sender.c:396 successful_send(); log.c:311 got_xfer_error
     sender_remove_error: bool,
     /// Set when a directory obstacle could not be removed to make way for an
     /// incoming regular file, symlink, or special. That one entry is skipped
@@ -275,7 +275,7 @@ pub(crate) struct CopyContext<'a> {
     /// absolute destination directory: the entry names every OTHER source
     /// operand contributes to that directory. This is the local-copy stand-in
     /// for upstream's merged flist, which makes every source's entries visible
-    /// to every `delete_in_dir()` call (flist.c:2499 send_file_list accumulates
+    /// to every `delete_in_dir()` call (flist.c:2739 send_file_list accumulates
     /// all operands into ONE list; generator.c:1924-1927 sweeps against it).
     /// Populated by the sources orchestrator before any operand is walked, so
     /// a sweep can never unlink an entry a sibling source supplies - in either
@@ -294,7 +294,7 @@ pub(crate) struct CopyContext<'a> {
     /// under `--dry-run` a re-sweep would even report the same deletion twice.
     swept_directories: HashSet<PathBuf>,
     /// Absolute destination paths already produced by an earlier source
-    /// operand in this multi-source run. upstream: flist.c:3364-3382
+    /// operand in this multi-source run. upstream: flist.c:3607-3625
     /// flist_sort_and_clean() drops a later duplicate name from the merged
     /// list ("Otherwise keep the first one"), so the FIRST operand's copy
     /// wins and the duplicate is neither transferred nor itemized. A later
@@ -311,7 +311,7 @@ pub(crate) struct CopyContext<'a> {
     verified_parents: HashMap<PathBuf, Option<u64>>,
     /// Relative paths of implied parent directories already surfaced as flist
     /// entries during this transfer (`--relative`). Upstream's
-    /// `send_implied_dirs()` (flist.c:1937) relies on `lastpath` plus
+    /// `send_implied_dirs()` (flist.c:2162) relies on `lastpath` plus
     /// `flist_sort_and_clean()` deduplication so each implied ancestor appears
     /// once even when several source args share a prefix; this set reproduces
     /// that single-emission guarantee for the local-copy itemize/stats/verbose
@@ -327,7 +327,7 @@ pub(crate) struct CopyContext<'a> {
     /// `-R down/3/deep extra/./down/3/deep/extra.added.value`), and upstream keeps
     /// the distinct file because no earlier flist entry produced it. Upstream
     /// reaches the same collapse by building one shared flist across all source
-    /// args and then deduplicating in `flist_sort_and_clean()` (flist.c:3016); the
+    /// args and then deduplicating in `flist_sort_and_clean()` (flist.c:3259); the
     /// streaming local-copy executor never materialises that shared list, so this
     /// ordered set of covering source roots reproduces the dedup. Kept as a `Vec`
     /// because the covering test is an ancestor (path-prefix) match, not an exact
@@ -361,7 +361,7 @@ pub(crate) struct CopyContext<'a> {
     /// patches the slot. Emitting the head before the body is composed is what
     /// let `--write-batch` advertise `count=0` ahead of block-match tokens.
     ///
-    /// upstream: `io.c:write_sum_head()`; `receiver.c:414` rejects a block
+    /// upstream: `io.c:write_sum_head()`; `receiver.c:427` rejects a block
     /// index that the advertised count cannot cover.
     batch_delta_sum_head: protocol::wire::SumHead,
     /// Byte offset of the reserved sum_head inside `batch_delta_buf`.
@@ -374,9 +374,9 @@ pub(crate) struct CopyContext<'a> {
     /// `ITEM_TRANSFER` bit; `record_batch_is_new()` patches in `ITEM_IS_NEW`
     /// once `copy_file()` knows whether the destination pre-existed.
     ///
-    /// upstream: `sender.c:468 write_ndx_and_attrs()` re-emits the exact
+    /// upstream: `sender.c:469 write_ndx_and_attrs()` re-emits the exact
     /// iflags word the generator computed in `generator.c:517 itemize()`,
-    /// and `sender.c:586,624` count `stats.created_files` only when
+    /// and `sender.c:587,625` count `stats.created_files` only when
     /// `ITEM_IS_NEW` is set in that word.
     batch_delta_iflags_offset: Option<usize>,
     /// Sort metadata for each flist entry in traversal order: (name_bytes, is_dir).
@@ -386,7 +386,7 @@ pub(crate) struct CopyContext<'a> {
     /// `(st_dev, st_ino)` to the traversal index of the entry that first
     /// carried that inode, for `--write-batch -H`.
     ///
-    /// upstream: `flist.c:599-625 send_file_entry()` consults `idev_find()`
+    /// upstream: `flist.c:824-850 send_file_entry()` consults `idev_find()`
     /// for every non-directory with `st_nlink > 1`; a miss makes the entry the
     /// group leader (`XMIT_HLINK_FIRST`) and records its index, a hit makes it
     /// a follower carrying the leader's index.
@@ -394,7 +394,7 @@ pub(crate) struct CopyContext<'a> {
     /// Hardlink group number per flist entry in traversal order, `None` for
     /// entries outside any cluster.
     ///
-    /// upstream: `flist.c:1335-1341 recv_file_entry()` stores the same value in
+    /// upstream: `flist.c:1560-1566 recv_file_entry()` stores the same value in
     /// `F_HL_GNUM`; `hlink.c:match_gnums()` then transfers only the
     /// sorted-first member of each group, so the batch must carry delta data
     /// for that member alone.
@@ -456,7 +456,7 @@ pub(crate) struct FinalizeMetadataParams<'a> {
     /// `Some(meta)` when the destination existed at transfer start;
     /// `None` for a brand-new destination. Used by
     /// [`::metadata::apply_dest_mode_pre_transfer`] to reproduce the
-    /// upstream `receiver.c:964` + `rsync.c:489-682` chmod-on-rename loop.
+    /// upstream `receiver.c:980` + `rsync.c:489-682` chmod-on-rename loop.
     pre_transfer_meta: Option<&'a fs::Metadata>,
 
     #[cfg(unix)]

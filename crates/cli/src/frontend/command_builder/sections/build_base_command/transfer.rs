@@ -278,7 +278,7 @@ pub(super) fn add_transfer_args(command: ClapCommand) -> ClapCommand {
         )
         .arg(
             // upstream: options.c:631-632 - `--old-dirs`/`--old-d` set
-            // xfer_dirs=4, which options.c:2197-2199 resolves to recurse=1 plus
+            // xfer_dirs=4, which options.c:2206-2208 resolves to recurse=1 plus
             // an appended `- /*/*` filter rule. It is unrelated to --mkpath.
             Arg::new("old-dirs")
                 .long("old-dirs")

@@ -6,7 +6,7 @@
 //! exceeds upstream's `MIN_FILECNT_LOOKAHEAD` window.
 //!
 //! upstream: compat.c:161-179 set_allow_inc_recurse,
-//! sender.c:228-232 send_extra_file_list throttle.
+//! sender.c:231-235 send_extra_file_list throttle.
 
 use crate::{ServerConfig, ServerRole, compute_allow_inc_recurse};
 

@@ -11,7 +11,7 @@
 //! goodbye exchange (`MSG_INFO`, stats summary, etc.) could race the
 //! transport FIN and end up in a torn capture. The fix in
 //! `crates/transfer/src/generator/transfer/orchestrator.rs` mirrors upstream
-//! `main.c:983` `do_server_sender()` which calls `io_flush(FULL_FLUSH)`
+//! `main.c:996` `do_server_sender()` which calls `io_flush(FULL_FLUSH)`
 //! immediately before returning.
 //!
 //! This test reproduces the daemon-pull `-zz` codepath that the UTS-9
@@ -28,9 +28,9 @@
 //! refactor cannot regress either codepath without tripping a regression.
 //!
 //! Upstream references:
-//! - `main.c:983` `do_server_sender()` - `io_flush(FULL_FLUSH)` before return
-//! - `main.c:1344` `client_run()` - `io_flush(FULL_FLUSH)` before return
-//! - `main.c:875-906` `read_final_goodbye()` - goodbye exchange contract
+//! - `main.c:996` `do_server_sender()` - `io_flush(FULL_FLUSH)` before return
+//! - `main.c:1362` `client_run()` - `io_flush(FULL_FLUSH)` before return
+//! - `main.c:888-919` `read_final_goodbye()` - goodbye exchange contract
 
 #[cfg(unix)]
 mod common;
@@ -81,7 +81,7 @@ fn daemon_download_with_zz_completes_without_connection_drop() {
     let dest_file = dest_dir.path().join("uts9.bin");
 
     // `-azz` archives + new-style compression (zlibx in upstream's
-    // options.c:2012 mapping). The doubled `-z` is the trigger that
+    // options.c:2018 mapping). The doubled `-z` is the trigger that
     // reproduces the original UTS-9 wire pattern; archive mode (`-a`)
     // is included so the codepath exercises the standard pull flow
     // rather than a degenerate single-file mode.

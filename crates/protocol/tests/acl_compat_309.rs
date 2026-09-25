@@ -17,7 +17,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1205-1207` - ACLs read only when `preserve_acls` is set
+//! - `flist.c:1430-1432` - ACLs read only when `preserve_acls` is set
 //! - `flist.c:send_file_entry() line 654` - ACLs skipped for symlinks
 //! - `acls.c` - entire file guarded by `#ifdef SUPPORT_ACLS`
 

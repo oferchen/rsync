@@ -4,7 +4,7 @@
 /// `--delete-during` (sets `delete_during`). Both use during-transfer timing,
 /// but `--delete` serializes as `--delete` on the wire while `--delete-during`
 /// serializes as `--delete-during`. The `DuringDefault` variant preserves this
-/// distinction - upstream: `options.c:2818-2829 server_options()`.
+/// distinction - upstream: `options.c:2828-2839 server_options()`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
 pub enum DeleteMode {
     /// Do not remove extraneous destination entries.
@@ -19,7 +19,7 @@ pub enum DeleteMode {
     /// Bare `--delete` without a specific timing variant (upstream: `delete_mode`
     /// variable). Behaves identically to `During` but serialized as `--delete`
     /// on the wire. Suppressed when `--delete-excluded` is active, matching
-    /// upstream `options.c:2827 (delete_mode && !delete_excluded)`.
+    /// upstream `options.c:2837 (delete_mode && !delete_excluded)`.
     DuringDefault,
     /// Record deletions during the walk and prune entries after transfers finish.
     Delay,

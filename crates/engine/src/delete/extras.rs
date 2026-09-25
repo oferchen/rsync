@@ -18,7 +18,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.0/generator.c:285-360`
+//! - `target/interop/upstream-src/rsync-3.5.1/generator.c:285-360`
 //!   (`delete_in_dir`): scans `get_dirlist(fbuf, ...)` then for every
 //!   item calls `flist_find_ignore_dirness(cur_flist, fp) < 0` to decide
 //!   whether to delete. We perform the same set subtraction in pure

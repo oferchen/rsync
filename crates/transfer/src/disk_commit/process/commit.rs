@@ -23,7 +23,7 @@ use super::super::config::{BackupConfig, BackupEnv, DiskCommitConfig, PartialMod
 
 /// Sparse finalization carried from the write pass.
 ///
-/// upstream: `fileio.c:43` `sparse_end()` - truncate the file to its logical
+/// upstream: `fileio.c:47` `sparse_end()` - truncate the file to its logical
 /// length (leaving the trailing region a hole) and punch the in-basis zero
 /// runs so an `--inplace` update does not retain stale bytes.
 pub(super) struct SparseFinalize {
@@ -36,7 +36,7 @@ pub(super) struct SparseFinalize {
 /// Truncates `target` to the sparse logical length and punches its in-basis
 /// zero runs. Runs before the file is put into place.
 ///
-/// upstream: `fileio.c:43` `sparse_end()` runs inside `receive_data()` BEFORE
+/// upstream: `fileio.c:47` `sparse_end()` runs inside `receive_data()` BEFORE
 /// `receiver.c` calls `finish_transfer()` -> `set_file_attrs()`. Both `set_len`
 /// (ftruncate) and `punch_hole` (fallocate) update the file mtime, so this must
 /// run before the timestamp is applied or the just-set mtime is clobbered. The
@@ -80,8 +80,8 @@ pub(super) struct CommitOutcome {
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:1285-1314`: delay_updates stages to partial dir
-/// - `receiver.c:685-720`: `handle_delayed_updates()` bulk rename
+/// - `receiver.c:1302-1331`: delay_updates stages to partial dir
+/// - `receiver.c:701-736`: `handle_delayed_updates()` bulk rename
 pub(super) fn commit_file(
     begin: &BeginMessage,
     config: &DiskCommitConfig,
@@ -90,7 +90,7 @@ pub(super) fn commit_file(
     bytes_written: u64,
     sparse_final: Option<SparseFinalize>,
 ) -> io::Result<CommitOutcome> {
-    // upstream: fileio.c:43 sparse_end() - the temp+rename path truncates and
+    // upstream: fileio.c:47 sparse_end() - the temp+rename path truncates and
     // punches the temp file in the caller BEFORE applying metadata, so the
     // ftruncate/punch cannot re-stamp the mtime that set_file_attrs applied.
     // The inplace path finalizes in its dedicated branch below (after any
@@ -125,7 +125,7 @@ pub(super) fn commit_file(
         && config.delay_updates
         && let Some(staging_path) = delay_updates_staging_path(config, &begin.file_path)
     {
-        // upstream: util1.c:1518-1530 handle_partial_dir(..., PDIR_CREATE)
+        // upstream: util1.c:1613-1625 handle_partial_dir(..., PDIR_CREATE)
         // creates the partial directory before moving the temp into it,
         // and clears a non-directory standing at that name first
         // (:1523-1528). Without the clear, `create_dir_all` reports
@@ -179,16 +179,16 @@ pub(super) fn commit_file(
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
         result
     } else if begin.is_inplace && !begin.is_device_target {
-        // upstream: receiver.c:652 gates the in-place ftruncate on
+        // upstream: receiver.c:668 gates the in-place ftruncate on
         // `!IS_DEVICE(file->mode)`, so `--write-devices` never truncates the
         // target device - its data lands via the in-place writes and a
         // block/char device has no length to set (ftruncate would fail EINVAL).
         if let Some(ref sparse) = sparse_final {
-            // upstream: fileio.c:47-52 sparse_end() - punch stale basis blocks
+            // upstream: fileio.c:51-56 sparse_end() - punch stale basis blocks
             // then ftruncate to the logical length for the in-place update.
             finalize_sparse(&begin.file_path, sparse)?;
         } else {
-            // upstream: receiver.c:340 - set_file_length(fd, F_LENGTH(file))
+            // upstream: receiver.c:353 - set_file_length(fd, F_LENGTH(file))
             // In append mode, bytes_written only counts newly received data -
             // the full file size includes the existing content we seeked past.
             let final_size = if begin.append_offset > 0 {
@@ -204,7 +204,7 @@ pub(super) fn commit_file(
         false
     };
     cleanup_guard.keep();
-    // upstream: receiver.c:1291-1299 - once the file is committed, a basis that
+    // upstream: receiver.c:1308-1316 - once the file is committed, a basis that
     // came from the partial directory (FNAMECMP_PARTIAL_DIR) is unlinked and the
     // now-empty partial-dir is rmdir'd via handle_partial_dir(PDIR_DELETE). The
     // removal is unconditional for --partial-dir successes: when no partial
@@ -223,7 +223,7 @@ pub(super) fn commit_file(
 ///
 /// Best-effort: a missing partial file or a non-empty partial-dir leaves the
 /// filesystem untouched. The absolute-`--partial-dir` exemption belongs to
-/// [`engine::remove_partial_dir`], which owns upstream `util1.c:1506-1507` for
+/// [`engine::remove_partial_dir`], which owns upstream `util1.c:1601-1602` for
 /// both of oc's removal sites.
 fn remove_partial_dir_basis(config: &DiskCommitConfig, dest_path: &Path) {
     let PartialMode::PartialDir(ref dir) = config.partial_mode else {
@@ -254,7 +254,7 @@ fn remove_partial_dir_basis(config: &DiskCommitConfig, dest_path: &Path) {
 /// # Upstream Reference
 ///
 /// - `delete.c:75-77` - the no-held-dirfd arm is `robust_unlink(fbuf)`, and
-///   `util1.c:545` shows `robust_unlink` is `do_unlink_at(fname)` on both sides
+///   `util1.c:548` shows `robust_unlink` is `do_unlink_at(fname)` on both sides
 ///   of its `ETXTBSY` `#ifdef`. Upstream's fallback is the confined `do_*_at()`
 ///   wrapper, never a bare `unlink()`.
 #[cfg(unix)]
@@ -289,7 +289,7 @@ fn remove_partial_basis_confined(_config: &DiskCommitConfig, partial: &Path) {
 /// `partial_dir_fname(fname)`. The directory itself is whatever
 /// `--partial-dir` names; `--delay-updates` alone is promoted to the implicit
 /// `.~tmp~` by `TransferConfigBuilder::effective_partial_dir`
-/// (upstream options.c:2563-2564), so the staging directory is read from the
+/// (upstream options.c:2572-2573), so the staging directory is read from the
 /// configured partial mode rather than hardcoded here.
 ///
 /// Returns `None` when the config carries no partial directory, which leaves
@@ -323,7 +323,7 @@ pub(super) fn delay_updates_staging_path(
 ///   modtime (`cleanup_file->modtime = 0`, `tweak_modtime = 1`) so an
 ///   interrupted partial stands out in `ls` and is not skipped by `--update`.
 ///   Used by the interrupt paths (channel disconnect, `Abort`, `Shutdown`).
-/// - `false` (normal failed-verify keep): upstream `receiver.c:1309` calls
+/// - `false` (normal failed-verify keep): upstream `receiver.c:1326` calls
 ///   `finish_transfer(..., recv_ok, ...)` with `recv_ok == 0`, which maps to
 ///   `ATTRS_SKIP_MTIME` (`rsync.c:911-912`), so the retained stub keeps its
 ///   recent temp-creation mtime rather than being reset to the epoch.
@@ -335,7 +335,7 @@ pub(super) fn delay_updates_staging_path(
 ///
 /// - `cleanup.c:169-170` - `handle_partial_dir()` moves temp to partial-dir
 /// - `cleanup.c:174-180` - signal cleanup zeros modtime for plain `--partial`
-/// - `receiver.c:1309` - normal keep uses `ok_to_set_time = recv_ok` (0 on fail)
+/// - `receiver.c:1326` - normal keep uses `ok_to_set_time = recv_ok` (0 on fail)
 /// - `rsync.c:911-912` - `ok_to_set_time ? ATTRS_ACCURATE_TIME : ATTRS_SKIP_MTIME`
 pub(super) fn retain_partial_file(
     config: &DiskCommitConfig,
@@ -357,7 +357,7 @@ pub(super) fn retain_partial_file(
                     // stands out as unfinished in an ls and --update does not
                     // skip it as "up to date". Only for plain --partial, not
                     // --partial-dir (handle_partial_dir() leaves the mtime
-                    // alone). The normal failed-verify keep (receiver.c:1309,
+                    // alone). The normal failed-verify keep (receiver.c:1326,
                     // ok_to_set_time=0 -> ATTRS_SKIP_MTIME) does NOT zero it,
                     // preserving the recent temp-creation mtime - so zero only
                     // when `zero_mtime` is set (the interrupt paths).
@@ -481,10 +481,10 @@ pub(super) fn rename_with_io_uring_fallback(old_path: &Path, new_path: &Path) ->
 /// (`transfer_ops::response.rs`) and the primary #6808 ownership/timestamp
 /// anchoring.
 ///
-/// upstream: `syscall.c:1866` `do_rename_at()` opens each slashed path's parent
+/// upstream: `syscall.c:2005` `do_rename_at()` opens each slashed path's parent
 /// via `secure_relative_open()` (openat2 `RESOLVE_BENEATH`) and issues
 /// `renameat()` against the resulting dirfd, gated on `secure_relpath_active()`
-/// (`syscall.c:100`).
+/// (`syscall.c:117`).
 ///
 /// In every other case (no sandbox, or a `--temp-dir`/partial-dir on a
 /// different tree than `dest_dir`) it falls back to the existing io_uring /
@@ -562,9 +562,9 @@ pub(super) fn rename_config_sandboxed(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/util1.c:1518-1530` `handle_partial_dir(..., PDIR_CREATE)` -
+/// - `rsync-3.5.1/util1.c:1613-1625` `handle_partial_dir(..., PDIR_CREATE)` -
 ///   the whole retention runs under `operator_path_resolve`.
-/// - `rsync-3.5.0/syscall.c:1891` `do_rename_at()` under that flag.
+/// - `rsync-3.5.1/syscall.c:2030` `do_rename_at()` under that flag.
 #[cfg(unix)]
 fn stage_into_partial_dir(
     _config: &DiskCommitConfig,
@@ -677,7 +677,7 @@ fn backup_rename_or_copy(old_path: &Path, new_path: &Path, env: BackupEnv<'_>) -
 /// module and the client still exits 0.
 ///
 /// upstream: `backup.c:443-449` `make_backup()` sets `operator_path_resolve`
-/// around the whole backup, and `syscall.c:1891` `do_rename_at()` walks each
+/// around the whole backup, and `syscall.c:2030` `do_rename_at()` walks each
 /// side with `owner_walk_parent()` while it is set. A session with no
 /// confinement root - every plain local or remote-shell client - has nothing to
 /// be outside of, so only the ownership half applies there.
@@ -831,7 +831,7 @@ fn backup_rename_sandboxed(
 /// with `EXDEV` before `rename(2)` does.
 ///
 /// upstream: `backup.c:443-449` `make_backup()`; `backup.c:239-246`
-/// `link_or_rename()`; `syscall.c:961` `do_link_at()` under
+/// `link_or_rename()`; `syscall.c:1100` `do_link_at()` under
 /// `operator_path_resolve`.
 fn backup_hardlink_syscall(env: BackupEnv<'_>, old_path: &Path, new_path: &Path) -> io::Result<()> {
     #[cfg(test)]
@@ -1183,7 +1183,7 @@ mod confined_partial_basis_cleanup {
     /// explicitly rather than left to the process default so the cell states
     /// the variable it holds at zero instead of inheriting it.
     ///
-    /// upstream: `syscall.c:142-143` - `confinement_root()` returns NULL for a
+    /// upstream: `syscall.c:169-170` - `confinement_root()` returns NULL for a
     /// non-daemon caller, so nothing here is a divergence to work around.
     fn confine_to_nothing() {
         install_session(&Activation {
@@ -1242,9 +1242,9 @@ mod confined_partial_basis_cleanup {
     /// What refuses here is the sandbox ANCHOR, not a root - upstream reaches
     /// the same refusal the same way, by anchoring
     /// `secure_relative_open(NULL, fnamecmp, ...)` on `AT_FDCWD` after the
-    /// receiver `change_dir()`d onto the destination (`receiver.c:1065-1071`),
+    /// receiver `change_dir()`d onto the destination (`receiver.c:1081-1087`),
     /// with `confine_root` left NULL for a non-daemon client
-    /// (`syscall.c:142-143`).
+    /// (`syscall.c:169-170`).
     ///
     /// ⚠ The escaping component is the PREFIX `.rsync-partial`, not the leaf.
     /// `unlink(2)` never follows a terminal symlink, so a leaf-symlink fixture
@@ -1284,7 +1284,7 @@ mod confined_partial_basis_cleanup {
     /// ships an availability regression: a plain `oc-rsync -a --partial-dir=...
     /// src/ dst/` into a `dst/` whose subdirectory is a symlink would stop
     /// cleaning up its own partial basis. upstream splices a relative in-tree
-    /// target back into the walk (`syscall.c:2961`) rather than refusing it.
+    /// target back into the walk (`syscall.c:3102`) rather than refusing it.
     #[test]
     fn partial_basis_cleanup_follows_a_relative_in_tree_partial_dir_without_a_confine_root() {
         let (_keep, root) = canonical_tempdir();

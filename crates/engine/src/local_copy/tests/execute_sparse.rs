@@ -77,9 +77,9 @@ fn execute_with_sparse_enabled_creates_holes() {
 /// sparse: `KEEP_SIZE` is selected **only when no holes will be punched**
 /// (otherwise the reserved blocks sit beyond EOF where a punch cannot reach
 /// them), and `do_fallocate()` reports the reserved length instead of 0.
-// upstream: syscall.c:2597 do_fallocate() - `(inplace || preallocate_files)
+// upstream: syscall.c:2736 do_fallocate() - `(inplace || preallocate_files)
 // && sparse_files <= 0 ? DO_FALLOC_OPTIONS : 0`
-// upstream: fileio.c:84 flush_sparse_hole() - `sparse_past_write >= preallocated_len`
+// upstream: fileio.c:88 flush_sparse_hole() - `sparse_past_write >= preallocated_len`
 #[cfg(target_os = "linux")]
 #[test]
 fn execute_preallocate_sparse_punches_the_reserved_extent() {
@@ -126,8 +126,8 @@ fn execute_preallocate_sparse_punches_the_reserved_extent() {
 /// This mirrors upstream `preallocate_test.py`'s `--inplace --sparse` leg:
 /// upstream keeps `sparse_files > 0` in inplace mode and sets
 /// `preallocated_len = size_r` so `write_sparse()` punches the hole in place
-/// (receiver.c:334, fileio.c:sparse_end updating_basis_or_equiv branch).
-// upstream: fileio.c:47 sparse_end() updating_basis_or_equiv -> do_punch_hole
+/// (receiver.c:347, fileio.c:sparse_end updating_basis_or_equiv branch).
+// upstream: fileio.c:51 sparse_end() updating_basis_or_equiv -> do_punch_hole
 #[cfg(target_os = "linux")]
 #[test]
 fn execute_inplace_sparse_punches_hole() {
@@ -207,8 +207,8 @@ fn execute_inplace_sparse_punches_hole() {
 /// next matched block. Random 1 MB data hits this once in 256 runs, which is
 /// how upstream `preallocate_test.py`'s `--inplace --sparse` leg failed
 /// intermittently.
-// upstream: receiver.c:563 write_file() - no lseek between tokens; the
-// deferred hole is flushed from the current position (fileio.c:81
+// upstream: receiver.c:579 write_file() - no lseek between tokens; the
+// deferred hole is flushed from the current position (fileio.c:85
 // flush_sparse_hole()).
 #[test]
 fn execute_inplace_sparse_keeps_offsets_after_block_ending_in_zero() {

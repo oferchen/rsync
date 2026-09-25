@@ -3,12 +3,12 @@
 ///
 /// upstream: `--dparam`/`-M` is a DAEMON-side, process-local option with no wire
 /// representation. `options.c:867` maps a client-mode `--dparam` to `OPT_DAEMON`
-/// ("you meant --daemon"); `options.c:1532` then re-parses argv with
+/// ("you meant --daemon"); `options.c:1538` then re-parses argv with
 /// `long_daemon_options[]`, where `options.c:875` collects it into `dparam_list`
-/// (`options.c:1552-1562`). `loadparm.c:667 set_dparams()` applies that list from
+/// (`options.c:1558-1568`). `loadparm.c:667 set_dparams()` applies that list from
 /// exactly two callers, both reading the daemon's OWN argv - `loadparm.c:618-621`
-/// during `lp_load()` and `clientserver.c:1745` in `daemon_main()`. A client that
-/// passes `--dparam` is refused by `options.c:1584-1589` ("Daemon option(s) used
+/// during `lp_load()` and `clientserver.c:1766` in `daemon_main()`. A client that
+/// passes `--dparam` is refused by `options.c:1590-1595` ("Daemon option(s) used
 /// without --daemon.", RERR_SYNTAX), and client-mode `-M` is `--remote-option`
 /// (`options.c:859`), a different option entirely.
 ///

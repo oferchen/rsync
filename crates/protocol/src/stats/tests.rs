@@ -4,7 +4,7 @@ use crate::stats::{DeleteStats, TransferStats, flist_buildtime_ms};
 use crate::version::ProtocolVersion;
 
 /// A sub-millisecond build must still reach the peer as non-zero, or an
-/// upstream client drops its "File list generation time" line (main.c:450).
+/// upstream client drops its "File list generation time" line (main.c:453).
 #[test]
 fn flist_buildtime_ms_reports_a_zero_measurement_as_one() {
     assert_eq!(flist_buildtime_ms(std::time::Duration::ZERO), 1);

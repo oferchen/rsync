@@ -23,7 +23,7 @@ enum NdxLead {
 
 /// Classifies the leading byte of a modern NDX value.
 ///
-/// Upstream `io.c:2290-2299` - `read_ndx()` first-byte dispatch.
+/// Upstream `io.c:2328-2337` - `read_ndx()` first-byte dispatch.
 #[inline]
 fn classify_ndx_lead(lead: u8) -> NdxLead {
     if lead == 0xFF {
@@ -40,17 +40,17 @@ fn classify_ndx_lead(lead: u8) -> NdxLead {
 ///
 /// This is the single owner of upstream's bound. `read_ndx` accumulates every
 /// arm into a `uint32` and refuses anything above `MAX_INT32` before narrowing
-/// (`io.c:2582-2586`), because the result is used unchecked as a file-list
-/// index; upstream states that reason in its own comment at `io.c:2579-2581`.
+/// (`io.c:2620-2624`), because the result is used unchecked as a file-list
+/// index; upstream states that reason in its own comment at `io.c:2617-2619`.
 ///
 /// The UNSIGNED accumulation is as load-bearing as the bound. Upstream's
-/// operands are `uint32` (`io.c:2574-2578`), where overflow is defined and
+/// operands are `uint32` (`io.c:2612-2616`), where overflow is defined and
 /// wraps into the range this guard then rejects. Performing the same addition
 /// in `i32` panics under Rust's debug overflow checks on bytes a peer fully
 /// controls, so the arithmetic must be unsigned even though the result is not.
 ///
 /// Tagged as a protocol violation so the exit-code mapper yields
-/// `RERR_PROTOCOL` (2), matching `exit_cleanup(RERR_PROTOCOL)` at `io.c:2585`.
+/// `RERR_PROTOCOL` (2), matching `exit_cleanup(RERR_PROTOCOL)` at `io.c:2623`.
 #[inline]
 fn ndx_from_unsigned(unum: u32) -> io::Result<i32> {
     if unum > i32::MAX as u32 {
@@ -64,7 +64,7 @@ fn ndx_from_unsigned(unum: u32) -> io::Result<i32> {
 /// Reconstructs the full 4-byte modern NDX value from the `0xFE`/high-bit form.
 ///
 /// `tag` is the byte whose high bit was set; `b0`, `b1`, `b2` are the three
-/// following bytes. Upstream `io.c:2570-2574`.
+/// following bytes. Upstream `io.c:2608-2612`.
 ///
 /// The masked tag caps this arm at `i32::MAX`, so the bound can never fire
 /// here; it is routed through [`ndx_from_unsigned`] anyway because upstream
@@ -78,7 +78,7 @@ fn decode_ndx_extended_full(tag: u8, b0: u8, b1: u8, b2: u8) -> io::Result<i32> 
 
 /// Reconstructs a modern NDX value from the `0xFE` 2-byte diff form.
 ///
-/// Upstream `io.c:2576`.
+/// Upstream `io.c:2614`.
 #[inline]
 fn decode_ndx_extended_diff(hi: u8, lo: u8, prev_val: i32) -> io::Result<i32> {
     let diff = ((hi as u32) << 8) | (lo as u32);
@@ -87,7 +87,7 @@ fn decode_ndx_extended_diff(hi: u8, lo: u8, prev_val: i32) -> io::Result<i32> {
 
 /// Reconstructs a modern NDX value from the single-byte short-diff form.
 ///
-/// Upstream `io.c:2578`.
+/// Upstream `io.c:2616`.
 #[inline]
 fn decode_ndx_short(diff_byte: u8, prev_val: i32) -> io::Result<i32> {
     ndx_from_unsigned((diff_byte as u32).wrapping_add(prev_val as u32))
@@ -151,7 +151,7 @@ pub trait NdxCodec {
 ///
 /// # Upstream Reference
 ///
-/// `io.c:2246-2248`:
+/// `io.c:2284-2286`:
 /// ```c
 /// if (protocol_version < 30)
 ///     return read_int(f);
@@ -224,8 +224,8 @@ impl NdxCodec for LegacyNdxCodec {
 ///
 /// # Upstream Reference
 ///
-/// `io.c:2243-2287` - `write_ndx()` function
-/// `io.c:2289-2318` - `read_ndx()` function
+/// `io.c:2281-2325` - `write_ndx()` function
+/// `io.c:2327-2356` - `read_ndx()` function
 #[derive(Debug, Clone)]
 pub struct ModernNdxCodec {
     protocol_version: u8,
@@ -335,11 +335,11 @@ impl NdxCodec for ModernNdxCodec {
             (diff, ndx)
         } else if ndx == NDX_DONE {
             // NDX_DONE is sent as single-byte 0 with no side effects
-            // Upstream io.c:2259-2262
+            // Upstream io.c:2297-2300
             return writer.write_all(&[0x00]);
         } else {
             // All negative index bytes start with 0xFF
-            // Upstream io.c:2263-2268
+            // Upstream io.c:2301-2306
             buf[cnt] = 0xFF;
             cnt += 1;
             let ndx_abs = -ndx;
@@ -349,13 +349,13 @@ impl NdxCodec for ModernNdxCodec {
         };
 
         // Encode the diff value
-        // Upstream io.c:2270-2285
+        // Upstream io.c:2308-2323
         if diff > 0 && diff < 0xFE {
             buf[cnt] = diff as u8;
             cnt += 1;
         } else if !(0..=0x7FFF).contains(&diff) {
             // Full 4-byte encoding with high bit set
-            // Upstream io.c:2275-2280
+            // Upstream io.c:2313-2318
             buf[cnt] = 0xFE;
             cnt += 1;
             buf[cnt] = ((ndx_positive >> 24) as u8) | 0x80;
@@ -368,7 +368,7 @@ impl NdxCodec for ModernNdxCodec {
             cnt += 1;
         } else {
             // 2-byte diff encoding
-            // Upstream io.c:2281-2284
+            // Upstream io.c:2319-2322
             buf[cnt] = 0xFE;
             cnt += 1;
             buf[cnt] = (diff >> 8) as u8;
@@ -401,11 +401,11 @@ impl NdxCodec for ModernNdxCodec {
 
         let num = if b[0] == 0xFE {
             // Extended encoding
-            // Upstream io.c:2305-2314
+            // Upstream io.c:2343-2352
             reader.read_exact(&mut b[..1])?;
             if b[0] & 0x80 != 0 {
                 // 4-byte full value
-                // Upstream io.c:2307-2311
+                // Upstream io.c:2345-2349
                 let high = b[0];
                 reader.read_exact(&mut b[..3])?;
                 decode_ndx_extended_full(high, b[0], b[1], b[2])
@@ -595,7 +595,7 @@ pub fn create_ndx_codec(protocol_version: u8) -> NdxCodecEnum {
 /// are excluded.
 ///
 /// A redo pass legitimately re-emits an already-sent index: upstream
-/// `io.c:write_ndx` imposes no ordering, and `sender.c:468-485` echoes the redo
+/// `io.c:write_ndx` imposes no ordering, and `sender.c:469-486` echoes the redo
 /// NDX via the same `write_ndx_and_attrs` path used for the first send
 /// (`generator.c:2178-2216` re-requests the file on the redo). Once such a
 /// re-emission is seen the guard latches off, since no monotonic invariant
@@ -659,7 +659,7 @@ impl NdxCodec for MonotonicNdxWriter {
     fn write_ndx<W: Write + ?Sized>(&mut self, writer: &mut W, ndx: i32) -> io::Result<()> {
         // Only check positive file indices - negative values are sentinels
         // (NDX_DONE, NDX_FLIST_EOF, NDX_DEL_STATS, NDX_FLIST_OFFSET). A redo
-        // pass re-emits an already-sent index (sender.c:468-485 echoes the redo NDX
+        // pass re-emits an already-sent index (sender.c:469-486 echoes the redo NDX
         // via write_ndx_and_attrs), so a non-increasing value latches the guard
         // off rather than tripping it.
         #[cfg(debug_assertions)]

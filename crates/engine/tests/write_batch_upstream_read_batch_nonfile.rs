@@ -16,8 +16,8 @@
 //! # Upstream Reference
 //!
 //! - `generator.c:1480-1482`/`:1605-1610`/`:1679-1682 itemize()`,
-//!   `receiver.c:726-786` (`stats.created_{dirs,symlinks,specials}`),
-//!   `receiver.c:559 no_batched_update()` (a missing special entry aborts
+//!   `receiver.c:742-802` (`stats.created_{dirs,symlinks,specials}`),
+//!   `receiver.c:575 no_batched_update()` (a missing special entry aborts
 //!   the replay with exit 23).
 
 #![cfg(unix)]
@@ -127,7 +127,7 @@ fn upstream_read_batch_counts_created_dirs_symlinks_and_specials() {
     assert!(
         status.success(),
         "upstream --read-batch of an oc batch must not abort (a missing special entry \
-         triggers exit 23 via receiver.c:559 no_batched_update); stdout:\n{stdout}\n\
+         triggers exit 23 via receiver.c:575 no_batched_update); stdout:\n{stdout}\n\
          stderr:\n{}",
         String::from_utf8_lossy(&stderr)
     );

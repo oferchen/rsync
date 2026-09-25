@@ -121,7 +121,7 @@ fn run_daemon_post_ok_bad_option_value_uses_multiplexed_error() {
         .read_exact(&mut err_body)
         .expect("read MSG_ERROR_XFER payload");
     let err_text = String::from_utf8(err_body).expect("UTF-8 error payload");
-    // Upstream echoes the rejected value back verbatim (options.c:1254
+    // Upstream echoes the rejected value back verbatim (options.c:1260
     // `"--%s=%s is %s"`), which is what lets an operator see which option was
     // refused. Assert on the value, not just the option name.
     assert!(

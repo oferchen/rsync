@@ -1846,7 +1846,7 @@ fn execute_copy_unsafe_links_in_tree_preserves_safe_and_dereferences_unsafe() {
 /// `--info=SYMSAFE` notice once for each unsafe symlink that gets
 /// followed.
 ///
-/// Mirrors `flist.c:216` in upstream rsync 3.4.1:
+/// Mirrors `flist.c:218` in upstream rsync 3.4.1:
 /// ```c
 /// if (copy_unsafe_links && unsafe_symlink(linkbuf, path)) {
 ///     if (INFO_GTE(SYMSAFE, 1)) {
@@ -1915,7 +1915,7 @@ fn copy_unsafe_links_emits_info_symsafe_notice() {
 
 /// Verifies that the default verbosity configuration (no `--info=SYMSAFE`)
 /// suppresses the notice during a `--copy-unsafe-links` dereference,
-/// matching upstream's `INFO_GTE(SYMSAFE, 1)` gate (flist.c:268).
+/// matching upstream's `INFO_GTE(SYMSAFE, 1)` gate (flist.c:493).
 #[cfg(unix)]
 #[test]
 fn copy_unsafe_links_default_verbosity_suppresses_info_symsafe_notice() {

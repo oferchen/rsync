@@ -108,8 +108,8 @@ fn receiver_shaped_descent_tracks_current_dirfd() {
 /// part that was wrong.
 ///
 /// upstream: `ds_descend()` refuses an absolute target outright
-/// (`syscall.c:2953`) while splicing a relative in-tree one back into the
-/// walk (`syscall.c:2961`), so refusing here is parity, not strictness.
+/// (`syscall.c:3094`) while splicing a relative in-tree one back into the
+/// walk (`syscall.c:3102`), so refusing here is parity, not strictness.
 #[test]
 fn descent_refuses_absolute_symlink_target_without_disturbing_stack() {
     let (_keep, root) = canonical_tempdir();
@@ -161,7 +161,7 @@ fn descent_refuses_absolute_symlink_target_without_disturbing_stack() {
 /// refuses a symlink leaf regardless of target. That platform split is a
 /// real residual, not an oversight in this test.
 ///
-/// upstream: `syscall.c:2961`.
+/// upstream: `syscall.c:3102`.
 #[cfg(target_os = "linux")]
 #[test]
 fn descent_follows_relative_in_tree_symlink() {

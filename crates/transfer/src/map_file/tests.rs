@@ -492,7 +492,7 @@ fn window_slide_forward_reuses_overlap() {
 /// must not drop bytes the overlap branch is about to relocate.
 ///
 /// Reproduces the data-loss path flagged during PR #5569 review: upstream
-/// `fileio.c:236` `realloc_array` only grows; mirroring that, `Vec::resize`
+/// `fileio.c:278` `realloc_array` only grows; mirroring that, `Vec::resize`
 /// must never shrink the buffer while `copy_within` is about to shift a
 /// suffix of the old window to the head of the new window.
 #[test]

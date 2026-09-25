@@ -76,7 +76,7 @@ pub fn forward_files_from<R: Read, W: Write>(
 
         let chunk = &mut buf[..n];
 
-        // upstream: io.c:397-403 - transform CR and/or LF into '\0'.
+        // upstream: io.c:415-421 - transform CR and/or LF into '\0'.
         if !eol_nulls {
             for byte in chunk.iter_mut() {
                 if *byte == b'\n' || *byte == b'\r' {
@@ -92,7 +92,7 @@ pub fn forward_files_from<R: Read, W: Write>(
                     current_entry.clear();
                     last_emitted_nul = true;
                 }
-                // upstream: io.c:456-482 - collapse runs of consecutive '\0'.
+                // upstream: io.c:474-500 - collapse runs of consecutive '\0'.
             } else {
                 current_entry.push(byte);
             }
@@ -106,7 +106,7 @@ pub fn forward_files_from<R: Read, W: Write>(
         last_emitted_nul = true;
     }
 
-    // upstream: io.c:379 - write_buf(iobuf.out_fd, "\0\0", ff_lastchar ? 2 : 1).
+    // upstream: io.c:397 - write_buf(iobuf.out_fd, "\0\0", ff_lastchar ? 2 : 1).
     if last_emitted_nul {
         writer.write_all(b"\0")?;
     } else {
@@ -159,7 +159,7 @@ fn write_filesfrom_entry<W: Write>(
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2297` - `read_line(filesfrom_fd, fbuf, sizeof fbuf, rl_flags)`
+/// - `flist.c:2537` - `read_line(filesfrom_fd, fbuf, sizeof fbuf, rl_flags)`
 ///   with `RL_EOL_NULLS` set when `reading_remotely`
 /// - `io.c:read_line()` (RL_CONVERT branch) - `iconvbufs(ic_recv, ...)`
 /// - `compat.c:799-806` - `filesfrom_convert` gating predicate

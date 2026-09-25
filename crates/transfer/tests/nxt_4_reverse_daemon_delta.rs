@@ -17,7 +17,7 @@
 //!
 //! - daemon-sender delta generation:
 //!   `crates/transfer/src/generator/delta.rs::generate_delta_from_signature`
-//!   (refs `sender.c:389-430`), with wire decode of the signature in
+//!   (refs `sender.c:390-431`), with wire decode of the signature in
 //!   `crates/protocol/src/wire/signature.rs::read_signature`.
 //! - client receiver applying the delta:
 //!   `crates/transfer/src/receiver/` (`delta_apply`, `quick_check`).
@@ -121,7 +121,7 @@ impl Drop for DaemonGuard {
 /// Spawn `oc-rsync --daemon` on `port` and wait until it accepts connections.
 fn spawn_oc_daemon(oc_bin: &Path, config_path: &Path) -> io::Result<(DaemonGuard, u16)> {
     // Acquire a race-free free port and start the daemon on it. Because the
-    // default daemon binds with SO_REUSEADDR only (upstream socket.c:447), a
+    // default daemon binds with SO_REUSEADDR only (upstream socket.c:455), a
     // port collision is a clean EADDRINUSE daemon exit - never a silent
     // SO_REUSEPORT co-bind - so the helper simply retries with a fresh port.
     // See `test_support::daemon_port`.

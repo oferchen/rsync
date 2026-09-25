@@ -254,7 +254,7 @@ fn max_alloc_argument_resolution_rejects_zero() {
 
 #[test]
 fn max_alloc_argument_resolution_rejects_below_one_mib() {
-    // upstream: options.c:2067 - parse_size_arg min value is 1 MiB, so "512K"
+    // upstream: options.c:2073 - parse_size_arg min value is 1 MiB, so "512K"
     // (below the minimum) is rejected as "too small".
     use crate::frontend::execution::parse_max_alloc_argument;
     let error = parse_max_alloc_argument(OsStr::new("512K")).expect_err("below 1 MiB rejected");
@@ -385,7 +385,7 @@ fn max_alloc_zero_from_the_environment_is_rejected() {
 
 #[test]
 fn max_alloc_below_one_mib_produces_error_exit() {
-    // upstream: options.c:1960 - a non-zero `--max-alloc` below 1 MiB is a
+    // upstream: options.c:1966 - a non-zero `--max-alloc` below 1 MiB is a
     // syntax error (exit 1).
     let _guard = clear_rsync_rsh();
     let (code, _stdout, stderr) = run_with_args([

@@ -39,7 +39,7 @@
 //!    handshake.
 //!
 //! The captures are the raw byte streams of both directions, multiplex
-//! framing included (upstream: io.c:1155 keeps the 4-byte frame headers inside
+//! framing included (upstream: io.c:1173 keeps the 4-byte frame headers inside
 //! the same stream), taken by the `capture-rsh` trampoline.
 #![cfg(unix)]
 use std::fs;

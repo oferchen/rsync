@@ -45,8 +45,8 @@ use crate::xattr_windows as backend;
 ///
 /// The privilege test goes through [`crate::am_root`], which reads the cached
 /// **libc** `geteuid` (`identity::is_root`), never a `rustix` raw syscall.
-/// Upstream's `am_root` comes from `MY_UID()` (`rsync.h:1455` = libc
-/// `geteuid()`, sampled at `main.c:1844`), so `fakeroot`'s LD_PRELOAD
+/// Upstream's `am_root` comes from `MY_UID()` (`rsync.h:1457` = libc
+/// `geteuid()`, sampled at `main.c:1871`), so `fakeroot`'s LD_PRELOAD
 /// interposition is visible to it. A raw syscall reports the real
 /// unprivileged uid under `fakeroot` and would confine the receiver to
 /// `user.*` in exactly the runs where upstream keeps `security.*`/`trusted.*`.
@@ -600,8 +600,8 @@ struct DestinationXattrs<'a> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/xattrs.c:386-390` - `fd >= 0 ? sys_fsetxattr : sys_lsetxattr`
-/// - `rsync-3.5.0/rsync.c:519` - `xattr_refuse`, "no confined fd for a
+/// - `rsync-3.5.1/xattrs.c:386-390` - `fd >= 0 ? sys_fsetxattr : sys_lsetxattr`
+/// - `rsync-3.5.1/rsync.c:519` - `xattr_refuse`, "no confined fd for a
 ///   slashed path: skip path-based xattr/ACL"
 enum XattrSink {
     /// The path-based l-variant. Upstream's `fd < 0` arm: what a
@@ -1657,8 +1657,8 @@ mod tests {
     /// The receiver screen must answer upstream's `am_root`, not a raw euid.
     ///
     /// upstream: `xattrs.c:1002` `int user_only = am_root <= 0;` where
-    /// `am_root` is `main.c:1846`'s cached `MY_UID() == ROOT_UID`, and
-    /// `MY_UID()` is the **libc** `geteuid()` (`rsync.h:1455`). `fakeroot`
+    /// `am_root` is `main.c:1873`'s cached `MY_UID() == ROOT_UID`, and
+    /// `MY_UID()` is the **libc** `geteuid()` (`rsync.h:1457`). `fakeroot`
     /// interposes that libc symbol, so upstream under `fakeroot` sees
     /// `am_root == 1` and keeps every namespace but `system.*`. A raw
     /// `geteuid` syscall is invisible to the interposition, still reports the

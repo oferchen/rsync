@@ -92,7 +92,7 @@ pub(crate) fn resolve_dir_merge_path(base: &Path, pattern: &Path) -> PathBuf {
 /// prepending the scanned directory (exclude.c:739-744). oc composes a
 /// `PathBuf` with no ceiling of its own, so the authority on "too long" is the
 /// platform - and `MAXPATHLEN` resolves to the same `PATH_MAX` the kernel
-/// enforces (rsync.h:760-762 only supplies 1024 when `<sys/param.h>` did not),
+/// enforces (rsync.h:761-763 only supplies 1024 when `<sys/param.h>` did not),
 /// so the two rules coincide on both supported platforms.
 ///
 /// This is not the errno-as-policy shape that keying a confinement fallback on
@@ -429,8 +429,8 @@ pub(crate) fn load_dir_merge_rules_recursive(
     // component may be attacker-controlled. Refuse a symlink owned by neither
     // uid 0 nor our euid, exactly as upstream does for the same open.
     //
-    // upstream: exclude.c:1464 parse_filter_file() -> syscall.c:538
-    // open_no_attacker_symlinks(); trust rule at syscall.c:406.
+    // upstream: exclude.c:1464 parse_filter_file() -> syscall.c:675
+    // open_no_attacker_symlinks(); trust rule at syscall.c:499.
     let file = match open_merge_file(path) {
         Ok(file) => file,
         // The refusal is NOT fatal. Upstream calls parse_filter_file() with
@@ -725,7 +725,7 @@ fn open_merge_file(path: &std::path::Path) -> io::Result<fs::File> {
         // it - a non-chrooted daemon writes as root, so a planted backup
         // symlink is root-owned, which the walk trusts by design.
         //
-        // upstream: `rsync-3.5.0/exclude.c:1668-1684` `parse_filter_file()`.
+        // upstream: `rsync-3.5.1/exclude.c:1668-1684` `parse_filter_file()`.
         fast_io::operator_open_read_confined(path)
     }
     #[cfg(not(unix))]

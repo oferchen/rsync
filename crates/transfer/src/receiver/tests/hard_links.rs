@@ -636,7 +636,7 @@ fn create_hardlinks_surfaces_non_eacces_error() {
 /// A `--delay-updates` leader is committed under the `.~tmp~` partial-dir and is
 /// renamed to its final path only in phase 2 by `handle_delayed_updates`. A
 /// follower may be hard-linked to it only *after* that rename - upstream
-/// `receiver.c:694-695` (the phase-2 rename) then `:551-552`
+/// `receiver.c:710-711` (the phase-2 rename) then `:551-552`
 /// (`send_msg_success` -> `finish_hard_link`). `create_hardlinks` links the
 /// follower against the leader's FINAL path (`dest_dir.join(rel)`), so if it ran
 /// before the delayed rename the follower's `linkat` would target a leader still
@@ -1024,7 +1024,7 @@ fn server_push_emits_new_follower_when_not_yet_linked() {
 }
 
 /// The peer's sender echoes every non-transfer item back (upstream
-/// `sender.c:286-292`), but the request-count-driven pipeline response loop
+/// `sender.c:289-295`), but the request-count-driven pipeline response loop
 /// never reads them. If they are not drained at the phase boundary, the first
 /// `read_expected_ndx_done` reads a follower echo's NDX instead of NDX_DONE and
 /// aborts with a protocol error (the exit-10 `hardlinks` testsuite failure).

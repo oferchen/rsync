@@ -5,6 +5,91 @@
   "_4_engine_and_transfer": "engine is now 0; transfer=4 is what remains of the deferred half of the 3.4.4 sweep, excluded to avoid colliding with concurrent edits in that crate. Those 4 are UNREVIEWED - nobody has confirmed they are false positives. Whoever sweeps them lowers the number in the same commit.",
   "_5_350_flip": "Pinned source moved 3.4.4 -> 3.5.0 (task U350-7e). 439 citations were retargeted by ordinal mapping - same anchor, same occurrence index in both versions - plus 122 range ENDs shifted by the same delta. Drift fell 453 -> 14 of 495 anchored citations. Every one of the 14 left is an anchor matching MORE THAN ONE upstream line, so the tool cannot localise it and its verdict is not evidence. They are accepted as false positives, NOT as unfixed drift. Fixing them means giving the comment a distinctive anchor, not moving a correct line number.",
   "_5_regenerate": "python3 tools/ci/citation_drift_audit.py --write-baseline [crate ...]  (merges, so a crate subset will not drop the others or these notes)",
+  "_6_351_flip": {
+    "resolutions": {
+      "options.c:2061-2073": {
+        "to": null,
+        "why": "VANISHED, BEHAVIOUR CHANGED: 3.5.1 deleted the `max-alloc must be greater than zero` rejection; --max-alloc=0 is accepted again and resolves to SIZE_ARG_MAX (options.c:2072-2086). Left as written: the oc code enforcing the 3.5.0 rejection needs an update (tasks 1359, 1572)"
+      },
+      "options.c:2066-2073": {
+        "to": null,
+        "why": "VANISHED, BEHAVIOUR CHANGED: 3.5.1 deleted the `max-alloc must be greater than zero` rejection; --max-alloc=0 is accepted again and resolves to SIZE_ARG_MAX (options.c:2072-2086). Left as written: the oc code enforcing the 3.5.0 rejection needs an update (tasks 1359, 1572)"
+      },
+      "options.c:2069-2072": {
+        "to": null,
+        "why": "VANISHED, BEHAVIOUR CHANGED: 3.5.1 deleted the `max-alloc must be greater than zero` rejection; --max-alloc=0 is accepted again and resolves to SIZE_ARG_MAX (options.c:2072-2086). Left as written: the oc code enforcing the 3.5.0 rejection needs an update (tasks 1359, 1572)"
+      },
+      "options.c:2069-2074": {
+        "to": "2196-2201",
+        "why": "parse_arguments() `if (iconv_opt && protect_args != 2) ... need_unsorted_flist = 1`. The 3.5.0 number was already stale (3.4.4's lines); re-located by construct"
+      },
+      "options.c:2070": {
+        "to": "2196",
+        "why": "parse_arguments() `protect_args != 2` iconv guard (stale 3.4.4 number, re-located by construct)"
+      },
+      "options.c:2071": {
+        "to": null,
+        "why": "VANISHED, BEHAVIOUR CHANGED: 3.5.1 deleted the `max-alloc must be greater than zero` rejection; --max-alloc=0 is accepted again and resolves to SIZE_ARG_MAX (options.c:2072-2086). Left as written: the oc code enforcing the 3.5.0 rejection needs an update (tasks 1359, 1572)"
+      },
+      "receiver.c:1137": {
+        "to": "1153",
+        "why": "recv_files() one_inplace. BEHAVIOUR CHANGED: now also requires `partial_dir` (task 1374)"
+      },
+      "receiver.c:1137-1138": {
+        "to": "1153-1155",
+        "why": "recv_files() one_inplace. BEHAVIOUR CHANGED: now also requires `partial_dir` (task 1374)"
+      },
+      "sender.c:293-295": {
+        "to": "296-298",
+        "why": "sender_open_copylinks_confined() module_dirfd branch; now secure_relative_dirfd_at_beneath() (O_PATH traversal dirfd, task 1365)"
+      },
+      "sender.c:295-308": {
+        "to": "587-600",
+        "why": "send_files() ITEM_IS_NEW created_* cascade. The 3.5.0 number was already stale (it cited 3.4.4's lines; the cascade sat at 3.5.0 587-600), so this is re-located by the comment's stated construct"
+      },
+      "sender.c:295-308,333-334": {
+        "to": "587-600,625-626",
+        "why": "send_files() created_* cascade plus the transferred-file `if (iflags & ITEM_IS_NEW) stats.created_files++` (stale 3.4.4 numbers, re-located by construct)"
+      },
+      "sender.c:296-309": {
+        "to": "587-600",
+        "why": "send_files() ITEM_IS_NEW created_* cascade (stale 3.4.4 number, re-located by construct as for sender.c:295-308)"
+      },
+      "syscall.c:186-240": {
+        "to": "232-291",
+        "why": "abspath_outside_confinement() comment+body; closing brace is 291 (function ordinal). BEHAVIOUR CHANGED: gains `final` and enforces for files-from owner walks (tasks 1366, 1371, 1567)"
+      },
+      "syscall.c:197-240": {
+        "to": "245-291",
+        "why": "abspath_outside_confinement() body. BEHAVIOUR CHANGED: `final` parameter, `enforce` covers filesfrom_owner_walk_active() (tasks 1366, 1371, 1567)"
+      },
+      "syscall.c:232": {
+        "to": "282",
+        "why": "'refuse for an operator/peer path' comment, now also naming filesfrom_owner_walk_active() (tasks 1366, 1371)"
+      },
+      "syscall.c:232-239": {
+        "to": "282-290",
+        "why": "divergence comment through the final refusal; `return operator_path_resolve ? 1 : 0` is now `return enforce ? 1 : 0` (tasks 1366, 1371, 1567)"
+      },
+      "syscall.c:233-238": {
+        "to": "284-289",
+        "why": "ancestor-of-root branch. BEHAVIOUR CHANGED: an ancestor now returns `enforce && final ? 1 : 0`, so a FINAL path that is an ancestor of the root is refused (task 1366)"
+      },
+      "syscall.c:239": {
+        "to": "290",
+        "why": "final refusal, now `return enforce ? 1 : 0` (tasks 1366, 1371)"
+      },
+      "syscall.c:406": {
+        "to": "499",
+        "why": "ona_open() untrusted-owner symlink refusal. BEHAVIOUR CHANGED: exempts /proc/self and /dev/{fd,stdin,stdout,stderr} namespace pins and prints a new refusal message (tasks 1363, 1368, 1574)"
+      },
+      "syscall.c:489-513": {
+        "to": "622-646",
+        "why": "ona_open() last-component confinement check through the O_DIRECTORY endpoint comment. BEHAVIOUR CHANGED: the endpoint is re-checked and REOPENED with the caller's flags instead of handing back the O_PATH traversal fd (tasks 1365, 1569)"
+      }
+    },
+    "summary": "Pinned source moved 3.5.0 -> 3.5.1 (task U351-4). Retargeted by tools/ci/citation_retarget.py, which re-locates each cited construct by content - enclosing function plus normalised line text, by occurrence ordinal - cross-checked against a line diff of the two releases, never by arithmetic. Per cited line number: 16780 unchanged, 11445 moved, 60 flagged (text changed in place, auto-remapped and listed for review), 128 resolved by hand from the table below, 17 vanished and left as written, 0 ambiguous left. docs/, CHANGELOG.md and release notes are records: only the 4 whose quoted anchors fit 3.5.0 strictly better than 3.4.4 were retargeted, the other 376 keep their numbers. The drift ratchet is unchanged (10 of 689 anchored); the non-blocking population fell 394 -> 389 of 637. Re-run with: python3 tools/ci/citation_retarget.py --from 3.5.0 --to 3.5.1 --prior-dir <3.4.4 tree> --from-dir <built 3.5.0> --to-dir <built 3.5.1> --resolutions tools/ci/citation_drift_baseline.json --resolutions-key _6_351_flip --apply (trees configured and built as the manifest's are, so generated headers such as daemon-parm.h are present)."
+  },
   "bandwidth": 0,
   "batch": 0,
   "checksums": 0,

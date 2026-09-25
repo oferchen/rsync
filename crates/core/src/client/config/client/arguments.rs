@@ -27,7 +27,7 @@ impl ClientConfig {
     /// Reports whether the user passed `--list-only` explicitly.
     ///
     /// Mirrors upstream `list_only > 1`: only the explicit flag is forwarded to
-    /// the remote as `--list-only` (`options.c:2747`); the implicit single-source
+    /// the remote as `--list-only` (`options.c:2757`); the implicit single-source
     /// listing (`list_only == 1`) is not.
     #[must_use]
     #[doc(alias = "--list-only")]
@@ -70,7 +70,7 @@ impl ClientConfig {
     /// `write_batch < 0`).
     ///
     /// The batch is still recorded in full, but no destination is updated:
-    /// `main.c:1839` turns the flag into `dry_run = 1` and `sender.c:217`
+    /// `main.c:1866` turns the flag into `dry_run = 1` and `sender.c:220`
     /// points the token stream at the batch file instead of the wire.
     #[doc(alias = "--only-write-batch")]
     #[must_use]
@@ -123,7 +123,7 @@ impl ClientConfig {
     /// A push (remote destination, local sources) and a local copy both send
     /// the file list from the local process, so neither is a pull.
     ///
-    /// upstream: `flist.c:2524` prints "sending incremental file list" only on
+    /// upstream: `flist.c:2764` prints "sending incremental file list" only on
     /// the sender (`!am_server`); the client is `am_sender` for a push and a
     /// local copy, and the receiver for a pull (which prints "receiving").
     #[must_use]

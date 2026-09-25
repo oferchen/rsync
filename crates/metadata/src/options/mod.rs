@@ -56,7 +56,7 @@ pub struct MetadataOptions {
     /// The operator-named destination root, when the caller knows it.
     ///
     /// Upstream resolves the destination exactly once, before any entry is
-    /// touched: `main.c:765` calls `change_dir(dest_path, CD_NORMAL)`. For a
+    /// touched: `main.c:778` calls `change_dir(dest_path, CD_NORMAL)`. For a
     /// non-daemon receiver that is a plain `chdir`; for a daemon it walks the
     /// path with `open_no_attacker_symlinks` and `fchdir`s the result
     /// (`util1.c` `change_dir`). Either way the root never reappears as a path

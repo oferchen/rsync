@@ -106,7 +106,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         preserve_acls,
     } = flags;
 
-    // upstream: flist.c:1419-1424 - stream a `--copy-devices` device as a
+    // upstream: flist.c:1644-1649 - stream a `--copy-devices` device as a
     // regular file of its readable byte length instead of the zero stat size.
     let device_as_file_size = context.copy_device_as_file_size(source, metadata);
     let file_size = device_as_file_size.unwrap_or(metadata.len());
@@ -140,7 +140,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // receiver rewrites the reconstruction into that same leaf in place
     // (`one_inplace`). Compute it once here so the basis selection below, the
     // in-place write strategy, and the delta loop all agree on the one file.
-    // upstream: generator.c:2172-2179 + 2270-2274, receiver.c:1137-1138.
+    // upstream: generator.c:2172-2179 + 2270-2274, receiver.c:1153-1155.
     let one_inplace_partial_file =
         super::write_strategy::one_inplace_partial_file(context, destination);
     let partial_dir_basis: Option<(&Path, fs::Metadata)> = match one_inplace_partial_file {
@@ -227,7 +227,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
             // When a rename moved the basis file, delta transfer must read
             // matched blocks from the backup location. The delta signature is
             // only built for regular files, so this condition is sufficient.
-            // upstream: receiver.c:872-876 (FNAMECMP_BACKUP).
+            // upstream: receiver.c:888-892 (FNAMECMP_BACKUP).
             if delta_signature.is_some()
                 && context.options().backup_enabled()
                 && !context.mode().is_dry_run()
@@ -247,7 +247,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // socket, or a device without `--copy-devices`) is materialised as an empty
     // placeholder. A `--copy-devices` device (`device_as_file_size.is_some()`)
     // instead falls through to the generic read/write loop below, which streams
-    // its `file_size` bytes just like a regular file (upstream sender.c:410-418).
+    // its `file_size` bytes just like a regular file (upstream sender.c:411-419).
     if !file_type.is_file() && device_as_file_size.is_none() {
         // A placeholder write carries no appended tail and no whole-file
         // checksum, so it can never fail verification.
@@ -377,7 +377,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // bytes.
     //
     // `--copy-devices` is the one case that must keep the recorded value: a
-    // device is streamed as `file_size` bytes (upstream sender.c:410-418) while
+    // device is streamed as `file_size` bytes (upstream sender.c:411-419) while
     // its own `st_size` is 0, so fstat here would bound the copy to nothing.
     let transfer_size = match device_as_file_size {
         Some(size) => size,
@@ -417,7 +417,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // `verify_failed` is upstream's `recv_ok == 0` for this file, decided before
     // the append rather than after it because the local executor can compare the
     // two prefixes directly. The append still runs: upstream retains the result
-    // and re-deltas it in phase 2 (receiver.c:1029, generator.c:2175-2217).
+    // and re-deltas it in phase 2 (receiver.c:1045, generator.c:2175-2217).
     let mut verify_failed = false;
     let append_offset = match append_mode {
         AppendMode::Append {
@@ -509,7 +509,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // `partialptr`) was resolved once above where the delta basis is selected;
     // it is both the basis name and, under `one_inplace`, the file the
     // reconstruction is written into. upstream: generator.c:2173-2179 +
-    // receiver.c:1137.
+    // receiver.c:1153.
     let strategy = select_write_strategy(
         append_offset,
         inplace_enabled,
@@ -566,13 +566,13 @@ pub(in crate::local_copy) fn execute_transfer_once(
     let preallocate_target = guard
         .as_ref()
         .map_or(destination, |existing_guard| existing_guard.staging_path());
-    // upstream: receiver.c:479 - preallocated_len records how much of the file
+    // upstream: receiver.c:495 - preallocated_len records how much of the file
     // has reserved blocks so a later sparse zero run inside that extent is
     // punched into a hole rather than seeked over (which would leave the
     // preallocated blocks allocated). Under --sparse the reservation must span
     // the file's size for the punch to reach it, so the sparse setting selects
     // the reservation upstream makes.
-    // upstream: syscall.c:2597 - `sparse_files <= 0` selects FALLOC_FL_KEEP_SIZE.
+    // upstream: syscall.c:2736 - `sparse_files <= 0` selects FALLOC_FL_KEEP_SIZE.
     let mut preallocated_len = maybe_preallocate_destination(
         &mut writer,
         preallocate_target,
@@ -582,8 +582,8 @@ pub(in crate::local_copy) fn execute_transfer_once(
             .preallocate_enabled()
             .then(|| Reservation::for_sparse(use_sparse_writes)),
     )?;
-    // upstream: receiver.c:490 - the inplace branch (`preallocated_len = size_r`)
-    // is an `else if` reached only when the preallocate branch (receiver.c:476) did
+    // upstream: receiver.c:506 - the inplace branch (`preallocated_len = size_r`)
+    // is an `else if` reached only when the preallocate branch (receiver.c:492) did
     // NOT run. A non-zero reservation above IS that branch having run, so leave it
     // alone. Otherwise the existing destination extent is already allocated and an
     // interior zero run must be punched.
@@ -596,7 +596,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // the inplace destination with `O_TRUNC` whenever there is no delta basis
     // (`should_truncate = delta_signature.is_none()`, which is exactly the
     // whole-file case), so preallocated_len must stay 0 here.
-    // upstream: receiver.c:486-487 - `if (sparse_files > 0 && whole_file &&
+    // upstream: receiver.c:502-503 - `if (sparse_files > 0 && whole_file &&
     // fd >= 0 && do_ftruncate(fd, 0) == 0) preallocated_len = 0;`
     if preallocated_len == 0
         && inplace_enabled
@@ -646,7 +646,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // basis and IS the writer's file (the InplacePartialDir strategy opened it,
     // untruncated when a delta exists), so the reconstruction reads and rewrites
     // it in place exactly as upstream's `updating_basis_or_equiv` path does
-    // (receiver.c:1138). The basis is therefore NOT separate from the writer.
+    // (receiver.c:1155). The basis is therefore NOT separate from the writer.
     let delta_basis = match one_inplace_partial_file {
         Some(ref leaf) => leaf.as_path(),
         None => delta_basis_override.as_deref().unwrap_or(destination),
@@ -659,7 +659,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // basis and writer are the same file, so it stays in-place.
     let basis_separate_from_writer =
         delta_basis_override.is_some() && one_inplace_partial_file.is_none();
-    // upstream: receiver.c:1138 `one_inplace` sets `updating_basis_or_equiv`, so
+    // upstream: receiver.c:1155 `one_inplace` sets `updating_basis_or_equiv`, so
     // the delta loop takes the in-place skip/rewrite path even without the
     // `--inplace` flag. The InplacePartialDir writer holds the leaf open for
     // in-place rewrite, so honour that here.
@@ -715,8 +715,8 @@ pub(in crate::local_copy) fn execute_transfer_once(
             //
             // upstream: the sender corrupts the whole-file checksum on a read
             // error (match.c:454-463), so the receiver fails verification,
-            // unlinks the temp file (receiver.c:1318 `do_unlink_at(fnametmp)`)
-            // and requests the phase-2 resend (receiver.c:1355-1358).
+            // unlinks the temp file (receiver.c:1335 `do_unlink_at(fnametmp)`)
+            // and requests the phase-2 resend (receiver.c:1372-1375).
             if context.source_read_events() != source_read_events_before {
                 drop(writer_for_metadata.take());
                 if let Some(guard) = guard.take() {
@@ -724,7 +724,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
                 }
                 // Mirror the error path: a partial-mode discard() finalised
                 // the temp onto its partial destination (upstream's retained
-                // partial, receiver.c:1301-1316); a plain new file is removed.
+                // partial, receiver.c:1318-1333); a plain new file is removed.
                 if existing_metadata.is_none() && !partial_enabled {
                     remove_incomplete_destination(destination);
                 }
@@ -912,7 +912,7 @@ pub(in crate::local_copy) fn execute_transfer_once(
         preserve_acls,
     )?;
 
-    // upstream: receiver.c:1015 - `recv_ok = receive_data(...)` compares the
+    // upstream: receiver.c:1031 - `recv_ok = receive_data(...)` compares the
     // sender's whole-file checksum against the receiver's. The local executor
     // reduces that comparison to the pre-append prefix comparison recorded in
     // `verify_failed` (see `determine_append_mode`), because both sides sum the

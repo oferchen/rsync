@@ -23,8 +23,8 @@ use super::flags::{
 /// `.` as the DESTINATION. Dropping every `.` leaves the server with no
 /// operand: MEASURED as an empty file list and a silent rc=0 no-op.
 ///
-/// upstream: `main.c:966-975` `do_server_sender()` - `dir = argv[0];` then
-/// `argc--; argv++;`; `main.c:1192-1194` `do_server_recv()` - the same pair.
+/// upstream: `main.c:979-988` `do_server_sender()` - `dir = argv[0];` then
+/// `argc--; argv++;`; `main.c:1210-1212` `do_server_recv()` - the same pair.
 const CWD_PLACEHOLDER: &str = ".";
 
 /// Parses the flag string and positional arguments from server-mode argument list.
@@ -49,7 +49,7 @@ const CWD_PLACEHOLDER: &str = ".";
 ///   [`compact_flag_string_expects_split_value`].
 pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, Vec<OsString>) {
     // popt consumes a bare `--` and returns everything after it as operands,
-    // never as flags (options.c:1491). Split first so the option scan below
+    // never as flags (options.c:1497). Split first so the option scan below
     // cannot claim a path, and so the marker itself never reaches the path
     // list - upstream never delivers it to `link_stat()`, and neither may we.
     let (args, operands) = split_at_end_of_options(args);
@@ -145,7 +145,7 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
 /// upstream: options.c:151 declares `int checksum_seed`, a signed global.
 /// The popt entry at options.c:861 binds it with `POPT_ARG_INT`, so the server
 /// side accepts the full signed range, and the client emits it at
-/// options.c:3047 with `"--checksum-seed=%d"`. A negative seed therefore
+/// options.c:3057 with `"--checksum-seed=%d"`. A negative seed therefore
 /// reaches us as `--checksum-seed=-1` and must not be refused.
 pub(super) fn parse_server_checksum_seed(value: &str) -> Result<i32, String> {
     let trimmed = value.trim();

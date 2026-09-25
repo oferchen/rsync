@@ -1,7 +1,7 @@
 // A source directory whose contents cannot be enumerated (mode 0300: write and
 // search, no read) is still a directory upstream sends: `send_file_entry()` and
-// `send_acl()` run before `opendir()` (flist.c:1847-1858), and a failed
-// `opendir()` only aborts the descent (flist.c:2129-2140). The receiver
+// `send_acl()` run before `opendir()` (flist.c:2072-2083), and a failed
+// `opendir()` only aborts the descent (flist.c:2365-2376). The receiver
 // therefore still creates the directory and applies its permissions and ACLs.
 // These tests pin that the enumeration failure stays enumeration-only.
 //

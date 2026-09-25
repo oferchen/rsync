@@ -3,7 +3,7 @@
 /// "no list" rather than falling back to the global one.
 ///
 /// upstream: loadparm.c - `hosts allow` is a `P_LOCAL` string whose global
-/// value seeds every module's default; access.c:275-278 then turns whatever
+/// value seeds every module's default; access.c:286-289 then turns whatever
 /// that module ends up holding into `NULL` when it is empty. So the empty
 /// value has to reach the module as a *set* value, not as "unset" - mapping it
 /// to absent would re-inherit the global list and deny the peer.

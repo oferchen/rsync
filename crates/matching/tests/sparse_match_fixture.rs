@@ -45,7 +45,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `target/interop/upstream-src/rsync-3.5.0/match.c:224-378` -
+//! - `target/interop/upstream-src/rsync-3.5.1/match.c:224-378` -
 //!   `hash_search()` two-stage gate (rolling sum then strong sum).
 //! - zsync `librcksum/rsum.c:362-366` - bithash probe before the
 //!   hash-table descent (planned in #2059).

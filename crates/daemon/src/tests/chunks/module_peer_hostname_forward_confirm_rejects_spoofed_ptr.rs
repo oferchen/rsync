@@ -5,7 +5,7 @@
 /// treated as no hostname, so the allow-rule fails closed.
 ///
 /// upstream: clientname.c:416 `check_name` - a name whose forward lookup does
-/// not match the peer address is replaced with "UNKNOWN"; access.c:49
+/// not match the peer address is replaced with "UNKNOWN"; access.c:60
 /// `allow_forward_dns` gates this on the `forward lookup` parameter.
 #[test]
 fn module_peer_hostname_forward_confirm_rejects_spoofed_ptr() {

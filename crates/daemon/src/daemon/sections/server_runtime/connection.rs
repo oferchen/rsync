@@ -39,7 +39,7 @@ struct AcceptLoopState<'a> {
     /// because no connection can be accepted, and therefore no child forked,
     /// before the loop starts.
     ///
-    /// upstream: `socket.c:753-760` `start_accept_loop()`.
+    /// upstream: `socket.c:761-768` `start_accept_loop()`.
     #[cfg(unix)]
     listener_fds: Vec<std::os::fd::RawFd>,
 }
@@ -50,7 +50,7 @@ struct AcceptLoopState<'a> {
 /// step does can end the daemon: reaping a worker only reports one finished
 /// session, and reload/status failures are logged in place. That mirrors
 /// upstream's accept loop, whose body has no error exit at all
-/// (socket.c:724-778).
+/// (socket.c:732-786).
 fn check_signals_and_maintain(state: &mut AcceptLoopState<'_>) -> Option<bool> {
     reap_finished_workers(&mut state.workers, state.log_sink.as_ref());
 
@@ -212,7 +212,7 @@ pub(crate) fn log_max_connections_rejection(
 /// `fork` does that, and upstream treats it the same way, by continuing the
 /// accept loop rather than ending the daemon.
 ///
-/// upstream: `socket.c:753-772` `start_accept_loop()` forks per connection;
+/// upstream: `socket.c:761-780` `start_accept_loop()` forks per connection;
 /// oc does the same on Unix and keeps a thread backing on Windows, which has
 /// no `fork`. See [`SessionBacking`].
 fn spawn_connection_worker(
@@ -268,7 +268,7 @@ fn spawn_connection_worker(
 /// confined to that child, which is the whole point - both are process-wide,
 /// so a thread-backed session leaks them into every later connection.
 ///
-/// upstream: `socket.c:753-765` `start_accept_loop()`.
+/// upstream: `socket.c:761-773` `start_accept_loop()`.
 #[cfg(unix)]
 fn fork_session_backing(
     context: ConnectionContext,
@@ -283,7 +283,7 @@ fn fork_session_backing(
             // inherited: it serves exactly one already-accepted connection, and
             // a listener held open here keeps the port bound for this child's
             // whole lifetime.
-            // upstream: `socket.c:753-760`.
+            // upstream: `socket.c:761-768`.
             platform::session_fork::close_inherited_listeners(&state.listener_fds);
             let code = serve_forked_session(&context, stream, raw_peer_addr, peer_addr);
             // `_exit`, never a return: the child shares the parent's buffered
@@ -294,12 +294,12 @@ fn fork_session_backing(
         Ok(platform::session_fork::ForkSide::Parent { child_pid }) => {
             // The parent must not hold the accepted socket: while it stays
             // open the peer cannot observe the child's close.
-            // upstream: `socket.c:772` `close(fd)` in the parent arm.
+            // upstream: `socket.c:780` `close(fd)` in the parent arm.
             drop(stream);
             Some(SessionBacking { child_pid })
         }
         Err(error) => {
-            // upstream: `socket.c:766-770` reports the failure, closes the
+            // upstream: `socket.c:774-778` reports the failure, closes the
             // socket and KEEPS ACCEPTING - a fork failure ends one connection,
             // never the daemon.
             report_fork_failure(&error, peer_addr, state.log_sink.as_ref());
@@ -333,7 +333,7 @@ fn serve_forked_session(
 
 /// Reports a `fork` that failed, against the peer whose connection it ends.
 ///
-/// upstream: `socket.c:766-770` `rsyserr(FERROR, errno, "could not create
+/// upstream: `socket.c:774-778` `rsyserr(FERROR, errno, "could not create
 /// child server process")`.
 #[cfg(unix)]
 fn report_fork_failure(error: &io::Error, peer: SocketAddr, log_sink: Option<&SharedLogSink>) {
@@ -356,7 +356,7 @@ fn apply_client_options(
     // upstream: clientserver.c - set_socket_options() is called
     // on the accepted client fd before the session handler runs.
     // Skipped for stdio streams which have no underlying TCP socket.
-    // upstream: socket.c:730-733 - each option that fails to apply warns and
+    // upstream: socket.c:738-741 - each option that fails to apply warns and
     // the loop continues; a single failure never rejects the connection.
     if !client_socket_options.is_empty() {
         let Some(tcp) = stream.tcp_stream() else {

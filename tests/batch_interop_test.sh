@@ -19,7 +19,7 @@
 # Every --read-batch replays with the options its batch was written with, as
 # upstream's generated "<batch>.sh" companion does (batch.c
 # write_batch_shell_file). --read-batch evaluates set_allow_inc_recurse() on
-# the replay's own options (main.c:639-641), so a bare replay of an
+# the replay's own options (main.c:652-654), so a bare replay of an
 # inc-recursive batch is refused (compat.c:780-785) by upstream and oc-rsync
 # alike; test_inc_recurse_refusal_parity pins that.
 #
@@ -402,7 +402,7 @@ test_upstream_compressed_to_oc() {
 # =========================================================================
 # Refusal parity: a bare replay of an inc-recursive batch
 #
-# upstream: main.c:639-641 - --read-batch runs set_allow_inc_recurse() on the
+# upstream: main.c:652-654 - --read-batch runs set_allow_inc_recurse() on the
 # replay's own options, where !recurse disallows inc-recursion
 # (compat.c:172-173); compat.c:780-785 then refuses a batch whose compat flags
 # carry CF_INC_RECURSE with RERR_SYNTAX. Both readers must refuse the same

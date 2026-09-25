@@ -367,7 +367,7 @@ fn sparse_write_state_handles_trailing_zeros() {
     sparse.write(&mut output, &zeros).unwrap();
     // finish() returns the logical length and seeks over the trailing hole; the
     // caller establishes the size via set_len (ftruncate) rather than writing a
-    // terminal byte. Emulate that here with resize. upstream: fileio.c:43.
+    // terminal byte. Emulate that here with resize. upstream: fileio.c:47.
     let logical = sparse.finish(&mut output).unwrap();
     output.get_mut().resize(logical as usize, 0);
 
@@ -448,7 +448,7 @@ fn sparse_write_state_finish_handles_only_zeros() {
     sparse.accumulate(4096);
     // finish() returns the logical length; the caller truncates to it (leaving
     // the region a hole that reads back as zeros) instead of materializing a
-    // trailing byte. Emulate set_len with resize. upstream: fileio.c:43.
+    // trailing byte. Emulate set_len with resize. upstream: fileio.c:47.
     let logical = sparse.finish(&mut output).unwrap();
     assert_eq!(logical, 4096);
     output.get_mut().resize(logical as usize, 0);

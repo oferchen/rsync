@@ -75,7 +75,7 @@ impl FilterSetInner {
     ///
     /// This is upstream's `check_filter()` loop applied to a single name that
     /// no traversal will ever revisit - the shape the daemon uses to vet the
-    /// client's destination argument (main.c:700-737 `get_local_name()`).
+    /// client's destination argument (main.c:713-750 `get_local_name()`).
     /// Upstream's loop consults neither side modifiers nor perishability, so
     /// neither is consulted here.
     ///

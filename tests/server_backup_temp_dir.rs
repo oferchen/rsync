@@ -12,7 +12,7 @@
 //!   effect.
 //!
 //! upstream emits both through `safe_arg()` in `server_options()`
-//! (`options.c:2807-2808` and `:2926-2927`), and its receiver honours them.
+//! (`options.c:2817-2818` and `:2926-2927`), and its receiver honours them.
 //!
 //! ⚠ These cells force a REAL external `--server` process via `--rsync-path`.
 //! The in-process embedded-ssh path builds its `ServerConfig` straight from the

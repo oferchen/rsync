@@ -9,30 +9,30 @@
 //!
 //! - **Level 1**: `delta-transmission %s` (generator.c:2763; owned by the
 //!   receiver-side transfer setup and the local-copy frontend, not here) and
-//!   the `expand file_list pointer array` realloc trace (flist.c:403, no oc
+//!   the `expand file_list pointer array` realloc trace (flist.c:628, no oc
 //!   analogue - see below).
-//! - **Level 2**: `[%s] make_file(%s,*,%d)` (flist.c:1542),
-//!   `send_file_list done` (flist.c:2838), `recv_file_name(%s)`
-//!   (flist.c:3012), `received %d names` (flist.c:3019),
-//!   `recv_file_list done` (flist.c:3088), and
-//!   `[%s] receiving flist for dir %d` (io.c:1943, rsync.c:373).
-//! - **Level 3**: `output_flist()` (flist.c:3489, called from flist.c:2470,
-//!   :2835, :3085, :3756), `[%s] flist_eof=1` (seven sites: flist.c:2481,
-//!   :2850, :2861, :3058, :3105, io.c:1931, rsync.c:357), `file list sent`
-//!   (main.c:1374), the `[%s] receiving flist for dir %d` copy in
-//!   `recv_additional_file_list` (flist.c:3118), and the item-list expand
-//!   trace (util1.c:1956, no oc analogue).
-//! - **Level 4**: `FILE_STRUCT_LEN=%d, EXTRA_LEN=%d` (flist.c:163, no oc
+//! - **Level 2**: `[%s] make_file(%s,*,%d)` (flist.c:1767),
+//!   `send_file_list done` (flist.c:3081), `recv_file_name(%s)`
+//!   (flist.c:3255), `received %d names` (flist.c:3262),
+//!   `recv_file_list done` (flist.c:3331), and
+//!   `[%s] receiving flist for dir %d` (io.c:1981, rsync.c:373).
+//! - **Level 3**: `output_flist()` (flist.c:3732, called from flist.c:2710,
+//!   :2835, :3085, :3756), `[%s] flist_eof=1` (seven sites: flist.c:2721,
+//!   :2850, :2861, :3058, :3105, io.c:1969, rsync.c:357), `file list sent`
+//!   (main.c:1392), the `[%s] receiving flist for dir %d` copy in
+//!   `recv_additional_file_list` (flist.c:3361), and the item-list expand
+//!   trace (util1.c:2051, no oc analogue).
+//! - **Level 4**: `FILE_STRUCT_LEN=%d, EXTRA_LEN=%d` (flist.c:165, no oc
 //!   analogue).
 //!
 //! # Deliberately unowned upstream sites
 //!
-//! - flist.c:403 and util1.c:1956 trace `realloc_array()` growth of pointer
+//! - flist.c:628 and util1.c:2051 trace `realloc_array()` growth of pointer
 //!   arrays. oc's file lists are `Vec`s of inline entries: there is no
 //!   pointer-array realloc event, and reporting `Vec` doublings would emit
 //!   lines upstream's cells never show (upstream's arrays start large enough
 //!   that small transfers never grow them).
-//! - flist.c:163 reports `FILE_STRUCT_LEN`/`EXTRA_LEN`, the constants of
+//! - flist.c:165 reports `FILE_STRUCT_LEN`/`EXTRA_LEN`, the constants of
 //!   upstream's `file_struct` + trailing-extras allocation scheme. oc's
 //!   `FileEntry` has no extras array, so `EXTRA_LEN` has no honest value and
 //!   a partial line would break the format.
@@ -82,7 +82,7 @@ impl std::fmt::Display for ProcessRole {
 
 /// Traces one `make_file()` call (level 2).
 ///
-/// upstream: flist.c:1542 `[%s] make_file(%s,*,%d)`. The third argument is
+/// upstream: flist.c:1767 `[%s] make_file(%s,*,%d)`. The third argument is
 /// the filter level: `NO_FILTERS` (0) for named command-line sources,
 /// `SERVER_FILTERS` (1) on the daemon arg path, `ALL_FILTERS` (2) for
 /// entries found by recursion and implied directories (rsync.h:212-214).
@@ -101,7 +101,7 @@ pub fn trace_make_file(role: ProcessRole, name: &dyn std::fmt::Display, filter_l
 /// Traces file list EOF (level 3).
 ///
 /// upstream: `[%s] flist_eof=1` - written when a side sets its `flist_eof`
-/// global (flist.c:2481, :2850, :2861, :3058, :3105, io.c:1931, rsync.c:357).
+/// global (flist.c:2721, :2850, :2861, :3058, :3105, io.c:1969, rsync.c:357).
 #[inline]
 pub fn trace_flist_eof(role: ProcessRole) {
     debug_log!(Flist, 3, "[{}] flist_eof=1", role);
@@ -109,7 +109,7 @@ pub fn trace_flist_eof(role: ProcessRole) {
 
 /// Traces send_file_list completion (level 2).
 ///
-/// upstream: flist.c:2838 `send_file_list done`.
+/// upstream: flist.c:3081 `send_file_list done`.
 #[inline]
 pub fn trace_send_file_list_done() {
     debug_log!(Flist, 2, "send_file_list done");
@@ -117,7 +117,7 @@ pub fn trace_send_file_list_done() {
 
 /// Traces one received file-list name (level 2).
 ///
-/// upstream: flist.c:3012 `recv_file_name(%s)` - printed for each entry as
+/// upstream: flist.c:3255 `recv_file_name(%s)` - printed for each entry as
 /// the receive loop stores it.
 #[inline]
 pub fn trace_recv_file_name(name: &str) {
@@ -126,7 +126,7 @@ pub fn trace_recv_file_name(name: &str) {
 
 /// Traces received file count (level 2).
 ///
-/// upstream: flist.c:3019 `received %d names` - printed once per
+/// upstream: flist.c:3262 `received %d names` - printed once per
 /// `recv_file_list()` call, after its entry loop.
 #[inline]
 pub fn trace_received_names(count: usize) {
@@ -135,7 +135,7 @@ pub fn trace_received_names(count: usize) {
 
 /// Traces recv_file_list completion (level 2).
 ///
-/// upstream: flist.c:3088 `recv_file_list done`.
+/// upstream: flist.c:3331 `recv_file_list done`.
 #[inline]
 pub fn trace_recv_file_list_done() {
     debug_log!(Flist, 2, "recv_file_list done");
@@ -144,8 +144,8 @@ pub fn trace_recv_file_list_done() {
 /// Traces receiving an incremental file list for a directory.
 ///
 /// upstream prints the same text from three sites at two levels, so the
-/// level is a per-call-site parameter: level 2 at io.c:1943 (generator) and
-/// rsync.c:373 (receiver), level 3 at flist.c:3118
+/// level is a per-call-site parameter: level 2 at io.c:1981 (generator) and
+/// rsync.c:373 (receiver), level 3 at flist.c:3361
 /// (`recv_additional_file_list`).
 #[inline]
 pub fn trace_receiving_flist_for_dir(role: ProcessRole, dir_ndx: i32, level: u8) {
@@ -160,7 +160,7 @@ pub fn trace_receiving_flist_for_dir(role: ProcessRole, dir_ndx: i32, level: u8)
 
 /// Traces client-side file list transmission completion (level 3).
 ///
-/// upstream: main.c:1374 `file list sent` - printed by `client_run()` only
+/// upstream: main.c:1392 `file list sent` - printed by `client_run()` only
 /// (the server sender has no such line).
 #[inline]
 pub fn trace_file_list_sent() {
@@ -169,7 +169,7 @@ pub fn trace_file_list_sent() {
 
 /// Dumps a file list (level 3).
 ///
-/// upstream: flist.c:3489 `output_flist()` - a header line followed by one
+/// upstream: flist.c:3732 `output_flist()` - a header line followed by one
 /// line per slot (tombstoned slots print empty name fields, exactly as
 /// upstream prints a `!F_IS_ACTIVE` slot):
 ///
@@ -221,7 +221,7 @@ pub fn output_flist(
 
 /// Formats one `output_flist()` line (level 3).
 ///
-/// upstream: flist.c:3524 `[%s] i=%d %s %s%s%s%s mode=0%o len=%s%s%s flags=%x`.
+/// upstream: flist.c:3767 `[%s] i=%d %s %s%s%s%s mode=0%o len=%s%s%s flags=%x`.
 fn output_flist_entry(
     role: ProcessRole,
     ndx: i32,
@@ -378,7 +378,7 @@ mod tests {
         assert_eq!(format!("{}", ProcessRole::PreForkReceiver), "Receiver");
     }
 
-    /// upstream: flist.c:3524 - the entry line for a plain file at depth 1,
+    /// upstream: flist.c:3767 - the entry line for a plain file at depth 1,
     /// gid shown, uid hidden (receiver without root).
     #[test]
     fn flags_word_tracks_top_dir_content_dir_and_nsec() {

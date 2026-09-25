@@ -7,8 +7,8 @@
 //! # Upstream Reference
 //!
 //! - `sender.c:send_files()` - Main transfer loop
-//! - `flist.c:2227` - `send_file_list()` builds and sends file list
-//! - `main.c:893-924` - `read_final_goodbye()` protocol finalization
+//! - `flist.c:2463` - `send_file_list()` builds and sends file list
+//! - `main.c:906-937` - `read_final_goodbye()` protocol finalization
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -40,7 +40,7 @@ impl GeneratorContext {
     /// Prints the `sending incremental file list` banner on the client's own
     /// output at file-list-send time, ahead of any per-file rows.
     ///
-    /// Mirrors upstream `flist.c:2248-2252`: the banner fires only for a
+    /// Mirrors upstream `flist.c:2484-2488`: the banner fires only for a
     /// client-side sender (`!am_server` -> `client_mode`), under incremental
     /// recursion - which upstream disables when `!recurse` (compat.c:172-173),
     /// so a non-recursive single-file `-v` push prints nothing - and when the
@@ -73,15 +73,15 @@ impl GeneratorContext {
     ///
     /// Upstream has no batched drain: `read_a_msg()` calls
     /// `successful_send(val)` the instant it demultiplexes a `MSG_SUCCESS`
-    /// frame (`io.c:1793-1807`), so the unlink - and the `FERROR_XFER` a
+    /// frame (`io.c:1831-1845`), so the unlink - and the `FERROR_XFER` a
     /// refused unlink raises - happens wherever the sender is doing I/O, inside
-    /// `send_files()` and again inside `read_final_goodbye()` (`main.c:997`).
+    /// `send_files()` and again inside `read_final_goodbye()` (`main.c:1010`).
     /// Our reader accumulates the indices instead of dispatching them, so that
     /// eagerness has to be reproduced by draining at each point upstream would
     /// already have reacted.
     ///
     /// **Phase 1** runs before the sender answers the goodbye. That is the last
-    /// moment a diagnostic still reaches a pulling client: `sender.c:455-462`
+    /// moment a diagnostic still reaches a pulling client: `sender.c:456-463`
     /// ends every failing arm at `FERROR_XFER`, and it is the LOG CODE that
     /// carries the exit status, not an `io_error` bit - `rwrite()` sets
     /// `got_xfer_error` (`log.c:337-338`) and, on a server, forwards the text
@@ -104,9 +104,9 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1793-1807` - `MSG_SUCCESS` dispatches `successful_send(val)` inline
-    /// - `sender.c:395` - `successful_send()` performs the guarded unlink
-    /// - `main.c:993-997` - `read_final_goodbye()` still drives `read_a_msg()`
+    /// - `io.c:1831-1845` - `MSG_SUCCESS` dispatches `successful_send(val)` inline
+    /// - `sender.c:396` - `successful_send()` performs the guarded unlink
+    /// - `main.c:1006-1010` - `read_final_goodbye()` still drives `read_a_msg()`
     pub(crate) fn goodbye_draining_source_removals<R, W, F>(
         &mut self,
         reader: &mut super::super::super::reader::ServerReader<R>,
@@ -153,8 +153,8 @@ impl GeneratorContext {
     /// # Upstream Reference
     ///
     /// - `sender.c:send_files()` - Main transfer loop
-    /// - `flist.c:2227` - `send_file_list()` builds and sends file list
-    /// - `main.c:893-924` - `read_final_goodbye()` protocol finalization
+    /// - `flist.c:2463` - `send_file_list()` builds and sends file list
+    /// - `main.c:906-937` - `read_final_goodbye()` protocol finalization
     pub fn run<R: Read, W: Write>(
         &mut self,
         mut reader: super::super::super::reader::ServerReader<R>,
@@ -176,7 +176,7 @@ impl GeneratorContext {
             })?;
         }
 
-        // upstream: main.c:1266-1276 - flush pending multiplex output before
+        // upstream: main.c:1284-1294 - flush pending multiplex output before
         // blocking on recv_filter_list(). Upstream's perform_io() flushes the
         // output buffer while waiting for input via select(), but our separate
         // read/write streams cannot do that. Without this flush, any buffered
@@ -187,10 +187,10 @@ impl GeneratorContext {
             writer.flush()?;
         }
 
-        // upstream: main.c:1276 - recv_filter_list() in server mode
+        // upstream: main.c:1294 - recv_filter_list() in server mode
         self.receive_filter_list_if_server(&mut reader)?;
 
-        // upstream: flist.c:2248-2252 send_file_list() - a client-side sender
+        // upstream: flist.c:2484-2488 send_file_list() - a client-side sender
         // announces `sending incremental file list` at file-list-send time,
         // before the walk produces any per-file output. Write it DIRECTLY to
         // the client stream: the deferred `info_log!` event buffer is only
@@ -200,7 +200,7 @@ impl GeneratorContext {
         // `receiver/transfer/setup/context.rs`.
         self.announce_incremental_flist()?;
 
-        // upstream: flist.c:2240-2264 - resolve --files-from paths if configured
+        // upstream: flist.c:2476-2503 - resolve --files-from paths if configured
         let files_from_entries = self.resolve_files_from_paths(paths, &mut reader)?;
 
         // FSM: filter exchange complete. Advance to FileListTransfer.
@@ -210,13 +210,13 @@ impl GeneratorContext {
 
         let reader = &mut reader;
 
-        // upstream: flist.c:2227 - send_file_list()
+        // upstream: flist.c:2463 - send_file_list()
         let file_count = {
             let _t = PhaseTimer::new("file-list-build-send");
             let build = if files_from_entries.is_empty() {
                 self.build_file_list(paths)
             } else {
-                // upstream: flist.c:2240-2244 - argv[0] is the base for --files-from
+                // upstream: flist.c:2476-2480 - argv[0] is the base for --files-from
                 let base_dir = paths.first().cloned().unwrap_or_else(|| PathBuf::from("."));
                 self.build_file_list_with_base(&base_dir, &files_from_entries)
             };
@@ -242,7 +242,7 @@ impl GeneratorContext {
         self.send_id_lists(writer)?;
         self.send_io_error_flag(writer)?;
 
-        // upstream: main.c:1374 - client_run() prints `file list sent` at
+        // upstream: main.c:1392 - client_run() prints `file list sent` at
         // DEBUG_GTE(FLIST, 3); the server sender has no such line.
         if self.config.connection.client_mode {
             protocol::flist::trace_file_list_sent();
@@ -253,14 +253,14 @@ impl GeneratorContext {
             .advance_to(TransferPhase::DeltaTransfer)
             .map_err(crate::fsm_error)?;
 
-        // upstream: main.c:968-974 do_server_sender() -
+        // upstream: main.c:981-987 do_server_sender() -
         //   flist = send_file_list(f_out, argc, argv);
         //   if (!flist || flist->used == 0) { io_end_buffering_in(0); exit_cleanup(0); }
         //
         // An empty file list means every requested path failed to be listed
         // (missing source, unreadable directory, everything filtered out). The
         // peer's client_run() mirrors this: with an empty list it skips do_recv()
-        // entirely (main.c:1379-1391), so it never sends an ndx, never sends
+        // entirely (main.c:1397-1409), so it never sends an ndx, never sends
         // NDX_DONE, and never joins the goodbye handshake - it just reports the
         // io_error we already sent and waits in noop_io_until_death() for our FIN.
         // Entering send_files() here would block forever reading an ndx the peer
@@ -268,7 +268,7 @@ impl GeneratorContext {
         // connection down, which is what releases the peer.
         //
         // Server-side only, exactly as upstream: a client-mode sender (push)
-        // runs send_files() unconditionally from client_run() (main.c:1343).
+        // runs send_files() unconditionally from client_run() (main.c:1361).
         if file_count == 0 && !self.config.connection.client_mode {
             // upstream: exit_cleanup(0) -> io_flush(FULL_FLUSH) before _exit.
             writer.flush_all_pending()?;
@@ -293,7 +293,7 @@ impl GeneratorContext {
         }
 
         // INC_RECURSE sub-lists are sent lazily inside the loop via
-        // SegmentScheduler, matching upstream sender.c:227,261 cadence.
+        // SegmentScheduler, matching upstream sender.c:230,264 cadence.
         let transfer_result = {
             let _t = PhaseTimer::new("generator-transfer-loop");
             self.run_transfer_loop(reader, writer, &mut progress, &mut itemize)?
@@ -304,16 +304,16 @@ impl GeneratorContext {
             .advance_to(TransferPhase::Finalization)
             .map_err(crate::fsm_error)?;
 
-        // upstream: main.c:978-980 - do_server_sender() calls io_flush then handle_stats
+        // upstream: main.c:991-993 - do_server_sender() calls io_flush then handle_stats
         // before read_final_goodbye. Server-sender writes transfer stats to the wire;
         // client-sender handle_stats(-1) puts nothing on the wire but, under
         // --write-batch, writes the same five values straight to batch_fd
         // (main.c:374-383). Both land BEFORE read_final_goodbye tees the goodbye
         // NDX_DONE, which is the order --read-batch parses them back in.
         //
-        // upstream: main.c:979 io_flush(FULL_FLUSH) then main.c:330-331
+        // upstream: main.c:992 io_flush(FULL_FLUSH) then main.c:330-331
         // handle_stats() caches stats.total_read/total_written (the raw descriptor
-        // counters, io.c:820/859) BEFORE the stats trailer and read_final_goodbye.
+        // counters, io.c:838/877) BEFORE the stats trailer and read_final_goodbye.
         // Flush buffered transfer output to the transport counter, then snapshot
         // both raw wire totals here so the trailing stats + goodbye bytes stay
         // excluded, exactly as upstream's cache-then-write ordering does. Absent
@@ -357,9 +357,9 @@ impl GeneratorContext {
         // returns would never happen because the read would deadlock on
         // the unterminated deflate block.
         //
-        // upstream: `main.c:979-983 do_server_sender()` brackets
+        // upstream: `main.c:992-996 do_server_sender()` brackets
         // `read_final_goodbye()` with `io_flush(FULL_FLUSH)`. Upstream's
-        // goodbye NDX_DONE rides through `write_buf()` (`io.c:2255`) which
+        // goodbye NDX_DONE rides through `write_buf()` (`io.c:2293`) which
         // bypasses the deflate stream entirely. Our writer-graph routes
         // it through `CompressedWriter`, so we additionally need to drive
         // `CompressedWriter::finish()` here (matching
@@ -527,7 +527,7 @@ impl GeneratorContext {
         // upstream: handle_stats() reports stats.total_size (main.c:351
         // write_varlong30(f, stats.total_size, 3)), accumulated in
         // send_file_entry() as `F_LENGTH(file)` for regular files and symlinks
-        // only (flist.c:690-691). Read the value tallied at send time - summing
+        // only (flist.c:915-916). Read the value tallied at send time - summing
         // `self.file_list` here is wrong because INC_RECURSE drains sent
         // segments, leaving only the final sub-list, and would also count
         // directory sizes that upstream excludes.
@@ -541,7 +541,7 @@ impl GeneratorContext {
             num_specials: flist_send_stats.num_specials,
             files_transferred: transfer_result.files_transferred,
             transferred_file_size: transfer_result.transferred_file_size,
-            // upstream: main.c:330-331,454-457 - a client sender reports its own
+            // upstream: main.c:330-331,457-460 - a client sender reports its own
             // cached raw descriptor counters as "Total bytes sent/received". Use
             // the raw wire totals snapshotted at the handle_stats point above, not
             // the logical delta/token tallies.

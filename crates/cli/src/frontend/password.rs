@@ -169,10 +169,10 @@ fn first_line(bytes: &[u8]) -> Vec<u8> {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/authenticate.c:245` - `getpassf()` opens `--password-file`
+/// - `rsync-3.5.1/authenticate.c:245` - `getpassf()` opens `--password-file`
 ///   with `open_no_attacker_symlinks(filename, O_RDONLY, 0)`.
-/// - `rsync-3.5.0/syscall.c:538` - `open_no_attacker_symlinks()`; the
-///   trust rule is at `syscall.c:406`.
+/// - `rsync-3.5.1/syscall.c:675` - `open_no_attacker_symlinks()`; the
+///   trust rule is at `syscall.c:499`.
 fn open_operator_named(path: &Path) -> io::Result<File> {
     #[cfg(unix)]
     {

@@ -9,7 +9,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/options.c:2594-2598` - the `if (partial_dir)` block, which
+//! - `rsync-3.5.1/options.c:2603-2607` - the `if (partial_dir)` block, which
 //!   sits OUTSIDE the `!am_server` guard at `:2590` that wraps the
 //!   `RSYNC_PARTIAL_DIR` environment fallback.
 
@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/options.c:2594-2598` `parse_arguments()`.
+/// - `rsync-3.5.1/options.c:2603-2607` `parse_arguments()`.
 /// - `rsync-3.5.0/util1.c` `clean_fname()` with `CFN_COLLAPSE_DOT_DOT_DIRS`.
 pub(crate) fn normalize_partial_dir(dir: &Path) -> Option<PathBuf> {
     let cleaned = filters::collapse_dot_dot_dirs(dir);
@@ -55,7 +55,7 @@ mod tests {
     /// The expectations are upstream's two arms read directly:
     /// `if (*partial_dir) clean_fname(...)` then
     /// `if (!*partial_dir || strcmp(partial_dir, ".") == 0) partial_dir = NULL`
-    /// (options.c:2594-2598).
+    /// (options.c:2603-2607).
     #[test]
     fn matches_upstream_end_of_parse_normalisation() {
         for unset in ["", ".", "./", "./.", "a/.."] {

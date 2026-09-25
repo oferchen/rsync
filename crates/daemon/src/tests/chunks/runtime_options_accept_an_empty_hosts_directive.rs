@@ -1,7 +1,7 @@
 /// An empty `hosts allow` / `hosts deny` value is legal config, not a parse
 /// error, and it means "no list".
 ///
-/// upstream: access.c:275-278 - `allow_access()` normalises an empty list
+/// upstream: access.c:286-289 - `allow_access()` normalises an empty list
 /// string to `NULL` before deciding anything, so the directive with no value
 /// behaves exactly as if it were absent. Refusing it aborted the daemon at
 /// startup where upstream serves: measured against real rsync 3.5.0, a config

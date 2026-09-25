@@ -178,21 +178,21 @@ pub(crate) struct ConfigInputs {
     pub(crate) link_dests: Vec<PathBuf>,
     pub(crate) remove_source_files: bool,
     /// `--remove-sent-files` - deprecated alias; forwarded verbatim on the wire.
-    /// upstream: options.c:2982-2985.
+    /// upstream: options.c:2992-2995.
     pub(crate) remove_sent_files: bool,
     /// Resolved out-format string carries `%i`; forwards `--log-format=%i`.
     /// Mirrors upstream `stdout_format_has_i`, derived from the resolved format
-    /// string rather than the `-i` flag. upstream: options.c:2345-2358,2772-2775.
+    /// string rather than the `-i` flag. upstream: options.c:2354-2367,2782-2785.
     pub(crate) out_format_forwards_i: bool,
     /// A custom `--out-format` template was given, so remote per-file output is
     /// rendered client-side from collected events instead of the server line.
     pub(crate) render_out_format_locally: bool,
     /// Explicit `--out-format` / `--log-format` contains `%o` but not `%i`;
-    /// forwards `--log-format=%o`. upstream: options.c:2939-2940.
+    /// forwards `--log-format=%o`. upstream: options.c:2949-2950.
     pub(crate) out_format_has_operation: bool,
     /// Explicit `--out-format` / `--log-format` was given with neither `%i` nor
     /// `%o`; forwards the placeholder `--log-format=X` for a non-verbose client.
-    /// upstream: options.c:2778-2779.
+    /// upstream: options.c:2788-2789.
     pub(crate) out_format_placeholder: bool,
     pub(crate) inplace: bool,
     pub(crate) append: bool,
@@ -274,7 +274,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .quiet(inputs.quiet)
         .msgs2stderr(inputs.msgs2stderr)
         .recursive(inputs.recursive)
-        // upstream: options.c:2199-2203 - `else if (recurse) xfer_dirs = 1;
+        // upstream: options.c:2208-2212 - `else if (recurse) xfer_dirs = 1;
         // else if (xfer_dirs < 0) xfer_dirs = list_only ? 1 : 0;`. When neither
         // -r nor an explicit -d/--no-dirs is given, --list-only still transfers
         // (lists) a bare directory operand's own entry.
@@ -284,9 +284,9 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
             inputs.dirs.unwrap_or(inputs.list_only)
         })
         .dirs_explicit(inputs.dirs_explicit)
-        // upstream: options.c:2215-2217 - delete mode is enabled only by an
+        // upstream: options.c:2224-2226 - delete mode is enabled only by an
         // explicit `--delete*` or `--delete-excluded`. `--max-delete` merely caps
-        // the count (options.c:2182-2185) and must never enable deletion.
+        // the count (options.c:2191-2194) and must never enable deletion.
         .delete(inputs.delete_mode.is_enabled() || inputs.delete_excluded)
         .delete_excluded(inputs.delete_excluded)
         .delete_missing_args(inputs.delete_missing_args)

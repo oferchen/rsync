@@ -58,17 +58,17 @@ impl FileListReader {
         let mut target_bytes = vec![0u8; len];
         reader.read_exact(&mut target_bytes)?;
 
-        // upstream: flist.c:1156 - the target is transcoded through ic_recv ONLY
+        // upstream: flist.c:1381 - the target is transcoded through ic_recv ONLY
         // when `sender_symlink_iconv` (iconv active AND CF_SYMLINK_ICONV
         // negotiated). Against a peer that lacks the capability the raw local
-        // bytes are read verbatim (flist.c:1181 `read_sbuf` else branch), so a
+        // bytes are read verbatim (flist.c:1406 `read_sbuf` else branch), so a
         // proto-30 / pre-3.1 peer must NOT be transcoded here.
         let target_bytes: std::borrow::Cow<'_, [u8]> = if self.symlink_iconv {
             match self.iconv.as_ref() {
                 Some(converter) => match converter.remote_to_local(&target_bytes) {
                     Ok(converted) => converted,
                     Err(_) => {
-                        // upstream: flist.c:1169-1177 - strict `ic_recv` failure
+                        // upstream: flist.c:1394-1402 - strict `ic_recv` failure
                         // warns via FERROR_XFER, sets io_error |= IOERR_GENERAL,
                         // and empties the target (bp[0]='\0', outbuf.len=0). The
                         // entry stays a symlink with an empty target.
@@ -76,7 +76,7 @@ impl FileListReader {
                             "{}",
                             crate::iconv::cannot_convert_symlink_message("receiver", name)
                         );
-                        // upstream: flist.c:1169-1177 sets io_error with no
+                        // upstream: flist.c:1394-1402 sets io_error with no
                         // `ignore_errors` check, so this is a LOCAL error.
                         self.local_io_error |= crate::io_error::IOERR_GENERAL;
                         return Ok(Some(PathBuf::new()));
@@ -168,11 +168,11 @@ impl FileListReader {
     /// - If XMIT_HLINK_FIRST is also set: return u32::MAX (this is the first/leader)
     ///
     /// Wire consumption is gated on the flags ALONE, not on the local
-    /// `preserve_hard_links` (-H) setting. upstream: flist.c:874-876 reads
+    /// `preserve_hard_links` (-H) setting. upstream: flist.c:1099-1101 reads
     /// `first_hlink_ndx = read_varint(f)` under
     /// `protocol_version >= 30 && BITS_SETnUNSET(xflags, XMIT_HLINKED, XMIT_HLINK_FIRST)`
     /// with no `preserve_hard_links` check, and copies the leader's metadata at
-    /// flist.c:888-925 (`goto create_object`) regardless of -H. A sender may set
+    /// flist.c:1113-1150 (`goto create_object`) regardless of -H. A sender may set
     /// XMIT_HLINKED without the receiver enabling -H, so gating this read on the
     /// local flag would leave the varint on the wire and desync the flist stream.
     /// The disk-linking semantics (receiver transfer set) stay gated on
@@ -237,7 +237,7 @@ impl FileListReader {
             self.state.prev_hardlink_dev()
         } else {
             let raw_dev = crate::read_longint(reader)?;
-            // Upstream stores dev + 1, so subtract 1. upstream: flist.c:668
+            // Upstream stores dev + 1, so subtract 1. upstream: flist.c:893
             // `dev = read_longint(f)` then the +1 offset is undone with plain
             // int64 arithmetic that wraps; a malicious sender can supply
             // raw_dev == i64::MIN, so wrapping_sub matches upstream's wrap and
@@ -296,7 +296,7 @@ impl FileListReader {
             self.stats.num_dirs += 1;
         } else if entry.is_file() {
             self.stats.num_files += 1;
-            // upstream: flist.c:774 `stats.total_size += F_LENGTH(file)` uses
+            // upstream: flist.c:999 `stats.total_size += F_LENGTH(file)` uses
             // signed int64 and tolerates wrap; this is a cosmetic counter logged
             // by trace.rs and never gates wire format. Saturate instead of
             // wrapping so debug builds (overflow-checks=true, e.g. cargo-fuzz)
@@ -326,7 +326,7 @@ mod edg_panic_tests {
 
     /// A malicious sender must not crash the protocol 28-29 hardlink decode by
     /// sending dev == i64::MIN, which would underflow the `raw_dev - 1` offset
-    /// (upstream: flist.c:668) and panic under overflow-checks (cargo-fuzz /
+    /// (upstream: flist.c:893) and panic under overflow-checks (cargo-fuzz /
     /// debug). The hardened decode mirrors upstream's int64 wraparound and must
     /// return cleanly instead of panicking.
     #[test]

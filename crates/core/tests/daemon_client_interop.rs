@@ -10,7 +10,7 @@
 //!
 //! Upstream reference:
 //! - `target/interop/upstream-src/rsync-3.5.0/clientserver.c` - daemon protocol
-//! - `target/interop/upstream-src/rsync-3.5.0/main.c:1323-1440` - client_run()
+//! - `target/interop/upstream-src/rsync-3.5.1/main.c:1341-1458` - client_run()
 
 mod common;
 

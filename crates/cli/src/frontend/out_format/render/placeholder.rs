@@ -176,7 +176,7 @@ pub(super) fn render_placeholder_value(
 /// local-copy path transfers are always whole-file, so the header is empty
 /// (count=0) and its size is the constant 16 bytes the sender reads back.
 ///
-/// upstream: rsync.h:987 `struct sum_struct`; io.c:2257 `write_sum_head()`,
+/// upstream: rsync.h:988 `struct sum_struct`; io.c:2295 `write_sum_head()`,
 /// which emits `s2length` only for `protocol_version >= 27` (always true for
 /// the protocol range oc-rsync speaks).
 const SUM_HEAD_WIRE_BYTES: u64 = 16;

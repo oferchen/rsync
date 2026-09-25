@@ -4,9 +4,9 @@ use super::round_up_1024;
 
 /// Upstream's raw input buffer size.
 ///
-/// upstream: `io.c:1561` `alloc_xbuf(&iobuf.in, ROUND_UP_1024(IO_BUFFER_SIZE))`
+/// upstream: `io.c:1587` `alloc_xbuf(&iobuf.in, ROUND_UP_1024(IO_BUFFER_SIZE))`
 /// with `IO_BUFFER_SIZE = 32*1024` (`rsync.h:160`). Never reallocated
-/// (io.c:579 "We never resize the circular input buffer."); a request larger
+/// (io.c:597 "We never resize the circular input buffer."); a request larger
 /// than the buffer is a fatal protocol error, never a growth.
 pub const IN_BUFFER_SIZE: usize = 32 * 1024;
 
@@ -20,7 +20,7 @@ pub const IN_BUFFER_SIZE: usize = 32 * 1024;
 /// Nothing above this type knows the wire exists: the decoders read from the
 /// demultiplexer, the demultiplexer reads from here, and only this type touches
 /// the descriptor - which is the layering upstream enforces with
-/// `assert(fd != iobuf.in_fd)` in `safe_read()` (io.c:243).
+/// `assert(fd != iobuf.in_fd)` in `safe_read()` (io.c:261).
 pub struct InBuf {
     buf: Vec<u8>,
     pos: usize,
@@ -42,7 +42,7 @@ impl InBuf {
     }
 
     /// Returns the fixed circular size. This never changes for the lifetime of
-    /// the buffer (io.c:579).
+    /// the buffer (io.c:597).
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.buf.len()
@@ -72,7 +72,7 @@ impl InBuf {
 
     /// Marks `n` readable bytes as consumed, wrapping `pos`.
     ///
-    /// upstream: io.c:565-573 - an emptied buffer rewinds to offset 0 so the
+    /// upstream: io.c:583-591 - an emptied buffer rewinds to offset 0 so the
     /// next fill gets the whole span contiguously.
     pub fn consume(&mut self, n: usize) {
         debug_assert!(n <= self.len, "consuming more than is buffered");
@@ -91,7 +91,7 @@ impl InBuf {
     /// Returns the number of bytes buffered, `0` on EOF. The buffer is never
     /// resized to make room; when it is full this is a no-op returning `0`,
     /// which is the point at which upstream's `perform_io` would instead be
-    /// draining output (io.c:664-672 only selects for read when there is free
+    /// draining output (io.c:682-690 only selects for read when there is free
     /// space).
     pub fn fill<R: Read + ?Sized>(&mut self, reader: &mut R) -> io::Result<usize> {
         let size = self.capacity();
@@ -120,7 +120,7 @@ pub struct IoBufReader<R> {
 }
 
 impl<R: Read> IoBufReader<R> {
-    /// Wraps `inner` in a fixed 32 KiB input buffer (upstream io.c:1401).
+    /// Wraps `inner` in a fixed 32 KiB input buffer (upstream io.c:1427).
     #[must_use]
     pub fn new(inner: R) -> Self {
         Self::with_capacity(IN_BUFFER_SIZE, inner)

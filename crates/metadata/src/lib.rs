@@ -194,14 +194,14 @@ pub mod windows;
 
 /// Returns whether the process runs with an effective UID of 0 (root).
 ///
-/// Mirrors upstream rsync's `am_root` (`main.c:1284 am_root = (our_uid == 0)`),
+/// Mirrors upstream rsync's `am_root` (`main.c:1302 am_root = (our_uid == 0)`),
 /// which gates ownership-change attempts and the `ITEM_REPORT_OWNER` itemize
 /// flag (`generator.c:546`). Always `false` on Windows, matching upstream's
 /// `am_root = 0` on platforms without POSIX uid semantics.
 ///
 /// Delegates to [`identity::is_root`] rather than issuing a fresh `geteuid`, so
 /// this answers the same question upstream's `am_root` does. Upstream computes
-/// it once from `our_uid = MY_UID()` (`main.c:1764-1766`), the libc `geteuid`,
+/// it once from `our_uid = MY_UID()` (`main.c:1791-1793`), the libc `geteuid`,
 /// which gives two properties a raw syscall cannot:
 ///
 /// - under `fakeroot` the *faked* root identity is observed, because fakeroot
@@ -223,9 +223,9 @@ pub fn am_root() -> bool {
 
 /// Whether this platform can change a symbolic link's own permission bits.
 ///
-/// Mirrors upstream rsync's `CAN_CHMOD_SYMLINK` (`rsync.h:438-440`), defined
+/// Mirrors upstream rsync's `CAN_CHMOD_SYMLINK` (`rsync.h:439-441`), defined
 /// whenever `HAVE_LCHMOD` or `HAVE_SETATTRLIST` is probed
-/// (`configure.ac:911,918`). Upstream `syscall.c:761 do_chmod()` chmods a
+/// (`configure.ac:911,918`). Upstream `syscall.c:900 do_chmod()` chmods a
 /// symlink with `lchmod()` and then `setattrlist(..., FSOPT_NOFOLLOW)`; both
 /// exist on macOS and the BSDs but not on Linux, where `fchmodat(2)` rejects
 /// `AT_SYMLINK_NOFOLLOW` with `EOPNOTSUPP` and every symlink's `st_mode` is a

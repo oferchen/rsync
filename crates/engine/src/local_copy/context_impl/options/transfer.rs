@@ -53,7 +53,7 @@ impl<'a> CopyContext<'a> {
     /// Whether a symlinked source *leaf* should be followed when its content is
     /// opened.
     ///
-    /// upstream: `sender.c:685` gates the confined open on
+    /// upstream: `sender.c:686` gates the confined open on
     /// `!copy_links && !copy_unsafe_links && !copy_dirlinks && !insecure_links`
     /// and lets every other case fall through to the unconfined
     /// `do_open_checklinks`, which follows the leaf. All three link-following
@@ -99,7 +99,7 @@ impl<'a> CopyContext<'a> {
     /// `source` is not a copy-devices device and the caller should use the stat
     /// length as usual.
     ///
-    /// Mirrors upstream `flist.c:1451-1456 make_file()`, which opens the device
+    /// Mirrors upstream `flist.c:1676-1681 make_file()`, which opens the device
     /// and records `get_device_size()` in place of the (zero) stat length. See
     /// [`crate::local_copy::LocalCopyMetadata::virtualize_copy_device_as_file`]
     /// for the matching reporting override.

@@ -1,7 +1,7 @@
 //! Receiver-side handler for `--delete-missing-args` mode-0 sentinel entries.
 //!
 //! When the sender emits a mode-0 sentinel entry for a vanished top-level
-//! source (`flist.c:2254-2258`), the receiver must delete the corresponding
+//! source (`flist.c:2491-2497`), the receiver must delete the corresponding
 //! destination path if it exists and skip any further processing for that
 //! entry. Without this handler the sentinel survives in the file list but
 //! triggers no filesystem action, leaving stale destination state behind
@@ -12,7 +12,7 @@
 //!
 //! - `generator.c:1360-1366` - `if (missing_args == 2 && file->mode == 0)`:
 //!   apply the filter list, then `delete_item()` when `statret == 0`.
-//! - `flist.c:2254-2258` - `missing_args == 2` sender branch that emits
+//! - `flist.c:2491-2497` - `missing_args == 2` sender branch that emits
 //!   the mode-0 sentinel this handler consumes.
 
 use std::io;

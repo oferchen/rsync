@@ -11,7 +11,7 @@
 //!   sync path that the original interop test happened to exercise.
 //! - **UTS-2.f** (#3727): regression test that the SSH-mode alt-dest
 //!   transfer with `--copy-dest=<missing-path>` auto-creates the missing
-//!   destination root, mirroring upstream's `main.c:778-792`
+//!   destination root, mirroring upstream's `main.c:791-805`
 //!   `get_local_name()` flow.
 //! - **UTS-2.g** (#3728): wire-byte parity check confirming the mkdir is
 //!   receiver-local. No `MSG_*` frame, capability advertisement, or other
@@ -39,13 +39,13 @@
 //! PR #5574 reaches every `--server`-driven receiver path uniformly. The
 //! relevant source lines are at
 //! `crates/transfer/src/receiver/transfer/setup.rs:163-193`, where the
-//! upstream reference (`main.c:778-792 get_local_name()`) is cited inline.
+//! upstream reference (`main.c:791-805 get_local_name()`) is cited inline.
 //!
 //! ## Upstream Reference
 //!
-//! - `main.c:778-792 get_local_name()` - pre-flight `do_mkdir(dest_path, ACCESSPERMS)`
+//! - `main.c:791-805 get_local_name()` - pre-flight `do_mkdir(dest_path, ACCESSPERMS)`
 //!   when `file_total > 1 || trailing_slash`.
-//! - `main.c:791-808 setup_basis_dirs()` - the alt-dest flow that consumes
+//! - `main.c:804-821 setup_basis_dirs()` - the alt-dest flow that consumes
 //!   `--copy-dest`, `--link-dest`, and `--compare-dest`. Alt-dest paths are
 //!   used as basis only; the actual destination root creation stays in
 //!   `get_local_name()` and is therefore covered by the same pre-flight
@@ -71,7 +71,7 @@ use transfer::receiver::ensure_dest_root_exists;
 /// pre-flight would fail the assertion that the root materialized.
 ///
 /// See the module docstring for the full call-graph trace.
-// upstream: main.c:778-792 get_local_name()
+// upstream: main.c:791-805 get_local_name()
 #[test]
 fn uts_2_e_pre_flight_runs_under_server_dispatch() {
     let tmp = tempdir().expect("tempdir");
@@ -117,19 +117,19 @@ fn uts_2_e_pre_flight_runs_under_server_dispatch() {
 /// without a manual mkdir on the receiver host. The hardening in PR #5574
 /// keeps it from auto-creating through a symlinked dest. This test asserts
 /// the post-fix behaviour on the alt-dest cell that motivated the work.
-// upstream: main.c:778-792 get_local_name() pre-flight + main.c:791-808
+// upstream: main.c:791-805 get_local_name() pre-flight + main.c:804-821
 // setup_basis_dirs() alt-dest dispatch
 #[test]
 fn uts_2_f_ssh_alt_dest_auto_creates_missing_dest_root() {
     let tmp = tempdir().expect("tempdir");
     // Single missing leaf whose parent (tmp) already exists: upstream
-    // `main.c:788` `do_mkdir(dest_path)` creates exactly one level and fails
+    // `main.c:801` `do_mkdir(dest_path)` creates exactly one level and fails
     // with ENOENT on a deeper missing chain unless `--mkpath` was forwarded.
     let dest_root = tmp.path().join("missing_dest_root");
     let copy_dest_basis = tmp.path().join("basis_for_copy_dest");
 
     // The copy-dest basis is materialized by the operator separately;
-    // upstream's main.c:798-806 only checks that the basis path resolves,
+    // upstream's main.c:811-819 only checks that the basis path resolves,
     // not that the dest exists. The dest-root pre-flight is what fixes
     // the interop failure.
     fs::create_dir_all(&copy_dest_basis).expect("seed copy-dest basis");
@@ -183,7 +183,7 @@ fn uts_2_f_ssh_alt_dest_auto_creates_missing_dest_root() {
 /// argument (the most plausible way to leak bytes), this test would not
 /// compile and the wire-parity invariant would be re-evaluated at the
 /// type level rather than silently regressed at runtime.
-// upstream: main.c:778-792 - do_mkdir is local to the receiver; no
+// upstream: main.c:791-805 - do_mkdir is local to the receiver; no
 // equivalent of MSG_MKDIR exists in the wire protocol.
 #[test]
 fn uts_2_g_wire_byte_parity_mkdir_is_receiver_local() {

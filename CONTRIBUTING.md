@@ -158,10 +158,10 @@ manual run from your branch is equivalent.
 ## Upstream source citations
 
 Non-obvious protocol and wire behaviour is annotated with a citation to the
-upstream rsync C source, e.g. `// upstream: sender.c:477 - "sender finished"`.
+upstream rsync C source, e.g. `// upstream: sender.c:478 - "sender finished"`.
 
 - **One pinned baseline.** Every citation line number is anchored to the single
-  pinned upstream tree at `target/interop/upstream-src/rsync-3.5.0/`. Do **not**
+  pinned upstream tree at `target/interop/upstream-src/rsync-3.5.1/`. Do **not**
   append a version to each citation - the baseline is recorded once, in
   `tools/ci/citation_drift_audit.py` (`VER`) and `docs/UPSTREAM_COMPARISON.md`.
   Repeating it across thousands of comments would turn a version bump into a
@@ -180,11 +180,15 @@ upstream rsync C source, e.g. `// upstream: sender.c:477 - "sender finished"`.
 
   Re-anchor each flagged citation individually against the new source. Never
   bulk-shift line numbers by a fixed offset: already-correct citations drift by
-  different amounts (or not at all), so a blind shift corrupts them.
+  different amounts (or not at all), so a blind shift corrupts them. The
+  content-based retarget for a whole pin move is
+  `tools/ci/citation_retarget.py`: it re-locates every cited construct by its
+  enclosing function and line text, rewrites only what it can place, and lists
+  the ambiguous and vanished citations for a human to resolve.
 - **The hard gate.** `cargo xtask citations` asserts that every citation in the
   repository - not only under `crates/` - names a `.c`, `.h`, `.py` or `.sh`
   file the pinned release actually has, at a line that file actually has. It
-  reads `tools/ci/upstream-3.5.0-lines.tsv` rather than the source tree, so it
+  reads `tools/ci/upstream-3.5.1-lines.tsv` rather than the source tree, so it
   runs everywhere, including under `nextest`. Regenerate that manifest with
   `cargo xtask citations --write-manifest` when the pin moves - in the same
   change that moves `VER` in the drift auditor, never in a later one. The two
@@ -193,7 +197,7 @@ upstream rsync C source, e.g. `// upstream: sender.c:477 - "sender finished"`.
   tarball does not ship - zsync's `librcksum/` - name a different upstream and
   are out of scope.
 - **Naming a release explicitly.** A citation may spell
-  `rsync-3.5.0/flist.c:2477` or `target/interop/upstream-src/rsync-3.5.0/flist.c:2477`;
+  `rsync-3.5.1/flist.c:2717` or `target/interop/upstream-src/rsync-3.5.1/flist.c:2717`;
   the prefix is stripped and the line range is checked as if the bare name had
   been written. Spelling any *other* release is a hard failure, so
   `rsync-3.4.1/delete.c:130` fails - it names rsync at a release this tree no

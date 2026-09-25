@@ -3,7 +3,7 @@
 // never reach the daemon.
 /// Applies long-form arguments from the client to the server configuration.
 ///
-/// Upstream rsync's `server_options()` (options.c:2755-2998) sends many options
+/// Upstream rsync's `server_options()` (options.c:2765-3008) sends many options
 /// as long-form arguments that are not encoded in the compact flag string.
 /// The daemon must parse these to correctly configure the transfer.
 ///
@@ -15,13 +15,13 @@
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:1460-1465` - daemon-mode unknown option error path
-/// - `options.c:2836-2847` - delete mode variants
-/// - `options.c:2854-2855` - `--size-only`
-/// - `options.c:2896-2897` - `--ignore-errors`
-/// - `options.c:2906` - `--numeric-ids`
-/// - `options.c:2909` - `--use-qsort`
-/// - `options.c:2755-2758` - `--compress-level=N`
+/// - `options.c:1466-1471` - daemon-mode unknown option error path
+/// - `options.c:2846-2857` - delete mode variants
+/// - `options.c:2864-2865` - `--size-only`
+/// - `options.c:2906-2907` - `--ignore-errors`
+/// - `options.c:2916` - `--numeric-ids`
+/// - `options.c:2919` - `--use-qsort`
+/// - `options.c:2765-2768` - `--compress-level=N`
 fn apply_long_form_args(
     client_args: &[String],
     config: &mut ServerConfig,
@@ -40,7 +40,7 @@ fn apply_long_form_args(
             continue;
         }
         match arg.as_str() {
-            // upstream: options.c:2836-2847 - delete mode variants
+            // upstream: options.c:2846-2857 - delete mode variants
             "--delete" | "--delete-during" => {
                 config.flags.delete = true;
             }
@@ -65,7 +65,7 @@ fn apply_long_form_args(
             "--delete-excluded" => {
                 config.flags.delete = true;
             }
-            // upstream: options.c:3014-3015 - `if (force_delete) args[ac++] =
+            // upstream: options.c:3024-3025 - `if (force_delete) args[ac++] =
             // "--force"`. It is the second term of `int del_opts = delete_mode
             // || force_delete ? DEL_RECURSE : 0` (generator.c:1629/2481), which
             // lets a POPULATED directory obstacle be cleared for an incoming
@@ -75,65 +75,65 @@ fn apply_long_form_args(
             "--force" => {
                 config.flags.force = true;
             }
-            // upstream: options.c:2856-2857 - --stats sets do_stats which causes
+            // upstream: options.c:2866-2867 - --stats sets do_stats which causes
             // INFO_STATS to level 2+. Without this flag, the generator does not
             // emit NDX_DEL_STATS during the goodbye phase and the client sender's
             // "Number of deleted files" line stays at zero on daemon uploads.
             "--stats" => {
                 config.do_stats = true;
             }
-            // upstream: options.c:2854-2855
+            // upstream: options.c:2864-2865
             "--size-only" => {
                 config.file_selection.size_only = true;
             }
-            // upstream: options.c:2896-2897
+            // upstream: options.c:2906-2907
             "--ignore-errors" => {
                 config.deletion.ignore_errors = true;
             }
-            // upstream: options.c:2899-2900
+            // upstream: options.c:2909-2910
             "--copy-unsafe-links" => {
                 config.flags.copy_unsafe_links = true;
             }
-            // upstream: options.c:2902-2903
+            // upstream: options.c:2912-2913
             "--safe-links" => {
                 config.flags.safe_links = true;
             }
-            // upstream: options.c:2905-2906 - an explicit client --numeric-ids
+            // upstream: options.c:2915-2916 - an explicit client --numeric-ids
             // sets `numeric_ids = 1` (drops the wire name-list entirely).
             "--numeric-ids" => {
                 config.flags.numeric_ids = core::server::NumericIds::Explicit;
             }
-            // upstream: options.c:2976-2977 - `--no-implied-dirs` forwarded to
+            // upstream: options.c:2986-2987 - `--no-implied-dirs` forwarded to
             // the sender on a pull. The daemon-sender must omit implied parent
-            // dirs from the flist at protocol < 30 (flist.c:2468); protocol >= 30
-            // always sends them (flist.c:2257-2258).
+            // dirs from the flist at protocol < 30 (flist.c:2708); protocol >= 30
+            // always sends them (flist.c:2496-2497).
             "--no-implied-dirs" => {
                 config.flags.no_implied_dirs = true;
             }
-            // upstream: options.c:2908-2909
+            // upstream: options.c:2918-2919
             "--use-qsort" => {
                 config.qsort = true;
             }
-            // upstream: options.c:2918-2919
+            // upstream: options.c:2928-2929
             "--ignore-existing" => {
                 config.file_selection.ignore_existing = true;
             }
-            // upstream: options.c:2922-2923
+            // upstream: options.c:2932-2933
             "--existing" => {
                 config.file_selection.existing_only = true;
             }
-            // upstream: options.c:2870-2871
+            // upstream: options.c:2880-2881
             "--ignore-missing-args" => {
                 config.file_selection.ignore_missing_args = true;
             }
             "--delete-missing-args" => {
                 config.file_selection.delete_missing_args = true;
             }
-            // upstream: options.c:2951-2960
+            // upstream: options.c:2961-2970
             "--inplace" => {
                 config.write.inplace = true;
             }
-            // upstream: options.c:1722-1726 - OPT_APPEND increments append_mode
+            // upstream: options.c:1728-1732 - OPT_APPEND increments append_mode
             // on the server side. A second `--append` (append_mode == 2) is the
             // wire encoding of `--append-verify`; the client never sends the
             // long-form `--append-verify` to a server.
@@ -143,11 +143,11 @@ fn apply_long_form_args(
                 }
                 config.flags.append = true;
             }
-            // upstream: options.c:2891-2892
+            // upstream: options.c:2901-2902
             "--delay-updates" => {
                 config.write.delay_updates = true;
             }
-            // upstream: options.c:2930-2931
+            // upstream: options.c:2940-2941
             "--fsync" => {
                 config.write.fsync = true;
             }
@@ -164,23 +164,23 @@ fn apply_long_form_args(
             "--no-zero-copy" => {
                 config.write.zero_copy_policy = fast_io::ZeroCopyPolicy::Disabled;
             }
-            // upstream: options.c:2996-2997 - --mkpath forwarded to the daemon
-            // receiver on a push. Gates dest-arg path creation (main.c:738
-            // make_path vs main.c:796 single do_mkdir).
+            // upstream: options.c:3006-3007 - --mkpath forwarded to the daemon
+            // receiver on a push. Gates dest-arg path creation (main.c:751
+            // make_path vs main.c:809 single do_mkdir).
             "--mkpath" => {
                 config.flags.mkpath = true;
             }
             "--no-mkpath" => {
                 config.flags.mkpath = false;
             }
-            // upstream: options.c:2197-2199 - `--old-dirs`/`--old-d` set
+            // upstream: options.c:2206-2208 - `--old-dirs`/`--old-d` set
             // xfer_dirs=4, resolved to recurse=1 plus an appended `- /*/*`
             // filter. server_options() never forwards these deprecated flags; a
             // client encodes them as `-r` in the compact flag string and sends
             // `- /*/*` over the wire filter list. Consumed here without mkpath
             // semantics so a stray forward is not mistaken for a positional path.
             "--old-dirs" | "--old-d" => {}
-            // upstream: options.c:2914 - `if (list_only > 1) args[ac++] =
+            // upstream: options.c:2924 - `if (list_only > 1) args[ac++] =
             // "--list-only"`, forwarded only when the operator asked for a
             // listing explicitly (options.c:809 stores 2, not 1). It reaches
             // whichever end the server plays: a daemon receiver renders the
@@ -190,7 +190,7 @@ fn apply_long_form_args(
             "--list-only" => {
                 config.flags.list_only = true;
             }
-            // upstream: options.c:2917-2919 - a client running `-d --delete`
+            // upstream: options.c:2927-2929 - a client running `-d --delete`
             // emits `--no-r` so a remote that only got `-d` may still delete.
             // options.c:632 clears the same `recurse` global the compact `r`
             // letter sets, so the negation has to be applied after the flag
@@ -198,7 +198,7 @@ fn apply_long_form_args(
             "--no-r" => {
                 config.flags.recursive = false;
             }
-            // upstream: options.c:2926-2932 - `preserve_specials` never rides
+            // upstream: options.c:2936-2942 - `preserve_specials` never rides
             // the compact flag string, because `-D` covers devices only. The
             // long form carries it instead: `--no-specials` when devices are
             // preserved but specials are not, `--specials` when specials are
@@ -209,7 +209,7 @@ fn apply_long_form_args(
             "--no-specials" => {
                 config.flags.specials = false;
             }
-            // upstream: options.c:2948-2951 - `--msgs2stderr` /
+            // upstream: options.c:2958-2961 - `--msgs2stderr` /
             // `--no-msgs2stderr` (options.c:619-620) tell the peer where to
             // route its own name and info output.
             "--msgs2stderr" => {
@@ -218,27 +218,27 @@ fn apply_long_form_args(
             "--no-msgs2stderr" => {
                 config.flags.msgs_to_stderr = false;
             }
-            // upstream: options.c:3059-3060 - `else if (keep_partial &&
+            // upstream: options.c:3069-3070 - `else if (keep_partial &&
             // am_sender)` emits the bare `--partial` (options.c:788) to a
             // server receiver, which then keeps a partially transferred file
             // instead of unlinking it.
             "--partial" => {
                 config.flags.partial = true;
             }
-            // upstream: options.c:3129-3130 - an `--inplace --sparse` sender
+            // upstream: options.c:3139-3140 - an `--inplace --sparse` sender
             // emits `--no-W` so the receiver still asks for a delta rather
             // than the whole file. options.c:760 clears the same `whole_file`
             // global the compact `W` letter sets.
             "--no-W" => {
                 config.flags.whole_file = false;
             }
-            // upstream: options.c:3143-3144 - a `--files-from` transfer with
+            // upstream: options.c:3153-3154 - a `--files-from` transfer with
             // relative paths off emits the long `--no-relative` in place of
             // the compact `R`. options.c:707-708 spell it both ways.
             "--no-relative" | "--no-R" => {
                 config.flags.relative = false;
             }
-            // upstream: options.c:3153-3156 - `--remove-source-files`, and the
+            // upstream: options.c:3163-3166 - `--remove-source-files`, and the
             // deprecated `--remove-sent-files` alias (options.c:744-745), tell
             // a server sender to unlink each source file once the receiver has
             // acknowledged it. Dropping it left the sources in place on every
@@ -246,24 +246,24 @@ fn apply_long_form_args(
             "--remove-source-files" | "--remove-sent-files" => {
                 config.flags.remove_source_files = true;
             }
-            // upstream: options.c:3161-3162 - `if (preallocate_files &&
+            // upstream: options.c:3171-3172 - `if (preallocate_files &&
             // am_sender)` forwards `--preallocate` (options.c:729) to a server
             // receiver so it fallocate()s each destination file before writing.
             "--preallocate" => {
                 config.flags.preallocate = true;
             }
-            // upstream: options.c:3164-3165 - `--open-noatime` (options.c:658)
+            // upstream: options.c:3174-3175 - `--open-noatime` (options.c:658)
             // is forwarded so the server sender opens source files with
             // O_NOATIME and leaves their access times untouched.
             "--open-noatime" => {
                 config.write.open_noatime = true;
             }
-            // upstream: options.c:2849 - backup
+            // upstream: options.c:2859 - backup
             "--backup" => {
                 config.flags.backup = true;
             }
             // Two-arg options: upstream sends option and value as separate args.
-            // upstream: options.c:2933-2941 - reference directories
+            // upstream: options.c:2943-2951 - reference directories
             "--compare-dest" => {
                 if let Some(dir) = client_args.get(i + 1) {
                     config.reference_directories.push(ReferenceDirectory::new(
@@ -291,7 +291,7 @@ fn apply_long_form_args(
                     i += 1;
                 }
             }
-            // upstream: options.c:2805-2808 - backup-dir as separate args
+            // upstream: options.c:2815-2818 - backup-dir as separate args
             "--backup-dir" => {
                 config.flags.backup = true;
                 if let Some(dir) = client_args.get(i + 1) {
@@ -299,7 +299,7 @@ fn apply_long_form_args(
                     i += 1;
                 }
             }
-            // upstream: options.c:2809-2811 - suffix as separate args
+            // upstream: options.c:2819-2821 - suffix as separate args
             // When --backup-dir is specified without explicit --suffix,
             // upstream changes the default suffix from "~" to "" and sends
             // --suffix as a two-arg form (not --suffix=VALUE).
@@ -309,14 +309,14 @@ fn apply_long_form_args(
                     i += 1;
                 }
             }
-            // upstream: options.c:2925-2927 - temp-dir as separate args
+            // upstream: options.c:2935-2937 - temp-dir as separate args
             "--temp-dir" => {
                 if let Some(dir) = client_args.get(i + 1) {
                     config.temp_dir = Some(std::path::PathBuf::from(dir));
                     i += 1;
                 }
             }
-            // upstream: options.c:3052-3056 - `if (partial_dir && am_sender)`
+            // upstream: options.c:3062-3066 - `if (partial_dir && am_sender)`
             // emits `--partial-dir` and its value as two argv entries via
             // `safe_arg("", partial_dir)`, then `--delay-updates` when that is
             // also active. The receiving side stages each incoming temp file
@@ -331,7 +331,7 @@ fn apply_long_form_args(
                     i += 1;
                 }
             }
-            // upstream: options.c:2818-2823 - --compress-choice, --new-compress, --old-compress
+            // upstream: options.c:2828-2833 - --compress-choice, --new-compress, --old-compress
             "--new-compress" => {
                 config.flags.compress = true;
                 if config.connection.compression_level.is_none() {
@@ -347,7 +347,7 @@ fn apply_long_form_args(
                 }
             }
             _ => {
-                // upstream: options.c:2818-2823 - --compress-choice=ALGO
+                // upstream: options.c:2828-2833 - --compress-choice=ALGO
                 if let Some(_choice) = arg
                     .strip_prefix("--compress-choice=")
                     .or_else(|| arg.strip_prefix("--zc="))
@@ -359,23 +359,23 @@ fn apply_long_form_args(
                         config.connection.compression_level =
                             Some(compress::zlib::CompressionLevel::Default);
                     }
-                // upstream: options.c:2755-2758
+                // upstream: options.c:2765-2768
                 } else if let Some(level_str) = arg.strip_prefix("--compress-level=") {
                     if let Ok(level) = level_str.parse::<u32>()
                         && let Ok(cl) = compress::zlib::CompressionLevel::from_numeric(level)
                     {
                         config.connection.compression_level = Some(cl);
                     }
-                // upstream: options.c:2825-2828
+                // upstream: options.c:2835-2838
                 } else if let Some(val) = arg.strip_prefix("--max-delete=") {
                     if let Ok(n) = val.parse::<i64>()
                         && n >= 0
                     {
                         config.deletion.max_delete = Some(n as u64);
                     }
-                // upstream: options.c:2998-3001 - `server_options()` forwards
+                // upstream: options.c:3008-3011 - `server_options()` forwards
                 // `--min-size`/`--max-size` (as one `--opt=VALUE` token, see
-                // safe_arg at options.c:2716-2720) only when the local end is
+                // safe_arg at options.c:2726-2730) only when the local end is
                 // the sender, i.e. only to a daemon that is RECEIVING a push.
                 // That is the one direction where the filter runs on the
                 // daemon: enforcement lives in the generator
@@ -396,8 +396,8 @@ fn apply_long_form_args(
                             rejection.get_or_insert(ClientArgRejection::InvalidValue(message));
                         }
                     }
-                // upstream: options.c:2065-2074 - `server_options()` forwards
-                // `--max-alloc` (options.c:3029-3030) and the daemon runs the
+                // upstream: options.c:2071-2076 - `server_options()` forwards
+                // `--max-alloc` (options.c:3039-3040) and the daemon runs the
                 // SAME `parse_arguments()` block the client does, so a peer
                 // value is both applied and refused there. The daemon decodes
                 // the client argv here rather than through the `--server` argv
@@ -426,8 +426,8 @@ fn apply_long_form_args(
                         config.file_selection.modify_window =
                             ::metadata::ModifyWindow::from_secs(n);
                     }
-                // upstream: options.c:2953-2954 - the client forwards the block
-                // size as a standalone `-B%u` token, and options.c:1795-1805
+                // upstream: options.c:2963-2964 - the client forwards the block
+                // size as a standalone `-B%u` token, and options.c:1801-1811
                 // parses it back into the same `block_size` global. The daemon
                 // decodes the client argv here rather than through the
                 // `--server` argv parser, so it needs its own arm; both call the
@@ -439,9 +439,9 @@ fn apply_long_form_args(
                     if let Ok(size) = parse_block_size_arg(val, config.protocol) {
                         config.block_size = size;
                     }
-                // upstream: options.c:2874 - a negative modify_window is
+                // upstream: options.c:2884 - a negative modify_window is
                 // forwarded via the short `-@%d` spelling (e.g. `-@-1`) for
-                // nanosecond-exact comparison (util1.c:1482).
+                // nanosecond-exact comparison (util1.c:1577).
                 } else if let Some(val) = arg.strip_prefix("-@") {
                     if let Ok(n) = val.parse::<i64>() {
                         config.file_selection.modify_window =
@@ -478,7 +478,7 @@ fn apply_long_form_args(
                     config.has_partial_dir = true;
                 } else if let Some(path) = arg.strip_prefix("--files-from=") {
                     config.file_selection.files_from_path = Some(path.to_owned());
-                // upstream: options.c:2912 / 2915 - --usermap=SPEC / --groupmap=SPEC.
+                // upstream: options.c:2922 / 2915 - --usermap=SPEC / --groupmap=SPEC.
                 // After unbackslash_arg / secluded-args delivery the spec arrives
                 // verbatim (`*:1234` wildcards intact) so we hand it directly to
                 // the metadata parser. Without this step the daemon-mode receiver
@@ -500,7 +500,7 @@ fn apply_long_form_args(
                     if let Ok(mapping) = ::metadata::GroupMapping::parse(spec) {
                         config.group_mapping = Some(mapping);
                     }
-                // upstream: options.c:2981-2982 - `safe_arg("--checksum-choice",
+                // upstream: options.c:2991-2992 - `safe_arg("--checksum-choice",
                 // checksum_choice)` forwards the raw spec, and compat.c:544
                 // then makes it load-bearing on the WIRE: the checksum vstring
                 // is sent only `if (!checksum_choice)`. A daemon that drops the
@@ -514,7 +514,7 @@ fn apply_long_form_args(
                             rejection.get_or_insert(ClientArgRejection::InvalidValue(message));
                         }
                     }
-                // upstream: options.c:3046-3049 - `--checksum-seed=%d` is
+                // upstream: options.c:3056-3059 - `--checksum-seed=%d` is
                 // forwarded from an `int` global (options.c:861 is POPT_ARG_INT),
                 // and compat.c:823-825 has the SERVER pick the seed and write it
                 // on the wire. Dropping the value made `--checksum-seed` a no-op
@@ -534,7 +534,7 @@ fn apply_long_form_args(
                     config.file_selection.from0 = true;
                 // upstream: options.c:785,975 - --log-format is the deprecated
                 // alias for --out-format. The server parses it to set
-                // stdout_format_has_i (options.c:2345-2348): `%i` sets has_i = 1
+                // stdout_format_has_i (options.c:2354-2357): `%i` sets has_i = 1
                 // (itemize significant items) and `%I` sets has_i = 2, the `-ii`
                 // level that also itemizes unchanged entries. The client
                 // forwards `--log-format=%i%I` for `-ii` (options.c:164-175).
@@ -552,21 +552,21 @@ fn apply_long_form_args(
                 // popt table the daemon runs (`options.c:812` -
                 // `{"only-write-batch", 0, POPT_ARG_STRING, &batch_name,
                 // OPT_ONLY_WRITE_BATCH, ...}`, whose case at
-                // `options.c:1779-1781` sets `write_batch = -1`), and a
-                // conforming client emits it at `options.c:3016-3017`
+                // `options.c:1785-1787` sets `write_batch = -1`), and a
+                // conforming client emits it at `options.c:3026-3027`
                 // (`if (write_batch < 0) args[ac++] = "--only-write-batch=X"`).
-                // The server-side reset at `options.c:2261-2273` that prints
+                // The server-side reset at `options.c:2270-2282` that prints
                 // "ignoring --write-batch option sent to server" fires only for
                 // `write_batch > 0 || read_batch`, so `write_batch = -1`
                 // survives on the daemon. Refusing it turned away upstream
                 // 3.5.0 with `@ERROR: unrecognized option (in daemon mode)`.
                 //
                 // The value is upstream's literal placeholder `X`, never a real
-                // path: `main.c:1912` gates `open_batch_files()` on `!am_server`,
+                // path: `main.c:1939` gates `open_batch_files()` on `!am_server`,
                 // so the daemon never opens a batch file. What it must take from
                 // the flag is the mode switch - `clientserver.c:1195`
                 // `if (write_batch < 0) dry_run = 1` - and the receiver body at
-                // `receiver.c:987-993`, which logs the item and writes nothing
+                // `receiver.c:1003-1009`, which logs the item and writes nothing
                 // while the generator still sends real block checksums.
                 //
                 // Gated on the receiver role because `server_options()` emits the
@@ -583,10 +583,10 @@ fn apply_long_form_args(
                         config.flags.dry_run = true;
                     }
                 } else if rejection.is_none() && is_client_only_flag_reaching_daemon(arg) {
-                    // upstream: options.c:1460-1465 - the daemon's popt loop
+                    // upstream: options.c:1466-1471 - the daemon's popt loop
                     // emits `rsync: <BAD>: <err> (in daemon mode)` on the
                     // first unrecognised option and jumps to `daemon_error:`
-                    // (options.c:1480-1482), exiting `RERR_SYNTAX`. We mirror
+                    // (options.c:1486-1488), exiting `RERR_SYNTAX`. We mirror
                     // that fail-loud surface for batch-family flags that the
                     // client-side sanitiser should have stripped. Catching
                     // them here converts the previously silent connection
@@ -611,14 +611,14 @@ fn apply_long_form_args(
 pub(crate) enum ClientArgRejection {
     /// A client-only flag (the write/read-batch family) reached the daemon.
     ///
-    /// upstream: `options.c:1460-1465` - the daemon-mode popt loop emits
+    /// upstream: `options.c:1466-1471` - the daemon-mode popt loop emits
     /// `rsync: <BAD>: <err> (in daemon mode)` and jumps to `daemon_error:`
-    /// (`options.c:1480-1482`), exiting `RERR_SYNTAX`.
+    /// (`options.c:1486-1488`), exiting `RERR_SYNTAX`.
     Unrecognized(String),
     /// A recognised option carried a value upstream's own parser rejects.
     ///
     /// The payload is the message verbatim, already in upstream's
-    /// `--%s=%s is %s` shape (`options.c:1253`).
+    /// `--%s=%s is %s` shape (`options.c:1259`).
     InvalidValue(String),
 }
 
@@ -649,20 +649,20 @@ fn parse_transfer_checksum_choice(spec: &str) -> Result<::protocol::ChecksumAlgo
 
 /// Parses a `--max-size`/`--min-size` value the way upstream's popt case does.
 ///
-/// upstream: `options.c:1808-1817` - both options call
+/// upstream: `options.c:1814-1823` - both options call
 /// `parse_size_arg(arg, 'b', "<name>", 0, -1, False)`, and a failure aborts
 /// option parsing rather than falling back to a default. Ignoring a bad value
 /// here would re-open the very hole this arm closes: the option would be
 /// dropped, silently, on a peer-supplied argument.
 fn parse_transfer_size_limit(opt_name: &str, value: &str) -> Result<u64, String> {
-    // upstream: options.c:1172-1175 - the digit scan leaves the cursor on the
+    // upstream: options.c:1178-1181 - the digit scan leaves the cursor on the
     // terminator, so the suffix switch takes `def_suf` and `strtod("")` gives
     // 0. An empty value is exactly `=0`, not "no limit"; the shared parser
     // rejects the empty string, so the rule is applied per option (the same
     // placement the CLI uses, since `--max-alloc` must keep rejecting it).
     let text = if value.is_empty() { "0" } else { value };
 
-    // upstream: options.c:1169 + :1216-1221 - with max_value = -1 (what :1809
+    // upstream: options.c:1175 + :1216-1221 - with max_value = -1 (what :1809
     // and :1815 pass) the ceiling is `(ssize_t)(SIZE_MAX / 2)`, and the range
     // check runs against the `double` returned by strtod with a STRICT
     // `dsize >= size_max` clause. `(double)(SIZE_MAX / 2)` rounds to 2^63, so
@@ -693,19 +693,19 @@ fn parse_transfer_size_limit(opt_name: &str, value: &str) -> Result<u64, String>
 
 /// Parses a peer-forwarded `--max-alloc` value into a byte ceiling.
 ///
-/// upstream: `options.c:2066-2074` - `parse_size_arg(max_alloc_arg, 'B',
+/// upstream: `options.c:2072-2076` - `parse_size_arg(max_alloc_arg, 'B',
 /// "max-alloc", 1024*1024, -1, True)` followed by the zero refusal. The value
 /// RULES live in `protocol::max_alloc` because the client's own CLI applies
 /// exactly the same ones; only the front-end parse is restated here, since this
 /// parser reads raw wire strings rather than an `OsStr` argv.
 fn parse_max_alloc_limit(value: &str) -> Result<usize, String> {
-    // upstream: options.c:1172-1175 - the digit scan leaves the cursor on the
+    // upstream: options.c:1178-1181 - the digit scan leaves the cursor on the
     // terminator and `strtod("")` gives 0, so an empty value is exactly `=0`.
     // For `--max-alloc` that resolves to the zero refusal rather than a parse
     // error, which is what upstream reports for a forwarded `--max-alloc=`.
     let text = if value.is_empty() { "0" } else { value };
 
-    // upstream: options.c:2067 passes def_suf 'B'.
+    // upstream: options.c:2073 passes def_suf 'B'.
     let bytes = match ::core::bandwidth::parse_size_arg(text, b'B') {
         Ok(parsed) => u64::try_from(parsed.bytes).unwrap_or(u64::MAX),
         Err(::core::bandwidth::SizeArgError::Invalid) => {
@@ -722,7 +722,7 @@ fn parse_max_alloc_limit(value: &str) -> Result<usize, String> {
 
 /// Renders upstream's size-argument failure text.
 ///
-/// upstream: `options.c:1253` - `snprintf(err_buf, .., "--%s=%s is %s",
+/// upstream: `options.c:1259` - `snprintf(err_buf, .., "--%s=%s is %s",
 /// opt_name, size_arg, err)`. The `(max: N)` suffix upstream appends at
 /// `:1254-1258` applies only when the option declares a bound; `--max-size`
 /// and `--min-size` pass `max_value = -1`, so no suffix is emitted.
@@ -741,7 +741,7 @@ fn size_arg_error(opt_name: &str, value: &str, reason: &str) -> String {
 /// a Rule-12 fail-loud `@ERROR` instead.
 ///
 /// `--only-write-batch` is deliberately NOT in this set: upstream emits it to
-/// the server on purpose (`options.c:3016-3017`) and keeps `write_batch = -1`
+/// the server on purpose (`options.c:3026-3027`) and keeps `write_batch = -1`
 /// there, so it is handled as a real option by the caller.
 ///
 /// Both bare-flag (`--write-batch`) and key=value (`--write-batch=PATH`)
@@ -750,9 +750,9 @@ fn size_arg_error(opt_name: &str, value: &str, reason: &str) -> String {
 /// # Upstream Reference
 ///
 /// - `options.c:810-811` - `read-batch` and `write-batch` popt entries
-/// - `options.c:2261-2273` - the server-side reset that fires for
+/// - `options.c:2270-2282` - the server-side reset that fires for
 ///   `write_batch > 0 || read_batch`
-/// - `options.c:1444-1449` - daemon-mode unknown option error path
+/// - `options.c:1450-1455` - daemon-mode unknown option error path
 fn is_client_only_flag_reaching_daemon(arg: &str) -> bool {
     let bare = arg.split('=').next().unwrap_or(arg);
     matches!(bare, "--write-batch" | "--read-batch")

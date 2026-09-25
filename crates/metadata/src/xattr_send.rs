@@ -367,7 +367,7 @@ mod macos_provenance_tests {
 ///
 /// ⚠ Both run with the generator's `user_only` - `copy_xattrs` computes
 /// `am_sender ? 0 : am_root <= 0` (xattrs.c:364) and every live caller is
-/// generator-side (generator.c:1599, generator.c:2430, util1.c:513), so
+/// generator-side (generator.c:1599, generator.c:2430, util1.c:516), so
 /// `am_sender == 0` throughout. The SIDE below is about which filter RULES
 /// participate, which is a separate axis from the namespace screen.
 ///

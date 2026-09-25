@@ -105,8 +105,8 @@ pub fn send_msgs_vectored<W: Write>(
 /// because a zero-length data frame contributes no bytes to the raw data stream
 /// and is silently absorbed by the peer.
 ///
-/// upstream: `io.c:maybe_send_keepalive()` (io.c:1453-1481) sends
-/// `send_msg(MSG_DATA, "", 0, 0)`; the explanatory comment is at io.c:1446-1452.
+/// upstream: `io.c:maybe_send_keepalive()` (io.c:1479-1507) sends
+/// `send_msg(MSG_DATA, "", 0, 0)`; the explanatory comment is at io.c:1472-1478.
 ///
 /// # Examples
 ///

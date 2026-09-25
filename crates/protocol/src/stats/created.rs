@@ -5,7 +5,7 @@
 //! breakdown entirely on the client from its own itemize pass: every entry
 //! whose iflags carry `ITEM_IS_NEW` bumps `stats.created_files` plus the
 //! per-type counter for the entry's mode. A client sender does this in
-//! `sender.c:295-308`; a client receiver in `receiver.c:733-746`. Only
+//! `sender.c:587-600`; a client receiver in `receiver.c:749-762`. Only
 //! `total_read`/`total_written`/`total_size` (and the `--delete` counters)
 //! cross the wire (main.c `handle_stats`), so the client must tally these
 //! itself while it processes the per-file `NDX + iflags` stream.
@@ -24,7 +24,7 @@ use crate::flist::FileType;
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:733-746` / `sender.c:295-308` - `stats.created_*++` under the
+/// - `receiver.c:749-762` / `sender.c:587-600` - `stats.created_*++` under the
 ///   `iflags & ITEM_IS_NEW` guard, keyed by the entry's mode.
 /// - `main.c:387-416` - `output_itemized_counts()` renders the breakdown.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -70,7 +70,7 @@ impl CreatedStats {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:733-746` / `sender.c:296-309` - the `S_ISREG` / `S_ISDIR`
+    /// - `receiver.c:749-762` / `sender.c:587-600` - the `S_ISREG` / `S_ISDIR`
     ///   / `S_ISLNK` / `IS_DEVICE` / else cascade.
     pub const fn record(&mut self, mode: u32) {
         self.files = self.files.saturating_add(1);

@@ -52,7 +52,7 @@
 // thread clears it on exit - before `stop_and_join()` returns - leaving the
 // goodbye-drain clone a normal blocking socket.
 //
-// upstream: io.c:882-889 perform_io() drains readable multiplex messages
+// upstream: io.c:900-907 perform_io() drains readable multiplex messages
 // whenever it is about to write, keeping the peer's send buffer emptied.
 //
 // This file is `include!`d into the `crate::daemon` scope, so it reuses the
@@ -271,7 +271,7 @@ impl DrainingReader {
                             if thread_inner.stop.load(Ordering::Acquire) {
                                 break 'drain;
                             }
-                            // upstream: io.c:243-249 - the session's OWN timeout
+                            // upstream: io.c:261-267 - the session's OWN timeout
                             // is checked here, on the same tick that observes an
                             // idle socket. `DRAIN_READ_TIMEOUT` is only the poll
                             // CADENCE; without this arm the expiry is retried
@@ -515,7 +515,7 @@ mod draining_reader_tests {
 
     #[test]
     fn replays_all_buffered_bytes_before_stop() {
-        // Queue-drain invariant (mirrors upstream perform_io io.c:882): every
+        // Queue-drain invariant (mirrors upstream perform_io io.c:900): every
         // byte the drain thread pulled off the socket must be replayed to the
         // consumer in order, even after `stop()` halts further draining. The
         // consumer reads the full transfer payload through the reader, then
@@ -692,7 +692,7 @@ mod draining_reader_tests {
         // The defect this fixes: `DRAIN_READ_TIMEOUT` makes every read on an
         // idle socket return `TimedOut`, and the retry arm swallowed all of
         // them - so a peer that went silent mid-transfer kept the session open
-        // forever. upstream ends it at `check_timeout()` (io.c:243-249).
+        // forever. upstream ends it at `check_timeout()` (io.c:261-267).
         //
         // The deadline is armed at zero, so the first idle tick is already past
         // the bound: the assertion is on the ARM being consulted at all, not on

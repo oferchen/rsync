@@ -106,7 +106,7 @@ impl FromIterator<LimiterChange> for LimiterChange {
 /// `true`, throttling is disabled entirely.
 ///
 /// Returns a [`LimiterChange`] describing the transition that occurred.
-/// upstream: options.c:2392 - daemon_bwlimit override: strictest rate wins
+/// upstream: options.c:2401 - daemon_bwlimit override: strictest rate wins
 pub fn apply_effective_limit(
     limiter: &mut Option<BandwidthLimiter>,
     limit: Option<NonZeroU64>,
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn apply_effective_limit_updates_existing_limiter_limit_lower() {
-        // upstream: options.c:2392 - min(client, daemon) wins.
+        // upstream: options.c:2401 - min(client, daemon) wins.
         let mut limiter = Some(BandwidthLimiter::new(nz(2000)));
         let result = apply_effective_limit(&mut limiter, Some(nz(1000)), true);
         assert_eq!(result, LimiterChange::Updated);

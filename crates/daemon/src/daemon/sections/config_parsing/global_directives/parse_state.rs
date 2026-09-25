@@ -18,7 +18,7 @@ struct GlobalParseState {
     /// also seeds. Upstream's `log file` is `P_LOCAL` (daemon-parm.h:289) but
     /// `FN_LOCAL_STRING(lp_log_file, log_file)` falls back to the global value
     /// at `module_id < 0`, and `daemon_main` calls `log_init(0)`
-    /// (clientserver.c:1768) at STARTUP - so the global value opens a
+    /// (clientserver.c:1789) at STARTUP - so the global value opens a
     /// daemon-wide log before any module is selected. Recording it only as a
     /// module default would lose every pre-module diagnostic.
     log_file: Option<(PathBuf, ConfigDirectiveOrigin)>,

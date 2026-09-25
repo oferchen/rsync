@@ -15,9 +15,9 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1615-1639` `send_file_name()` - `iconvbufs(ic_send, ...)`
+//! - `flist.c:1840-1864` `send_file_name()` - `iconvbufs(ic_send, ...)`
 //!   transcodes the filename before it leaves the sender.
-//! - `flist.c:738-754` `recv_file_entry()` - `iconvbufs(ic_recv, ...)`
+//! - `flist.c:963-979` `recv_file_entry()` - `iconvbufs(ic_recv, ...)`
 //!   transcodes the filename before the receiver hits the filesystem.
 
 use std::borrow::Cow;
@@ -82,7 +82,7 @@ fn bytes_to_os_string(bytes: Vec<u8>) -> OsString {
 /// than aborting the transfer, mirroring upstream's `ICB_INCLUDE_BAD`
 /// `*obuf++ = *ibuf++` (rsync.c:261). In the real local-copy flow such names
 /// are already screened out by the strict [`name_is_convertible`] gate
-/// (`flist.c:1624-1631` `ICB_INIT`), so this path only runs for convertible
+/// (`flist.c:1849-1856` `ICB_INIT`), so this path only runs for convertible
 /// names; the verbatim fallback keeps parity with the shared lossy converter.
 /// A warning is emitted via
 /// [`trace_conversion_warning`](protocol::iconv::trace_conversion_warning)
@@ -125,7 +125,7 @@ pub(crate) fn transcode_filename_component<'a>(
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:1614-1638` `send_file1()` - `iconvbufs(ic_send, ..., ICB_INIT)`
+/// - `flist.c:1839-1863` `send_file1()` - `iconvbufs(ic_send, ..., ICB_INIT)`
 ///   uses the strict (non-`ICB_INCLUDE_BAD`) mode; a `< 0` return skips the
 ///   file rather than substituting replacement bytes.
 #[must_use]
@@ -145,7 +145,7 @@ pub(crate) fn name_is_convertible(name: &OsStr, converter: Option<&FilenameConve
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:1631` `send_file1()` - `rprintf(FERROR_XFER, "[%s] cannot convert
+/// - `flist.c:1856` `send_file1()` - `rprintf(FERROR_XFER, "[%s] cannot convert
 ///   filename: %s (%s)\n", who_am_i(), f_name(file, fbuf), strerror(errno))`.
 pub(crate) fn emit_cannot_convert_filename(display: &OsStr) {
     eprintln!(

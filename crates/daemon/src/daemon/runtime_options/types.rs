@@ -27,7 +27,7 @@ pub(crate) struct RuntimeOptions {
     /// than picking one. The accept-loop interprets this as "iterate IPv6
     /// then IPv4, surface per-family bind failures as warnings, succeed as
     /// long as at least one family bound." See
-    /// `target/interop/upstream-src/rsync-3.5.0/socket.c:552-650`
+    /// `target/interop/upstream-src/rsync-3.5.1/socket.c:560-658`
     /// (`open_socket_in`) for the family-iteration loop oc-rsync reproduces.
     pub(crate) dual_stack: bool,
     bind_address_overridden: bool,
@@ -141,7 +141,7 @@ pub(crate) struct RuntimeOptions {
     ///
     /// upstream: daemon-parm.h - `proxy_protocol_hosts` STRING, P_GLOBAL,
     /// default "". Empty means trust nobody, not trust everybody
-    /// (access.c:302-303).
+    /// (access.c:313-314).
     proxy_protocol_hosts: Vec<HostPattern>,
     /// Directory the daemon chroots into before forking children.
     ///

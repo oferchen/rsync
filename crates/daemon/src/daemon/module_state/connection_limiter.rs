@@ -39,7 +39,7 @@ const SLOT_LEN: i64 = 4;
 ///
 /// upstream: connection.c:26 `claim_connection()` opens the lock file and calls
 /// `lock_range(fd, i*4, 4)` for each slot, returning success on the first range
-/// it locks. util1.c:632 `lock_range()` issues `fcntl(fd, F_SETLK, &lock)` with
+/// it locks. util1.c:635 `lock_range()` issues `fcntl(fd, F_SETLK, &lock)` with
 /// `l_type = F_WRLCK`. On Windows, which has no equivalent lock-on-death
 /// primitive, the limiter falls back to a counter serialised with `flock`.
 pub(crate) struct ConnectionLimiter {
@@ -159,7 +159,7 @@ impl ConnectionLimiter {
                 match nix::fcntl::fcntl(&file, setlk_arg(&lock)) {
                     Ok(_) => return Ok(ConnectionLockGuard { _file: file }),
                     // The range is held by another connection or process; try the
-                    // next slot. upstream: util1.c:642 - `fcntl` returns non-zero
+                    // next slot. upstream: util1.c:645 - `fcntl` returns non-zero
                     // with EACCES/EAGAIN when the lock is contended.
                     Err(nix::errno::Errno::EACCES | nix::errno::Errno::EAGAIN) => break,
                     // A signal interrupted the lock request before it resolved;
@@ -184,7 +184,7 @@ impl ConnectionLimiter {
 
 /// Builds an `F_WRLCK` description for the slot beginning at `offset`.
 ///
-/// upstream: util1.c:713-719 sets `l_type = F_WRLCK`, `l_whence = SEEK_SET`,
+/// upstream: util1.c:716-722 sets `l_type = F_WRLCK`, `l_whence = SEEK_SET`,
 /// `l_start = offset`, `l_len = len`.
 #[cfg(unix)]
 fn slot_lock(offset: i64) -> nix::libc::flock {
@@ -211,7 +211,7 @@ fn setlk_arg(lock: &nix::libc::flock) -> nix::fcntl::FcntlArg<'_> {
 
 /// Selects the non-blocking `F_SETLK` command on non-Linux unix platforms.
 ///
-/// upstream: util1.c:642 uses `fcntl(fd, F_SETLK, &lock)`. Where OFD locks are
+/// upstream: util1.c:645 uses `fcntl(fd, F_SETLK, &lock)`. Where OFD locks are
 /// unavailable the in-process slot count is enforced by the caller's atomic
 /// counter; `F_SETLK` still coordinates across separate daemon processes.
 #[cfg(all(unix, not(target_os = "linux")))]

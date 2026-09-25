@@ -720,7 +720,7 @@ fn size_trailing_plus_minus_one_modifier_is_accepted() {
     );
 }
 
-/// upstream options.c:1924 - `--stderr` accepts only `errors`, `all`, or
+/// upstream options.c:1930 - `--stderr` accepts only `errors`, `all`, or
 /// `client`; any other mode is a fatal error. oc silently accepts any string.
 #[test]
 #[ignore = "oc divergence: invalid --stderr mode not rejected"]

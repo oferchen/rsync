@@ -279,7 +279,7 @@ fn reference_apply<R: Read>(
     let file = out
         .into_inner()
         .map_err(|e| std::io::Error::other(e.to_string()))?;
-    // upstream: fileio.c:43 sparse_end() -> do_ftruncate(f, size). finish() only
+    // upstream: fileio.c:47 sparse_end() -> do_ftruncate(f, size). finish() only
     // seeks over the trailing hole; the caller establishes the logical length via
     // set_len, mirroring DeltaApplicator. Punching in-basis holes is a block
     // deallocation that reads back as zeros identically to the truncated tail, so
@@ -649,8 +649,8 @@ fn equivalence_checksum_mismatch_both_invalid() {
 /// writer to the logical offset before the next write, so the hole started
 /// late and every following byte shifted. The applicator must never reposition
 /// between tokens.
-// upstream: receiver.c:563 write_file() - no lseek between tokens;
-// fileio.c:81 flush_sparse_hole() flushes from the current position.
+// upstream: receiver.c:579 write_file() - no lseek between tokens;
+// fileio.c:85 flush_sparse_hole() flushes from the current position.
 #[test]
 fn sparse_copy_ending_in_zeros_keeps_following_tokens_in_place() {
     let block_len = BLOCK_LEN as usize;

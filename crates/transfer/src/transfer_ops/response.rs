@@ -78,7 +78,7 @@ pub fn process_file_response<R: Read>(
 ) -> io::Result<u64> {
     let header = match read_response_header(reader, ndx_codec, pending, ctx, receiver)? {
         super::HeaderOutcome::Header(header) => header,
-        // upstream: io.c:1809-1818 - a declined file is retired by the generator
+        // upstream: io.c:1847-1856 - a declined file is retired by the generator
         // and never answered. This synchronous, single-request path has no window
         // to retire against, so a decline is surfaced as an error rather than
         // silently dropped.
@@ -97,7 +97,7 @@ pub fn process_file_response<R: Read>(
 
     // Inplace: write directly to destination. Otherwise temp+rename for atomicity.
     let (mut file, mut cleanup_guard, needs_rename) = if use_inplace {
-        // upstream: receiver.c:968 - do_open(fname, O_WRONLY|O_CREAT, 0600)
+        // upstream: receiver.c:984 - do_open(fname, O_WRONLY|O_CREAT, 0600)
         let f = fs::OpenOptions::new()
             .write(true)
             .create(true)
@@ -130,7 +130,7 @@ pub fn process_file_response<R: Read>(
         cleanup_guard.mark_registered();
     }
 
-    // upstream: receiver.c:372-373 - in append mode, seek past existing content
+    // upstream: receiver.c:385-386 - in append mode, seek past existing content
     // so new data is written at the end of the file
     let append_offset = header.append_offset;
     if append_offset > 0 {
@@ -140,7 +140,7 @@ pub fn process_file_response<R: Read>(
     // Length of the pre-existing basis extent for sparse hole-punching. Only
     // in-place writes reuse existing bytes; a temp file is fresh, so its runs
     // are seeked (natural holes) and need no punch.
-    // upstream: receiver.c:318-338 sets preallocated_len from the basis size.
+    // upstream: receiver.c:331-351 sets preallocated_len from the basis size.
     let basis_len = if use_inplace {
         file.metadata().map(|m| m.len()).unwrap_or(0)
     } else {
@@ -313,7 +313,7 @@ pub fn process_file_response<R: Read>(
         }
     }
 
-    // upstream: fileio.c:43 sparse_end() - flush the trailing hole and hand the
+    // upstream: fileio.c:47 sparse_end() - flush the trailing hole and hand the
     // caller the logical length (and any in-basis hole ranges) so the file is
     // truncated to size and stale basis blocks are punched, instead of
     // materializing a trailing byte.
@@ -338,7 +338,7 @@ pub fn process_file_response<R: Read>(
     }
     drop(output);
 
-    // upstream: fileio.c:43-71 sparse_end() - establish the logical size via
+    // upstream: fileio.c:47-75 sparse_end() - establish the logical size via
     // ftruncate (leaving the trailing region a hole) and punch any in-basis
     // zero runs so an --inplace update does not retain stale bytes. Runs on the
     // temp file before rename for the atomic path, on the final file for
@@ -421,7 +421,7 @@ pub fn process_file_response<R: Read>(
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
     } else if ctx.config.inplace && sparse_state.is_none() {
         // Inplace: truncate to final size.
-        // upstream: receiver.c:340 - set_file_length(fd, F_LENGTH(file))
+        // upstream: receiver.c:353 - set_file_length(fd, F_LENGTH(file))
         // In append mode, total_bytes only counts newly received data -
         // the full file size includes the existing content we seeked past.
         // The sparse path already truncated to its logical length above.

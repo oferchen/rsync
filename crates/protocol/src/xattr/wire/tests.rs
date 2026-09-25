@@ -1069,7 +1069,7 @@ fn read_definitions_exceeds_max_count() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1097,7 +1097,7 @@ fn read_definitions_exceeds_max_name_len() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1127,7 +1127,7 @@ fn read_definitions_exceeds_max_value_len() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1155,7 +1155,7 @@ fn recv_xattr_exceeds_max_count() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1184,7 +1184,7 @@ fn recv_xattr_exceeds_max_name_len() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1213,7 +1213,7 @@ fn recv_xattr_exceeds_max_value_len() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1246,7 +1246,7 @@ fn recv_xattr_values_exceeds_max_value_len() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("exceeds maximum"));
     // WHY: upstream reads these counts/lengths via read_varint_bounded /
-    // read_varint_size (xattrs.c:793,802-803; io.c:1904-1926), which
+    // read_varint_size (xattrs.c:793,802-803; io.c:1942-1964), which
     // exit_cleanup(RERR_PROTOCOL) (exit 2) on overrun. The ProtocolViolation
     // tag must survive so the core exit-code mapper reproduces exit 2, not the
     // RERR_STREAMIO (12) a bare InvalidData maps to - a drop-in tool must
@@ -1455,7 +1455,7 @@ fn recv_xattr_values_lowered_max_alloc_rejects_sub_gib_length() {
 /// A negative datum varint cannot fit the signed-`int32` field encoding, so it
 /// stays a protocol violation (exit 2) even when `--max-alloc` is raised to the
 /// field maximum. WHY: upstream's read_varint_size rejects a negative value
-/// with RERR_PROTOCOL regardless of `max_alloc` (io.c:1917-1926); raising the
+/// with RERR_PROTOCOL regardless of `max_alloc` (io.c:1955-1964); raising the
 /// allocation ceiling must never make a malformed field decode.
 #[test]
 fn read_definitions_negative_datum_rejected_even_when_max_alloc_raised() {

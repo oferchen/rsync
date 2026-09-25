@@ -17,7 +17,7 @@ fn module_definition_hostname_deny_short_circuited_by_wildcard_allow() {
 /// allows the deny list to gate access by hostname.
 ///
 /// The deny token is given a forward resolution deliberately. Upstream returns
-/// the caller's `deny` flag when a token will not resolve (access.c:57-63), so
+/// the caller's `deny` flag when a token will not resolve (access.c:68-74), so
 /// an unresolvable deny token blocks EVERY peer - and the second assertion
 /// below would then be asserting the absence of a security property rather
 /// than the presence of a matching rule. Resolving the token elsewhere isolates

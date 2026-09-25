@@ -82,10 +82,10 @@ impl ClientConfig {
 
     /// Reports whether the user explicitly requested `--super`.
     ///
-    /// Mirrors upstream's `am_root > 1` state (`options.c:3018`), set only by an
+    /// Mirrors upstream's `am_root > 1` state (`options.c:3028`), set only by an
     /// explicit `--super` (not by merely running as root). The remote-invocation
     /// builder forwards `--super` on a push under this condition, matching
-    /// `options.c:2852`.
+    /// `options.c:2862`.
     #[must_use]
     #[doc(alias = "--super")]
     pub const fn super_user(&self) -> bool {
@@ -113,7 +113,7 @@ impl ClientConfig {
     /// Returns the access-time preservation level (0 = off, 1 = `-U`, 2 = `-UU`).
     ///
     /// Level 2 doubles the compact `U` letter in the server flag string,
-    /// matching upstream `options.c:2681-2685`.
+    /// matching upstream `options.c:2691-2695`.
     #[must_use]
     pub const fn preserve_atimes_level(&self) -> u8 {
         self.preserve_atimes
@@ -184,7 +184,7 @@ impl ClientConfig {
     /// 2 = `-XX`).
     ///
     /// Level 2 doubles the compact `X` letter in the server flag string,
-    /// matching upstream `options.c:2698-2704`.
+    /// matching upstream `options.c:2708-2714`.
     #[cfg(all(any(unix, windows), feature = "xattr"))]
     #[must_use]
     pub const fn preserve_xattrs_level(&self) -> u8 {

@@ -43,7 +43,7 @@ pub(crate) fn query_destination_state(path: &Path) -> Result<DestinationState, L
 /// Ensures the destination path is a directory, creating it if necessary.
 ///
 /// Returns `true` when this call materialised the destination directory,
-/// `false` when it was already present. upstream: main.c:798-799 - the
+/// `false` when it was already present. upstream: main.c:811-812 - the
 /// generator emits `created directory %s` only when the pre-flight mkdir
 /// actually created the dest; subsequent runs against the same destination
 /// must remain silent.
@@ -51,8 +51,8 @@ pub(crate) fn query_destination_state(path: &Path) -> Result<DestinationState, L
 /// The `mkpath` argument selects how many components may be created, mirroring
 /// upstream `get_local_name()`: without `--mkpath` a single `do_mkdir(dest_path)`
 /// creates only the final component and a missing ancestor is a fatal ENOENT
-/// (`main.c:787,796`), whereas `--mkpath` first runs `make_path(dest_path, ...)`
-/// to build the whole leading chain (`main.c:736`).
+/// (`main.c:800,809`), whereas `--mkpath` first runs `make_path(dest_path, ...)`
+/// to build the whole leading chain (`main.c:749`).
 pub(crate) fn ensure_destination_directory(
     destination_path: &Path,
     state: &mut DestinationState,
@@ -74,7 +74,7 @@ pub(crate) fn ensure_destination_directory(
         return Ok(true);
     }
 
-    // upstream: main.c:736 vs main.c:796 - `--mkpath` runs `make_path()` (full
+    // upstream: main.c:749 vs main.c:809 - `--mkpath` runs `make_path()` (full
     // chain) while the plain path does a single `do_mkdir(dest_path)` that fails
     // with ENOENT when a leading directory is absent.
     let outcome = if mkpath {
@@ -99,7 +99,7 @@ pub(crate) fn ensure_destination_directory(
 /// When an `--iconv` converter is supplied, the source filename component
 /// `name` is transcoded with [`transcode_filename_component`] before being
 /// appended to `destination_base`. This mirrors upstream rsync's
-/// `flist.c:1579-1603` (sender) + `flist.c:738-754` (receiver) composition
+/// `flist.c:1804-1828` (sender) + `flist.c:963-979` (receiver) composition
 /// in local-copy mode (`rsync.c:118-140`).
 pub(super) fn compute_target_path(
     destination_path: &Path,

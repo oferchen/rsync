@@ -37,11 +37,11 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1329` - `if (sanitize_paths && !munge_symlinks && *bp)
+//! - `flist.c:1554` - `if (sanitize_paths && !munge_symlinks && *bp)
 //!   sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`
 //! - `clientserver.c:1068` - `if (module_dirlen) sanitize_paths = 1`, so
 //!   the guard is live for a daemon module serving a path.
-//! - `flist.c:867` - `lastdir_depth = count_dir_elements(lastdir)`, the
+//! - `flist.c:1092` - `lastdir_depth = count_dir_elements(lastdir)`, the
 //!   budget of leading `..` the sanitize preserves.
 //! - `generator.c:1951` - the `--safe-links` check reads `F_SYMLINK(file)`,
 //!   i.e. the *already* sanitized target, which is why the transform has to
@@ -141,7 +141,7 @@ fn create_one_symlink_at(
 
 #[test]
 fn daemon_receiver_sanitizes_an_escaping_symlink_target_when_munging_is_off() {
-    // upstream: flist.c:1329 - with munging off, `sanitize_paths` still
+    // upstream: flist.c:1554 - with munging off, `sanitize_paths` still
     // strips the leading `../`, so the stored link cannot resolve above the
     // module root. Without this, a client holding only write access plants
     // `escape -> ../outside` and reaches outside the module on the next
@@ -152,7 +152,7 @@ fn daemon_receiver_sanitizes_an_escaping_symlink_target_when_munging_is_off() {
         on_disk.as_deref(),
         Some(std::path::Path::new("outside")),
         "a daemon receiver with `munge symlinks = false` must sanitize the \
-         received target (upstream flist.c:1329); storing `../outside` \
+         received target (upstream flist.c:1554); storing `../outside` \
          verbatim lets the link resolve outside the module root",
     );
 }
@@ -186,7 +186,7 @@ fn a_pull_clients_safe_links_check_reads_the_verbatim_target() {
     // relative one, so the client's --safe-links check would pass and create
     // a link upstream skips. Measured against rsync 3.5.0: the pull client
     // reports `ignoring unsafe symlink` and creates nothing
-    // (generator.c:1951 / util1.c:1569 "all absolute ... are unsafe").
+    // (generator.c:1951 / util1.c:1664 "all absolute ... are unsafe").
     let mut config = daemon_receiver_without_munging();
     config.connection.client_mode = true;
     config.flags.safe_links = true;
@@ -223,7 +223,7 @@ fn a_non_daemon_receiver_leaves_the_target_alone() {
 
 #[test]
 fn munging_still_wins_when_it_is_enabled() {
-    // The two transforms are mutually exclusive upstream (`flist.c:1329` is
+    // The two transforms are mutually exclusive upstream (`flist.c:1554` is
     // guarded by `!munge_symlinks`). With munging on, the target must carry
     // the prefix and must NOT have been sanitized first - sanitizing as well
     // would strip the `../` that the munge prefix already neutralises, and
@@ -236,7 +236,7 @@ fn munging_still_wins_when_it_is_enabled() {
     assert_eq!(
         on_disk.as_deref(),
         Some(std::path::Path::new("/rsyncd-munged/../outside")),
-        "munging and sanitization are mutually exclusive (flist.c:1329 is \
+        "munging and sanitization are mutually exclusive (flist.c:1554 is \
          gated on !munge_symlinks); with munging on the target keeps its \
          `../` behind the prefix",
     );
@@ -275,7 +275,7 @@ fn a_non_utf8_target_is_sanitized_byte_exactly() {
 #[test]
 fn sanitization_precedes_the_safe_links_check() {
     // Placement, not just presence. Upstream sanitizes during the file-list
-    // decode (`flist.c:1329`), so by the time the generator evaluates
+    // decode (`flist.c:1554`), so by the time the generator evaluates
     // `--safe-links` it reads the *sanitized* target
     // (`generator.c:1951` passes `F_SYMLINK(file)`). A target of
     // `../outside` therefore becomes `outside`, which is in-tree, and the
@@ -295,15 +295,15 @@ fn sanitization_precedes_the_safe_links_check() {
         Some(std::path::Path::new("outside")),
         "sanitization must run before the --safe-links evaluation so the \
          check sees the same in-tree target upstream sees \
-         (flist.c:1329 decode, then generator.c:1951); sanitizing later \
+         (flist.c:1554 decode, then generator.c:1951); sanitizing later \
          would skip an entry upstream creates",
     );
 }
 
 #[test]
 fn a_target_reaching_no_further_than_the_transfer_root_survives_intact() {
-    // upstream: flist.c:1329 passes `lastdir_depth`, not 0 - the depth of the
-    // entry's own directory (flist.c:867). A link in `sub/dir/` may therefore
+    // upstream: flist.c:1554 passes `lastdir_depth`, not 0 - the depth of the
+    // entry's own directory (flist.c:1092). A link in `sub/dir/` may therefore
     // carry `../..`, which lands exactly on the transfer root and is in-tree.
     //
     // This is the arm the root-level tests above cannot reach: at the root the
@@ -325,8 +325,8 @@ fn a_target_reaching_no_further_than_the_transfer_root_survives_intact() {
         on_disk.as_deref(),
         Some(std::path::Path::new("../../hello.txt")),
         "a target that walks back no further than the transfer root is within \
-         the `lastdir_depth` budget and must survive verbatim (flist.c:1329 \
-         with flist.c:867); collapsing it to `hello.txt` points the link at a \
+         the `lastdir_depth` budget and must survive verbatim (flist.c:1554 \
+         with flist.c:1092); collapsing it to `hello.txt` points the link at a \
          file that does not exist",
     );
 }
@@ -349,7 +349,7 @@ fn a_target_reaching_past_the_transfer_root_is_collapsed_to_it() {
     assert_eq!(
         on_disk.as_deref(),
         Some(std::path::Path::new("../../escape.txt")),
-        "only the `..` beyond the entry's depth is dropped (flist.c:1329 with \
+        "only the `..` beyond the entry's depth is dropped (flist.c:1554 with \
          lastdir_depth); flattening to `escape.txt` would both lose the \
          in-budget prefix and hide that the peer asked to escape",
     );

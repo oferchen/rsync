@@ -10,7 +10,7 @@
 //!
 //! Nothing is interpreted or reframed. Upstream keeps the multiplex framing
 //! inside this same byte stream (the 4-byte `(MPLEX_BASE + code) << 24 | len`
-//! header, upstream: io.c:1155 io_flush/mplex writer), so capturing the raw
+//! header, upstream: io.c:1173 io_flush/mplex writer), so capturing the raw
 //! stream captures negotiation, multiplex frames and payload alike.
 //!
 //! Each pump forwards a chunk as soon as one `read` returns rather than

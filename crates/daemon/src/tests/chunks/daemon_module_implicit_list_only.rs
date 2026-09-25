@@ -2,7 +2,7 @@
 /// enter implicit list-only mode and list the module contents instead of
 /// erroring "need at least one source and one destination".
 ///
-/// upstream: options.c:2194 - a single source with `list_only` set lists the
+/// upstream: options.c:2203 - a single source with `list_only` set lists the
 /// module. Fix sites: `client/remote/daemon_transfer/mod.rs` (the
 /// `args.len() < 2 && !list_only` guard + dummy-dest synthesis) and the CLI
 /// frontend `.../workflow/run.rs` single-operand auto-promotion. `run_client`

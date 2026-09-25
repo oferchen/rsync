@@ -9,10 +9,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1631` `send_file1()` - sender: `rprintf(FERROR_XFER, "[%s]
+//! - `flist.c:1856` `send_file1()` - sender: `rprintf(FERROR_XFER, "[%s]
 //!   cannot convert filename: %s (%s)\n", who_am_i(), f_name(file, fbuf),
 //!   strerror(errno))`.
-//! - `flist.c:757` `recv_file_entry()` - receiver: same message via
+//! - `flist.c:982` `recv_file_entry()` - receiver: same message via
 //!   `rprintf(FERROR_UTF8, ...)`.
 //! - `log.c:239` `filtered_fwrite()` - non-printable bytes render as `\#%03o`.
 
@@ -42,10 +42,10 @@ pub fn cannot_convert_filename_message(role: &str, name_bytes: &[u8]) -> String 
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:1648-1650` `send_file1()` - sender: `rprintf(FERROR_XFER, "[%s]
+/// - `flist.c:1873-1875` `send_file1()` - sender: `rprintf(FERROR_XFER, "[%s]
 ///   cannot convert symlink data for: %s (%s)\n", who_am_i(),
 ///   full_fname(fbuf), strerror(errno))`.
-/// - `flist.c:1171-1173` `recv_file_entry()` - receiver: same message via
+/// - `flist.c:1396-1398` `recv_file_entry()` - receiver: same message via
 ///   `full_fname(thisname)`.
 #[must_use]
 pub fn cannot_convert_symlink_message(role: &str, name_bytes: &[u8]) -> String {

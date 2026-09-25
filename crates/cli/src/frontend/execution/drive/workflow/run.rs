@@ -305,13 +305,13 @@ where
     // silences every verbosity-gated line. Upstream additionally keeps `quiet`
     // as its own global and consults it in the `FINFO` arm of `rwrite()`
     // (log.c:344-345), so a notice it prints at DEFAULT verbosity - `skipping
-    // directory %s` (flist.c:1484) - still disappears under `-q`. Carrying the
+    // directory %s` (flist.c:1709) - still disappears under `-q`. Carrying the
     // flag past the parser is what makes those two states distinguishable.
     logging::set_quiet(quiet);
 
     // Publish `--insecure-links` and `--confine-root` for the operator-path
     // ownership walk. Upstream reads its `insecure_links` and `confine_root`
-    // globals from inside `ona_open()` (syscall.c:300, :316-328), so the answer
+    // globals from inside `ona_open()` (syscall.c:380, :316-328), so the answer
     // reaches every operator-path open without any of them naming the flags;
     // this is where oc gives those globals a value. Without the root, a
     // `--confine-root` transfer walks ownership but measures against nothing,
@@ -320,7 +320,7 @@ where
     // Client side only. The daemon arm of `optout_allowed` reads the served
     // module's `insecure links` directive, which is not known until a module is
     // selected, and upstream is explicit that a peer-supplied
-    // `--insecure-links` must never reach it (syscall.c:117-121). Leaving the
+    // `--insecure-links` must never reach it (syscall.c:134-138). Leaving the
     // daemon on the default keeps the confinement fully engaged there.
     fast_io::confinement::install_local_session(
         fast_io::confinement::LocalInsecureLinks::from_local_flag(insecure_links),
@@ -427,7 +427,7 @@ where
         Err(unsupported) => return fail_with_message(unsupported.to_message(), stderr),
     };
 
-    // upstream: options.c:2465-2471 - with `--files-from` the transferred file
+    // upstream: options.c:2474-2480 - with `--files-from` the transferred file
     // set comes from the list, so a client may name exactly one source root and
     // one destination. More than two operands, or a lone operand (a missing
     // destination), is a syntax error (`usage(FERROR); exit RERR_SYNTAX`, exit
@@ -452,7 +452,7 @@ where
             Err(code) => return code,
         };
 
-    // upstream: options.c:2055 `if (do_stats) parse_output_words("stats2", ...)`
+    // upstream: options.c:2061 `if (do_stats) parse_output_words("stats2", ...)`
     // (or "stats3" with `-vv`). The legacy `--stats` flag maps to level 2; with
     // higher verbosity it bumps to level 3. A subsequent `--info=statsN` token
     // overrides this default inside `parse_info_settings`.
@@ -554,7 +554,7 @@ where
         .as_ref()
         .and_then(|value: &ParsedChown| value.group());
 
-    // upstream: options.c:2483 - only open files_from locally when the spec
+    // upstream: options.c:2492 - only open files_from locally when the spec
     // is NOT a hostspec. Remote files-from (`:path` or `host:path`) are read
     // by the server, so the client never opens them.
     let files_from_resolved = resolve_files_from_source(&files_from);
@@ -617,12 +617,12 @@ where
 
     let implied_dirs_option = implied_dirs;
 
-    // upstream: options.c:2188-2191 - `if (files_from) { if (recurse == 1)
+    // upstream: options.c:2197-2200 - `if (files_from) { if (recurse == 1)
     // recurse = 0; ... }`. Only the value `-a` implies (recurse == 1,
-    // options.c:1546 `if (!recurse) recurse = 1`) is cleared; an explicit `-r`
+    // options.c:1552 `if (!recurse) recurse = 1`) is cleared; an explicit `-r`
     // sets recurse == 2 (options.c:621 `POPT_ARG_VAL, &recurse, 2`) and
     // SURVIVES --files-from, so upstream still recurses into a directory named
-    // in the list and still packs the compact `r` letter (options.c:2705).
+    // in the list and still packs the compact `r` letter (options.c:2715).
     //
     // `recursive_override` is `Some(true)` exactly for the forms whose recursion
     // outlives a files-from list (explicit `-r`, and `--old-dirs`), and `None`
@@ -638,10 +638,10 @@ where
     // upstream: options.c:628 - `-d` sets `xfer_dirs = 2`. Capture that before
     // the files-from default below folds the implied `xfer_dirs = 1` into the
     // same flag, because the compact `d` letter is packed only for the explicit
-    // level (options.c:2638-2640).
+    // level (options.c:2647-2649).
     let dirs_explicit = dirs == Some(true);
 
-    // upstream: options.c:2190-2191 - `if (xfer_dirs < 0) xfer_dirs = 1;` when
+    // upstream: options.c:2199-2200 - `if (xfer_dirs < 0) xfer_dirs = 1;` when
     // files_from is active. This is the implied level, not an explicit `-d`.
     let dirs = if files_from_active { Some(true) } else { dirs };
 
@@ -691,7 +691,7 @@ where
     // upstream: compat.c:811-814 setup_protocol() -
     //   if (!checksum_seed) checksum_seed = time(NULL) ^ (getpid() << 6);
     //   write_int(f_out, checksum_seed);
-    // The finalised seed is what io.c:2524 start_write_batch() records in the
+    // The finalised seed is what io.c:2562 start_write_batch() records in the
     // batch header, so an explicit --checksum-seed=N (options.c:847) must flow
     // through unchanged and only an unset seed is derived from time/pid.
     let batch_checksum_seed = explicit_batch_seed(checksum_seed).unwrap_or_else(derive_batch_seed);
@@ -752,7 +752,7 @@ where
     }
 
     // Build transfer operands early so we can check if this is a daemon transfer.
-    // upstream: main.c:780-790 - source dir is chdir target, not a transfer source
+    // upstream: main.c:793-803 - source dir is chdir target, not a transfer source
     // `has_remote_operand` was computed above (protocol resolution needs it).
     let mut transfer_operands = Vec::with_capacity(file_list_operands.len() + remainder.len());
     if files_from_active && !file_list_operands.is_empty() {
@@ -762,7 +762,7 @@ where
             // files_from_path and uses the source dir as base_dir for resolving
             // relative filenames. Individual file entries must NOT be operands -
             // they corrupt the generator's base_dir derivation (paths.first()).
-            // upstream: main.c:1292-1339 - client_run() uses argv[0] as chdir
+            // upstream: main.c:1310-1357 - client_run() uses argv[0] as chdir
             // target, filesfrom_fd is a separate channel.
             transfer_operands.extend(remainder);
         } else {
@@ -806,7 +806,7 @@ where
     // --numeric-ids) from raw_argv, eliding the filename operands. Capture the
     // raw argv and operands so the batch script generator can re-emit them.
     let batch_config = batch_config.map(|cfg| {
-        // upstream: flist.c:2548 - the writer omits the post-flist id-lists under
+        // upstream: flist.c:2788 - the writer omits the post-flist id-lists under
         // --numeric-ids (numeric_ids is not a recorded stream flag), so carry it
         // into the batch config for both write and read modes.
         let cfg = cfg.with_numeric_ids(numeric_ids);
@@ -825,11 +825,11 @@ where
     });
 
     // upstream: options.c:795 - `--list-only` sets `list_only = 2`, the explicit
-    // form that server_options() forwards as `--list-only` (options.c:2747
+    // form that server_options() forwards as `--list-only` (options.c:2757
     // `list_only > 1`). The implicit `list_only |= 1` below never reaches 2, so
     // it is never forwarded. Capture the explicit bit before the OR.
     let list_only_arg = list_only;
-    // upstream: options.c:2194-2195 - `if (argc < 2 && !read_batch && !am_server)
+    // upstream: options.c:2203-2204 - `if (argc < 2 && !read_batch && !am_server)
     // list_only |= 1;`. A single source with no destination implies list-only
     // mode regardless of transport: a local path (`rsync src/`), an SSH source
     // (`rsync host:path`), or a daemon module (`host::module`,
@@ -838,14 +838,14 @@ where
     // applies on the client path.
     let list_only = list_only || (transfer_operands.len() == 1 && read_batch.is_none());
 
-    // upstream: options.c:2187-2188 - relative_paths defaults to 1 when files_from
+    // upstream: options.c:2196-2197 - relative_paths defaults to 1 when files_from
     let effective_relative = if files_from_active && relative.is_none() {
         Some(true)
     } else {
         relative
     };
 
-    // upstream: options.c:2207-2208 - `if (!relative_paths) implied_dirs = 0;`.
+    // upstream: options.c:2216-2217 - `if (!relative_paths) implied_dirs = 0;`.
     // Implied directories only exist for relative-rooted transfer paths, so
     // when relative paths are disabled implied_dirs is forced off regardless
     // of any explicit `--implied-dirs`. Otherwise it defaults on.
@@ -914,7 +914,7 @@ where
     let prune_empty_dirs_flag = prune_empty_dirs.unwrap_or(false);
     let fsync_flag = fsync_option.unwrap_or(false);
     let append_enabled = append.unwrap_or(false);
-    // upstream: options.c:2400-2419 - `--append` and `--write-devices` each
+    // upstream: options.c:2409-2428 - `--append` and `--write-devices` each
     // force the global inplace flag on. Both live in
     // `engine::write_strategy::implies_inplace`, the single owner of the rule,
     // so this front end and the `ServerConfig` promotion cannot drift apart.
@@ -928,7 +928,7 @@ where
     let checksum_for_config = checksum.unwrap_or(false);
     let fuzzy_level_value = fuzzy.unwrap_or(0);
 
-    // upstream: options.c:2345-2358,2375-2376,2768-2780 - the resolved
+    // upstream: options.c:2354-2367,2384-2385,2778-2790 - the resolved
     // out-format string tells the server which placeholders it uses. Upstream
     // derives `stdout_format_has_i` from that resolved string, not from the `-i`
     // flag: an explicit `--out-format` without `%i` clears it even under `-i`
@@ -1016,8 +1016,8 @@ where
         executability: preserve_executability,
         permissions: preserve_permissions,
         fake_super: fake_super.unwrap_or(false),
-        // upstream: options.c:3018 - `am_root > 1` is set only by an explicit
-        // --super (not by running as root). Forwarded on a push (options.c:2852).
+        // upstream: options.c:3028 - `am_root > 1` is set only by an explicit
+        // --super (not by running as root). Forwarded on a push (options.c:2862).
         super_user: super_mode == Some(true),
         times: preserve_times,
         // The u8 level (0/1/2) drives the doubled `-UU` compact letter; the
@@ -1206,7 +1206,7 @@ where
 
 /// Resolves the effective `old_style_args` level from the CLI counter and env.
 ///
-/// upstream: options.c:1968-1974 - when `old_style_args` is still unset
+/// upstream: options.c:1974-1980 - when `old_style_args` is still unset
 /// (`old_style_args < 0`, modelled here as `None`), check `RSYNC_OLD_ARGS` and
 /// set the level with `old_style_args = atoi(arg)`. The env var is only honoured
 /// when protect_args is not active (upstream: `protect_args <= 0`). An explicit
@@ -1214,18 +1214,18 @@ where
 /// as upstream skips the `< 0` branch once the flag has set the level.
 ///
 /// When both `--old-args` and `--protect-args` are explicitly set, upstream
-/// rejects the combination (options.c:1975); we silently give protect_args
+/// rejects the combination (options.c:1981); we silently give protect_args
 /// precedence since the conflict is validated at the CLI layer.
 fn resolve_old_args(explicit: Option<u8>, protect_args: Option<bool>) -> Option<u8> {
     if let Some(level) = explicit {
         return Some(level);
     }
-    // upstream: options.c:1969 - only check env when !am_server && protect_args <= 0
+    // upstream: options.c:1975 - only check env when !am_server && protect_args <= 0
     if protect_args.unwrap_or(false) {
         return None;
     }
     match std::env::var("RSYNC_OLD_ARGS") {
-        // upstream: options.c:1971 old_style_args = atoi(arg). `atoi` reads a
+        // upstream: options.c:1977 old_style_args = atoi(arg). `atoi` reads a
         // leading integer, so "2"/"2 " -> 2 and non-numeric -> 0. The level is
         // capped at 2, the highest state safe_arg distinguishes.
         Ok(val) if !val.is_empty() => {
@@ -1275,9 +1275,9 @@ fn derive_batch_seed() -> i32 {
 /// parent-component case (`--log-file=/tmp/somedir/rsync.log`, where the leaf
 /// does not exist yet) is not defended by `O_NOFOLLOW` alone.
 ///
-/// upstream: `syscall.c:537` `open_no_attacker_symlinks()` - the entry point for
+/// upstream: `syscall.c:674` `open_no_attacker_symlinks()` - the entry point for
 /// the opens that are not confined beneath a root, `--log-file` among them
-/// (`syscall.c:232`).
+/// (`syscall.c:282`).
 /// Opens the client `--log-file` for appending, refusing untrusted symlinks.
 ///
 /// upstream: log.c:170 passes `0644`, not `0666`. The difference is observable:
@@ -1311,7 +1311,7 @@ mod tests {
 
     /// An explicit `--old-args` counter must flow through unchanged and suppress
     /// the env lookup, mirroring upstream skipping the `old_style_args < 0`
-    /// branch once the flag has set the level (options.c:1968).
+    /// branch once the flag has set the level (options.c:1974).
     #[test]
     fn explicit_level_passes_through_and_ignores_env() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -1322,7 +1322,7 @@ mod tests {
         assert_eq!(resolve_old_args(Some(0), None), Some(0));
     }
 
-    /// upstream: options.c:2082 `old_style_args = atoi(arg)` - `RSYNC_OLD_ARGS=2`
+    /// upstream: options.c:2091 `old_style_args = atoi(arg)` - `RSYNC_OLD_ARGS=2`
     /// must reach level 2, the state where safe_arg disables all escaping. This
     /// is the env path that a boolean model collapsed to level 1, silently
     /// dropping the option-arg escaping upstream keeps only below level 2.
@@ -1348,7 +1348,7 @@ mod tests {
         }
     }
 
-    /// upstream: options.c:1969 - the env var is only consulted when
+    /// upstream: options.c:1975 - the env var is only consulted when
     /// `protect_args <= 0`. With protect_args active the level stays unset even
     /// if `RSYNC_OLD_ARGS` is present, since the two options are exclusive.
     #[test]
@@ -1369,7 +1369,7 @@ mod tests {
 
     /// An explicit non-zero `--checksum-seed=N` must be recorded in the batch
     /// header verbatim so `--read-batch` replays with the identical seed.
-    /// upstream: compat.c:813-814 writes the parsed seed unchanged; io.c:2524
+    /// upstream: compat.c:813-814 writes the parsed seed unchanged; io.c:2562
     /// tees that same value into the header. Regressing this (e.g. always
     /// deriving a fresh seed) makes upstream `--read-batch` compute mismatched
     /// checksums against a batch oc-rsync wrote.
@@ -1379,7 +1379,7 @@ mod tests {
     }
 
     /// A negative seed must reach the batch header verbatim. upstream:
-    /// options.c:151 stores the seed in an `int` and io.c:2524
+    /// options.c:151 stores the seed in an `int` and io.c:2562
     /// `write_int(batch_fd, checksum_seed)` writes those same 32 bits, so a
     /// batch oc-rsync writes stays readable by upstream `--read-batch`.
     #[test]

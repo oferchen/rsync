@@ -62,7 +62,7 @@ impl<'a> CopyContext<'a> {
     /// tier, since the caller removes the original right after regardless of
     /// which strategy placed the backup (`delete.c:165-167`). Callers backing
     /// up an item before overwriting it with fresh content pass `false` so
-    /// the hard-link tier runs first (`rsync.c:740`, `receiver.c:538`).
+    /// the hard-link tier runs first (`rsync.c:740`, `receiver.c:554`).
     ///
     /// Emits an `--info=BACKUP` notice mirroring upstream rsync 3.4.1
     /// (backup.c:352) under `INFO_GTE(BACKUP, 1)` once the backup has been

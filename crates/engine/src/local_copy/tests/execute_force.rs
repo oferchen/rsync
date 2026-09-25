@@ -45,7 +45,7 @@ fn force_file_replaces_non_empty_directory() {
 // selects the RECURSION (delete.c:207-209). An EMPTY directory obstacle is
 // therefore rmdir'd and the file written, with no --force.
 //
-// The flist.c:3067-3081 rule this cell used to cite is the MULTI-SOURCE merge -
+// The flist.c:3310-3324 rule this cell used to cite is the MULTI-SOURCE merge -
 // see `force_disabled_multi_source_keeps_the_directory` - and a single source
 // never reaches it. Measured against rsync 3.5.0.
 #[test]
@@ -245,7 +245,7 @@ fn force_replaces_file_entry_with_directory_during_recursive_copy() {
 // EMPTY directory is rmdir'd and the file written with no options at all.
 //
 // This cell used to assert the opposite - that the directory survived and the
-// file was silently dropped at exit 0 - citing flist.c:3067-3081. That
+// file was silently dropped at exit 0 - citing flist.c:3310-3324. That
 // citation is the MULTI-SOURCE merge rule (see
 // `force_disabled_multi_source_keeps_the_directory` below); it does not reach
 // a single-source recursive copy, where the file is in the flist and the
@@ -282,7 +282,7 @@ fn force_disabled_recursive_copy_replaces_an_empty_directory() {
 
 // The multi-source exception the cell above used to claim for itself.
 //
-// upstream: flist.c:3067-3081 flist_sort_and_clean() drops the colliding
+// upstream: flist.c:3310-3324 flist_sort_and_clean() drops the colliding
 // regular file and keeps the directory, so the entry never reaches
 // recv_generator and the destination directory is left alone at exit 0.
 #[test]

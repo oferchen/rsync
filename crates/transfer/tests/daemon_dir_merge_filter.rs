@@ -8,7 +8,7 @@
 //! directive - and therefore lives in `daemon_filter_list`
 //! (`clientserver.c:934`) - is registered alongside the transfer's own. The
 //! sender walk then calls `change_local_filter_dir` -> `push_local_filters`
-//! per directory (`flist.c:2265-2331`), which populates that rule's
+//! per directory (`flist.c:2504-2571`), which populates that rule's
 //! `u.mergelist`, and `check_filter` recurses into `ent->u.mergelist` for every
 //! PERDIR_MERGE entry it walks. The daemon list therefore DOES descend per
 //! directory.

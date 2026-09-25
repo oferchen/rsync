@@ -13,8 +13,8 @@
 //!
 //! - `rsync.c:118-140` `setup_iconv()` - LOCAL/REMOTE split and
 //!   `iconv_open` calls.
-//! - `flist.c:1579-1603` `send_file_name()` sender filename transcode.
-//! - `flist.c:738-754` `recv_file_entry()` receiver filename transcode.
+//! - `flist.c:1804-1828` `send_file_name()` sender filename transcode.
+//! - `flist.c:963-979` `recv_file_entry()` receiver filename transcode.
 
 // macOS APFS and Windows NTFS both reject the raw 0xe9 byte that
 // `--iconv=UTF-8,ISO-8859-1` produces for the canonical "caf\xe9.txt"
@@ -218,8 +218,8 @@ fn iconv_applies_to_nested_filenames_recursively() {
 ///   - Sender: `iconv_open(UTF-8, LOCAL)` then `iconv_open(REMOTE, UTF-8)`
 ///   - Receiver: `iconv_open(UTF-8, REMOTE)` then `iconv_open(LOCAL, UTF-8)`
 ///
-/// upstream: rsync.c:118-140 setup_iconv(), flist.c:1579-1603 send,
-///           flist.c:738-754 recv.
+/// upstream: rsync.c:118-140 setup_iconv(), flist.c:1804-1828 send,
+///           flist.c:963-979 recv.
 #[test]
 fn iconv_utf8_latin1_round_trip_preserves_filenames() {
     let temp = tempdir().expect("tempdir");
@@ -387,7 +387,7 @@ fn iconv_utf8_latin1_round_trip_preserves_filenames() {
 /// iconv path handles both source-as-subdirectory and source-as-contents
 /// semantics correctly.
 ///
-/// upstream: main.c:978-982 - trailing-slash causes XMIT_TOP_DIR
+/// upstream: main.c:991-995 - trailing-slash causes XMIT_TOP_DIR
 ///           semantics on the source, copying contents into dest.
 #[test]
 fn iconv_round_trip_trailing_slash_copies_contents() {

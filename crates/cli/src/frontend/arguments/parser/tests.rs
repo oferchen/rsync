@@ -18,7 +18,7 @@ fn delete_modes_are_mutually_exclusive_two_flags() {
     let result = parse_test_args(["-r", "--delete-before", "--delete-after", "src/", "dst/"]);
     assert!(result.is_err());
     let err = result.unwrap_err();
-    // upstream: options.c:2211-2212 exact wording.
+    // upstream: options.c:2220-2221 exact wording.
     assert!(
         err.to_string()
             .contains("You may not combine multiple --delete-WHEN options.")
@@ -72,7 +72,7 @@ fn delete_excluded_activates_delete_mode() {
 
 #[test]
 fn max_delete_does_not_activate_delete_mode() {
-    // upstream: options.c:2215-2217 - `--max-delete` never enables deletion; it
+    // upstream: options.c:2224-2226 - `--max-delete` never enables deletion; it
     // only caps the count once an explicit `--delete*` has enabled it.
     let result = parse_test_args(["-r", "--max-delete=10", "src/", "dst/"]);
     assert!(result.is_ok());
@@ -160,7 +160,7 @@ fn omit_link_times_flag() {
     assert_eq!(parsed.omit_link_times, Some(true));
 }
 
-// upstream: options.c:2366-2367 - `--list-only` does NOT set dry_run (only -n
+// upstream: options.c:2375-2376 - `--list-only` does NOT set dry_run (only -n
 // does). The receiver skips destination writes under list_only independently
 // (run_client mode selection + TransferFlags::skip_dest_writes), so the two
 // must stay decoupled or the server args wrongly pack the compact 'n' letter.
@@ -207,7 +207,7 @@ fn backup_dir_implies_backup() {
 
 #[test]
 fn backup_suffix_does_not_imply_backup() {
-    // upstream: options.c:2296-2307 - only `--backup-dir` implies `--backup`; a
+    // upstream: options.c:2305-2316 - only `--backup-dir` implies `--backup`; a
     // bare `--suffix` sets the suffix string without enabling backups.
     let result = parse_test_args(["--suffix=.bak", "src/", "dst/"]);
     assert!(result.is_ok());
@@ -973,7 +973,7 @@ fn alt_dest_args(flag: &str, count: usize) -> Vec<String> {
     args
 }
 
-/// upstream: options.c:1749-1754 accepts up to `MAX_BASIS_DIRS` (rsync.h:196)
+/// upstream: options.c:1755-1760 accepts up to `MAX_BASIS_DIRS` (rsync.h:196)
 /// alt-dest args; the boundary itself must not be rejected.
 #[test]
 fn alt_dest_limit_accepts_twenty() {
@@ -981,7 +981,7 @@ fn alt_dest_limit_accepts_twenty() {
     assert!(result.is_ok(), "20 alt-dest dirs must be accepted");
 }
 
-/// upstream: options.c:1752-1753 rejects the 21st alt-dest arg with the verbatim
+/// upstream: options.c:1758-1759 rejects the 21st alt-dest arg with the verbatim
 /// `ERROR: at most 20 <opt> args may be specified` message and RERR_SYNTAX. The
 /// exact wording matters because it is observable output a drop-in must mirror.
 #[test]
@@ -1017,7 +1017,7 @@ fn alt_dest_limit_enforced_for_each_type() {
 }
 
 /// The `basis_dir[]` array is shared, but upstream forbids mixing the three
-/// alt-dest types (options.c:1741-1745), a rule oc mirrors with
+/// alt-dest types (options.c:1747-1751), a rule oc mirrors with
 /// `conflicts_with_all`. So a "combined" total spanning types (here 10
 /// `--compare-dest` + 11 `--link-dest`) can never reach the count check - it is
 /// rejected first by the conflict rule. This proves only one type ever populates
@@ -1037,7 +1037,7 @@ fn alt_dest_types_cannot_be_mixed() {
     );
 }
 
-/// upstream: options.c:2286 uses `strlen(batch_name) > MAX_BATCH_NAME_LEN`, so a
+/// upstream: options.c:2295 uses `strlen(batch_name) > MAX_BATCH_NAME_LEN`, so a
 /// name of exactly MAX_BATCH_NAME_LEN (256) bytes is the boundary and must be
 /// accepted. This is observable behaviour a drop-in must not regress: rejecting
 /// a legal name would break scripts that upstream rsync accepts.
@@ -1055,7 +1055,7 @@ fn batch_name_at_max_len_accepted() {
     );
 }
 
-/// upstream: options.c:2169-2174 rejects a batch name longer than
+/// upstream: options.c:2178-2183 rejects a batch name longer than
 /// MAX_BATCH_NAME_LEN with the verbatim message
 /// `the batch-file name must be 256 characters or less.` and exits
 /// `RERR_SYNTAX` (1). The exact wording and the syntax exit code are both
@@ -1111,7 +1111,7 @@ fn batch_name_cap_enforced_for_each_option() {
 /// A local `--X -M--X` pairing of a FLAG option parses, with the `-M` payload
 /// applying rather than colliding with the local occurrence.
 ///
-/// upstream: options.c:3175-3182 appends `remote_options[]` after the
+/// upstream: options.c:3185-3192 appends `remote_options[]` after the
 /// serialized local options in the child's argv, and popt has no
 /// duplicate-occurrence error, so the child of a local transfer accepts the
 /// repeat with the last occurrence winning. clap's "cannot be used multiple
@@ -1125,7 +1125,7 @@ fn remote_option_repeating_a_local_flag_is_accepted() {
 
 /// A local `--X=a -M--X=b` pairing of a VALUE option parses, and the `-M`
 /// payload wins: upstream's child sees the remote option LAST
-/// (options.c:3175-3182), and popt's last-wins occurrence handling makes it
+/// (options.c:3185-3192), and popt's last-wins occurrence handling makes it
 /// authoritative on the applying side.
 #[test]
 fn remote_option_repeating_a_local_value_option_last_wins() {
@@ -1157,7 +1157,7 @@ fn repeated_remote_options_duplicating_local_options_are_accepted() {
             std::ffi::OsString::from("--partial"),
             std::ffi::OsString::from("--stats"),
         ],
-        "the -M payloads stay stored verbatim (options.c:1763-1771)"
+        "the -M payloads stay stored verbatim (options.c:1769-1777)"
     );
 }
 
@@ -1207,7 +1207,7 @@ fn no_long_option_rejects_its_own_remote_option_duplicate() {
 /// A plainly repeated flag (`--X --X`, no `-M` involved) parses on the
 /// primary command.
 ///
-/// upstream: popt has no duplicate-occurrence diagnostic - options.c:1502
+/// upstream: popt has no duplicate-occurrence diagnostic - options.c:1508
 /// re-runs the option's case per occurrence - so `rsync --partial --partial`
 /// exits 0. clap's "cannot be used multiple times" rejection was oc-invented.
 #[test]
@@ -1285,7 +1285,7 @@ fn count_actions_still_accumulate_across_repeats() {
     assert_eq!(
         parsed.old_args,
         Some(2),
-        "--old-args --old-args must still reach level 2 (options.c:1642)"
+        "--old-args --old-args must still reach level 2 (options.c:1648)"
     );
 }
 
@@ -1294,7 +1294,7 @@ fn count_actions_still_accumulate_across_repeats() {
 ///
 /// upstream: the rsync 3.5.0 binary contains no such diagnostic at all -
 /// popt re-runs the option's `parse_arguments()` case per occurrence
-/// (options.c:1502), so every plain repeat is accepted with the last value
+/// (options.c:1508), so every plain repeat is accepted with the last value
 /// winning. Any other rejection (conflicts, invalid values, mode checks) is
 /// allowed here because upstream has those too. Iterating the live option
 /// table keeps newly added options inside the invariant.

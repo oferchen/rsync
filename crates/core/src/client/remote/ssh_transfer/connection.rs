@@ -69,11 +69,11 @@ pub(super) fn build_ssh_connection(
         ssh.set_bind_address(Some(bind_addr.socket().ip()));
     }
 
-    // upstream: main.c:587-594 do_cmd() - forward --ipv4/--ipv6 to the ssh
+    // upstream: main.c:600-607 do_cmd() - forward --ipv4/--ipv6 to the ssh
     // child as -4/-6 (only honoured when the remote shell is `ssh`).
     ssh.set_address_family(ssh_address_family(config.address_mode()));
 
-    // upstream: main.c:600-601 do_cmd() - force blocking_io for the rsh/remsh
+    // upstream: main.c:613-614 do_cmd() - force blocking_io for the rsh/remsh
     // remote shells when the user left --blocking-io/--no-blocking-io unset. The
     // builder applies the auto-enable from the resolved program basename.
     ssh.set_blocking_io(config.blocking_io());
@@ -85,7 +85,7 @@ pub(super) fn build_ssh_connection(
     let connect_timeout = config.connect_timeout().effective(Duration::from_secs(30));
     ssh.set_connect_timeout(connect_timeout);
 
-    // upstream: options.c:2369 set_io_timeout(io_timeout) applies --timeout
+    // upstream: options.c:2378 set_io_timeout(io_timeout) applies --timeout
     // uniformly to every transport; on the SSH pipe it drives the stall
     // watchdog. 0/unset leaves it disabled.
     ssh.set_io_timeout(config.ssh_io_timeout());

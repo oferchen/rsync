@@ -44,9 +44,9 @@ enum PartialKind {
     /// self-rename and leaves it untouched. On success the commit rename moves
     /// it onto the destination and only the now-empty relative dir is removed:
     /// upstream skips its `do_unlink_at(partialptr)` under `!one_inplace`
-    /// (`receiver.c:1291`) precisely because `finish_transfer()` has already
+    /// (`receiver.c:1308`) precisely because `finish_transfer()` has already
     /// renamed that entry away, and then still calls
-    /// `handle_partial_dir(partialptr, PDIR_DELETE)` (`receiver.c:1299`) to
+    /// `handle_partial_dir(partialptr, PDIR_DELETE)` (`receiver.c:1316`) to
     /// remove the directory.
     OneInplace {
         file: PathBuf,
@@ -138,7 +138,7 @@ pub fn remove_incomplete_destination(destination: &Path) {
 /// Exclusively creates the staging temp, resolving through the ownership walk
 /// when the operator named a `--temp-dir`.
 ///
-/// upstream: `receiver.c:426-434` `open_tmpfile()` - for any non-chrooted
+/// upstream: `receiver.c:439-447` `open_tmpfile()` - for any non-chrooted
 /// receiver upstream calls `secure_mkstemp(fnametmp, mode, tmpdir != NULL)`,
 /// whose third argument selects the ownership-walk resolver for an
 /// operator-supplied `--temp-dir` and the strict transfer-path one otherwise.
@@ -200,7 +200,7 @@ fn create_new_temp(path: &Path, operator_path: bool) -> io::Result<fs::File> {
 /// which an absolute `--temp-dir` makes reachable because the source endpoint
 /// then lives outside the tree.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:1866` `do_rename_at()` - "Confine each side
+/// upstream: `rsync-3.5.1/syscall.c:2005` `do_rename_at()` - "Confine each side
 /// independently. [...] Doing each side independently means an absolute source
 /// never disables confinement of a relative destination."
 fn hardened_rename(
@@ -536,13 +536,13 @@ impl DestinationWriteGuard {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/receiver.c:1195-1196` - `if (inplace || one_inplace) {
+    /// - `rsync-3.5.1/receiver.c:1212-1213` - `if (inplace || one_inplace) {
     ///   fnametmp = one_inplace ? partialptr : fname; }`. The in-place target of
     ///   a `one_inplace` update is the file in the partial dir, **not** the live
     ///   destination.
-    /// - `rsync-3.5.0/receiver.c:1204-1224` - the three-arm open chain, each arm
+    /// - `rsync-3.5.1/receiver.c:1221-1241` - the three-arm open chain, each arm
     ///   handed `one_inplace`.
-    /// - `rsync-3.5.0/receiver.c:1288` - `finish_transfer(fname, fnametmp, ...)`
+    /// - `rsync-3.5.1/receiver.c:1305` - `finish_transfer(fname, fnametmp, ...)`
     ///   with `fnametmp == partialptr` renames the grown partial onto the
     ///   destination.
     ///
@@ -654,11 +654,11 @@ impl DestinationWriteGuard {
     /// guard is then untouched and its ordinary commit still renames the temp
     /// straight onto the destination.
     ///
-    /// upstream: `receiver.c:1301-1314` - under `--delay-updates` the receiver
+    /// upstream: `receiver.c:1318-1331` - under `--delay-updates` the receiver
     /// calls `handle_partial_dir(partialptr, PDIR_CREATE)` and then
     /// `finish_transfer(partialptr, fnametmp, ...)`, so the completed file lands
     /// in the partial dir under its real name and only
-    /// `handle_delayed_updates()` (`receiver.c:685-720`) renames it onto the
+    /// `handle_delayed_updates()` (`receiver.c:701-736`) renames it onto the
     /// destination after the walk. Deferring this guard's own
     /// temp-to-destination rename instead reaches the same end state but never
     /// creates the operator-named `--partial-dir` at all.
@@ -671,7 +671,7 @@ impl DestinationWriteGuard {
         let GuardStrategy::NamedTempFile { temp_path, partial } = &mut self.strategy else {
             return Ok(None);
         };
-        // upstream: receiver.c:1301 - `keep_partial && partialptr && (!one_inplace
+        // upstream: receiver.c:1318 - `keep_partial && partialptr && (!one_inplace
         // || delay_updates)`. A `one_inplace` update wrote INTO the partial-dir
         // entry, so under `--delay-updates` it is already staged there and
         // upstream's `finish_transfer(partialptr, fnametmp, ...)` is a
@@ -772,7 +772,7 @@ impl DestinationWriteGuard {
                             let _ = fs::remove_dir(dir);
                         }
                     }
-                    // upstream: receiver.c:1291-1299 - under `one_inplace`
+                    // upstream: receiver.c:1308-1316 - under `one_inplace`
                     // the `do_unlink_at(partialptr)` is skipped (the commit
                     // rename already moved that entry onto the destination) but
                     // `handle_partial_dir(partialptr, PDIR_DELETE)` still runs,

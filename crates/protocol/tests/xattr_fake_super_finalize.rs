@@ -9,8 +9,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `sender.c:280-284` - `recv_xattr_request()` on the sender after iflags
-//! - `sender.c:468-485` - `send_xattr_request()` in `write_ndx_and_attrs()`
+//! - `sender.c:283-287` - `recv_xattr_request()` on the sender after iflags
+//! - `sender.c:469-486` - `send_xattr_request()` in `write_ndx_and_attrs()`
 //! - `xattrs.c:623-675` - sender path emits `rel_num + len + data + 0`
 //! - `generator.c:585-592` - generator emits at least the 0 terminator when
 //!   `ITEM_REPORT_XATTR` is set on a new file (count mismatch path).

@@ -1,7 +1,7 @@
 //! Regression: a missing source argument must exit 23, driven by `MSG_ERROR_XFER`.
 //!
 //! Upstream's sender treats a source path that never existed as a transfer
-//! error but deliberately keeps `io_error` clear for it (`flist.c:2428-2436`):
+//! error but deliberately keeps `io_error` clear for it (`flist.c:2668-2676`):
 //!
 //! ```c
 //! if (errno != ENOENT || missing_args == 0) {
@@ -17,7 +17,7 @@
 //! `io_error` is a wire field the receiver reads to decide whether to inhibit
 //! its deletions, so upstream refuses to raise it here. That leaves the framed
 //! `FERROR_XFER` as the *only* carrier of the failure: the peer's `read_a_msg`
-//! routes `MSG_ERROR_XFER` to `rwrite` (`io.c:1660`), which sets
+//! routes `MSG_ERROR_XFER` to `rwrite` (`io.c:1686`), which sets
 //! `got_xfer_error` (`log.c:310-311`), and `cleanup.c:217-218` turns that into
 //! `RERR_PARTIAL`.
 //!
@@ -299,7 +299,7 @@ fn assert_partial_transfer(run: &ClientRun, label: &str) {
     let reports = run.output.matches("link_stat").count();
     assert_eq!(
         reports, 1,
-        "{label}: upstream rsyserr()s the failure once (flist.c:2433); \
+        "{label}: upstream rsyserr()s the failure once (flist.c:2673); \
          reporting it through both a MSG_ERROR_XFER frame and an io_error bit \
          would surface it twice"
     );

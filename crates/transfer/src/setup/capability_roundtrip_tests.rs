@@ -8,7 +8,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `options.c:3021-3068 maybe_add_e_option()` - the client emits the
+//! - `options.c:3031-3078 maybe_add_e_option()` - the client emits the
 //!   `-e.<letters>` capability string.
 //! - `compat.c:712-734` - the server reads `client_info` and sets the matching
 //!   `CF_*` flags. The letter meanings: `i` INC_RECURSE, `L` SYMLINK_TIMES,
@@ -39,7 +39,7 @@ use super::{
 fn emit_then_decode(allow_inc_recurse: bool) -> (String, CompatibilityFlags) {
     let suffix = build_capability_string_suffix(allow_inc_recurse);
     // The server receives the caps as the tail of the compact flag string, e.g.
-    // `-logDtpre.iLsfxCIvu` (upstream options.c:2728 appends into the same argstr).
+    // `-logDtpre.iLsfxCIvu` (upstream options.c:2738 appends into the same argstr).
     let compact = format!("-logDtpr{suffix}");
     let client_info = parse_client_info(std::slice::from_ref(&compact)).into_owned();
     let flags = build_compat_flags_from_client_info(&client_info, allow_inc_recurse);

@@ -1,6 +1,6 @@
 //! Cross-implementation parity suite for `--read-batch` replay.
 //!
-//! Upstream's batch model (batch.c, main.c:639-651): `--write-batch` records
+//! Upstream's batch model (batch.c, main.c:652-664): `--write-batch` records
 //! the stream-flags bitmap, the file list and every delta the receiver
 //! requested; `--read-batch` replays the file as `f_in` through the ordinary
 //! receiver with a local generator on a pipe. Equivalence therefore has two
@@ -492,7 +492,7 @@ fn replay_delete_parity_matches_upstream() {
 /// NOT replay one implementation's batch under the other: oc's local
 /// `--write-batch` re-encodes a synthetic flist (batch_setup.rs) whose hardlink
 /// group index uses base 0, whereas upstream's local `-aH` batch reserves ndx 0
-/// (`flist.c:3260`, incremental-recursion `ndx_start == 1`), so the group index
+/// (`flist.c:3503`, incremental-recursion `ndx_start == 1`), so the group index
 /// bases differ and cross-implementation replay of a hardlink batch is a
 /// distinct, pre-existing gap tracked separately. Each self cell is fully
 /// upstream-faithful and is what the reunified replay regressed.
@@ -778,12 +778,12 @@ fn replay_up_to_date_is_a_noop_on_both() {
 }
 
 /// Upstream announces every batched update its local generator no longer
-/// wants: `(Skipping batched update for "NAME")` per receiver.c:964-975,
+/// wants: `(Skipping batched update for "NAME")` per receiver.c:980-991,
 /// printed at default verbosity with exit 0.
 #[test]
 #[ignore = "known divergence: oc --read-batch is silent on an up-to-date replay while \
             upstream prints one (Skipping batched update for \"NAME\") line per \
-            recorded file (receiver.c:964-975); exit codes and trees already match"]
+            recorded file (receiver.c:980-991); exit codes and trees already match"]
 fn replay_up_to_date_skipping_notices_match_upstream() {
     let Some(harness) = ParityHarness::new(&build_basic_src, &build_basic_seed) else {
         return;

@@ -502,7 +502,7 @@ fn group_override_takes_precedence() {
 // GAP M8: upstream never distinguishes an explicit `--chown`/`--usermap`
 // override from the `-o`/`-a` preserve path - both set `preserve_uid` and are
 // gated by the same `change_uid = am_root && ...` check (rsync.c:526,
-// options.c:1793,1833). A non-root process that cannot chown must have the
+// options.c:1799,1839). A non-root process that cannot chown must have the
 // attempt skipped, not surfaced as a fatal EPERM (exit code 23). Before this
 // fix `owner_override`/`group_override` bypassed the gate and propagated the
 // kernel's EPERM as a fatal `MetadataError`.
@@ -917,11 +917,11 @@ fn no_perms_existing_file_from_entry_keeps_prior_mode() {
 }
 
 /// `--chmod` without `--perms` over an EXISTING destination: upstream tweaks
-/// the flist mode at build time (flist.c:996-997) and `dest_mode()`
+/// the flist mode at build time (flist.c:1221-1222) and `dest_mode()`
 /// (rsync.c:470-471) then discards the tweak in favour of the destination's
 /// own permission bits. Applying the tweak to the destination is the inverted
 /// composition this pin guards against.
-// upstream: flist.c:996-997 tweak_mode + rsync.c:464-486 dest_mode().
+// upstream: flist.c:1221-1222 tweak_mode + rsync.c:464-486 dest_mode().
 #[cfg(unix)]
 #[test]
 fn chmod_without_perms_existing_file_from_entry_keeps_prior_mode() {
@@ -959,7 +959,7 @@ fn chmod_without_perms_existing_file_from_entry_keeps_prior_mode() {
 /// and `dest_mode()`'s fresh arm then masks it by `dflt_perms` (umask 022 ->
 /// 0o755), so `F666` yields 0o644 - never the unmasked 0o666 the inverted
 /// composition (tweak after collapse) produces.
-// upstream: flist.c:996-997 tweak_mode + rsync.c:483-485 dest_mode() fresh arm.
+// upstream: flist.c:1221-1222 tweak_mode + rsync.c:483-485 dest_mode() fresh arm.
 #[cfg(unix)]
 #[test]
 fn chmod_without_perms_new_file_from_entry_masks_tweak_by_umask() {
@@ -995,7 +995,7 @@ fn chmod_without_perms_new_file_from_entry_masks_tweak_by_umask() {
 /// Local-copy analogue of the two entry-path pins, through
 /// `apply_dest_mode_pre_transfer`: a `--chmod` without `--perms` must ride
 /// the exists split (existing keeps its bits) instead of bypassing it.
-// upstream: receiver.c:964 dest_mode() invocation + rsync.c:464-486.
+// upstream: receiver.c:980 dest_mode() invocation + rsync.c:464-486.
 #[cfg(unix)]
 #[test]
 fn chmod_without_perms_pre_transfer_rides_the_exists_split() {
@@ -1099,9 +1099,9 @@ fn chmod_without_perms_directory_rides_the_exists_split() {
 }
 
 /// Non-vacuity companion: with `--perms` the tweak applies to the source
-/// mode EXACTLY - `dest_mode()` never runs (receiver.c:1181) - so the
+/// mode EXACTLY - `dest_mode()` never runs (receiver.c:1198) - so the
 /// exists split above cannot be satisfied by simply never chmodding.
-// upstream: flist.c:996-997 tweak_mode; preserve_perms skips dest_mode().
+// upstream: flist.c:1221-1222 tweak_mode; preserve_perms skips dest_mode().
 #[cfg(unix)]
 #[test]
 fn chmod_with_perms_applies_tweaked_source_mode_exactly() {
@@ -2044,7 +2044,7 @@ fn metadata_unchanged_returns_false_on_mtime_mismatch() {
     );
 }
 
-/// upstream: generator.c:396 `mtime_differs()` -> util1.c:1478 `same_time()` -
+/// upstream: generator.c:396 `mtime_differs()` -> util1.c:1573 `same_time()` -
 /// `unchanged_attrs()` must treat two mtimes within `--modify-window` as equal.
 /// Before threading the window, oc compared the mtime exactly, so a
 /// within-window destination was mis-classified as changed and its metadata was
@@ -2309,7 +2309,7 @@ fn metadata_unchanged_returns_false_when_chmod_would_change_mode() {
 
     let entry = FileEntry::new_file("chmod-changes.txt".into(), 4, 0o644);
 
-    // With --perms, u+x tweaks the flist mode 0o644 to 0o744 (flist.c:1741),
+    // With --perms, u+x tweaks the flist mode 0o644 to 0o744 (flist.c:1966),
     // which differs from the destination's 0o644.
     let chmod = crate::ChmodModifiers::parse("u+x").expect("parse chmod");
     let opts = MetadataOptions::new()
@@ -2600,7 +2600,7 @@ fn keep_dirlinks_bypasses_secure_chmod_sandbox() {
 /// The operator-named destination ROOT is followed even without
 /// `--keep-dirlinks`.
 ///
-/// upstream: `main.c:765` resolves the destination exactly once via
+/// upstream: `main.c:778` resolves the destination exactly once via
 /// `change_dir(dest_path, CD_NORMAL)` - a plain `chdir` for a non-daemon
 /// receiver - and then works relative to it, so the root never reappears as a
 /// path component and the per-entry syscalls always meet a real directory
@@ -2936,7 +2936,7 @@ fn local_atimes_zeroes_atime_nsec() {
 // (`CAN_CHMOD_SYMLINK` = macOS/BSD). The two tests below encode WHY it matters:
 // a receiver/local-copy that reports a `p` column for a symlink must also apply
 // that mode, or report and action would drift (upstream rsync.c:658-668 chmods
-// every file type; syscall.c:761 do_chmod() uses lchmod/setattrlist for
+// every file type; syscall.c:900 do_chmod() uses lchmod/setattrlist for
 // symlinks). They fail on pre-fix code, which skipped the symlink chmod.
 #[cfg(target_os = "macos")]
 #[test]
@@ -3021,8 +3021,8 @@ fn symlink_own_mode_applied_from_source_metadata_local_copy() {
 // mode with `tweak_mode()` at exactly three sites and every one is gated on
 // `!S_ISLNK`:
 //
-//   flist.c:1741-1742  send_file_name()   - the sender's flist rewrite
-//   flist.c:996-997    recv_file_entry()  - the receiver's flist read
+//   flist.c:1966-1967  send_file_name()   - the sender's flist rewrite
+//   flist.c:1221-1222    recv_file_entry()  - the receiver's flist read
 //   rsync.c:647-648    set_file_attrs()   - the daemon `outgoing chmod`
 //
 // so `set_file_attrs()` (rsync.c:510 `mode_t new_mode = file->mode;`) chmods a
@@ -3064,7 +3064,7 @@ fn symlink_chmod_spec_is_ignored_without_preserve_perms_local_copy() {
     assert_eq!(
         fs::symlink_metadata(&dst).unwrap().permissions().mode() & 0o7777,
         0o777,
-        "--chmod alone must not touch a link's mode (upstream flist.c:1741-1742 \
+        "--chmod alone must not touch a link's mode (upstream flist.c:1966-1967 \
          gates the tweak on !S_ISLNK); the link must keep its own 0o777"
     );
 }

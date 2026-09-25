@@ -94,7 +94,7 @@ impl LocalCopyChangeSet {
         // link (`metadata::CAN_CHMOD_SYMLINK` = macOS/BSD), so report and
         // action never drift: a reported `p` is always backed by the matching
         // apply in metadata::apply_symlink_permissions_like. Upstream skips the
-        // compare only where `CAN_CHMOD_SYMLINK` is undefined (rsync.h:455-456,
+        // compare only where `CAN_CHMOD_SYMLINK` is undefined (rsync.h:456-457,
         // HAVE_LCHMOD or HAVE_SETATTRLIST, probed at configure.ac:942,950); the
         // `#ifndef` block at generator.c:548-552 then compiles out. On Linux
         // the const is false and a link's `st_mode` is a fixed 0777, so nothing
@@ -133,8 +133,8 @@ impl LocalCopyChangeSet {
         }
 
         // A `--chmod` spec never reaches a symlink's mode: upstream gates every
-        // `tweak_mode()` call on `!S_ISLNK` (flist.c:1741-1742 send_file_name,
-        // flist.c:996-997 recv_file_entry, rsync.c:647-648 the daemon
+        // `tweak_mode()` call on `!S_ISLNK` (flist.c:1966-1967 send_file_name,
+        // flist.c:1221-1222 recv_file_entry, rsync.c:647-648 the daemon
         // `outgoing chmod`), so a link's mode arrives at itemize() untweaked and
         // the `p` column stays driven by the plain `-p` / `-E` compare
         // (generator.c:424-433 `perms_differ`). Reporting `p` here would be a
@@ -208,7 +208,7 @@ impl LocalCopyChangeSet {
             let new_mtime = metadata_modified_time(source);
             let old_mtime = metadata_modified_time(existing);
             // upstream: generator.c:533 - itemize() sets ITEM_REPORT_TIME via
-            // `!same_time(file->modtime, 0, &sxp->st)`. same_time() (util1.c:1478)
+            // `!same_time(file->modtime, 0, &sxp->st)`. same_time() (util1.c:1573)
             // compares whole seconds under `--modify-window`, so a sub-second
             // mtime drift on a directory must NOT light the `t` glyph. This is
             // type-agnostic in upstream: directories use the same same_time()
@@ -268,7 +268,7 @@ impl LocalCopyChangeSet {
     /// The mtime comparison uses `same_time()` semantics via
     /// `system_time_within_window`, not exact equality: upstream `itemize()` at
     /// `generator.c:533-534` calls `mtime_differs()` ->
-    /// `same_time(stp->st_mtime, ..., file->modtime, ...)` (util1.c:1478), which
+    /// `same_time(stp->st_mtime, ..., file->modtime, ...)` (util1.c:1573), which
     /// with the default `modify_window == 0` compares WHOLE SECONDS only
     /// (`f1_sec == f2_sec`) and ignores the fractional part. Two links whose
     /// mtimes fall in the same wall-clock second but differ in nanoseconds
@@ -314,7 +314,7 @@ impl LocalCopyChangeSet {
         // setattrlist), so it must not report a change it will not make.
         // Upstream is not the reason - it chmods every file type
         // (rsync.c:658-668, no S_ISLNK gate) and handles symlink portability
-        // inside do_chmod (syscall.c:761), which tries lchmod then
+        // inside do_chmod (syscall.c:900), which tries lchmod then
         // setattrlist(FSOPT_NOFOLLOW). Revisit with symlink-mode support.
         change_set
     }
@@ -428,7 +428,7 @@ fn determine_time_change(
         let old_mtime = existing.and_then(metadata_modified_time);
 
         // upstream: generator.c:533 - the ITEM_REPORT_TIME bit is set via
-        // `!same_time(file->modtime, 0, &sxp->st)`. same_time() (util1.c:1478)
+        // `!same_time(file->modtime, 0, &sxp->st)`. same_time() (util1.c:1573)
         // treats two mtimes as equal when their whole-second delta is within
         // `--modify-window`, so a sub-window drift must NOT light the `t` glyph.
         match (new_mtime, old_mtime) {

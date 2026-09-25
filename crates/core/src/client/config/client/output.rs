@@ -59,8 +59,8 @@ impl ClientConfig {
     /// resolved format string rather than the `-i` flag. For remote pushes this
     /// forwards `--log-format=%i`.
     ///
-    /// upstream: options.c:2345-2358 (`stdout_format_has_i`) and
-    /// options.c:2772-2775 (`args[ac++] = "--log-format=%i"`).
+    /// upstream: options.c:2354-2367 (`stdout_format_has_i`) and
+    /// options.c:2782-2785 (`args[ac++] = "--log-format=%i"`).
     #[must_use]
     #[doc(alias = "--out-format")]
     #[doc(alias = "--log-format")]
@@ -73,8 +73,8 @@ impl ClientConfig {
     /// this forwards `--log-format=%o` so the remote emits matching operation
     /// output.
     ///
-    /// upstream: options.c:2375-2376 (`stdout_format_has_o_or_i`) and
-    /// options.c:2776-2777 (`args[ac++] = "--log-format=%o"`).
+    /// upstream: options.c:2384-2385 (`stdout_format_has_o_or_i`) and
+    /// options.c:2786-2787 (`args[ac++] = "--log-format=%o"`).
     #[must_use]
     #[doc(alias = "--out-format")]
     #[doc(alias = "--log-format")]
@@ -86,7 +86,7 @@ impl ClientConfig {
     /// given that contains neither `%i` nor `%o`. For a non-verbose remote push
     /// this forwards the placeholder `--log-format=X`.
     ///
-    /// upstream: options.c:2778-2779 (`else if (!verbose) args[ac++] =
+    /// upstream: options.c:2788-2789 (`else if (!verbose) args[ac++] =
     /// "--log-format=X"`).
     #[must_use]
     #[doc(alias = "--out-format")]

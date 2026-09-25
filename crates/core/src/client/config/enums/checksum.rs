@@ -174,7 +174,7 @@ impl StrongChecksumChoice {
     /// comes from the second comma component. An `auto` sub-component resolves
     /// via `parse_csum_name` to the implied checksum, which is md5 at proto>=30
     /// (checksum.c:118-122), but ONLY when the choice is "set". The fully-auto
-    /// forms (`auto` / `auto,auto`) null `checksum_choice` (options.c:1997-2003)
+    /// forms (`auto` / `auto,auto`) null `checksum_choice` (options.c:2003-2009)
     /// and negotiate the strongest mutually supported checksum instead, which
     /// for a modern local copy is xxh128. Mirror that split: resolve a lone
     /// `auto` file sub-component to md5 on the suppressed path, and fall back to
@@ -220,7 +220,7 @@ impl StrongChecksumChoice {
     /// Returns the transfer-checksum override that drives protocol 30+
     /// negotiation, mirroring upstream's send-gate and `auto` resolution.
     ///
-    /// upstream: options.c:1997-2003 nulls `checksum_choice` only when the raw
+    /// upstream: options.c:2003-2009 nulls `checksum_choice` only when the raw
     /// string is exactly `auto` or `auto,auto`; any other value stays set and
     /// suppresses the vstring exchange (compat.c:541 `if (!checksum_choice)`).
     /// On that suppressed path `parse_checksum_choice` resolves the transfer
@@ -453,7 +453,7 @@ mod tests {
             );
         }
 
-        // upstream: options.c:1997-2003 + compat.c:541 - "auto,md5" keeps
+        // upstream: options.c:2003-2009 + compat.c:541 - "auto,md5" keeps
         // checksum_choice non-null, so the vstring exchange is SUPPRESSED
         // (send_checksum = checksum_override.is_none() in negotiate.rs). The
         // transfer "auto" resolves to implied md5 (checksum.c:118-122) and the
@@ -498,7 +498,7 @@ mod tests {
             );
         }
 
-        // upstream: options.c:1997-2003 - ONLY "auto" and "auto,auto" null
+        // upstream: options.c:2003-2009 - ONLY "auto" and "auto,auto" null
         // checksum_choice, leaving send_checksum true so negotiate_the_strings
         // exchanges lists and picks the strongest mutual checksum (xxh128 for a
         // modern local copy). WHY: these two forms must keep override == None,

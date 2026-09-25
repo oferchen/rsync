@@ -358,7 +358,7 @@ fn test_remote_invocation_builder() {
         remote::{RemoteInvocationBuilder, RemoteRole},
     };
 
-    // Test sender (push) invocation — no --sender flag (upstream options.c:2598)
+    // Test sender (push) invocation — no --sender flag (upstream options.c:2607)
     let config = ClientConfig::builder()
         .recursive(true)
         .times(true)
@@ -655,10 +655,10 @@ fn test_remote_invocation_with_multiple_paths() {
     let flags_idx = 3;
     let flags = args[flags_idx].to_string_lossy();
     assert!(flags.starts_with('-'));
-    // upstream: options.c:2710 - capability string is embedded in the compact
+    // upstream: options.c:2720 - capability string is embedded in the compact
     // flag string (e.g. `-re.LsfxCIvu`), not a separate argument.
     // upstream: compat.c:162-181 set_allow_inc_recurse(),
-    // options.c:3036 maybe_add_e_option() - 'i' is omitted when the local role
+    // options.c:3046 maybe_add_e_option() - 'i' is omitted when the local role
     // is Receiver because the receiver path strips CF_INC_RECURSE after read.
     let expected_suffix = build_capability_string_suffix(false);
     assert!(

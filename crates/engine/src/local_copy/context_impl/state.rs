@@ -194,7 +194,7 @@ impl<'a> CopyContext<'a> {
     /// `true` when this run has not yet produced that destination (the entry
     /// should be processed) and `false` when an earlier operand already
     /// claimed it - upstream's merged-flist dedup keeps the FIRST operand's
-    /// entry (flist.c:3364-3382), so the later duplicate is skipped silently.
+    /// entry (flist.c:3607-3625), so the later duplicate is skipped silently.
     /// Only multi-source runs can collide, so single-source runs skip the
     /// bookkeeping.
     pub(super) fn claim_destination(&mut self, destination: &Path) -> bool {
@@ -324,14 +324,14 @@ impl<'a> CopyContext<'a> {
             destination_previously_existed,
         );
 
-        // upstream: receiver.c:964 - when `-p`/`--chmod` are off, the
+        // upstream: receiver.c:980 - when `-p`/`--chmod` are off, the
         // receiver rewrites `file->mode` via `dest_mode()` BEFORE the
         // transfer; `set_file_attrs()` then chmods the freshly-renamed
         // temp file to that mode. Reproduce that chmod here so a re-
         // transferred regular file holds its pre-transfer permission bits
         // and a new regular file lands at `source_mode & dflt_perms`. A
         // `--chmod` without `--perms` rides this call too (the tweak feeds
-        // the exists split, per flist.c:1741-1742 + rsync.c:464-486); only
+        // the exists split, per flist.c:1966-1967 + rsync.c:464-486); only
         // `-p` short-circuits, since that path owns the chmod outright.
         #[cfg(unix)]
         ::metadata::apply_dest_mode_pre_transfer(
@@ -575,7 +575,7 @@ impl<'a> CopyContext<'a> {
     ///
     /// Also suppresses deletions like any other general I/O error, matching
     /// upstream where `io_error |= IOERR_GENERAL` gates the delete pass.
-    /// upstream: flist.c:1631 send_file1() sets io_error |= IOERR_GENERAL.
+    /// upstream: flist.c:1856 send_file1() sets io_error |= IOERR_GENERAL.
     pub(super) fn record_iconv_conversion_error(&mut self) {
         self.iconv_conversion_error = true;
         self.io_errors_occurred = true;
@@ -601,7 +601,7 @@ impl<'a> CopyContext<'a> {
     /// but finishes `RERR_PARTIAL` (exit 23).
     ///
     /// upstream: `sender.c:successful_send()` sets `got_xfer_error` via
-    /// `FERROR_XFER` and returns without aborting; `main.c:1630` then exits
+    /// `FERROR_XFER` and returns without aborting; `main.c:1648` then exits
     /// `RERR_PARTIAL`.
     pub(super) fn record_sender_remove_error(&mut self) {
         self.sender_remove_error = true;
@@ -638,10 +638,10 @@ impl<'a> CopyContext<'a> {
     ///
     /// Upstream reaches the same state through `map_ptr()`: a `read()` that
     /// returns 0 with the window unfilled stores `ENODATA` in `map->status`
-    /// (fileio.c:359-365), `unmap_file()` hands that status back
-    /// (fileio.c:385), and the sender turns it into `io_error |=
+    /// (fileio.c:401-407), `unmap_file()` hands that status back
+    /// (fileio.c:427), and the sender turns it into `io_error |=
     /// IOERR_GENERAL` plus one `read errors mapping %s` line at `FERROR_XFER`
-    /// before moving on to the next entry (sender.c:787-795).
+    /// before moving on to the next entry (sender.c:789-797).
     pub(super) fn record_source_read_error(&mut self) {
         self.source_read_error = true;
         self.io_errors_occurred = true;

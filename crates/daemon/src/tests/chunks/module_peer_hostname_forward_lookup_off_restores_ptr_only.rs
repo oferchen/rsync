@@ -3,7 +3,7 @@
 /// upstream access.c where `allow_forward_dns` (from `lp_forward_lookup`)
 /// being false skips the forward check entirely.
 ///
-/// upstream: access.c:49 - `if (!allow_forward_dns) return 0;` short-circuits
+/// upstream: access.c:60 - `if (!allow_forward_dns) return 0;` short-circuits
 /// the forward lookup when the `forward lookup` parameter is disabled.
 #[test]
 fn module_peer_hostname_forward_lookup_off_restores_ptr_only() {

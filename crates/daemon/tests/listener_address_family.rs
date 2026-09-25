@@ -12,7 +12,7 @@
 //! `OC_RSYNC_DAEMON_ADDRESS_FAMILY` configurations and verify a TCP client
 //! on the expected family receives the `@RSYNCD:` greeting.
 //!
-//! upstream: socket.c:402-499 (`open_socket_in`) iterates every
+//! upstream: socket.c:410-507 (`open_socket_in`) iterates every
 //! getaddrinfo result and only fails when zero sockets bound.
 
 use std::io::{BufRead, BufReader};

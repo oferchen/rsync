@@ -50,16 +50,16 @@ type StatShard = Mutex<HashMap<PathBuf, Arc<fs::Metadata>>>;
 /// # Upstream
 ///
 /// Upstream has no counterpart to re-key against: there is no pathname-keyed
-/// stat cache anywhere in rsync's file-list build. `flist.c:1547-1556`'s
+/// stat cache anywhere in rsync's file-list build. `flist.c:1772-1781`'s
 /// `lastdir` interns a directory *name* (a `char *`) and a derived component
 /// count, never a `STRUCT_STAT`; `make_file()` destructures each stat into
 /// scalar `file_struct` fields and drops it. Every hashtable upstream keeps is
 /// keyed on integers, not paths - `(dev, ino)` in `hlink.c:74-84`, `gnum`,
 /// `fs_dev`, an xattr-content checksum - and the one path-shaped cache
-/// (`syscall.c:3540-3548`) holds open dirfds, which upstream's own comment
+/// (`syscall.c:3721-3729`) holds open dirfds, which upstream's own comment
 /// argues are race-safe precisely because an fd pins an inode where a resolved
 /// path snapshot does not. Where a stale snapshot would be dangerous upstream
-/// re-stats and diffs against the flist value (`sender.c:428`, `failed_op =
+/// re-stats and diffs against the flist value (`sender.c:429`, `failed_op =
 /// "re-lstat"`). An oc-invented cache with no upstream analogue is a design
 /// decision, not an inherited one.
 #[derive(Debug)]

@@ -4,7 +4,7 @@
 // request, gated on a non-empty `request`, once the argv is parsed and the
 // pre-xfer hooks have run.
 
-/// Ceiling upstream tests *before* appending each operand (`io.c:1487`).
+/// Ceiling upstream tests *before* appending each operand (`io.c:1513`).
 ///
 /// The guard is `request_len < 1024`, evaluated before the append rather than
 /// after it, so the assembled value can exceed 1024 by the length of the
@@ -15,12 +15,12 @@ const DAEMON_REQUEST_LEN_CAP: usize = 1024;
 /// Assembles upstream's `request` from the client's argument vector.
 ///
 /// `request` is *not* the module name. It is an out-param of `read_args()`
-/// (`clientserver.c:1154`) built at `io.c:1486-1495` from the argv entries
+/// (`clientserver.c:1154`) built at `io.c:1512-1521` from the argv entries
 /// that follow the `.` cwd marker, joined with single spaces:
 ///
 /// - entries before the marker are options and never contribute;
 /// - the marker itself never contributes, and only the first one switches
-///   modes (`io.c:1507-1508` sets `dot_pos` from the *else* branch, which
+///   modes (`io.c:1533-1534` sets `dot_pos` from the *else* branch, which
 ///   stops running once `dot_pos` is set);
 /// - the operands are the raw wire lines, before `glob_expand_module()`.
 ///
@@ -105,7 +105,7 @@ fn log_daemon_request(
 mod daemon_request_line_tests {
     //! Upstream parity for the per-request daemon log line
     //! (`clientserver.c:1207-1220`) and its `request` operand
-    //! (`io.c:1486-1495`).
+    //! (`io.c:1512-1521`).
 
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
@@ -126,7 +126,7 @@ mod daemon_request_line_tests {
         assert_eq!(daemon_request(&argv).as_deref(), Some("mod/f"));
     }
 
-    /// upstream joins multiple operands with a single space (`io.c:1489-1490`).
+    /// upstream joins multiple operands with a single space (`io.c:1515-1516`).
     #[test]
     fn multiple_operands_join_with_single_spaces() {
         let argv = args(&["--server", ".", "mod/a", "mod/b", "mod/c"]);
@@ -148,7 +148,7 @@ mod daemon_request_line_tests {
         assert_eq!(daemon_request(&argv).as_deref(), Some("mod/a . mod/b"));
     }
 
-    /// The cap is tested BEFORE each append (`io.c:1487`), so the assembled
+    /// The cap is tested BEFORE each append (`io.c:1513`), so the assembled
     /// value overshoots 1024 by the operand that crossed the boundary. A
     /// `truncate(1024)` would produce different bytes than upstream.
     #[test]

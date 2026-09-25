@@ -195,7 +195,7 @@ fn keep_dirlinks_preserves_symlink_subdir_during_recursive_copy() {
 
     // Relative, in-tree target: the only shape upstream's confined walk
     // follows. `ds_descend` refuses any absolute target with ELOOP
-    // (rsync-3.5.0/syscall.c:2953), so an absolute one exits 23 and writes
+    // (rsync-3.5.1/syscall.c:3094), so an absolute one exits 23 and writes
     // nothing - the refusal is pinned separately below.
     let real_target = dest_root.join("real-target");
     fs::create_dir(&real_target).expect("create real target");
@@ -389,7 +389,7 @@ fn keep_dirlinks_deeply_nested_parent_symlink_to_dir() {
     // Make dest/a/b a symlink to a real directory. The target is relative and
     // in-tree because that is the only shape upstream's confined walk follows;
     // an absolute one exits 23 and transfers nothing (measured against rsync
-    // 3.5.0, refused at `ds_descend` rsync-3.5.0/syscall.c:2953).
+    // 3.5.0, refused at `ds_descend` rsync-3.5.1/syscall.c:3094).
     let real_b = dest_root.join("a/real-b");
     fs::create_dir_all(real_b.join("c")).expect("create real-b/c");
     symlink("real-b", dest_root.join("a/b")).expect("create symlink a/b -> real-b");
@@ -481,7 +481,7 @@ fn keep_dirlinks_delete_preserves_symlink_removes_extraneous() {
 
     // A real directory as the symlink target, with extraneous content. Relative
     // and in-tree: an absolute target is refused outright by upstream's confined
-    // walk (rsync-3.5.0/syscall.c:2953 `ds_descend`), so that shape exits 23 and
+    // walk (rsync-3.5.1/syscall.c:3094 `ds_descend`), so that shape exits 23 and
     // deletes nothing - the refusal is pinned separately.
     let real_target = dest_root.join("real-target");
     fs::create_dir(&real_target).expect("create real target");
@@ -542,7 +542,7 @@ fn keep_dirlinks_mixed_real_and_symlink_subdirs() {
 
     // link-sub at destination is a symlink to a real directory. The target is
     // relative and in-tree because upstream's confined walk refuses an absolute
-    // one outright (rsync-3.5.0/syscall.c:2953 ds_descend).
+    // one outright (rsync-3.5.1/syscall.c:3094 ds_descend).
     let link_target = dest_root.join("link-target");
     fs::create_dir(&link_target).expect("create link target");
     symlink("link-target", dest_root.join("link-sub")).expect("create symlink link-sub");
@@ -661,7 +661,7 @@ fn keep_dirlinks_does_not_apply_when_source_sends_file_over_symlink_to_dir() {
 /// the two together are the discriminating pair, since a fixture that merely
 /// failed to transfer anything would satisfy the refusal test alone.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:2961` `ds_descend()` - measured against the
+/// upstream: `rsync-3.5.1/syscall.c:3102` `ds_descend()` - measured against the
 /// real 3.5.0 binary: this shape exits 0 and updates through the link.
 #[cfg(unix)]
 #[test]
@@ -776,7 +776,7 @@ fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
 /// Linux: this shape exits 23 with "Too many levels of symbolic links" and
 /// leaves the out-of-tree target byte-for-byte untouched.
 ///
-/// upstream: `rsync-3.5.0/syscall.c:2953` `ds_descend()` - "absolute target:
+/// upstream: `rsync-3.5.1/syscall.c:3094` `ds_descend()` - "absolute target:
 /// refuse".
 #[cfg(unix)]
 #[test]

@@ -33,7 +33,7 @@ use crate::writer::{BatchRoute, MsgInfoSender};
 
 /// Scoped view of the sender's transfer stream, upstream's `f_xfer`.
 ///
-/// upstream `sender.c:217` picks the destination of a file's sum head, tokens
+/// upstream `sender.c:220` picks the destination of a file's sum head, tokens
 /// and trailing file checksum once per `send_files()` run:
 ///
 /// ```c
@@ -42,10 +42,10 @@ use crate::writer::{BatchRoute, MsgInfoSender};
 ///
 /// Under `--only-write-batch` that stream goes into the batch file *instead of*
 /// the wire, which is what lets the remote receiver run with `dry_run = 1`
-/// (`main.c:1839`) and never read a byte of delta. The NDX+attrs header
-/// (`sender.c:766`) always stays on the wire, so the divert is scoped to the
+/// (`main.c:1866`) and never read a byte of delta. The NDX+attrs header
+/// (`sender.c:768`) always stays on the wire, so the divert is scoped to the
 /// payload and reverted on drop. Under `--write-batch` (or with no batch at
-/// all) the route is unchanged and the recorder keeps teeing (`io.c:2282`).
+/// all) the route is unchanged and the recorder keeps teeing (`io.c:2320`).
 struct XferSink<'w, W: Write + MsgInfoSender + ?Sized> {
     writer: &'w mut W,
     diverted: bool,
@@ -88,7 +88,7 @@ impl<W: Write + MsgInfoSender + ?Sized> Drop for XferSink<'_, W> {
 
 /// Narrows a payload byte count to the part that actually reached the wire.
 ///
-/// upstream: `io.c:2255-2258` - a `write_buf()` aimed at `batch_fd` takes the
+/// upstream: `io.c:2293-2296` - a `write_buf()` aimed at `batch_fd` takes the
 /// `safe_write()` shortcut and returns before `total_data_written += len`, so
 /// bytes diverted into the batch never count towards "sent N bytes".
 const fn sent_bytes(counted: u64, diverted: bool) -> u64 {
@@ -99,7 +99,7 @@ const fn sent_bytes(counted: u64, diverted: bool) -> u64 {
 /// upstream maps to `exit_cleanup(RERR_PROTOCOL)` - rather than an ordinary
 /// per-file open failure that the sender records with `MSG_NO_SEND` and skips.
 ///
-/// Used to route the device-guard abort (`sender.c:407-409`) surfaced by
+/// Used to route the device-guard abort (`sender.c:408-410`) surfaced by
 /// [`GeneratorContext::open_source_unbuffered`] to a fatal return instead of
 /// [`GeneratorContext::record_open_failure`].
 fn is_protocol_violation(error: &io::Error) -> bool {
@@ -180,7 +180,7 @@ fn open_source_mmap(
 
 /// Formats the sender-side re-lstat/remove failure diagnostic.
 ///
-/// Mirrors upstream `sender.c:459`
+/// Mirrors upstream `sender.c:460`
 /// `rsyserr(FERROR_XFER, errno, "sender failed to %s %s", failed_op, fname)`:
 /// the path is emitted with a bare `%s`, never `full_fname()`, so it carries no
 /// surrounding quotes.
@@ -212,10 +212,10 @@ fn sender_op_failure(op: &str, path: &Path, error: &io::Error) -> String {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/sender.c:455-462` - the shared `failed:` label
-/// - `rsync-3.5.0/log.c:337-338` - `case FERROR_XFER: got_xfer_error = 1;`
-/// - `rsync-3.5.0/log.c:357-367` - `am_server` forwards it as `MSG_ERROR_XFER`
-/// - `rsync-3.5.0/cleanup.c:217-218` - `got_xfer_error` -> `RERR_PARTIAL`
+/// - `rsync-3.5.1/sender.c:456-463` - the shared `failed:` label
+/// - `rsync-3.5.1/log.c:337-338` - `case FERROR_XFER: got_xfer_error = 1;`
+/// - `rsync-3.5.1/log.c:357-367` - `am_server` forwards it as `MSG_ERROR_XFER`
+/// - `rsync-3.5.1/cleanup.c:217-218` - `got_xfer_error` -> `RERR_PARTIAL`
 #[must_use]
 pub(crate) struct SourceRemovalOutcome {
     /// `io_error` bits to OR into the transfer's accumulated state.
@@ -250,16 +250,16 @@ impl GeneratorContext {
     /// sum head that follows it.
     ///
     /// The two go to different destinations under `--only-write-batch`: the
-    /// header is what the receiver still reads (`receiver.c:811-817` logs the
+    /// header is what the receiver still reads (`receiver.c:827-833` logs the
     /// item and moves on), while the sum head opens the payload stream and
     /// therefore belongs to the batch. `divert` selects that split; when it is
     /// `false` both land on the wire exactly as before.
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:468-485` - `write_ndx_and_attrs()` body (calls
+    /// - `sender.c:469-486` - `write_ndx_and_attrs()` body (calls
     ///   `send_xattr_request(fname, file, f_out)` when ITEM_REPORT_XATTR set)
-    /// - `sender.c:766-767` - `write_ndx_and_attrs(f_out, ...)` followed by
+    /// - `sender.c:768-769` - `write_ndx_and_attrs(f_out, ...)` followed by
     ///   `write_sum_head(f_xfer, s)`
     fn write_ndx_attrs_and_sum_head<W: Write + MsgInfoSender>(
         &self,
@@ -279,7 +279,7 @@ impl GeneratorContext {
     /// through.
     ///
     /// Upstream calls `send_extra_file_list(f_out, MIN_FILECNT_LOOKAHEAD)` from
-    /// two points in the send loop (`sender.c:231` and `sender.c:265`); this is
+    /// two points in the send loop (`sender.c:234` and `sender.c:268`); this is
     /// that one function, so both call sites share a single expression of the
     /// rule. The loop condition lives in [`SegmentScheduler::next_to_send`],
     /// which folds each dispatch into the backlog before returning - so, like
@@ -289,8 +289,8 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2124-2139` - `send_extra_file_list()` loop head
-    /// - `sender.c:231,265` - the two call sites this method serves
+    /// - `flist.c:2360-2375` - `send_extra_file_list()` loop head
+    /// - `sender.c:234,268` - the two call sites this method serves
     fn send_extra_file_lists<W: Write>(
         &mut self,
         writer: &mut super::super::super::writer::ServerWriter<W>,
@@ -321,7 +321,7 @@ impl GeneratorContext {
     /// segment already awaits dispatch or the backlog has reached `ceiling`, so
     /// exactly one directory is scanned per sub-list the throttle admits -
     /// upstream's `send1extra()` producing one directory per loop turn
-    /// (`flist.c:2427`).
+    /// (`flist.c:2667`).
     fn refill_lazy_scheduler(
         &mut self,
         scheduler: &mut SegmentScheduler,
@@ -348,7 +348,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2848-2849` - `write_ndx(f, NDX_FLIST_EOF); flist_eof = 1`
+    /// - `flist.c:3091-3092` - `write_ndx(f, NDX_FLIST_EOF); flist_eof = 1`
     fn send_flist_eof_if_exhausted<W: Write>(
         &mut self,
         writer: &mut W,
@@ -376,9 +376,9 @@ impl GeneratorContext {
     /// [`Self::send_extra_file_lists`] only tops the backlog *up to* the floor,
     /// which leaves the window pinned there for the whole transfer. Upstream
     /// does not stop at the floor: while the backlog is under the ceiling it
-    /// polls with a zero timeout (`io.c:836-843`), and on a poll that finds no
-    /// input ready it sends exactly one more sub-list (`io.c:855`,
-    /// `at_least = -1` resolving to `backlog + 1` at `flist.c:2407`). oc has no
+    /// polls with a zero timeout (`io.c:854-861`), and on a poll that finds no
+    /// input ready it sends exactly one more sub-list (`io.c:873`,
+    /// `at_least = -1` resolving to `backlog + 1` at `flist.c:2647`). oc has no
     /// poll loop, but `has_buffered_input()` marks the same instant - the read
     /// that is genuinely about to block - so the top-up hangs off that instead.
     ///
@@ -389,8 +389,8 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:836-843` - the `MAX_FILECNT_LOOKAHEAD` ceiling on this path
-    /// - `io.c:851-857` - the idle poll result that triggers the top-up
+    /// - `io.c:854-861` - the `MAX_FILECNT_LOOKAHEAD` ceiling on this path
+    /// - `io.c:869-875` - the idle poll result that triggers the top-up
     fn grow_lookahead_while_idle<W: Write>(
         &mut self,
         writer: &mut super::super::super::writer::ServerWriter<W>,
@@ -422,7 +422,7 @@ impl GeneratorContext {
     ///
     /// - `match.c:480-488` - `match_report()`: the `DEBUG_GTE(DELTASUM, 1)`
     ///   gate and the format text
-    /// - `sender.c:815` - called once after `send_files()` finishes
+    /// - `sender.c:818` - called once after `send_files()` finishes
     /// - `log.c:330-346` - `rwrite()` under `am_server` frames FINFO as
     ///   `MSG_INFO` instead of writing it locally
     pub(in crate::generator) fn emit_match_totals_report<
@@ -474,16 +474,16 @@ impl GeneratorContext {
         };
         use super::super::protocol_io::{read_signature_blocks_keepalive, signature_read_lull_mod};
 
-        // upstream: sender.c:506-507 - rprintf(FINFO, "send_files starting\n")
+        // upstream: sender.c:507-508 - rprintf(FINFO, "send_files starting\n")
         debug_log!(Send, 1, "send_files starting");
 
-        // upstream: sender.c:218 - int save_io_error = io_error;
+        // upstream: sender.c:221 - int save_io_error = io_error;
         // Baseline io_error already conveyed with the file list. Any bits set
         // beyond this during the send loop (vanished/unreadable source files)
         // must be reported to the receiver so its exit code reflects them.
         let save_io_error = self.io_error;
 
-        // Phase handling: upstream sender.c line 210: max_phase = protocol_version >= 29 ? 2 : 1
+        // Phase handling: upstream sender.c line 213: max_phase = protocol_version >= 29 ? 2 : 1
         let mut phase: i32 = 0;
         let max_phase: i32 = if self.protocol.supports_iflags() {
             2
@@ -494,11 +494,11 @@ impl GeneratorContext {
         let deadline = TransferDeadline::from_system_time(self.config.stop_at);
 
         let mut files_transferred = 0;
-        // upstream: sender.c:343 - stats.total_transferred_size += F_LENGTH(file),
+        // upstream: sender.c:344 - stats.total_transferred_size += F_LENGTH(file),
         // accumulated at the same point as xferred_files (dry-run included, since
-        // the increment precedes the `if (!do_xfers)` continue at sender.c:346).
+        // the increment precedes the `if (!do_xfers)` continue at sender.c:347).
         let mut transferred_file_size = 0u64;
-        // upstream: sender.c:319-335,480 - FLAG_FILE_SENT per file. A resend of
+        // upstream: sender.c:320-336,481 - FLAG_FILE_SENT per file. A resend of
         // an already-sent entry (the redo pass) is a full-content transfer, not
         // another append delta, so track which entries have been sent once.
         let mut sent_files = SentFileTracker::default();
@@ -506,13 +506,13 @@ impl GeneratorContext {
         // upstream: match.c:472-475 - total_matches / total_hash_hits /
         // total_false_alarms accumulate across every file, and match_report()
         // (match.c:479-487) prints them once after send_files() returns
-        // (sender.c:815).
+        // (sender.c:818).
         let mut run_scan_counters = matching::ScanCounters::default();
         // upstream: match.c stats.matched_data / stats.literal_data accumulated
         // per token as the sender emits the delta stream.
         let mut matched_data = 0u64;
         let mut literal_data = 0u64;
-        // upstream: sender.c:295-308,333-334 - the sender reconstructs
+        // upstream: sender.c:587-600,625-626 - the sender reconstructs
         // stats.created_* from the ITEM_IS_NEW iflags the receiver's generator
         // sends per file, keyed by the entry's mode. Never crosses the wire.
         let mut created_stats = protocol::stats::CreatedStats::new();
@@ -561,22 +561,22 @@ impl GeneratorContext {
         // therefore one session-level constant, not a per-file boolean.
         let use_compression = token_encoder.is_some();
 
-        // upstream: sender.c:217 - `int f_xfer = write_batch < 0 ? batch_fd :
+        // upstream: sender.c:220 - `int f_xfer = write_batch < 0 ? batch_fd :
         // f_out`. Under `--only-write-batch` the sum head, tokens and file
         // checksum are recorded into the batch INSTEAD of being sent, so the
         // remote receiver - which server_options() put into `dry_run` via the
-        // `--only-write-batch=X` placeholder (options.c:2850, main.c:1839) and
-        // which therefore reads no payload (receiver.c:811-817) - never has an
+        // `--only-write-batch=X` placeholder (options.c:2860, main.c:1866) and
+        // which therefore reads no payload (receiver.c:827-833) - never has an
         // unread stream backing up behind it. Constant for the whole run,
         // exactly like upstream's single `f_xfer` binding.
         let divert_xfer = self.config.flags.only_write_batch;
 
-        // upstream: io.c:2244-2245 - separate read/write NDX state
+        // upstream: io.c:2282-2283 - separate read/write NDX state
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
 
         // INC_RECURSE: create scheduler and wire encoding state for lazy sub-list sending.
-        // upstream: sender.c:227,261 - interleaves sub-list sending with file transfers.
+        // upstream: sender.c:230,264 - interleaves sub-list sending with file transfers.
         let inc_recurse = self.inc_recurse();
         let mut scheduler =
             SegmentScheduler::new(std::mem::take(&mut self.incremental.pending_segments));
@@ -592,7 +592,7 @@ impl GeneratorContext {
         // instance for sub-lists would diff-encode negative offsets against an
         // independent prev_negative, desyncing the receiver's unified read
         // state. Route sub-list writes through ndx_write_codec.inner_mut().
-        // upstream: sender.c:242-250 - tracks remaining flist-free NDX_DONEs.
+        // upstream: sender.c:245-253 - tracks remaining flist-free NDX_DONEs.
         // With INC_RECURSE, the client sends one NDX_DONE per completed flist
         // (initial + sub-lists). The sender echoes these without phase change
         // until all flists are freed, then falls through to the normal phase
@@ -603,12 +603,12 @@ impl GeneratorContext {
         let tolerant = self.config.flags.dry_run;
 
         loop {
-            // upstream: io.c:750 - the sender's I/O loop acts on
+            // upstream: io.c:768 - the sender's I/O loop acts on
             // got_kill_signal only at a frame boundary. Checking before the
             // next NDX read means a shutdown never truncates a delta already
             // being written to the wire.
             crate::shared::check_shutdown()?;
-            // upstream: sender.c:227 - send extra file lists at top of loop
+            // upstream: sender.c:230 - send extra file lists at top of loop
             if inc_recurse {
                 self.send_extra_file_lists(
                     &mut *writer,
@@ -625,9 +625,9 @@ impl GeneratorContext {
                 )?;
             }
 
-            // upstream: io.c:640-724 perform_io() flushes buffered output only
+            // upstream: io.c:658-742 perform_io() flushes buffered output only
             // while genuinely waiting for input via select(); when the next
-            // request is already buffered (iobuf.in.len >= needed, io.c:643) it
+            // request is already buffered (iobuf.in.len >= needed, io.c:661) it
             // returns immediately without draining output. Our Read/Write traits
             // are independent, so we mirror that: flush before a read that would
             // actually block (no demuxed request buffered), but skip it while
@@ -637,7 +637,7 @@ impl GeneratorContext {
             // - ~24 files per socket write, matching upstream's iobuf.out
             // batching instead of one write() per file.
             if !reader.has_buffered_input() {
-                // upstream: io.c:851-857 - a poll that finds nothing to read is
+                // upstream: io.c:869-875 - a poll that finds nothing to read is
                 // the sender's cue to queue one more sub-list before it parks,
                 // which is what grows the lookahead past the floor. Emitting it
                 // here rather than after the flush keeps it in the same socket
@@ -666,7 +666,7 @@ impl GeneratorContext {
             // configured allowed_lull), keeping the default path wire-identical.
             writer.maybe_send_keepalive()?;
 
-            // upstream: sender.c:210-462 - read NDX request from receiver
+            // upstream: sender.c:213-463 - read NDX request from receiver
             let ndx = match ndx_read_codec.read_ndx(&mut *reader) {
                 Ok(ndx) => ndx,
                 Err(e) if (phase > 0 || tolerant) && is_early_close_error(&e) => {
@@ -675,24 +675,24 @@ impl GeneratorContext {
                 Err(e) => return Err(e),
             };
 
-            // upstream: io.c:1736-1750, sender.c:236-258 - handle control NDX values
+            // upstream: io.c:1774-1788, sender.c:239-261 - handle control NDX values
             if ndx < 0 {
                 match ndx {
                     NDX_DONE => {
-                        // upstream: sender.c:246-261 - INC_RECURSE flist-free path.
+                        // upstream: sender.c:249-264 - INC_RECURSE flist-free path.
                         // With INC_RECURSE, the client sends one NDX_DONE per
                         // completed sub-file-list before the actual phase transitions.
                         // Echo these without incrementing phase, matching upstream's
                         // flist_free(first_flist) loop.
                         if inc_recurse && flist_done_remaining > 0 {
                             flist_done_remaining -= 1;
-                            // upstream: sender.c:247-248 -
+                            // upstream: sender.c:250-251 -
                             // file_old_total -= first_flist->used; flist_free(first_flist).
                             // Reclaim heap data from the oldest completed segment to
                             // reduce RSS. Entries stay in place for NDX indexing but
                             // their PathBuf/extras allocations are freed.
                             self.reclaim_oldest_segment();
-                            // upstream: sender.c:251 - `file_old_total =
+                            // upstream: sender.c:254 - `file_old_total =
                             // cur_flist->used`. The freed list drops out of the
                             // lookahead backlog and the next sub-list becomes
                             // the one the receiver is working through, so the
@@ -700,7 +700,7 @@ impl GeneratorContext {
                             // the throttle admits another segment.
                             scheduler.retire_current_flist();
 
-                            // upstream: sender.c:249-253 - after freeing the oldest
+                            // upstream: sender.c:252-256 - after freeing the oldest
                             // flist, `if (first_flist)` is still true (another flist
                             // remains in the list), so it writes NDX_DONE and continues
                             // WITHOUT advancing phase. Reaching this branch at all means
@@ -733,13 +733,13 @@ impl GeneratorContext {
                             continue;
                         }
 
-                        // upstream: sender.c:256-261 - phase transition.
+                        // upstream: sender.c:259-264 - phase transition.
                         // Increment phase first, break without echo if past max_phase.
                         phase += 1;
                         if phase > max_phase {
                             break;
                         }
-                        // upstream: sender.c:258-259
+                        // upstream: sender.c:261-262
                         // rprintf(FINFO, "send_files phase=%d\n", phase)
                         debug_log!(Send, 1, "send_files phase={}", phase);
                         if let Err(e) = ndx_write_codec
@@ -794,7 +794,7 @@ impl GeneratorContext {
                 }
             }
 
-            // upstream: sender.c:267-272 - preserve the original wire NDX for
+            // upstream: sender.c:270-275 - preserve the original wire NDX for
             // echo-back. When INC_RECURSE is active, the receiver sends "gap
             // NDX" values (ndx_start - 1 per sub-list) that fall below
             // cur_flist->ndx_start. Upstream echoes the original NDX unchanged;
@@ -805,7 +805,7 @@ impl GeneratorContext {
             // resolve_itemize_ndx also handles the INC_RECURSE directory gap
             // NDX (`ndx_start - 1`), mapping it to the parent directory entry so
             // a dir itemize prints `.d.. sub/` rather than a file row for the
-            // trailing child of the previous segment (sender.c:267-272).
+            // trailing child of the previous segment (sender.c:270-275).
             let ndx = self.resolve_itemize_ndx(wire_ndx);
 
             // upstream: rsync.c:227 - read_ndx_and_attrs() reads iflags
@@ -823,7 +823,7 @@ impl GeneratorContext {
             // upstream: rsync.c:387-391 - the protocol-29 keep-alive frame. A
             // <=3.0.x generator running --timeout writes `NDX ==
             // cur_flist->used` followed by `iflags == ITEM_IS_NEW` as its
-            // keep-alive (3.0.9 io.c:953-968); rsync >= 3.1.0 sends an empty
+            // keep-alive (3.0.9 io.c:971-986); rsync >= 3.1.0 sends an empty
             // MSG_DATA instead, so only old peers emit this frame. It names no
             // entry: consume it, answer with our own keepalive (`if (am_sender)
             // maybe_send_keepalive(time(NULL), MSK_ALLOW_FLUSH)`, rsync.c:389-390)
@@ -861,7 +861,7 @@ impl GeneratorContext {
                 ));
             }
 
-            // upstream: sender.c:286-290 - drain the generator's xattr request
+            // upstream: sender.c:289-293 - drain the generator's xattr request
             // when preserve_xattrs && ITEM_REPORT_XATTR is set. The generator
             // always emits at least a 0 terminator (varint) under this gate, so
             // skipping it desyncs the subsequent sum_head read and aborts the
@@ -875,7 +875,7 @@ impl GeneratorContext {
             let mut pending_xattr_response =
                 self.read_generator_xattr_request_if_any(&mut *reader, ndx, &iflags)?;
 
-            // upstream: sender.c:283-284
+            // upstream: sender.c:286-287
             // rprintf(FINFO, "send_files(%d, %s%s%s)\n", ndx, path,slash,fname)
             // F_PATHNAME is unset for the in-band file list we build, so the
             // path/slash prefix is empty and we emit just the relative name.
@@ -885,7 +885,7 @@ impl GeneratorContext {
             }
 
             if !iflags.needs_transfer() {
-                // upstream: sender.c:293-309 - a non-transfer item that is new
+                // upstream: sender.c:296-310 - a non-transfer item that is new
                 // (ITEM_IS_NEW) bumps stats.created_files plus the per-type
                 // counter for its mode. This is how a pushed new directory,
                 // symlink, device, or FIFO reaches the "Number of created files"
@@ -893,7 +893,7 @@ impl GeneratorContext {
                 if iflags.raw() & ItemFlags::ITEM_IS_NEW != 0 && ndx < self.file_list.len() {
                     created_stats.record(self.file_list[ndx].mode());
                 }
-                // upstream: sender.c:286-292 - non-transfer items still echo
+                // upstream: sender.c:289-295 - non-transfer items still echo
                 // NDX + iflags + (optional xattr response) via write_ndx_and_attrs
                 // so the receiver can pair the response with its outstanding
                 // request and apply xattr-only updates. Without this echo the
@@ -913,7 +913,7 @@ impl GeneratorContext {
                 continue;
             }
 
-            // upstream: sender.c:312-317 - a valid in-range transfer request must
+            // upstream: sender.c:313-318 - a valid in-range transfer request must
             // never arrive once the sender has advanced into phase 2, the terminal
             // phase where the sender has already emitted its own "phase done" and
             // is only draining the receiver's end-of-phase NDX_DONE acknowledgements.
@@ -930,7 +930,7 @@ impl GeneratorContext {
                 )));
             }
 
-            // upstream: sender.c:347-350 - dry_run (!do_xfers) logs the item and
+            // upstream: sender.c:348-351 - dry_run (!do_xfers) logs the item and
             // echoes write_ndx_and_attrs() without calling receive_sums(). The
             // echo still carries the xattr response when ITEM_REPORT_XATTR is
             // set so the receiver can pair its outstanding request.
@@ -948,7 +948,7 @@ impl GeneratorContext {
                     },
                     pending_xattr_response.as_mut(),
                 )?;
-                // upstream: sender.c:332-334 - the created_files++ for a new
+                // upstream: sender.c:333-335 - the created_files++ for a new
                 // transfer item sits in the else (first-send) branch BEFORE the
                 // `if (!do_xfers)` dry-run continue, so a dry run counts created
                 // files too. A dry run never redoes a file, so every entry here
@@ -956,7 +956,7 @@ impl GeneratorContext {
                 if iflags.raw() & ItemFlags::ITEM_IS_NEW != 0 {
                     created_stats.record(file_entry.mode());
                 }
-                // upstream: sender.c:347-350 - a dry run logs the transfer item
+                // upstream: sender.c:348-351 - a dry run logs the transfer item
                 // via log_item(FCLIENT) without sending data: the `-i` itemize
                 // row or, under plain `-v`, the bare `%n%L` name line.
                 self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
@@ -966,7 +966,7 @@ impl GeneratorContext {
                 continue;
             }
 
-            // upstream: sender.c:120 - receive_sums(), which calls
+            // upstream: sender.c:124 - receive_sums(), which calls
             // io.c:read_sum_head(). That reader rejects an s2length wider than
             // the negotiated transfer digest (`xfer_sum_len`): the block loop
             // below consumes `4 + s2length` bytes per block, so a strong sum
@@ -993,10 +993,10 @@ impl GeneratorContext {
             // a non-chroot daemon, O_NOFOLLOW otherwise). Threaded into the
             // free-function read paths (mmap scan, inline-checksum re-read) so
             // every open of this source applies the same symlink-race defence.
-            // upstream: sender.c:359-383.
+            // upstream: sender.c:360-384.
             let source_open = self.source_open();
 
-            // upstream: sender.c:325-341 - when a file arrives again on the redo
+            // upstream: sender.c:326-342 - when a file arrives again on the redo
             // pass (`file->flags & FLAG_FILE_SENT`), the sender negates
             // append_mode and make_backups so the resend is a full-content
             // transfer. The receiver's generator has already restored
@@ -1006,7 +1006,7 @@ impl GeneratorContext {
             // desync the wire.
             let is_resend = sent_files.is_resend(ndx);
 
-            // upstream: sender.c:327-334 - the created_files++ lives in the
+            // upstream: sender.c:328-335 - the created_files++ lives in the
             // `else` (first-send, not FLAG_FILE_SENT) branch, so a redo-pass
             // resend never double-counts. A transferred file is always a
             // regular file, so `record` classifies it as the derived reg count.
@@ -1014,18 +1014,18 @@ impl GeneratorContext {
                 created_stats.record(file_entry.mode());
             }
 
-            // upstream: sender.c:89-95 receive_sums() - in append mode the
+            // upstream: sender.c:90-99 receive_sums() - in append mode the
             // receiver's generator writes only the sum_head, not the block
             // checksums (generator.c:786 `if (append_mode > 0 && f_copy < 0)
             // return 0`). Reading blocks here would block forever, so derive
             // flength from the header and take the append literal path. A resend
-            // (redo pass) clears append_mode (sender.c:324), so the signature
+            // (redo pass) clears append_mode (sender.c:325), so the signature
             // blocks are present and must be read like any full transfer.
             let is_append = self.config.flags.append && !is_resend;
             let sig_blocks = if is_append {
                 Vec::new()
             } else {
-                // upstream: sender.c:76 receive_sums() - on protocols below 31 the
+                // upstream: sender.c:77 receive_sums() - on protocols below 31 the
                 // sender pokes a keepalive every `allowed_lull * 5` blocks so a
                 // large/slow checksum read does not trip the peer's --timeout.
                 // Newer protocols multiplex the stream and set lull_mod = 0.
@@ -1049,7 +1049,7 @@ impl GeneratorContext {
 
             let file_size = file_entry.size();
 
-            // upstream: sender.c:421-429 - in append mode, refuse to send a
+            // upstream: sender.c:422-430 - in append mode, refuse to send a
             // source that has shrunk below the length recorded when the file
             // list was built (`st.st_size < F_LENGTH(file)`). Appending only
             // ever extends a file, so a now-shorter source would corrupt the
@@ -1062,7 +1062,7 @@ impl GeneratorContext {
                 continue;
             }
 
-            // upstream: sender.c:462-471 - a source read error during
+            // upstream: sender.c:463-472 - a source read error during
             // match_sums() is not fatal. map_ptr() zeroed the unreadable window
             // and the token stream ran to completion; the file checksum is
             // poisoned (match.c:414-423) so the receiver redoes the file, and
@@ -1077,7 +1077,7 @@ impl GeneratorContext {
                     .open_source_unbuffered(&source_path, file_size)
                 {
                     Ok(triple) => triple,
-                    // upstream: sender.c:407-409 - a device source without
+                    // upstream: sender.c:408-410 - a device source without
                     // --copy-devices aborts with exit_cleanup(RERR_PROTOCOL).
                     Err(e) if is_protocol_violation(&e) => return Err(e),
                     // upstream: sender.c do_fstat - a failed fstat on the opened
@@ -1180,9 +1180,9 @@ impl GeneratorContext {
                     None
                 };
 
-                // upstream: sender.c:337 - the per-file updating_basis_file flag
+                // upstream: sender.c:338 - the per-file updating_basis_file flag
                 // gates match.c:211's backward-Copy suppression. On a redo-pass
-                // resend upstream negates make_backups (sender.c:323,329) so the
+                // resend upstream negates make_backups (sender.c:324,330) so the
                 // inplace send skips the duplicate backup; mirror that by
                 // clearing the backup flag for a resend (proto < 29 path).
                 let updating_basis_file = updating_basis_file(
@@ -1202,20 +1202,20 @@ impl GeneratorContext {
                     compat_flags: self.compat_flags.as_ref(),
                     checksum_seed: self.checksum_seed,
                     updating_basis_file,
-                    // upstream: sender.c:109-110 - receive_sums() gives the
+                    // upstream: sender.c:113-114 - receive_sums() gives the
                     // LAST basis block this length instead of blength, and only
                     // when it is non-zero. The field is read and range-checked
-                    // at io.c:2061-2064, so it is always available here.
+                    // at io.c:2099-2102, so it is always available here.
                     remainder: sum_head.remainder,
                 };
                 // Upstream scans and emits tokens over the same map_ptr()
                 // window, so a read error is absorbed by the scan too. oc scans
                 // in a separate pass, so ScanSource gives that pass the same
-                // zero-fill-and-continue behaviour (fileio.c:299-306). The mmap
+                // zero-fill-and-continue behaviour (fileio.c:341-348). The mmap
                 // path has no io::Error to catch - a bad page raises SIGBUS -
                 // so it is left alone.
                 let mut scan_source = source_reader.map(|r| ScanSource::new(r, file_size));
-                // upstream: sender.c:760-763 then :768-769 - the source map and
+                // upstream: sender.c:762-765 then :768-769 - the source map and
                 // the match_sums() entry are announced per file, before the
                 // scan runs.
                 matching::trace_deltasum::trace_send_files_mapped(&source_path_display, file_size);
@@ -1266,7 +1266,7 @@ impl GeneratorContext {
                 // compute_file_checksum() call that re-opened and re-read the
                 // source file.
                 //
-                // upstream: io.c:859 - stats.total_written counts actual wire
+                // upstream: io.c:877 - stats.total_written counts actual wire
                 // bytes after each write() syscall, not the reconstructed file
                 // size. Wrap the delta+checksum write call in a CountingWriter
                 // so summary "sent N bytes" reflects the wire stream the
@@ -1318,7 +1318,7 @@ impl GeneratorContext {
                 };
                 bytes_sent += wire_bytes;
             } else {
-                // upstream: sender.c:385-400 - whole-file path; MSG_NO_SEND on open failure
+                // upstream: sender.c:386-401 - whole-file path; MSG_NO_SEND on open failure
                 // Use unbuffered reader: stream_whole_file_transfer manages its
                 // own 256 KB staging buffer with read_exact, so a BufReader would
                 // only add an extra memcpy per byte through its internal buffer.
@@ -1326,7 +1326,7 @@ impl GeneratorContext {
                     .open_source_unbuffered(&source_path, file_size)
                 {
                     Ok(triple) => triple,
-                    // upstream: sender.c:407-409 - a device source without
+                    // upstream: sender.c:408-410 - a device source without
                     // --copy-devices aborts with exit_cleanup(RERR_PROTOCOL).
                     Err(e) if is_protocol_violation(&e) => return Err(e),
                     // upstream: sender.c do_fstat - a failed fstat on the opened
@@ -1354,7 +1354,7 @@ impl GeneratorContext {
                 )?;
 
                 let checksum_algorithm = self.get_checksum_algorithm();
-                // upstream: io.c:859 - stats.total_written counts actual wire
+                // upstream: io.c:877 - stats.total_written counts actual wire
                 // bytes after each write() syscall, not the source file size.
                 // Wrap the whole-file stream in a CountingWriter so the summary
                 // "sent N bytes" reflects the post-compression wire stream the
@@ -1415,17 +1415,17 @@ impl GeneratorContext {
             }
             files_transferred += 1;
             transferred_file_size += file_size;
-            // upstream: sender.c:804 - `file->flags |= FLAG_FILE_SENT` once the
+            // upstream: sender.c:806 - `file->flags |= FLAG_FILE_SENT` once the
             // entry has actually been transferred, so a later redo request for
             // it clears append_mode/make_backups above. Skipped items
             // (diminished, open failure, non-regular) `continue` before here,
             // matching upstream which sets the flag only after a real send.
             sent_files.mark_sent(ndx);
 
-            // upstream: sender.c:395 successful_send() - the source unlink is
+            // upstream: sender.c:396 successful_send() - the source unlink is
             // DEFERRED, never run inline at send time. Upstream waits for the
             // receiver/generator to confirm the commit with MSG_SUCCESS(ndx)
-            // (io.c:1623-1637) and only then unlinks in successful_send().
+            // (io.c:1649-1663) and only then unlinks in successful_send().
             // Recording this entry as pending - instead of unlinking now - is
             // what makes --remove-source-files crash-safe: an interrupted,
             // failed, or redone transfer never deletes a source that did not
@@ -1436,11 +1436,11 @@ impl GeneratorContext {
                 self.pending_source_removals.mark_pending(ndx);
             }
 
-            // upstream: sender.c:445-446
+            // upstream: sender.c:446-447
             // rprintf(FINFO, "sender finished %s%s%s\n", path,slash,fname)
             debug_log!(Send, 1, "sender finished {}", file_entry.path().display());
 
-            // upstream: sender.c:461 - log_item(log_code, file, iflags, xname)
+            // upstream: sender.c:462 - log_item(log_code, file, iflags, xname)
             self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
 
             if let Some(cb) = progress.as_mut() {
@@ -1458,7 +1458,7 @@ impl GeneratorContext {
                 cb.on_file_transferred(&event);
             }
 
-            // upstream: sender.c:462-471 - once the file has been sent, logged
+            // upstream: sender.c:463-472 - once the file has been sent, logged
             // and its progress ended, unmap_file() surfaces the saved read
             // errno: set IOERR_GENERAL (exit 23), report it, and move on to the
             // next file rather than aborting the run.
@@ -1466,7 +1466,7 @@ impl GeneratorContext {
                 self.record_read_errors(&mut *writer, &err, &source_path_display)?;
             }
 
-            // upstream: sender.c:261 - send extra file lists at bottom of loop
+            // upstream: sender.c:264 - send extra file lists at bottom of loop
             if inc_recurse {
                 self.send_extra_file_lists(
                     &mut *writer,
@@ -1478,7 +1478,7 @@ impl GeneratorContext {
             }
 
             // Check deadline at file boundary after sending each file.
-            // Upstream rsync (io.c:825) hard-exits via exit_cleanup(RERR_TIMEOUT).
+            // Upstream rsync (io.c:843) hard-exits via exit_cleanup(RERR_TIMEOUT).
             // We return an error to match: the sender cannot gracefully stop because
             // the receiver has already sent pending file requests that expect responses.
             // The error propagates up, causing the connection to close and the remote
@@ -1522,13 +1522,13 @@ impl GeneratorContext {
         // Cache flist_writer back for potential reuse (e.g., phase 2).
         self.incremental.flist_writer_cache = Some(flist_writer);
 
-        // upstream: sender.c:488-489
+        // upstream: sender.c:489-490
         // rprintf(FINFO, "send files finished\n")
         debug_log!(Send, 1, "send files finished");
 
-        // upstream: sender.c:485-486 - if (io_error != save_io_error &&
+        // upstream: sender.c:486-487 - if (io_error != save_io_error &&
         // protocol_version >= 30) send_msg_int(MSG_IO_ERROR, io_error);
-        // upstream: sender.c:815 match_report() - the once-per-run delta totals,
+        // upstream: sender.c:818 match_report() - the once-per-run delta totals,
         // printed after the send loop has finished every file. `data` is
         // `stats.literal_data` (match.c:486), the cumulative literal-byte count.
         // Upstream prints it whether or not any delta ran, leaving the counters
@@ -1547,7 +1547,7 @@ impl GeneratorContext {
             }
         }
 
-        // upstream: sender.c:485-493 - after the transfer loop exits, the sender
+        // upstream: sender.c:486-494 - after the transfer loop exits, the sender
         // sends io_error (if changed) and a final NDX_DONE. This NDX_DONE is the
         // "goodbye" that tells the client's generator to proceed with its own
         // goodbye handshake. Without it, the client hangs waiting for this marker.
@@ -1576,7 +1576,7 @@ impl GeneratorContext {
     /// returning the `io_error` bits the caller must OR into the transfer's
     /// accumulated error state.
     ///
-    /// Mirrors upstream `successful_send()` (sender.c:395): the source is
+    /// Mirrors upstream `successful_send()` (sender.c:396): the source is
     /// re-stat'd through a confined parent descriptor (`do_stat_atfd` under
     /// `--copy-links`, else `do_lstat_atfd`) and is only unlinked - through that
     /// same descriptor - when it still matches the size and modification time
@@ -1589,14 +1589,14 @@ impl GeneratorContext {
     /// `emit_sender_diagnostic`, which is where the `got_xfer_error` flag and
     /// the `MSG_ERROR_XFER` frame to the client both come from.
     ///
-    /// The dev/ino "destination file" guard (sender.c:433-440) is gated on
+    /// The dev/ino "destination file" guard (sender.c:434-441) is gated on
     /// `local_server` upstream. The network generator is never `local_server`
     /// (local transfers use the engine copy path), so that guard lives only on
     /// the local-copy side.
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:395` `successful_send()`
+    /// - `sender.c:396` `successful_send()`
     /// - `options.c:765` `remove_source_files` global
     fn remove_source_file_if_requested(
         &self,
@@ -1604,18 +1604,18 @@ impl GeneratorContext {
         display_name: &Path,
         recorded: RecordedSourceIdentity,
     ) -> SourceRemovalOutcome {
-        // upstream: sender.c:405-406 - bail before any FS calls when the flag is off.
+        // upstream: sender.c:406-407 - bail before any FS calls when the flag is off.
         if !self.config.flags.remove_source_files {
             return SourceRemovalOutcome::clean();
         }
-        // upstream: sender.c:405-406 - successful_send() is a no-op when
+        // upstream: sender.c:406-407 - successful_send() is a no-op when
         // do_xfers is false (dry-run). Mirror that early return so --dry-run
         // never touches the filesystem.
         if self.config.flags.dry_run {
             return SourceRemovalOutcome::clean();
         }
 
-        // upstream: sender.c:408-455 - the parent resolve, the fd-relative
+        // upstream: sender.c:409-456 - the parent resolve, the fd-relative
         // re-stat and the unlink are ONE decision about ONE directory entry,
         // so they live together in a free function the guard tests drive
         // directly.
@@ -1632,7 +1632,7 @@ impl GeneratorContext {
     ///
     /// This is the sender-side reaction to a received `MSG_SUCCESS`, mirroring
     /// upstream's `successful_send()` being invoked from the message handler
-    /// (`io.c:1637`). The wire index is mapped back to its flat file-list entry
+    /// (`io.c:1663`). The wire index is mapped back to its flat file-list entry
     /// and the source is unlinked only if this sender actually deferred a
     /// removal for it - an index the sender never marked pending (a duplicate
     /// confirmation, or an up-to-date entry the sender never transmitted) is
@@ -1650,9 +1650,9 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1623-1637` - `MSG_SUCCESS` receipt drives `successful_send(val)`.
-    /// - `sender.c:395` - `successful_send()` unlink + guards.
-    /// - `sender.c:412-414` - `change_pathname(file, NULL, 0)` then
+    /// - `io.c:1649-1663` - `MSG_SUCCESS` receipt drives `successful_send(val)`.
+    /// - `sender.c:396` - `successful_send()` unlink + guards.
+    /// - `sender.c:413-415` - `change_pathname(file, NULL, 0)` then
     ///   `f_name(file, fname)` is the name every diagnostic below prints.
     pub(crate) fn confirm_source_removal(&mut self, wire_ndx: i32) -> SourceRemovalOutcome {
         if wire_ndx < 0 {
@@ -1685,7 +1685,7 @@ impl GeneratorContext {
     ///
     /// Upstream has no batched drain to mirror: `read_a_msg()` calls
     /// `successful_send(val)` the instant a `MSG_SUCCESS` frame is demultiplexed
-    /// (`io.c:1793-1807`), so the unlink and its `FERROR_XFER` happen wherever
+    /// (`io.c:1831-1845`), so the unlink and its `FERROR_XFER` happen wherever
     /// the sender happened to be doing I/O - during `send_files()` and again
     /// inside `read_final_goodbye()`. Our reader accumulates the indices instead
     /// of dispatching them, so the eagerness upstream gets for free has to be
@@ -1693,8 +1693,8 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1793-1807` - `MSG_SUCCESS` dispatches `successful_send(val)` inline
-    /// - `sender.c:395` - `successful_send()` performs the guarded unlink
+    /// - `io.c:1831-1845` - `MSG_SUCCESS` dispatches `successful_send(val)` inline
+    /// - `sender.c:396` - `successful_send()` performs the guarded unlink
     /// - `log.c:337-338`, `log.c:357-367` - `FERROR_XFER` sets `got_xfer_error`
     ///   and, on a server, forwards the text as `MSG_ERROR_XFER`
     pub(crate) fn drain_confirmed_source_removals<W: Write>(
@@ -1727,7 +1727,7 @@ impl GeneratorContext {
 /// `csum_length = SUM_LENGTH` and negates `append_mode`/`make_backups` around
 /// the redo `recv_generator` call (generator.c:2178-2216). The sender mirrors
 /// this from its side by keying off `FLAG_FILE_SENT`: a resend is a
-/// full-content transfer, not another append delta (sender.c:319-335,482-483).
+/// full-content transfer, not another append delta (sender.c:320-336,483-484).
 /// Without it the sender would take the no-signature append path and leave the
 /// block sums the receiver just sent unread on the wire, desyncing the stream
 /// against a real upstream peer.
@@ -1741,13 +1741,13 @@ struct SentFileTracker {
 
 impl SentFileTracker {
     /// Returns true when `ndx` was already transferred, i.e. this request is a
-    /// redo-pass resend (upstream `file->flags & FLAG_FILE_SENT`, sender.c:610).
+    /// redo-pass resend (upstream `file->flags & FLAG_FILE_SENT`, sender.c:611).
     fn is_resend(&self, ndx: usize) -> bool {
         self.sent.get(ndx).copied().unwrap_or(false)
     }
 
     /// Records that `ndx` has now been transferred, so any later request for it
-    /// is a resend (upstream `file->flags |= FLAG_FILE_SENT`, sender.c:804).
+    /// is a resend (upstream `file->flags |= FLAG_FILE_SENT`, sender.c:806).
     fn mark_sent(&mut self, ndx: usize) {
         if ndx >= self.sent.len() {
             self.sent.resize(ndx + 1, false);
@@ -1759,7 +1759,7 @@ impl SentFileTracker {
 /// Source-file identity recorded in the file list, compared against a fresh
 /// re-stat before `--remove-source-files` unlinks the source.
 ///
-/// upstream: `sender.c:442` compares `st.st_size` / `st.st_mtime` /
+/// upstream: `sender.c:443` compares `st.st_size` / `st.st_mtime` /
 /// `ST_MTIME_NSEC` against the file-list `F_LENGTH` / `modtime` / `F_MOD_NSEC`.
 #[derive(Clone, Copy)]
 struct RecordedSourceIdentity {
@@ -1774,7 +1774,7 @@ struct RecordedSourceIdentity {
 /// only when the recorded timestamp carried nanoseconds (upstream gates the
 /// nsec compare on `NSEC_BUMP`, i.e. a transmitted `FLAG_MOD_NSEC`).
 ///
-/// upstream: sender.c:442-451
+/// upstream: sender.c:443-452
 const fn source_changed_since_flist(
     recorded: RecordedSourceIdentity,
     current_size: u64,
@@ -1799,7 +1799,7 @@ const fn source_changed_since_flist(
 /// vanished/general distinction, exactly as upstream reaches `map_file` only
 /// after a successful `fstat`.
 ///
-/// upstream: sender.c:745 - `if (append_mode > 0 && st.st_size < F_LENGTH(file))`
+/// upstream: sender.c:747 - `if (append_mode > 0 && st.st_size < F_LENGTH(file))`
 fn source_diminished_below_flist(source_path: &Path, flist_len: u64) -> bool {
     std::fs::metadata(source_path).is_ok_and(|meta| meta.len() < flist_len)
 }
@@ -1832,13 +1832,13 @@ fn source_diminished_below_flist(source_path: &Path, flist_len: u64) -> bool {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/sender.c:416` - `dfd = secure_sender_parent_fd(file, fname, &bname)`
-/// - `rsync-3.5.0/sender.c:421-425` - the `secure-open-parent` failure arm
-/// - `rsync-3.5.0/sender.c:426-428` - `do_stat_atfd` / `do_lstat_atfd` on `dfd`
-/// - `rsync-3.5.0/sender.c:442-451` - the size/mtime changed-file guard
-/// - `rsync-3.5.0/sender.c:453` - `secure_remove_source_file(dfd, bname)`
-/// - `rsync-3.5.0/sender.c:201-203` - that function, `do_unlink_atfd(dfd, bname, 0)`
-/// - `rsync-3.5.0/sender.c:455-459` - the shared `failed:` label, where `ENOENT`
+/// - `rsync-3.5.1/sender.c:417` - `dfd = secure_sender_parent_fd(file, fname, &bname)`
+/// - `rsync-3.5.1/sender.c:422-426` - the `secure-open-parent` failure arm
+/// - `rsync-3.5.1/sender.c:427-429` - `do_stat_atfd` / `do_lstat_atfd` on `dfd`
+/// - `rsync-3.5.1/sender.c:443-452` - the size/mtime changed-file guard
+/// - `rsync-3.5.1/sender.c:454` - `secure_remove_source_file(dfd, bname)`
+/// - `rsync-3.5.1/sender.c:204-206` - that function, `do_unlink_atfd(dfd, bname, 0)`
+/// - `rsync-3.5.1/sender.c:456-460` - the shared `failed:` label, where `ENOENT`
 ///   from ANY of the three operations is the benign "already removed" notice
 #[cfg(unix)]
 fn remove_confirmed_source(
@@ -1849,17 +1849,17 @@ fn remove_confirmed_source(
 ) -> SourceRemovalOutcome {
     use std::os::fd::AsFd as _;
 
-    // upstream: sender.c:416 - resolve the parent ONCE. Both the re-stat and
+    // upstream: sender.c:417 - resolve the parent ONCE. Both the re-stat and
     // the unlink below run against this one descriptor.
     let parent = match fast_io::ConfinedFallback::confined().parent_at(source_path) {
         Ok(parent) => parent,
-        // upstream: sender.c:421-425 + 455-459 - a refused parent is
+        // upstream: sender.c:422-426 + 455-459 - a refused parent is
         // failed_op = "secure-open-parent", which shares the `failed:` label,
         // and therefore the ENOENT-is-benign arm, with the other two failures.
         Err(error) => return report_removal_failure("secure-open-parent", display_name, &error),
     };
 
-    // upstream: sender.c:426-428 - do_stat_atfd under --copy-links, else
+    // upstream: sender.c:427-429 - do_stat_atfd under --copy-links, else
     // do_lstat_atfd; the path-based pair only on the declined arm.
     let restat = match &parent {
         Some((dirfd, leaf)) => {
@@ -1879,12 +1879,12 @@ fn remove_confirmed_source(
     };
     let (size, mtime, mtime_nsec) = match restat {
         Ok(identity) => identity,
-        // upstream: sender.c:429-430,455-459 - ENOENT is the benign FINFO
+        // upstream: sender.c:430-431,456-460 - ENOENT is the benign FINFO
         // notice, anything else is rsyserr(FERROR_XFER) -> exit 23.
         Err(error) => return report_removal_failure("re-lstat", display_name, &error),
     };
 
-    // upstream: sender.c:442-451 - refuse to remove a source that changed size
+    // upstream: sender.c:443-452 - refuse to remove a source that changed size
     // or modification time since it entered the file list. Upstream reports
     // this at FERROR_XFER, exactly like the three failed_op arms.
     if source_changed_since_flist(recorded, size, mtime, mtime_nsec) {
@@ -1894,7 +1894,7 @@ fn remove_confirmed_source(
         ));
     }
 
-    // upstream: sender.c:453 - secure_remove_source_file(dfd, bname) through the
+    // upstream: sender.c:454 - secure_remove_source_file(dfd, bname) through the
     // very descriptor the re-stat used, or do_unlink(fname) on the declined arm.
     let removal = match &parent {
         Some((dirfd, leaf)) => fast_io::unlinkat(dirfd.as_fd(), leaf, fast_io::UnlinkFlags::File),
@@ -1902,7 +1902,7 @@ fn remove_confirmed_source(
     };
     match removal {
         Ok(()) => {
-            // upstream: sender.c:461-462 - INFO_GTE(REMOVE,1) success notice.
+            // upstream: sender.c:462-463 - INFO_GTE(REMOVE,1) success notice.
             info_log!(Remove, 1, "removing source {}", display_name.display());
             SourceRemovalOutcome::clean()
         }
@@ -1951,7 +1951,7 @@ fn remove_confirmed_source(
 /// error bit; anything else is `rsyserr(FERROR_XFER, ...)`, which upstream
 /// turns into `got_xfer_error` -> exit 23.
 ///
-/// upstream: `rsync-3.5.0/sender.c:455-459`
+/// upstream: `rsync-3.5.1/sender.c:456-460`
 fn report_removal_failure(
     op: &str,
     display_name: &Path,
@@ -2121,7 +2121,7 @@ mod sender_remove_guard_tests {
 
     #[test]
     fn re_lstat_failure_leaves_the_path_unquoted() {
-        // Output fidelity: upstream sender.c:459 emits the path with a bare
+        // Output fidelity: upstream sender.c:460 emits the path with a bare
         // %s, never full_fname(), so the diagnostic carries no surrounding
         // quotes. This fails on the pre-fix code that wrapped the path in `"`.
         let error = io::Error::from_raw_os_error(13);
@@ -2165,7 +2165,7 @@ mod sender_remove_guard_tests {
     #[test]
     fn grown_source_is_not_removed() {
         // Data safety: the user appended to the file after it entered the flist;
-        // removing it now would destroy data we never sent (sender.c:442).
+        // removing it now would destroy data we never sent (sender.c:443).
         let r = recorded(1024, 1_700_000_000, 0);
         assert!(source_changed_since_flist(r, 2048, 1_700_000_000, 0));
     }
@@ -2173,7 +2173,7 @@ mod sender_remove_guard_tests {
     #[test]
     fn retouched_source_is_not_removed() {
         // Data safety: same size but a newer mtime means the file was rewritten
-        // in place; upstream refuses the remove (sender.c:442 st_mtime compare).
+        // in place; upstream refuses the remove (sender.c:443 st_mtime compare).
         let r = recorded(1024, 1_700_000_000, 0);
         assert!(source_changed_since_flist(r, 1024, 1_700_000_500, 0));
     }
@@ -2229,7 +2229,7 @@ mod sender_remove_guard_tests {
 /// `module_dir` so a parent flipped to point outside the module cannot be
 /// walked through.
 ///
-/// upstream: `rsync-3.5.0/sender.c:395` `successful_send()`
+/// upstream: `rsync-3.5.1/sender.c:396` `successful_send()`
 #[cfg(all(test, unix))]
 mod sender_remove_confinement_tests {
     use super::{RecordedSourceIdentity, remove_confirmed_source, stat_identity};
@@ -2302,7 +2302,7 @@ mod sender_remove_confinement_tests {
                 .as_deref()
                 .is_some_and(|text| text.contains("secure-open-parent")),
             "the refusal must carry upstream's failed_op text so the caller can \
-             emit it at FERROR_XFER (sender.c:421-425,455-459)"
+             emit it at FERROR_XFER (sender.c:422-426,456-460)"
         );
     }
 
@@ -2337,7 +2337,7 @@ mod sender_remove_confinement_tests {
 
     /// The fd-relative re-stat must still be a re-stat: a source rewritten
     /// since it entered the file list is kept, exactly as on the path-based
-    /// arm (sender.c:442-451). A stat that compared nothing would delete it.
+    /// arm (sender.c:443-452). A stat that compared nothing would delete it.
     #[test]
     fn a_source_that_changed_since_the_flist_is_kept() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -2362,7 +2362,7 @@ mod sender_remove_confinement_tests {
                 .as_deref()
                 .is_some_and(|text| text.contains("Skipping sender remove for changed file")),
             "upstream reports the changed-file refusal at FERROR_XFER, not on \
-             local stderr (sender.c:442-451)"
+             local stderr (sender.c:443-452)"
         );
         assert!(source.exists(), "a changed source must not be removed");
     }
@@ -2370,7 +2370,7 @@ mod sender_remove_confinement_tests {
     /// A source that vanished before the confirmation arrived is upstream's
     /// benign "already removed" notice, not an error bit - the shared `failed:`
     /// label folds `ENOENT` from the parent resolve and the re-stat alike into
-    /// the same `FINFO` (sender.c:455-458).
+    /// the same `FINFO` (sender.c:456-459).
     #[test]
     fn a_vanished_source_is_not_an_error() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -2402,7 +2402,7 @@ mod sender_diminished_guard_tests {
     /// A source that shrank below the length recorded in the file list must be
     /// skipped: appending only extends a file, so re-sending a now-shorter
     /// source would corrupt the destination's preserved prefix
-    /// (sender.c:421 `st.st_size < F_LENGTH(file)`).
+    /// (sender.c:422 `st.st_size < F_LENGTH(file)`).
     #[test]
     fn shrunk_source_is_skipped() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -2449,7 +2449,7 @@ mod sender_diminished_guard_tests {
 mod phase2_guard_tests {
     //! Terminal-phase abort guard for the sender loop.
     //!
-    //! upstream: sender.c:312-317 - once `send_files()` has advanced into phase
+    //! upstream: sender.c:313-318 - once `send_files()` has advanced into phase
     //! 2 (the final phase, where the sender has already emitted its own phase
     //! done and only drains the receiver's end-of-phase `NDX_DONE`
     //! acknowledgements), a valid in-range transfer request is a protocol
@@ -2616,7 +2616,7 @@ mod phase2_guard_tests {
         wire.extend_from_slice(&ITEM_TRANSFER_LE);
 
         let err = drive(&mut ctx, wire).expect_err("phase-2 request must abort");
-        // upstream sender.c:316 exit_cleanup(RERR_PROTOCOL) (exit 2). oc tags the
+        // upstream sender.c:317 exit_cleanup(RERR_PROTOCOL) (exit 2). oc tags the
         // InvalidData error as a ProtocolViolation so the core exit-code mapper
         // yields RERR_PROTOCOL(2), not RERR_STREAMIO(12). The wire kind and text
         // stay identical to the receiver's goodbye NDX_DONE guard.
@@ -2793,7 +2793,7 @@ mod proto29_keepalive_tests {
     //!
     //! A <=3.0.x generator running `--timeout` writes `NDX == cur_flist->used`
     //! followed by `iflags == ITEM_IS_NEW` as its keep-alive (3.0.9
-    //! io.c:953-968). The sender consumes the frame, answers with its own
+    //! io.c:971-986). The sender consumes the frame, answers with its own
     //! keepalive (`if (am_sender) maybe_send_keepalive(time(NULL),
     //! MSK_ALLOW_FLUSH)`, rsync.c:389-390) and re-enters the read loop.
 
@@ -2815,7 +2815,7 @@ mod proto29_keepalive_tests {
 
     /// The empty `MSG_DATA` keepalive on the wire: a 4-byte multiplex header
     /// with payload length 0 and tag `MPLEX_BASE + MSG_DATA` (7). This is the
-    /// exact frame upstream's `maybe_send_keepalive` emits (io.c:1633).
+    /// exact frame upstream's `maybe_send_keepalive` emits (io.c:1659).
     const EMPTY_MSG_DATA_FRAME: [u8; 4] = [0x00, 0x00, 0x00, 0x07];
 
     /// Builds a sender at `protocol` over a single source file, so the
@@ -2934,14 +2934,14 @@ mod proto29_keepalive_tests {
 mod append_redo_tests {
     //! Redo-pass append desync guard for the sender loop.
     //!
-    //! upstream: sender.c:319-338,482-483 - the sender tracks `FLAG_FILE_SENT`
+    //! upstream: sender.c:320-339,483-484 - the sender tracks `FLAG_FILE_SENT`
     //! per file. The first request for an entry is sent as an append delta
     //! (`append_mode > 0`, no block signature - receive_sums returns early at
     //! generator.c:786). On a redo request the receiver's generator has already
     //! restored `csum_length = SUM_LENGTH` and negated `append_mode`
     //! (check_for_finished_files, generator.c:2178-2216) and now transmits a
     //! full block signature. The sender must negate `append_mode` too
-    //! (sender.c:324) so it reads those block sums and does a full-content
+    //! (sender.c:325) so it reads those block sums and does a full-content
     //! transfer. A static append branch would skip the block-sum read and leave
     //! them on the wire, desyncing every subsequent NDX against a real upstream
     //! peer.
@@ -3021,7 +3021,7 @@ mod append_redo_tests {
     /// A file first sent as an append delta and then re-requested on the redo
     /// pass must, on the resend, read the receiver's full block signature and
     /// perform a full-content transfer - never a second append that skips the
-    /// block sums (sender.c:319-335,482-483).
+    /// block sums (sender.c:320-336,483-484).
     ///
     /// The redo request carries 5 block sums (100 wire bytes) the receiver's
     /// generator produced after negating `append_mode` for the redo
@@ -3071,7 +3071,7 @@ mod append_redo_tests {
             "append send + redo resend both count as transfers"
         );
         // #178: total_transferred_size accumulates F_LENGTH at each transfer
-        // point (sender.c:343), in lockstep with files_transferred. Both sends
+        // point (sender.c:344), in lockstep with files_transferred. Both sends
         // of the 100-byte file count, so the sender-side total is 2 * 100 = 200.
         // A generator that never summed the length reports 0 here, which is what
         // made every remote push print `Total transferred file size: 0`.
@@ -3093,9 +3093,9 @@ mod append_redo_tests {
 mod inc_recurse_lookahead_tests {
     //! Sub-list pacing guard for the INC_RECURSE sender.
     //!
-    //! upstream: `sender.c:231,265` call `send_extra_file_list(f_out,
+    //! upstream: `sender.c:234,268` call `send_extra_file_list(f_out,
     //! MIN_FILECNT_LOOKAHEAD)`, whose loop head
-    //! (`flist.c:2139 while (file_total - file_old_total < at_least)`) is
+    //! (`flist.c:2375 while (file_total - file_old_total < at_least)`) is
     //! re-tested on every iteration. The sender therefore keeps roughly 1000
     //! entries queued ahead of the sub-list the receiver is working through and
     //! stops - it never pushes the whole tree up front.
@@ -3144,7 +3144,7 @@ mod inc_recurse_lookahead_tests {
         /// sender believes its next read can be served without blocking.
         ///
         /// This is the signal the sender reads as "am I idle?" (upstream's
-        /// `poll()` returning 0, io.c:851). Setting it decides which of the two
+        /// `poll()` returning 0, io.c:869). Setting it decides which of the two
         /// lookahead mechanisms the fixture exercises: `true` models a receiver
         /// keeping pace, so only the `MIN_FILECNT_LOOKAHEAD` floor runs and the
         /// burst is the floor's alone; `false` models a sender with time on its
@@ -3288,9 +3288,9 @@ mod inc_recurse_lookahead_tests {
 
     #[test]
     fn an_idle_sender_grows_the_lookahead_past_the_floor() {
-        // upstream io.c:851-857 - when the poll ahead of a read finds nothing
+        // upstream io.c:869-875 - when the poll ahead of a read finds nothing
         // ready, the sender spends the wait queueing one more sub-list
-        // (`at_least = -1` resolves to `backlog + 1` at flist.c:2407) instead of
+        // (`at_least = -1` resolves to `backlog + 1` at flist.c:2647) instead of
         // parking with the window pinned at the floor.
         //
         // The WHY: the floor is a floor, not a target. Stopping at it leaves the
@@ -3323,8 +3323,8 @@ mod inc_recurse_lookahead_tests {
 mod sender_batch_flush_tests {
     //! Daemon-sender write-batching guard (#190).
     //!
-    //! upstream: io.c:640-724 `perform_io()` drains `iobuf.out` only while
-    //! blocking on input; a request already buffered (io.c:643
+    //! upstream: io.c:658-742 `perform_io()` drains `iobuf.out` only while
+    //! blocking on input; a request already buffered (io.c:661
     //! `iobuf.in.len >= needed`) returns without a flush, so the sender
     //! coalesces many per-file deltas into one socket write (~24 files/write)
     //! rather than forcing a flush per file. This pins that contract: with every

@@ -9,11 +9,11 @@
 //!
 //! Without this guard the destination retains the stale sibling and the
 //! transfer exits cleanly, which is the silent-incompatibility upstream's
-//! `flist.c:2436-2443` and `generator.c:1348-1354` were written to avoid.
+//! `flist.c:2676-2683` and `generator.c:1348-1354` were written to avoid.
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:2436-2443` - sender emits mode-0 sentinel when
+//! - `flist.c:2676-2683` - sender emits mode-0 sentinel when
 //!   `missing_args == 2` and `link_stat()` fails with `ENOENT`.
 //! - `generator.c:1348-1354` - receiver-side `delete_item()` branch on
 //!   `file->mode == 0 && missing_args == 2`.
@@ -54,7 +54,7 @@ fn build_fixture() -> Fixture {
     fs::write(dest.join("keep.txt"), b"old").expect("write dest keep.txt");
 
     // files-from list references both the present source AND a vanished
-    // sibling. Upstream's `flist.c:2436` raises the mode-0 sentinel for
+    // sibling. Upstream's `flist.c:2676` raises the mode-0 sentinel for
     // the ENOENT entry when --delete-missing-args is in effect.
     let files_from = root.path().join("filelist");
     fs::write(&files_from, "keep.txt\nghost.txt\n").expect("write filelist");
@@ -113,7 +113,7 @@ fn delete_missing_args_files_from_removes_vanished_destination() {
 /// Companion: `--ignore-missing-args` must NOT delete the destination
 /// sibling. Upstream gates `delete_item()` on `missing_args == 2`;
 /// `--ignore-missing-args` sets `missing_args == 1`, which skips the
-/// sentinel entirely (`flist.c:2436-2437`).
+/// sentinel entirely (`flist.c:2676-2677`).
 #[test]
 fn ignore_missing_args_files_from_preserves_destination() {
     let rsync_bin = test_support::oc_rsync_bin();

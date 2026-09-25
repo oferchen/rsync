@@ -90,8 +90,8 @@ pub fn run_daemon_transfer(
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
 
-    // upstream: main.c:1465-1466 - a remote source with a single operand sets
-    // `argc = 0` ("no dest arg") rather than erroring, and options.c:2311-2312
+    // upstream: main.c:1483-1484 - a remote source with a single operand sets
+    // `argc = 0` ("no dest arg") rather than erroring, and options.c:2320-2321
     // has already inferred list-only from the operand count.
     let fallback_dest = std::ffi::OsString::from(".");
     let (sources, destination) = split_transfer_operands(args, config, &fallback_dest)?;
@@ -261,7 +261,7 @@ pub fn run_daemon_transfer(
     // Protocol is already negotiated via @RSYNCD text exchange (not binary 4-byte).
     // upstream: compat.c:599 - when remote_protocol != 0, setup_protocol skips
     // the binary exchange.
-    // upstream: main.c:1549 - record the requested daemon source (module/path)
+    // upstream: main.c:1567 - record the requested daemon source (module/path)
     // as an implied include for the receiver-side flist validation
     // (CVE-2022-29154); is_daemon_connection strips the module on the receiver.
     // The implied-include filter (CVE-2022-29154) is a `String`-typed
@@ -310,7 +310,7 @@ pub fn run_daemon_transfer(
 /// transfer byte, and a daemon reached through `RSYNC_CONNECT_PROG` runs its
 /// `post-xfer exec` hook exactly there.
 ///
-/// upstream: socket.c:1046 `sock_exec()` forks the connect program and never
+/// upstream: socket.c:1054 `sock_exec()` forks the connect program and never
 /// signals it; the child ends when the socket closes.
 fn close_then_reap(
     reader: DaemonStreamReader,
@@ -324,7 +324,7 @@ fn close_then_reap(
 
 /// Executes a daemon transfer tunneled over a remote shell (SSH with `::` syntax).
 ///
-/// Mirrors upstream `main.c:1577-1586`: when `-e`/`--rsh` is active with a
+/// Mirrors upstream `main.c:1595-1604`: when `-e`/`--rsh` is active with a
 /// double-colon operand, the client spawns the remote shell with
 /// `rsync --server --daemon .` as the remote command, then speaks the
 /// `@RSYNCD:` daemon protocol over the shell's stdio pipes.
@@ -343,8 +343,8 @@ pub fn run_daemon_over_remote_shell(
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
 
-    // upstream: main.c:1465-1466 - a remote source with a single operand sets
-    // `argc = 0` ("no dest arg") rather than erroring, and options.c:2311-2312
+    // upstream: main.c:1483-1484 - a remote source with a single operand sets
+    // `argc = 0` ("no dest arg") rather than erroring, and options.c:2320-2321
     // has already inferred list-only from the operand count.
     let fallback_dest = std::ffi::OsString::from(".");
     let (sources, destination) = split_transfer_operands(args, config, &fallback_dest)?;
@@ -370,7 +370,7 @@ pub fn run_daemon_over_remote_shell(
         .iter()
         .find(|arg| arg.to_string_lossy().contains("::"))
         .ok_or_else(|| invalid_argument_error("no host::module operand found", 1))?;
-    // upstream: main.c:1632 - a daemon-over-remote-shell connection carries the
+    // upstream: main.c:1650 - a daemon-over-remote-shell connection carries the
     // port to the child as RSYNC_PORT rather than dialling it, but the value is
     // the same `rsync_port` the socket path uses. The operand is passed as an
     // `OsStr` so a non-UTF-8 path byte survives to the wire.
@@ -379,7 +379,7 @@ pub fn run_daemon_over_remote_shell(
         DaemonTransferRequest::resolve_default_port(config.daemon_port()),
     )?;
 
-    // upstream: main.c:603-613 - when daemon_connection > 0, the remote
+    // upstream: main.c:616-626 - when daemon_connection > 0, the remote
     // command is `rsync_path --server --daemon .` with no server_options().
     let shell_args = config
         .remote_shell()
@@ -438,7 +438,7 @@ pub fn run_daemon_over_remote_shell(
     let buffered = buf_reader.buffer().to_vec();
     let mut reader_half = buf_reader.into_inner();
 
-    // upstream: main.c:1549 - record the requested daemon source (module/path)
+    // upstream: main.c:1567 - record the requested daemon source (module/path)
     // as an implied include for the receiver-side flist validation
     // (CVE-2022-29154); is_daemon_connection strips the module on the receiver.
     // The implied-include filter (CVE-2022-29154) is a `String`-typed

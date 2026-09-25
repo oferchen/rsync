@@ -1,7 +1,7 @@
 // Tests for the per-type "created" stat counters that feed `--stats`
 // "Number of created files: N (reg: .., dir: .., link: .., dev: .., special: ..)".
 //
-// upstream: receiver.c:733-746 / sender.c:295-308 - every ITEM_IS_NEW entry
+// upstream: receiver.c:749-762 / sender.c:587-600 - every ITEM_IS_NEW entry
 // bumps `stats.created_*` for its type, whether or not it transferred file
 // data. An in-place update of a pre-existing file/symlink is transferred but
 // is NOT ITEM_IS_NEW, so it must never inflate the created counts. These tests

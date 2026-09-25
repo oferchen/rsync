@@ -20,7 +20,7 @@ struct Candidate {
     /// Basename as raw OS bytes. Distance scoring and the candidate sort both
     /// run on these bytes, never a lossy-UTF8 rendering, so non-UTF8 filenames
     /// score and order exactly as upstream's byte-oriented `fuzzy_distance()`
-    /// and bytewise `f_name_cmp()` dictate. upstream: util1.c:1588
+    /// and bytewise `f_name_cmp()` dictate. upstream: util1.c:1683
     /// `fuzzy_distance()`, flist.c `f_name_cmp()`.
     name: Vec<u8>,
     /// Absolute path to the candidate file.
@@ -131,7 +131,7 @@ impl FuzzyMatcher {
 }
 
 /// Collects the eligible fuzzy candidates in `dir`, sorted by basename to
-/// mirror upstream's sorted dirlist ordering (flist.c:3451
+/// mirror upstream's sorted dirlist ordering (flist.c:3694
 /// `flist_sort_and_clean`).
 ///
 /// Skips non-regular files, zero-length files, and the exact-name file (which,
@@ -365,7 +365,7 @@ mod tests {
         }
 
         /// WHY: upstream `fuzzy_distance()` / `find_filename_suffix()` and the
-        /// dirlist sort are byte-oriented (util1.c:1528,1588; flist.c
+        /// dirlist sort are byte-oriented (util1.c:1623,1683; flist.c
         /// `f_name_cmp`). Routing candidate names through `to_string_lossy`
         /// first collapses every distinct invalid byte to U+FFFD, so two
         /// different non-UTF8 basenames become the same string and score an

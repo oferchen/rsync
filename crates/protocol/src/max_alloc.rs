@@ -13,7 +13,7 @@
 //!
 //! - `options.c:203-204` - `#define DEFAULT_MAX_ALLOC (1024L * 1024 * 1024)` and
 //!   `size_t max_alloc = DEFAULT_MAX_ALLOC;`.
-//! - `options.c:1954-1965` - `max_alloc` is rewritten from `--max-alloc` /
+//! - `options.c:1960-1971` - `max_alloc` is rewritten from `--max-alloc` /
 //!   `RSYNC_MAX_ALLOC` during option processing.
 //! - `util2.c:73-81` - `my_alloc()` aborts with `RERR_MALLOC` once a request
 //!   reaches `max_alloc`.
@@ -32,7 +32,7 @@ static MAX_ALLOC: AtomicUsize = AtomicUsize::new(DEFAULT_MAX_ALLOC);
 
 /// Smallest `--max-alloc` upstream's `parse_size_arg` accepts.
 ///
-/// upstream: `options.c:2067` passes `min_value = 1024*1024` to
+/// upstream: `options.c:2073` passes `min_value = 1024*1024` to
 /// `parse_size_arg(max_alloc_arg, 'B', "max-alloc", 1024*1024, -1, True)`.
 pub const MIN_MAX_ALLOC: u64 = 1024 * 1024;
 
@@ -56,7 +56,7 @@ pub const ZERO_REJECTED: &str = "max-alloc must be greater than zero";
 /// `--max-alloc`: the client's own CLI, and the `--server` / daemon argv
 /// parsers that read what a peer forwarded. Upstream runs the identical block
 /// in `parse_arguments()` regardless of which end is executing it
-/// (`options.c:2065-2074`), so the rules must not be restated per caller -
+/// (`options.c:2071-2076`), so the rules must not be restated per caller -
 /// a caller that omits the zero check hands a peer the ability to disable the
 /// `my_alloc()` ceiling (CVE-2026-53794).
 ///
@@ -76,7 +76,7 @@ pub fn validate_max_alloc(limit: u64, display: &str) -> Result<u64, String> {
         return Err(ZERO_REJECTED.to_owned());
     }
 
-    // upstream: options.c:2067 + :1250-1259 - parse_size_arg rejects a value
+    // upstream: options.c:2073 + :1250-1259 - parse_size_arg rejects a value
     // below the 1 MiB minimum. do_big_num renders the constant as "1.00M";
     // 3.5.0 left the "or 0 for unlimited" clause in place even though zero is
     // now refused by the caller, so the text is mirrored verbatim.
@@ -102,7 +102,7 @@ pub fn validate_max_alloc(limit: u64, display: &str) -> Result<u64, String> {
 /// handling). A zero value is ignored, leaving the previous ceiling in place,
 /// mirroring upstream's rejection of a non-positive size in `parse_size_arg`.
 ///
-/// upstream: `options.c:2074-2080` assigns `max_alloc = size` after parsing.
+/// upstream: `options.c:2076-2089` assigns `max_alloc = size` after parsing.
 pub fn set_max_alloc(bytes: usize) {
     if bytes == 0 {
         return;

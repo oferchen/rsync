@@ -82,7 +82,7 @@ impl ClientConfigBuilder {
     /// Drops the ownership check on operator-supplied path symlinks.
     ///
     /// Local-only: upstream never forwards `--insecure-links` to a peer
-    /// (`options.c:3068`) and a daemon hard-refuses one that arrives anyway
+    /// (`options.c:3078`) and a daemon hard-refuses one that arrives anyway
     /// (`options.c:1084`), so a client can never relax a server's confinement.
     #[must_use]
     #[doc(alias = "--insecure-links")]
@@ -94,8 +94,8 @@ impl ClientConfigBuilder {
     /// Confines every operator- and peer-supplied path beneath `root`.
     ///
     /// The value is validated absolute at parse time
-    /// (`options.c:2386-2389`) and is mutually exclusive with
-    /// [`insecure_links`](Self::insecure_links) (`options.c:2391-2396`).
+    /// (`options.c:2395-2398`) and is mutually exclusive with
+    /// [`insecure_links`](Self::insecure_links) (`options.c:2400-2405`).
     #[must_use]
     #[doc(alias = "--confine-root")]
     pub fn confine_root(mut self, confine_root: Option<PathBuf>) -> Self {

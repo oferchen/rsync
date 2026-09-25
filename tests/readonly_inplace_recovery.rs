@@ -1,9 +1,9 @@
 //! A read-only destination must still be updated under `--inplace`.
 //!
 //! upstream 3.5.0 opens the in-place output through a three-arm chain
-//! (`receiver.c:1210-1224`): the primary `O_WRONLY|O_CREAT`, Linux's
+//! (`receiver.c:1227-1241`): the primary `O_WRONLY|O_CREAT`, Linux's
 //! `protected_regular` retry, and finally `open_readonly_inplace()`
-//! (`receiver.c:200-287`), which grants owner-write only for the duration of
+//! (`receiver.c:213-300`), which grants owner-write only for the duration of
 //! the open and restores the prior mode before returning.
 //!
 //! oc had the first two arms at both of its in-place open sites and neither had

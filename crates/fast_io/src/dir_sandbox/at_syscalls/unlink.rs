@@ -171,10 +171,10 @@ pub fn unlinkat(dirfd: BorrowedFd<'_>, name: &OsStr, flags: UnlinkFlags) -> io::
 /// out of (`insecure links = yes` / `--insecure-links`) or when there is no
 /// parent to anchor at. `successful_send()` spells that arm as the
 /// `do_unlink(fname)` half of its `dfd >= 0 ? ... : ...` removal ternary
-/// (`sender.c:453`); its confined half resolves the parent once with
-/// `secure_sender_parent_fd()` (`sender.c:416`), re-stats fd-relative
-/// (`sender.c:426-428`) and removes with `secure_remove_source_file()`
-/// (`sender.c:201-203`, itself `do_unlink_atfd`).
+/// (`sender.c:454`); its confined half resolves the parent once with
+/// `secure_sender_parent_fd()` (`sender.c:417`), re-stats fd-relative
+/// (`sender.c:427-429`) and removes with `secure_remove_source_file()`
+/// (`sender.c:204-206`, itself `do_unlink_atfd`).
 ///
 /// So a site that has a parent to anchor at should not reach here directly.
 /// Callers holding a `DirSandbox` should prefer [`unlinkat`] against the
@@ -441,7 +441,7 @@ fn effective_uid() -> u32 {
 ///
 /// - `delete.c:100` / `generator.c:342` -
 ///   `!(fp->mode & S_IWUSR) && !am_root && fp->flags & FLAG_OWNED_BY_US`
-/// - `flist.c:1513-1514` - `FLAG_OWNED_BY_US` is set when
+/// - `flist.c:1738-1739` - `FLAG_OWNED_BY_US` is set when
 ///   `am_generator && st.st_uid == our_uid`.
 fn needs_uid_write_fix(meta: &AtMetadata) -> bool {
     meta.mode() & S_IWUSR == 0 && effective_uid() != 0 && meta.uid() == effective_uid()

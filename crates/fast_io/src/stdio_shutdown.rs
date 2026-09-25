@@ -31,8 +31,8 @@
 //! handles are not sockets and the SSH / remote-shell transport this
 //! fix targets is Unix-only.
 //!
-//! upstream: io.c:943-963 `noop_io_until_death()` (read loop that
-//! terminates on EOF); io.c:217-232 `whine_about_eof()` treats EOF
+//! upstream: io.c:961-981 `noop_io_until_death()` (read loop that
+//! terminates on EOF); io.c:235-250 `whine_about_eof()` treats EOF
 //! inside the `kluge_around_eof` window as a clean exit; cleanup.c:254
 //! `noop_io_until_death()` call in `_exit_cleanup`.
 

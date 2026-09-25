@@ -89,7 +89,7 @@ pub fn send_file_request<W: Write + ?Sized>(
 ///
 /// # Upstream Reference
 ///
-/// - `sender.c:193-196` - sender reads xattr request when ITEM_REPORT_XATTR set
+/// - `sender.c:196-199` - sender reads xattr request when ITEM_REPORT_XATTR set
 /// - `xattrs.c:623-675` - `send_xattr_request()` writes request from generator
 #[allow(clippy::too_many_arguments)]
 pub fn send_file_request_xattr<W: Write + ?Sized>(
@@ -152,7 +152,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         // byte and echoes it back to the receiver (rsync.c:403-405). The
         // --partial-dir resume basis (FNAMECMP_PARTIAL_DIR) and the
         // `--inplace --backup` delta basis (FNAMECMP_BACKUP, which clears the
-        // sender's `updating_basis_file`, sender.c:628-629) are emitted here;
+        // sender's `updating_basis_file`, sender.c:629-630) are emitted here;
         // FNAME carries no byte, matching the ordinary request encoding.
         let emit_basis_type = fnamecmp_type != protocol::FnameCmpType::Fname;
         if emit_basis_type {
@@ -167,21 +167,21 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
         }
         writer.write_all(&iflags.to_le_bytes())?;
 
-        // upstream: sender.c:186-189 - the basis-type byte precedes the xname
+        // upstream: sender.c:189-192 - the basis-type byte precedes the xname
         // vstring, which precedes any xattr-request payload.
         if emit_basis_type {
             writer.write_all(&[u8::from(fnamecmp_type)])?;
         }
         if emit_xname {
             // upstream: generator.c:591,1948 write_vstring() - 1- or 2-byte
-            // length prefix then the basename bytes (io.c:2297), not a varint.
+            // length prefix then the basename bytes (io.c:2335), not a varint.
             protocol::write_vstring(writer, xname.unwrap_or(&[]))?;
         }
 
         // upstream: generator.c:592-599 - the xattr request payload follows the
         // basis/xname fields whenever ITEM_REPORT_XATTR is on the wire; the
         // peer's send_files() reads it under the identical condition
-        // (sender.c:85-87). want_xattr_optim combined with
+        // (sender.c:86-88). want_xattr_optim combined with
         // ITEM_XNAME_FOLLOWS+ITEM_LOCAL_CHANGE suppresses the payload on both
         // sides (generator.c:595-596), so the bit rides the wire with no
         // trailing request. Coupling the payload to the same `report_xattr`
@@ -217,7 +217,7 @@ pub fn send_file_request_xattr<W: Write + ?Sized>(
     sum_head.write(writer)?;
 
     // upstream: generator.c:787-788 - in append mode, generator skips writing
-    // signature blocks after sum_head. The sender's receive_sums() (sender.c:87-92)
+    // signature blocks after sum_head. The sender's receive_sums() (sender.c:88-96)
     // returns early without reading blocks, using sum_head to calculate existing length.
     if !config.append
         && let Some(ref sig) = signature

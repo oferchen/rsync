@@ -137,7 +137,7 @@ impl PipelineState {
     /// A sender declines a file with `MSG_NO_SEND` the instant it fails to open
     /// it, which can name a later request while an earlier one is still at the
     /// window front. Upstream's generator is NDX-addressed and retires the entry
-    /// by index regardless of order (io.c:1207-1256 `got_flist_entry_status`);
+    /// by index regardless of order (io.c:1225-1274 `got_flist_entry_status`);
     /// this mirrors that for oc's FIFO-positional window.
     pub fn retire_ndx(&mut self, ndx: i32) -> Option<usize> {
         let pos = self.pending.iter().position(|t| t.ndx() == ndx)?;

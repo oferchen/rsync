@@ -1,8 +1,8 @@
 //! `Total bytes sent` / `Total bytes received` accounting on a client pull.
 //!
 //! Upstream's `handle_stats()` makes the sender authoritative: it caches the
-//! raw descriptor counters `stats.total_read` (io.c:820) and
-//! `stats.total_written` (io.c:859) and, when it is a server sender, writes them
+//! raw descriptor counters `stats.total_read` (io.c:838) and
+//! `stats.total_written` (io.c:877) and, when it is a server sender, writes them
 //! over the wire (main.c:349-350). The client receiver reads them back and
 //! swaps their meaning (main.c:365-372): it prints the sender's `total_read` as
 //! `Total bytes sent` and the sender's `total_written` as `Total bytes
@@ -49,7 +49,7 @@ fn receive_stats_decodes_sender_counters_for_the_client_swap() {
     assert_eq!(sender_stats.total_written, sender_total_written);
     assert_eq!(sender_stats.total_size, sender_total_size);
 
-    // upstream: main.c:365-372,454-457 - the client receiver's report swaps the
+    // upstream: main.c:365-372,457-460 - the client receiver's report swaps the
     // pair: "Total bytes sent" is the sender's total_read (what the client sent,
     // as the sender read it), "Total bytes received" is the sender's
     // total_written (what the client received, as the sender wrote it).

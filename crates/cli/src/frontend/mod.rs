@@ -266,7 +266,7 @@ where
     // non-allowlisted syscall is answered with EPERM, so a first read taken
     // later - inside a sandboxed worker - would cache -1 and collapse
     // `dest_mode()`'s new-file result to mode 000.
-    // upstream: main.c:1877 `umask(orig_umask = umask(0));` runs in main()
+    // upstream: main.c:1904 `umask(orig_umask = umask(0));` runs in main()
     // before any privilege drop or sandbox setup.
     #[cfg(unix)]
     metadata::init_orig_umask();
@@ -282,7 +282,7 @@ where
     let daemon_alias_requested = daemon_invoked_via_program_name(&args, brand);
 
     // Check for --server --daemon (remote-shell daemon mode) BEFORE plain
-    // --server. upstream: main.c:1843-1844 dispatches start_daemon() when both
+    // --server. upstream: main.c:1870-1871 dispatches start_daemon() when both
     // am_server and am_daemon are set, before the normal server path.
     if server::server_daemon_mode_requested(&args) {
         return server::run_server_daemon_mode(&args, stderr);
@@ -321,7 +321,7 @@ where
     let raw_token_count = args.len();
     let exit_code = match parse_args(args) {
         Ok(parsed) => {
-            // upstream: options.c:2005 - `human_readable > 1 && argc == 2 &&
+            // upstream: options.c:2011 - `human_readable > 1 && argc == 2 &&
             // !am_server` preserves the historic meaning of a lone `-h` as
             // `--help`. When the only command-line token increments the
             // human-readable counter (`-h`, `-hh`, `-avh`, `--human-readable`),
@@ -497,7 +497,7 @@ const SIGNAL_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 /// exits with the rsync signal code, because no unwinding is going to happen.
 ///
 /// upstream: `rsync.c:684 sig_int()` only records the signal and lets the
-/// normal I/O path shut the transfer down (`io.c:750 got_kill_signal` ->
+/// normal I/O path shut the transfer down (`io.c:768 got_kill_signal` ->
 /// `handle_kill_signal` -> `cleanup.c:_exit_cleanup(RERR_SIGNAL)`).
 fn install_client_signal_handling() {
     use std::sync::atomic::{AtomicBool, Ordering};

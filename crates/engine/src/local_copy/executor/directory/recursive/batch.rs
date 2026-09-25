@@ -59,7 +59,7 @@ fn build_protocol_file_entry(
         // upstream: flist.c:send_file_entry() - symlink target is read and
         // included in the flist entry so batch replay can recreate symlinks.
         let link_target = fs::read_link(source_path).unwrap_or_default();
-        // upstream: flist.c:1465 - symlinks carry stat.st_size (the target byte
+        // upstream: flist.c:1690 - symlinks carry stat.st_size (the target byte
         // length), matching the directory case above; only devices/specials are
         // zeroed.
         let mut symlink_entry =
@@ -71,7 +71,7 @@ fn build_protocol_file_entry(
         // nodes carry their own S_IFMT type (and, for devices, the rdev),
         // never a regular-file entry, and devices/specials are size-zeroed.
         // Encoding them as a regular file makes an upstream --read-batch peer
-        // expect file data (exit 23, receiver.c:559 no_batched_update) and
+        // expect file data (exit 23, receiver.c:575 no_batched_update) and
         // mis-count the node as regular. `-a`/`-D` selects them for transfer,
         // so the batch flist has to preserve the type.
         #[cfg(unix)]
@@ -164,9 +164,9 @@ fn build_protocol_file_entry(
 /// Protocols 28 and 29 have no index; the cluster is named by the trailing
 /// `(dev, ino)` pair instead.
 ///
-/// upstream: `flist.c:599-625` computes `first_hlink_ndx` and the two xflags,
-/// `flist.c:668-672` writes the follower's index and abbreviates the entry, and
-/// `flist.c:741-753` writes the pre-30 `(dev, ino)` pair.
+/// upstream: `flist.c:824-850` computes `first_hlink_ndx` and the two xflags,
+/// `flist.c:893-897` writes the follower's index and abbreviates the entry, and
+/// `flist.c:966-978` writes the pre-30 `(dev, ino)` pair.
 fn apply_hardlink_fields(
     entry: &mut protocol::flist::FileEntry,
     metadata: &fs::Metadata,
@@ -178,7 +178,7 @@ fn apply_hardlink_fields(
     };
 
     if protocol_version >= 30 {
-        // upstream: flist.c:602-605 - a new group records its own index and is
+        // upstream: flist.c:827-830 - a new group records its own index and is
         // flagged XMIT_HLINK_FIRST; the sentinel is how the writer spells that.
         entry.set_hardlink_idx(if is_leader {
             u32::MAX
@@ -328,7 +328,7 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    /// upstream: flist.c:1465 - a symlink's `F_LENGTH` is its `st_size`, which
+    /// upstream: flist.c:1690 - a symlink's `F_LENGTH` is its `st_size`, which
     /// lstat reports as the target byte length. Batch capture must record the
     /// same value the network flist would, otherwise `--list-only`/`%l` and the
     /// `--stats` total computed from a replayed batch diverge from upstream.
@@ -356,11 +356,11 @@ mod tests {
         );
     }
 
-    /// upstream: flist.c:1669 - `file->mode = st.st_mode` is one assignment for
+    /// upstream: flist.c:1894 - `file->mode = st.st_mode` is one assignment for
     /// every type. A batch capture is the same flist the network path would
     /// send, so a symlink's recorded mode must be its lstat mode. On Linux that
     /// is 0o777 by kernel fiat; on the `CAN_CHMOD_SYMLINK` platforms
-    /// (rsync.h:455-456) it is whatever `lchmod` set, and a hardcoded constant
+    /// (rsync.h:456-457) it is whatever `lchmod` set, and a hardcoded constant
     /// would lose it. Asserting equality with lstat covers both.
     #[test]
     fn symlink_batch_entry_carries_the_lstat_mode() {

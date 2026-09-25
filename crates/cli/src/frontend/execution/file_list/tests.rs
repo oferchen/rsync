@@ -145,8 +145,8 @@ fn read_file_list_zero_terminated_no_trailing_null() {
 
 #[test]
 fn read_file_list_zero_terminated_strips_hash_and_semicolon_comments() {
-    // upstream: flist.c:2249 sets RL_DUMP_COMMENTS independent of eol_nulls,
-    // and io.c:1276 read_line() strips leading '#'/';' comment lines even with
+    // upstream: flist.c:2485 sets RL_DUMP_COMMENTS independent of eol_nulls,
+    // and io.c:1294 read_line() strips leading '#'/';' comment lines even with
     // NUL delimiters. Comment entries are dropped; normal entries are kept.
     let input = b"#comment\0keep.txt\0;also-comment\0other.txt\0";
     let mut reader = Cursor::new(input);
@@ -334,7 +334,7 @@ fn resolve_file_list_entries_files_from_with_relative_still_inserts_marker() {
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2571` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`,
+/// - `flist.c:2811` - `sanitize_path(fbuf, fbuf, "", 0, SP_KEEP_DOT_DIRS)`,
 ///   applied unconditionally to every line read from `filesfrom_fd`.
 #[test]
 fn resolve_file_list_entries_files_from_clamps_parent_dir_escape() {
@@ -369,7 +369,7 @@ fn resolve_file_list_entries_files_from_ordinary_entry_survives_the_clamp() {
 
 /// The clamp must not eat an entry's own `/./` marker.
 ///
-/// `SP_KEEP_DOT_DIRS` exists precisely so the split at `flist.c:2316` can still
+/// `SP_KEEP_DOT_DIRS` exists precisely so the split at `flist.c:2556` can still
 /// find the marker; the plain `SP_DEFAULT` dialect would strip it and silently
 /// move the entry's chdir pivot, changing where the file lands at the
 /// destination.
@@ -387,7 +387,7 @@ fn resolve_file_list_entries_files_from_clamp_keeps_the_entry_dot_marker() {
 #[test]
 fn resolve_file_list_entries_files_from_absolute_entry_is_taken_relative_to_the_root() {
     // upstream: `sanitize_path` skips one leading slash before walking the
-    // components (flist.c:2571 -> util1.c), so a `/absolute/path.txt`
+    // components (flist.c:2811 -> util1.c), so a `/absolute/path.txt`
     // files-from line names an entry INSIDE the transfer root, not a
     // filesystem-absolute path. Measured against rsync 3.5.0: a `/file` entry
     // transfers `<source>/file`; oc used to bail out on `is_absolute()` before
@@ -552,7 +552,7 @@ fn resolve_files_from_host_colon_prefix() {
     // UTS-V3-D regression: upstream's `testsuite/files-from.test` 4th
     // invocation passes `--files-from=localhost:scratch/filelist`. The
     // parser must recognise the hostspec form (upstream
-    // `options.c:3112-3138 check_for_hostspec`) and emit RemoteFile
+    // `options.c:3122-3148 check_for_hostspec`) and emit RemoteFile
     // with the host stripped. Without this fix the loader hit
     // `loader.rs:54` immediately with "No such file or directory".
     let files = vec![OsString::from("localhost:/remote/path.txt")];
@@ -595,7 +595,7 @@ fn resolve_files_from_daemon_module_spec_is_local() {
 
 #[test]
 fn resolve_files_from_remote_stdin_marker_falls_through() {
-    // upstream `options.c:2466-2469` aborts on `host:-`; we route through
+    // upstream `options.c:2475-2478` aborts on `host:-`; we route through
     // LocalFile so the downstream loader returns a clear error rather
     // than silently routing the literal `-` to the remote side.
     let files = vec![OsString::from("host:-")];

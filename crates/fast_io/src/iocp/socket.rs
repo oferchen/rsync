@@ -13,13 +13,13 @@
 //!
 //! Upstream rsync uses POSIX `read(2)` / `write(2)` against the socket fd in
 //! `safe_read` / `safe_write`
-//! (`target/interop/upstream-src/rsync-3.5.0/io.c:292` and `:369`). Windows
+//! (`target/interop/upstream-src/rsync-3.5.1/io.c:310` and `:369`). Windows
 //! has no direct equivalent because `read`/`write` on a `SOCKET` are
 //! synchronous; the closest async-capable primitive is `WSARecv` / `WSASend`
 //! with `OVERLAPPED`. The buffering and EOF semantics expected by the
 //! multiplex layer above (`crates/protocol`) are unchanged: an `Ok(0)` from a
 //! socket read means the peer cleanly closed the connection, mirroring
-//! `safe_read` exiting its loop on `n == 0` (`io.c:333`).
+//! `safe_read` exiting its loop on `n == 0` (`io.c:351`).
 //!
 //! # WSA_IO_PENDING
 //!
@@ -77,7 +77,7 @@ const DEFAULT_SOCKET_COMPLETION_KEY: usize = 2;
 /// from the completion port - Windows performs that cleanup when the socket
 /// handle is closed.
 ///
-/// Mirrors the buffering shape of upstream rsync's `safe_read` (`io.c:239`)
+/// Mirrors the buffering shape of upstream rsync's `safe_read` (`io.c:257`)
 /// in that the function returns whatever bytes the kernel hands back, leaving
 /// the multiplex layer above (`crates/protocol`) responsible for assembling
 /// frames.
@@ -143,7 +143,7 @@ impl IocpSocketReader {
     /// Receives bytes from the socket, returning the number transferred.
     ///
     /// `Ok(0)` indicates a graceful peer shutdown - upstream `safe_read`
-    /// breaks its loop on `n == 0` (`io.c:333`). Connection-reset and
+    /// breaks its loop on `n == 0` (`io.c:351`). Connection-reset and
     /// shutdown-on-the-other-side errors are mapped to `Ok(0)` to mirror that
     /// EOF semantic, matching how the io_uring socket reader handles
     /// `IORING_OP_RECV` returning `0` after a peer close.
@@ -224,7 +224,7 @@ impl IocpSocketReader {
 /// Async socket writer backed by `WSASend` and the shared IOCP pump.
 ///
 /// Like [`IocpSocketReader`], the writer does not own the SOCKET. It is the
-/// caller's job to close it. Mirrors upstream `safe_write` (`io.c:312`) in
+/// caller's job to close it. Mirrors upstream `safe_write` (`io.c:330`) in
 /// that a partial write returns the byte count and lets the caller loop -
 /// the multiplex layer above performs that loop in
 /// `crates/protocol/src/multiplex.rs`.
@@ -278,7 +278,7 @@ impl IocpSocketWriter {
     /// Sends bytes through the socket, returning the number transferred.
     ///
     /// A short return is possible when the socket buffer is full; upstream
-    /// `safe_write` re-issues the call in that case (`io.c:316-336`). The
+    /// `safe_write` re-issues the call in that case (`io.c:334-354`). The
     /// multiplex writer above handles re-issuance for us; this function
     /// simply returns whatever the kernel reports.
     pub fn send_async(&mut self, buf: &[u8]) -> io::Result<usize> {
@@ -434,7 +434,7 @@ fn await_completion(
         Ok(transferred) => Ok(transferred as usize),
         // `UnexpectedEof` from the pump corresponds to STATUS_END_OF_FILE,
         // which Winsock translates to a graceful close on the recv side.
-        // upstream: io.c:333 - safe_read breaks its loop on n == 0.
+        // upstream: io.c:351 - safe_read breaks its loop on n == 0.
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(0),
         Err(e) => Err(e),
     }

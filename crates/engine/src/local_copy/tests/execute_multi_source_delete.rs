@@ -1,6 +1,6 @@
 // Multi-source `--delete` convergence pins, measured against upstream rsync
-// 3.5.0 (flist.c:2499 send_file_list folds every operand into ONE flist;
-// flist.c:3364-3382 flist_sort_and_clean keeps the FIRST duplicate;
+// 3.5.0 (flist.c:2739 send_file_list folds every operand into ONE flist;
+// flist.c:3607-3625 flist_sort_and_clean keeps the FIRST duplicate;
 // generator.c:1924-1927 delete_in_dir sweeps each merged-flist directory once,
 // during the walk; generator.c:364-396 do_delete_pass for --delete-before;
 // generator.c:2901-2902 for --delete-after).
@@ -61,7 +61,7 @@ fn record_index(
 /// Upstream matrix cell `--delete srcA/ srcB/ dest/`: the merged flist
 /// protects every source's entries from the sweep, deletes exactly the two
 /// extraneous names, and the FIRST source's copy of a duplicate name wins at
-/// every depth (flist.c:3364-3382 "keep the first one").
+/// every depth (flist.c:3607-3625 "keep the first one").
 #[test]
 fn multi_source_delete_protects_siblings_and_first_source_wins() {
     let temp = tempdir().expect("tempdir");
@@ -92,12 +92,12 @@ fn multi_source_delete_protects_siblings_and_first_source_wins() {
     assert_eq!(
         fs::read(dest.join("common.txt")).expect("read common"),
         b"contentA",
-        "duplicate root name: FIRST source wins (flist.c:3364-3382)"
+        "duplicate root name: FIRST source wins (flist.c:3607-3625)"
     );
     assert_eq!(
         fs::read(dest.join("sub/shared.txt")).expect("read shared"),
         b"sharedA",
-        "duplicate nested name: FIRST source wins (flist.c:3364-3382)"
+        "duplicate nested name: FIRST source wins (flist.c:3607-3625)"
     );
 
     // Upstream itemizes a duplicate name once - the later copy is dropped

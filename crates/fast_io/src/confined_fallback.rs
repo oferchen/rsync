@@ -3,7 +3,7 @@
 //!
 //! Every `do_*_at()` wrapper in upstream `syscall.c` answers the same question
 //! before it touches the filesystem, and answers it the same way. Written out
-//! from `do_unlink_at()` (`rsync-3.5.0/syscall.c:658`), which is the shortest
+//! from `do_unlink_at()` (`rsync-3.5.1/syscall.c:797`), which is the shortest
 //! statement of it:
 //!
 //! ```c
@@ -31,7 +31,7 @@
 //! confinement root) is laundered into the very syscall the refusal was
 //! protecting against. Upstream names that test as wrong in its own
 //! words - a leaf swapped under it is a reason to "refuse rather than fall
-//! through" (`rsync-3.5.0/syscall.c:1695-1698` `do_fchmodat_nofollow()`). Arm 1
+//! through" (`rsync-3.5.1/syscall.c:1834-1837` `do_fchmodat_nofollow()`). Arm 1
 //! is chosen from configuration read before any I/O happens, never from a
 //! runtime errno.
 //!
@@ -43,11 +43,11 @@
 //! # The gate, precisely
 //!
 //! Arm 1 is [`session_optout_allowed`](crate::confinement::session_optout_allowed) -
-//! upstream `symlink_optout_allowed()` (`rsync-3.5.0/syscall.c:122`), which is
+//! upstream `symlink_optout_allowed()` (`rsync-3.5.1/syscall.c:139`), which is
 //! the whole gate on the operator arm because that arm is tested *above*
 //! `secure_relpath_active()` in every wrapper.
 //!
-//! `secure_relpath_active()` (`rsync-3.5.0/syscall.c:100`) is not a second gate
+//! `secure_relpath_active()` (`rsync-3.5.1/syscall.c:117`) is not a second gate
 //! here. Its first clause IS the opt-out, so it can never admit a call this
 //! module refuses; its remaining clauses (chroot, sender) select upstream's
 //! *other* tier, which resolves a transfer-relative parent through
@@ -56,13 +56,13 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/syscall.c:658` `do_unlink_at()` - the contract, quoted above.
-//! - `rsync-3.5.0/syscall.c:1402` `do_rmdir_at()` - same shape, `AT_REMOVEDIR`.
-//! - `rsync-3.5.0/syscall.c:1497` `do_open_at()` - same shape, and the leaf
+//! - `rsync-3.5.1/syscall.c:797` `do_unlink_at()` - the contract, quoted above.
+//! - `rsync-3.5.1/syscall.c:1541` `do_rmdir_at()` - same shape, `AT_REMOVEDIR`.
+//! - `rsync-3.5.1/syscall.c:1636` `do_open_at()` - same shape, and the leaf
 //!   carries `O_NOFOLLOW`.
-//! - `rsync-3.5.0/syscall.c:1866` `do_rename_at()` - same shape, both endpoints
+//! - `rsync-3.5.1/syscall.c:2005` `do_rename_at()` - same shape, both endpoints
 //!   walked independently.
-//! - `rsync-3.5.0/syscall.c:558` `owner_walk_parent()` - the walk arm 2 and
+//! - `rsync-3.5.1/syscall.c:704` `owner_walk_parent()` - the walk arm 2 and
 //!   arm 3 share, mirrored by [`owner_trusted_parent_kind`].
 
 use std::ffi::OsString;
@@ -170,9 +170,9 @@ impl ConfinedFallback {
     /// window the pair does not close. A site that must *inspect* an entry and
     /// then *act* on the very entry it inspected has to hold one descriptor
     /// across both, which is what upstream's `successful_send()` does: it
-    /// resolves the parent once (`sender.c:416`), re-stats through it
-    /// (`sender.c:426-428`), and unlinks through the same descriptor
-    /// (`sender.c:453`) before closing it.
+    /// resolves the parent once (`sender.c:417`), re-stats through it
+    /// (`sender.c:427-429`), and unlinks through the same descriptor
+    /// (`sender.c:454`) before closing it.
     ///
     /// `None` is arm 1 and `Err` is arm 3, exactly as for [`arm_for`]; the
     /// caller supplies the arm-1 path-based operation itself, as upstream does
@@ -199,9 +199,9 @@ impl ConfinedFallback {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:675` - arm 1, `return unlink(path)`.
-    /// - `rsync-3.5.0/syscall.c:676` - the walk shared by arms 2 and 3.
-    /// - `rsync-3.5.0/syscall.c:679` - arm 2, `unlinkat(dfd, bname, 0)`.
+    /// - `rsync-3.5.1/syscall.c:814` - arm 1, `return unlink(path)`.
+    /// - `rsync-3.5.1/syscall.c:815` - the walk shared by arms 2 and 3.
+    /// - `rsync-3.5.1/syscall.c:818` - arm 2, `unlinkat(dfd, bname, 0)`.
     ///
     /// [`rmdir_at`]: Self::rmdir_at
     ///
@@ -219,7 +219,7 @@ impl ConfinedFallback {
 
     /// Remove the empty directory at `path`.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:1402` `do_rmdir_at()` - the same three
+    /// upstream: `rsync-3.5.1/syscall.c:1541` `do_rmdir_at()` - the same three
     /// arms with `AT_REMOVEDIR` set "to require the target be a directory".
     ///
     /// # Errors
@@ -270,9 +270,9 @@ impl ConfinedFallback {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:1893` - arm 1, `return do_rename(...)`.
-    /// - `rsync-3.5.0/syscall.c:1894` - the source-side walk.
-    /// - `rsync-3.5.0/syscall.c:1904` - arm 2, `renameat` between both dirfds.
+    /// - `rsync-3.5.1/syscall.c:2032` - arm 1, `return do_rename(...)`.
+    /// - `rsync-3.5.1/syscall.c:2033` - the source-side walk.
+    /// - `rsync-3.5.1/syscall.c:2043` - arm 2, `renameat` between both dirfds.
     ///
     /// # Errors
     ///
@@ -314,7 +314,7 @@ impl ConfinedFallback {
     /// On arm 2 the leaf carries `O_NOFOLLOW` in addition to `flags`, exactly
     /// as upstream does - "so the basename itself isn't followed if it happens
     /// to be a pre-planted symlink, which is what we want for `O_CREAT|O_EXCL`"
-    /// (`rsync-3.5.0/syscall.c:1492-1495`). The walk defends the parent chain; the
+    /// (`rsync-3.5.1/syscall.c:1631-1634`). The walk defends the parent chain; the
     /// leaf is a separate decision and needs its own flag.
     ///
     /// On arm 1 the flags are passed verbatim: upstream's arm 1 is
@@ -324,9 +324,9 @@ impl ConfinedFallback {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:1515` - arm 1, `return do_open(...)`.
-    /// - `rsync-3.5.0/syscall.c:1516` - the walk shared by arms 2 and 3.
-    /// - `rsync-3.5.0/syscall.c:1519` - arm 2,
+    /// - `rsync-3.5.1/syscall.c:1654` - arm 1, `return do_open(...)`.
+    /// - `rsync-3.5.1/syscall.c:1655` - the walk shared by arms 2 and 3.
+    /// - `rsync-3.5.1/syscall.c:1658` - arm 2,
     ///   `openat(dfd, bname, flags | O_NOFOLLOW, mode)`.
     ///
     /// # Errors
@@ -352,14 +352,14 @@ impl ConfinedFallback {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:765` `do_symlink_at()`.
-    /// - `rsync-3.5.0/syscall.c:785` - arm 1, `return do_symlink(lnk, path)`.
-    /// - `rsync-3.5.0/syscall.c:786` - the walk shared by arms 2 and 3.
-    /// - `rsync-3.5.0/syscall.c:848` - arm 2, `symlinkat(lnk, dfd, bname)`.
+    /// - `rsync-3.5.1/syscall.c:904` `do_symlink_at()`.
+    /// - `rsync-3.5.1/syscall.c:924` - arm 1, `return do_symlink(lnk, path)`.
+    /// - `rsync-3.5.1/syscall.c:925` - the walk shared by arms 2 and 3.
+    /// - `rsync-3.5.1/syscall.c:987` - arm 2, `symlinkat(lnk, dfd, bname)`.
     ///   Upstream's operator arm reaches it by falling *through* into a
     ///   leaf-creation block shared with the beneath-walk tier rather than
     ///   returning early like its siblings, "so fake-super emulation is
-    ///   preserved" (`rsync-3.5.0/syscall.c:781-783`). oc has no fake-super
+    ///   preserved" (`rsync-3.5.1/syscall.c:920-922`). oc has no fake-super
     ///   emulation in this helper, so the syscall pair is identical and the
     ///   port is the siblings' early return.
     ///
@@ -386,10 +386,10 @@ impl ConfinedFallback {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/syscall.c:2066` `do_mkdir_at()`.
-    /// - `rsync-3.5.0/syscall.c:2084` - arm 1, `return mkdir(path, mode)`.
-    /// - `rsync-3.5.0/syscall.c:2085` - the walk shared by arms 2 and 3.
-    /// - `rsync-3.5.0/syscall.c:2088` - arm 2, `mkdirat(dfd, bname, mode)`.
+    /// - `rsync-3.5.1/syscall.c:2205` `do_mkdir_at()`.
+    /// - `rsync-3.5.1/syscall.c:2223` - arm 1, `return mkdir(path, mode)`.
+    /// - `rsync-3.5.1/syscall.c:2224` - the walk shared by arms 2 and 3.
+    /// - `rsync-3.5.1/syscall.c:2227` - arm 2, `mkdirat(dfd, bname, mode)`.
     ///
     /// # Errors
     ///
@@ -409,13 +409,13 @@ impl ConfinedFallback {
     /// the two outcomes of the ownership walk. There is deliberately no path
     /// from an `Err` here back to [`Resolved::Unconfined`].
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:674-679` - the `symlink_optout_allowed()`
+    /// upstream: `rsync-3.5.1/syscall.c:813-818` - the `symlink_optout_allowed()`
     /// test, then `owner_walk_parent()`, then `if (dfd < 0) return -1;`.
     ///
     /// # Measured: the gate is only PARTLY redundant
     ///
     /// `owner_walk_open` short-circuits on the same opt-out
-    /// (`owner_walk.rs`, mirroring `syscall.c:300-302`), so for the `*at` ops
+    /// (`owner_walk.rs`, mirroring `syscall.c:380-382`), so for the `*at` ops
     /// the two arms resolve the same parent either way. Removing this test
     /// therefore leaves the delete and rename cells green - measured, by
     /// mutation. It is NOT redundant for the two decisions the walk cannot
@@ -527,7 +527,7 @@ mod tests {
     /// Arm 1: the opt-out is a STATIC POLICY answer, read before any I/O, so a
     /// path that arm 3 refuses classifies as unconfined here.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:674` - `symlink_optout_allowed()` is
+    /// upstream: `rsync-3.5.1/syscall.c:813` - `symlink_optout_allowed()` is
     /// tested at the top of the operator arm, above the walk.
     #[test]
     fn arm_one_is_chosen_when_the_session_opted_out() {
@@ -562,7 +562,7 @@ mod tests {
     /// NOT arm 1. `ELOOP` identifies it as the confinement decision rather than
     /// an incidental traversal failure.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:677-678` - `if (dfd < 0) return -1;`.
+    /// upstream: `rsync-3.5.1/syscall.c:816-817` - `if (dfd < 0) return -1;`.
     #[test]
     fn arm_three_is_an_error_and_never_falls_back_to_arm_one() {
         let fx = fixture();
@@ -582,7 +582,7 @@ mod tests {
     ///
     /// upstream: `operator_path_resolve` is per call site, and
     /// `abspath_outside_confinement()` returns 0 when it is clear
-    /// (`rsync-3.5.0/syscall.c:239`).
+    /// (`rsync-3.5.1/syscall.c:290`).
     #[test]
     fn an_ancillary_path_is_not_judged_against_the_root() {
         let fx = fixture();
@@ -703,7 +703,7 @@ mod tests {
     /// endpoint independently and returns -1 the moment either side fails, so
     /// an in-root source cannot license an escaping target.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:1895-1903`.
+    /// upstream: `rsync-3.5.1/syscall.c:2034-2042`.
     #[test]
     fn rename_arm_three_refuses_when_only_the_destination_escapes() {
         let fx = fixture();
@@ -748,7 +748,7 @@ mod tests {
     /// here points at an in-root file, so nothing but the missing flag can
     /// refuse it.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:1519` -
+    /// upstream: `rsync-3.5.1/syscall.c:1658` -
     /// `openat(dfd, bname, flags | O_NOFOLLOW, mode)`.
     #[test]
     fn open_arm_two_applies_o_nofollow_to_the_leaf() {
@@ -770,7 +770,7 @@ mod tests {
     /// opt-out restores the legacy symlink-following open verbatim, so the same
     /// leaf link opens.
     ///
-    /// upstream: `rsync-3.5.0/syscall.c:1515` - arm 1 is `do_open(pathname,
+    /// upstream: `rsync-3.5.1/syscall.c:1654` - arm 1 is `do_open(pathname,
     /// flags, mode)`, with no added flag.
     #[test]
     fn open_arm_one_still_follows_a_leaf_symlink() {

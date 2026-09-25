@@ -12,7 +12,7 @@
 //! only variable across a cell's two runs is the client under test.
 //!
 //! The daemon transport is skipped: the shared read-only module rejects
-//! `--remove-source-files` outright (upstream `main.c:938`), so removal cannot be
+//! `--remove-source-files` outright (upstream `main.c:951`), so removal cannot be
 //! exercised over it. For ssh/russh the sender - and therefore the remover - is
 //! always upstream, so those cells prove oc-as-receiver propagates the flag over
 //! the wire without disturbing the result; the `local` cell is the one that
@@ -74,7 +74,7 @@ impl RemoveSourceFiles {
             return CheckOutcome::skip(
                 self.name(),
                 label,
-                "read-only daemon module rejects --remove-source-files (upstream main.c:938)",
+                "read-only daemon module rejects --remove-source-files (upstream main.c:951)",
             );
         }
         if transport.needs_ssh() && !support::ssh_ready() {

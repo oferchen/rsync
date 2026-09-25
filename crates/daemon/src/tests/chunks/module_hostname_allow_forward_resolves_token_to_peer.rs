@@ -10,7 +10,7 @@
 /// address. Verifying with a None reverse hostname proves the match comes from
 /// forward resolution (upstream's UNDETERMINED-host case), not reverse lookup.
 ///
-/// upstream: access.c:56-68 `match_hostname` - forward-DNS on the token and
+/// upstream: access.c:67-79 `match_hostname` - forward-DNS on the token and
 /// compare each resolved address to the connecting address.
 #[test]
 fn module_hostname_allow_forward_resolves_token_to_peer() {

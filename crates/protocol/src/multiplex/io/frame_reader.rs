@@ -22,11 +22,11 @@ use super::super::helpers::{
 /// frame leaves the state intact, so the very next call resumes at the exact
 /// byte where the stall happened. `EINTR` is retried inline, matching upstream
 /// `perform_io`, which treats `EINTR`/`EAGAIN` alike as "zero bytes moved, not
-/// an error" (io.c:800-808).
+/// an error" (io.c:818-826).
 ///
 /// Upstream needs no such state machine because its decoders never touch the
 /// descriptor: `read_buf()` copies out of the circular `iobuf.in`, and the sole
-/// reader is `perform_io` (io.c:789). This type is the equivalent guarantee for
+/// reader is `perform_io` (io.c:807). This type is the equivalent guarantee for
 /// a `std::io::Read` stack, where the frame boundary and the syscall boundary
 /// are not the same thing.
 #[derive(Debug, Default)]

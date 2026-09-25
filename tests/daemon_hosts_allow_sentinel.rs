@@ -10,7 +10,7 @@
 //!
 //! Upstream hands `allow_access()` the same never-empty host string its log
 //! lines print (clientserver.c:769-773), and `match_hostname` refuses only a
-//! NULL or empty name (access.c:37-38) - so a sentinel is matched like any
+//! NULL or empty name (access.c:40-41) - so a sentinel is matched like any
 //! other name. oc modelled the host as `Option<&str>` and passed `None`, making
 //! both sentinels unmatchable: `hosts allow = UNDETERMINED` refused every peer.
 //!
@@ -20,8 +20,8 @@
 //! 2. `HostnamePattern::matches` compared case-SENSITIVELY against a pattern
 //!    lowercased at parse time. That held only because every host until now
 //!    arrived pre-lowercased from DNS. Upstream's matcher is `iwildmatch`, the
-//!    case-insensitive form (access.c:46), against a list lowercased by
-//!    `strlower` (access.c:251) - so `unknown` matches `UNKNOWN` upstream.
+//!    case-insensitive form (access.c:57), against a list lowercased by
+//!    `strlower` (access.c:262) - so `unknown` matches `UNKNOWN` upstream.
 //!
 //! Fixing only (1) left every row below still failing, which is why the table
 //! asserts the OUTCOME of a real connection rather than the shape of the call.

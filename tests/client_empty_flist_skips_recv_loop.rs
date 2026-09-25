@@ -1,6 +1,6 @@
 //! Regression: a client handed an empty file list must not enter its receive loop.
 //!
-//! upstream `main.c:1379-1391` `client_run()`:
+//! upstream `main.c:1397-1409` `client_run()`:
 //!
 //! ```c
 //! flist = recv_file_list(f_in, -1);
@@ -25,7 +25,7 @@
 //! Our client used to keep reading, so the peer's FIN surfaced as
 //! `transfer failed: failed to fill whole buffer` with no summary at all, and the
 //! clean-empty-list case exited 23 where upstream exits 0. That asymmetry also
-//! masked the server-side twin of this bug (`main.c:968-974`): an oc-to-oc test
+//! masked the server-side twin of this bug (`main.c:981-987`): an oc-to-oc test
 //! could not tell a sender that wrongly entered `send_files()` from a healthy
 //! one, because our client blocked either way.
 //!
@@ -219,7 +219,7 @@ struct ClientRun {
 
 impl ClientRun {
     /// The `sent N bytes  received N bytes  R bytes/sec` line upstream prints
-    /// from `output_summary()` (`main.c:460-465`).
+    /// from `output_summary()` (`main.c:463-468`).
     fn has_summary(&self) -> bool {
         self.output.contains("sent ") && self.output.contains("bytes/sec")
     }
@@ -298,18 +298,18 @@ fn assert_empty_list_run(run: &ClientRun, dest: &Path, expected_code: i32, label
     assert!(
         !run.output.contains("failed to fill whole buffer"),
         "{label}: client kept reading after an empty file list instead of \
-         skipping do_recv() (upstream main.c:1383-1392)"
+         skipping do_recv() (upstream main.c:1401-1410)"
     );
     assert!(
         run.has_summary(),
         "{label}: upstream's empty-list arm still runs output_summary() \
-         (main.c:1391); got:\n{}",
+         (main.c:1409); got:\n{}",
         run.output
     );
     assert!(
         !dest.exists(),
         "{label}: upstream never reaches get_local_name() on an empty list, so \
-         the pre-flight mkdir at main.c:778-792 must not run"
+         the pre-flight mkdir at main.c:791-805 must not run"
     );
     assert_eq!(
         run.code, expected_code,
@@ -339,7 +339,7 @@ fn module_with_locked_dir(locked: bool) -> (TempDir, PathBuf) {
 
 /// A source path the sender cannot stat for a reason other than `ENOENT` yields
 /// an empty file list whose end marker carries `IOERR_GENERAL`
-/// (`flist.c:2427-2434` -> `flist.c:2508-2517`). Upstream prints the summary and
+/// (`flist.c:2667-2674` -> `flist.c:2748-2757`). Upstream prints the summary and
 /// exits 23 (`cleanup.c:217-218`) without ever creating the destination root.
 ///
 /// Unix-only: the fault is POSIX DAC (`chmod 000`), which root bypasses.

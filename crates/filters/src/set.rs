@@ -205,7 +205,7 @@ impl FilterSet {
     /// This is the predicate for a one-shot check against a name no traversal
     /// will revisit - upstream's `check_filter()` over the daemon filter list,
     /// as `get_local_name()` applies it to the client's destination argument
-    /// (main.c:700-737). A name matching no rule is allowed, matching
+    /// (main.c:713-750). A name matching no rule is allowed, matching
     /// upstream's `return 0`.
     ///
     /// Unlike [`Self::allows`] (which assumes a single-path API caller with no

@@ -6,7 +6,7 @@
 //! 1. **Protocol-version gate** (`compat.c:667-673`): if the negotiated
 //!    protocol is `< 30`, the sender errors out with
 //!    `"--acls requires protocol 30 or higher (negotiated %d)."`.
-//! 2. **Local-binary feature gate** (`options.c:1965-1980`): when the
+//! 2. **Local-binary feature gate** (`options.c:1971-1986`): when the
 //!    server-side rsync was compiled without `--enable-acl-support`
 //!    (`#ifdef SUPPORT_ACLS`), the entire `acls.c` compilation unit
 //!    is empty (acls.c:29,1510) and the resulting binary will never
@@ -26,7 +26,7 @@
 //!
 //! Upstream references:
 //! - `compat.c:667-673`
-//! - `options.c:1965-1980`
+//! - `options.c:1971-1986`
 //! - `acls.c:29,1510`
 
 #![deny(unsafe_code)]
@@ -44,9 +44,9 @@ const SERVER_FLAGS_NO_ACL_NO_XATTR: &str = "-logDtpre.iLsfxC";
 
 /// Compact flag string from a modern peer that DOES support ACLs and xattrs.
 ///
-/// `A` and `X` sit BEFORE the `e`: upstream emits them at options.c:2861-2869,
+/// `A` and `X` sit BEFORE the `e`: upstream emits them at options.c:2871-2879,
 /// well ahead of `maybe_add_e_option`, which appends the `e.<caps>` suffix last
-/// (options.c:2894). The `-e` argument is the tail of the bundle by
+/// (options.c:2904). The `-e` argument is the tail of the bundle by
 /// construction, so no peer - upstream or oc - ever places a transfer letter
 /// after it. `crates/core/.../flags.rs` emits the same order.
 const SERVER_FLAGS_WITH_ACL_AND_XATTR: &str = "-logDtpAXre.iLsfxC";

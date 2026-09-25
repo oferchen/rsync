@@ -29,7 +29,7 @@ fn within_tolerance(actual: Duration, expected: Duration, tolerance_percent: f64
 
 #[test]
 fn bwlimit_unit_bytes_explicit() {
-    // 512-byte floor rounds up to the 1 KiB pacing rate (options.c:1718).
+    // 512-byte floor rounds up to the 1 KiB pacing rate (options.c:1724).
     let limit = parse_bandwidth_argument("512b")
         .expect("parse succeeds")
         .expect("limit available");
@@ -46,7 +46,7 @@ fn bwlimit_unit_kilobytes_binary() {
 
 #[test]
 fn bwlimit_unit_kilobytes_decimal() {
-    // 1 KB decimal = 1000 bytes -> 1 KiB pacing (options.c:1718).
+    // 1 KB decimal = 1000 bytes -> 1 KiB pacing (options.c:1724).
     let limit = parse_bandwidth_argument("1KB")
         .expect("parse succeeds")
         .expect("limit available");
@@ -63,7 +63,7 @@ fn bwlimit_unit_megabytes_binary() {
 
 #[test]
 fn bwlimit_unit_megabytes_decimal() {
-    // 1 MB decimal = 1_000_000 bytes -> 977 KiB pacing (options.c:1718).
+    // 1 MB decimal = 1_000_000 bytes -> 977 KiB pacing (options.c:1724).
     let limit = parse_bandwidth_argument("1MB")
         .expect("parse succeeds")
         .expect("limit available");
@@ -80,7 +80,7 @@ fn bwlimit_unit_gigabytes_binary() {
 
 #[test]
 fn bwlimit_unit_gigabytes_decimal() {
-    // 1 GB decimal = 1_000_000_000 bytes -> 976_563 KiB pacing (options.c:1718).
+    // 1 GB decimal = 1_000_000_000 bytes -> 976_563 KiB pacing (options.c:1724).
     let limit = parse_bandwidth_argument("1GB")
         .expect("parse succeeds")
         .expect("limit available");
@@ -393,7 +393,7 @@ fn bwlimit_recommended_read_size_respects_write_max() {
 
 #[test]
 fn bwlimit_minimum_rate_512_bytes() {
-    // The 512-byte floor rounds up to the 1 KiB pacing rate (options.c:1718).
+    // The 512-byte floor rounds up to the 1 KiB pacing rate (options.c:1724).
     let limit = parse_bandwidth_argument("512b")
         .expect("parse succeeds")
         .expect("limit available");
@@ -502,7 +502,7 @@ fn bwlimit_fractional_value_with_decimal_suffix() {
     let limit = parse_bandwidth_argument("1.5MB")
         .expect("parse succeeds")
         .expect("limit available");
-    // 1.5 * 1,000,000 = 1,500,000 bytes -> 1465 KiB pacing (options.c:1718).
+    // 1.5 * 1,000,000 = 1,500,000 bytes -> 1465 KiB pacing (options.c:1724).
     assert_eq!(limit.get(), 1_500_160);
 }
 
@@ -564,7 +564,7 @@ fn bwlimit_simulated_large_file_transfer() {
 #[test]
 fn bwlimit_behavior_matches_upstream_semantics_byte_suffix() {
     // Upstream rsync: 512b is the accepted floor, rounded to 1 KiB/s pacing
-    // (options.c:1718 `bwlimit = (512 + 512) / 1024` = 1 KiB).
+    // (options.c:1724 `bwlimit = (512 + 512) / 1024` = 1 KiB).
     let limit = parse_bandwidth_argument("512b")
         .expect("parse succeeds")
         .expect("limit available");
@@ -583,7 +583,7 @@ fn bwlimit_behavior_matches_upstream_semantics_k_suffix() {
 #[test]
 fn bwlimit_behavior_matches_upstream_semantics_kb_suffix() {
     // Upstream rsync: KB suffix uses decimal kilobytes (10 * 1000 bytes), then
-    // rounds the rate to whole KiB for pacing (options.c:1718 -> 10 KiB).
+    // rounds the rate to whole KiB for pacing (options.c:1724 -> 10 KiB).
     let limit = parse_bandwidth_argument("10KB")
         .expect("parse succeeds")
         .expect("limit available");

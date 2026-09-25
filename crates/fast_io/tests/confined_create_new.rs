@@ -9,7 +9,7 @@
 //! happens to be chosen: `O_TMPFILE` is Linux-only, so a behavioural test alone
 //! would exercise this on macOS and skip it on Linux.
 //!
-//! upstream: `rsync-3.5.0/syscall.c:2891` `ds_descend()`.
+//! upstream: `rsync-3.5.1/syscall.c:3032` `ds_descend()`.
 
 #![cfg(unix)]
 
@@ -35,7 +35,7 @@ fn confined_create_new_creates_a_nested_destination() {
 }
 
 /// A relative, in-tree symlinked parent is FOLLOWED, not refused - upstream's
-/// walk descends it (`syscall.c:2961`). Pinning this is what stops a future
+/// walk descends it (`syscall.c:3102`). Pinning this is what stops a future
 /// "refuse every symlink" simplification from breaking `-K`.
 #[test]
 fn confined_create_new_follows_a_relative_in_tree_parent_symlink() {

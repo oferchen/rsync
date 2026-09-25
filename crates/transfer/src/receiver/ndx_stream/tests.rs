@@ -161,10 +161,10 @@ fn flist_eof_sets_the_flag_and_continues() {
 /// Sub-list `dir_ndx` values are NOT monotonic and NOT contiguous.
 ///
 /// WHY: upstream's sender walks its dir_flist while *appending* newly
-/// discovered subdirectories to it (`flist.c:2695-2704`), so an `-a` pull of a
+/// discovered subdirectories to it (`flist.c:2935-2944`), so an `-a` pull of a
 /// nested tree interleaves level-1 directories with their children. A measured
 /// upstream oracle produced the header sequence `1, 9, 2, 10, 3, 11`. The
-/// range check (`rsync.c:361-369` / `flist.c:2622-2626`) is the ONLY constraint:
+/// range check (`rsync.c:361-369` / `flist.c:2862-2866`) is the ONLY constraint:
 /// any validation that assumed ordering or contiguity would reject a legitimate
 /// upstream stream.
 #[test]
@@ -248,7 +248,7 @@ fn del_stats_is_drained_before_the_inc_recurse_gate() {
 /// WHY: `rsync.c:336-342` runs before `rsync.c:343`, so `am_sender` does not
 /// exempt the sender from draining. This is what lets the generator accumulate
 /// the receiver's deletion counts during `read_final_goodbye()`
-/// (`main.c:904`).
+/// (`main.c:917`).
 #[test]
 fn sender_drains_del_stats_and_receives_the_counters() {
     /// Records every drained frame so the ordering claim is observable.
@@ -477,7 +477,7 @@ fn marker_rejected_by_receiver_without_inc_recurse() {
 #[test]
 fn receiver_last_file_ndx_matches_upstream_span() {
     let ctx = inc_recurse_receiver(&["d0"]);
-    // INC_RECURSE starts numbering at 1 (flist.c:2958), so an empty list has no
+    // INC_RECURSE starts numbering at 1 (flist.c:3201), so an empty list has no
     // valid index and reports one below the first.
     assert_eq!(FlistMarkerSink::last_file_ndx(&ctx), 0);
 
@@ -625,7 +625,7 @@ fn non_transfer_frame_for_non_regular_entry_is_not_refused() {
 /// WHY: upstream `rsync.c:386-391` - `if (protocol_version < 30 && ndx ==
 /// cur_flist->used && iflags == ITEM_IS_NEW) goto read_loop`. A <=3.0.x peer
 /// running `--timeout` emits exactly this frame as its keep-alive (3.0.9
-/// io.c:953-968); a reader that surfaced it would hand the caller an
+/// io.c:971-986); a reader that surfaced it would hand the caller an
 /// out-of-range index and abort a healthy session.
 #[test]
 fn proto29_keepalive_frame_is_consumed_and_the_stream_continues() {

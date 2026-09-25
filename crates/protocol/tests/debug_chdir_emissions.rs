@@ -2,7 +2,7 @@
 //! `protocol::chdir` helper module.
 //!
 //! The trace helper wraps upstream rsync 3.4.1's sole `DEBUG_GTE(CHDIR, 1)`
-//! emission from `util1.c:1168-1169` (`"[%s] change_dir(%s)\n"`). Upstream
+//! emission from `util1.c:1265-1266` (`"[%s] change_dir(%s)\n"`). Upstream
 //! routes every successful `chdir()` syscall through `change_dir`, so this
 //! single helper covers the entire CHDIR producer surface.
 //!
@@ -50,7 +50,7 @@ fn role_tokens_match_upstream_who_am_i() {
 }
 
 /// `trace_change_dir` fires the upstream-format
-/// `util1.c:1168-1169` emission at level 1 through the real logging channel.
+/// `util1.c:1265-1266` emission at level 1 through the real logging channel.
 #[test]
 fn change_dir_emits_under_debug_chdir_level_1() {
     init_chdir(1);

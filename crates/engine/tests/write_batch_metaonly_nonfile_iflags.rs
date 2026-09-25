@@ -46,7 +46,7 @@
 //! - `generator.c:584` ORs in `ITEM_IS_NEW` only for an absent destination;
 //!   a kept entry therefore carries none of `ITEM_IS_NEW` (1<<13),
 //!   `ITEM_LOCAL_CHANGE` (1<<14), or `ITEM_TRANSFER` (1<<15).
-//! - `receiver.c:726-786` reads the word in the `!(iflags & ITEM_TRANSFER)`
+//! - `receiver.c:742-802` reads the word in the `!(iflags & ITEM_TRANSFER)`
 //!   branch and, with `ITEM_IS_NEW` clear, itemizes the change without bumping
 //!   any `created_*` counter.
 

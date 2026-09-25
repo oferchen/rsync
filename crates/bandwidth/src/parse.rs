@@ -89,9 +89,9 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         return Err(BandwidthParseError::TooSmall);
     }
 
-    // upstream: options.c:1825 `bwlimit = (size + 512) / 1024` rounds the parsed
+    // upstream: options.c:1831 `bwlimit = (size + 512) / 1024` rounds the parsed
     // byte rate to whole KiB, and every pacing calculation then uses that KiB
-    // value (io.c:2115,2120,2133). Quantize identically so a byte or decimal
+    // value (io.c:2153,2158,2171). Quantize identically so a byte or decimal
     // suffix paces at the same rate as upstream rather than at its exact parsed
     // byte count: `1500B` -> 1 KiB (1024 B/s), `1MB` -> 977 KiB (1000448 B/s). A
     // default `K` suffix is already a whole-KiB multiple, so it is unaffected.
@@ -116,7 +116,7 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
 /// configuration. Surrounding whitespace is rejected to match upstream rsync's
 /// strict parsing. Upstream has no `:BURST` component, so a colon is rejected as
 /// invalid size syntax.
-/// upstream: options.c:1714 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
+/// upstream: options.c:1720 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
 #[doc(alias = "--bwlimit")]
 pub fn parse_bandwidth_limit(text: &str) -> Result<BandwidthLimitComponents, BandwidthParseError> {
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());

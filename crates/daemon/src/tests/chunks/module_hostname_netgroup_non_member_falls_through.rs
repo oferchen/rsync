@@ -9,7 +9,7 @@
 /// the no-op platform, pinning that `@netgroup` simply fails to match rather
 /// than crashing or spuriously admitting the peer.
 ///
-/// upstream: access.c:40-43 - the `innetgr` branch is compiled only under
+/// upstream: access.c:43-54 - the `innetgr` branch is compiled only under
 /// `HAVE_INNETGR`; without it a `@name` token never matches.
 #[test]
 fn module_hostname_netgroup_non_member_falls_through() {

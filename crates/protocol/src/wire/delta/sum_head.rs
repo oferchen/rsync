@@ -17,7 +17,7 @@
 //! match against, and whoever replays a body resolves every match token
 //! through [`SumHead::block_span`]. A head that does not describe the body it
 //! precedes therefore cannot be produced or accepted - which is what upstream
-//! enforces at `receiver.c:414` before it indexes the block table.
+//! enforces at `receiver.c:427` before it indexes the block table.
 
 use std::io::{self, Read, Write};
 
@@ -35,7 +35,7 @@ pub const MAX_BLOCK_SIZE: u32 = 1 << 29;
 
 /// Largest strong-sum width a `sum_head` may advertise, in bytes.
 ///
-/// upstream: `io.c:2056` bounds `s2length` by `xfer_sum_len`. SHA1 at 20
+/// upstream: `io.c:2094` bounds `s2length` by `xfer_sum_len`. SHA1 at 20
 /// bytes is the widest transfer digest oc-rsync negotiates.
 pub const MAX_STRONG_SUM_LEN: u32 = 20;
 
@@ -48,7 +48,7 @@ const MAX_BLOCK_ENTRY_LEN: usize = 4 + MAX_STRONG_SUM_LEN as usize;
 pub enum SumHeadError {
     /// A block-match token referenced a block the `sum_head` does not describe.
     ///
-    /// upstream: `receiver.c:571` - `Invalid block index %d (count=%ld)`,
+    /// upstream: `receiver.c:587` - `Invalid block index %d (count=%ld)`,
     /// which aborts the transfer with `RERR_PROTOCOL`.
     #[error("Invalid block index {index} (count={count})")]
     InvalidBlockIndex {
@@ -61,7 +61,7 @@ pub enum SumHeadError {
     /// The block count is negative, or large enough that sizing the block
     /// table from it would overflow.
     ///
-    /// upstream: `io.c:2029` and `io.c:2039-2048`.
+    /// upstream: `io.c:2067` and `io.c:2077-2086`.
     #[error("invalid checksum count {count}")]
     InvalidCount {
         /// The rejected count.
@@ -70,7 +70,7 @@ pub enum SumHeadError {
 
     /// The block length is negative or past [`MAX_BLOCK_SIZE`].
     ///
-    /// upstream: `io.c:2219-2223` - `Invalid block length %ld`.
+    /// upstream: `io.c:2257-2261` - `Invalid block length %ld`.
     #[error("invalid block length {blength}")]
     InvalidBlockLength {
         /// The rejected block length.
@@ -80,7 +80,7 @@ pub enum SumHeadError {
     /// Blocks are advertised while the block length is zero, which would make
     /// every block empty.
     ///
-    /// upstream: `io.c:2224-2228` - a SECOND, separately worded guard that
+    /// upstream: `io.c:2262-2266` - a SECOND, separately worded guard that
     /// runs only after the range check above has passed:
     ///
     /// ```c
@@ -99,7 +99,7 @@ pub enum SumHeadError {
 
     /// The strong-sum width is negative or past [`MAX_STRONG_SUM_LEN`].
     ///
-    /// upstream: `io.c:2056-2060`.
+    /// upstream: `io.c:2094-2098`.
     #[error("invalid checksum length {s2length}")]
     InvalidStrongSumLength {
         /// The rejected strong-sum width.
@@ -108,7 +108,7 @@ pub enum SumHeadError {
 
     /// The trailing-block length is negative or wider than a whole block.
     ///
-    /// upstream: `io.c:2061-2066`.
+    /// upstream: `io.c:2099-2104`.
     #[error("invalid remainder length {remainder}")]
     InvalidRemainder {
         /// The rejected remainder.
@@ -119,7 +119,7 @@ pub enum SumHeadError {
 impl From<SumHeadError> for io::Error {
     /// Maps a rejected `sum_head` onto the `RERR_PROTOCOL` (exit 2) path.
     ///
-    /// upstream: `io.c:2032-2065` `read_sum_head()` calls
+    /// upstream: `io.c:2070-2103` `read_sum_head()` calls
     /// `exit_cleanup(RERR_PROTOCOL)` on any out-of-range field.
     fn from(error: SumHeadError) -> Self {
         protocol_violation(format!("malformed sum_head: {error}"))
@@ -190,10 +190,10 @@ impl SumHead {
     /// `vec![0u8; s2length]`), so an unbounded header from an authenticated
     /// but untrusted peer is a memory-exhaustion vector.
     const fn check(self) -> Result<(), SumHeadError> {
-        // upstream: io.c:2029 - the field is signed on the wire, so a negative
+        // upstream: io.c:2067 - the field is signed on the wire, so a negative
         // count arrives here as a u32 above `i32::MAX` and is rejected.
         //
-        // upstream: io.c:2039-2048 - the block table is sized `count *
+        // upstream: io.c:2077-2086 - the block table is sized `count *
         // (4 + s2length)`; bound the first factor so that product cannot
         // overflow on a 32-bit target either.
         if self.count > i32::MAX as u32 || self.count as usize > usize::MAX / MAX_BLOCK_ENTRY_LEN {
@@ -201,7 +201,7 @@ impl SumHead {
                 count: self.count as i32,
             });
         }
-        // upstream: io.c:2219-2223 - blength in [0, max_blength]. This is the
+        // upstream: io.c:2257-2261 - blength in [0, max_blength]. This is the
         // RANGE check only; upstream words the zero case separately below and
         // reaches it only once the range check has passed, so the two must
         // stay ordered and must not be folded into one condition.
@@ -210,19 +210,19 @@ impl SumHead {
                 blength: self.blength as i32,
             });
         }
-        // upstream: io.c:2224-2228 - `if (sum->count && sum->blength == 0)`,
+        // upstream: io.c:2262-2266 - `if (sum->count && sum->blength == 0)`,
         // reported as "Invalid zero block length". Blocks advertised over a
         // zero-length block would make every block empty.
         if self.count > 0 && self.blength == 0 {
             return Err(SumHeadError::ZeroBlockLength);
         }
-        // upstream: io.c:2056-2060 - s2length in [0, xfer_sum_len].
+        // upstream: io.c:2094-2098 - s2length in [0, xfer_sum_len].
         if self.s2length > MAX_STRONG_SUM_LEN {
             return Err(SumHeadError::InvalidStrongSumLength {
                 s2length: self.s2length as i32,
             });
         }
-        // upstream: io.c:2061-2066 - remainder in [0, blength].
+        // upstream: io.c:2099-2104 - remainder in [0, blength].
         if self.remainder > self.blength {
             return Err(SumHeadError::InvalidRemainder {
                 remainder: self.remainder as i32,
@@ -297,7 +297,7 @@ impl SumHead {
 
     /// Total basis length this geometry covers.
     ///
-    /// upstream: `receiver.c:289-291` - `sum.flength = count * blength;
+    /// upstream: `receiver.c:302-304` - `sum.flength = count * blength;
     /// if (remainder) flength -= blength - remainder`. Append mode starts
     /// writing at this offset.
     #[inline]
@@ -320,7 +320,7 @@ impl SumHead {
     /// that does not describe the body it precedes fails here instead of
     /// indexing a block table that has no such entry.
     ///
-    /// upstream: `receiver.c:414-422`
+    /// upstream: `receiver.c:427-435`
     ///
     /// ```text
     /// i = -(i+1);
@@ -504,7 +504,7 @@ mod tests {
     ///
     /// The rejection must be [`SumHeadError::ZeroBlockLength`], not the
     /// neighbouring range check: upstream words these two cases differently
-    /// (`io.c:2219-2228`) and the 3.5.0 `checksum-zero-blocklen` cell greps the
+    /// (`io.c:2257-2266`) and the 3.5.0 `checksum-zero-blocklen` cell greps the
     /// sender's output for `Invalid zero block length` specifically.
     #[test]
     fn blocks_without_a_block_length_are_malformed() {
@@ -524,7 +524,7 @@ mod tests {
     /// `checksum-zero-blocklen_test.py` fails the sender if the refusal does
     /// not carry this string, even when the header is correctly rejected.
     ///
-    /// upstream: `io.c:2226` - `rprintf(FERROR, "Invalid zero block length
+    /// upstream: `io.c:2264` - `rprintf(FERROR, "Invalid zero block length
     /// [%s]\n", who_am_i())`. oc carries no `who_am_i()` suffix; the cell
     /// tests containment, so the bare literal satisfies it.
     #[test]

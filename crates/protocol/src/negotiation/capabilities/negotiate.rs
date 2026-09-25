@@ -744,7 +744,7 @@ fn default_selection_candidates<'a>(
 /// zero-numbered item on the client with
 /// `if (nni->num == 0 && !am_server && !dup_markup) continue;`
 /// (compat.c:485-486); both `CSUM_NONE` and `CPRES_NONE` are `0`
-/// (lib/md-defines.h:26, rsync.h:1177), so `none` is the entry dropped. The
+/// (lib/md-defines.h:26, rsync.h:1179), so `none` is the entry dropped. The
 /// server still advertises `none`. This keeps the emitted vstring byte-for-byte
 /// identical to upstream, which matters because a mismatched client list
 /// changes the wire bytes (length prefix plus payload) exchanged at
@@ -767,7 +767,7 @@ fn advertised_list<'a>(names: impl IntoIterator<Item = &'a str>, is_server: bool
 
 /// Writes a vstring (variable-length string) using upstream rsync's format.
 ///
-/// Format (upstream io.c:2297-2315 write_vstring):
+/// Format (upstream io.c:2335-2353 write_vstring):
 /// - For len <= 127: 1 byte = len
 /// - For len > 127: 2 bytes = [(len >> 8) | 0x80, len & 0xFF]
 ///
@@ -801,7 +801,7 @@ pub(super) fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
 
 /// Reads a vstring (variable-length string) using upstream rsync's format.
 ///
-/// Format (upstream io.c:2004-2021 read_vstring):
+/// Format (upstream io.c:2042-2059 read_vstring):
 /// - Read first byte
 /// - If high bit set: len = (first & 0x7F) * 256 + read_another_byte
 /// - Otherwise: len = first byte
@@ -823,7 +823,7 @@ pub(super) fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
 pub(super) fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
     // upstream: compat.c:99 #define MAX_NSTR_STRLEN 256; the caller's bufsize.
     const MAX_NSTR_STRLEN: usize = 256;
-    // upstream: io.c:2181 `if (len >= bufsize)` - one byte is reserved for the
+    // upstream: io.c:2219 `if (len >= bufsize)` - one byte is reserved for the
     // NUL terminator, so the accepted data length maxes out at bufsize - 1.
     const MAX_VSTRING_LEN: usize = MAX_NSTR_STRLEN - 1;
 
@@ -841,7 +841,7 @@ pub(super) fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
         first[0] as usize
     };
 
-    // upstream: io.c:2181-2185 - reject `len >= bufsize` (over-long vstring).
+    // upstream: io.c:2219-2223 - reject `len >= bufsize` (over-long vstring).
     if len > MAX_VSTRING_LEN {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

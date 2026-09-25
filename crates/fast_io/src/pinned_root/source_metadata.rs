@@ -106,7 +106,7 @@ impl SourceMetadata {
     /// kernel does not report this device's size in the stat" rather than "no
     /// bytes", and the real size has to be read another way.
     ///
-    /// upstream: `rsync-3.5.0/flist.c:1421` - `if (st.st_size == 0) st.st_size
+    /// upstream: `rsync-3.5.1/flist.c:1646` - `if (st.st_size == 0) st.st_size
     /// = get_device_size(...)`.
     #[must_use]
     pub fn is_empty(&self) -> bool {

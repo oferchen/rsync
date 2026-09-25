@@ -12,7 +12,7 @@
 //! 2. The sender emits a partial flist with the still-readable entries
 //!    and writes the accumulated `io_error` bitfield into the flist end
 //!    marker (`crates/transfer/src/generator/protocol_io.rs::send_file_list`
-//!    -> `flist.c:2518 write_int(f, io_error)`).
+//!    -> `flist.c:2758 write_int(f, io_error)`).
 //! 3. The upstream receiver consumes the partial flist, materializes
 //!    every successfully-enumerated file byte-identically, and exits
 //!    with `RERR_PARTIAL` (23) rather than aborting via
@@ -435,7 +435,7 @@ fn sender_inc_recurse_partial_walk_propagates_io_error() {
 
     // Contract 4: sender-side stderr must reference the failed
     // directory so operators can diagnose the partial transfer.
-    // upstream: flist.c:1842 - `opendir %s failed`.
+    // upstream: flist.c:2067 - `opendir %s failed`.
     assert!(
         outcome.server_stderr.contains("opendir")
             || outcome.server_stderr.contains("readdir")

@@ -2,7 +2,7 @@
 //!
 //! Contains the `DeltaApplicator` that applies delta data received from a sender
 //! to reconstruct files. Mirrors upstream rsync's `receive_data()` function from
-//! `receiver.c:305`.
+//! `receiver.c:318`.
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -86,7 +86,7 @@ type BasisMapStrategy = BufferedMap;
 ///    synchronous fault and stalling other in-flight SQEs on the same poller.
 ///
 /// Upstream rsync deliberately avoids `mmap(2)` for basis files for the same
-/// truncation reason - see `fileio.c:214-217` + `map_ptr()` in upstream rsync.
+/// truncation reason - see `fileio.c:256-259` + `map_ptr()` in upstream rsync.
 ///
 /// See `docs/design/basis-file-io-policy.md` and audit
 /// `docs/audits/mmap-iouring-co-usage.md` finding F1. The variant is retained
@@ -174,7 +174,7 @@ pub struct DeltaApplyResult {
 ///   `io::Error`. Windowed reads also keep mmap-backed pointers out of any
 ///   io_uring SQE, whose cold-page faults would stall the SQPOLL kernel
 ///   thread. Mirrors upstream rsync's deliberate use of `read(2)` for basis
-///   files (`fileio.c:214-217` + `map_ptr()`). See
+///   files (`fileio.c:256-259` + `map_ptr()`). See
 ///   `docs/design/basis-file-io-policy.md`.
 /// - Uses `TokenBuffer` for literal data, reusing the same allocation across
 ///   all tokens to avoid per-token heap allocations.
@@ -212,7 +212,7 @@ impl<'a> DeltaApplicator<'a> {
     /// surfaces as an ordinary short-read `io::Error` instead of a `SIGBUS`
     /// the kernel raises while faulting an unmapped page on our behalf. This
     /// also keeps mmap-backed pointers out of any io_uring SQE. Mirrors
-    /// upstream rsync's `fileio.c:214-217` rationale for using `read(2)`
+    /// upstream rsync's `fileio.c:256-259` rationale for using `read(2)`
     /// instead of `mmap(2)` on basis files. See
     /// `docs/design/basis-file-io-policy.md`.
     pub fn new(
@@ -233,7 +233,7 @@ impl<'a> DeltaApplicator<'a> {
             // reports as a transfer failure. Buffered reads also keep
             // mmap-backed pointers out of any io_uring SQE, whose cold-page
             // faults would otherwise stall the SQPOLL kernel thread.
-            // upstream: fileio.c:214-217 comment + map_ptr() deliberately use
+            // upstream: fileio.c:256-259 comment + map_ptr() deliberately use
             // read(2) instead of mmap(2) on basis files for this exact reason.
             let _ = config.writer_kind;
             #[cfg(unix)]
@@ -318,7 +318,7 @@ impl<'a> DeltaApplicator<'a> {
     /// (`BufferedMap`) on every platform. The basis is never memory-mapped so
     /// a concurrent truncation cannot raise `SIGBUS`, and no mmap pointer can
     /// reach an io_uring SQE (audit `docs/audits/mmap-iouring-co-usage.md`
-    /// finding F1; upstream `fileio.c:214-217` + `map_ptr()`).
+    /// finding F1; upstream `fileio.c:256-259` + `map_ptr()`).
     ///
     /// # Errors
     ///
@@ -768,7 +768,7 @@ impl<'a> DeltaApplicator<'a> {
     ) -> io::Result<(File, DeltaApplyResult)> {
         if let Some(ref mut sparse) = self.sparse_state {
             let final_pos = sparse.finish(&mut self.output)?;
-            // upstream: fileio.c:43 sparse_end() - ftruncate to the logical
+            // upstream: fileio.c:47 sparse_end() - ftruncate to the logical
             // length (leaving the trailing region a hole) and punch any
             // in-basis zero runs, instead of materializing a trailing byte.
             self.output.set_len(final_pos)?;
@@ -794,7 +794,7 @@ impl<'a> DeltaApplicator<'a> {
         let expected_len = self.checksum_verifier.digest_len();
         let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         reader.read_exact(&mut expected[..expected_len])?;
-        // upstream: receiver.c:516-517 DEBUG_GTE(DELTASUM, 2)
+        // upstream: receiver.c:532-533 DEBUG_GTE(DELTASUM, 2)
         debug_log!(Deltasum, 2, "got file_sum");
 
         let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
@@ -819,7 +819,7 @@ impl<'a> DeltaApplicator<'a> {
             ));
         }
 
-        // upstream: receiver.c:305 receive_data() emits the same summary line.
+        // upstream: receiver.c:318 receive_data() emits the same summary line.
         debug_log!(
             Deltasum,
             1,
@@ -848,7 +848,7 @@ pub fn apply_delta_stream<R: Read>(
     applicator: &mut DeltaApplicator<'_>,
     token_reader: &mut TokenReader,
 ) -> io::Result<()> {
-    // upstream: receiver.c:305 receive_data() logs the same start marker.
+    // upstream: receiver.c:318 receive_data() logs the same start marker.
     debug_log!(Deltasum, 2, "recv delta stream start");
 
     while applicator.apply_token(reader, token_reader)? {}
@@ -869,14 +869,14 @@ pub fn apply_delta_stream<R: Read>(
 /// `mapbuf == NULL`:
 ///
 /// - Literal tokens: the data bytes are read off the wire and dropped without
-///   writing (`receiver.c:407` `write_file` is guarded by `fd != -1`). On the
+///   writing (`receiver.c:420` `write_file` is guarded by `fd != -1`). On the
 ///   compressed path the decoder returns the already-decompressed payload, so
 ///   reading the token keeps the inflate stream in sync.
 /// - Block-match tokens: absorbed benignly by advancing the notional offset,
 ///   with NO basis read and NO `see_token` dictionary feed - exactly the
 ///   `if (!mapbuf) { ...; offset += len; continue; }` branch at
-///   `receiver.c:444-451`. That branch runs BEFORE the `if (mapbuf)` guard that
-///   would otherwise call `see_token`/`sum_update` (`receiver.c:461-466`), so
+///   `receiver.c:457-464`. That branch runs BEFORE the `if (mapbuf)` guard that
+///   would otherwise call `see_token`/`sum_update` (`receiver.c:474-479`), so
 ///   the discard path never feeds the dictionary either. A pre-fix upstream
 ///   version dereferenced `full_fname(fname)` with `fname == NULL` here and
 ///   crashed the receiver on an otherwise normal transfer (the
@@ -884,17 +884,17 @@ pub fn apply_delta_stream<R: Read>(
 ///
 /// After the `End` token, the sender always writes the whole-file checksum
 /// (`xfer_sum_len` bytes); upstream's `receive_data()` reads it unconditionally
-/// at `receiver.c:515` regardless of `fd`. `checksum_len` MUST equal the
+/// at `receiver.c:531` regardless of `fd`. `checksum_len` MUST equal the
 /// negotiated digest length ([`ChecksumVerifier::digest_len`]).
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:524-527` - `discard_receive_data()` calls
+/// - `receiver.c:540-543` - `discard_receive_data()` calls
 ///   `receive_data(f_in, NULL, -1, 0, NULL, -1, file, 0)`.
-/// - `receiver.c:999-1006` - `open_tmpfile` failure -> `discard_receive_data`
+/// - `receiver.c:1015-1022` - `open_tmpfile` failure -> `discard_receive_data`
 ///   + `continue` (no propagation out of the receive loop).
-/// - `receiver.c:444-451` - block-match-with-no-basis absorb (`offset += len`).
-/// - `receiver.c:515` - trailing `read_buf(f_in, sender_file_sum, xfer_sum_len)`.
+/// - `receiver.c:457-464` - block-match-with-no-basis absorb (`offset += len`).
+/// - `receiver.c:531` - trailing `read_buf(f_in, sender_file_sum, xfer_sum_len)`.
 pub fn discard_delta_stream<R: Read>(
     reader: &mut R,
     token_reader: &mut TokenReader,
@@ -910,7 +910,7 @@ pub fn discard_delta_stream<R: Read>(
             // wire bytes; drop the payload.
             DeltaToken::Literal(LiteralData::Ready(_)) => {}
             // Plain literal: read the raw bytes off the wire and drop them.
-            // upstream: receiver.c:407 write_file is skipped when fd == -1.
+            // upstream: receiver.c:420 write_file is skipped when fd == -1.
             DeltaToken::Literal(LiteralData::Pending(len)) => {
                 if scratch.len() < len {
                     scratch.resize(len, 0);
@@ -918,17 +918,17 @@ pub fn discard_delta_stream<R: Read>(
                 reader.read_exact(&mut scratch[..len])?;
             }
             // Block match with no basis: absorb without reading a basis block
-            // and without feeding see_token. upstream: receiver.c:444-451.
+            // and without feeding see_token. upstream: receiver.c:457-464.
             DeltaToken::BlockRef(_) => {}
         }
     }
 
-    // upstream: receiver.c:515 - the sender always trails the delta with the
+    // upstream: receiver.c:531 - the sender always trails the delta with the
     // whole-file checksum; consume it so the stream stays aligned for the next
     // NDX / goodbye. On the discard path there is nothing to verify against.
     let mut sink = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
     reader.read_exact(&mut sink[..checksum_len])?;
-    // upstream: receiver.c:516-517 DEBUG_GTE(DELTASUM, 2)
+    // upstream: receiver.c:532-533 DEBUG_GTE(DELTASUM, 2)
     debug_log!(Deltasum, 2, "got file_sum");
 
     debug_log!(Deltasum, 2, "recv delta stream discard complete");
@@ -1008,7 +1008,7 @@ mod tests {
         // the windowed read() reader, never mmap. Memory-mapping the basis
         // would raise SIGBUS if another process truncates it mid-transfer;
         // read(2) past the shrunk EOF surfaces as an ordinary io::Error
-        // instead (upstream fileio.c:214-217 + map_ptr()).
+        // instead (upstream fileio.c:256-259 + map_ptr()).
         assert!(
             !applicator.basis_uses_mmap(),
             "standard writer must read the basis via windowed read(), never mmap"
@@ -1032,11 +1032,11 @@ mod tests {
         // The load-bearing invariant: io_uring writer => never mmap basis.
         // Submitting an mmap-backed pointer to an io_uring SQE either
         // stalls the SQPOLL kernel thread on cold-page faults or raises
-        // SIGBUS on concurrent truncation (upstream fileio.c:214-217).
+        // SIGBUS on concurrent truncation (upstream fileio.c:256-259).
         assert!(
             !applicator.basis_uses_mmap(),
             "io_uring writer must force BufferedMap to keep mmap pointers \
-             out of any io_uring SQE (audit F1, fileio.c:214-217)"
+             out of any io_uring SQE (audit F1, fileio.c:256-259)"
         );
     }
 
@@ -1356,11 +1356,11 @@ mod tests {
     /// token AND the trailing checksum. If a single byte is left behind, the
     /// next NDX read parses leftover delta bytes as a frame header and the
     /// whole session desyncs (upstream: `discard_receive_data` at
-    /// receiver.c:524 exists precisely to keep the stream aligned when the
+    /// receiver.c:540 exists precisely to keep the stream aligned when the
     /// receiver never writes the file). This test pins that WHY: after a
     /// discard the reader is positioned exactly at end-of-frame, with no
     /// trailing bytes and no error - even when the delta contains a
-    /// block-match token with no basis (receiver.c:444-451).
+    /// block-match token with no basis (receiver.c:457-464).
     #[test]
     fn discard_drains_plain_delta_with_match_token_to_exact_end() {
         let digest_len = 16;
@@ -1408,7 +1408,7 @@ mod tests {
     /// drains a discarded delta it records IOERR_GENERAL, which MUST map to
     /// exit 23 (RERR_PARTIAL) - matching upstream's
     /// FERROR_XFER -> got_xfer_error -> _exit(RERR_PARTIAL) (log.c:311,
-    /// main.c:1630). This pins WHY the receiver sets the flag rather than
+    /// main.c:1648). This pins WHY the receiver sets the flag rather than
     /// aborting: the transfer is partial, not fatal (exit 12), and the drained
     /// stream keeps every subsequent file intact.
     #[test]

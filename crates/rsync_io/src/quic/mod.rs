@@ -761,7 +761,7 @@ impl QuicStream {
     /// `None` on the receiver (or `--bwlimit=0`), where the wrapper is a
     /// zero-overhead passthrough. Because [`QuicStream`] is a byte pipe, the
     /// decorator paces the exact wire bytes handed to the driver, matching
-    /// upstream's `sleep_for_bwlimit` on the raw socket write (`io.c:846,861`).
+    /// upstream's `sleep_for_bwlimit` on the raw socket write (`io.c:864,879`).
     ///
     /// The returned writer owns this handle; obtain the read half first via
     /// [`QuicStream::try_clone`] when a split read/write pair is needed.

@@ -255,7 +255,7 @@ impl<'a> CopyContext<'a> {
 /// Delegates to the shared predicate so the special-file basis and the regular
 /// -file basis cannot disagree about what "same time" means.
 ///
-/// upstream: `rsync-3.5.0/util1.c:1649` `same_time()` - a zero window (the
+/// upstream: `rsync-3.5.1/util1.c:1744` `same_time()` - a zero window (the
 /// default) compares WHOLE SECONDS; only a negative window
 /// (`--modify-window < 0`) also compares nanoseconds; a positive window is a
 /// whole-second tolerance in which "the nanoseconds do not figure".

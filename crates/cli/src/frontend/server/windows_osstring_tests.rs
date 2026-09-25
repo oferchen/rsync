@@ -9,11 +9,11 @@
 //! server acts on a *different* path than the client named.
 //!
 //! Upstream never has this failure mode: `parse_arguments(int *argc_p, const
-//! char ***argv_p)` (options.c:1361) hands popt the raw `char **` argv,
-//! `poptGetArgs` (options.c:2096) returns those same pointers, and
+//! char ***argv_p)` (options.c:1367) hands popt the raw `char **` argv,
+//! `poptGetArgs` (options.c:2105) returns those same pointers, and
 //! `poptDupArgv` copies them bytewise. Path-bearing option values are taken
 //! the same way - `basis_dir[basis_dir_cnt++] = (char *)poptGetOptArg(pc)`
-//! (options.c:1757) for the alt-dest flags. No stage validates or transcodes
+//! (options.c:1763) for the alt-dest flags. No stage validates or transcodes
 //! the encoding, so upstream is byte-transparent end to end. These tests pin
 //! the same transparency on the Windows side of oc's decode path.
 
@@ -52,7 +52,7 @@ const COMPACT_FLAGS: &str = "-logDtpre.iLsfxCIvu";
 /// Every long flag `server_options()` emits as two argv slots. Their value
 /// slot must be consumed regardless of its encoding.
 ///
-/// upstream: options.c:2807-2808 (`--backup-dir`), 2926-2927 (`--temp-dir`),
+/// upstream: options.c:2817-2818 (`--backup-dir`), 2926-2927 (`--temp-dir`),
 /// 2939-2940 (alt-dest via `safe_arg("", basis_dir[i])`), 2964-2965
 /// (`--files-from`), 2886-2890 (`--partial-dir`).
 const TWO_ARG_FLAGS: [&str; 7] = [
@@ -73,7 +73,7 @@ const TWO_ARG_FLAGS: [&str; 7] = [
 /// U+FFFD substitution here does not fail - it succeeds against the wrong
 /// path, so the transfer reports success while the client's destination is
 /// left untouched. Upstream cannot diverge this way because `poptGetArgs`
-/// (options.c:2096) yields the untouched `char *` argv.
+/// (options.c:2105) yields the untouched `char *` argv.
 #[test]
 fn positional_operand_preserves_unpaired_surrogate() {
     let dest = ill_formed_os_string("dest", "dir");
@@ -130,7 +130,7 @@ fn multiple_positional_operands_keep_distinct_ill_formed_names() {
 /// The partial directory is where an interrupted transfer's data is parked
 /// and where the retry looks for it. A corrupted spelling silently orphans
 /// the partial file: the retry finds nothing and re-sends the whole file,
-/// defeating the flag. upstream: options.c:2886-2890 emits the value via
+/// defeating the flag. upstream: options.c:2896-2900 emits the value via
 /// `safe_arg`, and the server binds it as an untouched `char *`.
 #[test]
 fn two_arg_partial_dir_value_preserves_unpaired_surrogate() {

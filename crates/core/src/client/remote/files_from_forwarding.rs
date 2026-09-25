@@ -7,7 +7,7 @@
 //! # Upstream Reference
 //!
 //! - `io.c:forward_filesfrom_data()` - reads from local fd, writes to socket
-//! - `main.c:1191-1198,1372-1375` - `start_filesfrom_forwarding(filesfrom_fd)`
+//! - `main.c:1209-1216,1390-1393` - `start_filesfrom_forwarding(filesfrom_fd)`
 
 use crate::client::config::{ClientConfig, FilesFromSource};
 use crate::client::error::{ClientError, invalid_argument_error};
@@ -54,7 +54,7 @@ pub(crate) fn read_local_files_from_for_forwarding(
             read_path_into(path, &mut wire_data, eol_nulls, iconv_converter.as_ref())?;
         }
         FilesFromSource::HybridLocalRemote { local_path, .. } => {
-            // upstream: options.c:2476-2501 - a localhost:path hostspec is a
+            // upstream: options.c:2485-2510 - a localhost:path hostspec is a
             // single local fd. This function only runs on PULL (gated by the
             // resolver's stage_local_bytes), where the receiver opens the file
             // locally and forwards its bytes to the remote sender. The remote
@@ -78,7 +78,7 @@ fn read_path_into(
     eol_nulls: bool,
     iconv_converter: Option<&protocol::FilenameConverter>,
 ) -> Result<(), ClientError> {
-    // upstream: options.c:2654 - the same `open_no_attacker_symlinks()` guard
+    // upstream: options.c:2664 - the same `open_no_attacker_symlinks()` guard
     // as the local read. Forwarding the list to a remote sender does not make
     // the local path any less operator-supplied.
     let mut file = super::operator_file::open_read(path).map_err(|e| {

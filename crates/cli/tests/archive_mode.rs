@@ -107,7 +107,7 @@ fn test_no_recursive_overrides_archive() {
 
 #[test]
 fn test_no_perms_before_archive_is_reenabled() {
-    // upstream: options.c:1546 `case 'a'` sets `preserve_perms = 1` in argv
+    // upstream: options.c:1552 `case 'a'` sets `preserve_perms = 1` in argv
     // order, so a `--no-perms` that precedes `-a` is overridden by the later
     // `-a`. At the parser layer that clears the explicit setting to None, and
     // the archive default (compute.rs `unwrap_or(archive)`) preserves perms.

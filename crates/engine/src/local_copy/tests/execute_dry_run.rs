@@ -26,7 +26,7 @@ fn dry_run_single_file_lists_but_does_not_copy() {
         .expect("dry run succeeds");
 
     // Summary reports what *would* happen. upstream: a dry run counts the file
-    // and its size (sender.c:342-343) but never reaches match_sums(), so
+    // and its size (sender.c:343-344) but never reaches match_sums(), so
     // literal_data (match.c:436) stays 0 - only transferred_file_size is 7.
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(summary.bytes_copied(), 0);
@@ -537,7 +537,7 @@ fn dry_run_statistics_match_apply_mode_statistics() {
         summary_apply.directories_created(),
         "directories_created should match between dry-run and apply"
     );
-    // upstream: the transferred *size* (sender.c:342-343) matches between a dry
+    // upstream: the transferred *size* (sender.c:343-344) matches between a dry
     // run and a real run, but literal_data (match.c:436) is only accumulated by
     // the real run - a dry run never calls match_sums(), so its bytes_copied
     // stays 0 while the apply run reports the moved bytes.
@@ -838,7 +838,7 @@ fn dry_run_multiple_files_all_reported() {
     assert_eq!(summary.files_copied(), 3);
     // upstream: a --dry-run never reaches match_sums(), so stats.literal_data
     // (match.c:436) stays 0; only the scan-derived transferred size (8 * 3)
-    // and the transferred-file count are tallied (sender.c:342-343).
+    // and the transferred-file count are tallied (sender.c:343-344).
     assert_eq!(summary.bytes_copied(), 0);
     assert_eq!(summary.transferred_file_size(), 24); // 8 * 3
 

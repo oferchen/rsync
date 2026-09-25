@@ -22,7 +22,7 @@ pub use server::ServerReader;
 /// occur.
 ///
 /// The sender loop consults this before its pre-read flush. Upstream's
-/// `perform_io()` (io.c:640-724) drains buffered output only while genuinely
+/// `perform_io()` (io.c:658-742) drains buffered output only while genuinely
 /// waiting on input via `select()`; when the next request is already buffered
 /// it returns immediately without touching output. Skipping the flush in that
 /// case lets the writer coalesce per-file deltas up to its buffer bound,

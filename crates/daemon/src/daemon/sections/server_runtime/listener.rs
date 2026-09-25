@@ -68,7 +68,7 @@ fn read_address_family_env_override() -> Option<AddressFamilyOverride> {
 /// which lets `getaddrinfo(NULL, port, AI_PASSIVE, ...)` return every
 /// available family - on glibc that is `::` then `0.0.0.0`.
 ///
-/// upstream: socket.c:402-499 (`open_socket_in`) walks every getaddrinfo
+/// upstream: socket.c:410-507 (`open_socket_in`) walks every getaddrinfo
 /// result, binds one socket per family, and only returns NULL when zero
 /// sockets bound.
 fn resolve_bind_addresses(
@@ -149,7 +149,7 @@ const fn normalize_peer_address(addr: SocketAddr) -> SocketAddr {
 /// daemon configuration file.
 ///
 /// Mirrors upstream rsync's default of 5: `daemon-parm.txt` declares
-/// `INTEGER listen_backlog 5`, and `socket.c:554` passes `lp_listen_backlog()`
+/// `INTEGER listen_backlog 5`, and `socket.c:562` passes `lp_listen_backlog()`
 /// to `listen(2)`. An operator who needs a deeper accept queue raises it with
 /// the `listen backlog` directive, exactly as upstream allows.
 const DEFAULT_LISTEN_BACKLOG: i32 = 5;
@@ -191,21 +191,21 @@ fn log_progress_summary(
 /// `"socket(...) failed"` / `"bind() failed: ... (address-family %d)"`
 /// debug emissions. Linux uses `AF_INET = 2` and `AF_INET6 = 10` (see
 /// `<bits/socket.h>`), which oc-rsync reproduces verbatim so the trace
-/// output stays byte-comparable with upstream `socket.c:432-470`.
+/// output stays byte-comparable with upstream `socket.c:440-478`.
 const fn address_family_int(addr: SocketAddr) -> i32 {
     if addr.is_ipv4() { 2 } else { 10 }
 }
 
 /// `SOCK_STREAM` numeric value used by upstream `socket(2)` calls.
 ///
-/// upstream: `socket.c:429-430` - `socket(resp->ai_family, resp->ai_socktype,
+/// upstream: `socket.c:437-438` - `socket(resp->ai_family, resp->ai_socktype,
 /// resp->ai_protocol)` where `ai_socktype == SOCK_STREAM` for the TCP
 /// listener path (`open_socket_in(SOCK_STREAM, ...)` at
 /// `clientserver.c:1099`). Linux defines `SOCK_STREAM = 1`.
 const UPSTREAM_SOCK_STREAM: i32 = 1;
 /// `IPPROTO_TCP` numeric value used by upstream `socket(2)` calls.
 ///
-/// upstream: `socket.c:429-430` - `resp->ai_protocol` is set by
+/// upstream: `socket.c:437-438` - `resp->ai_protocol` is set by
 /// `getaddrinfo` to `IPPROTO_TCP` (`6`) when `ai_socktype == SOCK_STREAM`.
 const UPSTREAM_IPPROTO_TCP: i32 = 6;
 
@@ -217,7 +217,7 @@ const UPSTREAM_IPPROTO_TCP: i32 = 6;
 /// `listen(sp[i], lp_listen_backlog())`.
 ///
 /// `socket_options` (the `socket options =` config directive / `--sockopts`)
-/// is applied before `bind(2)` - upstream: socket.c:447-465 applies
+/// is applied before `bind(2)` - upstream: socket.c:455-473 applies
 /// `SO_REUSEADDR` then `set_socket_options(s, sockopts)` then `bind(2)`.
 /// Applying user socket options only after `listen(2)` (as a prior version of
 /// this function did, via a caller-side post-bind pass) is a no-op for
@@ -226,7 +226,7 @@ const UPSTREAM_IPPROTO_TCP: i32 = 6;
 ///
 /// Failed `socket(2)` and `bind(2)` syscalls are reported through the
 /// `--debug=BIND` producer (`protocol::bind::trace`), mirroring upstream
-/// `socket.c:432-470` per-address-family accumulation. The errors are
+/// `socket.c:440-478` per-address-family accumulation. The errors are
 /// propagated to the caller unchanged.
 fn bind_with_backlog(
     addr: SocketAddr,
@@ -254,7 +254,7 @@ fn bind_with_backlog(
 
     // Allow port reuse so the daemon can restart quickly without waiting for
     // TIME_WAIT sockets to expire.
-    // upstream: socket.c:447 - open_socket_in() sets SO_REUSEADDR (and only
+    // upstream: socket.c:455 - open_socket_in() sets SO_REUSEADDR (and only
     // SO_REUSEADDR) on every listener.
     socket.set_reuse_address(true)?;
 
@@ -262,7 +262,7 @@ fn bind_with_backlog(
     // one replica socket per address), where several listener sockets must
     // share the bind address and the kernel load-balances accepts across them.
     // The default single-listener daemon (`reuse_port == false`) must NOT set
-    // it: upstream (socket.c:447) sets only SO_REUSEADDR, so a second daemon
+    // it: upstream (socket.c:455) sets only SO_REUSEADDR, so a second daemon
     // attempting to bind the same port is refused with EADDRINUSE rather than
     // silently co-binding. Best-effort when enabled: a failure downgrades to a
     // debug log. socket2's setter is Unix-only; Windows has no equivalent, so
@@ -289,7 +289,7 @@ fn bind_with_backlog(
         }
     }
 
-    // upstream: socket.c:449-452 - set_socket_options(s, sockopts) runs here,
+    // upstream: socket.c:457-460 - set_socket_options(s, sockopts) runs here,
     // after SO_REUSEADDR and before bind(2), so options that shape the SYN-ACK
     // (e.g. SO_SNDBUF/SO_RCVBUF window scaling) take effect from the first
     // connection the listener accepts.
@@ -367,7 +367,7 @@ fn warn_tcp_fastopen_unsupported(log: Option<&SharedLogSink>) {
 /// Emits a one-shot warning when a per-family bind fails while another
 /// family in the dual-stack startup is still available to try.
 ///
-/// upstream: `socket.c:463-465` in rsync-3.4.1 logs the per-family failure
+/// upstream: `socket.c:471-473` in rsync-3.4.1 logs the per-family failure
 /// via `asprintf(&errmsgs[ecnt++], "bind() failed: %s (address-family %d)")`
 /// and prints it through `rwrite(FLOG, ...)` either when all addresses fail
 /// or when running with `-vv` debug. oc-rsync surfaces it unconditionally on
@@ -401,7 +401,7 @@ fn warn_per_family_bind_failure(
 /// Emits a warning when `accept(2)` fails with a transient, per-connection
 /// error that the accept loop deliberately survives.
 ///
-/// upstream: `socket.c:593` - `if (fd < 0) continue;`. The daemon accept loop
+/// upstream: `socket.c:601` - `if (fd < 0) continue;`. The daemon accept loop
 /// ignores every `accept(2)` failure and keeps serving. Errors such as
 /// `ECONNABORTED` (a client reset between the TCP handshake and `accept`) or
 /// `EMFILE`/`ENFILE` (a transient descriptor shortage under a connection
@@ -457,7 +457,7 @@ fn bind_listeners_per_family(
     // SO_REUSEPORT is only needed when more than one replica socket must
     // co-bind the same address (the opt-in multi-acceptor extension). The
     // default single-listener daemon binds with SO_REUSEADDR only, matching
-    // upstream socket.c:447 so a duplicate bind is refused with EADDRINUSE.
+    // upstream socket.c:455 so a duplicate bind is refused with EADDRINUSE.
     let reuse_port = replicas > 1;
     let mut listeners = Vec::with_capacity(bind_addresses.len() * replicas);
     let mut bound_addresses = Vec::with_capacity(bind_addresses.len() * replicas);

@@ -223,7 +223,7 @@ impl FilterRuleWireFormat {
 
 /// Reads a 4-byte little-endian integer from the stream.
 ///
-/// This mirrors upstream rsync's `read_int()` function in io.c:1774,
+/// This mirrors upstream rsync's `read_int()` function in io.c:1812,
 /// which reads 4 bytes and interprets them as a little-endian int32.
 fn read_i32_le(reader: &mut dyn Read) -> io::Result<i32> {
     let mut buf = [0u8; 4];
@@ -233,7 +233,7 @@ fn read_i32_le(reader: &mut dyn Read) -> io::Result<i32> {
 
 /// Writes a 4-byte little-endian integer to the stream.
 ///
-/// This mirrors upstream rsync's `write_int()` function in io.c:1815,
+/// This mirrors upstream rsync's `write_int()` function in io.c:1853,
 /// which writes 4 bytes as a little-endian int32.
 fn write_i32_le(writer: &mut dyn Write, value: i32) -> io::Result<()> {
     writer.write_all(&value.to_le_bytes())
@@ -276,13 +276,13 @@ fn wire_bytes_to_pattern(bytes: &[u8]) -> OsString {
 
 /// Largest filter-rule record accepted from a peer, in bytes.
 ///
-/// upstream: rsync.h:765-769 defines
+/// upstream: rsync.h:766-770 defines
 /// `BIGPATHBUFLEN = MAXPATHLEN < 4096 ? 4096+1024 : MAXPATHLEN+1024`, and
 /// `recv_filter_list` sizes its receive buffer with it (exclude.c:1973).
 ///
 /// The value is 5120 on every platform oc supports, but not for the same
-/// reason on each: rsync.h:761 defines `MAXPATHLEN 1024` only `#ifndef`, and
-/// rsync.h:389 includes `<sys/param.h>` first, so the system value wins - 4096
+/// reason on each: rsync.h:762 defines `MAXPATHLEN 1024` only `#ifndef`, and
+/// rsync.h:390 includes `<sys/param.h>` first, so the system value wins - 4096
 /// on Linux, 1024 on macOS. Linux takes the `MAXPATHLEN+1024` arm and macOS
 /// takes the `4096+1024` arm, and both land on 5120.
 ///

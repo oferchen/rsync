@@ -2344,11 +2344,11 @@ fn delay_updates_restores_nested_directory_mtime_after_rename() {
 
 // --- staging THROUGH the --partial-dir -------------------------------------
 //
-// upstream: receiver.c:1301-1314 - under --delay-updates a completed file is
+// upstream: receiver.c:1318-1331 - under --delay-updates a completed file is
 // published INTO the --partial-dir under its real name
 // (`handle_partial_dir(partialptr, PDIR_CREATE)` then
 // `finish_transfer(partialptr, fnametmp, ...)`), and only
-// `handle_delayed_updates()` (receiver.c:685-720) renames it onto the
+// `handle_delayed_updates()` (receiver.c:701-736) renames it onto the
 // destination after the walk. Merely holding the temp back until the end
 // reaches the same destination content but never creates the partial dir,
 // which an operator who named `--partial-dir=DIR` can observe.
@@ -2446,7 +2446,7 @@ fn delay_updates_writes_through_a_pre_existing_partial_dir() {
 
 #[test]
 fn delay_updates_removes_a_relative_partial_dir_after_the_rename() {
-    // upstream: receiver.c:718 handle_partial_dir(partialptr, PDIR_DELETE)
+    // upstream: receiver.c:734 handle_partial_dir(partialptr, PDIR_DELETE)
     // rmdir's a now-empty RELATIVE partial dir once the delayed rename lands.
     let temp = create_tempdir();
     let source_root = temp.path().join("source");

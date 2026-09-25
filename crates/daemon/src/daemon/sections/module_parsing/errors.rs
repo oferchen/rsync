@@ -9,7 +9,7 @@
 ///
 /// upstream: options.c:862 `{"bwlimit", 0, POPT_ARG_INT, &daemon_bwlimit, ...}`
 /// - the daemon `--bwlimit` is a plain integer number of KiB per second, unlike
-///   the client `--bwlimit` (options.c:1714) which accepts a size suffix. There is
+///   the client `--bwlimit` (options.c:1720) which accepts a size suffix. There is
 ///   no `:BURST` component. `0` disables throttling; the returned value is the
 ///   byte-per-second rate (KiB * 1024).
 fn parse_runtime_bwlimit(value: &OsString) -> Result<Option<NonZeroU64>, DaemonError> {
@@ -168,7 +168,7 @@ fn bind_error(address: SocketAddr, error: io::Error) -> DaemonError {
 
 /// Only the kqueue engine treats an `accept(2)` failure as fatal: a kevent
 /// error means its readiness surface is unusable. The portable poll engine
-/// mirrors upstream `socket.c:593`'s `if (fd < 0) continue;` and warns instead.
+/// mirrors upstream `socket.c:601`'s `if (fd < 0) continue;` and warns instead.
 #[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 fn accept_error(address: SocketAddr, error: io::Error) -> DaemonError {
     network_error("accept connection on", address, error)

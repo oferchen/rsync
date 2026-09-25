@@ -1,6 +1,6 @@
 // The name a failed `link_stat` reports for a source operand.
 //
-// Upstream renders it through `full_fname()` (util1.c:1433-1464), which puts
+// Upstream renders it through `full_fname()` (util1.c:1528-1559), which puts
 // `curr_dir` in front of every relative `fn`, so a missing relative operand is
 // reported by its absolute path. `curr_dir` is upstream's own *string* - built
 // by `push_dir()` appending the operand's `dir` half and cleaning it lexically -
@@ -25,7 +25,7 @@ fn a_relative_operand_is_named_by_its_absolute_path() {
     assert_eq!(
         operand_diagnostic_name(Path::new("nope")),
         working_dir.join("nope"),
-        "upstream prefixes a relative `fn` with `curr_dir` (util1.c:1445-1452)"
+        "upstream prefixes a relative `fn` with `curr_dir` (util1.c:1540-1547)"
     );
     assert_eq!(
         operand_diagnostic_name(Path::new("sub/nope")),

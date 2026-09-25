@@ -94,9 +94,9 @@ pub struct GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1547-1557` - `make_file()` reallocates `lastdir` only when
+    /// - `flist.c:1772-1782` - `make_file()` reallocates `lastdir` only when
     ///   the directory prefix differs from the previous entry's.
-    /// - `flist.c:1683-1684` - `file->dirname = lastdir` aliases that one
+    /// - `flist.c:1908-1909` - `file->dirname = lastdir` aliases that one
     ///   string from every entry in the directory.
     last_dirname: Option<Arc<Path>>,
     /// Per-directory scoped filter chain for file list building and deletion.
@@ -154,8 +154,8 @@ pub struct GeneratorContext {
     /// until the peer confirms the commit via `MSG_SUCCESS`. Empty and unused
     /// unless `--remove-source-files` is active.
     ///
-    /// upstream: sender.c:395 `successful_send()` unlinks on confirmation,
-    /// never inline at send time (io.c:1623-1637 `MSG_SUCCESS` handler).
+    /// upstream: sender.c:396 `successful_send()` unlinks on confirmation,
+    /// never inline at send time (io.c:1649-1663 `MSG_SUCCESS` handler).
     pub(crate) pending_source_removals: super::pending_removal::PendingSourceRemovals,
     /// Incremental recursion (INC_RECURSE) state for segmented file list sending.
     pub(crate) incremental: IncrementalState,
@@ -183,7 +183,7 @@ pub struct GeneratorContext {
     /// (upstream: main.c:238-247 `read_del_stats()`)
     pub(crate) delete_stats: DeleteStats,
     /// Per-type file-list tallies and `total_size`, accumulated as each entry
-    /// is written to the wire (upstream: `send_file_entry()`, flist.c:421-438,
+    /// is written to the wire (upstream: `send_file_entry()`, flist.c:646-663,
     /// 690-691). Feeds the `--stats` "Number of files" breakdown and the real
     /// "Total file size" on a push; accumulated at send time because
     /// INC_RECURSE drains sent segments from `file_list`.
@@ -196,7 +196,7 @@ pub struct GeneratorContext {
     /// Directory the sender is serving from, i.e. upstream's `curr_dir`.
     ///
     /// Upstream's sender `push_dir()`s into the `dir` half of each positional's
-    /// `dir`/`fn` split (flist.c:2338-2349) before walking it, and
+    /// `dir`/`fn` split (flist.c:2578-2589) before walking it, and
     /// `full_fname()` renders every diagnostic path relative to that directory.
     /// oc-rsync never `chdir()`s, so the same directory - the walk `base` - is
     /// recorded here as each source entry is walked and consumed by
@@ -232,13 +232,13 @@ pub struct GeneratorContext {
     pub(crate) batch_stats_sink: Option<BatchStatsSink>,
     /// Shared handle on the raw wire byte counter for bytes written to the
     /// transport, below multiplex framing (upstream `stats.total_written`,
-    /// io.c:859). Sampled at the `handle_stats` point (main.c:979-980) so the
+    /// io.c:877). Sampled at the `handle_stats` point (main.c:992-993) so the
     /// sender reports raw wire bytes - the count the client sender prints and the
     /// server sender transmits over the wire - instead of a logical token tally.
     /// `None` in unit tests, where the logical fallback is used.
     pub(crate) wire_write_counter: Option<Arc<std::sync::atomic::AtomicU64>>,
     /// Shared handle on the raw wire byte counter for bytes read from the
-    /// transport (upstream `stats.total_read`, io.c:820). Sampled alongside
+    /// transport (upstream `stats.total_read`, io.c:838). Sampled alongside
     /// [`Self::wire_write_counter`] at the `handle_stats` point. `None` in unit
     /// tests, where the logical fallback is used.
     pub(crate) wire_read_counter: Option<Arc<std::sync::atomic::AtomicU64>>,
@@ -253,7 +253,7 @@ pub struct GeneratorContext {
     pub(crate) receiver_symlink_times: bool,
     /// True when this server sender must write per-file lines to a daemon
     /// module's log file (`transfer logging = yes`), regardless of the client's
-    /// `-i`. Mirrors upstream `sender.c:499` (`itemizing = logfile_format_has_i`),
+    /// `-i`. Mirrors upstream `sender.c:500` (`itemizing = logfile_format_has_i`),
     /// which routes every processed entry through
     /// `maybe_log_item()`/`log_item(FLOG)`.
     pub(crate) daemon_log_active: bool,
@@ -296,8 +296,8 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `util1.c:1445-1452` - `p1 = curr_dir + module_dirlen` computed
-    ///   unconditionally; `util1.c:1453` - `if (module_id >= 0)` gating only
+    /// - `util1.c:1540-1547` - `p1 = curr_dir + module_dirlen` computed
+    ///   unconditionally; `util1.c:1548` - `if (module_id >= 0)` gating only
     ///   the suffix.
     pub(crate) fn full_fname_paths(&self) -> crate::full_fname::FullFnamePaths<'_> {
         let module_root = self.config.connection.daemon_module_root.as_deref();
@@ -325,7 +325,7 @@ impl GeneratorContext {
         config: ServerConfig,
         pipeline: TransferPipeline,
     ) -> Self {
-        // upstream: flist.c:2958 - ndx_start = inc_recurse ? 1 : 0
+        // upstream: flist.c:3201 - ndx_start = inc_recurse ? 1 : 0
         let inc_recurse = handshake
             .compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE));
@@ -400,7 +400,7 @@ impl GeneratorContext {
     /// Arms per-file daemon-log collection for a server sender whose module has
     /// `transfer logging = yes`, recording whether the `log format` carries `%i`.
     ///
-    /// upstream: sender.c:499 `itemizing = am_server ? logfile_format_has_i : ...`.
+    /// upstream: sender.c:500 `itemizing = am_server ? logfile_format_has_i : ...`.
     pub fn enable_daemon_log(&mut self, format_has_i: bool) {
         self.daemon_log_active = true;
         self.daemon_logfile_format_has_i = format_has_i;
@@ -409,7 +409,7 @@ impl GeneratorContext {
     /// Collects one per-file daemon-log row when daemon transfer logging is armed.
     ///
     /// The daemon sender's own FLOG write, independent of the client's `-i`.
-    /// Transferred items always log (upstream `sender.c:461` `log_item()` is
+    /// Transferred items always log (upstream `sender.c:462` `log_item()` is
     /// unconditional given `logfile_format`); non-transfer items follow
     /// `maybe_log_item()`'s `am_server` gate (`log.c:875-885`): logged only when
     /// the format carries `%i` and the item is significant or names an alternate
@@ -418,9 +418,9 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:499` - `itemizing = am_server ? logfile_format_has_i : ...`
-    /// - `sender.c:584` - `maybe_log_item(file, iflags, itemizing, xname)`
-    /// - `sender.c:461` - `log_item(log_code, file, iflags, NULL)` per transfer
+    /// - `sender.c:500` - `itemizing = am_server ? logfile_format_has_i : ...`
+    /// - `sender.c:585` - `maybe_log_item(file, iflags, itemizing, xname)`
+    /// - `sender.c:462` - `log_item(log_code, file, iflags, NULL)` per transfer
     pub(crate) fn record_daemon_log(
         &self,
         ndx: usize,
@@ -457,8 +457,8 @@ impl GeneratorContext {
     /// Attaches the raw wire byte counters used for `handle_stats()` reporting.
     ///
     /// Both counters must wrap the raw transport (below multiplex framing),
-    /// matching upstream's descriptor counters `stats.total_written` (io.c:859)
-    /// and `stats.total_read` (io.c:820). Must be set before [`run`](Self::run)
+    /// matching upstream's descriptor counters `stats.total_written` (io.c:877)
+    /// and `stats.total_read` (io.c:838). Must be set before [`run`](Self::run)
     /// for the sender to report raw wire byte totals.
     pub fn set_wire_counters(
         &mut self,
@@ -511,7 +511,7 @@ impl GeneratorContext {
     /// on the trailing file of the previous segment, so a directory row would
     /// print with a file type char and the wrong path. Upstream recovers the
     /// directory via `file = dir_flist->files[cur_flist->parent_ndx]`
-    /// (sender.c:269-272); oc mirrors that by mapping the gap to its sub-list's
+    /// (sender.c:272-275); oc mirrors that by mapping the gap to its sub-list's
     /// recorded owning-directory flat index. Each sub-list resolves to its own
     /// owning directory - the initial list's gap to the `.` root, a
     /// subdirectory's gap to that subdirectory - so every directory is itemized
@@ -519,7 +519,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:267-272` - gap NDX (`ndx < cur_flist->ndx_start`) resolves to
+    /// - `sender.c:270-275` - gap NDX (`ndx < cur_flist->ndx_start`) resolves to
     ///   the owning directory entry in `dir_flist`.
     /// - `generator.c:2306-2313` - each sub-list (including the initial list
     ///   whose `parent_ndx >= 0`) itemizes its owning directory at `ndx_start - 1`.
@@ -685,7 +685,7 @@ impl GeneratorContext {
         .with_preserve_crtimes(self.config.flags.crtimes)
         .with_preserve_acls(self.config.flags.acls)
         .with_acl_send_names(acl_send_names)
-        // upstream: flist.c:481-482,491-492 - inline XMIT_*_NAME_FOLLOWS owner
+        // upstream: flist.c:706-707,716-717 - inline XMIT_*_NAME_FOLLOWS owner
         // names are emitted only under incremental recursion. Without it the
         // names travel solely in the trailing id-list (send_id_lists), so
         // gating inline emission on inc_recurse keeps the flist bytes identical
@@ -784,7 +784,7 @@ impl GeneratorContext {
     /// so no comparison, encoding, or output can observe the difference; the
     /// per-entry allocation the constructor made is simply dropped.
     ///
-    /// upstream: flist.c:1547-1557, flist.c:1683-1684 (`lastdir`).
+    /// upstream: flist.c:1772-1782, flist.c:1908-1909 (`lastdir`).
     fn intern_dirname(&mut self, entry: &mut FileEntry) {
         match &self.last_dirname {
             Some(cached) if cached == entry.dirname() => {
@@ -838,7 +838,7 @@ impl GeneratorContext {
     /// - `clientserver.c:1018` - `use_secure_symlinks = am_daemon && !am_chrooted`
     /// - `clientserver.c:988` - the only assignment of `am_chrooted`
     /// - `clientserver.c:1345-1357` - why the daemon chroot does not set it
-    /// - `sender.c:359-383` - `secure_relative_open` vs `do_open_checklinks`
+    /// - `sender.c:360-384` - `secure_relative_open` vs `do_open_checklinks`
     pub(crate) fn source_open(&self) -> open_source::SourceOpen {
         let follow_symlinks = self.config.flags.copy_links || self.config.flags.copy_unsafe_links;
         open_source::SourceOpen::new(
@@ -859,11 +859,11 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `syscall.c:136` `confinement_root()` - `am_daemon ? module_dir :
+    /// - `syscall.c:163` `confinement_root()` - `am_daemon ? module_dir :
     ///   confine_root`. The daemon arm wins unconditionally: its module
     ///   directory is already the boundary, and `--confine-root` arrives in a
     ///   peer-supplied argv where honouring it could only WIDEN the module
-    ///   (`options.c:2382-2386` nulls it out for a daemon before it is read).
+    ///   (`options.c:2391-2395` nulls it out for a daemon before it is read).
     pub(crate) fn confine_root(&self) -> Option<PathBuf> {
         confinement_root(&self.config.connection)
     }
@@ -881,11 +881,11 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:247-255` `scan_readlink()` - `do_readlink_atfd(scan_dirfd,
+    /// - `flist.c:470-480` `scan_readlink()` - `do_readlink_atfd(scan_dirfd,
     ///   basename)` when the leaf sits directly inside the scanned directory.
-    /// - `flist.c:2028-2059` `secure_opendir()` - the confined open that
+    /// - `flist.c:2256-2295` `secure_opendir()` - the confined open that
     ///   produces `scan_dirfd` for a daemon.
-    /// - `util1.c:1216` `change_dir()` - the per-argument descent, confined
+    /// - `util1.c:1313` `change_dir()` - the per-argument descent, confined
     ///   with `secure_relative_open()` for a non-chrooted daemon.
     ///
     /// The confined branch is Unix-only, matching
@@ -970,29 +970,29 @@ impl GeneratorContext {
     ///
     /// The activation threshold differs by mode:
     ///
-    /// **Server mode** (daemon sender - `main.c:1270-1275` `start_server am_sender`):
+    /// **Server mode** (daemon sender - `main.c:1288-1293` `start_server am_sender`):
     /// - For protocol >= 30, `need_messages_from_generator = 1` (compat.c:776)
     /// - `if (need_messages_from_generator) io_start_multiplex_in(f_in);`
     ///
-    /// **Client mode** (client pushing to daemon - `main.c:1322-1323` `client_run am_sender`):
+    /// **Client mode** (client pushing to daemon - `main.c:1340-1341` `client_run am_sender`):
     /// - `if (protocol_version >= 31 || (!filesfrom_host && protocol_version >= 23))`
     /// - We don't support filesfrom, so this simplifies to >= 23
     ///
-    /// **`--remove-source-files`** (`options.c:2243-2251`): the sender must
+    /// **`--remove-source-files`** (`options.c:2252-2260`): the sender must
     /// receive `MSG_SUCCESS` before it may unlink a source, so upstream sets
     /// `need_messages_from_generator = 1` unconditionally when the flag is
     /// active, forcing input multiplex regardless of protocol version. Both
     /// peers share the option, so both force it and the stream stays in sync.
     #[must_use]
     pub(crate) const fn should_activate_input_multiplex(&self) -> bool {
-        // upstream: options.c:2243-2251 - --remove-source-files always needs the
+        // upstream: options.c:2252-2260 - --remove-source-files always needs the
         // generator->sender message channel so MSG_SUCCESS can drive the
         // deferred unlink, independent of protocol version.
         if self.config.flags.remove_source_files {
             return true;
         }
         if self.config.connection.client_mode {
-            // Client mode: >= 23 (upstream main.c:1304-1305, no filesfrom)
+            // Client mode: >= 23 (upstream main.c:1322-1323, no filesfrom)
             self.protocol.supports_multiplex_io()
         } else {
             // Server mode: >= 30 (need_messages_from_generator)
@@ -1097,7 +1097,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `syscall.c:228 do_open` / `syscall.c:687 do_open_nofollow` (3.4.2
+    /// - `syscall.c:278 do_open` / `syscall.c:826 do_open_nofollow` (3.4.2
     ///   propagates `O_NOATIME` through both paths).
     pub(crate) fn open_source_reader(
         &self,
@@ -1203,14 +1203,14 @@ impl GeneratorContext {
     /// The third tuple element is the effective source length: on the plain-file
     /// path it is the fstat'd size (with a 0-length device resolved via
     /// `get_device_size`), preferred over the flist scan-time length exactly as
-    /// upstream `sender.c:404-419` prefers `st.st_size`. The fast path, taken
+    /// upstream `sender.c:405-420` prefers `st.st_size`. The fast path, taken
     /// only for a non-device regular file that follows symlinks, reports the
     /// flist length. A device source opened without `--copy-devices` aborts the
     /// transfer with `RERR_PROTOCOL` (a tagged `ProtocolViolation` error).
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:404-419` - `do_fstat` + `IS_DEVICE` guard + `get_device_size`.
+    /// - `sender.c:405-420` - `do_fstat` + `IS_DEVICE` guard + `get_device_size`.
     pub(crate) fn open_source_unbuffered(
         &self,
         path: &std::path::Path,
@@ -1259,7 +1259,7 @@ impl GeneratorContext {
         }
 
         let mut f = self.source_open().open(path)?;
-        // upstream: sender.c:404-419 - fstat the opened fd, reject a device
+        // upstream: sender.c:405-420 - fstat the opened fd, reject a device
         // without --copy-devices, and prefer the fstat'd size (resolving a
         // 0-length device via get_device_size) over the flist scan-time size.
         let effective_size = self.fstat_source_guard(&mut f)?;
@@ -1288,7 +1288,7 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:404-419` - `do_fstat` (exit `RERR_FILEIO` on failure),
+    /// - `sender.c:405-420` - `do_fstat` (exit `RERR_FILEIO` on failure),
     ///   `IS_DEVICE(st.st_mode)` guard (`RERR_PROTOCOL`), and
     ///   `st.st_size = get_device_size(fd, fname)` for a 0-length device.
     fn fstat_source_guard(&self, file: &mut std::fs::File) -> std::io::Result<u64> {
@@ -1301,7 +1301,7 @@ impl GeneratorContext {
         #[cfg(unix)]
         let size = match source_device_guard(&metadata, self.config.flags.copy_devices)? {
             Some(size) => size,
-            // upstream: sender.c:418 - st.st_size = get_device_size(fd, fname).
+            // upstream: sender.c:419 - st.st_size = get_device_size(fd, fname).
             None => get_device_size(file)?,
         };
         #[cfg(not(unix))]
@@ -1333,7 +1333,7 @@ impl GeneratorContext {
 
     /// Validates that a file index is within bounds of the file list.
     ///
-    /// upstream: sender.c:408 `flist_for_ndx()` / rsync.c:352 - an out-of-range
+    /// upstream: sender.c:409 `flist_for_ndx()` / rsync.c:352 - an out-of-range
     /// wire file index aborts with `exit_cleanup(RERR_PROTOCOL)` (exit 2). The
     /// error is tagged so the core exit-code mapper yields RERR_PROTOCOL(2)
     /// rather than RERR_STREAMIO(12).
@@ -1362,8 +1362,8 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:2980 flist_free()` - frees completed file list segments
-    /// - `sender.c:248` - `flist_free(first_flist)` in sender transfer loop
+    /// - `flist.c:3223 flist_free()` - frees completed file list segments
+    /// - `sender.c:251` - `flist_free(first_flist)` in sender transfer loop
     pub(crate) fn reclaim_oldest_segment(&mut self) {
         let Some((start, end)) = self.incremental.ndx_map.reclaimable_range() else {
             return;
@@ -1468,7 +1468,7 @@ pub(crate) fn sender_fstat_error(source: &std::io::Error) -> std::io::Error {
 ///
 /// # Upstream Reference
 ///
-/// - `sender.c:405-419` - `if (IS_DEVICE(st.st_mode)) { if (!copy_devices) ...
+/// - `sender.c:406-420` - `if (IS_DEVICE(st.st_mode)) { if (!copy_devices) ...
 ///   exit_cleanup(RERR_PROTOCOL); if (st.st_size == 0) st.st_size =
 ///   get_device_size(fd, fname); }`.
 #[cfg(unix)]
@@ -1480,7 +1480,7 @@ fn source_device_guard(
     let file_type = metadata.file_type();
     if file_type.is_block_device() || file_type.is_char_device() {
         if !copy_devices {
-            // upstream: sender.c:407-409 - rprintf(FERROR, "attempt to copy
+            // upstream: sender.c:408-410 - rprintf(FERROR, "attempt to copy
             // device contents without --copy-devices\n") + exit_cleanup(RERR_PROTOCOL).
             return Err(protocol::protocol_violation(format!(
                 "attempt to copy device contents without --copy-devices {}{}",
@@ -1500,7 +1500,7 @@ fn source_device_guard(
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:1550 get_device_size` - `lseek(fd, 0, SEEK_END)` yields the
+/// - `flist.c:1775 get_device_size` - `lseek(fd, 0, SEEK_END)` yields the
 ///   size; `lseek(fd, 0, SEEK_SET)` rewinds. A seek failure logs and returns
 ///   `0` upstream, so the transfer degrades to an empty stream rather than
 ///   aborting; the rewind failure is likewise non-fatal.
@@ -1690,7 +1690,7 @@ mod source_base_windows_tests {
 
 #[cfg(all(test, unix))]
 mod device_guard_tests {
-    //! Sender device guard (`sender.c:405-419`): a device source without
+    //! Sender device guard (`sender.c:406-420`): a device source without
     //! `--copy-devices` must abort with `RERR_PROTOCOL`, a device with
     //! `--copy-devices` defers to `get_device_size`, and a regular file
     //! reports its fstat length.
@@ -1717,7 +1717,7 @@ mod device_guard_tests {
     }
 
     /// With `--copy-devices` a 0-length device defers size resolution to
-    /// `get_device_size` (upstream `sender.c:418`), signalled by `Ok(None)`.
+    /// `get_device_size` (upstream `sender.c:419`), signalled by `Ok(None)`.
     #[test]
     fn char_device_with_copy_devices_defers_size_resolution() {
         let metadata = std::fs::metadata("/dev/null").expect("/dev/null present");
@@ -1762,14 +1762,14 @@ mod device_guard_tests {
 ///
 /// # Upstream Reference
 ///
-/// - `syscall.c:301-303` - `ona_open()` returns `open(path, flags, mode)` when
+/// - `syscall.c:381-383` - `ona_open()` returns `open(path, flags, mode)` when
 ///   `symlink_optout_allowed()`, above every use of `confinement_root()`.
-/// - `syscall.c:136-146` - `confinement_root()` - `am_daemon ? module_dir :
+/// - `syscall.c:163-173` - `confinement_root()` - `am_daemon ? module_dir :
 ///   confine_root`. The daemon arm wins unconditionally: its module directory
 ///   is already the boundary, and `--confine-root` arrives in a peer-supplied
 ///   argv where honouring it could only WIDEN the module
-///   (`options.c:2382-2386` nulls it out for a daemon before it is read).
-/// - `syscall.c:123-127` - `symlink_optout_allowed()`.
+///   (`options.c:2391-2395` nulls it out for a daemon before it is read).
+/// - `syscall.c:140-144` - `symlink_optout_allowed()`.
 fn confinement_root(connection: &crate::config::ConnectionConfig) -> Option<PathBuf> {
     // The opt-out is read on the SAME axis as the root, because upstream's two
     // arms read disjoint state: a daemon consults `lp_insecure_links(module_id)`

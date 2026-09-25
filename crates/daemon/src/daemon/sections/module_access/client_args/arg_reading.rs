@@ -14,7 +14,7 @@
 ///
 /// # Upstream Reference
 ///
-/// - `io.c:1295-1306` - `unbackslash_arg(char *s)` in rsync 3.4.4.
+/// - `io.c:1313-1332` - `unbackslash_arg(char *s)` in rsync 3.4.4.
 fn unbackslash_arg(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -36,10 +36,10 @@ fn unbackslash_arg(s: &str) -> String {
 /// Merges secluded-args phase 1 (cmdline) and phase 2 (stdin) arg lists.
 ///
 /// In secluded-args mode upstream rsync splits the daemon argv at the
-/// `NULL` it injects at `options.c:2745`. Phase 1 (read from the cmdline,
+/// `NULL` it injects at `options.c:2755`. Phase 1 (read from the cmdline,
 /// `clientserver.c:395-407`) carries the args that precede that NULL:
 /// `--server`, `--sender`, the compact flag string built by `argstr`
-/// (`options.c:2620-2731`), and `--iconv=...` if any. Phase 2 (read from
+/// (`options.c:2629-2741`), and `--iconv=...` if any. Phase 2 (read from
 /// stdin via `send_protected_args`, `rsync.c:283-320`) carries every arg
 /// that follows, beginning with the synthetic `"rsync"` arg0
 /// (`rsync.c:295`) and ending with the `.` separator plus the positional
@@ -61,7 +61,7 @@ fn unbackslash_arg(s: &str) -> String {
 /// # Upstream Reference
 ///
 /// - `clientserver.c:1059-1086` - two-phase `read_args()` + `parse_arguments()`
-/// - `options.c:2614-2745` - `server_options()` placement of `--server`,
+/// - `options.c:2623-2755` - `server_options()` placement of `--server`,
 ///   `--sender`, `argstr`, and the secluded-args NULL split point
 /// - `rsync.c:283-320` - `send_protected_args()` rewrites the NULL slot
 ///   with `"rsync"` and streams the rest as NUL-separated bytes
@@ -76,7 +76,7 @@ fn merge_secluded_args(phase1: Vec<String>, mut phase2: Vec<String>) -> Vec<Stri
 }
 
 /// Applies [`unbackslash_arg`] to every option arg that precedes the `.`
-/// CWD marker, mirroring upstream `io.c:1336-1359`'s split between option
+/// CWD marker, mirroring upstream `io.c:1362-1385`'s split between option
 /// and file args. File args after the dot are left verbatim because upstream
 /// dispatches them through `glob_expand()` rather than `unbackslash_arg()`.
 fn unescape_phase1_option_args(args: Vec<String>) -> Vec<String> {
@@ -100,7 +100,7 @@ fn unescape_phase1_option_args(args: Vec<String>) -> Vec<String> {
 ///
 /// After the daemon sends "@RSYNCD: OK", the client sends its command-line
 /// arguments (e.g., "--server", "-r", "-a", "."). This mirrors upstream's
-/// `read_args()` function in io.c:1292.
+/// `read_args()` function in io.c:1310.
 ///
 /// For protocol >= 30: arguments are null-byte terminated
 /// For protocol < 30: arguments are newline terminated
@@ -108,7 +108,7 @@ fn unescape_phase1_option_args(args: Vec<String>) -> Vec<String> {
 ///
 /// The argument count is bounded by
 /// [`protocol::secluded_args::MAX_DAEMON_ARGS`]. Upstream applies that ceiling
-/// inside this same loop (`io.c:1476-1479`) under `if (mod_name && ...)`, and
+/// inside this same loop (`io.c:1502-1505`) under `if (mod_name && ...)`, and
 /// every caller of this function is serving a module, so the bound is
 /// unconditional here. Without it a client can make the daemon accumulate an
 /// unbounded argument vector before a single argument is parsed.
@@ -120,7 +120,7 @@ fn read_client_arguments<R: BufRead>(
     let mut arguments = Vec::new();
 
     loop {
-        // upstream: io.c:1476 - checked per read line, before the argument is
+        // upstream: io.c:1502 - checked per read line, before the argument is
         // appended, so the peer is cut off while it is still sending rather
         // than after the whole vector is resident.
         if arguments.len() >= protocol::secluded_args::MAX_DAEMON_ARGS - 1 {
@@ -244,7 +244,7 @@ fn read_and_log_client_args(
     ) {
         Ok(args) => args,
         Err(err) => {
-            // upstream: io.c:1477-1478 - `read_args()` reports its own refusal
+            // upstream: io.c:1503-1504 - `read_args()` reports its own refusal
             // (`too many daemon arguments`) at FERROR, which for a daemon lands
             // in the log file. Telling only the peer leaves the operator with a
             // connection that was cut for no recorded reason, so the log gets
@@ -272,7 +272,7 @@ fn read_and_log_client_args(
         // - Phase 1 (cmdline): `--server`, `--sender`, the compact flag
         //   string (`-slogDtprIzxe.iLsfxCIvu`), and `--iconv=...` if any.
         //   These appear before the `NULL` upstream inserts at
-        //   `options.c:2745` and must reach the daemon's option parser
+        //   `options.c:2755` and must reach the daemon's option parser
         //   or the negotiated compact flags (`-r`, `-l`, `-z`, ...) and
         //   the role marker `--sender` are silently dropped.
         // - Phase 2 (stdin): every long-form option emitted after that
@@ -287,7 +287,7 @@ fn read_and_log_client_args(
         // `daemon-groupmap-wild` test (`--groupmap=*:GID`).
         //
         // Phase 2 args are emitted verbatim by upstream `safe_arg()` -
-        // the `if (!protect_args ...)` guard at `options.c:2551` skips
+        // the `if (!protect_args ...)` guard at `options.c:2560` skips
         // the WILD_CHARS escape when `protect_args` is set - so no
         // `unbackslash_arg()` pass is needed on either phase.
         match protocol::secluded_args::recv_secluded_args(

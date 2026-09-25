@@ -17,7 +17,7 @@ fn run_daemon_enforces_module_connection_limit() {
             .expect("chmod secrets");
     }
 
-    // Each session runs in a forked child (upstream: socket.c:753-772
+    // Each session runs in a forked child (upstream: socket.c:761-780
     // start_accept_loop), so the `max connections` slots must be claimed
     // through the `lock file` - the only cross-process ledger
     // (clientserver.c:791 claim_connection). The default lock file is

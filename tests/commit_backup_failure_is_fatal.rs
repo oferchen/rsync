@@ -16,7 +16,7 @@
 //! `cleanup.c:113-117` keeps the first code handed to `exit_cleanup()`, and the
 //! `RERR_PARTIAL` fallback at `cleanup.c:210-218` is guarded on
 //! `exit_code == 0`. Contrast the per-file failure oc already matched: a denied
-//! `mkstemp()` (`receiver.c:452-455`) is reported and `recv_files()` moves on.
+//! `mkstemp()` (`receiver.c:465-468`) is reported and `recv_files()` moves on.
 //!
 //! Why the abort is the half that matters: `make_backup()` is what preserves
 //! the destination's pre-image. A receiver that treats "the backup could not be
@@ -102,7 +102,7 @@ struct Fixture {
 /// pre-image to back up.
 ///
 /// The backup lives at `dst/bak/sub/fNN` (upstream clears the suffix when a
-/// `--backup-dir` is named, `options.c:2438-2439`). Nesting the files one level
+/// `--backup-dir` is named, `options.c:2447-2448`). Nesting the files one level
 /// down is load-bearing: the step that fails is the leaf `mkdir` of
 /// `dst/bak/sub`, so top-level files would need no new backup subdirectory and
 /// the fixture would never fail.

@@ -1752,7 +1752,7 @@ fn backup_with_inplace_preserves_dest_inode_and_truncates() {
 //
 // upstream backup.test invocation 5:
 //   rsync -ai --inplace --no-whole-file --backup --backup-dir=$bak from/ to/
-// upstream receiver.c:872-876 sets fnamecmp = get_backup_name(fname)
+// upstream receiver.c:888-892 sets fnamecmp = get_backup_name(fname)
 // (FNAMECMP_BACKUP) so the basis is read from the backup path while the
 // writer overwrites the (now-empty) destination.
 #[test]
@@ -1793,7 +1793,7 @@ fn backup_dir_with_inplace_no_whole_file_copies_matched_blocks() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    // upstream: options.c:2278-2279 - when --backup-dir is set without an
+    // upstream: options.c:2287-2288 - when --backup-dir is set without an
     // explicit --suffix, the suffix defaults to "" so the backup is placed
     // at $bakdir/<rel> rather than $bakdir/<rel>~. The CLI calls
     // `with_backup_suffix(None)` to apply this rule (see core/src/client/run/mod.rs);
@@ -1825,7 +1825,7 @@ fn backup_dir_with_inplace_no_whole_file_copies_matched_blocks() {
     // destination layout is `<dest>/source/payload.bin`. compute_backup_path
     // preserves the rsync-relative dirname under the backup directory, placing
     // the backup at `<backup_root>/source/payload.bin` (with empty suffix per
-    // upstream options.c:2278-2279).
+    // upstream options.c:2287-2288).
     let backup_path = backup_root.join("source").join("payload.bin");
     let backed_up = fs::read(&backup_path).expect("read backup");
     assert_eq!(
@@ -2406,7 +2406,7 @@ fn backup_delete_recurses_into_extraneous_directory() {
     let options = LocalCopyOptions::default()
         .delete(true)
         .with_backup_directory(Some(backup_dir.clone()))
-        // Mirror upstream `--backup-dir`: an empty suffix (options.c:2296-2297).
+        // Mirror upstream `--backup-dir`: an empty suffix (options.c:2305-2306).
         .with_backup_suffix(None::<std::ffi::OsString>);
 
     plan.execute_with_options(LocalCopyExecution::Apply, options)
@@ -2983,7 +2983,7 @@ fn backup_dir_replaces_preexisting_directory_at_target() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    // upstream: options.c:2278-2279 - when --backup-dir is set without an
+    // upstream: options.c:2287-2288 - when --backup-dir is set without an
     // explicit --suffix, the suffix defaults to "" so the backup is placed
     // at $bakdir/<rel> rather than $bakdir/<rel>~. The CLI calls
     // `with_backup_suffix(None)` to apply this rule (see core/src/client/run/mod.rs);
@@ -3175,10 +3175,10 @@ fn backup_dir_clears_nondir_obstruction() {
 /// A plain `--backup` (no `--backup-dir`) implies omit-dir-times, so an empty
 /// directory keeps its wall-clock mtime rather than the source mtime.
 ///
-/// upstream: options.c:2342-2343 - `if (make_backups && !backup_dir)
+/// upstream: options.c:2351-2352 - `if (make_backups && !backup_dir)
 /// omit_dir_times = -1;` feeds rsync.c:583, which adds `ATTRS_SKIP_MTIME` for
 /// directories. The implication is receiver/local-side only and is never
-/// advertised as the sender `-O` letter (options.c:2646 gates that on
+/// advertised as the sender `-O` letter (options.c:2655 gates that on
 /// `omit_dir_times > 0`).
 #[cfg(unix)]
 #[test]
@@ -3221,7 +3221,7 @@ fn backup_without_backup_dir_omits_directory_mtime() {
 /// With `--backup-dir` the omit-dir-times implication does NOT apply, so the
 /// source directory mtime is preserved as usual.
 ///
-/// upstream: options.c:2342 - the implication is gated on `!backup_dir`, so a
+/// upstream: options.c:2351 - the implication is gated on `!backup_dir`, so a
 /// `--backup-dir` transfer preserves directory mtimes (generator.c:2271
 /// `need_retouch_dir_times = preserve_mtimes && !omit_dir_times`).
 #[cfg(unix)]
@@ -3409,7 +3409,7 @@ fn checksum_does_override_the_quick_check_on_the_same_fixture() {
 // The escape shape is a TRUSTED-owned directory symlink standing where the
 // operator named the backup area. That matters for what these cells can and
 // cannot prove: the ownership half of the walk follows a symlink owned by uid 0
-// or our own euid by design (fast_io/owner_walk.rs, upstream syscall.c:406), and
+// or our own euid by design (fast_io/owner_walk.rs, upstream syscall.c:499), and
 // a single-uid test owns every symlink it plants, so it can never make the
 // ownership half REFUSE. What it can exercise is the CONFINEMENT-ROOT half,
 // which is the half that actually defends this shape - upstream's own note on
@@ -3545,7 +3545,7 @@ fn backup_confinement_fixture() -> BackupConfinementFixture {
 /// fired after the syscall would leave the destination empty.
 ///
 /// upstream: `backup.c:443-449` `make_backup()` raises `operator_path_resolve`
-/// around the WHOLE backup; `syscall.c:961` `do_link_at()` and `syscall.c:1891`
+/// around the WHOLE backup; `syscall.c:1100` `do_link_at()` and `syscall.c:2030`
 /// `do_rename_at()` each walk their endpoints while it is set.
 #[cfg(unix)]
 #[test]
@@ -3631,8 +3631,8 @@ fn backup_dir_leaving_an_unconfined_session_does_receive_the_pre_image() {
 /// confinement root so mis-anchored that nothing at all resolves inside it -
 /// would satisfy the witness above while breaking a legitimate `--backup-dir`.
 ///
-/// upstream: `syscall.c:406` follows a trusted-owned symlink;
-/// `syscall.c:186-240` `abspath_outside_confinement()` refuses only what lands
+/// upstream: `syscall.c:499` follows a trusted-owned symlink;
+/// `syscall.c:232-291` `abspath_outside_confinement()` refuses only what lands
 /// outside the root.
 #[cfg(unix)]
 #[test]
@@ -3761,9 +3761,9 @@ fn inplace_backup_dir_leaving_an_unconfined_session_does_receive_the_pre_image()
 // `delete_item()` / `do_mkdir_at()` (backup.c:69-128) and, further down, the
 // `do_symlink_at(sl, buf)` at backup.c:377 and the `copy_file(fname, buf, -1,
 // mode)` at backup.c:401 whose destination open is `do_open_at()`
-// (util1.c:366 `unlink_and_reopen`). Each of those wrappers takes the ownership
+// (util1.c:369 `unlink_and_reopen`). Each of those wrappers takes the ownership
 // walk while the flag is set, and `owner_walk_parent()` judges the resolved
-// leaf against the confinement root (syscall.c:581-596).
+// leaf against the confinement root (syscall.c:727-735).
 //
 // As with the cells above, the escape shape is a symlink the test itself owns,
 // so these pin the CONFINEMENT-ROOT half of the walk, never the ownership half:
@@ -3879,7 +3879,7 @@ fn with_cross_device_backup_tiers<R>(
 ///
 /// upstream: `backup.c:401` `copy_file(fname, buf, -1, file->mode)`, whose
 /// destination goes through `unlink_and_reopen()` -> `do_open_at()`
-/// (util1.c:366, syscall.c:1513) inside `make_backup()`'s
+/// (util1.c:369, syscall.c:1652) inside `make_backup()`'s
 /// `operator_path_resolve = 1` window.
 #[cfg(unix)]
 #[test]
@@ -4014,7 +4014,7 @@ fn backup_confinement_symlink_fixture() -> BackupConfinementFixture {
 /// `do_symlink_at()` for.
 ///
 /// upstream: `backup.c:377` `do_symlink_at(sl, buf)` inside `make_backup()`'s
-/// `operator_path_resolve = 1` window (backup.c:437-449); `syscall.c:780`
+/// `operator_path_resolve = 1` window (backup.c:437-449); `syscall.c:919`
 /// resolves the parent with `owner_walk_parent()`.
 #[cfg(unix)]
 #[test]
@@ -4178,7 +4178,7 @@ fn device_tier_fixture(target_outside: bool) -> DeviceTierFixture {
 /// upstream: `backup.c:358-365` `make_backup_inner()` hands the DEVICE branch to
 /// `do_mknod_at()`, inside the `operator_path_resolve = 1` window
 /// `make_backup()` raises around the whole backup (backup.c:437-449);
-/// `syscall.c:1268-1305` `do_mknod_at()` under that flag resolves the parent
+/// `syscall.c:1407-1444` `do_mknod_at()` under that flag resolves the parent
 /// with `owner_walk_parent()` and creates the leaf with `mknodat`.
 #[cfg(unix)]
 #[test]
@@ -4280,7 +4280,7 @@ fn device_backup_staying_inside_the_confinement_root_is_created() {
 /// `mknod(2)`, so confining only the node-creating arm would leave the
 /// placeholder open to exactly the same redirection.
 ///
-/// upstream: `syscall.c:1276-1285` `do_mknod_at()` - the `am_root < 0` arm under
+/// upstream: `syscall.c:1415-1424` `do_mknod_at()` - the `am_root < 0` arm under
 /// `operator_path_resolve` creates the placeholder with `openat()` against the
 /// walked parent "so the confinement guarantee is unchanged".
 #[cfg(unix)]

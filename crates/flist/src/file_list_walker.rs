@@ -28,7 +28,7 @@ impl FileListWalker {
     ) -> Result<Self, FileListError> {
         let root = absolutize(root)?;
         // The walk root is deliberately not announced: upstream's counterpart
-        // (flist.c:2248 `rprintf(FLOG, "building file list\n")`) is an FLOG
+        // (flist.c:2484 `rprintf(FLOG, "building file list\n")`) is an FLOG
         // message that log.c:rwrite() drops for a client with no --log-file,
         // whereas every DiagnosticEvent from this crate reaches stdout. Once
         // the renderer routes by `DiagnosticEvent::code()`, the banner can be

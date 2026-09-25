@@ -306,7 +306,7 @@ fn execute_with_compression_limits_post_compress_bandwidth() {
 /// Pacing on the full literal-read or source size would over-throttle a delta
 /// transfer whose actual wire volume is small.
 ///
-/// upstream: io.c:861 `sleep_for_bwlimit(n)`; token.c:`send_token()` writes the
+/// upstream: io.c:879 `sleep_for_bwlimit(n)`; token.c:`send_token()` writes the
 /// literal length + bytes and the negative block-reference tokens that `n`
 /// counts.
 #[test]

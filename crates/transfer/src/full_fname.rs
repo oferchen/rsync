@@ -11,7 +11,7 @@
 //!
 //! Only the message sites that upstream routes through `full_fname()` carry the
 //! suffix. Sites that hard-code the quotes around a plain `%s` (for example
-//! `copying unsafe symlink "%s" -> "%s"` at `flist.c:229`, or
+//! `copying unsafe symlink "%s" -> "%s"` at `flist.c:231`, or
 //! `not creating new %s "%s"` at `generator.c:1380`) never gain it, so they must
 //! keep formatting their own quotes.
 //!
@@ -75,10 +75,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `util1.c:1433` - `full_fname()`; the `module_id >= 0` branch selects
+//! - `util1.c:1528` - `full_fname()`; the `module_id >= 0` branch selects
 //!   `" (in "`, `lp_name(module_id)`, `")"`.
-//! - `util1.c:1445-1452` - the `*fn == '/'` test and `p1 = curr_dir +
-//!   module_dirlen` (`util1.c:1448`), computed with no reference to
+//! - `util1.c:1540-1547` - the `*fn == '/'` test and `p1 = curr_dir +
+//!   module_dirlen` (`util1.c:1543`), computed with no reference to
 //!   `module_id`.
 //! - `clientserver.c:821` - `module_id = i` is the only assignment that makes
 //!   `module_id >= 0`, so the suffix appears exactly when the process is a
@@ -91,7 +91,7 @@
 //! - `clientserver.c:922-923` - `if (module_dirlen == 1) module_dirlen = 0;` -
 //!   a module rooted at `/` strips nothing, so `p1` keeps `curr_dir`'s leading
 //!   slash and the rendered name stays absolute.
-//! - `util1.c:1224` - `getcwd(curr_dir, ...)` seeds the working directory once.
+//! - `util1.c:1321` - `getcwd(curr_dir, ...)` seeds the working directory once.
 
 use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
@@ -123,7 +123,7 @@ pub(crate) struct FullFnamePaths<'a> {
     pub module_root: Option<&'a Path>,
     /// Absolute directory names are rendered against. upstream: `curr_dir` -
     /// the receiver's destination, the sender's per-arg `dir` from the
-    /// `flist.c:2608-2637` split, or the process working directory.
+    /// `flist.c:2848-2877` split, or the process working directory.
     pub curr_dir: &'a Path,
 }
 
@@ -171,7 +171,7 @@ impl<'a> FullFnamePaths<'a> {
             slash_path(path)
         };
         // A DOTDIR source arg leaves `fn` as ".", never empty
-        // (`flist.c:2672-2673`).
+        // (`flist.c:2912-2913`).
         let tail = if tail.is_empty() {
             ".".to_owned()
         } else {
@@ -204,7 +204,7 @@ impl<'a> FullFnamePaths<'a> {
 
 /// Upstream's `*fn == '/'` test, on the leading byte.
 ///
-/// upstream: `util1.c:1445` - `if (*fn == '/') p1 = p2 = "";`. The names that
+/// upstream: `util1.c:1540` - `if (*fn == '/') p1 = p2 = "";`. The names that
 /// reach this module are rsync's own `/`-separated wire names, never
 /// host-native paths, so the question is literally "does this name begin with
 /// a slash" and the answer must not depend on the platform.
@@ -226,7 +226,7 @@ fn is_rooted(path: &Path) -> bool {
 
 /// Upstream's `curr_dir[]` for a process that never selected a module.
 ///
-/// Upstream seeds the global once with `getcwd()` (`util1.c:1224`) and moves it
+/// Upstream seeds the global once with `getcwd()` (`util1.c:1321`) and moves it
 /// with `change_dir()`. oc-rsync never `chdir()`s, so the process working
 /// directory is that value for the whole run.
 ///
@@ -261,13 +261,13 @@ fn strip_prefix_root(module_root: &Path) -> Option<&Path> {
 ///
 /// `.` components are dropped because upstream never carries one into a
 /// diagnostic: the sender cleans every flist name with `clean_fname(thisname,
-/// 0)` (`flist.c:1424`), and with `CFN_KEEP_DOT_DIRS` unset that discards
-/// interior `"."` dirs (`util1.c:1068-1071`). An operand of `./sub/` therefore
+/// 0)` (`flist.c:1649`), and with `CFN_KEEP_DOT_DIRS` unset that discards
+/// interior `"."` dirs (`util1.c:1165-1168`). An operand of `./sub/` therefore
 /// prints as `<curr_dir>/sub/...`, not `<curr_dir>/./sub/...`.
 ///
 /// A path that is nothing but `.` components renders empty; [`FullFnamePaths::render`]
 /// turns that back into `"."`, which is upstream's DOTDIR name
-/// (`flist.c:2672-2673`).
+/// (`flist.c:2912-2913`).
 fn slash_path(path: &Path) -> String {
     let mut out = String::new();
     for component in path.components() {
@@ -292,7 +292,7 @@ fn slash_path(path: &Path) -> String {
 ///
 /// # Upstream Reference
 ///
-/// - `util1.c:1460` - `asprintf(&result, "\"%s%s%s\"%s%s%s", ...)`
+/// - `util1.c:1555` - `asprintf(&result, "\"%s%s%s\"%s%s%s", ...)`
 pub(crate) fn full_fname(fname: &str, paths: FullFnamePaths<'_>) -> String {
     match paths.render(Path::new(fname)) {
         Some(rendered) => quote(&rendered, paths.module),
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     fn path_at_curr_dir_renders_as_dot() {
         // upstream's DOTDIR_NAME arg leaves `fn` as ".", never the empty
-        // string (flist.c:2672-2673).
+        // string (flist.c:2912-2913).
         assert_eq!(
             full_fname_path(Path::new("/srv/mod"), paths("/srv/mod", "/srv/mod")),
             "\".\" (in mymod)"
@@ -494,8 +494,8 @@ mod tests {
     /// A `./` in the operand must not survive into the rendered name.
     ///
     /// Upstream cleans every flist name with `clean_fname(thisname, 0)`
-    /// (`flist.c:1424`); with `CFN_KEEP_DOT_DIRS` unset that discards interior
-    /// `"."` dirs (`util1.c:1068-1071`). Ground truth captured from rsync
+    /// (`flist.c:1649`); with `CFN_KEEP_DOT_DIRS` unset that discards interior
+    /// `"."` dirs (`util1.c:1165-1168`). Ground truth captured from rsync
     /// 3.5.0 pushing `./sub/` from `/tmp/t1141P/work` over a local remote
     /// shell: `send_files failed to open "/tmp/t1141P/work/sub/denied.txt"` -
     /// no `/./` anywhere in the name.

@@ -872,9 +872,9 @@ fn flist_symlink_mode_preserved() {
 }
 
 /// A symlink's permission bits are not universally 0o777: on the platforms
-/// where `CAN_CHMOD_SYMLINK` holds (rsync.h:455-456 - `HAVE_LCHMOD ||
+/// where `CAN_CHMOD_SYMLINK` holds (rsync.h:456-457 - `HAVE_LCHMOD ||
 /// HAVE_SETATTRLIST`, i.e. macOS and the BSDs) `lchmod` gives a link a real
-/// mode, which upstream sends verbatim (flist.c:1669). Pin that the wire
+/// mode, which upstream sends verbatim (flist.c:1894). Pin that the wire
 /// encoding carries such a mode instead of flattening it.
 #[test]
 fn flist_symlink_non_0777_mode_preserved() {

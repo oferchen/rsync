@@ -5,7 +5,7 @@
 //! compensate for frame headers and batch approximately 2 wire chunks per flush.
 //!
 //! The frame header is reserved *inside* that buffer and back-filled at flush
-//! time (upstream io.c:2461-2462 and io.c:687-688), so a header and its payload
+//! time (upstream io.c:2499-2500 and io.c:705-706), so a header and its payload
 //! are adjacent bytes of one buffer before any syscall runs. Nothing can be
 //! scheduled between them and no partial write can leave a header on the wire
 //! without its payload queued behind it.
@@ -21,14 +21,14 @@ use protocol::{MESSAGE_HEADER_LEN, MessageCode, MessageHeader};
 ///
 /// Upstream keeps two distinct batch wirings and this enum names them:
 /// `--write-batch` tees every socket write into `batch_fd`
-/// (`io.c:2282 write_batch_monitor_out`), while `--only-write-batch` sends the
+/// (`io.c:2320 write_batch_monitor_out`), while `--only-write-batch` sends the
 /// token stream to `batch_fd` *instead of* the socket
-/// (`sender.c:217 f_xfer = write_batch < 0 ? batch_fd : f_out`).
+/// (`sender.c:220 f_xfer = write_batch < 0 ? batch_fd : f_out`).
 ///
 /// # Upstream Reference
 ///
-/// - `io.c:2281-2283` - `if (f == write_batch_monitor_out) safe_write(batch_fd, ...)`
-/// - `sender.c:217` - `int f_xfer = write_batch < 0 ? batch_fd : f_out;`
+/// - `io.c:2319-2321` - `if (f == write_batch_monitor_out) safe_write(batch_fd, ...)`
+/// - `sender.c:220` - `int f_xfer = write_batch < 0 ? batch_fd : f_out;`
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BatchRoute {
     /// Write to the wire and copy into the batch (upstream's tee monitor).
@@ -63,7 +63,7 @@ pub(crate) struct MultiplexWriter<W> {
     /// `IO_BUFFER_SIZE`-derived output sizing pattern.
     buffer_size: usize,
     /// Reusable staging area for control frames, which upstream builds
-    /// header-and-payload in one shot (io.c:965-1058 `send_msg`), and for the
+    /// header-and-payload in one shot (io.c:983-1076 `send_msg`), and for the
     /// oversized `MSG_DATA` frames that do not fit the circular buffer.
     scratch: Vec<u8>,
     /// True when data has been written to `inner` since the last successful
@@ -75,7 +75,7 @@ pub(crate) struct MultiplexWriter<W> {
     /// upstream: `io.c` `write_batch_monitor_out` + `safe_write(batch_fd, buf, len)`
     pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
     /// Selects whether recorded bytes are also framed onto the wire.
-    /// upstream: `sender.c:501` `f_xfer = write_batch < 0 ? batch_fd : f_out`
+    /// upstream: `sender.c:502` `f_xfer = write_batch < 0 ? batch_fd : f_out`
     pub(crate) batch_route: BatchRoute,
     /// Instant of the last actual write to `inner`, tracking upstream's
     /// `last_io_out`. A lull is measured from this point.
@@ -83,7 +83,7 @@ pub(crate) struct MultiplexWriter<W> {
     /// The keep-alive lull interval, `None` when `--timeout` is not set.
     ///
     /// upstream: `io.c:set_io_timeout()` sets `allowed_lull = (io_timeout + 1) / 2`
-    /// (io.c:1151); a keepalive is emitted once this much time has elapsed with
+    /// (io.c:1169); a keepalive is emitted once this much time has elapsed with
     /// no output.
     allowed_lull: Option<Duration>,
 }
@@ -95,7 +95,7 @@ const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
 ///
 /// A single oversized frame must not pin its staging allocation for the rest of
 /// the run; upstream keeps steady-state memory bounded by never growing its
-/// buffers at all (io.c:579, io.c:594).
+/// buffers at all (io.c:597, io.c:612).
 const SCRATCH_RETAIN: usize = DEFAULT_BUFFER_SIZE + MESSAGE_HEADER_LEN;
 
 impl<W: Write> MultiplexWriter<W> {
@@ -108,7 +108,7 @@ impl<W: Write> MultiplexWriter<W> {
     /// per flush for better syscall efficiency.
     pub(crate) fn new(inner: W) -> Self {
         let mut buffer = OutBuf::new(DEFAULT_BUFFER_SIZE);
-        // upstream: io.c:2455-2462 io_start_multiplex_out() reserves the first
+        // upstream: io.c:2493-2500 io_start_multiplex_out() reserves the first
         // MSG_DATA header before a single payload byte is buffered.
         buffer.start_multiplex();
         Self {
@@ -127,7 +127,7 @@ impl<W: Write> MultiplexWriter<W> {
     /// Configures the keep-alive lull interval.
     ///
     /// upstream: `io.c:set_io_timeout()` derives `allowed_lull = (io_timeout + 1) / 2`
-    /// (io.c:1151). Passing `None` (no `--timeout`) disables lull keepalives, so
+    /// (io.c:1169). Passing `None` (no `--timeout`) disables lull keepalives, so
     /// the default transfer path stays byte-for-byte identical.
     pub(crate) fn set_allowed_lull(&mut self, lull: Option<Duration>) {
         self.allowed_lull = lull;
@@ -138,7 +138,7 @@ impl<W: Write> MultiplexWriter<W> {
     /// `--timeout` is not set.
     ///
     /// Callers use this to derive upstream's `lull_mod = allowed_lull * 5`
-    /// cadence (sender.c:76) when poking keepalives inside a long read loop.
+    /// cadence (sender.c:77) when poking keepalives inside a long read loop.
     pub(crate) fn allowed_lull(&self) -> Option<Duration> {
         self.allowed_lull
     }
@@ -148,11 +148,11 @@ impl<W: Write> MultiplexWriter<W> {
     ///
     /// Returns `true` when an empty `MSG_DATA` keepalive was written.
     ///
-    /// Mirrors upstream `io.c:maybe_send_keepalive()` (io.c:1466-1479): the
+    /// Mirrors upstream `io.c:maybe_send_keepalive()` (io.c:1492-1505): the
     /// keepalive is emitted only when a full `allowed_lull` has passed since the
     /// last output and the output buffer sits at a frame boundary. When data is
     /// still buffered, flushing it is itself output activity, so upstream flushes
-    /// instead of emitting the empty frame (io.c:1476-1479).
+    /// instead of emitting the empty frame (io.c:1502-1505).
     pub(crate) fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
         let Some(lull) = self.allowed_lull else {
             return Ok(false);
@@ -164,8 +164,8 @@ impl<W: Write> MultiplexWriter<W> {
     ///
     /// Upstream routes the reply through `maybe_send_keepalive()` even when
     /// `--timeout` is not set: `allowed_lull` starts at 0 (io.c:83) and
-    /// `set_io_timeout(0)` recomputes it as `(0 + 1) / 2 == 0` (io.c:1281), so
-    /// the `now - last_io_out >= allowed_lull` test (io.c:1626) passes
+    /// `set_io_timeout(0)` recomputes it as `(0 + 1) / 2 == 0` (io.c:1299), so
+    /// the `now - last_io_out >= allowed_lull` test (io.c:1652) passes
     /// unconditionally and the reply goes out immediately. With `--timeout`
     /// the configured half-interval gates the reply exactly as it gates a
     /// spontaneous keepalive, so this treats an unset lull as zero rather
@@ -177,16 +177,16 @@ impl<W: Write> MultiplexWriter<W> {
 
     /// The shared body of [`Self::maybe_send_keepalive`] and
     /// [`Self::answer_keepalive`]: upstream `io.c:maybe_send_keepalive()`
-    /// (io.c:1613-1641) with `allowed_lull` supplied by the caller.
+    /// (io.c:1639-1667) with `allowed_lull` supplied by the caller.
     fn send_keepalive_after_lull(&mut self, lull: Duration) -> io::Result<bool> {
         if self.last_io_out.elapsed() < lull {
             return Ok(false);
         }
 
-        // upstream: io.c:1476-1479 - pending output is flushed rather than
+        // upstream: io.c:1502-1505 - pending output is flushed rather than
         // emitting a keepalive; the flush itself is the I/O that resets the lull.
         // "Empty" here is `out.len == out_empty_len`, not `len == 0`: the
-        // reserved header occupies the first four bytes (io.c:1472).
+        // reserved header occupies the first four bytes (io.c:1498).
         if !self.buffer.is_empty() {
             self.flush_buffer()?;
             self.inner.flush()?;
@@ -195,7 +195,7 @@ impl<W: Write> MultiplexWriter<W> {
             return Ok(false);
         }
 
-        // upstream: io.c:1472-1473 - only at a frame boundary, emit an empty
+        // upstream: io.c:1498-1499 - only at a frame boundary, emit an empty
         // MSG_DATA that the peer absorbs as a no-op keepalive.
         self.write_frame(MessageCode::Data, 0, std::iter::empty())?;
         self.inner.flush()?;
@@ -213,9 +213,9 @@ impl<W: Write> MultiplexWriter<W> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:2255-2258` - `write_buf()` with `f != iobuf.out_fd` bypasses the
+    /// - `io.c:2293-2296` - `write_buf()` with `f != iobuf.out_fd` bypasses the
     ///   multiplex buffer and writes straight to the fd (here, the batch).
-    /// - `io.c:2281-2283` - the tee into `batch_fd` for `--write-batch`.
+    /// - `io.c:2319-2321` - the tee into `batch_fd` for `--write-batch`.
     fn record_to_batch<'b>(&self, chunks: impl Iterator<Item = &'b [u8]>) -> io::Result<bool> {
         let Some(recorder) = self.batch_recorder.as_ref() else {
             return Ok(false);
@@ -232,7 +232,7 @@ impl<W: Write> MultiplexWriter<W> {
     /// Flushes the internal buffer by sending it as a `MSG_DATA` frame.
     ///
     /// The header is back-filled into the four bytes reserved at the front of
-    /// the buffered run (upstream io.c:687-688) and the whole frame leaves
+    /// the buffered run (upstream io.c:705-706) and the whole frame leaves
     /// through one drain loop, so a short write can never separate the header
     /// from its payload.
     fn flush_buffer(&mut self) -> io::Result<()> {
@@ -246,7 +246,7 @@ impl<W: Write> MultiplexWriter<W> {
 
     /// Writes one frame whose header and payload are staged contiguously.
     ///
-    /// upstream: `send_msg()` (io.c:965-1058) builds every non-`MSG_DATA` frame
+    /// upstream: `send_msg()` (io.c:983-1076) builds every non-`MSG_DATA` frame
     /// header-then-payload in one shot inside `iobuf.msg`; the same treatment is
     /// applied to a `MSG_DATA` payload too large for the circular buffer, which
     /// would otherwise be the one place a header and its body could be split
@@ -332,7 +332,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
 
         // A payload that cannot fit the circular buffer is staged contiguously
         // and sent as its own MSG_DATA frame. upstream splits such a write into
-        // buffer-sized chunks instead (io.c:2242-2253 write_bigbuf); keeping the
+        // buffer-sized chunks instead (io.c:2280-2291 write_bigbuf); keeping the
         // single frame preserves the bytes already on the wire while still
         // guaranteeing the header and payload leave together.
         if buf.len() >= self.buffer_size {
@@ -342,7 +342,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
             return Ok(buf.len());
         }
 
-        // upstream: io.c:2263-2264 write_buf() reaches perform_io() only when
+        // upstream: io.c:2301-2302 write_buf() reaches perform_io() only when
         // the bytes do not fit, so a write that fits costs no syscall at all.
         self.buffer.push(buf);
         Ok(buf.len())
@@ -421,7 +421,7 @@ mod keepalive_tests {
     }
 
     /// A lull that has not yet elapsed produces no keepalive (upstream gates on
-    /// `now - last_io_out >= allowed_lull`, io.c:1466).
+    /// `now - last_io_out >= allowed_lull`, io.c:1492).
     #[test]
     fn lull_not_elapsed_emits_nothing() {
         let mut out: Vec<u8> = Vec::new();
@@ -435,7 +435,7 @@ mod keepalive_tests {
     }
 
     /// Once the lull has elapsed at a frame boundary, an empty MSG_DATA keepalive
-    /// is emitted, matching upstream `send_msg(MSG_DATA, "", 0, 0)` (io.c:1633).
+    /// is emitted, matching upstream `send_msg(MSG_DATA, "", 0, 0)` (io.c:1659).
     #[test]
     fn lull_elapsed_emits_empty_msg_data() {
         let mut out: Vec<u8> = Vec::new();
@@ -460,7 +460,7 @@ mod keepalive_tests {
 
     /// When output is still buffered, the lull flushes the pending data instead
     /// of emitting an empty frame; the flush is itself the I/O that resets the
-    /// lull (upstream io.c:1476-1479).
+    /// lull (upstream io.c:1502-1505).
     #[test]
     fn lull_with_pending_data_flushes_instead_of_keepalive() {
         let mut out: Vec<u8> = Vec::new();
@@ -478,7 +478,7 @@ mod keepalive_tests {
 
     /// Answering a protocol-29 keep-alive frame without `--timeout` replies
     /// immediately: upstream's `allowed_lull` is 0 in that case (io.c:83,
-    /// io.c:1281), so `maybe_send_keepalive()` at rsync.c:389-390 always sends.
+    /// io.c:1299), so `maybe_send_keepalive()` at rsync.c:389-390 always sends.
     #[test]
     fn answer_keepalive_without_timeout_replies_immediately() {
         let mut out: Vec<u8> = Vec::new();
@@ -491,7 +491,7 @@ mod keepalive_tests {
     }
 
     /// With `--timeout` configured, the reply is gated on the same lull as a
-    /// spontaneous keepalive (`now - last_io_out >= allowed_lull`, io.c:1626):
+    /// spontaneous keepalive (`now - last_io_out >= allowed_lull`, io.c:1652):
     /// nothing goes out before the half-interval elapses.
     #[test]
     fn answer_keepalive_with_unelapsed_lull_stays_silent() {
@@ -503,7 +503,7 @@ mod keepalive_tests {
     }
 
     /// Like the spontaneous path, an answer with data still buffered flushes
-    /// that data instead of emitting an empty frame (io.c:1636-1639).
+    /// that data instead of emitting an empty frame (io.c:1662-1665).
     #[test]
     fn answer_keepalive_flushes_pending_data_instead_of_empty_frame() {
         let mut out: Vec<u8> = Vec::new();
@@ -536,8 +536,8 @@ mod keepalive_tests {
 /// Tests for the framing guarantees the reserved-header buffer provides.
 ///
 /// The contract under test is upstream's, from io.c: the `MSG_DATA` header is
-/// back-filled inside the buffer before any syscall (io.c:687-688), a write
-/// that fits does no I/O (io.c:2255-2284), and nothing can be scheduled between
+/// back-filled inside the buffer before any syscall (io.c:705-706), a write
+/// that fits does no I/O (io.c:2293-2322), and nothing can be scheduled between
 /// a header and the end of its payload.
 #[cfg(test)]
 mod framing_tests {
@@ -605,7 +605,7 @@ mod framing_tests {
 
     /// Requirement 13: a write whose bytes fit performs no I/O at all, so N
     /// small writes cost exactly one underlying write at flush, not N.
-    /// upstream: io.c:2263-2264 - `write_buf()` reaches `perform_io()` only when
+    /// upstream: io.c:2301-2302 - `write_buf()` reaches `perform_io()` only when
     /// `out.len + len > out.size`.
     #[test]
     fn small_writes_cost_one_underlying_write_at_flush() {
@@ -664,7 +664,7 @@ mod framing_tests {
     /// A control frame is never scheduled between a `MSG_DATA` header and the
     /// end of its payload: buffered data is flushed as a complete frame first.
     /// upstream keeps `MSG_*` in a separate buffer for exactly this reason
-    /// (io.c:680-681 puts the in-progress raw run first).
+    /// (io.c:698-699 puts the in-progress raw run first).
     #[test]
     fn control_frame_never_splits_a_data_payload() {
         let mut writer = MultiplexWriter::new(StallingWriter::new(usize::MAX));
@@ -705,7 +705,7 @@ mod framing_tests {
     }
 
     /// The oversized-frame staging buffer must not stay resident: upstream keeps
-    /// steady-state memory bounded by never growing its buffers (io.c:579, 594).
+    /// steady-state memory bounded by never growing its buffers (io.c:597, 612).
     #[test]
     fn oversized_staging_buffer_is_released() {
         let mut writer = MultiplexWriter::new(StallingWriter::new(usize::MAX));

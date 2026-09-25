@@ -62,7 +62,7 @@
 //! require an `AF_INET`/`AF_INET6` socket FD and are therefore unreachable
 //! for SSH transfers - regardless of kernel version or `io_uring_policy`.
 //! This mirrors upstream rsync, which also performs blocking reads/writes
-//! on the inherited stdio FDs when invoked over SSH (`main.c:504 do_cmd()`).
+//! on the inherited stdio FDs when invoked over SSH (`main.c:507 do_cmd()`).
 //!
 //! The Linux kernel does support submitting `IORING_OP_READ` /
 //! `IORING_OP_WRITE` against pipe FDs (5.1+), and `splice()` / `vmsplice()`

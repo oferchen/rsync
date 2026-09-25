@@ -19,10 +19,10 @@
 //!
 //! # Upstream Reference
 //!
-//! - `options.c:2473,2501` - filesfrom_fd opens stdin or the local file.
-//! - `flist.c:2275-2298` - send_file_list() chdirs to argv[0] and reads
+//! - `options.c:2482,2510` - filesfrom_fd opens stdin or the local file.
+//! - `flist.c:2514-2538` - send_file_list() chdirs to argv[0] and reads
 //!   one filename at a time from `filesfrom_fd`.
-//! - `flist.c:2316-2330` - per-entry `/./` anchor splits the prefix into
+//! - `flist.c:2556-2570` - per-entry `/./` anchor splits the prefix into
 //!   the per-entry walk base; the suffix is the wire-side relative name.
 
 use std::fs;
@@ -161,7 +161,7 @@ fn ssh_push_files_from_emits_relative_wire_names() {
         // separator on Windows (the implied-parent loop builds names via
         // `PathBuf::push`). The wire bytes are always `/`-separated
         // (`FileEntry::name_bytes()` -> `wire_path::path_bytes_to_wire`,
-        // upstream flist.c:534-570 emits `/` verbatim), so the assertions must
+        // upstream flist.c:759-795 emits `/` verbatim), so the assertions must
         // use that platform-independent representation.
         let name_bytes = entry.name_bytes();
         let name = String::from_utf8_lossy(&name_bytes);

@@ -1,9 +1,9 @@
 //! `--files-from` must not discard an explicitly requested recursion.
 //!
-//! upstream: options.c:2188-2191 - `if (files_from) { if (recurse == 1)
+//! upstream: options.c:2197-2200 - `if (files_from) { if (recurse == 1)
 //! recurse = 0; ... }`. Only the value `-a` implies (`recurse == 1`,
-//! options.c:1546) is cleared; `-r` sets `recurse == 2` (options.c:621) and
-//! survives, and `--old-dirs` re-forces `recurse = 1` at options.c:2197-2199,
+//! options.c:1552) is cleared; `-r` sets `recurse == 2` (options.c:621) and
+//! survives, and `--old-dirs` re-forces `recurse = 1` at options.c:2206-2208,
 //! after the files-from clearing has run.
 //!
 //! Clearing recursion unconditionally made every directory named in a
@@ -50,7 +50,7 @@ fn archive_implied_recursion_is_not_marked_as_surviving() {
 
 #[test]
 fn old_dirs_recursion_survives_files_from() {
-    // upstream: options.c:2197-2199 - `xfer_dirs >= 4` re-forces `recurse = 1`
+    // upstream: options.c:2206-2208 - `xfer_dirs >= 4` re-forces `recurse = 1`
     // after the files-from block, so --old-dirs recursion outlives the list.
     let args = parse_args([
         "oc-rsync",

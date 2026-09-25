@@ -57,11 +57,11 @@ impl ReceiverContext {
     ///   `list_file_entry()` and sends no per-file NDX at all. It does *not*
     ///   set `dry_run`, but checking it first keeps that independent of the
     ///   flag's future wiring.
-    /// - `--only-write-batch` before `--dry-run` (`main.c:1839`): `write_batch
+    /// - `--only-write-batch` before `--dry-run` (`main.c:1866`): `write_batch
     ///   < 0` forces `dry_run = 1` while leaving `do_xfers = 1`, so the flag
     ///   pair is ambiguous and only the order disambiguates it. The generator
     ///   still sends real block checksums and the sender expects a sum head per
-    ///   file (`sender.c:766-767`); taking the dry-run body here would send a
+    ///   file (`sender.c:768-769`); taking the dry-run body here would send a
     ///   bare NDX + iflags with no sum head and hang both ends.
     /// - `--dry-run` last (`generator.c:1858-1959`): NDX + iflags, no sum head.
     pub(in crate::receiver) const fn select_mode(&self) -> ReceiverMode {
@@ -79,13 +79,13 @@ impl ReceiverContext {
     /// Drives one non-transfer mode to completion.
     ///
     /// Returns `(files_transferred, transferred_file_size)` - the tallies
-    /// upstream still reports for a run that moves no data (`receiver.c:781-784`
+    /// upstream still reports for a run that moves no data (`receiver.c:797-800`
     /// bumps `stats.xferred_files` before the `if (!do_xfers)` continue).
     ///
     /// # Upstream Reference
     ///
     /// - `generator.c:1249` - `--list-only` renders entries, sends no request.
-    /// - `main.c:1839` - `if (write_batch < 0) dry_run = 1`, `do_xfers` stays 1.
+    /// - `main.c:1866` - `if (write_batch < 0) dry_run = 1`, `do_xfers` stays 1.
     /// - `generator.c:1858-1959` - the `!do_xfers` dry-run request shape.
     pub(in crate::receiver) fn run_non_transfer_mode<
         R: Read,
@@ -109,9 +109,9 @@ impl ReceiverContext {
                 // The same reporting pass the plain dry run uses; only the wire
                 // loop differs (real block checksums, no plan). A push receiver
                 // reads no delta - the client sender diverted it into its own
-                // batch fd (sender.c:217) - while a pull receiver drains the
+                // batch fd (sender.c:220) - while a pull receiver drains the
                 // remote sender's delta via discard_receive_data()
-                // (receiver.c:813-814).
+                // (receiver.c:829-830).
                 let plan = self.plan_dry_run(&setup.dest_dir, files_to_transfer);
                 stats.directories_created = new_dir_count(&plan);
                 self.run_only_write_batch_loop(reader, writer, files_to_transfer, setup)?;

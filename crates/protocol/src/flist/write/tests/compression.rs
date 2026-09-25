@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn zero_flags_varint_uses_xmit_extended_flags() {
-    // Upstream flist.c line 550: write_varint(f, xflags ? xflags : XMIT_EXTENDED_FLAGS)
+    // Upstream flist.c line 775: write_varint(f, xflags ? xflags : XMIT_EXTENDED_FLAGS)
     // When all compression flags apply (mode, time, uid, gid same as prev),
     // xflags would be 0, but we substitute XMIT_EXTENDED_FLAGS to avoid
     // collision with the end-of-list marker (which is also 0).

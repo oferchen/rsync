@@ -30,7 +30,7 @@
 //! # Upstream Reference
 //!
 //! - `rsync.c:318-429` - `read_ndx_and_attrs()` frame dispatch
-//! - `io.c:1750-1786` - `wait_for_receiver()` one-frame fetch
+//! - `io.c:1788-1824` - `wait_for_receiver()` one-frame fetch
 //! - `generator.c:2316-2385` - `generate_files()` on-demand fetch loop
 
 use std::io::{self, Read};
@@ -448,8 +448,8 @@ mod tests {
     /// `0xFF` `NDX_FLIST_OFFSET` marker as a varint entry-flags byte (which trips
     /// `overflow in read_varint`, since `int_byte_extra[0xFF >> 2] = 5 > 4`).
     ///
-    /// upstream: flist.c:2152 `write_ndx(NDX_FLIST_OFFSET - dir_ndx)`,
-    /// io.c:2318 `write_ndx()`, flist.c:2112 `write_end_of_flist()`.
+    /// upstream: flist.c:2388 `write_ndx(NDX_FLIST_OFFSET - dir_ndx)`,
+    /// io.c:2356 `write_ndx()`, flist.c:2348 `write_end_of_flist()`.
     #[rustfmt::skip]
     const UPSTREAM_INC_RECURSE_FRAME: &[u8] = &[
         0xac, 0x01, 0x01, 0x2e, 0x00, 0x00, 0x10, 0x6a, 0x66, 0x1f, 0x52, 0xf0,
@@ -612,8 +612,8 @@ mod tests {
 
     /// `--debug=flist2` emissions across the REAL upstream multi-segment
     /// stream above: the initial list prints one `recv_file_name(%s)` per
-    /// entry (flist.c:3012), `received %d names` (flist.c:3019) and
-    /// `recv_file_list done` (flist.c:3088); each sub-list adds
+    /// entry (flist.c:3255), `received %d names` (flist.c:3262) and
+    /// `recv_file_list done` (flist.c:3331); each sub-list adds
     /// `[receiver] receiving flist for dir %d` (rsync.c:373) plus its own
     /// name/count/done set. Verbosity is installed through the same
     /// `apply_debug_flag` funnel the CLI's `--debug=` parser uses. Exact
@@ -744,7 +744,7 @@ mod tests {
     /// A `dir_ndx` equal to, past, or absurdly beyond `dir_flist.used()` is
     /// untrusted wire data that references a directory the receiver never saw.
     ///
-    /// WHY: upstream `flist.c:2622-2626` aborts with `exit_cleanup(RERR_PROTOCOL)`
+    /// WHY: upstream `flist.c:2862-2866` aborts with `exit_cleanup(RERR_PROTOCOL)`
     /// on `dir_ndx >= dir_flist->used`. oc must fail closed - reject with a
     /// `ProtocolViolation` (RERR_PROTOCOL) and append nothing - rather than trust
     /// the sender's index or (for a huge value) panic on the framing arithmetic.
@@ -779,7 +779,7 @@ mod tests {
 
     /// A second sub-list for a directory already served is a malicious duplicate.
     ///
-    /// WHY: upstream `flist.c:2627-2632` sets `FLAG_GOT_DIR_FLIST` and aborts with
+    /// WHY: upstream `flist.c:2867-2872` sets `FLAG_GOT_DIR_FLIST` and aborts with
     /// `RERR_PROTOCOL` on the second sub-list; without the guard a sender could
     /// replay sub-lists to grow `file_list` without bound. The first sub-list for
     /// dir_ndx 0 is accepted, the second is refused.
@@ -838,9 +838,9 @@ mod tests {
     /// in place, preserving the slot count so NDX stays aligned.
     ///
     /// WHY: upstream runs `flist_sort_and_clean()` on EACH INC_RECURSE sub-list
-    /// (send `flist.c:2190`, recv `flist.c:2771`), whose clean pass
-    /// (`flist.c:3031`, active for the receiver) drops duplicate names by
-    /// `clear_file()` (`flist.c:3089`) - a tombstone that keeps the entry's
+    /// (send `flist.c:2426`, recv `flist.c:3014`), whose clean pass
+    /// (`flist.c:3274`, active for the receiver) drops duplicate names by
+    /// `clear_file()` (`flist.c:3332`) - a tombstone that keeps the entry's
     /// array slot so following NDX values are unaffected. The receiver must NOT
     /// compact or renumber, or its numbering desyncs from the sender's full
     /// un-deduped array. The legitimate sender ships un-deduped sub-lists (a
@@ -886,11 +886,11 @@ mod tests {
     /// tombstoned directory.
     ///
     /// Upstream keeps the slot: the receiver appends every directory to
-    /// `dir_flist` as it READS it (`flist.c:2996-2998`, before any clean), and
+    /// `dir_flist` as it READS it (`flist.c:3239-3241`, before any clean), and
     /// `dir_flist->files[]` holds POINTERS into the same `file_struct`s as the
     /// transfer list. When `flist_sort_and_clean()` later `clear_file()`s the
     /// duplicate, the shared struct is zeroed but the `dir_flist` slot remains,
-    /// now inactive - which is precisely the slot `flist.c:2911-2918` refuses
+    /// now inactive - which is precisely the slot `flist.c:3154-3161` refuses
     /// with "refusing flist for cleared dir_ndx %d".
     ///
     /// [`DirFlist`] reproduces that by recording the directories BEFORE the
@@ -944,8 +944,8 @@ mod tests {
     /// | 2 | `x/d`          | `x/d` |
     /// | 3 | `x/d` CLEARED  | `x/z` |
     ///
-    /// Upstream refuses `dir_ndx` 3 at `flist.c:2911-2918`. oc's bounds check
-    /// (`flist.c:2906-2909`) cannot: 3 is in range. The peer's entries are
+    /// Upstream refuses `dir_ndx` 3 at `flist.c:3154-3161`. oc's bounds check
+    /// (`flist.c:3149-3152`) cannot: 3 is in range. The peer's entries are
     /// grafted under `x/z` instead. The `proto-cleared-dirflist` cell happens to
     /// put the duplicate LAST, where the bounds check does catch it - so that
     /// cell alone understates the defect.
@@ -984,7 +984,7 @@ mod tests {
 
     /// A sub-list entry whose dirname escapes its declared parent must be rejected.
     ///
-    /// WHY: upstream `flist.c:2719-2730` compares every sub-list entry's dirname
+    /// WHY: upstream `flist.c:2959-2973` compares every sub-list entry's dirname
     /// against `f_name(dir_flist->files[dir_ndx])` and, on a mismatch, aborts with
     /// `exit_cleanup(RERR_UNSUPPORTED)` ("ABORTING due to invalid path from
     /// sender"). Without this check a hostile sender could frame a sub-list for a

@@ -1,4 +1,4 @@
-//! `--append` must imply `--inplace` (upstream `options.c:2400-2411`).
+//! `--append` must imply `--inplace` (upstream `options.c:2409-2420`).
 //!
 //! The promotion is not cosmetic. Upstream never branches on `append_mode`
 //! after option parsing; it branches on the implied `inplace` flag, and the
@@ -10,7 +10,7 @@
 //!   the non-inplace path and moves the destination away (upstream `rsync.c:740`
 //!   hard-links it into the backup area first), which both destroys the basis
 //!   and leaves the "backup" aliasing the file that is still being written.
-//! - `receiver.c:1029,1074` - `|| inplace` is what RETAINS a file whose
+//! - `receiver.c:1045,1090` - `|| inplace` is what RETAINS a file whose
 //!   verification failed instead of discarding it, and what makes the warning
 //!   say "retained" rather than "discarded".
 //!
@@ -189,7 +189,7 @@ fn explicit_inplace_backup_preserves_the_pre_image() {
 
 /// `--append` rewrites the live destination, never a temp file that is renamed
 /// over it. Upstream selects the write target with `if (inplace || one_inplace)`
-/// (`receiver.c:968`) and only then can `receiver.c:1029` retain a failed
+/// (`receiver.c:984`) and only then can `receiver.c:1045` retain a failed
 /// update: there is nothing to discard because the bytes already landed on the
 /// destination inode.
 #[cfg(unix)]
@@ -227,9 +227,9 @@ fn append_writes_through_the_destination_inode() {
 }
 
 /// The implication must not weaken the conflicts upstream derives FROM it.
-/// `options.c:2424-2432` rejects `inplace` with `--partial-dir`/`--delay-updates`
+/// `options.c:2433-2441` rejects `inplace` with `--partial-dir`/`--delay-updates`
 /// and names the option the user actually typed (`append_mode ? "append" :
-/// "inplace"`), and `options.c:2401` rejects an explicit `--whole-file`.
+/// "inplace"`), and `options.c:2410` rejects an explicit `--whole-file`.
 #[test]
 fn append_keeps_the_upstream_conflict_diagnostics() {
     let binary = oc_rsync_binary();

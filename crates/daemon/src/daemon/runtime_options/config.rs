@@ -31,7 +31,7 @@ impl RuntimeOptions {
             self.set_config_lock_file(lock_file, &origin)?;
         }
 
-        // upstream: clientserver.c:1768 - `daemon_main` calls `log_init(0)`
+        // upstream: clientserver.c:1789 - `daemon_main` calls `log_init(0)`
         // before accepting anything, and `log_init` resolves the name through
         // `lp_log_file(module_id)` at `module_id < 0`, i.e. the global value.
         // Without this the daemon-wide log is never opened and the startup

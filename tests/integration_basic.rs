@@ -410,7 +410,7 @@ fn error_on_nonexistent_source() {
     cmd.assert_failure();
 }
 
-// upstream: main.c:736 get_local_name() - without --mkpath a missing leading
+// upstream: main.c:749 get_local_name() - without --mkpath a missing leading
 // prefix of the destination argument is never auto-created; the transfer fails
 // (change_dir ENOENT, exit 3) and nothing is written. Verified against upstream
 // rsync 3.4.x: `rsync source.txt newdir/dest.txt` with newdir absent exits 3.
@@ -430,7 +430,7 @@ fn missing_destination_parent_without_mkpath_fails() {
     );
 }
 
-// upstream: main.c:736 - with --mkpath the destination argument's missing
+// upstream: main.c:749 - with --mkpath the destination argument's missing
 // leading directories are materialized via make_path() before the transfer.
 #[test]
 fn create_missing_destination_directory_with_mkpath() {

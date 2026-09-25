@@ -90,7 +90,7 @@ impl ReceiverContext {
     /// At protocol >= 30 the sender may describe ownership on the entry itself
     /// (`XMIT_USER_NAME_FOLLOWS` / `XMIT_GROUP_NAME_FOLLOWS`) instead of, or as
     /// well as, in the trailing id list. Upstream resolves those names as it
-    /// decodes the entry - `flist.c:1004` calls `recv_user_name()`, which is
+    /// decodes the entry - `flist.c:1229` calls `recv_user_name()`, which is
     /// the same `recv_add_id()` path `recv_id_list()` uses - so the mapping (and
     /// any `name converter` refusal it triggers) happens even when no trailing
     /// list follows.
@@ -101,7 +101,7 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:998-1020` - `recv_file_entry()` inline name arms
+    /// - `flist.c:1223-1245` - `recv_file_entry()` inline name arms
     /// - `uidlist.c:418-449` - `recv_user_name()` / `recv_group_name()`
     #[cfg(unix)]
     pub(crate) fn register_inline_id_names(

@@ -202,7 +202,7 @@ impl<W: Write> ServerWriter<W> {
     /// (returns `false`) in plain mode, when no `--timeout` is configured, or
     /// when the lull has not yet elapsed.
     ///
-    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1453-1481), invoked from the
+    /// upstream: `io.c:maybe_send_keepalive()` (io.c:1479-1507), invoked from the
     /// generator/sender loop during an I/O lull (e.g. generator.c:2139).
     pub fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
         match self {
@@ -217,7 +217,7 @@ impl<W: Write> ServerWriter<W> {
     /// Unlike [`Self::maybe_send_keepalive`], an unset lull counts as zero
     /// rather than "disabled": upstream's reply goes through
     /// `maybe_send_keepalive()` whose `allowed_lull` is 0 without `--timeout`
-    /// (io.c:83, io.c:1281), so the reply is immediate. A no-op in plain mode -
+    /// (io.c:83, io.c:1299), so the reply is immediate. A no-op in plain mode -
     /// the frame only exists on a multiplexed stream.
     pub fn answer_keepalive(&mut self) -> io::Result<bool> {
         match self {
@@ -231,7 +231,7 @@ impl<W: Write> ServerWriter<W> {
     /// `--timeout` is set or the stream is not multiplexed.
     ///
     /// Callers use this to derive upstream's `lull_mod = allowed_lull * 5`
-    /// cadence (sender.c:76) when poking keepalives inside a long read loop.
+    /// cadence (sender.c:77) when poking keepalives inside a long read loop.
     pub fn allowed_lull(&self) -> Option<Duration> {
         match self {
             Self::Multiplex(mux) => mux.allowed_lull(),
@@ -248,9 +248,9 @@ impl<W: Write> ServerWriter<W> {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:367-368`: `send_msg_int(MSG_NO_SEND, ndx)` when file open fails
+    /// - `sender.c:368-369`: `send_msg_int(MSG_NO_SEND, ndx)` when file open fails
     ///   and `protocol_version >= 30`.
-    /// - `io.c:1618-1627`: receiver-side handling of `MSG_NO_SEND`.
+    /// - `io.c:1644-1653`: receiver-side handling of `MSG_NO_SEND`.
     ///
     /// # Errors
     ///
@@ -267,8 +267,8 @@ impl<W: Write> ServerWriter<W> {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1093-1097`: `send_msg_int(MSG_REDO, ndx)` on checksum failure
-    /// - `io.c:1535-1540`: generator-side handler queues index to `redo_list`
+    /// - `receiver.c:1109-1113`: `send_msg_int(MSG_REDO, ndx)` on checksum failure
+    /// - `io.c:1561-1566`: generator-side handler queues index to `redo_list`
     ///
     /// # Errors
     ///
@@ -290,10 +290,10 @@ impl<W: Write> ServerWriter<W> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1071-1086`: `send_msg_success()` -> `send_msg_int(MSG_SUCCESS, ndx)`.
-    /// - `receiver.c:1063-1069`: emitted on `recv_ok == 1` (finish_transfer succeeded).
+    /// - `io.c:1089-1104`: `send_msg_success()` -> `send_msg_int(MSG_SUCCESS, ndx)`.
+    /// - `receiver.c:1079-1085`: emitted on `recv_ok == 1` (finish_transfer succeeded).
     /// - `generator.c:1834-1839`: emitted for an already up-to-date source.
-    /// - `io.c:1623-1637`: sender-side handler runs `successful_send(ndx)`.
+    /// - `io.c:1649-1663`: sender-side handler runs `successful_send(ndx)`.
     ///
     /// # Errors
     ///
@@ -314,9 +314,9 @@ impl<W: Write> ServerWriter<W> {
     ///
     /// # Upstream Reference
     ///
-    /// - `sender.c:485-486`: `if (io_error != save_io_error && protocol_version >= 30)
+    /// - `sender.c:486-487`: `if (io_error != save_io_error && protocol_version >= 30)
     ///   send_msg_int(MSG_IO_ERROR, io_error);` immediately before `write_ndx(NDX_DONE)`.
-    /// - `io.c:1542-1549`: receiver handler ORs the value into `io_error`.
+    /// - `io.c:1568-1575`: receiver handler ORs the value into `io_error`.
     ///
     /// # Errors
     ///
@@ -338,7 +338,7 @@ impl<W: Write> ServerWriter<W> {
     ///
     /// - `cleanup.c:250`: `send_msg_int(MSG_ERROR_EXIT, exit_code)` from
     ///   `_exit_cleanup()`, under `protocol_version >= 31 || am_receiver`.
-    /// - `io.c:1854-1892`: the peer's `read_a_msg()` handler ends in the
+    /// - `io.c:1892-1930`: the peer's `read_a_msg()` handler ends in the
     ///   NORETURN `_exit_cleanup(val, __FILE__, 0 - __LINE__)`.
     ///
     /// # Errors
@@ -384,7 +384,7 @@ impl<W: Write> ServerWriter<W> {
     /// A no-op without an attached recorder (`Plain` / `Taken` can never carry
     /// one), so the default transfer path stays byte-for-byte identical.
     ///
-    /// upstream: `sender.c:501` - `f_xfer = write_batch < 0 ? batch_fd : f_out`
+    /// upstream: `sender.c:502` - `f_xfer = write_batch < 0 ? batch_fd : f_out`
     pub fn set_batch_route(&mut self, route: BatchRoute) {
         match self {
             Self::Multiplex(mux) => mux.batch_route = route,
@@ -469,7 +469,7 @@ impl<W: Write> ServerWriter<W> {
     /// - `cleanup.c::handle_cleanup()` brackets the sender's final
     ///   `io_flush(FULL_FLUSH)` with the process exit so every user-space
     ///   byte hits the wire before the kernel queues `FIN`.
-    /// - `main.c:983` calls `io_flush(FULL_FLUSH)` after
+    /// - `main.c:996` calls `io_flush(FULL_FLUSH)` after
     ///   `read_final_goodbye()` returns, mirroring the same barrier intent.
     ///
     /// # Errors
@@ -575,7 +575,7 @@ impl<W: Write> Write for ServerWriter<W> {
 ///
 /// # Upstream Reference
 ///
-/// - `io.c:943-963 noop_io_until_death()` keeps the sender's read side
+/// - `io.c:961-981 noop_io_until_death()` keeps the sender's read side
 ///   open until the peer FINs.
 /// - `cleanup.c:265 close_all()` finally drops the fds; the kernel
 ///   queues `FIN` on the write side as a side effect of the exit.

@@ -15,7 +15,7 @@ fn normalize_auth_digest(value: &str) -> Option<String> {
 
 /// Splits a daemon config list value the way upstream's `conf_strtok` does.
 ///
-/// upstream: `util1.c:932 conf_strtok()`. It has TWO modes, selected by the
+/// upstream: `util1.c:1029 conf_strtok()`. It has TWO modes, selected by the
 /// value itself:
 ///
 /// - the value starts (after leading whitespace) with `,` - split on COMMAS
@@ -33,7 +33,7 @@ fn normalize_auth_digest(value: &str) -> Option<String> {
 /// ⚠ SCOPE: upstream routes exactly TWO directives through `conf_strtok` -
 /// `auth users` (authenticate.c:356) and `gid` (clientserver.c:844, :861).
 /// Everything else keeps its own splitter; in particular `hosts allow` /
-/// `hosts deny` use a plain `strtok(list2, " ,\t")` at `access.c:259` with NO
+/// `hosts deny` use a plain `strtok(list2, " ,\t")` at `access.c:270` with NO
 /// leading-comma mode. Do not widen this helper to those directives - that
 /// would introduce a divergence rather than remove one.
 fn conf_split(value: &str) -> Vec<&str> {
@@ -452,7 +452,7 @@ pub(crate) fn parse_max_connections_directive(value: &str) -> Option<MaxConnecti
 mod conf_strtok_tests {
     use super::*;
 
-    // upstream: util1.c:932 conf_strtok() - a value NOT starting with a comma
+    // upstream: util1.c:1029 conf_strtok() - a value NOT starting with a comma
     // splits on `" ,\t\r\n"`, so whitespace separates entries.
     #[test]
     fn without_a_leading_comma_whitespace_separates_entries() {

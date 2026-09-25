@@ -25,7 +25,7 @@
 ///
 /// - `clientserver.c:992-1004` - daemon resolves `munge_symlinks` from
 ///   `lp_munge_symlinks()` before fork-and-serve.
-/// - `flist.c:1122-1126` - receiver prepends `SYMLINK_PREFIX` to the wire
+/// - `flist.c:1347-1351` - receiver prepends `SYMLINK_PREFIX` to the wire
 ///   target so the on-disk link cannot resolve outside the module root.
 /// - `rsync.h:36` - `SYMLINK_PREFIX "/rsyncd-munged/"` (trailing slash kept).
 #[cfg(unix)]
@@ -99,7 +99,7 @@ fn daemon_munge_symlinks_push_prepends_prefix() {
         std::path::Path::new("/rsyncd-munged//etc/passwd"),
         "absolute targets must carry the `/rsyncd-munged/` prefix verbatim \
          so the kernel cannot follow them out of the module root \
-         (upstream flist.c:1150-1154)",
+         (upstream flist.c:1375-1379)",
     );
 
     let rel_link = fs::read_link(dest_dir.join("rel_link")).expect("read rel_link target");
@@ -116,7 +116,7 @@ fn daemon_munge_symlinks_push_prepends_prefix() {
         std::path::Path::new("/rsyncd-munged/../escape"),
         "parent-escape targets must carry the prefix unmodified so a later \
          munging sender can strip it and restore the original target \
-         (upstream flist.c:274-278); note `--safe-links` does not evaluate \
+         (upstream flist.c:499-503); note `--safe-links` does not evaluate \
          munged links individually - the prefix is absolute, so a munging \
          receiver under --safe-links skips every symlink (generator.c:1951)",
     );

@@ -124,8 +124,8 @@ fn new_symlink_entry() {
 
 #[test]
 fn new_symlink_keeps_non_0777_permissions() {
-    // upstream: flist.c:1669 - `file->mode = st.st_mode` for every type. A
-    // symlink's permission bits are not universally 0o777: rsync.h:455-456
+    // upstream: flist.c:1894 - `file->mode = st.st_mode` for every type. A
+    // symlink's permission bits are not universally 0o777: rsync.h:456-457
     // defines `CAN_CHMOD_SYMLINK` on the platforms with `lchmod`/`setattrlist`
     // (macOS, the BSDs), where a link carries a real, settable mode. The
     // constructor must therefore store what it is handed, like every sibling.
@@ -1473,7 +1473,7 @@ fn extras_presence_bitfield_independence() {
 
 #[test]
 fn set_mode_overrides_constructor_mode() {
-    // upstream: flist.c:2442 - delete-missing-args sets file->mode = 0
+    // upstream: flist.c:2682 - delete-missing-args sets file->mode = 0
     let mut entry = FileEntry::new_file("sentinel.txt".into(), 0, 0o644);
     assert_eq!(entry.mode(), 0o100644); // S_IFREG | 0644
     entry.set_mode(0);

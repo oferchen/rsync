@@ -7,8 +7,8 @@
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2447-2490` - files_from parsing and filesfrom_host/fd setup
-/// - `options.c:2944-2956` - server_options() forwarding to remote server
+/// - `options.c:2456-2499` - files_from parsing and filesfrom_host/fd setup
+/// - `options.c:2954-2966` - server_options() forwarding to remote server
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub enum FilesFromSource {
     /// No `--files-from` specified.
@@ -25,13 +25,13 @@ pub enum FilesFromSource {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2458` - `check_for_hostspec()` detects `:path` prefix
+    /// - `options.c:2467` - `check_for_hostspec()` detects `:path` prefix
     RemoteFile(String),
     /// A `localhost:path` hostspec whose stripped path is openable locally.
     ///
     /// Upstream rsync keeps a single files-from fd: it either opens the file
     /// locally or reads it from the wire fd, never both
-    /// (`options.c:2476-2501`). This variant defers that choice to
+    /// (`options.c:2485-2510`). This variant defers that choice to
     /// [`FilesFromSource::resolve_for`], which collapses it into a plain local
     /// open in whichever transfer direction applies:
     ///
@@ -40,8 +40,8 @@ pub enum FilesFromSource {
     /// - PULL: the local receiver stages `local_path`'s bytes and the remote
     ///   sender reads `--files-from=-`; `wire_arg` is not forwarded.
     ///
-    /// Matches upstream `options.c:3112-3138 check_for_hostspec` +
-    /// `options.c:2476-2483` single-host semantics.
+    /// Matches upstream `options.c:3122-3148 check_for_hostspec` +
+    /// `options.c:2485-2492` single-host semantics.
     HybridLocalRemote {
         /// Local filesystem path to open in the applicable direction.
         local_path: std::path::PathBuf,
@@ -55,8 +55,8 @@ pub enum FilesFromSource {
 ///
 /// Upstream rsync uses a single files-from file descriptor: a remote
 /// `--files-from` is EITHER opened locally OR read from the live wire fd
-/// (`filesfrom_fd = f_in`), never both (`options.c:2476-2501`,
-/// `main.c:1322-1328`). [`FilesFromSource::resolve_for`] collapses the
+/// (`filesfrom_fd = f_in`), never both (`options.c:2485-2510`,
+/// `main.c:1340-1346`). [`FilesFromSource::resolve_for`] collapses the
 /// hybrid local/remote variant into one of those two single-fd modes based
 /// on transfer direction, so callers never stage local bytes AND forward a
 /// wire arg for the same source.
@@ -115,9 +115,9 @@ impl FilesFromSource {
     ///
     /// # Upstream Reference
     ///
-    /// - `options.c:2476-2501` - single `filesfrom_fd` (local open or wire fd)
-    /// - `main.c:1322-1328` - `filesfrom_fd = f_in` for remote files-from
-    /// - `options.c:2962` - `server_options()` forwards the arg only when
+    /// - `options.c:2485-2510` - single `filesfrom_fd` (local open or wire fd)
+    /// - `main.c:1340-1346` - `filesfrom_fd = f_in` for remote files-from
+    /// - `options.c:2972` - `server_options()` forwards the arg only when
     ///   `!am_sender || filesfrom_host`
     #[must_use]
     pub fn resolve_for(&self, is_push: bool, from0: bool) -> FilesFromPlan {
@@ -160,7 +160,7 @@ impl FilesFromSource {
                 if is_push {
                     // Remote receiver opens the file and forwards its bytes
                     // back; the local sender reads them as `--files-from=-`.
-                    // upstream: main.c:1191-1198 start_filesfrom_forwarding.
+                    // upstream: main.c:1209-1216 start_filesfrom_forwarding.
                     FilesFromPlan {
                         sender_files_from_path: Some("-".to_owned()),
                         sender_from0: true,

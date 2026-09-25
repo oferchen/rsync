@@ -33,7 +33,7 @@ impl ClientConfig {
     ///
     /// Upstream resolves a relative `--temp-dir` from inside the destination,
     /// because `do_recv()` runs after `get_local_name()` has chdir'd there
-    /// (main.c:765/823/852, stat at main.c:1046). oc has no chdir, so the
+    /// (main.c:778/836/865, stat at main.c:1059). oc has no chdir, so the
     /// caller anchors the value once and stores it back here - every consumer
     /// (the existence check, the receiver's temp-file open, the local-copy
     /// executor) then reads the same resolved path instead of each re-deriving

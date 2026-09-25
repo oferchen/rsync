@@ -87,11 +87,11 @@ fn data_frame(payload: &[u8]) -> Vec<u8> {
 }
 
 /// Upstream allocates every I/O buffer in whole 1024-byte units so the low byte
-/// of `size` is free to mark a temporarily reduced buffer (io.c:129-136).
+/// of `size` is free to mark a temporarily reduced buffer (io.c:136-143).
 #[test]
 fn buffer_sizes_match_upstream() {
-    assert_eq!(IN_BUFFER_SIZE, 32 * 1024, "upstream io.c:1401");
-    assert_eq!(OUT_BUFFER_SIZE, 64 * 1024, "upstream io.c:1382");
+    assert_eq!(IN_BUFFER_SIZE, 32 * 1024, "upstream io.c:1427");
+    assert_eq!(OUT_BUFFER_SIZE, 64 * 1024, "upstream io.c:1408");
     assert_eq!(round_up_1024(1), 1024);
     assert_eq!(round_up_1024(1024), 1024);
     assert_eq!(round_up_1024(1025), 2048);
@@ -100,7 +100,7 @@ fn buffer_sizes_match_upstream() {
 
 /// "Empty" on a multiplexed buffer means `len == 4`, not `len == 0`: the
 /// reserved header occupies the first four bytes (upstream `out_empty_len`,
-/// io.c:2457). Getting this wrong flushes a bodiless header on every idle poll.
+/// io.c:2495). Getting this wrong flushes a bodiless header on every idle poll.
 #[test]
 fn reserved_header_makes_empty_mean_four() {
     let mut out = OutBuf::new(1024);
@@ -123,7 +123,7 @@ fn reserved_header_makes_empty_mean_four() {
 
 /// Appending bytes that fit must perform no I/O whatsoever - upstream's
 /// `write_buf` only reaches `perform_io` when `out.len + len > out.size`
-/// (io.c:2263-2264). `push` takes no writer at all, so this is structural; the
+/// (io.c:2301-2302). `push` takes no writer at all, so this is structural; the
 /// test pins that the flush that follows is a single frame, not one per push.
 #[test]
 fn buffered_writes_do_no_io_until_flush() {
@@ -160,7 +160,7 @@ fn short_writes_never_tear_the_frame() {
 /// A stall mid-header and a stall mid-payload must both leave the buffer
 /// describing exactly what is still owed, so the retry resumes on the very next
 /// byte. Upstream gets this from `out->pos` surviving a partial write
-/// (io.c:869-877); a header written by a separate `write_all` cannot.
+/// (io.c:887-895); a header written by a separate `write_all` cannot.
 #[test]
 fn stall_at_any_offset_resumes_without_loss() {
     let payload = b"the quick brown fox";
@@ -193,9 +193,9 @@ fn stall_at_any_offset_resumes_without_loss() {
 ///
 /// This is the case reserve-in-place is easy to get subtly wrong. A stalled
 /// run leaves `pos` part-way through the buffer; the bytes appended behind it
-/// split around the physical end (upstream io.c:2270-2276), the reserved header
+/// split around the physical end (upstream io.c:2308-2314), the reserved header
 /// for that second frame sits immediately in front of them, and the drain has
-/// to stop at the end, rewind `pos` to 0 and continue (io.c:864-877). The wire
+/// to stop at the end, rewind `pos` to 0 and continue (io.c:882-895). The wire
 /// must still show two well-formed frames, in order, with nothing re-sent.
 #[test]
 fn flush_wrapping_the_circular_end_is_byte_exact() {
@@ -227,15 +227,15 @@ fn flush_wrapping_the_circular_end_is_byte_exact() {
     assert_eq!(writer.sink, expected, "golden wire bytes across the wrap");
 
     // A fully drained buffer rewinds and re-reserves at offset 0
-    // (upstream io.c:872-877).
+    // (upstream io.c:890-895).
     assert_eq!(out.cursors(), (0, HEADER_LEN, 1024));
     assert!(out.is_empty());
 }
 
 /// A reserved header that would straddle the physical end forces upstream's
-/// temporary size reduction (io.c:699-705): the buffer shrinks so the header
+/// temporary size reduction (io.c:717-723): the buffer shrinks so the header
 /// goes to offset 0 instead, and the size is restored the moment `pos` wraps
-/// (io.c:497-513). The low byte of the size is the marker, which only works
+/// (io.c:515-531). The low byte of the size is the marker, which only works
 /// because every allocation is 1024-aligned.
 #[test]
 fn header_that_would_straddle_the_end_reduces_the_size() {
@@ -293,7 +293,7 @@ fn flushing_an_empty_buffer_writes_nothing() {
     assert!(writer.calls.is_empty());
 }
 
-/// The input buffer is fixed for its whole lifetime (io.c:579) and wraps rather
+/// The input buffer is fixed for its whole lifetime (io.c:597) and wraps rather
 /// than compacting.
 #[test]
 fn input_buffer_is_fixed_and_circular() {

@@ -361,7 +361,7 @@ mod tests {
             rendered.contains(&"-oServerAliveCountMax=3".to_owned()),
             "expected ServerAliveCountMax=3 in {rendered:?}"
         );
-        // upstream: main.c:569-586 do_cmd() renders the parsed username as a
+        // upstream: main.c:582-599 do_cmd() renders the parsed username as a
         // separate `-l <user>` argument ahead of the bare host operand, not
         // a `user@host` composite.
         assert!(

@@ -138,7 +138,7 @@ impl TransferSpec {
 /// protected head (`--server`, `--sender`, the compact flag string with
 /// capability suffix, `--iconv`) and the deferred remainder (long-form
 /// options, `.`, and paths) is provided separately for transmission over
-/// stdin after SSH connection (upstream: `options.c:2745-2746` NULL cutoff).
+/// stdin after SSH connection (upstream: `options.c:2755-2756` NULL cutoff).
 #[derive(Debug)]
 pub struct SecludedInvocation {
     /// Arguments to place on the SSH command line. Under secluded-args this

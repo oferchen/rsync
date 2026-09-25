@@ -9,7 +9,7 @@
 //! # Upstream Reference
 //!
 //! - `generator.c:1580` - `find_fuzzy_basis()` searches fuzzy_dirlist entries
-//! - `options.c:2120` - `fuzzy_basis = basis_dir_cnt + 1` for level 2
+//! - `options.c:2129` - `fuzzy_basis = basis_dir_cnt + 1` for level 2
 
 use std::num::NonZeroU8;
 use std::path::Path;

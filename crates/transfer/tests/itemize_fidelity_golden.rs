@@ -13,7 +13,7 @@
 //! upstream renders `cLc........` (a retargeted symlink whose mtime falls in
 //! the same whole second as the old link's, so no `t` glyph): upstream
 //! `itemize()` (generator.c:526-527) tests the time via `mtime_differs()` ->
-//! `same_time()` (util1.c:1478), which with the default `modify_window == 0`
+//! `same_time()` (util1.c:1573), which with the default `modify_window == 0`
 //! compares whole seconds only and ignores the fractional part. An exact
 //! nanosecond comparison would spuriously light the `t` glyph (`cLc.t......`);
 //! this test guards that boundary.
@@ -22,7 +22,7 @@
 //!
 //! - `log.c:695-746` - `%i` itemize string construction.
 //! - `generator.c:508-549` - `itemize()` derives the attribute flags.
-//! - `util1.c:1478` - `same_time()` whole-second comparison.
+//! - `util1.c:1573` - `same_time()` whole-second comparison.
 
 #![cfg(unix)]
 

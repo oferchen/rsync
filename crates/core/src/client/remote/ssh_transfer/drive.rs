@@ -89,8 +89,8 @@ pub fn run_ssh_transfer(
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
-    // upstream: main.c:1465-1466 - a remote source with a single operand sets
-    // `argc = 0` ("no dest arg") rather than erroring, and options.c:2311-2312
+    // upstream: main.c:1483-1484 - a remote source with a single operand sets
+    // `argc = 0` ("no dest arg") rather than erroring, and options.c:2320-2321
     // has already inferred list-only from the operand count.
     let fallback_dest = std::ffi::OsString::from(".");
     let (sources, destination) = split_transfer_operands(args, config, &fallback_dest)?;
@@ -118,7 +118,7 @@ pub fn run_ssh_transfer(
             remote_sources,
             local_dest,
         } => {
-            // upstream: main.c:1525,1549 - each requested source path is
+            // upstream: main.c:1543,1567 - each requested source path is
             // recorded as an implied include to validate the received flist.
             let implied_source_args = remote_operand_source_paths(&remote_sources)?;
             let (invocation_args, ssh_host, ssh_user, ssh_port, stdin_args) =
@@ -159,7 +159,7 @@ fn run_pull_transfer(
     observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
-    // upstream: main.c:1276 - client_mode=true tells the server flow to send the
+    // upstream: main.c:1294 - client_mode=true tells the server flow to send the
     // filter list after handshake + compat exchange (where recv_filter_list() is
     // called inside the server).
     let mut server_config = build_server_config_for_receiver(config, local_paths)?;
@@ -170,7 +170,7 @@ fn run_pull_transfer(
         )?;
     server_config.stop_at = config.stop_at();
 
-    // upstream: main.c:1372-1375 - when pulling with --files-from pointing to a
+    // upstream: main.c:1390-1393 - when pulling with --files-from pointing to a
     // local file or stdin, the receiver reads the file list locally and
     // forwards its bytes back to the remote sender via
     // `start_filesfrom_forwarding(filesfrom_fd)`. The remote sender consumes
@@ -184,7 +184,7 @@ fn run_pull_transfer(
         server_config.connection.files_from_data = Some(data);
     }
 
-    // upstream: flist.c:1026 recv_file_entry() validates each received name
+    // upstream: flist.c:1251 recv_file_entry() validates each received name
     // against these implied includes (CVE-2022-29154). Computed after staging
     // so a local --files-from folds each forwarded entry into the set.
     server_config.connection.implied_source_args = implied_source_args_for_pull(
@@ -353,7 +353,7 @@ fn run_server_over_ssh_connection(
                 Err(_) => ExitCode::WaitChild,
             };
 
-            // upstream: io.c:232 whine_about_eof() maps an unexpected EOF
+            // upstream: io.c:250 whine_about_eof() maps an unexpected EOF
             // during setup to RERR_STREAMIO (12); an out-of-range peer protocol
             // version is RERR_PROTOCOL (2) per compat.c:619-623 setup_protocol;
             // other handshake failures keep the client/server-startup code (5).
@@ -377,7 +377,7 @@ fn run_server_over_ssh_connection(
                 return Err(remote_exit_error(child_exit, local_role));
             }
             let detail = if base == ExitCode::StreamIo {
-                // upstream: io.c:228-232 - the EOF whine omits the underlying
+                // upstream: io.c:246-250 - the EOF whine omits the underlying
                 // error and reports the byte count received so far.
                 "connection unexpectedly closed (0 bytes received so far)".to_string()
             } else {
@@ -399,7 +399,7 @@ fn run_server_over_ssh_connection(
     }
     let negotiated_protocol = handshake.protocol.as_u8();
 
-    // upstream: sender.c:449-461 log_item(FCLIENT) - on an SSH push the local
+    // upstream: sender.c:450-462 log_item(FCLIENT) - on an SSH push the local
     // side is the sender (ServerRole::Generator) and prints each file's
     // client-visible line to its own stdout: the `-i` itemize row (built from
     // the iflags the remote receiver's generator writes over the wire,
@@ -407,7 +407,7 @@ fn run_server_over_ssh_connection(
     // remote generator never forwards either itself (log.c:822 gates FCLIENT on
     // `!am_server`). A custom `--out-format` also wants the per-file rows even
     // without `-v`/`-i` so the client can render them; otherwise honor the plain
-    // verbose/itemize gates (upstream: sender.c:215 `itemizing =
+    // verbose/itemize gates (upstream: sender.c:218 `itemizing =
     // stdout_format_has_i`).
     //
     // On a pull the local side is the receiver, which prints its own default
@@ -477,7 +477,7 @@ fn transfer_failure_error(
     child_exit_code: ExitCode,
     local_role: Role,
 ) -> ClientError {
-    // upstream: io.c:1892 - a received `MSG_ERROR_EXIT` ends in the
+    // upstream: io.c:1930 - a received `MSG_ERROR_EXIT` ends in the
     // NORETURN `_exit_cleanup(val)`, so the peer's code IS the client's
     // exit code; upstream never reaches the child-status comparison
     // below on that path. Without this arm the abort surfaces as a

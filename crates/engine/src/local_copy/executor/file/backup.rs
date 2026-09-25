@@ -37,7 +37,7 @@ use crate::local_copy::create_symlink;
 /// design, and a non-chrooted daemon's own `--backup-dir` entries are
 /// trusted-owned by construction, so ownership alone would let a backup entry
 /// pointing outside the module carry an in-module file's contents out of it
-/// (syscall.c:186-240 `abspath_outside_confinement()`). A session with no
+/// (syscall.c:232-291 `abspath_outside_confinement()`). A session with no
 /// confinement root - every plain local client - is unaffected: there is
 /// nothing to be outside of.
 ///
@@ -284,7 +284,7 @@ where
 /// the ownership walk bound to the session's confinement root.
 ///
 /// upstream: `backup.c:69` `validate_backup_dir()` calls `do_lstat_at()`, whose
-/// `operator_path_resolve` arm (`syscall.c:2208`, inside the shared
+/// `operator_path_resolve` arm (`syscall.c:2347`, inside the shared
 /// `do_xstat_at()`) resolves the parent with `owner_walk_parent()` and
 /// `fstatat`s the leaf through it. The decision this stat feeds is "delete
 /// whatever is here", so resolving it by path is what lets a flipped component
@@ -309,7 +309,7 @@ fn backup_dir_element_metadata(path: &Path) -> io::Result<fs::Metadata> {
 ///
 /// upstream: `backup.c:75-79` `validate_backup_dir()` -
 /// `delete_item(..., DEL_FOR_BACKUP | DEL_RECURSE)`, reaching `do_unlink_at()`
-/// (`syscall.c:673`) inside `make_backup()`'s `operator_path_resolve` window.
+/// (`syscall.c:812`) inside `make_backup()`'s `operator_path_resolve` window.
 #[cfg(unix)]
 fn remove_backup_dir_obstruction(path: &Path) -> io::Result<()> {
     fast_io::operator_remove_file_confined(path)
@@ -354,7 +354,7 @@ fn apply_backup_dir_attrs(
         // NULL, 0) - the synthesized file_struct carries the destination
         // directory's stat mode VERBATIM and set_file_attrs chmods to
         // `file->mode` with no `dest_mode()` collapse: dest_mode() runs only
-        // at generator.c:1856/1939 and receiver.c:1191, none of which sit on
+        // at generator.c:1856/1939 and receiver.c:1208, none of which sit on
         // the backup path. A `!preserve_perms` run therefore still copies the
         // destination directory's exact permission bits onto the backup
         // subdirectory (measured against rsync 3.5.0: dest dir 0707, -r
@@ -388,7 +388,7 @@ pub(crate) fn copy_entry_to_backup(
     if file_type.is_file() {
         // upstream: backup.c:401 `copy_file(fname, buf, -1, file->mode)`, whose
         // destination open is `do_open_at()` via `unlink_and_reopen()`
-        // (util1.c:366) and therefore takes the confined ownership walk inside
+        // (util1.c:369) and therefore takes the confined ownership walk inside
         // `make_backup()`'s `operator_path_resolve` window. `fs::copy` resolves
         // `backup_path` by path instead, so a symlink at the leaf - or at a
         // component flipped since the parent chain was validated - redirects
@@ -439,7 +439,7 @@ pub(crate) fn copy_entry_to_backup(
 /// beneath-walk rather than the ownership one.
 ///
 /// upstream: `backup.c:377` `do_symlink_at(sl, buf)` inside `make_backup()`'s
-/// `operator_path_resolve = 1` window (backup.c:437-449); `syscall.c:780`
+/// `operator_path_resolve = 1` window (backup.c:437-449); `syscall.c:919`
 /// `do_symlink_at()` resolves the parent with `owner_walk_parent()` and creates
 /// the leaf with `symlinkat`.
 #[cfg(unix)]

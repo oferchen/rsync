@@ -92,7 +92,7 @@ impl CompiledRule {
         // treats `\` as an escape, so a literal backslash in a non-wild pattern
         // (e.g. a `back\slash.txt` --files-from name) would otherwise fail to
         // match its own file - on a pull the receiver then aborts with
-        // "rejecting unrequested file-list name" (flist.c:1026). Escape each `\`
+        // "rejecting unrequested file-list name" (flist.c:1251). Escape each `\`
         // to `\\` for non-wild patterns so wildmatch reproduces upstream's
         // literal comparison. Wild patterns keep `\` as an escape, matching
         // upstream's wildmatch_array path.

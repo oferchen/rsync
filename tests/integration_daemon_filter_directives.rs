@@ -11,7 +11,7 @@
 //! upstream: clientserver.c:934-951 - `rsync_module()` builds
 //! `daemon_filter_list` from `filter` / `include_from` / `include` /
 //! `exclude_from` / `exclude` in that order, then `check_filter()` at
-//! `receiver.c:889` and `generator.c:1663` consults it before any
+//! `receiver.c:905` and `generator.c:1663` consults it before any
 //! per-file action.
 //!
 //! A refused file is never dropped in silence: `generator.c:1669-1671` reports

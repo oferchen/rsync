@@ -33,7 +33,7 @@ there too - but it is the population a version bump must be read against, becaus
 that is where "the code this cites no longer exists" hides.
 
 TWO POPULATIONS, ONE OF THEM GATING. The line filter used to be "does this line
-contain the word `upstream`", which sees `// upstream: flist.c:123 "..."` and
+contain the word `upstream`", which sees `// upstream: flist.c:125 "..."` and
 misses every citation written as a bullet under a `/// # Upstream Reference`
 heading - the word is on the heading, never on the bullets. That is 5,240 of the
 tree's 12,596 `file.c:NNN` citations, 42%, across 748 files: an entire
@@ -55,7 +55,7 @@ Usage:
 """
 import re, os, sys, glob
 
-VER = "3.5.0"
+VER = "3.5.1"
 S = f"target/interop/upstream-src/rsync-{VER}"
 HIGH = {"flist","generator","receiver","io","token","sender","clientserver","options","main",
         "exclude","delete","backup","acls","rsync","batch","compat","log","socket","util1","util2","xattrs","checksum","match"}
@@ -82,7 +82,7 @@ class Tally:
     The tool scans two populations and must never let a reader confuse them:
 
       * BLOCKING - the citation's line carries the word "upstream" somewhere on
-        it (`// upstream: flist.c:123 "..."`). This is the population the tool
+        it (`// upstream: flist.c:125 "..."`). This is the population the tool
         has always seen, and the only one `--ratchet` and the backwards-range
         hard failure act on.
       * EXTENDED - the line carries a `file.c:NNN` citation but NOT the word

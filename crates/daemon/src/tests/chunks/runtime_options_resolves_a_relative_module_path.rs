@@ -1,7 +1,7 @@
 // A relative module `path` is resolved against the daemon's current directory,
 // not refused - including under `use chroot`.
 //
-// upstream: `normalize_path` (util1.c:1405-1426) opens with
+// upstream: `normalize_path` (util1.c:1500-1521) opens with
 // `if (*path != '/') { /* Make path absolute. */ ... }`, and `rsync_module()`
 // routes every module path through it on both the chroot arm
 // (clientserver.c:898-916) and the no-chroot arm (:916-918). There is no

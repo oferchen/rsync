@@ -132,7 +132,7 @@ pub fn replay(
 
     let mut entries = reader.read_protocol_flist()?;
 
-    // upstream: flist.c:1335-1341 - recv_file_entry() stamps F_HL_GNUM while
+    // upstream: flist.c:1560-1566 - recv_file_entry() stamps F_HL_GNUM while
     // the entry is still in wire order, because the tag a follower carries is
     // the leader's *unsorted* index. Doing it after the sort below would name
     // a different entry.
@@ -152,7 +152,7 @@ pub fn replay(
     };
     assign_hardlink_gnums(&mut entries, initial_ndx_start, proto);
 
-    // upstream: flist.c:2771 - flist_sort_and_clean() after recv_file_list().
+    // upstream: flist.c:3014 - flist_sort_and_clean() after recv_file_list().
     // NDX values from the generator reference sorted positions, not wire order.
     let pre29 = reader.config().protocol_version < 29;
     sort_file_list(&mut entries, false, pre29);
@@ -163,7 +163,7 @@ pub fn replay(
         ..ReplayResult::default()
     };
 
-    // upstream: main.c:787-808 - get_local_name() creates the destination
+    // upstream: main.c:800-821 - get_local_name() creates the destination
     // directory automatically when the transfer involves more than one file or
     // the destination operand ends in a slash. Batch replay reproduces that
     // behaviour so a fresh destination tree can absorb a batch without
@@ -214,9 +214,9 @@ pub fn replay(
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:1335-1341`: `F_HL_GNUM(file) = flist->ndx_start + flist->used`
+/// - `flist.c:1560-1566`: `F_HL_GNUM(file) = flist->ndx_start + flist->used`
 ///   for an `XMIT_HLINK_FIRST` entry, `= first_hlink_ndx` otherwise.
-/// - `flist.c:1343-1362`: the protocol 28-29 arm groups by `(dev, ino)`.
+/// - `flist.c:1568-1587`: the protocol 28-29 arm groups by `(dev, ino)`.
 pub(super) fn assign_hardlink_gnums(
     entries: &mut [protocol::flist::FileEntry],
     ndx_start: i32,

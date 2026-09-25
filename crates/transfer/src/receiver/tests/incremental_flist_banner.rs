@@ -1,5 +1,5 @@
 //! Regression: the `receiving incremental file list` banner on a remote pull
-//! must fire exactly like upstream `flist.c:2606-2607` - only for a client-side
+//! must fire exactly like upstream `flist.c:2846-2847` - only for a client-side
 //! receiver (`!am_server`), under recursion (upstream disables inc_recurse when
 //! `!recurse`, compat.c:172-173), and when the FLIST info category is at level >= 1
 //! (so `--info=flist0` suppresses it even at `-v`).
@@ -53,7 +53,7 @@ fn flist0_suppresses_even_when_recursive() {
 }
 
 /// A non-recursive single-file `-v` pull prints no banner: upstream leaves
-/// inc_recurse off without `-r`, so `flist.c:2607` is not reached.
+/// inc_recurse off without `-r`, so `flist.c:2847` is not reached.
 #[test]
 fn non_recursive_prints_no_banner() {
     logging::init(VerbosityConfig::from_verbose_level(1));

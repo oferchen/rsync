@@ -89,7 +89,7 @@ fn partial_destination(
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:357-373` - `if (append_mode == 2 && mapbuf)` sum_update loop
+/// - `receiver.c:370-386` - `if (append_mode == 2 && mapbuf)` sum_update loop
 ///   over `sum.flength` bytes in `CHUNK_SIZE` steps.
 fn sum_append_prefix(
     config: &DiskCommitConfig,
@@ -105,7 +105,7 @@ fn sum_append_prefix(
         return Ok(());
     };
 
-    // Append implies inplace (receiver.c:968), so the prefix lives at the final
+    // Append implies inplace (receiver.c:984), so the prefix lives at the final
     // destination and is untouched until the appended tail is written.
     let mut file = fs::File::open(&begin.file_path)?;
     let mut remaining = begin.append_offset;
@@ -128,8 +128,8 @@ fn sum_append_prefix(
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:505` - `sum_end(file_sum1)` computes the whole-file digest.
-/// - `receiver.c:515-519` - `read_buf(f_in, sender_file_sum, ...)` then
+/// - `receiver.c:521` - `sum_end(file_sum1)` computes the whole-file digest.
+/// - `receiver.c:531-535` - `read_buf(f_in, sender_file_sum, ...)` then
 ///   `if (fd != -1 && memcmp(file_sum1, sender_file_sum, xfer_sum_len) != 0)
 ///   return 0;` - a mismatch yields `recv_ok = 0` and the file is not put into
 ///   place.
@@ -155,17 +155,17 @@ fn verify_whole_file_checksum(
 /// redo (phase 1) or logs the error (phase 2).
 ///
 /// The retained stub keeps its recent temp-creation mtime (not the epoch):
-/// upstream `receiver.c:1047` passes `ok_to_set_time = recv_ok`, and a failed
+/// upstream `receiver.c:1063` passes `ok_to_set_time = recv_ok`, and a failed
 /// verify has `recv_ok == 0`, which maps to `ATTRS_SKIP_MTIME` (rsync.c:748).
 /// The epoch stamp is reserved for the signal/abort cleanup path (cleanup.c:
 /// 174-180), so `retain_partial_file` is called here with `zero_mtime = false`.
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:1039-1056` - on `recv_ok == 0` the temp goes to the partial dir
+/// - `receiver.c:1055-1072` - on `recv_ok == 0` the temp goes to the partial dir
 ///   (`handle_partial_dir(PDIR_CREATE)`) or is unlinked (`do_unlink_at`);
 ///   `finish_transfer()` - the destination rename - is skipped.
-/// - `receiver.c:1047` / `rsync.c:748-749` - `ok_to_set_time = recv_ok` (0 here)
+/// - `receiver.c:1063` / `rsync.c:748-749` - `ok_to_set_time = recv_ok` (0 here)
 ///   -> `ATTRS_SKIP_MTIME`, so the kept stub retains its temp-creation mtime.
 fn withhold_failed_commit(
     config: &DiskCommitConfig,
@@ -205,7 +205,7 @@ pub(in crate::disk_commit) fn process_file(
     disk_batch: Option<&mut fast_io::IoUringDiskBatch>,
     iocp_batch: Option<&mut fast_io::IocpDiskBatch>,
 ) -> io::Result<CommitResult> {
-    // upstream: receiver.c:999-1006 - when open_tmpfile() fails (e.g. EACCES
+    // upstream: receiver.c:1015-1022 - when open_tmpfile() fails (e.g. EACCES
     // from a read-only destination directory) the receiver does NOT abort the
     // receive loop. It logs the error, calls discard_receive_data() to drain
     // this file's delta, and continues to the next file. On the pipelined path
@@ -252,13 +252,13 @@ pub(in crate::disk_commit) fn process_file(
 
     // Pre-existing basis length for sparse hole-punching: only in-place writes
     // reuse existing bytes, so a zero run there must be punched rather than
-    // merely seeked over. upstream: receiver.c:318-338 preallocated_len.
+    // merely seeked over. upstream: receiver.c:331-351 preallocated_len.
     let basis_len = if config.use_sparse && begin.is_inplace {
         file.metadata().map(|m| m.len()).unwrap_or(0)
     } else {
         0
     };
-    // upstream: receiver.c:319-336 - when --preallocate is set, fallocate the
+    // upstream: receiver.c:332-349 - when --preallocate is set, fallocate the
     // destination to its eventual length before writing. do_fallocate()'s return
     // becomes preallocated_len, overriding the inplace basis for sparse hole
     // decisions; a failure warns and continues (never aborts).
@@ -288,7 +288,7 @@ pub(in crate::disk_commit) fn process_file(
     // removes ~42% of instructions from the network-critical path.
     let mut checksum_verifier = begin.checksum_verifier.take();
 
-    // upstream: receiver.c:357-373 - fold the existing prefix into the
+    // upstream: receiver.c:370-386 - fold the existing prefix into the
     // whole-file checksum under --append-verify before hashing the tail.
     sum_append_prefix(config, &begin, &mut checksum_verifier)?;
 
@@ -299,7 +299,7 @@ pub(in crate::disk_commit) fn process_file(
     // delta transfer with zero literal data would look like progress and get
     // renamed over a complete destination.
     //
-    // upstream: `receiver.c:392-403` sets the latch only in the literal branch;
+    // upstream: `receiver.c:405-416` sets the latch only in the literal branch;
     // `cleanup.c:159` gates retention on it and `cleanup.c:199-200` unlinks the
     // temp otherwise.
     let mut literal_bytes: u64 = 0;
@@ -344,7 +344,7 @@ pub(in crate::disk_commit) fn process_file(
         match msg {
             FileMessage::Chunk(data) | FileMessage::MatchedChunk(data) => {
                 // Update per-file checksum before writing (mirrors upstream
-                // receiver.c:315 which hashes each token before writing).
+                // receiver.c:328 which hashes each token before writing).
                 if let Some(ref mut verifier) = checksum_verifier {
                     verifier.update(&data);
                 }
@@ -362,20 +362,20 @@ pub(in crate::disk_commit) fn process_file(
             }
             FileMessage::SkipMatched(data) => {
                 // In-place matched block already at its destination offset.
-                // upstream: receiver.c:461-465 hashes the matched bytes via
+                // upstream: receiver.c:474-478 hashes the matched bytes via
                 // sum_update BEFORE skip_matched(), so fold them into the
                 // per-file checksum here regardless of whether we write them.
                 if let Some(ref mut verifier) = checksum_verifier {
                     verifier.update(&data);
                 }
                 if let Some(ref mut sparse) = sparse_state {
-                    // upstream: fileio.c:196-200 skip_matched() sparse branch
+                    // upstream: fileio.c:204-208 skip_matched() sparse branch
                     // hands the bytes to the sparse processor (with the seek
                     // flag). Writing them through SparseWriteState is
                     // byte-identical for an in-place basis==dest update.
                     sparse.write(output.buffered_for_sparse(), &data)?;
                 } else {
-                    // upstream: fileio.c:202-209 skip_matched() - flush then
+                    // upstream: fileio.c:210-249 skip_matched() - flush then
                     // lseek past the already-in-place bytes instead of
                     // rewriting identical data.
                     output.skip_matched(data.len() as u64)?;
@@ -384,7 +384,7 @@ pub(in crate::disk_commit) fn process_file(
                 let _ = buf_return_tx.try_send(data);
             }
             FileMessage::Commit { expected_checksum } => {
-                // upstream: fileio.c:43 sparse_end() - flush the trailing hole
+                // upstream: fileio.c:47 sparse_end() - flush the trailing hole
                 // and hand the logical length + in-basis hole ranges to the
                 // commit step for ftruncate + punch (no materialized byte).
                 let sparse_final = if let Some(ref mut sparse) = sparse_state {
@@ -400,13 +400,13 @@ pub(in crate::disk_commit) fn process_file(
                 output.flush_and_sync(config.do_fsync, &begin.file_path)?;
                 output.finish(config.do_fsync, &begin.file_path)?;
 
-                // upstream: receiver.c:505-519 - compute the whole-file checksum
+                // upstream: receiver.c:521-535 - compute the whole-file checksum
                 // and compare it against the sender's trailing sum BEFORE the
                 // file is put into place. On a temp+rename mismatch (recv_ok == 0)
                 // the temp is retained/discarded, never renamed over the
                 // destination. Inplace/device targets cannot be withheld (the
                 // bytes already landed), matching upstream's `|| inplace` branch
-                // at receiver.c:1029; the receiver still queues the redo.
+                // at receiver.c:1045; the receiver still queues the redo.
                 let (computed_checksum, verify_ok) =
                     verify_whole_file_checksum(checksum_verifier.take(), &expected_checksum);
                 if !verify_ok && needs_rename {
@@ -419,7 +419,7 @@ pub(in crate::disk_commit) fn process_file(
                     ));
                 }
 
-                // upstream: fileio.c:43 sparse_end() runs inside receive_data()
+                // upstream: fileio.c:47 sparse_end() runs inside receive_data()
                 // BEFORE receiver.c calls finish_transfer() -> set_file_attrs().
                 // Truncate/punch the temp file first so the ftruncate + punch
                 // (both of which touch mtime) cannot clobber the timestamp the
@@ -467,7 +467,7 @@ pub(in crate::disk_commit) fn process_file(
                 // When delay_updates staged the file, apply metadata to
                 // the staging path (it will be renamed to final later).
                 let metadata_error = if outcome.delayed_path.is_some() {
-                    // upstream: receiver.c:1047 - finish_transfer(partialptr, ...)
+                    // upstream: receiver.c:1063 - finish_transfer(partialptr, ...)
                     // applies metadata to the staged partial file.
                     let staged = outcome
                         .delayed_path
@@ -506,7 +506,7 @@ pub(in crate::disk_commit) fn process_file(
                 // upstream: cleanup.c:159 - on abort, retain the temp only if
                 // LITERAL data was received. Matched basis copies do not count:
                 // upstream sets `cleanup_got_literal` solely in the literal
-                // branch (receiver.c:392-403), so a temp built entirely from
+                // branch (receiver.c:405-416), so a temp built entirely from
                 // basis blocks is unlinked (cleanup.c:199-200) rather than
                 // renamed over an intact destination.
                 if literal_bytes > 0 && needs_rename {
@@ -574,7 +574,7 @@ pub(in crate::disk_commit) fn process_whole_file(
     disk_batch: Option<&mut fast_io::IoUringDiskBatch>,
     iocp_batch: Option<&mut fast_io::IocpDiskBatch>,
 ) -> io::Result<CommitResult> {
-    // upstream: receiver.c:999-1006 - open failure is a benign per-file partial,
+    // upstream: receiver.c:1015-1022 - open failure is a benign per-file partial,
     // not a fatal abort. The coalesced WholeFile carries its data inline, so
     // there are no queued channel messages to drain (unlike process_file); the
     // open error surfaces directly and drain_all_results maps a permission
@@ -605,7 +605,7 @@ pub(in crate::disk_commit) fn process_whole_file(
     } else {
         0
     };
-    // upstream: receiver.c:319-336 - preallocate the destination before writing
+    // upstream: receiver.c:332-349 - preallocate the destination before writing
     // when --preallocate is set (see process_file).
     let preallocated_len = maybe_preallocate(&file, config, &begin, basis_len);
     // upstream: receiver.c:receive_data - a coalesced whole-file rewrite starts
@@ -626,7 +626,7 @@ pub(in crate::disk_commit) fn process_whole_file(
     let bytes_written = data.len() as u64;
 
     let mut checksum_verifier = begin.checksum_verifier.take();
-    // upstream: receiver.c:357-373 - fold the existing prefix into the
+    // upstream: receiver.c:370-386 - fold the existing prefix into the
     // whole-file checksum under --append-verify before hashing the tail.
     sum_append_prefix(config, &begin, &mut checksum_verifier)?;
     if let Some(ref mut verifier) = checksum_verifier {
@@ -652,7 +652,7 @@ pub(in crate::disk_commit) fn process_whole_file(
     output.flush_and_sync(config.do_fsync, &begin.file_path)?;
     output.finish(config.do_fsync, &begin.file_path)?;
 
-    // upstream: receiver.c:505-519 - verify the whole-file checksum before the
+    // upstream: receiver.c:521-535 - verify the whole-file checksum before the
     // file is put into place (see process_file for the full rationale). A
     // temp+rename mismatch is retained/discarded, never renamed over dest.
     let (computed_checksum, verify_ok) =
@@ -667,7 +667,7 @@ pub(in crate::disk_commit) fn process_whole_file(
         ));
     }
 
-    // upstream: fileio.c:43 sparse_end() runs before finish_transfer() ->
+    // upstream: fileio.c:47 sparse_end() runs before finish_transfer() ->
     // set_file_attrs() (see process_file for full rationale). Truncate/punch
     // the temp file before applying metadata so the mtime survives.
     if needs_rename && let Some(ref sparse) = sparse_final {
@@ -747,7 +747,7 @@ pub(in crate::disk_commit) fn process_whole_file(
 /// channel instead delivers `Shutdown`/`Abort`/disconnect first, that terminal
 /// signal is propagated so the disk loop exits, exactly as the write path does.
 ///
-/// upstream: receiver.c:999-1006 - discard this file's data and continue.
+/// upstream: receiver.c:1015-1022 - discard this file's data and continue.
 fn discard_file_on_open_failure(
     file_rx: &spsc::Receiver<FileMessage>,
     buf_return_tx: &spsc::Sender<Vec<u8>>,
@@ -848,9 +848,9 @@ fn make_inplace_backup(
 /// Upstream computes the destination mode BEFORE opening the output file:
 ///
 /// ```text
-/// int exists = fd1 != -1;                                     // receiver.c:955
+/// int exists = fd1 != -1;                                     // receiver.c:971
 /// file->mode = dest_mode(file->mode, st.st_mode, dflt_perms, exists);
-/// if (inplace || one_inplace) { ... }                         // receiver.c:967
+/// if (inplace || one_inplace) { ... }                         // receiver.c:983
 /// ```
 ///
 /// and for an existing destination `dest_mode()` returns
@@ -868,7 +868,7 @@ fn make_inplace_backup(
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:955-965` - `dest_mode()` invocation before the output open
+/// - `receiver.c:971-981` - `dest_mode()` invocation before the output open
 /// - `rsync.c:449-472` - `dest_mode()` body
 fn inplace_pre_transfer_stat(begin: &BeginMessage) -> Option<fs::Metadata> {
     if !begin.is_inplace || begin.is_device_target {
@@ -893,8 +893,8 @@ fn inplace_pre_transfer_stat(begin: &BeginMessage) -> Option<fs::Metadata> {
 /// # Upstream Reference
 ///
 /// - `receiver.c`: `write_devices && IS_DEVICE(st.st_mode)` - inplace write to device
-/// - `receiver.c:968-984`: opens destination directly when inplace
-/// - `receiver.c:1219-1224`: recovers a read-only destination via
+/// - `receiver.c:984-1000`: opens destination directly when inplace
+/// - `receiver.c:1236-1241`: recovers a read-only destination via
 ///   `open_readonly_inplace`
 fn open_output_file(
     begin: &BeginMessage,
@@ -904,7 +904,7 @@ fn open_output_file(
         let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
         // The guard wraps the real device node, not a temp file. A
         // mid-transfer error must NOT unlink it (upstream never unlinks an
-        // inplace/device target - receiver.c:1054 gates on !one_inplace), so
+        // inplace/device target - receiver.c:1070 gates on !one_inplace), so
         // seed it keep-on-drop.
         Ok((
             file,
@@ -912,7 +912,7 @@ fn open_output_file(
             false,
         ))
     } else if begin.is_inplace {
-        // upstream: receiver.c:1195-1224 - the whole three-arm chain, owned by
+        // upstream: receiver.c:1212-1241 - the whole three-arm chain, owned by
         // `fast_io`. The receiver never truncates: the destination it opens IS
         // the delta basis. `Direct` because this is the destination leaf, whose
         // parents the caller has already anchored - not an operator path.
@@ -921,14 +921,14 @@ fn open_output_file(
             false,
             fast_io::InplaceResolution::Direct,
         )?;
-        // upstream: receiver.c:372-373 - in append mode, seek past existing content
+        // upstream: receiver.c:385-386 - in append mode, seek past existing content
         if begin.append_offset > 0 {
             use std::io::Seek;
             file.seek(io::SeekFrom::Start(begin.append_offset))?;
         }
         // The guard wraps the real destination file, not a temp file. On a
         // mid-transfer error the guard must LEAVE the partial write in place
-        // rather than delete the user's existing file. upstream: receiver.c:1054
+        // rather than delete the user's existing file. upstream: receiver.c:1070
         // gates the destination unlink on !one_inplace, so an inplace target is
         // never unlinked; a partial inplace write stays. keep_dest() seeds the
         // guard keep-on-drop so its Drop is a no-op on the error path.
@@ -961,13 +961,13 @@ fn open_output_file(
 /// `config.preallocate`, returning the `preallocated_len` the sparse writer
 /// must use (bytes reserved that a zero run should punch rather than seek).
 ///
-/// Mirrors upstream `receiver.c:319-336`: the preallocation branch gates on
+/// Mirrors upstream `receiver.c:332-349`: the preallocation branch gates on
 /// `preallocate_files && total_size > 0 && (!inplace_sizing || total_size >
 /// size_r)`, and its `do_fallocate()` return value overrides the inplace basis
-/// length. A `do_fallocate()` failure warns and continues (`receiver.c:324`), so
+/// length. A `do_fallocate()` failure warns and continues (`receiver.c:337`), so
 /// this never propagates an error - preallocation is a best-effort optimization
 /// and its failure must not abort the receive.
-/// upstream: receiver.c:320 - preallocated_len = do_fallocate(fd, 0, total_size)
+/// upstream: receiver.c:333 - preallocated_len = do_fallocate(fd, 0, total_size)
 fn maybe_preallocate(
     file: &fs::File,
     config: &DiskCommitConfig,
@@ -977,7 +977,7 @@ fn maybe_preallocate(
     if !config.preallocate {
         return fallback_preallocated_len;
     }
-    // upstream: receiver.c:320 - size_r is the existing basis length; only an
+    // upstream: receiver.c:333 - size_r is the existing basis length; only an
     // in-place write reuses it, otherwise the temp file starts empty.
     let existing_len = if begin.is_inplace {
         file.metadata().map(|m| m.len()).unwrap_or(0)
@@ -989,7 +989,7 @@ fn maybe_preallocate(
     }
     match fast_io::preallocate(file, begin.target_size) {
         Ok(preallocated_len) => preallocated_len,
-        // upstream: receiver.c:324 - rsyserr(FWARNING, ...) then continue.
+        // upstream: receiver.c:337 - rsyserr(FWARNING, ...) then continue.
         Err(err) => {
             logging::debug_log!(
                 Io,
@@ -1020,7 +1020,7 @@ fn maybe_preallocate(
 /// target, so `preallocated_len > 0` uniquely identifies upstream's `else if
 /// (inplace_sizing)` branch that the `do_ftruncate(fd, 0)` is nested in. Skipped
 /// in append mode (`append_offset > 0`), which must keep the existing prefix and
-/// which upstream forbids together with `--whole-file` (`options.c:2400`). The
+/// which upstream forbids together with `--whole-file` (`options.c:2409`). The
 /// truncate is best-effort: on failure the caller keeps the basis length and
 /// falls back to punching, which is equally correct.
 /// upstream: receiver.c:receive_data - `if (sparse_files > 0 && whole_file &&

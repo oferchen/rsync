@@ -1,5 +1,5 @@
 /// Validates that MSG_ERROR_EXIT payloads are encoded as little-endian,
-/// matching upstream SIVAL encoding (io.c:send_msg_int:1060).
+/// matching upstream SIVAL encoding (io.c:send_msg_int:1078).
 ///
 /// A big-endian payload causes an upstream client to read exit code 1 as
 /// 0x01000000 via IVAL (little-endian decode). After the 8-bit exit mask

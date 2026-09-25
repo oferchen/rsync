@@ -172,7 +172,7 @@ fn sparse_state_finish_with_pending_zeros() {
     let mut cursor = Cursor::new(vec![0u8; 200]);
     let pos = state.finish(&mut cursor).expect("finish with pending");
     // finish() returns the logical length (seeking over the hole); the caller
-    // truncates to it. upstream: fileio.c:43 sparse_end() -> do_ftruncate.
+    // truncates to it. upstream: fileio.c:47 sparse_end() -> do_ftruncate.
     assert_eq!(pos, 100);
 }
 
@@ -183,7 +183,7 @@ fn sparse_state_finish_returns_logical_length_without_writing() {
     let mut cursor = Cursor::new(Vec::new()); // fresh (empty) destination
     // finish() seeks over the trailing hole and returns the logical length; it
     // does NOT materialize a terminal byte (the caller establishes the size via
-    // set_len). upstream: fileio.c:43 sparse_end() -> do_ftruncate(f, size).
+    // set_len). upstream: fileio.c:47 sparse_end() -> do_ftruncate(f, size).
     let pos = state.finish(&mut cursor).expect("finish");
     assert_eq!(pos, 10);
 

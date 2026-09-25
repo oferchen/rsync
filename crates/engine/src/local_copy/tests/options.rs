@@ -423,7 +423,7 @@ fn preallocate_destination_reserves_space() {
     assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
     // Other Unix: fallocate is unavailable, so the fallback extends the file to
     // upstream's deliberately-perturbed `length`
-    // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+    // (upstream: syscall.c:2740-2743; receiver.c:668 trims the excess).
     #[cfg(all(unix, not(target_os = "linux")))]
     assert_eq!(metadata.len(), 4095);
     // Windows has no fallocate at all: the file is extended to exactly

@@ -21,7 +21,7 @@ pub struct ServerReader<R: Read> {
     /// Client-receiver I/O-timeout adoption state, applied to the
     /// `MultiplexReader` on multiplex activation. Held here because the reader
     /// starts in Plain mode. `(current --timeout secs, live-socket re-apply)`.
-    /// upstream: io.c:1551-1561 read_a_msg() case MSG_IO_TIMEOUT.
+    /// upstream: io.c:1577-1587 read_a_msg() case MSG_IO_TIMEOUT.
     pending_io_timeout_adoption: Option<(Option<u32>, crate::handshake::IoTimeoutReapply)>,
     /// Client-sender `MSG_DELETED` render state, applied to the
     /// `MultiplexReader` on multiplex activation. `Some` only on a push where
@@ -70,7 +70,7 @@ impl<R: Read> ServerReader<R> {
     /// socket. Applied to the `MultiplexReader` on `activate_multiplex`. Only
     /// the client receiver of a daemon transfer calls this.
     ///
-    /// upstream: io.c:1551-1561 read_a_msg() case MSG_IO_TIMEOUT.
+    /// upstream: io.c:1577-1587 read_a_msg() case MSG_IO_TIMEOUT.
     pub fn enable_io_timeout_adoption(
         &mut self,
         current: Option<u32>,
@@ -217,7 +217,7 @@ impl<R: Read> ServerReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1542-1549`: receiver accumulates `io_error |= val` and forwards
+    /// - `io.c:1568-1575`: receiver accumulates `io_error |= val` and forwards
     ///   via `send_msg_int(MSG_IO_ERROR, val)` when `am_receiver`.
     pub fn take_io_error(&mut self) -> i32 {
         match &mut self.inner {
@@ -237,7 +237,7 @@ impl<R: Read> ServerReader<R> {
     /// # Upstream Reference
     ///
     /// - `log.c:311`: receipt of `FERROR_XFER` sets `got_xfer_error = 1`
-    /// - `main.c:1630-1631`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
+    /// - `main.c:1648-1649`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
     pub fn xfer_error_count(&mut self) -> u32 {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.xfer_error_count(),
@@ -257,9 +257,9 @@ impl<R: Read> ServerReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1535-1540`: `MSG_REDO` dispatches to `got_flist_entry_status(FES_REDO, val)`
+    /// - `io.c:1561-1566`: `MSG_REDO` dispatches to `got_flist_entry_status(FES_REDO, val)`
     ///   on the generator side, pushing the NDX to `redo_list`.
-    /// - `receiver.c:1093-1097`: receiver sends `send_msg_int(MSG_REDO, ndx)` on checksum failure.
+    /// - `receiver.c:1109-1113`: receiver sends `send_msg_int(MSG_REDO, ndx)` on checksum failure.
     pub fn take_redo_indices(&mut self) -> Vec<i32> {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.take_redo_indices(),
@@ -279,9 +279,9 @@ impl<R: Read> ServerReader<R> {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1623-1637`: `MSG_SUCCESS` received; `!am_generator` calls
+    /// - `io.c:1649-1663`: `MSG_SUCCESS` received; `!am_generator` calls
     ///   `successful_send(val)`.
-    /// - `sender.c:395`: `successful_send()` performs the deferred unlink.
+    /// - `sender.c:396`: `successful_send()` performs the deferred unlink.
     pub fn take_success_indices(&mut self) -> Vec<i32> {
         match &mut self.inner {
             ServerReaderInner::Multiplex(mux) => mux.take_success_indices(),

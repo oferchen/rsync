@@ -1,6 +1,6 @@
 //! Byte-counting reader wrapper for transfer statistics.
 //!
-//! Mirrors upstream rsync's `stats.total_read` tracking in `io.c:820`, which
+//! Mirrors upstream rsync's `stats.total_read` tracking in `io.c:838`, which
 //! increments by the byte count of each raw socket read - below the multiplex
 //! demultiplexer and below token decompression.
 
@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Used to track bytes received during transfers for statistics. Wrapping the
 /// raw transport (below the multiplex demultiplexer and token decompression)
 /// makes the running total reflect the compressed wire bytes, matching upstream
-/// rsync's `stats.total_read` (`io.c:820`).
+/// rsync's `stats.total_read` (`io.c:838`).
 ///
 /// The reader is moved into the protocol stack ([`ServerReader`](super::ServerReader))
 /// and consumed by the transfer loop, so the count is published through a shared

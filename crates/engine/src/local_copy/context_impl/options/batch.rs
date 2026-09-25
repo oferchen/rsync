@@ -75,7 +75,7 @@ impl<'a> CopyContext<'a> {
     /// user/group names are already embedded inline via XMIT_USER_NAME_FOLLOWS,
     /// the post-flist ID lists are empty (just varint30(0) terminators).
     ///
-    /// upstream: flist.c:2548 - `if (numeric_ids <= 0 && !inc_recurse)
+    /// upstream: flist.c:2788 - `if (numeric_ids <= 0 && !inc_recurse)
     /// send_id_lists(f)`. ID lists are only emitted when INC_RECURSE is
     /// inactive; under INC_RECURSE the uid/gid names are inlined into
     /// each flist entry via XMIT_USER_NAME_FOLLOWS / XMIT_GROUP_NAME_FOLLOWS
@@ -106,7 +106,7 @@ impl<'a> CopyContext<'a> {
             )
         };
 
-        // upstream: flist.c:2548 - `if (numeric_ids <= 0 && !inc_recurse)
+        // upstream: flist.c:2788 - `if (numeric_ids <= 0 && !inc_recurse)
         // send_id_lists(f)`. Under --numeric-ids no id-lists are emitted, so the
         // reader (reader/flist.rs) must find none. numeric_ids is not a stream
         // flag; it is carried in the batch config from the invocation.
@@ -114,7 +114,7 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
 
-        // upstream: flist.c:2548 - skip send_id_lists() under INC_RECURSE.
+        // upstream: flist.c:2788 - skip send_id_lists() under INC_RECURSE.
         let inc_recurse = compat_flags
             .map(|cf| {
                 protocol::CompatibilityFlags::from_bits(cf as u32)
@@ -271,7 +271,7 @@ impl<'a> CopyContext<'a> {
     /// reserved here and [`Self::finalize_batch_file_delta`] overwrites it with
     /// the geometry the body was actually built against. Composing the head up
     /// front is what produced batches advertising `count=0` ahead of a body
-    /// full of block matches, which upstream rejects at `receiver.c:414`.
+    /// full of block matches, which upstream rejects at `receiver.c:427`.
     ///
     /// Must be called before any token writes for this file (before
     /// `capture_batch_whole_file` or inline delta token writes).
@@ -387,9 +387,9 @@ impl<'a> CopyContext<'a> {
     ///
     /// - `generator.c:583-584 itemize()` - `iflags |= ITEM_IS_NEW` when
     ///   `statret < 0` (destination absent).
-    /// - `sender.c:468 write_ndx_and_attrs()` - re-emits that exact iflags
+    /// - `sender.c:469 write_ndx_and_attrs()` - re-emits that exact iflags
     ///   word to the peer reading the batch.
-    /// - `sender.c:586,624` - `stats.created_files++` gated on
+    /// - `sender.c:587,625` - `stats.created_files++` gated on
     ///   `iflags & ITEM_IS_NEW`.
     pub(crate) fn record_batch_is_new(&mut self, is_new: bool) {
         if !is_new {
@@ -435,10 +435,10 @@ impl<'a> CopyContext<'a> {
     ///   the destination is absent, and `generator.c:576-590` writes `NDX`
     ///   then the shortint iflags with no sum_head because `ITEM_TRANSFER` is
     ///   clear.
-    /// - `receiver.c:726-786` reads the word in the `!(iflags & ITEM_TRANSFER)`
+    /// - `receiver.c:742-802` reads the word in the `!(iflags & ITEM_TRANSFER)`
     ///   branch, logs the item, and bumps `stats.created_{dirs,symlinks,
     ///   devices,specials}` under the `ITEM_IS_NEW` guard.
-    /// - `receiver.c:559-570 no_batched_update()` - a special needs this entry:
+    /// - `receiver.c:575-586 no_batched_update()` - a special needs this entry:
     ///   without it the replay aborts (exit 23) and the node is never created.
     ///   Dirs and symlinks are created from the flist regardless, but a missing
     ///   entry makes an upstream reader under-count them and drop their
@@ -480,7 +480,7 @@ impl<'a> CopyContext<'a> {
     /// geometry, refusing to record a token the replaying receiver would
     /// reject.
     ///
-    /// upstream: `receiver.c:414` aborts with `RERR_PROTOCOL` on an index that
+    /// upstream: `receiver.c:427` aborts with `RERR_PROTOCOL` on an index that
     /// is not below `sum.count`. Checking here means a sum_head/body mismatch
     /// fails while writing the batch instead of silently shipping a file that
     /// crashes the peer replaying it.
@@ -515,7 +515,7 @@ impl<'a> CopyContext<'a> {
     /// (protocol >= 30), sum_init ignores the seed - the checksum is plain
     /// MD5 of the file bytes.
     ///
-    /// upstream: receiver.c:515 - read_buf(f_in, sender_file_sum, xfer_sum_len)
+    /// upstream: receiver.c:531 - read_buf(f_in, sender_file_sum, xfer_sum_len)
     pub(crate) fn finalize_batch_file_delta(
         &mut self,
         source: &std::path::Path,
@@ -843,9 +843,9 @@ impl<'a> CopyContext<'a> {
     /// traversal index of the cluster leader together with whether this entry
     /// *is* that leader - the first sighting of the inode.
     ///
-    /// upstream: `flist.c:1628-1635 make_file()` remembers `(st_dev, st_ino)`
+    /// upstream: `flist.c:1853-1860 make_file()` remembers `(st_dev, st_ino)`
     /// for every non-directory with `st_nlink > 1`, and
-    /// `flist.c:599-625 send_file_entry()` turns a first sighting into
+    /// `flist.c:824-850 send_file_entry()` turns a first sighting into
     /// `XMIT_HLINK_FIRST` (recording `first_ndx + ndx`) and every repeat into a
     /// follower carrying the leader's index.
     pub(super) fn assign_batch_hlink_group(
@@ -1051,7 +1051,7 @@ fn batch_entry_compare(
 /// The `(st_dev, st_ino)` key a batch flist entry contributes to hardlink
 /// grouping, or `None` when the entry cannot belong to a cluster.
 ///
-/// upstream: `flist.c:1628-1635 make_file()` - under protocol 28 and above the
+/// upstream: `flist.c:1853-1860 make_file()` - under protocol 28 and above the
 /// candidate test is `!S_ISDIR(st.st_mode) && st.st_nlink > 1`.
 #[cfg(unix)]
 fn batch_hlink_key(metadata: &fs::Metadata, preserve_hard_links: bool) -> Option<(u64, u64)> {

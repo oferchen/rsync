@@ -32,7 +32,7 @@ pub(super) use verify_redo::execute_transfer;
 /// Mirrors upstream's `recv_ok` for the two outcomes the local executor can
 /// produce: `recv_ok == 1` (committed) and `recv_ok == 0` (the whole-file
 /// re-checksum failed, so the update is kept and the file is queued for the
-/// phase-2 redo). upstream: receiver.c:1061-1101.
+/// phase-2 redo). upstream: receiver.c:1077-1117.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::local_copy) enum TransferOutcome {
     /// The pass committed; nothing further is owed for this file.
@@ -40,7 +40,7 @@ pub(in crate::local_copy) enum TransferOutcome {
     /// An `--append-verify` pass appended its tail but the whole-file
     /// re-checksum disagreed. The appended bytes stay on disk and the caller
     /// must rerun the file as an ordinary delta transfer.
-    /// upstream: receiver.c:1358 `send_msg_int(MSG_REDO, ndx)`.
+    /// upstream: receiver.c:1375 `send_msg_int(MSG_REDO, ndx)`.
     VerificationFailed,
     /// The source ended before the length this pass was sized from - it
     /// shrank mid-read - so the staged result carries a stale tail and was
@@ -51,8 +51,8 @@ pub(in crate::local_copy) enum TransferOutcome {
     /// error makes the sender deliberately corrupt the whole-file checksum
     /// (match.c:454-463), the receiver fails verification, unlinks the temp
     /// file and queues the file for the phase-2 resend
-    /// (receiver.c:1318,1325-1362 `send_msg_int(MSG_REDO, ndx)`), and the
-    /// resend re-opens and re-fstats the shrunken file (sender.c:728-760).
+    /// (receiver.c:1335,1342-1379 `send_msg_int(MSG_REDO, ndx)`), and the
+    /// resend re-opens and re-fstats the shrunken file (sender.c:730-762).
     SourceChanged,
 }
 

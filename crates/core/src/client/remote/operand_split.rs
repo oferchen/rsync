@@ -7,12 +7,12 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/options.c:2311-2312` - `if (argc < 2 && !read_batch &&
+//! - `rsync-3.5.1/options.c:2320-2321` - `if (argc < 2 && !read_batch &&
 //!   !am_server) list_only |= 1;`. The inference is transport-agnostic: a local
 //!   path, an SSH `host:path` source and a daemon `host::module` all take it.
-//! - `rsync-3.5.0/main.c:1465-1466` - inside `start_client()`'s remote-source
+//! - `rsync-3.5.1/main.c:1483-1484` - inside `start_client()`'s remote-source
 //!   branch, `if (argc == 1 || **argv == ':') argc = 0; /* no dest arg */`.
-//! - `rsync-3.5.0/main.c:712` - `get_local_name()` returns NULL immediately for
+//! - `rsync-3.5.1/main.c:725` - `get_local_name()` returns NULL immediately for
 //!   `list_only`, which is why a destination that is never consumed is safe.
 
 use std::ffi::OsString;
@@ -24,10 +24,10 @@ use crate::client::error::{ClientError, invalid_argument_error};
 ///
 /// With two or more operands the last is the destination, as usual. With
 /// exactly one the operand is a source and `fallback_dest` stands in for the
-/// destination upstream simply does not have (`main.c:1465-1466`); the caller
+/// destination upstream simply does not have (`main.c:1483-1484`); the caller
 /// owns that value so the borrow outlives the call. `list_only` makes the
 /// stand-in inert - upstream's `get_local_name()` returns NULL before ever
-/// looking at it (`main.c:712`), and oc's receiver is read-only for the same
+/// looking at it (`main.c:725`), and oc's receiver is read-only for the same
 /// reason - so a one-operand transfer without `list_only` is rejected rather
 /// than silently writing to it.
 ///
@@ -92,7 +92,7 @@ mod tests {
     }
 
     /// THE FIX: a lone operand is a SOURCE, and the caller's stand-in becomes
-    /// the destination. Upstream records `argc = 0` here (main.c:1465-1466);
+    /// the destination. Upstream records `argc = 0` here (main.c:1483-1484);
     /// the stand-in is inert because `list_only` keeps the receiver read-only.
     #[test]
     fn lone_operand_under_list_only_is_a_source() {

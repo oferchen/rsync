@@ -165,7 +165,7 @@ impl IconvSetting {
 
         // The post-comma half names the PEER's charset. Upstream validates
         // it in the peer process, which reaches the same `exit_cleanup`
-        // (clientserver.c:168/762, main.c:651-666 all call setup_iconv);
+        // (clientserver.c:168/762, main.c:664-679 all call setup_iconv);
         // a local copy runs both halves here, so check it here too.
         if let Some(remote) = remote {
             Self::check_charset(remote)?;
@@ -261,8 +261,8 @@ impl IconvSetting {
     ///
     /// - `rsync.c:118-122` - LOCAL/REMOTE split between client and server.
     /// - `rsync.c:130-140` - `ic_send`/`ic_recv` `iconv_open` calls.
-    /// - `flist.c:1579-1603` - sender applies `ic_send` to filenames.
-    /// - `flist.c:738-754` - receiver applies `ic_recv` to filenames.
+    /// - `flist.c:1804-1828` - sender applies `ic_send` to filenames.
+    /// - `flist.c:963-979` - receiver applies `ic_recv` to filenames.
     pub fn resolve_local_copy_converter(&self) -> Option<FilenameConverter> {
         match self {
             Self::Unspecified | Self::Disabled => None,

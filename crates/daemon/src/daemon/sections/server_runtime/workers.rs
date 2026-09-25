@@ -17,7 +17,7 @@ type WorkerResult = Result<(), (Option<SocketAddr>, io::Error)>;
 /// would be released by the child's copy and never by the parent, leaving the
 /// parent's count raised for the life of the daemon.
 ///
-/// upstream: socket.c:753-765 `start_accept_loop()` keeps the forked child's
+/// upstream: socket.c:761-773 `start_accept_loop()` keeps the forked child's
 /// pid and reaps it later; the connection slot belongs to the parent, not to
 /// the session running inside it.
 struct SessionWorker {
@@ -67,7 +67,7 @@ impl SessionWorker {
 /// was still live could deadlock on the allocator or on the log sink's mutex,
 /// holding a lock no thread exists in the child to release.
 ///
-/// upstream: `socket.c:753-765` `start_accept_loop()` forks per accepted
+/// upstream: `socket.c:761-773` `start_accept_loop()` forks per accepted
 /// connection and keeps only the pid.
 #[cfg(unix)]
 struct SessionBacking {
@@ -141,7 +141,7 @@ impl SessionBacking {
 /// named here rather than left as a `thread::Result`, whose shape is a
 /// property of the thread backing alone.
 ///
-/// upstream: socket.c:676-684 `sigchld_handler()` reaps with
+/// upstream: socket.c:684-692 `sigchld_handler()` reaps with
 /// `waitpid(-1, NULL, WNOHANG)` - a NULL status pointer, so upstream's parent
 /// discards the session's fate entirely. oc reports it instead; see
 /// [`report_worker_outcome`] for why that is never fatal to the loop.
@@ -246,14 +246,14 @@ fn drain_workers(workers: &mut Vec<SessionWorker>, log_sink: Option<&SharedLogSi
 /// The join point therefore has no fatal class to report, which is why it
 /// returns nothing at all rather than a `Result` a caller might act on.
 ///
-/// upstream: socket.c:753-765 `start_accept_loop()` runs the session in a
-/// forked child that ends at `_exit(ret)`, and socket.c:676-684
+/// upstream: socket.c:761-773 `start_accept_loop()` runs the session in a
+/// forked child that ends at `_exit(ret)`, and socket.c:684-692
 /// `sigchld_handler()` reaps it with `waitpid(-1, NULL, WNOHANG)` - a NULL
 /// status pointer, so the parent discards the session's outcome without ever
-/// inspecting it. The `while (1)` loop at socket.c:724 has no error exit;
+/// inspecting it. The `while (1)` loop at socket.c:732 has no error exit;
 /// `poll` failure (:738), `accept` failure (:748) and even `fork` failure
 /// (:766) each keep the loop running. Only listener setup is fatal, via
-/// `exit_cleanup(RERR_SOCKETIO)` at socket.c:699 and socket.c:715.
+/// `exit_cleanup(RERR_SOCKETIO)` at socket.c:707 and socket.c:723.
 fn report_worker_outcome(outcome: SessionOutcome, log_sink: Option<&SharedLogSink>) {
     match outcome {
         SessionOutcome::Ok => {}

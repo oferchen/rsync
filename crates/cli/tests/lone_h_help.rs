@@ -1,6 +1,6 @@
 //! A bare `-h` prints help, not human-readable output.
 //!
-//! upstream: options.c:2005 - `human_readable > 1 && argc == 2 && !am_server`
+//! upstream: options.c:2011 - `human_readable > 1 && argc == 2 && !am_server`
 //! preserves the historic meaning of a lone `-h` as `--help`: when the only
 //! command-line token increments the human-readable counter, rsync prints usage
 //! to stdout and exits 0 instead of failing with a missing-operands error.

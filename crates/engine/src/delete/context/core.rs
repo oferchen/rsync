@@ -696,7 +696,7 @@ pub(super) struct DrainParts {
 /// still yields `None` for any plan directory whose components the
 /// confined open refuses - which is exactly the planted-symlink case.
 /// Keying the drop to a weaker syscall on a runtime errno is upstream's
-/// stated objection (`rsync-3.5.0/syscall.c:658` `do_unlink_at()`, whose
+/// stated objection (`rsync-3.5.1/syscall.c:797` `do_unlink_at()`, whose
 /// third arm is an error and never a plain path syscall); the
 /// `ConfinedFallback` routing is what makes that drop safe here.
 #[cfg(unix)]

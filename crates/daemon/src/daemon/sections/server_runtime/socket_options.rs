@@ -52,7 +52,7 @@ enum SocketOption {
 impl SocketOption {
     /// Returns the upstream option name used in warning messages.
     ///
-    /// upstream: socket.c:730-733 - `set_socket_options()` reports a failed
+    /// upstream: socket.c:738-741 - `set_socket_options()` reports a failed
     /// `setsockopt(2)` as "failed to set socket option %s" using the option's
     /// `socket_options[].name`.
     fn name(&self) -> &'static str {
@@ -82,8 +82,8 @@ impl SocketOption {
 /// is given, and accept `0`/`1` or `true`/`false` as values.
 ///
 /// upstream: socket.c:set_socket_options() is `void`. An unknown option name
-/// (socket.c:704-707) warns and `continue`s; an `OPT_ON` preset given a value
-/// (socket.c:717-727) warns but is still applied. Neither aborts the daemon, so
+/// (socket.c:712-715) warns and `continue`s; an `OPT_ON` preset given a value
+/// (socket.c:725-735) warns but is still applied. Neither aborts the daemon, so
 /// those cases warn through `log_sink` and keep parsing rather than returning an
 /// error. Malformed numeric values remain a local (non-upstream) hard error.
 fn parse_socket_options(
@@ -167,7 +167,7 @@ fn parse_socket_options(
                 result.push(SocketOption::SoRcvTimeo(n));
             }
             _ => {
-                // upstream: socket.c:704-707 - `rprintf(FERROR,"Unknown socket
+                // upstream: socket.c:712-715 - `rprintf(FERROR,"Unknown socket
                 // option %s\n",tok)` then `continue`; never fatal.
                 warn_socket_option(log_sink, format!("Unknown socket option {name}"));
             }
@@ -222,7 +222,7 @@ fn parse_int_option_value(value: Option<&str>, name: &str) -> Result<i32, String
 /// Warns when an `OPT_ON` preset option is given an `=value` suffix, then lets
 /// the caller apply the preset anyway.
 ///
-/// upstream: socket.c:717-727 - an `OPT_ON` entry such as `IPTOS_LOWDELAY` that
+/// upstream: socket.c:725-735 - an `OPT_ON` entry such as `IPTOS_LOWDELAY` that
 /// receives a value prints `syntax error -- %s does not take a value` but still
 /// runs the `setsockopt(2)` with its fixed value. The warning is advisory, not
 /// fatal.
@@ -274,8 +274,8 @@ fn parse_tos_option_value(value: Option<&str>) -> Result<u32, String> {
 
 /// Applies parsed socket options to a TCP listener via `socket2`.
 ///
-/// upstream: socket.c:449-452 - `set_socket_options()` runs before `bind(2)`
-/// (socket.c:465), before the listener can process a SYN. The real daemon
+/// upstream: socket.c:457-460 - `set_socket_options()` runs before `bind(2)`
+/// (socket.c:473), before the listener can process a SYN. The real daemon
 /// startup path (`listener.rs::bind_with_backlog`) applies options to the
 /// pre-connect `socket2::Socket` directly for that reason; this
 /// `&TcpListener` entry point exists for the test-injected pre-bound-listener
@@ -310,7 +310,7 @@ fn apply_socket_options_to_stream(
 /// `lp_socket_options()`). Without it, idle daemon connections can be silently
 /// dropped by NAT/firewall timeouts. Best-effort: a failed `setsockopt(2)`
 /// warns and the session still proceeds, mirroring upstream's warn-and-continue
-/// in socket.c:730-733.
+/// in socket.c:738-741.
 fn enable_accepted_stream_keepalive(stream: &TcpStream, log_sink: Option<&SharedLogSink>) {
     if let Err(error) = socket2::SockRef::from(stream).set_keepalive(true) {
         warn_socket_option(
@@ -322,7 +322,7 @@ fn enable_accepted_stream_keepalive(stream: &TcpStream, log_sink: Option<&Shared
 
 /// Shared implementation for applying socket options to any socket reference.
 ///
-/// upstream: socket.c:730-733 - `set_socket_options()` applies each option
+/// upstream: socket.c:738-741 - `set_socket_options()` applies each option
 /// independently; on a failed `setsockopt(2)` it emits a warning
 /// (`rsyserr(FERROR, errno, "failed to set socket option %s", tok)`) and
 /// `continue`s to the next option. A single failed option never aborts the
@@ -359,7 +359,7 @@ fn apply_socket_options_impl(
         };
 
         if let Err(error) = result {
-            // upstream: socket.c:730-733 - warn and keep applying the rest.
+            // upstream: socket.c:738-741 - warn and keep applying the rest.
             warn_socket_option(
                 log_sink,
                 format!("failed to set socket option {}: {error}", opt.name()),

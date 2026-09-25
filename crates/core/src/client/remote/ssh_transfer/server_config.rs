@@ -29,7 +29,7 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     server_config.flags.numeric_ids = crate::server::NumericIds::from_client(config.numeric_ids());
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
-    // upstream: options.c:2911-2934 - the alt-dest args (--compare-dest,
+    // upstream: options.c:2921-2944 - the alt-dest args (--compare-dest,
     // --copy-dest, --link-dest) live inside the `if (am_sender)` server_options
     // block, so on a pull they are never sent over the wire to the remote
     // sender; the local client IS the receiver and applies them itself in
@@ -40,9 +40,9 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     server_config.reference_directories = config.reference_directories().to_vec();
     // upstream: backup.c:make_backup() runs on the receiver, invoked from
     // generator.c/receiver.c. `make_backups` rides in the compact flag string as
-    // 'b' (options.c:2648-2649), so flags.backup is already set here; but
+    // 'b' (options.c:2657-2658), so flags.backup is already set here; but
     // --backup-dir / --suffix are long-form values finalized in the local popt
-    // parse (options.c:2285-2298) and never delivered onto the receiver config.
+    // parse (options.c:2294-2307) and never delivered onto the receiver config.
     // On a pull the local client IS the receiver, so carry backup_dir/backup_suffix
     // here - otherwise effective_backup_suffix() falls back to "~" and the backup
     // lands beside the file instead of in --backup-dir (local/daemon pulls kept
@@ -51,18 +51,18 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     server_config.backup_suffix = config
         .backup_suffix()
         .map(|s| s.to_string_lossy().into_owned());
-    // upstream: --chmod is parsed into `chmod_modes` (options.c:1762) and is
+    // upstream: --chmod is parsed into `chmod_modes` (options.c:1768) and is
     // never placed in server_options, so it is never forwarded to the remote
     // sender. On a pull the local client IS the receiver and applies the
-    // modifiers itself as it reads each incoming flist entry (flist.c:905-906
+    // modifiers itself as it reads each incoming flist entry (flist.c:1130-1131
     // recv_file_entry() -> tweak_mode()). Carry them onto the local receiver
     // config here; without this the ssh pull left every regular file at its
     // source mode while local copies applied --chmod correctly.
     server_config.chmod = config.chmod().cloned();
-    // upstream: options.c:2996-2997 - `--mkpath` is forwarded to the remote only
+    // upstream: options.c:3006-3007 - `--mkpath` is forwarded to the remote only
     // inside the `if (am_sender)` server_options block, so on a pull it never
     // rides the wire; the local client IS the receiver and creates the dest-arg
-    // path chain itself in get_local_name() (main.c:736 make_path under mkpath).
+    // path chain itself in get_local_name() (main.c:749 make_path under mkpath).
     // Carry it onto the local receiver config here. Without this the ssh pull to
     // a missing deep destination failed with "failed to create destination root
     // ... No such file or directory" while local copies honored --mkpath.
@@ -87,79 +87,79 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     server_config.file_selection.existing_only = config.existing_only();
     // upstream generator.c:1395 skips any file already present at the destination
     // under --ignore-existing (`if (ignore_existing > 0 && statret == 0)` early
-    // goto cleanup). options.c:2911-2919 forwards --ignore-existing to the remote
+    // goto cleanup). options.c:2921-2929 forwards --ignore-existing to the remote
     // only inside the `if (am_sender)` server_options block, so on a pull it is
     // never sent over the wire; the local client IS the receiver and applies it
     // itself. Carry it onto the local receiver config here, mirroring
     // existing_only above. Without this the ssh pull re-transferred and
     // overwrote existing destination files instead of skipping them.
     server_config.file_selection.ignore_existing = config.ignore_existing();
-    // upstream: options.c:2907-2909 forwards --temp-dir to the remote only inside
+    // upstream: options.c:2917-2919 forwards --temp-dir to the remote only inside
     // the `if (am_sender)` server_options block, so on a pull it is never sent
     // over the wire; the local client IS the receiver and stages the temp file
-    // itself (receiver.c:766 open_tmpfile() honours tmpdir). Carry it onto the
+    // itself (receiver.c:782 open_tmpfile() honours tmpdir). Carry it onto the
     // local receiver config here - without this the ssh pull staged the temp file
     // in the destination directory, ignoring --temp-dir (local copies honoured it).
     server_config.temp_dir = config.temp_directory().map(std::path::Path::to_path_buf);
     // upstream rsync.c:719 adds ATTRS_SKIP_MTIME for `omit_dir_times && S_ISDIR`,
     // and generator.c:2271 gates need_retouch_dir_times on !omit_dir_times.
-    // options.c:2646-2647 packs the compact 'O' into server_options only when
+    // options.c:2655-2656 packs the compact 'O' into server_options only when
     // am_sender, so on a pull -O never rides the wire; the local client IS the
     // receiver and must apply it itself. Carry it onto the local receiver config
     // here - without this the ssh pull set directory mtimes from the source while
     // local copies left them at the current time.
     server_config.flags.omit_dir_times = config.omit_dir_times();
-    // upstream: options.c:2194 / generator.c:1249 - a single source operand with
+    // upstream: options.c:2203 / generator.c:1249 - a single source operand with
     // no destination implies list-only. On a pull the local client IS the
     // receiver and `list_only` is a long-form-only concern absent from the
     // compact letter string, so carry it onto the local receiver config here.
     // Without this the receiver renders the flist AND writes files (the compact
     // 'n' is no longer packed for list-only after decoupling it from dry_run).
     server_config.flags.list_only = config.list_only();
-    // upstream: options.c:777 / receiver.c:656,1029-1050 - --delay-updates is a
+    // upstream: options.c:777 / receiver.c:672,1045-1066 - --delay-updates is a
     // plain receiver-side option (no am_sender gate) that stages updates into
-    // the partial dir and renames them in the phase-2 sweep. options.c:2886-2892
+    // the partial dir and renames them in the phase-2 sweep. options.c:2896-2902
     // forwards --delay-updates to the remote only on a push (partial_dir &&
     // am_sender); on a pull the local client IS the receiver and the flag is
     // never sent over the wire, so carry it onto the local receiver config here.
     // Without this the receiver updates files in place, defeating --delay-updates.
     server_config.write.delay_updates = config.delay_updates();
-    // upstream: options.c:2912-2913 - `if (am_sender) { if (usermap) ... }`
+    // upstream: options.c:2922-2923 - `if (am_sender) { if (usermap) ... }`
     // forwards --usermap to the remote only on a push. On a pull the local
     // client IS the receiver and applies the uid name-map itself as it reads
     // the incoming id list (receiver/file_list/id_lists.rs). Carry it onto the
     // local receiver config here; without this the ssh pull silently ignored
     // --usermap while local and daemon pulls remapped ownership.
     server_config.user_mapping = config.user_mapping().cloned();
-    // upstream: options.c:2915-2916 - `if (am_sender) { if (groupmap) ... }`
+    // upstream: options.c:2925-2926 - `if (am_sender) { if (groupmap) ... }`
     // is the gid counterpart of --usermap above; same pull rationale.
     server_config.group_mapping = config.group_mapping().cloned();
-    // upstream: options.c:2930-2931 - `if (am_sender && do_fsync) --fsync`.
+    // upstream: options.c:2940-2941 - `if (am_sender && do_fsync) --fsync`.
     // --fsync is applied by the receiver, which fsync()s each committed file
     // (syscall.c do_fsync), so on a pull the local client IS the receiver and
     // must carry the flag; it rides the wire only on a push. The daemon pull
     // already sets this in apply_common_daemon_config; both ssh builders dropped
     // it, so the ssh pull never fsync'd its writes.
     server_config.write.fsync = config.fsync();
-    // upstream: options.c:2979-2980 - `if (write_devices && am_sender)
+    // upstream: options.c:2989-2990 - `if (write_devices && am_sender)
     // --write-devices`. --write-devices makes the receiver write file content
     // in-place into an existing device node (receiver.c: write_devices &&
     // IS_DEVICE), so on a pull the local client IS the receiver and must carry
     // it; it rides the wire only on a push.
     server_config.write.write_devices = config.write_devices();
-    // upstream: options.c:2641-2643 - `if (am_sender) { if (keep_dirlinks)
+    // upstream: options.c:2650-2652 - `if (am_sender) { if (keep_dirlinks)
     // argstr[x++] = 'K'; }`. -K makes the receiver follow a symlink-to-dir at
     // the destination instead of clobbering it (receiver/directory/creation.rs),
     // so on a pull the local client IS the receiver and must carry the flag; the
     // compact 'K' letter is emitted only when the local side is the sender.
     server_config.flags.keep_dirlinks = config.keep_dirlinks();
-    // upstream: options.c:2650-2655 - `if (am_sender) { if (fuzzy_basis) {
+    // upstream: options.c:2659-2665 - `if (am_sender) { if (fuzzy_basis) {
     // argstr[x++] = 'y'; ... } }`. -y/--fuzzy lets the receiver pick a similar
     // basis file for the delta, so on a pull the local client IS the receiver
     // and must carry the fuzzy level; the compact 'y' letter is emitted only
     // when the local side is the sender.
     server_config.flags.fuzzy_level = config.fuzzy_level();
-    // upstream: options.c:2648-2649 - `if (am_sender) { ... if (omit_link_times)
+    // upstream: options.c:2657-2658 - `if (am_sender) { ... if (omit_link_times)
     // argstr[x++] = 'J'; }`. -J/--omit-link-times skips a received symlink's
     // mtime (rsync.c:583 adds ATTRS_SKIP_MTIME for `omit_link_times &&
     // S_ISLNK`), so on a pull the local client IS the receiver and must carry
@@ -167,7 +167,7 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     // the sender. Without this the ssh pull set symlink mtimes from the source
     // while the local copy executor honoured -J.
     server_config.flags.omit_link_times = config.omit_link_times();
-    // upstream: options.c:2692-2693 - `else if (preserve_executability &&
+    // upstream: options.c:2702-2703 - `else if (preserve_executability &&
     // am_sender) argstr[x++] = 'E';`. -E/--executability copies the source
     // executability bits when perms are not otherwise preserved
     // (rsync.c:457-465), so on a pull the local client IS the receiver and must
@@ -184,7 +184,7 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
     // the receiver's default output, so keep the two wired together.
     server_config.flags.info_flags.out_format_active = config.render_out_format_locally();
     // upstream stdout_format_has_i - gates the receiver's `created directory`
-    // notice on a dest-creating pull (main.c:807-808). True under `-i` or a
+    // notice on a dest-creating pull (main.c:820-821). True under `-i` or a
     // custom `--out-format` carrying `%i`; false for a `%i`-less template.
     server_config.flags.info_flags.out_format_forwards_i = config.out_format_forwards_i();
 
@@ -201,11 +201,11 @@ pub(in crate::client::remote) fn build_server_config_for_receiver(
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2465-2510` - the sender opens a local files-from file (or
+/// - `options.c:2474-2519` - the sender opens a local files-from file (or
 ///   sets up filesfrom_fd for remote/stdin sources).
-/// - `flist.c:2275-2298` - `send_file_list()` chdirs to `argv[0]` then reads
+/// - `flist.c:2514-2538` - `send_file_list()` chdirs to `argv[0]` then reads
 ///   filenames from `filesfrom_fd` to emit the file list.
-/// - `main.c:1322-1328` - when `filesfrom_host` is non-NULL, the sender
+/// - `main.c:1340-1346` - when `filesfrom_host` is non-NULL, the sender
 ///   wires `filesfrom_fd = f_in` so the remote forwards bytes via the wire.
 pub(in crate::client::remote) fn build_server_config_for_generator(
     config: &ClientConfig,
@@ -218,10 +218,10 @@ pub(in crate::client::remote) fn build_server_config_for_generator(
         ServerConfig::from_flag_string_and_args(ServerRole::Generator, flag_string, args)
             .map_err(|e| invalid_argument_error(&format!("invalid server config: {e}"), 1))?;
 
-    // upstream: io.c:834-862 / main.c:1068 - on a push the local client IS the
+    // upstream: io.c:852-880 / main.c:1081 - on a push the local client IS the
     // sender and paces its own outbound socket writes. Carry the parsed
     // `--bwlimit` rate onto the in-process generator config; the remote
-    // receiver ignores its forwarded copy (main.c:1068).
+    // receiver ignores its forwarded copy (main.c:1081).
     server_config.connection.bwlimit = config
         .bandwidth_limit()
         .map(|limit| limit.into_components());
@@ -239,10 +239,10 @@ pub(in crate::client::remote) fn build_server_config_for_generator(
     server_config.flags.devices = config.preserve_devices();
     server_config.flags.specials = config.preserve_specials();
     server_config.flags.drop_devices = config.drop_devices();
-    // upstream: --chmod is parsed into `chmod_modes` (options.c:1762) and is
+    // upstream: --chmod is parsed into `chmod_modes` (options.c:1768) and is
     // never placed in server_options, so it is never forwarded to the remote
     // receiver. On a push the local client IS the sender and applies the
-    // modifiers itself as it builds each outgoing flist entry (flist.c:1580-1581
+    // modifiers itself as it builds each outgoing flist entry (flist.c:1805-1806
     // send_file_name() -> tweak_mode()). Carry them onto the local generator
     // config here; without this the ssh push left every file at its source mode
     // while local copies and pulls applied --chmod correctly.
@@ -271,14 +271,14 @@ pub(in crate::client::remote) fn build_server_config_for_generator(
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2473` - `filesfrom_fd = 0` for `--files-from=-` (stdin).
-/// - `options.c:2501` - `filesfrom_fd = open(files_from, O_RDONLY|O_BINARY)`
+/// - `options.c:2482` - `filesfrom_fd = 0` for `--files-from=-` (stdin).
+/// - `options.c:2510` - `filesfrom_fd = open(files_from, O_RDONLY|O_BINARY)`
 ///   for local files.
-/// - `main.c:1322-1328` - remote files-from wires `filesfrom_fd = f_in` after
+/// - `main.c:1340-1346` - remote files-from wires `filesfrom_fd = f_in` after
 ///   `setup_protocol()`; the remote receiver forwards the list bytes over the
 ///   wire via `start_filesfrom_forwarding`.
 fn apply_files_from_for_sender(config: &ClientConfig, server_config: &mut ServerConfig) {
-    // upstream: options.c:2476-2501 / main.c:1322-1328 - the local sender
+    // upstream: options.c:2485-2510 / main.c:1340-1346 - the local sender
     // resolves a single files-from fd. A localhost:path hostspec is opened
     // locally here (never staged + wire-forwarded), matching a plain local
     // file; a remote-hosted list is read from the wire as `--files-from=-`.
@@ -305,7 +305,7 @@ mod tests {
             .build()
     }
 
-    /// upstream `sender.c:217` binds `f_xfer` from the global `write_batch`
+    /// upstream `sender.c:220` binds `f_xfer` from the global `write_batch`
     /// before the send loop starts. oc's sender reads that decision off its
     /// in-process `ServerConfig`, which is parsed from the compact flag string
     /// and never sees this long-form-only option, so the push builder has to
@@ -322,7 +322,7 @@ mod tests {
 
     /// `--write-batch` (upstream `write_batch > 0`) performs a real transfer AND
     /// records it, so the token stream must keep its wire route and only be teed
-    /// (`io.c:2282`). Diverting here would starve the live remote receiver.
+    /// (`io.c:2320`). Diverting here would starve the live remote receiver.
     #[test]
     fn generator_config_leaves_plain_write_batch_on_the_wire() {
         let config = config_with_batch_mode(engine::batch::BatchMode::Write);
@@ -333,7 +333,7 @@ mod tests {
 
     /// On an ssh pull the local client IS the receiver, and the alt-dest args
     /// (--compare-dest / --copy-dest / --link-dest) are never sent over the wire
-    /// to the remote sender (upstream options.c:2911-2934 gates them on
+    /// to the remote sender (upstream options.c:2921-2944 gates them on
     /// am_sender). The receiver applies them itself in try_dests_reg()
     /// (generator.c:954), so the ssh receiver config must carry them locally -
     /// exactly as the daemon receiver builder does. Regression guard for the ssh
@@ -387,7 +387,7 @@ mod tests {
     /// On an ssh pull the local client IS the receiver and runs
     /// backup.c:make_backup() itself. `make_backups` rides in the compact 'b'
     /// letter, but --backup-dir / --suffix are long-form values finalized in the
-    /// local popt parse (upstream options.c:2285-2298) and must be carried onto
+    /// local popt parse (upstream options.c:2294-2307) and must be carried onto
     /// the receiver config. Regression guard for the ssh pull that wrote a "~"
     /// backup beside the file because backup_dir/backup_suffix were empty while
     /// local and daemon pulls placed the backup in --backup-dir.
@@ -421,7 +421,7 @@ mod tests {
 
     /// On an ssh pull the local client IS the receiver and applies
     /// --ignore-existing itself (upstream generator.c:1395 skips existing dest
-    /// files). options.c:2911-2919 forwards the flag to the remote only when
+    /// files). options.c:2921-2929 forwards the flag to the remote only when
     /// am_sender, so on a pull it never rides the wire and must be carried onto
     /// the receiver config. Regression guard for the ssh pull that overwrote an
     /// existing destination file instead of skipping it.
@@ -447,9 +447,9 @@ mod tests {
 
     /// On an ssh pull the local client IS the receiver and applies `--chmod`
     /// itself. `--chmod` is never forwarded to the remote sender (upstream
-    /// options.c:1762 parses it into `chmod_modes`, absent from server_options),
+    /// options.c:1768 parses it into `chmod_modes`, absent from server_options),
     /// so the receiver applies it as it reads each flist entry
-    /// (flist.c:905-906). The receiver config must carry the parsed modifiers.
+    /// (flist.c:1130-1131). The receiver config must carry the parsed modifiers.
     /// Regression guard for the ssh pull that left files at their source mode
     /// while local copies applied `--chmod`.
     #[test]
@@ -477,7 +477,7 @@ mod tests {
 
     /// On an ssh pull the local client IS the receiver and applies --usermap
     /// itself as it reads the incoming id list (receiver/file_list/id_lists.rs).
-    /// Upstream options.c:2912-2913 forwards --usermap to the remote only when
+    /// Upstream options.c:2922-2923 forwards --usermap to the remote only when
     /// am_sender, so on a pull it never rides the wire and must be carried onto
     /// the receiver config. Regression guard for the ssh pull that ignored
     /// --usermap while the daemon pull remapped ownership.
@@ -494,7 +494,7 @@ mod tests {
         assert_eq!(server_config.user_mapping.as_ref(), Some(&mapping));
     }
 
-    /// The gid counterpart of --usermap (upstream options.c:2915-2916).
+    /// The gid counterpart of --usermap (upstream options.c:2925-2926).
     #[cfg(unix)]
     #[test]
     fn receiver_config_propagates_groupmap() {
@@ -520,7 +520,7 @@ mod tests {
     }
 
     /// On an ssh pull the local client IS the receiver and fsync()s each
-    /// committed file under --fsync. Upstream options.c:2930-2931 forwards
+    /// committed file under --fsync. Upstream options.c:2940-2941 forwards
     /// --fsync to the remote only when am_sender, so on a pull it must be carried
     /// onto the receiver config. Regression guard for the ssh pull that never
     /// fsync'd its writes while the daemon pull did.
@@ -535,7 +535,7 @@ mod tests {
 
     /// On an ssh pull the local client IS the receiver and writes file content
     /// in-place into an existing device node under --write-devices. Upstream
-    /// options.c:2979-2980 forwards it to the remote only when am_sender.
+    /// options.c:2989-2990 forwards it to the remote only when am_sender.
     #[test]
     fn receiver_config_propagates_write_devices() {
         let config = ClientConfig::builder().write_devices(true).build();
@@ -561,7 +561,7 @@ mod tests {
     }
 
     /// On an ssh pull the local client IS the receiver and follows a
-    /// symlink-to-dir at the destination under -K. Upstream options.c:2641-2643
+    /// symlink-to-dir at the destination under -K. Upstream options.c:2650-2652
     /// packs the compact 'K' only when am_sender.
     #[test]
     fn receiver_config_propagates_keep_dirlinks() {
@@ -573,7 +573,7 @@ mod tests {
     }
 
     /// On an ssh pull the local client IS the receiver and picks a fuzzy basis
-    /// under -y/--fuzzy. Upstream options.c:2650-2655 packs the compact 'y' only
+    /// under -y/--fuzzy. Upstream options.c:2659-2665 packs the compact 'y' only
     /// when am_sender.
     #[test]
     fn receiver_config_propagates_fuzzy_level() {
@@ -586,7 +586,7 @@ mod tests {
 
     /// On an ssh pull the local client IS the receiver and stages updates into
     /// the partial dir then renames them in the phase-2 sweep under
-    /// --delay-updates (upstream receiver.c:656,1029-1050). options.c:2886-2892
+    /// --delay-updates (upstream receiver.c:672,1045-1066). options.c:2896-2902
     /// forwards it to the remote only on a push (partial_dir && am_sender), so on
     /// a pull it never rides the wire and must be carried onto the receiver
     /// config. Regression guard for the ssh pull that updated files in place.
@@ -600,7 +600,7 @@ mod tests {
     }
 
     /// On an ssh pull a single source operand with no destination implies
-    /// list-only (upstream options.c:2194 / generator.c:1249). `list_only` is a
+    /// list-only (upstream options.c:2203 / generator.c:1249). `list_only` is a
     /// long-form-only concern absent from the compact letter string and must be
     /// carried onto the receiver config. Regression guard for the ssh pull that
     /// rendered the flist AND wrote files.
@@ -631,8 +631,8 @@ mod tests {
     }
 
     /// On an ssh pull the local client IS the receiver and stages the temp file
-    /// itself (upstream receiver.c:766 open_tmpfile() honours tmpdir).
-    /// options.c:2907-2909 forwards --temp-dir to the remote only when am_sender,
+    /// itself (upstream receiver.c:782 open_tmpfile() honours tmpdir).
+    /// options.c:2917-2919 forwards --temp-dir to the remote only when am_sender,
     /// so on a pull it never rides the wire and must be carried onto the receiver
     /// config. Regression guard for the ssh pull that staged temps in the
     /// destination directory instead of --temp-dir.
@@ -663,7 +663,7 @@ mod tests {
 
     /// On an ssh pull the local client IS the receiver and applies
     /// --omit-dir-times itself (upstream rsync.c:583 skips a directory's mtime,
-    /// generator.c:2271 gates the retouch pass). options.c:2646-2647 packs the
+    /// generator.c:2271 gates the retouch pass). options.c:2655-2656 packs the
     /// compact 'O' only when am_sender, so on a pull it never rides the wire and
     /// must be carried onto the receiver config. Regression guard for the ssh
     /// pull that set directory mtimes from the source.
@@ -689,7 +689,7 @@ mod tests {
 
     /// On an ssh pull the local client IS the receiver and applies
     /// --omit-link-times itself (upstream rsync.c:583 adds ATTRS_SKIP_MTIME for
-    /// a symlink). options.c:2648-2649 packs the compact 'J' only when
+    /// a symlink). options.c:2657-2658 packs the compact 'J' only when
     /// am_sender, so on a pull it never rides the wire and must be carried onto
     /// the receiver config. Regression guard for the ssh pull that set symlink
     /// mtimes from the source while the local copy executor honoured -J.
@@ -715,7 +715,7 @@ mod tests {
 
     /// On an ssh pull the local client IS the receiver and applies -E itself
     /// (upstream rsync.c:457-465 layers the source executability bits on the
-    /// destination mode). options.c:2692-2693 packs the compact 'E' only when
+    /// destination mode). options.c:2702-2703 packs the compact 'E' only when
     /// am_sender, so on a pull it never rides the wire and must be carried onto
     /// the receiver config. Regression guard for the ssh pull that left files at
     /// their existing mode while the local copy executor honoured -E.
@@ -740,7 +740,7 @@ mod tests {
 
     /// On an ssh pull the local client IS the receiver and creates the dest-arg
     /// path chain itself. `--mkpath` is forwarded to the remote only when
-    /// am_sender (upstream options.c:2996-2997), so on a pull it never rides the
+    /// am_sender (upstream options.c:3006-3007), so on a pull it never rides the
     /// wire and must be carried onto the receiver config. Regression guard for
     /// the ssh pull that failed with "failed to create destination root ... No
     /// such file or directory" against a missing deep destination while local
@@ -755,7 +755,7 @@ mod tests {
     }
 
     /// Without `--mkpath` the receiver config leaves the flag clear, so a missing
-    /// destination parent stays a fatal error, matching upstream main.c:796.
+    /// destination parent stays a fatal error, matching upstream main.c:809.
     #[test]
     fn receiver_config_without_mkpath_stays_clear() {
         let config = ClientConfig::builder().build();
@@ -790,7 +790,7 @@ mod tests {
     }
 
     /// On an ssh push the local client IS the sender and applies `--chmod`
-    /// itself as it builds each outgoing flist entry (upstream flist.c:1580-1581
+    /// itself as it builds each outgoing flist entry (upstream flist.c:1805-1806
     /// send_file_name() -> tweak_mode()). `--chmod` is never forwarded to the
     /// remote receiver, so the generator config must carry the parsed modifiers.
     /// Regression guard for the ssh push that left files at their source mode

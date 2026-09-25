@@ -443,7 +443,7 @@ pub struct BatchConfig {
     /// by the replay script's pass-through arguments, so it must be threaded in
     /// from the current invocation. It gates the post-flist uid/gid id-list
     /// region on both sides: the writer omits the id-lists and the reader must
-    /// not attempt to consume them, matching upstream `flist.c:2548`
+    /// not attempt to consume them, matching upstream `flist.c:2788`
     /// (`numeric_ids <= 0 && !inc_recurse`) and `uidlist.c:465,473`
     /// (`numeric_ids <= 0`).
     pub numeric_ids: bool,
@@ -455,7 +455,7 @@ pub struct BatchConfig {
     /// for it, because upstream's batch file is a byte tee of a real wire
     /// stream and the replaying receiver takes `preserve_atimes` from the
     /// replay script's argv. It gates the per-entry atime field, which the
-    /// flist writer emits under `preserve_atimes` (`flist.c:625`), so a reader
+    /// flist writer emits under `preserve_atimes` (`flist.c:850`), so a reader
     /// that does not know about it decodes the next entry's flag byte as an
     /// atime and desynchronises the stream.
     pub preserve_atimes: bool,
@@ -697,7 +697,7 @@ impl BatchConfig {
     /// Set whether `--numeric-ids` was active for the batch invocation.
     ///
     /// Gates the post-flist uid/gid id-list region: under `--numeric-ids`
-    /// upstream sends no id-lists (`flist.c:2820` requires `numeric_ids <= 0`),
+    /// upstream sends no id-lists (`flist.c:3063` requires `numeric_ids <= 0`),
     /// so the writer omits them and the reader must not consume them
     /// (`uidlist.c:465,473`).
     ///
@@ -719,7 +719,7 @@ impl BatchConfig {
     /// Set whether `--atimes` was active for the batch invocation.
     ///
     /// Gates the per-entry atime field, which the flist writer emits under
-    /// `preserve_atimes` (`flist.c:625`). Like `--numeric-ids`, this has no
+    /// `preserve_atimes` (`flist.c:850`). Like `--numeric-ids`, this has no
     /// `batch.c:59-76 flag_ptr[]` bit and must come from the replay
     /// invocation.
     ///

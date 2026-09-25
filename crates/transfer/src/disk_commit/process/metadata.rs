@@ -38,7 +38,7 @@ pub(super) fn apply_file_metadata(
     if begin.is_device_target {
         None
     } else {
-        // upstream: receiver.c:964 dest_mode() runs against the PRE-transfer
+        // upstream: receiver.c:980 dest_mode() runs against the PRE-transfer
         // destination stat. When metadata is applied to a temp/staged file
         // (target_path != final path), the final destination still holds the
         // file it had before this transfer, so stat it to reproduce
@@ -54,9 +54,9 @@ pub(super) fn apply_file_metadata(
         // mode 000 whenever the entry carries no perm bits - where upstream
         // preserves the destination's own bits.
         //
-        // upstream: rsync.c:449-472 dest_mode() is called (receiver.c:964) with
+        // upstream: rsync.c:449-472 dest_mode() is called (receiver.c:980) with
         // `statret == 0` for an inplace write, because the destination exists.
-        // upstream: receiver.c:1174-1177 - the basis fd is dropped again
+        // upstream: receiver.c:1191-1194 - the basis fd is dropped again
         // unless it is a regular file, so a symlink / fifo / device obstacle
         // leaves `exists = fd1 != -1` false and dest_mode() takes the
         // new-destination arm (its lstat mode - 0o755 for a symlink on some
@@ -301,7 +301,7 @@ mod tests {
 
     /// A non-regular obstacle at the final destination (here a symlink) must
     /// NOT count as an existing destination for `dest_mode()`: upstream drops
-    /// the basis fd unless it is a regular file (receiver.c:1174-1177), so
+    /// the basis fd unless it is a regular file (receiver.c:1191-1194), so
     /// the staged file takes the new-destination arm - the entry mode masked
     /// by the umask - never the obstacle's lstat permission bits (0o755 for a
     /// symlink on some platforms).

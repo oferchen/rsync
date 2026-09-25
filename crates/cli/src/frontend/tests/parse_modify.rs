@@ -10,7 +10,7 @@ fn parse_modify_window_argument_accepts_positive_values() {
 #[test]
 fn parse_modify_window_argument_accepts_negative_values() {
     // WHY: upstream options.c parses `--modify-window` as a signed int; a
-    // negative value requests nanosecond-exact comparison (util1.c:1482), so it
+    // negative value requests nanosecond-exact comparison (util1.c:1577), so it
     // must be accepted rather than rejected.
     assert_eq!(
         parse_modify_window_argument(OsStr::new("-1")).expect("parse -1"),

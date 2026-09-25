@@ -310,7 +310,7 @@ pub enum DeltaResultStatus {
     Success,
     /// Delta failed and the file should be retried in phase 2.
     ///
-    /// Mirrors upstream `receiver.c:960-968` where checksum mismatch triggers
+    /// Mirrors upstream `receiver.c:976-984` where checksum mismatch triggers
     /// `MSG_REDO`.
     NeedsRedo {
         /// Human-readable reason for the redo.

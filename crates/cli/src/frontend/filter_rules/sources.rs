@@ -32,7 +32,7 @@ pub(crate) fn append_filter_rules_from_files(
         return Err(message);
     }
 
-    // upstream: options.c:1541-1543 - --exclude-from and --include-from
+    // upstream: options.c:1547-1549 - --exclude-from and --include-from
     // feed parse_filter_file with XFLG_OLD_PREFIXES so per-line `- pat`,
     // `+ pat`, and `!` prefixes flip the rule kind or clear the list. Kinds
     // other than Include/Exclude have no upstream OLD_PREFIXES analogue, so
@@ -121,7 +121,7 @@ pub(crate) fn append_filter_rules_from_files(
 ///
 /// This rule is deliberately NOT shared with `--files-from`, whose own open
 /// failure upstream reports from a different site and exits 1, not 11
-/// (main.c:1886) - measured on 3.5.0.
+/// (main.c:1913) - measured on 3.5.0.
 fn filter_file_open_error(
     path: &Path,
     include: bool,
@@ -158,12 +158,12 @@ fn filter_file_open_error(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/exclude.c:1683` - `parse_filter_file()` opens the file with
+/// - `rsync-3.5.1/exclude.c:1683` - `parse_filter_file()` opens the file with
 ///   `open_no_attacker_symlinks(open_path, O_RDONLY, 0)`.
-/// - `rsync-3.5.0/exclude.c:1587` - the `--*clude-from` / `merge` call site
+/// - `rsync-3.5.1/exclude.c:1587` - the `--*clude-from` / `merge` call site
 ///   passes `XFLG_FATAL_ERRORS`.
-/// - `rsync-3.5.0/syscall.c:538` - `open_no_attacker_symlinks()`; the trust
-///   rule is at `syscall.c:406`.
+/// - `rsync-3.5.1/syscall.c:675` - `open_no_attacker_symlinks()`; the trust
+///   rule is at `syscall.c:499`.
 fn open_operator_named(path: &Path) -> io::Result<File> {
     crate::frontend::operator_file::open_read_confined(path)
 }
@@ -678,7 +678,7 @@ mod tests {
     /// The ownership walk must still FOLLOW a symlink whose components we own.
     ///
     /// Upstream refuses only a component owned by a uid that is neither root
-    /// nor our euid (`syscall.c:406`), so a filter file reached through a
+    /// nor our euid (`syscall.c:499`), so a filter file reached through a
     /// symlink the operator created is read normally. This is the
     /// over-refusal direction: it is what a walk that simply refused every
     /// symlink would break, and unlike the cross-uid refusal it needs no root

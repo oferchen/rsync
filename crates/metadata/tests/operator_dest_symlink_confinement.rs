@@ -3,7 +3,7 @@
 //! Upstream enters the destination operand with a plain `change_dir()`
 //! (`main.c` `get_local_name()`), so a symlink the operator put anywhere in
 //! that path is followed. Each entry's parent is then resolved relative to the
-//! cwd through `secure_relative_open(NULL, dirpath, ...)` (`syscall.c:1106`
+//! cwd through `secure_relative_open(NULL, dirpath, ...)` (`syscall.c:1245`
 //! `do_lchown_at()`, likewise `do_chmod_at()` and the utimes wrapper), so a
 //! symlink BELOW the root is confined.
 //!

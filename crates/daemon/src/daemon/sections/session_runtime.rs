@@ -113,7 +113,7 @@ fn handle_session(
     // / `hosts deny`, `%h`, and every log line - so believing one from an
     // arbitrary direct connection lets that connection choose its own source
     // address. Upstream fail-closes: an unset trusted-proxy list rejects
-    // everyone (access.c:302-303).
+    // everyone (access.c:313-314).
     let mut stream = stream;
     let peer_addr = match proxy_policy.decide(peer_addr.ip()) {
         ProxyHeaderDecision::NotRequired => peer_addr,
@@ -125,7 +125,7 @@ fn handle_session(
             if let Some(log) = log_sink.as_ref() {
                 // upstream: clientserver.c:1390 - `host` starts as the
                 // UNDETERMINED sentinel, and with forward DNS off
-                // (access.c:304) nothing ever replaces it, so the rejection
+                // (access.c:315) nothing ever replaces it, so the rejection
                 // line names UNDETERMINED regardless of `reverse lookup` -
                 // no lookup has run this early in the connection.
                 let host = module_state::UNDETERMINED_HOSTNAME;
@@ -413,7 +413,7 @@ fn handle_legacy_session(
         &deadline,
     )) {
         Ok(line) => line,
-        // upstream: io.c:147-153 - the deadline is consulted at the wait, and an
+        // upstream: io.c:154-161 - the deadline is consulted at the wait, and an
         // elapsed one DIAGNOSES then exits RERR_TIMEOUT. The read error itself
         // is only the messenger: both the guard's own refusal and SO_RCVTIMEO
         // surface as TimedOut, so the deadline - not the errno - decides.

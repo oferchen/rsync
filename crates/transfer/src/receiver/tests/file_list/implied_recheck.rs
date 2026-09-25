@@ -4,7 +4,7 @@
 //! file list that the client never requested, causing the receiver to write
 //! files outside the intended set. Upstream records each requested source arg
 //! as an implied include (`exclude.c:add_implied_include`) and rejects any
-//! received name not covered by it (`flist.c:1026 recv_file_entry`,
+//! received name not covered by it (`flist.c:1251 recv_file_entry`,
 //! `exit_cleanup(RERR_UNSUPPORTED)`). These tests encode that invariant: an
 //! injected name aborts with exit code 4, while every legitimately requested
 //! name (and its implied parent directories) passes. They also prove the
@@ -175,10 +175,10 @@ fn daemon_files_from_subdir_entry_passes_without_module_strip() {
     // Regression: `oc-rsync --files-from=LIST rsync://host/m/ dst/` selecting a
     // subdirectory entry `sub/d.txt`. The forwarded files-from entries are the
     // implied source args and are already module-relative, so upstream records
-    // them with skip_daemon_module=0 (io.c:427,464) even on a daemon
+    // them with skip_daemon_module=0 (io.c:445,482) even on a daemon
     // connection. Stripping the leading path component would turn `sub/d.txt`
     // into `d.txt` and wrongly reject the arriving `sub/d.txt` as unrequested.
-    // --files-from defaults relative_paths=1 and xfer_dirs=1 (options.c:2206,
+    // --files-from defaults relative_paths=1 and xfer_dirs=1 (options.c:2215,
     // 2620) with recursion off, so the received `sub` dir and `sub/d.txt` file
     // must both pass.
     let mut config = test_config();
@@ -228,7 +228,7 @@ fn daemon_files_from_still_rejects_unrequested_name() {
 #[test]
 fn daemon_module_operand_still_strips_module_name() {
     // A raw daemon `module/path` operand (no --files-from) keeps
-    // skip_daemon_module=1 (main.c:1549): the module name `m` is stripped so
+    // skip_daemon_module=1 (main.c:1567): the module name `m` is stripped so
     // the requested `path` and its subtree are validated against the received
     // names, which arrive module-relative.
     let mut config = test_config();
@@ -248,7 +248,7 @@ fn daemon_module_operand_still_strips_module_name() {
 
 #[test]
 fn trust_sender_skips_implied_check() {
-    // upstream: options.c:2510 / exclude.c:385 - trust_sender_args makes
+    // upstream: options.c:2519 / exclude.c:385 - trust_sender_args makes
     // add_implied_include() a no-op, so the implied list is empty and the
     // receiver performs no name validation.
     let mut config = test_config();
@@ -287,7 +287,7 @@ fn no_source_args_is_a_no_op() {
 /// a sender that drops the second flag would otherwise get `delete_in_dir()`
 /// run on `dest/dir`, sweeping siblings the client never named.
 ///
-/// upstream: `flist.c:1230-1252` `recv_file_entry()`.
+/// upstream: `flist.c:1455-1477` `recv_file_entry()`.
 #[test]
 fn implied_parent_dir_is_downgraded_whatever_the_sender_sent() {
     let mut config = test_config();
@@ -347,9 +347,9 @@ fn a_requested_directory_keeps_its_content_flag() {
 }
 
 /// A filename that failed `--iconv` conversion is cleared to "" (upstream
-/// flist.c:842-845 sets `thisname[0] = '\0'`) but the entry stays active with
+/// flist.c:1067-1070 sets `thisname[0] = '\0'`) but the entry stays active with
 /// its real file-type bits, and upstream still runs it through
-/// `check_filter(&implied_filter_list, "", ...)` at flist.c:1026, which returns
+/// `check_filter(&implied_filter_list, "", ...)` at flist.c:1251, which returns
 /// `<= 0` for the empty name and aborts with RERR_UNSUPPORTED (exit 4). The
 /// sender kept the entry active and will send its data, so the receiver must
 /// reject it here rather than letting the request reach the per-file
@@ -378,7 +378,7 @@ fn iconv_emptied_name_rejected_with_exit_code_4() {
 
 /// A locally cleared tombstone - an entry with an empty name AND no S_IFMT
 /// mode bits, e.g. a `--prune-empty-dirs` slot that `clear_file()` zeroed
-/// (prune.rs) - never existed at upstream's recv-time check (flist.c:1019 runs
+/// (prune.rs) - never existed at upstream's recv-time check (flist.c:1244 runs
 /// before flist_sort_and_clean's prune pass), so the receiver's post-receive
 /// recheck must treat it as a no-op. Distinguished from an iconv-emptied entry
 /// by the absence of file-type bits.

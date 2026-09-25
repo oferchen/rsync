@@ -45,7 +45,7 @@ fn write_hardlink_follower_round_trip_protocol_30() {
     let mut buf = Vec::new();
     let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
 
-    // A follower must reference an already-seen leader (upstream flist.c:794).
+    // A follower must reference an already-seen leader (upstream flist.c:1019).
     // Write the leader at NDX 0 and the follower at NDX 1 pointing back to it.
     let mut leader = FileEntry::new_file("file1.txt".into(), 100, 0o644);
     leader.set_hardlink_idx(u32::MAX);

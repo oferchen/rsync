@@ -6,10 +6,10 @@
 //! Upstream gates the receiver's confined `*at` resolver on `am_daemon`:
 //! `use_secure_symlinks = am_daemon && (!am_chrooted || module_dirlen)`
 //! (`clientserver.c:1093`), and `confinement_root()` hands back `module_dir`
-//! only when `am_daemon` (`syscall.c:136`). `am_daemon` is true in the *serving*
+//! only when `am_daemon` (`syscall.c:163`). `am_daemon` is true in the *serving*
 //! process, never in the client that dials `rsync://`. So on a pull the client
 //! is an ordinary, unconfined receiver: `secure_basis_open()` takes its
-//! `if (!am_daemon || ...)` arm (`receiver.c:152`) and does a plain `do_open`,
+//! `if (!am_daemon || ...)` arm (`receiver.c:165`) and does a plain `do_open`,
 //! and a symlinked destination root is followed exactly as it is for a local
 //! copy or an SSH pull.
 //!
@@ -52,9 +52,9 @@
 //! # Upstream References
 //!
 //! - `clientserver.c:1093` - `use_secure_symlinks = am_daemon && ...`
-//! - `syscall.c:136` - `confinement_root()` returns `module_dir` only for a daemon
-//! - `receiver.c:152` - `if (!am_daemon || ...)` plain-open arm of `secure_basis_open()`
-//! - `main.c:757` - `change_dir(dest_path, CD_NORMAL)` resolves a symlinked
+//! - `syscall.c:163` - `confinement_root()` returns `module_dir` only for a daemon
+//! - `receiver.c:165` - `if (!am_daemon || ...)` plain-open arm of `secure_basis_open()`
+//! - `main.c:770` - `change_dir(dest_path, CD_NORMAL)` resolves a symlinked
 //!   destination root once, for every non-daemon receiver
 
 #![cfg(unix)]

@@ -4,11 +4,11 @@
 //! `--bwlimit`:
 //!
 //! ```c
-//! /* options.c:1802 */
+//! /* options.c:1808 */
 //! if ((size = parse_size_arg(arg, 'b', "block-size", 0, max_blength, False)) < 0)
 //! ```
 //!
-//! and `parse_size_arg` (options.c:1163-1265) accepts a decimal number with an
+//! and `parse_size_arg` (options.c:1169-1271) accepts a decimal number with an
 //! optional fraction, an optional `b/k/m/g/t/p` scale, an optional `B` (x1000)
 //! or `iB` (x1024) qualifier, and a trailing `+1` / `-1` adjustment.
 //!
@@ -127,7 +127,7 @@ fn the_grammar_table_matches_the_real_upstream_binary() {
 }
 
 /// Acceptance alone would pass on a parser that ignored the scale, so pin the
-/// VALUES: `K` is 1024 and `KB` is 1000 (options.c:1197-1202).
+/// VALUES: `K` is 1024 and `KB` is 1000 (options.c:1203-1208).
 ///
 /// The observable is the delta itemization: a basis differing from the source
 /// only in its opening bytes yields a different matched/literal split at 1024

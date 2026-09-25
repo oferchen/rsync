@@ -72,7 +72,7 @@ fn assert_no_positional_leak(config: &ClientConfig, role: RemoteRole, paths: &[&
 
 #[test]
 fn bwlimit_does_not_leak_and_is_captured() {
-    // upstream: options.c:2966-2967 - `--bwlimit=%d` (whole KiB), emitted
+    // upstream: options.c:2976-2977 - `--bwlimit=%d` (whole KiB), emitted
     // unconditionally (both roles). The parser must recognise the joined form
     // AND capture its value.
     let config = ClientConfig::builder()
@@ -100,7 +100,7 @@ fn bwlimit_does_not_leak_and_is_captured() {
 
 #[test]
 fn block_size_emits_short_b_and_does_not_leak() {
-    // upstream: options.c:2788 - `-B%u` short spelling. The old non-upstream
+    // upstream: options.c:2798 - `-B%u` short spelling. The old non-upstream
     // long `--block-size=` form leaked because is_known only knows `-B<digits>`.
     let config = ClientConfig::builder()
         .block_size_override(Some(NonZeroU32::new(131072).unwrap()))
@@ -130,7 +130,7 @@ fn block_size_emits_short_b_and_does_not_leak() {
 
 #[test]
 fn temp_dir_and_backup_dir_joined_forms_do_not_leak() {
-    // upstream emits these SPLIT (options.c:2807-2808 / 2926-2927); oc's own
+    // upstream emits these SPLIT (options.c:2817-2818 / 2926-2927); oc's own
     // forwarder emits the JOINED `--flag=value`. Both must be recognised. These
     // are am_sender (PUSH) only, so exercise the Sender role.
     let config = ClientConfig::builder()
@@ -204,7 +204,7 @@ fn emitted_joined_value(built: &[OsString], prefix: &str) -> String {
 
 #[test]
 fn bwlimit_value_round_trips_through_the_server_parser() {
-    // upstream: options.c:2966 - `--bwlimit=%d` in whole KiB. server_option_kib()
+    // upstream: options.c:2976 - `--bwlimit=%d` in whole KiB. server_option_kib()
     // scales bytes/sec to KiB, so 4 MiB/s emits 4096; the parser must capture
     // that KiB string, not the byte count.
     let config = ClientConfig::builder()
@@ -231,7 +231,7 @@ fn bwlimit_value_round_trips_through_the_server_parser() {
 
 #[test]
 fn checksum_choice_value_round_trips_through_the_server_parser() {
-    // upstream: options.c:2816 safe_arg("--checksum-choice", ...) joins with `=`
+    // upstream: options.c:2826 safe_arg("--checksum-choice", ...) joins with `=`
     // to `--checksum-choice=<algo>`, emitted only when the choice is non-Auto.
     let config = ClientConfig::builder()
         .checksum_choice(StrongChecksumChoice::parse("md5").unwrap())
@@ -251,7 +251,7 @@ fn checksum_choice_value_round_trips_through_the_server_parser() {
 
 #[test]
 fn iconv_value_round_trips_and_forwards_the_remote_charset_only() {
-    // upstream: options.c:2735-2740 - the client forwards the REMOTE charset (the
+    // upstream: options.c:2745-2750 - the client forwards the REMOTE charset (the
     // part after the comma) as `--iconv=<remote>`, not both halves. safe_arg
     // joins with `=`, so `--iconv=utf-8,latin1` forwards `latin1`. The parser
     // must capture exactly that forwarded value.

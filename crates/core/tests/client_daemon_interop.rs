@@ -17,7 +17,7 @@
 //!
 //! Upstream references:
 //! - clientserver.c - daemon protocol implementation
-//! - main.c:1267-1384 - client_run() orchestration
+//! - main.c:1285-1402 - client_run() orchestration
 
 mod common;
 
@@ -952,7 +952,7 @@ fn test_special_characters_in_filename() {
 /// Verifies that when --files-from specifies a local file listing specific
 /// paths, only those paths are transferred to the daemon. The client reads
 /// the file list locally and does NOT send --files-from to the daemon
-/// receiver - upstream: options.c:2944.
+/// receiver - upstream: options.c:2954.
 #[test]
 #[ignore = "requires upstream rsync binary"]
 fn test_client_push_to_daemon_with_files_from() {

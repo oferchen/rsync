@@ -33,7 +33,7 @@
 //! # Upstream Reference
 //!
 //! - `generator.c:517-586 itemize()` (report bits), `:584` (`ITEM_IS_NEW`
-//!   only for an absent dest), `sender.c:468 write_ndx_and_attrs()`,
+//!   only for an absent dest), `sender.c:469 write_ndx_and_attrs()`,
 //!   `log.c:730-746` (itemize string rendering; `.` fill when a report bit is
 //!   set but the entry is neither new nor transferred).
 

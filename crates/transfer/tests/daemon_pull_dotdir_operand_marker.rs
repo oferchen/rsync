@@ -3,22 +3,22 @@
 //! # Background
 //!
 //! Upstream's daemon runs every client positional through
-//! `sanitize_path(NULL, argv[i], "", 0, SP_KEEP_DOT_DIRS)` (`options.c:2402-2405`,
+//! `sanitize_path(NULL, argv[i], "", 0, SP_KEEP_DOT_DIRS)` (`options.c:2411-2414`,
 //! gated on the `sanitize_paths` that `clientserver.c:1068` sets for every
 //! connection with a module dir). That sanitizer does NOT split the path into
 //! components and rejoin them: it copies each component *through the next
-//! slash* (`util1.c:1201`) and only then examines the following one, so a
-//! discarded `.` (`util1.c:1163-1172`) or `..` (`util1.c:1183-1191`) leaves the
+//! slash* (`util1.c:1298`) and only then examines the following one, so a
+//! discarded `.` (`util1.c:1260-1269`) or `..` (`util1.c:1280-1288`) leaves the
 //! separator that preceded it in the output buffer. `sym-to-dir/.` therefore
 //! sanitizes to `sym-to-dir/`, not to `sym-to-dir`.
 //!
 //! That surviving slash is load-bearing. `send_file_list()` reads it at
-//! `flist.c:2589-2594` and sets `name_type = DOTDIR_NAME`, and the operand's
+//! `flist.c:2829-2834` and sets `name_type = DOTDIR_NAME`, and the operand's
 //! stat is then taken as
 //! `link_stat(fbuf, &st, copy_dirlinks || name_type != NORMAL_NAME)`
-//! (`flist.c:2696`). The second disjunct is the marker: with it, a symlink whose
+//! (`flist.c:2936`). The second disjunct is the marker: with it, a symlink whose
 //! target is a directory is followed and the directory's CONTENTS are sent
-//! (`flist.c:286-299`); without it the operand is `lstat`ed and ships as a
+//! (`flist.c:511-524`); without it the operand is `lstat`ed and ships as a
 //! symlink under its own basename.
 //!
 //! oc-rsync's daemon resolved the client tail by splitting on `/`, dropping
@@ -64,13 +64,13 @@
 //!
 //! # Upstream References
 //!
-//! - `rsync-3.5.0/options.c:2402-2405` - the daemon's per-arg `sanitize_path()`
-//! - `rsync-3.5.0/clientserver.c:1068` - `if (module_dirlen) sanitize_paths = 1`
-//! - `rsync-3.5.0/util1.c:1163-1172` - a `.` component is skipped
-//! - `rsync-3.5.0/util1.c:1201` - each component is copied *through* its slash
-//! - `rsync-3.5.0/flist.c:2589-2594` - a trailing `/` sets `DOTDIR_NAME`
-//! - `rsync-3.5.0/flist.c:2696` - `copy_dirlinks || name_type != NORMAL_NAME`
-//! - `rsync-3.5.0/flist.c:286-299` - `link_stat()`'s `follow_dirlinks` arm
+//! - `rsync-3.5.1/options.c:2411-2414` - the daemon's per-arg `sanitize_path()`
+//! - `rsync-3.5.1/clientserver.c:1068` - `if (module_dirlen) sanitize_paths = 1`
+//! - `rsync-3.5.1/util1.c:1260-1269` - a `.` component is skipped
+//! - `rsync-3.5.1/util1.c:1298` - each component is copied *through* its slash
+//! - `rsync-3.5.1/flist.c:2829-2834` - a trailing `/` sets `DOTDIR_NAME`
+//! - `rsync-3.5.1/flist.c:2936` - `copy_dirlinks || name_type != NORMAL_NAME`
+//! - `rsync-3.5.1/flist.c:511-524` - `link_stat()`'s `follow_dirlinks` arm
 
 #![cfg(unix)]
 
@@ -275,8 +275,8 @@ fn dotdir_marker_on_a_trailing_dot_follows_the_symlinked_directory() {
     assert_eq!(
         pulled.tree,
         vec!["f.txt".to_owned()],
-        "a `/.` operand carries upstream's DOTDIR marker (flist.c:2589-2594), so \
-         link_stat follows the symlinked directory (flist.c:2696) and the \
+        "a `/.` operand carries upstream's DOTDIR marker (flist.c:2829-2834), so \
+         link_stat follows the symlinked directory (flist.c:2936) and the \
          CONTENTS arrive; a tree containing `sym-to-dir` means the marker was \
          dropped and the operand was lstat'ed",
     );
@@ -300,7 +300,7 @@ fn an_operand_without_the_marker_still_ships_the_symlink_itself() {
         pulled.tree,
         vec!["sym-to-dir".to_owned()],
         "without the DOTDIR marker `link_stat`'s follow_dirlinks argument is \
-         `copy_dirlinks` alone (flist.c:2696), which is off here, so the operand \
+         `copy_dirlinks` alone (flist.c:2936), which is off here, so the operand \
          must ship as the symlink it is",
     );
 }
@@ -325,7 +325,7 @@ fn a_bare_dot_operand_transfers_the_whole_module() {
             "sym-to-dir".to_owned(),
         ],
         "a lone `.` operand names the module root with the DOTDIR marker \
-         (flist.c:2601-2604), so the module's whole contents transfer; an empty \
+         (flist.c:2841-2844), so the module's whole contents transfer; an empty \
          tree is the `.`-stripped-to-nothing shape",
     );
 }

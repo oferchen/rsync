@@ -26,7 +26,7 @@ use protocol::acl::AclCache;
 /// - `cleanup.c:105-115` - `handle_partial_dir()` renames temp to partial-dir
 /// - `options.c:keep_partial` - `--partial` flag
 /// - `options.c:partial_dir` - `--partial-dir=DIR` option
-/// - `receiver.c:340-345` - `do_rename(partialptr, fname)` on interrupt
+/// - `receiver.c:353-358` - `do_rename(partialptr, fname)` on interrupt
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub enum PartialMode {
     /// No partial retention: delete temp files on interrupt (default behavior).
@@ -50,7 +50,7 @@ pub enum PartialMode {
 /// # Upstream Reference
 ///
 /// - `backup.c:make_backup()` - renames existing file to backup path
-/// - `options.c:2805-2813` - `--backup`, `--backup-dir`, `--suffix`
+/// - `options.c:2815-2823` - `--backup`, `--backup-dir`, `--suffix`
 #[derive(Debug, Clone)]
 pub struct BackupConfig {
     /// Destination root directory for computing relative backup paths.
@@ -111,7 +111,7 @@ pub struct DiskCommitConfig {
     pub use_sparse: bool,
     /// Whether to preallocate each destination file to its eventual length
     /// before writing (`--preallocate`). Reserves blocks up front to reduce
-    /// fragmentation. upstream: receiver.c:320 do_fallocate(fd, 0, total_size).
+    /// fragmentation. upstream: receiver.c:333 do_fallocate(fd, 0, total_size).
     pub preallocate: bool,
     /// Destination tree root used to anchor SEC-1.r/SEC-1.j cross-thread
     /// `*at` syscalls. `None` when the destination root could not be opened
@@ -199,7 +199,7 @@ pub struct DiskCommitConfig {
     /// # Upstream Reference
     ///
     /// - `cleanup.c:105-115` - `handle_partial_dir()` in cleanup path
-    /// - `receiver.c:340-345` - partial file rename on interrupt
+    /// - `receiver.c:353-358` - partial file rename on interrupt
     pub partial_mode: PartialMode,
     /// When true, files are staged to a `.~tmp~` partial directory instead
     /// of being renamed to their final destination immediately. The caller
@@ -207,9 +207,9 @@ pub struct DiskCommitConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:546-547`: `delayed_bits = bitbag_create()`
-    /// - `receiver.c:1029-1052`: staging to partial dir when `delay_updates`
-    /// - `receiver.c:694-695`: `handle_delayed_updates()` at phase 2
+    /// - `receiver.c:562-563`: `delayed_bits = bitbag_create()`
+    /// - `receiver.c:1045-1068`: staging to partial dir when `delay_updates`
+    /// - `receiver.c:710-711`: `handle_delayed_updates()` at phase 2
     pub delay_updates: bool,
     /// Whether `--append-verify` (append_mode == 2) is active for the session.
     ///
@@ -221,7 +221,7 @@ pub struct DiskCommitConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:357-373` - `if (append_mode == 2 && mapbuf)` prefix `sum_update`
+    /// - `receiver.c:370-386` - `if (append_mode == 2 && mapbuf)` prefix `sum_update`
     pub append_verify: bool,
     /// Name of the daemon module this server process is serving, when any.
     ///
@@ -231,8 +231,8 @@ pub struct DiskCommitConfig {
     ///
     /// # Upstream Reference
     ///
-    /// - `util1.c:1290` - `if (module_id >= 0)` in `full_fname()`.
-    /// - `receiver.c:297` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed", ...)`
+    /// - `util1.c:1387` - `if (module_id >= 0)` in `full_fname()`.
+    /// - `receiver.c:310` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed", ...)`
     pub daemon_module: Option<String>,
     /// Absolute on-disk root of the daemon module this server process serves.
     ///
@@ -244,7 +244,7 @@ pub struct DiskCommitConfig {
     /// # Upstream Reference
     ///
     /// - `clientserver.c:993` - `change_dir(module_chdir, CD_NORMAL)`
-    /// - `util1.c:1285` - `p1 = curr_dir + module_dirlen`
+    /// - `util1.c:1382` - `p1 = curr_dir + module_dirlen`
     pub daemon_module_root: Option<PathBuf>,
 }
 

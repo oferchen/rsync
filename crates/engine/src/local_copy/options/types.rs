@@ -73,7 +73,7 @@ pub struct ReferenceDirectory {
     /// The basis path exactly as the peer or operator wrote it.
     ///
     /// Upstream never rewrites `basis_dir[]` before matching it against the
-    /// daemon filter list: `main.c:1246-1252` runs `sanitize_path(clean,
+    /// daemon filter list: `main.c:1264-1270` runs `sanitize_path(clean,
     /// *dir_p, "/", 0, SP_DEFAULT)` over the *given* argument, which leaves a
     /// relative `--link-dest=secret` as `secret`. That is why upstream's own
     /// diagnostics quote `secret` and not a resolved path, and why an anchored
@@ -222,7 +222,7 @@ pub struct LocalCopyOptions {
     ///
     /// upstream: generator.c:1155 `list_file_entry()` lists every flist entry
     /// regardless of `--links`/`--devices`/`--specials` because list-only mode
-    /// never runs the generator's non-regular skip path (main.c:708
+    /// never runs the generator's non-regular skip path (main.c:721
     /// `get_local_name()` returns NULL for `list_only`).
     pub(super) list_only: bool,
     pub(super) preserve_hard_links: bool,

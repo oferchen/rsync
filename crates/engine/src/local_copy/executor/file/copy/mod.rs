@@ -56,7 +56,7 @@ pub(crate) fn copy_file(
                 .map(PathBuf::from)
                 .unwrap_or_default()
         });
-    // upstream: flist.c:1419-1424 - `--copy-devices` streams a device as a
+    // upstream: flist.c:1644-1649 - `--copy-devices` streams a device as a
     // regular file, so its readable length (not the zero stat size) drives the
     // size checks, stats, and the copy byte count.
     let device_as_file_size = context.copy_device_as_file_size(source, metadata);
@@ -111,7 +111,7 @@ pub(crate) fn copy_file(
         // directory is rmdir'd and the file placed with no options at all, and
         // a populated one is refused out loud at exit 23.
         //
-        // Multi-source merges are the exception: flist.c:3067-3081
+        // Multi-source merges are the exception: flist.c:3310-3324
         // flist_sort_and_clean() drops the colliding regular file and keeps the
         // directory, so the entry never reaches recv_generator at all and a file
         // contributed by one source must never blow away a directory
@@ -150,7 +150,7 @@ pub(crate) fn copy_file(
     // `--write-devices` is the ONLY thing that keeps a device node standing
     // under an arriving regular file. Without it the node is cleared and an
     // ordinary file is created at that name; with it the node survives and the
-    // transfer writes THROUGH it (`receiver.c:1170`).
+    // transfer writes THROUGH it (`receiver.c:1187`).
     //
     // The local executor reached the right destination TYPE by accident in its
     // default shape - temp-file staging renames over whatever is there - but it
@@ -291,7 +291,7 @@ pub(crate) fn copy_file(
     // preallocated / existing extent (guided by preallocated_len) instead of
     // seeking, so those modes still produce sparse output. Append mode is the
     // exception - upstream flips `sparse_files` off during the append pass
-    // (receiver.c:761,771) so the pre-existing prefix is never hole-punched.
+    // (receiver.c:777,787) so the pre-existing prefix is never hole-punched.
     let use_sparse_writes = context.sparse_enabled() && !context.append_enabled();
     let partial_enabled = context.partial_enabled();
     let inplace_enabled = context.inplace_enabled();

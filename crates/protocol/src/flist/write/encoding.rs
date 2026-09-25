@@ -34,7 +34,7 @@ impl FileListWriter {
     ) -> io::Result<()> {
         if self.use_varint_flags() {
             // Varint mode: avoid xflags=0 which collides with the end marker.
-            // upstream: flist.c:562 write_varint(f, xflags ? xflags : XMIT_EXTENDED_FLAGS)
+            // upstream: flist.c:787 write_varint(f, xflags ? xflags : XMIT_EXTENDED_FLAGS)
             let flags_to_write = if xflags == 0 {
                 XMIT_EXTENDED_FLAGS as u32
             } else {
@@ -54,7 +54,7 @@ impl FileListWriter {
                 writer.write_all(&[xflags_to_write as u8])?;
             }
         } else {
-            // upstream: flist.c:571-574 - dirs use XMIT_LONG_NAME, non-dirs use XMIT_TOP_DIR
+            // upstream: flist.c:796-799 - dirs use XMIT_LONG_NAME, non-dirs use XMIT_TOP_DIR
             let flags_to_write = if (xflags & 0xFF) == 0 {
                 if is_dir {
                     xflags | XMIT_LONG_NAME as u32
@@ -114,12 +114,12 @@ impl FileListWriter {
             // Symlink targets use the same wire-form normalisation as filenames:
             // any platform-native backslash separators are translated to forward
             // slashes before transmission.
-            // upstream: flist.c:send_file_entry() lines 650-655 and util1.c:955-961
+            // upstream: flist.c:send_file_entry() lines 650-655 and util1.c:1052-1058
             let wire_bytes = path_bytes_to_wire(target.as_path());
-            // upstream: flist.c:1642 - the target is transcoded through ic_send
+            // upstream: flist.c:1867 - the target is transcoded through ic_send
             // ONLY when `sender_symlink_iconv` (iconv active AND CF_SYMLINK_ICONV
             // negotiated). Against a peer without the capability the raw local
-            // bytes are sent verbatim, mirroring the `else` branch at flist.c:1659.
+            // bytes are sent verbatim, mirroring the `else` branch at flist.c:1884.
             let converted;
             let target_bytes: &[u8] = if self.symlink_iconv {
                 converted = self.apply_encoding_conversion(&wire_bytes)?;
@@ -187,8 +187,8 @@ impl FileListWriter {
             }
         }
 
-        // upstream: flist.c:453-458 advances the carried rdev_major only for
-        // real devices. Special files (flist.c:462-472) transmit
+        // upstream: flist.c:678-683 advances the carried rdev_major only for
+        // real devices. Special files (flist.c:687-697) transmit
         // MAKEDEV(rdev_major, 0) WITHOUT touching rdev_major, so a following
         // device with the same major still earns XMIT_SAME_RDEV_MAJOR. Updating
         // the state for a special (major == 0 here) would wrongly reset the
@@ -340,7 +340,7 @@ impl FileListWriter {
     ///
     /// # Upstream Reference
     ///
-    /// - `flist.c:1624-1638` `send_file1()` - strict `ic_send` conversion, then
+    /// - `flist.c:1849-1863` `send_file1()` - strict `ic_send` conversion, then
     ///   `io_error |= IOERR_GENERAL` + `cannot convert filename` + `return NULL`.
     /// - `generator::file_list::drop_unconvertible_entries` - oc's build-time
     ///   drop that keeps sender/receiver ndx aligned.
@@ -351,7 +351,7 @@ impl FileListWriter {
         if let Some(ref converter) = self.iconv {
             let outcome = converter.local_to_remote_lossy(name);
             if outcome.had_replacements {
-                // upstream: flist.c:1633-1636 - warn about unconvertible filename
+                // upstream: flist.c:1858-1861 - warn about unconvertible filename
                 crate::iconv::trace_conversion_warning(
                     crate::iconv::IconvRole::Server,
                     &String::from_utf8_lossy(name),
@@ -428,7 +428,7 @@ impl FileListWriter {
             self.stats.num_dirs += 1;
         } else if entry.is_file() {
             self.stats.num_files += 1;
-            // upstream: flist.c:774 `stats.total_size += F_LENGTH(file)` uses
+            // upstream: flist.c:999 `stats.total_size += F_LENGTH(file)` uses
             // signed int64 and tolerates wrap; this is a cosmetic counter logged
             // by trace.rs and never gates wire format. Saturate instead of
             // wrapping so debug builds (overflow-checks=true, e.g. cargo-fuzz)

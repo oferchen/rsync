@@ -33,7 +33,7 @@ pub const ZSTD_BEST_LEVEL: i32 = 19;
 pub const LZ4_DEFAULT_ACCELERATION: i32 = 1;
 
 /// Raw `do_compression_level` value upstream uses when the user did not pass
-/// `--compress-level`. upstream: rsync.h:1151 `#define CLVL_NOT_SPECIFIED INT_MIN`.
+/// `--compress-level`. upstream: rsync.h:1153 `#define CLVL_NOT_SPECIFIED INT_MIN`.
 ///
 /// [`CompressionAlgorithm::resolve_debug_level`] treats this sentinel as
 /// "unspecified" and substitutes the codec's default level, mirroring

@@ -561,7 +561,7 @@ fn minimum_granularity_single_byte_accumulation() {
     // whole sleep quantum and paces at twice the configured rate. Testing under
     // the floor measures that truncation instead of the accumulation this test
     // is about.
-    // upstream: options.c:1714 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
+    // upstream: options.c:1720 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
     let rate = 512_u64;
     let mut limiter = BandwidthLimiter::new(nz(rate));
 
@@ -1045,7 +1045,7 @@ fn convergence_across_three_decades_of_rates() {
     // At the floor that is 1/64 = 1.6%; at 100 B/s it is 1/12 = 8.3%, a flat
     // bias no window size dilutes, so a sub-floor row would measure the
     // truncation rather than convergence.
-    // upstream: options.c:1714 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
+    // upstream: options.c:1720 parse_size_arg(bwlimit_arg, 'K', "bwlimit", 512, -1, True)
     let rates = [512_u64, 1_000, 10_000, 100_000, 1_000_000, 10_000_000];
 
     for &rate in &rates {

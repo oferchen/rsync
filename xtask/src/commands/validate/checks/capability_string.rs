@@ -7,8 +7,8 @@
 //! choice, incremental recursion, symlink-times, and so on) and must match
 //! upstream byte-for-byte or a peer negotiates the wrong feature set.
 //!
-//! upstream: options.c:2216 `server_options()` builds `argstr` (the compact flag
-//! string) and appends the capability letters; main.c:1187 `do_cmd()` execs the
+//! upstream: options.c:2225 `server_options()` builds `argstr` (the compact flag
+//! string) and appends the capability letters; main.c:1205 `do_cmd()` execs the
 //! remote shell with those args.
 //!
 //! The transfer is oriented as a PUSH (`src/ host:dst/`), so the client under

@@ -7,7 +7,7 @@
 //!
 //! # Upstream Reference
 //!
-//! - `receiver.c:720` - `recv_files()` main reception loop
+//! - `receiver.c:736` - `recv_files()` main reception loop
 //! - `generator.c:2157-2163` - phase 1 vs phase 2 checksum length selection
 //! - `io.c:perform_io()` - upstream bidirectional I/O batching via `select()`
 
@@ -45,14 +45,14 @@ type InFlightFile = (usize, PathBuf, FileEntry, u32);
 ///
 /// # Upstream Reference
 ///
-/// - `receiver.c:1170` - `write_to_device = write_devices && IS_DEVICE(st.st_mode)`,
+/// - `receiver.c:1187` - `write_to_device = write_devices && IS_DEVICE(st.st_mode)`,
 ///   where `st` is the `do_fstat()` of the opened destination/basis descriptor
-///   (`receiver.c:1143-1145`), never the file-list entry.
-/// - `receiver.c:1076` - that descriptor is opened via `do_open_atfd()`, which
-///   forces `O_NOFOLLOW` (`syscall.c:3835`), so a symlinked destination is not
+///   (`receiver.c:1160-1162`), never the file-list entry.
+/// - `receiver.c:1092` - that descriptor is opened via `do_open_atfd()`, which
+///   forces `O_NOFOLLOW` (`syscall.c:4016`), so a symlinked destination is not
 ///   followed into a device; `symlink_metadata` is the same decision.
-/// - `rsync.h:1394` - `IS_DEVICE(mode)` is `S_ISCHR(mode) || S_ISBLK(mode)`. FIFOs
-///   and sockets are `IS_SPECIAL` (`rsync.h:1393`) and are NOT device targets.
+/// - `rsync.h:1396` - `IS_DEVICE(mode)` is `S_ISCHR(mode) || S_ISBLK(mode)`. FIFOs
+///   and sockets are `IS_SPECIAL` (`rsync.h:1395`) and are NOT device targets.
 #[cfg(unix)]
 fn destination_is_device(path: &std::path::Path) -> bool {
     use std::os::unix::fs::FileTypeExt;
@@ -125,7 +125,7 @@ impl InFlightRequests {
     /// was found. The two parallel queues are pushed and popped in lockstep, so
     /// the position `wire` reports addresses the same entry in `files`.
     ///
-    /// upstream: io.c:1207-1256 `got_flist_entry_status(FES_NO_SEND, ndx)`
+    /// upstream: io.c:1225-1274 `got_flist_entry_status(FES_NO_SEND, ndx)`
     /// retires the declined entry by index, not by the receiver's window front.
     fn retire_by_ndx(&mut self, ndx: i32) -> bool {
         match self.wire.retire_ndx(ndx) {
@@ -152,7 +152,7 @@ impl InFlightRequests {
 
 /// Result type for the pipelined transfer closure:
 /// `(files_transferred, transferred_file_size, bytes, literal, matched, redo_indices,
-/// delayed_updates)`. `transferred_file_size` mirrors upstream `receiver.c:784`
+/// delayed_updates)`. `transferred_file_size` mirrors upstream `receiver.c:800`
 /// `stats.total_transferred_size += F_LENGTH(file)`, summed at the same point as
 /// `files_transferred`.
 type PipelineResult = (
@@ -170,7 +170,7 @@ type PipelineResult = (
 /// Mirrors upstream's sparse negation on the redo pass: on entering the redo
 /// after an append transfer, `recv_files` runs `if (append_mode) sparse_files =
 /// -sparse_files;`, and every downstream write path gates on `sparse_files > 0`
-/// (receiver.c:330,482; fileio.c:155,196). The redo rewrites the file from
+/// (receiver.c:343,498; fileio.c:159,204). The redo rewrites the file from
 /// scratch, so the append+sparse interaction no longer holds and sparse must be
 /// disabled for the resend. A non-redo pass, or a redo that was not append mode,
 /// keeps sparse as configured.
@@ -248,8 +248,8 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:1063-1069` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
-    /// - `io.c:1623-1637` - sender-side `MSG_SUCCESS` handler -> `successful_send`.
+    /// - `receiver.c:1079-1085` - `send_msg_success(fname, ndx)` on `recv_ok == 1`.
+    /// - `io.c:1649-1663` - sender-side `MSG_SUCCESS` handler -> `successful_send`.
     fn emit_confirmed_source_removals<W>(
         &self,
         writer: &mut W,
@@ -288,7 +288,7 @@ impl ReceiverContext {
     ///
     /// - `log.c:251-346` - `rwrite()`: `am_server` sends the frame and returns,
     ///   otherwise `FERROR_XFER`/`FWARNING` go to stderr and `FINFO` to stdout
-    /// - `receiver.c:1088-1091` - the `failed verification` warning/error text
+    /// - `receiver.c:1104-1107` - the `failed verification` warning/error text
     fn emit_pipeline_messages<W>(
         &self,
         writer: &mut W,
@@ -347,9 +347,9 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `rsync-3.5.0/cleanup.c:242-253` - `_exit_cleanup()` flushes queued
+    /// - `rsync-3.5.1/cleanup.c:242-253` - `_exit_cleanup()` flushes queued
     ///   messages on the fatal path.
-    /// - `rsync-3.5.0/rsync.c:897-900` - the backup failure that makes this
+    /// - `rsync-3.5.1/rsync.c:897-900` - the backup failure that makes this
     ///   path reachable.
     fn drain_or_report<W, F>(
         &self,
@@ -423,7 +423,7 @@ impl ReceiverContext {
         // upstream: generator.c:582-593 - itemize() also writes NDX + iflags
         // for entries with significant attribute diffs but no ITEM_TRANSFER,
         // interleaved with the transfer requests in flist order; the peer's
-        // sender prints each row and echoes the attrs back (sender.c:292-294).
+        // sender prints each row and echoes the attrs back (sender.c:295-297).
         // Merge the recorded metadata-only rows into the request stream so the
         // wire order matches upstream's single flist walk. The recording passes
         // (directories, then symlinks, then specials, then the candidate scan)
@@ -497,7 +497,7 @@ impl ReceiverContext {
                 && self.compat_flags.is_some_and(|f| {
                     !f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
                 }),
-            // upstream: receiver.c:761-773 - a phase-2 redo negates append_mode
+            // upstream: receiver.c:777-789 - a phase-2 redo negates append_mode
             // (`append_mode = -append_mode`), so the re-request is a full
             // transfer that overwrites the file rather than appending to a
             // prefix the verify pass already rejected.
@@ -516,7 +516,7 @@ impl ReceiverContext {
         let mut pipeline = InFlightRequests::new(pipeline_config);
         let mut file_iter = files_to_transfer.into_iter();
         let mut files_transferred = 0usize;
-        // upstream: receiver.c:784 stats.total_transferred_size += F_LENGTH(file),
+        // upstream: receiver.c:800 stats.total_transferred_size += F_LENGTH(file),
         // summed at the same point as files_transferred.
         let mut transferred_file_size = 0u64;
         let mut bytes_received = 0u64;
@@ -554,13 +554,13 @@ impl ReceiverContext {
         //
         // `--delay-updates` with no explicit `--partial-dir` stages through the
         // implicit `.~tmp~` beside each destination file:
-        // upstream options.c:2563-2564 `if (delay_updates && !partial_dir)
+        // upstream options.c:2572-2573 `if (delay_updates && !partial_dir)
         // partial_dir = tmp_partialdir;` (`static char tmp_partialdir[] = ".~tmp~"`).
         //
         // The substitution belongs here, on the receiver, rather than on the
         // option value itself: upstream keeps the implicit directory off the wire
         // by comparing the pointer against `tmp_partialdir` before forwarding
-        // `--partial-dir` (options.c:3052-3055), sending only `--delay-updates`
+        // `--partial-dir` (options.c:3062-3065), sending only `--delay-updates`
         // so the peer re-derives `.~tmp~` for itself. oc builds its argv from
         // `ClientConfig`, which this never touches, so the same split holds
         // without threading provenance through the option value.
@@ -598,7 +598,7 @@ impl ReceiverContext {
             daemon_module_root: self.config.connection.daemon_module_root.clone(),
             ..DiskCommitConfig::default()
         };
-        // upstream: receiver.c:1072,1085 - `stdout_format_has_i` and `read_batch`
+        // upstream: receiver.c:1088,1101 - `stdout_format_has_i` and `read_batch`
         // are globals in `recv_files()`; here they travel with the mediator that
         // owns the verification result.
         let mut pipelined_receiver =
@@ -640,7 +640,7 @@ impl ReceiverContext {
             let mut flushed_pending: usize = 0;
 
             loop {
-                // upstream: io.c:750 - perform_io() acts on got_kill_signal at
+                // upstream: io.c:768 - perform_io() acts on got_kill_signal at
                 // its loop boundary, never mid-frame. Same here: a shutdown
                 // request between two file responses aborts the loop, and the
                 // `pipelined_receiver.shutdown()` below hands the disk thread
@@ -849,7 +849,7 @@ impl ReceiverContext {
                     pipeline.pop().expect("pipeline not empty");
                 flushed_pending = flushed_pending.saturating_sub(1);
 
-                // upstream: sender.c:292-294 - a non-transfer item is logged by
+                // upstream: sender.c:295-297 - a non-transfer item is logged by
                 // the sender and echoed back via write_ndx_and_attrs(); consume
                 // the echo here so the response stream stays aligned with the
                 // transfer replies that follow it in FIFO order.
@@ -889,7 +889,7 @@ impl ReceiverContext {
                     continue;
                 }
 
-                // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
+                // upstream: receiver.c:724-725 DEBUG_GTE(RECV, 1)
                 debug_log!(Recv, 1, "recv_files({})", file_entry.path().display());
 
                 let response_ctx = ResponseContext {
@@ -926,8 +926,8 @@ impl ReceiverContext {
                 let result = match response? {
                     crate::transfer_ops::ResponseProgress::Received(result) => result,
                     crate::transfer_ops::ResponseProgress::Declined { pending, ndx } => {
-                        // upstream: io.c:1809-1818 -> got_flist_entry_status(FES_NO_SEND, ndx).
-                        // The sender declined a file (sender.c:669,723,751) and moved on
+                        // upstream: io.c:1847-1856 -> got_flist_entry_status(FES_NO_SEND, ndx).
+                        // The sender declined a file (sender.c:670,725,753) and moved on
                         // without answering; upstream's generator retires the entry BY INDEX,
                         // not by any window front. The sender has already set io_error
                         // (FERROR_XFER), which is what makes the run exit 23 - dropping the
@@ -939,7 +939,7 @@ impl ReceiverContext {
                             continue;
                         }
                         // Against an upstream sender the decline can name a later, still
-                        // outstanding request while this front is awaited (io.c:1207 is
+                        // outstanding request while this front is awaited (io.c:1225 is
                         // NDX-addressed and tolerates the order). Retire the named entry by
                         // index and restore the popped front, whose response is still coming.
                         if pipeline.retire_by_ndx(ndx) {
@@ -951,7 +951,7 @@ impl ReceiverContext {
                         }
                         // A decline for an index outside the window was never requested:
                         // a genuine desync. upstream aborts with RERR_PROTOCOL when
-                        // ndx < flist->ndx_start (io.c:1210-1211).
+                        // ndx < flist->ndx_start (io.c:1228-1229).
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!(
@@ -966,7 +966,7 @@ impl ReceiverContext {
                     result.expected_checksum,
                     result.checksum_len,
                     file_path,
-                    // upstream: receiver.c:1089 - the verification-failure line
+                    // upstream: receiver.c:1105 - the verification-failure line
                     // names `f_name(file, ..)`, not the joined destination path.
                     file_entry.path().clone(),
                     file_idx,
@@ -980,7 +980,7 @@ impl ReceiverContext {
                     })?;
                 metadata_errors.extend(disk_meta_errors);
 
-                // upstream: receiver.c:1063-1069 - a committed file (recv_ok == 1)
+                // upstream: receiver.c:1079-1085 - a committed file (recv_ok == 1)
                 // gets an immediate MSG_SUCCESS so the sender can unlink its
                 // --remove-source-files source. Emit for every file the drain
                 // just confirmed committed.
@@ -988,7 +988,7 @@ impl ReceiverContext {
 
                 self.emit_peer_messages(writer, &mut pipelined_receiver);
 
-                // upstream: io.c:820 stats.total_read only counts bytes read
+                // upstream: io.c:838 stats.total_read only counts bytes read
                 // off the wire. Matched-from-basis bytes never traverse the
                 // read fd, so exclude them from bytes_received.
                 bytes_received += result.literal_bytes;
@@ -997,11 +997,11 @@ impl ReceiverContext {
                 files_transferred += 1;
                 transferred_file_size += file_entry.size();
 
-                // upstream: receiver.c:950 - log_item() after successful file transfer
+                // upstream: receiver.c:966 - log_item() after successful file transfer
                 {
                     if self.config.flags.verbose && self.config.connection.client_mode {
                         if self.interleave_names && !is_redo_pass {
-                            // upstream: receiver.c:1008-1012 - the client prints
+                            // upstream: receiver.c:1024-1028 - the client prints
                             // each file's name per file (log_before_transfer),
                             // in flist order, interleaved with --progress,
                             // instead of buffering for an end-of-run block. The
@@ -1070,7 +1070,7 @@ impl ReceiverContext {
                 self.drain_or_report(writer, &mut pipelined_receiver, |pr| pr.drain_all_results())?;
             metadata_errors.extend(disk_meta_errors);
 
-            // upstream: receiver.c:1063-1069 - flush MSG_SUCCESS for the final
+            // upstream: receiver.c:1079-1085 - flush MSG_SUCCESS for the final
             // batch of files the blocking drain just confirmed committed, so the
             // sender unlinks their --remove-source-files sources.
             self.emit_confirmed_source_removals(writer, &mut pipelined_receiver)?;
@@ -1130,7 +1130,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `generator.c:584-587` - `write_ndx()` + `write_shortint(iflags)`
-    /// - `sender.c:292-294` - the sender logs the row, then echoes the attrs
+    /// - `sender.c:295-297` - the sender logs the row, then echoes the attrs
     #[allow(clippy::too_many_arguments)]
     fn send_no_transfer_itemize<W: Write + ?Sized>(
         &self,
@@ -1165,16 +1165,16 @@ impl ReceiverContext {
     /// an attribute-only regular-file change - because upstream's `itemize()`
     /// writes NDX + iflags for every entry with significant flags, not just the
     /// ones with `ITEM_TRANSFER` (generator.c:581-600), and the peer's
-    /// `send_files()` echoes both kinds (sender.c:292-310 for non-transfer,
-    /// sender.c:347-350 for `!do_xfers` transfers).
+    /// `send_files()` echoes both kinds (sender.c:295-311 for non-transfer,
+    /// sender.c:348-351 for `!do_xfers` transfers).
     ///
     /// Returns `(transfer_items, transferred_size)` - upstream bumps
     /// `stats.xferred_files` and `stats.total_transferred_size` before the
-    /// `if (!do_xfers)` continue (receiver.c:781-784), so a dry run reports the
+    /// `if (!do_xfers)` continue (receiver.c:797-800), so a dry run reports the
     /// same "Number of regular files transferred" as the real run would.
     ///
     /// upstream: generator.c:1858-1959 - `!do_xfers` path sends write_ndx() then
-    /// goto cleanup, skipping write_sum_head(). sender.c:468-485 - `!do_xfers`
+    /// goto cleanup, skipping write_sum_head(). sender.c:469-486 - `!do_xfers`
     /// logs the item and echoes write_ndx_and_attrs() without receive_sums().
     pub(in crate::receiver) fn run_dry_run_loop<
         R: Read,
@@ -1207,7 +1207,7 @@ impl ReceiverContext {
         for &(file_idx, file_entry, item_iflags) in plan {
             let needs_transfer = item_iflags & crate::generator::ItemFlags::ITEM_TRANSFER != 0;
             if needs_transfer {
-                // upstream: receiver.c:783-784 - xferred_files and
+                // upstream: receiver.c:799-800 - xferred_files and
                 // total_transferred_size are summed before the `!do_xfers`
                 // continue, so a dry run reports what the real run would move.
                 transfer_items += 1;
@@ -1243,7 +1243,7 @@ impl ReceiverContext {
             // pending - matching upstream's batched iobuf_out pattern.
             writer.flush()?;
 
-            // upstream: sender.c:468-485 - sender echoes write_ndx_and_attrs back
+            // upstream: sender.c:469-486 - sender echoes write_ndx_and_attrs back
             let (_echoed_ndx, _sender_attrs) =
                 crate::receiver::wire::SenderAttrs::read_with_codec_xattr(
                     reader,
@@ -1279,22 +1279,22 @@ impl ReceiverContext {
     /// Unlike [`run_dry_run_loop`](Self::run_dry_run_loop), the generator sends
     /// REAL block checksums (a full sum head + signature per file), because
     /// upstream forces `dry_run = 1` only after `do_xfers` is computed
-    /// (main.c:1839), so `do_xfers` stays 1 and the sender needs the checksums
+    /// (main.c:1866), so `do_xfers` stays 1 and the sender needs the checksums
     /// to build its batch. Nothing is written to the destination either way -
     /// upstream's `write_batch < 0` arm logs the item and `continue`s
-    /// (receiver.c:811-817) - but where the sender's delta goes differs by
+    /// (receiver.c:827-833) - but where the sender's delta goes differs by
     /// direction, and so does what this loop must read back:
     ///
     /// - PUSH (this side is the remote server receiver, `am_server`): the
     ///   client sender diverted its token stream into its own batch fd
-    ///   (sender.c:217 `f_xfer = write_batch < 0 ? batch_fd : f_out`), so only
+    ///   (sender.c:220 `f_xfer = write_batch < 0 ? batch_fd : f_out`), so only
     ///   the bare NDX+attrs echo from `write_ndx_and_attrs(f_out, ...)`
-    ///   (sender.c:468-485) reaches the wire. Reading further would block forever.
+    ///   (sender.c:469-486) reaches the wire. Reading further would block forever.
     /// - PULL (this side is the local client receiver, `!am_server`): upstream
-    ///   never forwards the flag to the remote sender (options.c:2850 sits in
+    ///   never forwards the flag to the remote sender (options.c:2860 sits in
     ///   the `am_sender` block), so that sender is an ordinary one writing sum
     ///   head + delta + file checksum onto the wire. Upstream drains it with
-    ///   `discard_receive_data()` (receiver.c:813-814); skipping the read would
+    ///   `discard_receive_data()` (receiver.c:829-830); skipping the read would
     ///   desync the connection - the next NDX read would parse delta bytes as a
     ///   frame header. The batch is recorded by the local tee on the read side
     ///   (io.c `write_batch_monitor_in`), so the stream must actually flow.
@@ -1304,11 +1304,11 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1839` - `if (write_batch < 0) dry_run = 1` (do_xfers stays 1)
-    /// - `sender.c:766-767` - `write_ndx_and_attrs(f_out); write_sum_head(f_xfer)`
-    /// - `receiver.c:811-817` - `write_batch < 0`: log, `if (!am_server)`
+    /// - `main.c:1866` - `if (write_batch < 0) dry_run = 1` (do_xfers stays 1)
+    /// - `sender.c:768-769` - `write_ndx_and_attrs(f_out); write_sum_head(f_xfer)`
+    /// - `receiver.c:827-833` - `write_batch < 0`: log, `if (!am_server)`
     ///   `discard_receive_data()`, no dest write
-    /// - `receiver.c:524-527` - `discard_receive_data()`
+    /// - `receiver.c:540-543` - `discard_receive_data()`
     pub(in crate::receiver) fn run_only_write_batch_loop<
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
@@ -1355,7 +1355,7 @@ impl ReceiverContext {
             append_verify: self.config.flags.append_verify,
         };
 
-        // upstream: receiver.c:813 `if (!am_server) discard_receive_data(...)`.
+        // upstream: receiver.c:829 `if (!am_server) discard_receive_data(...)`.
         // `client_mode` is oc's `!am_server`, so only a pull drains a delta.
         let discard_sender_data = self.config.connection.client_mode;
         // upstream: token.c keeps one decompression context for the whole
@@ -1366,7 +1366,7 @@ impl ReceiverContext {
         } else {
             None
         };
-        // upstream: receiver.c:515 - `receive_data()` always trails the token
+        // upstream: receiver.c:531 - `receive_data()` always trails the token
         // stream with `read_buf(f_in, sender_file_sum, xfer_sum_len)`, even on
         // the discard path where there is nothing to verify against.
         let discard_checksum_len = ChecksumVerifier::new(
@@ -1426,7 +1426,7 @@ impl ReceiverContext {
             // its own batch fd, and echoes only NDX+attrs back to us.
             writer.flush()?;
 
-            // upstream: sender.c:468-485 - write_ndx_and_attrs(f_out, ...) echo.
+            // upstream: sender.c:469-486 - write_ndx_and_attrs(f_out, ...) echo.
             let (_echoed_ndx, _sender_attrs) =
                 crate::receiver::wire::SenderAttrs::read_with_codec_xattr(
                     reader,
@@ -1436,10 +1436,10 @@ impl ReceiverContext {
                 )?;
 
             if let Some(token_reader) = token_reader.as_mut() {
-                // upstream: sender.c:443 write_sum_head(f_xfer, s) - on a pull
+                // upstream: sender.c:444 write_sum_head(f_xfer, s) - on a pull
                 // `f_xfer == f_out`, so the sum head and the whole delta land
                 // on the wire and must be consumed to keep the sender in
-                // lockstep (receiver.c:813-814 discard_receive_data()).
+                // lockstep (receiver.c:829-830 discard_receive_data()).
                 let _echoed_sum_head = crate::receiver::wire::SumHead::read(reader)?;
                 token_reader.reset();
                 crate::delta_apply::discard_delta_stream(
@@ -1449,7 +1449,7 @@ impl ReceiverContext {
                 )?;
             }
 
-            // upstream: receiver.c:812 log_item(FCLIENT, file, iflags, NULL) -
+            // upstream: receiver.c:828 log_item(FCLIENT, file, iflags, NULL) -
             // the item is still logged even though nothing is written. Under
             // `-i`/`-vi` the deferred itemize row already carries the name.
             if self.config.flags.verbose

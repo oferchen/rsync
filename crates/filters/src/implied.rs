@@ -16,9 +16,9 @@
 //!   into one or more `FILTRULE_INCLUDE` rules (basename/relative handling,
 //!   parent-dir implication for `--relative`, a trailing `/**` (`--recursive`)
 //!   or `/*` (`--dirs`) rule, wildcard args producing `FILTRULE_WILD` rules).
-//! - `flist.c:1026` `recv_file_entry()` - rejects any received name for which
+//! - `flist.c:1251` `recv_file_entry()` - rejects any received name for which
 //!   `check_filter(&implied_filter_list, ...) <= 0` (no include match).
-//! - `options.c:2510-2513` - `trust_sender_args` disables the mechanism for
+//! - `options.c:2519-2522` - `trust_sender_args` disables the mechanism for
 //!   local/`--trust-sender`/server/old-style/`files-from-host` transfers; the
 //!   caller reflects that by not building the list at all in those cases.
 
@@ -547,7 +547,7 @@ mod tests {
     #[test]
     fn files_from_relative_entries_admit_requested_tree() {
         // --files-from implies --relative and disables recursion in favour of
-        // --dirs (options.c:2169-2173,2205-2206). `from/./` reduces to `/*`,
+        // --dirs (options.c:2178-2182,2214-2215). `from/./` reduces to `/*`,
         // admitting every top-level name the whole-dir entry requested.
         let opts = ImpliedIncludeOptions {
             relative: true,

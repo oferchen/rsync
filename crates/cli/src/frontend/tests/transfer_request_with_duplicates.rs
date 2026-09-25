@@ -11,7 +11,7 @@ use super::*;
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:3004-3012` - `flist_sort_and_clean()` marks duplicate entries
+/// - `flist.c:3247-3255` - `flist_sort_and_clean()` marks duplicate entries
 /// - `testsuite/duplicates.test` - copies source 10 times, asserts each
 ///   file appears exactly once in verbose output
 #[cfg(unix)]

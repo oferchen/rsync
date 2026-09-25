@@ -95,7 +95,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `sender.c:468-485` - `write_ndx_and_attrs()` sends iflags for protocol >= 29
+    /// `sender.c:469-486` - `write_ndx_and_attrs()` sends iflags for protocol >= 29
     #[must_use]
     pub const fn supports_iflags(self) -> bool {
         self.as_u8() >= 29
@@ -158,7 +158,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `main.c:1304-1305` - client activates input multiplex for protocol >= 23;
+    /// `main.c:1322-1323` - client activates input multiplex for protocol >= 23;
     /// server activates output multiplex for protocol >= 23.
     #[must_use]
     pub const fn supports_multiplex_io(self) -> bool {
@@ -170,7 +170,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `main.c:880-905` - `read_final_goodbye()` skips for protocol < 24.
+    /// `main.c:893-918` - `read_final_goodbye()` skips for protocol < 24.
     #[must_use]
     pub const fn supports_goodbye_exchange(self) -> bool {
         self.as_u8() >= 24
@@ -202,7 +202,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// - `io.c:1230` `start_filesfrom_forwarding` -
+    /// - `io.c:1248` `start_filesfrom_forwarding` -
     ///   `if (protocol_version < 31 && OUT_MULTIPLEXED)` switches the output to
     ///   `MPLX_TO_BUFFERED` before forwarding.
     #[must_use]
@@ -217,7 +217,7 @@ impl ProtocolVersion {
     ///
     /// # Upstream Reference
     ///
-    /// `main.c:880-905` - protocol >= 31 performs extra `NDX_DONE` round-trip.
+    /// `main.c:893-918` - protocol >= 31 performs extra `NDX_DONE` round-trip.
     #[must_use]
     pub const fn supports_extended_goodbye(self) -> bool {
         self.as_u8() >= 31

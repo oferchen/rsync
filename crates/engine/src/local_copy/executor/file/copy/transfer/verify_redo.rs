@@ -2,8 +2,8 @@
 //!
 //! Upstream gets this for free on a local transfer because "local" is just a
 //! client and a server exchanging the ordinary protocol over a socketpair
-//! (main.c:1468 sets `local_server`, main.c:649-655 forks `local_child`, and
-//! main.c:1050-1132 forks again so `recv_files()` and `generate_files()` run
+//! (main.c:1486 sets `local_server`, main.c:662-668 forks `local_child`, and
+//! main.c:1063-1150 forks again so `recv_files()` and `generate_files()` run
 //! concurrently). The local executor is a separate implementation of that
 //! transfer, so it has to reproduce the semantics explicitly:
 //!
@@ -12,14 +12,14 @@
 //!    writes a sum header with no block sums (generator.c:787), so pass one is
 //!    always a pure append.
 //! 2. **Verify the whole file.** `receive_data()` compares the sender's
-//!    whole-file checksum with the receiver's (receiver.c:518-519). With
+//!    whole-file checksum with the receiver's (receiver.c:534-535). With
 //!    `--append-verify` both sides fold the pre-existing prefix into that sum
-//!    (match.c:373-386, receiver.c:357-371) and then the identical appended
+//!    (match.c:373-386, receiver.c:370-384) and then the identical appended
 //!    tail, so the comparison is exactly "do the two prefixes agree".
 //! 3. **Retain the result.** `--append` implies `--inplace`
-//!    (options.c:2400-2411), so `finish_transfer()` runs even for `recv_ok == 0`
-//!    (receiver.c:1029) and the appended bytes stay on disk.
-//! 4. **Warn and request the redo** (receiver.c:1063-1097).
+//!    (options.c:2409-2420), so `finish_transfer()` runs even for `recv_ok == 0`
+//!    (receiver.c:1045) and the appended bytes stay on disk.
+//! 4. **Warn and request the redo** (receiver.c:1079-1113).
 //! 5. **Redo as an ordinary delta.** The generator re-enters `recv_generator()`
 //!    with `append_mode` negated and `ignore_times` bumped
 //!    (generator.c:2186-2200), and `whole_file` was already forced to 0 for the
@@ -104,7 +104,7 @@ pub(in crate::local_copy) fn execute_transfer(
                 Some(&retained),
                 // The destination existed before this pass: upstream counts
                 // `stats.created_files++` only on the non-redo leg
-                // (receiver.c:778).
+                // (receiver.c:794).
                 true,
                 file_type,
                 relative,
@@ -118,10 +118,10 @@ pub(in crate::local_copy) fn execute_transfer(
             // The source shrank while the first pass was reading it, so the
             // staged result carried a stale tail and was discarded. Warn the
             // way upstream's receiver does when the deliberately corrupted
-            // checksum fails verification (receiver.c:1325-1354), then rerun
+            // checksum fails verification (receiver.c:1342-1371), then rerun
             // the file once. The retry re-opens the source and sizes itself
             // from a fresh `fstat`, exactly as upstream's phase-2 resend does
-            // (sender.c:728-760), so it lands bytes consistent with the file
+            // (sender.c:730-762), so it lands bytes consistent with the file
             // as it is now. `metadata` is deliberately NOT refreshed: upstream
             // stamps the redone destination with the attributes the file list
             // recorded (`set_file_attrs` reads the flist entry), not with a
@@ -149,8 +149,8 @@ pub(in crate::local_copy) fn execute_transfer(
 
     // Upstream bounds the redo to ONE retry: the resend arrives with
     // `FLAG_FILE_SENT` already set, so the receiver runs it with `redoing = 1`
-    // (receiver.c:933-942) and a second failure logs `FERROR_XFER` with no
-    // further `MSG_REDO` (receiver.c:1333,1355-1358 - the request is guarded
+    // (receiver.c:949-958) and a second failure logs `FERROR_XFER` with no
+    // further `MSG_REDO` (receiver.c:1350,1372-1375 - the request is guarded
     // by `if (!redoing)`). Mirror that: report the discarded update and stop.
     // The exit-23 flags from `note_short_source_read` are already recorded.
     if redo_outcome != TransferOutcome::Complete {
@@ -179,7 +179,7 @@ fn source_changed_redo_flags(flags: TransferFlags) -> TransferFlags {
 
 /// The disposition noun upstream's verification-failure lines carry.
 ///
-/// upstream: receiver.c:1337-1343 - `"discarded"` unless the update was kept
+/// upstream: receiver.c:1354-1360 - `"discarded"` unless the update was kept
 /// (`keep_partial` with a partial path, or `inplace`), in which case it is
 /// `"put into partial-dir"` under `--partial-dir` and `"retained"` otherwise.
 fn kept_description(context: &CopyContext, flags: &TransferFlags) -> &'static str {
@@ -194,9 +194,9 @@ fn kept_description(context: &CopyContext, flags: &TransferFlags) -> &'static st
 
 /// Emits upstream's first-failure warning for a source that shrank mid-read.
 ///
-/// upstream: receiver.c:1333-1354 - `redoing` is still 0, so the message is
+/// upstream: receiver.c:1350-1371 - `redoing` is still 0, so the message is
 /// `FWARNING` with `redostr = " (will try again)"`, gated behind
-/// `INFO_GTE(NAME, 1) || stdout_format_has_i` (receiver.c:1334). The wording
+/// `INFO_GTE(NAME, 1) || stdout_format_has_i` (receiver.c:1351). The wording
 /// is upstream's verbatim: on the wire this failure IS a checksum-verification
 /// failure, because the sender corrupted the whole-file checksum on the read
 /// error (match.c:454-463).
@@ -213,10 +213,10 @@ fn warn_source_changed(context: &CopyContext, record_path: &Path, flags: &Transf
 
 /// Emits upstream's second-failure error when the bounded redo also fails.
 ///
-/// upstream: receiver.c:1333 - `enum logcode msgtype = redoing ? FERROR_XFER : FWARNING;`
-/// picks the error form on the second failure, and receiver.c:1344-1353 sets
+/// upstream: receiver.c:1350 - `enum logcode msgtype = redoing ? FERROR_XFER : FWARNING;`
+/// picks the error form on the second failure, and receiver.c:1361-1370 sets
 /// `errstr = "ERROR"` with an empty `redostr`. `FERROR_XFER` short-circuits the
-/// name gate at receiver.c:1334, so the line is unconditional.
+/// name gate at receiver.c:1351, so the line is unconditional.
 fn note_redo_discarded(context: &CopyContext, record_path: &Path, flags: &TransferFlags) {
     eprintln!(
         "ERROR: {} failed verification -- update {}.",
@@ -231,7 +231,7 @@ fn note_redo_discarded(context: &CopyContext, record_path: &Path, flags: &Transf
 /// `ignore_times`; generator.c:2288-2289 already forced `whole_file = 0` for the
 /// session because append mode is active, which is what overrides the
 /// `whole_file = 1` default a local transfer would otherwise carry
-/// (main.c:652-653); receiver.c:761,771 negates `sparse_files` alongside
+/// (main.c:665-666); receiver.c:777,787 negates `sparse_files` alongside
 /// `append_mode`, restoring whatever `--sparse` asked for.
 fn redo_flags(flags: TransferFlags, sparse_enabled: bool) -> TransferFlags {
     TransferFlags {
@@ -249,13 +249,13 @@ fn redo_flags(flags: TransferFlags, sparse_enabled: bool) -> TransferFlags {
 
 /// Emits upstream's retained-update warning for a failed verification.
 ///
-/// upstream: receiver.c:1071-1094. The line is gated behind
-/// `INFO_GTE(NAME, 1) || stdout_format_has_i` (receiver.c:1072) and carries the
+/// upstream: receiver.c:1087-1110. The line is gated behind
+/// `INFO_GTE(NAME, 1) || stdout_format_has_i` (receiver.c:1088) and carries the
 /// transfer-relative name, never an absolute path.
 ///
 /// `keptstr` is unconditionally `"retained"`. Upstream reaches that string
-/// because `--append` implies `--inplace` (options.c:2400-2411), which takes
-/// receiver.c:1073-1078 past both the `"discarded"` and the
+/// because `--append` implies `--inplace` (options.c:2409-2420), which takes
+/// receiver.c:1089-1094 past both the `"discarded"` and the
 /// `"put into partial-dir"` leg. The local executor arrives at the same place by
 /// a different route: this warning is reachable only when `append_offset > 0`,
 /// which pins `select_write_strategy` to `WriteStrategy::Append`, and that
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn redo_restores_sparse_writes_from_the_session_setting() {
-        // upstream: receiver.c:761,771 negates sparse_files alongside
+        // upstream: receiver.c:777,787 negates sparse_files alongside
         // append_mode, so --sparse suppressed during the append comes back for
         // the redo. Without --sparse it must stay off.
         assert!(redo_flags(flags(), true).use_sparse_writes);

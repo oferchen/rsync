@@ -2,7 +2,7 @@
 //! path resolution injected.
 //!
 //! Upstream opens an in-place output through a fixed sequence
-//! (`receiver.c:1195-1224`):
+//! (`receiver.c:1212-1241`):
 //!
 //! 1. `O_WRONLY|O_CREAT` at the target;
 //! 2. on Linux, a retry without `O_CREAT` when that returned `EACCES` - the
@@ -15,7 +15,7 @@
 //! Arm 3 is deliberately **not** `#ifdef linux`: a read-only destination is an
 //! `EACCES` everywhere.
 //!
-//! *Which* resolver each arm uses is upstream's second axis. `receiver.c:1204`
+//! *Which* resolver each arm uses is upstream's second axis. `receiver.c:1221`
 //! threads `one_inplace` into `secure_recv_open()` at every arm: the ordinary
 //! destination leaf is opened by path, but the `--partial-dir` staging target
 //! of a `one_inplace` update is an operator-supplied path walked component by
@@ -35,7 +35,7 @@ use std::path::Path;
 /// How an in-place output path is resolved at every arm of the open chain.
 ///
 /// upstream: the `one_inplace` argument to `secure_recv_open()`
-/// (`receiver.c:1204-1214`).
+/// (`receiver.c:1221-1231`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InplaceResolution {
     /// Resolve by path.
@@ -72,7 +72,7 @@ impl InplaceResolution {
         match self {
             Self::Direct => {
                 use std::os::unix::fs::OpenOptionsExt as _;
-                // upstream: receiver.c:216 - O_NOFOLLOW refuses a symlink at the
+                // upstream: receiver.c:229 - O_NOFOLLOW refuses a symlink at the
                 // leaf, so the mode dance below cannot be redirected.
                 fs::OpenOptions::new()
                     .read(true)
@@ -99,7 +99,7 @@ impl InplaceResolution {
     ) -> io::Result<fs::File> {
         #[cfg(unix)]
         if self == Self::OperatorWalk {
-            // upstream: receiver.c:1205 - `secure_recv_open(fnametmp,
+            // upstream: receiver.c:1222 - `secure_recv_open(fnametmp,
             // O_WRONLY|O_CREAT, 0600, one_inplace)`. The final mode comes from
             // `set_file_attrs()` after the transfer, so 0600 is what the file
             // wears only while it is being written.
@@ -122,7 +122,7 @@ impl InplaceResolution {
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.0/receiver.c:1195-1224` - the chain in full.
+/// - `rsync-3.5.1/receiver.c:1212-1241` - the chain in full.
 ///
 /// # Errors
 ///
@@ -134,7 +134,7 @@ pub fn open_inplace_output(
 ) -> io::Result<fs::File> {
     let opened = resolution.open_write(path, true, truncate);
 
-    // upstream: receiver.c:1211-1218 - "Maybe the error was due to
+    // upstream: receiver.c:1228-1235 - "Maybe the error was due to
     // protected_regular setting?" Under that sysctl the kernel refuses an
     // O_CREAT open of an existing file we do not own in a sticky,
     // world-writable directory. The file exists on this path, so drop O_CREAT.
@@ -146,7 +146,7 @@ pub fn open_inplace_output(
         other => other,
     };
 
-    // upstream: receiver.c:1219-1224 - the read-only-destination arm. NOT
+    // upstream: receiver.c:1236-1241 - the read-only-destination arm. NOT
     // platform-gated: a read-only file is an EACCES everywhere.
     #[cfg(unix)]
     let opened = match opened {

@@ -47,7 +47,7 @@ impl ReceiverContext {
         self.defer_itemize = true;
         // Interleave plain `-v` (name-only, no `-i`) client-mode file names with
         // --progress in flist order, matching upstream log_before_transfer
-        // (receiver.c:1008-1012). Set identically to run_pipelined: the flags
+        // (receiver.c:1024-1028). Set identically to run_pipelined: the flags
         // are read by the shared run_pipeline_loop_decoupled, so leaving them
         // unset here left the default feature set (this driver) rendering names
         // as an end-of-run block while the shipped binary interleaved them.
@@ -60,11 +60,11 @@ impl ReceiverContext {
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 
-        // upstream: main.c:1383-1392 - a client handed an empty list skips
+        // upstream: main.c:1401-1410 - a client handed an empty list skips
         // do_recv() entirely and reports the io_error the end marker carried.
         // Checked before the sub-list fetch below because upstream's own
         // `if (inc_recurse && file_total == 1) recv_additional_file_list()`
-        // (main.c:1380-1381) cannot fire with a file_total of 0 either.
+        // (main.c:1398-1399) cannot fire with a file_total of 0 either.
         if self.is_empty_client_flist(file_count) {
             return self.finish_empty_client_flist(reader, writer);
         }
@@ -117,7 +117,7 @@ impl ReceiverContext {
             io_error: self.flist_reader_io_error() | self.flist_io_error,
             ..Default::default()
         };
-        // upstream: receiver.c:653-654 DEBUG_GTE(RECV, 1)
+        // upstream: receiver.c:669-670 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files({}) starting", file_count);
 
         let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();
@@ -161,7 +161,7 @@ impl ReceiverContext {
                     Some((is_new, iflags_raw)) => {
                         if is_new {
                             stats.directories_created += 1;
-                            // upstream: receiver.c:736-738 - a new directory
+                            // upstream: receiver.c:752-754 - a new directory
                             // (ITEM_IS_NEW) bumps stats.created_dirs. Counts the
                             // pre-flight-mkdir'd transfer root too, so the
                             // "Number of created files" dir sub-count matches.
@@ -248,7 +248,7 @@ impl ReceiverContext {
         );
 
         // Both assigned by every arm of the mode match below.
-        // upstream: receiver.c:784 total_transferred_size, summed with files_transferred.
+        // upstream: receiver.c:800 total_transferred_size, summed with files_transferred.
         let mut files_transferred: usize;
         let mut transferred_file_size: u64;
         let mut bytes_received: u64 = 0;
@@ -397,7 +397,7 @@ impl ReceiverContext {
             }
         }
 
-        // upstream: receiver.c:694-695 then :551-552 - handle_delayed_updates()
+        // upstream: receiver.c:710-711 then :551-552 - handle_delayed_updates()
         // renames each delay-updates leader to its final path in phase 2, and
         // only then are followers hard-linked to it. See
         // finalize_delayed_updates_and_hardlinks for the ordering rationale.
@@ -411,9 +411,9 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.finalize_delayed_updates_and_hardlinks(&setup.dest_dir, &all_delayed_updates, writer)?;
 
-        // upstream: io.c:1702-1712 - see the matching drain in `pipelined.rs`.
+        // upstream: io.c:1740-1750 - see the matching drain in `pipelined.rs`.
         // The sender's MSG_IO_ERROR arrives before the phase-1 NDX_DONE
-        // (sender.c:809-817), so folding it in here is what lets the late sweep
+        // (sender.c:811-820), so folding it in here is what lets the late sweep
         // honour `delete_in_dir`'s IOERR_GENERAL guard (generator.c:304-311)
         // instead of deleting entries upstream preserves.
         stats.io_error |= reader.take_io_error();
@@ -446,7 +446,7 @@ impl ReceiverContext {
         stats.literal_data = literal_data;
         stats.matched_data = matched_data;
         stats.total_source_bytes = self.total_source_size();
-        // upstream: flist.c:2993-3006 - the per-type tallies were bumped as
+        // upstream: flist.c:3236-3249 - the per-type tallies were bumped as
         // each entry (sub-lists included) was read, so they stay exact even
         // after completed segments are reclaimed. Read after the loop because
         // incremental recursion keeps appending sub-list segments until then.
@@ -460,9 +460,9 @@ impl ReceiverContext {
         }
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
-        // upstream: main.c:803-805 - the pre-flight mkdir of the destination
+        // upstream: main.c:816-818 - the pre-flight mkdir of the destination
         // root sets FLAG_DIR_CREATED on flist[0], so the generator itemizes it
-        // with ITEM_IS_NEW and receiver.c:736-738 counts created_dirs for it.
+        // with ITEM_IS_NEW and receiver.c:752-754 counts created_dirs for it.
         // oc creates the root out-of-band (ensure_dest_root_exists), so the root
         // entry is seen as "existing" in the dir loop above and not counted
         // there; count it here so the created-dir total includes the synthesized
@@ -473,7 +473,7 @@ impl ReceiverContext {
         // Fold the per-type created tally accumulated across the directory,
         // symlink, special, and file-transfer passes into the returned stats so
         // the client reconstructs the "Number of created files" breakdown.
-        // upstream: receiver.c:733-746 - stats.created_* accumulated locally.
+        // upstream: receiver.c:749-762 - stats.created_* accumulated locally.
         stats.created_stats = self.created_stats.get();
         // Rejoin the make-room deletions with the sweep's tally; upstream counts
         // both into the same `stats.deleted_*` globals (delete.c:241-256).
@@ -488,8 +488,8 @@ impl ReceiverContext {
 
         self.finalize_transfer(reader, writer)?;
 
-        // upstream: io.c:1547 - io_error |= val on MSG_IO_ERROR from the sender.
-        // The sender emits MSG_IO_ERROR (sender.c:485-486) for source files that
+        // upstream: io.c:1573 - io_error |= val on MSG_IO_ERROR from the sender.
+        // The sender emits MSG_IO_ERROR (sender.c:486-487) for source files that
         // vanished or could not be opened during its send loop. Fold those bits
         // into the exit-code io_error so the receiver reports 24/23; MSG_NO_SEND
         // alone only skips the file and carries no exit-code bits.
@@ -497,7 +497,7 @@ impl ReceiverContext {
 
         // upstream: log.c:310-311 - every MSG_ERROR_XFER read off the wire sets
         // got_xfer_error, the only report an ENOENT source argument produces
-        // (flist.c:2431 withholds IOERR_GENERAL for it).
+        // (flist.c:2671 withholds IOERR_GENERAL for it).
         stats.got_xfer_error = reader.xfer_error_count() > 0 || self.got_xfer_error.get();
 
         Ok(stats)
@@ -606,7 +606,7 @@ impl ReceiverContext {
             io_error: self.flist_reader_io_error() | self.flist_io_error,
             ..Default::default()
         };
-        // upstream: receiver.c:653-654 DEBUG_GTE(RECV, 1)
+        // upstream: receiver.c:669-670 DEBUG_GTE(RECV, 1)
         debug_log!(Recv, 1, "recv_files({}) starting", file_count);
 
         let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();
@@ -892,7 +892,7 @@ impl ReceiverContext {
             all_delayed_updates.extend(redo_delayed);
         }
 
-        // upstream: receiver.c:694-695 then :551-552 - delay-updates rename then
+        // upstream: receiver.c:710-711 then :551-552 - delay-updates rename then
         // follower hard-link, after every transfer.
         #[cfg(unix)]
         self.finalize_delayed_updates_and_hardlinks(
@@ -959,7 +959,7 @@ impl ReceiverContext {
     /// # Upstream Reference
     ///
     /// - `generator.c:2219-2239` - `check_for_finished_files` frees `first_flist`
-    ///   and writes `NDX_DONE`; `sender.c:246-261` echoes it.
+    ///   and writes `NDX_DONE`; `sender.c:249-264` echoes it.
     fn release_completed_segment_if_older<Rd: Read, W: Write + ?Sized>(
         &mut self,
         cur_segment_idx: usize,
@@ -1192,10 +1192,10 @@ mod itemize_order_tests {
     /// row and the created-directory tally are still produced.
     ///
     /// WHY all three assertions: upstream suppresses only the syscall, never the
-    /// reporting. `syscall.c:1010-1016 do_mkdir()` is `if (dry_run) return 0;`
+    /// reporting. `syscall.c:1149-1155 do_mkdir()` is `if (dry_run) return 0;`
     /// and `rsync.c:498-499 set_file_attrs()` returns early, while
     /// `generator.c:1480-1483 itemize()` and the receiver's `created_dirs`
-    /// counter (`receiver.c:732-737`) run unconditionally. Asserting only the
+    /// counter (`receiver.c:748-753`) run unconditionally. Asserting only the
     /// absent directory would let a future early-return silence output upstream
     /// prints, trading one fidelity bug for another; asserting only the row
     /// would let the mkdir come back.
@@ -1331,7 +1331,7 @@ mod itemize_order_tests {
             let mut ctx = ReceiverContext::new_for_test(&hs, config);
 
             // `num_segments` segments of `per` entries each; the +1 NDX gap
-            // between segments mirrors upstream flist.c:2966.
+            // between segments mirrors upstream flist.c:3209.
             let per = 3usize;
             ctx.file_list = (0..num_segments * per)
                 .map(|i| FileEntry::new_file(format!("f{i}").into(), 1, 0o100644))

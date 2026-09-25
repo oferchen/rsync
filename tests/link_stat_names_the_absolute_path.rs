@@ -2,7 +2,7 @@
 //! by its absolute path, the way upstream's `full_fname()` does.
 //!
 //! Upstream renders every path inside a sender diagnostic through
-//! `full_fname()` (`util1.c:1433-1464`), which prefixes a relative `fn` with
+//! `full_fname()` (`util1.c:1528-1559`), which prefixes a relative `fn` with
 //! `curr_dir`:
 //!
 //! ```c
@@ -17,7 +17,7 @@
 //! ```
 //!
 //! `send_file_list()` has already split the operand into a `dir`/`fn` pair and
-//! `push_dir()`ed into `dir` before the `link_stat()` at `flist.c:2697`, so
+//! `push_dir()`ed into `dir` before the `link_stat()` at `flist.c:2937`, so
 //! `curr_dir` is the operand's parent and the rendered name is absolute. From
 //! `/tmp/t1158`, rsync 3.5.0 reports `-a nope dst/` as:
 //!

@@ -249,7 +249,7 @@ mod permission_denied {
     /// 0o644 IS readable, so the pre-fix probe passed and the run limped to a
     /// divergent exit 23.
     ///
-    /// upstream: main.c:763-768 get_local_name() ->
+    /// upstream: main.c:776-781 get_local_name() ->
     /// `change_dir(dest_path, CD_NORMAL)` -> exit_cleanup(RERR_FILESELECT).
     #[test]
     fn untraversable_destination_root_fails_file_selection() {

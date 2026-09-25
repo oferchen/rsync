@@ -1,7 +1,7 @@
 /// An unresolvable `hosts deny` hostname token must fail CLOSED, and an
 /// unresolvable `hosts allow` token must NOT.
 ///
-/// upstream: access.c:57-63 - the forward-DNS branch of `match_hostname`
+/// upstream: access.c:68-74 - the forward-DNS branch of `match_hostname`
 /// returns the caller's `deny` flag when `gethostbyname` returns NULL:
 ///
 /// ```c
@@ -12,8 +12,8 @@
 /// }
 /// ```
 ///
-/// The flag is threaded per call - 0 for the allow list (access.c:284), 1 for
-/// the deny list (access.c:293) - so ONE branch produces opposite answers for
+/// The flag is threaded per call - 0 for the allow list (access.c:295), 1 for
+/// the deny list (access.c:304) - so ONE branch produces opposite answers for
 /// the two lists. Sibling of CVE-2026-70452, which fixed the reverse-lookup
 /// path only. oc previously returned "no match" for both, so a `hosts deny`
 /// naming a host whose DNS was unavailable admitted every peer.
@@ -30,7 +30,7 @@ fn module_hostname_deny_unresolvable_token_fails_closed() {
     let deny_only = module_with_host_patterns(&[], &["unresolvable.example.com"]);
     assert!(
         !deny_only.permits(peer, PeerHost::new(reverse, true)),
-        "an unresolvable `hosts deny` token must refuse the peer (access.c:57-63)"
+        "an unresolvable `hosts deny` token must refuse the peer (access.c:68-74)"
     );
 
     // THE ASYMMETRY, and the reason `deny` is a parameter rather than a global

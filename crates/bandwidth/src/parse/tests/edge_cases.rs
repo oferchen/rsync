@@ -63,7 +63,7 @@ mod size_suffixes {
     #[test]
     fn byte_suffix_quantizes_to_whole_kib() {
         // B/b suffix means raw bytes (no multiplier), but upstream then rounds
-        // the rate to whole KiB (options.c:1718 `bwlimit = (size + 512) / 1024`)
+        // the rate to whole KiB (options.c:1724 `bwlimit = (size + 512) / 1024`)
         // and paces on that. `1024b` is already 1 KiB; `512B` rounds up to 1 KiB.
         let result = parse_bandwidth_argument("1024b").expect("parse succeeds");
         assert_eq!(result, NonZeroU64::new(1024));
@@ -76,7 +76,7 @@ mod size_suffixes {
     fn decimal_suffixes_quantize_to_whole_kib() {
         // KB/MB/GB suffixes use 1000-based (decimal) multipliers, then upstream
         // rounds the resulting byte rate to whole KiB and paces on that
-        // (options.c:1718 `bwlimit = (size + 512) / 1024`).
+        // (options.c:1724 `bwlimit = (size + 512) / 1024`).
         let kb = parse_bandwidth_argument("1KB").expect("parse succeeds");
         assert_eq!(kb, NonZeroU64::new(1024)); // (1000 + 512) / 1024 = 1 KiB
 
@@ -575,14 +575,14 @@ mod case_sensitivity {
         let lower = parse_bandwidth_argument("512b").expect("parse succeeds");
         let upper = parse_bandwidth_argument("512B").expect("parse succeeds");
         assert_eq!(lower, upper);
-        // 512 bytes rounds up to the 1 KiB pacing floor (options.c:1718).
+        // 512 bytes rounds up to the 1 KiB pacing floor (options.c:1724).
         assert_eq!(lower, NonZeroU64::new(1024));
     }
 
     #[test]
     fn decimal_suffix_all_case_variations() {
         // KB, Kb, kB, kb all work: 1000-byte decimal rate, rounded to the 1 KiB
-        // pacing floor (options.c:1718 `bwlimit = (size + 512) / 1024`).
+        // pacing floor (options.c:1724 `bwlimit = (size + 512) / 1024`).
         let kb_upper = parse_bandwidth_argument("1KB").expect("parse succeeds");
         let kb_mixed1 = parse_bandwidth_argument("1Kb").expect("parse succeeds");
         let kb_mixed2 = parse_bandwidth_argument("1kB").expect("parse succeeds");
@@ -672,7 +672,7 @@ mod minimum_values {
     #[test]
     fn minimum_512_bytes_is_valid() {
         // 512 bytes is upstream's accepted floor (parse_size_arg min), and it
-        // rounds up to the 1 KiB pacing rate (options.c:1718).
+        // rounds up to the 1 KiB pacing rate (options.c:1724).
         let result = parse_bandwidth_argument("512b").expect("parse succeeds");
         assert_eq!(result, NonZeroU64::new(1024));
     }
@@ -804,7 +804,7 @@ mod rounding {
     #[test]
     fn byte_suffix_quantized_to_kib() {
         // A byte suffix skips the suffix multiplier, but the final rate is still
-        // rounded to whole KiB for pacing: 513 bytes -> 1 KiB (options.c:1718).
+        // rounded to whole KiB for pacing: 513 bytes -> 1 KiB (options.c:1724).
         let result = parse_bandwidth_argument("513b").expect("parse succeeds");
         assert_eq!(result, NonZeroU64::new(1024));
     }

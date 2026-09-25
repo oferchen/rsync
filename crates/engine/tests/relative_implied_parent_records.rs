@@ -16,8 +16,8 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:1937 send_implied_dirs()` - one `FLAG_IMPLIED_DIR` entry per ancestor.
-//! - `flist.c:2258` - `protocol_version >= 30` forces `implied_dirs = 1` for the flist.
+//! - `flist.c:2162 send_implied_dirs()` - one `FLAG_IMPLIED_DIR` entry per ancestor.
+//! - `flist.c:2497` - `protocol_version >= 30` forces `implied_dirs = 1` for the flist.
 //! - `main.c:387-411 output_itemized_counts()` - the `dir:` breakdown.
 
 #![cfg(unix)]
@@ -152,7 +152,7 @@ fn no_implied_dirs_suppresses_rows_but_still_counts_ancestors() {
 /// A `-R` operand whose implied ancestor is a SYMLINK to a directory:
 /// `<from>/./link/c.txt` where `link -> real`. Upstream sets
 /// `copy_links = xfer_dirs = 1` around the implied-ancestor loop
-/// (`flist.c:1985`), so a symlinked ancestor is FOLLOWED and emitted as a real
+/// (`flist.c:2210`), so a symlinked ancestor is FOLLOWED and emitted as a real
 /// directory - it earns an itemize row and counts under `--stats`. The
 /// local-copy executor previously stat'd ancestors with `symlink_metadata`,
 /// which reports the symlink as a non-directory and dropped it, losing the row

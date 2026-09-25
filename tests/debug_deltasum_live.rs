@@ -188,7 +188,7 @@ fn local_delta_scan_emits_deltasum2() {
 /// Level 3 adds the generator's per-chunk sums and the receiver's per-block
 /// application, both of which the local fused loop really performs.
 ///
-/// upstream: generator.c:817-822 `chunk[%s] offset=...`, receiver.c:609-614
+/// upstream: generator.c:817-822 `chunk[%s] offset=...`, receiver.c:625-630
 /// `chunk[%d] of size %ld at %s offset=%s`, :552-555 `data recv %d at %s`.
 #[test]
 fn local_delta_scan_emits_deltasum3_chunk_detail() {
@@ -237,7 +237,7 @@ fn local_deltasum1_is_the_total_line_only() {
 /// The network SENDER path is a different scanner from the local one, so it
 /// needs its own live assertion.
 ///
-/// upstream: sender.c:348-350 `count=/n=/rem=`, :760-763 `send_files mapped`,
+/// upstream: sender.c:349-351 `count=/n=/rem=`, :760-763 `send_files mapped`,
 /// :768-769 `calling match_sums`, match.c:465-466 `sending file_sum`.
 #[cfg(unix)]
 #[test]
@@ -273,7 +273,7 @@ fn wire_push_sender_emits_deltasum2() {
 /// set of emission sites.
 ///
 /// upstream: generator.c:2358-2361 `gen mapped`, :2363-2364 `generating and
-/// sending sums`, :765-770 the geometry, receiver.c:498-501 `recv mapped`,
+/// sending sums`, :765-770 the geometry, receiver.c:514-517 `recv mapped`,
 /// :671-673 `got file_sum`.
 #[cfg(unix)]
 #[test]

@@ -1,9 +1,9 @@
 //! Tests for the sender-role gating of `--bwlimit` on the server transfer body.
 //!
 //! These encode the upstream invariant that only the sender paces its own
-//! outbound socket writes: `main.c:1068` disables the receiver's throttle
+//! outbound socket writes: `main.c:1081` disables the receiver's throttle
 //! (`bwlimit_writemax = 0`), while the sender clamps and sleeps per write
-//! (`io.c:846,861`). The wiring carries the effective rate on
+//! (`io.c:864,879`). The wiring carries the effective rate on
 //! `ConnectionConfig::bwlimit`; [`crate::sender_bandwidth_limiter`] turns it
 //! into a live limiter only for the Generator (sender) role.
 
@@ -31,7 +31,7 @@ fn components(rate: u64) -> BandwidthLimitComponents {
 
 /// The sender (Generator) installs a limiter when a non-zero `--bwlimit` is set.
 ///
-/// WHY: the sender must pace its socket writes (upstream `io.c:846,861`), so a
+/// WHY: the sender must pace its socket writes (upstream `io.c:864,879`), so a
 /// configured rate on the Generator role must materialise a live limiter whose
 /// rate matches - otherwise `--bwlimit` is inert on the network path, the exact
 /// pre-fix bug.
@@ -44,7 +44,7 @@ fn generator_with_bwlimit_builds_limiter() {
 
 /// The receiver never throttles, even when a `--bwlimit` rate is present.
 ///
-/// WHY: upstream `main.c:1083` sets `bwlimit_writemax = 0` on the receiver, so
+/// WHY: upstream `main.c:1096` sets `bwlimit_writemax = 0` on the receiver, so
 /// its writes (of ACKs / file-list requests) are never paced. Forwarding a
 /// `--bwlimit` value to a receiver (upstream always forwards it) must remain a
 /// no-op on its writer.
@@ -53,7 +53,7 @@ fn receiver_never_throttles() {
     let config = config_with_bwlimit(ServerRole::Receiver, Some(components(64 * 1024)));
     assert!(
         sender_bandwidth_limiter(&config).is_none(),
-        "receiver must not pace its writes (main.c:1068)"
+        "receiver must not pace its writes (main.c:1081)"
     );
 }
 
@@ -76,7 +76,7 @@ fn generator_without_bwlimit_is_passthrough() {
 /// A daemon-clamped rate reaches the live sender limiter unchanged.
 ///
 /// WHY: `server_config.rs` clamps the client rate to the daemon cap
-/// (upstream: options.c:2392 min(client, daemon)) and carries the result on
+/// (upstream: options.c:2401 min(client, daemon)) and carries the result on
 /// `ConnectionConfig::bwlimit`; the effective rate must reach the live limiter
 /// so the sender paces at exactly that rate, not the unclamped client value.
 #[test]

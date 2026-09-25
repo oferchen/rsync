@@ -29,8 +29,8 @@
 /// # Upstream Reference
 ///
 /// - `cleanup.c:265 close_all()` - sender-side close after `_exit_cleanup`.
-/// - `io.c:943-963 noop_io_until_death()` - receiver-side drain pattern.
-/// - `main.c:893-923 read_final_goodbye()` - sender's NDX exchange.
+/// - `io.c:961-981 noop_io_until_death()` - receiver-side drain pattern.
+/// - `main.c:906-936 read_final_goodbye()` - sender's NDX exchange.
 #[cfg(unix)]
 #[test]
 fn daemon_compress_pull_drains_peer_goodbye_for_uts_v3_cluster_a() {

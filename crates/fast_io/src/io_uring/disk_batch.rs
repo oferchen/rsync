@@ -34,7 +34,7 @@ use super::config::{IoUringConfig, is_io_uring_available};
 /// Default write buffer capacity for the batched disk writer (256 KB).
 ///
 /// Matches upstream rsync's `wf_writeBufSize = WRITE_SIZE * 8`
-/// (fileio.c:161).
+/// (fileio.c:165).
 const DEFAULT_BUFFER_CAPACITY: usize = 256 * 1024;
 
 /// Batched io_uring disk writer for the disk commit phase.

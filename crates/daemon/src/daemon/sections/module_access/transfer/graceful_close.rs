@@ -11,7 +11,7 @@
 // itself completed correctly.
 //
 // Upstream rsync never hits this because the daemon-receiver child keeps reading
-// the socket (`io.c:943 noop_io_until_death()` loops on `read_buf()` until the
+// the socket (`io.c:961 noop_io_until_death()` loops on `read_buf()` until the
 // peer dies) right up to process exit, so the kernel receive buffer is empty by
 // the time `cleanup.c:265 close_all()` runs. The threaded daemon collapses that
 // pattern into an explicit drain-to-EOF here: read the socket until the peer
@@ -85,10 +85,10 @@ impl PeerDrainStream for TcpStream {
 /// result has already been decided, so a drain hiccup must never change the
 /// transfer's outcome.
 ///
-/// upstream: `io.c:797 perform_io()` retries `read()` on
+/// upstream: `io.c:815 perform_io()` retries `read()` on
 /// `EINTR`/`EWOULDBLOCK`/`EAGAIN` (treats them as zero progress and loops) and
 /// treats only other errors as fatal; it ends solely on real EOF
-/// (`io.c:790`, `n == 0`). `io.c:943 noop_io_until_death()` loops `read_buf()`
+/// (`io.c:808`, `n == 0`). `io.c:961 noop_io_until_death()` loops `read_buf()`
 /// on that contract until the peer FINs, bounded by `set_io_timeout`.
 fn drain_until_peer_eof<S: PeerDrainStream + ?Sized>(stream: &mut S, timeout: Duration) {
     let _ = stream.set_drain_timeout(Some(timeout));
@@ -100,10 +100,10 @@ fn drain_until_peer_eof<S: PeerDrainStream + ?Sized>(stream: &mut S, timeout: Du
             Ok(0) => break,
             // More trailing bytes (peer goodbye / codec trailer); keep draining.
             Ok(_) => continue,
-            // Interrupted syscall (EINTR): not EOF, always retry - upstream io.c:279/797.
+            // Interrupted syscall (EINTR): not EOF, always retry - upstream io.c:297/815.
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
             // Idle-socket per-read timeout / EAGAIN: retry until the total budget
-            // is spent, then stop so the close can proceed - upstream io.c:797.
+            // is spent, then stop so the close can proceed - upstream io.c:815.
             Err(ref e)
                 if matches!(
                     e.kind(),
@@ -190,7 +190,7 @@ mod graceful_close_tests {
     /// return only after a real `Ok(0)` EOF, having consumed every trailing byte
     /// in between. If it bailed early on either transient error (the pre-fix
     /// behaviour), the peer's goodbye bytes would be left unread and the close
-    /// would abort with a RST. upstream: io.c:322/376 retry EINTR/EAGAIN.
+    /// would abort with a RST. upstream: io.c:340/394 retry EINTR/EAGAIN.
     #[test]
     fn retries_transient_errors_and_returns_only_on_eof() {
         let mut reader = ScriptedReader {

@@ -38,7 +38,7 @@
 //! # Why these cells run unprivileged
 //!
 //! Upstream refuses only `st_uid != 0 && st_uid != trusted_uid`
-//! (`syscall.c:406`), so uid 0 and the euid take one identical follow path into
+//! (`syscall.c:499`), so uid 0 and the euid take one identical follow path into
 //! one identical confinement check. The daemon spawned here runs as the test's
 //! own uid, so a plant owned by that uid is exactly the root-owned case a
 //! privileged daemon would see. The distinct third-uid REFUSAL arm stays with
@@ -46,13 +46,13 @@
 //!
 //! # Upstream Reference
 //!
-//! - `rsync-3.5.0/backup.c:443-449` `make_backup()` - `operator_path_resolve =
+//! - `rsync-3.5.1/backup.c:443-449` `make_backup()` - `operator_path_resolve =
 //!   1` around the entire backup.
-//! - `rsync-3.5.0/backup.c:226-247` `link_or_rename()` - `do_link_at` first,
+//! - `rsync-3.5.1/backup.c:226-247` `link_or_rename()` - `do_link_at` first,
 //!   `do_rename_at` on failure. Both tiers are inside the region above.
-//! - `rsync-3.5.0/syscall.c:581-596` `owner_walk_parent()` - the resolved-leaf
+//! - `rsync-3.5.1/syscall.c:727-735` `owner_walk_parent()` - the resolved-leaf
 //!   `abspath_outside_confinement()` check the region arms.
-//! - `rsync-3.5.0/receiver.c:694-695` `handle_delayed_updates()` - a failed
+//! - `rsync-3.5.1/receiver.c:710-711` `handle_delayed_updates()` - a failed
 //!   backup SKIPS the update rather than overwriting the pre-image anyway.
 
 #![cfg(unix)]
@@ -341,7 +341,7 @@ fn assert_confined(outcome: &Outcome, what: &str) {
         Some(PRE_IMAGE),
         "{what}: a refused backup must leave the destination alone - the \
          pre-image is exactly what the backup could not save, so overwriting \
-         it anyway destroys it (upstream receiver.c:694-695){}",
+         it anyway destroys it (upstream receiver.c:710-711){}",
         outcome.diagnostics(),
     );
     assert!(
@@ -372,7 +372,7 @@ fn a_backup_dir_symlink_leaving_the_module_must_not_receive_the_pre_image() {
 /// `make_backup()` site with its own rename: a fix applied only to the
 /// disk-commit path would leave this one escaping.
 ///
-/// upstream: `receiver.c:685-720` `handle_delayed_updates()`.
+/// upstream: `receiver.c:701-736` `handle_delayed_updates()`.
 #[test]
 fn a_delayed_update_backup_must_not_leave_the_module() {
     let outcome = measured(
@@ -494,7 +494,7 @@ fn an_ordinary_backup_dir_works_under_delay_updates() {
     // The DISCRIMINATING assertion. Under `--delay-updates` the backup is not
     // taken by the per-file commit at all - `commit.rs` defers it - so
     // `handle_delayed_updates` is its ONLY caller, mirroring upstream
-    // receiver.c:694 `if (make_backups > 0 && !make_backup(fname, False))`.
+    // receiver.c:710 `if (make_backups > 0 && !make_backup(fname, False))`.
     // Every other pin in this cell holds just as well if the sweep never
     // reached the ladder.
     assert_eq!(

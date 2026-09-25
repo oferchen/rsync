@@ -102,7 +102,7 @@ impl FileListWriter {
             xflags |= XMIT_SAME_TIME as u32;
         }
 
-        // upstream: flist.c:475 - set XMIT_SAME_UID when !preserve_uid OR
+        // upstream: flist.c:700 - set XMIT_SAME_UID when !preserve_uid OR
         // (uid matches previous AND not the first entry). The *lastname guard
         // prevents false "same" on the first entry where prev_uid is zero.
         let entry_uid = entry.uid().unwrap_or(0);
@@ -111,7 +111,7 @@ impl FileListWriter {
             xflags |= XMIT_SAME_UID as u32;
         }
 
-        // upstream: flist.c:485 - same pattern as UID
+        // upstream: flist.c:710 - same pattern as UID
         let entry_gid = entry.gid().unwrap_or(0);
         if !self.preserve.gid || (entry_gid == self.state.prev_gid() && not_first_entry) {
             xflags |= XMIT_SAME_GID as u32;
@@ -149,7 +149,7 @@ impl FileListWriter {
         }
 
         if is_special {
-            // upstream: flist.c:462-472 - special files don't need a real rdev.
+            // upstream: flist.c:687-697 - special files don't need a real rdev.
             // Set XMIT_SAME_RDEV_MAJOR unconditionally for efficiency, and
             // also XMIT_RDEV_MINOR_8_PRE30 for protocol 28-29.
             xflags |= (XMIT_SAME_RDEV_MAJOR as u32) << 8;
@@ -195,7 +195,7 @@ impl FileListWriter {
         } else if self.protocol.as_u8() >= 28
             && let Some(dev) = entry.hardlink_dev()
         {
-            // upstream: flist.c:542 - XMIT_HLINKED set for ALL hardlink entries,
+            // upstream: flist.c:767 - XMIT_HLINKED set for ALL hardlink entries,
             // not just protocol 30+. Protocol 28-29 also sets this flag.
             xflags |= (XMIT_HLINKED as u32) << 8;
             if dev == self.state.prev_hardlink_dev() {
@@ -213,7 +213,7 @@ impl FileListWriter {
     ///
     /// # Upstream Reference
     ///
-    /// `flist.c:481-482,491-492` gates the inline name flags on `inc_recurse`:
+    /// `flist.c:706-707,716-717` gates the inline name flags on `inc_recurse`:
     /// `if (inc_recurse && user_name) xflags |= XMIT_USER_NAME_FOLLOWS`. Without
     /// incremental recursion there is no per-file inline name; the names travel
     /// only in the trailing id-list (`send_id_lists`, uidlist.c). Setting the

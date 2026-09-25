@@ -26,7 +26,7 @@ use crate::local_copy::LocalCopyError;
 /// size - with `KEEP_SIZE` the reserved blocks sit beyond EOF and the punch
 /// silently does nothing, leaving the file fully allocated. So when holes will
 /// also be punched (`--sparse`), upstream reserves at full size instead.
-/// upstream: syscall.c:2597 do_fallocate() - `int opts = (inplace ||
+/// upstream: syscall.c:2736 do_fallocate() - `int opts = (inplace ||
 /// preallocate_files) && sparse_files <= 0 ? DO_FALLOC_OPTIONS : 0;`
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Reservation {
@@ -39,7 +39,7 @@ pub(crate) enum Reservation {
 
 impl Reservation {
     /// Selects the reservation upstream would make for this sparse setting.
-    /// upstream: syscall.c:2597 - `sparse_files <= 0` is what selects KEEP_SIZE.
+    /// upstream: syscall.c:2736 - `sparse_files <= 0` is what selects KEEP_SIZE.
     pub(crate) const fn for_sparse(sparse: bool) -> Self {
         if sparse {
             Self::FullSize
@@ -77,8 +77,8 @@ const fn available(reservation: Reservation) -> Reservation {
 /// for [`Reservation::FullSize`]. The sparse writer compares an interior zero
 /// run's start against it to choose `do_punch_hole()` over a plain `lseek()`, so
 /// a stray `0` here silently leaves `--preallocate --sparse` files fully
-/// allocated - the exact regression upstream records at syscall.c:2622.
-/// upstream: syscall.c:2589 do_fallocate(); receiver.c:479
+/// allocated - the exact regression upstream records at syscall.c:2761.
+/// upstream: syscall.c:2728 do_fallocate(); receiver.c:495
 /// `preallocated_len = do_fallocate(fd, 0, total_size)`
 pub(crate) fn maybe_preallocate_destination(
     file: &mut fs::File,
@@ -120,7 +120,7 @@ fn preallocate_destination_file(
             ));
         }
 
-        // upstream: syscall.c:2601-2604 - the reservation is deliberately made
+        // upstream: syscall.c:2740-2743 - the reservation is deliberately made
         // one byte off the requested size ("make the length not match the
         // desired length"), and do_fallocate() reports that same perturbed
         // length. total_len > 0 is guaranteed above, so this cannot underflow.
@@ -132,8 +132,8 @@ fn preallocate_destination_file(
 
         let reservation = available(reservation);
         let fd = file.as_fd();
-        // upstream: syscall.c:2584 DO_FALLOC_OPTIONS = FALLOC_FL_KEEP_SIZE, but
-        // syscall.c:2597 selects it only when no holes will be punched. KEEP_SIZE
+        // upstream: syscall.c:2723 DO_FALLOC_OPTIONS = FALLOC_FL_KEEP_SIZE, but
+        // syscall.c:2736 selects it only when no holes will be punched. KEEP_SIZE
         // leaves the file's apparent size (st_size) untouched - it grows only as
         // data is written, preserving the sparse-until-written appearance
         // observable mid-transfer via stat / du --apparent-size - but the blocks
@@ -150,7 +150,7 @@ fn preallocate_destination_file(
         let flags = FallocateFlags::empty();
         match fallocate(fd, flags, 0, length) {
             Ok(()) => Ok(match reservation {
-                // upstream: syscall.c:2622-2629 - with KEEP_SIZE the blocks for
+                // upstream: syscall.c:2761-2768 - with KEEP_SIZE the blocks for
                 // [0, length) are reserved even though the file size stays put,
                 // so report that reserved length. Reporting 0 here is upstream's
                 // pre-3.5.0 behaviour and is precisely why `--preallocate
@@ -158,7 +158,7 @@ fn preallocate_destination_file(
                 // compares `>= 0` and is seeked over rather than punched,
                 // leaving the whole reserved extent allocated.
                 Reservation::KeepSize => length,
-                // upstream: syscall.c:2616-2620 - opts == 0 reports the
+                // upstream: syscall.c:2755-2759 - opts == 0 reports the
                 // resulting allocation, falling back to `length` if fstat fails.
                 Reservation::FullSize => allocated_bytes(file).unwrap_or(length),
             }),
@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
         // Other Unix: fallocate is unavailable, so the fallback extends the
         // file to upstream's deliberately-perturbed `length`
-        // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+        // (upstream: syscall.c:2740-2743; receiver.c:668 trims the excess).
         #[cfg(all(unix, not(target_os = "linux")))]
         assert_eq!(metadata.len(), 999);
         // Windows has no fallocate at all: the file is extended to exactly
@@ -298,7 +298,7 @@ mod tests {
         assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
         // Other Unix: fallocate is unavailable, so the fallback extends the
         // file to upstream's deliberately-perturbed `length`
-        // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+        // (upstream: syscall.c:2740-2743; receiver.c:668 trims the excess).
         #[cfg(all(unix, not(target_os = "linux")))]
         assert_eq!(metadata.len(), 2047);
         // Windows has no fallocate at all: the file is extended to exactly
@@ -410,8 +410,8 @@ mod tests {
     /// allocated. Upstream records that exact regression in its own source: "a
     /// stray 0 here, from 2019's switch to KEEP_SIZE, is why --preallocate
     /// --sparse stopped producing sparse files".
-    // upstream: syscall.c:2629 do_fallocate() - `return length;`
-    // upstream: fileio.c:84 flush_sparse_hole() - `sparse_past_write >= preallocated_len`
+    // upstream: syscall.c:2768 do_fallocate() - `return length;`
+    // upstream: fileio.c:88 flush_sparse_hole() - `sparse_past_write >= preallocated_len`
     #[cfg(target_os = "linux")]
     #[test]
     fn keep_size_reports_the_reserved_length_not_zero() {
@@ -429,7 +429,7 @@ mod tests {
         )
         .expect("preallocate");
 
-        // upstream: syscall.c:2601-2604 - the reservation is one byte off the request.
+        // upstream: syscall.c:2740-2743 - the reservation is one byte off the request.
         assert_eq!(
             reserved,
             one_mib - 1,
@@ -446,7 +446,7 @@ mod tests {
     /// lies INSIDE the file's size where `do_punch_hole()` can deallocate it. An
     /// implementation that ignored the reservation and always used `KEEP_SIZE`
     /// would still satisfy the length assertion above, but fails here.
-    // upstream: syscall.c:2597 - `... && sparse_files <= 0 ? DO_FALLOC_OPTIONS : 0`
+    // upstream: syscall.c:2736 - `... && sparse_files <= 0 ? DO_FALLOC_OPTIONS : 0`
     #[cfg(target_os = "linux")]
     #[test]
     fn sparse_reservation_lands_inside_the_file_size() {
@@ -468,7 +468,7 @@ mod tests {
 
     /// Preallocation that never ran reports no reserved extent, so upstream's
     /// `else` arm (`preallocated_len = 0`) is what the sparse writer sees.
-    // upstream: receiver.c:492 - `preallocated_len = 0;`
+    // upstream: receiver.c:508 - `preallocated_len = 0;`
     #[test]
     fn disabled_preallocation_reports_no_extent() {
         let temp = tempdir().expect("tempdir");
@@ -544,7 +544,7 @@ mod tests {
         assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
         // Other Unix: fallocate is unavailable, so the fallback extends the
         // file to upstream's deliberately-perturbed `length`
-        // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+        // (upstream: syscall.c:2740-2743; receiver.c:668 trims the excess).
         #[cfg(all(unix, not(target_os = "linux")))]
         assert_eq!(metadata.len(), 4095);
         // Windows has no fallocate at all: the file is extended to exactly
@@ -564,7 +564,7 @@ mod tests {
         assert_eq!(metadata.len(), 24, "size grows only as data is written");
         // Other Unix: fallocate is unavailable, so the fallback extends the
         // file to upstream's deliberately-perturbed `length`
-        // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+        // (upstream: syscall.c:2740-2743; receiver.c:668 trims the excess).
         #[cfg(all(unix, not(target_os = "linux")))]
         assert_eq!(metadata.len(), 4095);
         // Windows has no fallocate at all: the file is extended to exactly
@@ -601,7 +601,7 @@ mod tests {
         );
         // Other Unix: fallocate is unavailable, so the fallback extends the
         // file to upstream's deliberately-perturbed `length`
-        // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+        // (upstream: syscall.c:2740-2743; receiver.c:668 trims the excess).
         #[cfg(all(unix, not(target_os = "linux")))]
         assert_eq!(metadata.len(), 4095);
         // Windows has no fallocate at all: the file is extended to exactly
@@ -630,7 +630,7 @@ mod tests {
         assert_eq!(metadata.len(), 0, "KEEP_SIZE must not extend apparent size");
         // Other Unix: fallocate is unavailable, so the fallback extends the
         // file to upstream's deliberately-perturbed `length`
-        // (upstream: syscall.c:2601-2604; receiver.c:652 trims the excess).
+        // (upstream: syscall.c:2740-2743; receiver.c:668 trims the excess).
         #[cfg(all(unix, not(target_os = "linux")))]
         assert_eq!(metadata.len(), 2);
         // Windows has no fallocate at all: the file is extended to exactly
@@ -646,7 +646,7 @@ mod tests {
     /// writing - it grows only as data lands. Before the fix, a plain fallocate
     /// (or the set_len fallback) extended st_size to total_len immediately,
     /// observable via stat / du --apparent-size mid-transfer.
-    // upstream: syscall.c:2584 DO_FALLOC_OPTIONS = FALLOC_FL_KEEP_SIZE
+    // upstream: syscall.c:2723 DO_FALLOC_OPTIONS = FALLOC_FL_KEEP_SIZE
     #[cfg(target_os = "linux")]
     #[test]
     fn preallocate_keep_size_does_not_extend_apparent_size() {

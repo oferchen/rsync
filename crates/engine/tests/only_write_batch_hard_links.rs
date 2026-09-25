@@ -12,11 +12,11 @@
 //!
 //! # Upstream Reference
 //!
-//! - `flist.c:599-625` - `send_file_entry()` flags the first sighting of an
+//! - `flist.c:824-850` - `send_file_entry()` flags the first sighting of an
 //!   inode `XMIT_HLINK_FIRST` and every repeat a follower.
-//! - `flist.c:668-672` - the follower entry is just flags, name and
+//! - `flist.c:893-897` - the follower entry is just flags, name and
 //!   `write_varint(first_hlink_ndx)`.
-//! - `flist.c:1335-1341` - `recv_file_entry()` stamps `F_HL_GNUM` in wire
+//! - `flist.c:1560-1566` - `recv_file_entry()` stamps `F_HL_GNUM` in wire
 //!   order.
 //! - `hlink.c:113-194` - `match_gnums()` clusters by that tag so one member is
 //!   transferred and the rest are linked to it.

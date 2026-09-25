@@ -9,7 +9,7 @@ use std::time::Duration;
 ///
 /// # Upstream Reference
 ///
-/// - `flist.c:2699-2712` - `recv_file_list()` per-type tally.
+/// - `flist.c:2939-2952` - `recv_file_list()` per-type tally.
 /// - `main.c:387-411` - `output_itemized_counts()` derives `reg`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FileTypeTotals {
@@ -122,7 +122,7 @@ pub struct LocalCopySummary {
     fifos_created: u64,
     // Per-type counts of entries whose destination did NOT previously exist,
     // mirroring upstream's `stats.created_{files,symlinks,devices,specials}`
-    // accounting (receiver.c:733-746 / sender.c:301-314): every ITEM_IS_NEW
+    // accounting (receiver.c:749-762 / sender.c:302-315): every ITEM_IS_NEW
     // entry bumps the created counter for its type, whether or not it moved
     // file data. Kept distinct from the "copied" tallies above, which also
     // count in-place updates of pre-existing files/symlinks/nodes. `created_dirs`
@@ -262,7 +262,7 @@ impl LocalCopySummary {
     /// before the transfer). Distinct from [`Self::files_copied`], which also
     /// counts in-place updates of pre-existing files.
     ///
-    /// upstream: receiver.c:733-746 / sender.c:295-308 - the reg portion of
+    /// upstream: receiver.c:749-762 / sender.c:587-600 - the reg portion of
     /// `stats.created_files`, reported by `--stats` as
     /// `Number of created files: N (reg: X, ...)`.
     #[must_use]
@@ -274,7 +274,7 @@ impl LocalCopySummary {
     /// before the transfer). Distinct from [`Self::symlinks_copied`], which
     /// also counts re-pointed pre-existing links.
     ///
-    /// upstream: receiver.c:740-741 `stats.created_symlinks++`.
+    /// upstream: receiver.c:756-757 `stats.created_symlinks++`.
     #[must_use]
     pub const fn created_symlinks(&self) -> u64 {
         self.created_symlinks
@@ -283,7 +283,7 @@ impl LocalCopySummary {
     /// Returns the number of newly created device nodes (destination absent
     /// before the transfer).
     ///
-    /// upstream: receiver.c:743-744 `stats.created_devices++`.
+    /// upstream: receiver.c:759-760 `stats.created_devices++`.
     #[must_use]
     pub const fn created_devices(&self) -> u64 {
         self.created_devices
@@ -292,7 +292,7 @@ impl LocalCopySummary {
     /// Returns the number of newly created special files - FIFOs and sockets -
     /// (destination absent before the transfer).
     ///
-    /// upstream: receiver.c:745-746 `stats.created_specials++`.
+    /// upstream: receiver.c:761-762 `stats.created_specials++`.
     #[must_use]
     pub const fn created_specials(&self) -> u64 {
         self.created_specials
@@ -547,7 +547,7 @@ impl LocalCopySummary {
     ///
     /// Remote transfers take these from the sender's `flist_buildtime` and
     /// `flist_xfertime`: the peer's stats trailer on a pull, the local
-    /// generator on a push (`main.c:374-377`, `flist.c:2773-2801`).
+    /// generator on a push (`main.c:374-377`, `flist.c:3016-3044`).
     #[must_use]
     pub const fn with_file_list_times(mut self, generation_ms: u64, transfer_ms: u64) -> Self {
         self.file_list_generation = Duration::from_millis(generation_ms);
@@ -557,7 +557,7 @@ impl LocalCopySummary {
 
     /// Returns `true` when the transfer materialised the destination root directory.
     ///
-    /// upstream: main.c:816-817 - `rprintf(FINFO, "created directory %s\n", dest_path)`
+    /// upstream: main.c:829-830 - `rprintf(FINFO, "created directory %s\n", dest_path)`
     /// gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. The CLI mirrors this
     /// gate to emit the notice ahead of the per-entry itemize lines so the
     /// upstream `testsuite/itemize.test` golden matches.
@@ -571,7 +571,7 @@ impl LocalCopySummary {
     /// bumps the created-directory tally when the root is a real "." flist
     /// entry.
     ///
-    /// upstream: receiver.c:731-746 - the pre-flight mkdir of the destination
+    /// upstream: receiver.c:747-762 - the pre-flight mkdir of the destination
     /// root sets ITEM_IS_NEW on the synthesized "." entry, so
     /// `stats.created_files++`/`stats.created_dirs++` count it - but ONLY when
     /// the flist actually carries that "." entry (a non-relative copy-contents
@@ -618,7 +618,7 @@ impl LocalCopySummary {
         // files" line reports the total plus a per-type breakdown where the
         // regular-file count is the remainder (total minus dirs/links/devs/
         // specials). The receiver classifies the file list into these tallies
-        // (flist.c:2699-2712); reg is derived here so a remote pull prints the
+        // (flist.c:2939-2952); reg is derived here so a remote pull prints the
         // same `reg: R, dir: D, link: L` line as a local copy instead of
         // counting every entry as a regular file.
         let non_regular = file_type_totals
@@ -633,12 +633,12 @@ impl LocalCopySummary {
             devices_total: file_type_totals.devices,
             fifos_total: file_type_totals.specials,
             files_copied: files_transferred as u64,
-            // upstream: receiver.c:784 stats.total_transferred_size, computed
+            // upstream: receiver.c:800 stats.total_transferred_size, computed
             // locally by the pulling client's receiver (never sent on the wire).
             transferred_file_size,
             // upstream never sends `stats.created_*` over the wire - the client
             // recomputes the "Number of created files" breakdown locally from
-            // its own itemize pass (receiver.c:733-746). For a remote pull the
+            // its own itemize pass (receiver.c:749-762). For a remote pull the
             // receiver reconstructs it into `created_stats`; map each per-type
             // count through so the breakdown matches upstream (reg is the
             // derived remainder, distinct from `files_copied`, which also counts
@@ -652,7 +652,7 @@ impl LocalCopySummary {
             bytes_sent,
             bytes_copied: literal_data,
             matched_bytes: matched_data,
-            // upstream: flist.c:2789 - the pulling client's receiver accumulates
+            // upstream: flist.c:3032 - the pulling client's receiver accumulates
             // stats.flist_size from its own raw read counter across every
             // recv_file_list() span; it is never sent over the wire (main.c:445
             // prints each role's local figure).
@@ -694,7 +694,7 @@ impl LocalCopySummary {
         // upstream: main.c:429 output_itemized_counts() - "Number of files"
         // reports the total plus a per-type breakdown where reg is the
         // remainder. The sender tallies the typed counts in send_file_entry()
-        // (flist.c:421-438); reg is derived here so a push prints the same
+        // (flist.c:646-663); reg is derived here so a push prints the same
         // `reg: R, dir: D, link: L` line as a local copy instead of counting
         // every entry as a regular file.
         let non_regular = file_type_totals
@@ -709,12 +709,12 @@ impl LocalCopySummary {
             devices_total: file_type_totals.devices,
             fifos_total: file_type_totals.specials,
             files_copied: files_transferred as u64,
-            // upstream: sender.c:343 stats.total_transferred_size, computed
+            // upstream: sender.c:344 stats.total_transferred_size, computed
             // locally by the pushing client's sender (never sent on the wire).
             transferred_file_size,
             // See `from_receiver_stats`: on a push the local sender reconstructs
             // the created breakdown from the `ITEM_IS_NEW` iflags it reads off
-            // the wire (sender.c:295-308), so map each per-type count through.
+            // the wire (sender.c:587-600), so map each per-type count through.
             created_regular_files: created_stats.regular(),
             directories_created: created_stats.dirs,
             created_symlinks: created_stats.symlinks,
@@ -733,9 +733,9 @@ impl LocalCopySummary {
             total_elapsed: elapsed,
             wall_clock_elapsed: elapsed,
             // `file_list_size` stays 0 on a push: upstream's client sender
-            // samples stats.total_written around send_file_list (flist.c:2254,
-            // flist.c:2560), but the encoded list is still sitting unflushed in
-            // the 64 KiB iobuf.out (io.c:1382), so the raw counter has not
+            // samples stats.total_written around send_file_list (flist.c:2491,
+            // flist.c:2800), but the encoded list is still sitting unflushed in
+            // the 64 KiB iobuf.out (io.c:1408), so the raw counter has not
             // moved and the client prints `File list size: 0`.
             ..Default::default()
         }
@@ -849,7 +849,7 @@ impl LocalCopySummary {
     /// Records a would-be transfer for a `--dry-run`, mirroring upstream's
     /// sender under `dry_run`.
     ///
-    /// upstream: `sender.c:342-343` increments `stats.xferred_files` and
+    /// upstream: `sender.c:343-344` increments `stats.xferred_files` and
     /// `stats.total_transferred_size += F_LENGTH(file)` before the
     /// `if (!do_xfers)` guard, so both count the file even in a dry run. The
     /// guard then `continue`s before `match_sums()`, which is the sole place
@@ -904,7 +904,7 @@ impl LocalCopySummary {
     ///
     /// A local copy always runs upstream's `send_file_list()`, so its
     /// "File list generation time" line is always printed
-    /// (`flist.c:2773-2777`, `main.c:450`).
+    /// (`flist.c:3016-3020`, `main.c:453`).
     pub(in crate::local_copy) fn finalize_file_list_generation(&mut self) {
         self.file_list_generation = Duration::from_millis(protocol::stats::flist_buildtime_ms(
             self.file_list_generation,
@@ -955,7 +955,7 @@ impl LocalCopySummary {
     /// dry-run modes, so `--stats` counts match upstream even when no file data
     /// moved (a new empty file, symlink, device, FIFO, or empty directory).
     ///
-    /// upstream: receiver.c:733-746 / sender.c:295-308 - `stats.created_*++`
+    /// upstream: receiver.c:749-762 / sender.c:587-600 - `stats.created_*++`
     /// under the `iflags & ITEM_IS_NEW` guard, keyed by the entry's mode.
     pub(in crate::local_copy) const fn record_created_regular_file(&mut self) {
         self.created_regular_files = self.created_regular_files.saturating_add(1);
@@ -1051,7 +1051,7 @@ mod tests {
     /// The receiver-measured flist span must reach the client summary.
     ///
     /// WHY: upstream never sends `stats.flist_size` over the wire - the pulling
-    /// client prints its own locally measured span (flist.c:2789, main.c:445).
+    /// client prints its own locally measured span (flist.c:3032, main.c:445).
     /// Before the fix the remote-pull constructor dropped it, so `--stats`
     /// printed `File list size: 0` on every remote transfer.
     #[test]
@@ -1081,7 +1081,7 @@ mod tests {
     /// entry was reported as `reg` and the dir/link/dev/special totals were zero
     /// (`Number of files: 6 (reg: 6)` instead of `(reg: 2, dir: 3, link: 1)`).
     ///
-    /// upstream: flist.c:2699-2712 per-type tally; main.c:387-411 derives `reg`.
+    /// upstream: flist.c:2939-2952 per-type tally; main.c:387-411 derives `reg`.
     #[test]
     fn from_receiver_stats_derives_file_type_breakdown() {
         let summary = LocalCopySummary::from_receiver_stats(
@@ -1213,7 +1213,7 @@ mod tests {
     /// instead of reporting the old over-count (`files_transferred`) with the
     /// dir/link/dev/special sub-counts stuck at zero.
     ///
-    /// upstream: receiver.c:733-746 / sender.c:295-308 - `stats.created_*`.
+    /// upstream: receiver.c:749-762 / sender.c:587-600 - `stats.created_*`.
     #[test]
     fn from_receiver_stats_maps_created_breakdown() {
         let created_stats = protocol::CreatedStats {
@@ -1290,7 +1290,7 @@ mod tests {
     /// data, so every entry was reported as `reg` (`Number of files: 6 (reg:
     /// 6)` instead of `(reg: 3, dir: 2, link: 1)`).
     ///
-    /// upstream: flist.c:421-438 per-type tally; main.c:387-411 derives `reg`.
+    /// upstream: flist.c:646-663 per-type tally; main.c:387-411 derives `reg`.
     #[test]
     fn from_generator_stats_derives_file_type_breakdown() {
         let summary = LocalCopySummary::from_generator_stats(
@@ -1407,7 +1407,7 @@ mod tests {
     #[test]
     fn record_dry_run_file_leaves_literal_and_matched_zero() {
         // upstream: under --dry-run the sender counts the file
-        // (sender.c:342-343) but never reaches match_sums(), so
+        // (sender.c:343-344) but never reaches match_sums(), so
         // stats.literal_data (match.c:436) and stats.matched_data (match.c:121)
         // stay 0. A dry-run that WOULD transfer must not inflate either.
         let mut summary = LocalCopySummary::default();

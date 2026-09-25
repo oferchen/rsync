@@ -213,7 +213,7 @@ impl crate::writer::MsgInfoSender for CapturingDeletionWriter {
 
     fn send_msg_deleted(&mut self, data: &[u8]) -> io::Result<()> {
         // Reproduce the client-side render (DeletedRender, itemize form): a
-        // trailing NUL marks a directory (upstream io.c:1616), which the client
+        // trailing NUL marks a directory (upstream io.c:1642), which the client
         // prints with a trailing slash.
         let (is_dir, name_bytes) = match data.split_last() {
             Some((0, rest)) => (true, rest),

@@ -463,7 +463,7 @@ pub fn upstream_rsync() -> PathBuf {
 ///
 /// This is what makes a mid-transfer interrupt test deterministic. Throttling
 /// the client with `--bwlimit` does not work: upstream only throttles socket
-/// *writes* (`io.c:861`), so on a daemon pull the limit has to be applied by
+/// *writes* (`io.c:879`), so on a daemon pull the limit has to be applied by
 /// the daemon and is inert client-side. Capping the bytes instead means the
 /// transfer is structurally unable to complete, so the kill can be gated on
 /// observed on-disk progress rather than on a timing guess.
@@ -738,7 +738,7 @@ pub fn find_temp_files(dir: &Path) -> Vec<PathBuf> {
 ///
 /// The proxy is what makes the kill deterministic. `--bwlimit` cannot be used
 /// to open the window because upstream throttles socket *writes*
-/// (`io.c:861`), so on a daemon pull the limit belongs to the daemon and is
+/// (`io.c:879`), so on a daemon pull the limit belongs to the daemon and is
 /// inert client-side. Capping the forwarded bytes instead means the transfer
 /// cannot complete at all, so the signal can be gated on observed on-disk
 /// progress rather than on a timing guess.

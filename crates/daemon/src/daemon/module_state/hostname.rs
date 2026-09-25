@@ -56,7 +56,7 @@ pub(in crate::daemon) fn peer_host_display(resolved: Option<&str>, reverse_looku
 ///
 /// Upstream passes a never-empty string into `allow_access()`, so a sentinel is
 /// matched like any other name - `match_hostname` bails only on `!host ||
-/// !*host` (access.c:37-38), and clientname.c:93-95 documents `UNKNOWN` as
+/// !*host` (access.c:40-41), and clientname.c:93-95 documents `UNKNOWN` as
 /// deliberately usable in a `hosts allow` line. Modelling the host as a bare
 /// `Option<&str>` made both sentinels unmatchable, so `hosts allow =
 /// UNDETERMINED` refused every peer.
@@ -114,7 +114,7 @@ impl<'a> PeerHost<'a> {
 /// upstream: clientserver.c - reverse DNS is performed when `hosts allow` or
 /// `hosts deny` patterns contain hostnames. The `reverse lookup` parameter
 /// controls whether reverse DNS is attempted at all; the `forward lookup`
-/// parameter (access.c:49 `allow_forward_dns`, default True) forward-confirms
+/// parameter (access.c:60 `allow_forward_dns`, default True) forward-confirms
 /// the result.
 pub(crate) fn module_peer_hostname<'a>(
     module: &ModuleDefinition,
@@ -147,7 +147,7 @@ pub(crate) fn module_peer_hostname<'a>(
 /// unconfirmed name with the "UNKNOWN" placeholder.
 ///
 /// upstream: clientname.c:416 `check_name` forward-confirms the reverse-DNS
-/// name against the peer address; access.c:49 gates forward DNS on the
+/// name against the peer address; access.c:60 gates forward DNS on the
 /// `forward lookup` daemon parameter (default True, daemon-parm.h:197).
 pub(in crate::daemon) fn resolve_peer_hostname(
     peer_ip: IpAddr,
@@ -189,8 +189,8 @@ fn forward_confirms(name: &str, peer_ip: IpAddr) -> bool {
 /// `None` means the LOOKUP FAILED; `Some(addrs)` means it succeeded, possibly
 /// with an empty or non-matching set. Upstream draws exactly this line and the
 /// two sides differ: a NULL `gethostbyname` returns the caller's `deny` flag
-/// (access.c:57-63), while a successful lookup whose records do not include the
-/// peer falls out of the loop and returns 0 (access.c:66-73). Collapsing both
+/// (access.c:68-74), while a successful lookup whose records do not include the
+/// peer falls out of the loop and returns 0 (access.c:77-84). Collapsing both
 /// into "no records" - as an empty `Vec` did - makes an unresolvable `hosts
 /// deny` token fail OPEN.
 ///
@@ -227,7 +227,7 @@ fn resolve_forward_key(key: &str) -> Option<Vec<IpAddr>> {
 /// Tests inject deterministic membership via `TEST_NETGROUP_MEMBERS`, keeping
 /// access-control tests hermetic and free of a real netgroup database.
 ///
-/// upstream: access.c:42 `innetgr(tok + 1, host, NULL, NULL)` - only the
+/// upstream: access.c:45 `innetgr(tok + 1, host, NULL, NULL)` - only the
 /// netgroup's host field is consulted (user and domain are NULL).
 #[cfg(not(test))]
 pub(in crate::daemon) fn netgroup_contains(netgroup: &str, host: &str) -> bool {

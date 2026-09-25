@@ -55,8 +55,8 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:720` - `recv_files()` main reception loop
-    /// - `main.c:1160-1200` - `do_recv()` orchestration
+    /// - `receiver.c:736` - `recv_files()` main reception loop
+    /// - `main.c:1178-1218` - `do_recv()` orchestration
     /// - `compat.c:740` - `inc_recurse` is read from the negotiated compat flags,
     ///   the same runtime signal gated on here.
     pub fn run<R: Read, W: Write + crate::writer::MsgInfoSender + ?Sized>(
@@ -90,12 +90,12 @@ impl ReceiverContext {
     ///
     /// Upstream opens the batch file and hands its descriptor to the ordinary
     /// receiving client as `f_in`, pointing the generator's `f_out` at one end
-    /// of a self-pipe whose read end is never drained (`main.c:635-651`). The
+    /// of a self-pipe whose read end is never drained (`main.c:648-664`). The
     /// receiver then reads the recorded file list and delta stream exactly as
     /// it would off a socket - `do_recv()` is unchanged - while its outbound
     /// requests and signatures fall into the dead-end pipe. Because the batch
     /// file was never framed, upstream also skips `io_start_multiplex_in()` for
-    /// it (`main.c:1359-1366`, gated on `!read_batch`).
+    /// it (`main.c:1377-1384`, gated on `!read_batch`).
     ///
     /// This is the enabling mechanism for routing `--read-batch` through the
     /// real receiver rather than the native replay fork. It reproduces both
@@ -117,18 +117,18 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:635-651` - `read_batch` sets `f_in = batch_fd` and points
+    /// - `main.c:648-664` - `read_batch` sets `f_in = batch_fd` and points
     ///   `f_out` at a self-pipe with no live consumer.
-    /// - `main.c:1359-1366` - the `!read_batch` gate that leaves the batch
+    /// - `main.c:1377-1384` - the `!read_batch` gate that leaves the batch
     ///   `f_in` unmultiplexed.
-    /// - `main.c:1387` - `do_recv(f_in, f_out, local_name)` drives the real
+    /// - `main.c:1405` - `do_recv(f_in, f_out, local_name)` drives the real
     ///   receiver over that batch `f_in`.
     pub fn run_local_replay<R: Read>(
         &mut self,
         batch_input: R,
         progress: Option<&mut dyn crate::TransferProgressCallback>,
     ) -> io::Result<TransferStats> {
-        // upstream: main.c:1359 `!read_batch` keeps the batch f_in unmultiplexed.
+        // upstream: main.c:1377 `!read_batch` keeps the batch f_in unmultiplexed.
         self.local_replay = true;
         // The sender-driven replay drive reports no per-file progress
         // (upstream's replay generator writes progress into a dead pipe);
@@ -145,17 +145,17 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1383-1392` - `client_run()` gates the entire receive on
+    /// - `main.c:1401-1410` - `client_run()` gates the entire receive on
     ///   `if (flist && flist->used > 0)`. With no entries it takes the `else`
     ///   arm (`handle_stats(-1); output_summary();`) and returns without ever
     ///   calling `do_recv()`.
-    /// - `main.c:968-974` - the peer sender bailed out at
+    /// - `main.c:981-987` - the peer sender bailed out at
     ///   `if (!flist || flist->used == 0) exit_cleanup(0)` (mirrored in
     ///   `generator::transfer::orchestrator`), so it never reads an ndx, never
     ///   writes its stats trailer, and never joins the goodbye handshake.
     ///
     /// Client-side only, exactly as upstream: `do_server_recv()` has no such
-    /// gate and calls `do_recv()` unconditionally (`main.c:1201-1245`).
+    /// gate and calls `do_recv()` unconditionally (`main.c:1219-1263`).
     pub(in crate::receiver) const fn is_empty_client_flist(&self, file_count: usize) -> bool {
         file_count == 0 && self.config.connection.client_mode
     }
@@ -163,7 +163,7 @@ impl ReceiverContext {
     /// Ends a client receive that was handed an empty file list, without
     /// entering the transfer loop or the finalization exchange.
     ///
-    /// Mirrors the `else` arm of `main.c:1389-1392`: no ndx is written, no
+    /// Mirrors the `else` arm of `main.c:1407-1410`: no ndx is written, no
     /// stats trailer is read, and the goodbye handshake is skipped, because the
     /// peer sender already exited. Reading for any of them would block until
     /// the connection died, which is how this surfaced - the client reported
@@ -173,8 +173,8 @@ impl ReceiverContext {
     /// deliver before it exited, from both wire encodings upstream uses:
     ///
     /// - the file-list end marker, when the peer negotiated a safe incremental
-    ///   file list (`flist.c:2508-2517` -> `write_end_of_flist(f, 1)`), and
-    /// - a `MSG_IO_ERROR` frame otherwise (`flist.c:2553-2555`), which arrives
+    ///   file list (`flist.c:2748-2757` -> `write_end_of_flist(f, 1)`), and
+    /// - a `MSG_IO_ERROR` frame otherwise (`flist.c:2793-2795`), which arrives
     ///   interleaved with the list itself and has therefore already been folded
     ///   into the reader by the time the list ends - exactly how upstream's
     ///   global `io_error` picks it up before `client_run()` tests the list.
@@ -202,7 +202,7 @@ impl ReceiverContext {
         Ok(TransferStats {
             io_error: self.flist_reader_io_error() | self.flist_io_error | reader.take_io_error(),
             // upstream: log.c:310-311 - an empty list is exactly what a missing
-            // source argument produces, and `flist.c:2431` leaves io_error clear
+            // source argument produces, and `flist.c:2671` leaves io_error clear
             // for it, so the MSG_ERROR_XFER frames read while draining the list
             // are the only evidence the run must exit 23.
             got_xfer_error: reader.xfer_error_count() > 0,
@@ -226,8 +226,8 @@ impl ReceiverContext {
     ///
     /// # Upstream Reference
     ///
-    /// - `receiver.c:694-695` - `handle_delayed_updates()` at `phase == 2`.
-    /// - `receiver.c:551-552` - only after the delayed rename does
+    /// - `receiver.c:710-711` - `handle_delayed_updates()` at `phase == 2`.
+    /// - `receiver.c:567-568` - only after the delayed rename does
     ///   `send_msg_success()` drive `finish_hard_link()` (`hlink.c:475`,
     ///   `generator.c:2169`) to link the leader's followers.
     pub(in crate::receiver) fn finalize_delayed_updates_and_hardlinks<W>(
@@ -400,7 +400,7 @@ impl ReceiverContext {
     ///   the `do {..} while (cur_flist->next)` loop consumed every list; its
     ///   inner wait breaks on `cur_flist->next || flist_eof`
     ///   (`generator.c:2838`), so both sites are downstream of `flist_eof`
-    ///   (`flist.c:112` - "all the file-lists are now known").
+    ///   (`flist.c:114` - "all the file-lists are now known").
     ///
     /// The oc translation of that invariant: without INC_RECURSE the single
     /// list arrives whole and is complete by construction (`receive.rs` sets
@@ -604,7 +604,7 @@ fn sweep_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
 /// Renames all delayed-update files from their staging paths to their final
 /// destinations, removing each emptied staging directory as it goes.
 ///
-/// Mirrors upstream `receiver.c:688-717 handle_delayed_updates()` which
+/// Mirrors upstream `receiver.c:704-733 handle_delayed_updates()` which
 /// iterates `delayed_bits`, renames each file from its `partial_dir_fname()`
 /// path to the final destination, and calls `handle_partial_dir(PDIR_DELETE)`.
 ///
@@ -613,22 +613,22 @@ fn sweep_rename(old_path: &Path, new_path: &Path) -> io::Result<()> {
 /// absolute value. [`engine::remove_partial_dir`] owns the rule.
 ///
 /// When `backup_config` is `Some`, backs up the existing destination file
-/// before the rename (upstream: `receiver.c:538 make_backup(fname, False)`).
+/// before the rename (upstream: `receiver.c:554 make_backup(fname, False)`).
 ///
 /// A failure does not abort the sweep - remaining files are still renamed -
 /// but the two failure kinds part company, exactly as upstream's do:
 ///
 /// - A failed BACKUP skips the staged rename for that file
-///   (`receiver.c:694` - `if (make_backups > 0 && !make_backup(fname, False))
+///   (`receiver.c:710` - `if (make_backups > 0 && !make_backup(fname, False))
 ///   continue;`). Renaming anyway would overwrite the very pre-image the
 ///   backup was meant to preserve, leaving no copy of it anywhere. The
 ///   diagnostic `make_backup()` prints is `FERROR`, which carries no
 ///   exit-code bit (log.c:336-341), so the run's status is unchanged -
 ///   measured against rsync 3.5.0.
-/// - A failed RENAME is `rsyserr(FERROR_XFER, ...)` (`receiver.c:709-712`),
+/// - A failed RENAME is `rsyserr(FERROR_XFER, ...)` (`receiver.c:725-728`),
 ///   which sets `got_xfer_error` and forces exit 23 (`RERR_PARTIAL`). That is
 ///   what the returned `IOERR_GENERAL` bit stands in for
-///   (log.c:309-316, cleanup.c:210-218, main.c:1630-1631).
+///   (log.c:309-316, cleanup.c:210-218, main.c:1648-1649).
 ///
 /// The rename half matters on Linux kernels 5.13-5.18: those have Landlock but
 /// lack `LANDLOCK_ACCESS_FS_REFER` (added in 5.19), so the cross-directory
@@ -649,7 +649,7 @@ pub(in crate::receiver) fn handle_delayed_updates(
     let mut io_error = 0;
 
     for (staging_path, final_path) in delayed {
-        // upstream: receiver.c:694 - `if (make_backups > 0 && !make_backup(fname,
+        // upstream: receiver.c:710 - `if (make_backups > 0 && !make_backup(fname,
         // False)) continue;`. This is the SAME `make_backup(fname, False)` that
         // `finish_transfer()` calls (rsync.c:739), so the sweep is a second
         // CALLER of the ladder, never a second implementation of it. Routing it
@@ -686,7 +686,7 @@ pub(in crate::receiver) fn handle_delayed_updates(
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    // upstream: receiver.c:694 - `!make_backup(...)` skips
+                    // upstream: receiver.c:710 - `!make_backup(...)` skips
                     // straight to the next delayed entry. The staged file stays
                     // in the partial dir and the destination keeps its
                     // pre-transfer contents, so the pre-image the backup could
@@ -701,7 +701,7 @@ pub(in crate::receiver) fn handle_delayed_updates(
             }
         }
 
-        // upstream: receiver.c:540-542 - DEBUG_GTE(RECV, 1) rename notice
+        // upstream: receiver.c:556-558 - DEBUG_GTE(RECV, 1) rename notice
         debug_log!(
             Recv,
             1,
@@ -710,7 +710,7 @@ pub(in crate::receiver) fn handle_delayed_updates(
             final_path.display()
         );
 
-        // upstream: receiver.c:546 - do_rename(partialptr, fname)
+        // upstream: receiver.c:562 - do_rename(partialptr, fname)
         if let Err(e) = sweep_rename(staging_path, final_path) {
             // upstream: rsyserr(FERROR_XFER, ...) sets got_xfer_error ->
             // RERR_PARTIAL (exit 23). On kernels 5.13-5.18 the Landlock
@@ -726,7 +726,7 @@ pub(in crate::receiver) fn handle_delayed_updates(
             continue;
         }
 
-        // upstream: receiver.c:716 - handle_partial_dir(partialptr, PDIR_DELETE)
+        // upstream: receiver.c:732 - handle_partial_dir(partialptr, PDIR_DELETE)
         // fires per file on the rename's success branch rather than as a
         // deferred sweep over the distinct parents. That ordering is what makes
         // the unchecked rmdir correct when two entries stage in one directory:
@@ -773,7 +773,7 @@ mod tests {
             ..Default::default()
         };
         // upstream: the batch is applied by the receiving *client*, so the
-        // empty-list short-circuit (main.c:1389-1392) is reachable.
+        // empty-list short-circuit (main.c:1407-1410) is reachable.
         config.connection.client_mode = true;
         ReceiverContext::new_for_test(&handshake, config)
     }
@@ -815,7 +815,7 @@ mod tests {
             "no delta data is applied for an empty recorded batch"
         );
         // The mechanism must have kept the batch f_in unmultiplexed the whole
-        // way through (upstream main.c:1359 `!read_batch`).
+        // way through (upstream main.c:1377 `!read_batch`).
         assert!(!ctx.should_activate_input_multiplex());
     }
 
@@ -824,7 +824,7 @@ mod tests {
     /// untouched.
     ///
     /// WHY: upstream gates every `io_start_multiplex_in(f_in)` on `!read_batch`
-    /// (main.c:1359-1366) because the batch file was never framed. Without the
+    /// (main.c:1377-1384) because the batch file was never framed. Without the
     /// gate the receiver would try to demux raw batch bytes as `MSG_DATA`
     /// frames and desync immediately.
     #[test]
@@ -860,7 +860,7 @@ mod tests {
     /// WHY: this is the A2 seam. Upstream's `--read-batch` skips negotiation and
     /// reads the recorded protocol/compat/seed back from the batch fd
     /// (`compat.c` `setup_protocol()` under `read_batch`; the values
-    /// `io.c:2521-2524` teed at capture). The replay receiver must run against
+    /// `io.c:2559-2562` teed at capture). The replay receiver must run against
     /// the SAME protocol/seed/compat the batch was recorded under or its
     /// file-list decode and basis checksums desync. The header is round-tripped
     /// through the batch reader's own [`BatchHeader::read_from`] so the parse is
@@ -911,7 +911,7 @@ mod tests {
     /// replay receiver's compat state is absent - never a phantom zero.
     ///
     /// WHY: upstream writes the compat varint only for protocol >= 30
-    /// (`io.c:2522-2523`), and [`BatchHeader::read_from`] mirrors that by
+    /// (`io.c:2560-2561`), and [`BatchHeader::read_from`] mirrors that by
     /// reading it only then. `for_batch_replay` must carry that `None` through
     /// (leaving `compat_flags()` `None`, exactly as a legacy live negotiation
     /// would) while still pinning the recorded protocol and seed.
@@ -997,8 +997,8 @@ mod tests {
     /// the replaying destination lacks must replay to a clean no-op finish.
     ///
     /// WHY: upstream's `--read-batch` receiver obeys the stream
-    /// (`receiver.c:828-862` reads each recorded row; the replaying
-    /// generator's own requests fall into a dead-end pipe, `main.c:639-651`).
+    /// (`receiver.c:844-878` reads each recorded row; the replaying
+    /// generator's own requests fall into a dead-end pipe, `main.c:652-664`).
     /// The record-time generator saw an up-to-date destination and requested
     /// nothing, so the batch body is just the phase `NDX_DONE`s, the stats
     /// trailer, and the goodbye. A lockstep request/echo drive would plan a
@@ -1035,7 +1035,7 @@ mod tests {
         let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
         // Recorded body: a one-file flist, then no transfer rows at all -
-        // three phase NDX_DONEs (receiver.c:809 max_phase = 2), the sender's
+        // three phase NDX_DONEs (receiver.c:825 max_phase = 2), the sender's
         // five varlong30 stats (main.c:362-373), and the goodbye NDX_DONE.
         let mut recorded = Vec::new();
         let mut flist_writer = FileListWriter::new(proto);
@@ -1070,10 +1070,10 @@ mod tests {
     ///
     /// WHY: this is how `--read-batch` of an upstream multi-directory batch
     /// regressed. The recording sender echoes an `NDX_DONE` for every
-    /// remaining flist segment (`sender.c:246-254`) before its phase-end
+    /// remaining flist segment (`sender.c:249-257`) before its phase-end
     /// markers, and upstream's receiver consumes each by freeing
     /// `first_flist` and continuing WITHOUT a phase advance
-    /// (`receiver.c:679-689`). A replay loop that counts every `NDX_DONE` as
+    /// (`receiver.c:695-705`). A replay loop that counts every `NDX_DONE` as
     /// a phase transition leaves the loop early, decodes the segment echoes
     /// as the head of the stats trailer, and dies with an unexpected EOF
     /// ("failed to fill whole buffer") on the trailer's final varlong. Two
@@ -1115,7 +1115,7 @@ mod tests {
         let mut ctx = ReceiverContext::new_for_test(&handshake, config);
         // Stand in for an initial flist that carried the segment's parent
         // directory, so the sub-list's dir_ndx 0 passes the fail-closed
-        // range check (flist.c:2906-2909).
+        // range check (flist.c:3149-3152).
         ctx.dir_flist = DirFlist::with_active(["sub"]);
 
         // Recorded body: initial flist (one file), one sub-list segment
@@ -1171,7 +1171,7 @@ mod tests {
     }
 
     /// Verifies the delayed rename sweep moves files from staging paths to
-    /// final destinations, matching upstream `receiver.c:422-450`.
+    /// final destinations, matching upstream `receiver.c:435-463`.
     #[test]
     fn handle_delayed_updates_renames_staged_files() {
         let dir = test_support::create_tempdir();
@@ -1245,8 +1245,8 @@ mod tests {
 
     /// An ABSOLUTE `--partial-dir` must survive the sweep.
     ///
-    /// upstream: `util1.c:1506-1507` - `handle_partial_dir(fname, PDIR_DELETE)`
-    /// returns immediately when `*partial_dir == '/'`, so `receiver.c:716` never
+    /// upstream: `util1.c:1601-1602` - `handle_partial_dir(fname, PDIR_DELETE)`
+    /// returns immediately when `*partial_dir == '/'`, so `receiver.c:732` never
     /// rmdir's an operator-named absolute staging directory. Measured against
     /// real rsync 3.5.0 over a daemon push with `-a --delay-updates
     /// --partial-dir=/pdir`: upstream leaves a pre-existing `/pdir` in place,
@@ -1273,7 +1273,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&final_path).unwrap(), "payload");
         assert!(
             partial_dir.is_dir(),
-            "an absolute --partial-dir must outlive the transfer (util1.c:1507)"
+            "an absolute --partial-dir must outlive the transfer (util1.c:1602)"
         );
     }
     /// Non-vacuity companion for
@@ -1302,7 +1302,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&final_path).unwrap(), "payload");
         assert!(
             !partial_dir.exists(),
-            "an emptied relative --partial-dir is rmdir'd (util1.c:1531)"
+            "an emptied relative --partial-dir is rmdir'd (util1.c:1626)"
         );
     }
     /// Verifies the sweep continues past a rename failure (matching upstream
@@ -1386,7 +1386,7 @@ mod tests {
     /// `BackupConfig` is supplied.
     ///
     /// This is the receiver-side equivalent of upstream
-    /// `receiver.c:538-539 make_backup(fname, False)` -> `backup.c:make_backup`
+    /// `receiver.c:554-555 make_backup(fname, False)` -> `backup.c:make_backup`
     /// which renames the existing file out of the way and emits the
     /// `backed up X to Y` info_log via `INFO_GTE(BACKUP, 1)` at
     /// `backup.c:352-353`. Upstream `testsuite/backup.test:43,56` greps for
@@ -1594,7 +1594,7 @@ mod tests {
     /// The `--delay-updates` sweep must reach the cross-device tier of the
     /// backup ladder, not just its rename tier.
     ///
-    /// upstream: `receiver.c:694` `handle_delayed_updates()` calls the same
+    /// upstream: `receiver.c:710` `handle_delayed_updates()` calls the same
     /// `make_backup(fname, False)` as `finish_transfer()` (rsync.c:739), so a
     /// `--backup-dir` on another mount takes `copy_file()` + unlink
     /// (`backup.c:414` `make_backup: COPY`) exactly as it does on the ordinary
@@ -1847,7 +1847,7 @@ mod tests {
     /// propagates the error before reaching the sweep call in `pipelined.rs`),
     /// leaving staged files intact for the next resume attempt.
     ///
-    /// upstream: receiver.c:694-695 - handle_delayed_updates() only after
+    /// upstream: receiver.c:710-711 - handle_delayed_updates() only after
     /// successful completion of both transfer phases.
     #[test]
     fn interrupt_skips_sweep_files_persist_in_staging() {
@@ -1901,7 +1901,7 @@ mod tests {
     /// directory; unanchored, the path-based resolver follows the swap and the
     /// pre-image leaves the tree.
     ///
-    /// upstream: `receiver.c:694` - `if (make_backups > 0 && !make_backup(fname,
+    /// upstream: `receiver.c:710` - `if (make_backups > 0 && !make_backup(fname,
     /// False)) continue;`. This is the same `make_backup()` `finish_transfer()`
     /// calls, and `make_backup()` (`backup.c:437-448`) raises
     /// `operator_path_resolve` for its whole body whichever caller entered it.
@@ -1991,7 +1991,7 @@ mod tests {
     /// its own arguments instead of a default. Both are needed - either half
     /// alone can be dropped without the other cell noticing.
     ///
-    /// upstream: `receiver.c:694-695` - `handle_delayed_updates()` runs at
+    /// upstream: `receiver.c:710-711` - `handle_delayed_updates()` runs at
     /// `phase == 2` inside the receiver, with the same ambient
     /// `operator_path_resolve` state `make_backup()` sets for itself
     /// (`backup.c:437-448`).

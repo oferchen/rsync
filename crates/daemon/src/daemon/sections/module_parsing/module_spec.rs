@@ -11,11 +11,11 @@
 /// upstream: `options.c` - `server_options()` emits `--timeout=%d` whenever the
 /// client has `io_timeout` set, and the daemon's own `parse_arguments()` run
 /// over the received argv lands it in the global `io_timeout`, which
-/// `options.c:2511 set_io_timeout(io_timeout)` then arms. oc's daemon has no
+/// `options.c:2520 set_io_timeout(io_timeout)` then arms. oc's daemon has no
 /// such global, so the value is read back out of the argv here.
 ///
 /// A non-positive or unparsable value yields `None`: upstream parses `--timeout`
-/// as a plain `int`, and `io.c:1266-1271 set_io_timeout()` clamps a negative to
+/// as a plain `int`, and `io.c:1284-1289 set_io_timeout()` clamps a negative to
 /// `0`, which is "no timeout" - the same thing `None` means here.
 fn client_io_timeout_from_args(client_args: &[String]) -> Option<NonZeroU64> {
     client_args
@@ -63,7 +63,7 @@ fn apply_io_timeout(stream: &DaemonStream, timeout: Option<NonZeroU64>) -> io::R
         stream.set_write_timeout(Some(duration))?;
     } else {
         // When the module sets no `timeout`, the data phase is untimed, matching
-        // upstream's `io_timeout = 0` default (options.c:107; io.c:179
+        // upstream's `io_timeout = 0` default (options.c:107; io.c:197
         // short-circuits the timeout check when unset). Clearing both directions
         // is defensive: it guarantees the accepted socket carries no inherited
         // I/O deadline into the delta phase, so a legitimately slow but live
@@ -242,7 +242,7 @@ fn parse_module_definition(
     // config-file module, kept in step here so the two parse entry points
     // cannot disagree about what a relative `path` means.
     //
-    // upstream: `normalize_path` (util1.c:1405-1426) makes a non-`/` path
+    // upstream: `normalize_path` (util1.c:1500-1521) makes a non-`/` path
     // absolute by joining it onto `curr_dir`, and `rsync_module()` routes both
     // the chroot and no-chroot arms through it (clientserver.c:898-918).
     // Upstream's config parser has no absolute-path requirement at all.
@@ -260,7 +260,7 @@ fn parse_module_definition(
         })?;
         // `normalize_path` cleans after it joins: `clean_fname(path,
         // CFN_COLLAPSE_DOT_DOT_DIRS | CFN_DROP_TRAILING_DOT_DIR)`
-        // (util1.c:1420). Without it `path = ./data` would resolve to
+        // (util1.c:1515). Without it `path = ./data` would resolve to
         // `<cwd>/./data` and carry the `.` into every derived path.
         module.path = filters::collapse_dot_dot_dirs(&current_dir.join(&module.path));
     }

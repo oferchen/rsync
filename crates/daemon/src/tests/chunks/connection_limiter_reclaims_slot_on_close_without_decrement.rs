@@ -7,7 +7,7 @@
 // decrement and no on-disk state that a crash could leave stale.
 //
 // upstream: connection.c:26 `claim_connection()` never writes a count; it relies
-// solely on `lock_range()` (util1.c:632, `fcntl` `F_SETLK`/`F_WRLCK`), whose
+// solely on `lock_range()` (util1.c:635, `fcntl` `F_SETLK`/`F_WRLCK`), whose
 // locks the kernel drops on process death.
 //
 // Requires open file description locks so the two acquisitions here (one process)

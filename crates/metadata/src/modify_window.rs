@@ -8,13 +8,13 @@
 
 /// Signed whole-second tolerance for the mtime quick-check.
 ///
-/// Semantics mirror upstream `util1.c:1478 same_time()`:
+/// Semantics mirror upstream `util1.c:1573 same_time()`:
 /// - `0` (default): whole-second equality; any sub-second difference is ignored.
 /// - `> 0`: symmetric whole-second window; nanoseconds are ignored.
 /// - `< 0`: nanosecond-exact comparison - both the whole seconds and the
 ///   nanoseconds must be equal.
 ///
-/// upstream: options.c:149 `int modify_window` / util1.c:32 `same_time()`.
+/// upstream: options.c:149 `int modify_window` / util1.c:35 `same_time()`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ModifyWindow(i64);
 
@@ -25,7 +25,7 @@ impl ModifyWindow {
     /// Builds a window from a signed whole-second count.
     ///
     /// A negative `secs` selects nanosecond-exact comparison, matching
-    /// upstream's `modify_window < 0` branch (util1.c:1653).
+    /// upstream's `modify_window < 0` branch (util1.c:1748).
     #[must_use]
     pub const fn from_secs(secs: i64) -> Self {
         Self(secs)
@@ -46,22 +46,22 @@ impl ModifyWindow {
 
     /// Returns `true` when two mtimes are "the same" under this window.
     ///
-    /// Direct port of upstream `util1.c:1478 same_time()`:
+    /// Direct port of upstream `util1.c:1573 same_time()`:
     /// - `window == 0`: `f1_sec == f2_sec` (nanoseconds ignored).
     /// - `window < 0`: `f1_sec == f2_sec && f1_nsec == f2_nsec` (nsec-exact).
     /// - `window > 0`: `|f1_sec - f2_sec| <= window` (nanoseconds ignored -
-    ///   upstream note: "time windows don't care about that", util1.c:1655).
+    ///   upstream note: "time windows don't care about that", util1.c:1750).
     #[must_use]
     pub fn same_time(self, f1_sec: i64, f1_nsec: u32, f2_sec: i64, f2_nsec: u32) -> bool {
-        // upstream: util1.c:1480
+        // upstream: util1.c:1575
         if self.0 == 0 {
             return f1_sec == f2_sec;
         }
-        // upstream: util1.c:1482 - a negative window compares nanoseconds too.
+        // upstream: util1.c:1577 - a negative window compares nanoseconds too.
         if self.0 < 0 {
             return f1_sec == f2_sec && f1_nsec == f2_nsec;
         }
-        // upstream: util1.c:1485-1487 - symmetric second window; the value is
+        // upstream: util1.c:1580-1582 - symmetric second window; the value is
         // positive here, so the cast to u64 for `abs_diff` is lossless.
         f1_sec.abs_diff(f2_sec) <= self.0 as u64
     }

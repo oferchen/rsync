@@ -100,7 +100,7 @@ use Applicability::{AllReceivers, DaemonOnly};
 pub const CATALOG: &[OptionSpec] = &[
     OptionSpec {
         upstream_name: "--link-dest",
-        options_c: "options.c:2933",
+        options_c: "options.c:2943",
         getter: "reference_directories",
         server_field: Some("reference_directories"),
         applicability: AllReceivers,
@@ -108,7 +108,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--backup-dir",
-        options_c: "options.c:2805",
+        options_c: "options.c:2815",
         getter: "backup_directory",
         server_field: Some("backup_dir"),
         applicability: AllReceivers,
@@ -116,7 +116,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--suffix",
-        options_c: "options.c:2813",
+        options_c: "options.c:2823",
         getter: "backup_suffix",
         server_field: Some("backup_suffix"),
         applicability: AllReceivers,
@@ -124,7 +124,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--chmod",
-        options_c: "options.c:1762",
+        options_c: "options.c:1768",
         getter: "chmod",
         server_field: Some("chmod"),
         applicability: AllReceivers,
@@ -132,7 +132,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--ignore-existing",
-        options_c: "options.c:2918",
+        options_c: "options.c:2928",
         getter: "ignore_existing",
         server_field: Some("ignore_existing"),
         applicability: AllReceivers,
@@ -140,7 +140,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--existing",
-        options_c: "options.c:2922",
+        options_c: "options.c:2932",
         getter: "existing_only",
         server_field: Some("existing_only"),
         applicability: AllReceivers,
@@ -148,7 +148,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--prune-empty-dirs",
-        options_c: "options.c:2644",
+        options_c: "options.c:2653",
         getter: "prune_empty_dirs",
         server_field: Some("prune_empty_dirs"),
         applicability: AllReceivers,
@@ -156,7 +156,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--delay-updates",
-        options_c: "options.c:2891",
+        options_c: "options.c:2901",
         getter: "delay_updates",
         server_field: Some("delay_updates"),
         applicability: AllReceivers,
@@ -164,7 +164,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--size-only",
-        options_c: "options.c:2854",
+        options_c: "options.c:2864",
         getter: "size_only",
         server_field: Some("size_only"),
         applicability: AllReceivers,
@@ -172,7 +172,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--numeric-ids",
-        options_c: "options.c:2905",
+        options_c: "options.c:2915",
         getter: "numeric_ids",
         server_field: Some("numeric_ids"),
         applicability: AllReceivers,
@@ -180,7 +180,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--delete",
-        options_c: "options.c:2845",
+        options_c: "options.c:2855",
         getter: "delete_mode",
         server_field: Some("delete"),
         applicability: AllReceivers,
@@ -188,7 +188,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--partial",
-        options_c: "options.c:2894",
+        options_c: "options.c:2904",
         getter: "partial",
         server_field: Some("partial"),
         applicability: AllReceivers,
@@ -196,7 +196,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--devices",
-        options_c: "options.c:2761",
+        options_c: "options.c:2771",
         getter: "preserve_devices",
         server_field: Some("devices"),
         applicability: AllReceivers,
@@ -204,7 +204,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--specials",
-        options_c: "options.c:2766",
+        options_c: "options.c:2776",
         getter: "preserve_specials",
         server_field: Some("specials"),
         applicability: AllReceivers,
@@ -212,7 +212,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--list-only",
-        options_c: "options.c:2747",
+        options_c: "options.c:2757",
         getter: "list_only",
         server_field: Some("list_only"),
         applicability: AllReceivers,
@@ -220,7 +220,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--fsync",
-        options_c: "options.c:2930",
+        options_c: "options.c:2940",
         getter: "fsync",
         server_field: Some("fsync"),
         applicability: DaemonOnly,
@@ -228,7 +228,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--usermap",
-        options_c: "options.c:2912",
+        options_c: "options.c:2922",
         getter: "user_mapping",
         server_field: None,
         applicability: AllReceivers,
@@ -236,7 +236,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--groupmap",
-        options_c: "options.c:2915",
+        options_c: "options.c:2925",
         getter: "group_mapping",
         server_field: None,
         applicability: AllReceivers,
@@ -244,7 +244,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--temp-dir",
-        options_c: "options.c:2926",
+        options_c: "options.c:2936",
         getter: "temp_directory",
         server_field: None,
         applicability: AllReceivers,
@@ -252,7 +252,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--mkpath",
-        options_c: "options.c:2996",
+        options_c: "options.c:3006",
         getter: "mkpath",
         server_field: None,
         applicability: AllReceivers,
@@ -260,7 +260,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--omit-dir-times",
-        options_c: "options.c:2646",
+        options_c: "options.c:2655",
         getter: "omit_dir_times",
         server_field: None,
         applicability: AllReceivers,
@@ -268,7 +268,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--omit-link-times",
-        options_c: "options.c:2648",
+        options_c: "options.c:2657",
         getter: "omit_link_times",
         server_field: None,
         applicability: AllReceivers,
@@ -276,7 +276,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--write-devices",
-        options_c: "options.c:2979",
+        options_c: "options.c:2989",
         getter: "write_devices",
         server_field: None,
         applicability: AllReceivers,
@@ -284,7 +284,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--keep-dirlinks",
-        options_c: "options.c:2642",
+        options_c: "options.c:2651",
         getter: "keep_dirlinks",
         server_field: None,
         applicability: AllReceivers,
@@ -292,7 +292,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--fuzzy",
-        options_c: "options.c:2650",
+        options_c: "options.c:2659",
         getter: "fuzzy",
         server_field: None,
         applicability: AllReceivers,
@@ -300,7 +300,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--force",
-        options_c: "options.c:2848",
+        options_c: "options.c:2858",
         getter: "force_replacements",
         server_field: None,
         applicability: AllReceivers,
@@ -308,7 +308,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--preserve-executability",
-        options_c: "options.c:2692",
+        options_c: "options.c:2702",
         getter: "preserve_executability",
         server_field: None,
         applicability: AllReceivers,
@@ -316,7 +316,7 @@ pub const CATALOG: &[OptionSpec] = &[
     },
     OptionSpec {
         upstream_name: "--super",
-        options_c: "options.c:2853",
+        options_c: "options.c:2863",
         getter: "super_user",
         server_field: None,
         applicability: AllReceivers,

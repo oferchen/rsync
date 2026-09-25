@@ -21,7 +21,7 @@
 //! *requested* duration rather than the *actual* duration so the
 //! invariants hold deterministically regardless of OS scheduling.
 //
-// upstream: io.c:2025 `sleep_for_bwlimit()` - the rate enforcement
+// upstream: io.c:2063 `sleep_for_bwlimit()` - the rate enforcement
 // routine our `BandwidthLimiter::register` mirrors. The C symbol is
 // `sleep_for_bwlimit`; some references in older rsync documentation use
 // the historical name `bwlimit_pause` for the same routine.
@@ -183,7 +183,7 @@ proptest! {
 /// "unlimited" and preventing any limiter from being constructed.
 ///
 /// Upstream rsync interprets `--bwlimit=0` as the unlimited sentinel
-/// in `options.c:2378` (`if (bwlimit < 0) bwlimit = 0`); a zero value
+/// in `options.c:2387` (`if (bwlimit < 0) bwlimit = 0`); a zero value
 /// disables `sleep_for_bwlimit` calls entirely.
 #[test]
 fn zero_rate_means_unlimited() {

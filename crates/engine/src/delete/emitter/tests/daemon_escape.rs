@@ -14,7 +14,7 @@
 //! syscall is keyed on a runtime error, and the error it keys on is the
 //! confinement working.
 //!
-//! upstream: `rsync-3.5.0/syscall.c:658` `do_unlink_at()` has three
+//! upstream: `rsync-3.5.1/syscall.c:797` `do_unlink_at()` has three
 //! arms. Arm 1 is the policy gate off. Arm 2 is the gate on with the
 //! walk succeeding. Arm 3 is the gate on with the walk failing, and
 //! arm 3 is an error - never a plain path syscall.

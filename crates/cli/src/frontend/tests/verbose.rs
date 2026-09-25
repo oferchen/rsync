@@ -391,7 +391,7 @@ fn verbose_human_readable_combined_formats_sizes() {
 
 /// Verifies that -vv lists files using upstream's bare `%n%L` format
 /// (no `copied:`/`symlink:` descriptor prefix, no byte-count wrapper).
-/// Upstream: options.c:2514 sets `stdout_format = "%n%L"`; log.c:603-659
+/// Upstream: options.c:2523 sets `stdout_format = "%n%L"`; log.c:603-659
 /// expands `%n` to the filename and `%L` to ` -> target` for symlinks.
 /// The upstream testsuite `duplicates.test` greps `^name1$` to detect
 /// duplicate copies, so the per-file line must be bare.
@@ -559,7 +559,7 @@ fn level_2_local_brackets_name_list_with_delta_and_total() {
 /// ```
 ///
 /// The exactly-once assertion is the guard against a second emitter: upstream
-/// prints the line from one place (sender.c:491), so any additional oc-side
+/// prints the line from one place (sender.c:492), so any additional oc-side
 /// emitter - for example an engine `debug_log!` flushed dead-last - must fail
 /// here rather than silently duplicate or displace the line.
 #[test]
@@ -1299,7 +1299,7 @@ fn verbose_dry_run_with_stats_shows_statistics() {
 /// bare `name1` line and exactly one `name2 -> target` line on -vv stdout.
 /// The test greps `^name1$` / `^name2 -> ` to detect duplicate copies, so
 /// any prefix (`copied:`, `symlink:`) or byte-count wrapper breaks interop.
-/// Upstream: `testsuite/duplicates.test`, options.c:2514 (`stdout_format = "%n%L"`).
+/// Upstream: `testsuite/duplicates.test`, options.c:2523 (`stdout_format = "%n%L"`).
 #[cfg(unix)]
 #[test]
 fn duplicates_testsuite_emits_bare_name_lines() {
@@ -1347,11 +1347,11 @@ fn duplicates_testsuite_emits_bare_name_lines() {
 
 /// Verifies that `-vv` on an all-uptodate tree mirrors upstream rsync 3.4.4:
 ///
-/// 1. The first stdout line is `sending incremental file list` (flist.c:2252).
+/// 1. The first stdout line is `sending incremental file list` (flist.c:2488).
 /// 2. Unchanged files emit `<name> is uptodate` (rsync.c:676) at NAME>=2.
 /// 3. Files are NOT pre-listed as bare names before the uptodate notice -
 ///    upstream gates the bare per-file emission on `INFO_EQ(PROGRESS, 1)`
-///    (receiver.c:1011, sender.c:450), and no `--progress` was requested here.
+///    (receiver.c:1027, sender.c:451), and no `--progress` was requested here.
 #[test]
 fn level_2_all_uptodate_matches_upstream_banner_and_uptodate_lines() {
     use tempfile::tempdir;
@@ -1397,10 +1397,10 @@ fn level_2_all_uptodate_matches_upstream_banner_and_uptodate_lines() {
     );
     assert_eq!(
         lines[0], "sending incremental file list",
-        "first line must be the FCLIENT banner (flist.c:2252), got: {rendered:?}"
+        "first line must be the FCLIENT banner (flist.c:2488), got: {rendered:?}"
     );
 
-    // Per upstream rsync.c:676 + sender.c:450, no bare `<name>` lines should
+    // Per upstream rsync.c:676 + sender.c:451, no bare `<name>` lines should
     // precede the `is uptodate` notice when --progress is absent. A regression
     // would surface as e.g. `foo/a.txt` on its own line right after the banner.
     let uptodate_count = lines.iter().filter(|l| l.ends_with(" is uptodate")).count();
@@ -1551,7 +1551,7 @@ fn level_2_hardlink_uptodate_emits_is_uptodate_notice() {
 /// `testsuite/itemize.test` `v_filt` helper (`sed -e '/^$/,$d'`) can strip the
 /// trailer before diffing.
 ///
-/// upstream: main.c:461 - `output_summary()` emits `rprintf(FCLIENT, "\n")`
+/// upstream: main.c:464 - `output_summary()` emits `rprintf(FCLIENT, "\n")`
 /// before the `INFO_GTE(STATS, 1)` totals block.
 #[test]
 fn level_2_blank_line_precedes_totals_trailer() {
@@ -1874,7 +1874,7 @@ fn verbose_delete_renders_deleting_before_summary_no_bare_leak() {
 /// `--quiet` suppresses info output no matter where `-v` sits on the command
 /// line, and `-v` alone still produces output.
 ///
-/// upstream: `-q` and `-v` are independent - `options.c:1598` just does
+/// upstream: `-q` and `-v` are independent - `options.c:1604` just does
 /// `quiet++`, and the suppression happens once at the output funnel
 /// (`log.c:317-319` `case FINFO: if (quiet) return;`). Neither flag overrides
 /// the other during parsing, so the result does not depend on their order.
@@ -1975,7 +1975,7 @@ fn banner_stdout(flags: &[&str]) -> String {
 }
 
 /// Pins the FIRST of upstream's two banner writes: `start_filelist_progress()`
-/// emits `"%s ... "` on `FCLIENT` with no trailing newline (flist.c:177), so a
+/// emits `"%s ... "` on `FCLIENT` with no trailing newline (flist.c:179), so a
 /// non-recursive `-dv` run opens with that exact prefix.
 ///
 /// Kept separate from [`dirs_verbose_banner_terminates_with_done`] on purpose:
@@ -1986,12 +1986,12 @@ fn dirs_verbose_banner_starts_with_flist_progress_prefix() {
     let rendered = banner_stdout(&["-dv"]);
     assert!(
         rendered.starts_with("building file list ... "),
-        "stdout must open with the flist.c:177 FCLIENT prefix, got: {rendered:?}"
+        "stdout must open with the flist.c:179 FCLIENT prefix, got: {rendered:?}"
     );
 }
 
 /// Pins the SECOND banner write: `finish_filelist_progress()` emits `"done\n"`
-/// on `FINFO` (flist.c:206) once the list is complete, terminating the line the
+/// on `FINFO` (flist.c:208) once the list is complete, terminating the line the
 /// first write left open.
 #[test]
 fn dirs_verbose_banner_terminates_with_done() {
@@ -1999,12 +1999,12 @@ fn dirs_verbose_banner_terminates_with_done() {
     let first = rendered.lines().next().unwrap_or_default();
     assert!(
         first.ends_with("done"),
-        "the banner line must be terminated by the flist.c:206 FINFO write, got: {rendered:?}"
+        "the banner line must be terminated by the flist.c:208 FINFO write, got: {rendered:?}"
     );
 }
 
 /// The two writes concatenate into one line, emitted exactly once and ahead of
-/// the per-file names - upstream: flist.c:2521-2522, which runs at the top of
+/// the per-file names - upstream: flist.c:2761-2762, which runs at the top of
 /// `send_file_list()` before any entry is listed.
 #[test]
 fn dirs_verbose_prints_building_banner_once_and_first() {
@@ -2027,12 +2027,12 @@ fn dirs_verbose_prints_building_banner_once_and_first() {
     assert!(
         !rendered.contains("sending incremental file list"),
         "the incremental banner is the mutually exclusive `else if` arm \
-         (flist.c:2523-2524) and must not also appear, got: {rendered:?}"
+         (flist.c:2763-2764) and must not also appear, got: {rendered:?}"
     );
 }
 
 /// `--list-only` resolves `xfer_dirs` to 1 without enabling `inc_recurse`
-/// (options.c:2317-2320), so it selects the same non-incremental banner. This
+/// (options.c:2326-2329), so it selects the same non-incremental banner. This
 /// is the cell a fix placed at the incremental banner's own emission site would
 /// miss entirely, because the listing renderer returns before reaching it.
 #[test]
@@ -2061,8 +2061,8 @@ fn list_only_verbose_prints_building_banner_before_the_listing() {
 }
 
 /// Recursion keeps the *incremental* banner: `inc_recurse` clears
-/// `show_filelist_progress` (flist.c:170), routing `send_file_list()` to the
-/// `else if` arm at flist.c:2523-2524.
+/// `show_filelist_progress` (flist.c:172), routing `send_file_list()` to the
+/// `else if` arm at flist.c:2763-2764.
 ///
 /// This is the cell that catches an unconditional or wrongly-negated banner: a
 /// fix that ignores `!inc_recurse` prints the `building` text here, or prints
@@ -2083,7 +2083,7 @@ fn recursive_verbose_keeps_incremental_banner() {
     );
 }
 
-/// Without `-v` the `INFO_GTE(FLIST, 1)` term of flist.c:170 is false, so no
+/// Without `-v` the `INFO_GTE(FLIST, 1)` term of flist.c:172 is false, so no
 /// banner is printed - and nothing else is either.
 #[test]
 fn dirs_without_verbose_prints_no_banner() {
@@ -2092,7 +2092,7 @@ fn dirs_without_verbose_prints_no_banner() {
 }
 
 /// `--info=flist0` clears the FLIST category while leaving verbosity at 1,
-/// proving the gate is the info category (flist.c:170) rather than raw `-v`.
+/// proving the gate is the info category (flist.c:172) rather than raw `-v`.
 #[test]
 fn dirs_verbose_info_flist0_suppresses_banner() {
     let rendered = banner_stdout(&["-dv", "--info=flist0"]);
@@ -2106,7 +2106,7 @@ fn dirs_verbose_info_flist0_suppresses_banner() {
     );
 }
 
-/// `start_filelist_progress()` returns early under `quiet` (flist.c:175) - a
+/// `start_filelist_progress()` returns early under `quiet` (flist.c:177) - a
 /// term the info-level gate does not model, so it needs its own check now that
 /// `-q` and `-v` are independent.
 #[test]

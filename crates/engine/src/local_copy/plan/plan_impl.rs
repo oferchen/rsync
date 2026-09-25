@@ -24,7 +24,7 @@ impl LocalCopyPlan {
     /// Constructs a plan from CLI-style operands, with `--relative` off.
     ///
     /// Use [`Self::from_operands_with_relative`] when the flag is known; it is
-    /// the operand rule at `flist.c:2595-2602` that reads it.
+    /// the operand rule at `flist.c:2835-2842` that reads it.
     ///
     /// The operands must contain at least one source and a destination. A
     /// trailing path separator on a source operand mirrors upstream rsync's
@@ -58,8 +58,8 @@ impl LocalCopyPlan {
     /// [`Self::from_operands`] with `--relative` known.
     ///
     /// The flag scopes one operand rule: upstream's trailing-`..` DOTDIR
-    /// append (`flist.c:2595-2602`) sits in the arm `--relative` short-circuits
-    /// past (`flist.c:2581-2583`). See
+    /// append (`flist.c:2835-2842`) sits in the arm `--relative` short-circuits
+    /// past (`flist.c:2821-2823`). See
     /// `operands::operand_ends_in_parent_dir`, which carries the full citation.
     ///
     /// # Errors
@@ -73,7 +73,7 @@ impl LocalCopyPlan {
             return Err(LocalCopyError::missing_operands());
         }
 
-        // upstream: flist.c:3004-3012 - flist_sort_and_clean() deduplicates
+        // upstream: flist.c:3247-3255 - flist_sort_and_clean() deduplicates
         // entries with identical paths via FLAG_DUPLICATE, keeping only the
         // first occurrence. We deduplicate source operands here to prevent
         // the same directory or file from being processed multiple times.
@@ -313,7 +313,7 @@ mod tests {
         assert!(debug.contains("LocalCopyPlan"));
     }
 
-    /// upstream: flist.c:3004-3012 - flist_sort_and_clean() marks duplicate
+    /// upstream: flist.c:3247-3255 - flist_sort_and_clean() marks duplicate
     /// entries with FLAG_DUPLICATE. Passing the same source operand multiple
     /// times must not produce duplicate entries in the plan.
     #[test]

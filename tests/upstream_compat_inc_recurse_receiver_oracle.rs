@@ -32,11 +32,11 @@
 //!
 //! ```text
 //! show_filelist_progress = INFO_GTE(FLIST,1) && xfer_dirs && !am_server && !inc_recurse
-//!                                                       // upstream: flist.c:164
+//!                                                       // upstream: flist.c:166
 //! if (show_filelist_progress)
-//!     start_filelist_progress("building file list");   // upstream: flist.c:2249
+//!     start_filelist_progress("building file list");   // upstream: flist.c:2485
 //! else if (inc_recurse && INFO_GTE(FLIST,1) && !am_server)
-//!     rprintf(FCLIENT, "sending incremental file list\n");  // upstream: flist.c:2252
+//!     rprintf(FCLIENT, "sending incremental file list\n");  // upstream: flist.c:2488
 //! ```
 //!
 //! The two branches are mutually exclusive on `inc_recurse`. With a single
@@ -86,7 +86,7 @@ use test_support::{
 const MIN_FILECNT_LOOKAHEAD: usize = 1000;
 
 /// The literal the pushing upstream sender prints under `-v` only when the
-/// receiving server negotiated CF_INC_RECURSE (upstream flist.c:2252).
+/// receiving server negotiated CF_INC_RECURSE (upstream flist.c:2488).
 const INC_MARKER: &str = "sending incremental file list";
 
 /// Fixture shape: 12 top-level dirs x 2 subdirs each, 30 files per dir.
@@ -296,7 +296,7 @@ fn rsh_push_into_oc_receiver_does_not_negotiate_inc_recurse() {
     assert!(
         !out.contains(INC_MARKER),
         "oc receiver must NOT negotiate CF_INC_RECURSE today, yet the upstream sender \
-         printed {INC_MARKER:?} (flist.c:2252) - the baseline changed, see #205\n{out}"
+         printed {INC_MARKER:?} (flist.c:2488) - the baseline changed, see #205\n{out}"
     );
 
     assert_trees_equal(&src, &dest);
@@ -331,7 +331,7 @@ fn rsh_push_into_upstream_receiver_negotiates_inc_recurse_control() {
     assert!(
         out.contains(INC_MARKER),
         "an upstream server-receiver negotiates CF_INC_RECURSE, so the pushing sender \
-         must print {INC_MARKER:?} (flist.c:2252); its absence would void the oc \
+         must print {INC_MARKER:?} (flist.c:2488); its absence would void the oc \
          baseline's discriminating power\n{out}"
     );
 
@@ -435,7 +435,7 @@ fn daemon_push_into_oc_receiver_does_not_negotiate_inc_recurse() {
     assert!(
         !out.contains(INC_MARKER),
         "oc daemon receiver must NOT negotiate CF_INC_RECURSE today, yet the upstream \
-         sender printed {INC_MARKER:?} (flist.c:2252) - baseline changed, see #205\n{out}"
+         sender printed {INC_MARKER:?} (flist.c:2488) - baseline changed, see #205\n{out}"
     );
 
     assert_trees_equal(&src, &daemon.module_root);

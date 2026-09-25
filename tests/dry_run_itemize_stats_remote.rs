@@ -3,7 +3,7 @@
 //! Upstream suppresses only the *mutations* under `-n`, never the reporting:
 //!
 //! ```c
-//! /* syscall.c:1010-1016 */
+//! /* syscall.c:1149-1155 */
 //! int do_mkdir(const char *path, mode_t mode) { if (dry_run) return 0; ... }
 //! /* rsync.c:498-499 */
 //! if (dry_run) return 1;                 /* set_file_attrs() */
@@ -12,7 +12,7 @@
 //! if (itemizing && f_out != -1)
 //!     itemize(fnamecmp, file, ndx, statret, &sx, statret ? ITEM_LOCAL_CHANGE : 0, 0, NULL);
 //!
-//! /* receiver.c:732-746 - and so does the created-file tally */
+//! /* receiver.c:748-762 - and so does the created-file tally */
 //! if (iflags & ITEM_IS_NEW) {
 //!     stats.created_files++;
 //!     ... else if (S_ISDIR(file->mode)) stats.created_dirs++; ...
@@ -300,7 +300,7 @@ fn assert_dry_run_fidelity(push: bool) {
         "5 (reg: 3, dir: 1, link: 1)",
         "{label} created-file breakdown\nfull stdout:\n{stdout}"
     );
-    // upstream: receiver.c:781-784 / sender.c:341-343 - xferred_files and
+    // upstream: receiver.c:797-800 / sender.c:342-344 - xferred_files and
     // total_transferred_size are summed before the `!do_xfers` continue.
     assert_eq!(
         stat_line(&stdout, "Number of regular files transferred:"),

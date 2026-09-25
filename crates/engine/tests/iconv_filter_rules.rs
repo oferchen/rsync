@@ -19,9 +19,9 @@
 //!
 //! - `exclude.c:check_filter()` - first-match-wins filter evaluation
 //!   against local-charset filenames.
-//! - `flist.c:1579-1603` `send_file_name()` - `ic_send` conversion
+//! - `flist.c:1804-1828` `send_file_name()` - `ic_send` conversion
 //!   applied AFTER filter evaluation on the sender.
-//! - `flist.c:738-754` `recv_file_entry()` - `ic_recv` conversion on
+//! - `flist.c:963-979` `recv_file_entry()` - `ic_recv` conversion on
 //!   the receiver side.
 //! - `rsync.c:118-140` `setup_iconv()` - LOCAL/REMOTE split.
 

@@ -3,7 +3,7 @@ use super::*;
 
 /// A local transfer APPLIES its `-M` values instead of refusing them.
 ///
-/// upstream: options.c:3175-3182 appends `remote_options[]` to the argv of the
+/// upstream: options.c:3185-3192 appends `remote_options[]` to the argv of the
 /// server the client starts, and a local copy still forks one (do_cmd ->
 /// local_child -> child_main), so the child parses them normally. Upstream has
 /// no local-transfer refusal for `-M` anywhere; oc used to invent one because

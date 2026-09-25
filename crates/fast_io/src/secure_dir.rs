@@ -79,13 +79,13 @@ pub fn secure_open_dir(path: &Path) -> io::Result<OwnedFd> {
 ///
 /// Upstream splits the two by who supplied the path:
 ///
-/// - `syscall.c:85-90` `open_anchor_dirfd()` - a plain
+/// - `syscall.c:102-107` `open_anchor_dirfd()` - a plain
 ///   `openat(AT_FDCWD, path, O_RDONLY | O_DIRECTORY)`, no `O_NOFOLLOW` and no
 ///   `resolve` flags.
-/// - `syscall.c:3189-3193` - `secure_relative_open()` routes an absolute
+/// - `syscall.c:3336-3340` - `secure_relative_open()` routes an absolute
 ///   `basedir` to that helper under the comment "Absolute basedir:
 ///   operator-trusted."
-/// - `main.c:765` / `clientserver.c:993` - the receiver destination and the
+/// - `main.c:778` / `clientserver.c:993` - the receiver destination and the
 ///   daemon module root are entered with a plain `change_dir()`.
 ///
 /// # Errors
@@ -105,7 +105,7 @@ pub fn secure_open_dir(path: &Path) -> io::Result<OwnedFd> {
 /// ancestors as the dropped uid, which `EACCES`es whenever the module sits
 /// under a directory that uid cannot search (a 0700 home).
 ///
-/// upstream: `syscall.c:85-90` `open_anchor_dirfd()` - `dup(module_dirfd)`
+/// upstream: `syscall.c:102-107` `open_anchor_dirfd()` - `dup(module_dirfd)`
 /// under exactly this condition, plain `openat(AT_FDCWD, ...)` otherwise.
 pub fn open_trusted_dir(path: &Path) -> io::Result<OwnedFd> {
     if let Some(pinned) = crate::confinement::pinned_root_fd_for(path) {
@@ -148,7 +148,7 @@ mod imp {
             )
         })?;
 
-        // upstream: syscall.c:85-90 open_anchor_dirfd() - no `O_NOFOLLOW`,
+        // upstream: syscall.c:102-107 open_anchor_dirfd() - no `O_NOFOLLOW`,
         // no `resolve` flags. The anchor is operator-supplied, so ordinary
         // symlink resolution applies.
         let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC;

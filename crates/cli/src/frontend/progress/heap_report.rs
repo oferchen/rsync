@@ -1,6 +1,6 @@
 //! The `--info=stats3` heap-statistics block.
 //!
-//! upstream: main.c:484 `show_malloc_stats()`, called from `handle_stats()`
+//! upstream: main.c:487 `show_malloc_stats()`, called from `handle_stats()`
 //! (main.c:337-340) under `INFO_GTE(STATS, 3)` with the comment "These come out
 //! from every process", ahead of `output_summary()`.
 //!
@@ -27,7 +27,7 @@ use fast_io::heap_stats::{HeapStats, heap_stats};
 /// Logical roles a transfer drives, in upstream's process order.
 ///
 /// upstream renders `(%s%s%s)` from `am_server` / `am_daemon` / `who_am_i()`
-/// (main.c:490-491); a local transfer yields exactly these three.
+/// (main.c:493-494); a local transfer yields exactly these three.
 const ROLES: [&str; 3] = ["sender", "server receiver", "server generator"];
 
 /// Marks the figures as describing one shared process heap.
@@ -38,7 +38,7 @@ const SHARED_HEAP_NOTE: &str = "[process-wide; oc roles are threads, not process
 
 /// One `name: value (description)` row.
 ///
-/// upstream's `PRINT_ALLOC_NUM(title, descr, num)` (main.c:493-495) pairs each
+/// upstream's `PRINT_ALLOC_NUM(title, descr, num)` (main.c:496-498) pairs each
 /// counter with a fixed description; the same pairing keeps the block
 /// self-describing.
 type Row = (&'static str, fn(&HeapStats) -> u64, &'static str);
@@ -88,7 +88,7 @@ fn render_blocks<W: Write + ?Sized>(
     pid: u32,
 ) -> io::Result<()> {
     for role in ROLES {
-        // upstream: main.c:489 `rprintf(FCLIENT, "\n")` precedes each block.
+        // upstream: main.c:492 `rprintf(FCLIENT, "\n")` precedes each block.
         writeln!(stdout)?;
         writeln!(
             stdout,

@@ -144,9 +144,9 @@ pub(crate) fn prefetch_checksums(
 /// Computes the checksum of a single file.
 ///
 /// upstream: checksum.c:402 `file_checksum()` reads the file through
-/// `map_file()` / `map_ptr()` (fileio.c:213-317), which is a `read()`-based
+/// `map_file()` / `map_ptr()` (fileio.c:255-359), which is a `read()`-based
 /// sliding window, NOT `mmap(2)`. Upstream deliberately avoids `mmap` here:
-/// the fileio.c:214-217 comment notes that another process truncating the
+/// the fileio.c:256-259 comment notes that another process truncating the
 /// file mid-transfer would raise SIGBUS and kill the process. We mirror that
 /// by streaming through a read window ([`hash_file_contents`]) rather than
 /// mapping the file, so a concurrent truncation degrades gracefully (the read
@@ -567,7 +567,7 @@ mod tests {
     /// Ground-truth parity for the SIGBUS-safe read-window path (issue #192).
     ///
     /// The whole-file checksum path streams the file through a bounded read
-    /// window (upstream fileio.c:213-317 `map_file`/`map_ptr`), NOT `mmap(2)`.
+    /// window (upstream fileio.c:255-359 `map_file`/`map_ptr`), NOT `mmap(2)`.
     /// This test proves the windowed/chunked reader yields a digest identical
     /// to hashing the entire content in a single pass, for every algorithm and
     /// across sizes that span several read windows (the 128 KiB buffer block).

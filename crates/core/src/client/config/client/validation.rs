@@ -40,7 +40,7 @@ impl ClientConfig {
     /// Returns the checksum seed configured via `--checksum-seed`, if any.
     ///
     /// upstream: options.c:151 declares `int checksum_seed`, a signed global.
-    /// It is forwarded to the remote at options.c:3047 as
+    /// It is forwarded to the remote at options.c:3057 as
     /// `"--checksum-seed=%d"`.
     #[doc(alias = "--checksum-seed")]
     pub const fn checksum_seed(&self) -> Option<i32> {
