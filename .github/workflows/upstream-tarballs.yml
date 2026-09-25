@@ -1,0 +1,44 @@
+name: Upstream tarball cache
+
+# The single producer of the upstream rsync tarball cache entry that every
+# fetch-upstream-rsync consumer restores. Runs when the pins or the fetch
+# mechanism change, so the key is filled once per manifest rather than raced
+# by parallel consumer jobs. A push to master stores it where every branch can
+# read it; a pull request that changes the pins stores it for that PR's ref.
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'tools/ci/upstream-tarballs.sha256'
+      - 'tools/ci/fetch_upstream_rsync.sh'
+      - '.github/actions/fetch-upstream-rsync/**'
+      - '.github/workflows/upstream-tarballs.yml'
+  pull_request:
+    paths:
+      - 'tools/ci/upstream-tarballs.sha256'
+      - 'tools/ci/fetch_upstream_rsync.sh'
+      - '.github/actions/fetch-upstream-rsync/**'
+      - '.github/workflows/upstream-tarballs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-tarballs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    name: Warm upstream tarball cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Fetch, verify and save every pinned tarball
+        uses: ./.github/actions/fetch-upstream-rsync
+        with:
+          versions: all

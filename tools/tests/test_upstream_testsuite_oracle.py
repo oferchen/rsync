@@ -29,6 +29,7 @@ reason when no usable one is present.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shlex
 import shutil
@@ -520,10 +521,30 @@ class RsyncReportedVersionTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
 
 
+def _pinned_env(workdir: Path) -> dict[str, str]:
+    """Env that makes the builder's fetcher take the planted tarballs as pinned.
+
+    The builder obtains its source through fetch_upstream_rsync.sh, which
+    refuses any tarball not matching its manifest pin. Pinning the planted
+    fakes, and pointing the tarball cache at them, keeps these tests hermetic
+    while still going through the same verification a real fetch does.
+    """
+    manifest = workdir / "pins.sha256"
+    manifest.write_text("".join(
+        f"{hashlib.sha256(t.read_bytes()).hexdigest()}  {t.name}\n"
+        for t in sorted(workdir.glob("rsync-*.tar.gz"))
+    ))
+    env = dict(os.environ)
+    env["UPSTREAM_TARBALL_CACHE"] = str(workdir)
+    env["UPSTREAM_TARBALL_MANIFEST"] = str(manifest)
+    env["RSYNC_TARBALL_BASE_URL"] = "file:///nonexistent-oracle-source"
+    return env
+
+
 class BuildOldRsyncOracleTests(unittest.TestCase):
     """build_old_rsync_oracle.sh: what it installs and what it refuses.
 
-    Hermetic: a pre-placed source tarball means curl is never reached, and the
+    Hermetic: a pre-placed, pinned source tarball means curl is never reached, and the
     tarball's ./configure writes a Makefile whose `all` emits a shell script
     standing in for the built rsync. Real tar and real make, no compiler.
     """
@@ -564,6 +585,7 @@ class BuildOldRsyncOracleTests(unittest.TestCase):
         return subprocess.run(
             ["bash", str(BUILDER), version, str(self.dest), str(self.workdir)],
             capture_output=True, text=True, check=False,
+            env=_pinned_env(self.workdir),
         )
 
     def test_a_build_reporting_the_requested_version_is_installed(self) -> None:
@@ -730,7 +752,7 @@ class OracleCflagsEraTests(unittest.TestCase):
             tar.add(src, arcname="rsync-3.2.7")
         result = subprocess.run(
             ["bash", str(BUILDER), "3.2.7", str(self.tmp / "old_versions"), str(workdir)],
-            capture_output=True, text=True, check=False,
+            capture_output=True, text=True, check=False, env=_pinned_env(workdir),
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         return shlex.split(record.read_text())

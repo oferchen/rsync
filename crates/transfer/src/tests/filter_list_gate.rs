@@ -660,3 +660,40 @@ fn pre30_push_still_refuses_a_user_perishable_rule() {
         "a user -p rule on a pre-30 push",
     );
 }
+
+// -- built-in -C defaults (exclude.c:1489-1504) --
+
+fn cvs_default(pattern: &str) -> FilterRuleWireFormat {
+    let mut rule = FilterRuleWireFormat::exclude(pattern.to_owned()).with_perishable(true);
+    rule.cvs_origin = true;
+    rule
+}
+
+/// Upstream parses the built-in `-C` list with FILTRULE_PERISHABLE only at
+/// protocol >= 30 (exclude.c:1498-1500), from send_filter_list() once the
+/// protocol is known. A pre-30 `-C` push therefore sends plain excludes; oc
+/// marked them perishable up front and refused the push as too modern.
+/// MEASURED: rsync 3.5.0 `-a -C --protocol=28` push exits 0; oc exited 2.
+#[test]
+fn pre30_cvs_push_sends_the_defaults_as_plain_excludes() {
+    for proto in [ProtocolVersion::V28, ProtocolVersion::V29] {
+        client_filter_step(cvs_default("*.o"), true, false, proto, false)
+            .expect("no list: nothing to refuse");
+        let wire = client_filter_step(cvs_default("*.o"), true, false, proto, true)
+            .expect("the -C defaults are plain excludes below protocol 30");
+        let payload: &[u8] = if proto == ProtocolVersion::V28 {
+            b"*.o"
+        } else {
+            b"- *.o"
+        };
+        assert_eq!(wire, one_record(payload), "protocol {proto}");
+    }
+}
+
+/// At protocol 30 the defaults are perishable and carry `p`.
+#[test]
+fn protocol_30_cvs_push_marks_the_defaults_perishable() {
+    let wire = client_filter_step(cvs_default("*.o"), true, false, ProtocolVersion::V30, true)
+        .expect("protocol 30 encodes `p`");
+    assert_eq!(wire, one_record(b"-p *.o"));
+}
