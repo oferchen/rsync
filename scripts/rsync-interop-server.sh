@@ -39,8 +39,7 @@ versions=(3.0.9 3.1.3 3.4.1 3.4.2)
 readonly versions
 
 rsync_repo_url="https://github.com/RsyncProject/rsync.git"
-rsync_tarball_base_url="${RSYNC_TARBALL_BASE_URL:-https://rsync.samba.org/ftp/rsync/src}"
-readonly rsync_repo_url rsync_tarball_base_url
+readonly rsync_repo_url
 
 DEBIAN_MIRROR="${DEBIAN_MIRROR:-https://deb.debian.org/debian}"
 UBUNTU_MIRROR="${UBUNTU_MIRROR:-http://archive.ubuntu.com/ubuntu}"
@@ -198,21 +197,12 @@ try_fetch_deb_generic() {
 
 fetch_upstream_tarball() {
   local version=$1 dest=$2
-  local url="${rsync_tarball_base_url}/rsync-${version}.tar.gz"
-  local tmp_tar
-  tmp_tar=$(mktemp)
-  if ! curl -fsSL "${url}" -o "${tmp_tar}"; then
-    rm -f "${tmp_tar}"
-    return 1
-  fi
-  mkdir -p "${upstream_src_root}"
   rm -rf "${dest}" "${upstream_src_root}/rsync-${version}"
-  if ! tar -xzf "${tmp_tar}" -C "${upstream_src_root}" >/dev/null 2>&1; then
-    rm -f "${tmp_tar}"
+  if ! bash "${workspace_root}/tools/ci/fetch_upstream_rsync.sh" \
+      "${version}" "${upstream_src_root}" >/dev/null; then
     rm -rf "${dest}"
     return 1
   fi
-  rm -f "${tmp_tar}"
   [[ -d "${dest}" ]] || return 1
   return 0
 }
