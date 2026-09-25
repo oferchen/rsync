@@ -380,10 +380,10 @@ pub fn generate_delta_from_signature<R: Read>(
 ///   segmentation seam at a range boundary can still shift the literal-token
 ///   length framing by a few bytes (never the counts or the reconstructed
 ///   data). See [`DeltaGenerator::generate_chunked`] for the exact contract.
-/// - **Duplicate-content basis**: fall back to the pruned sequential
-///   [`DeltaGenerator::generate`] over the same slice, because the prune-off
-///   parallel scan would resolve duplicate siblings differently and diverge
-///   from the wire bytes the receiver expects.
+/// - **Duplicate-content basis**: fall back to the sequential
+///   [`DeltaGenerator::generate`] over the same slice, because each parallel
+///   stripe starts its `want_i` hint fresh and could resolve duplicate
+///   siblings differently, diverging from upstream's token stream.
 ///
 /// `max_chunks` bounds the number of parallel ranges (the caller passes
 /// `rayon::current_num_threads().min(8)`).
@@ -415,8 +415,9 @@ pub fn generate_delta_from_signature_chunked(
         .with_updating_basis_file(updating_basis_file)
         .with_source_len(source.len() as u64);
     let result = if index.has_duplicate_blocks() {
-        // Duplicate-content basis: the prune-off parallel scan would diverge
-        // from the pruned sequential wire bytes, so keep the sequential path.
+        // Duplicate-content basis: a stripe's fresh `want_i` hint could pick a
+        // different sibling than the sequential scan, so keep the sequential
+        // path.
         generator.generate_counted(io::Cursor::new(source), &index)
     } else {
         generator.generate_chunked_counted(source, &index, max_chunks)
@@ -1722,10 +1723,11 @@ mod tests {
     }
 
     /// A duplicate-content basis must route the opt-in parallel scan back to the
-    /// pruned sequential scan.
+    /// sequential scan.
     ///
-    /// WHY: the prune-off parallel scan resolves duplicate siblings to different
-    /// `Copy` indices than the pruned sequential scan, so on a duplicate-heavy
+    /// WHY: each parallel stripe starts its `want_i` hint fresh, so it can
+    /// resolve duplicate siblings to different `Copy` indices than the
+    /// sequential scan, and on a duplicate-heavy
     /// basis its token stream (and the wire bytes) diverge from what the receiver
     /// expects. [`generate_delta_from_signature_chunked`] guards against this by
     /// falling back to [`DeltaGenerator::generate`] whenever
@@ -1803,6 +1805,72 @@ mod tests {
         );
     }
 
+    /// Repeated source blocks must produce the same tokens whichever scan the
+    /// wrapper picks.
+    ///
+    /// A basis block matches every source repeat of its content: upstream
+    /// `match.c:hash_search()` never retires a chain entry outside `--inplace`.
+    /// The wrapper must agree with the sequential scan token for token both on
+    /// a duplicate-free basis (parallel path taken) and on a sparse, zero-heavy
+    /// basis (sequential fallback taken), and neither may send the repeats as
+    /// literals.
+    #[test]
+    fn repeated_source_blocks_match_identically_on_both_scan_paths() {
+        const BLOCK_LEN: u32 = 1024;
+        const STRONG_LEN: u8 = 16;
+        const SOURCE_LEN: usize = 3 * 1024 * 1024;
+        let bl = BLOCK_LEN as usize;
+
+        // Duplicate-free basis; the source follows every block with block 5.
+        let unique = lcg_bytes(0x5EB7_0000_0000_0001, 64 * bl);
+        let mut repeated = Vec::with_capacity(SOURCE_LEN);
+        while repeated.len() < SOURCE_LEN {
+            let k = (repeated.len() / (2 * bl)) % 64;
+            repeated.extend_from_slice(&unique[k * bl..(k + 1) * bl]);
+            repeated.extend_from_slice(&unique[5 * bl..6 * bl]);
+        }
+
+        // Sparse image: three zero blocks in the basis, megabytes of zeros in
+        // the source.
+        let mut sparse_basis = lcg_bytes(0x5EB7_0000_0000_0002, 32 * bl);
+        for k in [3usize, 4, 20] {
+            sparse_basis[k * bl..(k + 1) * bl].fill(0);
+        }
+        let mut sparse_source = sparse_basis.clone();
+        sparse_source.resize(SOURCE_LEN, 0);
+
+        for (basis, source, duplicate_basis) in [
+            (&unique, &repeated, false),
+            (&sparse_basis, &sparse_source, true),
+        ] {
+            let sig_blocks = wire_signature(basis, BLOCK_LEN, STRONG_LEN);
+            let config = || delta_config(sig_blocks.clone(), BLOCK_LEN, STRONG_LEN, false);
+            let index = build_signature_index(config()).expect("index");
+            assert_eq!(index.has_duplicate_blocks(), duplicate_basis);
+
+            let (sequential, _) = generate_delta_from_signature(
+                io::Cursor::new(source.clone()),
+                config(),
+                source.len() as u64,
+            )
+            .expect("sequential");
+            let (chunked, _) =
+                generate_delta_from_signature_chunked(source, config(), 4).expect("chunked");
+
+            assert_eq!(
+                chunked.tokens(),
+                sequential.tokens(),
+                "parallel wrapper and sequential scan must emit identical tokens \
+                 (duplicate basis: {duplicate_basis})"
+            );
+            assert_eq!(
+                sequential.literal_bytes(),
+                0,
+                "every source block has a basis match, so none may go out as a \
+                 literal (duplicate basis: {duplicate_basis})"
+            );
+        }
+    }
     /// The wire `remainder` must land on the LAST reconstructed block, and only
     /// there.
     ///

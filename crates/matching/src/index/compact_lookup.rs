@@ -52,7 +52,7 @@ const TRADITIONAL_TABLESIZE: usize = 1 << MAX_LOG2_BUCKETS;
 
 /// Allocation guard on the wide bucket count.
 ///
-/// `2^27 - 1` slots is 1 GiB of [`BucketSlot`], reached only at roughly
+/// `2^27 - 1` slots is 512 MiB of `u32` bucket heads, reached only at roughly
 /// 107 million basis blocks (a multi-terabyte basis at upstream's 128 KiB
 /// maximum block length) - about 2 000x past the point where the wide mode
 /// engages. Upstream has no equivalent guard; it simply asks `new_array()`
@@ -97,25 +97,6 @@ struct ChainEntry {
     block_index: u32,
     /// Link to the next entry in the same bucket chain, or [`CHAIN_END`].
     next: u32,
-}
-
-/// Per-bucket head/tail pointers into the chain backing store.
-///
-/// Tracking the tail explicitly lets [`CompactLookup::insert`] append in
-/// O(1) so the iteration order matches insertion order. The `MatchedBlocks`
-/// duplicate-block contract relies on first-fit-in-bucket semantics, so
-/// the natural insertion order must survive the rewrite.
-#[derive(Clone, Copy, Debug)]
-struct BucketSlot {
-    head: u32,
-    tail: u32,
-}
-
-impl BucketSlot {
-    const EMPTY: Self = Self {
-        head: CHAIN_END,
-        tail: CHAIN_END,
-    };
 }
 
 /// Bucket sizing and addressing rule, the single owner of the decision.
@@ -194,11 +175,11 @@ impl BucketAddress {
 /// Bucket index over the rolling checksum.
 ///
 /// See the module docs for the two addressing modes, the ZSO-4 design
-/// contract, and the duplicate-block correctness rationale shared with
-/// [`super::MatchedBlocks`].
+/// contract.
 #[derive(Clone, Debug)]
 pub(super) struct CompactLookup {
-    buckets: Vec<BucketSlot>,
+    /// Head entry of each bucket chain, or [`CHAIN_END`].
+    buckets: Vec<u32>,
     entries: Vec<ChainEntry>,
     address: BucketAddress,
 }
@@ -229,7 +210,7 @@ impl CompactLookup {
         let address = BucketAddress::for_entries(n_entries);
         let reserve = n_entries.min(MAX_RESERVE_ENTRIES);
         Self {
-            buckets: vec![BucketSlot::EMPTY; address.bucket_count()],
+            buckets: vec![CHAIN_END; address.bucket_count()],
             entries: Vec::with_capacity(reserve),
             address,
         }
@@ -237,11 +218,14 @@ impl CompactLookup {
 
     /// Inserts a `(sum1, sum2) -> block_index` mapping.
     ///
-    /// Entries are appended to the tail of the bucket chain so the iteration
-    /// order matches insertion order. Preserving insertion order keeps the
-    /// `MatchedBlocks` first-fit-in-bucket semantics intact: the matcher
-    /// picks the earliest unmarked basis index when several blocks share a
-    /// bucket and discriminator.
+    /// Entries are pushed onto the head of the bucket chain, so a walk yields
+    /// the most recently inserted entry first. The builder inserts blocks in
+    /// ascending index order, so among equal rolling sums the highest block
+    /// index is tried first - the order upstream's chain walk sees, which
+    /// decides the matched sibling when basis blocks share content.
+    ///
+    /// upstream: match.c:98-110 `build_hash_table()` -
+    /// `s->sums[i].chain = hash_table[t]; hash_table[t] = i;`.
     pub(super) fn insert(&mut self, sum1: u16, sum2: u16, block_index: u32) {
         debug_assert_ne!(
             block_index, CHAIN_END,
@@ -252,24 +236,14 @@ impl CompactLookup {
         self.entries.push(ChainEntry {
             sum1,
             block_index,
-            next: CHAIN_END,
+            next: self.buckets[bucket],
         });
-
-        let slot = self.buckets[bucket];
-        if slot.head == CHAIN_END {
-            self.buckets[bucket] = BucketSlot {
-                head: entry_idx,
-                tail: entry_idx,
-            };
-        } else {
-            self.entries[slot.tail as usize].next = entry_idx;
-            self.buckets[bucket].tail = entry_idx;
-        }
+        self.buckets[bucket] = entry_idx;
     }
 
     /// Returns an iterator over all block indices matching `(sum1, sum2)`.
     ///
-    /// Walks the bucket chain in insertion order and yields entries whose
+    /// Walks the bucket chain newest-first and yields entries whose
     /// lower-half discriminator equals `sum1`. The strong-checksum verify
     /// still gates the final caller-visible match - this iterator only
     /// filters out chain entries that cannot possibly match. The yielded
@@ -280,14 +254,14 @@ impl CompactLookup {
         CompactLookupIter {
             table: self,
             sum1,
-            next: self.buckets[bucket].head,
+            next: self.buckets[bucket],
         }
     }
 
     /// Resets all bucket heads and chain entries, preserving the backing
     /// allocations for the next per-segment rebuild.
     pub(super) fn clear(&mut self) {
-        self.buckets.fill(BucketSlot::EMPTY);
+        self.buckets.fill(CHAIN_END);
         self.entries.clear();
     }
 
@@ -317,7 +291,7 @@ impl CompactLookup {
     /// lint since rustc cannot trace pub-to-restricted-pub call chains.
     #[cfg(any(test, feature = "bench-internal"))]
     pub fn bucket_bytes(&self) -> usize {
-        self.buckets.len() * core::mem::size_of::<BucketSlot>()
+        self.buckets.len() * core::mem::size_of::<u32>()
     }
 }
 
@@ -382,15 +356,17 @@ mod tests {
         assert!(results.is_empty());
     }
 
+    /// Equal keys come back highest block index first, as upstream's
+    /// head-inserted chain yields them (match.c:98-110). The order decides
+    /// which duplicate-content sibling a window matches, and so the wire.
     #[test]
-    fn multiple_entries_same_key() {
+    fn multiple_entries_same_key_walk_newest_first() {
         let mut table = CompactLookup::with_capacity(16);
         table.insert(10, 20, 0);
         table.insert(10, 20, 1);
         table.insert(10, 20, 2);
-        let mut results: Vec<usize> = table.find_all(10, 20).collect();
-        results.sort_unstable();
-        assert_eq!(results, vec![0, 1, 2]);
+        let results: Vec<usize> = table.find_all(10, 20).collect();
+        assert_eq!(results, vec![2, 1, 0]);
     }
 
     #[test]
@@ -574,14 +550,14 @@ mod tests {
             assert!(found.contains(&i), "missing entry {i}");
         }
 
-        // Duplicate keys must still come back in insertion order: the
-        // MatchedBlocks first-fit contract depends on it.
+        // Duplicate keys come back newest-first in wide mode too: the chain
+        // order picks the matched sibling, so it must not depend on sizing.
         let mut dup = CompactLookup::with_capacity(n);
         dup.insert(7, 9, 100);
         dup.insert(7, 9, 5);
         dup.insert(7, 9, 42);
         let found: Vec<usize> = dup.find_all(7, 9).collect();
-        assert_eq!(found, vec![100, 5, 42]);
+        assert_eq!(found, vec![42, 5, 100]);
     }
 
     #[test]

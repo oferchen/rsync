@@ -96,8 +96,8 @@
 //! # See also
 //!
 //! - `crates/matching/src/index/compact_lookup.rs` for the current layout.
-//! - `docs/design/zsync-prune.md` and `docs/design/zsync-bithash.md` for
-//!   sibling bench harnesses (#2063, #2067, #2071) that established the
+//! - `docs/design/zsync-bithash.md` for the sibling bench harnesses
+//!   (#2063, #2067) that established the
 //!   `bench-internal` pattern this bench follows.
 
 #![cfg(feature = "bench-internal")]
