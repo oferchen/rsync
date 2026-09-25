@@ -702,6 +702,21 @@ where
                         }
                     }
 
+                    // upstream: receiver.c:426-434 open_tmpfile() - an
+                    // operator `--temp-dir` may sit outside the destination,
+                    // even on another filesystem, and the receiver creates,
+                    // copies and unlinks its temp files there. Without it in
+                    // the allowlist every mkstemp fails EACCES. The path is
+                    // resolved the way the receiver resolves it: as given,
+                    // relative to the working directory.
+                    if let Some(canon) = config
+                        .temp_dir
+                        .as_deref()
+                        .and_then(|dir| dir.canonicalize().ok())
+                    {
+                        allowed.push(canon);
+                    }
+
                     // upstream: generator.c:1356 - with --keep-dirlinks the
                     // receiver follows a destination symlink that resolves to a
                     // directory and writes through it, which upstream permits

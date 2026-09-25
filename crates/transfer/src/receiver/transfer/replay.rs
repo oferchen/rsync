@@ -466,30 +466,40 @@ impl ReceiverContext {
 
             // Commit: rename the temp file over the destination. Mirrors the
             // SEC-1.j routing of sync.rs (the sandbox-anchored renameat with
-            // the io_uring fast path first).
+            // the io_uring fast path first). A `--temp-dir` on another
+            // filesystem takes robust_rename's copy fallback (util1.c:596).
+            #[cfg(unix)]
+            crate::robust_rename::robust_rename(
+                crate::robust_rename::CommitAnchor {
+                    sandbox: sandbox.as_deref(),
+                    root: &dest_dir,
+                },
+                temp_guard.path(),
+                &file_path,
+                None,
+                |old, new| {
+                    if let Some(result) = fast_io::try_rename_via_io_uring(old, new) {
+                        return result;
+                    }
+                    let old_rel = old.strip_prefix(&dest_dir).unwrap_or(old);
+                    fast_io::renameat_via_sandbox_or_fallback(
+                        sandbox.as_deref(),
+                        &dest_dir,
+                        old_rel,
+                        old,
+                        &dest_dir,
+                        relative_path,
+                        new,
+                        true,
+                    )
+                },
+            )?;
+            #[cfg(not(unix))]
             if let Some(rename_result) =
                 fast_io::try_rename_via_io_uring(temp_guard.path(), &file_path)
             {
                 rename_result?;
             } else {
-                #[cfg(unix)]
-                {
-                    let temp_path = temp_guard.path();
-                    let temp_rel = temp_path
-                        .strip_prefix(&dest_dir)
-                        .map(std::path::Path::to_path_buf)
-                        .unwrap_or_else(|_| temp_path.to_path_buf());
-                    fast_io::renameat_via_sandbox_or_fallback(
-                        sandbox.as_deref(),
-                        &dest_dir,
-                        &temp_rel,
-                        temp_path,
-                        &dest_dir,
-                        relative_path,
-                        &file_path,
-                        true,
-                    )?;
-                }
                 #[cfg(windows)]
                 {
                     crate::temp_guard::commit_rename_no_follow(temp_guard.path(), &file_path)?;

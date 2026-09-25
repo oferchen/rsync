@@ -158,6 +158,8 @@ pub mod map_file;
 pub mod pipeline;
 pub mod progress;
 pub mod reorder_buffer;
+#[cfg(unix)]
+pub(crate) mod robust_rename;
 pub mod token_buffer;
 pub mod token_reader;
 pub mod transfer_ops;

@@ -347,3 +347,90 @@ pub fn confined_rename(
 
     renameat(old_dirfd, old_name, new_dirfd, new_name, replace)
 }
+
+/// Move `old_path` to `new_path` by copying its bytes and then unlinking the
+/// source: the cross-filesystem arm of a commit rename that failed with
+/// `EXDEV`, as when `--temp-dir` sits on another filesystem.
+///
+/// Each endpoint is resolved exactly as [`renameat_via_sandbox_or_fallback`]
+/// resolves it, so the copy is confined wherever the rename it replaces would
+/// have been. With a sandbox, a side beneath `root` takes the confined walk and
+/// an absolute side outside it - an operator `--temp-dir` or `--partial-dir` -
+/// takes the ownership walk. Without one, each side follows upstream's
+/// three-arm contract through [`ConfinedFallback`](crate::ConfinedFallback).
+///
+/// The source is opened `O_NOFOLLOW`. The destination is unlinked, then
+/// created `O_EXCL` with the source's permission bits. The source unlink runs
+/// last and its failure is ignored, as upstream ignores it.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.1/util1.c:636-663` `robust_rename()` - the `EXDEV` arm sets
+///   `operator_path_resolve` for an absolute `to` around `copy_file()` and for
+///   an absolute `from` around `do_unlink_at()`.
+/// - `rsync-3.5.1/util1.c:347-376` `unlink_and_reopen()` - `robust_unlink(dest)`
+///   then `do_open_at(dest, O_WRONLY|O_CREAT|O_TRUNC|O_EXCL, mode &
+///   INITACCESSPERMS)`.
+///
+/// # Errors
+///
+/// Resolving either endpoint, opening the source, clearing or creating the
+/// destination, or copying the bytes. A failed source unlink is not an error.
+#[cfg(unix)]
+pub fn copy_then_unlink_via_sandbox_or_fallback(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    root: &Path,
+    old_path: &Path,
+    new_path: &Path,
+) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let old = copy_endpoint(sandbox, root, old_path)?;
+    let (old_dirfd, old_name) = old.resolved();
+    let source = super::openat(
+        old_dirfd,
+        old_name,
+        libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        0,
+    )?;
+    let metadata = source.metadata()?;
+
+    let new = copy_endpoint(sandbox, root, new_path)?;
+    let (new_dirfd, new_name) = new.resolved();
+    match super::unlinkat(new_dirfd, new_name, super::UnlinkFlags::File) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    let dest = super::openat(
+        new_dirfd,
+        new_name,
+        libc::O_WRONLY
+            | libc::O_CREAT
+            | libc::O_TRUNC
+            | libc::O_EXCL
+            | libc::O_NOFOLLOW
+            | libc::O_CLOEXEC,
+        metadata.permissions().mode() & 0o777,
+    )?;
+    crate::copy_file_range::copy_file_contents(&source, &dest, metadata.len())?;
+
+    let _ = super::unlinkat(old_dirfd, old_name, super::UnlinkFlags::File);
+    Ok(())
+}
+
+/// Resolve one side of [`copy_then_unlink_via_sandbox_or_fallback`] by the
+/// same rule [`renameat_via_sandbox_or_fallback`] applies to that side.
+#[cfg(unix)]
+fn copy_endpoint<'a>(
+    sandbox: Option<&crate::dir_sandbox::DirSandbox>,
+    root: &Path,
+    path: &'a Path,
+) -> io::Result<ConfinedEndpoint<'a>> {
+    if sandbox.is_some() {
+        return anchor_confined_endpoint(root, path);
+    }
+    Ok(match crate::ConfinedFallback::confined().parent_at(path)? {
+        Some((parent, leaf)) => ConfinedEndpoint::OwnerWalked { parent, leaf },
+        None => ConfinedEndpoint::Ambient(path.as_os_str()),
+    })
+}
