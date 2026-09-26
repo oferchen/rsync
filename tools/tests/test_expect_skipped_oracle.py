@@ -52,7 +52,7 @@ TEST_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
 def _scrubbed_env(**overrides: str) -> dict[str, str]:
     env = dict(os.environ)
     for k in ("EXPECT_SKIPPED", "EXPECT_RESULT", "DAEMON_TESTS_ONLY",
-              "EMIT_EXPECT_SKIPPED", "USE_TCP"):
+              "EMIT_EXPECT_SKIPPED", "USE_TCP", "EXPECT_FAILURES"):
         env.pop(k, None)
     env.update(overrides)
     return env
@@ -101,6 +101,96 @@ class ExpectSkippedGuardTests(unittest.TestCase):
         # The guard must not refuse the one configuration the oracle fires in.
         result = _source_harness(_scrubbed_env(EXPECT_SKIPPED="@x.txt"))
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class AcceptedFailuresTests(unittest.TestCase):
+    """reconcile_accepted_failures(): accepted divergences keep the oracle live.
+
+    runtests.py exits with the failure count and, when that is non-zero,
+    never compares the skip set (3.5.0 runtests.py:1008-1009). A corpus with
+    accepted divergences therefore needs the driver to judge the full run:
+    FAIL set == the manifest's `fail` rows, skip set == the ledger.
+    """
+
+    MANIFEST = "alpha pass\nbeta fail  # accepted divergence\nzeta skip\n"
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.manifest = self.tmp / "expect.txt"
+        self.manifest.write_text(self.MANIFEST)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _reconcile(self, log_text: str, rc: int,
+                   manifest: Path | None = None) -> tuple[str, str]:
+        log = self.tmp / "output.log"
+        log.write_text(log_text)
+        extra = f"reconcile_accepted_failures {shlex.quote(str(log))} {rc}\n"
+        result = _source_harness(_scrubbed_env(
+            EXPECT_SKIPPED="@x.txt",
+            EXPECT_FAILURES=str(manifest or self.manifest)), extra)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip(), result.stderr
+
+    @staticmethod
+    def _log(fails: list[str], skip_want: str, skip_got: str) -> str:
+        rows = "".join(f"FAIL    {n}\n" for n in fails)
+        return (
+            "PASS    alpha\n" + rows + "SKIP    zeta (needs root)\n"
+            "------------------------------------------------------------\n"
+            "----- overall results:\n"
+            "----- skipped results:\n"
+            f"      expected: {skip_want}\n"
+            f"      got:      {skip_got}\n"
+            "------------------------------------------------------------\n"
+            f"overall result is {len(fails)}\n"
+        )
+
+    def test_exactly_the_accepted_failures_pass_the_leg(self) -> None:
+        status, err = self._reconcile(self._log(["beta"], "zeta", "zeta"), 1)
+        self.assertEqual(status, "0", err)
+
+    def test_an_unrecorded_failure_fails_the_leg(self) -> None:
+        status, err = self._reconcile(
+            self._log(["beta", "gamma"], "zeta", "zeta"), 2)
+        self.assertEqual(status, "2")
+        self.assertIn("gamma: failed", err)
+
+    def test_a_recorded_failure_that_passes_fails_the_leg(self) -> None:
+        # The xpass --expect-result would report (runtests.py:978-995).
+        status, err = self._reconcile(self._log([], "zeta", "zeta"), 0)
+        self.assertEqual(status, "1")
+        self.assertIn("beta: manifest records fail", err)
+
+    def test_the_skip_oracle_still_fires_alongside_accepted_failures(self) -> None:
+        # runtests.py dropped this comparison because a test failed; the
+        # driver must make it instead of waving the run through.
+        status, err = self._reconcile(
+            self._log(["beta"], "zeta", "alpha,zeta"), 1)
+        self.assertEqual(status, "1")
+        self.assertIn("alpha: skipped", err)
+
+    def test_a_non_test_failure_is_not_absorbed(self) -> None:
+        # rc counts valgrind errors too; only FAIL lines are accepted.
+        status, err = self._reconcile(self._log(["beta"], "zeta", "zeta"), 2)
+        self.assertEqual(status, "2")
+        self.assertIn("not a test failure", err)
+
+    def test_a_divergence_free_manifest_passes_status_through(self) -> None:
+        clean = self.tmp / "clean.txt"
+        clean.write_text("alpha pass\nzeta skip\n")
+        self.assertEqual(
+            self._reconcile(self._log([], "zeta", "zeta"), 0, clean)[0], "0")
+        self.assertEqual(
+            self._reconcile(self._log(["beta"], "zeta", "zeta"), 1, clean)[0],
+            "1")
+
+    def test_expect_failures_without_the_skip_oracle_is_refused(self) -> None:
+        result = _source_harness(_scrubbed_env(EXPECT_FAILURES="y.txt"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires EXPECT_SKIPPED", result.stderr)
 
 
 class EmitExpectSkippedTests(unittest.TestCase):

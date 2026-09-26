@@ -48,10 +48,10 @@ impl From<SizeArgError> for SizeParseError {
 /// Applied PER OPTION rather than inside the shared string parser, because
 /// whether the resulting 0 is legal is decided by that option's own
 /// `min_value`: legal for `--block-size`, `--min-size` and `--max-size`
-/// (min 0 - options.c:1808, :1809, :1815) and for `--bwlimit` (`unlimited_0`,
-/// :1821); NOT legal for `--max-alloc` (min 1 MiB, :2067), which upstream and
-/// oc both reject. Folding the rule into `parse_size_spec` would silently
-/// start accepting `--max-alloc=`.
+/// (min 0 - options.c:1808, :1809, :1815), and for `--bwlimit` and
+/// `--max-alloc` (`unlimited_0`, :1821, :2073). Folding the rule into
+/// `parse_size_spec` would silently start accepting an empty value for an
+/// option whose minimum excludes 0.
 ///
 /// Measured against rsync 3.5.0: an empty value behaves exactly like `=0` on
 /// each option - and for `--max-size` that EXCLUDES every non-empty file
@@ -77,29 +77,24 @@ pub(crate) fn parse_size_limit_argument(value: &OsStr, flag: &str) -> Result<u64
         trimmed
     };
 
-    match parse_size_spec(trimmed) {
-        Ok(limit) => Ok(limit),
-        Err(SizeParseError::Empty) => {
-            Err(rsync_error!(1, format!("{flag} value must not be empty")).with_role(Role::Client))
-        }
-        Err(SizeParseError::Negative) => Err(rsync_error!(
-            1,
+    parse_size_spec(trimmed).map_err(|error| size_parse_error(flag, display, error))
+}
+
+/// Renders a size parse failure as the client diagnostic for `flag`.
+fn size_parse_error(flag: &str, display: &str, error: SizeParseError) -> Message {
+    let text = match error {
+        SizeParseError::Empty => format!("{flag} value must not be empty"),
+        SizeParseError::Negative => {
             format!("invalid {flag} '{display}': size must be non-negative")
-        )
-        .with_role(Role::Client)),
-        Err(SizeParseError::Invalid) => Err(rsync_error!(
-            1,
-            format!(
-                "invalid {flag} '{display}': expected a size with an optional K/M/G/T/P suffix"
-            )
-        )
-        .with_role(Role::Client)),
-        Err(SizeParseError::TooLarge) => Err(rsync_error!(
-            1,
+        }
+        SizeParseError::Invalid => {
+            format!("invalid {flag} '{display}': expected a size with an optional K/M/G/T/P suffix")
+        }
+        SizeParseError::TooLarge => {
             format!("invalid {flag} '{display}': size exceeds the supported range")
-        )
-        .with_role(Role::Client)),
-    }
+        }
+    };
+    rsync_error!(1, text).with_role(Role::Client)
 }
 
 // The `--max-alloc` value rules and their constants live in
@@ -116,22 +111,22 @@ const MAX_BLOCK_SIZE: u64 = 1 << 17;
 /// Parses the `--max-alloc` argument as a byte ceiling.
 ///
 /// Mirrors upstream rsync's `parse_size_arg(arg, 'B', "max-alloc", 1024*1024,
-/// -1, True)` and the zero check that follows it in `parse_arguments()`
-/// (options.c:2066-2073):
+/// -1, True)` and the resolution of 0 that follows it in `parse_arguments()`
+/// (options.c:2072-2086):
 ///
-/// - `0` is rejected. It used to mean `SIZE_MAX`, which disabled the
-///   per-allocation guard outright; upstream 3.5.0 removed that escape hatch
-///   (CVE-2026-53794) because the value also arrives from a peer.
+/// - `0` means the largest limit this build supports and resolves to
+///   `protocol::max_alloc::SIZE_ARG_MAX`.
 /// - A non-zero value below 1 MiB is rejected ("too small").
+/// - A value that reaches `SIZE_ARG_MAX`, or overflows while being scaled, is
+///   rejected ("too large").
 /// - Empty, negative, and non-numeric input is rejected.
-/// - Values above `protocol::max_alloc::MAX_ALLOC_CEILING` are rejected for
-///   overflow safety (an oc-specific guard; upstream has no upper bound).
 ///
 /// # Errors
 ///
 /// Returns a `Message` with role [`Role::Client`] and exit code 1 on any
 /// rejection, matching upstream's diagnostic style.
 pub(crate) fn parse_max_alloc_argument(value: &OsStr) -> Result<u64, Message> {
+    let value = empty_size_means_zero(value);
     let text = value.to_string_lossy();
     let trimmed = text.trim_matches(|ch: char| ch.is_ascii_whitespace());
     let display = if trimmed.is_empty() {
@@ -140,12 +135,19 @@ pub(crate) fn parse_max_alloc_argument(value: &OsStr) -> Result<u64, Message> {
         trimmed
     };
 
-    let limit = parse_size_limit_argument(value, "--max-alloc")?;
+    let limit = match parse_size_spec(trimmed) {
+        Ok(limit) => limit,
+        // upstream: options.c:1211-1216 - a value that overflows while being
+        // scaled is "too large", the same verdict as one past the ceiling, so
+        // hand the shared rule a value it rejects on that ground.
+        Err(SizeParseError::TooLarge) => u64::MAX,
+        Err(error) => return Err(size_parse_error("--max-alloc", display, error)),
+    };
 
     // The zero / too-small / too-large rules are NOT restated here: the daemon
     // applies the identical block to a peer-forwarded `--max-alloc`, and
     // upstream runs one `parse_arguments()` body on both ends
-    // (options.c:2071-2076). This call site only adapts the shared owner's text
+    // (options.c:2067-2086). This call site only adapts the shared owner's text
     // into the client-role `Message` shape.
     ::protocol::max_alloc::validate_max_alloc(limit, display)
         .map_err(|text| rsync_error!(1, text).with_role(Role::Client))
@@ -229,7 +231,7 @@ mod tests {
     use super::*;
     // The rule's owner; these tests assert against ITS constants, so a change
     // there cannot leave a stale copy asserting the old bound here.
-    use ::protocol::max_alloc::{MAX_ALLOC_CEILING, ZERO_REJECTED as MAX_ALLOC_ZERO_REJECTED};
+    use ::protocol::max_alloc::SIZE_ARG_MAX;
     use std::ffi::OsString;
 
     fn os(s: &str) -> OsString {
@@ -545,15 +547,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_max_alloc_argument_rejects_zero() {
-        // upstream: options.c:2069-2072 - `--max-alloc=0` used to mean SIZE_MAX
-        // and thereby disabled the my_alloc() ceiling; 3.5.0 rejects it
-        // (CVE-2026-53794). Every spelling of zero takes the same path.
+    fn parse_max_alloc_argument_resolves_zero_to_the_ceiling() {
+        // upstream: options.c:2085-2086 - every spelling of zero means "the
+        // largest limit this build supports", SIZE_MAX/2, which keeps the
+        // my_alloc() ceiling bounded.
         for value in ["0", "0B", "0K", "0.0M"] {
-            let err = parse_max_alloc_argument(&os(value)).unwrap_err();
-            assert!(
-                err.to_string().contains(MAX_ALLOC_ZERO_REJECTED),
-                "expected the upstream zero-rejection text for {value}, got: {err}"
+            assert_eq!(
+                parse_max_alloc_argument(&os(value)).unwrap(),
+                SIZE_ARG_MAX,
+                "--max-alloc={value}"
             );
         }
     }
@@ -576,28 +578,29 @@ mod tests {
     fn parse_max_alloc_argument_rejects_invalid() {
         assert!(parse_max_alloc_argument(&os("garbage")).is_err());
         assert!(parse_max_alloc_argument(&os("100X")).is_err());
-        assert!(parse_max_alloc_argument(&os("")).is_err());
         assert!(parse_max_alloc_argument(&os("-1G")).is_err());
     }
 
     #[test]
-    fn parse_max_alloc_argument_rejects_above_ceiling() {
-        // u64::MAX expressed as bytes overflows the ceiling.
-        let value = format!("{}", u64::MAX);
+    fn parse_max_alloc_argument_rejects_the_ceiling() {
+        // upstream: options.c:1221-1227 - reaching SIZE_ARG_MAX is "too large".
+        let value = format!("{SIZE_ARG_MAX}");
         let err = parse_max_alloc_argument(&os(&value)).unwrap_err();
-        let rendered = err.to_string();
         assert!(
-            rendered.contains("exceeds the supported range"),
-            "expected range error, got: {rendered}"
+            err.to_string()
+                .contains(&format!("--max-alloc={value} is too large")),
+            "expected upstream's too-large text, got: {err}"
         );
     }
 
     #[test]
-    fn parse_max_alloc_argument_accepts_ceiling() {
-        let value = format!("{MAX_ALLOC_CEILING}");
+    fn parse_max_alloc_argument_accepts_just_below_the_ceiling() {
+        // The largest value the double comparison lets through: the ceiling
+        // less one ulp of f64 at that magnitude.
+        let below = SIZE_ARG_MAX - 2048;
         assert_eq!(
-            parse_max_alloc_argument(&os(&value)).unwrap(),
-            MAX_ALLOC_CEILING
+            parse_max_alloc_argument(&os(&below.to_string())).unwrap(),
+            below
         );
     }
 
