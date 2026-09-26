@@ -55,7 +55,7 @@ use crate::dir_sandbox::at_syscalls;
 /// no-op on every 64-bit target, so this is not a behaviour choice - it keeps
 /// the emitted flag word identical to what this walk issued before, which is
 /// what makes the switch a backend change and nothing else.
-fn walk_openat(
+pub(crate) fn walk_openat(
     dirfd: BorrowedFd<'_>,
     name: &OsStr,
     flags: OFlags,
@@ -185,7 +185,11 @@ impl AbsPathTracker {
     /// the PHYSICAL cwd, as upstream's own comment requires: a lexical name
     /// would sit at a different depth after descending a trusted symlink, and a
     /// `..` that really escapes would look like it landed inside.
-    fn start(path: &Path, kind: crate::confinement::PathKind) -> io::Result<Self> {
+    fn start(
+        path: &Path,
+        kind: crate::confinement::PathKind,
+        base: Option<&WalkBase<'_>>,
+    ) -> io::Result<Self> {
         if kind != crate::confinement::PathKind::Confined
             || crate::confinement::session_confinement_root().is_none()
         {
@@ -193,6 +197,8 @@ impl AbsPathTracker {
         }
         let abspath = if path.is_absolute() {
             PathBuf::from("/")
+        } else if let Some(base) = base {
+            base.physical.to_path_buf()
         } else {
             std::env::current_dir()?
         };
@@ -252,13 +258,17 @@ impl AbsPathTracker {
     /// cross-device and fall back to copy+remove, which would launder the
     /// refusal.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:597-599`.
-    fn refuse_if_outside(&self) -> io::Result<()> {
+    /// upstream: `rsync-3.5.1/syscall.c:476` (a created leaf), `:598` (leaf),
+    /// `:650` (a walk that resolved entirely to a directory).
+    fn refuse_if_outside(&self, arrival: crate::confinement::Arrival) -> io::Result<()> {
         let Self::Tracking { abspath } = self else {
             return Ok(());
         };
-        if crate::confinement::outside_session_root(abspath, crate::confinement::PathKind::Confined)
-        {
+        if crate::confinement::outside_session_root(
+            abspath,
+            crate::confinement::PathKind::Confined,
+            arrival,
+        ) {
             return Err(io::Error::from_raw_os_error(libc::ELOOP));
         }
         Ok(())
@@ -301,7 +311,7 @@ impl AbsPathTracker {
 /// under Landlock would refuse these exactly as it refuses `O_RDONLY` today,
 /// which fails CLOSED: the walk stops and nothing escapes.
 #[cfg(target_os = "linux")]
-fn traversal_dir_flags() -> OFlags {
+pub(crate) fn traversal_dir_flags() -> OFlags {
     OFlags::PATH | OFlags::DIRECTORY | OFlags::CLOEXEC
 }
 
@@ -309,7 +319,7 @@ fn traversal_dir_flags() -> OFlags {
 ///
 /// upstream: `rsync-3.5.1/syscall.c:626`.
 #[cfg(not(target_os = "linux"))]
-fn traversal_dir_flags() -> OFlags {
+pub(crate) fn traversal_dir_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC
 }
 
@@ -405,7 +415,22 @@ fn owner_walk_open(
     kind: crate::confinement::PathKind,
 ) -> io::Result<OwnedFd> {
     let mut discarded = None;
-    owner_walk_open_tracked(path, flags, mode, kind, &mut discarded)
+    owner_walk_open_tracked(path, flags, mode, kind, None, &mut discarded)
+}
+
+/// The directory a relative walk starts from, in place of the process cwd.
+///
+/// Upstream's sender `chdir`s into the `--files-from` base before it walks a
+/// list entry, so the walk starts there and the confinement tracker is seeded
+/// with that directory's PHYSICAL path (`getcwd()`). oc does not `chdir`; the
+/// base is held open instead and its physical path carried alongside.
+///
+/// upstream: `rsync-3.5.1/syscall.c:406` - the `getcwd()` seed.
+pub(crate) struct WalkBase<'a> {
+    /// The held base directory.
+    pub(crate) dir: BorrowedFd<'a>,
+    /// Its physical absolute path.
+    pub(crate) physical: &'a Path,
 }
 
 /// [`owner_walk_open`], additionally reporting where the walk actually landed.
@@ -415,15 +440,19 @@ fn owner_walk_open(
 /// walk in a session that has a confinement root. Every other walk leaves it
 /// `None`, which is upstream's `pabs[0] == '\0'` and means "nothing to judge".
 ///
+/// A relative `path` starts at `base` when one is given, else at the cwd.
+///
 /// upstream: `rsync-3.5.1/syscall.c:365` `ona_open()` with its `out_abs` /
 /// `out_cap` pair.
-fn owner_walk_open_tracked(
+pub(crate) fn owner_walk_open_tracked(
     path: &Path,
     flags: OFlags,
     mode: Mode,
     kind: crate::confinement::PathKind,
+    base: Option<&WalkBase<'_>>,
     resolved: &mut Option<PathBuf>,
 ) -> io::Result<OwnedFd> {
+    let base = base.filter(|_| !path.is_absolute());
     // upstream: syscall.c:380-382 - "Opted out (local --insecure-links, or a
     // daemon module with `insecure links = yes`): restore the legacy
     // symlink-following open." The test sits at the top of ona_open(), so it
@@ -442,15 +471,19 @@ fn owner_walk_open_tracked(
             path
         };
         // `openat`/`CWD` for the same seccomp reason as `open_start_dir`.
-        return walk_openat(rustix::fs::CWD, target.as_os_str(), flags, mode);
+        let start = base.map_or(rustix::fs::CWD, |base| base.dir);
+        return walk_openat(start, target.as_os_str(), flags, mode);
     }
 
     let mut pending = walk_components(path);
     let by_location = traversal_is_by_location();
     let traverse = traversal_dir_flags();
-    let mut dirfd = open_start_dir(path.is_absolute(), traverse)?;
+    let mut dirfd = match base {
+        Some(base) => base.dir.try_clone_to_owned()?,
+        None => open_start_dir(path.is_absolute(), traverse)?,
+    };
     let mut hops = MAX_SYMLINK_HOPS;
-    let mut tracker = AbsPathTracker::start(path, kind)?;
+    let mut tracker = AbsPathTracker::start(path, kind, base)?;
 
     while !pending.is_empty() {
         let name = pending.remove(0);
@@ -472,7 +505,7 @@ fn owner_walk_open_tracked(
                 // does its damage, so skipping it here would leave the
                 // `--partial-dir`/`--temp-dir` shapes unconfined.
                 tracker.step(&name);
-                tracker.refuse_if_outside()?;
+                tracker.refuse_if_outside(crate::confinement::Arrival::Final)?;
                 *resolved = tracker.resolved().map(Path::to_path_buf);
                 return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
             }
@@ -502,13 +535,11 @@ fn owner_walk_open_tracked(
         }
 
         if is_last {
-            // upstream: syscall.c:593-601 - `abspath_step()` then
-            // `abspath_outside_confinement()`. The check belongs HERE and not on
-            // interior components: an absolute walk passes through the root's
-            // own ancestors on the way down, which are not-yet-arrived rather
-            // than diverged.
+            // upstream: rsync-3.5.1/syscall.c:594-598 - `abspath_step()` then
+            // `abspath_outside_confinement(abspath, 1)`: the completed target,
+            // so an ancestor of the root is outside here.
             tracker.step(&name);
-            tracker.refuse_if_outside()?;
+            tracker.refuse_if_outside(crate::confinement::Arrival::Final)?;
             *resolved = tracker.resolved().map(Path::to_path_buf);
             return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
         }
@@ -531,6 +562,12 @@ fn owner_walk_open_tracked(
     // `O_PATH`, which names a location and is not a working descriptor. The
     // reopen is the same open the caller would have got before, and it is
     // subject to the sandbox exactly as that one was.
+    //
+    // upstream: rsync-3.5.1/syscall.c:649-650 - a directory open that ends here
+    // has arrived, so an ancestor of the root is outside.
+    if flags.contains(OFlags::DIRECTORY) {
+        tracker.refuse_if_outside(crate::confinement::Arrival::Final)?;
+    }
     *resolved = tracker.resolved().map(Path::to_path_buf);
     if by_location {
         return walk_openat(
@@ -608,6 +645,7 @@ pub fn owner_trusted_parent_kind(
         OFlags::RDONLY | OFlags::DIRECTORY,
         Mode::empty(),
         kind,
+        None,
         &mut parent_abs,
     )?;
     // upstream: `if (pabs[0])` - an untracked walk has nothing to judge.
@@ -615,6 +653,7 @@ pub fn owner_trusted_parent_kind(
         && crate::confinement::outside_session_root(
             &abs.join(&leaf),
             crate::confinement::PathKind::Confined,
+            crate::confinement::Arrival::Final,
         )
     {
         return Err(io::Error::from_raw_os_error(libc::ELOOP));
@@ -2007,29 +2046,29 @@ mod tests {
         assert_eq!(body, "INSIDE");
     }
 
-    /// Constraint 4, the ancestor pin: an absolute path that is an ANCESTOR of
-    /// the confinement root must keep resolving.
+    /// Constraint 4, the ancestor pin: an ancestor of the confinement root is
+    /// allowed only while the walk is DESCENDING through it.
     ///
     /// An absolute walk passes through `/`, `/tmp`, `/tmp/xxx`, ... on its way
-    /// down to the root, and those components are not-yet-arrived rather than
-    /// diverged. Refusing them would refuse every absolute operator path a
-    /// confined session ever names - the walk would be unable to reach its own
-    /// root. That is precisely why the confinement test is applied at the LEAF
-    /// and not per component, and why stepping by location does not need a
-    /// beneath-ness test to be safe.
+    /// down to the root, and those interior components are not-yet-arrived
+    /// rather than diverged - [`a_leaf_inside_the_root_still_resolves`] walks
+    /// through exactly those. A walk that ENDS on an ancestor has resolved to a
+    /// directory above the root, which names the whole tree the root was meant
+    /// to fence off, so upstream 3.5.1 refuses it as the completed target.
     ///
-    /// upstream: `syscall.c:245` `abspath_outside_confinement()` - an ancestor
-    /// of the root is not outside it.
+    /// upstream: `rsync-3.5.1/syscall.c:287-290` `abspath_outside_confinement()`
+    /// - `return enforce && final ? 1 : 0;` for an ancestor of the root.
     #[test]
-    fn an_ancestor_of_the_confinement_root_still_resolves() {
+    fn an_ancestor_of_the_confinement_root_is_refused_as_the_final_target() {
         let temp = TempDir::new().expect("tempdir");
         let parent = temp.path().join("parent");
         let root = parent.join("module");
         std::fs::create_dir_all(&root).expect("mkdir root");
         confine_to(&root);
 
-        operator_open_read_confined(&parent)
-            .expect("an ancestor of the root is descending, not escaping");
+        let error = operator_open_read_confined(&parent)
+            .expect_err("an ancestor of the root is outside once the walk ends there");
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
     }
 
     /// The non-vacuity companion to [`follows_a_self_owned_symlink_at_the_leaf`].

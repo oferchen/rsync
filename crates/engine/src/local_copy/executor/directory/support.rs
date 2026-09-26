@@ -20,6 +20,19 @@ pub(crate) struct DirectoryEntry {
     pub(crate) metadata: fs::Metadata,
 }
 
+/// Which resolver a directory scan enumerates through.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ScanRoot<'a> {
+    /// A plain path-based enumeration.
+    Unconfined,
+    /// Resolved beneath the operand's transfer root.
+    Beneath(&'a Path),
+    /// A `--files-from` directory, through the ownership walk from the held
+    /// base.
+    #[cfg(unix)]
+    FilesFrom(&'a fast_io::FilesFromBase),
+}
+
 /// Minimum number of entries to justify parallel metadata fetching.
 /// Below this threshold, the overhead of thread synchronization exceeds
 /// the benefit of parallelism.
@@ -31,7 +44,7 @@ const PARALLEL_THRESHOLD: usize = 32;
 #[cfg(test)]
 fn read_directory_entries_sorted(path: &Path) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
     let mut pending = Vec::new();
-    read_directory_entries_sorted_reuse(path, &mut pending, None)
+    read_directory_entries_sorted_reuse(path, &mut pending, ScanRoot::Unconfined)
 }
 
 /// Reads directory entries into a reusable `pending` buffer, avoiding a fresh
@@ -40,9 +53,9 @@ fn read_directory_entries_sorted(path: &Path) -> Result<Vec<DirectoryEntry>, Loc
 pub(crate) fn read_directory_entries_sorted_reuse(
     path: &Path,
     pending: &mut Vec<(OsString, PathBuf)>,
-    anchor: Option<&Path>,
+    root: ScanRoot<'_>,
 ) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
-    read_directory_entries_sorted_parallel(path, pending, anchor)
+    read_directory_entries_sorted_parallel(path, pending, root)
 }
 
 /// Lists `path`'s entry names, resolving every component beneath `anchor`
@@ -59,12 +72,22 @@ pub(crate) fn read_directory_entries_sorted_reuse(
 /// or on a platform with no dirfd model - the same three conditions the
 /// confined source open already degrades on.
 ///
+/// A `--files-from` directory is listed through the ownership walk instead.
+///
 /// # Upstream Reference
 ///
 /// - `rsync-3.5.0/flist.c` `send_directory()` enumerates the descriptor its
 ///   confined open produced.
-fn read_entry_names(path: &Path, anchor: Option<&Path>) -> Result<Vec<OsString>, LocalCopyError> {
-    if let Some(root) = anchor
+/// - `rsync-3.5.1/flist.c:2262-2265` `secure_opendir()` - the `--files-from`
+///   arm, `open_no_attacker_symlinks(fbuf, O_RDONLY | O_DIRECTORY, 0)`.
+fn read_entry_names(path: &Path, root: ScanRoot<'_>) -> Result<Vec<OsString>, LocalCopyError> {
+    #[cfg(unix)]
+    if let ScanRoot::FilesFrom(base) = root {
+        return base
+            .read_dir(path)
+            .map_err(|error| LocalCopyError::io("read directory", path, error));
+    }
+    if let ScanRoot::Beneath(root) = root
         && let Ok(relative) = path.strip_prefix(root)
     {
         match fast_io::read_dir_confined(root, relative) {
@@ -130,12 +153,12 @@ fn read_directory_entries_sorted_sequential(
 fn read_directory_entries_sorted_parallel(
     path: &Path,
     pending: &mut Vec<(OsString, PathBuf)>,
-    anchor: Option<&Path>,
+    root: ScanRoot<'_>,
 ) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
     // Phase 1: Collect paths sequentially - directory enumeration is
     // inherently sequential on every platform, and it is the step the
     // confinement has to cover.
-    let names = read_entry_names(path, anchor)?;
+    let names = read_entry_names(path, root)?;
 
     pending.clear();
     for file_name in names {
@@ -532,9 +555,12 @@ mod tests {
             std::fs::create_dir(temp.path().join(&name)).expect("mkdir");
         }
 
-        let parallel =
-            super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new(), None)
-                .unwrap();
+        let parallel = super::read_directory_entries_sorted_parallel(
+            temp.path(),
+            &mut Vec::new(),
+            super::ScanRoot::Unconfined,
+        )
+        .unwrap();
         let sequential = read_directory_entries_sorted_sequential(temp.path()).unwrap();
 
         assert_eq!(parallel.len(), sequential.len());
@@ -557,8 +583,11 @@ mod tests {
         }
 
         // Should still work correctly (uses sequential path internally)
-        let result =
-            super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new(), None);
+        let result = super::read_directory_entries_sorted_parallel(
+            temp.path(),
+            &mut Vec::new(),
+            super::ScanRoot::Unconfined,
+        );
         assert!(result.is_ok());
         let entries = result.unwrap();
         assert_eq!(entries.len(), 5);
@@ -580,8 +609,11 @@ mod tests {
                 .expect("write");
         }
 
-        let result =
-            super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new(), None);
+        let result = super::read_directory_entries_sorted_parallel(
+            temp.path(),
+            &mut Vec::new(),
+            super::ScanRoot::Unconfined,
+        );
         assert!(result.is_ok());
         let entries = result.unwrap();
 
@@ -608,9 +640,12 @@ mod tests {
         std::fs::create_dir(temp.path().join("c_dir")).expect("create c_dir");
         std::fs::write(temp.path().join("d_file"), b"x").expect("write d_file");
 
-        let entries =
-            super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new(), None)
-                .expect("read entries");
+        let entries = super::read_directory_entries_sorted_parallel(
+            temp.path(),
+            &mut Vec::new(),
+            super::ScanRoot::Unconfined,
+        )
+        .expect("read entries");
         let order: Vec<String> = entries
             .iter()
             .map(|e| e.file_name.to_string_lossy().into_owned())
@@ -637,8 +672,11 @@ mod tests {
             }
         }
 
-        let result =
-            super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new(), None);
+        let result = super::read_directory_entries_sorted_parallel(
+            temp.path(),
+            &mut Vec::new(),
+            super::ScanRoot::Unconfined,
+        );
         assert!(result.is_ok());
         let _entries = result.unwrap();
 
@@ -674,13 +712,23 @@ mod tests {
         let mut buf = Vec::new();
         assert_eq!(buf.capacity(), 0);
 
-        let entries_a = super::read_directory_entries_sorted_reuse(&dir_a, &mut buf, None).unwrap();
+        let entries_a = super::read_directory_entries_sorted_reuse(
+            &dir_a,
+            &mut buf,
+            super::ScanRoot::Unconfined,
+        )
+        .unwrap();
         assert_eq!(entries_a.len(), 10);
         // After draining, the buffer keeps its heap capacity.
         assert!(buf.capacity() >= 10);
 
         let saved_capacity = buf.capacity();
-        let entries_b = super::read_directory_entries_sorted_reuse(&dir_b, &mut buf, None).unwrap();
+        let entries_b = super::read_directory_entries_sorted_reuse(
+            &dir_b,
+            &mut buf,
+            super::ScanRoot::Unconfined,
+        )
+        .unwrap();
         assert_eq!(entries_b.len(), 3);
         // Capacity stays at the high-water mark from the larger directory.
         assert_eq!(buf.capacity(), saved_capacity);

@@ -357,13 +357,9 @@ pub(in crate::local_copy) fn execute_transfer_once(
         return Ok(TransferOutcome::Complete);
     }
 
-    let mut reader = open_source_file(
-        source,
-        context.open_noatime_enabled(),
-        context.source_anchor(),
-        context.follow_source_symlinks(),
-    )
-    .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+    let mut reader = context
+        .open_source_content(source)
+        .map_err(|error| LocalCopyError::io("copy file", source, error))?;
 
     // The number of bytes to actually move, as opposed to `file_size`, which is
     // the length the scan recorded and which every decision above is made from.

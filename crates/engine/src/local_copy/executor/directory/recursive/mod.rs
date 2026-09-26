@@ -214,7 +214,7 @@ fn copy_directory_recursive_inner(
     };
 
     let list_start = Instant::now();
-    let (readdir_buf, source_anchor) = context.readdir_buf_with_confined_anchor();
+    let (readdir_buf, scan_root) = context.readdir_buf_with_confined_anchor();
     // Seeded here rather than at the entry loop so a failed enumeration can
     // carry its error to the same end-of-frame re-raise the per-entry failures
     // use.
@@ -238,8 +238,7 @@ fn copy_directory_recursive_inner(
     // directory's own permissions/ACLs unapplied and a stale destination ACL
     // entry unrevoked. Continue with no children; the tail re-raises.
     let mut enumeration_failed = false;
-    let mut entries = match read_directory_entries_sorted_reuse(source, readdir_buf, source_anchor)
-    {
+    let mut entries = match read_directory_entries_sorted_reuse(source, readdir_buf, scan_root) {
         Ok(entries) => entries,
         Err(error) => {
             if error.is_vanished_error() {

@@ -131,6 +131,7 @@ impl LocalCopyOptionsBuilder {
             preserve_symlinks: self.preserve_symlinks,
             copy_dirlinks: self.copy_dirlinks,
             copy_unsafe_links: self.copy_unsafe_links,
+            files_from: false,
             keep_dirlinks: self.keep_dirlinks,
             safe_links: self.safe_links,
             munge_links: self.munge_links,
