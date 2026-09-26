@@ -540,14 +540,17 @@ fn openat_dir_strict(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Resul
     openat_nofollow(parent_fd, child_name)
 }
 
-/// `openat(O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)` fallback.
+/// `openat(O_NOFOLLOW)` fallback with the traversal flags.
 ///
 /// Issued through `rustix::fs::openat`, which is a thin, safe wrapper
 /// over the raw syscall.
+///
+/// upstream: `rsync-3.5.1/syscall.c:3046` - `directory_traverse_flags() |
+/// O_NOFOLLOW`.
 fn openat_nofollow(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<OwnedFd> {
     use rustix::fs::{Mode, OFlags};
 
-    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let flags = crate::owner_walk::traversal_dir_flags() | OFlags::NOFOLLOW;
     let fd = rustix::fs::openat(parent_fd, child_name, flags, Mode::empty())
         .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
     Ok(fd)
@@ -611,7 +614,7 @@ mod linux {
             // symlinks `RESOLVE_BENEATH` is here to let through, and it does so
             // before any `resolve` flag is consulted. Confinement is the
             // caller's `resolve` mask; an escape still fails with `EXDEV`.
-            how.flags = (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
+            how.flags = crate::owner_walk::traversal_dir_raw_flags() as u64;
             how.mode = 0;
             how.resolve = resolve;
 
@@ -843,7 +846,9 @@ impl<O: ConfinementOracle> ConfinedWalk<'_, O> {
             return self.pop();
         }
 
-        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // upstream: rsync-3.5.1/syscall.c:3046 - the held fd is traversal
+        // authority only.
+        let flags = crate::owner_walk::traversal_dir_raw_flags() | libc::O_NOFOLLOW;
         match crate::dir_sandbox::at_syscalls::openat(self.cur(), part, flags, 0) {
             Ok(dir) => {
                 self.push(OwnedFd::from(dir), part)?;

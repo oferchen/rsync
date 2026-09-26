@@ -87,14 +87,28 @@ mod imp {
         read_names(sandbox.root_dirfd())
     }
 
-    /// Enumerates `dirfd` from a duplicate of it.
+    /// Enumerates `dirfd` through a fresh read-capable open of it.
+    ///
+    /// A held directory fd may be traversal-only (`O_PATH` on Linux), which
+    /// cannot be read; listing needs read permission, so the directory is
+    /// reopened `O_RDONLY` exactly as upstream's `secure_opendir()` opens the
+    /// directory it enumerates. A searchable but unreadable directory
+    /// therefore fails here with `EACCES`, as upstream's does.
+    ///
+    /// upstream: `rsync-3.5.1/syscall.c:3384-3386` - "Callers that read
+    /// directory entries ... must continue to use `O_RDONLY | O_DIRECTORY`".
     #[allow(unsafe_code)]
     pub(super) fn read_names(dirfd: BorrowedFd<'_>) -> io::Result<Vec<OsString>> {
-        let duplicate = dirfd.try_clone_to_owned()?;
-        let raw = duplicate.into_raw_fd();
+        let readable = crate::dir_sandbox::at_syscalls::openat(
+            dirfd,
+            std::ffi::OsStr::new("."),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            0,
+        )?;
+        let raw = readable.into_raw_fd();
 
         // SAFETY: `raw` is an open directory descriptor this function solely
-        // owns, freshly duplicated above and not shared with the caller's.
+        // owns, freshly opened above and not shared with the caller's.
         // `fdopendir` takes that ownership on success; on failure it does not,
         // which is why the error arm closes `raw` itself.
         let dir = unsafe { libc::fdopendir(raw) };

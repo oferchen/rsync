@@ -415,6 +415,18 @@ pub(crate) fn traversal_dir_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC
 }
 
+/// [`traversal_dir_flags`] as the raw `open(2)` flag word, for the resolvers
+/// that issue the call through `libc` rather than `rustix`.
+///
+/// A directory fd held only for traversal, `fchdir()` or as `*at()` authority
+/// needs search permission, not read: on Linux it is `O_PATH`, so a mode 0111
+/// parent or a 0333 destination can still be walked and written beneath.
+///
+/// upstream: `rsync-3.5.1/syscall.c:83-92` `directory_traverse_flags()`.
+pub(crate) fn traversal_dir_raw_flags() -> libc::c_int {
+    traversal_dir_flags().bits() as libc::c_int
+}
+
 /// Whether the walk's anchor must be reopened before it is handed back.
 ///
 /// True exactly where [`traversal_dir_flags`] returns an `O_PATH` descriptor,
@@ -789,9 +801,11 @@ pub fn owner_trusted_parent_kind(
     };
     let parent = path.parent().unwrap_or_else(|| Path::new(""));
     let mut parent_abs = None;
+    // upstream: rsync-3.5.1/syscall.c:714,723 - the parent is opened with
+    // `directory_traverse_flags()`: it is `*at()` authority only.
     let dirfd = owner_walk_open_tracked(
         parent,
-        OFlags::RDONLY | OFlags::DIRECTORY,
+        traversal_dir_flags(),
         Mode::empty(),
         kind,
         None,
@@ -1240,8 +1254,10 @@ fn operator_open_kind(
 
 /// Open an operator-supplied DIRECTORY through the ownership walk.
 ///
-/// This is upstream's `open_no_attacker_symlinks(dir, O_RDONLY | O_DIRECTORY,
-/// 0)`, and its one load-bearing caller is `change_dir()`: a non-chrooted
+/// This is upstream's `open_no_attacker_symlinks_dirfd(dir)`: the directory is
+/// opened for traversal only (`O_PATH` on Linux), so a searchable but
+/// unreadable directory resolves. Its one load-bearing caller is
+/// `change_dir()`: a non-chrooted
 /// daemon enters its module root through this walk rather than a plain
 /// `chdir`, so a symlink an attacker planted at any component of the
 /// configured `path =` is refused while the operator's own
@@ -1251,7 +1267,7 @@ fn operator_open_kind(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:677` `open_no_attacker_symlinks()`
+/// - `rsync-3.5.1/syscall.c:683-686` `open_no_attacker_symlinks_dirfd()`
 /// - `rsync-3.5.1/util1.c:1351-1360` `change_dir()` - the `am_daemon &&
 ///   !am_chrooted` arm, which opens the module root this way and `fchdir`s to
 ///   the result.
@@ -1263,7 +1279,7 @@ fn operator_open_kind(
 pub fn operator_open_dir(path: &Path) -> io::Result<OwnedFd> {
     owner_walk_open(
         path,
-        OFlags::RDONLY | OFlags::DIRECTORY,
+        traversal_dir_flags(),
         Mode::empty(),
         crate::confinement::PathKind::Ancillary,
     )

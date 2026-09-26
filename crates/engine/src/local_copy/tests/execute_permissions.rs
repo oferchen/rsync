@@ -853,10 +853,16 @@ fn preexisting_readonly_dest_root_without_perms_transfers_and_is_restored() {
 /// Upstream's raise residue: an owner-writable-but-not-executable directory
 /// keeps the transient owner-rwx bits on disk, because fix_dir_perms restores
 /// only when `!(file->mode & S_IWUSR)` (generator.c:2594) and 0o644 has the
-/// owner-write bit. Measured against rsync 3.5.0: source dir 0o644 under
-/// `-rp` lands 0o744 on a fresh destination (umask 022 / 077 / 002 alike).
-/// The pre-fix behaviour restored the strict 0o644 and diverged.
-// upstream: generator.c:1904-1912 raise + generator.c:2594 restore condition.
+/// owner-write bit. Source dir 0o644 under `-rp` lands 0o744 on a fresh
+/// destination (umask 022 / 077 / 002 alike).
+///
+/// Measured against rsync 3.5.1, the listing of that source directory itself
+/// fails - `opendir "src/sub" failed: Permission denied` and exit 23 - because
+/// the sender resolves it through a traversal-only descriptor and a directory
+/// without owner-x cannot be entered. The directory entry was already sent, so
+/// the residue still lands.
+// upstream: generator.c:1904-1912 raise + generator.c:2594 restore condition;
+// rsync-3.5.1/syscall.c:3218 the `.` reopen of the traversal fd.
 #[cfg(unix)]
 #[test]
 fn owner_writable_nonexec_dir_keeps_the_raise_residue_under_perms() {
@@ -880,13 +886,18 @@ fn owner_writable_nonexec_dir_keeps_the_raise_residue_under_perms() {
     let operands = vec![source_operand, dest.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    plan.execute_with_options(
-        LocalCopyExecution::Apply,
-        LocalCopyOptions::default()
-            .recursive(true)
-            .permissions(true),
-    )
-    .expect("copy succeeds");
+    let error = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .recursive(true)
+                .permissions(true),
+        )
+        .expect_err("listing a directory without owner-x fails, as in rsync 3.5.1");
+    assert!(
+        error.to_string().contains("Permission denied"),
+        "unexpected failure: {error}"
+    );
 
     let sub_mode = fs::metadata(dest.join("sub"))
         .expect("dest sub meta")
