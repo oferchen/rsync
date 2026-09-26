@@ -600,17 +600,16 @@ fn apply_max_alloc(config: &ClientConfig) {
     let Some(limit) = config.max_alloc() else {
         return;
     };
-    // upstream: options.c:2069-2072 - a max-alloc of 0 once meant SIZE_MAX and
-    // so removed the ceiling; 3.5.0 refuses it (CVE-2026-53794). The CLI parser
-    // rejects zero before it reaches here, and a library caller that supplies
-    // it leaves the standing ceiling in place rather than lifting it, matching
-    // `protocol::set_max_alloc`'s own contract for a zero argument.
+    // upstream: options.c:2085-2086 - the CLI parser resolves 0 to
+    // SIZE_ARG_MAX before it reaches here, so only a library caller can
+    // supply it; that leaves the standing ceiling in place rather than
+    // lifting it, matching `protocol::set_max_alloc`'s own contract.
     if limit == 0 {
         return;
     }
     let Ok(limit_usize) = usize::try_from(limit) else {
-        // Configurations parsed via the CLI are bounded by `MAX_ALLOC_CEILING`
-        // (u64::MAX / 4) so this branch is only reachable on 32-bit targets
+        // Configurations parsed via the CLI are bounded by `SIZE_ARG_MAX`
+        // (SIZE_MAX / 2) so this branch is only reachable on 32-bit targets
         // when a programmatic builder supplies a 64-bit value larger than
         // the host's address space. Skipping the cap is safe; the pool
         // simply remains uncapped.

@@ -11,6 +11,9 @@ pub(crate) const PASSWORD_DAEMON_ONLY_MESSAGE: &str = "the --password-file and -
 /// Error message when `--connect-program` is used without a daemon connection.
 pub(crate) const CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE: &str =
     "the --connect-program option may only be used when accessing an rsync daemon";
+/// Error message when `--contimeout` is used without a daemon connection.
+pub(crate) const CONTIMEOUT_DAEMON_ONLY_MESSAGE: &str =
+    "The --contimeout option may only be used when connecting to an rsync daemon";
 
 /// Rejects options that are only valid for remote or daemon transfers.
 ///
@@ -59,6 +62,26 @@ where
     }
 
     None
+}
+
+/// Rejects a non-zero `--contimeout` when no operand names an rsync daemon.
+///
+/// A local copy and a plain remote-shell transfer both lack a daemon
+/// connection. A daemon reached through `--rsh` still has one, so it keeps
+/// the option, which then bounds that connection's establishment.
+///
+/// upstream: main.c:1623-1627 start_client() - `if (connect_timeout &&
+/// !daemon_connection)` exits with `RERR_SYNTAX`.
+pub(super) fn validate_contimeout_needs_daemon<Err>(
+    contimeout_set: bool,
+    has_daemon_operand: bool,
+    stderr: &mut MessageSink<Err>,
+) -> Option<i32>
+where
+    Err: Write,
+{
+    (contimeout_set && !has_daemon_operand)
+        .then(|| reject_local_only_option(stderr, CONTIMEOUT_DAEMON_ONLY_MESSAGE))
 }
 
 /// Emits an error for a local-only option violation and returns the exit code.

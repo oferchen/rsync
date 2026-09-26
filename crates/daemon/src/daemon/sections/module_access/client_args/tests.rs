@@ -613,13 +613,12 @@ mod daemon_partial_dir_sanitize_tests {
     }
 }
 
-/// A peer-forwarded `--max-alloc` must be parsed and refused exactly as
-/// upstream's own `parse_arguments()` does when the daemon runs it.
+/// A peer-forwarded `--max-alloc` must be parsed, resolved and refused exactly
+/// as upstream's own `parse_arguments()` does when the daemon runs it.
 ///
-/// upstream: `options.c:2071-2076`. The daemon executes the same block as the
-/// client, so a client that predates 3.5.0's zero refusal - and therefore still
-/// forwards `--max-alloc=0` on the wire - is refused by the SERVER rather than
-/// silently disabling the server's own `my_alloc()` ceiling.
+/// upstream: `options.c:2067-2086`. The daemon executes the same block as the
+/// client, so a forwarded `--max-alloc=0` resolves against the SERVER's own
+/// SIZE_MAX rather than disabling its `my_alloc()` ceiling.
 #[cfg(test)]
 mod daemon_max_alloc_arg_tests {
     use super::{ClientArgRejection, ServerConfig, ServerRole, apply_long_form_args};
@@ -645,26 +644,36 @@ mod daemon_max_alloc_arg_tests {
         }
     }
 
-    /// The attack shape: every spelling of zero must be refused with upstream's
-    /// own wording, because the value arrives from a peer.
+    /// Every spelling of zero, including the empty value upstream's parser
+    /// reads as 0 (options.c:1178-1181), resolves to the daemon's own
+    /// SIZE_ARG_MAX: bounded, never the unlimited ceiling a literal 0 would be.
     #[test]
-    fn a_wire_supplied_zero_is_refused() {
-        for value in ["--max-alloc=0", "--max-alloc=0B", "--max-alloc=0.0M"] {
+    fn a_wire_supplied_zero_resolves_to_the_ceiling() {
+        let restore = ::protocol::effective_max_alloc();
+        for value in [
+            "--max-alloc=0",
+            "--max-alloc=0B",
+            "--max-alloc=0.0M",
+            "--max-alloc=",
+        ] {
+            ::protocol::set_max_alloc(restore);
+            assert_eq!(rejection(&[value]), None, "{value} must be accepted");
             assert_eq!(
-                invalid_value_text(&[value]),
-                "max-alloc must be greater than zero",
-                "{value} must be refused with upstream's text",
+                ::protocol::effective_max_alloc() as u64,
+                ::protocol::max_alloc::SIZE_ARG_MAX,
+                "{value} must resolve to SIZE_ARG_MAX",
             );
         }
+        ::protocol::set_max_alloc(restore);
     }
 
-    /// upstream: options.c:1178-1181 - an empty value parses as 0, so it lands
-    /// on the SAME refusal rather than a distinct parse error.
+    /// upstream: options.c:1221-1227 - the ceiling still binds a forwarded
+    /// value, so accepting 0 does not let a peer name a larger one.
     #[test]
-    fn an_empty_value_takes_the_zero_refusal() {
+    fn a_value_at_the_ceiling_is_refused() {
         assert_eq!(
-            invalid_value_text(&["--max-alloc="]),
-            "max-alloc must be greater than zero",
+            invalid_value_text(&["--max-alloc=8192P"]),
+            "--max-alloc=8192P is too large",
         );
     }
 
