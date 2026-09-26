@@ -73,6 +73,9 @@ pub struct ClientConfig {
     pub(super) rayon_threads: Option<NonZeroUsize>,
     pub(super) tokio_threads: Option<NonZeroUsize>,
     pub(super) max_alloc: Option<u64>,
+    /// The `--max-alloc` value as the operator spelled it, forwarded to the
+    /// peer unresolved.
+    pub(super) max_alloc_arg: Option<String>,
     pub(super) modify_window: Option<i64>,
     pub(super) remove_source_files: bool,
     /// Whether the user spelled the deprecated `--remove-sent-files` alias (and
@@ -402,6 +405,7 @@ impl Default for ClientConfig {
             rayon_threads: None,
             tokio_threads: None,
             max_alloc: None,
+            max_alloc_arg: None,
             modify_window: None,
             remove_source_files: false,
             remove_sent_files: false,

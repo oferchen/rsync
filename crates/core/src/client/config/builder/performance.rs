@@ -175,6 +175,18 @@ impl ClientConfigBuilder {
         max_alloc: Option<u64>,
     }
 
+    /// Sets the `--max-alloc` value as the operator spelled it.
+    ///
+    /// Forwarded to the peer in place of the resolved byte count, so each
+    /// side resolves `0` against its own address-space ceiling
+    /// (upstream: options.c:2078-2084).
+    #[doc(alias = "--max-alloc")]
+    #[must_use]
+    pub fn max_alloc_arg(mut self, value: Option<String>) -> Self {
+        self.max_alloc_arg = value;
+        self
+    }
+
     builder_setter! {
         /// Enables or disables sparse file handling for the transfer.
         #[doc(alias = "--sparse")]

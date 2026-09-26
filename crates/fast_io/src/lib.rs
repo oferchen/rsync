@@ -157,6 +157,8 @@ pub mod pinned_root;
 /// Unix-only: read-only in-place recovery, mirroring upstream
 /// `open_readonly_inplace` (`receiver.c:213`).
 #[cfg(unix)]
+pub mod readiness;
+#[cfg(unix)]
 pub mod readonly_inplace;
 /// Same-filesystem (device) detection for reflink / copy-on-write gating.
 pub mod same_fs;

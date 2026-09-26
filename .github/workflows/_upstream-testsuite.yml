@@ -44,6 +44,16 @@ on:
           oracle that stops a test from quietly becoming a permanent no-op.
         type: string
         default: ''
+      expect_failures_nonroot:
+        description: >-
+          Repo-relative path to the non-root leg's expect-result manifest,
+          used only alongside expect_skipped_nonroot. Its `fail` rows are the
+          accepted divergences: runtests.py stops checking the skip set once
+          any test fails (3.5.0 runtests.py:1008-1009), so the driver judges
+          the full run itself - the FAIL set must be exactly those rows and
+          the skip set exactly the skip list.
+        type: string
+        default: ''
       artifact_suffix:
         description: >-
           Suffix appended to the uploaded artifact names. Artifact names must
@@ -205,6 +215,8 @@ jobs:
           # tree runtests.py runs in, so the repo-relative input is anchored to
           # the workspace here. Empty input => empty spec => no oracle.
           EXPECT_SKIPPED: ${{ inputs.expect_skipped_nonroot != '' && format('@{0}/{1}', github.workspace, inputs.expect_skipped_nonroot) || '' }}
+          # Repo-relative; the driver anchors it to the workspace itself.
+          EXPECT_FAILURES: ${{ inputs.expect_failures_nonroot }}
           # Always emit the manifest this run would hold itself to. It is the
           # only honest source for `expect_result`: hand-curating the ledger is
           # exactly how it drifts out of agreement with the suite, and because

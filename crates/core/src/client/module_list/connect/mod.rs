@@ -17,7 +17,7 @@ pub(crate) use proxy::{
     ProxyConfig, ProxyCredentials, connect_via_proxy, establish_proxy_tunnel, load_daemon_proxy,
     parse_proxy_spec,
 };
-pub(crate) use rsh::{RshDaemonSpawn, spawn_rsh_daemon_stream};
+pub(crate) use rsh::{ConnectDeadlineReader, RshDaemonSpawn, spawn_rsh_daemon_stream};
 
 /// Read half of a [`DaemonStream`] after splitting.
 pub(crate) enum DaemonStreamReader {
@@ -46,6 +46,19 @@ impl Read for DaemonStreamReader {
 }
 
 impl DaemonStreamReader {
+    /// Returns the descriptor a bounded read waits on, or `None` for a QUIC
+    /// stream, which has no descriptor of its own.
+    #[cfg(unix)]
+    fn readiness_fd(&self) -> Option<std::os::fd::BorrowedFd<'_>> {
+        use std::os::fd::AsFd;
+        match self {
+            Self::Tcp(stream) => Some(stream.as_fd()),
+            Self::Program(reader) => Some(reader.as_fd()),
+            #[cfg(feature = "quic")]
+            Self::Quic(_) => None,
+        }
+    }
+
     /// Clones the underlying TCP read half so an adopted daemon
     /// `MSG_IO_TIMEOUT` can be re-applied to the live socket. Returns `None`
     /// for connect-program (pipe) transports, which carry no socket timeout.
