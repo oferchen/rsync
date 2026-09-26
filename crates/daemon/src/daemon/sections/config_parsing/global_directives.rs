@@ -1,8 +1,6 @@
 // Global-section directive parsing.
 //
-// Handles `key = value` directives that appear before any `[module]` header
-// (the global section), including the `include` directive that triggers
-// recursive config file parsing and result merging.
+// Handles `key = value` directives that appear in the global section.
 
 include!("global_directives/module_defaults.rs");
 

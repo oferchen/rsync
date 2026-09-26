@@ -55,20 +55,48 @@ fn collapse_section_name(name: &str) -> String {
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
 pub(crate) fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
     let mut stack = Vec::new();
-    parse_config_modules_inner(path, &mut stack, None)?.into_result()
+    let mut parse = ConfigParse::new();
+    parse_config_file(path, &mut stack, &mut parse)?;
+    parse.vars.into_result(parse.sections)
 }
 
-/// Parses one config file, returning the raw parse state with its module
-/// sections still unfinalized.
+/// The whole-parse state upstream keeps in loadparm.c's file-scope globals.
 ///
-/// Only the top-level [`parse_config_modules`] finalizes them, because a
-/// string-typed P_LOCAL parameter resolves its default against the global state
-/// left standing at the end of the whole parse (upstream: loadparm.c:347-348).
-fn parse_config_modules_inner(
+/// upstream: loadparm.c - `Vars` (the global and P_LOCAL default values),
+/// `section_list` (every module section, in creation order) and the
+/// `bInGlobalSection`/`iSectionIndex` cursor are shared by every file the parse
+/// reads. `&merge` keeps writing into all three; `&include` saves and restores
+/// only `Vars` around the included file (params.c:include_config).
+struct ConfigParse {
+    /// upstream `Vars`: the values a section copies when it is created.
+    vars: GlobalParseState,
+    /// upstream `section_list`: every module section read so far.
+    sections: Vec<PendingModule>,
+    /// The section parameters are written to; `None` is `bInGlobalSection`.
+    current: Option<usize>,
+}
+
+impl ConfigParse {
+    fn new() -> Self {
+        Self {
+            vars: GlobalParseState::new(),
+            sections: Vec::new(),
+            current: None,
+        }
+    }
+}
+
+/// Parses one config file into the shared `parse` state.
+///
+/// Sections are not finalized here: a string-typed P_LOCAL parameter a section
+/// never set falls back to the global value left standing at the end of the
+/// whole parse (upstream: loadparm.c:347-348), so only the top-level
+/// [`parse_config_modules`] finalizes them.
+fn parse_config_file(
     path: &Path,
     stack: &mut Vec<PathBuf>,
-    inherited: Option<&GlobalParseState>,
-) -> Result<GlobalParseState, DaemonError> {
+    parse: &mut ConfigParse,
+) -> Result<(), DaemonError> {
     let canonical = path
         .canonicalize()
         .map_err(|error| config_io_error("read", path, error))?;
@@ -89,18 +117,6 @@ fn parse_config_modules_inner(
     let contents = crate::daemon::operator_file::read_to_string(path)
         .map_err(|error| config_io_error("read", &canonical, error))?;
     stack.push(canonical.clone());
-
-    // upstream: loadparm.c::lp_load() &include handling - the included file
-    // continues parsing against the shared `Vars` block, so modules declared
-    // there inherit the parent's P_LOCAL defaults (use chroot, hosts allow,
-    // secrets file, ...). Seed the child state from the parent so
-    // `PendingModule` resolves defaults the same way as upstream.
-    let mut state = match inherited {
-        Some(parent) => GlobalParseState::inherited_from(parent),
-        None => GlobalParseState::new(),
-    };
-    let mut pending: Vec<PendingModule> = Vec::new();
-    let mut current: Option<usize> = None;
 
     let result = (|| -> Result<(), DaemonError> {
         for (line_number, logical_line) in logical_config_lines(&contents) {
@@ -138,30 +154,16 @@ fn parse_config_modules_inner(
                     ));
                 }
 
-                current = None;
-
                 // upstream: loadparm.c:do_section:497-510 - a section named
                 // "global" (whitespace/case-insensitive via strwiEQ) returns to
                 // the daemon-wide global scope instead of defining a module:
                 // bInGlobalSection = True and no module is added, so directives
-                // that follow apply as global defaults. Leaving `current` as None
-                // routes them through the global dispatch path, exactly as the
-                // directives before the first `[module]` header are handled.
-                if normalize_param_name(name) == "global" {
-                    continue;
-                }
-
-                // upstream: loadparm.c:add_a_section:320-339 - "it might already
-                // exist": a repeated `[name]` header re-opens the section that
-                // header already created instead of adding a second one, so the
-                // directives that follow merge into the existing module.
-                current = Some(open_module_section(
-                    &mut pending,
-                    name,
-                    line_number,
-                    path,
-                    &state,
-                ));
+                // that follow apply as global defaults.
+                parse.current = if normalize_param_name(name) == "global" {
+                    None
+                } else {
+                    Some(open_module_section(parse, name, line_number, path))
+                };
                 continue;
             }
 
@@ -195,15 +197,19 @@ fn parse_config_modules_inner(
                 (normalize_param_name(raw_key), raw_value.trim())
             };
 
-            // upstream: params.c:Parse() - the `&include`/`&merge` directives
-            // are dispatched from the top-level switch and apply to the global
-            // configuration regardless of any open module section. Forward
-            // them to the global-directive handler rather than the per-module
-            // setter so the recursive include works after a `[name]` line.
-            let is_amp_directive = key.starts_with('&');
-            if !is_amp_directive && let Some(index) = current {
+            // upstream: params.c:Parse() - `&include`/`&merge` are dispatched
+            // from the scanner itself, before the section cursor is consulted:
+            // they act on the whole parse state, never on one section.
+            if key == "&include" || key == "&merge" {
+                apply_include_directive(parse, &key, value, path, line_number, &canonical, stack)?;
+                continue;
+            }
+
+            if let Some(index) = parse.current
+                && !key.starts_with('&')
+            {
                 apply_module_directive(
-                    &mut pending[index].builder,
+                    &mut parse.sections[index].builder,
                     &key,
                     value,
                     path,
@@ -213,44 +219,25 @@ fn parse_config_modules_inner(
                 continue;
             }
 
-            // Finish the open modules before recursing into an included file so
-            // they are recorded ahead of any modules pulled in by
-            // `&include`/`&merge`, matching upstream's declaration order.
-            if is_amp_directive {
-                current = None;
-                flush_pending_modules(&mut pending, &mut state);
-            }
-
-            apply_global_directive(
-                &mut state,
-                &key,
-                value,
-                path,
-                line_number,
-                &canonical,
-                stack,
-            )?;
+            apply_global_directive(&mut parse.vars, &key, value, path, line_number, &canonical)?;
         }
-
-        flush_pending_modules(&mut pending, &mut state);
 
         Ok(())
     })();
 
     stack.pop();
-    result.map(|()| state)
+    result
 }
 
-/// A module section that has been opened but not yet finalized, together with
-/// the global defaults captured when its `[name]` header was first seen.
+/// A module section, together with the values it copied from `Vars` when its
+/// `[name]` header was first seen.
 ///
-/// upstream: loadparm.c:add_a_section:329 - a new section is initialized from
-/// `sDefault`, the running snapshot of the P_LOCAL defaults set in the global
-/// section. Later global directives never rewrite a section that already
-/// exists, so bool- and integer-typed P_LOCAL defaults are pinned here at
-/// creation time. String-typed ones are not: they fall back to the live
-/// `Vars.l` at access time, so they are resolved from the final global state
-/// instead - see `GlobalModuleDefaults::resolve`.
+/// upstream: loadparm.c:init_section:394-398 - a new section is a copy of
+/// `Vars.l` at the moment it is created. Bool-, integer- and enum-typed P_LOCAL
+/// values are read from that copy only (FN_LOCAL_BOOL/INTEGER,
+/// loadparm.c:351-356). A string-typed one is read from the copy when it is
+/// non-NULL and from the final `Vars.l` otherwise (FN_LOCAL_STRING,
+/// loadparm.c:347-348) - see `GlobalModuleDefaults::resolve`.
 struct PendingModule {
     builder: ModuleDefinitionBuilder,
     /// The config file the `[name]` header was read from, so a validation
@@ -260,92 +247,62 @@ struct PendingModule {
     defaults: CapturedModuleDefaults,
 }
 
-/// The global defaults a module section inherits, snapshotted when the section
-/// is created.
+/// The global values a module section copied when it was created.
 ///
-/// Explicit globals declared in the same file win over inherited values from a
-/// parent file (set when the parse state is the body of an `&include`/`&merge`
-/// target), matching upstream's shared-`Vars` semantics where the includer's
-/// defaults serve as fallbacks until the included file overrides them.
-///
-/// `module_defaults` supplies only the bool- and integer-typed P_LOCAL
-/// defaults; the string-typed ones in that bag are read from the final global
-/// state instead, via `GlobalModuleDefaults::resolve`. The four slots below are
-/// the directives the parser tracks separately from that bag (each carries a
-/// `ConfigDirectiveOrigin` for diagnostics) and stay creation-time here.
+/// `module_defaults` holds the P_LOCAL defaults the dispatcher keeps in one bag;
+/// the other slots are the P_LOCAL directives the parser tracks separately from
+/// that bag (each carries a `ConfigDirectiveOrigin` for diagnostics).
 struct CapturedModuleDefaults {
     secrets_file: Option<PathBuf>,
     incoming_chmod: Option<String>,
     outgoing_chmod: Option<String>,
+    refuse_options: Option<Vec<String>>,
     use_chroot: Option<bool>,
     module_defaults: GlobalModuleDefaults,
 }
 
 impl CapturedModuleDefaults {
-    /// Snapshots the defaults a module section created right now would inherit.
-    fn capture(state: &GlobalParseState) -> Self {
+    /// Snapshots the values a module section created right now would copy.
+    fn capture(vars: &GlobalParseState) -> Self {
         Self {
-            secrets_file: state
-                .global_secrets_file
-                .as_ref()
-                .map(|(value, _)| value.clone())
-                .or_else(|| state.inherited_secrets_file.clone()),
-            incoming_chmod: state
-                .global_incoming_chmod
-                .as_ref()
-                .map(|(value, _)| value.clone())
-                .or_else(|| state.inherited_incoming_chmod.clone()),
-            outgoing_chmod: state
-                .global_outgoing_chmod
-                .as_ref()
-                .map(|(value, _)| value.clone())
-                .or_else(|| state.inherited_outgoing_chmod.clone()),
-            use_chroot: state
-                .global_use_chroot
-                .as_ref()
-                .map(|(value, _)| *value)
-                .or(state.inherited_use_chroot),
-            module_defaults: state.module_defaults.clone(),
+            secrets_file: vars.global_secrets_file.as_ref().map(|(v, _)| v.clone()),
+            incoming_chmod: vars.global_incoming_chmod.as_ref().map(|(v, _)| v.clone()),
+            outgoing_chmod: vars.global_outgoing_chmod.as_ref().map(|(v, _)| v.clone()),
+            refuse_options: vars.global_refuse_directives.last().map(|(v, _)| v.clone()),
+            use_chroot: vars.global_use_chroot.as_ref().map(|(v, _)| *v),
+            module_defaults: vars.module_defaults.clone(),
         }
     }
 }
 
-/// Returns the index of the open module section named `name`, creating it when
-/// this is the first `[name]` header in the file.
+/// Returns the index of the module section named `name`, creating it when no
+/// earlier header in any file of the parse named it.
 ///
-/// upstream: loadparm.c:add_a_section:320-339 - "it might already exist": the
-/// existing section index is returned instead of a second section being added,
-/// so a repeated header merges rather than conflicting.
+/// upstream: loadparm.c:add_a_section:431-450 - "it might already exist":
+/// getsectionbyname() searches the whole `section_list` with the
+/// whitespace- and case-insensitive `strwiEQ`, and a match is returned as-is,
+/// so a repeated header re-opens that section instead of adding a second one.
 fn open_module_section(
-    pending: &mut Vec<PendingModule>,
+    parse: &mut ConfigParse,
     name: &str,
     line_number: usize,
     config_path: &Path,
-    state: &GlobalParseState,
 ) -> usize {
-    if let Some(index) = pending
+    let folded = normalize_param_name(name);
+    if let Some(index) = parse
+        .sections
         .iter()
-        .position(|module| module.builder.name == name)
+        .rposition(|module| normalize_param_name(&module.builder.name) == folded)
     {
         return index;
     }
 
-    pending.push(PendingModule {
+    parse.sections.push(PendingModule {
         builder: ModuleDefinitionBuilder::new(name.to_owned(), line_number),
         config_path: config_path.to_path_buf(),
-        defaults: CapturedModuleDefaults::capture(state),
+        defaults: CapturedModuleDefaults::capture(&parse.vars),
     });
-    pending.len() - 1
-}
-
-/// Closes every open module section in declaration order and records it on the
-/// parse state.
-///
-/// The sections are not finalized here: a string-typed P_LOCAL default is only
-/// looked up once the whole config tree has been read, so finalization happens
-/// in [`GlobalParseState::into_result`] at the top level of the parse.
-fn flush_pending_modules(pending: &mut Vec<PendingModule>, state: &mut GlobalParseState) {
-    state.modules.append(pending);
+    parse.sections.len() - 1
 }
 
 /// Splits `contents` into logical config lines, joining backslash-continued

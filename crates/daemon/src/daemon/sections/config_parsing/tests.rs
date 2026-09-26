@@ -1622,8 +1622,9 @@ mod config_parsing_tests {
             vec!["delete", "compress"]
         );
 
-        // Module should have empty refuse options (inheritance happens at RuntimeOptions level)
-        assert!(result.modules[0].refuse_options.is_empty());
+        // upstream: loadparm.c:394-398 init_section() - the module copies the
+        // global value in force when its header was read.
+        assert_eq!(result.modules[0].refuse_options, vec!["delete", "compress"]);
     }
 
     #[test]
@@ -1652,8 +1653,8 @@ mod config_parsing_tests {
         assert_eq!(result.global_refuse_options.len(), 1);
         assert_eq!(result.global_refuse_options[0].0, vec!["delete"]);
 
-        // Inheritor has no own refuse options
-        assert!(result.modules[0].refuse_options.is_empty());
+        // Inheritor copied the global value when its section was created
+        assert_eq!(result.modules[0].refuse_options, vec!["delete"]);
 
         // Overrider has its own refuse options
         assert_eq!(result.modules[1].refuse_options, vec!["hardlinks"]);
@@ -4044,5 +4045,231 @@ mod config_parsing_tests {
         let file = write_config("quic client ca file =\n");
         parse_config_modules(file.path())
             .expect_err("empty quic client ca file directive is a config error");
+    }
+
+    /// Creates the `data` directory every section-model test module serves.
+    fn section_model_data_dir(dir: &TempDir) -> String {
+        let data = dir.path().join("data");
+        fs::create_dir_all(&data).expect("create data dir");
+        data.display().to_string()
+    }
+
+    fn module_named<'a>(result: &'a ParsedConfigModules, name: &str) -> &'a ModuleDefinition {
+        result
+            .modules
+            .iter()
+            .find(|module| module.name == name)
+            .unwrap_or_else(|| panic!("module '{name}' present"))
+    }
+
+    #[test]
+    fn string_global_copied_at_section_creation_beats_a_later_global() {
+        // upstream: loadparm.c:394-398 init_section() copies `Vars.l` into the
+        // new section, and FN_LOCAL_STRING (loadparm.c:347-348) returns that
+        // copy whenever it is non-NULL. A `hosts allow` in force when `[early]`
+        // was created is the one it enforces; a later global rewrite must not
+        // widen or narrow its access list.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\nhosts allow = 10.0.0.1\n[early]\npath = {data}\n\
+             [global]\nhosts allow = 10.0.0.2 10.0.0.3\n[late]\npath = {data}\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(module_named(&result, "early").hosts_allow.len(), 1);
+        assert_eq!(module_named(&result, "late").hosts_allow.len(), 2);
+    }
+
+    #[test]
+    fn string_global_with_builtin_default_is_not_taken_from_a_later_global() {
+        // upstream: daemon-parm.txt gives `log format` a non-NULL default, so
+        // the section's init_section() copy is never NULL and FN_LOCAL_STRING
+        // never falls back to the final `Vars.l` for it.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\n[early]\npath = {data}\n[global]\nlog format = %f\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            module_named(&result, "early").log_format.as_deref(),
+            Some("%o %h [%a] %m (%u) %f %l")
+        );
+    }
+
+    #[test]
+    fn refuse_options_copied_at_section_creation_beats_a_later_global() {
+        // upstream: `refuse options` is a NULL-default P_LOCAL string, so the
+        // value copied at section creation wins over the final global one.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\nrefuse options = delete\n[early]\npath = {data}\n\
+             [global]\nrefuse options = compress\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            module_named(&result, "early").refuse_options,
+            vec!["delete"]
+        );
+    }
+
+    #[test]
+    fn secrets_file_declared_after_an_auth_module_is_its_fallback() {
+        // upstream: `secrets file` is a NULL-default P_LOCAL string. A module
+        // created before any global `secrets file` has a NULL copy, so
+        // FN_LOCAL_STRING reads the final global value when the client
+        // authenticates (authenticate.c:143). The config is valid upstream.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let secrets = dir.path().join("rsyncd.secrets");
+        fs::write(&secrets, "alice:pw\n").expect("write secrets");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secrets, fs::Permissions::from_mode(0o600))
+                .expect("chmod secrets");
+        }
+        let file = write_config(&format!(
+            "use chroot = no\n[auth]\npath = {data}\nauth users = alice\n\
+             [global]\nsecrets file = {}\n",
+            secrets.display()
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            module_named(&result, "auth").secrets_file.as_deref(),
+            Some(secrets.as_path())
+        );
+    }
+
+    #[test]
+    fn included_file_globals_reach_the_modules_it_declares() {
+        // upstream: params.c:include_config - `&include` pushes `Vars`, parses
+        // the file into it, then pops. A `[mod]` the included file declares
+        // after its own `hosts allow` / `auth users` copies them at creation,
+        // and keeps them after `]pop` restores the includer's globals.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let included = write_config(&format!(
+            "hosts allow = 10.0.0.1\nread only = no\n[inc]\npath = {data}\n"
+        ));
+        let file = write_config(&format!(
+            "use chroot = no\n&include {}\n[after]\npath = {data}\n",
+            included.path().display()
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let inc = module_named(&result, "inc");
+        assert_eq!(
+            inc.hosts_allow.len(),
+            1,
+            "the included file's own hosts allow"
+        );
+        assert!(!inc.read_only, "the included file's own read only");
+        let after = module_named(&result, "after");
+        assert!(
+            after.hosts_allow.is_empty(),
+            "`]pop` drops the included globals"
+        );
+        assert!(after.read_only, "`]pop` drops the included globals");
+    }
+
+    #[test]
+    fn merged_file_local_defaults_and_globals_stay_in_force() {
+        // upstream: params.c:include_config(val, 0) - `&merge` sends no
+        // `]push`/`]pop`, so every parameter the merged file sets, P_GLOBAL or
+        // P_LOCAL, stays in the shared `Vars` for the rest of the parse.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let merged = write_config(
+            "read only = no\nhosts deny = 10.9.9.9\ntimeout = 77\npid file = /run/merged.pid\n\
+             reverse lookup = no\nlist = no\n",
+        );
+        let file = write_config(&format!(
+            "use chroot = no\n&merge {}\n[mod]\npath = {data}\n",
+            merged.path().display()
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let module = module_named(&result, "mod");
+        assert!(!module.read_only);
+        assert!(!module.listable);
+        assert!(!module.reverse_lookup);
+        assert_eq!(module.hosts_deny.len(), 1);
+        assert_eq!(module.timeout.map(NonZeroU64::get), Some(77));
+        assert_eq!(
+            result.pid_file.as_ref().map(|(path, _)| path.clone()),
+            Some(PathBuf::from("/run/merged.pid"))
+        );
+        assert_eq!(
+            result.daemon_timeout.as_ref().map(|(timeout, _)| *timeout),
+            Some(NonZeroU64::new(77))
+        );
+    }
+
+    #[test]
+    fn merge_inside_a_module_keeps_applying_to_that_module() {
+        // upstream: &merge does not touch bInGlobalSection/iSectionIndex
+        // (params.c:include_config:422-428 only sends `]push` for &include), so
+        // the merged file's parameters and the includer's following lines keep
+        // applying to `[mod]`, and never become globals for `[other]`.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let merged = write_config("hosts allow = 10.0.0.1\n");
+        let file = write_config(&format!(
+            "use chroot = no\n[mod]\npath = {data}\n&merge {}\nread only = no\n\
+             [other]\npath = {data}\n",
+            merged.path().display()
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let module = module_named(&result, "mod");
+        assert_eq!(module.hosts_allow.len(), 1);
+        assert!(!module.read_only);
+        let other = module_named(&result, "other");
+        assert!(other.hosts_allow.is_empty());
+        assert!(other.read_only);
+    }
+
+    #[test]
+    fn include_inside_a_module_resumes_in_the_global_section() {
+        // upstream: loadparm.c:do_section:598-599 - `]pop` sets
+        // bInGlobalSection, so after an `&include` inside `[mod]` the
+        // includer's following lines are globals that later sections copy.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let included = write_config("# nothing\n");
+        let file = write_config(&format!(
+            "use chroot = no\n[mod]\npath = {data}\n&include {}\nread only = no\n\
+             [other]\npath = {data}\n",
+            included.path().display()
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(module_named(&result, "mod").read_only);
+        assert!(!module_named(&result, "other").read_only);
+    }
+
+    #[test]
+    fn section_header_in_an_included_file_reopens_an_existing_module() {
+        // upstream: loadparm.c:add_a_section - getsectionbyname() searches the
+        // whole section list with strwiEQ, so `[MOD]` in an included file
+        // re-opens the includer's `[mod]` instead of adding a second module.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let included = write_config("[MOD]\ncomment = from include\n");
+        let file = write_config(&format!(
+            "use chroot = no\n[mod]\npath = {data}\n&include {}\n",
+            included.path().display()
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "mod");
+        assert_eq!(result.modules[0].comment.as_deref(), Some("from include"));
     }
 }

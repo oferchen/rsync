@@ -656,6 +656,26 @@ s.close()
 "
 }
 
+# Allocate COUNT distinct ephemeral ports, one per line.
+# Every socket stays bound until all COUNT are chosen, so the kernel cannot
+# hand the same port out twice. Separate allocate_ephemeral_port calls give
+# no such guarantee: each releases its port before the next call, and
+# parallel workers were handed the same daemon port.
+allocate_distinct_ephemeral_ports() {
+  python3 - "$1" <<'PY'
+import socket, sys
+held = []
+for _ in range(int(sys.argv[1])):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(('127.0.0.1', 0))
+    held.append(s)
+for s in held:
+    print(s.getsockname()[1])
+    s.close()
+PY
+}
+
 # Wait for a TCP port to become reachable, with timeout.
 # Returns non-zero on failure - callers must handle this as a hard error.
 # Checks every 0.5s up to max_wait seconds (default 15).
@@ -12171,8 +12191,14 @@ mkdir -p "$result_dir"
 # Each subshell gets its own copy of daemon PID globals, unique ports,
 # and unique temp directories. The read-only globals (comp_src, src,
 # oc_client, oc_binary, up_identity, hard_timeout) are inherited safely.
+# Ports are allocated here, before the fork, so no two workers share one.
+parallel_ports=($(allocate_distinct_ephemeral_ports $((2 * ${#versions[@]}))))
 version_pids=()
+version_index=0
 for version in "${versions[@]}"; do
+  oc_port=${parallel_ports[$((2 * version_index))]}
+  up_port=${parallel_ports[$((2 * version_index + 1))]}
+  version_index=$((version_index + 1))
   (
     # Subshell: isolated daemon PID state
     oc_pid=""
@@ -12189,8 +12215,6 @@ for version in "${versions[@]}"; do
       version_failed+=("${version} (missing)")
     else
       # Comprehensive interop test (includes archive scenario that covers basic push/pull)
-      oc_port=$(allocate_ephemeral_port)
-      up_port=$(allocate_ephemeral_port)
       echo ""
       echo "=== Comprehensive: upstream ${version} (native protocol) (ports: oc=${oc_port} up=${up_port}) ==="
       if ! run_comprehensive_interop_case "$version" "$upstream_binary" \

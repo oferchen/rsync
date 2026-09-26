@@ -657,6 +657,15 @@ impl FileListReader {
                 if (leader_mode & 0o170000) != 0o040000 {
                     self.state.update_atime(leader_atime);
                 }
+                // upstream: flist.c:1131-1134 - a device follower also carries
+                // the leader's rdev_major into the static.
+                let leader_type = leader_mode & 0o170000;
+                if self.preserve_devices
+                    && (leader_type == 0o060000 || leader_type == 0o020000)
+                    && let Some(major) = leader.rdev_major()
+                {
+                    self.state.update_rdev_major(major);
+                }
 
                 (
                     leader.size(),

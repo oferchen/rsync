@@ -455,3 +455,107 @@ fn hardlink_multiple_groups_with_directories() {
     assert_eq!(entries[4].hardlink_idx(), Some(u32::MAX));
     assert_eq!(entries[5].hardlink_idx(), Some(4));
 }
+
+/// An abbreviated follower must leave the compression state at its own
+/// (= its leader's) values, exactly as upstream's statics do after
+/// `flist.c:send_file_entry()` jumps to `the_end`. The entry after the
+/// follower is then diffed against the follower, not against the unrelated
+/// entry before it. Getting this wrong makes the receiver decode that entry
+/// with the leader's mode/mtime/uid/gid - silent metadata corruption under
+/// `-H` at protocol 30+.
+#[test]
+fn entry_after_abbreviated_follower_is_diffed_against_the_follower() {
+    let protocol = ProtocolVersion::try_from(32u8).unwrap();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol)
+        .with_preserve_hard_links(true)
+        .with_preserve_uid(true)
+        .with_preserve_gid(true)
+        .with_preserve_atimes(true);
+
+    let file = |name: &str, mode: u32, mtime: i64, id: u32, atime: i64, hl: Option<u32>| {
+        let mut e = FileEntry::new_file(name.into(), 64, mode);
+        e.set_mtime(mtime, 0);
+        e.set_uid(id);
+        e.set_gid(id);
+        e.set_atime(atime);
+        if let Some(idx) = hl {
+            e.set_hardlink_idx(idx);
+        }
+        e
+    };
+    let entries_in = [
+        file(
+            "a",
+            0o100600,
+            1_600_000_000,
+            1000,
+            1_600_000_100,
+            Some(u32::MAX),
+        ),
+        file("b", 0o100644, 1_700_000_000, 2000, 1_700_000_100, None),
+        file("c", 0o100600, 1_600_000_000, 1000, 1_600_000_100, Some(0)),
+        file("d", 0o100644, 1_700_000_000, 2000, 1_700_000_100, None),
+    ];
+    for entry in &entries_in {
+        writer.write_entry(&mut buf, entry).unwrap();
+    }
+    writer.write_end(&mut buf, None).unwrap();
+
+    let mut reader = FileListReader::new(protocol)
+        .with_preserve_hard_links(true)
+        .with_preserve_uid(true)
+        .with_preserve_gid(true)
+        .with_preserve_atimes(true);
+    let entries = read_all(&mut reader, &buf);
+
+    assert_eq!(entries.len(), 4);
+    let d = &entries[3];
+    assert_eq!(d.name(), "d");
+    assert_eq!(d.mode(), 0o100644);
+    assert_eq!(d.mtime(), 1_700_000_000);
+    assert_eq!(d.uid(), Some(2000));
+    assert_eq!(d.gid(), Some(2000));
+    assert_eq!(d.atime(), 1_700_000_100);
+}
+
+/// Device variant: the follower carries its leader's rdev major into the
+/// static on both sides (upstream `flist.c:send_file_entry()` line 764 and
+/// `recv_file_entry()` lines 1131-1134), so a later device with the leader's
+/// major is sent with `XMIT_SAME_RDEV_MAJOR` and must decode to that major.
+#[test]
+fn device_after_abbreviated_follower_uses_the_followers_rdev_major() {
+    let protocol = ProtocolVersion::try_from(32u8).unwrap();
+    let mut buf = Vec::new();
+    let mut writer = FileListWriter::new(protocol)
+        .with_preserve_hard_links(true)
+        .with_preserve_devices(true);
+
+    let dev = |name: &str, major: u32, minor: u32, hl: Option<u32>| {
+        let mut e = FileEntry::new_block_device(name.into(), 0o660, major, minor);
+        e.set_mtime(1_700_000_000, 0);
+        if let Some(idx) = hl {
+            e.set_hardlink_idx(idx);
+        }
+        e
+    };
+    let entries_in = [
+        dev("a", 8, 1, Some(u32::MAX)),
+        dev("b", 9, 1, None),
+        dev("c", 8, 1, Some(0)),
+        dev("d", 8, 2, None),
+    ];
+    for entry in &entries_in {
+        writer.write_entry(&mut buf, entry).unwrap();
+    }
+    writer.write_end(&mut buf, None).unwrap();
+
+    let mut reader = FileListReader::new(protocol)
+        .with_preserve_hard_links(true)
+        .with_preserve_devices(true);
+    let entries = read_all(&mut reader, &buf);
+
+    assert_eq!(entries.len(), 4);
+    assert_eq!(entries[3].rdev_major(), Some(8));
+    assert_eq!(entries[3].rdev_minor(), Some(2));
+}
