@@ -3,8 +3,7 @@
 # Runs a smoke version of the criterion matching benchmark suite (short
 # measurement budget, bencher output) to catch performance regressions in
 # the zsync-inspired optimizations: bithash negative prefilter, compact
-# rsum-key lookup cache, parallel sender-scan delta generator, and
-# duplicate-heavy prune pruning.
+# rsum-key lookup cache, and parallel sender-scan delta generator.
 #
 # Template: mirrors bench-checksum-throughput.yml (CBP-6) and
 # bench-drain-throughput.yml (DPC-8) - criterion + bencher output +
@@ -98,7 +97,6 @@ jobs:
           BENCHES=(
             bithash_rejection
             compact_keys_cache
-            prune_duplicate_heavy
             zsync_optimizations
             seq_match_redundant
           )

@@ -16,19 +16,13 @@
 //! whenever `updating_basis_file` is set (`crates/matching/src/generator.rs`,
 //! the `self.updating_basis_file` bail-out).
 //!
-//! Two pins:
-//!
-//! 1. **Correctness** - on a fixture whose second half matches the basis's
-//!    FIRST half (every match is backward at global scale, forward at
-//!    stripe-local scale), the guarded chunked scan equals the guarded
-//!    sequential scan token-for-token, suppresses every backward copy, and
-//!    reconstructs the source exactly. A discrimination control shows the
-//!    striped scan WOULD emit those backward copies were the guard not
-//!    routing it away.
-//! 2. **Routing** - the guarded chunked scan takes the pruned sequential
-//!    path, observed through the shared consumed-bitset seam: the sequential
-//!    scan marks matched blocks consumed, while the striped path clears the
-//!    bitset and never writes it (pruning is off per stripe).
+//! The pin: on a fixture whose second half matches the basis's FIRST half
+//! (every match is backward at global scale, forward at stripe-local scale),
+//! the guarded chunked scan equals the guarded sequential scan
+//! token-for-token, suppresses every backward copy, and reconstructs the
+//! source exactly. A discrimination control shows the striped scan WOULD emit
+//! those backward copies were the guard not routing it away, so the token
+//! parity also proves the routing.
 
 use matching::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken, apply_delta};
 use protocol::ProtocolVersion;
@@ -117,7 +111,7 @@ fn backward_fixture(basis: &[u8]) -> Vec<u8> {
     source
 }
 
-/// Pin (a), correctness: `--inplace` + parallel scan produces the guarded
+/// `--inplace` + parallel scan produces the guarded
 /// sequential scan's exact token stream on the backward fixture - every
 /// backward match suppressed to literals, reconstruction byte-exact.
 #[test]
@@ -170,55 +164,5 @@ fn inplace_chunked_matches_guarded_sequential_on_backward_fixture() {
         "the unguarded striped scan must match the bulk of the backward half \
          (copy_bytes={})",
         unguarded_chunked.copy_bytes()
-    );
-}
-
-/// Pin (b), routing: `--inplace` + parallel scan takes the pruned SEQUENTIAL
-/// path, observed through the consumed-bitset seam. The sequential scan marks
-/// every matched block consumed; the striped path clears the bitset and never
-/// writes it (per-stripe pruning is off), so a forced striping under
-/// `--inplace` leaves the bitset empty and turns this test red.
-#[test]
-fn inplace_chunked_takes_sequential_path() {
-    let basis = lcg_bytes(0x1260_C0DE_5EA1_2026, N);
-    let index = build_index(&basis, BLOCK_LEN);
-    assert!(
-        !index.has_duplicate_blocks(),
-        "fixture must be duplicate-free"
-    );
-    // Source == basis: every block matches at its own offset, which the
-    // in-place guard admits (`>=` is not strict), so the sequential scan
-    // marks every block consumed.
-    let source = basis.clone();
-    let block_count = index.block_count();
-
-    let guarded = DeltaGenerator::new().with_updating_basis_file(true);
-    let chunked = guarded
-        .generate_chunked(&source, &index, CHUNKS)
-        .expect("guarded chunked");
-    assert_eq!(reconstruct(&basis, &index, &chunked), source);
-
-    let consumed_after_guarded = (0..block_count as u32)
-        .filter(|&i| index.is_consumed(i))
-        .count();
-    assert!(
-        consumed_after_guarded > block_count * 9 / 10,
-        "--inplace must take the pruned sequential path, which marks matched \
-         blocks consumed (consumed {consumed_after_guarded} of {block_count})"
-    );
-
-    // Seam control: the striped path (guard off) resets the bitset and never
-    // marks it, so the observable cleanly discriminates the two routes.
-    let striped = DeltaGenerator::new()
-        .generate_chunked(&source, &index, CHUNKS)
-        .expect("striped");
-    assert_eq!(reconstruct(&basis, &index, &striped), source);
-    let consumed_after_striped = (0..block_count as u32)
-        .filter(|&i| index.is_consumed(i))
-        .count();
-    assert_eq!(
-        consumed_after_striped, 0,
-        "the striped scan clears the consumed bitset and scans prune-off; a \
-         non-empty bitset here would blind the routing pin above"
     );
 }

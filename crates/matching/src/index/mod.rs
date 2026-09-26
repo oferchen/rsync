@@ -18,7 +18,6 @@
 mod bithash;
 mod builder;
 mod compact_lookup;
-mod matched_blocks;
 mod trace;
 
 #[cfg(test)]
@@ -28,10 +27,6 @@ mod chain_bound_tests;
 #[cfg(test)]
 mod compact_key_tests;
 #[cfg(test)]
-mod matched_blocks_tests;
-#[cfg(test)]
-mod prune_tests;
-#[cfg(test)]
 mod seq_match_tests;
 #[cfg(test)]
 mod sparse_match_tests;
@@ -39,7 +34,6 @@ mod sparse_match_tests;
 mod tests;
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use checksums::RollingDigest;
 
@@ -47,7 +41,6 @@ use signature::{SignatureAlgorithm, SignatureBlock};
 
 use bithash::BitHash;
 use compact_lookup::CompactLookup;
-pub use matched_blocks::MatchedBlocks;
 pub use trace::{
     HASH_KEY_BITS, HashtableRole, trace_created as trace_hashtable_created,
     trace_destroyed as trace_hashtable_destroyed, trace_growing as trace_hashtable_growing,
@@ -127,7 +120,7 @@ pub struct ProbeCounters {
 /// full rolling sum as upstream does. A tag table indexed by `sum1` provides
 /// fast-path rejection before the bucket walk, and the bithash prefilter
 /// (ZSO-1) rejects the bulk of post-tag misses before the chain probe.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DeltaSignatureIndex {
     block_length: usize,
     strong_length: usize,
@@ -157,34 +150,18 @@ pub struct DeltaSignatureIndex {
     /// is in-memory only and is cleared by [`Self::rebuild`] so per-segment
     /// INC_RECURSE indexes never inherit stale links.
     next_match: Vec<u32>,
-    /// Consumed-block bitset for zsync-inspired hash-chain pruning (ZSO-3).
-    ///
-    /// One bit per basis block index, sized to `(blocks.len() + 63) / 64`
-    /// `AtomicU64` words. Probes consult [`Self::is_consumed`] before the
-    /// strong-checksum verify and skip already-emitted blocks; matchers
-    /// flip the bit through [`Self::mark_consumed`] after a successful
-    /// `Copy` token emission. Atomic load/store keeps the entire match
-    /// pipeline `&self`-compatible, so the same index may be shared
-    /// read-only across concurrent generators (per
-    /// `crates/engine/src/concurrent_delta/`) without per-session
-    /// `MatchedBlocks` clones.
-    ///
-    /// Reset to all-zero by [`Self::rebuild`] so per-segment
-    /// INC_RECURSE lifecycles (ZSO-7) start with no stale prune bits.
-    consumed: Vec<AtomicU64>,
     /// `true` when two or more indexed full-length blocks share identical
     /// content (equal rolling checksum and equal strong checksum).
     ///
     /// Computed once at construction ([`Self::from_signature_with_role`] and
     /// [`Self::rebuild`]) so callers can query it in O(1). The parallel
-    /// delta scan ([`crate::DeltaGenerator::generate_chunked`]) runs with the
-    /// consumed-bitset pruning disabled; on a basis with duplicate-content
-    /// blocks that changes which sibling each source window resolves to (and
-    /// therefore the emitted `Copy{index}` and the matched/literal split)
-    /// relative to the pruned sequential [`crate::DeltaGenerator::generate`].
-    /// A duplicate-free basis makes pruning a no-op, so the wiring layer only
-    /// engages the parallel scan when this returns `false`. See
-    /// `docs/design/zsync-prune.md`.
+    /// delta scan ([`crate::DeltaGenerator::generate_chunked`]) starts each
+    /// stripe with a fresh `want_i` hint; on a basis with duplicate-content
+    /// blocks that can change which sibling a source window resolves to (and
+    /// therefore the emitted `Copy{index}`) relative to the sequential
+    /// [`crate::DeltaGenerator::generate`]. A duplicate-free basis has exactly
+    /// one candidate per window, so the wiring layer only engages the parallel
+    /// scan when this returns `false`.
     has_duplicate_blocks: bool,
     /// Role used for `--debug=HASH` `[<role>]` prefixes on the create,
     /// grow, and destroy lifecycle emissions. Mirrors upstream
@@ -198,51 +175,6 @@ pub struct DeltaSignatureIndex {
     /// skip the field entirely so the hot path carries zero overhead.
     #[cfg(any(test, feature = "bench-internal"))]
     seq_match_counters: std::sync::Arc<SeqMatchCounters>,
-}
-
-/// Number of bits stored per `consumed` word.
-pub(super) const CONSUMED_BITS_PER_WORD: usize = u64::BITS as usize;
-
-/// Allocates the consumed-block bitset sized for `block_count` basis
-/// blocks with every bit cleared.
-pub(super) fn build_consumed_words(block_count: usize) -> Vec<AtomicU64> {
-    let words = block_count.div_ceil(CONSUMED_BITS_PER_WORD);
-    let mut v = Vec::with_capacity(words);
-    for _ in 0..words {
-        v.push(AtomicU64::new(0));
-    }
-    v
-}
-
-impl Clone for DeltaSignatureIndex {
-    /// Clones every field, snapshotting the consumed-bitset with
-    /// `Relaxed` loads. Each clone owns an independent bitset so
-    /// `mark_consumed` on the clone never races the original; this
-    /// matches the per-segment ZSO-7 lifecycle and the
-    /// per-generator-session contract from the parent design.
-    fn clone(&self) -> Self {
-        let consumed = self
-            .consumed
-            .iter()
-            .map(|word| AtomicU64::new(word.load(Ordering::Relaxed)))
-            .collect();
-        Self {
-            block_length: self.block_length,
-            strong_length: self.strong_length,
-            algorithm: self.algorithm,
-            blocks: self.blocks.clone(),
-            lookup: self.lookup.clone(),
-            tag_table: self.tag_table.clone(),
-            bithash: self.bithash.clone(),
-            next_match: self.next_match.clone(),
-            consumed,
-            has_duplicate_blocks: self.has_duplicate_blocks,
-            role: self.role,
-            last_traced_size: self.last_traced_size,
-            #[cfg(any(test, feature = "bench-internal"))]
-            seq_match_counters: std::sync::Arc::clone(&self.seq_match_counters),
-        }
-    }
 }
 
 /// Test-only seq-match probe counters.
@@ -361,12 +293,12 @@ impl DeltaSignatureIndex {
     /// identical content (equal rolling and strong checksums).
     ///
     /// A duplicate-free basis (`false`) is the precondition for engaging the
-    /// prune-off parallel scan in [`crate::DeltaGenerator::generate_chunked`]
-    /// without diverging from the pruned sequential
-    /// [`crate::DeltaGenerator::generate`]: with every content unique there is
-    /// exactly one matching basis block per source window, so disabling the
-    /// consumed-bitset prune cannot change which block a window resolves to.
-    /// See the field docs on [`DeltaSignatureIndex`].
+    /// parallel scan in [`crate::DeltaGenerator::generate_chunked`] without
+    /// diverging from the sequential [`crate::DeltaGenerator::generate`]: with
+    /// every content unique there is exactly one matching basis block per
+    /// source window, so the per-stripe `want_i` hint cannot change which
+    /// block a window resolves to. See the field docs on
+    /// [`DeltaSignatureIndex`].
     #[must_use]
     pub const fn has_duplicate_blocks(&self) -> bool {
         self.has_duplicate_blocks
@@ -413,7 +345,7 @@ impl DeltaSignatureIndex {
     /// strong checksum matches `window`. Returns `None` when there is no
     /// recorded successor, the digest's `(sum1, sum2)` disagrees with the
     /// stored block, or the strong checksum verify fails. Callers MUST fall
-    /// back to [`Self::find_match_bytes_filtered`] on a miss.
+    /// back to [`Self::find_match_bytes`] on a miss.
     ///
     /// The rolling-checksum prefilter is a cheap two-word compare against
     /// the linked block's stored digest, so a miss here costs the same as
@@ -529,97 +461,13 @@ impl DeltaSignatureIndex {
         std::sync::Arc::clone(&self.seq_match_counters)
     }
 
-    /// Returns `true` when the basis block at `idx` has been marked as
-    /// consumed by a prior `Copy`-token emission.
-    ///
-    /// Lookups in [`Self::find_match_bytes_filtered`] and
-    /// [`Self::find_match_slices_filtered`] consult this bit before the
-    /// strong-checksum verify, skipping already-emitted basis blocks.
-    /// Out-of-range indices return `false` so probe loops do not need to
-    /// guard the call site against malformed candidate vectors.
-    ///
-    /// The load is `Relaxed`: the consumed bitset is an optimization,
-    /// not a synchronization primitive. A stale-`false` read at worst
-    /// re-verifies a basis block that has since been claimed elsewhere;
-    /// the strong-checksum step still produces a correct token. A
-    /// stale-`true` read cannot occur because each bit only ever
-    /// transitions from `0` to `1` for the lifetime of the bitset.
-    #[inline]
-    #[must_use]
-    pub fn is_consumed(&self, idx: u32) -> bool {
-        let idx = idx as usize;
-        if idx >= self.blocks.len() {
-            return false;
-        }
-        let word = idx / CONSUMED_BITS_PER_WORD;
-        let bit = idx % CONSUMED_BITS_PER_WORD;
-        (self.consumed[word].load(Ordering::Relaxed) >> bit) & 1 == 1
-    }
-
-    /// Marks the basis block at `idx` as consumed.
-    ///
-    /// Called by the matcher after emitting a `Copy` token for block
-    /// `idx`. Subsequent probes through [`Self::is_consumed`] will skip
-    /// this basis index, mirroring zsync's `remove_block_from_hash`
-    /// (`librcksum/hash.c:111-128`).
-    ///
-    /// Uses `AtomicU64::fetch_or` under `Relaxed` ordering: setting a
-    /// bit is idempotent and the bitset is a probe-side optimization,
-    /// so no happens-before edge is required. Concurrent calls on
-    /// distinct bits never conflict, and concurrent calls on the same
-    /// bit converge to the same value.
-    ///
-    /// Out-of-range indices are silently ignored.
-    #[inline]
-    pub fn mark_consumed(&self, idx: u32) {
-        let idx = idx as usize;
-        if idx >= self.blocks.len() {
-            return;
-        }
-        let word = idx / CONSUMED_BITS_PER_WORD;
-        let bit = idx % CONSUMED_BITS_PER_WORD;
-        self.consumed[word].fetch_or(1u64 << bit, Ordering::Relaxed);
-    }
-
-    /// Resets every bit in the consumed-block bitset.
-    ///
-    /// Used by [`Self::rebuild`] so per-segment INC_RECURSE lifecycles
-    /// (ZSO-7) start with no stale prune bits. Also exposed publicly so
-    /// generator-session restarts (e.g., a basis retry after a phase-2
-    /// redo) can recycle the same index without re-allocating.
-    pub fn reset_consumed(&self) {
-        for word in &self.consumed {
-            word.store(0, Ordering::Relaxed);
-        }
-    }
-
     /// Attempts to locate a matching block for a contiguous byte slice.
     #[inline]
     pub fn find_match_bytes(&self, digest: RollingDigest, window: &[u8]) -> Option<usize> {
-        self.find_match_bytes_filtered(digest, window, None)
+        self.probe_bytes(digest, window, None)
     }
 
-    /// Attempts to locate a matching block for a contiguous byte slice,
-    /// skipping basis blocks already marked in `matched`.
-    ///
-    /// When `matched` is `None` this behaves identically to
-    /// [`Self::find_match_bytes`]. When `Some`, candidate basis blocks
-    /// whose bit is set in the bitmap are filtered out before the
-    /// strong-checksum verify, mirroring zsync's `librcksum`
-    /// matched-block pruning. Pruning never reduces the set of source
-    /// bytes that can be matched: see [`MatchedBlocks`] for the
-    /// duplicate-block correctness contract.
-    #[inline]
-    pub fn find_match_bytes_filtered(
-        &self,
-        digest: RollingDigest,
-        window: &[u8],
-        matched: Option<&MatchedBlocks>,
-    ) -> Option<usize> {
-        self.probe_bytes(digest, window, matched, None)
-    }
-
-    /// Shared probe core behind [`Self::find_match_bytes_filtered`] and the
+    /// Shared probe core behind [`Self::find_match_bytes`] and the
     /// counted [`Self::find_match_window_counted`].
     ///
     /// When `counters` is `Some`, tallies upstream-style
@@ -631,7 +479,6 @@ impl DeltaSignatureIndex {
         &self,
         digest: RollingDigest,
         window: &[u8],
-        matched: Option<&MatchedBlocks>,
         mut counters: Option<&mut ProbeCounters>,
     ) -> Option<usize> {
         if window.len() != self.block_length {
@@ -661,7 +508,7 @@ impl DeltaSignatureIndex {
         }
 
         let strong = self.algorithm.compute_truncated(window, self.strong_length);
-        if let Some(index) = self.walk_chain(digest, matched, strong.as_slice()) {
+        if let Some(index) = self.walk_chain(digest, strong.as_slice()) {
             return Some(index);
         }
         // A bithash positive that produced no confirmed match: the exact
@@ -686,23 +533,6 @@ impl DeltaSignatureIndex {
         first: &[u8],
         second: &[u8],
     ) -> Option<usize> {
-        self.find_match_slices_filtered(digest, first, second, None)
-    }
-
-    /// Attempts to locate a matching block for a non-contiguous window,
-    /// skipping basis blocks already marked in `matched`.
-    ///
-    /// Mirrors [`Self::find_match_bytes_filtered`] for the two-slice
-    /// window form used by the generator's ring buffer. Passing `None`
-    /// is equivalent to [`Self::find_match_slices`].
-    #[inline]
-    pub fn find_match_slices_filtered(
-        &self,
-        digest: RollingDigest,
-        first: &[u8],
-        second: &[u8],
-        matched: Option<&MatchedBlocks>,
-    ) -> Option<usize> {
         if first.len() + second.len() != self.block_length {
             return None;
         }
@@ -718,57 +548,32 @@ impl DeltaSignatureIndex {
         let strong = self
             .algorithm
             .compute_truncated_slices(first, second, self.strong_length);
-        self.walk_chain(digest, matched, strong.as_slice())
+        self.walk_chain(digest, strong.as_slice())
     }
 
     /// Walks the equal-weak-checksum chain for `digest` and returns the first
     /// candidate whose strong checksum equals `strong`.
     ///
     /// Shared by the contiguous and two-slice probes so the chain-walk rule -
-    /// the prune skips and the [`MAX_CHAIN_LEN`] bound - lives in one place.
+    /// upstream's chain order and the [`MAX_CHAIN_LEN`] bound - lives in one
+    /// place. Every basis block stays on its chain for the whole scan, so a
+    /// block matches as many source windows as carry its content.
     ///
-    /// upstream: `match.c` `hash_search()` inner chain loop. The prune bitsets
-    /// only mark a block consumed; they never unlink it from the append-only
-    /// lookup chain, so a consumed entry stays linked and is re-walked by every
-    /// later probe. The bound is therefore charged for every candidate the
-    /// chain yields - dead or live - before the prune skips, exactly like
-    /// upstream's non-inplace `hash_search` (`match.c:250`), which never
-    /// unlinks and so counts every same-weak-sum record. Charging after the
-    /// skips would let a hostile peer park thousands of weak-colliding blocks
-    /// ahead of a live match, consume them, and make every probe re-walk the
-    /// dead run for free - O(dead entries) per probe, O(n^2) overall - while
-    /// the bound looked intact (task 628, CVE-2026-70453). `--inplace`'s
-    /// physical unlink (`match.c:235`) is the deferred follow-up (task 1268);
-    /// here dead entries spend the budget instead.
+    /// upstream: `match.c:229-256` `hash_search()` inner chain loop. The chain
+    /// yields the highest block index first (see [`CompactLookup::insert`]),
+    /// so among duplicate-content blocks the same sibling wins as upstream.
     #[inline]
-    fn walk_chain(
-        &self,
-        digest: RollingDigest,
-        matched: Option<&MatchedBlocks>,
-        strong: &[u8],
-    ) -> Option<usize> {
+    fn walk_chain(&self, digest: RollingDigest, strong: &[u8]) -> Option<usize> {
         let mut chain_len = 0u32;
         for index in self.lookup.find_all(digest.sum1(), digest.sum2()) {
             // upstream: `match.c:250` - bound the work spent on one pathological
-            // bucket, charging every same-weak-sum candidate the chain yields
-            // (including the prune-skipped dead entries below) before deciding
+            // bucket, charging every same-weak-sum candidate before deciding
             // whether it is a match. Past the cap the offset is a non-match and
             // the caller rolls forward a byte, so the skipped data goes out as
             // literals.
             chain_len += 1;
             if chain_len > MAX_CHAIN_LEN {
                 return None;
-            }
-            if matches!(matched, Some(m) if m.is_matched(index)) {
-                continue;
-            }
-            // ZSO-3 hash-chain prune: skip basis blocks the matcher has
-            // already emitted as `Copy` tokens. Atomic load keeps the probe
-            // `&self`-compatible so the index can be shared read-only across
-            // concurrent generators. See [`MatchedBlocks`] for the
-            // duplicate-block correctness contract.
-            if self.is_consumed(index as u32) {
-                continue;
             }
             let block = &self.blocks[index];
             debug_assert_eq!(block.len(), self.block_length);
@@ -793,7 +598,7 @@ impl DeltaSignatureIndex {
     ///
     /// This method mirrors that tail case. The combined length of `first` and
     /// `second` must be shorter than `block_length` (a full-length window
-    /// belongs on the fast path). It scans for a not-yet-consumed basis block
+    /// belongs on the fast path). It scans for a basis block
     /// whose recorded length equals that combined length and whose rolling and
     /// strong checksums match, returning its index. Partial blocks only ever
     /// occur as the final block, so this scan touches at most one candidate in
@@ -808,10 +613,6 @@ impl DeltaSignatureIndex {
     /// error rather than a slower path. `populate_index` deliberately never
     /// inserts a partial block, so the lookup cannot return one and the BitHash
     /// would reject it as a negative. The linear scan is the only way in.
-    ///
-    /// The prunes that turn on block *identity* rather than rolling-sum
-    /// geometry do still apply, and are honoured below: the per-session
-    /// [`MatchedBlocks`] filter and the shared `consumed` bitset.
     ///
     /// # Cost
     ///
@@ -834,7 +635,6 @@ impl DeltaSignatureIndex {
         digest: RollingDigest,
         first: &[u8],
         second: &[u8],
-        matched: Option<&MatchedBlocks>,
     ) -> Option<usize> {
         let tail_len = first.len() + second.len();
         if tail_len == 0 || tail_len >= self.block_length {
@@ -844,12 +644,6 @@ impl DeltaSignatureIndex {
         let mut strong: Option<signature::DigestBuf> = None;
         for (index, block) in self.blocks.iter().enumerate() {
             if block.len() != tail_len {
-                continue;
-            }
-            if matches!(matched, Some(m) if m.is_matched(index)) {
-                continue;
-            }
-            if self.is_consumed(index as u32) {
                 continue;
             }
             let block_digest = block.rolling();
@@ -940,7 +734,7 @@ impl DeltaSignatureIndex {
         let (front, back) = window.as_slices();
         scratch.extend_from_slice(front);
         scratch.extend_from_slice(back);
-        self.probe_bytes(digest, scratch.as_slice(), None, Some(counters))
+        self.probe_bytes(digest, scratch.as_slice(), Some(counters))
     }
 
     /// Attempts to match a short trailing [`VecDeque`] window against a basis
@@ -966,7 +760,7 @@ impl DeltaSignatureIndex {
         let (front, back) = window.as_slices();
         scratch.extend_from_slice(front);
         scratch.extend_from_slice(back);
-        self.find_tail_match(digest, scratch.as_slice(), &[], None)
+        self.find_tail_match(digest, scratch.as_slice(), &[])
     }
 
     /// Extends a confirmed block match into a run of consecutive matching blocks.
@@ -1086,7 +880,7 @@ impl DeltaSignatureIndex {
     /// to the strong-checksum verify step.
     ///
     /// Mirrors the inner `bithash.contains(...)` probe in
-    /// [`Self::find_match_bytes_filtered`], without the tag-table or
+    /// [`Self::find_match_bytes`], without the tag-table or
     /// strong-checksum work. Lets the bench harness count rejection rate
     /// without instrumenting the production hot path.
     #[must_use]

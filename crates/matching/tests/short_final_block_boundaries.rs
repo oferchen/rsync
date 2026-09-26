@@ -158,7 +158,7 @@ fn find_tail_match_accepts_every_slice_split_of_the_window() {
     for split in 0..=tail_len {
         let (first, second) = tail.split_at(split);
         assert_eq!(
-            index.find_tail_match(digest, first, second, None),
+            index.find_tail_match(digest, first, second),
             Some(tail_block),
             "split at {split} of {tail_len} must find the same block"
         );

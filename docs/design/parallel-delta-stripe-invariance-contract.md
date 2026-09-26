@@ -240,6 +240,10 @@ PDS-2 fixture. State that in the PDS-3c row rather than writing a test
 that cannot fail.
 
 ### Row B - matched-block prune under striping (task 939)
+**Withdrawn.** The matched-block prune and its `consumed` bitset were
+removed because they changed the token stream relative to upstream (see
+`docs/design/zsync-prune.md`). The scan no longer writes the index at all,
+so this row has nothing left to pin; the text below is kept as history.
 
 The task asks how consumption order across stripes changes later probes.
 The answer in the current design is that it cannot, because pruning is

@@ -27,7 +27,7 @@
 //! |------|--------|-------------------------------|---------------------|
 //! | ZSO-1| #2510  | shipped (PR #3737)            | active              |
 //! | ZSO-2| #2510  | landing on PR #4624           | active (see note)   |
-//! | ZSO-3| #2511  | shipped                       | active              |
+//! | ZSO-3| #2511  | removed (not wire-neutral)    | slot kept           |
 //! | ZSO-4| #2512  | shipped                       | active              |
 //!
 //! ZSO-2 (sequential-match lookahead) is implemented on branch
@@ -54,12 +54,12 @@
 //!    literal run for an all-miss source) so a future regression that
 //!    silently merges or splits tokens trips at least one assertion.
 //!
-//! ZSO-3 and ZSO-4 have shipped, so their tests are active. Because the
-//! prune bitmap and the compact rolling-key are on unconditionally in the
-//! public API, those two tests pin match correctness directly: a prune
-//! regression forces a matchable block to a literal, and a compact-key
-//! regression drops a well-separated match - both trip a token-shape
-//! assertion rather than needing an opt-out reference run.
+//! ZSO-3 (the matched-block prune) was removed because it changed the token
+//! stream relative to upstream; its slot now pins that a duplicate-heavy
+//! chain still resolves every window to a copy. ZSO-4 is on unconditionally
+//! in the public API, so its test pins match correctness directly: a
+//! compact-key regression drops a well-separated match and trips a
+//! token-shape assertion rather than needing an opt-out reference run.
 //!
 //! # Cross-references
 //!
@@ -334,28 +334,20 @@ fn seq_match_optimization_preserves_wire_bytes() {
 }
 
 // ---------------------------------------------------------------------------
-// ZSO-3 - hash-chain pruning (task #2511, pending)
+// ZSO-3 slot - duplicate-heavy chains
 // ---------------------------------------------------------------------------
 
-/// ZSO-3 active test - hash-chain pruning (task #2511, shipped; design
-/// at `docs/design/zsync-prune.md`).
-///
 /// Construction: a duplicate-heavy basis whose blocks are three distinct
 /// 700-byte contents laid out `A B C A B C ...` so the rolling-sum lookup
 /// map holds three buckets, each carrying a long chain of identical-key
-/// entries. This is the long-chain topology ZSO-3's prune-on-match walk
-/// targets (upstream zsync `librcksum/hash.c:111`). The source is the
-/// whole basis, so every one of the duplicate blocks must be matched
-/// exactly once.
+/// entries. The source is the whole basis.
 ///
-/// Regression intent: pruning is a performance optimization; it must not
-/// drop a matchable block. If a prune regression retired a live chain
-/// entry too early, the corresponding source window would fall through to
-/// a literal - so the zero-literal / full-copy assertions below fail the
-/// moment pruning stops leaving each duplicate sibling findable until it
-/// is individually consumed.
+/// Every source window has a matching basis block, so the delta must be all
+/// copies: any literal means the chain walk failed to return a live match.
+/// A basis block stays matchable for the whole scan, as in upstream's
+/// `match.c:hash_search()`.
 #[test]
-fn hash_chain_prune_preserves_wire_bytes() {
+fn duplicate_chain_resolves_every_window_to_a_copy() {
     const BLOCK_LEN: u32 = 700;
     const REPEATS: usize = 5;
 
@@ -376,8 +368,8 @@ fn hash_chain_prune_preserves_wire_bytes() {
     let (script, wire) = run_pipeline(&basis, &source, BLOCK_LEN);
     assert!(!wire.is_empty(), "wire-byte stream must not be empty");
 
-    // Determinism gate: the prune bitmap is reset per `generate` call, so
-    // two runs on the same duplicate-heavy input must be byte-identical.
+    // Determinism gate: two runs on the same duplicate-heavy input must be
+    // byte-identical.
     let (_, wire2) = run_pipeline(&basis, &source, BLOCK_LEN);
     assert_eq!(
         wire, wire2,
@@ -387,27 +379,25 @@ fn hash_chain_prune_preserves_wire_bytes() {
     // Functional correctness: the reconstruction equals the source.
     assert_round_trip(&basis, &source, &script);
 
-    // Prune correctness: a source that is exactly the basis must resolve
-    // to copies for every basis byte and zero literals. Any Literal token
-    // here means a matchable duplicate was pruned out of its chain before
-    // its source window arrived.
+    // A source that is exactly the basis must resolve to copies for every
+    // basis byte and zero literals.
     assert!(
         script
             .tokens()
             .iter()
             .all(|t| matches!(t, DeltaToken::Copy { .. })),
-        "prune must not force any duplicate block to a literal token"
+        "no duplicate block may fall back to a literal token"
     );
     assert_eq!(
         script.literal_bytes(),
         0,
-        "prune must not drop a matchable block (got {} literal bytes)",
+        "no matchable block may be dropped (got {} literal bytes)",
         script.literal_bytes()
     );
     assert_eq!(
         script.copy_bytes(),
         basis.len() as u64,
-        "every duplicate basis block must be matched exactly once"
+        "every source byte must be covered by a copy"
     );
 }
 

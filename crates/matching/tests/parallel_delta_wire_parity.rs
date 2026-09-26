@@ -4,12 +4,12 @@
 //! # Why this file exists
 //!
 //! The parallel scan splits the source into overlapping stripes scanned on
-//! separate workers with the consumed-bitset prune disabled, then reassembles
+//! separate workers, each with a fresh `want_i` hint, then reassembles
 //! the single-pass token stream (`docs/design/intra-file-parallelism.md`,
 //! "Approach A": per-stripe read-ahead completes straddling matches; a greedy
 //! merge over the union of `Copy` runs reproduces the sequential selection).
 //! For a duplicate-free basis this is wire-transparent; a duplicate-content
-//! basis resolves each source window to a different sibling than the pruned
+//! basis can resolve a source window to a different sibling than the
 //! sequential scan, so the production wiring engages the parallel path only
 //! behind a default-off flag and only when the basis is duplicate-free
 //! ([`DeltaSignatureIndex::has_duplicate_blocks`] is `false`).
@@ -144,8 +144,8 @@ const DUP_FREE_LEN: usize = 8_390_200;
 /// straddles that boundary is non-matching in *both* scans (its strong
 /// checksum changed) and the only thing that must line up is the literal-token
 /// framing across the range join, which the concatenation-time coalescing
-/// restores. Every other block matches at its aligned offset exactly once, so
-/// the disabled prune is a no-op. The result: identical `Copy` index sequence,
+/// restores. Every other block matches at its aligned offset, and a
+/// duplicate-free basis offers each window exactly one candidate. The result: identical `Copy` index sequence,
 /// identical literal runs, identical wire bytes.
 #[test]
 fn parallel_delta_dup_free_is_wire_identical() {
@@ -310,12 +310,12 @@ const DUP_HEAVY_LEN: usize = 4 * 1024 * 1024;
 /// duplicate-heavy basis, pinning the divergence the duplicate-free gate
 /// exists to avoid.
 ///
-/// With three distinct block contents repeated `A B C A B C ...`, the pruned
-/// sequential scan matches each duplicate sibling once and emits an ascending,
-/// position-accurate `Copy` index sequence. The prune-off parallel scan, when
-/// a range starts mid-file, resolves the first occurrence of each content to
-/// the lowest-indexed sibling and walks the successor chain from there, so its
-/// `Copy` indices no longer track the true source offsets. The wire bytes must
+/// With three distinct block contents repeated `A B C A B C ...`, the
+/// sequential scan's `want_i` hint follows the basis in step and emits an
+/// ascending, position-accurate `Copy` index sequence. A parallel stripe that
+/// starts mid-file restarts that hint at block 0, which matches its first
+/// window's content, and walks the successor chain from there, so its `Copy`
+/// indices no longer track the true source offsets. The wire bytes must
 /// diverge - if they ever stop diverging, the gate could be silently dropped.
 #[test]
 fn parallel_delta_dup_heavy_diverges() {

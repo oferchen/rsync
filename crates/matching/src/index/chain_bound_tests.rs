@@ -120,43 +120,54 @@ fn crafted_blocks_collide_on_the_weak_checksum_only() {
     );
 }
 
+/// Zero-based position at which the chain walk reaches basis block `block`
+/// in an `n_blocks`-entry chain.
+///
+/// upstream: match.c:98-110 `build_hash_table()` head-inserts, so the walk
+/// visits the highest block index first.
+fn chain_rank(n_blocks: u32, block: usize) -> u32 {
+    n_blocks - 1 - block as u32
+}
+
 /// CLASS TEST over the candidate's position in the chain.
 ///
 /// upstream `match.c` counts candidates that reach the strong-checksum compare
-/// and abandons the offset once the count would exceed `MAX_CHAIN_LEN`. With
-/// candidates walked in insertion order, basis block `p` is the `p + 1`-th
-/// candidate, so it is reachable exactly while `p < MAX_CHAIN_LEN`.
+/// and abandons the offset once the count would exceed `MAX_CHAIN_LEN`. A
+/// basis block is reachable exactly while its [`chain_rank`] is below the
+/// bound.
 #[test]
 fn candidate_is_reachable_exactly_below_the_bound() {
     let n_blocks = MAX_CHAIN_LEN + 200;
     let basis = hostile_basis(n_blocks);
     let index = index_over(&basis, BLOCK_LEN as u32);
 
-    let positions = [
+    let ranks = [
         0,
         1,
         2,
-        (MAX_CHAIN_LEN / 2) as usize,
-        (MAX_CHAIN_LEN - 2) as usize,
-        (MAX_CHAIN_LEN - 1) as usize,
-        MAX_CHAIN_LEN as usize,
-        (MAX_CHAIN_LEN + 1) as usize,
-        (n_blocks - 1) as usize,
+        MAX_CHAIN_LEN / 2,
+        MAX_CHAIN_LEN - 2,
+        MAX_CHAIN_LEN - 1,
+        MAX_CHAIN_LEN,
+        MAX_CHAIN_LEN + 1,
+        n_blocks - 1,
     ];
 
-    for position in positions {
+    for rank in ranks {
+        let position = (n_blocks - 1 - rank) as usize;
+        assert_eq!(chain_rank(n_blocks, position), rank);
         let found = probe(&index, &basis, position);
-        if (position as u32) < MAX_CHAIN_LEN {
+        if rank < MAX_CHAIN_LEN {
             assert_eq!(
                 found,
                 Some(position),
-                "candidate at chain position {position} is within the bound \
+                "block {position} at chain rank {rank} is within the bound \
                  and must still match",
             );
         } else {
             assert_eq!(
                 found, None,
-                "candidate at chain position {position} is past the bound, so \
+                "block {position} at chain rank {rank} is past the bound, so \
                  the walk must have stopped and reported a non-match",
             );
         }
@@ -164,8 +175,9 @@ fn candidate_is_reachable_exactly_below_the_bound() {
 }
 
 /// CLASS TEST over chain length. However long the chain grows, the walk stops
-/// at the bound: the first candidate always matches and the last matches only
-/// while the chain is short enough to reach it.
+/// at the bound: the first candidate (the highest block index) always matches
+/// and block 0, walked last, matches only while the chain is short enough to
+/// reach it.
 #[test]
 fn bound_holds_across_chain_lengths() {
     for n_blocks in [
@@ -179,18 +191,18 @@ fn bound_holds_across_chain_lengths() {
         let basis = hostile_basis(n_blocks);
         let index = index_over(&basis, BLOCK_LEN as u32);
 
+        let first = (n_blocks - 1) as usize;
         assert_eq!(
-            probe(&index, &basis, 0),
-            Some(0),
+            probe(&index, &basis, first),
+            Some(first),
             "the first candidate must match at chain length {n_blocks}",
         );
 
-        let last = (n_blocks - 1) as usize;
-        let expected = ((last as u32) < MAX_CHAIN_LEN).then_some(last);
+        let expected = (chain_rank(n_blocks, 0) < MAX_CHAIN_LEN).then_some(0);
         assert_eq!(
-            probe(&index, &basis, last),
+            probe(&index, &basis, 0),
             expected,
-            "last candidate at chain length {n_blocks}",
+            "block 0 is the last candidate at chain length {n_blocks}",
         );
     }
 }
@@ -267,85 +279,6 @@ fn bound_is_inert_on_a_realistic_basis() {
             .all(|token| matches!(token, DeltaToken::Copy { .. })),
         "an identical source must match every block",
     );
-}
-
-/// REGRESSION for the dead-entry bound gap (task 628, CVE-2026-70453).
-///
-/// The ZSO-3 prune skips consumed basis blocks, but those entries stay linked
-/// in the append-only lookup chain - the prune only flips a bitset, it never
-/// unlinks. If the bound is charged only for candidates that survive the prune,
-/// a hostile peer can park thousands of weak-colliding blocks ahead of a live
-/// match, consume them, and make every later probe re-walk them for free: the
-/// per-probe cost is O(dead entries) and the whole generate degrades to
-/// `O(source_len * chain_len)` even though the bound looks intact.
-///
-/// The charge must cover every candidate the weak-sum chain yields, dead or
-/// live, exactly like upstream's non-inplace `hash_search` (`match.c:250`,
-/// which never unlinks and so counts every same-weak-sum record). With 1027
-/// consumed entries parked ahead of a live block, the walk must spend the whole
-/// 1024-entry budget on the dead run and report the offset as a non-match -
-/// never reach the block at position 1027. Pre-fix this returned `Some(1027)`,
-/// proving dead entries were walked uncharged and the bound was bypassed.
-#[test]
-fn consumed_chain_entries_are_charged_against_the_bound() {
-    let n_blocks = MAX_CHAIN_LEN + 4;
-    let basis = hostile_basis(n_blocks);
-    let index = index_over(&basis, BLOCK_LEN as u32);
-
-    // Park a run of consumed dead entries ahead of a still-live match.
-    let live = MAX_CHAIN_LEN as usize + 3;
-    for position in 0..live {
-        index.mark_consumed(position as u32);
-    }
-    assert!(
-        !index.is_consumed(live as u32),
-        "the block under test must still be live",
-    );
-
-    let window = block_bytes(&basis, live);
-    let found = index.find_match_bytes(RollingDigest::from_bytes(window), window);
-    assert_eq!(
-        found, None,
-        "the {live} consumed entries ahead of the live match must each spend a \
-         unit of the {MAX_CHAIN_LEN} budget, so the walk stops before the live \
-         block and reports a non-match - matching upstream non-inplace mode",
-    );
-}
-
-/// CLASS TEST over the number of consumed entries parked ahead of a live match.
-///
-/// A live block preceded by `k` consumed siblings is the `k + 1`-th candidate
-/// the charged walk visits, so it stays reachable exactly while `k <
-/// MAX_CHAIN_LEN`. Dead entries count toward the budget just like live ones -
-/// the whole point of the fix.
-#[test]
-fn live_match_past_consumed_run_reachable_only_below_the_bound() {
-    let n_blocks = MAX_CHAIN_LEN + 4;
-    let basis = hostile_basis(n_blocks);
-
-    for k in [
-        0usize,
-        1,
-        (MAX_CHAIN_LEN - 2) as usize,
-        (MAX_CHAIN_LEN - 1) as usize,
-        MAX_CHAIN_LEN as usize,
-        (MAX_CHAIN_LEN + 1) as usize,
-    ] {
-        // Fresh index per case so consumed runs from earlier cases do not leak.
-        let index = index_over(&basis, BLOCK_LEN as u32);
-        for position in 0..k {
-            index.mark_consumed(position as u32);
-        }
-
-        let window = block_bytes(&basis, k);
-        let found = index.find_match_bytes(RollingDigest::from_bytes(window), window);
-        let expected = ((k as u32) < MAX_CHAIN_LEN).then_some(k);
-        assert_eq!(
-            found, expected,
-            "live match after {k} consumed entries: reachable iff k < \
-             {MAX_CHAIN_LEN}",
-        );
-    }
 }
 
 /// Pins the cap to upstream's literal value. oc must not invent a different

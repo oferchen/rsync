@@ -41,8 +41,9 @@
 //!   stripe boundary is completed by the owning worker's read-ahead and merged
 //!   without loss or duplication, for stripe counts whose boundaries bisect a
 //!   block.
-//! - **Duplicate-content divergence** - on a duplicate-heavy basis the prune-off
-//!   parallel scan resolves siblings differently and the token stream diverges;
+//! - **Duplicate-content divergence** - on a duplicate-heavy basis each stripe
+//!   starts its `want_i` hint fresh, resolves siblings differently from the
+//!   sequential scan, and the token stream diverges;
 //!   reconstruction stays exact. This pins why the production wiring gates the
 //!   parallel path on a duplicate-free basis (the fallback itself lives in
 //!   `transfer::generator::generate_delta_from_signature_chunked`).
@@ -334,8 +335,9 @@ fn small_source_collapses_and_single_stripe_equals_sequential() {
     );
 }
 
-/// Duplicate-content basis (fixture e): the prune-off parallel scan resolves
-/// duplicate siblings differently from the pruned sequential scan, so the token
+/// Duplicate-content basis (fixture e): each stripe starts its `want_i` hint
+/// fresh, so the parallel scan resolves duplicate siblings differently from the
+/// sequential scan (whose hint carries across the boundary), and the token
 /// stream diverges - but reconstruction stays byte-exact. This pins the boundary
 /// the duplicate-free gate exists to avoid; the production fallback itself lives
 /// in `transfer::generator::generate_delta_from_signature_chunked` and is pinned
@@ -465,94 +467,6 @@ fn corrupted_merge_is_detected() {
         seq_canon,
         "mis-ordering merge tokens must break token-sequence identity"
     );
-}
-
-/// Matched-block prune, cross-CALL reset (task 939 / contract row B,
-/// requirement 1). Pins that `index.reset_consumed()` inside the striped entry
-/// is load-bearing ACROSS calls, not just within one.
-///
-/// # What decides this
-///
-/// The striped scan disables per-stripe pruning (`generate_with_prune(.., false,
-/// ..)`), so no worker writes the shared `consumed` bitset - row B is
-/// INVARIANT, not stripe-dependent. But `walk_chain`
-/// (`crates/matching/src/index/mod.rs`) consults `is_consumed` on EVERY probe
-/// regardless of the per-session filter, and a `DeltaSignatureIndex` outlives a
-/// single `generate()` call. A prior pruned sequential scan on the same index
-/// leaves its matched blocks marked consumed; without the up-front
-/// `reset_consumed()` the striped scan would skip every one of them in
-/// `walk_chain` and collapse to all-literals. This is the one requirement the
-/// contract flags as covered by no natural fixture: a test that builds a fresh
-/// index per scan can never observe it.
-///
-/// The fixture therefore PRIMES the shared index with a pruned sequential
-/// `generate()` (identical source -> every full block consumed), then runs the
-/// striped scan on that SAME index at every stripe count and requires the
-/// sequential (fresh-index) token stream back. It is duplicate-free, so the
-/// prune is otherwise a no-op and the only thing that can perturb the output is
-/// a stale consumed bitset. Mutation proof: deleting `reset_consumed()` from
-/// `generate_chunked_forced` collapses stripes >= 2 to literals and fails the
-/// canonical-token assertion.
-#[test]
-fn primed_consumed_bitset_is_reset_before_striped_scan() {
-    let basis = lcg_bytes(0x9E37_79B9_7F4A_7C15, 96 * 1024);
-    let index = build_index(&basis, BLOCK_LEN);
-    assert!(
-        !index.has_duplicate_blocks(),
-        "fixture must be duplicate-free so a stale bitset is the only variable"
-    );
-    let source = basis.clone();
-    let block_len = index.block_length();
-    let generator = DeltaGenerator::new();
-
-    // Fresh-index baseline: the token stream the primed striped scan must
-    // reproduce byte-for-byte.
-    let fresh_index = build_index(&basis, BLOCK_LEN);
-    let sequential = generator
-        .generate(Cursor::new(source.clone()), &fresh_index)
-        .expect("sequential baseline");
-    let seq_canon = canonical(&sequential, block_len);
-
-    // Prime the SHARED index with a pruned sequential scan: on an identical
-    // source every full block matches once and is marked consumed, so the
-    // shared bitset is left fully set. `generate` prunes in production.
-    let primed = generator
-        .generate(Cursor::new(source.clone()), &index)
-        .expect("priming pruned scan");
-    assert_eq!(reconstruct(&basis, &index, &primed), source);
-    assert!(
-        primed.copy_bytes() > (source.len() as u64) * 9 / 10,
-        "priming scan must actually consume the basis blocks (copy_bytes={})",
-        primed.copy_bytes()
-    );
-
-    // The striped scan on the SAME index must reset the primed bits up front;
-    // otherwise walk_chain skips every consumed block and the stream collapses
-    // to literals.
-    for &stripes in STRIPE_COUNTS {
-        if source.len() < stripes {
-            continue;
-        }
-        assert_eq!(
-            generator.forced_stripe_count(source.len(), &index, stripes),
-            stripes,
-            "fixture must split into exactly {stripes} stripes"
-        );
-        let (chunked, _) = generator
-            .generate_chunked_forced(&source, &index, stripes)
-            .expect("forced chunked on primed index");
-        assert_eq!(
-            reconstruct(&basis, &index, &chunked),
-            source,
-            "reconstruction must survive a primed consumed bitset at {stripes} stripes"
-        );
-        assert_eq!(
-            canonical(&chunked, block_len),
-            seq_canon,
-            "striped scan on a primed index must reset the consumed bitset and \
-             reproduce the sequential stream at {stripes} stripes"
-        );
-    }
 }
 
 /// Consecutive-match at a stripe boundary (task 940 / contract row C). Pins
