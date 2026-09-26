@@ -13,6 +13,7 @@
 //! daemon-over-rsh transport).
 
 use std::process::{Command, Output};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;

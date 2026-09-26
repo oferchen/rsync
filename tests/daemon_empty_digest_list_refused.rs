@@ -29,14 +29,14 @@
 //! process exit status directly. A normal client never produces the trailing
 //! space, so the greeting is written by hand.
 //!
-//! Unix-only: inetd mode needs stdin to be a socket, which requires handing a
-//! `socketpair(2)` end to the child as fd 0.
+//! Unix-only: inetd mode needs stdin to be a connected IP stream socket, which
+//! requires handing a loopback TCP connection to the child as fd 0.
 
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Write};
+use std::net::{TcpListener, TcpStream};
 use std::os::fd::OwnedFd;
-use std::os::unix::net::UnixStream;
 use std::process::{Command, Stdio};
 
 use std::time::Duration;
@@ -82,6 +82,16 @@ fn write_config(dir: &TempDir) -> std::path::PathBuf {
     config
 }
 
+/// Returns both ends of a connected loopback TCP stream: ours, then the one
+/// the daemon receives as its inetd connection.
+fn loopback_pair() -> (TcpStream, TcpStream) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let ours =
+        TcpStream::connect(listener.local_addr().expect("local addr")).expect("connect loopback");
+    let (theirs, _) = listener.accept().expect("accept loopback");
+    (ours, theirs)
+}
+
 /// Runs one inetd-mode session against the shipped binary.
 ///
 /// Sends `greeting` followed by a request for the `protected` module, and
@@ -93,10 +103,11 @@ fn run_session(greeting: &str) -> (String, Option<i32>) {
     let dir = TempDir::new().expect("temp dir");
     let config = write_config(&dir);
 
-    // A socketpair end handed over as fd 0 is what makes the daemon take
-    // upstream's `is_a_socket(STDIN_FILENO)` branch and serve exactly one
-    // session over stdio.
-    let (ours, theirs) = UnixStream::pair().expect("socketpair");
+    // A connected loopback TCP stream handed over as fd 0 is what makes the
+    // daemon take upstream's `is_inetd_socket(STDIN_FILENO)` branch and serve
+    // exactly one session over stdio; a local socketpair is not an inetd peer
+    // (clientserver.c:1740-1743 accepts only AF_INET/AF_INET6).
+    let (ours, theirs) = loopback_pair();
     theirs
         .set_read_timeout(Some(HANDSHAKE_DEADLINE))
         .expect("child read timeout");
