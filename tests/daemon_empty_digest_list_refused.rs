@@ -94,12 +94,21 @@ fn loopback_pair() -> (TcpStream, TcpStream) {
 
 /// Runs one inetd-mode session against the shipped binary.
 ///
-/// Sends `greeting` followed by a request for the `protected` module, and
-/// returns the daemon's first answer line together with the process exit code.
+/// Sends `greeting`, then - when `request_module` is set - a request for the
+/// `protected` module, and returns the daemon's first answer line together
+/// with the process exit code.
+///
+/// `request_module` must be false for a greeting the daemon refuses in
+/// `exchange_protocols()`: it writes its `@ERROR` and closes the socket without
+/// reading anything further (upstream clientserver.c:201-213). Over TCP, data
+/// still unread at that close makes the kernel answer with an RST, and on Linux
+/// an RST discards the `@ERROR` already queued in our receive buffer, so the
+/// read below fails with `ECONNRESET` instead of seeing the refusal. Not sending
+/// bytes the daemon will never read keeps its close an orderly FIN.
 ///
 /// `--no-detach` is mandatory: without it the daemon would background itself and
 /// the assertions below would run against a process that had already exited.
-fn run_session(greeting: &str) -> (String, Option<i32>) {
+fn run_session(greeting: &str, request_module: bool) -> (String, Option<i32>) {
     let dir = TempDir::new().expect("temp dir");
     let config = write_config(&dir);
 
@@ -148,22 +157,14 @@ fn run_session(greeting: &str) -> (String, Option<i32>) {
         .write_all(greeting.as_bytes())
         .expect("send client greeting");
 
-    // A greeting that omits the digest name list at protocol > 31 is refused by
-    // exchange_protocols() the instant it is read: the daemon writes its @ERROR
-    // and closes the socket WITHOUT ever reading the module name (upstream
-    // clientserver.c:201-213). Under load that close can land between these two
-    // client writes, so a BrokenPipe on the module-name write is the daemon
-    // refusing early - not a failure. The @ERROR is already in our receive
-    // buffer, so the read below still observes it and the assertions still hold.
-    // The greetings that DO reach the module-name read (protocol 31, and the
-    // empty-list cases the presence gate accepts) never trip this branch.
-    match writer
-        .write_all(b"protected\n")
-        .and_then(|()| writer.flush())
-    {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
-        Err(error) => panic!("send module request: {error}"),
+    if request_module {
+        // Every greeting sent with a module request reaches the daemon's
+        // module-name read (protocol 31, and the empty-list cases the presence
+        // gate accepts), so the write cannot race the daemon's close.
+        writer
+            .write_all(b"protected\n")
+            .and_then(|()| writer.flush())
+            .expect("send module request");
     }
 
     let mut answer = String::new();
@@ -186,7 +187,7 @@ fn run_session(greeting: &str) -> (String, Option<i32>) {
 #[test]
 fn an_empty_digest_list_is_refused_with_exit_code_4() {
     for greeting in ["@RSYNCD: 31.0 \n", "@RSYNCD: 32.0 \n"] {
-        let (answer, code) = run_session(greeting);
+        let (answer, code) = run_session(greeting, true);
 
         assert_eq!(
             answer,
@@ -213,7 +214,7 @@ fn an_empty_digest_list_is_refused_with_exit_code_4() {
 /// `exchange_protocols()`, with a different diagnostic.
 #[test]
 fn an_absent_digest_list_still_reaches_the_auth_challenge() {
-    let (answer, _code) = run_session("@RSYNCD: 31.0\n");
+    let (answer, _code) = run_session("@RSYNCD: 31.0\n", true);
 
     let challenge = answer
         .strip_prefix("@RSYNCD: AUTHREQD ")
@@ -232,7 +233,7 @@ fn an_absent_digest_list_still_reaches_the_auth_challenge() {
 /// upstream: clientserver.c:203-211.
 #[test]
 fn an_absent_digest_list_past_protocol_31_is_refused_by_the_presence_gate() {
-    let (answer, _code) = run_session("@RSYNCD: 32.0\n");
+    let (answer, _code) = run_session("@RSYNCD: 32.0\n", false);
 
     assert_eq!(
         answer,
