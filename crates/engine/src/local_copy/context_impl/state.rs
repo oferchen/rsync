@@ -77,6 +77,7 @@ impl<'a> CopyContext<'a> {
             unsupported_operation_skipped: false,
             sender_remove_error: false,
             make_way_error: false,
+            create_error: false,
             delete_io_error: false,
             multi_source: false,
             cross_source_keep: HashMap::new(),
@@ -705,6 +706,21 @@ impl<'a> CopyContext<'a> {
     /// was copied.
     pub(super) const fn make_way_error_occurred(&self) -> bool {
         self.make_way_error
+    }
+
+    /// Records that `atomic_create()` failed for one entry. The entry is
+    /// skipped, the rest of the transfer continues, and the run finishes
+    /// `RERR_PARTIAL` (23).
+    ///
+    /// upstream: `generator.c:2490-2522` and `hlink.c:486` report the failure
+    /// at `FERROR_XFER`, which sets `got_xfer_error` (`log.c:337-338`).
+    pub(crate) fn record_create_error(&mut self) {
+        self.create_error = true;
+    }
+
+    /// Reports whether any entry could not be created.
+    pub(super) const fn create_error_occurred(&self) -> bool {
+        self.create_error
     }
 
     /// Records that a source file ended before the length this transfer was

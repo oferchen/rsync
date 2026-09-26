@@ -6,6 +6,7 @@
 //!
 //! upstream: receiver.c - symlink handling, syscall.c:do_symlink()
 
+use crate::local_copy::{report_link_failure, report_symlink_failure};
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -576,13 +577,13 @@ pub(crate) fn copy_symlink(
                 Ok(()) => break,
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(destination)?;
-                    create_hard_link(&existing_target, destination).map_err(|link_error| {
-                        LocalCopyError::io(
-                            "create hard link",
-                            destination.to_path_buf(),
-                            link_error,
-                        )
-                    })?;
+                    if let Err(link_error) = create_hard_link(&existing_target, destination) {
+                        // upstream: hlink.c:486-487 - rsyserr(FERROR_XFER, errno,
+                        // "link %s => %s failed", ...) and the entry is skipped.
+                        report_link_failure(context, destination, &existing_target, &link_error);
+                        context.register_progress();
+                        return Ok(());
+                    }
                     break;
                 }
                 Err(error)
@@ -595,11 +596,9 @@ pub(crate) fn copy_symlink(
                     continue;
                 }
                 Err(error) => {
-                    return Err(LocalCopyError::io(
-                        "create hard link",
-                        destination.to_path_buf(),
-                        error,
-                    ));
+                    report_link_failure(context, destination, &existing_target, &error);
+                    context.register_progress();
+                    return Ok(());
                 }
             }
         }
@@ -739,11 +738,11 @@ pub(crate) fn copy_symlink(
             context.register_progress();
             return Ok(());
         }
-        return Err(LocalCopyError::io(
-            "create symbolic link",
-            destination,
-            error,
-        ));
+        // upstream: generator.c:2490-2493 - rsyserr(FERROR_XFER, errno,
+        // "symlink %s -> \"%s\" failed", ...) and the entry is skipped.
+        report_symlink_failure(context, destination, &write_target, &error);
+        context.register_progress();
+        return Ok(());
     }
 
     context.register_created_path(
