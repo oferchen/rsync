@@ -500,6 +500,7 @@ mod privilege_tests {
             early_input_data: None,
             client_digests: AdvertisedDigests::Absent,
             session_exit_code: &mut session_exit_code,
+            post_xfer_command: None,
             conn_state: ConnectionState::Authenticating,
         };
 
