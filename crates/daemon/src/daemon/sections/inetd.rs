@@ -65,6 +65,8 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
         reverse_lookup,
         lock_file,
         daemon_timeout,
+        proxy_protocol,
+        proxy_protocol_hosts,
         ..
     } = options;
 
@@ -110,7 +112,7 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
-    let stream = DaemonStream::stdio(pair);
+    let mut stream = DaemonStream::stdio(pair);
 
     // upstream: clientserver.c:1759 - `start_daemon(STDIN_FILENO, STDIN_FILENO)`.
     // Under inetd, fd 0 IS the connected socket, so `client_addr()` skips the
@@ -139,6 +141,28 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
             ));
         }
     };
+
+    // upstream: clientserver.c:1443-1446 - the inetd child runs the same
+    // `proxy protocol` gate as a forked listener child: start_daemon() is the
+    // shared entry point (daemon_main() calls it for an inetd socket at :1759).
+    let proxy_policy = ProxyProtocolPolicy::new(proxy_protocol, proxy_protocol_hosts);
+    let peer_addr =
+        match admit_proxy_protocol_peer(&mut stream, peer_addr, &proxy_policy, log_sink.as_ref()) {
+            Ok(Some(addr)) => addr,
+            // upstream: start_daemon() returns -1 and the process exits.
+            Ok(None) => return Ok(()),
+            Err(err) => {
+                let code = ExitCode::SocketIo;
+                return Err(DaemonError::with_code(
+                    code,
+                    rsync_error!(
+                        code.as_i32(),
+                        format!("failed to read PROXY protocol header: {err}")
+                    )
+                    .with_role(Role::Daemon),
+                ));
+            }
+        };
 
     // upstream: clientname.c `client_name` forward-confirms the reverse-DNS
     // name unconditionally, so this pre-module log/registry name is confirmed
