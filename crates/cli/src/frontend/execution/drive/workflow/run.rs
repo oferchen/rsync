@@ -705,12 +705,21 @@ where
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| String::from("oc-rsync"));
 
+    // upstream: io.c:2559 write_int(batch_fd, protocol_version) - the header
+    // records the protocol the run speaks, which `--protocol` lowers on a local
+    // copy too, so a batch can be written for an older reader.
+    let batch_protocol = i32::from(
+        desired_protocol
+            .unwrap_or(protocol::ProtocolVersion::NEWEST)
+            .as_u8(),
+    );
+
     let batch_config = if let Some(ref path) = write_batch {
         Some(
             BatchConfig::new(
                 BatchMode::Write,
                 path.to_string_lossy().into_owned(),
-                i32::from(protocol::ProtocolVersion::NEWEST.as_u8()),
+                batch_protocol,
             )
             .with_compat_flags(local_batch_compat_flags)
             .with_checksum_seed(batch_checksum_seed)
@@ -721,7 +730,7 @@ where
             BatchConfig::new(
                 BatchMode::OnlyWrite,
                 path.to_string_lossy().into_owned(),
-                i32::from(protocol::ProtocolVersion::NEWEST.as_u8()),
+                batch_protocol,
             )
             .with_compat_flags(local_batch_compat_flags)
             .with_checksum_seed(batch_checksum_seed)
