@@ -242,7 +242,7 @@ partial pass
 partial_nowrite pass
 partial-dir-abs-delta pass
 partial-protected-regular-retry-linux skip
-partial-protected-regular-retry-policy fail  # env: upstream 3.5.1 fails too on macOS (positive control) - owner: task 1671 (U351)
+partial-protected-regular-retry-policy pass
 password-file-symlink pass
 peer-legacy-implied-delete-scope skip
 preallocate pass
@@ -296,7 +296,7 @@ rrsync-no-overwrite-logfile pass
 rrsync-no-overwrite-partial-dir pass
 rrsync-pull-arg-shapes pass
 rrsync-pull-delivers-content pass
-rrsync-root-relative-paths fail  # env: upstream 3.5.1 fails too with a /tmp scratch and passes with /private/tmp (macOS /tmp symlink vs rrsync realpath check) - owner: task 1390 (U351)
+rrsync-root-relative-paths pass
 rrsync-sender-leaf-flip skip
 rrsync-sender-parent-pin skip
 rrsync-specials-denied pass

@@ -778,17 +778,49 @@ cleanup_published_bin() {
 # with ENOENT, a pure harness artifact. Hosting the scratch OUTSIDE the shadowed
 # parent (e.g. /tmp, mode 1777, all components world-x, never chown_target since
 # it is world-x) keeps the from/to/chk dirs visible after the tmpfs mount.
+#
+# The base is echoed CANONICAL (physical_dir_path). On macOS /tmp and /var are
+# symlinks into /private, and upstream's suite compares test paths with the
+# kernel-resolved spelling of the same directory, which a symlinked prefix
+# breaks: support/rrsync:808 dies "post-realpath open failed" for an -absolute
+# path spelled through the symlinked prefix, and the dyld/LD_PRELOAD interposers
+# of partial-protected-regular-retry-{policy,linux}_test.py match the partial
+# dir against fcntl(F_GETPATH) / readlink(/proc/self/fd) with strcmp(). Upstream
+# 3.5.1 itself fails all three under a symlinked scratch and passes under the
+# canonical one; its own default scratch (runtests.py:709, the build tree) has
+# no symlinked component.
 world_traversable_scratch_base() {
     local fallback=$1
-    local base
+    local base canonical
     for base in "${TMPDIR:-}" /tmp; do
         [[ -n "$base" && -d "$base" && -w "$base" ]] || continue
-        path_world_traversable "$base" || continue
-        echo "$base"
+        canonical=$(physical_dir_path "$base") || continue
+        path_world_traversable "$canonical" || continue
+        echo "$canonical"
         return 0
     done
-    echo "$fallback"
+    physical_dir_path "$fallback" || echo "$fallback"
     return 0
+}
+
+# Echo the symlink-free absolute spelling of existing directory $1.
+physical_dir_path() {
+    (cd -P -- "$1" 2>/dev/null && pwd -P)
+}
+
+# Give directory $1 the caller's primary group.
+#
+# WHY (macOS, non-root): BSD file systems give a new file its PARENT's group,
+# not the creator's egid, so everything under /private/tmp (root:wheel) is
+# group wheel, which the runner is not a member of, and the kernel then drops
+# an ungrantable S_ISGID from chmod() (upstream syscall.c:1794-1797 documents
+# the same macOS rule). chmod-setid_test.py's --chmod=a+s thus yields 4644 for
+# upstream 3.5.1 too. Upstream's default scratch (runtests.py:709) lives in the
+# build tree, owned by the caller's own group, where the bit is grantable; this
+# restores that. On Linux the creator's egid is already the group, so it is a
+# no-op there.
+adopt_primary_group() {
+    chgrp "$(id -g)" "$1"
 }
 
 # Compose the per-run Python-suite scratch tree path from its base and leg tags.
@@ -1371,6 +1403,7 @@ run_python_suite_mode() {
     chmod -R u+rwX "$scratch_home" 2>/dev/null || true
     rm -rf "$scratch_home"
     mkdir -p "$scratch_home"
+    adopt_primary_group "$scratch_home"
     if [[ "$scratch_base" != "$log_root" ]]; then
         echo "==> Scratch tree under ${scratch_home} (outside the tmpfs-shadowed HOME)" >&2
     fi

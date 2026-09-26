@@ -12,6 +12,11 @@ was made per-run in an earlier change (publish_oc_rsync_bin); its sibling, the
 Python-suite scratch tree, is made per-run by uts_scratch_home_path(), proved
 here.
 
+The same scratch tree must also look to upstream's suite like runtests.py's own
+default (the build tree): reached by a symlink-free path and owned by the
+caller's primary group. world_traversable_scratch_base() and
+adopt_primary_group() provide that, proved by ScratchBaseEnvironmentTests.
+
 The tests are hermetic: they SOURCE the harness (they never launch the 45-minute
 suite) and call the real functions, so a hand copy of the naming cannot pass in
 place of the shipped one. No network, no root, no build - identical on a laptop
@@ -20,8 +25,10 @@ and on a runner.
 
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -91,6 +98,65 @@ class ScratchHomeIsolationTests(unittest.TestCase):
         self.assertTrue(a.stdout.strip())
         self.assertTrue(b.stdout.strip())
         self.assertNotEqual(a.stdout.strip(), b.stdout.strip())
+
+
+class ScratchBaseEnvironmentTests(unittest.TestCase):
+    """The scratch base is canonical and group-owned like upstream's default."""
+
+    def setUp(self) -> None:
+        # Under /tmp (1777, like the harness's own base) so every component
+        # is world-traversable whoever runs the test, whatever $TMPDIR says.
+        self._tmp = tempfile.TemporaryDirectory(dir="/tmp")
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+    def _world_traversable_target_behind_symlink(self) -> tuple[Path, Path]:
+        # macOS shape: /tmp -> private/tmp, a 1777 dir reached via a symlink.
+        # Every component must be o+x or the helper rightly rejects it.
+        os.chmod(self.root, 0o755)
+        real = self.root / "private" / "tmp"
+        real.mkdir(parents=True)
+        os.chmod(real.parent, 0o755)
+        os.chmod(real, 0o1777)
+        link = self.root / "tmp"
+        link.symlink_to(real)
+        return link, real
+
+    def test_scratch_base_through_symlink_is_echoed_canonical(self) -> None:
+        # Upstream's rrsync -absolute check and the partial-retry interposers'
+        # F_GETPATH / /proc/self/fd comparison both see the resolved spelling,
+        # so a symlinked scratch prefix fails them for upstream 3.5.1 too.
+        link, real = self._world_traversable_target_behind_symlink()
+        result = _source_and_eval(
+            f"TMPDIR={shlex.quote(str(link))}\n"
+            "world_traversable_scratch_base /nonexistent-fallback"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), str(real.resolve()))
+
+    def test_physical_dir_path_resolves_a_symlinked_prefix(self) -> None:
+        link, real = self._world_traversable_target_behind_symlink()
+        nested = real / "leg"
+        nested.mkdir()
+        result = _source_and_eval(
+            f"physical_dir_path {shlex.quote(str(link / 'leg'))}"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), str(nested.resolve()))
+
+    def test_adopt_primary_group_sets_the_callers_gid(self) -> None:
+        # Start from a group other than the primary one whenever the caller
+        # has one, so the assertion observes a real change.
+        scratch = self.root / "scratch"
+        scratch.mkdir()
+        others = [g for g in os.getgroups() if g != os.getgid()]
+        if others:
+            os.chown(scratch, -1, others[0])
+        result = _source_and_eval(
+            f"adopt_primary_group {shlex.quote(str(scratch))}"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(os.stat(scratch).st_gid, os.getgid())
 
 
 class UtsJobsValidationTests(unittest.TestCase):
