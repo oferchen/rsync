@@ -105,6 +105,19 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Marks the source operands as `--files-from` entries.
+    ///
+    /// The source base is operator-selected, but each list entry may not be,
+    /// so the sender resolves entries through the ownership walk (and, under
+    /// `--confine-root`, keeps them beneath the root). upstream:
+    /// `rsync-3.5.1/syscall.c:149` `filesfrom_owner_walk_active()`.
+    #[must_use]
+    #[doc(alias = "--files-from")]
+    pub const fn files_from(mut self, files_from: bool) -> Self {
+        self.files_from = files_from;
+        self
+    }
+
     /// Keeps existing destination symlinks that point to directories.
     #[must_use]
     #[doc(alias = "--keep-dirlinks")]
@@ -334,6 +347,12 @@ impl LocalCopyOptions {
     #[must_use]
     pub const fn copy_dirlinks_enabled(&self) -> bool {
         self.copy_dirlinks
+    }
+
+    /// Reports whether the source operands are `--files-from` entries.
+    #[must_use]
+    pub const fn files_from_enabled(&self) -> bool {
+        self.files_from
     }
 
     /// Reports whether existing destination directory symlinks should be preserved.

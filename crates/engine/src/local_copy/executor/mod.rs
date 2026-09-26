@@ -19,6 +19,7 @@ pub(crate) use cleanup::{
 pub(crate) use create_failure::report_mknod_failure;
 pub(crate) use create_failure::{report_link_failure, report_symlink_failure};
 pub(crate) use directory::ChecksumCache;
+pub(crate) use directory::ScanRoot;
 pub(crate) use directory::{
     capture_batch_file_entry, copy_directory_recursive, copy_directory_walk_one_level, is_device,
     is_fifo,

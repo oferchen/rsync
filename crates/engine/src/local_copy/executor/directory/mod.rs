@@ -11,4 +11,4 @@ pub(crate) use parallel_checksum::ChecksumCache;
 pub(crate) use recursive::capture_batch_file_entry;
 pub(crate) use recursive::copy_directory_recursive;
 pub(crate) use recursive::copy_directory_walk_one_level;
-pub(crate) use support::{is_device, is_fifo};
+pub(crate) use support::{ScanRoot, is_device, is_fifo};

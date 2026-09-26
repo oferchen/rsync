@@ -82,6 +82,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) rayon_threads: Option<NonZeroUsize>,
     pub(crate) tokio_threads: Option<NonZeroUsize>,
     pub(crate) max_alloc: Option<u64>,
+    pub(crate) max_alloc_arg: Option<String>,
     pub(crate) backup: bool,
     pub(crate) backup_dir: Option<PathBuf>,
     pub(crate) backup_suffix: Option<OsString>,
@@ -298,6 +299,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .rayon_threads(inputs.rayon_threads)
         .tokio_threads(inputs.tokio_threads)
         .max_alloc(inputs.max_alloc)
+        .max_alloc_arg(inputs.max_alloc_arg.clone())
         .backup(inputs.backup)
         .backup_directory(inputs.backup_dir.clone())
         .backup_suffix(inputs.backup_suffix.clone())

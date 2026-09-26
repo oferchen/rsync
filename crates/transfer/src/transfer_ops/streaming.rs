@@ -205,6 +205,7 @@ pub fn process_file_response_streaming<R: Read>(
     };
 
     let mut total_bytes: u64 = 0;
+    let describe_file = || ctx.full_fname(receiver);
 
     // upstream: token.c:863-866 - reset per-file token state. For zstd the
     // decompression context is preserved (single continuous stream across all
@@ -286,6 +287,7 @@ pub fn process_file_response_streaming<R: Read>(
                 total_bytes, // initial literal bytes from first chunk
                 updating_basis,
                 is_inplace,
+                &describe_file,
             )?
         }
         first_delta => {
@@ -307,6 +309,7 @@ pub fn process_file_response_streaming<R: Read>(
                 0,
                 updating_basis,
                 is_inplace,
+                &describe_file,
             )?
         }
     };
