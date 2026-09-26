@@ -170,7 +170,14 @@ fn prepend_components(pending: &mut Vec<OsString>, path: &Path) {
 /// state it advances (`syscall.c:384-408`).
 enum AbsPathTracker {
     Disabled,
-    Tracking { abspath: PathBuf },
+    /// Location known but not judged: an unconfined walk that started at, or
+    /// restarted from, `/`. Upstream's `is_anchored` without a root to test.
+    Anchored {
+        abspath: PathBuf,
+    },
+    Tracking {
+        abspath: PathBuf,
+    },
 }
 
 impl AbsPathTracker {
@@ -193,7 +200,13 @@ impl AbsPathTracker {
         if kind != crate::confinement::PathKind::Confined
             || crate::confinement::session_confinement_root().is_none()
         {
-            return Ok(Self::Disabled);
+            return Ok(if path.is_absolute() {
+                Self::Anchored {
+                    abspath: PathBuf::from("/"),
+                }
+            } else {
+                Self::Disabled
+            });
         }
         let abspath = if path.is_absolute() {
             PathBuf::from("/")
@@ -210,7 +223,7 @@ impl AbsPathTracker {
     ///
     /// upstream: `rsync-3.5.1/syscall.c:324` `abspath_step()`.
     fn step(&mut self, name: &OsStr) {
-        let Self::Tracking { abspath } = self else {
+        let (Self::Anchored { abspath } | Self::Tracking { abspath }) = self else {
             return;
         };
         if name == OsStr::new(".") {
@@ -228,9 +241,35 @@ impl AbsPathTracker {
     ///
     /// upstream: `rsync-3.5.1/syscall.c:577`.
     fn restart_at_root(&mut self) {
-        if let Self::Tracking { abspath } = self {
-            *abspath = PathBuf::from("/");
+        match self {
+            Self::Tracking { abspath } => *abspath = PathBuf::from("/"),
+            Self::Anchored { .. } | Self::Disabled => {
+                *self = Self::Anchored {
+                    abspath: PathBuf::from("/"),
+                };
+            }
         }
+    }
+
+    /// Is `name`, reached from the current location, one of the procfs/devfs
+    /// entry symlinks that lead into an fd pin?
+    ///
+    /// Inside a user namespace `/proc/self`, `/dev/fd` and `/dev/std*` report
+    /// the overflow uid, so the ownership test would refuse the very spelling
+    /// rrsync rewrites option paths to (`/proc/self/fd/N`). Only these exact
+    /// components of an anchored walk are exempt; the magic link past them is
+    /// still owner-checked and the walk restarts at its real target.
+    ///
+    /// upstream: `rsync-3.5.1/syscall.c:489-498` `namespace_pin`.
+    fn at_namespace_pin(&self, name: &OsStr) -> bool {
+        let (Self::Anchored { abspath } | Self::Tracking { abspath }) = self else {
+            return false;
+        };
+        let name = name.as_encoded_bytes();
+        if abspath == Path::new("/proc") {
+            return name == b"self";
+        }
+        abspath == Path::new("/dev") && matches!(name, b"fd" | b"stdin" | b"stdout" | b"stderr")
     }
 
     /// The absolute path the walk has resolved, or `None` when the tracker is
@@ -246,7 +285,7 @@ impl AbsPathTracker {
     /// from.
     fn resolved(&self) -> Option<&Path> {
         match self {
-            Self::Disabled => None,
+            Self::Disabled | Self::Anchored { .. } => None,
             Self::Tracking { abspath } => Some(abspath),
         }
     }
@@ -516,7 +555,9 @@ pub(crate) fn owner_walk_open_tracked(
             // upstream: syscall.c:499 - an other-uid symlink is the attacker's
             // and is refused; uid 0 or our own euid is the operator's own
             // layout and is followed. This arm is reached for the leaf too.
-            if !symlink_owner_is_trusted(stat.uid()) {
+            // upstream: syscall.c:489-498 exempts only the userns-overflow
+            // entry links of an fd pin (`/proc/self`, `/dev/fd`, `/dev/std*`).
+            if !tracker.at_namespace_pin(&name) && !symlink_owner_is_trusted(stat.uid()) {
                 return Err(io::Error::from_raw_os_error(libc::ELOOP));
             }
             if hops == 0 {
@@ -1531,10 +1572,40 @@ fn operator_symlink_metadata_kind(
 
 #[cfg(test)]
 mod tests {
+    use super::AbsPathTracker;
     use super::{
         operator_open_append, operator_open_read, operator_read_to_string,
         symlink_owner_is_trusted, trusted_uid,
     };
+    use crate::confinement::PathKind;
+    use std::ffi::OsStr;
+
+    /// upstream: `syscall.c:489-498` - only the exact entry links of an fd pin,
+    /// reached by an anchored walk, skip the ownership test.
+    #[test]
+    fn only_the_fd_pin_entry_links_of_an_anchored_walk_are_exempt() {
+        let exempt = |path: &str, name: &str| {
+            let path = std::path::Path::new(path);
+            let mut tracker =
+                AbsPathTracker::start(path, PathKind::Ancillary, None).expect("start");
+            for component in super::walk_components(path) {
+                tracker.step(&component);
+            }
+            tracker.at_namespace_pin(OsStr::new(name))
+        };
+        assert!(exempt("/proc", "self"));
+        for name in ["fd", "stdin", "stdout", "stderr"] {
+            assert!(exempt("/dev", name), "{name}");
+        }
+        assert!(!exempt("/proc", "fd"));
+        assert!(!exempt("/proc/self", "fd"));
+        assert!(!exempt("/dev", "shm"));
+        assert!(!exempt("/tmp/proc", "self"));
+        assert!(
+            !exempt("proc", "self"),
+            "an unanchored walk is never exempt"
+        );
+    }
 
     /// The whole point of the helper: content comes back, and it comes back
     /// through the walk rather than a path-based read.
