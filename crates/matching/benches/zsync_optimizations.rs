@@ -3,7 +3,7 @@
 //! Provides a single command to measure the speedup of the matching pipeline
 //! built on top of [`DeltaSignatureIndex`]. The harness is deliberately
 //! decoupled from the per-optimization bench cells already in the workspace
-//! (`bithash_rejection.rs`, `seq_match_redundant.rs`, `prune_duplicate_heavy.rs`,
+//! (`bithash_rejection.rs`, `seq_match_redundant.rs`,
 //! `compact_keys_cache.rs`, `zsync_medium_dataset.rs`) so a release engineer
 //! can produce a baseline vs optimized comparison in one invocation:
 //!
@@ -39,7 +39,7 @@
 //! - **hash_lookups**: total probe attempts. Each `find_match_bytes` call
 //!   enters the tag-table fast path, so this is also the upper bound on
 //!   compact-lookup chain walks. The zsync optimizations (bithash, compact
-//!   key, prune) all aim to lower the *cost* of a lookup, not the count;
+//!   key) both aim to lower the *cost* of a lookup, not the count;
 //!   `matches / hash_lookups` is therefore the productivity ratio the
 //!   harness reports.
 //!

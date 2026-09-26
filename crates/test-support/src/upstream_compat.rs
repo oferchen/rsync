@@ -26,8 +26,10 @@ pub enum UpstreamVersion {
     V3_1_3,
     /// rsync 3.4.4 - default for new NXT-* ports.
     V3_4_4,
-    /// rsync 3.5.0 - current upstream release.
+    /// rsync 3.5.0.
     V3_5_0,
+    /// rsync 3.5.1 - current upstream release.
+    V3_5_1,
 }
 
 impl UpstreamVersion {
@@ -38,6 +40,7 @@ impl UpstreamVersion {
             UpstreamVersion::V3_1_3 => "3.1.3",
             UpstreamVersion::V3_4_4 => "3.4.4",
             UpstreamVersion::V3_5_0 => "3.5.0",
+            UpstreamVersion::V3_5_1 => "3.5.1",
         }
     }
 
@@ -50,6 +53,7 @@ impl UpstreamVersion {
             UpstreamVersion::V3_1_3 => "OC_RSYNC_UPSTREAM_BIN_3_1_3",
             UpstreamVersion::V3_4_4 => "OC_RSYNC_UPSTREAM_BIN_3_4_4",
             UpstreamVersion::V3_5_0 => "OC_RSYNC_UPSTREAM_BIN_3_5_0",
+            UpstreamVersion::V3_5_1 => "OC_RSYNC_UPSTREAM_BIN_3_5_1",
         }
     }
 }
