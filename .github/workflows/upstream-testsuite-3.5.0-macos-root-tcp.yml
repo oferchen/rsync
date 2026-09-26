@@ -1,0 +1,29 @@
+name: Upstream Testsuite 3.5.0 (root, tcp, macOS)
+
+# Standalone entry point for one macOS leg of the upstream rsync 3.5.0
+# testsuite, so its pass/fail status is visible as its own README badge. ci.yml
+# runs the same legs on every pull request; this re-runs one of them on a
+# schedule and on demand, with the same reusable workflow and the same
+# committed manifest, so the badge tracks master. The Linux 3.5.0 legs are
+# upstream-testsuite.yml, -root.yml, -tcp.yml and -root-tcp.yml.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '45 7 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-testsuite-3.5.0-macos-root-tcp-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-tcp-root:
+    uses: ./.github/workflows/_upstream-testsuite-macos.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: '3.5.0'
+      variant: 'root'
+      transport: 'tcp'
+      expect_result_macos_root: tools/ci/upstream-3.5.0-expect.macos.root.tcp.txt
