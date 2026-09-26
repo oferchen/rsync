@@ -312,11 +312,13 @@ fn handle_refused_option_post_handshake(
     client_args: &[String],
 ) -> io::Result<()> {
     finalize_post_ok_protocol_for_error(ctx, protocol_version, client_args)?;
-    let error = AtError::message(refused_option_message(refused));
+    // upstream: options.c:915 option_error() - `rprintf(FERROR, RSYNC_NAME
+    // ": %s", err_buf)`; over the multiplexed stream there is no `@ERROR:`.
+    let text = format!("rsync: {}", refused_option_message(refused));
     send_multiplexed_error_and_exit(
         ctx.reader.get_mut(),
         ctx.limiter,
-        &error.line(),
+        &text,
         RERR_UNSUPPORTED_EXIT_CODE,
     )?;
     if let Some(log) = ctx.log_sink {
