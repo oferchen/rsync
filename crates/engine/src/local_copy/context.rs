@@ -43,6 +43,7 @@ use super::{
     trace_make_backup_device, trace_make_backup_hlink, trace_make_backup_rename,
     trace_make_backup_symlink, write_sparse_chunk,
 };
+use super::{ScanRoot, SourceSpec};
 use crate::block_touch::BlockTouchTracker;
 use crate::delta::{DeltaSignatureIndex, ProbeCounters};
 use crate::signature::SignatureBlock;
@@ -180,6 +181,11 @@ pub(crate) struct CopyContext<'a> {
     /// through the confined held-ancestor-dirfd stack anchored at the transfer
     /// root, so a parent component flipped to a symlink is refused.
     source_anchor: Option<PathBuf>,
+    /// The held `--files-from` base the current operand's entries resolve
+    /// beneath through the ownership walk; `None` whenever
+    /// `filesfrom_owner_walk_active()` does not hold.
+    #[cfg(unix)]
+    files_from_base: Option<fast_io::FilesFromBase>,
     /// Number of leading path components in `relative` that represent the
     /// transfer root name (e.g. the source directory name when copying
     /// without a trailing slash).  These components inflate the depth

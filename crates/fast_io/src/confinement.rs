@@ -308,14 +308,32 @@ pub fn pinned_root_relative(
 /// The session-scoped counterpart of [`Activation::outside_root`], for the
 /// ownership walk, which has no [`Activation`] in hand.
 ///
-/// upstream: `syscall.c:232-291` `abspath_outside_confinement()`.
+/// upstream: `rsync-3.5.1/syscall.c:245-294` `abspath_outside_confinement()`.
 #[must_use]
-pub fn outside_session_root(abspath: &Path, kind: PathKind) -> bool {
+pub fn outside_session_root(abspath: &Path, kind: PathKind, arrival: Arrival) -> bool {
     SESSION_ROOT
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_deref()
-        .is_some_and(|root| path_outside_root(root, abspath, kind))
+        .is_some_and(|root| path_outside_root(root, abspath, kind, arrival))
+}
+
+/// Whether a resolved path is an ancestor crossed on the way down or the
+/// completed target of a walk.
+///
+/// An absolute walk passes through the root's own ancestors (`/`, `/srv`)
+/// before it arrives, so an ancestor is allowed while descending. A walk that
+/// ENDS on an ancestor has resolved to a directory above the root, which is
+/// outside it.
+///
+/// upstream: `rsync-3.5.1/syscall.c:245` - the `final` argument of
+/// `abspath_outside_confinement()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arrival {
+    /// An interior component: an ancestor of the root is not yet outside.
+    Descending,
+    /// The completed target: an ancestor of the root is outside.
+    Final,
 }
 
 /// The session's confinement root, or `None` when nothing is confined.
@@ -334,7 +352,7 @@ pub fn session_confinement_root() -> Option<PathBuf> {
 
 /// The shared rule behind [`Activation::outside_root`] and
 /// [`outside_session_root`]: one implementation, two ways of naming the root.
-fn path_outside_root(root: &Path, abspath: &Path, kind: PathKind) -> bool {
+fn path_outside_root(root: &Path, abspath: &Path, kind: PathKind, arrival: Arrival) -> bool {
     // upstream: `rootlen <= 1` - a root of "/" (or none) confines nothing.
     if root.parent().is_none() || root.as_os_str().is_empty() {
         return false;
@@ -342,9 +360,10 @@ fn path_outside_root(root: &Path, abspath: &Path, kind: PathKind) -> bool {
     if abspath.starts_with(root) {
         return false;
     }
-    // An empty path, or an ancestor of the root: still descending.
+    // upstream: rsync-3.5.1/syscall.c:287-290 - an empty path, or an ancestor of the root,
+    // is valid only while descending.
     if abspath.as_os_str().is_empty() || root.starts_with(abspath) {
-        return false;
+        return kind == PathKind::Confined && arrival == Arrival::Final;
     }
     kind == PathKind::Confined
 }
@@ -631,7 +650,7 @@ impl Activation {
     /// - `syscall.c:245-291` - `abspath_outside_confinement()`
     pub fn outside_root(&self, abspath: &Path, kind: PathKind) -> bool {
         self.root()
-            .is_some_and(|root| path_outside_root(root, abspath, kind))
+            .is_some_and(|root| path_outside_root(root, abspath, kind, Arrival::Descending))
     }
 
     fn is_daemon(&self) -> bool {
@@ -1055,6 +1074,42 @@ mod tests {
         let act = daemon(Role::Receiver, module_at("/srv/data"));
         assert!(!act.outside_root(Path::new("/srv"), PathKind::Confined));
         assert!(!act.outside_root(Path::new("/"), PathKind::Confined));
+    }
+
+    /// A walk that ENDS on an ancestor of the root has resolved to a directory
+    /// above it: a `--files-from` entry `up -> ..` names the whole parent
+    /// tree. Upstream 3.5.1 refuses that completed path while still allowing
+    /// the same ancestor mid-walk, and only for a path that must stay inside.
+    #[test]
+    fn an_ancestor_is_outside_only_as_the_final_target_of_a_confined_walk() {
+        let root = Path::new("/srv/data");
+        for ancestor in ["/srv", "/", ""] {
+            let ancestor = Path::new(ancestor);
+            assert!(path_outside_root(
+                root,
+                ancestor,
+                PathKind::Confined,
+                Arrival::Final
+            ));
+            assert!(!path_outside_root(
+                root,
+                ancestor,
+                PathKind::Confined,
+                Arrival::Descending
+            ));
+            assert!(!path_outside_root(
+                root,
+                ancestor,
+                PathKind::Ancillary,
+                Arrival::Final
+            ));
+        }
+        assert!(!path_outside_root(
+            root,
+            root,
+            PathKind::Confined,
+            Arrival::Final
+        ));
     }
 
     /// The byte-prefix trap upstream guards with an explicit boundary test:

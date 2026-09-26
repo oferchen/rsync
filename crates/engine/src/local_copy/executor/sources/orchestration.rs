@@ -707,6 +707,15 @@ pub(crate) fn copy_sources(
             let mut first_io_error: Option<LocalCopyError> = None;
             for source in &worklist {
                 context.set_source_anchor(source_confinement_anchor(source));
+                // Without the held base no entry can be resolved through the
+                // ownership walk, so the operand fails rather than falling back
+                // to the path-following open the walk exists to replace.
+                if let Err(error) = context.set_files_from_base(source) {
+                    eprintln!("{error}");
+                    context.record_io_error();
+                    first_io_error.get_or_insert(error);
+                    continue;
+                }
                 let result = process_single_source(
                     context,
                     plan,

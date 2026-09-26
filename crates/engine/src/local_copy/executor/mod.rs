@@ -15,6 +15,7 @@ pub(crate) use cleanup::{
     record_directory_subtree, remove_source_entry_if_requested,
 };
 pub(crate) use directory::ChecksumCache;
+pub(crate) use directory::ScanRoot;
 pub(crate) use directory::{
     capture_batch_file_entry, copy_directory_recursive, copy_directory_walk_one_level, is_device,
     is_fifo,

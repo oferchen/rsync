@@ -544,6 +544,35 @@ pub struct ReceiverContext {
 }
 
 impl ReceiverContext {
+    /// Renders a flist-relative name the way upstream's `full_fname()` does on
+    /// the receiver, whose `curr_dir` is the destination root.
+    ///
+    /// `dest_root` of `None` falls back to the process working directory.
+    pub(crate) fn full_fname(
+        &self,
+        relative: &std::path::Path,
+        dest_root: Option<&std::path::Path>,
+    ) -> String {
+        use crate::full_fname::{FullFnamePaths, full_fname_path};
+        let connection = &self.config.connection;
+        let paths = match (
+            connection.daemon_module.as_deref(),
+            connection.daemon_module_root.as_deref(),
+            dest_root,
+        ) {
+            (Some(module), Some(root), dest) => {
+                FullFnamePaths::daemon(module, root, dest.unwrap_or(root))
+            }
+            (_, _, Some(dest)) => FullFnamePaths {
+                module: None,
+                module_root: None,
+                curr_dir: dest,
+            },
+            _ => FullFnamePaths::non_daemon(),
+        };
+        full_fname_path(relative, paths)
+    }
+
     /// Creates a new receiver context from a completed handshake and server config.
     ///
     /// Initializes protocol state, INC_RECURSE NDX offset, and empty file list.

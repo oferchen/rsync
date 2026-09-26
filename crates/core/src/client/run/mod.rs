@@ -1006,6 +1006,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .copy_dirlinks(config.copy_dirlinks())
             .copy_devices_as_files(config.copy_devices())
             .copy_unsafe_links(config.copy_unsafe_links())
+            .files_from(config.files_from().is_active())
             .keep_dirlinks(config.keep_dirlinks())
             .safe_links(config.safe_links())
             .munge_links(config.munge_links())

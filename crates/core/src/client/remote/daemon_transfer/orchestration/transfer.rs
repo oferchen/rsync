@@ -57,6 +57,7 @@ pub(crate) fn run_pull_transfer(
     // upstream: compat.c:599 - protocol was negotiated via @RSYNCD text exchange,
     // setup_protocol() skips the binary exchange because remote_protocol != 0.
     let mut handshake = build_daemon_handshake(config, protocol);
+    let mut counted = CountingReader::new(reader, buffered.len());
     handshake.buffered = buffered;
 
     let mut server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
@@ -110,10 +111,10 @@ pub(crate) fn run_pull_transfer(
     // after io_start_multiplex_out (main.c:1285-1286). As the client receiver we
     // adopt it and re-apply to the live socket. Build the re-apply hook from the
     // split socket halves; connect-program (pipe) transports yield None.
-    let io_timeout_reapply = build_io_timeout_reapply(reader, writer);
+    let io_timeout_reapply = build_io_timeout_reapply(counted.inner, writer);
     // Let an interrupt release a receive blocked on the wire. Held for the
     // duration of the transfer; dropping it deregisters the socket.
-    let _wake_guard = register_shutdown_wake(reader);
+    let _wake_guard = register_shutdown_wake(counted.inner);
     // A custom `--out-format` makes the receiver buffer metadata events (it
     // suppresses its own stdout); collect them for the CLI to render. Otherwise
     // the receiver prints its own default `-v`/`-i` output and no callback is
@@ -128,7 +129,7 @@ pub(crate) fn run_pull_transfer(
     let server_stats = crate::server::run_server_with_handshake_adopting(
         server_config,
         handshake,
-        reader,
+        &mut counted,
         writer,
         crate::server::ServerTransferHooks {
             progress,
@@ -140,7 +141,7 @@ pub(crate) fn run_pull_transfer(
             daemon_log: None,
         },
     )
-    .map_err(|e| map_server_transfer_error(e, Role::Receiver))?;
+    .map_err(|e| map_server_transfer_error(e, Role::Receiver, counted.count))?;
     let elapsed = start.elapsed();
 
     let mut summary = convert_server_stats_to_summary(server_stats, elapsed);
@@ -179,13 +180,14 @@ pub(crate) fn run_push_transfer(
 
     // upstream: compat.c:599 - if (remote_protocol == 0) { ... }
     let mut handshake = build_daemon_handshake(config, protocol);
+    let mut counted = CountingReader::new(reader, buffered.len());
     handshake.buffered = buffered;
 
     let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
     let dry_run = config.dry_run();
 
     // Let an interrupt release a send blocked on the wire (see run_pull_transfer).
-    let _wake_guard = register_shutdown_wake(reader);
+    let _wake_guard = register_shutdown_wake(counted.inner);
 
     // Push: local side is Generator (sender); batch records outgoing data (is_sender=true).
     let batch_recording = batch_ctx
@@ -222,7 +224,7 @@ pub(crate) fn run_push_transfer(
     let result = crate::server::run_server_with_handshake(
         server_config,
         handshake,
-        reader,
+        &mut counted,
         writer,
         progress,
         batch_recording,
@@ -249,7 +251,34 @@ pub(crate) fn run_push_transfer(
             // its socket early after receiving the file list.
             Ok(ClientSummary::default())
         }
-        Err(e) => Err(map_server_transfer_error(e, Role::Sender)),
+        Err(e) => Err(map_server_transfer_error(e, Role::Sender, counted.count)),
+    }
+}
+
+/// Counts the bytes a transfer reads from the daemon, for the byte count
+/// upstream's end-of-stream diagnostic reports.
+///
+/// The count starts at the bytes the greeting reader had already buffered, so
+/// it covers every protocol byte after the `@RSYNCD` exchange.
+struct CountingReader<'a> {
+    inner: &'a mut DaemonStreamReader,
+    count: u64,
+}
+
+impl<'a> CountingReader<'a> {
+    fn new(inner: &'a mut DaemonStreamReader, already_buffered: usize) -> Self {
+        Self {
+            inner,
+            count: already_buffered as u64,
+        }
+    }
+}
+
+impl std::io::Read for CountingReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.count += n as u64;
+        Ok(n)
     }
 }
 
@@ -266,12 +295,18 @@ pub(crate) fn run_push_transfer(
 /// upstream `log_exit()`; the daemon's message is not reprinted because the
 /// reader already delivered it to stderr in wire order.
 ///
-/// Failures with no embedded remote code (local I/O, protocol desync) keep the
-/// prior generic `transfer failed: ...` (23) diagnostic.
+/// A stream that ends mid-transfer is upstream's end-of-stream whine, exit
+/// `RERR_STREAMIO` (12), naming `bytes_received`. Other failures with no
+/// embedded remote code (local I/O, protocol desync) keep the generic
+/// `transfer failed: ...` (23) diagnostic.
 ///
 /// upstream: io.c:1689-1739 - `MSG_ERROR_EXIT` drives the NORETURN
 /// `_exit_cleanup(val)`, so the client's final exit code is the peer's code.
-fn map_server_transfer_error(error: std::io::Error, role: Role) -> ClientError {
+fn map_server_transfer_error(
+    error: std::io::Error,
+    role: Role,
+    bytes_received: u64,
+) -> ClientError {
     // An interrupted transfer surfaces as whatever I/O failure the teardown
     // produced (a truncated multiplex frame, a closed socket). Upstream never
     // reports that: `rsync.c:709-716 sig_int()` short-circuits to
@@ -304,7 +339,27 @@ fn map_server_transfer_error(error: std::io::Error, role: Role) -> ClientError {
             ExitCode::Protocol.as_i32(),
         );
     }
+    // upstream: io.c:282-304 whine_about_eof() - the peer closing the stream
+    // before the transfer finished is reported on its own line, then
+    // exit_cleanup(RERR_STREAMIO) names the exit code ("error in rsync
+    // protocol data stream"). It is not a per-file partial transfer.
+    if error.kind() == std::io::ErrorKind::UnexpectedEof {
+        eprintln!("{}", end_of_stream_whine(bytes_received, role));
+        return remote_exit_error(ExitCode::StreamIo, role);
+    }
     invalid_argument_error(&format!("transfer failed: {error}"), 23)
+}
+
+/// The line upstream prints when the peer closes the stream mid-transfer.
+///
+/// upstream: io.c:298-300 - `rprintf(FERROR, RSYNC_NAME ": connection
+/// unexpectedly closed (%s bytes received so far) [%s]\n",
+/// big_num(stats.total_read), who_am_i());`
+fn end_of_stream_whine(bytes_received: u64, role: Role) -> String {
+    format!(
+        "rsync: connection unexpectedly closed ({bytes_received} bytes received so far) [{}]",
+        role.as_str()
+    )
 }
 
 /// Walks the source chain of an `io::Error` looking for a
@@ -466,7 +521,7 @@ mod map_server_transfer_error_tests {
     /// daemon's message to stderr in wire order.
     #[test]
     fn maps_remote_reject_to_daemon_code_without_transfer_failed_prefix() {
-        let err = map_server_transfer_error(remote_exit_io(1), Role::Sender);
+        let err = map_server_transfer_error(remote_exit_io(1), Role::Sender, 0);
         assert_eq!(err.exit_code(), 1);
         assert_eq!(err.code(), ExitCode::Syntax);
         let rendered = err.to_string();
@@ -477,7 +532,7 @@ mod map_server_transfer_error_tests {
     /// A pull tags the diagnostic with the receiver role.
     #[test]
     fn maps_remote_reject_pull_uses_receiver_role() {
-        let err = map_server_transfer_error(remote_exit_io(1), Role::Receiver);
+        let err = map_server_transfer_error(remote_exit_io(1), Role::Receiver, 0);
         assert_eq!(err.exit_code(), 1);
         assert!(err.to_string().contains("[receiver="), "{err}");
     }
@@ -496,6 +551,7 @@ mod map_server_transfer_error_tests {
                 "ERROR: rejecting unrequested file-list name: ab.txt",
             ),
             Role::Receiver,
+            0,
         );
         assert_eq!(err.exit_code(), 4);
         assert_eq!(err.code(), ExitCode::Unsupported);
@@ -508,6 +564,7 @@ mod map_server_transfer_error_tests {
         let err = map_server_transfer_error(
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pipe"),
             Role::Receiver,
+            0,
         );
         assert_eq!(err.exit_code(), 23);
         assert!(err.to_string().contains("transfer failed"), "{err}");
@@ -521,6 +578,7 @@ mod map_server_transfer_error_tests {
         let err = map_server_transfer_error(
             protocol::protocol_violation("filter rules are too modern for remote rsync."),
             Role::Sender,
+            0,
         );
         assert_eq!(err.exit_code(), 2);
         assert!(
@@ -542,6 +600,7 @@ mod map_server_transfer_error_tests {
         let err = map_server_transfer_error(
             std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "multiplex truncated"),
             Role::Receiver,
+            0,
         );
         crate::signal::reset_for_testing();
         assert_eq!(err.exit_code(), 20);
@@ -551,5 +610,29 @@ mod map_server_transfer_error_tests {
             "{rendered}"
         );
         assert!(!rendered.contains("multiplex truncated"), "{rendered}");
+    }
+
+    /// A peer that closes the stream mid-transfer is upstream's end-of-stream
+    /// whine, exit RERR_STREAMIO (12), naming the bytes received so far - not a
+    /// per-file partial transfer (23). The rsync 3.5.1 strict-basis cell
+    /// asserts exactly this for a sender that stops after its last token.
+    /// upstream: io.c:282-304 whine_about_eof().
+    #[test]
+    fn maps_mid_transfer_eof_to_the_end_of_stream_whine() {
+        let err = map_server_transfer_error(
+            std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "multiplex truncated"),
+            Role::Receiver,
+            112,
+        );
+        assert_eq!(err.exit_code(), 12);
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("error in rsync protocol data stream"),
+            "{rendered}"
+        );
+        assert_eq!(
+            end_of_stream_whine(112, Role::Receiver),
+            "rsync: connection unexpectedly closed (112 bytes received so far) [receiver]"
+        );
     }
 }
