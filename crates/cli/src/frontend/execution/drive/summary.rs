@@ -8,7 +8,7 @@ use core::{
         ClientConfig, ClientProgressObserver, ClientSummary, HumanReadableMode,
         StrongChecksumAlgorithm, run_client_with_observer,
     },
-    message::Message,
+    message::{Message, Role},
 };
 use logging::{DebugFlag, InfoFlag, LogCode, debug_gte, drain_stamped_events_for_client, info_gte};
 use logging_sink::{MessageSink, logfile::LogFileWriter};
@@ -371,10 +371,11 @@ where
             // (cleanup.c:113-117). A second interrupt arriving while this code
             // propagates back to `run`'s tail then finds the latch already set
             // and cannot substitute RERR_SIGNAL.
-            core::exit_code::record_exit(
-                core::exit_code::process_latch(),
-                summary.io_error_exit_code().unwrap_or(0),
-            )
+            let code = summary.io_error_exit_code().unwrap_or(0);
+            if code != 0 {
+                emit_exit_diagnostic(code, is_sender, stderr);
+            }
+            core::exit_code::record_exit(core::exit_code::process_latch(), code)
         }
         Err(error) => {
             if let Some(observer) = live_progress
@@ -397,6 +398,39 @@ where
             core::exit_code::record_exit(core::exit_code::process_latch(), error.exit_code())
         }
     }
+}
+
+/// Prints the closing `rsync error: ... (code N)` line a remote transfer owes
+/// when it finished its run but still exits non-zero.
+///
+/// The per-file causes already reached the terminal; this is the summary line
+/// upstream's `log_exit()` adds on the client. A pushing client is the sender,
+/// a pulling client's main process is the generator, and `who_am_i()` tags the
+/// line accordingly. `RERR_VANISHED` renders as a warning, as upstream does.
+///
+/// # Upstream Reference
+///
+/// - `log.c:937-963` - `log_exit()` prints `rsync error: %s (code %d) at
+///   %s(%d) [%s=%s]` for any non-zero code
+/// - `main.c:1412` - the push client's `client_run()` exit (`[sender]`)
+/// - `main.c:1983` - the pull client's exit after `do_recv()` (`[generator]`)
+fn emit_exit_diagnostic<Err>(code: i32, is_sender: bool, stderr: &mut MessageSink<Err>)
+where
+    Err: Write,
+{
+    let Some(message) = Message::from_exit_code(code) else {
+        return;
+    };
+    let role = if is_sender {
+        Role::Sender
+    } else {
+        Role::Generator
+    };
+    let message = message
+        .with_source(core::tracked_message_source!())
+        .with_role(role);
+    let fallback = message.clone().with_brand(stderr.brand()).to_string();
+    emit_message_with_fallback(&message, &fallback, stderr);
 }
 
 /// Parameters for writing transfer output to a log file.
