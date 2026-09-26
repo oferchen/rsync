@@ -7,6 +7,7 @@ use super::super::{
 #[test]
 fn named_version_constants_match_supported_protocols() {
     let expected = [
+        ProtocolVersion::V33,
         ProtocolVersion::V32,
         ProtocolVersion::V31,
         ProtocolVersion::V30,
@@ -331,5 +332,5 @@ fn detects_supported_versions() {
 fn rejects_unsupported_versions_in_helper() {
     assert!(!ProtocolVersion::is_supported(0));
     assert!(!ProtocolVersion::is_supported(27));
-    assert!(!ProtocolVersion::is_supported(33));
+    assert!(!ProtocolVersion::is_supported(34));
 }

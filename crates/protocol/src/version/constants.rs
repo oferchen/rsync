@@ -5,8 +5,10 @@ use ::core::ops::RangeInclusive;
 
 /// Lowest protocol version supported by upstream rsync 3.4.4.
 pub(crate) const OLDEST_SUPPORTED_PROTOCOL: u8 = 28;
-/// Newest protocol version supported by upstream rsync 3.4.4.
-pub(crate) const NEWEST_SUPPORTED_PROTOCOL: u8 = 32;
+/// Newest protocol version supported by upstream rsync 3.5.1.
+///
+/// upstream: rsync.h:114 `PROTOCOL_VERSION 33`.
+pub(crate) const NEWEST_SUPPORTED_PROTOCOL: u8 = 33;
 /// Protocol revision that introduced the binary negotiation handshake.
 pub(crate) const FIRST_BINARY_NEGOTIATION_PROTOCOL: u8 = 30;
 /// Highest protocol version upstream rsync 3.4.4 tolerates from a peer advertisement.
@@ -46,8 +48,8 @@ mod tests {
     }
 
     #[test]
-    fn newest_supported_protocol_is_32() {
-        assert_eq!(NEWEST_SUPPORTED_PROTOCOL, 32);
+    fn newest_supported_protocol_is_33() {
+        assert_eq!(NEWEST_SUPPORTED_PROTOCOL, 33);
     }
 
     #[test]

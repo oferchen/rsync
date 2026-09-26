@@ -188,7 +188,7 @@ fn session_handshake_parts_round_trip_legacy_handshake() {
         .expect("write succeeds");
 
     let transport = legacy.into_stream().into_inner();
-    let mut expected = client_greeting(32);
+    let mut expected = client_greeting(33);
     expected.extend_from_slice(b"module\n");
     assert_eq!(transport.writes(), expected.as_slice());
     assert_eq!(transport.flushes(), 1);

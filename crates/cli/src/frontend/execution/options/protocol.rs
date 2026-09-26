@@ -17,9 +17,9 @@ use std::str::FromStr;
 const UPSTREAM_MIN_PROTOCOL: u8 = 20;
 /// Highest protocol version upstream rsync accepts on the command line.
 ///
-/// upstream: rsync.h:114 `PROTOCOL_VERSION 32`. `setup_protocol`
+/// upstream: rsync.h:114 `PROTOCOL_VERSION 33`. `setup_protocol`
 /// (compat.c:634) rejects anything above this with `RERR_PROTOCOL`.
-const UPSTREAM_MAX_PROTOCOL: u8 = 32;
+const UPSTREAM_MAX_PROTOCOL: u8 = 33;
 
 /// Classification of a validated `--protocol` argument.
 ///

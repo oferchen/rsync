@@ -212,18 +212,18 @@ fn boundary_protocol_maximum_supported() {
 
 #[test]
 fn boundary_protocol_above_maximum() {
-    // Protocol 33 is above the maximum supported
-    // Should be clamped to 32 (matching upstream rsync behavior)
-    let result = ProtocolVersion::from_peer_advertisement(33);
+    // Protocol 34 is above the maximum supported
+    // Should be clamped to 33 (matching upstream rsync behavior)
+    let result = ProtocolVersion::from_peer_advertisement(34);
     assert!(
         result.is_ok(),
-        "Protocol 33 should be clamped to maximum supported (32)"
+        "Protocol 34 should be clamped to maximum supported (33)"
     );
 
     let protocol = result.unwrap();
     assert_eq!(
         protocol.as_u8(),
-        32,
+        33,
         "Should be clamped to maximum supported protocol"
     );
 }
@@ -508,10 +508,10 @@ fn supported_range_consistency() {
     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
 
     assert_eq!(oldest, 28, "Oldest supported should be 28");
-    assert_eq!(newest, 32, "Newest supported should be 32");
+    assert_eq!(newest, 33, "Newest supported should be 33");
 
     assert_eq!(oldest, ProtocolVersion::V28.as_u8());
-    assert_eq!(newest, ProtocolVersion::V32.as_u8());
+    assert_eq!(newest, ProtocolVersion::V33.as_u8());
 }
 
 #[test]
@@ -519,14 +519,15 @@ fn supported_protocols_array_consistency() {
     // Validate that SUPPORTED_PROTOCOLS array matches supported range
     let supported = ProtocolVersion::supported_protocol_numbers();
 
-    assert_eq!(supported.len(), 5, "Should have 5 supported protocols");
+    assert_eq!(supported.len(), 6, "Should have 6 supported protocols");
 
     // Should be in descending order (newest first)
-    assert_eq!(supported[0], 32);
-    assert_eq!(supported[1], 31);
-    assert_eq!(supported[2], 30);
-    assert_eq!(supported[3], 29);
-    assert_eq!(supported[4], 28);
+    assert_eq!(supported[0], 33);
+    assert_eq!(supported[1], 32);
+    assert_eq!(supported[2], 31);
+    assert_eq!(supported[3], 30);
+    assert_eq!(supported[4], 29);
+    assert_eq!(supported[5], 28);
 }
 
 #[test]
@@ -534,7 +535,7 @@ fn is_supported_protocol_number_comprehensive() {
     // Test all values from 0 to 255
     for value in 0u8..=255 {
         let is_supported = ProtocolVersion::is_supported_protocol_number(value);
-        let expected = matches!(value, 28..=32);
+        let expected = matches!(value, 28..=33);
 
         assert_eq!(is_supported, expected, "Protocol {value} support mismatch");
     }
@@ -588,9 +589,9 @@ fn from_str_unsupported_in_range() {
 fn from_peer_advertisement_clamping() {
     // Validate that future versions within MAXIMUM_PROTOCOL_ADVERTISEMENT (40) are clamped
     let test_cases_clamped = [
-        (33, 32), // Just above max supported
-        (35, 32), // Within advertisement range
-        (40, 32), // At MAXIMUM_PROTOCOL_ADVERTISEMENT
+        (34, 33), // Just above max supported
+        (35, 33), // Within advertisement range
+        (40, 33), // At MAXIMUM_PROTOCOL_ADVERTISEMENT
     ];
 
     for (input, expected) in test_cases_clamped {
