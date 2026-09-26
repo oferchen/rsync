@@ -60,7 +60,8 @@ mod reader_creation_tests {
         };
 
         assert!(
-            err.to_string().contains("is not a regular file"),
+            err.to_string()
+                .contains("is neither a regular file nor a FIFO"),
             "expected the non-regular refusal, got: {err}"
         );
     }
@@ -211,6 +212,38 @@ mod stdin_source_tests {
             "stdin batch data must match the file batch data"
         );
         assert_eq!(stdin_data, b"test data here");
+    }
+
+    /// A FIFO at the read-batch path is replayed, not refused.
+    ///
+    /// Shell process substitution (`--read-batch=<(...)`) hands rsync a pipe,
+    /// and upstream 3.5.1 accepts one while still refusing devices and
+    /// sockets. The FIFO cannot seek, so the replay must decode it exactly as
+    /// the buffered `-` source does.
+    ///
+    /// upstream: `rsync-3.5.1/batch.c:274-282` - `!S_ISREG && !S_ISFIFO`.
+    #[test]
+    #[cfg(unix)]
+    fn read_batch_replays_a_fifo() {
+        let temp_dir = TempDir::new().unwrap();
+        let regular = temp_dir.path().join("regular.batch");
+        create_test_batch(&regular);
+        let image = std::fs::read(&regular).unwrap();
+        let fifo = temp_dir.path().join("fifo.batch");
+        match std::process::Command::new("mkfifo").arg(&fifo).status() {
+            Ok(status) => assert!(status.success(), "mkfifo failed"),
+            Err(error) => panic!("mkfifo is required for this test: {error}"),
+        }
+
+        let writer_path = fifo.clone();
+        let writer = std::thread::spawn(move || std::fs::write(writer_path, image));
+        let config = BatchConfig::new(BatchMode::Read, fifo.to_string_lossy().to_string(), 30);
+        let mut reader = BatchReader::new(config).expect("a FIFO is a valid batch source");
+        writer.join().unwrap().unwrap();
+
+        let flags = reader.read_header().unwrap();
+        assert!(flags.recurse);
+        assert_eq!(drain_data(&mut reader), b"test data here");
     }
 }
 
