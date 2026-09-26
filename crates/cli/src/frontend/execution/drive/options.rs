@@ -140,6 +140,37 @@ fn imply_name_from_progress(
     }
 }
 
+/// Raises the thread-local info levels that upstream's `--progress` implies.
+///
+/// upstream: options.c:2511-2515 - under `do_progress` (and not a server) an
+/// unset NAME is raised to 1 and `FLIST2,PROGRESS` are applied, all at
+/// DEFAULT_PRIORITY, so an explicit `--info` value for the same category keeps
+/// its USER_PRIORITY level. The output gates (the file-list banner, `created
+/// directory`, the name listing) read these levels, so `-P` without `-v` prints
+/// them exactly as upstream does.
+fn apply_progress_info_levels(
+    initial_progress: ProgressSetting,
+    name_bumped: bool,
+    user_flist: bool,
+    user_progress: bool,
+) {
+    if matches!(
+        initial_progress,
+        ProgressSetting::Disabled | ProgressSetting::Unspecified
+    ) {
+        return;
+    }
+    for (token, implied) in [
+        ("name1", name_bumped),
+        ("flist2", !user_flist),
+        ("progress1", !user_progress),
+    ] {
+        if implied {
+            let _ = logging::apply_info_flag(token);
+        }
+    }
+}
+
 /// Parses --info flags and returns display settings.
 fn parse_info_settings<Out, Err>(
     stdout: &mut Out,
@@ -160,7 +191,9 @@ where
     let mut name_overridden = initial_name_overridden;
 
     if info_args.is_empty() {
-        let name_level = imply_name_from_progress(initial_progress, name_level, name_overridden);
+        let implied = imply_name_from_progress(initial_progress, name_level, name_overridden);
+        apply_progress_info_levels(initial_progress, implied != name_level, false, false);
+        let name_level = implied;
         return Ok(InfoFlagsResult {
             progress_setting,
             stats_level,
@@ -213,8 +246,14 @@ where
                 .map(|(name, level)| OsString::from(format!("{name}{level}")))
                 .collect();
 
-            let name_level =
-                imply_name_from_progress(initial_progress, name_level, name_overridden);
+            let implied = imply_name_from_progress(initial_progress, name_level, name_overridden);
+            apply_progress_info_levels(
+                initial_progress,
+                implied != name_level,
+                settings.flist.is_some(),
+                !matches!(settings.progress, ProgressSetting::Unspecified),
+            );
+            let name_level = implied;
             Ok(InfoFlagsResult {
                 progress_setting,
                 stats_level,
