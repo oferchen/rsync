@@ -306,6 +306,19 @@ impl ProtocolVersion {
     pub const fn supports_inc_recurse(self) -> bool {
         self.as_u8() >= 30
     }
+
+    /// Returns `true` if this protocol version carries `MSG_BLOCK_STATS` and
+    /// the `Number of 4 KiB logical blocks touched` `--stats` line.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1112` - `do_recv()` sends it only when `protocol_version >= 33`
+    /// - `io.c:1722` - `read_a_msg()` rejects it when `protocol_version < 33`
+    /// - `main.c:446` - `output_summary()` prints the line when `>= 33`
+    #[must_use]
+    pub const fn supports_block_stats(self) -> bool {
+        self.as_u8() >= 33
+    }
 }
 
 /// Protocol capabilities newtype providing a focused API for version-dependent

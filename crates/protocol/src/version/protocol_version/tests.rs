@@ -4,8 +4,8 @@ use std::num::{NonZeroI8, NonZeroU8, NonZeroU16};
 use super::{ProtocolVersion, SUPPORTED_PROTOCOL_COUNT};
 
 #[test]
-fn newest_is_32() {
-    assert_eq!(ProtocolVersion::NEWEST.as_u8(), 32);
+fn newest_is_33() {
+    assert_eq!(ProtocolVersion::NEWEST.as_u8(), 33);
 }
 
 #[test]
@@ -14,8 +14,8 @@ fn oldest_is_28() {
 }
 
 #[test]
-fn v32_equals_newest() {
-    assert_eq!(ProtocolVersion::V32, ProtocolVersion::NEWEST);
+fn v33_equals_newest() {
+    assert_eq!(ProtocolVersion::V33, ProtocolVersion::NEWEST);
 }
 
 #[test]
@@ -24,8 +24,8 @@ fn v28_equals_oldest() {
 }
 
 #[test]
-fn supported_protocol_count_is_5() {
-    assert_eq!(SUPPORTED_PROTOCOL_COUNT, 5);
+fn supported_protocol_count_is_6() {
+    assert_eq!(SUPPORTED_PROTOCOL_COUNT, 6);
 }
 
 #[test]
@@ -51,7 +51,7 @@ fn is_supported_protocol_number_returns_true_for_valid() {
 
 #[test]
 fn is_supported_protocol_number_returns_false_for_invalid() {
-    for version in [0, 1, 27, 33, 100, 255] {
+    for version in [0, 1, 27, 34, 100, 255] {
         assert!(
             !ProtocolVersion::is_supported_protocol_number(version),
             "version {version} should not be supported"
@@ -128,6 +128,22 @@ fn supports_flist_times_boundary_at_29() {
     assert!(ProtocolVersion::V32.supports_flist_times());
 }
 
+/// WHY: MSG_BLOCK_STATS and its --stats line exist only from protocol 33
+/// (main.c:446,1112; io.c:1722). Every older version must stay silent so a
+/// protocol-32 session with a 3.5.0 peer is byte-identical to before.
+#[test]
+fn supports_block_stats_boundary_at_33() {
+    for version in ProtocolVersion::supported_versions() {
+        assert_eq!(
+            version.supports_block_stats(),
+            version.as_u8() >= 33,
+            "version {version}"
+        );
+    }
+    assert!(ProtocolVersion::V33.supports_block_stats());
+    assert!(!ProtocolVersion::V32.supports_block_stats());
+}
+
 #[test]
 fn supports_extended_flags_for_all_supported_versions() {
     for version in ProtocolVersion::supported_versions() {
@@ -193,7 +209,7 @@ fn from_supported_returns_some_for_valid() {
 #[test]
 fn from_supported_returns_none_for_invalid() {
     assert!(ProtocolVersion::from_supported(27).is_none());
-    assert!(ProtocolVersion::from_supported(33).is_none());
+    assert!(ProtocolVersion::from_supported(34).is_none());
 }
 
 #[test]
@@ -218,9 +234,9 @@ fn offset_from_oldest_correct() {
 
 #[test]
 fn offset_from_newest_correct() {
-    assert_eq!(ProtocolVersion::V32.offset_from_newest(), 0);
-    assert_eq!(ProtocolVersion::V31.offset_from_newest(), 1);
-    assert_eq!(ProtocolVersion::V28.offset_from_newest(), 4);
+    assert_eq!(ProtocolVersion::V33.offset_from_newest(), 0);
+    assert_eq!(ProtocolVersion::V31.offset_from_newest(), 2);
+    assert_eq!(ProtocolVersion::V28.offset_from_newest(), 5);
 }
 
 #[test]
@@ -472,27 +488,27 @@ fn supported_versions_iter_yields_all() {
 fn supported_protocol_numbers_iter_yields_all() {
     let numbers: Vec<_> = ProtocolVersion::supported_protocol_numbers_iter().collect();
     assert_eq!(numbers.len(), SUPPORTED_PROTOCOL_COUNT);
-    assert_eq!(numbers[0], 32);
+    assert_eq!(numbers[0], 33);
 }
 
 #[test]
 fn supported_range_bounds_correct() {
     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
     assert_eq!(oldest, 28);
-    assert_eq!(newest, 32);
+    assert_eq!(newest, 33);
 }
 
 #[test]
 fn supported_version_bounds_correct() {
     let (oldest, newest) = ProtocolVersion::supported_version_bounds();
     assert_eq!(oldest, ProtocolVersion::V28);
-    assert_eq!(newest, ProtocolVersion::V32);
+    assert_eq!(newest, ProtocolVersion::V33);
 }
 
 #[test]
 fn supported_protocol_bitmap_has_correct_bits() {
     let bitmap = ProtocolVersion::supported_protocol_bitmap();
-    for version in [28, 29, 30, 31, 32] {
+    for version in [28, 29, 30, 31, 32, 33] {
         assert!(
             (bitmap & (1u64 << version)) != 0,
             "bit for version {version} should be set"
@@ -503,8 +519,8 @@ fn supported_protocol_bitmap_has_correct_bits() {
         "bit for version 27 should not be set"
     );
     assert!(
-        (bitmap & (1u64 << 33)) == 0,
-        "bit for version 33 should not be set"
+        (bitmap & (1u64 << 34)) == 0,
+        "bit for version 34 should not be set"
     );
 }
 

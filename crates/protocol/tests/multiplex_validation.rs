@@ -281,9 +281,9 @@ fn test_vectored_write_single_syscall_simulation() {
 }
 
 #[test]
-fn test_all_18_message_codes_round_trip() {
+fn test_all_19_message_codes_round_trip() {
     let all_codes = MessageCode::all();
-    assert_eq!(all_codes.len(), 18, "must have exactly 18 message codes");
+    assert_eq!(all_codes.len(), 19, "must have exactly 19 message codes");
 
     for &code in all_codes {
         let payload = format!("payload for {}", code.name());

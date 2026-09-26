@@ -172,12 +172,16 @@ fn withhold_failed_commit(
     mut cleanup_guard: TempFileGuard,
     begin: &BeginMessage,
     bytes_written: u64,
+    touched_blocks_4k: u64,
     computed_checksum: Option<ComputedChecksum>,
 ) -> CommitResult {
     retain_partial_file(config, &mut cleanup_guard, &begin.file_path, false);
     drop(cleanup_guard);
     CommitResult {
         bytes_written,
+        // upstream credits blocks at write time (fileio.c:218), so a file that
+        // fails verification still counts what it wrote.
+        touched_blocks_4k,
         file_entry_index: begin.file_entry_index,
         metadata_error: None,
         computed_checksum,
@@ -306,6 +310,12 @@ pub(in crate::disk_commit) fn process_file(
     // Tracks whether the temp's cleanup entry has been upgraded to name a
     // partial destination (see the `cleanup_got_literal` gate at the loop tail).
     let mut partial_registered = false;
+    // Dense-mode touched blocks, credited at each write's absolute offset
+    // (sparse mode credits its own data spans). A fresh tracker per file is
+    // upstream's per-file reset. upstream: receiver.c:489 reset_block_tracker(),
+    // fileio.c:251-252 track_block_touches() for every non-seek write_file().
+    let mut touched = engine::BlockTouchTracker::new();
+    let mut write_offset = begin.append_offset;
 
     loop {
         let msg = match file_rx.recv() {
@@ -353,7 +363,9 @@ pub(in crate::disk_commit) fn process_file(
                     sparse.write(output.buffered_for_sparse(), &data)?;
                 } else {
                     output.write_chunk(&data)?;
+                    touched.record(write_offset, data.len() as u64);
                 }
+                write_offset += data.len() as u64;
                 bytes_written += data.len() as u64;
                 literal_bytes += literal_len;
                 // Return the buffer for reuse. Ignore errors - the network
@@ -372,14 +384,16 @@ pub(in crate::disk_commit) fn process_file(
                     // upstream: fileio.c:204-208 skip_matched() sparse branch
                     // hands the bytes to the sparse processor (with the seek
                     // flag). Writing them through SparseWriteState is
-                    // byte-identical for an in-place basis==dest update.
-                    sparse.write(output.buffered_for_sparse(), &data)?;
+                    // byte-identical for an in-place basis==dest update, and
+                    // like upstream's seek it credits no touched blocks.
+                    sparse.skip_matched(output.buffered_for_sparse(), &data)?;
                 } else {
                     // upstream: fileio.c:210-249 skip_matched() - flush then
                     // lseek past the already-in-place bytes instead of
                     // rewriting identical data.
                     output.skip_matched(data.len() as u64)?;
                 }
+                write_offset += data.len() as u64;
                 bytes_written += data.len() as u64;
                 let _ = buf_return_tx.try_send(data);
             }
@@ -396,6 +410,9 @@ pub(in crate::disk_commit) fn process_file(
                 } else {
                     None
                 };
+                let touched_blocks_4k = sparse_state
+                    .as_ref()
+                    .map_or(touched.total(), SparseWriteState::touched_blocks);
 
                 output.flush_and_sync(config.do_fsync, &begin.file_path)?;
                 output.finish(config.do_fsync, &begin.file_path)?;
@@ -415,6 +432,7 @@ pub(in crate::disk_commit) fn process_file(
                         cleanup_guard,
                         &begin,
                         bytes_written,
+                        touched_blocks_4k,
                         computed_checksum,
                     ));
                 }
@@ -487,6 +505,7 @@ pub(in crate::disk_commit) fn process_file(
 
                 return Ok(CommitResult {
                     bytes_written,
+                    touched_blocks_4k,
                     file_entry_index: begin.file_entry_index,
                     metadata_error,
                     computed_checksum,
@@ -633,18 +652,27 @@ pub(in crate::disk_commit) fn process_whole_file(
         verifier.update(&data);
     }
 
-    let sparse_final = if config.use_sparse {
+    // upstream: fileio.c:218-243 - the single literal lands at the append
+    // offset (0 unless resuming); sparse mode credits only its data spans.
+    let (sparse_final, touched_blocks_4k) = if config.use_sparse {
         let mut sparse = SparseWriteState::default();
         sparse.set_preallocated_len(preallocated_len);
         sparse.write(output.buffered_for_sparse(), &data)?;
         let logical = sparse.finish(output.buffered_for_sparse())?;
-        Some(SparseFinalize {
-            logical_len: logical,
-            holes: sparse.take_holes(),
-        })
+        let touched = sparse.touched_blocks();
+        (
+            Some(SparseFinalize {
+                logical_len: logical,
+                holes: sparse.take_holes(),
+            }),
+            touched,
+        )
     } else {
         output.write_chunk(&data)?;
-        None
+        (
+            None,
+            engine::BlockTouchTracker::blocks_spanned(begin.append_offset, bytes_written),
+        )
     };
 
     let _ = buf_return_tx.try_send(data);
@@ -663,6 +691,7 @@ pub(in crate::disk_commit) fn process_whole_file(
             cleanup_guard,
             &begin,
             bytes_written,
+            touched_blocks_4k,
             computed_checksum,
         ));
     }
@@ -719,6 +748,7 @@ pub(in crate::disk_commit) fn process_whole_file(
 
     Ok(CommitResult {
         bytes_written,
+        touched_blocks_4k,
         file_entry_index: begin.file_entry_index,
         metadata_error,
         computed_checksum,

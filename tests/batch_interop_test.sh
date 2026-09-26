@@ -259,8 +259,10 @@ test_oc_to_upstream() {
     setup_test_data_with_basis "$work_dir/src" "$work_dir/dest" "$work_dir/basis"
 
     local opts=(-av --no-whole-file --ignore-times)
+    oc_batch_protocol_args "$version"
     log_info "Creating batch with oc-rsync..."
     if ! "$OC_RSYNC" "${opts[@]}" \
+        ${OC_BATCH_PROTOCOL_ARGS[@]+"${OC_BATCH_PROTOCOL_ARGS[@]}"} \
         --write-batch="$work_dir/mybatch" \
         "$work_dir/src/" "$work_dir/dest/" > "$work_dir/write.log" 2>&1; then
         cat "$work_dir/write.log" >&2

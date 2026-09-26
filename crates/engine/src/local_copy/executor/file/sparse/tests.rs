@@ -2525,3 +2525,45 @@ fn sub_window_interior_zero_run_is_punched() {
         meta.blocks() * 512
     );
 }
+
+/// WHY: touched blocks are credited at absolute offsets, so an append that
+/// resumes at 4000 and writes 200 bytes straddles blocks 0 and 1, and a zero
+/// run between data spans is a hole that is never credited.
+/// upstream: fileio.c:168-180 track_block_touches(f, offset + start, ...).
+#[test]
+fn sparse_state_credits_data_spans_at_logical_offset() {
+    let mut file = NamedTempFile::new().expect("temp file");
+    let path = file.path().to_path_buf();
+    let writer = file.as_file_mut();
+
+    let mut state = SparseWriteState::default();
+    state.set_start_offset(4000);
+    writer
+        .seek(SeekFrom::Start(4000))
+        .expect("seek to resume point");
+    write_sparse_chunk(writer, &mut state, &[9u8; 200], &path).expect("append span");
+    assert_eq!(state.touched_blocks(), 2);
+
+    let mut hole_then_data = vec![0u8; 64 * 1024];
+    hole_then_data.extend([5u8; 10]);
+    write_sparse_chunk(writer, &mut state, &hole_then_data, &path).expect("hole then data");
+    // 4200 + 65536 = 69736 -> block 17; the hole blocks in between stay unset.
+    assert_eq!(state.touched_blocks(), 3);
+}
+
+/// WHY: an in-place matched block is seeked over upstream (`use_seek`), so the
+/// skip path credits no touched blocks even though its zero runs are scanned.
+/// upstream: fileio.c:298-300 skip_matched().
+#[test]
+fn sparse_skip_matched_credits_nothing() {
+    let mut file = NamedTempFile::new().expect("temp file");
+    let path = file.path().to_path_buf();
+    let writer = file.as_file_mut();
+    writer.write_all(&[3u8; 8192]).expect("seed basis");
+    writer.seek(SeekFrom::Start(0)).expect("rewind");
+
+    let mut state = SparseWriteState::default();
+    super::state::skip_matched_sparse(writer, &mut state, &[3u8; 8192], &path)
+        .expect("skip matched");
+    assert_eq!(state.touched_blocks(), 0);
+}

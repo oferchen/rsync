@@ -188,19 +188,19 @@ fn test_protocol_matrix_version_27_rejected() {
 }
 
 #[test]
-fn test_protocol_matrix_version_33_clamped() {
-    // Protocol 33 is above our range but below MAX_ADVERTISEMENT (40)
-    // so it should be clamped to 32
-    let client_advertises = [TestVersion(33)];
+fn test_protocol_matrix_version_34_clamped() {
+    // Protocol 34 is above our range but below MAX_ADVERTISEMENT (40)
+    // so it should be clamped to 33
+    let client_advertises = [TestVersion(34)];
     let result = select_highest_mutual(client_advertises);
     assert!(
         result.is_ok(),
-        "Protocol 33 should be clamped to 32, not rejected"
+        "Protocol 34 should be clamped to 33, not rejected"
     );
     assert_eq!(
         result.unwrap().as_u8(),
-        32,
-        "Protocol 33 should be clamped to protocol 32"
+        33,
+        "Protocol 34 should be clamped to protocol 33"
     );
 }
 
@@ -222,17 +222,17 @@ fn test_protocol_matrix_version_range_validation() {
         let client_advertises = [TestVersion(version)];
         let result = select_highest_mutual(client_advertises);
 
-        if (28..=32).contains(&version) {
+        if (28..=33).contains(&version) {
             // Versions in our supported range: accept as-is
             assert!(result.is_ok(), "Protocol {version} should be supported");
             assert_eq!(result.unwrap().as_u8(), version as u8);
-        } else if (33..=MAX_ADVERTISEMENT).contains(&version) {
-            // Versions above our range but below MAX_ADVERTISEMENT: clamp to 32
-            assert!(result.is_ok(), "Protocol {version} should be clamped to 32");
+        } else if (34..=MAX_ADVERTISEMENT).contains(&version) {
+            // Versions above our range but below MAX_ADVERTISEMENT: clamp to 33
+            assert!(result.is_ok(), "Protocol {version} should be clamped to 33");
             assert_eq!(
                 result.unwrap().as_u8(),
-                32,
-                "Protocol {version} should be clamped to 32"
+                33,
+                "Protocol {version} should be clamped to 33"
             );
         } else {
             // Versions 0-27 (too old) or > 40 (way too new): reject

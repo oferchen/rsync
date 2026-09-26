@@ -549,7 +549,12 @@ fn run_client_internal(
         })
     };
 
-    let summary = summary.map_err(map_local_copy_error)?;
+    let mut summary = summary.map_err(map_local_copy_error)?;
+    // upstream: a local copy runs at `--protocol=N` when given (compat.c:629-637),
+    // which gates the protocol-dependent --stats lines (main.c:434-448).
+    if let Some(protocol) = config.protocol_version() {
+        summary.set_protocol_version(protocol.as_u8());
+    }
 
     // upstream: receiver.c:690-692 - emit the progress2 end-of-transfer summary
     // line when the transfer moved no file data (a lone special/symlink or a

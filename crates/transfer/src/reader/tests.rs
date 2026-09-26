@@ -1305,3 +1305,91 @@ fn multiplex_reader_non_23_exit_aborts_immediately() {
     assert_eq!(err.kind(), std::io::ErrorKind::ConnectionAborted);
     assert!(err.to_string().contains("code 5"));
 }
+
+/// Builds a stream carrying one `MSG_BLOCK_STATS` frame with `payload`,
+/// followed by a `MSG_DATA` frame, as a peer's goodbye tail would.
+fn block_stats_stream(payload: &[u8]) -> Vec<u8> {
+    let mut stream = Vec::new();
+    protocol::send_msg(&mut stream, protocol::MessageCode::BlockStats, payload).unwrap();
+    protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"ok").unwrap();
+    stream
+}
+
+/// WHY: a protocol-33 sender stores the remote receiver's count from the
+/// 8-byte LE int64 payload and keeps reading - the frame precedes the final
+/// goodbye NDX_DONE, so dropping or mis-decoding it would print the wrong
+/// `Number of 4 KiB logical blocks touched` line.
+/// upstream: io.c:1727 `stats.touched_blocks_4k = IVAL64(b, 0);`
+#[test]
+fn server_reader_block_stats_accepted_on_sender_is_stored() {
+    let payload = 1_024i64.to_le_bytes();
+    let mut reader = ServerReader::new_plain(Cursor::new(block_stats_stream(&payload)));
+    reader.accept_block_stats();
+    let mut reader = reader.activate_multiplex().unwrap();
+
+    let mut buf = [0u8; 2];
+    reader.read_exact(&mut buf).unwrap();
+    assert_eq!(&buf, b"ok");
+    assert_eq!(reader.touched_blocks_4k(), 1_024);
+}
+
+/// WHY: before protocol 33, and on any reader that is not the sender, tag 11 is
+/// an unknown message upstream - `invalid_msg` exits RERR_STREAMIO. A reader
+/// that silently accepted it would let a proto-32 peer inject a stats value.
+/// upstream: io.c:1722 `protocol_version < 33 || (!am_generator && !am_sender)`.
+#[test]
+fn server_reader_block_stats_rejected_when_not_accepted() {
+    let payload = 7i64.to_le_bytes();
+    let mut reader = ServerReader::new_plain(Cursor::new(block_stats_stream(&payload)))
+        .activate_multiplex()
+        .unwrap();
+
+    let mut buf = [0u8; 2];
+    let err = reader
+        .read_exact(&mut buf)
+        .expect_err("MSG_BLOCK_STATS must be fatal where it is not accepted");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(reader.touched_blocks_4k(), 0);
+}
+
+/// WHY: upstream requires `msg_bytes == 8` exactly; any other length is the
+/// fatal invalid-message path even on an accepting sender.
+/// upstream: io.c:1722 `if (msg_bytes != 8 || ...) goto invalid_msg;`
+#[test]
+fn server_reader_block_stats_wrong_length_rejected() {
+    for payload in [&[0u8; 4][..], &[0u8; 9][..], &[][..]] {
+        let mut reader = ServerReader::new_plain(Cursor::new(block_stats_stream(payload)));
+        reader.accept_block_stats();
+        let mut reader = reader.activate_multiplex().unwrap();
+
+        let mut buf = [0u8; 2];
+        let err = reader
+            .read_exact(&mut buf)
+            .expect_err("a MSG_BLOCK_STATS that is not 8 bytes must abort");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(reader.touched_blocks_4k(), 0);
+    }
+}
+
+/// WHY: acceptance registered after multiplexing is active must still apply;
+/// the sender may set it on an already-multiplexed reader.
+#[test]
+fn server_reader_block_stats_accept_after_activation() {
+    let payload = 3i64.to_le_bytes();
+    let mut reader = ServerReader::new_plain(Cursor::new(block_stats_stream(&payload)))
+        .activate_multiplex()
+        .unwrap();
+    reader.accept_block_stats();
+
+    let mut buf = [0u8; 2];
+    reader.read_exact(&mut buf).unwrap();
+    assert_eq!(reader.touched_blocks_4k(), 3);
+}
+
+/// WHY: no MSG_BLOCK_STATS arriving leaves the count at 0, which upstream
+/// still prints at protocol 33 (main.c:446-448).
+#[test]
+fn server_reader_block_stats_defaults_to_zero() {
+    let mut reader = ServerReader::new_plain(Cursor::new(Vec::new()));
+    assert_eq!(reader.touched_blocks_4k(), 0);
+}

@@ -1162,7 +1162,7 @@ mod version_constants {
     /// SUPPORTED_PROTOCOL_COUNT matches array length.
     #[test]
     fn supported_protocol_count_matches() {
-        assert_eq!(SUPPORTED_PROTOCOL_COUNT, 5);
+        assert_eq!(SUPPORTED_PROTOCOL_COUNT, 6);
         assert_eq!(SUPPORTED_PROTOCOLS.len(), SUPPORTED_PROTOCOL_COUNT);
     }
 
@@ -1170,7 +1170,7 @@ mod version_constants {
     #[test]
     fn protocol_version_constants() {
         assert_eq!(ProtocolVersion::OLDEST.as_u8(), 28);
-        assert_eq!(ProtocolVersion::NEWEST.as_u8(), 32);
+        assert_eq!(ProtocolVersion::NEWEST.as_u8(), 33);
         assert_eq!(ProtocolVersion::BINARY_NEGOTIATION_INTRODUCED.as_u8(), 30);
     }
 
@@ -1323,7 +1323,7 @@ mod stress_tests {
 
         // Should select highest supported (32, or clamped if > 32)
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().as_u8(), 32);
+        assert_eq!(result.unwrap().as_u8(), 33);
     }
 
     /// Many unsupported versions with one supported.

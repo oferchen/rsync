@@ -97,6 +97,11 @@ pub struct ReceiverContext {
     /// finalize byte-identical. Only the mid-walk EMISSION moves; the heap
     /// reclaim stays at finalize until RS-3c.
     pub(in crate::receiver) segments_released_mid_walk: usize,
+    /// Distinct 4 KiB logical blocks written across every received file,
+    /// including the phase-2 redo. A server receiver reports it to the client
+    /// in `MSG_BLOCK_STATS` at protocol 33+.
+    /// upstream: fileio.c:218-243 `stats.touched_blocks_4k`; main.c:1112-1117.
+    pub(in crate::receiver) touched_blocks_4k: u64,
     /// The receiver's directory numbering, addressed by the wire `dir_ndx` of an
     /// INC_RECURSE sub-list header (`NDX_FLIST_OFFSET - dir_ndx`).
     ///
@@ -617,6 +622,7 @@ impl ReceiverContext {
             segment_parent_dir_ndx: vec![None],
             first_segment_idx: 0,
             segments_released_mid_walk: 0,
+            touched_blocks_4k: 0,
             dir_flist: DirFlist::default(),
             served_dir_flists: HashSet::new(),
             flist_reader_cache: None,

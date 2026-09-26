@@ -155,7 +155,7 @@ fn classification_display_is_stable() {
     let future = RemoteProtocolAdvertisement::from_raw(40, ProtocolVersion::NEWEST);
 
     assert_eq!(supported.to_string(), "protocol 31");
-    assert_eq!(future.to_string(), "future protocol 40 (clamped to 32)");
+    assert_eq!(future.to_string(), "future protocol 40 (clamped to 33)");
 }
 
 proptest! {

@@ -95,8 +95,8 @@ fn test_oc_daemon_sends_protocol_greeting() {
         .expect("parse protocol version");
 
     assert!(
-        (30.0..=32.0).contains(&protocol_version),
-        "oc-rsync should advertise protocol 30-32, got: {protocol_version}"
+        (30.0..=33.0).contains(&protocol_version),
+        "oc-rsync should advertise protocol 30-33, got: {protocol_version}"
     );
 }
 
