@@ -173,17 +173,9 @@ fn daemon_handshake_downgrades_proto_33_daemon_to_32() {
     ));
     let mut writer: Vec<u8> = Vec::new();
 
-    let negotiated = perform_daemon_handshake(
-        &mut reader,
-        &mut writer,
-        &request,
-        true,
-        &[],
-        None,
-        None,
-        None,
-    )
-    .expect("a newer daemon must negotiate down, not abort");
+    let negotiated =
+        perform_daemon_handshake(&mut reader, &mut writer, &request, true, None, None, None)
+            .expect("a newer daemon must negotiate down, not abort");
 
     assert_eq!(negotiated.as_u8(), 32, "negotiated MIN(ours, theirs)");
     let sent = String::from_utf8_lossy(&writer);
@@ -634,16 +626,8 @@ mod handle_at_error_tests {
         ));
         let mut writer: Vec<u8> = Vec::new();
 
-        let result = perform_daemon_handshake(
-            &mut reader,
-            &mut writer,
-            &request,
-            true,
-            &[],
-            None,
-            None,
-            None,
-        );
+        let result =
+            perform_daemon_handshake(&mut reader, &mut writer, &request, true, None, None, None);
 
         let err = result.expect_err("EOF mid-handshake must be an error, not a hang");
         assert_eq!(
@@ -664,16 +648,7 @@ mod handle_at_error_tests {
         };
         let mut reader = BufReader::new(Cursor::new(greeting.to_vec()));
         let mut writer: Vec<u8> = Vec::new();
-        perform_daemon_handshake(
-            &mut reader,
-            &mut writer,
-            &request,
-            true,
-            &[],
-            None,
-            None,
-            None,
-        )
+        perform_daemon_handshake(&mut reader, &mut writer, &request, true, None, None, None)
     }
 
     // upstream: clientserver.c:189-194 (am_client == 1) - a server greeting at

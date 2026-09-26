@@ -46,10 +46,10 @@ impl DaemonTransferRequest {
 
     /// Resolves the port an operand that names none connects to.
     ///
-    /// upstream: `main.c:1609-1612` - `--port` seeds `rsync_port`, and only the
+    /// upstream: `main.c:1591-1594` - `--port` seeds `rsync_port`, and only the
     /// `-1` sentinel (no `--port` and no `:port` in the operand) falls back to
     /// `RSYNC_PORT`. An explicit `:port` in the operand still wins, because
-    /// `check_for_hostspec()` (`options.c:3311-3337`) overwrites `rsync_port`
+    /// `check_for_hostspec()` (`options.c:3301-3327`) overwrites `rsync_port`
     /// while parsing it.
     pub(crate) const fn resolve_default_port(configured: Option<u16>) -> u16 {
         match configured {
@@ -379,7 +379,6 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
     writer: &mut W,
     request: &DaemonTransferRequest,
     output_motd: bool,
-    daemon_params: &[String],
     early_input: Option<&Path>,
     protocol_override: Option<ProtocolVersion>,
     password_override: Option<&[u8]>,
@@ -451,36 +450,6 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
     writer
         .flush()
         .map_err(|e| socket_error("flush to", request.address.socket_addr_display(), e))?;
-
-    // ⚠ oc-only, and BROKEN in both directions - do not read the loop below as
-    // upstream behaviour. Upstream has no `send_daemon_args()` and no `OPTION`
-    // handshake line at all: `grep '"@RSYNCD' *.c *.h` over 3.5.0 yields only
-    // the greeting (compat.c:853), `AUTHREQD` (clientserver.c:809), `OK`
-    // (clientserver.c:1152) and `EXIT` (clientserver.c:1385). `--dparam`/`-M` is
-    // a DAEMON-side, process-local option (`options.c:875` in
-    // `long_daemon_options[]` -> `dparam_list` -> `loadparm.c:667 set_dparams()`,
-    // called only from `loadparm.c:621` and `clientserver.c:1766`), and a client
-    // that passes it is refused by `options.c:1590-1595` with "Daemon option(s)
-    // used without --daemon." Client-mode `-M` is `--remote-option`
-    // (`options.c:859`).
-    //
-    // Measured against 3.5.0: an upstream daemon reads exactly one request line
-    // after the greeting (clientserver.c:1537-1571), so this line is taken as the
-    // module name and answered `@ERROR: Unknown module 'OPTION key=value'`. oc's
-    // own daemon answers identically, because it only recognises the
-    // `@RSYNCD: OPTION ...` spelling - so `--dparam` on a client fails against
-    // every daemon. Filed for removal alongside the client-mode option itself;
-    // left in place here so the failure stays loud rather than silent.
-    for param in daemon_params {
-        let option_line = format!("OPTION {param}\n");
-        writer.write_all(option_line.as_bytes()).map_err(|e| {
-            socket_error(
-                "send daemon option to",
-                request.address.socket_addr_display(),
-                e,
-            )
-        })?;
-    }
 
     // upstream: clientserver.c:266-294 - sends `#early_input=<len>\n` followed by
     // the raw file contents before the module name.

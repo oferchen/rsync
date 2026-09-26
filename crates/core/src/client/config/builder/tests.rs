@@ -870,19 +870,6 @@ fn default_human_readable_is_false() {
 }
 
 #[test]
-fn daemon_params_sets_values() {
-    let params = vec!["read only=true".to_owned(), "timeout=60".to_owned()];
-    let config = builder().daemon_params(params.clone()).build();
-    assert_eq!(config.daemon_params(), &params);
-}
-
-#[test]
-fn default_daemon_params_is_empty() {
-    let config = builder().build();
-    assert!(config.daemon_params().is_empty());
-}
-
-#[test]
 fn itemize_changes_sets_flag() {
     let config = builder().itemize_changes(true).build();
     assert!(config.itemize_changes());
