@@ -374,6 +374,7 @@ struct DaemonFileLogWriter<'a> {
     remote_addr: String,
     module_name: String,
     module_path: String,
+    username: String,
     pid: u32,
 }
 
@@ -388,7 +389,7 @@ impl DaemonFileLog for DaemonFileLogWriter<'_> {
             hostname: &self.hostname,
             remote_addr: &self.remote_addr,
             module_name: &self.module_name,
-            username: "",
+            username: &self.username,
             filename: &filename,
             file_length: size,
             pid: self.pid,
@@ -420,6 +421,7 @@ fn execute_transfer(
     write_stream: &mut dyn Write,
     role: ServerRole,
     module: &ModuleRuntime,
+    auth_user: Option<&str>,
 ) -> i32 {
     if let Some(log) = ctx.log_sink {
         // upstream: the daemon sender announces the walk with the FLOG-only
@@ -453,6 +455,9 @@ fn execute_transfer(
             remote_addr: ctx.peer_ip.to_string(),
             module_name: ctx.request.to_string(),
             module_path: module.path.display().to_string(),
+            // upstream: log.c `case 'u': n = auth_user;` - the name that passed
+            // auth_server(), empty for an anonymous module.
+            username: auth_user.unwrap_or_default().to_owned(),
             pid: std::process::id(),
         }
     });

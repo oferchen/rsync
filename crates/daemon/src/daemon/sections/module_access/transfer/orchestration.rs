@@ -877,6 +877,7 @@ fn process_approved_module(
         &mut *streams.write,
         role,
         module,
+        auth_user.as_deref(),
     );
 
     // #503: stop and join the background delta-drain thread before the TCP
