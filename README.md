@@ -9,26 +9,28 @@
 <table>
   <tr>
     <th>Version</th>
+    <th>Platform</th>
     <th>Privilege</th>
     <th>PIPE</th>
     <th>TCP</th>
   </tr>
   <tr>
-    <td><b>3.5.0</b></td>
+    <td rowspan="2"><b>3.5.0</b></td>
+    <td rowspan="2">Linux</td>
     <td>root</td>
-    <td><a href="https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml"><img alt="Upstream Rsync Testsuite 3.5.0 root PIPE" src="https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-root.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20root%20PIPE"></a></td>
-    <td><a href="https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml"><img alt="Upstream Rsync Testsuite 3.5.0 root TCP" src="https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-root-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20root%20TCP"></a></td>
+    <td><a href="https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml"><img alt="Upstream Rsync Testsuite 3.5.0 root PIPE Linux" src="https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-root.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20root%20PIPE%20Linux"></a></td>
+    <td><a href="https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml"><img alt="Upstream Rsync Testsuite 3.5.0 root TCP Linux" src="https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-root-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20root%20TCP%20Linux"></a></td>
   </tr>
   <tr>
-    <td><b>3.5.0</b></td>
     <td>non-root</td>
-    <td><a href="https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml"><img alt="Upstream Rsync Testsuite 3.5.0 non-root PIPE" src="https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20non-root%20PIPE"></a></td>
-    <td><a href="https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml"><img alt="Upstream Rsync Testsuite 3.5.0 non-root TCP" src="https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20non-root%20TCP"></a></td>
+    <td><a href="https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml"><img alt="Upstream Rsync Testsuite 3.5.0 non-root PIPE Linux" src="https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20non-root%20PIPE%20Linux"></a></td>
+    <td><a href="https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml"><img alt="Upstream Rsync Testsuite 3.5.0 non-root TCP Linux" src="https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20non-root%20TCP%20Linux"></a></td>
   </tr>
   <tr>
     <td><b>3.5.1</b></td>
+    <td>Linux + macOS</td>
     <td>root + non-root</td>
-    <td colspan="2" align="center"><a href="https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml"><img alt="Upstream Rsync Testsuite 3.5.1 root|non-root TCP|PIPE" src="https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1%20root%7Cnon-root%20TCP%7CPIPE"></a><br><sub>Linux + macOS: all eight legs run in one workflow</sub></td>
+    <td colspan="2" align="center"><a href="https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml"><img alt="Upstream Rsync Testsuite 3.5.1 root|non-root TCP|PIPE Linux|macOS" src="https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1%20root%7Cnon-root%20TCP%7CPIPE%20Linux%7CmacOS"></a><br><sub>one workflow runs all eight legs</sub></td>
   </tr>
 </table>
 
