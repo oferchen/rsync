@@ -94,8 +94,8 @@ impl<'a> ParentWalk<'a> {
 /// - Below `root`: [`fast_io::open_dir_beneath_nofollow`] on the root's pinned
 ///   descriptor (see [`crate::DestinationRoot`]) - the remainder refuses every
 ///   symlink.
-/// - The root entry itself: its parent is entirely operator path, opened
-///   through [`fast_io::operator_open_dir`].
+/// - The root entry itself (a single-file root): its parent is opened the way
+///   the root is entered, see [`crate::DestinationRoot::open_dir`].
 /// - No root, or a destination outside it: the strict
 ///   [`fast_io::secure_open_dir`] walk over the whole parent.
 #[cfg(unix)]
@@ -114,7 +114,7 @@ pub(crate) fn confined_parent(
             .strip_prefix(root.path())
             .is_ok_and(|tail| tail.as_os_str().is_empty())
         {
-            return fast_io::operator_open_dir(parent).map(Some);
+            return root.open_dir(parent).map(Some);
         }
     }
     fast_io::secure_open_dir(parent).map(Some)
@@ -135,6 +135,27 @@ pub(crate) fn at_confined_parent(
     bare: impl FnOnce() -> std::io::Result<()>,
 ) -> std::io::Result<()> {
     use std::os::fd::AsFd;
+
+    // A directory destination root is the operator's, entered by upstream
+    // with a plain change_dir() and then named as ".". Anchor on the root's
+    // own descriptor rather than opening its parent: the parent lies outside
+    // the tree a kernel sandbox (Landlock) grants the receiver, so opening it
+    // is refused and the root's owner, times, and mode would never be applied.
+    // A single-file destination has no such descriptor (ENOTDIR): upstream's
+    // get_local_name() makes its parent the cwd and names the leaf, which is
+    // the parent path below.
+    // upstream: main.c:778 change_dir(dest_path); rsync.c set_file_attrs(".")
+    if let Some(root) = root
+        && destination
+            .strip_prefix(root.path())
+            .is_ok_and(|tail| tail.as_os_str().is_empty())
+    {
+        match root.anchor() {
+            Ok(anchor) => return at(anchor, std::ffi::OsStr::new(".")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotADirectory => {}
+            Err(error) => return Err(error),
+        }
+    }
 
     let owned;
     let parent = match shared {
