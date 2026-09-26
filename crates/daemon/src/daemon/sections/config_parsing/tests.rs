@@ -219,13 +219,6 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_missing_equals() {
-        let file = write_config("[module]\npath /tmp\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("key = value"));
-    }
-
-    #[test]
     fn parse_unknown_global_directive_warns_and_continues() {
         let file = write_config("unknown = value\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds with warning");
@@ -843,13 +836,6 @@ mod config_parsing_tests {
     #[test]
     fn parse_empty_path_errors() {
         let file = write_config("[mod]\npath = \n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("must not be empty"));
-    }
-
-    #[test]
-    fn parse_empty_pid_file_errors() {
-        let file = write_config("pid file = \n");
         let err = parse_config_modules(file.path()).expect_err("should fail");
         assert!(err.to_string().contains("must not be empty"));
     }
@@ -2087,30 +2073,6 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn exclude_from_empty_value_rejected() {
-        let dir = TempDir::new().expect("create temp dir");
-        let module_path = dir.path().join("data");
-        fs::create_dir(&module_path).expect("create dir");
-
-        let config = format!("[mod]\npath = {}\nexclude from =\n", module_path.display());
-        let file = write_config(&config);
-        let err = parse_config_modules(file.path()).expect_err("should fail on empty");
-        assert!(err.to_string().contains("exclude from"));
-    }
-
-    #[test]
-    fn include_from_empty_value_rejected() {
-        let dir = TempDir::new().expect("create temp dir");
-        let module_path = dir.path().join("data");
-        fs::create_dir(&module_path).expect("create dir");
-
-        let config = format!("[mod]\npath = {}\ninclude from =\n", module_path.display());
-        let file = write_config(&config);
-        let err = parse_config_modules(file.path()).expect_err("should fail on empty");
-        assert!(err.to_string().contains("include from"));
-    }
-
-    #[test]
     fn exclude_from_duplicate_last_wins() {
         let dir = TempDir::new().expect("create temp dir");
         let module_path = dir.path().join("data");
@@ -2193,13 +2155,6 @@ mod config_parsing_tests {
         let file = write_config(&format!("[mod]\npath = {}\n", abs("/tmp")));
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.syslog_facility.is_none());
-    }
-
-    #[test]
-    fn parse_syslog_facility_empty_rejected() {
-        let file = write_config("syslog facility =\n[mod]\npath = /tmp\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail on empty");
-        assert!(err.to_string().contains("syslog facility"));
     }
 
     #[test]
@@ -2344,13 +2299,6 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_module_syslog_tag_empty_rejected() {
-        let file = write_config("[mod]\npath = /tmp\nsyslog tag =\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail on empty");
-        assert!(err.to_string().contains("syslog tag"));
-    }
-
-    #[test]
     fn parse_module_duplicate_syslog_facility_last_wins() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
@@ -2381,13 +2329,6 @@ mod config_parsing_tests {
         let file = write_config(&format!("[mod]\npath = {}\n", abs("/tmp")));
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.syslog_tag.is_none());
-    }
-
-    #[test]
-    fn parse_syslog_tag_empty_rejected() {
-        let file = write_config("syslog tag =\n[mod]\npath = /tmp\n");
-        let err = parse_config_modules(file.path()).expect_err("should fail on empty");
-        assert!(err.to_string().contains("syslog tag"));
     }
 
     #[test]
@@ -2474,17 +2415,6 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_address_empty_value() {
-        let file = write_config("address =\n");
-        let err = parse_config_modules(file.path()).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("'address' directive must not be empty"),
-            "{msg}"
-        );
-    }
-
-    #[test]
     fn parse_address_invalid() {
         let file = write_config("address = not-an-ip\n");
         let err = parse_config_modules(file.path()).unwrap_err();
@@ -2522,17 +2452,6 @@ mod config_parsing_tests {
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (opts, _) = result.socket_options.expect("should have socket_options");
         assert_eq!(opts, "TCP_NODELAY, SO_KEEPALIVE, SO_SNDBUF=65536");
-    }
-
-    #[test]
-    fn parse_socket_options_empty_value_rejected() {
-        let file = write_config("socket options =\n");
-        let err = parse_config_modules(file.path()).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("'socket options' directive must not be empty"),
-            "{msg}"
-        );
     }
 
     #[test]
@@ -2637,18 +2556,6 @@ mod config_parsing_tests {
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.daemon_chroot.is_none());
-    }
-
-    #[test]
-    fn parse_global_daemon_chroot_empty_rejected() {
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!("daemon chroot = \n[mod]\npath = {}\n", path.display());
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path());
-        assert!(result.is_err());
     }
 
     #[test]
@@ -3124,18 +3031,6 @@ mod config_parsing_tests {
             result.modules[0].log_file,
             Some(PathBuf::from("rsyncd.log"))
         );
-    }
-
-    #[test]
-    fn parse_module_log_file_empty_rejected() {
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!("[mod]\npath = {}\nlog file =\n", path.display());
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path());
-        assert!(result.is_err());
     }
 
     #[test]

@@ -94,11 +94,11 @@ fn runtime_options_accepts_other_writable_secrets_file_at_parse_time() {
     .expect("other-writable secrets file should not fail config parsing");
 }
 
-/// Non-vacuity companion for the three acceptances above: the parse-time
-/// validator is still wired and still rejects. Without this, dropping the whole
-/// validator would leave every acceptance test green.
+/// A secrets path that is not a regular file is still stored: upstream only
+/// opens it when a client authenticates (authenticate.c:143-160), so the
+/// failure is a refused login, not a config error.
 #[test]
-fn runtime_options_rejects_a_secrets_file_that_is_not_a_regular_file() {
+fn runtime_options_stores_a_secrets_path_that_is_not_a_regular_file() {
     let dir = tempdir().expect("config dir");
     let module_dir = dir.path().join("module");
     fs::create_dir_all(&module_dir).expect("module dir");
@@ -114,16 +114,14 @@ fn runtime_options_rejects_a_secrets_file_that_is_not_a_regular_file() {
     )
     .expect("write config");
 
-    let error = RuntimeOptions::parse(&[
+    let options = RuntimeOptions::parse(&[
         OsString::from("--config"),
         file.path().as_os_str().to_os_string(),
     ])
-    .expect_err("a directory is not a usable secrets file");
+    .expect("a directory secrets path is a login failure, not a config error");
 
-    assert!(
-        error
-            .message()
-            .to_string()
-            .contains("must be a regular file")
+    assert_eq!(
+        options.modules()[0].secrets_file.as_deref(),
+        Some(secrets_path.as_path())
     );
 }
