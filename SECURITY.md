@@ -138,7 +138,7 @@ On master:
 - **Basis and stream errors.** A block match with no basis file is a protocol error (exit 2) naming the file, and a daemon stream that closes mid-transfer reports `connection unexpectedly closed` and exits 12, as upstream does (PR #8016). This covers the first two sub-cases of the `strict-basis` cell.
 - **Option and startup rules.** `--contimeout` is refused unless there is a daemon connection and bounds a daemon-over-`--rsh` handshake; `--max-alloc=0` is accepted again and resolves to the bounded maximum; the daemon enters inetd mode only for an `AF_INET`/`AF_INET6` stream on stdin (PR #8011).
 
-Still carrying a `fail` row in the 3.5.1 manifests: `strict-basis` (remaining sub-cases), `symlink-race-dest`, `search-only-held-dirfd`, the `/dev/fd/N` cells (`pseudo-paths`, `pseudo-paths-daemon`, `read-batch-pipe`), `batch-file-symlink`, and `write-touched-blocks`, which needs protocol 33. `relative-source-ancestor`, whose row names the `--files-from` escape, passes since PR #8012 (3.5.1 run 36258733853); its rows still read `fail` and need flipping.
+Still carrying a `fail` row in the 3.5.1 manifests: `strict-basis` (remaining sub-cases), `symlink-race-dest`, `search-only-held-dirfd`, the `/dev/fd/N` cells (`pseudo-paths`, `pseudo-paths-daemon`, `read-batch-pipe`), `batch-file-symlink`, and `write-touched-blocks`, which needs protocol 33. `relative-source-ancestor`, whose row names the `--files-from` escape, passes since PR #8012; PR #8017 flips its rows to `pass`.
 
 ### Upstream rsync 3.4.3 defense-in-depth audit (2026-05-20)
 
