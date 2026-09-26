@@ -554,7 +554,7 @@ mod imp {
             //    fresh `O_CLOEXEC` fd; it is never duplicated, leaked, or
             //    aliased elsewhere.
             #[allow(unsafe_code)]
-            let raw = unsafe {
+            let issue = || unsafe {
                 let mut how: libc::open_how = std::mem::zeroed();
                 how.flags = flags as u64;
                 how.mode = 0;
@@ -569,19 +569,25 @@ mod imp {
                 )
             };
 
-            if raw >= 0 {
-                // SAFETY: `raw` is a non-negative fd just returned by
-                // `openat2(2)` with `O_CLOEXEC`, owned exclusively here.
-                #[allow(unsafe_code)]
-                let file = unsafe { File::from_raw_fd(raw as libc::c_int) };
-                return Ok(Some(file));
+            match crate::linux_capabilities::retry_scoped_openat2(issue) {
+                Ok(raw) => {
+                    // SAFETY: `raw` is a non-negative fd just returned by
+                    // `openat2(2)` with `O_CLOEXEC`, owned exclusively here.
+                    #[allow(unsafe_code)]
+                    let file = unsafe { File::from_raw_fd(raw as libc::c_int) };
+                    Ok(Some(file))
+                }
+                // ENOSYS: the syscall is gone despite the probe. EAGAIN: a
+                // `..` step kept racing host-wide renames past the retry
+                // budget - a statement about the host, not the path. Both
+                // hand the open to the portable walk, which is upstream's own
+                // resolver and pins each parent instead of re-resolving `..`
+                // (`rsync-3.5.1/syscall.c:2918-2935`), so it cannot EAGAIN.
+                Err(err) if matches!(err.raw_os_error(), Some(libc::ENOSYS | libc::EAGAIN)) => {
+                    Ok(None)
+                }
+                Err(err) => Err(err),
             }
-
-            let err = io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::ENOSYS) {
-                return Ok(None);
-            }
-            Err(err)
         }
     }
 
@@ -693,6 +699,72 @@ mod tests {
         let file = open_source_confined(&root, Path::new("link/data"), LeafPolicy::Nofollow, false)
             .expect("an in-tree symlinked directory component must be followed");
         assert_eq!(read_to_string(file), "in-tree");
+    }
+
+    /// An in-module `..` reached through a directory symlink keeps opening
+    /// while other threads rename files elsewhere on the host.
+    ///
+    /// WHY: a scoped `openat2(RESOLVE_BENEATH)` that walks a `..` fails with
+    /// `EAGAIN` whenever any rename races it, because the kernel can no longer
+    /// prove the step stayed beneath the anchor. That refusal says nothing
+    /// about the path, yet it reached the sender verbatim - the upstream
+    /// `daemon-copylinks-parent-escape` cell failed under parallel load with
+    /// `send_files failed to open "/sub/in_dir/f.txt" (in m): Resource
+    /// temporarily unavailable (11)`. Upstream's resolver pins each parent
+    /// and never re-resolves `..` (`rsync-3.5.1/syscall.c:2918-2935`), so a
+    /// concurrent rename cannot fail it; neither may ours.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_dotdot_symlink_target_survives_concurrent_renames() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = std::fs::canonicalize(tmp.path()).expect("canonicalize");
+        let module = root.join("module");
+        std::fs::create_dir_all(module.join("sub")).expect("mkdir sub");
+        std::fs::create_dir_all(module.join("targetdir")).expect("mkdir targetdir");
+        std::fs::write(module.join("targetdir/f.txt"), b"in-module").expect("write");
+        symlink("../targetdir", module.join("sub/in_dir")).expect("symlink");
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let renamers: Vec<_> = (0..2)
+            .map(|n| {
+                let stop = Arc::clone(&stop);
+                let a = root.join(format!("churn-{n}-a"));
+                let b = root.join(format!("churn-{n}-b"));
+                std::fs::write(&a, b"").expect("seed churn file");
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        std::fs::rename(&a, &b).expect("rename a->b");
+                        std::fs::rename(&b, &a).expect("rename b->a");
+                    }
+                })
+            })
+            .collect();
+
+        let mut failure = None;
+        for _ in 0..20_000 {
+            match open_source_confined(
+                &module,
+                Path::new("sub/in_dir/f.txt"),
+                LeafPolicy::Nofollow,
+                false,
+            ) {
+                Ok(file) => drop(file),
+                Err(err) => {
+                    failure = Some(err);
+                    break;
+                }
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        for renamer in renamers {
+            renamer.join().expect("renamer thread");
+        }
+        if let Some(err) = failure {
+            panic!("an in-module `..` target failed under concurrent renames: {err}");
+        }
     }
 
     /// A symlinked *leaf* is refused under the default policy even when its

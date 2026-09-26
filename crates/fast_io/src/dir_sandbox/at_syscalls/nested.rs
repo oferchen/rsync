@@ -139,6 +139,16 @@ pub(super) fn anchor_parent<'a>(
                 Ok(Some(dirfd)) => Ok(ParentAnchor::Anchored { dirfd, name: leaf }),
                 // ENOSYS / EINVAL: capability absent, degrade gracefully.
                 Ok(None) => Ok(ParentAnchor::Fallback),
+                // EAGAIN after the retry budget: a `..` step kept racing
+                // host-wide renames. That is not a refusal of the path, so
+                // resolve it with upstream's own portable walk
+                // (`ds_descend()`, `rsync-3.5.1/syscall.c:3032-3106`), which
+                // pins each parent and cannot EAGAIN - never with a
+                // path-based re-resolution.
+                Err(err) if err.raw_os_error() == Some(libc::EAGAIN) => {
+                    let dirfd = sandbox.open_subdir_confined(&parent_rel)?;
+                    Ok(ParentAnchor::Anchored { dirfd, name: leaf })
+                }
                 // Deliberate refusal (EXDEV/ELOOP/ENOENT/ENOTDIR): the
                 // op must fail, never silently re-resolve via a path.
                 Err(err) => Err(err),
@@ -217,8 +227,10 @@ mod linux {
     ///
     /// Returns `Ok(None)` only on `ENOSYS` (kernel lacks the syscall
     /// despite the probe) or `EINVAL` (resolve flags unsupported), so
-    /// the caller can degrade to path-based resolution. Every other
-    /// error is a deliberate refusal and is returned verbatim.
+    /// the caller can degrade to path-based resolution. A racing `EAGAIN`
+    /// is re-issued by [`retry_scoped_openat2`](crate::linux_capabilities::retry_scoped_openat2)
+    /// and only surfaces once its budget is spent. Every other error is a
+    /// deliberate refusal and is returned verbatim.
     pub(super) fn openat2_parent_beneath(
         parent_fd: BorrowedFd<'_>,
         parent_rel: &Path,
@@ -245,7 +257,7 @@ mod linux {
         // 3. `OwnedFd::from_raw_fd(raw)` - sole owner of the returned
         //    fd; never aliased or leaked.
         #[allow(unsafe_code)]
-        let raw = unsafe {
+        let issue = || unsafe {
             let mut how: libc::open_how = std::mem::zeroed();
             how.flags = (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
             how.mode = 0;
@@ -260,15 +272,16 @@ mod linux {
             )
         };
 
-        if raw >= 0 {
-            // SAFETY: `raw` is a non-negative fd just returned by
-            // `openat2(2)` with `O_CLOEXEC`; sole owner.
-            #[allow(unsafe_code)]
-            let fd = unsafe { OwnedFd::from_raw_fd(raw as libc::c_int) };
-            return Ok(Some(fd));
-        }
-
-        let err = io::Error::last_os_error();
+        let err = match crate::linux_capabilities::retry_scoped_openat2(issue) {
+            Ok(raw) => {
+                // SAFETY: `raw` is a non-negative fd just returned by
+                // `openat2(2)` with `O_CLOEXEC`; sole owner.
+                #[allow(unsafe_code)]
+                let fd = unsafe { OwnedFd::from_raw_fd(raw as libc::c_int) };
+                return Ok(Some(fd));
+            }
+            Err(err) => err,
+        };
         match err.raw_os_error() {
             Some(libc::ENOSYS) | Some(libc::EINVAL) => Ok(None),
             _ => Err(err),

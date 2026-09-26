@@ -603,7 +603,7 @@ mod linux {
         //    the fd just returned. We do not duplicate, leak, or alias
         //    the raw value anywhere else.
         #[allow(unsafe_code)]
-        let raw = unsafe {
+        let issue = || unsafe {
             let mut how: libc::open_how = std::mem::zeroed();
             // `O_NOFOLLOW` is deliberately absent. It refuses a symlink at the
             // final component, and every caller here passes a single component,
@@ -624,16 +624,22 @@ mod linux {
             )
         };
 
-        if raw >= 0 {
-            // SAFETY: `raw` is a non-negative fd just returned by
-            // `openat2(2)` with `O_CLOEXEC`. We have not duplicated or
-            // leaked it; this is the sole owner.
-            #[allow(unsafe_code)]
-            let fd = unsafe { OwnedFd::from_raw_fd(raw as libc::c_int) };
-            return Ok(Some(fd));
-        }
-
-        let err = io::Error::last_os_error();
+        // A single component can still walk a `..` when it is an in-tree
+        // symlink (`name -> ../dir`), and a scoped `..` step fails with
+        // `EAGAIN` whenever a host-wide rename races it. Re-issue it rather
+        // than report a legal lookup as an error; upstream's walk pins the
+        // parent and never sees this errno (`rsync-3.5.1/syscall.c:2918-2935`).
+        let err = match crate::linux_capabilities::retry_scoped_openat2(issue) {
+            Ok(raw) => {
+                // SAFETY: `raw` is a non-negative fd just returned by
+                // `openat2(2)` with `O_CLOEXEC`. We have not duplicated or
+                // leaked it; this is the sole owner.
+                #[allow(unsafe_code)]
+                let fd = unsafe { OwnedFd::from_raw_fd(raw as libc::c_int) };
+                return Ok(Some(fd));
+            }
+            Err(err) => err,
+        };
         if err.raw_os_error() == Some(libc::ENOSYS) {
             return Ok(None);
         }

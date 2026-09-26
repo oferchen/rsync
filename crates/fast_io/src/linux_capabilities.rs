@@ -39,6 +39,69 @@ pub fn openat2_supported() -> bool {
     imp::openat2_supported()
 }
 
+/// How many times [`retry_scoped_openat2`] re-issues an `openat2(2)` that the
+/// kernel refused with `EAGAIN`.
+///
+/// Bounded so a host that renames without pause cannot pin a transfer in a
+/// retry loop; the callers that have a portable walk fall back to it once the
+/// budget is spent.
+#[cfg(target_os = "linux")]
+pub(crate) const SCOPED_OPENAT2_EAGAIN_RETRIES: u32 = 64;
+
+/// Issues a scoped (`RESOLVE_BENEATH` / `RESOLVE_IN_ROOT`) `openat2(2)` via
+/// `issue`, re-issuing it while the kernel answers `EAGAIN`.
+///
+/// A scoped lookup that walks a `..` - literally, or through an in-tree
+/// symlink such as `sub/link -> ../dir` - re-checks the global mount and
+/// rename seqlocks after the step and fails with `EAGAIN` when *any* rename
+/// or mount anywhere on the host raced it, because it can no longer prove the
+/// `..` stayed beneath the anchor (`openat2(2)`: "The caller may choose to
+/// retry the openat2() call"). The refusal says nothing about the path
+/// itself, so surfacing it would fail a perfectly legal in-module `..` on a
+/// busy host - the sender reported `send_files failed to open ...:
+/// Resource temporarily unavailable (11)` for a `--copy-links` target under
+/// concurrent load.
+///
+/// Upstream never sees this errno: its resolver is the portable per-component
+/// walk that pops a pinned parent descriptor for each `..` instead of asking
+/// the kernel to re-resolve it (`rsync-3.5.1/syscall.c:2918-2935`,
+/// `ds_descend()` `:3032-3106`), so a concurrent rename cannot fail it.
+///
+/// Returns the non-negative descriptor `issue` produced, or the error of the
+/// last attempt - still `EAGAIN` once [`SCOPED_OPENAT2_EAGAIN_RETRIES`] is
+/// spent, which callers with a portable walk treat as "use the walk".
+#[cfg(target_os = "linux")]
+pub(crate) fn retry_scoped_openat2(
+    mut issue: impl FnMut() -> libc::c_long,
+) -> std::io::Result<libc::c_long> {
+    retry_on_eagain(|| {
+        let raw = issue();
+        if raw >= 0 {
+            Ok(raw)
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    })
+}
+
+/// The retry policy of [`retry_scoped_openat2`], separated from the syscall so
+/// it can be exercised without racing a real rename.
+#[cfg(target_os = "linux")]
+fn retry_on_eagain<T>(mut attempt: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut retries = 0;
+    loop {
+        match attempt() {
+            Err(err)
+                if err.raw_os_error() == Some(libc::EAGAIN)
+                    && retries < SCOPED_OPENAT2_EAGAIN_RETRIES =>
+            {
+                retries += 1;
+            }
+            outcome => return outcome,
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod imp {
     use std::sync::OnceLock;
@@ -121,6 +184,52 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn eagain_is_retried_until_the_open_succeeds() {
+        let mut calls = 0;
+        let outcome = retry_on_eagain(|| {
+            calls += 1;
+            if calls <= 3 {
+                Err(std::io::Error::from_raw_os_error(libc::EAGAIN))
+            } else {
+                Ok(7)
+            }
+        });
+        assert_eq!(outcome.expect("retried past EAGAIN"), 7);
+        assert_eq!(calls, 4);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn eagain_retries_are_bounded_and_the_last_error_surfaces() {
+        let mut calls = 0u32;
+        let outcome: std::io::Result<()> = retry_on_eagain(|| {
+            calls += 1;
+            Err(std::io::Error::from_raw_os_error(libc::EAGAIN))
+        });
+        assert_eq!(
+            outcome.expect_err("budget spent").raw_os_error(),
+            Some(libc::EAGAIN)
+        );
+        assert_eq!(calls, SCOPED_OPENAT2_EAGAIN_RETRIES + 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_refusal_other_than_eagain_is_not_retried() {
+        let mut calls = 0;
+        let outcome: std::io::Result<()> = retry_on_eagain(|| {
+            calls += 1;
+            Err(std::io::Error::from_raw_os_error(libc::EXDEV))
+        });
+        assert_eq!(
+            outcome.expect_err("refusal").raw_os_error(),
+            Some(libc::EXDEV)
+        );
+        assert_eq!(calls, 1);
+    }
 
     #[test]
     fn openat2_supported_returns_bool_without_panic() {
