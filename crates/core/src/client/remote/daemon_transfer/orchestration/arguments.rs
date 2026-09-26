@@ -514,12 +514,11 @@ pub(super) fn build_full_daemon_args(
         args.push(format!("--skip-compress={spec}"));
     }
 
-    // upstream: options.c:2873-2874 - `if (max_alloc_arg && max_alloc !=
+    // upstream: options.c:3039-3040 - `if (max_alloc_arg && max_alloc !=
     // DEFAULT_MAX_ALLOC) --max-alloc`. Not `am_sender` gated: each side owns
     // its own cap, so forwarding lets the remote enforce the same budget.
-    // `max_alloc()` is None unless the user supplied a non-default value.
-    if let Some(limit) = config.max_alloc() {
-        args.push(format!("--max-alloc={limit}"));
+    if let Some(arg) = config.max_alloc_forward_arg() {
+        args.push(format!("--max-alloc={arg}"));
     }
 
     // upstream: options.c:2883-2888 - modify_window forwarded only when set AND
@@ -1943,17 +1942,41 @@ mod server_option_fidelity_tests {
         assert!(!pull.iter().any(|a| a.starts_with("--max-size")));
     }
 
-    // upstream: options.c:2873-2874 - --max-alloc forwarded (role-agnostic) so
-    // the remote enforces the same allocation cap.
+    // upstream: options.c:3039-3040 - --max-alloc forwarded (role-agnostic) so
+    // the remote enforces the same allocation cap, in the operator's spelling.
     #[test]
     fn max_alloc_forwarded() {
         let config = ClientConfig::builder()
+            .max_alloc(Some(2 * 1_073_741_824))
+            .max_alloc_arg(Some("2G".to_owned()))
+            .build();
+        assert!(args(&config, false).iter().any(|a| a == "--max-alloc=2G"));
+    }
+
+    // upstream: options.c:2085-2086 + 3039-3040 - 0 resolves to SIZE_ARG_MAX
+    // locally but reaches the peer as the literal "0", so a peer with a
+    // smaller SIZE_MAX resolves it to its own ceiling instead of refusing a
+    // number above it.
+    #[test]
+    fn max_alloc_zero_forwarded_unresolved() {
+        let config = ClientConfig::builder()
+            .max_alloc(Some(::protocol::max_alloc::SIZE_ARG_MAX))
+            .max_alloc_arg(Some("0".to_owned()))
+            .build();
+        assert!(args(&config, false).iter().any(|a| a == "--max-alloc=0"));
+    }
+
+    // upstream: options.c:3039 - `max_alloc != DEFAULT_MAX_ALLOC` gates it.
+    #[test]
+    fn max_alloc_default_not_forwarded() {
+        let config = ClientConfig::builder()
             .max_alloc(Some(1_073_741_824))
+            .max_alloc_arg(Some("1G".to_owned()))
             .build();
         assert!(
-            args(&config, false)
+            !args(&config, false)
                 .iter()
-                .any(|a| a == "--max-alloc=1073741824")
+                .any(|a| a.starts_with("--max-alloc"))
         );
     }
 

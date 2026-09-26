@@ -18,12 +18,11 @@
 //! | `--min-size` | min 0 (:1809) | 0 -> no lower bound |
 //! | `--max-size` | min 0 (:1815) | 0 -> **excludes every non-empty file** |
 //! | `--bwlimit` | min 512, `unlimited_0` (:1821) | 0 -> unlimited |
-//! | `--max-alloc` | min 1 MiB (:2067) | **rejected** |
+//! | `--max-alloc` | min 1 MiB, `unlimited_0` (:2073) | 0 -> the largest limit (SIZE_MAX/2) |
 //!
 //! `--max-size=` excluding everything is why a success-only assertion would be
 //! the wrong oracle here, and why the rule cannot live in the shared string
-//! parser: folding it in would silently start accepting `--max-alloc=`, undoing
-//! the guard that landed for the zero case.
+//! parser: each option decides what its 0 means.
 //!
 //! Skip conditions (test passes with a printed reason):
 //! - The cross-implementation cell needs a built upstream 3.5.0 binary.
@@ -171,24 +170,29 @@ fn a_non_empty_size_value_still_parses_and_applies() {
     );
 }
 
-/// GUARD: `--max-alloc` has a 1 MiB minimum upstream, so 0 - and therefore an
-/// empty value - is rejected by both implementations. The empty-to-zero rule is
-/// applied per option precisely so this stays rejected; putting it in the
-/// shared string parser would have quietly re-opened it.
+/// `--max-alloc` keeps its 1 MiB minimum, but rsync 3.5.1 passes
+/// `unlimited_0`, so 0 - and therefore an empty value - means the largest
+/// limit this build allows (SIZE_MAX/2) rather than a refusal. A non-zero
+/// value below the minimum is still rejected.
 ///
-/// upstream: options.c:2073 `parse_size_arg(..., "max-alloc", 1024*1024, ...)`.
+/// upstream: options.c:2073 `parse_size_arg(..., "max-alloc", 1024*1024, -1, True)`,
+/// options.c:2086 `if (!max_alloc) max_alloc = SIZE_ARG_MAX;`
 #[test]
-fn an_empty_max_alloc_is_still_rejected() {
+fn an_empty_max_alloc_means_the_largest_limit() {
     let fixture = Fixture::new();
     let oc = oc_binary();
 
     assert!(
-        !fixture.run(&oc, Some("--max-alloc=")).success,
-        "--max-alloc= must stay rejected"
+        fixture.run(&oc, Some("--max-alloc=")).transferred,
+        "--max-alloc= must resolve to 0, the largest limit, and transfer"
     );
     assert!(
-        !fixture.run(&oc, Some("--max-alloc=0")).success,
-        "--max-alloc=0 must stay rejected"
+        fixture.run(&oc, Some("--max-alloc=0")).transferred,
+        "--max-alloc=0 must mean the largest limit and transfer"
+    );
+    assert!(
+        !fixture.run(&oc, Some("--max-alloc=1")).success,
+        "a non-zero --max-alloc below the 1 MiB minimum must stay rejected"
     );
     assert!(
         fixture.run(&oc, Some("--max-alloc=1048576")).success,

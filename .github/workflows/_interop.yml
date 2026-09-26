@@ -140,6 +140,13 @@ jobs:
         env:
           OC_RSYNC_UPSTREAM_COMPAT: "1"
         run: cargo nextest run --locked --profile ci -p transfer -E 'binary(upstream_compat_no_send_out_of_order)'
+      # Delta token oracle: an upstream client pulls the same repeated-block
+      # and sparse-image fixtures from an upstream sender and from oc, and the
+      # captured sender streams must be byte-identical (match.c hash_search()).
+      - name: Run delta token parity oracle (oc sender vs upstream sender)
+        env:
+          OC_RSYNC_UPSTREAM_COMPAT: "1"
+        run: cargo nextest run --locked --profile ci -p test-support -E 'binary(upstream_delta_token_parity)'
 
       - name: Run interop tests
         run: |

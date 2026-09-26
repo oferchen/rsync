@@ -27,19 +27,21 @@ use tracing::instrument;
 
 use std::io::BufReader;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use engine::batch::BatchWriter;
 
 use super::super::DAEMON_SOCKET_TIMEOUT;
 use super::super::config::ClientConfig;
-use super::super::error::{ClientError, invalid_argument_error, socket_error};
+use super::super::error::{
+    ClientError, connection_timed_out_error, invalid_argument_error, socket_error,
+};
 #[cfg(feature = "quic")]
 use super::super::module_list::Transport;
 use super::super::module_list::{
-    DaemonConnectTimeouts, DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter,
-    QuicDialParams, RshDaemonSpawn, open_daemon_stream, resolve_connect_timeout,
-    spawn_rsh_daemon_stream,
+    ConnectDeadlineReader, DaemonConnectTimeouts, DaemonStreamGuard, DaemonStreamReader,
+    DaemonStreamWriter, QuicDialParams, RshDaemonSpawn, open_daemon_stream,
+    resolve_connect_timeout, spawn_rsh_daemon_stream,
 };
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
@@ -64,6 +66,38 @@ fn is_daemon_url(operand: &str) -> bool {
         return true;
     }
     false
+}
+
+/// Parses the transfer's daemon operand, in either the `rsync://` URL or the
+/// `host::module` spelling.
+///
+/// Shared by the socket and the remote-shell daemon paths: upstream's
+/// `check_for_hostspec()` sets `rsync_port` for both spellings, and whether a
+/// remote shell is configured only decides how the connection is made
+/// (main.c `daemon_connection = shell_cmd ? 1 : -1`).
+fn parse_daemon_operand(config: &ClientConfig) -> Result<DaemonTransferRequest, ClientError> {
+    let daemon_operand = config
+        .transfer_args()
+        .iter()
+        .find(|arg| {
+            let s = arg.to_string_lossy();
+            is_daemon_url(&s) || s.contains("::")
+        })
+        .ok_or_else(|| invalid_argument_error("no daemon URL or host::module operand found", 1))?;
+
+    let daemon_operand_str = daemon_operand.to_string_lossy();
+    let default_port = DaemonTransferRequest::resolve_default_port(config.daemon_port());
+    if daemon_operand_str.starts_with("rsync://") || daemon_operand_str.starts_with("RSYNC://") {
+        return DaemonTransferRequest::parse_rsync_url(daemon_operand, default_port);
+    }
+    // A `quic://` operand is dispatched to the QUIC parser under the feature;
+    // without it `is_daemon_url` never matches `quic://`, so this branch only
+    // sees `host::module` targets.
+    #[cfg(feature = "quic")]
+    if daemon_operand_str.starts_with("quic://") || daemon_operand_str.starts_with("QUIC://") {
+        return DaemonTransferRequest::parse_quic_url(daemon_operand, default_port);
+    }
+    DaemonTransferRequest::parse_double_colon(daemon_operand, default_port)
 }
 
 /// Executes a transfer over daemon protocol (rsync://).
@@ -112,35 +146,8 @@ pub fn run_daemon_transfer(
         }
     };
 
-    let daemon_operand = config
-        .transfer_args()
-        .iter()
-        .find(|arg| {
-            let s = arg.to_string_lossy();
-            is_daemon_url(&s) || s.contains("::")
-        })
-        .ok_or_else(|| invalid_argument_error("no daemon URL or host::module operand found", 1))?;
-
-    let daemon_operand_str = daemon_operand.to_string_lossy();
-    let default_port = DaemonTransferRequest::resolve_default_port(config.daemon_port());
     #[cfg_attr(not(feature = "quic"), allow(unused_mut))]
-    let mut request = if daemon_operand_str.starts_with("rsync://")
-        || daemon_operand_str.starts_with("RSYNC://")
-    {
-        DaemonTransferRequest::parse_rsync_url(daemon_operand, default_port)?
-    } else {
-        // A `quic://` operand is dispatched to the QUIC parser under the
-        // feature; without it `is_daemon_url` never matches `quic://`, so this
-        // branch only sees `host::module` targets.
-        #[cfg(feature = "quic")]
-        if daemon_operand_str.starts_with("quic://") || daemon_operand_str.starts_with("QUIC://") {
-            DaemonTransferRequest::parse_quic_url(daemon_operand, default_port)?
-        } else {
-            DaemonTransferRequest::parse_double_colon(daemon_operand, default_port)?
-        }
-        #[cfg(not(feature = "quic"))]
-        DaemonTransferRequest::parse_double_colon(daemon_operand, default_port)?
-    };
+    let mut request = parse_daemon_operand(config)?;
 
     // The `--quic` modifier upgrades an ordinary `rsync://` / `host::` target to
     // QUIC; a `quic://` target already carries the transport, so this is
@@ -365,25 +372,24 @@ pub fn run_daemon_over_remote_shell(
         }
     };
 
-    let daemon_operand = config
-        .transfer_args()
-        .iter()
-        .find(|arg| arg.to_string_lossy().contains("::"))
-        .ok_or_else(|| invalid_argument_error("no host::module operand found", 1))?;
     // upstream: main.c:1650 - a daemon-over-remote-shell connection carries the
     // port to the child as RSYNC_PORT rather than dialling it, but the value is
-    // the same `rsync_port` the socket path uses. The operand is passed as an
-    // `OsStr` so a non-UTF-8 path byte survives to the wire.
-    let request = DaemonTransferRequest::parse_double_colon(
-        daemon_operand,
-        DaemonTransferRequest::resolve_default_port(config.daemon_port()),
-    )?;
+    // the same `rsync_port` the socket path uses.
+    let request = parse_daemon_operand(config)?;
 
     // upstream: main.c:616-626 - when daemon_connection > 0, the remote
     // command is `rsync_path --server --daemon .` with no server_options().
     let shell_args = config
         .remote_shell()
         .ok_or_else(|| invalid_argument_error("daemon-over-remote-shell requires -e/--rsh", 1))?;
+
+    // upstream: main.c:1655-1661 - `--contimeout` bounds spawning the helper,
+    // its own connect and the daemon greeting as one phase, the way the socket
+    // path bounds connect().
+    let connect_deadline = config
+        .connect_timeout()
+        .as_seconds()
+        .map(|secs| Instant::now() + Duration::from_secs(secs.get()));
 
     // Shared with the module-listing path so `-e PROG host::` behaves
     // identically whether listing modules or transferring files.
@@ -410,7 +416,7 @@ pub fn run_daemon_over_remote_shell(
     let (reader_half, mut writer_half, guard) = stream
         .split()
         .map_err(|e| socket_error("split remote shell stream for", "handshake", e))?;
-    let mut buf_reader = BufReader::new(reader_half);
+    let mut buf_reader = BufReader::new(ConnectDeadlineReader::new(reader_half, connect_deadline));
 
     let output_motd = !config.no_motd();
     let protocol = perform_daemon_handshake(
@@ -422,7 +428,16 @@ pub fn run_daemon_over_remote_shell(
         config.early_input(),
         config.protocol_version(),
         config.password_override(),
-    )?;
+    )
+    .map_err(|error| {
+        // upstream: io.c:169-173 - the deadline outranks whatever the
+        // interrupted read would have reported.
+        if buf_reader.get_ref().expired() {
+            connection_timed_out_error()
+        } else {
+            error
+        }
+    })?;
 
     let daemon_is_sender = matches!(role, RemoteRole::Receiver);
     send_daemon_arguments(
@@ -436,7 +451,9 @@ pub fn run_daemon_over_remote_shell(
     let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
 
     let buffered = buf_reader.buffer().to_vec();
-    let mut reader_half = buf_reader.into_inner();
+    // upstream: main.c:1670 - `set_client_connect_timeout(0)` once the
+    // in-band exchange is done; the transfer itself is not bounded by it.
+    let mut reader_half = buf_reader.into_inner().into_inner();
 
     // upstream: main.c:1567 - record the requested daemon source (module/path)
     // as an implied include for the receiver-side flist validation

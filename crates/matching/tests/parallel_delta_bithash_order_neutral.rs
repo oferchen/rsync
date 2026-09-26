@@ -28,17 +28,13 @@
 //!   (`crates/matching/src/index/builder.rs`), from the full received signature -
 //!   before, and independent of, any stripe count.
 //! - It is stored as a plain `BitHash` field on the index with *no* interior
-//!   mutability, in deliberate contrast to the `consumed` prune bitset, which is
-//!   a `Vec<AtomicU64>` precisely so it *can* be flipped through a shared `&`.
-//!   `BitHash::insert`/`clear` take `&mut self`; `BitHash::contains` takes
-//!   `&self`.
+//!   mutability. `BitHash::insert`/`clear` take `&mut self`;
+//!   `BitHash::contains` takes `&self`.
 //! - The parallel path (`generate_chunked_counted` -> `scan_ranges_and_merge`)
 //!   hands every rayon worker a shared `&DeltaSignatureIndex`. A worker therefore
 //!   *cannot* insert into or clear the BitHash - the shared borrow makes the
 //!   `&mut self` mutators unreachable, so the type system forbids a stripe from
-//!   making the prefilter stripe-dependent. The only shared mutation the scan
-//!   performs is on `consumed`, and the parallel path disables that per stripe
-//!   (`prune_matched = false`) and resets it once up front.
+//!   making the prefilter stripe-dependent.
 //!
 //! So striping changes only *which* worker probes *which* offset and in *what*
 //! order - never the admit/reject verdict for a given rolling sum. This suite
@@ -249,9 +245,8 @@ fn assert_bithash_order_neutral(basis: &[u8], source: &[u8], index: &DeltaSignat
         .expect("sequential");
     let seq_canon = canonical(&sequential, block_len);
 
-    // The sequential scan is the pruned production reference; the BitHash's
-    // decision function must be unchanged by it (the scan mutates only the
-    // `consumed` bitset, never the filter).
+    // The sequential scan is the production reference; the BitHash's
+    // decision function must be unchanged by it.
     assert_eq!(
         admit_fingerprint(index),
         fingerprint_before,

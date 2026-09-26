@@ -969,10 +969,10 @@ fn apply_value_flags<Err: Write>(
         }
     }
 
-    // upstream: options.c:2067-2076 - the server runs the same `parse_arguments`
+    // upstream: options.c:2067-2086 - the server runs the same `parse_arguments`
     // max-alloc block as the client, so a peer-forwarded `--max-alloc` is parsed
-    // and applied to the local allocator, and a forwarded zero is refused there
-    // instead of disabling the ceiling (CVE-2026-53794).
+    // and applied to the local allocator, and a forwarded zero resolves to this
+    // side's own ceiling instead of disabling it.
     if let Some(alloc_str) = &long_flags.max_alloc {
         match super::super::execution::parse_max_alloc_argument(std::ffi::OsStr::new(alloc_str)) {
             Ok(limit) => {

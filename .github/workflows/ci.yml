@@ -1230,11 +1230,14 @@ jobs:
   # configuration: it is what un-skips daemon-max-alloc-zero, so the ledger
   # measured with it differs from one measured without it.
   #
-  # A full run without --expect-result fails on any FAIL outcome, which is
-  # currently equivalent to the pipe gate above (its manifest is 260 pass /
-  # 85 skip: no accepted divergences to re-expect). Not yet a required status
-  # check - registering a context is a repo-admin action - but it fails loud
-  # on every PR either way.
+  # A bare full run fails on any FAIL outcome, and runtests.py then skips the
+  # skip-set comparison altogether (3.5.0 runtests.py:1008-1009). The pipe
+  # gate's manifest records accepted divergences as `fail` rows (3.5.1
+  # behaviour the 3.5.0 corpus still asserts against), so the driver is handed
+  # that same manifest as EXPECT_FAILURES: the run passes only when its FAIL
+  # set is exactly those rows AND its skip set is exactly the ledger. Not yet
+  # a required status check - registering a context is a repo-admin action -
+  # but it fails loud on every PR either way.
   #
   # artifact_suffix disambiguates from `upstream-testsuite`, which uploads
   # `upstream-testsuite-logs-pipe` in the same run.
@@ -1247,6 +1250,7 @@ jobs:
       upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
       variant: 'nonroot'
       expect_skipped_nonroot: tools/ci/upstream-3.5.0-skiplist.nonroot.txt
+      expect_failures_nonroot: tools/ci/upstream-3.5.0-expect.nonroot.txt
       artifact_suffix: '-skip-oracle'
 
   # ===========================================================================

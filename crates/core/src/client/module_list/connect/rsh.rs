@@ -14,11 +14,12 @@
 //! then speaks the daemon protocol over the spawned process's stdin/stdout.
 
 use std::ffi::{OsStr, OsString};
+use std::io::{self, Read};
 use std::net::IpAddr;
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use super::DaemonStream;
+use super::{DaemonStream, DaemonStreamReader};
 use crate::client::AddressMode;
 use crate::client::IPC_EXIT_CODE;
 use crate::client::error::{ClientError, invalid_argument_error};
@@ -161,6 +162,86 @@ fn build_rsh_command_argv(spec: &RshDaemonSpawn<'_>) -> (OsString, Vec<OsString>
     args.push(OsString::from("."));
 
     (ssh_program.to_os_string(), args)
+}
+
+/// Read half of a daemon reached through a remote shell, bounded by
+/// `--contimeout` while the connection is being established.
+///
+/// Spawning the helper, its own connect, and the daemon greeting all happen
+/// before any transfer I/O, so upstream times that whole phase against one
+/// wall-clock deadline instead of leaving a helper that never answers to
+/// hang the client. Each read first waits for the descriptor to become
+/// readable within the time left; once the deadline passes the read fails and
+/// [`Self::expired`] reports it, so the caller exits with `RERR_CONTIMEOUT`.
+///
+/// The wait needs `poll(2)`, so the deadline is enforced on Unix only; on other
+/// platforms reads block as before.
+///
+/// upstream: main.c:1655-1670 arms `set_client_connect_timeout()` around
+/// `do_cmd()` + `start_inband_exchange()`; io.c:169-173
+/// `handshake_poll_timeout_ms()` exits once it passes.
+pub(crate) struct ConnectDeadlineReader {
+    inner: DaemonStreamReader,
+    deadline: Option<Instant>,
+    expired: bool,
+}
+
+impl ConnectDeadlineReader {
+    /// Wraps `inner`; `deadline` of `None` leaves reads unbounded.
+    pub(crate) const fn new(inner: DaemonStreamReader, deadline: Option<Instant>) -> Self {
+        Self {
+            inner,
+            deadline,
+            expired: false,
+        }
+    }
+
+    /// Reports whether a read failed because the deadline passed.
+    pub(crate) const fn expired(&self) -> bool {
+        self.expired
+    }
+
+    /// Returns the unbounded reader once the connection is established.
+    pub(crate) fn into_inner(self) -> DaemonStreamReader {
+        self.inner
+    }
+
+    #[cfg(unix)]
+    fn wait_until(&mut self, deadline: Instant) -> io::Result<()> {
+        let Some(fd) = self.inner.readiness_fd() else {
+            return Ok(());
+        };
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                self.expired = true;
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "connection timed out",
+                ));
+            }
+            match fast_io::readiness::wait_readable(fd, remaining) {
+                Ok(true) => return Ok(()),
+                Ok(false) => {}
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn wait_until(&mut self, _deadline: Instant) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Read for ConnectDeadlineReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if let Some(deadline) = self.deadline {
+            self.wait_until(deadline)?;
+        }
+        self.inner.read(buf)
+    }
 }
 
 /// Spawns the remote shell and wraps its stdio as a [`DaemonStream`].

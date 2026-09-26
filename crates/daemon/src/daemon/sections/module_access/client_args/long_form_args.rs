@@ -405,9 +405,8 @@ fn apply_long_form_args(
                 // rule in `protocol::max_alloc`.
                 //
                 // Without this arm the option fell off the end of the chain and
-                // was SILENTLY IGNORED, which is exactly the shape 3.5.0's zero
-                // refusal exists to close: an older client that predates the
-                // check still forwards `--max-alloc=0` on the wire.
+                // was SILENTLY IGNORED, so a forwarded `--max-alloc=0` would
+                // never be resolved to this side's own ceiling.
                 } else if let Some(val) = arg.strip_prefix("--max-alloc=") {
                     match parse_max_alloc_limit(val) {
                         // upstream: util2.c:75 - the rewritten `max_alloc`
@@ -700,9 +699,8 @@ fn parse_transfer_size_limit(opt_name: &str, value: &str) -> Result<u64, String>
 /// parser reads raw wire strings rather than an `OsStr` argv.
 fn parse_max_alloc_limit(value: &str) -> Result<usize, String> {
     // upstream: options.c:1178-1181 - the digit scan leaves the cursor on the
-    // terminator and `strtod("")` gives 0, so an empty value is exactly `=0`.
-    // For `--max-alloc` that resolves to the zero refusal rather than a parse
-    // error, which is what upstream reports for a forwarded `--max-alloc=`.
+    // terminator and `strtod("")` gives 0, so an empty value is exactly `=0`
+    // and resolves to the same ceiling rather than being a parse error.
     let text = if value.is_empty() { "0" } else { value };
 
     // upstream: options.c:2073 passes def_suf 'B'.

@@ -486,6 +486,16 @@ pub(in crate::client) enum ProgramReader {
 }
 
 #[cfg(unix)]
+impl std::os::fd::AsFd for ProgramReader {
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        match self {
+            Self::Socket(s) => s.as_fd(),
+            Self::Pipe(p) => p.as_fd(),
+        }
+    }
+}
+
+#[cfg(unix)]
 impl Read for ProgramReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {

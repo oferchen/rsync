@@ -1,34 +1,42 @@
-// Inetd/connect-program stdin detection for standalone daemon mode.
+// Inetd stdin detection for standalone daemon mode.
 //
-// upstream: clientserver.c:1546-1560 - `daemon_main()` checks
-// `is_a_socket(STDIN_FILENO)` before entering the TCP accept loop. When stdin
-// is a socket (inetd invocation or `RSYNC_CONNECT_PROG` pipe), the daemon
+// upstream: clientserver.c:1746-1757 - `daemon_main()` checks
+// `is_inetd_socket(STDIN_FILENO)` before entering the TCP accept loop. When
+// stdin is a connected IP stream (inetd invocation, or `RSYNC_CONNECT_PROG`,
+// whose `sock_exec()` hands the program a loopback TCP pair), the daemon
 // serves a single session over stdin/stdout instead of binding a TCP listener.
-//
-// upstream: socket.c:508-526 - `is_a_socket(fd)` calls
-// `getsockopt(fd, SOL_SOCKET, SO_TYPE, ...)` and returns 1 on success.
 
-/// Checks whether stdin is a socket (inetd/connect-program invocation).
+/// Checks whether stdin is an inetd connection.
 ///
-/// Returns `true` when the process was spawned by inetd, xinetd, systemd
-/// socket activation, or `RSYNC_CONNECT_PROG` with a socketpair - all of
-/// which set stdin to an `AF_UNIX` or `AF_INET` socket. The check uses
-/// `getsockopt(SO_TYPE)` via `socket2::SockRef`, matching upstream rsync's
-/// `is_a_socket()` in `socket.c:508`.
+/// True only for a `SOCK_STREAM` socket whose peer is `AF_INET` or
+/// `AF_INET6`. A launcher that gives the process a local socket for its own
+/// I/O - an `AF_UNIX` socketpair, as an ADB shell without a PTY does - must
+/// not select inetd mode: that daemon is meant to listen, and serving the
+/// launcher's socket instead leaves the port unbound and logs the session as
+/// `connect from UNKNOWN`. `socket2::SockAddr::as_socket()` yields an address
+/// only for the two IP families, which is exactly upstream's family test.
 ///
 /// On non-Unix platforms this always returns `false` since inetd-style
 /// invocation does not apply.
 ///
-/// upstream: socket.c:508-526 - `is_a_socket(fd)`.
+/// upstream: clientserver.c:1725-1744 - `is_inetd_socket()`.
 #[cfg(unix)]
 fn is_stdin_socket() -> bool {
-    // socket2::SockRef::from() on Unix takes &impl AsFd. std::io::Stdin
-    // implements AsFd, so this is entirely safe (no unsafe block needed).
-    // If the fd is not a socket, SockRef::r#type() returns Err because
-    // getsockopt(SO_TYPE) fails with ENOTSOCK.
-    let stdin = io::stdin();
-    let sock = socket2::SockRef::from(&stdin);
-    sock.r#type().is_ok()
+    is_inetd_socket(&io::stdin())
+}
+
+/// The descriptor test behind [`is_stdin_socket`], for any descriptor.
+#[cfg(unix)]
+fn is_inetd_socket(fd: &impl std::os::fd::AsFd) -> bool {
+    // socket2::SockRef::from() on Unix takes &impl AsFd, so this is entirely
+    // safe (no unsafe block needed). A non-socket fails both
+    // getsockopt(SO_TYPE) and getpeername with ENOTSOCK.
+    let sock = socket2::SockRef::from(fd);
+    sock.r#type()
+        .is_ok_and(|kind| kind == socket2::Type::STREAM)
+        && sock
+            .peer_addr()
+            .is_ok_and(|peer| peer.as_socket().is_some())
 }
 
 #[cfg(not(unix))]
@@ -178,27 +186,46 @@ mod inetd_tests {
         assert!(!is_stdin_socket());
     }
 
-    /// Verifies that `getsockopt(SO_TYPE)` succeeds on a real socket fd and
-    /// fails on a regular file fd - the two branches of `is_stdin_socket()`.
+    /// A connected TCP stream is what inetd hands the daemon, so it must
+    /// select the single-session path.
     #[cfg(unix)]
     #[test]
-    fn socket_detection_distinguishes_socket_from_file() {
-        use std::os::unix::net::UnixStream;
+    fn connected_tcp_stream_is_an_inetd_socket() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let client =
+            std::net::TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        let (server, _) = listener.accept().expect("accept");
+        assert!(is_inetd_socket(&server));
+        assert!(is_inetd_socket(&client));
+    }
 
-        // A Unix socketpair fd must be detected as a socket.
-        let (sock_a, _sock_b) = UnixStream::pair().expect("socketpair");
-        let sock_ref = socket2::SockRef::from(&sock_a);
-        assert!(
-            sock_ref.r#type().is_ok(),
-            "getsockopt(SO_TYPE) should succeed on a socket fd"
-        );
+    /// A local socket on stdin (an ADB shell without a PTY) is the launcher's
+    /// own I/O channel, not a client connection. Treating it as inetd leaves
+    /// the daemon's port unbound and logs `connect from UNKNOWN`.
+    /// upstream: clientserver.c:1740-1743 accepts only AF_INET/AF_INET6.
+    #[cfg(unix)]
+    #[test]
+    fn unix_socketpair_is_not_an_inetd_socket() {
+        let (ours, _peer) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        assert!(!is_inetd_socket(&ours));
+    }
 
-        // A regular file fd must not be detected as a socket.
+    /// An IP peer alone is not enough: inetd supplies a stream, and a
+    /// connected datagram socket must not be served as one.
+    /// upstream: clientserver.c:1735 `type != SOCK_STREAM`.
+    #[cfg(unix)]
+    #[test]
+    fn connected_udp_socket_is_not_an_inetd_socket() {
+        let a = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind a");
+        let b = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind b");
+        a.connect(b.local_addr().expect("addr")).expect("connect");
+        assert!(!is_inetd_socket(&a));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn regular_file_is_not_an_inetd_socket() {
         let devnull = std::fs::File::open("/dev/null").expect("/dev/null");
-        let devnull_ref = socket2::SockRef::from(&devnull);
-        assert!(
-            devnull_ref.r#type().is_err(),
-            "getsockopt(SO_TYPE) should fail on a regular file fd"
-        );
+        assert!(!is_inetd_socket(&devnull));
     }
 }

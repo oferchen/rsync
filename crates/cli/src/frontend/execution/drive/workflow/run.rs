@@ -24,6 +24,7 @@ use crate::frontend::{
 };
 use core::client::{BatchConfig, BatchMode, HumanReadableMode};
 use core::{message::Role, rsync_error};
+use engine::operand::{OperandKind, classify_operand};
 use logging::VerbosityConfig;
 use logging_sink::MessageSink;
 use std::fs::File;
@@ -801,6 +802,17 @@ where
         return code;
     }
 
+    let has_daemon_operand = transfer_operands
+        .iter()
+        .any(|op| classify_operand(op) == OperandKind::Daemon);
+    if let Some(exit_code) = validation::validate_contimeout_needs_daemon(
+        connect_timeout_setting.as_seconds().is_some(),
+        has_daemon_operand,
+        stderr,
+    ) {
+        return exit_code;
+    }
+
     // upstream: batch.c:269-298 - the replay script reconstructs the original
     // command's pass-through options (transfer-affecting flags like -a/-z/
     // --numeric-ids) from raw_argv, eliding the filename operands. Capture the
@@ -994,6 +1006,9 @@ where
         rayon_threads: rayon_thread_count,
         tokio_threads: tokio_thread_count,
         max_alloc: max_alloc_limit,
+        max_alloc_arg: max_alloc
+            .as_ref()
+            .map(|arg| arg.to_string_lossy().into_owned()),
         backup,
         backup_dir: backup_dir.map(PathBuf::from),
         backup_suffix,

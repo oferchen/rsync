@@ -6,11 +6,19 @@ using techniques from zsync 0.6.2's `librcksum`. All optimizations here are
 the protocol-32 negotiation, the signature payload format, or the
 file-list / NDX framing.
 
+**Status.** Three of the four techniques shipped and are wire-neutral:
+the bithash prefilter, the seq-match lookahead and the compact key. The
+fourth, matched-block hash removal ("prune"), shipped and was later
+**removed**: it was not wire-neutral. Retiring a basis block after its
+first `Copy` sent every later repeat of that content as literal data,
+where upstream sends a copy token, which changed the token stream, the
+`--stats` Literal/Matched split and the bytes on the wire. See
+`docs/design/zsync-prune.md`.
+
 ## Goals and non-goals
 
-- Reduce CPU on the hot path: skip rolling-hash work that cannot match,
-  skip strong-checksum work on already-matched blocks, and skip table
-  probes on confirmed-miss positions.
+- Reduce CPU on the hot path: skip rolling-hash work that cannot match
+  and skip table probes on confirmed-miss positions.
 - Stay byte-identical on the wire against upstream rsync 3.0.9, 3.1.3,
   3.4.1 in both directions.
 - Keep the SIMD parity invariant for the rolling Adler hash
@@ -86,7 +94,7 @@ wire-affecting risk-wise even if not bytes-wise.
 |---------------|------------------------------------------|------|---------------------------------------------------------------------------------------------|
 | Bithash       | `crates/match/src/index/mod.rs`          | 165  | new `BitHash` field; probe gates on `probably_present(rsum)` before `lookup.get`            |
 | Seq-match     | `crates/match/src/generator.rs`          | 177  | after a confirmed match, try block `index+1` directly via the existing `want_i` hint surface|
-| Prune         | `crates/match/src/generator.rs`          | 214  | mark matched block_index in a bitmap; probe skips matched bits unless duplicate exists      |
+| Prune (removed) | `crates/match/src/generator.rs`        | 214  | was: mark matched block_index in a bitmap and skip it on later probes; removed, not wire-neutral |
 | Compact key   | `crates/match/src/index/mod.rs`          | 44   | swap `FxHashMap<(u16,u16), Vec<usize>>` for a packed `(rsum_low, block_idx)` layout         |
 
 ## zsync source mapping
@@ -124,6 +132,10 @@ zsync librcksum (gianm/zsync mirror, line-equivalent to 0.6.2):
   `hash_entry` struct sharing a chain; removing one leaves siblings.
 - The bithash bit is NOT cleared on removal (no reverse mapping); the
   chain lookup is the authoritative gate.
+- oc does not port this. zsync reconstructs each target block once, so a
+  written block is never wanted again; an rsync sender must answer every
+  source window that carries a basis block's content, however often it
+  repeats. Removal therefore changes rsync's token stream (see Status).
 
 ### Compact key (`rsum_a_mask`)
 
@@ -145,12 +157,14 @@ Wire-compat constrains every translation:
 2. **Strong-checksum algorithm** is determined by capability
    negotiation; the `ChecksumStrategySelector` governs it. Never
    change the verification step.
-3. **Duplicate-block correctness:** when pruning, evict by
-   `block_index` (the matched-blocks bitmap), not by the
-   `(rsum, strong)` tuple. Two blocks with identical content occupy
-   distinct `block_index` slots; pruning one leaves the other.
-4. **INC_RECURSE segments:** state (matched-bitmap, bithash,
-   `next_match` hint) lives inside `DeltaSignatureIndex`. Every
+3. **No block retirement, upstream chain order:** every basis block
+   stays matchable for the whole scan, and equal rolling sums are walked
+   highest block index first, as upstream's head-inserted chain does
+   (`match.c:98-110`). Both decide which `Copy` index goes on the wire.
+   The only upstream retirement is the `--inplace` offset rule
+   (`match.c:232-240`), owned by `with_updating_basis_file`.
+4. **INC_RECURSE segments:** state (bithash, `next_match` hint) lives
+   inside `DeltaSignatureIndex`. Every
    per-segment `MatchIndex::build` rebuilds them from scratch, which
    is the existing pattern (`builder.rs:71-98`).
 5. **Append/inplace:** the existing append path skips signature blocks
@@ -196,7 +210,10 @@ upstream:
 
 The design space is therefore fully open - no upstream constraint
 blocks any of the four. The constraint is purely "do not change wire
-bytes," which all four techniques honour by construction.
+bytes." The bithash, seq-match and compact key honour it by construction.
+Matched-block removal does not: an upstream sender keeps matching a
+block after its first copy, so removing it turns later repeats into
+literals. It was removed for that reason.
 
 ## Per-technique PR plan
 

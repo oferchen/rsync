@@ -163,6 +163,7 @@ detail.
 - Backup error naming, directory crtimes, macOS set-group-ID, the sender scan anchor, trailing `/.` handling, cleared `dir_flist` slots and upstream error wording (#7635, #7641, #7642, #7646, #7647, #7652, #7654, #7655, #7656, #7658)
 
 **Interop**
+- A basis block matches every repeat of its content, as upstream does: repeated data (zero runs in sparse or VM images) went out as literals where upstream sends copy tokens, changing the wire and the `--stats` Literal/Matched split
 - Upstream clients pulling with `-H` under INC_RECURSE no longer abort on hard links that span directories (#7982)
 - `--stats` file list times reach upstream clients (#7986)
 - Honour `-B` / `--block-size` on every wire transport (#7301)

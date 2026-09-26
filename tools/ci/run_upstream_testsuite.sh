@@ -43,6 +43,12 @@
 #                             # accepted and silently never checked.
 #   EMIT_EXPECT_SKIPPED=<file> # write an EXPECT_SKIPPED skip list from this
 #                             # run, so the ledger is generated, never typed.
+#   EXPECT_FAILURES=<file>    # with EXPECT_SKIPPED only: the leg's committed
+#                             # expect-result manifest. Its `fail` rows are
+#                             # the accepted divergences, so a full run whose
+#                             # FAIL set is EXACTLY those rows, and whose skip
+#                             # set matches the skip spec, passes. See
+#                             # reconcile_accepted_failures().
 #   USE_TCP=yes               # --use-tcp: run the daemon tests against a real
 #                             # rsyncd bound to 127.0.0.1 instead of the secure
 #                             # stdio-pipe default, which opens no socket.
@@ -159,6 +165,22 @@ if [[ -n "$expect_skipped_spec" && "${DAEMON_TESTS_ONLY:-no}" == "yes" ]]; then
     echo "       --daemon-tests-only clears runtests.py's full_run (3.5.0" >&2
     echo "       runtests.py:836): the expected-skip list describes a full" >&2
     echo "       run, so on a subset the spec would never be checked." >&2
+    exit 1
+fi
+# Accepted-divergence manifest for a skip-oracle leg. runtests.py stops
+# comparing the skip set as soon as any test fails (3.5.0 runtests.py:1009
+# `if exit_code == 0`), so on a corpus with even one accepted divergence the
+# bare full run both fails and leaves the skip oracle dark. The committed
+# expect-result manifest already names those divergences as `fail` rows;
+# reconciling against it keeps both checks live. Without EXPECT_SKIPPED there
+# is no full-run oracle to rescue, and a leg with EXPECT_RESULT is already
+# judged against the manifest, so EXPECT_FAILURES alone is refused.
+expect_failures_file="$(absolutize_under_workspace "${EXPECT_FAILURES:-}")"
+if [[ -n "$expect_failures_file" && -z "$expect_skipped_spec" ]]; then
+    echo "ERROR: EXPECT_FAILURES requires EXPECT_SKIPPED." >&2
+    echo "       It reconciles a FULL run's FAIL set so the skip oracle can" >&2
+    echo "       still fire; a leg with EXPECT_RESULT is already judged" >&2
+    echo "       against its manifest row by row." >&2
     exit 1
 fi
 oc_rsync_bin="$(absolutize_under_workspace \
@@ -1367,10 +1389,102 @@ run_python_suite_mode() {
     chmod -R u+rwX "$scratch_home" 2>/dev/null || true
     rm -rf "$scratch_home" 2>/dev/null || true
 
+    rc=$(reconcile_accepted_failures "$output_log" "$rc")
     emit_git_ref_step_summary "$output_log" "$rc"
     emit_expect_result_manifest "$output_log"
     emit_expect_skipped_manifest "$output_log"
     return "$rc"
+}
+
+# Judge a skip-oracle run against the accepted divergences in EXPECT_FAILURES.
+#
+# Prints the leg's exit status on stdout; the reasoning goes to stderr. With no
+# EXPECT_FAILURES the runtests.py status passes through untouched.
+#
+# runtests.py exits with failed + valgrind errors, and only when that is 0 does
+# it compare the skip set (3.5.0 runtests.py:1008-1018). It still PRINTS both
+# skip sets on every full run with --expect-skipped (:998-1001), so the
+# comparison it skipped can be made here from its own output. The run passes
+# only when all three hold:
+#   * every failure is a test failure (rc equals the FAIL-line count, so no
+#     valgrind error or runner error is absorbed),
+#   * the FAIL set equals the manifest's `fail` rows EXACTLY - a new failure
+#     fails the leg, and so does a recorded one that now passes, as it would
+#     under --expect-result (:978-995),
+#   * the skip set equals the expected skip set, the check runtests.py dropped.
+reconcile_accepted_failures() {
+    local output_log=$1 rc=$2
+    if [[ -z "$expect_failures_file" ]]; then
+        echo "$rc"
+        return 0
+    fi
+    if [[ ! -f "$expect_failures_file" ]]; then
+        echo "ERROR: EXPECT_FAILURES does not exist: ${expect_failures_file}" >&2
+        echo 1
+        return 0
+    fi
+    python3 - "$output_log" "$rc" "$expect_failures_file" <<'PY'
+import sys
+
+log_path, rc, manifest_path = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+with open(log_path, encoding='utf-8', errors='replace') as fh:
+    lines = fh.read().splitlines()
+
+
+def err(msg):
+    print(msg, file=sys.stderr)
+
+
+got_fail = sorted({line.split()[1] for line in lines
+                   if line.startswith('FAIL ') and len(line.split()) >= 2})
+want_fail = set()
+with open(manifest_path, encoding='utf-8') as fh:
+    for raw in fh.read().splitlines():
+        fields = raw.split('#', 1)[0].split()
+        if len(fields) >= 2 and fields[1] == 'fail':
+            want_fail.add(fields[0])
+want_fail = sorted(want_fail)
+
+skip_want = skip_got = None
+for i, line in enumerate(lines):
+    if line.strip() == '----- skipped results:' and i + 2 < len(lines):
+        exp, got = lines[i + 1].strip(), lines[i + 2].strip()
+        if exp.startswith('expected:') and got.startswith('got:'):
+            skip_want = {s for s in exp[len('expected:'):].strip().split(',') if s}
+            skip_got = {s for s in got[len('got:'):].strip().split(',') if s}
+
+if rc == 0 and not want_fail:
+    print(0)
+    sys.exit(0)
+
+err(f'==> Accepted divergences: {manifest_path} ({len(want_fail)} fail rows)')
+problems = []
+if rc != len(got_fail):
+    problems.append(f'runtests.py exited {rc} with {len(got_fail)} FAIL lines;'
+                    ' the difference is not a test failure')
+for name in sorted(set(got_fail) - set(want_fail)):
+    problems.append(f'{name}: failed, manifest does not record it as fail')
+for name in sorted(set(want_fail) - set(got_fail)):
+    problems.append(f'{name}: manifest records fail, run did not fail it')
+if skip_want is None:
+    problems.append('no skipped-results block in the log; the skip oracle'
+                    ' cannot be evaluated')
+elif skip_want != skip_got:
+    for name in sorted(skip_got - skip_want):
+        problems.append(f'{name}: skipped, not in the expected skip set')
+    for name in sorted(skip_want - skip_got):
+        problems.append(f'{name}: expected to skip, did not')
+
+if problems:
+    err('----- accepted-divergence mismatches:')
+    for p in problems:
+        err(f'      {p}')
+    print(rc if rc else 1)
+else:
+    err(f'==> FAIL set is exactly the {len(want_fail)} accepted divergence(s)'
+        ' and the skip set matches; leg passes.')
+    print(0)
+PY
 }
 
 # Write an --expect-skipped skip list from a completed runtests.py run.

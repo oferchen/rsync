@@ -18,9 +18,8 @@
 //! - Target: basis with ~5% of bytes flipped at deterministic offsets.
 //!   We pick the in-place flip variant rather than insertion / shift to
 //!   keep block alignment stable so the match-index path itself is the
-//!   dominant cost - this is what zsync's matched-block bitmap and the
-//!   rolling probe were tuned against, and it matches the test corpora
-//!   already used by `prune_duplicate_heavy.rs` and
+//!   dominant cost - this is what the rolling probe was tuned against,
+//!   and it matches the test corpus already used by
 //!   `bithash_rejection.rs`. The flip count is `0.05 * size` bytes; with
 //!   ~6400 blocks per 100 MiB at the default block length, an even spread
 //!   leaves a substantial fraction of blocks fully clean and exercises

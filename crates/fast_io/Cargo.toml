@@ -34,7 +34,8 @@ memmap2 = "0.9"
 libc = { workspace = true }
 
 # rustix is used for statx syscall on Linux (always compiled, runtime detection)
-rustix = { workspace = true, features = ["fs"] }
+# and for the poll(2) readiness wait.
+rustix = { workspace = true, features = ["event", "fs"] }
 
 # Concurrent hash map for the DirSandbox secondary-operand side cache
 # (SEC-1.e); read-mostly lookups by canonical operand path.

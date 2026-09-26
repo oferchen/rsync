@@ -54,7 +54,9 @@ fn find_match_bytes_locates_full_block() {
     let digest = index.block(0).rolling();
     let window = vec![b'a'; index.block_length()];
     let found = index.find_match_bytes(digest, &window).expect("match");
-    assert_eq!(found, 0);
+    // Blocks 0 and 1 share content; upstream walks the chain highest index
+    // first (match.c:98-110), so block 1 wins.
+    assert_eq!(found, 1);
 }
 
 #[test]
@@ -87,7 +89,9 @@ fn find_match_window_handles_split_buffers() {
     let found = index
         .find_match_window(digest, &window, &mut scratch)
         .expect("match");
-    assert_eq!(found, 0);
+    // Constant data makes blocks 0 and 1 identical; upstream walks the chain
+    // highest index first (match.c:98-110), so block 1 wins.
+    assert_eq!(found, 1);
 }
 
 /// The counted probe must tally `hash_hits`/`false_alarms` for the `-vv`

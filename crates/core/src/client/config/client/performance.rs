@@ -186,6 +186,29 @@ impl ClientConfig {
         self.max_alloc
     }
 
+    /// Returns the `--max-alloc` value to forward to the peer, if any.
+    ///
+    /// Only a limit that differs from the default is forwarded, and it goes in
+    /// the operator's spelling rather than as the resolved byte count: `0`
+    /// must reach the peer as `0` so a peer with a smaller address space
+    /// resolves it to its own ceiling instead of refusing a number above it.
+    /// A limit set without a spelling (a library caller) forwards the number.
+    ///
+    /// upstream: options.c:3039-3040 - `if (max_alloc_arg && max_alloc !=
+    /// DEFAULT_MAX_ALLOC) args[ac++] = safe_arg("--max-alloc", max_alloc_arg);`
+    #[must_use]
+    pub fn max_alloc_forward_arg(&self) -> Option<String> {
+        let limit = self.max_alloc?;
+        if usize::try_from(limit).is_ok_and(|limit| limit == protocol::DEFAULT_MAX_ALLOC) {
+            return None;
+        }
+        Some(
+            self.max_alloc_arg
+                .clone()
+                .unwrap_or_else(|| limit.to_string()),
+        )
+    }
+
     /// Reports whether qsort should be used instead of merge sort for file lists.
     ///
     /// When enabled, uses qsort for file list sorting which may be faster
