@@ -202,6 +202,30 @@ fn receiver_working_directory(dest: &Path) -> PathBuf {
     }
 }
 
+/// Resolves an existing destination directory the way upstream's receiver
+/// `change_dir()` does before it transfers anything: through the ownership
+/// walk, so a component symlink owned by neither root nor the euid is refused
+/// (with upstream's actionable diagnostic) instead of being followed out of
+/// the tree. `--insecure-links` restores the plain `chdir`.
+///
+/// upstream: `rsync-3.5.1/util1.c:1363-1392` (absolute) and `:1456-1467`
+/// (relative, resolved as `curr_dir/dir`) - `open_no_attacker_symlinks_dirfd()`
+/// for a non-daemon receiver; `rsync-3.5.1/main.c:778-781` reports
+/// `change_dir#1` and exits `RERR_FILESELECT` when it fails.
+#[cfg(unix)]
+fn resolve_destination_like_change_dir(dest: &Path) -> Result<(), ClientError> {
+    if fast_io::confinement::session_optout_allowed() {
+        return Ok(());
+    }
+    let absolute = std::env::current_dir()
+        .map(|cwd| cwd.join(dest))
+        .unwrap_or_else(|_| dest.to_path_buf());
+    let trimmed: PathBuf = absolute.components().collect();
+    fast_io::operator_open_dir(&trimmed)
+        .map(drop)
+        .map_err(|error| super::error::destination_access_error(dest, error))
+}
+
 #[cfg_attr(
     feature = "tracing",
     instrument(skip(config, observer), name = "client_internal")
@@ -468,6 +492,10 @@ fn run_client_internal(
         && error.kind() == std::io::ErrorKind::PermissionDenied
     {
         return Err(super::error::destination_access_error(dest_to_check, error));
+    }
+    #[cfg(unix)]
+    if plan.destination().is_dir() {
+        resolve_destination_like_change_dir(plan.destination())?;
     }
 
     // upstream: main.c:1259 / main.c:1442 call `check_alt_basis_dirs()` once the

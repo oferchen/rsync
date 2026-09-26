@@ -452,6 +452,26 @@ fn open_start_dir(absolute: bool, flags: OFlags) -> io::Result<OwnedFd> {
     )
 }
 
+/// The actionable diagnostic upstream prints when the walk refuses a symlink
+/// owned by an untrusted user.
+///
+/// upstream: `rsync-3.5.1/syscall.c:499-504` - `rprintf(FERROR, ...)` in
+/// `ona_open()`, ahead of the `ELOOP`.
+pub const UNTRUSTED_SYMLINK_REFUSAL: &str = "refusing to follow a symlink owned by an untrusted \
+     user; use --insecure-links locally or \"insecure links = yes\" in a daemon module ONLY if \
+     every path component is trusted";
+
+/// Report a refused untrusted-owner symlink on the error channel, as
+/// upstream's `rprintf(FERROR, ...)` does before the walk fails with `ELOOP`.
+fn report_untrusted_symlink() {
+    logging::emit_info_coded(
+        logging::InfoFlag::Misc,
+        0,
+        logging::LogCode::Error,
+        UNTRUSTED_SYMLINK_REFUSAL.to_owned(),
+    );
+}
+
 /// Open an fd-directory entry that names a kernel object.
 ///
 /// The entry is reopened without `O_NOFOLLOW` so the kernel applies the
@@ -657,6 +677,7 @@ pub(crate) fn owner_walk_open_tracked(
             // layout and is followed. This arm is reached for the leaf too.
             if !symlink_owner_is_trusted(stat.uid()) && !is_namespace_pin(tracker.anchored(), &name)
             {
+                report_untrusted_symlink();
                 return Err(io::Error::from_raw_os_error(libc::ELOOP));
             }
             if hops == 0 {
@@ -2652,5 +2673,41 @@ mod pseudo_path_tests {
         let (reader, _writer) = std::io::pipe().expect("pipe");
         let error = operator_open_read(&fd_path(&reader)).expect_err("refused under a root");
         assert_eq!(error.raw_os_error(), Some(libc::ENOENT));
+    }
+}
+
+/// The refusal of an untrusted-owner symlink carries upstream's actionable
+/// diagnostic on the error channel.
+#[cfg(test)]
+mod untrusted_symlink_diagnostic_tests {
+    use super::{UNTRUSTED_SYMLINK_REFUSAL, operator_open_read};
+
+    /// upstream: `rsync-3.5.1/syscall.c:499-504`. Planting a symlink owned by
+    /// another uid needs root; as any other user the cell reports the skip.
+    #[test]
+    fn an_untrusted_symlink_refusal_reports_the_diagnostic() {
+        if !rustix::process::geteuid().is_root() {
+            eprintln!("skipped: planting a symlink owned by another uid needs root");
+            return;
+        }
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let target = temp.path().join("target");
+        std::fs::write(&target, b"x").expect("write");
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+        std::os::unix::fs::lchown(&link, Some(65534), Some(65534)).expect("lchown");
+        logging::drain_events();
+
+        let error = operator_open_read(&link).expect_err("an untrusted symlink is refused");
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+        let reported = logging::drain_events()
+            .into_iter()
+            .any(|event| match event {
+                logging::DiagnosticEvent::Info { code, message, .. } => {
+                    code == logging::LogCode::Error && message == UNTRUSTED_SYMLINK_REFUSAL
+                }
+                _ => false,
+            });
+        assert!(reported, "the refusal must carry the actionable diagnostic");
     }
 }
