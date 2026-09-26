@@ -664,7 +664,7 @@ fn finish_applies_default_secrets_for_auth_users() {
 }
 
 #[test]
-fn finish_fails_auth_users_without_secrets() {
+fn finish_accepts_auth_users_without_secrets() {
     let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     builder.set_path(PathBuf::from("/data"));
     builder
@@ -675,8 +675,13 @@ fn finish_fails_auth_users_without_secrets() {
         )
         .expect("auth users accepted");
     let defaults = GlobalModuleDefaults::default();
-    let result = builder.finish(&test_config_path(), None, None, None, None, &defaults);
-    assert!(result.is_err());
+    // upstream: authenticate.c:143-146 - every login fails with "no secrets
+    // file"; the module itself still loads.
+    let def = builder
+        .finish(&test_config_path(), None, None, None, None, &defaults)
+        .expect("a module without a secrets file still loads");
+    assert!(def.secrets_file.is_none());
+    assert_eq!(def.auth_users.len(), 1);
 }
 
 #[test]
