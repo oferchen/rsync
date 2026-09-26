@@ -23,6 +23,9 @@ use std::sync::OnceLock;
 #[derive(Debug)]
 pub struct DestinationRoot {
     path: PathBuf,
+    /// The daemon module that `path` lies beneath, when a daemon serves it.
+    #[cfg(unix)]
+    module_root: Option<PathBuf>,
     #[cfg(unix)]
     anchor: OnceLock<OwnedFd>,
 }
@@ -34,7 +37,29 @@ impl DestinationRoot {
         Self {
             path,
             #[cfg(unix)]
+            module_root: None,
+            #[cfg(unix)]
             anchor: OnceLock::new(),
+        }
+    }
+
+    /// Records `path`, a destination beneath the daemon module `module_root`.
+    ///
+    /// The operator named only the module; the remainder of `path` came from
+    /// the peer, so it is entered beneath the module rather than trusted.
+    /// upstream: util1.c change_dir() - a daemon enters the peer's relative
+    /// destination through secure_relative_dirfd() from the module root.
+    #[must_use]
+    pub fn served(path: PathBuf, module_root: PathBuf) -> Self {
+        #[cfg(unix)]
+        return Self {
+            module_root: Some(module_root),
+            ..Self::new(path)
+        };
+        #[cfg(not(unix))]
+        {
+            drop(module_root);
+            Self::new(path)
         }
     }
 
@@ -44,19 +69,44 @@ impl DestinationRoot {
         &self.path
     }
 
-    /// The root directory, opened through the ownership walk on first use.
+    /// The root directory, opened on first use through [`Self::open_dir`].
     ///
-    /// A symlink owned by uid 0 or our euid anywhere in the operator's path is
-    /// followed; one owned by anyone else is refused (`ELOOP`), which is
-    /// stricter than upstream's plain `chdir` for a non-daemon receiver. A
-    /// failed open is not cached, so it is reported again on the next call.
+    /// A failed open is not cached, so it is reported again on the next call.
     #[cfg(unix)]
     pub(crate) fn anchor(&self) -> std::io::Result<BorrowedFd<'_>> {
         if let Some(fd) = self.anchor.get() {
             return Ok(fd.as_fd());
         }
-        let opened = fast_io::operator_open_dir(&self.path)?;
+        let opened = self.open_dir(&self.path)?;
         Ok(self.anchor.get_or_init(|| opened).as_fd())
+    }
+
+    /// Opens `dir`, the root or a single-file root's parent, the way upstream
+    /// enters the destination.
+    ///
+    /// - Operator-named: the ownership walk, which follows a symlink owned by
+    ///   uid 0 or our euid and refuses any other (`ELOOP`). upstream: util1.c
+    ///   change_dir() open_no_attacker_symlinks_dirfd().
+    /// - Daemon-served: the module root is opened as the operator's, and the
+    ///   peer's remainder is walked beneath it on every platform the way
+    ///   upstream's `ds_descend()` walks it (syscall.c:3032): a relative
+    ///   in-tree symlink is followed, an absolute target or a climb above the
+    ///   module is refused (`ELOOP`).
+    #[cfg(unix)]
+    pub(crate) fn open_dir(&self, dir: &Path) -> std::io::Result<OwnedFd> {
+        let Some(module_root) = &self.module_root else {
+            return fast_io::operator_open_dir(dir);
+        };
+        let tail = dir
+            .strip_prefix(module_root)
+            .map_err(|_| std::io::Error::from_raw_os_error(libc::EXDEV))?;
+        fast_io::DirSandbox::open_dest_anchor_confined(
+            module_root,
+            tail,
+            fast_io::dir_sandbox::ConfinePolicy::operator_trusted(),
+        )?
+        .root_dirfd()
+        .try_clone_to_owned()
     }
 }
 
