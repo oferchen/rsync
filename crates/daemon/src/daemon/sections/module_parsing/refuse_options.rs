@@ -348,6 +348,15 @@ fn long_option_short_letter(long_name: &str) -> Option<char> {
         .map(|opt| opt.letter)
 }
 
+/// The short name of the `long_options[]` row a refusal names, as
+/// `create_refuse_error()` reports it (options.c:1427-1428).
+///
+/// `D`, `F` and `P` are rows of their own upstream with no long name, so no
+/// long option reports them.
+fn refused_short_letter(long_name: &str) -> Option<char> {
+    long_option_short_letter(long_name).filter(|letter| !matches!(letter, 'D' | 'F' | 'P'))
+}
+
 /// Checks whether any client argument is refused by the module's refuse list.
 ///
 /// Expands bundled short options (e.g. `-vlogDtprez.iLsfxCIvu`) into their
@@ -466,7 +475,96 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
             }
         }
     }
+    refused_implied_option(module, client_args)
+}
+
+/// Checks the refusals upstream derives from option COMBINATIONS once popt has
+/// accepted every option on its own.
+///
+/// Each named rule refuses a capability that other options reach without
+/// naming it: `--append` and `--write-devices` imply `--inplace`, `--inplace`
+/// implies `--partial`, `-P` is `--partial --progress`, and a bare `--delete`
+/// must pick a timing. The option reported is the refused one, not the one the
+/// client sent, as `create_refuse_error(refused_X)` names its row.
+///
+/// upstream: options.c:1729-1732 (`-P`), :2202-2205 (`no-iconv`), :2342-2353
+/// (delete timing), :2551-2567 (`append`/`write-devices`), :2586-2588 and
+/// :2608-2610 (`partial`).
+fn refused_implied_option(module: &ModuleDefinition, client_args: &[String]) -> Option<String> {
+    let has = |name: &str| client_args.iter().any(|arg| is_long_option(arg, name));
+    let refused = |name: &str| is_option_refused(module, name, None);
+
+    // upstream: options.c:1729-1732 - `-P` checks both rows before setting
+    // `do_progress` and `keep_partial`. A refused `partial` is reported by the
+    // per-letter scan already, since `P` maps to that row.
+    if refused("progress") && short_bundles(client_args).any(|letters| letters.contains('P')) {
+        return Some("--progress".to_owned());
+    }
+
+    // upstream: options.c:2202-2205 - refusing `no-iconv` demands `--iconv`.
+    if refused("no-iconv") && !client_args.iter().any(|arg| is_long_option(arg, "iconv")) {
+        return Some("--no-iconv".to_owned());
+    }
+
+    // upstream: options.c:2340-2353 - with no timing named, a bare `--delete`
+    // or `--delete-excluded` picks one, and refuses only when both are refused.
+    let timing_named = [
+        "del",
+        "delete-before",
+        "delete-during",
+        "delete-delay",
+        "delete-after",
+    ]
+    .iter()
+    .any(|name| has(name));
+    if !timing_named
+        && (has("delete") || has("delete-excluded"))
+        && refused("delete-before")
+        && refused("delete-during")
+    {
+        return Some("--delete-before".to_owned());
+    }
+
+    // upstream: options.c:2551-2567 - `--append` (either form) and
+    // `--write-devices` switch on `inplace`, so they fall under its refusal.
+    let append_or_devices = has("append") || has("append-verify") || has("write-devices");
+    if append_or_devices && refused("inplace") {
+        return Some("--inplace".to_owned());
+    }
+
+    // upstream: options.c:2586-2588 - "--inplace implies --partial for refusal
+    // purposes"; :2601-2610 - so does a `--partial-dir` that cleans to nothing.
+    if refused("partial") {
+        let inplace = append_or_devices || has("inplace");
+        // `clean_fname()` reduces a value made only of `.` and `/` components
+        // to "" or ".", both of which upstream then discards.
+        let empty_partial_dir = !inplace
+            && client_args.iter().any(|arg| {
+                arg.trim()
+                    .strip_prefix("--partial-dir=")
+                    .is_some_and(|dir| {
+                        dir.split('/')
+                            .all(|component| component.is_empty() || component == ".")
+                    })
+            });
+        if inplace || empty_partial_dir {
+            return Some("--partial".to_owned());
+        }
+    }
+
     None
+}
+
+/// Yields the letters of each short-option bundle, stopping at the `.` that
+/// starts the capability suffix (`-vlogDtpre.iLsfxCIvu`).
+fn short_bundles(client_args: &[String]) -> impl Iterator<Item = &str> {
+    client_args.iter().filter_map(|arg| {
+        let rest = arg.trim_start().strip_prefix('-')?;
+        if rest.starts_with('-') {
+            return None;
+        }
+        rest.split('.').next()
+    })
 }
 
 /// Reports whether a client argument turns on the delete machinery, so a

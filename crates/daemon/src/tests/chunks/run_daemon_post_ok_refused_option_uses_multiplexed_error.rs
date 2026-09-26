@@ -156,7 +156,7 @@ fn run_daemon_post_ok_refused_option_uses_multiplexed_error() {
         "error payload must name the refused option: {err_text:?}",
     );
     assert!(
-        err_text.starts_with("@ERROR: The server is configured to refuse"),
+        err_text == "rsync: The server is configured to refuse --compress (-z)\n",
         "error payload must mirror upstream's refuse-options message: {err_text:?}",
     );
 
