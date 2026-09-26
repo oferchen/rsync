@@ -145,6 +145,11 @@ pub struct LocalCopySummary {
     transferred_file_size: u64,
     bytes_copied: u64,
     matched_bytes: u64,
+    // Distinct 4 KiB logical blocks the receiver wrote, for the protocol-33
+    // `Number of 4 KiB logical blocks touched` line. upstream: rsync.h:1084
+    // `stats.touched_blocks_4k`, accumulated by fileio.c:218
+    // track_block_touches().
+    touched_blocks_4k: u64,
     // Cumulative delta-matcher diagnostics for the `-vv` `total:` line.
     // upstream: match.c:433-435 folds each file's per-file `matches`,
     // `hash_hits`, and `false_alarms` into `total_*` after `match_sums()`
@@ -366,6 +371,24 @@ impl LocalCopySummary {
         self.matched_bytes
     }
 
+    /// Returns the number of distinct 4 KiB logical blocks the receiver wrote.
+    ///
+    /// Rendered as `Number of 4 KiB logical blocks touched` when the negotiated
+    /// protocol is 33 or newer. upstream: main.c:446-448 output_summary().
+    #[must_use]
+    pub const fn touched_blocks_4k(&self) -> u64 {
+        self.touched_blocks_4k
+    }
+
+    /// Adds `blocks` to the touched-block total, saturating at `INT64_MAX` like
+    /// upstream's `int64` counter (fileio.c:236-237).
+    pub(in crate::local_copy) fn record_touched_blocks(&mut self, blocks: u64) {
+        self.touched_blocks_4k = self
+            .touched_blocks_4k
+            .saturating_add(blocks)
+            .min(i64::MAX as u64);
+    }
+
     /// Returns the number of basis blocks the delta matcher reused across the
     /// whole run - the `matches=` field of the `-vv` `total:` line.
     ///
@@ -552,6 +575,16 @@ impl LocalCopySummary {
     pub const fn with_file_list_times(mut self, generation_ms: u64, transfer_ms: u64) -> Self {
         self.file_list_generation = Duration::from_millis(generation_ms);
         self.file_list_transfer = Duration::from_millis(transfer_ms);
+        self
+    }
+
+    /// Sets the touched-block total reported by a remote transfer.
+    ///
+    /// On a pull the local receiver counted it; on a push it arrives from the
+    /// remote receiver in `MSG_BLOCK_STATS` (io.c:1721-1732).
+    #[must_use]
+    pub const fn with_touched_blocks_4k(mut self, blocks: u64) -> Self {
+        self.touched_blocks_4k = blocks;
         self
     }
 
@@ -778,6 +811,7 @@ impl LocalCopySummary {
             transferred_file_size: 0,
             bytes_copied: 0,
             matched_bytes: 0,
+            touched_blocks_4k: 0,
             delta_matches: 0,
             delta_hash_hits: 0,
             delta_false_alarms: 0,

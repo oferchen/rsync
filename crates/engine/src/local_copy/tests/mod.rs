@@ -970,6 +970,7 @@ include!("execute_skip.rs");
 include!("execute_ignore_existing.rs");
 include!("execute_existing.rs");
 include!("execute_delta.rs");
+include!("execute_touched_blocks.rs");
 include!("execute_whole_file.rs");
 include!("execute_symlinks.rs");
 include!("execute_symlink_edge_cases.rs");

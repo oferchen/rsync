@@ -30,7 +30,7 @@ use super::{
     run_module_list_with_password,
 };
 
-const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
+const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 33.0 sha512 sha256 sha1 md5 md4\n";
 
 const DEFAULT_PROXY_STATUS_LINE: &str = "HTTP/1.0 200 Connection established";
 const LOWERCASE_PROXY_STATUS_LINE: &str = "http/1.1 200 Connection Established";

@@ -90,10 +90,36 @@ mod integration {
         assert!(reader.header().unwrap().compat_flags.is_none());
     }
 
+    /// WHY: a protocol-33 batch is what rsync 3.5.1 records (compat.c:611);
+    /// this build speaks 33, so it must replay it rather than refuse it.
+    #[test]
+    fn read_header_accepts_protocol_33_batch() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("proto33.batch");
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            33,
+        );
+        let mut writer = BatchWriter::new(write_config).unwrap();
+        writer.write_header(BatchFlags::default()).unwrap();
+        writer.finalize().unwrap();
+
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            33,
+        );
+        let mut reader = BatchReader::new(read_config).unwrap();
+        reader.read_header().expect("protocol 33 batch is readable");
+        assert_eq!(reader.header().unwrap().protocol_version, 33);
+    }
+
     #[test]
     fn read_header_rejects_batch_from_newer_protocol() {
-        // A batch written by a future rsync (protocol 33) must be refused by a
-        // client that supports at most protocol 32, rather than silently
+        // A batch written by a future rsync (protocol 34) must be refused by a
+        // client that supports at most protocol 33, rather than silently
         // adopting an unsupported protocol and replaying it wrong.
         // upstream: compat.c:609-613 "protocol version in the batch file is too new".
         let temp_dir = TempDir::new().unwrap();
@@ -102,7 +128,7 @@ mod integration {
         let write_config = BatchConfig::new(
             BatchMode::Write,
             batch_path.to_string_lossy().to_string(),
-            33,
+            34,
         );
         let mut writer = BatchWriter::new(write_config).unwrap();
         writer.write_header(BatchFlags::default()).unwrap();

@@ -90,6 +90,9 @@ pub struct PipelinedReceiver {
     /// Count of files skipped due to permission-denied errors during disk commit.
     /// Used to accumulate `IOERR_GENERAL` for exit code 23.
     permission_error_count: u32,
+    /// Distinct 4 KiB logical blocks written across every committed file.
+    /// upstream: fileio.c:218-243 `stats.touched_blocks_4k`.
+    touched_blocks_4k: u64,
     /// Accumulated warning/error messages from checksum verification and
     /// permission failures. Collected here instead of using `eprintln!` to
     /// avoid deadlocking on the global stderr mutex in daemon handler threads.
@@ -253,6 +256,7 @@ impl PipelinedReceiver {
             redo_indices: Vec::new(),
             redo_enabled: true,
             permission_error_count: 0,
+            touched_blocks_4k: 0,
             warnings: Vec::new(),
             delayed_updates: Vec::new(),
             success_indices: Vec::new(),
@@ -490,6 +494,7 @@ impl PipelinedReceiver {
                     Self::emit_backup_notice(&result);
                     self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
+                    self.record_touched_blocks(result.touched_blocks_4k);
                     if let Some(err) = result.metadata_error {
                         self.warnings
                             .push((MessageCode::ErrorXfer, Self::metadata_failure(&err.1)));
@@ -542,6 +547,7 @@ impl PipelinedReceiver {
                     Self::emit_backup_notice(&result);
                     self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
+                    self.record_touched_blocks(result.touched_blocks_4k);
                     if let Some(err) = result.metadata_error {
                         self.warnings
                             .push((MessageCode::ErrorXfer, Self::metadata_failure(&err.1)));
@@ -565,6 +571,21 @@ impl PipelinedReceiver {
         }
 
         Ok((bytes, meta_errors))
+    }
+
+    /// Adds a committed file's touched blocks, saturating at `INT64_MAX` like
+    /// upstream's `int64` counter (fileio.c:236-237).
+    fn record_touched_blocks(&mut self, blocks: u64) {
+        self.touched_blocks_4k = self
+            .touched_blocks_4k
+            .saturating_add(blocks)
+            .min(i64::MAX as u64);
+    }
+
+    /// Returns the distinct 4 KiB logical blocks written by every commit
+    /// collected so far. upstream: fileio.c:218-243.
+    pub fn touched_blocks_4k(&self) -> u64 {
+        self.touched_blocks_4k
     }
 
     /// Returns the number of files skipped due to permission-denied errors.
@@ -933,6 +954,7 @@ mod tests {
         computed_bytes[0] = 0xBB;
         let result = CommitResult {
             bytes_written: 100,
+            touched_blocks_4k: 0,
             file_entry_index: 0,
             metadata_error: None,
             computed_checksum: Some(ComputedChecksum {
@@ -984,6 +1006,7 @@ mod tests {
         computed_bytes[0] = 0xCC;
         let result = CommitResult {
             bytes_written: 200,
+            touched_blocks_4k: 0,
             file_entry_index: 0,
             metadata_error: None,
             computed_checksum: Some(ComputedChecksum {
@@ -1025,6 +1048,7 @@ mod tests {
         // Same checksum - should succeed without redo.
         let result = CommitResult {
             bytes_written: 50,
+            touched_blocks_4k: 0,
             file_entry_index: 0,
             metadata_error: None,
             computed_checksum: Some(ComputedChecksum {
@@ -1077,6 +1101,7 @@ mod tests {
         // A matching checksum on a committed (post-rename) result confirms the file.
         let result = CommitResult {
             bytes_written: 64,
+            touched_blocks_4k: 0,
             file_entry_index: 0,
             metadata_error: None,
             computed_checksum: Some(ComputedChecksum {
@@ -1142,6 +1167,7 @@ mod tests {
         computed_bytes[0] = 0xBB;
         let result = CommitResult {
             bytes_written: 100,
+            touched_blocks_4k: 0,
             file_entry_index: 0,
             metadata_error: None,
             computed_checksum: Some(ComputedChecksum {
@@ -2101,6 +2127,7 @@ mod tests {
         computed_bytes[0] = 0xBB;
         let result = CommitResult {
             bytes_written: 100,
+            touched_blocks_4k: 0,
             file_entry_index: 0,
             metadata_error: None,
             computed_checksum: Some(ComputedChecksum {
@@ -2165,6 +2192,7 @@ mod tests {
         computed_bytes[0] = 0xBB;
         pr.verify_checksum(&CommitResult {
             bytes_written: 100,
+            touched_blocks_4k: 0,
             file_entry_index: 0,
             metadata_error: None,
             computed_checksum: Some(ComputedChecksum {
@@ -2317,6 +2345,7 @@ mod tests {
 
         let result = CommitResult {
             bytes_written: 42,
+            touched_blocks_4k: 0,
             file_entry_index: 0,
             metadata_error: None,
             computed_checksum: None,

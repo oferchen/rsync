@@ -38,7 +38,7 @@ fn target_description() -> String {
 ///     "{PROGRAM_NAME} v{} (revision #",
 ///     RUST_VERSION
 /// )));
-/// assert!(banner.contains("protocol version 32"));
+/// assert!(banner.contains("protocol version 33"));
 /// assert!(banner.contains("revision #"));
 /// assert!(banner.contains(&format!("Source: {}", SOURCE_URL)));
 /// ```

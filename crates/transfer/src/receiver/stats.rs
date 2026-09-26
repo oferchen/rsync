@@ -214,6 +214,17 @@ pub struct TransferStats {
     /// - `match.c:118` - `stats.matched_data += s2length`
     pub matched_data: u64,
 
+    /// Distinct 4 KiB logical blocks written across every received file.
+    ///
+    /// Counted unconditionally; a server receiver reports it to the client in
+    /// `MSG_BLOCK_STATS` when the negotiated protocol is 33 or newer.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `fileio.c:218-243` - `track_block_touches()` accumulates it
+    /// - `main.c:1112-1117` - `do_recv()` sends it after `NDX_DONE`
+    pub touched_blocks_4k: u64,
+
     /// Number of files that were retransmitted due to checksum verification failure.
     ///
     /// Mirrors upstream rsync's redo mechanism where files that fail whole-file

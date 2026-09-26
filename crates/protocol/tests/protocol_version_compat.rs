@@ -1181,7 +1181,7 @@ mod error_handling {
         for version in 33..=40 {
             let result = select_highest_mutual([TestVersion(version)]);
             assert!(result.is_ok(), "Protocol {version} should clamp to 32");
-            assert_eq!(result.unwrap().as_u8(), 32);
+            assert_eq!(result.unwrap().as_u8(), 33);
         }
     }
 
@@ -1209,8 +1209,8 @@ mod version_iteration {
     fn supported_versions_count() {
         assert_eq!(
             SUPPORTED_PROTOCOLS.len(),
-            5,
-            "Should support exactly 5 protocols (28-32)"
+            6,
+            "Should support exactly 6 protocols (28-33)"
         );
     }
 
@@ -1243,7 +1243,7 @@ mod version_iteration {
             ProtocolVersion::V31.next_newer(),
             Some(ProtocolVersion::V32)
         );
-        assert_eq!(ProtocolVersion::V32.next_newer(), None);
+        assert_eq!(ProtocolVersion::V33.next_newer(), None);
 
         assert_eq!(
             ProtocolVersion::V32.next_older(),
@@ -1272,18 +1272,18 @@ mod version_iteration {
         assert_eq!(ProtocolVersion::V31.offset_from_oldest(), 3);
         assert_eq!(ProtocolVersion::V32.offset_from_oldest(), 4);
 
-        assert_eq!(ProtocolVersion::V32.offset_from_newest(), 0);
-        assert_eq!(ProtocolVersion::V31.offset_from_newest(), 1);
-        assert_eq!(ProtocolVersion::V30.offset_from_newest(), 2);
-        assert_eq!(ProtocolVersion::V29.offset_from_newest(), 3);
-        assert_eq!(ProtocolVersion::V28.offset_from_newest(), 4);
+        assert_eq!(ProtocolVersion::V33.offset_from_newest(), 0);
+        assert_eq!(ProtocolVersion::V31.offset_from_newest(), 2);
+        assert_eq!(ProtocolVersion::V30.offset_from_newest(), 3);
+        assert_eq!(ProtocolVersion::V29.offset_from_newest(), 4);
+        assert_eq!(ProtocolVersion::V28.offset_from_newest(), 5);
     }
 
     #[test]
     fn supported_bitmap_correct() {
         let bitmap = ProtocolVersion::supported_protocol_bitmap();
 
-        for version in [28, 29, 30, 31, 32] {
+        for version in [28, 29, 30, 31, 32, 33] {
             let mask = 1u64 << version;
             assert!(
                 (bitmap & mask) != 0,
@@ -1291,7 +1291,7 @@ mod version_iteration {
             );
         }
 
-        for version in [0, 27, 33] {
+        for version in [0, 27, 34] {
             let mask = 1u64 << version;
             assert!(
                 (bitmap & mask) == 0,

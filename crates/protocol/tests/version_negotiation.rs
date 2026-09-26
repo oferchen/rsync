@@ -165,25 +165,25 @@ fn test_binary_negotiation_boundary_consistency() {
 /// Test that future version advertisements are clamped to the newest supported version.
 ///
 /// Upstream rsync clamps future protocol versions (within MAX_PROTOCOL_VERSION=40)
-/// down to the newest supported version (32) to maintain forward compatibility.
+/// down to the newest supported version (33) to maintain forward compatibility.
 #[test]
 fn test_future_version_clamping() {
-    // Future version 35 should clamp to 32
+    // Future version 35 should clamp to 33
     let result = select_highest_mutual([AdvertisedVersion(35)])
         .expect("future version must clamp to newest supported");
     assert_eq!(
         result,
-        ProtocolVersion::V32,
-        "version 35 must clamp to protocol 32"
+        ProtocolVersion::V33,
+        "version 35 must clamp to protocol 33"
     );
 
-    // Version at the maximum advertisement threshold (40) should clamp to 32
+    // Version at the maximum advertisement threshold (40) should clamp to 33
     let result = select_highest_mutual([AdvertisedVersion(40)])
         .expect("maximum advertisement version must clamp to newest supported");
     assert_eq!(
         result,
-        ProtocolVersion::V32,
-        "version 40 must clamp to protocol 32"
+        ProtocolVersion::V33,
+        "version 40 must clamp to protocol 33"
     );
 
     // Test clamping with mixed future and supported versions
@@ -195,8 +195,8 @@ fn test_future_version_clamping() {
     .expect("mixed future and supported versions must negotiate");
     assert_eq!(
         result,
-        ProtocolVersion::V32,
-        "mixed versions including 35 must clamp to 32"
+        ProtocolVersion::V33,
+        "mixed versions including 35 must clamp to 33"
     );
 
     // Versions above MAX_PROTOCOL_VERSION (40) are rejected, not clamped
@@ -396,14 +396,15 @@ fn test_protocol_version_ordering() {
     );
     assert_eq!(
         ProtocolVersion::NEWEST,
-        ProtocolVersion::V32,
-        "V32 must be the newest supported version"
+        ProtocolVersion::V33,
+        "V33 must be the newest supported version"
     );
 }
 
 /// Test that all protocol version constants are properly defined and consistent.
 #[test]
 fn test_protocol_version_constants_consistency() {
+    assert_eq!(ProtocolVersion::V33.as_u8(), 33);
     assert_eq!(ProtocolVersion::V32.as_u8(), 32);
     assert_eq!(ProtocolVersion::V31.as_u8(), 31);
     assert_eq!(ProtocolVersion::V30.as_u8(), 30);
@@ -414,14 +415,15 @@ fn test_protocol_version_constants_consistency() {
     let supported = ProtocolVersion::supported_versions();
     assert_eq!(
         supported.len(),
-        5,
-        "must support exactly 5 protocol versions"
+        6,
+        "must support exactly 6 protocol versions"
     );
-    assert_eq!(supported[0], ProtocolVersion::V32);
-    assert_eq!(supported[1], ProtocolVersion::V31);
-    assert_eq!(supported[2], ProtocolVersion::V30);
-    assert_eq!(supported[3], ProtocolVersion::V29);
-    assert_eq!(supported[4], ProtocolVersion::V28);
+    assert_eq!(supported[0], ProtocolVersion::V33);
+    assert_eq!(supported[1], ProtocolVersion::V32);
+    assert_eq!(supported[2], ProtocolVersion::V31);
+    assert_eq!(supported[3], ProtocolVersion::V30);
+    assert_eq!(supported[4], ProtocolVersion::V29);
+    assert_eq!(supported[5], ProtocolVersion::V28);
 }
 
 /// Test that protocol version range helpers work correctly.
@@ -429,15 +431,15 @@ fn test_protocol_version_constants_consistency() {
 fn test_protocol_version_range_helpers() {
     let range = ProtocolVersion::supported_range();
     assert_eq!(*range.start(), 28);
-    assert_eq!(*range.end(), 32);
+    assert_eq!(*range.end(), 33);
 
     let (oldest, newest) = ProtocolVersion::supported_range_bounds();
     assert_eq!(oldest, 28);
-    assert_eq!(newest, 32);
+    assert_eq!(newest, 33);
 
     let (oldest_ver, newest_ver) = ProtocolVersion::supported_version_bounds();
     assert_eq!(oldest_ver, ProtocolVersion::V28);
-    assert_eq!(newest_ver, ProtocolVersion::V32);
+    assert_eq!(newest_ver, ProtocolVersion::V33);
 }
 
 /// Test that supported protocol bitmap is correctly constructed.
@@ -488,7 +490,7 @@ fn test_protocol_version_index_lookup() {
 
     // Test out-of-bounds index
     assert!(
-        ProtocolVersion::from_supported_index(5).is_none(),
+        ProtocolVersion::from_supported_index(6).is_none(),
         "out-of-bounds index must return None"
     );
     assert!(
