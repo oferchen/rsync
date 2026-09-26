@@ -18,6 +18,8 @@ struct AcceptLoopState<'a> {
     /// the same behaviour at the daemon level.
     max_connections: Option<usize>,
     config_path: &'a Option<PathBuf>,
+    /// `--log-file-format`, re-applied to the modules on every SIGHUP reload.
+    log_file_format: Option<String>,
     connection_limiter: &'a Option<Arc<ConnectionLimiter>>,
     modules: Arc<Vec<ModuleRuntime>>,
     motd_lines: Arc<Vec<String>>,
@@ -95,6 +97,7 @@ fn check_signals_and_maintain(state: &mut AcceptLoopState<'_>) -> Option<bool> {
             &mut state.motd_lines,
             state.log_sink.as_ref(),
             state.notifier,
+            state.log_file_format.as_deref(),
         );
     }
 

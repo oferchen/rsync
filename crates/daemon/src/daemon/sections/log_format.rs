@@ -367,12 +367,20 @@ fn log_transfer(format: &str, ctx: &LogFormatContext<'_>, log_sink: &SharedLogSi
     log_message(log_sink, &message);
 }
 
-/// Returns the effective log format string for a module.
+/// Returns the per-file transfer log format for a module, or `None` when the
+/// module writes no per-file lines.
 ///
 /// Falls back to `DEFAULT_LOG_FORMAT` when the module does not specify a
 /// custom `log_format` directive.
-fn effective_log_format(module: &ModuleDefinition) -> &str {
-    module.log_format.as_deref().unwrap_or(DEFAULT_LOG_FORMAT)
+///
+/// upstream: clientserver.c:823 takes the module format only under `transfer
+/// logging`, and log.c:871 `log_item()` writes only when `*logfile_format` is
+/// non-empty.
+fn transfer_log_format(module: &ModuleDefinition) -> Option<&str> {
+    module
+        .transfer_logging
+        .then(|| module.log_format.as_deref().unwrap_or(DEFAULT_LOG_FORMAT))
+        .filter(|format| !format.is_empty())
 }
 
 /// Returns whether the format string contains a `%i` escape.
@@ -659,23 +667,50 @@ mod log_format_tests {
     }
 
     #[test]
-    fn effective_log_format_uses_module_setting() {
+    fn transfer_log_format_uses_module_setting() {
         let module = ModuleDefinition {
             transfer_logging: true,
             log_format: Some("%o %f %l".to_owned()),
             ..Default::default()
         };
-        assert_eq!(effective_log_format(&module), "%o %f %l");
+        assert_eq!(transfer_log_format(&module), Some("%o %f %l"));
     }
 
     #[test]
-    fn effective_log_format_falls_back_to_default() {
+    fn transfer_log_format_falls_back_to_default() {
         let module = ModuleDefinition {
             transfer_logging: true,
             log_format: None,
             ..Default::default()
         };
-        assert_eq!(effective_log_format(&module), DEFAULT_LOG_FORMAT);
+        assert_eq!(transfer_log_format(&module), Some(DEFAULT_LOG_FORMAT));
+    }
+
+    /// upstream: clientserver.c:823 only takes `lp_log_format()` when `transfer
+    /// logging` is on; otherwise `logfile_format` stays NULL and log.c:871
+    /// `log_item()` writes nothing to the log file.
+    #[test]
+    fn transfer_log_format_is_none_without_transfer_logging() {
+        let module = ModuleDefinition {
+            transfer_logging: false,
+            log_format: Some("%o %f %l".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(transfer_log_format(&module), None);
+    }
+
+    /// upstream: log.c:871 `logfile_format && *logfile_format` - an empty format
+    /// (e.g. `--log-file-format=`) turns per-file logging off rather than
+    /// writing an empty line per file. rsyncd.conf(5): "unless the string is
+    /// empty, in which case transfer logging is turned off".
+    #[test]
+    fn transfer_log_format_is_none_for_an_empty_format() {
+        let module = ModuleDefinition {
+            transfer_logging: true,
+            log_format: Some(String::new()),
+            ..Default::default()
+        };
+        assert_eq!(transfer_log_format(&module), None);
     }
 
     // --- Modifier scan (upstream log.c:558-576) --------------------------
