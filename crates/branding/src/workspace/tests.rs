@@ -4,9 +4,9 @@ use super::*;
 
 #[test]
 fn parse_protocol_matches_env() {
-    assert_eq!(metadata().protocol_version(), 32);
-    assert_eq!(protocol_version_u8(), 32);
-    assert_eq!(protocol_version_nonzero_u8().get(), 32);
+    assert_eq!(metadata().protocol_version(), 33);
+    assert_eq!(protocol_version_u8(), 33);
+    assert_eq!(protocol_version_nonzero_u8().get(), 33);
     assert_eq!(daemon_config_dir(), Path::new(DAEMON_CONFIG_DIR));
     assert_eq!(daemon_config_path(), Path::new(DAEMON_CONFIG_PATH));
     assert_eq!(daemon_secrets_path(), Path::new(DAEMON_SECRETS_PATH));
