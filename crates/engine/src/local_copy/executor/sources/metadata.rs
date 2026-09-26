@@ -85,6 +85,14 @@ fn operand_link_stat(
     source: &SourceSpec,
     source_path: &Path,
 ) -> io::Result<Metadata> {
+    // upstream: rsync-3.5.1/flist.c:465-466 `scan_link_stat()` - a
+    // `--files-from` entry is stat'd through the ownership walk, following a
+    // leaf symlink only for a marked (directory) entry since the walk is
+    // inactive under `--copy-dirlinks`.
+    #[cfg(unix)]
+    if let Some(base) = context.files_from_base() {
+        return base.symlink_metadata(source_path, source.copy_contents());
+    }
     if context.copy_links_enabled() && marker_governs_operand_stat(context, source) {
         return std::fs::metadata(source_path);
     }

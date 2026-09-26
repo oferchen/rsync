@@ -997,6 +997,7 @@ include!("execute_multi_source_delete.rs");
 include!("delete_incremental_filter_stack.rs");
 include!("execute_delete_excluded.rs");
 include!("backups.rs");
+include!("execute_files_from_confinement.rs");
 include!("delete_protect.rs");
 include!("dest_guard.rs");
 include!("executor_file_comparison.rs");

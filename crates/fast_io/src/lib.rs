@@ -112,6 +112,10 @@ pub mod container;
 /// path TOCTOU naturally (see the SEC-1.l audit).
 #[cfg(unix)]
 pub mod dir_sandbox;
+/// Unix-only: ownership-walk resolution for a sender's `--files-from`
+/// entries, mirroring upstream `filesfrom_link_stat()` (`flist.c:400`).
+#[cfg(unix)]
+pub mod files_from_walk;
 /// Active-allocator heap counters for the `--info=stats3` diagnostic block.
 pub mod heap_stats;
 /// The receiver's in-place output open: upstream's three-arm chain
@@ -417,6 +421,8 @@ pub use dir_sandbox::{
     unlink_path, unlink_via_sandbox_or_fallback, unlinkat, utimensat,
     utimensat_via_sandbox_or_fallback,
 };
+#[cfg(unix)]
+pub use files_from_walk::FilesFromBase;
 pub use inplace_open::{InplaceResolution, open_inplace_output};
 pub use kernel_version::{
     IO_URING_MIN_KERNEL, IoUringRequirement, KernelVersion, LinkatRequirement, PbufRingRequirement,
