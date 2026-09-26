@@ -778,6 +778,18 @@ impl ReceiverContext {
         } else {
             dest_dir
         };
+        // The destination root is entered once and every entry's parent is
+        // resolved beneath it; its own attributes go through its descriptor.
+        // A daemon's operator named only the module, so the peer's remainder
+        // is entered beneath the module root.
+        // upstream: util1.c change_dir(), clientserver.c:1093
+        let destination_root = match self.config.connection.served_module_root() {
+            Some(module_root) => {
+                metadata::DestinationRoot::served(dest_dir.clone(), module_root.to_path_buf())
+            }
+            None => metadata::DestinationRoot::new(dest_dir.clone()),
+        };
+        let metadata_opts = metadata_opts.with_destination_root(Some(Arc::new(destination_root)));
 
         let acl_cache = if self.config.flags.acls {
             self.flist_reader_cache
