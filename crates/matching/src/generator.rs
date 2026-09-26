@@ -17,7 +17,7 @@ use rayon::prelude::*;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::index::{DeltaSignatureIndex, MatchedBlocks};
+use crate::index::DeltaSignatureIndex;
 use crate::ring_buffer::RingBuffer;
 use crate::script::{DeltaScript, DeltaToken};
 use crate::trace_deltasum;
@@ -225,10 +225,7 @@ fn merge_copy_runs(source: &[u8], mut runs: Vec<CopyRun>, block_len: usize) -> D
         }
         match runs.get(next) {
             Some(run) if run.source_start == cursor => {
-                tokens.push(DeltaToken::Copy {
-                    index: run.basis_index,
-                    len: run.len,
-                });
+                push_merged_copy(&mut tokens, run, block_len);
                 cursor += run.len as u64;
                 next += 1;
             }
@@ -251,6 +248,31 @@ fn merge_copy_runs(source: &[u8], mut runs: Vec<CopyRun>, block_len: usize) -> D
         .map(|token| token.byte_len() as u64)
         .sum();
     DeltaScript::new(tokens, n, literal_bytes)
+}
+
+/// Appends a merged `Copy`, re-forming the seq-match runs the sequential scan
+/// emits.
+///
+/// The merge works at block granularity, but the sequential scan coalesces a
+/// chain of adjacent matches on consecutive basis blocks into one fat `Copy`
+/// ([`flush_seq_match_run`]). Two `Copy` tokens can only sit next to each other
+/// in the sequential stream when they came from one such chain, so extending
+/// the previous full-block `Copy` whenever the next block continues it
+/// reproduces the sequential token stream exactly. A short final block is
+/// always its own token, as in the sequential scan.
+fn push_merged_copy(tokens: &mut Vec<DeltaToken>, run: &CopyRun, block_len: usize) {
+    if run.len == block_len
+        && let Some(DeltaToken::Copy { index, len }) = tokens.last_mut()
+        && *len % block_len == 0
+        && *index + (*len / block_len) as u64 == run.basis_index
+    {
+        *len += block_len;
+        return;
+    }
+    tokens.push(DeltaToken::Copy {
+        index: run.basis_index,
+        len: run.len,
+    });
 }
 
 /// Builds the overlapping spatial-stripe ranges for the parallel scan.
@@ -315,11 +337,6 @@ pub struct DeltaGenerator {
     /// the caller. `None` suppresses those two lines rather than inventing a
     /// number; every production caller sets it.
     source_len: Option<u64>,
-    /// Test-only knob disabling the matched-block pruning bitmap so the
-    /// property tests can compare prune-on against prune-off output. The
-    /// production path always prunes; see `docs/design/zsync-prune.md`.
-    #[cfg(any(test, feature = "bench-internal"))]
-    prune_matched: bool,
 }
 
 impl DeltaGenerator {
@@ -331,8 +348,6 @@ impl DeltaGenerator {
             consecutive_match_needed: 1,
             updating_basis_file: false,
             source_len: None,
-            #[cfg(any(test, feature = "bench-internal"))]
-            prune_matched: true,
         }
     }
 
@@ -382,33 +397,6 @@ impl DeltaGenerator {
     #[must_use]
     pub fn with_updating_basis_file(mut self, updating: bool) -> Self {
         self.updating_basis_file = updating;
-        self
-    }
-
-    /// Test-only switch that disables the matched-block pruning bitmap.
-    ///
-    /// Used by the property tests in `matched_blocks_tests.rs` to compare
-    /// prune-on output against the no-prune baseline. Not exposed in
-    /// production builds.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn with_prune_matched(mut self, enabled: bool) -> Self {
-        self.prune_matched = enabled;
-        self
-    }
-
-    /// Bench-only switch mirroring [`Self::with_prune_matched`], used by
-    /// the harness in `crates/matching/benches/prune_duplicate_heavy.rs`
-    /// to compare prune-on against prune-off match throughput on
-    /// duplicate-heavy basis data.
-    ///
-    /// Behind the internal `bench-internal` feature flag so the surface
-    /// never reaches release builds. See `docs/design/zsync-prune.md`
-    /// benchmark plan binding (#2071) for the methodology.
-    #[cfg(all(not(test), feature = "bench-internal"))]
-    #[must_use]
-    pub fn with_prune_matched(mut self, enabled: bool) -> Self {
-        self.prune_matched = enabled;
         self
     }
 
@@ -466,13 +454,9 @@ impl DeltaGenerator {
         {
             return self.generate_gated(reader, index);
         }
-        #[cfg(any(test, feature = "bench-internal"))]
-        let prune_matched = self.prune_matched;
-        #[cfg(not(any(test, feature = "bench-internal")))]
-        let prune_matched = true;
         // `reader` is the whole source, so its EOF is the file's EOF and the
         // short-final-block probe is in scope.
-        self.generate_with_prune(reader, index, prune_matched, true)
+        self.scan(reader, index, true)
     }
 
     /// Reports whether emitting a `Copy` for basis block `idx` is safe at the
@@ -499,24 +483,23 @@ impl DeltaGenerator {
         basis_offset >= cursor
     }
 
-    /// Core single-stream delta scan, parameterized on whether the shared
-    /// `index` consumed-bitset pruning is engaged.
+    /// Core single-stream delta scan.
     ///
-    /// Production [`Self::generate`] always prunes. [`Self::generate_chunked`]
-    /// passes `prune_matched = false`: with pruning off this routine performs
-    /// only read-only lookups on `index` (no [`DeltaSignatureIndex::mark_consumed`]
-    /// or [`DeltaSignatureIndex::reset_consumed`]), so a shared `&index` is safe
-    /// to scan from multiple rayon workers concurrently.
+    /// Performs only read-only lookups on `index`, so a shared `&index` is
+    /// safe to scan from multiple rayon workers concurrently
+    /// ([`Self::generate_chunked`]). A basis block stays matchable for the
+    /// whole scan, however many source windows it matches, exactly as
+    /// upstream's `hash_search()` leaves its hash chains intact outside
+    /// `--inplace` (`match.c:229-345`).
     ///
     /// `tail_match` states whether `reader`'s EOF is the source file's EOF. Only
     /// then may the short-final-block probe run: upstream reaches that block
     /// solely at offset `len - s->sums[s->count-1].len` (`match.c:174`), so a
     /// stripe that merely stops early must not claim it mid-file.
-    fn generate_with_prune<R: Read>(
+    fn scan<R: Read>(
         &self,
         mut reader: R,
         index: &DeltaSignatureIndex,
-        prune_matched: bool,
         tail_match: bool,
     ) -> io::Result<(DeltaScript, ScanCounters)> {
         let block_len = index.block_length();
@@ -549,21 +532,6 @@ impl DeltaGenerator {
         // most likely first match. Probing the hint before the hash table
         // lookup skips the probe entirely when data is sequential.
         let mut want_i: Option<usize> = Some(0);
-
-        // zsync-inspired matched-block pruning: each emitted Copy token sets a
-        // bit so later probes skip the strong-checksum verify on already-
-        // consumed basis blocks. Duplicate-content siblings live at distinct
-        // basis indices; the bitmap leaves those siblings findable until each
-        // is consumed independently. See docs/design/zsync-prune.md.
-        let mut matched_blocks = MatchedBlocks::with_block_count(index.block_count());
-        // ZSO-3: the shared consumed-bitset on `index` survives across
-        // generator sessions when callers reuse the same index. Reset
-        // it now so each `generate()` call starts with a fresh prune
-        // state. Concurrent generators sharing the same index continue
-        // to coordinate through `mark_consumed` after this reset.
-        if prune_matched {
-            index.reset_consumed();
-        }
 
         let mut buffer = vec![0u8; self.buffer_len.max(block_len)];
         let mut buffer_pos = 0usize;
@@ -634,23 +602,14 @@ impl DeltaGenerator {
             trace_deltasum::trace_scan_offset(offset, digest.sum2(), digest.sum1());
 
             // upstream: match.c:144-190 - try want_i hint before hash probe.
-            // The want_i hint deliberately bypasses the matched-block bitmap:
-            // the hint targets the just-matched index plus one, which the
-            // bitmap correctly leaves unset. Adding a bitmap probe to the
-            // hint adds a branch with no information gain.
             let (first, second) = window.as_slices();
-            let matched = {
-                let prune_filter = prune_matched.then_some(&matched_blocks);
-                if let Some(hint) = want_i {
-                    if index.check_block_match_slices(hint, digest, first, second) {
-                        Some(hint)
-                    } else {
-                        hash_hits += 1;
-                        index.find_match_slices_filtered(digest, first, second, prune_filter)
-                    }
-                } else {
+            let matched = match want_i {
+                Some(hint) if index.check_block_match_slices(hint, digest, first, second) => {
+                    Some(hint)
+                }
+                _ => {
                     hash_hits += 1;
-                    index.find_match_slices_filtered(digest, first, second, prune_filter)
+                    index.find_match_slices(digest, first, second)
                 }
             };
             // upstream: match.c:211 - under --inplace, drop any candidate whose
@@ -730,22 +689,6 @@ impl DeltaGenerator {
                     }
                     total_bytes += block.len() as u64;
 
-                    // zsync prune trigger site, equivalent to write_blocks()
-                    // in librcksum/rsum.c:109-119: mark the basis block as
-                    // consumed AFTER the Copy token has been emitted, so a
-                    // later probe at a different source offset will not pick
-                    // this basis index again.
-                    matched_blocks.mark_matched(match_idx);
-                    // ZSO-3 hash-chain prune on the shared index. Mirrors
-                    // the per-session `matched_blocks.mark_matched` above
-                    // but uses interior mutability so the same effect
-                    // applies when the index is shared read-only across
-                    // concurrent generators
-                    // (`crates/engine/src/concurrent_delta/`).
-                    if prune_matched {
-                        index.mark_consumed(match_idx as u32);
-                    }
-
                     let last_matched = match_idx;
                     // upstream/zsync: `librcksum/rsum.c:262` advances the
                     // lookahead slot to the indexed successor. The basis can
@@ -793,17 +736,14 @@ impl DeltaGenerator {
                     // still followed.
                     let adj_digest = rolling.digest();
                     let (f, s) = window.as_slices();
-                    let adj_match = {
-                        let adj_filter = prune_matched.then_some(&matched_blocks);
-                        if let Some(next_idx) =
-                            index.try_next_match_slices(last_matched, adj_digest, f, s)
-                        {
-                            Some(next_idx)
-                        } else {
-                            hash_hits += 1;
-                            index.find_match_slices_filtered(adj_digest, f, s, adj_filter)
-                        }
-                    };
+                    let adj_match =
+                        match index.try_next_match_slices(last_matched, adj_digest, f, s) {
+                            Some(next_idx) => Some(next_idx),
+                            None => {
+                                hash_hits += 1;
+                                index.find_match_slices(adj_digest, f, s)
+                            }
+                        };
                     // upstream: match.c:211 - `offset` has advanced by one block
                     // above, so re-apply the in-place guard to the adjacent
                     // candidate before extending the run.
@@ -860,7 +800,7 @@ impl DeltaGenerator {
                 let tail = window.as_slice();
                 let digest = RollingDigest::from_bytes(tail);
                 index
-                    .find_tail_match(digest, tail, &[], prune_matched.then_some(&matched_blocks))
+                    .find_tail_match(digest, tail, &[])
                     // upstream: match.c:211 - the in-place guard applies
                     // to the tail candidate like any other.
                     .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset))
@@ -906,10 +846,6 @@ impl DeltaGenerator {
                     len: block.len(),
                 });
                 total_bytes += block.len() as u64;
-                matched_blocks.mark_matched(tail_idx);
-                if prune_matched {
-                    index.mark_consumed(tail_idx as u32);
-                }
                 window.clear();
             }
         }
@@ -982,9 +918,6 @@ impl DeltaGenerator {
         let mut tokens: Vec<DeltaToken> = Vec::new();
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
-
-        let mut matched_blocks = MatchedBlocks::with_block_count(index.block_count());
-        index.reset_consumed();
 
         let mut buffer = vec![0u8; self.buffer_len.max(block_len)];
         let mut buffer_pos = 0usize;
@@ -1062,7 +995,7 @@ impl DeltaGenerator {
             // basis offset precedes the write cursor so it demotes to a literal.
             hash_hits += 1;
             let matched = index
-                .find_match_slices_filtered(digest, first, second, Some(&matched_blocks))
+                .find_match_slices(digest, first, second)
                 .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
 
             let Some(mut match_idx) = matched else {
@@ -1110,9 +1043,6 @@ impl DeltaGenerator {
                 last_match = offset + block_len as u64;
                 run.push(basis_idx);
 
-                matched_blocks.mark_matched(match_idx);
-                index.mark_consumed(match_idx as u32);
-
                 window.clear();
                 rolling.reset();
                 // The matched block consumed `block_len` source bytes; advance
@@ -1148,7 +1078,7 @@ impl DeltaGenerator {
                 let adj_digest = rolling.digest();
                 hash_hits += 1;
                 let adj = index
-                    .find_match_slices_filtered(adj_digest, f, s, Some(&matched_blocks))
+                    .find_match_slices(adj_digest, f, s)
                     .filter(|&idx| self.basis_offset_ok(index, block_len, idx, offset));
                 match adj {
                     Some(next_idx) => match_idx = next_idx,
@@ -1192,7 +1122,7 @@ impl DeltaGenerator {
         }
         flush_pending!();
 
-        // upstream: match.c:441-442. As in `generate_with_prune`, the counter
+        // upstream: match.c:441-442. As in `scan`, the counter
         // line belongs to the caller that writes the checksum trailer.
         trace_deltasum::trace_done_hash_search();
 
@@ -1215,8 +1145,7 @@ impl DeltaGenerator {
     /// (`docs/design/intra-file-parallelism.md`, "Approach A"): partition the
     /// source into contiguous stripes, scan each on its own rayon worker against
     /// the shared read-only signature `index`, then merge in source order. The
-    /// `consumed` bitset is cleared once up front and never written by a worker
-    /// (pruning is off per stripe), so the shared `&index` is read concurrently
+    /// scan never writes `index`, so the shared `&index` is read concurrently
     /// with no locking and no shared mutable state on the hot path.
     ///
     /// # Boundary correctness (overlap + greedy merge)
@@ -1246,11 +1175,13 @@ impl DeltaGenerator {
     /// source windows can still reframe a seam; the result stays a valid delta
     /// that reconstructs exactly, only the token boundaries may differ.)
     ///
-    /// On a duplicate-heavy basis the disabled per-stripe prune resolves
-    /// duplicate siblings to different `Copy` indices than the pruned sequential
-    /// scan, so the token stream can diverge; callers gate the parallel path on
-    /// [`DeltaSignatureIndex::has_duplicate_blocks`] being `false` for that
-    /// reason. Reconstruction stays byte-exact regardless.
+    /// On a basis with duplicate-content blocks the choice between siblings
+    /// depends on the `want_i` adjacency hint (`match.c:321-334`), and each
+    /// stripe starts that hint fresh instead of inheriting the sequential
+    /// scan's state at the stripe boundary. A stripe can therefore pick a
+    /// different sibling, so the token stream can diverge; callers gate the
+    /// parallel path on [`DeltaSignatureIndex::has_duplicate_blocks`] being
+    /// `false` for that reason. Reconstruction stays byte-exact regardless.
     ///
     /// # Arguments
     ///
@@ -1318,15 +1249,9 @@ impl DeltaGenerator {
         let chunks = feasible.min(max_chunks.max(1));
 
         if chunks <= 1 || block_len == 0 {
-            // Too small to split usefully - keep the pruned sequential path.
+            // Too small to split usefully - keep the sequential path.
             return self.generate_counted(Cursor::new(source), index);
         }
-
-        // Pruning is disabled per stripe, so no worker writes the shared
-        // `consumed` bitset. Clear it once (a prior pruned generate() would
-        // otherwise leave every block consumed and defeat all matching); after
-        // this reset it stays immutable across the concurrent scan.
-        index.reset_consumed();
 
         let ranges = stripe_ranges(n, chunks, block_len);
         self.scan_ranges_and_merge(source, index, &ranges)
@@ -1336,9 +1261,7 @@ impl DeltaGenerator {
     /// `index`, then merges the union of `Copy` runs back into the single-pass
     /// token stream.
     ///
-    /// `index.reset_consumed()` must have run before this call: pruning is off
-    /// per stripe (`generate_with_prune(.., false, ..)`), so no worker writes the
-    /// shared `consumed` bitset and the `&index` is read concurrently with no
+    /// No worker writes `index`, so the `&index` is read concurrently with no
     /// locking. Only a stripe that runs to `source.len()` sees the file's real
     /// EOF, so only it may claim the basis's short final block; a stripe that
     /// stops at a boundary would otherwise place that block mid-file, where
@@ -1355,9 +1278,7 @@ impl DeltaGenerator {
 
         let scripts: Vec<io::Result<(DeltaScript, ScanCounters)>> = ranges
             .par_iter()
-            .map(|&(s, e)| {
-                self.generate_with_prune(Cursor::new(&source[s..e]), index, false, e == n)
-            })
+            .map(|&(s, e)| self.scan(Cursor::new(&source[s..e]), index, e == n))
             .collect();
 
         let mut counters = ScanCounters::default();
@@ -1421,16 +1342,14 @@ impl DeltaGenerator {
     /// machinery at a chosen stripe count `{1, 2, 4, 8, ...}` on modest fixtures,
     /// independent of host CPU count and file size, so it can prove the merged
     /// output is invariant to how the source was striped. This entry point does
-    /// exactly that: it clears the consumed bitset and runs
-    /// [`Self::scan_ranges_and_merge`] over exactly `stripes` overlapping ranges
+    /// exactly that: it runs [`Self::scan_ranges_and_merge`] over exactly `stripes` overlapping ranges
     /// (or fewer only when `source` is shorter than `stripes` bytes).
     ///
     /// It honours the same two bail-outs as the production path - the
     /// consecutive-match extension (`seq_matches >= 2`) and the in-place guard
     /// (`updating_basis_file`) both route to their sequential scans - so those
     /// contracts stay observable through this entry too. Not compiled into
-    /// release builds; gated behind `bench-internal` exactly like
-    /// [`Self::with_prune_matched`].
+    /// release builds; gated behind `bench-internal`.
     #[cfg(any(test, feature = "bench-internal"))]
     pub fn generate_chunked_forced(
         &self,
@@ -1450,7 +1369,6 @@ impl DeltaGenerator {
         if block_len == 0 || source.is_empty() {
             return self.generate_counted(Cursor::new(source), index);
         }
-        index.reset_consumed();
         let ranges = stripe_ranges(source.len(), stripes.max(1), block_len);
         self.scan_ranges_and_merge(source, index, &ranges)
     }
@@ -1805,8 +1723,8 @@ mod tests {
     #[test]
     fn generate_chunked_handles_duplicate_basis_blocks() {
         // 4 MiB of a repeated 64 KiB block: many basis indices share content,
-        // exercising the prune-off concurrent path where chunks independently
-        // match the same basis blocks without coordination.
+        // exercising the concurrent path where chunks independently match the
+        // same basis blocks without coordination.
         let block = pseudo_random(64 * 1024, 0x0000_0099);
         let mut basis = Vec::with_capacity(4 * 1024 * 1024);
         for _ in 0..64 {
@@ -2083,40 +2001,6 @@ mod tests {
     }
 
     #[test]
-    fn generate_chunked_matches_after_prior_pruned_generate() {
-        // Regression: the matcher consults the shared `consumed` bitset on
-        // every probe. A pruned generate() leaves blocks marked consumed; if
-        // generate_chunked does not reset the bitset, every block looks taken
-        // and the scan degrades to all-literal (correct output, but zero delta
-        // compression and pathologically slow). Reconstruction parity alone
-        // cannot catch this - assert effectiveness (most bytes are copied).
-        let data = pseudo_random(4 * 1024 * 1024, 0x0bad_f00d);
-        let index = build_index(&data);
-        let generator = DeltaGenerator::new();
-
-        // Prime the shared consumed-bitset with a pruned sequential generate.
-        let seq = generator
-            .generate(Cursor::new(&data[..]), &index)
-            .expect("seq");
-        assert!(
-            seq.literal_bytes() < data.len() as u64 / 4,
-            "sequential should mostly match identical data"
-        );
-
-        let chunked = generator
-            .generate_chunked(&data, &index, 4)
-            .expect("chunked");
-        assert_eq!(reconstruct(&data, &index, &chunked), data);
-        assert!(
-            chunked.literal_bytes() < data.len() as u64 / 4,
-            "chunked must still produce copies after a prior pruned generate; \
-             got literal_bytes={} of {}",
-            chunked.literal_bytes(),
-            data.len()
-        );
-    }
-
-    #[test]
     fn block_skip_matched_path_is_o_blocks_not_o_bytes() {
         // ZSO-2 regression: after a confirmed block match the generator
         // advances the scan by a whole block (`offset += block_len` on the
@@ -2222,7 +2106,7 @@ mod tests {
         // A constant-fill basis makes every full block content-identical
         // regardless of the layout's chosen block length, so the gate must
         // detect duplicates and force the parallel scan to fall back to the
-        // pruned sequential path.
+        // sequential path.
         let basis = vec![0x42u8; 64 * 1024];
         let index = build_index(&basis);
         assert!(

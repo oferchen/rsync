@@ -36,8 +36,7 @@ tracing = ["dep:tracing"]
 # used only by the bench harnesses in `benches/`. Never enabled by default,
 # never propagated to workspace `default-features`, the CLI `features`
 # table, or the daemon. There is no way to turn it on from a release
-# `oc-rsync` invocation. See `docs/design/zsync-bithash.md` section 7 and
-# `docs/design/zsync-prune.md` benchmark plan.
+# `oc-rsync` invocation. See `docs/design/zsync-bithash.md` section 7.
 bench-internal = []
 
 [dev-dependencies]
@@ -66,11 +65,6 @@ harness = false
 required-features = ["bench-internal"]
 
 [[bench]]
-name = "prune_duplicate_heavy"
-harness = false
-required-features = ["bench-internal"]
-
-[[bench]]
 name = "compact_keys_cache"
 harness = false
 required-features = ["bench-internal"]
@@ -93,4 +87,8 @@ required-features = ["bench-internal"]
 
 [[test]]
 name = "parallel_delta_bithash_order_neutral"
+required-features = ["bench-internal"]
+
+[[test]]
+name = "repeated_basis_block"
 required-features = ["bench-internal"]
