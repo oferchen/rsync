@@ -135,7 +135,7 @@ pub(super) async fn handle_async_session(
     let mut bytes_received: u64 = 0;
     let mut bytes_sent: u64 = 0;
 
-    let greeting = format!("@RSYNCD: {}.0\n", 32);
+    let greeting = format!("@RSYNCD: {}.0\n", protocol::ProtocolVersion::NEWEST.as_u8());
     writer.write_all(greeting.as_bytes()).await?;
     writer.flush().await?;
     bytes_sent += greeting.len() as u64;

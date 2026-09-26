@@ -330,9 +330,9 @@ mod tests {
         let result = perform_handshake(&mut stdin, &mut stdout).expect("handshake succeeds");
         assert_eq!(result.protocol.as_u8(), 32);
 
-        // Server should respond with 4-byte version
+        // Server should respond with its own 4-byte version
         assert_eq!(stdout.len(), 4);
-        assert_eq!(stdout[0], 32);
+        assert_eq!(stdout[0], ProtocolVersion::NEWEST.as_u8());
     }
 
     #[test]
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn default_handshake_advertises_newest() {
         // The no-cap path is byte-identical to advertising NEWEST.
-        let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
+        let mut stdin = Cursor::new(vec![33, 0, 0, 0]);
         let mut stdout = Vec::new();
         let result = perform_handshake(&mut stdin, &mut stdout).expect("handshake succeeds");
         assert_eq!(result.protocol, ProtocolVersion::NEWEST);
@@ -492,7 +492,7 @@ mod tests {
     // every real release peer.
     #[test]
     fn server_handshake_noop_against_release_peer() {
-        let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
+        let mut stdin = Cursor::new(vec![33, 0, 0, 0]);
         let mut stdout = Vec::new();
 
         let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre.LsfxCIvu")
@@ -506,7 +506,7 @@ mod tests {
     // is nothing to reconcile and the newest version stands.
     #[test]
     fn server_handshake_noop_without_capability_string() {
-        let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
+        let mut stdin = Cursor::new(vec![33, 0, 0, 0]);
         let mut stdout = Vec::new();
 
         let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpr")
@@ -522,7 +522,7 @@ mod tests {
     // peer would be a pre-release, the client leaves the version untouched.
     #[test]
     fn client_handshake_never_reconciles() {
-        let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
+        let mut stdin = Cursor::new(vec![33, 0, 0, 0]);
         let mut stdout = Vec::new();
 
         let result = perform_handshake(&mut stdin, &mut stdout).expect("handshake succeeds");
@@ -554,10 +554,10 @@ mod tests {
     // WHY: forward compatibility on the ASCII greeting path. upstream:
     // clientserver.c:242-255 exchange_protocols() leaves `protocol_version` at
     // ours when the peer is newer (SUBPROTOCOL_VERSION == 0 in releases), so a
-    // 33.0 or 40.0 greeting negotiates to NEWEST and the response advertises it.
+    // 34.0 or 40.0 greeting negotiates to NEWEST and the response advertises it.
     #[test]
     fn legacy_handshake_clamps_newer_peer_to_newest() {
-        for newer in ["@RSYNCD: 33.0\n", "@RSYNCD: 40.0\n"] {
+        for newer in ["@RSYNCD: 34.0\n", "@RSYNCD: 40.0\n"] {
             let mut stdin = Cursor::new(newer.as_bytes().to_vec());
             let mut stdout = Vec::new();
 
@@ -567,7 +567,7 @@ mod tests {
 
             let response = String::from_utf8_lossy(&stdout);
             assert!(
-                response.starts_with("@RSYNCD: 32"),
+                response.starts_with("@RSYNCD: 33"),
                 "response must advertise the clamped version, got: {response}"
             );
         }

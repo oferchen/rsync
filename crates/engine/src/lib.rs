@@ -127,6 +127,7 @@
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub mod async_io;
 
+pub mod block_touch;
 pub mod cleanup;
 pub mod concurrent_delta;
 pub mod delete;
@@ -233,6 +234,7 @@ pub use signature::{
 };
 
 /// Directory traversal abstractions for file list generation.
+pub use block_touch::BlockTouchTracker;
 pub use walk::{DirectoryWalker, FilteredWalker, WalkConfig, WalkEntry, WalkError, WalkdirWalker};
 
 /// Poison-tolerant lock acquisition helpers for `Mutex`/`RwLock` state that

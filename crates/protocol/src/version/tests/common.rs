@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn reference_negotiation_prefers_highest_supported_version() {
-        let negotiated = reference_negotiation(&[27u32, 32, 30]).expect("must select newest");
+        let negotiated = reference_negotiation(&[27u32, 33, 30]).expect("must select newest");
         assert_eq!(negotiated, ProtocolVersion::NEWEST);
     }
 

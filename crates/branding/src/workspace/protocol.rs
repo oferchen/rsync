@@ -42,7 +42,7 @@ pub const fn protocol_version_u8() -> u8 {
 /// ```
 /// use branding::workspace;
 ///
-/// assert_eq!(workspace::protocol_version_nonzero_u8().get(), 32);
+/// assert_eq!(workspace::protocol_version_nonzero_u8().get(), 33);
 /// ```
 #[must_use]
 pub const fn protocol_version_nonzero_u8() -> NonZeroU8 {

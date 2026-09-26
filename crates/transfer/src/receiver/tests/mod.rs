@@ -1,6 +1,8 @@
 //! Receiver tests, decomposed by surface area.
 //!
 //! - [`support`] - shared fixtures and helpers reused across the surfaces.
+//! - [`block_stats_goodbye`] - protocol-33 `MSG_BLOCK_STATS` placement in the
+//!   goodbye handshake, and its absence at protocol 32.
 //! - [`file_list`] - file-list receive, sanitize, incremental, sender-attrs,
 //!   sum-head, ndx-convert, and the delete-pipeline hook.
 //! - [`delta_apply`] - whole-file delta application, wire-to-script
@@ -23,6 +25,7 @@
 //! - [`xattr_filter`] - `x`-modifier filter screening on the generator's
 //!   destination xattr read.
 
+mod block_stats_goodbye;
 #[cfg(unix)]
 mod create_specials;
 mod delta_apply;

@@ -8,7 +8,7 @@ use super::{ProtocolVersion, select_highest_mutual};
 
 #[test]
 fn newest_protocol_is_preferred() {
-    let result = select_highest_mutual([32, 31, 30]).expect("must succeed");
+    let result = select_highest_mutual([33, 31, 30]).expect("must succeed");
     assert_eq!(result, ProtocolVersion::NEWEST);
 }
 
@@ -31,13 +31,13 @@ fn reports_no_mutual_protocol() {
 
 #[test]
 fn select_highest_mutual_deduplicates_peer_versions() {
-    let negotiated = select_highest_mutual([32, 32, 31, 31]).expect("must select 32");
+    let negotiated = select_highest_mutual([33, 33, 31, 31]).expect("must select 33");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
 }
 
 #[test]
 fn select_highest_mutual_handles_unsorted_peer_versions() {
-    let negotiated = select_highest_mutual([29, 32, 30, 31]).expect("must select newest");
+    let negotiated = select_highest_mutual([29, 33, 30, 31]).expect("must select newest");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
 }
 
@@ -75,17 +75,17 @@ fn select_highest_mutual_short_circuits_after_newest() {
 
 #[test]
 fn select_highest_mutual_accepts_slice_iterators() {
-    let peers = [31u8, 29, 32];
+    let peers = [31u8, 29, 33];
     let negotiated = select_highest_mutual(peers.iter()).expect("slice iter works");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
 }
 
 #[test]
 fn select_highest_mutual_accepts_mut_slice_iterators() {
-    let mut peers = [31u8, 29, 32];
+    let mut peers = [31u8, 29, 33];
     let negotiated = select_highest_mutual(peers.iter_mut()).expect("mut slice iter works");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
-    assert_eq!(peers, [31u8, 29, 32]);
+    assert_eq!(peers, [31u8, 29, 33]);
 }
 
 #[test]
@@ -98,7 +98,7 @@ fn select_highest_mutual_accepts_protocol_version_references() {
 #[test]
 fn select_highest_mutual_accepts_non_zero_u8_advertisements() {
     let peers = [
-        NonZeroU8::new(32).expect("non-zero"),
+        NonZeroU8::new(33).expect("non-zero"),
         NonZeroU8::new(31).expect("non-zero"),
     ];
     let negotiated = select_highest_mutual(peers).expect("non-zero values work");
@@ -112,11 +112,11 @@ fn select_highest_mutual_accepts_non_zero_unsigned_advertisements() {
         assert_eq!(negotiated, ProtocolVersion::NEWEST);
     }
 
-    check(NonZeroU16::new(32).expect("non-zero"));
-    check(NonZeroU32::new(32).expect("non-zero"));
-    check(NonZeroU64::new(32).expect("non-zero"));
-    check(NonZeroU128::new(32).expect("non-zero"));
-    check(NonZeroUsize::new(32).expect("non-zero"));
+    check(NonZeroU16::new(33).expect("non-zero"));
+    check(NonZeroU32::new(33).expect("non-zero"));
+    check(NonZeroU64::new(33).expect("non-zero"));
+    check(NonZeroU128::new(33).expect("non-zero"));
+    check(NonZeroUsize::new(33).expect("non-zero"));
 
     let future = NonZeroU64::new(200).expect("non-zero");
     let err = select_highest_mutual([future]).unwrap_err();
@@ -134,7 +134,7 @@ fn select_highest_mutual_accepts_non_zero_signed_advertisements() {
     }
 
     check(
-        NonZeroI8::new(32).expect("non-zero"),
+        NonZeroI8::new(33).expect("non-zero"),
         ProtocolVersion::NEWEST,
     );
     check(
@@ -271,7 +271,7 @@ fn select_highest_mutual_accepts_wider_integer_advertisements() {
 
 #[test]
 fn select_highest_mutual_accepts_signed_integer_advertisements() {
-    let peers = [32i16, 29i16];
+    let peers = [33i16, 29i16];
     let negotiated = select_highest_mutual(peers).expect("signed integers supported");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
 

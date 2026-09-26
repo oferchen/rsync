@@ -873,10 +873,10 @@ mod protocol_version_arbitrary_input {
             prop_assert_eq!(result.unwrap().as_u8(), value);
         }
 
-        /// ProtocolVersion::from_supported returns None outside 28-32.
+        /// ProtocolVersion::from_supported returns None outside 28-33.
         #[test]
         fn from_supported_invalid_range(value in prop::sample::select(
-            (0u8..28).chain(33u8..=255).collect::<Vec<u8>>()
+            (0u8..28).chain(34u8..=255).collect::<Vec<u8>>()
         )) {
             let result = ProtocolVersion::from_supported(value);
             prop_assert!(result.is_none());
@@ -890,7 +890,7 @@ mod protocol_version_arbitrary_input {
 
         /// ProtocolVersion::from_str roundtrip for valid versions.
         #[test]
-        fn from_str_roundtrip(value in 28u8..=32u8) {
+        fn from_str_roundtrip(value in 28u8..=33u8) {
             let s = value.to_string();
             let parsed: ProtocolVersion = s.parse().unwrap();
             prop_assert_eq!(parsed.as_u8(), value);

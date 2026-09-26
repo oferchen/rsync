@@ -55,7 +55,7 @@ fn v32_constant_is_32() {
 /// Verifies protocol 32 equals NEWEST.
 #[test]
 fn v32_equals_newest() {
-    assert_eq!(ProtocolVersion::V32, ProtocolVersion::NEWEST);
+    assert_eq!(ProtocolVersion::V33, ProtocolVersion::NEWEST);
 }
 
 /// Verifies protocol 32 is within supported range.
@@ -213,17 +213,17 @@ fn v32_complete_feature_profile() {
     assert!(!v.uses_fixed_encoding());
 }
 
-/// Verifies v32 is the newest supported protocol.
+/// Verifies v33 is the newest supported protocol.
 #[test]
-fn v32_is_newest_supported() {
-    assert_eq!(ProtocolVersion::V32, ProtocolVersion::NEWEST);
-    assert_eq!(ProtocolVersion::NEWEST.as_u8(), 32);
+fn v33_is_newest_supported() {
+    assert_eq!(ProtocolVersion::V33, ProtocolVersion::NEWEST);
+    assert_eq!(ProtocolVersion::NEWEST.as_u8(), 33);
 }
 
 /// Verifies v32 has no newer version.
 #[test]
 fn v32_has_no_next_newer() {
-    assert!(ProtocolVersion::V32.next_newer().is_none());
+    assert!(ProtocolVersion::V33.next_newer().is_none());
 }
 
 /// Verifies v32 has v31 as next older.
@@ -240,11 +240,11 @@ fn v32_next_older_is_v31() {
 fn v32_future_versions_clamp_to_v32() {
     // Version 35 is within MAXIMUM_PROTOCOL_ADVERTISEMENT (40)
     let result = ProtocolVersion::from_peer_advertisement(35).unwrap();
-    assert_eq!(result, ProtocolVersion::V32);
+    assert_eq!(result, ProtocolVersion::V33);
 
     // Version 40 is at the edge
     let result = ProtocolVersion::from_peer_advertisement(40).unwrap();
-    assert_eq!(result, ProtocolVersion::V32);
+    assert_eq!(result, ProtocolVersion::V33);
 }
 
 /// Verifies versions beyond maximum advertisement are rejected.
@@ -432,7 +432,7 @@ fn v32_ordering() {
 #[test]
 fn v32_equality() {
     assert_eq!(ProtocolVersion::V32, ProtocolVersion::V32);
-    assert_eq!(ProtocolVersion::V32, ProtocolVersion::NEWEST);
+    assert_eq!(ProtocolVersion::V33, ProtocolVersion::NEWEST);
     assert_ne!(ProtocolVersion::V32, ProtocolVersion::V31);
 }
 
@@ -454,13 +454,13 @@ fn v32_offset_from_oldest() {
 /// Verifies v32 is at the correct offset from newest.
 #[test]
 fn v32_offset_from_newest() {
-    assert_eq!(ProtocolVersion::V32.offset_from_newest(), 0);
+    assert_eq!(ProtocolVersion::V33.offset_from_newest(), 0);
 }
 
 /// Verifies v32 navigation to next newer version.
 #[test]
 fn v32_next_newer_is_none() {
-    assert_eq!(ProtocolVersion::V32.next_newer(), None);
+    assert_eq!(ProtocolVersion::V33.next_newer(), None);
 }
 
 /// Verifies v32 navigation to next older version.
@@ -550,8 +550,8 @@ fn v32_within_range_bounds() {
 /// Verifies v32 from supported index lookup.
 #[test]
 fn v32_from_supported_index() {
-    // v32 should be at index 0 (in newest-to-oldest order: 32, 31, 30, 29, 28)
-    let version = ProtocolVersion::from_supported_index(0);
+    // v32 should be at index 1 (in newest-to-oldest order: 33, 32, 31, 30, 29, 28)
+    let version = ProtocolVersion::from_supported_index(1);
     assert_eq!(version, Some(ProtocolVersion::V32));
 }
 
@@ -559,7 +559,7 @@ fn v32_from_supported_index() {
 #[test]
 fn v32_is_first_in_supported_list() {
     let versions = ProtocolVersion::supported_versions();
-    assert_eq!(versions[0], ProtocolVersion::V32);
+    assert_eq!(versions[0], ProtocolVersion::V33);
 }
 
 /// Verifies appropriate error when v32 is not available.
@@ -675,15 +675,15 @@ fn v32_mixed_version_infrastructure() {
 fn v32_future_version_handling() {
     // Peer advertises v33, which should be clamped to v32
     let result = ProtocolVersion::from_peer_advertisement(33).unwrap();
-    assert_eq!(result, ProtocolVersion::V32);
+    assert_eq!(result, ProtocolVersion::V33);
 
     // Same for v35
     let result = ProtocolVersion::from_peer_advertisement(35).unwrap();
-    assert_eq!(result, ProtocolVersion::V32);
+    assert_eq!(result, ProtocolVersion::V33);
 
     // And v40 (edge of MAXIMUM_PROTOCOL_ADVERTISEMENT)
     let result = ProtocolVersion::from_peer_advertisement(40).unwrap();
-    assert_eq!(result, ProtocolVersion::V32);
+    assert_eq!(result, ProtocolVersion::V33);
 }
 
 /// Verifies v32 uses modern NDX encoding (delta-based).
@@ -894,7 +894,7 @@ fn v32_maximum_advertisement_boundary() {
     // 40 is accepted and clamped
     let result = ProtocolVersion::from_peer_advertisement(40);
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), ProtocolVersion::V32);
+    assert_eq!(result.unwrap(), ProtocolVersion::V33);
 
     // 41 is rejected
     let result = ProtocolVersion::from_peer_advertisement(41);
@@ -907,7 +907,7 @@ fn v32_version_ordering_position() {
     let versions = ProtocolVersion::supported_versions();
 
     // v32 should be first (newest)
-    assert_eq!(versions[0], ProtocolVersion::V32);
+    assert_eq!(versions[0], ProtocolVersion::V33);
 
     // v28 should be last (oldest)
     assert_eq!(versions[versions.len() - 1], ProtocolVersion::V28);
@@ -931,12 +931,12 @@ fn v32_hash_and_equality_in_collections() {
     use std::collections::HashSet;
 
     let mut set = HashSet::new();
-    set.insert(ProtocolVersion::V32);
-    set.insert(ProtocolVersion::V32);
+    set.insert(ProtocolVersion::V33);
+    set.insert(ProtocolVersion::V33);
     set.insert(ProtocolVersion::NEWEST);
 
     // All three are the same, so set should have 1 element
     assert_eq!(set.len(), 1);
-    assert!(set.contains(&ProtocolVersion::V32));
+    assert!(set.contains(&ProtocolVersion::V33));
     assert!(set.contains(&ProtocolVersion::NEWEST));
 }

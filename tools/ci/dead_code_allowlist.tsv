@@ -54,7 +54,6 @@ take_stdin	crates/rsync_io/src/ssh/async_transport.rs	2026-11-07	unreviewed base
 take_stdout	crates/rsync_io/src/ssh/async_transport.rs	2026-11-07	unreviewed baseline row
 into_sync_halves	crates/rsync_io/src/ssh/embedded/sync_bridge.rs	2026-11-07	unreviewed baseline row
 strong_digest	crates/signature/src/block.rs	2026-11-07	unreviewed baseline row
-apply_literal	crates/transfer/src/delta_apply/applicator.rs	2026-11-07	unreviewed baseline row
 with_remainder	crates/transfer/src/delta_config.rs	2026-11-07	unreviewed baseline row
 with_negotiated_algorithms	crates/transfer/src/delta_config.rs	2026-11-07	unreviewed baseline row
 wire_bits	crates/transfer/src/generator/item_flags.rs	2026-11-07	unreviewed baseline row

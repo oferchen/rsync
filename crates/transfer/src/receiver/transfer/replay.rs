@@ -409,16 +409,24 @@ impl ReceiverContext {
 
             token_reader.reset();
 
+            // upstream: receiver.c:1156-1157 - `updating_basis_or_equiv = ... ||
+            // (inplace && fnamecmp == fname ...)`. This replay always stages a temp,
+            // so the flag only keeps in-place-matched blocks out of the
+            // touched-block count, as upstream's skip_matched() does.
+            let updating_basis =
+                self.config.write.inplace && basis_path.as_deref() == Some(file_path.as_path());
             let mut applicator = crate::delta_apply::DeltaApplicator::new(
                 file,
                 &config,
                 file_verifier,
                 layout_signature.as_ref(),
                 basis_path.as_deref(),
-            )?;
+            )?
+            .with_updating_basis(updating_basis);
 
             crate::delta_apply::apply_delta_stream(reader, &mut applicator, &mut token_reader)?;
             let (file, result) = applicator.finish(reader, None)?;
+            self.record_touched_blocks(result.touched_blocks_4k);
 
             if let Some(final_pos) = result.final_pos {
                 let expected_size = file_entry.size();
@@ -648,6 +656,7 @@ impl ReceiverContext {
         stats.bytes_received = bytes_received;
         stats.literal_data = literal_data;
         stats.matched_data = matched_data;
+        stats.touched_blocks_4k = self.touched_blocks_4k;
         stats.total_source_bytes = self.total_source_size();
         if !metadata_errors.is_empty() {
             stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;

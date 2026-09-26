@@ -443,8 +443,8 @@ where
     }
 
     // `--protocol` is resolved once operands are known: upstream accepts it on a
-    // local copy (setup_protocol runs there too) but this build only speaks the
-    // wire for a remote transfer, so the value is ignored locally and validated
+    // local copy (setup_protocol runs there too). A local copy uses it only for
+    // the protocol-gated `--stats` lines; a legacy (< 28) value is validated
     // against the wire range only when an operand is remote.
     let has_remote_operand = remainder.iter().any(|op| operand_is_remote(op));
     let desired_protocol =
@@ -706,28 +706,45 @@ where
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| String::from("oc-rsync"));
 
+    // upstream: io.c:2559 write_int(batch_fd, protocol_version) - the header
+    // records the protocol the run speaks, which `--protocol` lowers on a local
+    // copy too, so a batch can be written for an older reader.
+    let batch_protocol = i32::from(
+        desired_protocol
+            .unwrap_or(protocol::ProtocolVersion::NEWEST)
+            .as_u8(),
+    );
+
     let batch_config = if let Some(ref path) = write_batch {
         Some(
-            BatchConfig::new(BatchMode::Write, path.to_string_lossy().into_owned(), 32)
-                .with_compat_flags(local_batch_compat_flags)
-                .with_checksum_seed(batch_checksum_seed)
-                .with_invoker(invoker.clone()),
+            BatchConfig::new(
+                BatchMode::Write,
+                path.to_string_lossy().into_owned(),
+                batch_protocol,
+            )
+            .with_compat_flags(local_batch_compat_flags)
+            .with_checksum_seed(batch_checksum_seed)
+            .with_invoker(invoker.clone()),
         )
     } else if let Some(ref path) = only_write_batch {
         Some(
             BatchConfig::new(
                 BatchMode::OnlyWrite,
                 path.to_string_lossy().into_owned(),
-                32,
+                batch_protocol,
             )
             .with_compat_flags(local_batch_compat_flags)
             .with_checksum_seed(batch_checksum_seed)
             .with_invoker(invoker.clone()),
         )
     } else {
-        read_batch
-            .as_ref()
-            .map(|path| BatchConfig::new(BatchMode::Read, path.to_string_lossy().into_owned(), 32))
+        read_batch.as_ref().map(|path| {
+            BatchConfig::new(
+                BatchMode::Read,
+                path.to_string_lossy().into_owned(),
+                i32::from(protocol::ProtocolVersion::NEWEST.as_u8()),
+            )
+        })
     };
 
     let numeric_ids = numeric_ids_option.unwrap_or(false);

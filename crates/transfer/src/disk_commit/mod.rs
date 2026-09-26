@@ -33,6 +33,8 @@ mod writer;
 mod tests;
 #[cfg(test)]
 mod tests_partial_interrupt_parity;
+#[cfg(test)]
+mod tests_touched_blocks;
 
 pub use self::config::{
     BackupConfig, DEFAULT_CHANNEL_CAPACITY, DELAY_UPDATES_PARTIAL_DIR, DiskCommitConfig,

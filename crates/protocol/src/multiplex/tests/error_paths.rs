@@ -215,7 +215,7 @@ fn recv_msg_into_rejects_tags_below_mplex_base() {
 #[test]
 fn recv_msg_rejects_unknown_message_codes_in_valid_range() {
     let invalid_offsets = [
-        11u8, 12, 15, 21, 23, 25, 30, 34, 40, 43, 50, 85, 87, 99, 103, 200,
+        12u8, 15, 21, 23, 25, 30, 34, 40, 43, 50, 85, 87, 99, 103, 200,
     ];
 
     for &offset in &invalid_offsets {

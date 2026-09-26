@@ -857,6 +857,15 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
         "Total transferred file size: {transferred_size_display} bytes"
     )?;
     writeln!(stdout, "Literal data: {literal_bytes_display} bytes")?;
+    // upstream: main.c:446-448 - `if (protocol_version >= 33)`, a comma_num()
+    // count printed even when no MSG_BLOCK_STATS arrived (then 0).
+    if summary.protocol_version() >= 33 {
+        writeln!(
+            stdout,
+            "Number of 4 KiB logical blocks touched: {}",
+            format_count(summary.touched_blocks_4k(), human_readable)
+        )?;
+    }
     writeln!(stdout, "Matched data: {matched_bytes_display} bytes")?;
     writeln!(stdout, "File list size: {file_list_size_display}")?;
     // upstream: main.c:449 `if (stats.flist_buildtime)` gates both timing
@@ -1705,6 +1714,78 @@ mod tests {
             LocalCopyChangeSet::new(),
         );
         assert_eq!(render_verbose(unchanged_subdir), "");
+    }
+
+    /// Renders the `--stats` level-2 detail block for `summary`.
+    fn render_stats_detail(summary: &ClientSummary, human_readable: HumanReadableMode) -> String {
+        let mut out = Vec::new();
+        emit_stats_detail_block(summary, &mut out, human_readable)
+            .expect("emit_stats_detail_block writes to an in-memory buffer");
+        String::from_utf8(out).expect("output is valid UTF-8")
+    }
+
+    fn touched_blocks_summary(protocol_version: u8) -> ClientSummary {
+        ClientSummary::for_stats_test(
+            engine::local_copy::LocalCopySummary::default().with_touched_blocks_4k(1_024),
+            protocol_version,
+        )
+    }
+
+    /// WHY: upstream prints `Number of 4 KiB logical blocks touched` directly
+    /// after `Literal data` and before `Matched data`, comma-grouped via
+    /// comma_num(); a parser keyed on line order or the exact text breaks on
+    /// any other placement or wording. upstream: main.c:444-450.
+    #[test]
+    fn proto33_stats_prints_touched_blocks_between_literal_and_matched() {
+        let out = render_stats_detail(&touched_blocks_summary(33), HumanReadableMode::Grouped);
+        let lines: Vec<&str> = out.lines().collect();
+        let literal = lines
+            .iter()
+            .position(|line| line.starts_with("Literal data: "))
+            .expect("Literal data line");
+        assert_eq!(
+            lines[literal + 1],
+            "Number of 4 KiB logical blocks touched: 1,024"
+        );
+        assert!(lines[literal + 2].starts_with("Matched data: "));
+    }
+
+    /// WHY: the line exists only from protocol 33 (main.c:446); a protocol-32
+    /// transfer must render byte-identically to before it was added.
+    #[test]
+    fn proto32_stats_omits_touched_blocks_line() {
+        let out = render_stats_detail(&touched_blocks_summary(32), HumanReadableMode::Grouped);
+        assert!(!out.contains("logical blocks touched"), "{out}");
+        let lines: Vec<&str> = out.lines().collect();
+        let literal = lines
+            .iter()
+            .position(|line| line.starts_with("Literal data: "))
+            .expect("Literal data line");
+        assert!(lines[literal + 1].starts_with("Matched data: "));
+    }
+
+    /// WHY: comma_num() drops the grouping under `--no-h` (human_readable 0),
+    /// so the raw count prints as bare digits. upstream: inums.h:26-30.
+    #[test]
+    fn proto33_stats_touched_blocks_raw_without_grouping() {
+        let out = render_stats_detail(&touched_blocks_summary(33), HumanReadableMode::Raw);
+        assert!(
+            out.contains("Number of 4 KiB logical blocks touched: 1024\n"),
+            "{out}"
+        );
+    }
+
+    /// WHY: a protocol-33 run that received no count still prints the line with
+    /// 0 - upstream gates it on the protocol alone (main.c:446).
+    #[test]
+    fn proto33_stats_prints_zero_touched_blocks() {
+        let summary =
+            ClientSummary::for_stats_test(engine::local_copy::LocalCopySummary::default(), 33);
+        let out = render_stats_detail(&summary, HumanReadableMode::Grouped);
+        assert!(
+            out.contains("Number of 4 KiB logical blocks touched: 0\n"),
+            "{out}"
+        );
     }
 
     /// Renders the summary trailer for an empty (default) transfer at the given

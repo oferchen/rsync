@@ -137,6 +137,14 @@ pub(super) fn try_dispatch(
         // A whole-file clone/copy is all literal: no signature was
         // consulted, so nothing was matched.
         .record_file(file_size, file_size, crate::local_copy::MATCHED_NONE, None);
+    // upstream writes the same bytes through write_file(), crediting every
+    // block from offset 0 (fileio.c:251-252). An alt-dest basis copy is
+    // upstream's copy_file() and is never credited (generator.c:931).
+    if copy_source == source {
+        context.summary_mut().record_touched_blocks(
+            crate::block_touch::BlockTouchTracker::blocks_spanned(0, file_size),
+        );
+    }
     context
         .summary_mut()
         .record_copy_method(CopyMethodKind::IoUring);

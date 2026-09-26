@@ -3,7 +3,7 @@ use crate::workspace::WorkspaceBranding;
 use std::path::Path;
 
 /// Validates workspace branding invariants: a non-empty brand, a protocol
-/// version within the supported 28-32 range, well-formed client and daemon
+/// version within the supported 28-33 range, well-formed client and daemon
 /// binary names that resolve to a single executable, and named daemon config
 /// and secrets files.
 pub fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
@@ -13,9 +13,9 @@ pub fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
         )));
     }
 
-    if !(28..=32).contains(&branding.protocol) {
+    if !(28..=33).contains(&branding.protocol) {
         return Err(TaskError::Validation(format!(
-            "protocol version {} must be between 28 and 32",
+            "protocol version {} must be between 28 and 33",
             branding.protocol
         )));
     }
@@ -239,6 +239,20 @@ mod tests {
             error,
             TaskError::Validation(message) if message.contains("protocol version")
         ));
+
+        branding.protocol = 34;
+        let error = validate_branding(&branding).unwrap_err();
+        assert!(matches!(
+            error,
+            TaskError::Validation(message) if message.contains("protocol version")
+        ));
+    }
+
+    #[test]
+    fn validate_branding_accepts_protocol_33() {
+        let mut branding = sample_branding();
+        branding.protocol = 33;
+        validate_branding(&branding).expect("rsync 3.5.1 protocol 33 is supported");
     }
 
     #[test]

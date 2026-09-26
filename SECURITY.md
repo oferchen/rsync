@@ -129,7 +129,7 @@ This section is updated per CVE as each is closed or evidenced as non-applicable
 
 ### Upstream rsync 3.5.1 (21 Sep 2026)
 
-rsync 3.5.1 raises the protocol to 33 and names **no CVE ids** in its release notes. Its bug fixes tighten path handling and the daemon on top of 3.5.0. oc-rsync still pins 3.5.0 as its reference and negotiates a protocol-33 peer down to 32 (PR #7916). The 3.5.1 test suite runs on push to master and nightly, not on pull requests, and every `fail` row in its manifests (`tools/ci/upstream-3.5.1-expect.*.txt`) names its cause and owning task.
+rsync 3.5.1 raises the protocol to 33 and names **no CVE ids** in its release notes. Its bug fixes tighten path handling and the daemon on top of 3.5.0. oc-rsync still pins 3.5.0 as its reference version but speaks protocol 33 (PR #8003), and negotiates a newer peer down instead of refusing it (PR #7916). The 3.5.1 test suite runs on push to master and nightly, not on pull requests, and every `fail` row in its manifests (`tools/ci/upstream-3.5.1-expect.*.txt`) names its cause and owning task.
 
 On master:
 
@@ -138,7 +138,7 @@ On master:
 - **Basis and stream errors.** A block match with no basis file is a protocol error (exit 2) naming the file, and a daemon stream that closes mid-transfer reports `connection unexpectedly closed` and exits 12, as upstream does (PR #8016). This covers the first two sub-cases of the `strict-basis` cell.
 - **Option and startup rules.** `--contimeout` is refused unless there is a daemon connection and bounds a daemon-over-`--rsh` handshake; `--max-alloc=0` is accepted again and resolves to the bounded maximum; the daemon enters inetd mode only for an `AF_INET`/`AF_INET6` stream on stdin (PR #8011).
 
-Still carrying a `fail` row in the 3.5.1 manifests: `strict-basis` (remaining sub-cases), `symlink-race-dest`, `search-only-held-dirfd`, the `/dev/fd/N` cells (`pseudo-paths`, `pseudo-paths-daemon`, `read-batch-pipe`), `batch-file-symlink`, and `write-touched-blocks`, which needs protocol 33. `relative-source-ancestor`, whose row names the `--files-from` escape, passes since PR #8012; PR #8017 flips its rows to `pass`.
+Still carrying a `fail` row in the 3.5.1 manifests: `strict-basis` (remaining sub-cases), `symlink-race-dest`, `search-only-held-dirfd`, the `/dev/fd/N` cells (`pseudo-paths`, `pseudo-paths-daemon`, `read-batch-pipe`), and `batch-file-symlink`. `write-touched-blocks` passes since PR #8003 added protocol 33. `relative-source-ancestor`, whose row names the `--files-from` escape, passes since PR #8012; PR #8017 flips its rows to `pass`.
 
 ### Upstream rsync 3.4.3 defense-in-depth audit (2026-05-20)
 

@@ -110,6 +110,7 @@ fn message_code_is_logging_correctly_categorizes_all_variants() {
         MessageCode::Data,
         MessageCode::Redo,
         MessageCode::Stats,
+        MessageCode::BlockStats,
         MessageCode::IoError,
         MessageCode::IoTimeout,
         MessageCode::NoOp,
@@ -318,6 +319,7 @@ fn message_code_from_u8_boundary_values() {
     // Valid boundary values
     assert!(MessageCode::from_u8(0).is_some()); // Data
     assert!(MessageCode::from_u8(10).is_some()); // Stats
+    assert!(MessageCode::from_u8(11).is_some()); // BlockStats
     assert!(MessageCode::from_u8(22).is_some()); // IoError
     assert!(MessageCode::from_u8(33).is_some()); // IoTimeout
     assert!(MessageCode::from_u8(42).is_some()); // NoOp
@@ -326,7 +328,7 @@ fn message_code_from_u8_boundary_values() {
     assert!(MessageCode::from_u8(102).is_some()); // NoSend
 
     // Invalid boundary values (just outside valid ranges)
-    assert!(MessageCode::from_u8(11).is_none()); // After Stats
+    assert!(MessageCode::from_u8(12).is_none()); // After BlockStats
     assert!(MessageCode::from_u8(21).is_none()); // Before IoError
     assert!(MessageCode::from_u8(23).is_none()); // After IoError
     assert!(MessageCode::from_u8(32).is_none()); // Before IoTimeout
@@ -696,19 +698,19 @@ fn log_code_methods_are_const() {
 /// The rsync protocol uses non-contiguous values for historical reasons.
 #[test]
 fn message_code_sparse_value_ranges() {
-    // Contiguous range: 0-10
-    for i in 0u8..=10 {
+    // Contiguous range: 0-11 (11 is MSG_BLOCK_STATS, rsync.h:302)
+    for i in 0u8..=11 {
         assert!(
             MessageCode::from_u8(i).is_some(),
             "Value {i} should be valid"
         );
     }
 
-    // Gap: 11-21
-    for i in 11u8..22 {
+    // Gap: 12-21
+    for i in 12u8..22 {
         assert!(
             MessageCode::from_u8(i).is_none(),
-            "Value {i} should be invalid (gap 11-21)"
+            "Value {i} should be invalid (gap 12-21)"
         );
     }
 

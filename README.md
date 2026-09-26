@@ -15,7 +15,7 @@
 
 # oc-rsync
 
-`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.5.0 and the 3.4.x series (protocol 32), and usable as a drop-in replacement.
+`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.5.1 (protocol 33), 3.5.0 and the 3.4.x series (protocol 32), and usable as a drop-in replacement.
 
 The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` without conflict.
 
@@ -23,13 +23,13 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 
 ## Status
 
-**Release:** 0.6.4 (2026-07-18). **Upstream reference:** rsync 3.5.0, protocol 32, with back-negotiation to protocol 28. Changes merged since the release are listed under *Unreleased* in the [CHANGELOG](./CHANGELOG.md).
+**Release:** 0.6.4 (2026-07-18). **Upstream reference:** rsync 3.5.0, speaking protocol 33 (rsync 3.5.1) with back-negotiation to protocol 28. Changes merged since the release are listed under *Unreleased* in the [CHANGELOG](./CHANGELOG.md).
 
 All transfer modes (local, SSH, daemon), the delta algorithm, metadata preservation and compression are complete.
 
 **rsync 3.5.0** (13 Aug 2026) keeps `PROTOCOL_VERSION` 32, so wire compatibility carries over from 3.4.4. Its changes are behavioural: 33 CVE fixes in path handling and the daemon, plus new options and directives. oc-rsync implements all five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`) and all three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`). The per-CVE audit trail is in [`SECURITY.md`](./SECURITY.md).
 
-**rsync 3.5.1** (21 Sep 2026) raises the protocol to 33. oc-rsync does not advertise 33: a peer that advertises a newer protocol is negotiated down to 32 instead of refused (#7916), a path covered by unit tests. Moving the reference to 3.5.1 is in progress. On master so far: upstream citations are pinned to 3.5.1 (#7994), the 3.5.1 test suite runs on every push to master and nightly (#7996), and a first set of 3.5.1 divergences is fixed (#8010, #8011, #8012, #8016). Protocol 33 and the reference-version switch are not on master.
+**rsync 3.5.1** (21 Sep 2026) raises the protocol to 33. oc-rsync speaks protocol 33, with `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003); a peer that advertises a newer protocol is negotiated down instead of refused (#7916). Moving the reference version to 3.5.1 is in progress. Also on master: upstream citations are pinned to 3.5.1 (#7994), the 3.5.1 test suite runs on every push to master and nightly (#7996), and a first set of 3.5.1 divergences is fixed (#8010, #8011, #8012, #8016). The reference-version switch is not on master yet.
 
 | Component | Status |
 |-----------|--------|
@@ -297,8 +297,8 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 
 | Protocol | Upstream versions | oc-rsync status | Coverage |
 |----------|-------------------|-----------------|----------|
-| 33 | 3.5.1 | Negotiated down to 32 (#7916) | Unit tests |
-| 32 | 3.4.x, 3.5.0 | Full support (default) | Interop matrix against 3.4.4 and 3.5.0 |
+| 33 | 3.5.1 | Full support (default) | `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003); unit and golden-byte tests |
+| 32 | 3.4.x, 3.5.0 | Full support | Interop matrix against 3.4.4 and 3.5.0 |
 | 31 | 3.1.x - 3.3.x | Full support | Interop matrix against 3.1.3 |
 | 30 | 3.0.x | Full support | Interop matrix against 3.0.9 |
 | 29 | 2.6.9 | Full support | Non-blocking daemon push/pull cells against 2.6.9, plus golden-byte tests |
@@ -395,7 +395,7 @@ See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full workflow and [`docs/cont
 src/bin/oc-rsync.rs     # Entry point
 crates/cli/             # CLI flags, help, output formatting
 crates/core/            # Orchestration facade, session management, config
-crates/protocol/        # Wire protocol (v28-32), multiplex framing
+crates/protocol/        # Wire protocol (v28-33), multiplex framing
 crates/transfer/        # Generator, receiver, delta transfer pipeline
 crates/engine/          # Local copy executor, sparse writes, temp-file commit
 crates/daemon/          # Daemon mode, module access control, systemd

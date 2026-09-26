@@ -91,6 +91,7 @@ entry per change; see the linked PRs for detail.
 
 ### Added
 
+- Protocol 33 from rsync 3.5.1: `MSG_BLOCK_STATS` and the `--stats` line `Number of 4 KiB logical blocks touched`; newer peers clamp to 33, 3.5.0 and older negotiate down (#8003)
 - `--confine-root`, `--insecure-links` / `--no-insecure-links` and `--drop-D` / `--no-drop-D` from rsync 3.5.0 (#7396, #7299)
 - Daemon directives `auth digest` (#7350), `insecure links` (#7484) and `proxy protocol hosts` (see Security)
 - QUIC transport behind the `quic` feature (off by default): `quic://` and `--quic`, daemon listener, TOFU and private-CA trust, mutual TLS, `--quic-cipher`, BBR/Cubic congestion control and `--bwlimit` pacing (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #7910)
@@ -114,8 +115,8 @@ entry per change; see the linked PRs for detail.
 
 ### Changed
 
-- The upstream reference is rsync 3.5.0. It keeps protocol 32, so wire compatibility is unchanged (#7305, #7321, #7331, #7607)
-- A peer that advertises a newer protocol, such as rsync 3.5.1 with 33, is negotiated down to 32 instead of refused (#7916)
+- The upstream reference is rsync 3.5.0 (#7305, #7321, #7331, #7607)
+- A peer that advertises a newer protocol than oc-rsync's is negotiated down instead of refused (#7916)
 - The required upstream-testsuite gate runs the 3.5.0 Python corpus on Linux (pipe and TCP, root and non-root); macOS legs run on every PR (#7387, #7339, #7405, #7408, #7392, #7391)
 - rsync 3.5.0 joins the interop matrix as a gating peer (#7290, #7337)
 - Release benchmarks compare against both 3.4.4 and 3.5.0 and report peak RSS for every mode (#7595)
