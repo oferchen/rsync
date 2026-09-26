@@ -4,7 +4,7 @@ use ::core::str::FromStr;
 #[test]
 fn protocol_version_from_str_accepts_supported_values() {
     assert_eq!(
-        ProtocolVersion::from_str("32").expect("32 is supported"),
+        ProtocolVersion::from_str("33").expect("33 is supported"),
         ProtocolVersion::NEWEST
     );
     assert_eq!(

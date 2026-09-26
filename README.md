@@ -12,7 +12,7 @@
 
 # oc-rsync
 
-`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.5.0 and the 3.4.x series (protocol 32). Works as a drop-in replacement.
+`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.5.1 (protocol 33), 3.5.0 and the 3.4.x series (protocol 32). Works as a drop-in replacement.
 
 Binary name: **`oc-rsync`**. It installs alongside the system `rsync` without conflict.
 
@@ -20,7 +20,7 @@ Binary name: **`oc-rsync`**. It installs alongside the system `rsync` without co
 
 ## Status
 
-**Release:** 0.6.4. **Upstream reference:** rsync 3.5.0, protocol 32, with back-negotiation to protocol 28.
+**Release:** 0.6.4. **Upstream reference:** rsync 3.5.0, protocol 33 (rsync 3.5.1), with back-negotiation to protocol 28.
 
 All transfer modes (local, SSH, daemon), the delta algorithm, metadata preservation and compression are complete.
 
@@ -109,7 +109,8 @@ Interop scenarios run in CI against the upstream releases listed in [`tools/ci/r
 
 | Protocol | Upstream versions | oc-rsync status | Coverage |
 |----------|-------------------|-----------------|----------|
-| 32 | 3.4.x, 3.5.0 | Full support (default) | Interop matrix against 3.4.4 and 3.5.0 |
+| 33 | 3.5.1 | Full support (default) | Adds `MSG_BLOCK_STATS` and the `--stats` touched-blocks line |
+| 32 | 3.4.x, 3.5.0 | Full support | Interop matrix against 3.4.4 and 3.5.0 |
 | 31 | 3.1.x - 3.3.x | Full support | Interop matrix against 3.1.3 |
 | 30 | 3.0.x | Full support | Interop matrix against 3.0.9 |
 | 29 | 2.6.9 | Full support | Non-blocking daemon push/pull cells against 2.6.9, plus golden-byte tests |
@@ -363,7 +364,7 @@ cargo nextest run --workspace --all-features
 src/bin/oc-rsync.rs     # Entry point
 crates/cli/             # CLI flags, help, output formatting
 crates/core/            # Orchestration facade, session management, config
-crates/protocol/        # Wire protocol (v28-32), multiplex framing
+crates/protocol/        # Wire protocol (v28-33), multiplex framing
 crates/transfer/        # Generator, receiver, delta transfer pipeline
 crates/engine/          # Local copy executor, sparse writes, temp-file commit
 crates/daemon/          # Daemon mode, module access control, systemd

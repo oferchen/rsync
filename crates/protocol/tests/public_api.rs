@@ -29,7 +29,7 @@ impl ProtocolVersionAdvertisement for CustomAdvertised {
 
 #[test]
 fn custom_advertised_types_can_participate_in_negotiation() {
-    let peers = [CustomAdvertised(31), CustomAdvertised(32)];
+    let peers = [CustomAdvertised(31), CustomAdvertised(33)];
     let negotiated = select_highest_mutual(peers).expect("should negotiate successfully");
     assert_eq!(negotiated, ProtocolVersion::NEWEST);
 }
@@ -44,21 +44,23 @@ fn supported_protocol_exports_remain_consistent() {
 
 #[test]
 fn supported_protocols_match_upstream_order() {
-    assert_eq!(protocol::SUPPORTED_PROTOCOLS, [32, 31, 30, 29, 28]);
+    assert_eq!(protocol::SUPPORTED_PROTOCOLS, [33, 32, 31, 30, 29, 28]);
 }
 
 #[test]
 fn named_protocol_version_constants_are_exposed() {
+    assert_eq!(ProtocolVersion::V33.as_u8(), 33);
     assert_eq!(ProtocolVersion::V32.as_u8(), 32);
     assert_eq!(ProtocolVersion::V31.as_u8(), 31);
     assert_eq!(ProtocolVersion::V30.as_u8(), 30);
     assert_eq!(ProtocolVersion::V29.as_u8(), 29);
     assert_eq!(ProtocolVersion::V28.as_u8(), 28);
 
-    assert_eq!(ProtocolVersion::V32, ProtocolVersion::NEWEST);
+    assert_eq!(ProtocolVersion::V33, ProtocolVersion::NEWEST);
     assert_eq!(ProtocolVersion::V28, ProtocolVersion::OLDEST);
 
     let expected = [
+        ProtocolVersion::V33,
         ProtocolVersion::V32,
         ProtocolVersion::V31,
         ProtocolVersion::V30,

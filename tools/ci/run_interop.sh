@@ -2196,7 +2196,7 @@ test_write_batch_read_batch() {
   mkdir -p "$dest3" "$dest4"
 
   if ! timeout "$hard_timeout" "$oc_bin" -av \
-      --write-batch="$batch_file2" --timeout=10 \
+      ${OC_BATCH_PROTOCOL_ARGS[@]+"${OC_BATCH_PROTOCOL_ARGS[@]}"} --write-batch="$batch_file2" --timeout=10 \
       "${src_dir}/" "${dest3}/" \
       >"${log}.write-batch2.out" 2>"${log}.write-batch2.err"; then
     echo "    write-batch failed (oc-rsync write, exit=$?)"
@@ -2251,7 +2251,7 @@ CONF
 
   # Step 4: oc-rsync pushes to daemon with --write-batch
   if ! timeout "$hard_timeout" "$oc_bin" -av \
-      --write-batch="$batch_daemon" --timeout=10 \
+      ${OC_BATCH_PROTOCOL_ARGS[@]+"${OC_BATCH_PROTOCOL_ARGS[@]}"} --write-batch="$batch_daemon" --timeout=10 \
       "${src_dir}/" "rsync://127.0.0.1:${oc_port}/interop" \
       >"${log}.write-batch-daemon.out" 2>"${log}.write-batch-daemon.err"; then
     echo "    write-batch failed (daemon push, exit=$?)"
@@ -2307,7 +2307,7 @@ CONF
   start_oc_daemon "$daemon_conf" "$daemon_log" "$upstream_binary" "$daemon_pid" "$oc_port"
 
   if ! timeout "$hard_timeout" "$oc_bin" -av \
-      --write-batch="$batch_daemon_pull" --timeout=10 \
+      ${OC_BATCH_PROTOCOL_ARGS[@]+"${OC_BATCH_PROTOCOL_ARGS[@]}"} --write-batch="$batch_daemon_pull" --timeout=10 \
       "rsync://127.0.0.1:${oc_port}/interop/" "${pull_dest}/" \
       >"${log}.write-batch-daemon-pull.out" 2>"${log}.write-batch-daemon-pull.err"; then
     echo "    write-batch failed (daemon pull, exit=$?)"
@@ -2431,7 +2431,7 @@ test_write_batch_read_batch_compressed() {
   mkdir -p "$dest5" "$dest6"
 
   if ! timeout "$hard_timeout" "$oc_bin" -av -z \
-      --write-batch="$batch_file3" --timeout=10 \
+      ${OC_BATCH_PROTOCOL_ARGS[@]+"${OC_BATCH_PROTOCOL_ARGS[@]}"} --write-batch="$batch_file3" --timeout=10 \
       "${src_dir}/" "${dest5}/" \
       >"${log}.write-batch-z-cross.out" 2>"${log}.write-batch-z-cross.err"; then
     echo "    write-batch with -z failed (oc-rsync write, exit=$?)"
@@ -2531,7 +2531,7 @@ test_oc_compressed_batch_upstream_reads() {
 
   # Step 1: oc-rsync writes a batch file with compression
   if ! timeout "$hard_timeout" "$oc_bin" -av -z \
-      --write-batch="$batch_oc" --timeout=10 \
+      ${OC_BATCH_PROTOCOL_ARGS[@]+"${OC_BATCH_PROTOCOL_ARGS[@]}"} --write-batch="$batch_oc" --timeout=10 \
       "${src_dir}/" "${dest1}/" \
       >"${log}.compress-oc-write.out" 2>"${log}.compress-oc-write.err"; then
     echo "    write-batch with -z failed (oc-rsync write, exit=$?)"
@@ -2820,7 +2820,7 @@ test_batch_framing_multifile() {
   mkdir -p "$oc_write_dest" "$up_read_dest"
 
   if ! timeout "$hard_timeout" "$oc_bin" -av \
-      --write-batch="$batch_oc" --timeout=10 \
+      ${OC_BATCH_PROTOCOL_ARGS[@]+"${OC_BATCH_PROTOCOL_ARGS[@]}"} --write-batch="$batch_oc" --timeout=10 \
       "${framing_src}/" "${oc_write_dest}/" \
       >"${log}.batch-framing-oc-write.out" 2>"${log}.batch-framing-oc-write.err"; then
     echo "    write-batch failed (oc-rsync write, exit=$?)"
@@ -11362,6 +11362,8 @@ run_standalone_interop_tests() {
 
   # Global: consumed by run_standalone_test for version-scoped known failures.
   standalone_upstream_version=$(upstream_release_version "$upstream_binary")
+  # Global: the protocol pin for oc-written batches this upstream replays.
+  oc_batch_protocol_args "${standalone_upstream_version:-}"
   echo "  [standalone] upstream release: ${standalone_upstream_version:-unknown}"
 
   local test_names=(

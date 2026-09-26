@@ -34,12 +34,12 @@ fn min_supported_version_is_28() {
     assert_eq!(SUPPORTED_PROTOCOL_BOUNDS.0, 28);
 }
 
-/// Verifies MAX_SUPPORTED is protocol version 32.
+/// Verifies MAX_SUPPORTED is protocol version 33.
 #[test]
-fn max_supported_version_is_32() {
-    assert_eq!(ProtocolVersion::NEWEST.as_u8(), 32);
-    assert_eq!(*SUPPORTED_PROTOCOL_RANGE.end(), 32);
-    assert_eq!(SUPPORTED_PROTOCOL_BOUNDS.1, 32);
+fn max_supported_version_is_33() {
+    assert_eq!(ProtocolVersion::NEWEST.as_u8(), 33);
+    assert_eq!(*SUPPORTED_PROTOCOL_RANGE.end(), 33);
+    assert_eq!(SUPPORTED_PROTOCOL_BOUNDS.1, 33);
 }
 
 /// Verifies the MAXIMUM_PROTOCOL_ADVERTISEMENT ceiling is 40.
@@ -82,7 +82,7 @@ fn negotiation_boundary_versions() {
     assert!(min_result.is_ok());
     assert_eq!(min_result.unwrap(), ProtocolVersion::OLDEST);
 
-    let max_result = select_highest_mutual([32]);
+    let max_result = select_highest_mutual([33]);
     assert!(max_result.is_ok());
     assert_eq!(max_result.unwrap(), ProtocolVersion::NEWEST);
 }

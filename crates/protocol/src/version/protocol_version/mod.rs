@@ -99,7 +99,7 @@ macro_rules! declare_supported_protocols {
     };
 }
 
-declare_supported_protocols!(32, 31, 30, 29, 28);
+declare_supported_protocols!(33, 32, 31, 30, 29, 28);
 
 /// Bitmask describing the protocol versions supported by the Rust
 /// implementation.
@@ -135,17 +135,13 @@ impl ProtocolVersion {
     pub const BINARY_NEGOTIATION_INTRODUCED: ProtocolVersion =
         ProtocolVersion::new_const(FIRST_BINARY_NEGOTIATION_PROTOCOL);
 
-    /// Protocol version 33, introduced by upstream rsync 3.5.1 for
-    /// `MSG_BLOCK_STATS`.
-    ///
-    /// Not yet advertised: it lies outside [`Self::supported_range`], so
-    /// negotiation clamps a protocol-33 peer to [`Self::NEWEST`]. It exists so
-    /// the protocol-33 paths can be exercised in-process before they are.
-    pub const V33: ProtocolVersion = ProtocolVersion::new_const(33);
+    /// Protocol version 33, the newest revision advertised by upstream rsync
+    /// 3.5.1, which added `MSG_BLOCK_STATS`.
+    pub const V33: ProtocolVersion = ProtocolVersion::NEWEST;
 
     /// Protocol version 32, the newest revision advertised by upstream rsync
-    /// 3.4.4.
-    pub const V32: ProtocolVersion = ProtocolVersion::NEWEST;
+    /// 3.4.4 and 3.5.0.
+    pub const V32: ProtocolVersion = ProtocolVersion::new_const(32);
 
     /// Protocol version 31, used by upstream rsync 3.1.x releases.
     pub const V31: ProtocolVersion = ProtocolVersion::new_const(31);

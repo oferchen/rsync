@@ -61,14 +61,14 @@ pub struct ClientSummary {
     io_error_exit_code: Option<i32>,
     /// Negotiated protocol version for the transfer.
     ///
-    /// Defaults to the newest supported version (32) for local copies.
+    /// Defaults to the newest supported version for local copies.
     /// Set to the actual negotiated version for remote/daemon transfers.
     /// upstream: main.c:429-433 gates stats lines on protocol version.
     protocol_version: u8,
 }
 
 /// Newest protocol version, used as default for local copies.
-const DEFAULT_PROTOCOL_VERSION: u8 = 32;
+const DEFAULT_PROTOCOL_VERSION: u8 = protocol::ProtocolVersion::NEWEST.as_u8();
 
 impl Default for ClientSummary {
     fn default() -> Self {
@@ -501,7 +501,7 @@ impl ClientSummary {
 
     /// Returns the negotiated protocol version for the transfer.
     ///
-    /// Defaults to the newest supported version (32) for local copies.
+    /// Defaults to the newest supported version for local copies.
     /// For remote/daemon transfers, reflects the actual negotiated version.
     /// upstream: main.c:429-433 gates stats lines on this value.
     #[must_use]
