@@ -286,7 +286,9 @@ pub struct ResponseContext<'a> {
 ///
 /// - `rsync-3.5.1/receiver.c:1212` - `if (inplace || one_inplace)`.
 /// - `rsync-3.5.1/receiver.c:1153-1155` - `one_inplace = inplace_partial &&
-///   fnamecmp_type == FNAMECMP_PARTIAL_DIR && fd1 != -1`.
+///   partial_dir && fnamecmp_type == FNAMECMP_PARTIAL_DIR && fd1 != -1`. The
+///   `partial_dir` term is folded into `inplace_partial`, which
+///   `transfer/src/lib.rs` sets only when a partial directory is configured.
 /// - `rsync-3.5.1/receiver.c:1213` - `fnametmp = one_inplace ? partialptr : fname`.
 /// - `rsync-3.5.1/receiver.c:1305-1316` - `finish_transfer(fname, fnametmp, ...)`
 ///   then `handle_partial_dir(partialptr, PDIR_DELETE)`, with the

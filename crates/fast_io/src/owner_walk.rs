@@ -1530,6 +1530,8 @@ pub fn operator_open_create_new(path: &Path, mode: u32) -> io::Result<std::fs::F
 /// - `rsync-3.5.1/receiver.c:1229-1231` - the same call without `O_CREAT`, the
 ///   `protected_regular` retry. Upstream threads `one_inplace` through both, so
 ///   a retry cannot silently drop to the plain resolver.
+/// - `rsync-3.5.1/receiver.c:201-209` `secure_recv_open()` routes both through
+///   `secure_basis_open()`, which never follows the leaf.
 ///
 /// `O_TRUNC` never appears at either upstream site: a staged partial IS the
 /// delta basis, and upstream sizes the result with a final `ftruncate`. The
@@ -1551,13 +1553,54 @@ pub fn operator_open_recv(
     if truncate {
         flags |= OFlags::TRUNC;
     }
-    operator_open_with(
+    operator_open_leaf_nofollow(
         path,
         flags,
         // `RawMode` is u16 on macOS and u32 on Linux, so route the cast through
         // it rather than naming either width here.
         Mode::from_bits_truncate(mode as rustix::fs::RawMode),
     )
+}
+
+/// Open a `--partial-dir` basis read-only: the parent through the ownership
+/// walk, the leaf never followed.
+///
+/// The read half of [`operator_open_recv`], for the in-place probe that pins
+/// the basis inode before its mode is raised.
+///
+/// # Errors
+///
+/// See [`operator_open_recv`].
+pub fn operator_open_basis_read(path: &Path) -> io::Result<std::fs::File> {
+    operator_open_leaf_nofollow(path, OFlags::RDONLY, Mode::empty())
+}
+
+/// Open `path` beneath its walked parent without following a symlink at the
+/// leaf.
+///
+/// A trusted-owned symlink is still followed in a PARENT component; at the leaf
+/// it is refused with `ELOOP`, so an operator-path leaf symlink cannot be
+/// selected as the alternate basis or written through. The path must stay
+/// under the confinement root, as upstream sets `operator_path_resolve` around
+/// these opens.
+///
+/// upstream: `rsync-3.5.1/receiver.c:131-150` `secure_basis_open()` -
+/// `owner_walk_parent()` then `do_open_atfd()`, which adds `O_NOFOLLOW`
+/// (`rsync-3.5.1/syscall.c:4016`). 3.5.0 used `open_no_attacker_symlinks()`
+/// on the whole path, which follows a trusted-owned leaf.
+fn operator_open_leaf_nofollow(
+    path: &Path,
+    flags: OFlags,
+    mode: Mode,
+) -> io::Result<std::fs::File> {
+    let (parent, leaf) = owner_trusted_parent_kind(path, crate::confinement::PathKind::Confined)?;
+    walk_openat(
+        parent.as_fd(),
+        &leaf,
+        flags | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        mode,
+    )
+    .map(std::fs::File::from)
 }
 
 /// Read an operator-supplied file to a `String` through the ownership walk.
@@ -2709,5 +2752,48 @@ mod untrusted_symlink_diagnostic_tests {
                 _ => false,
             });
         assert!(reported, "the refusal must carry the actionable diagnostic");
+    }
+}
+
+/// The `--partial-dir` staging and basis opens refuse a leaf symlink, even a
+/// trusted-owned one, while still following a trusted parent symlink.
+#[cfg(test)]
+mod partial_leaf_nofollow_tests {
+    use super::{operator_open_basis_read, operator_open_recv};
+    use std::os::unix::fs::symlink;
+
+    /// upstream: `rsync-3.5.1/receiver.c:131-150` - the leaf is opened with
+    /// `do_open_atfd()`, i.e. `O_NOFOLLOW`. rsync 3.5.0 followed a
+    /// trusted-owned leaf here, so this cell separates the two releases.
+    #[test]
+    fn a_trusted_leaf_symlink_is_not_written_or_read_through() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let target = temp.path().join("elsewhere");
+        std::fs::write(&target, b"basis").expect("write");
+        let leaf = temp.path().join("partial");
+        symlink(&target, &leaf).expect("symlink");
+
+        let error = operator_open_recv(&leaf, false, false, 0o600)
+            .expect_err("the staging open must not follow a leaf symlink");
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+        let error = operator_open_basis_read(&leaf)
+            .expect_err("the basis open must not follow a leaf symlink");
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+        assert_eq!(std::fs::read(&target).expect("read"), b"basis");
+    }
+
+    /// CONTROL. A trusted-owned PARENT symlink - the operator's own
+    /// `partial -> /mnt/scratch` layout - is still followed.
+    #[test]
+    fn a_trusted_parent_symlink_is_followed() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let real = temp.path().join("real");
+        std::fs::create_dir(&real).expect("mkdir");
+        std::fs::write(real.join("file"), b"basis").expect("write");
+        symlink(&real, temp.path().join("pdir")).expect("symlink");
+
+        let path = temp.path().join("pdir").join("file");
+        operator_open_basis_read(&path).expect("a trusted parent symlink is followed");
+        operator_open_recv(&path, false, false, 0o600).expect("the staging open resolves");
     }
 }
