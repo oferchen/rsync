@@ -778,10 +778,19 @@ impl ReceiverContext {
         } else {
             dest_dir
         };
-        // The operand is the operator's: resolve entry parents beneath it and
-        // apply the root's own attributes through its descriptor.
+        // Resolve entry parents beneath the operator's root and apply that
+        // root's own attributes through its descriptor. A client operand is
+        // the operator's; a daemon's operator named only the module, so the
+        // peer-supplied tail below it keeps the nofollow walk and a symlinked
+        // tail component cannot redirect an attribute apply out of the module.
+        // upstream: clientserver.c:1093 use_secure_symlinks = am_daemon && ...
+        let operator_root = self
+            .config
+            .connection
+            .served_module_root()
+            .map_or_else(|| dest_dir.clone(), Path::to_path_buf);
         let metadata_opts = metadata_opts.with_destination_root(Some(Arc::new(
-            metadata::DestinationRoot::new(dest_dir.clone()),
+            metadata::DestinationRoot::new(operator_root),
         )));
 
         let acl_cache = if self.config.flags.acls {
