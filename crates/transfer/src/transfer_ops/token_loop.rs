@@ -87,6 +87,7 @@ pub(super) fn process_remaining_tokens<R: Read>(
     initial_literal_bytes: u64,
     updating_basis: bool,
     is_inplace: bool,
+    describe_file: &dyn Fn() -> String,
 ) -> io::Result<StreamingResult> {
     let send_abort = |tx: &spsc::Sender<FileMessage>, reason: String| {
         let _ = tx.send(FileMessage::Abort { reason });
@@ -243,11 +244,60 @@ pub(super) fn process_remaining_tokens<R: Read>(
                     total_bytes += copy_len;
                     matched_bytes += copy_len;
                 } else {
-                    let msg = format!("block reference {block_idx} without basis file");
-                    send_abort(file_tx, msg.clone());
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, msg));
+                    let error = super::block_match_without_basis(&describe_file());
+                    send_abort(file_tx, error.to_string());
+                    return Err(error);
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::ProtocolViolation;
+
+    /// A block match with no basis mapped is the peer contradicting the basis
+    /// the generator announced. upstream names the file and exits
+    /// RERR_PROTOCOL (receiver.c:616-620), and the rsync 3.5.1 testsuite's
+    /// strict-basis cell greps for that exact text - a forged or refused basis
+    /// (a leaf symlink under --link-dest) must end on it.
+    #[test]
+    fn block_match_without_basis_names_the_file_as_a_protocol_error() {
+        let mut reader = ServerReader::new_plain(std::io::Cursor::new(Vec::new()));
+        let (file_tx, _file_rx) = spsc::channel(4);
+        let (_buf_tx, buf_return_rx) = spsc::channel(4);
+        let mut verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5);
+        let mut token_reader = TokenReader::new(None, 31).expect("plain token reader");
+
+        let Err(err) = process_remaining_tokens(
+            &mut reader,
+            &file_tx,
+            &buf_return_rx,
+            &mut verifier,
+            &None,
+            &mut None,
+            0,
+            Some(DeltaToken::BlockRef(0)),
+            &mut token_reader,
+            0,
+            false,
+            false,
+            &|| "\"/dest/f\"".to_owned(),
+        ) else {
+            panic!("a block match without a basis must fail");
+        };
+
+        assert_eq!(
+            err.to_string(),
+            "got a block match with no basis file for \"/dest/f\" [receiver]"
+        );
+        assert!(
+            err.get_ref()
+                .and_then(|inner| inner.downcast_ref::<ProtocolViolation>())
+                .is_some(),
+            "must map to RERR_PROTOCOL (2), not a per-file failure"
+        );
     }
 }
