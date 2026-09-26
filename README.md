@@ -3,11 +3,13 @@
 
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/ci.yml)
 [![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml)
-[![Upstream Testsuite 3.5.0 (nonroot, pipe)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml)
-[![Upstream Testsuite 3.5.0 (root, pipe)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml)
-[![Upstream Testsuite 3.5.0 (nonroot, tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml)
-[![Upstream Testsuite 3.5.0 (root, tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml)
-[![Upstream Testsuite 3.5.1 (Linux + macOS, root + nonroot, pipe + tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml)
+
+[![Upstream Rsync Testsuite 3.5.0 root PIPE Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-root.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20root%20PIPE%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml)
+[![Upstream Rsync Testsuite 3.5.0 root TCP Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-root-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20root%20TCP%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml)<br>
+[![Upstream Rsync Testsuite 3.5.0 non-root PIPE Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20non-root%20PIPE%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml)
+[![Upstream Rsync Testsuite 3.5.0 non-root TCP Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20non-root%20TCP%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml)<br>
+[![Upstream Rsync Testsuite 3.5.1 root|non-root TCP|PIPE Linux|macOS](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1%20root%7Cnon-root%20TCP%7CPIPE%20Linux%7CmacOS)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml)
+
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
 # oc-rsync
