@@ -778,6 +778,11 @@ impl ReceiverContext {
         } else {
             dest_dir
         };
+        // The operand is the operator's: resolve entry parents beneath it and
+        // apply the root's own attributes through its descriptor.
+        let metadata_opts = metadata_opts.with_destination_root(Some(Arc::new(
+            metadata::DestinationRoot::new(dest_dir.clone()),
+        )));
 
         let acl_cache = if self.config.flags.acls {
             self.flist_reader_cache

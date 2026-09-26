@@ -136,6 +136,20 @@ pub(crate) fn at_confined_parent(
 ) -> std::io::Result<()> {
     use std::os::fd::AsFd;
 
+    // The destination root itself is the operator's, entered by upstream with
+    // a plain change_dir() and then named as ".". Anchor on the root's own
+    // descriptor rather than opening its parent: the parent lies outside the
+    // tree a kernel sandbox (Landlock) grants the receiver, so opening it is
+    // refused and the root's owner, times, and mode would never be applied.
+    // upstream: main.c:778 change_dir(dest_path); rsync.c set_file_attrs(".")
+    if let Some(root) = root
+        && destination
+            .strip_prefix(root.path())
+            .is_ok_and(|tail| tail.as_os_str().is_empty())
+    {
+        return at(root.anchor()?, std::ffi::OsStr::new("."));
+    }
+
     let owned;
     let parent = match shared {
         Some(parent) => Some(parent),
