@@ -207,6 +207,19 @@ fn setup() -> (tempfile::TempDir, PathBuf, PathBuf) {
     fs::write(src.join("beta.txt"), b"beta contents here\n").unwrap();
     fs::write(src.join("sub/gamma.txt"), b"gamma\n").unwrap();
     std::os::unix::fs::symlink("alpha.txt", src.join("link")).unwrap();
+    // The transfer root `.` exists on both sides, so whether it gets a row
+    // depends only on whether the two root mtimes differ. upstream:
+    // generator.c:532-536 sets ITEM_REPORT_TIME when mtime_differs(), and
+    // util1.c:1744-1747 same_time() compares whole seconds under the default
+    // modify_window of 0. `dest` is created before the source files are
+    // written, so a setup that straddles a second boundary leaves the roots a
+    // second apart and upstream itself prints `.d..t...... ./`. Pin dest's
+    // mtime to src's so the expected rows do not depend on the wall clock.
+    let src_mtime = fs::metadata(&src).unwrap().modified().unwrap();
+    fs::File::open(&dest)
+        .unwrap()
+        .set_modified(src_mtime)
+        .expect("align dest root mtime with src root");
     (temp, src, dest)
 }
 
