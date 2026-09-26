@@ -221,6 +221,37 @@ pub struct ResponseContext<'a> {
     pub wire_basis: wire_basis::WireBasis<'a>,
 }
 
+impl ResponseContext<'_> {
+    /// Names the file being received the way upstream's receiver does.
+    ///
+    /// Upstream has `chdir`ed into the destination root, so `full_fname()`
+    /// prefixes the flist-relative name with that directory (and appends
+    /// ` (in MODULE)` for a daemon).
+    fn full_fname(&self, receiver: &crate::receiver::ReceiverContext) -> String {
+        #[cfg(unix)]
+        let dest_root = self.dest_dir;
+        #[cfg(not(unix))]
+        let dest_root = None;
+        receiver.full_fname(self.wire_basis.entry_relative_path, dest_root)
+    }
+}
+
+/// The error for a block-match token that arrives while no basis is mapped.
+///
+/// The generator told the sender a basis existed, but the receiver has none
+/// to copy from, so honouring the match would leave a hole in the output. The
+/// peer is inconsistent with its own handshake, which upstream treats as a
+/// protocol error rather than a per-file failure.
+///
+/// upstream: receiver.c:616-620 receive_data() - `rprintf(FERROR, "got a
+/// block match with no basis file for %s [%s]\n", full_fname(fname),
+/// who_am_i()); exit_cleanup(RERR_PROTOCOL);`
+fn block_match_without_basis(file: &str) -> io::Error {
+    protocol::protocol_violation(format!(
+        "got a block match with no basis file for {file} [receiver]"
+    ))
+}
+
 /// Decides whether the receiver writes this file straight to its final
 /// destination (inplace) or reconstructs it into a temp file that is renamed on
 /// commit.
