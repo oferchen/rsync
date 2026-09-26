@@ -505,12 +505,46 @@ fn handle_legacy_session(
             Err(_) => {}
         }
 
-        // upstream: clientserver.c:1407-1418 - the daemon checks if the first
-        // non-@RSYNCD line is `#early_input=<len>`. If so, it reads <len> bytes
-        // of raw data and then reads the next line as the module name.
-        if let Some(data) = read_early_input(&line, &mut reader)? {
-            early_input_data = Some(data);
-            continue;
+        // upstream: clientserver.c:1539-1550 - only the first request line may
+        // be `#early_input=<len>`: the daemon reads <len> raw bytes and then
+        // exactly one more line, which is the request whatever it holds. A
+        // second `#early_input=` is therefore an unknown `#` command.
+        if early_input_data.is_none() {
+            match early_input_length(&line) {
+                EarlyInputLength::Absent => {}
+                EarlyInputLength::Invalid => {
+                    write_limited(
+                        reader.get_mut(),
+                        &mut limiter,
+                        b"@ERROR: invalid early_input length\n",
+                    )?;
+                    reader.get_mut().flush()?;
+                    // FSM: -> Closing after the fatal @ERROR refusal.
+                    return Ok(end_session(conn_state, None));
+                }
+                EarlyInputLength::Valid(len) => {
+                    let mut data = vec![0u8; len];
+                    // upstream: the payload is read under the same handshake
+                    // deadline as the lines around it (clientserver.c:1545
+                    // read_buf -> io.c safe_read).
+                    match DeadlineBufRead::new(&mut reader, deadline_socket.as_ref(), &deadline)
+                        .read_exact(&mut data)
+                    {
+                        Ok(()) => {}
+                        Err(_) if deadline.expired() => {
+                            if let Some(log) = log_sink.as_ref() {
+                                let message = rsync_error!(30, handshake_timeout_message("rsyncd"))
+                                    .with_role(Role::Daemon);
+                                log_message(log, &message);
+                            }
+                            return Ok(end_session(conn_state, Some(ExitCode::Timeout)));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                    early_input_data = Some(data);
+                    continue;
+                }
+            }
         }
 
         request = Some(line);
@@ -581,39 +615,48 @@ fn handle_legacy_session(
     Ok(end_session(conn_state, session_exit_code))
 }
 
-/// Checks whether `line` is an `#early_input=<len>` command and, if so, reads
-/// the specified number of raw bytes from the stream.
+/// What a request line says about `#early_input=`.
+#[derive(Debug, PartialEq, Eq)]
+enum EarlyInputLength {
+    /// The line is not an `#early_input=` command.
+    Absent,
+    /// The command's length is outside `1..=EARLY_INPUT_MAX_SIZE`.
+    Invalid,
+    /// The command announces this many raw bytes.
+    Valid(usize),
+}
+
+/// Parses an `#early_input=<len>` command line.
 ///
-/// Returns `Ok(Some(data))` when the early-input command was recognized and the
-/// data was read successfully, `Ok(None)` when the line is not an early-input
-/// command, or an I/O error if reading fails or the length is invalid.
+/// The length is read as C `strtol(.., 10)` reads it: leading whitespace, an
+/// optional sign, then the digits, ignoring any tail; no digits reads as 0.
 ///
-/// upstream: clientserver.c:1407-1414 - `rsync_module()` reads early input data
-/// and stores it for later delivery to the pre-xfer exec script.
-fn read_early_input(line: &str, reader: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
-    let len_str = match line.strip_prefix(EARLY_INPUT_CMD) {
-        Some(rest) => rest,
-        None => return Ok(None),
+/// upstream: clientserver.c:1539-1543 - `early_input_len = strtol(...)`, then
+/// `<= 0 || > BIGPATHBUFLEN` is refused with `@ERROR: invalid early_input
+/// length`.
+fn early_input_length(line: &str) -> EarlyInputLength {
+    let Some(rest) = line.strip_prefix(EARLY_INPUT_CMD) else {
+        return EarlyInputLength::Absent;
     };
-
-    let data_len: usize = len_str.parse().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid early_input length: {len_str}"),
-        )
-    })?;
-
-    if data_len == 0 || data_len > EARLY_INPUT_MAX_SIZE {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("early_input length {data_len} out of range (1..={EARLY_INPUT_MAX_SIZE})"),
-        ));
+    let rest = rest.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']);
+    let (negative, digits) = match rest.as_bytes().first() {
+        Some(b'-') => (true, &rest[1..]),
+        Some(b'+') => (false, &rest[1..]),
+        _ => (false, rest),
+    };
+    let end = digits
+        .bytes()
+        .position(|b| !b.is_ascii_digit())
+        .unwrap_or(digits.len());
+    // Any value past the bound is refused, so saturating keeps the verdict.
+    let magnitude = digits[..end].bytes().fold(0usize, |acc, b| {
+        acc.saturating_mul(10).saturating_add(usize::from(b - b'0'))
+    });
+    if negative || magnitude == 0 || magnitude > EARLY_INPUT_MAX_SIZE {
+        EarlyInputLength::Invalid
+    } else {
+        EarlyInputLength::Valid(magnitude)
     }
-
-    let mut buf = vec![0u8; data_len];
-    reader.read_exact(&mut buf)?;
-
-    Ok(Some(buf))
 }
 
 fn handle_binary_session(
@@ -775,98 +818,47 @@ mod session_runtime_tests {
     }
 
     #[test]
-    fn read_early_input_parses_valid_command() {
-        let data = b"hello world";
-        let mut cursor = io::Cursor::new(data.to_vec());
-        let result = read_early_input("#early_input=11", &mut cursor).unwrap();
-        assert_eq!(result, Some(b"hello world".to_vec()));
+    fn early_input_length_reads_a_valid_command() {
+        assert_eq!(
+            early_input_length("#early_input=11"),
+            EarlyInputLength::Valid(11)
+        );
+        assert_eq!(
+            early_input_length(&format!("#early_input={EARLY_INPUT_MAX_SIZE}")),
+            EarlyInputLength::Valid(EARLY_INPUT_MAX_SIZE)
+        );
     }
 
     #[test]
-    fn read_early_input_returns_none_for_non_command() {
-        let mut cursor = io::Cursor::new(Vec::new());
-        let result = read_early_input("mymodule", &mut cursor).unwrap();
-        assert_eq!(result, None);
+    fn early_input_length_ignores_other_lines() {
+        assert_eq!(early_input_length("mymodule"), EarlyInputLength::Absent);
+        assert_eq!(early_input_length(""), EarlyInputLength::Absent);
+        assert_eq!(early_input_length("#list"), EarlyInputLength::Absent);
     }
 
+    /// upstream: clientserver.c:1540-1543 - `strtol` reads a numeric prefix, so
+    /// a trailing tail is ignored, and anything that is not a positive length
+    /// within `BIGPATHBUFLEN` is refused.
     #[test]
-    fn read_early_input_returns_none_for_empty_line() {
-        let mut cursor = io::Cursor::new(Vec::new());
-        let result = read_early_input("", &mut cursor).unwrap();
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn read_early_input_rejects_zero_length() {
-        let mut cursor = io::Cursor::new(Vec::new());
-        let result = read_early_input("#early_input=0", &mut cursor);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("out of range"));
-    }
-
-    #[test]
-    fn read_early_input_rejects_exceeding_max_size() {
-        let mut cursor = io::Cursor::new(Vec::new());
-        let too_large = EARLY_INPUT_MAX_SIZE + 1;
-        let line = format!("#early_input={too_large}");
-        let result = read_early_input(&line, &mut cursor);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("out of range"));
-    }
-
-    #[test]
-    fn read_early_input_rejects_non_numeric_length() {
-        let mut cursor = io::Cursor::new(Vec::new());
-        let result = read_early_input("#early_input=abc", &mut cursor);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("invalid early_input length"));
-    }
-
-    #[test]
-    fn read_early_input_reads_binary_data() {
-        let data: Vec<u8> = (0..=255u8).collect();
-        let mut cursor = io::Cursor::new(data.clone());
-        let line = format!("#early_input={}", data.len());
-        let result = read_early_input(&line, &mut cursor).unwrap();
-        assert_eq!(result, Some(data));
-    }
-
-    #[test]
-    fn read_early_input_at_max_size() {
-        let data = vec![0xABu8; EARLY_INPUT_MAX_SIZE];
-        let mut cursor = io::Cursor::new(data.clone());
-        let line = format!("#early_input={EARLY_INPUT_MAX_SIZE}");
-        let result = read_early_input(&line, &mut cursor).unwrap();
-        assert_eq!(result, Some(data));
-    }
-
-    #[test]
-    fn read_early_input_roundtrip_with_send_format() {
-        let payload = b"authentication-token-xyz";
-        let header = format!("{EARLY_INPUT_CMD}{}\n", payload.len());
-        let mut wire = header.into_bytes();
-        wire.extend_from_slice(payload);
-
-        // The daemon reads lines; `#early_input=24` would be the trimmed line.
-        let line = format!("{EARLY_INPUT_CMD}{}", payload.len());
-        let mut cursor = io::Cursor::new(payload.to_vec());
-        let result = read_early_input(&line, &mut cursor).unwrap();
-        assert_eq!(result.unwrap(), payload);
-    }
-
-    #[test]
-    fn read_early_input_returns_error_on_short_stream() {
-        // Only 3 bytes available but header says 10
-        let data = vec![1u8, 2, 3];
-        let mut cursor = io::Cursor::new(data);
-        let result = read_early_input("#early_input=10", &mut cursor);
-        assert!(result.is_err());
+    fn early_input_length_follows_strtol() {
+        assert_eq!(
+            early_input_length("#early_input= +12abc"),
+            EarlyInputLength::Valid(12)
+        );
+        for invalid in [
+            "#early_input=0".to_owned(),
+            "#early_input=-5".to_owned(),
+            "#early_input=abc".to_owned(),
+            "#early_input=".to_owned(),
+            format!("#early_input={}", EARLY_INPUT_MAX_SIZE + 1),
+            "#early_input=99999999999999999999999".to_owned(),
+        ] {
+            assert_eq!(
+                early_input_length(&invalid),
+                EarlyInputLength::Invalid,
+                "{invalid:?}"
+            );
+        }
     }
 
     #[test]
