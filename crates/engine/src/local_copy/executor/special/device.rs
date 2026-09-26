@@ -5,6 +5,9 @@
 //!
 //! upstream: receiver.c - device node handling, syscall.c:do_mknod()
 
+use crate::local_copy::report_link_failure;
+#[cfg(unix)]
+use crate::local_copy::report_mknod_failure;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -368,9 +371,13 @@ pub(crate) fn copy_device(
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 remove_existing_destination(destination)?;
-                create_hard_link(&link_source, destination).map_err(|link_error| {
-                    LocalCopyError::io("create hard link", destination, link_error)
-                })?;
+                if let Err(link_error) = create_hard_link(&link_source, destination) {
+                    // upstream: hlink.c:486-487 - rsyserr(FERROR_XFER, errno,
+                    // "link %s => %s failed", ...) and the entry is skipped.
+                    report_link_failure(context, destination, &link_source, &link_error);
+                    context.register_progress();
+                    return Ok(());
+                }
             }
             Err(error)
                 if matches!(
@@ -382,11 +389,9 @@ pub(crate) fn copy_device(
                 existing_hard_link_target = Some(link_source);
             }
             Err(error) => {
-                return Err(LocalCopyError::io(
-                    "create hard link",
-                    destination.to_path_buf(),
-                    error,
-                ));
+                report_link_failure(context, destination, &link_source, &error);
+                context.register_progress();
+                return Ok(());
             }
         }
 
@@ -484,8 +489,13 @@ pub(crate) fn copy_device(
         // --fake-super is active (mirrors upstream
         // syscall.c:do_mknod()'s am_root < 0 branch).
         let fake_super = metadata_options.fake_super_enabled();
-        create_device_node_with_fake_super(destination, metadata, fake_super)
-            .map_err(map_metadata_error)?;
+        if let Err(error) = create_device_node_with_fake_super(destination, metadata, fake_super) {
+            // upstream: generator.c:2521-2522 - rsyserr(FERROR_XFER, e,
+            // "mknod %s failed", ...) and the entry is skipped.
+            report_mknod_failure(context, destination, &error.into_parts().2);
+            context.register_progress();
+            return Ok(());
+        }
 
         context.register_created_path(
             destination,

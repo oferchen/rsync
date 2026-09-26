@@ -160,9 +160,11 @@ pub(crate) fn clear_directory_obstacle(
                 report_not_empty(destination, relative);
             } else {
                 // upstream: delete.c:264-266 - rsyserr(FERROR_XFER, errno,
-                // "delete_file: %s(%s) failed", what, fbuf).
+                // "delete_file: %s(%s) failed", what, fbuf). The obstacle is cleared by
+                // the generator (atomic_create -> delete_item), so who_am_i() is
+                // `generator`.
                 eprintln!(
-                    "rsync: [receiver] delete_file: rmdir({}) failed: {}",
+                    "rsync: [generator] delete_file: rmdir({}) failed: {}",
                     display_name(destination, relative),
                     crate::local_copy::upstream_io_error(&error),
                 );
@@ -366,7 +368,7 @@ pub(crate) fn clear_device_obstacle(
             // upstream: delete.c:264-266 - rsyserr(FERROR_XFER, errno,
             // "delete_file: %s(%s) failed", what, fbuf).
             eprintln!(
-                "rsync: [receiver] delete_file: unlink({}) failed: {}",
+                "rsync: [generator] delete_file: unlink({}) failed: {}",
                 display_name(destination, relative),
                 crate::local_copy::upstream_io_error(&error),
             );
