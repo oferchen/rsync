@@ -23,8 +23,8 @@ use super::iter::{SupportedProtocolNumbersIter, SupportedVersionsIter};
 ///
 /// This type wraps a non-zero byte that identifies which revision of the rsync
 /// wire protocol a session has agreed to use. The supported range is
-/// [`V28`](Self::V28) through [`V32`](Self::V32), matching upstream rsync
-/// 3.4.4. Protocol version 30 marks the boundary between the legacy ASCII
+/// [`V28`](Self::V28) through [`V33`](Self::V33), matching upstream rsync
+/// 3.5.1. Protocol version 30 marks the boundary between the legacy ASCII
 /// negotiation (`@RSYNCD:`) and the modern binary handshake.
 ///
 /// # Constructing a Version
