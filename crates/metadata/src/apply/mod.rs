@@ -94,8 +94,8 @@ impl<'a> ParentWalk<'a> {
 /// - Below `root`: [`fast_io::open_dir_beneath_nofollow`] on the root's pinned
 ///   descriptor (see [`crate::DestinationRoot`]) - the remainder refuses every
 ///   symlink.
-/// - The root entry itself: its parent is entirely operator path, opened
-///   through [`fast_io::operator_open_dir`].
+/// - The root entry itself (a single-file root): its parent is opened the way
+///   the root is entered, see [`crate::DestinationRoot::open_dir`].
 /// - No root, or a destination outside it: the strict
 ///   [`fast_io::secure_open_dir`] walk over the whole parent.
 #[cfg(unix)]
@@ -114,7 +114,7 @@ pub(crate) fn confined_parent(
             .strip_prefix(root.path())
             .is_ok_and(|tail| tail.as_os_str().is_empty())
         {
-            return fast_io::operator_open_dir(parent).map(Some);
+            return root.open_dir(parent).map(Some);
         }
     }
     fast_io::secure_open_dir(parent).map(Some)

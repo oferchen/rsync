@@ -124,3 +124,55 @@ fn a_symlinked_tail_component_cannot_redirect_the_attribute_apply() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// The other half of upstream's rule: a relative symlink that stays inside
+/// the module is followed (syscall.c:3102 splices it into the walk), so a
+/// push through it applies the destination's attributes and exits 0. This
+/// is the shape of macOS's `/var -> private/var` under a `path = /` module
+/// (upstream's link-dest-pathroot cell).
+#[test]
+fn an_in_module_symlinked_tail_still_receives_the_destination_attrs() {
+    // SAFETY: geteuid() has no preconditions and cannot fail.
+    if unsafe { libc::geteuid() } == 0 {
+        println!("SKIP: running as root, the daemon drops to nobody");
+        return;
+    }
+    let Some(port) = free_port() else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = fs::canonicalize(temp.path()).expect("canonicalize tempdir");
+    let module = root.join("module");
+    fs::create_dir_all(module.join("real")).expect("create module tree");
+    symlink("real", module.join("link")).expect("plant in-module symlink");
+    let src = root.join("src");
+    fs::create_dir(&src).expect("create src");
+    fs::write(src.join("f"), b"payload\n").expect("write source");
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o750)).expect("chmod src");
+
+    let _daemon = spawn_daemon(&root, port, &module);
+    let out = Command::new(oc_binary())
+        .arg("-a")
+        .arg(format!("{}/", src.display()))
+        .arg(format!("rsync://127.0.0.1:{port}/m/link/"))
+        .stdin(Stdio::null())
+        .output()
+        .expect("run push client");
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "push through an in-module link failed\nstderr:\n{stderr}"
+    );
+    let mode = fs::metadata(module.join("real"))
+        .expect("stat destination")
+        .permissions()
+        .mode()
+        & 0o7777;
+    assert_eq!(mode, 0o750, "the destination root's mode was not applied");
+    assert!(
+        module.join("real").join("f").is_file(),
+        "the file did not land"
+    );
+}
