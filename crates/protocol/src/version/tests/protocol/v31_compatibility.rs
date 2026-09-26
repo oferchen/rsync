@@ -351,7 +351,7 @@ fn v31_upgrades_to_v32_when_peer_supports_it() {
 fn v31_forward_compat_clamps_future_to_v32() {
     // Peer offers v31 and future versions (33-40)
     let result = select_highest_mutual([31, 35]).unwrap();
-    assert_eq!(result, ProtocolVersion::V32, "future versions clamp to v32");
+    assert_eq!(result, ProtocolVersion::V33, "future versions clamp to v33");
 }
 
 /// Verifies feature differences between v31 and v32.
@@ -390,13 +390,13 @@ fn v31_vs_v32_feature_comparison() {
 /// Verifies v31 forward compatibility with future protocol versions.
 #[test]
 fn v31_forward_compat_with_future_versions() {
-    // Peer offers v31, v32, and future version 35
-    let result = select_highest_mutual([31, 32, 35]).unwrap();
-    assert_eq!(result, ProtocolVersion::V32);
+    // Peer offers v31, v33, and future version 35
+    let result = select_highest_mutual([31, 33, 35]).unwrap();
+    assert_eq!(result, ProtocolVersion::V33);
 
     // Peer offers only v31 and future version 38
     let result = select_highest_mutual([31, 38]).unwrap();
-    assert_eq!(result, ProtocolVersion::V32, "clamps 38 to v32");
+    assert_eq!(result, ProtocolVersion::V33, "clamps 38 to v33");
 }
 
 /// Verifies v31 rejects versions beyond maximum advertisement.
@@ -446,7 +446,7 @@ fn v31_offset_from_oldest() {
 /// Verifies v31 is at the correct offset from newest.
 #[test]
 fn v31_offset_from_newest() {
-    assert_eq!(ProtocolVersion::V31.offset_from_newest(), 1);
+    assert_eq!(ProtocolVersion::V31.offset_from_newest(), 2);
 }
 
 /// Verifies v31 navigation to next newer version.
@@ -545,8 +545,8 @@ fn v31_within_range_bounds() {
 /// Verifies v31 from supported index lookup.
 #[test]
 fn v31_from_supported_index() {
-    // v31 should be at index 1 (in newest-to-oldest order: 32, 31, 30, 29, 28)
-    let version = ProtocolVersion::from_supported_index(1);
+    // v31 should be at index 2 (in newest-to-oldest order: 33, 32, 31, 30, 29, 28)
+    let version = ProtocolVersion::from_supported_index(2);
     assert_eq!(version, Some(ProtocolVersion::V31));
 }
 

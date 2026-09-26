@@ -445,6 +445,7 @@ impl ReceiverContext {
         stats.bytes_received = bytes_received;
         stats.literal_data = literal_data;
         stats.matched_data = matched_data;
+        stats.touched_blocks_4k = self.touched_blocks_4k;
         stats.total_source_bytes = self.total_source_size();
         // upstream: flist.c:3236-3249 - the per-type tallies were bumped as
         // each entry (sub-lists included) was read, so they stay exact even
@@ -915,6 +916,7 @@ impl ReceiverContext {
         stats.bytes_received = bytes_received;
         stats.literal_data = literal_data;
         stats.matched_data = matched_data;
+        stats.touched_blocks_4k = self.touched_blocks_4k;
         stats.total_source_bytes = self.total_source_size();
         let (num_dirs, num_symlinks, num_devices, num_specials) = self.file_type_counts();
         stats.num_dirs = num_dirs;

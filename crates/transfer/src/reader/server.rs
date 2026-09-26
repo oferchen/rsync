@@ -27,6 +27,9 @@ pub struct ServerReader<R: Read> {
     /// `MultiplexReader` on multiplex activation. `Some` only on a push where
     /// the remote receiver performs `--delete`. upstream: log.c:870-874.
     pending_deleted_render: Option<super::DeletedRender>,
+    /// Sender acceptance of `MSG_BLOCK_STATS`, applied to the
+    /// `MultiplexReader` on multiplex activation. upstream: io.c:1721-1732.
+    pending_block_stats_accept: bool,
 }
 
 #[allow(private_interfaces)]
@@ -49,6 +52,7 @@ impl<R: Read> ServerReader<R> {
             pending_batch_recorder: None,
             pending_io_timeout_adoption: None,
             pending_deleted_render: None,
+            pending_block_stats_accept: false,
         }
     }
 
@@ -61,6 +65,33 @@ impl<R: Read> ServerReader<R> {
     /// upstream: log.c:870-874 `log_delete()` renders on the non-server side.
     pub(crate) fn enable_deleted_render(&mut self, render: super::DeletedRender) {
         self.pending_deleted_render = Some(render);
+    }
+
+    /// Accepts `MSG_BLOCK_STATS` frames once multiplexing is active.
+    ///
+    /// Called only by a sender after protocol 33 is negotiated; every other
+    /// reader treats the frame as a fatal invalid message.
+    ///
+    /// upstream: io.c:1722 - valid only for `am_generator || am_sender` at
+    /// `protocol_version >= 33`.
+    pub(crate) fn accept_block_stats(&mut self) {
+        match &mut self.inner {
+            ServerReaderInner::Multiplex(mux) => mux.accept_block_stats(),
+            ServerReaderInner::Compressed(compressed) => compressed.get_mut().accept_block_stats(),
+            ServerReaderInner::Plain(_) => self.pending_block_stats_accept = true,
+        }
+    }
+
+    /// Returns the remote receiver's touched-block count from its
+    /// `MSG_BLOCK_STATS`, or 0 when none arrived.
+    ///
+    /// upstream: io.c:1727 `stats.touched_blocks_4k = IVAL64(b, 0);`
+    pub fn touched_blocks_4k(&mut self) -> u64 {
+        match &mut self.inner {
+            ServerReaderInner::Multiplex(mux) => mux.touched_blocks_4k(),
+            ServerReaderInner::Compressed(compressed) => compressed.get_mut().touched_blocks_4k(),
+            ServerReaderInner::Plain(_) => 0,
+        }
     }
 
     /// Registers client-receiver I/O-timeout adoption state.
@@ -125,11 +156,15 @@ impl<R: Read> ServerReader<R> {
                 if let Some(render) = self.pending_deleted_render {
                     mux.set_deleted_render(render);
                 }
+                if self.pending_block_stats_accept {
+                    mux.accept_block_stats();
+                }
                 Ok(Self {
                     inner: ServerReaderInner::Multiplex(mux),
                     pending_batch_recorder: None,
                     pending_io_timeout_adoption: None,
                     pending_deleted_render: None,
+                    pending_block_stats_accept: false,
                 })
             }
             ServerReaderInner::Multiplex(_) => Err(io::Error::new(
@@ -169,6 +204,7 @@ impl<R: Read> ServerReader<R> {
                     pending_batch_recorder: None,
                     pending_io_timeout_adoption: None,
                     pending_deleted_render: None,
+                    pending_block_stats_accept: false,
                 })
             }
             ServerReaderInner::Plain(_) => Err(io::Error::new(

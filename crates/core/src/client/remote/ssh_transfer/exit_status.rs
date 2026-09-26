@@ -83,6 +83,8 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
                 transfer_stats.flist_buildtime_ms,
                 transfer_stats.flist_xfertime_ms,
             );
+            // upstream: main.c:446-448 prints stats.touched_blocks_4k at protocol 33+.
+            let s = s.with_touched_blocks_4k(transfer_stats.touched_blocks_4k);
             (s, transfer_stats.io_error, transfer_stats.got_xfer_error)
         }
         ServerStats::Generator(ref generator_stats) => {
@@ -111,6 +113,8 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
                 generator_stats.flist_buildtime_ms,
                 generator_stats.flist_xfertime_ms,
             );
+            // upstream: main.c:446-448 prints stats.touched_blocks_4k at protocol 33+.
+            let s = s.with_touched_blocks_4k(generator_stats.touched_blocks_4k);
             (s, generator_stats.io_error, generator_stats.got_xfer_error)
         }
     };

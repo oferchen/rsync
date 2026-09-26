@@ -163,6 +163,11 @@ impl GeneratorContext {
         mut progress: Option<&mut dyn super::super::super::TransferProgressCallback>,
         mut itemize: Option<&mut dyn super::super::super::ItemizeCallback>,
     ) -> io::Result<GeneratorStats> {
+        // upstream: io.c:1721-1732 - MSG_BLOCK_STATS is valid on the sender only
+        // once protocol 33 is negotiated; anywhere else it is an invalid message.
+        if self.protocol.supports_block_stats() {
+            reader.accept_block_stats();
+        }
         if self.should_activate_input_multiplex() {
             reader = reader.activate_multiplex().map_err(|e| {
                 io::Error::new(
@@ -549,6 +554,9 @@ impl GeneratorContext {
             bytes_read: total_read,
             matched_data: transfer_result.matched_data,
             literal_data: transfer_result.literal_data,
+            // upstream: io.c:1727 stores the remote receiver's count, read off
+            // the wire before the final goodbye NDX_DONE; 0 when none arrived.
+            touched_blocks_4k: reader.touched_blocks_4k(),
             total_size: flist_send_stats.total_size,
             flist_buildtime_ms: flist_buildtime,
             flist_xfertime_ms: flist_xfertime,

@@ -8,12 +8,12 @@ pub(super) const RSYNCD: &str = branding::daemon_program_name();
 #[cfg(unix)]
 pub(super) const OC_RSYNC_D: &str = branding::oc_daemon_program_name();
 
-pub(super) const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n";
+pub(super) const LEGACY_DAEMON_GREETING: &str = "@RSYNCD: 33.0 sha512 sha256 sha1 md5 md4\n";
 
 pub(super) fn spawn_stub_daemon(
     responses: Vec<&'static str>,
 ) -> (std::net::SocketAddr, thread::JoinHandle<()>) {
-    spawn_stub_daemon_with_protocol(responses, "32.0")
+    spawn_stub_daemon_with_protocol(responses, "33.0")
 }
 
 pub(super) fn spawn_stub_daemon_with_protocol(
@@ -42,7 +42,7 @@ pub(super) fn spawn_auth_stub_daemon(
 
     let handle = thread::spawn(move || {
         if let Ok((stream, _)) = listener.accept() {
-            handle_auth_connection(stream, challenge, &expected_credentials, &responses, "32.0");
+            handle_auth_connection(stream, challenge, &expected_credentials, &responses, "33.0");
         }
     });
 

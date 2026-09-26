@@ -251,9 +251,9 @@ impl WorkspaceMetadata {
     }
 
     fn validate_protocol(&self, manifest_path: &Path) {
-        if !(28..=32).contains(&self.protocol) {
+        if !(28..=33).contains(&self.protocol) {
             panic!(
-                "workspace.metadata.oc_rsync.protocol must be between 28 and 32 in {}",
+                "workspace.metadata.oc_rsync.protocol must be between 28 and 33 in {}",
                 manifest_path.display()
             );
         }

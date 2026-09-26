@@ -38,7 +38,7 @@
 //!    the negotiated protocol version. The batch format has NO ASCII magic:
 //!    upstream `batch.c:113` writes the stream-flags i32 first, then
 //!    `io.c:2484` writes the protocol-version i32. So bytes 4..8 of the file
-//!    must equal the negotiated protocol (32). Emitted by
+//!    must equal the negotiated protocol (33). Emitted by
 //!    `crates/batch/src/writer.rs::write_header`.
 //! 4. A subsequent `oc-rsync --read-batch=FILE DEST_REPLAY/` (no remote
 //!    URL) reconstructs the same source tree from the batch file alone,
@@ -388,9 +388,9 @@ fn daemon_pull_write_batch_records_and_replays() {
         i32::from_le_bytes(batch_bytes[4..8].try_into().expect("4-byte protocol field"));
     assert_eq!(
         protocol_version,
-        32,
+        33,
         "batch header protocol-version field (bytes 4..8) must be the negotiated \
-         protocol 32; first 16 bytes = {:?}",
+         protocol 33; first 16 bytes = {:?}",
         &batch_bytes[..batch_bytes.len().min(16)],
     );
 

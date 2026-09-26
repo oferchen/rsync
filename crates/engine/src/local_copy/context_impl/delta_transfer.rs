@@ -215,6 +215,11 @@ impl<'a> CopyContext<'a> {
         let mut matched_bytes = 0u64;
         let mut sparse_state = SparseWriteState::default();
         sparse_state.set_preallocated_len(preallocated_len);
+        // Dense writes are credited here; under --sparse the sparse writer
+        // credits its own data spans. In-place matched blocks that already sit
+        // at their offset are never credited. upstream: receiver.c:489 resets
+        // the tracker per file; fileio.c:251 counts each non-seek write_file().
+        let mut touched = BlockTouchTracker::new();
         let mut window: VecDeque<u8> = VecDeque::with_capacity(index.block_length());
         let mut pending_literals = Vec::with_capacity(index.block_length());
         let mut scratch = Vec::with_capacity(index.block_length());
@@ -335,6 +340,9 @@ impl<'a> CopyContext<'a> {
                         flushed as u64
                     };
                     literal_bytes = literal_bytes.saturating_add(literal_written);
+                    if !sparse {
+                        touched.record(total_bytes, flushed_len as u64);
+                    }
                     total_bytes = total_bytes.saturating_add(flushed_len as u64);
                     output_position = output_position.saturating_add(flushed_len as u64);
                     let progressed = initial_bytes.saturating_add(total_bytes);
@@ -400,6 +408,7 @@ impl<'a> CopyContext<'a> {
                         writer
                             .write_all(matched_bytes)
                             .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+                        touched.record(total_bytes, block_len as u64);
                     }
                     self.write_batch_block_match_token(
                         matched.descriptor().index() as u32,
@@ -421,6 +430,9 @@ impl<'a> CopyContext<'a> {
                             state: &mut sparse_state,
                         },
                     )?;
+                    if !sparse {
+                        touched.record(total_bytes, block_len as u64);
+                    }
                 }
 
                 total_bytes = total_bytes.saturating_add(block_len as u64);
@@ -565,6 +577,9 @@ impl<'a> CopyContext<'a> {
                     flushed as u64
                 };
                 literal_bytes = literal_bytes.saturating_add(literal_written);
+                if !sparse {
+                    touched.record(total_bytes, flushed_len as u64);
+                }
                 total_bytes = total_bytes.saturating_add(flushed_len as u64);
                 output_position = output_position.saturating_add(flushed_len as u64);
                 pending_literals.clear();
@@ -606,6 +621,7 @@ impl<'a> CopyContext<'a> {
                     writer
                         .write_all(matched_bytes)
                         .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+                    touched.record(total_bytes, block_len as u64);
                 }
                 self.write_batch_block_match_token(
                     matched.descriptor().index() as u32,
@@ -627,6 +643,9 @@ impl<'a> CopyContext<'a> {
                         state: &mut sparse_state,
                     },
                 )?;
+                if !sparse {
+                    touched.record(total_bytes, block_len as u64);
+                }
             }
 
             total_bytes = total_bytes.saturating_add(block_len as u64);
@@ -656,6 +675,9 @@ impl<'a> CopyContext<'a> {
                 destination,
                 total_bytes,
             )?;
+            if !sparse {
+                touched.record(total_bytes, flushed_len as u64);
+            }
             total_bytes = total_bytes.saturating_add(flushed_len as u64);
             let literal_written = if sparse {
                 flushed_len as u64
@@ -749,8 +771,13 @@ impl<'a> CopyContext<'a> {
         } else {
             FileCopyOutcome::new(literal_bytes, matched_bytes, None)
         };
+        let touched_blocks = if sparse {
+            sparse_state.touched_blocks()
+        } else {
+            touched.total()
+        };
 
-        Ok(outcome)
+        Ok(outcome.with_touched_blocks(touched_blocks))
     }
 
     /// Writes a literal (unmatched) chunk to `writer`, applying sparse

@@ -59,7 +59,7 @@ fn recv_msg_into_handles_maximum_payload_length() {
 
 #[test]
 fn recv_msg_rejects_all_invalid_message_codes() {
-    let invalid_codes = [11u8, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 24, 25];
+    let invalid_codes = [12u8, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 24, 25];
 
     for &invalid_code in &invalid_codes {
         let tag = u32::from(MPLEX_BASE) + u32::from(invalid_code);

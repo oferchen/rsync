@@ -34,7 +34,7 @@ fn parses_legacy_daemon_greeting_without_space_after_prefix() {
 
 #[test]
 fn parses_legacy_daemon_greeting_with_whitespace_before_fractional() {
-    let parsed = parse_legacy_daemon_greeting("@RSYNCD: 32   .0   \n").expect("valid greeting");
+    let parsed = parse_legacy_daemon_greeting("@RSYNCD: 33   .0   \n").expect("valid greeting");
     assert_eq!(parsed, ProtocolVersion::NEWEST);
 }
 
@@ -409,7 +409,11 @@ fn rejects_greeting_with_lowercase_prefix() {
 #[test]
 fn formats_legacy_daemon_greeting_for_newest_protocol() {
     let rendered = format_legacy_daemon_greeting(ProtocolVersion::NEWEST);
-    assert_eq!(rendered, "@RSYNCD: 32.0\n");
+    assert_eq!(
+        rendered,
+        "@RSYNCD: 33.0
+"
+    );
 }
 
 #[test]

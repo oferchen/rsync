@@ -151,6 +151,10 @@ pub struct GeneratorStats {
     pub matched_data: u64,
     /// Bytes sent as literal data (upstream: `stats.literal_data`).
     pub literal_data: u64,
+    /// Distinct 4 KiB logical blocks the remote receiver wrote, from its
+    /// `MSG_BLOCK_STATS`; 0 when none arrived (upstream:
+    /// `stats.touched_blocks_4k`, io.c:1721-1732).
+    pub touched_blocks_4k: u64,
     /// Sum of all source file sizes in the flist (upstream: `stats.total_size`).
     pub total_size: u64,
     /// File list build time in milliseconds (upstream: `stats.flist_buildtime`).

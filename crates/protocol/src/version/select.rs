@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn select_highest_mutual_all_supported_returns_newest() {
-        let versions = vec![28_u8, 29, 30, 31, 32];
+        let versions = vec![28_u8, 29, 30, 31, 33];
         let result = select_highest_mutual(versions).unwrap();
         assert_eq!(result, ProtocolVersion::NEWEST);
     }
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn select_highest_mutual_accepts_u32_values() {
-        let versions: Vec<u32> = vec![30, 31, 32];
+        let versions: Vec<u32> = vec![30, 31, 33];
         let result = select_highest_mutual(versions).unwrap();
         assert_eq!(result, ProtocolVersion::NEWEST);
     }
@@ -465,9 +465,9 @@ mod tests {
     }
 
     #[test]
-    fn select_negotiates_v32_as_newest() {
-        let result = select_highest_mutual([32_u8]).unwrap();
-        assert_eq!(result, ProtocolVersion::V32);
+    fn select_negotiates_v33_as_newest() {
+        let result = select_highest_mutual([33_u8]).unwrap();
+        assert_eq!(result, ProtocolVersion::V33);
         assert_eq!(result, ProtocolVersion::NEWEST);
     }
 
@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn select_all_supported_versions_returns_newest() {
-        let result = select_highest_mutual([28_u8, 29, 30, 31, 32]).unwrap();
+        let result = select_highest_mutual([28_u8, 29, 30, 31, 33]).unwrap();
         assert_eq!(result, ProtocolVersion::NEWEST);
     }
 
@@ -503,20 +503,20 @@ mod tests {
 
     #[test]
     fn select_with_reversed_order() {
-        let result = select_highest_mutual([32_u8, 31, 30, 29, 28]).unwrap();
+        let result = select_highest_mutual([33_u8, 31, 30, 29, 28]).unwrap();
         assert_eq!(result, ProtocolVersion::NEWEST);
     }
 
     #[test]
     fn select_with_scrambled_order() {
-        let result = select_highest_mutual([30_u8, 28, 32, 29, 31]).unwrap();
+        let result = select_highest_mutual([30_u8, 28, 33, 29, 31]).unwrap();
         assert_eq!(result, ProtocolVersion::NEWEST);
     }
 
     #[test]
     fn select_early_return_optimization() {
         // Encountering NEWEST short-circuits the iterator.
-        let result = select_highest_mutual([32_u8, 28]).unwrap();
+        let result = select_highest_mutual([33_u8, 28]).unwrap();
         assert_eq!(result, ProtocolVersion::NEWEST);
     }
 
@@ -595,7 +595,7 @@ mod tests {
 
     #[test]
     fn interop_multiple_upstream_versions() {
-        let result = select_highest_mutual([30_u8, 31, 32]).unwrap();
+        let result = select_highest_mutual([30_u8, 31, 33]).unwrap();
         assert_eq!(result, ProtocolVersion::NEWEST);
     }
 

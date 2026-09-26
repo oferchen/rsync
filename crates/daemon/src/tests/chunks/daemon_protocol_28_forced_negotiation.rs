@@ -145,11 +145,11 @@ fn daemon_protocol_28_forced_version_negotiation_downgrade() {
     let (mut stream, handle) = start_daemon(config, port, held_listener);
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
 
-    // Daemon sends its greeting (protocol 32 with digest list)
+    // Daemon sends its greeting (protocol 33 with digest list)
     let mut line = String::new();
     reader.read_line(&mut line).expect("greeting");
     assert!(
-        line.starts_with("@RSYNCD: 32.0") || line.starts_with("@RSYNCD: 31.0"),
+        line.starts_with("@RSYNCD: 33.0"),
         "Daemon should greet with newest protocol, got: {line}"
     );
 

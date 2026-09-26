@@ -44,6 +44,8 @@ struct FlushTrackingWriter {
     last_op_was_flush: bool,
 }
 
+impl crate::writer::MsgInfoSender for FlushTrackingWriter {}
+
 impl Write for FlushTrackingWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer.extend_from_slice(buf);
@@ -78,6 +80,8 @@ impl TailFlushFailingWriter {
         }
     }
 }
+
+impl crate::writer::MsgInfoSender for TailFlushFailingWriter {}
 
 impl Write for TailFlushFailingWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {

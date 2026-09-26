@@ -20,6 +20,7 @@ use crate::map_file::BufferedMap;
 use crate::map_file::MapFile;
 use crate::token_buffer::TokenBuffer;
 use crate::token_reader::{DeltaToken, LiteralData, TokenReader};
+use engine::BlockTouchTracker;
 
 /// Same-fs detection cache for the IUD-10 `copy_file_range` fast path.
 ///
@@ -146,6 +147,10 @@ pub struct DeltaApplyResult {
     pub literal_tokens: u64,
     /// Number of block reference tokens processed.
     pub block_tokens: u64,
+    /// Distinct 4 KiB logical blocks written, excluding blocks upstream would
+    /// seek past when updating the basis in place.
+    /// upstream: fileio.c:218-243 `track_block_touches()`.
+    pub touched_blocks_4k: u64,
     /// Final output position after [`DeltaApplicator::finish`].
     ///
     /// When sparse mode is active this is the position returned by
@@ -199,6 +204,13 @@ pub struct DeltaApplicator<'a> {
     /// Copy-on-write policy. When `Disabled`, the `FICLONERANGE` partial
     /// clone path is skipped entirely (mirrors the `--no-cow` flag).
     cow_policy: fast_io::CowPolicy,
+    /// Upstream's `updating_basis_or_equiv`: the basis is the destination being
+    /// rewritten in place, so a matched block landing at its own offset is
+    /// seeked past rather than written and credits no touched blocks.
+    /// upstream: receiver.c:640-645, fileio.c:294-313 skip_matched().
+    updating_basis: bool,
+    /// Dense-mode touched blocks; sparse mode credits its own data spans.
+    touched: BlockTouchTracker,
     stats: DeltaApplyResult,
 }
 
@@ -258,8 +270,22 @@ impl<'a> DeltaApplicator<'a> {
             same_fs: SameFsCache::Unresolved,
             reflink_range: ReflinkRangeCache::Unresolved,
             cow_policy: config.cow_policy,
+            updating_basis: false,
+            touched: BlockTouchTracker::new(),
             stats: DeltaApplyResult::default(),
         })
+    }
+
+    /// Marks this applicator as updating its basis in place (upstream's
+    /// `updating_basis_or_equiv`), so matched blocks at their own offset are
+    /// not credited as touched blocks.
+    ///
+    /// upstream: receiver.c:640-645 - `if (updating_basis_or_equiv) { if
+    /// (offset == offset2 && fd != -1) { skip_matched(...); continue; } }`
+    #[must_use]
+    pub const fn with_updating_basis(mut self, updating_basis: bool) -> Self {
+        self.updating_basis = updating_basis;
+        self
     }
 
     /// Returns true if a basis file is open and is using the mmap strategy.
@@ -303,6 +329,8 @@ impl<'a> DeltaApplicator<'a> {
             sparse.write(&mut self.output, data)?;
         } else {
             self.output.write_all(data)?;
+            self.touched
+                .record(self.stats.bytes_written, data.len() as u64);
         }
 
         self.stats.bytes_written += data.len() as u64;
@@ -357,6 +385,9 @@ impl<'a> DeltaApplicator<'a> {
         } else {
             block_len as usize
         };
+        // upstream: receiver.c:640-645 - an in-place update seeks past a block
+        // already at its own offset, so it credits no touched blocks.
+        let seek_matched = self.updating_basis && offset == self.stats.bytes_written;
 
         debug_log!(
             Deltasum,
@@ -398,6 +429,9 @@ impl<'a> DeltaApplicator<'a> {
             )? {
                 self.output
                     .seek(SeekFrom::Start(dest_off + bytes_to_copy as u64))?;
+                if !seek_matched {
+                    self.touched.record(dest_off, bytes_to_copy as u64);
+                }
                 self.stats.bytes_written += bytes_to_copy as u64;
                 self.stats.matched_bytes += bytes_to_copy as u64;
                 self.stats.block_tokens += 1;
@@ -418,6 +452,9 @@ impl<'a> DeltaApplicator<'a> {
                 // forward to keep subsequent literal writes contiguous.
                 self.output
                     .seek(SeekFrom::Start(dest_off + dispatched as u64))?;
+                if !seek_matched {
+                    self.touched.record(dest_off, dispatched as u64);
+                }
                 self.stats.bytes_written += dispatched as u64;
                 self.stats.matched_bytes += dispatched as u64;
                 self.stats.block_tokens += 1;
@@ -432,9 +469,17 @@ impl<'a> DeltaApplicator<'a> {
         self.checksum_verifier.update(block_data);
 
         if let Some(ref mut sparse) = self.sparse_state {
-            sparse.write(&mut self.output, block_data)?;
+            if seek_matched {
+                sparse.skip_matched(&mut self.output, block_data)?;
+            } else {
+                sparse.write(&mut self.output, block_data)?;
+            }
         } else {
             self.output.write_all(block_data)?;
+            if !seek_matched {
+                self.touched
+                    .record(self.stats.bytes_written, bytes_to_copy as u64);
+            }
         }
 
         self.stats.bytes_written += bytes_to_copy as u64;
@@ -670,6 +715,7 @@ impl<'a> DeltaApplicator<'a> {
             sparse.write(&mut self.output, data)?;
         } else {
             self.output.write_all(data)?;
+            self.touched.record(self.stats.bytes_written, len as u64);
         }
         self.stats.bytes_written += len as u64;
         self.stats.literal_bytes += len as u64;
@@ -696,6 +742,7 @@ impl<'a> DeltaApplicator<'a> {
             checksum_verifier,
             sparse_state,
             output,
+            touched,
             stats,
             ..
         } = self;
@@ -705,6 +752,7 @@ impl<'a> DeltaApplicator<'a> {
             sparse.write(output, data)?;
         } else {
             output.write_all(data)?;
+            touched.record(stats.bytes_written, len as u64);
         }
         stats.bytes_written += len as u64;
         stats.literal_bytes += len as u64;
@@ -766,6 +814,10 @@ impl<'a> DeltaApplicator<'a> {
         reader: &mut R,
         expected_size: Option<u64>,
     ) -> io::Result<(File, DeltaApplyResult)> {
+        self.stats.touched_blocks_4k = self
+            .sparse_state
+            .as_ref()
+            .map_or(self.touched.total(), SparseWriteState::touched_blocks);
         if let Some(ref mut sparse) = self.sparse_state {
             let final_pos = sparse.finish(&mut self.output)?;
             // upstream: fileio.c:47 sparse_end() - ftruncate to the logical
@@ -1141,6 +1193,70 @@ mod tests {
             io::ErrorKind::UnexpectedEof,
             "short read past the shrunk basis must surface as UnexpectedEof, got {err:?}",
         );
+    }
+
+    /// Applies `block 0, 2 KiB literal, block 2` over a 4 MiB basis (2 KiB
+    /// blocks) and returns the touched-block count.
+    fn touched_blocks_for(updating_basis: bool) -> u64 {
+        use std::num::NonZeroU8;
+
+        let dir = tempdir().expect("tempdir");
+        let basis_path = dir.path().join("basis.bin");
+        const BASIS_LEN: usize = 4 * 1024 * 1024;
+        let basis_bytes: Vec<u8> = (0..BASIS_LEN).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&basis_path, &basis_bytes).expect("write basis");
+        let layout =
+            engine::delta::calculate_signature_layout(engine::delta::SignatureLayoutParams::new(
+                BASIS_LEN as u64,
+                None,
+                protocol::ProtocolVersion::NEWEST,
+                NonZeroU8::new(16).unwrap(),
+            ))
+            .expect("layout");
+        let signature = engine::signature::generate_file_signature(
+            File::open(&basis_path).expect("reopen basis"),
+            layout,
+            engine::signature::SignatureAlgorithm::Md4,
+        )
+        .expect("signature");
+        let block_len = signature.layout().block_length().get() as usize;
+        assert_eq!(
+            block_len, 2048,
+            "upstream sizes a 4 MiB file's blocks at 2 KiB"
+        );
+
+        let out = File::create(dir.path().join("out.bin")).expect("create out");
+        let verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::None);
+        let mut applicator = DeltaApplicator::new(
+            out,
+            &DeltaApplyConfig::default(),
+            verifier,
+            Some(&signature),
+            Some(basis_path.as_path()),
+        )
+        .expect("construct applicator")
+        .with_updating_basis(updating_basis);
+        applicator.apply_block_ref(0).expect("block 0");
+        applicator
+            .apply_literal(&vec![0xEEu8; block_len])
+            .expect("literal");
+        applicator.apply_block_ref(2).expect("block 2");
+        // CSUM_NONE's whole-file sum is a single zero byte on the wire.
+        let (_, result) = applicator
+            .finish(&mut io::Cursor::new([0u8]), None)
+            .expect("finish");
+        result.touched_blocks_4k
+    }
+
+    /// WHY: when the basis is the destination being updated in place, a block
+    /// already at its own offset is seeked past upstream (skip_matched) and is
+    /// not a touched block - only the literal's block counts. A temp-file
+    /// rebuild writes the matched blocks too, so they count.
+    /// upstream: receiver.c:640-645, fileio.c:294-313.
+    #[test]
+    fn in_place_matched_blocks_are_not_touched() {
+        assert_eq!(touched_blocks_for(true), 1);
+        assert_eq!(touched_blocks_for(false), 2);
     }
 
     #[test]

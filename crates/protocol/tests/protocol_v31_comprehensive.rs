@@ -353,7 +353,7 @@ mod handshake_scenarios {
         // Server offers v31 and future versions (33-40)
         let server_offers = [31_u8, 35, 38];
         let result = select_highest_mutual(server_offers).unwrap();
-        assert_eq!(result, ProtocolVersion::V32, "future versions clamp to v32");
+        assert_eq!(result, ProtocolVersion::V33, "future versions clamp to v33");
     }
 
     #[test]
@@ -562,7 +562,7 @@ mod feature_boundaries {
 
     #[test]
     fn v31_is_second_newest() {
-        assert_eq!(ProtocolVersion::V31.offset_from_newest(), 1);
+        assert_eq!(ProtocolVersion::V31.offset_from_newest(), 2);
         assert_eq!(
             ProtocolVersion::V31.next_newer(),
             Some(ProtocolVersion::V32)
@@ -580,13 +580,13 @@ mod feature_boundaries {
     fn v31_offset_calculations() {
         let v31 = ProtocolVersion::V31;
         assert_eq!(v31.offset_from_oldest(), 3); // v28=0, v29=1, v30=2, v31=3
-        assert_eq!(v31.offset_from_newest(), 1); // v32=0, v31=1
+        assert_eq!(v31.offset_from_newest(), 2); // v33=0, v32=1, v31=2
     }
 
     #[test]
     fn v31_from_supported_index() {
-        // Supported versions in newest-to-oldest order: 32, 31, 30, 29, 28
-        let version = ProtocolVersion::from_supported_index(1);
+        // Supported versions in newest-to-oldest order: 33, 32, 31, 30, 29, 28
+        let version = ProtocolVersion::from_supported_index(2);
         assert_eq!(version, Some(ProtocolVersion::V31));
     }
 }

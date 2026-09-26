@@ -117,7 +117,7 @@ mod tests {
     // upstream: rsync.h:114 - PROTOCOL_VERSION is the newest supported protocol.
     #[test]
     fn protocol_version_is_newest_supported() {
-        assert_eq!(PROTOCOL_VERSION, 32);
+        assert_eq!(PROTOCOL_VERSION, 33);
     }
 
     // upstream: compat.c:885 - a release build advertises 0 at every version.

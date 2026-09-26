@@ -23,8 +23,8 @@ use super::iter::{SupportedProtocolNumbersIter, SupportedVersionsIter};
 ///
 /// This type wraps a non-zero byte that identifies which revision of the rsync
 /// wire protocol a session has agreed to use. The supported range is
-/// [`V28`](Self::V28) through [`V32`](Self::V32), matching upstream rsync
-/// 3.4.4. Protocol version 30 marks the boundary between the legacy ASCII
+/// [`V28`](Self::V28) through [`V33`](Self::V33), matching upstream rsync
+/// 3.5.1. Protocol version 30 marks the boundary between the legacy ASCII
 /// negotiation (`@RSYNCD:`) and the modern binary handshake.
 ///
 /// # Constructing a Version
@@ -99,7 +99,7 @@ macro_rules! declare_supported_protocols {
     };
 }
 
-declare_supported_protocols!(32, 31, 30, 29, 28);
+declare_supported_protocols!(33, 32, 31, 30, 29, 28);
 
 /// Bitmask describing the protocol versions supported by the Rust
 /// implementation.
@@ -135,9 +135,13 @@ impl ProtocolVersion {
     pub const BINARY_NEGOTIATION_INTRODUCED: ProtocolVersion =
         ProtocolVersion::new_const(FIRST_BINARY_NEGOTIATION_PROTOCOL);
 
+    /// Protocol version 33, the newest revision advertised by upstream rsync
+    /// 3.5.1, which added `MSG_BLOCK_STATS`.
+    pub const V33: ProtocolVersion = ProtocolVersion::NEWEST;
+
     /// Protocol version 32, the newest revision advertised by upstream rsync
-    /// 3.4.4.
-    pub const V32: ProtocolVersion = ProtocolVersion::NEWEST;
+    /// 3.4.4 and 3.5.0.
+    pub const V32: ProtocolVersion = ProtocolVersion::new_const(32);
 
     /// Protocol version 31, used by upstream rsync 3.1.x releases.
     pub const V31: ProtocolVersion = ProtocolVersion::new_const(31);

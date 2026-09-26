@@ -108,20 +108,20 @@ fn parse_protocol_from_greeting_handles_version_only() {
     assert_eq!(protocol.as_u8(), 28);
 }
 
-// WHY: forward compatibility with newer daemons (rsync 3.5.1 greets with
-// protocol 33). upstream: clientserver.c:251-255 exchange_protocols() - a
+// WHY: forward compatibility with newer daemons (a future rsync greeting
+// with protocol 34 or later). upstream: clientserver.c:251-255 exchange_protocols() - a
 // client whose `protocol_version` is below `remote_protocol` keeps its own
 // version (SUBPROTOCOL_VERSION == 0 in releases ignores the newer peer's
 // sub-protocol); the peer is never refused up to MAX_PROTOCOL_VERSION (40).
 #[test]
 fn parse_protocol_from_greeting_clamps_newer_daemon_to_newest() {
     for greeting in [
-        "@RSYNCD: 33.0 sha512 sha256 sha1 md5 md4\n",
+        "@RSYNCD: 34.0 sha512 sha256 sha1 md5 md4\n",
         "@RSYNCD: 40.0 sha512 sha256 sha1 md5 md4\n",
     ] {
         let protocol = parse_protocol_from_greeting(greeting)
             .unwrap_or_else(|e| panic!("greeting {greeting:?} must clamp, got: {e}"));
-        assert_eq!(protocol.as_u8(), 32);
+        assert_eq!(protocol.as_u8(), 33);
     }
 }
 
@@ -153,13 +153,13 @@ fn parse_protocol_from_greeting_still_refuses_too_old_daemon() {
 }
 
 // LIVE PROOF at the client-path level: the whole `perform_daemon_handshake`
-// exchange against a scripted proto-33 daemon transcript must reach the
+// exchange against a scripted proto-34 daemon transcript must reach the
 // negotiated-version return, with the client advertising its own newest
 // version back. upstream: clientserver.c exchange_protocols() +
-// start_inband_exchange() - a 3.5.0 client against a 3.5.1 daemon negotiates
+// start_inband_exchange() - an older client against a newer daemon negotiates
 // the common protocol instead of refusing.
 #[test]
-fn daemon_handshake_downgrades_proto_33_daemon_to_32() {
+fn daemon_handshake_downgrades_proto_34_daemon_to_33() {
     use std::io::{BufReader, Cursor};
 
     let request = DaemonTransferRequest {
@@ -169,7 +169,7 @@ fn daemon_handshake_downgrades_proto_33_daemon_to_32() {
         username: None,
     };
     let mut reader = BufReader::new(Cursor::new(
-        b"@RSYNCD: 33.0 sha512 sha256 sha1 md5 md4\n@RSYNCD: OK\n".to_vec(),
+        b"@RSYNCD: 34.0 sha512 sha256 sha1 md5 md4\n@RSYNCD: OK\n".to_vec(),
     ));
     let mut writer: Vec<u8> = Vec::new();
 
@@ -185,10 +185,10 @@ fn daemon_handshake_downgrades_proto_33_daemon_to_32() {
     )
     .expect("a newer daemon must negotiate down, not abort");
 
-    assert_eq!(negotiated.as_u8(), 32, "negotiated MIN(ours, theirs)");
+    assert_eq!(negotiated.as_u8(), 33, "negotiated MIN(ours, theirs)");
     let sent = String::from_utf8_lossy(&writer);
     assert!(
-        sent.starts_with("@RSYNCD: 32.0"),
+        sent.starts_with("@RSYNCD: 33.0"),
         "client must advertise its own version, got: {sent}"
     );
     assert!(

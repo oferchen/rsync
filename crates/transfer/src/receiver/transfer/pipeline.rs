@@ -1100,6 +1100,7 @@ impl ReceiverContext {
 
             let redo_indices = pipelined_receiver.take_redo_indices();
             let delayed = pipelined_receiver.take_delayed_updates();
+            self.record_touched_blocks(pipelined_receiver.touched_blocks_4k());
 
             Ok((
                 files_transferred,

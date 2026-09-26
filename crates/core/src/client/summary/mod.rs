@@ -61,14 +61,14 @@ pub struct ClientSummary {
     io_error_exit_code: Option<i32>,
     /// Negotiated protocol version for the transfer.
     ///
-    /// Defaults to the newest supported version (32) for local copies.
+    /// Defaults to the newest supported version for local copies.
     /// Set to the actual negotiated version for remote/daemon transfers.
     /// upstream: main.c:429-433 gates stats lines on protocol version.
     protocol_version: u8,
 }
 
 /// Newest protocol version, used as default for local copies.
-const DEFAULT_PROTOCOL_VERSION: u8 = 32;
+const DEFAULT_PROTOCOL_VERSION: u8 = protocol::ProtocolVersion::NEWEST.as_u8();
 
 impl Default for ClientSummary {
     fn default() -> Self {
@@ -111,6 +111,22 @@ impl ClientSummary {
             events: Vec::new(),
             io_error_exit_code: None,
             protocol_version: DEFAULT_PROTOCOL_VERSION,
+        }
+    }
+
+    /// Builds a summary from raw statistics at a given protocol version.
+    ///
+    /// Exposed so downstream crates can test `--stats` rendering, whose lines
+    /// are protocol-gated (upstream `main.c:434-448`), without running a
+    /// transfer.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn for_stats_test(stats: LocalCopySummary, protocol_version: u8) -> Self {
+        Self {
+            stats,
+            events: Vec::new(),
+            io_error_exit_code: None,
+            protocol_version,
         }
     }
 
@@ -317,6 +333,19 @@ impl ClientSummary {
         self.stats.matched_bytes()
     }
 
+    /// Returns the number of distinct 4 KiB logical blocks the receiver wrote.
+    ///
+    /// Reported as `Number of 4 KiB logical blocks touched` when the negotiated
+    /// protocol is 33 or newer; 0 when a protocol-33 peer sent no
+    /// `MSG_BLOCK_STATS`.
+    ///
+    /// upstream: `main.c:446-448` `output_summary()`, `rsync.h:1084`
+    /// `stats.touched_blocks_4k`.
+    #[must_use]
+    pub const fn touched_blocks_4k(&self) -> u64 {
+        self.stats.touched_blocks_4k()
+    }
+
     /// Returns the number of basis blocks the delta matcher reused, reported as
     /// `matches=` on the `-vv` `total:` line.
     ///
@@ -472,7 +501,7 @@ impl ClientSummary {
 
     /// Returns the negotiated protocol version for the transfer.
     ///
-    /// Defaults to the newest supported version (32) for local copies.
+    /// Defaults to the newest supported version for local copies.
     /// For remote/daemon transfers, reflects the actual negotiated version.
     /// upstream: main.c:429-433 gates stats lines on this value.
     #[must_use]

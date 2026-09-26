@@ -73,14 +73,15 @@ fn message_code_try_from_u8_succeeds_for_all_18_codes() {
     assert_eq!(MessageCode::try_from(102_u8).unwrap(), MessageCode::NoSend);
 }
 
-/// Verifies that `MessageCode::ALL` contains exactly 18 codes and that each
-/// code's numeric value matches its expected wire representation.
+/// Verifies that `MessageCode::ALL` contains exactly the 19 codes of
+/// upstream 3.5.1's `enum msgcode` (rsync.h:292-309) and that each code's
+/// numeric value matches its expected wire representation.
 #[test]
-fn message_code_all_array_contains_exactly_18_codes_with_correct_values() {
-    assert_eq!(MessageCode::ALL.len(), 18);
+fn message_code_all_array_contains_exactly_19_codes_with_correct_values() {
+    assert_eq!(MessageCode::ALL.len(), 19);
 
     // Map expected (variant, numeric_value) pairs
-    let expected: [(MessageCode, u8); 18] = [
+    let expected: [(MessageCode, u8); 19] = [
         (MessageCode::Data, 0),
         (MessageCode::ErrorXfer, 1),
         (MessageCode::Info, 2),
@@ -92,6 +93,7 @@ fn message_code_all_array_contains_exactly_18_codes_with_correct_values() {
         (MessageCode::ErrorUtf8, 8),
         (MessageCode::Redo, 9),
         (MessageCode::Stats, 10),
+        (MessageCode::BlockStats, 11),
         (MessageCode::IoError, 22),
         (MessageCode::IoTimeout, 33),
         (MessageCode::NoOp, 42),
@@ -121,8 +123,8 @@ fn message_code_all_array_contains_exactly_18_codes_with_correct_values() {
 /// undefined values in those gaps are properly rejected.
 #[test]
 fn message_code_from_u8_rejects_gap_values() {
-    // Gap between Stats (10) and IoError (22)
-    for value in 11..22 {
+    // Gap between BlockStats (11) and IoError (22)
+    for value in 12..22 {
         assert_eq!(
             MessageCode::from_u8(value),
             None,
@@ -185,7 +187,7 @@ fn message_code_from_u8_rejects_gap_values() {
 fn message_code_try_from_u8_returns_unknown_message_code_error() {
     // Test representative values from different gap ranges
     let invalid_values: &[u8] = &[
-        11,  // First gap (11-21)
+        12,  // First gap (12-21)
         21,  // Last value in first gap
         23,  // Second gap (23-32)
         34,  // Third gap (34-41)
@@ -288,7 +290,7 @@ fn message_code_from_u8_agrees_with_try_from_on_success() {
 #[test]
 fn message_code_from_u8_agrees_with_try_from_on_failure() {
     // Sample of invalid values
-    for value in [11_u8, 50, 99, 150, 255] {
+    for value in [12_u8, 50, 99, 150, 255] {
         let via_from = MessageCode::from_u8(value);
         let via_try = MessageCode::try_from(value).ok();
         assert_eq!(via_from, None, "from_u8({value}) should return None");
@@ -299,7 +301,7 @@ fn message_code_from_u8_agrees_with_try_from_on_failure() {
 /// Tests that `Display` outputs the upstream MSG_* identifier for all codes.
 #[test]
 fn message_code_display_outputs_msg_identifier() {
-    let expected: [(MessageCode, &str); 18] = [
+    let expected: [(MessageCode, &str); 19] = [
         (MessageCode::Data, "MSG_DATA"),
         (MessageCode::ErrorXfer, "MSG_ERROR_XFER"),
         (MessageCode::Info, "MSG_INFO"),
@@ -311,6 +313,7 @@ fn message_code_display_outputs_msg_identifier() {
         (MessageCode::ErrorUtf8, "MSG_ERROR_UTF8"),
         (MessageCode::Redo, "MSG_REDO"),
         (MessageCode::Stats, "MSG_STATS"),
+        (MessageCode::BlockStats, "MSG_BLOCK_STATS"),
         (MessageCode::IoError, "MSG_IO_ERROR"),
         (MessageCode::IoTimeout, "MSG_IO_TIMEOUT"),
         (MessageCode::NoOp, "MSG_NOOP"),
@@ -344,7 +347,7 @@ fn message_code_display_equals_name() {
 /// Tests that `Debug` output includes the variant name.
 #[test]
 fn message_code_debug_includes_variant_name() {
-    let expected: [(MessageCode, &str); 18] = [
+    let expected: [(MessageCode, &str); 19] = [
         (MessageCode::Data, "Data"),
         (MessageCode::ErrorXfer, "ErrorXfer"),
         (MessageCode::Info, "Info"),
@@ -356,6 +359,7 @@ fn message_code_debug_includes_variant_name() {
         (MessageCode::ErrorUtf8, "ErrorUtf8"),
         (MessageCode::Redo, "Redo"),
         (MessageCode::Stats, "Stats"),
+        (MessageCode::BlockStats, "BlockStats"),
         (MessageCode::IoError, "IoError"),
         (MessageCode::IoTimeout, "IoTimeout"),
         (MessageCode::NoOp, "NoOp"),
@@ -400,7 +404,7 @@ fn message_code_values_are_unique() {
             "Duplicate value {value} for code {code:?}"
         );
     }
-    assert_eq!(seen.len(), 18);
+    assert_eq!(seen.len(), 19);
 }
 
 /// Tests that the FLUSH alias constant has the expected properties.
@@ -461,7 +465,7 @@ fn message_code_from_u8_matches_try_from() {
 
 #[test]
 fn message_code_from_u8_rejects_unknown_values() {
-    assert_eq!(MessageCode::from_u8(11), None);
+    assert_eq!(MessageCode::from_u8(12), None);
     assert_eq!(MessageCode::from_u8(0xFF), None);
 }
 

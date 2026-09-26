@@ -31,7 +31,7 @@ fn negotiate_legacy_daemon_session_exchanges_banners() {
     assert!(!handshake.local_protocol_was_capped());
 
     let transport = handshake.into_stream().into_inner();
-    assert_eq!(transport.written(), client_greeting(32));
+    assert_eq!(transport.written(), client_greeting(33));
     assert_eq!(transport.flushes(), 1);
 }
 
@@ -97,7 +97,7 @@ fn negotiate_clamps_future_advertisement() {
     );
 
     let transport = parts.into_handshake().into_stream().into_inner();
-    assert_eq!(transport.written(), client_greeting(32));
+    assert_eq!(transport.written(), client_greeting(33));
 }
 
 #[test]
@@ -169,7 +169,7 @@ fn into_parts_round_trips_legacy_handshake() {
     assert_eq!(transport.flushes(), 2);
     assert_eq!(
         transport.written(),
-        [client_greeting(32), b"@RSYNCD: OK\n".to_vec()].concat()
+        [client_greeting(33), b"@RSYNCD: OK\n".to_vec()].concat()
     );
 }
 
@@ -378,11 +378,11 @@ fn legacy_client_greeting_advertises_our_digests_not_the_servers() {
     stream.flush().expect("flush propagates");
 
     let inner = stream.into_inner();
-    // Version is our own 32.0 (upstream advertises its max before reading the
+    // Version is our own 33.0 (upstream advertises its max before reading the
     // server), digests are our full list - never the server's `sha512 md5`.
     assert_eq!(
         inner.written(),
-        b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n@RSYNCD: OK\n"
+        b"@RSYNCD: 33.0 sha512 sha256 sha1 md5 md4\n@RSYNCD: OK\n"
     );
 }
 
@@ -400,7 +400,7 @@ fn legacy_client_greeting_ignores_a_single_weak_server_digest() {
     let inner = handshake.into_stream().into_inner();
     assert_eq!(
         inner.written(),
-        b"@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n"
+        b"@RSYNCD: 33.0 sha512 sha256 sha1 md5 md4\n"
     );
 }
 
@@ -456,7 +456,7 @@ fn discriminating_server_greeting_advertises_ours_and_decrements() {
         ProtocolVersion::from_supported(30).expect("protocol 30 supported"),
     );
 
-    // The greeting advertises our own 32.0, never the server's 30.5.
+    // The greeting advertises our own 33.0, never the server's 30.5.
     let transport = handshake.into_stream().into_inner();
-    assert_eq!(transport.written(), client_greeting(32));
+    assert_eq!(transport.written(), client_greeting(33));
 }

@@ -300,18 +300,18 @@ fn version_31_safe_file_list_always_enabled() {
     assert!(ProtocolVersion::V32.safe_file_list_always_enabled());
 }
 
-/// Verify protocol 32 is the newest supported version.
+/// Verify protocol 33 is the newest supported version.
 #[test]
-fn version_32_is_newest_supported() {
-    assert_eq!(ProtocolVersion::NEWEST, ProtocolVersion::V32);
-    assert_eq!(ProtocolVersion::NEWEST.as_u8(), 32);
+fn version_33_is_newest_supported() {
+    assert_eq!(ProtocolVersion::NEWEST, ProtocolVersion::V33);
+    assert_eq!(ProtocolVersion::NEWEST.as_u8(), 33);
 }
 
-/// Test negotiation to protocol 32.
+/// Test negotiation to protocol 33.
 #[test]
-fn version_32_negotiation() {
-    let result = select_highest_mutual([VersionAd(32)]).unwrap();
-    assert_eq!(result, ProtocolVersion::V32);
+fn version_33_negotiation() {
+    let result = select_highest_mutual([VersionAd(33)]).unwrap();
+    assert_eq!(result, ProtocolVersion::V33);
     assert_eq!(result, ProtocolVersion::NEWEST);
 }
 
@@ -368,15 +368,15 @@ fn selects_highest_mutual_version() {
 #[test]
 fn short_circuits_on_newest_version() {
     // When 32 is seen first, should return immediately
-    let result = select_highest_mutual([VersionAd(32), VersionAd(28)]).unwrap();
+    let result = select_highest_mutual([VersionAd(33), VersionAd(28)]).unwrap();
     assert_eq!(result, ProtocolVersion::NEWEST);
 
     // When 32 is in the middle
-    let result = select_highest_mutual([VersionAd(28), VersionAd(32), VersionAd(30)]).unwrap();
+    let result = select_highest_mutual([VersionAd(28), VersionAd(33), VersionAd(30)]).unwrap();
     assert_eq!(result, ProtocolVersion::NEWEST);
 
     // When 32 is at the end
-    let result = select_highest_mutual([VersionAd(28), VersionAd(29), VersionAd(32)]).unwrap();
+    let result = select_highest_mutual([VersionAd(28), VersionAd(29), VersionAd(33)]).unwrap();
     assert_eq!(result, ProtocolVersion::NEWEST);
 }
 
@@ -490,7 +490,7 @@ fn backwards_compat_rsync_31x() {
 fn backwards_compat_rsync_34x() {
     let result = select_highest_mutual([VersionAd(32)]).unwrap();
     assert_eq!(result.as_u8(), 32);
-    assert_eq!(result, ProtocolVersion::NEWEST);
+    assert_eq!(result, ProtocolVersion::V32);
 }
 
 /// Test downgrade when peer uses older protocol.
@@ -766,7 +766,7 @@ fn version_navigation_next_newer() {
         ProtocolVersion::V31.next_newer(),
         Some(ProtocolVersion::V32)
     );
-    assert_eq!(ProtocolVersion::V32.next_newer(), None);
+    assert_eq!(ProtocolVersion::V33.next_newer(), None);
 }
 
 /// Test navigation between protocol versions (older).
@@ -802,11 +802,11 @@ fn version_offset_calculations() {
     assert_eq!(ProtocolVersion::V32.offset_from_oldest(), 4);
 
     // Offset from newest
-    assert_eq!(ProtocolVersion::V32.offset_from_newest(), 0);
-    assert_eq!(ProtocolVersion::V31.offset_from_newest(), 1);
-    assert_eq!(ProtocolVersion::V30.offset_from_newest(), 2);
-    assert_eq!(ProtocolVersion::V29.offset_from_newest(), 3);
-    assert_eq!(ProtocolVersion::V28.offset_from_newest(), 4);
+    assert_eq!(ProtocolVersion::V33.offset_from_newest(), 0);
+    assert_eq!(ProtocolVersion::V31.offset_from_newest(), 2);
+    assert_eq!(ProtocolVersion::V30.offset_from_newest(), 3);
+    assert_eq!(ProtocolVersion::V29.offset_from_newest(), 4);
+    assert_eq!(ProtocolVersion::V28.offset_from_newest(), 5);
 }
 
 /// Test roundtrip via offset.
@@ -842,7 +842,7 @@ fn version_ordering() {
 #[test]
 fn version_equality() {
     assert_eq!(ProtocolVersion::V28, ProtocolVersion::V28);
-    assert_eq!(ProtocolVersion::V32, ProtocolVersion::NEWEST);
+    assert_eq!(ProtocolVersion::V33, ProtocolVersion::NEWEST);
     assert_eq!(ProtocolVersion::V28, ProtocolVersion::OLDEST);
 
     // Partial equality with u8
@@ -914,7 +914,7 @@ fn supported_protocol_bitmap() {
         assert_eq!(bitmap & mask, 0, "Bit for v{version} should not be set");
     }
 
-    for version in 33..64 {
+    for version in 34..64 {
         let mask = 1u64 << version;
         assert_eq!(bitmap & mask, 0, "Bit for v{version} should not be set");
     }
@@ -924,7 +924,7 @@ fn supported_protocol_bitmap() {
 #[test]
 fn is_supported_protocol_number_comprehensive() {
     for value in 0u8..=255 {
-        let expected = (28..=32).contains(&value);
+        let expected = (28..=33).contains(&value);
         assert_eq!(
             ProtocolVersion::is_supported_protocol_number(value),
             expected,

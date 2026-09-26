@@ -10,6 +10,7 @@ use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 
+use crate::block_touch::BlockTouchTracker;
 use crate::local_copy::LocalCopyError;
 
 use super::hole_punch::punch_hole;
@@ -36,6 +37,15 @@ pub(crate) struct SparseWriteState {
     /// `preallocated_len`). Zero runs starting below this offset are punched
     /// into holes; runs starting at or beyond it are seeked over.
     preallocated_len: u64,
+    /// Logical file offset of the next byte handed in, advanced by every chunk
+    /// whether its bytes are written, seeked over, or deferred as a hole.
+    /// upstream: the caller-tracked `offset` passed to `write_file()`.
+    logical_offset: u64,
+    /// Distinct 4 KiB blocks written by data spans. Seek-mode spans (in-place
+    /// matched blocks) and zero runs are never credited.
+    /// upstream: fileio.c:168-169,179-180 - `if (!use_seek)
+    /// track_block_touches(f, offset + start, ...)`.
+    touched: BlockTouchTracker,
 }
 
 impl SparseWriteState {
@@ -45,6 +55,19 @@ impl SparseWriteState {
     /// upstream: fileio.c:88 - if (sparse_past_write >= preallocated_len)
     pub(crate) const fn set_preallocated_len(&mut self, len: u64) {
         self.preallocated_len = len;
+    }
+
+    /// Sets the logical file offset of the first byte this state will see.
+    ///
+    /// Non-zero only when an append resumes past an existing prefix, so block
+    /// accounting credits the blocks the resumed data actually lands in.
+    pub(crate) const fn set_start_offset(&mut self, offset: u64) {
+        self.logical_offset = offset;
+    }
+
+    /// Returns the number of distinct 4 KiB blocks the data spans wrote.
+    pub(crate) const fn touched_blocks(&self) -> u64 {
+        self.touched.total()
     }
 
     pub(super) const fn accumulate(&mut self, additional: usize) {
@@ -216,9 +239,15 @@ fn write_sparse_spans(
             // flush reads the writer's current position as the run start.
             state.flush(writer, destination)?;
             match mode {
-                SpanWrite::Data => writer
-                    .write_all(&chunk[data_start..data_end])
-                    .map_err(|error| LocalCopyError::io("copy file", destination, error))?,
+                SpanWrite::Data => {
+                    writer
+                        .write_all(&chunk[data_start..data_end])
+                        .map_err(|error| LocalCopyError::io("copy file", destination, error))?;
+                    state.touched.record(
+                        state.logical_offset + data_start as u64,
+                        (data_end - data_start) as u64,
+                    );
+                }
                 // upstream: fileio.c:125-126 - the bytes are already at this
                 // offset, so advance past them instead of rewriting them.
                 SpanWrite::Seek => {
@@ -235,5 +264,6 @@ fn write_sparse_spans(
         offset = segment_end;
     }
 
+    state.logical_offset = state.logical_offset.saturating_add(chunk.len() as u64);
     Ok(chunk.len())
 }

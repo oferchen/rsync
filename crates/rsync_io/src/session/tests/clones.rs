@@ -457,6 +457,6 @@ fn session_handshake_parts_from_legacy_components_round_trips() {
         .into_stream()
         .into_inner();
 
-    assert_eq!(transport.writes(), client_greeting(32));
+    assert_eq!(transport.writes(), client_greeting(33));
     assert_eq!(transport.flushes(), 1);
 }

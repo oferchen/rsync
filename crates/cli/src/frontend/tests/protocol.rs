@@ -42,12 +42,22 @@ fn protocol_below_upstream_floor_is_protocol_error() {
 }
 
 #[test]
+fn protocol_33_is_supported() {
+    // upstream 3.5.1: rsync.h:114 `PROTOCOL_VERSION 33`, so compat.c:634-637
+    // accepts `--protocol=33`.
+    match parse_protocol_version_arg(OsStr::new("33")).expect("protocol 33 is valid") {
+        ProtocolArg::Supported(v) => assert_eq!(v.as_u8(), 33),
+        ProtocolArg::LegacyLocalOnly(raw) => panic!("33 is wire-supported, got legacy {raw}"),
+    }
+}
+
+#[test]
 fn protocol_above_upstream_ceiling_is_protocol_error() {
-    // upstream: compat.c:635 rejects `> PROTOCOL_VERSION` (32) with RERR_PROTOCOL.
-    let message = parse_protocol_version_arg(OsStr::new("33"))
-        .expect_err("protocol 33 is above the upstream ceiling");
+    // upstream: compat.c:635 rejects `> PROTOCOL_VERSION` (33) with RERR_PROTOCOL.
+    let message = parse_protocol_version_arg(OsStr::new("34"))
+        .expect_err("protocol 34 is above the upstream ceiling");
     assert_eq!(message.code(), Some(2));
-    assert!(message.to_string().contains("no more than 32"));
+    assert!(message.to_string().contains("no more than 33"));
 }
 
 #[test]

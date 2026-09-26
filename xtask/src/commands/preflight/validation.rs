@@ -12,7 +12,8 @@ use packaging::file_name;
 pub(crate) use packaging::validate_packaging_assets;
 
 /// Validates that workspace branding matches the pinned release invariants:
-/// upstream 3.4.1, a `-rust` version suffix, protocol 32, brand-derived binary
+/// upstream 3.4.1, a `-rust` version suffix, protocol 33 (rsync 3.5.1
+/// rsync.h:114 `PROTOCOL_VERSION`), brand-derived binary
 /// and daemon file names, and absolute config/secrets paths within the
 /// configured daemon directory.
 pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> {
@@ -33,8 +34,8 @@ pub(crate) fn validate_branding(branding: &WorkspaceBranding) -> TaskResult<()> 
         ),
     )?;
     ensure(
-        branding.protocol == 32,
-        format!("Supported protocol must be 32; found {}", branding.protocol),
+        branding.protocol == 33,
+        format!("Supported protocol must be 33; found {}", branding.protocol),
     )?;
     let expected_client = format!("{brand}-rsync");
     ensure(

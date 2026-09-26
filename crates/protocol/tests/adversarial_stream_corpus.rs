@@ -130,12 +130,12 @@ const MULTIPLEX_CASES: &[Case] = &[
         expected: Outcome::Err(io::ErrorKind::InvalidData),
     },
     Case {
-        // Bug it catches: an unknown message tag (code 11 -> tag byte 18)
+        // Bug it catches: an unknown message tag (code 12 -> tag byte 19)
         // must surface UnknownMessageCode rather than be silently treated
-        // as DATA. Codes 11-21, 23-32, 34-41, 43-85, 87-99, 103-247 are all
-        // unmapped. Tag is at LE byte index 3.
+        // as DATA. Codes 12-21, 23-32, 34-41, 43-85, 87-99, 103-247 are all
+        // unmapped (11 is MSG_BLOCK_STATS). Tag is at LE byte index 3.
         name: "multiplex_header_unknown_message_code",
-        bytes: &[0x00, 0x00, 0x00, 18],
+        bytes: &[0x00, 0x00, 0x00, 19],
         expected: Outcome::Err(io::ErrorKind::InvalidData),
     },
     Case {

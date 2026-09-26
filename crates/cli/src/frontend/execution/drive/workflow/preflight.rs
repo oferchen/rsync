@@ -112,10 +112,10 @@ where
         return Ok(None);
     };
     match parse_protocol_version_arg(value.as_os_str()) {
-        Ok(ProtocolArg::Supported(version)) => {
-            // Local copies ignore the protocol entirely (no wire negotiation).
-            Ok(has_remote_operand.then_some(version))
-        }
+        // A local copy negotiates nothing, but upstream still runs it at the
+        // requested protocol, which gates its `--stats` lines (compat.c:629-637,
+        // main.c:434-448), so the version is kept for both.
+        Ok(ProtocolArg::Supported(version)) => Ok(Some(version)),
         Ok(ProtocolArg::LegacyLocalOnly(raw)) => {
             if has_remote_operand {
                 Err(fail_with_message(legacy_remote_rejection(raw), stderr))
