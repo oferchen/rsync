@@ -72,12 +72,6 @@ struct LogFormatContext<'a> {
     itemize_string: &'a str,
 }
 
-/// Appends the decimal representation of a `u32` to a string.
-fn push_u32(buf: &mut String, value: u32) {
-    use std::fmt::Write as _;
-    let _ = write!(buf, "{value}");
-}
-
 /// Upper bound on the modifier run scanned before an escape letter.
 ///
 /// upstream: `log.c:568` bounds the width-digit scan with

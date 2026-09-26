@@ -360,13 +360,12 @@ bytes on the receiver-to-sender channel.
   pending a benchmark-before-default decision. Enable it only when both ends
   are oc and you have validated the win for your workload.
 
-## oc-only rsyncd.conf directives and expansions
-
+## oc-only rsyncd.conf directives
 These are configuration-file extensions, not environment variables. Upstream
-rsync logs an unknown parameter and ignores it, and expands only `%NAME%`
-references through `getenv()`, so a config that uses any of the items below
-behaves differently under an upstream daemon.
-
+rsync logs an unknown parameter and ignores it, so a config that uses any of
+the directives below behaves differently under an upstream daemon. `%`
+expansion has no oc-only forms: like upstream, oc expands only `%NAME%`
+references through the environment and the `RSYNC_*` connection variables.
 Directives:
 
 - `bwlimit` (global) - daemon-wide bandwidth limit, same syntax as `--bwlimit`.
@@ -378,17 +377,6 @@ Directives:
   / `outgoing chmod`. Upstream folds only whitespace in parameter names.
 - `quic cert file`, `quic key file`, `quic client ca file`, `quic port`
   (global, `quic` feature) - QUIC listener identity and port.
-
-Expansions:
-
-- `%MODULE%`, `%ADDR%`, `%DIFFHOST%` in `path`, `temp dir`, `log file`,
-  `secrets file`, `exclude from` and `include from` expand to the module name,
-  the client address and the client host name. Upstream leaves them literal
-  unless the daemon's environment defines them.
-- `%P`, `%m`, `%p`, `%u`, `%a`, `%h` in `early exec`, `pre-xfer exec`,
-  `post-xfer exec` and `name converter` expand to the module path, module
-  name, daemon pid, user name, client address and client host name. Upstream
-  passes them to the shell unchanged.
 
 ## Legacy variables
 

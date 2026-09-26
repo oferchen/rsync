@@ -1,8 +1,8 @@
 // Top-level approved-module request driver: connection acquisition,
 // auth, exec hooks, config build, transfer execution, and TCP drain.
 
-/// Runs the module's `post-xfer exec` hook, if one is configured and exec
-/// hooks are enabled, with the given transfer `exit_status`.
+/// Runs the module's `post-xfer exec` hook, once it has been armed, with the
+/// given transfer `exit_status`.
 ///
 /// upstream: clientserver.c:908-933 - the daemon forks a child that runs the
 /// whole module session while the parent waits for the child's exit status and
@@ -14,6 +14,10 @@
 /// failures, a refused option, and so on). This finalizer lets those
 /// early-return paths mirror that "post-xfer always runs" flow, matching the
 /// inline post-xfer dispatch on the success path.
+///
+/// The hook is armed only once its directive has been expanded, which is
+/// upstream's fork point (`ctx.post_xfer_command`); an abort before it runs
+/// nothing, as a refusal before upstream's fork does.
 fn run_post_xfer_finalizer(
     ctx: &ModuleRequestContext<'_>,
     module: &ModuleRuntime,
@@ -22,44 +26,10 @@ fn run_post_xfer_finalizer(
     client_args: &[String],
     exit_status: i32,
 ) {
-    let Some(command) = module
-        .post_xfer_exec
-        .as_deref()
-        .filter(|_| xfer_exec_enabled())
-    else {
+    let Some(command) = ctx.post_xfer_command.as_deref() else {
         return;
     };
 
-    let addr_str = ctx.peer_ip.to_string();
-    let path_str = module.path.display().to_string();
-    // upstream: clientserver.c:815 sets RSYNC_USER_NAME to the authenticated
-    // user on the daemon process before the hook directive is retrieved, so a
-    // `%RSYNC_USER_NAME%` reference in the template resolves to that user.
-    let path_ctx = PathExpansionContext {
-        module_path: &path_str,
-        module_name: &module.name,
-        username: user_name.unwrap_or(""),
-        remote_addr: &addr_str,
-        hostname: host_name,
-        pid: std::process::id(),
-    };
-    let expanded_command = match expand_exec_command(command, &path_ctx) {
-        Ok(expanded) => expanded,
-        Err(refusal) => {
-            // The transfer has already finished by the time the post-xfer hook
-            // runs, so the only fail-closed action left is to not run it.
-            // ⚠ upstream refuses earlier: it expands all four hook directives
-            // together at clientserver.c:959-960, before the transfer, and
-            // aborts via exit_cleanup(RERR_UNSUPPORTED). Hoisting oc's
-            // expansion to the same point is filed as a residual.
-            if let Some(log) = ctx.log_sink {
-                let message = rsync_error!(RERR_UNSUPPORTED_EXIT_CODE, refusal.log_line())
-                    .with_role(Role::Daemon);
-                log_message(log, &message);
-            }
-            return;
-        }
-    };
     let xfer_ctx = XferExecContext {
         module_name: &module.name,
         module_path: &module.path,
@@ -69,39 +39,91 @@ fn run_post_xfer_finalizer(
         request: ctx.request,
         client_args,
     };
-    run_post_xfer_exec(&expanded_command, &xfer_ctx, exit_status, ctx.log_sink);
+    run_post_xfer_exec(command, &xfer_ctx, exit_status, ctx.log_sink);
 }
 
-/// Reports a refused shell hook to the peer and the daemon log.
+/// Logs a refused shell hook; the session then ends with nothing sent.
 ///
 /// The hook may be an access check, so a template whose substitution carries
 /// shell syntax fails the transfer rather than running the hook unprotected or
-/// skipping it.
+/// skipping it. Upstream sends the peer nothing: `exit_cleanup()` closes the
+/// connection, and a client reports "didn't get server startup line".
 ///
 /// upstream: `loadparm.c:267-274` - `rprintf(FLOG, ...)` then
 /// `exit_cleanup(RERR_UNSUPPORTED)`.
-fn refuse_shell_hook(
-    ctx: &mut ModuleRequestContext<'_>,
-    refusal: &ShellHookRefusal,
-) -> io::Result<()> {
-    let text = refusal.log_line();
-
-    // Log BEFORE writing to the peer. upstream: loadparm.c:270-273 emits the
-    // FLOG line and only then calls exit_cleanup().
-    // ⚠ The order is load-bearing, not cosmetic: by the time a hook runs the
-    // stream is already multiplexed, so the plain `@ERROR` line can fail to
-    // land. Sending first meant `?` propagated that failure and the refusal
-    // never reached the daemon log at all - the operator's only record of a
-    // fail-closed security decision, silently dropped.
+fn refuse_shell_hook(ctx: &ModuleRequestContext<'_>, refusal: &ShellHookRefusal) {
     if let Some(log) = ctx.log_sink {
         let message =
-            rsync_error!(RERR_UNSUPPORTED_EXIT_CODE, text.clone()).with_role(Role::Daemon);
+            rsync_error!(RERR_UNSUPPORTED_EXIT_CODE, refusal.log_line()).with_role(Role::Daemon);
         log_message(log, &message);
     }
+}
 
-    let error = AtError::message(text);
-    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-    Ok(())
+/// One of a module's exec-hook directives.
+///
+/// The discriminants are upstream's read order in the `||` chain at
+/// clientserver.c:959-960.
+#[derive(Clone, Copy)]
+enum Hook {
+    EarlyExec,
+    PreXferExec,
+    PostXferExec,
+    NameConverter,
+}
+
+/// A module's exec-hook directives, each expanded at most once.
+///
+/// upstream: loadparm.c:333 `RETURN_EXPANDED` expands a directive on its first
+/// read and caches the result, so a directive that expanded once is never
+/// refused later.
+struct HookDirectives<'m> {
+    templates: [Option<&'m str>; 4],
+    expanded: [Option<String>; 4],
+}
+
+impl<'m> HookDirectives<'m> {
+    fn new(module: &'m ModuleRuntime) -> Self {
+        let templates = [
+            module.early_exec.as_deref(),
+            module.pre_xfer_exec.as_deref(),
+            module.post_xfer_exec.as_deref(),
+            module.name_converter.as_deref(),
+        ]
+        .map(|template| template.filter(|text| !text.is_empty()));
+        Self {
+            templates,
+            expanded: Default::default(),
+        }
+    }
+
+    /// The first configured directive in upstream's read order.
+    fn first_configured(&self) -> Option<Hook> {
+        const ORDER: [Hook; 4] = [
+            Hook::EarlyExec,
+            Hook::PreXferExec,
+            Hook::PostXferExec,
+            Hook::NameConverter,
+        ];
+        ORDER
+            .into_iter()
+            .find(|hook| self.templates[*hook as usize].is_some())
+    }
+
+    /// Expands `hook` unless it is unset or already expanded.
+    fn expand(&mut self, hook: Hook, vars: &HookVariables<'_>) -> Result<(), ShellHookRefusal> {
+        let slot = hook as usize;
+        if self.expanded[slot].is_none()
+            && let Some(template) = self.templates[slot]
+        {
+            self.expanded[slot] = Some(expand_exec_command(template, vars)?);
+        }
+        Ok(())
+    }
+
+    /// Takes the expanded command for `hook`, if it is set.
+    fn take(&mut self, hook: Hook) -> Option<String> {
+        self.expanded[hook as usize].take()
+    }
 }
 
 /// Processes an approved module request.
@@ -127,14 +149,19 @@ fn process_approved_module(
         log_module_request(log, ctx.host_display(), ctx.peer_ip, ctx.request);
     }
 
-    // Expand %-variables (e.g. %MODULE%, %ADDR%) in path-type fields using the
-    // connection's client address and hostname.
-    // upstream: loadparm.c:lp_string() - variable substitution at access time.
+    // upstream: clientserver.c:757/770-771 - RSYNC_MODULE_NAME, RSYNC_HOST_NAME
+    // and RSYNC_HOST_ADDR are set before authentication reads `secrets file`.
+    let peer_host_addr = ctx.peer_ip.to_string();
+    let peer_host_name = ctx.host_display().to_owned();
+    let pre_auth_vars = HookVariables {
+        module_name: Some(&module.name),
+        host_name: Some(&peer_host_name),
+        host_addr: Some(&peer_host_addr),
+        ..HookVariables::default()
+    };
     let effective_module = {
         let mut definition = module.definition.clone();
-        let client_addr = ctx.peer_ip.to_string();
-        let client_host = ctx.host_display();
-        expand_module_vars(&mut definition, &client_addr, client_host);
+        expand_module_vars(&mut definition, &pre_auth_vars);
         ModuleRuntime::from(definition)
     };
     let module = &effective_module;
@@ -160,27 +187,119 @@ fn process_approved_module(
             None => return Ok(()),
         };
 
-    // Run early exec after authentication so the authenticated username
-    // is available in the RSYNC_USER_NAME environment variable.
-    // upstream: clientserver.c - early_exec() runs after auth completes.
-    if xfer_exec_enabled()
-        && let Some(command) = &module.early_exec
+    // upstream: clientserver.c:815 - RSYNC_USER_NAME is set once auth has
+    // passed, and the module's other path-type parameters are read after it.
+    let authed_module = {
+        let mut definition = module.definition.clone();
+        let vars = HookVariables {
+            user_name: Some(auth_user.as_deref().unwrap_or("")),
+            ..pre_auth_vars
+        };
+        expand_module_vars(&mut definition, &vars);
+        ModuleRuntime::from(definition)
+    };
+    let module = &authed_module;
+
+    // upstream: clientserver.c:930-951 - the five daemon filter parameters
+    // (`filter`, `include from`, `include`, `exclude from`, `exclude`) are
+    // parsed HERE, and the ordering is the substance of this placement:
+    //
+    //   :934-951  parse_filter_str / parse_filter_file  <- the reads
+    //   :1050     chroot(module_chdir)
+    //   :1059     change_dir(module_chdir)
+    //   :1098     setgid
+    //   :1123     setuid
+    //   :1152     `@RSYNCD: OK`
+    //
+    // ⚠ ALL THREE OF chroot, THE UID DROP AND THE CWD CHANGE LAND AFTER THE
+    // PARSE UPSTREAM, AND EACH ONE BREAKS A DIFFERENT CONFIGURATION IF THE
+    // PARSE IS MOVED BELOW IT:
+    //
+    // - after `chroot`, an absolute path outside the module - the documented
+    //   `exclude from = /etc/rsync/excludes` shape - no longer names a file
+    //   this process can reach, so the whole connection is refused on a
+    //   DEFAULT config (`use chroot` defaults on);
+    // - after `setuid`, an operator file readable only by root (mode 0600)
+    //   becomes unreadable, which breaks it with no chroot involved at all;
+    // - after `change_dir`, a RELATIVE path resolves against the module root
+    //   rather than the daemon's launch directory, which is where upstream
+    //   resolves it because :1059 has not run yet.
+    //
+    // Reading them here reproduces all three. The rules are enforced
+    // server-side regardless of what filters the client later sends.
+    //
+    // ⚠ The parse is SPLIT from its assignment deliberately: `config` does not
+    // exist until the client's argv has been read, which is necessarily after
+    // `@RSYNCD: OK` and therefore after the privilege drop. Only the READ has
+    // to happen early, so only the read moves; the rules are parked in this
+    // local and installed into `config` at its construction site below. Upstream
+    // has no analogue of that assignment - it parses straight into the global
+    // `daemon_filter_list` - so the split is an oc structural artefact, not a
+    // behavioural difference.
+    //
+    // The parse precedes the post-xfer fork (:967), so a refusal here runs no
+    // hook at all.
+    let daemon_filter_rules = match build_daemon_filter_rules(module) {
+        Ok(rules) => rules,
+        Err(err) => {
+            let error = AtError::message(format!("failed to load module filter rules: {err}"));
+            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+            return Ok(());
+        }
+    };
+
+    // upstream: clientserver.c:959-1031 - the hook directives are read, and so
+    // expanded, after authentication (RSYNC_USER_NAME is set at :815) and the
+    // daemon filter parse (:930-954), and before the post-xfer fork, the early
+    // exec and the chroot:
+    //
+    // - the `||` chain at :959-960 reads them in `Hook` order and stops at the
+    //   first configured one, expanding it even when RSYNC_NO_XFER_EXEC then
+    //   disables every hook (the name converter included);
+    // - post-xfer is read next, before the fork (:967);
+    // - early exec, pre-xfer and the name converter are read after the fork
+    //   (:996, :1015, :1024), so their refusal is a child exit the post-xfer
+    //   parent still observes, and a pre-xfer or name-converter refusal comes
+    //   only after early exec has run.
+    let hook_module_path = module.path.display().to_string();
+    let hook_host_addr = ctx.peer_ip.to_string();
+    let hook_host_name = ctx.host_display().to_owned();
+    let hook_vars = HookVariables {
+        module_name: Some(&module.name),
+        module_path: Some(&hook_module_path),
+        host_name: Some(&hook_host_name),
+        host_addr: Some(&hook_host_addr),
+        user_name: Some(auth_user.as_deref().unwrap_or("")),
+    };
+    let mut hooks = HookDirectives::new(module);
+    if let Some(first) = hooks.first_configured()
+        && let Err(refusal) = hooks.expand(first, &hook_vars)
     {
-        let early_path_ctx = PathExpansionContext {
-            module_path: &module.path.display().to_string(),
-            module_name: &module.name,
-            username: auth_user.as_deref().unwrap_or(""),
-            remote_addr: &ctx.peer_ip.to_string(),
-            hostname: ctx.host_display(),
-            pid: std::process::id(),
-        };
-        let expanded_command = match expand_exec_command(command, &early_path_ctx) {
-            Ok(expanded) => expanded,
-            Err(refusal) => {
-                refuse_shell_hook(ctx, &refusal)?;
-                return Ok(());
-            }
-        };
+        refuse_shell_hook(ctx, &refusal);
+        return Ok(());
+    }
+    let exec_enabled = xfer_exec_enabled();
+    if exec_enabled {
+        if let Err(refusal) = hooks.expand(Hook::PostXferExec, &hook_vars) {
+            refuse_shell_hook(ctx, &refusal);
+            return Ok(());
+        }
+        ctx.post_xfer_command = hooks.take(Hook::PostXferExec);
+        if let Err(refusal) = hooks.expand(Hook::EarlyExec, &hook_vars) {
+            refuse_shell_hook(ctx, &refusal);
+            run_post_xfer_finalizer(
+                ctx,
+                module,
+                &hook_host_name,
+                auth_user.as_deref(),
+                &[],
+                RERR_UNSUPPORTED_EXIT_CODE,
+            );
+            return Ok(());
+        }
+    }
+
+    if exec_enabled && let Some(expanded_command) = hooks.take(Hook::EarlyExec) {
         let early_ctx = XferExecContext {
             module_name: &module.name,
             module_path: &module.path,
@@ -261,63 +380,24 @@ fn process_approved_module(
         }
     }
 
-    // upstream: clientserver.c:930-951 - the five daemon filter parameters
-    // (`filter`, `include from`, `include`, `exclude from`, `exclude`) are
-    // parsed HERE, and the ordering is the substance of this placement:
-    //
-    //   :934-951  parse_filter_str / parse_filter_file  <- the reads
-    //   :1050     chroot(module_chdir)
-    //   :1059     change_dir(module_chdir)
-    //   :1098     setgid
-    //   :1123     setuid
-    //   :1152     `@RSYNCD: OK`
-    //
-    // ⚠ ALL THREE OF chroot, THE UID DROP AND THE CWD CHANGE LAND AFTER THE
-    // PARSE UPSTREAM, AND EACH ONE BREAKS A DIFFERENT CONFIGURATION IF THE
-    // PARSE IS MOVED BELOW IT:
-    //
-    // - after `chroot`, an absolute path outside the module - the documented
-    //   `exclude from = /etc/rsync/excludes` shape - no longer names a file
-    //   this process can reach, so the whole connection is refused on a
-    //   DEFAULT config (`use chroot` defaults on);
-    // - after `setuid`, an operator file readable only by root (mode 0600)
-    //   becomes unreadable, which breaks it with no chroot involved at all;
-    // - after `change_dir`, a RELATIVE path resolves against the module root
-    //   rather than the daemon's launch directory, which is where upstream
-    //   resolves it because :1059 has not run yet.
-    //
-    // Reading them here reproduces all three. The rules are enforced
-    // server-side regardless of what filters the client later sends.
-    //
-    // ⚠ The parse is SPLIT from its assignment deliberately: `config` does not
-    // exist until the client's argv has been read, which is necessarily after
-    // `@RSYNCD: OK` and therefore after the privilege drop. Only the READ has
-    // to happen early, so only the read moves; the rules are parked in this
-    // local and installed into `config` at its construction site below. Upstream
-    // has no analogue of that assignment - it parses straight into the global
-    // `daemon_filter_list` - so the split is an oc structural artefact, not a
-    // behavioural difference.
-    //
-    // Client args are not available yet (the client blocks on OK before
-    // sending its argv), so a refusal here hooks post-xfer-exec with an empty
-    // arg list, exactly as the sibling pre-OK refusals below do.
-    let daemon_filter_rules = match build_daemon_filter_rules(module) {
-        Ok(rules) => rules,
-        Err(err) => {
-            let error = AtError::message(format!("failed to load module filter rules: {err}"));
-            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-            let host_owned = ctx.host_display().to_owned();
-            run_post_xfer_finalizer(
-                ctx,
-                module,
-                &host_owned,
-                auth_user.as_deref(),
-                &[],
-                MODULE_ABORT_EXIT_CODE,
-            );
-            return Ok(());
+    if exec_enabled {
+        for hook in [Hook::PreXferExec, Hook::NameConverter] {
+            if let Err(refusal) = hooks.expand(hook, &hook_vars) {
+                refuse_shell_hook(ctx, &refusal);
+                run_post_xfer_finalizer(
+                    ctx,
+                    module,
+                    &hook_host_name,
+                    auth_user.as_deref(),
+                    &[],
+                    RERR_UNSUPPORTED_EXIT_CODE,
+                );
+                return Ok(());
+            }
         }
-    };
+    }
+    let pre_xfer_command = hooks.take(Hook::PreXferExec).filter(|_| exec_enabled);
+    let name_converter_command = hooks.take(Hook::NameConverter).filter(|_| exec_enabled);
 
     // upstream: clientserver.c:1050-1123 - chroot + setgid + setuid run BEFORE
     // `@RSYNCD: OK` (:1152), so their `@ERROR: chroot/setgid/setuid failed`
@@ -528,22 +608,7 @@ fn process_approved_module(
     // upstream: clientserver.c:964-971 - spawn name converter after privilege
     // reduction so it runs with reduced privileges inside the chroot.
     #[cfg(unix)]
-    let _name_converter_guard = if let Some(ref cmd) = module.name_converter {
-        let nc_path_ctx = PathExpansionContext {
-            module_path: &module.path.display().to_string(),
-            module_name: &module.name,
-            username: auth_user.as_deref().unwrap_or(""),
-            remote_addr: &ctx.peer_ip.to_string(),
-            hostname: ctx.host_display(),
-            pid: std::process::id(),
-        };
-        let expanded = match expand_exec_command(cmd, &nc_path_ctx) {
-            Ok(expanded) => expanded,
-            Err(refusal) => {
-                refuse_shell_hook(ctx, &refusal)?;
-                return Ok(());
-            }
-        };
+    let _name_converter_guard = if let Some(expanded) = name_converter_command {
         match NameConverter::spawn(&expanded) {
             Ok(nc) => Some(install_name_converter(nc)),
             Err(err) => {
@@ -568,6 +633,8 @@ fn process_approved_module(
         None
     };
 
+    #[cfg(not(unix))]
+    let _ = name_converter_command;
     #[cfg(windows)]
     let _name_converter_guard = Some(install_windows_name_converter());
 
@@ -739,51 +806,10 @@ fn process_approved_module(
         client_args: &client_args,
     };
 
-    // Build the expansion context for a shell-executed hook command.
-    //
-    // upstream: loadparm.c:237 expand_vars() resolves `%NAME%` references by
-    // getenv; clientserver.c:757/770/771/815/920 set RSYNC_MODULE_NAME,
-    // RSYNC_HOST_NAME, RSYNC_HOST_ADDR, RSYNC_USER_NAME and RSYNC_MODULE_PATH
-    // on the daemon process ahead of the hook retrieval at :959, so those are
-    // the names a template can resolve. `%RSYNC_USER_NAME%` must therefore see
-    // the authenticated user, not an empty string.
-    //
-    // ⚠ The single-character escapes this context also feeds (%P/%m/%u/%a/%h/%p)
-    // are an oc extension: upstream expands only the delimited `%NAME%` form.
-    let addr_str_exec = ctx.peer_ip.to_string();
-    let path_str_exec = module.path.display().to_string();
-    let exec_path_ctx = PathExpansionContext {
-        module_path: &path_str_exec,
-        module_name: &module.name,
-        username: auth_user.as_deref().unwrap_or(""),
-        remote_addr: &addr_str_exec,
-        hostname: &host_name_owned,
-        pid: std::process::id(),
-    };
-
     // upstream: clientserver.c - pre_exec() runs before the transfer starts.
     // Stdout from the script is sent to the client as an info message. It gets
     // no stdin: `--early-input` belongs to the early-exec hook alone.
-    if let Some(command) = module
-        .pre_xfer_exec
-        .as_deref()
-        .filter(|_| xfer_exec_enabled())
-    {
-        let expanded_command = match expand_exec_command(command, &exec_path_ctx) {
-            Ok(expanded) => expanded,
-            Err(refusal) => {
-                refuse_shell_hook(ctx, &refusal)?;
-                run_post_xfer_finalizer(
-                    ctx,
-                    module,
-                    &host_name_owned,
-                    auth_user.as_deref(),
-                    &client_args,
-                    RERR_UNSUPPORTED_EXIT_CODE,
-                );
-                return Ok(());
-            }
-        };
+    if let Some(expanded_command) = pre_xfer_command {
         match run_pre_xfer_exec(&expanded_command, &xfer_ctx) {
             Ok(Ok(output)) => {
                 // upstream: clientserver.c:pre_exec() - stdout from the script is
@@ -1041,21 +1067,10 @@ fn process_approved_module(
     // delivery of any in-flight TX bytes.
     drop(streams);
 
-    // upstream: clientserver.c - post_exec() runs after the transfer, regardless of outcome
-    if let Some(command) = module
-        .post_xfer_exec
-        .as_deref()
-        .filter(|_| xfer_exec_enabled())
-    {
-        // The transfer has already completed here, so the only fail-closed
-        // action left is to not run the hook. ⚠ upstream refuses earlier - it
-        // expands all four hook directives together at clientserver.c:959-960,
-        // before the transfer - so hoisting oc's expansion to that point is
-        // filed as a residual.
-        let Ok(expanded_command) = expand_exec_command(command, &exec_path_ctx) else {
-            return Ok(());
-        };
-        run_post_xfer_exec(&expanded_command, &xfer_ctx, exit_status, ctx.log_sink);
+    // upstream: clientserver.c:975-988 - the post-xfer parent runs the hook
+    // once the transfer child has exited, whatever its outcome.
+    if let Some(command) = ctx.post_xfer_command.as_deref() {
+        run_post_xfer_exec(command, &xfer_ctx, exit_status, ctx.log_sink);
     }
 
     // FSM: Transferring -> Closing - transfer and post-xfer hooks complete.

@@ -117,6 +117,7 @@ are mirrored. One entry per change; see the linked PRs for detail.
 
 - The upstream reference is rsync 3.5.0 (#7305, #7321, #7331, #7607)
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down instead of refused (#7916)
+- Daemon `%` expansion matches upstream's `expand_vars()`: only `%NAME%` references expand, and the oc-only tokens are removed. Replace `%MODULE%`/`%m` with `%RSYNC_MODULE_NAME%`, `%ADDR%`/`%a` with `%RSYNC_HOST_ADDR%`, `%DIFFHOST%`/`%h` with `%RSYNC_HOST_NAME%`, `%P` with `%RSYNC_MODULE_PATH%` and `%u` with `%RSYNC_USER_NAME%`; `%p` has no hook-template equivalent (use `$RSYNC_PID` in the hook's shell), and `%%` is no longer an escape
 - The required upstream-testsuite gate runs the 3.5.0 Python corpus on Linux (pipe and TCP, root and non-root); macOS legs run on every PR (#7387, #7339, #7405, #7408, #7392, #7391)
 - The required upstream-testsuite gate moves to the 3.5.1 corpus, in its own workflow with its own badge and the same check names; the 3.5.0 testsuite legs, workflow, manifests and badge are retired (3.5.0 stays in the interop matrix)
 - rsync 3.5.0 joins the interop matrix as a gating peer (#7290, #7337)
