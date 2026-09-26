@@ -148,10 +148,12 @@ mod imp {
             )
         })?;
 
-        // upstream: syscall.c:102-107 open_anchor_dirfd() - no `O_NOFOLLOW`,
-        // no `resolve` flags. The anchor is operator-supplied, so ordinary
-        // symlink resolution applies.
-        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC;
+        // upstream: rsync-3.5.1/syscall.c:102-107 open_anchor_dirfd() - no
+        // `O_NOFOLLOW`, no `resolve` flags, and `directory_traverse_flags()`.
+        // The anchor is operator-supplied, so ordinary symlink resolution
+        // applies, and it is `*at()` authority only, so search permission is
+        // enough.
+        let flags = crate::owner_walk::traversal_dir_raw_flags();
 
         // SAFETY: `c_path` is a valid NUL-terminated C string borrowed for
         // the duration of the call. `libc::open` is a thread-safe syscall
@@ -181,7 +183,7 @@ mod imp {
     /// mid-path components; callers that need that must run on a Linux 5.6+
     /// kernel where the `openat2` upgrade in [`secure_open_dir`] takes over.
     fn open_nofollow(c_path: &CString) -> io::Result<OwnedFd> {
-        let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC;
+        let flags = crate::owner_walk::traversal_dir_raw_flags() | libc::O_NOFOLLOW;
 
         // SAFETY: `c_path` is a valid NUL-terminated C string borrowed for
         // the duration of the call. `libc::open` is a thread-safe syscall
@@ -234,8 +236,7 @@ mod imp {
             // an all-zero bit pattern is a valid value.
             #[allow(unsafe_code)]
             let mut how: libc::open_how = unsafe { std::mem::zeroed() };
-            how.flags =
-                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC) as u64;
+            how.flags = (crate::owner_walk::traversal_dir_raw_flags() | libc::O_NOFOLLOW) as u64;
             how.mode = 0;
             // `RESOLVE_BENEATH` is NOT used here. This helper is the bootstrap
             // open that produces the parent dirfd anchor; subsequent `*at`
@@ -288,8 +289,124 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    use std::os::fd::AsFd;
     use std::os::fd::AsRawFd;
     use tempfile::tempdir;
+
+    /// A directory whose mode is `mode`, restored to 0755 on drop so the
+    /// tempdir can be cleaned up.
+    #[cfg(target_os = "linux")]
+    struct ModeGuard(std::path::PathBuf);
+
+    #[cfg(target_os = "linux")]
+    impl ModeGuard {
+        fn set(path: &Path, mode: u32) -> Self {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("chmod");
+            Self(path.to_path_buf())
+        }
+
+        /// Whether this process is actually denied reading the directory.
+        /// Root (`CAP_DAC_READ_SEARCH`) is not, and then nothing here can be
+        /// observed.
+        fn read_is_denied(&self) -> bool {
+            std::fs::read_dir(&self.0).is_err()
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for ModeGuard {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    /// A destination below a searchable but unreadable (0111) parent must be
+    /// reachable: the held anchor is traversal authority only, and traversal
+    /// needs search permission, not read. Android exposes `/sdcard` this way.
+    ///
+    /// upstream: `rsync-3.5.1/syscall.c:83-92` `directory_traverse_flags()`,
+    /// `:102-107` `open_anchor_dirfd()`; testsuite `search-only-destination`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn anchors_resolve_beneath_a_search_only_parent() {
+        let dir = tempdir().expect("tempdir");
+        let base = std::fs::canonicalize(dir.path()).expect("canonicalize");
+        let dest = base.join("search-only").join("dest");
+        std::fs::create_dir_all(&dest).expect("mkdir");
+        let guard = ModeGuard::set(&base.join("search-only"), 0o111);
+        if !guard.read_is_denied() {
+            return;
+        }
+
+        // The ownership walk opens every component itself, so resolving the
+        // 0111 directory as the walk's final component is what a read-only
+        // open cannot do: the receiver's destination-parent walk and
+        // change_dir() both land there.
+        crate::operator_open_dir(&base.join("search-only"))
+            .expect("walked 0111 directory as the final component");
+        let (parent, _) =
+            crate::owner_trusted_parent(&dest).expect("walked parent that is itself 0111");
+        drop(parent);
+        let fd = secure_open_dir(&dest).expect("secure anchor beneath a 0111 parent");
+        crate::dir_sandbox::at_syscalls::openat(
+            fd.as_fd(),
+            std::ffi::OsStr::new("created"),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC,
+            0o644,
+        )
+        .expect("create beneath the traversal anchor");
+    }
+
+    /// A write+search-only (0333) destination is a valid `*at()` authority:
+    /// a known name can be created in it although it cannot be listed.
+    ///
+    /// upstream: testsuite `search-only-held-dirfd`, the mode 0333
+    /// destination.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_write_search_only_directory_is_a_valid_anchor() {
+        let dir = tempdir().expect("tempdir");
+        let base = std::fs::canonicalize(dir.path()).expect("canonicalize");
+        let dest = base.join("write-only");
+        std::fs::create_dir(&dest).expect("mkdir");
+        let guard = ModeGuard::set(&dest, 0o333);
+        if !guard.read_is_denied() {
+            return;
+        }
+
+        let fd = open_trusted_dir(&dest).expect("0333 anchor");
+        crate::dir_sandbox::at_syscalls::openat(
+            fd.as_fd(),
+            std::ffi::OsStr::new("incoming"),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC,
+            0o644,
+        )
+        .expect("create beneath a 0333 anchor");
+    }
+
+    /// Traversal authority is not read authority: listing a 0111 directory
+    /// through its held anchor still fails with `EACCES`, as upstream's
+    /// `secure_opendir()` does.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_search_only_directory_still_refuses_enumeration() {
+        let dir = tempdir().expect("tempdir");
+        let base = std::fs::canonicalize(dir.path()).expect("canonicalize");
+        let xonly = base.join("xonly");
+        std::fs::create_dir(&xonly).expect("mkdir");
+        let guard = ModeGuard::set(&xonly, 0o111);
+        if !guard.read_is_denied() {
+            return;
+        }
+
+        let fd = open_trusted_dir(&xonly).expect("0111 anchor");
+        let error = crate::confined_readdir::read_dir_names_at(fd.as_fd())
+            .expect_err("a search-only directory must not be enumerable");
+        assert_eq!(error.raw_os_error(), Some(libc::EACCES));
+    }
 
     #[test]
     fn opens_real_directory() {
