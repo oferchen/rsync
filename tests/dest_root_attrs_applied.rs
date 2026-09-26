@@ -59,6 +59,35 @@ enum Mode {
     Pull,
 }
 
+/// Runs one `-a`-style transfer from a working directory outside the temp
+/// root, so the kernel sandbox's read set does not already cover it.
+fn run(mode: Mode, root: &Path, from: &str, to: &str, flags: &str) -> test_support::CliOutput {
+    let binary = oc_rsync_binary();
+    let shim = write_rsh_shim(root);
+    let runner = test_support::OcRsyncCliRunner::new()
+        .binary(&binary)
+        .cwd(std::env::temp_dir().parent().unwrap_or(Path::new("/")))
+        .arg(flags);
+    let runner = match mode {
+        Mode::Local => runner.arg(from).arg(to),
+        Mode::Push => runner
+            .arg("--rsh")
+            .arg(&shim)
+            .arg("--rsync-path")
+            .arg(&binary)
+            .arg(from)
+            .arg(format!("h:{to}")),
+        Mode::Pull => runner
+            .arg("--rsh")
+            .arg(&shim)
+            .arg("--rsync-path")
+            .arg(&binary)
+            .arg(format!("h:{from}"))
+            .arg(to),
+    };
+    runner.run().expect("transfer did not finish")
+}
+
 /// Copies `src/` into an existing `dst/` under a fresh temp dir, from a working
 /// directory outside it, and checks the root and a nested directory.
 ///
@@ -75,35 +104,12 @@ fn assert_root_attrs_applied(mode: Mode) {
     fs::set_permissions(&src, fs::Permissions::from_mode(0o750)).expect("chmod src");
     backdate(&nested);
     backdate(&src);
-    let shim = write_rsh_shim(&root);
     let dst = root.join("dst");
     fs::create_dir(&dst).expect("create dst");
 
-    let binary = oc_rsync_binary();
     let from = format!("{}/", src.display());
     let to = format!("{}/", dst.display());
-    let mut runner = test_support::OcRsyncCliRunner::new()
-        .binary(&binary)
-        .cwd(std::env::temp_dir().parent().unwrap_or(Path::new("/")))
-        .arg("-a");
-    runner = match mode {
-        Mode::Local => runner.arg(&from).arg(&to),
-        Mode::Push => runner
-            .arg("--rsh")
-            .arg(&shim)
-            .arg("--rsync-path")
-            .arg(&binary)
-            .arg(&from)
-            .arg(format!("h:{to}")),
-        Mode::Pull => runner
-            .arg("--rsh")
-            .arg(&shim)
-            .arg("--rsync-path")
-            .arg(&binary)
-            .arg(format!("h:{from}"))
-            .arg(&to),
-    };
-    let out = runner.run().expect("transfer did not finish");
+    let out = run(mode, &root, &from, &to, "-a");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         out.status,
@@ -142,4 +148,80 @@ fn push_applies_the_destination_root_attrs() {
 #[test]
 fn pull_applies_the_destination_root_attrs() {
     assert_root_attrs_applied(Mode::Pull);
+}
+
+/// Which single entry a file-operand cell transfers.
+#[derive(Clone, Copy, Debug)]
+enum Single {
+    /// A regular file over an existing destination file.
+    File,
+    /// A FIFO to a destination name that does not exist yet.
+    Fifo,
+}
+
+/// A destination operand naming a FILE has no directory to anchor on: upstream
+/// `get_local_name()` makes its parent the cwd and names the leaf. The root's
+/// attributes must still be applied, and never fail with `ENOTDIR`.
+fn assert_single_file_attrs_applied(mode: Mode, kind: Single) {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = fs::canonicalize(temp.path()).expect("canonicalize tempdir");
+    fs::create_dir(root.join("src")).expect("create src");
+    fs::create_dir(root.join("dst")).expect("create dst");
+    let (name, flags) = match kind {
+        Single::File => ("f", "-a"),
+        Single::Fifo => ("p", "-aD"),
+    };
+    let src = root.join("src").join(name);
+    let dst = root.join("dst").join(name);
+    match kind {
+        Single::File => {
+            fs::write(&src, b"source bytes\n").expect("write src file");
+            fs::write(&dst, b"old\n").expect("seed dst file");
+        }
+        Single::Fifo => {
+            let status = Command::new("mkfifo")
+                .arg(&src)
+                .status()
+                .expect("spawn mkfifo");
+            assert!(status.success(), "mkfifo failed: {status}");
+        }
+    }
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o640)).expect("chmod src");
+    backdate(&src);
+
+    let out = run(
+        mode,
+        &root,
+        &src.display().to_string(),
+        &dst.display().to_string(),
+        flags,
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status,
+        Some(0),
+        "{mode:?}/{kind:?}: a file destination operand must not fail its attribute \
+         apply\nstderr:\n{stderr}"
+    );
+    let want = fs::symlink_metadata(&src).expect("stat source");
+    let got = fs::symlink_metadata(&dst).expect("stat destination");
+    assert_eq!(
+        got.mtime(),
+        want.mtime(),
+        "{mode:?}/{kind:?}: mtime not applied"
+    );
+    assert_eq!(
+        got.mode() & 0o7777,
+        0o640,
+        "{mode:?}/{kind:?}: mode not applied"
+    );
+}
+
+#[test]
+fn single_file_destination_attrs_are_applied() {
+    for mode in [Mode::Local, Mode::Push, Mode::Pull] {
+        for kind in [Single::File, Single::Fifo] {
+            assert_single_file_attrs_applied(mode, kind);
+        }
+    }
 }
