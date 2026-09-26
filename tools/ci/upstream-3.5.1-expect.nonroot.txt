@@ -316,7 +316,7 @@ scanner-argv-bounds pass
 scanner-batch-flag-mismatch pass
 scanner-daemon-log-checksum pass
 scanner-delete-delay-overread pass
-search-only-destination fail  # destination walk needs read on a search-only (0111) dir - owner: task 1569 (U351)
+search-only-destination pass
 search-only-held-dirfd fail  # sender/receiver need read on search-only dirs - owner: task 1569 (U351)
 secure-relpath-validation pass
 sender-flist-symlink-leak pass
