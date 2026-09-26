@@ -315,7 +315,10 @@ pub(crate) fn emit_transfer_summary(
         )?;
     }
 
-    let formatted_rendered = if let Some(format) = out_format {
+    // A live listing has already written each entry's formatted line.
+    let formatted_rendered = if let Some(format) = out_format
+        && !live.listing
+    {
         if events.is_empty() {
             false
         } else {
@@ -328,7 +331,12 @@ pub(crate) fn emit_transfer_summary(
 
     let progress_rendered = if live.progress {
         true
-    } else if matches!(progress_mode, Some(ProgressMode::PerFile)) && !events.is_empty() {
+    } else if matches!(progress_mode, Some(ProgressMode::PerFile))
+        && !live.listing
+        && !events.is_empty()
+    {
+        // A live listing owns the progress too: when it wrote none (a dry
+        // run), upstream printed none either (sender.c:638-642).
         emit_progress(events, writer, human_readable_mode, escape, pending)?
     } else {
         false
@@ -1014,6 +1022,19 @@ fn is_generator_phase_skip(event: &ClientEvent) -> bool {
             | ClientEventKind::SkippedOverMaxSize
             | ClientEventKind::SkippedUnderMinSize
     )
+}
+
+/// Returns whether upstream's generator writes this entry's line itself, the
+/// moment it checks the entry, instead of itemizing it to the sender.
+///
+/// upstream: generator.c:1154,1305 and rsync.c:828 write `is uptodate`, and
+/// recv_generator() the skip notices, with rprintf(), and log.c:log_delete()
+/// sends a deletion as its own MSG_DELETED. Every other entry is itemized to the
+/// sender, which logs it when it reaches that entry (sender.c:send_files()).
+pub(crate) fn is_generator_notice(event: &ClientEvent) -> bool {
+    is_uptodate_event(event)
+        || is_generator_phase_skip(event)
+        || matches!(event.kind(), ClientEventKind::EntryDeleted)
 }
 
 /// Returns `true` for a HardLink event describing a hard-linked symlink (`hL`).

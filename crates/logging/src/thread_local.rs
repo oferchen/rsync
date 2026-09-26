@@ -274,6 +274,19 @@ pub fn drain_events() -> Vec<DiagnosticEvent> {
         .collect()
 }
 
+/// Runs `f` and discards every diagnostic event it emits on this thread.
+///
+/// For a pass whose side effects are not part of the run the user sees, such
+/// as the local copy's dry-run preview that sizes `--progress`: upstream makes
+/// no such pass, so each notice it would repeat must reach the output once.
+/// Events queued before `f` runs are kept.
+pub fn discard_events_from<R>(f: impl FnOnce() -> R) -> R {
+    let mark = EVENTS.with(|e| e.borrow().len());
+    let result = f();
+    EVENTS.with(|e| e.borrow_mut().truncate(mark));
+    result
+}
+
 /// Drain the events whose code `accept` selects, leaving the rest queued.
 ///
 /// The buffer has several independent consumers - a log-file sink, a
@@ -661,6 +674,27 @@ mod tests {
         init(VerbosityConfig::default());
         let result = apply_debug_flag("not_a_flag");
         assert!(result.is_err());
+    }
+
+    /// A preview pass's notices must vanish while earlier ones survive, or the
+    /// real run repeats the preview's lines (or loses the ones queued before).
+    #[test]
+    fn discard_events_from_drops_only_the_closures_events() {
+        let _ = drain_events();
+        emit_info(InfoFlag::Misc, 0, "before".to_owned());
+        let value = discard_events_from(|| {
+            emit_info(InfoFlag::Misc, 0, "preview".to_owned());
+            7
+        });
+        assert_eq!(value, 7);
+        let kept: Vec<String> = drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Info { message, .. } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kept, ["before"]);
     }
 
     #[test]

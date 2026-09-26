@@ -1356,18 +1356,16 @@ impl ReceiverContext {
         // unless the itemize level requests unchanged rows (generator.c:574-576).
         // A daemon receiver with `transfer logging = yes` itemizes every
         // up-to-date file for its FLOG write even without a client `-i`
-        // (upstream receiver.c:823). The client-visible emit and the wire-forward
-        // stay on the original gate; only the daemon-log hook fires on the
-        // widened arm.
-        if emit_itemize || self.daemon_log_active {
+        // (upstream receiver.c:823), and a push receiver forwards the row to the
+        // client's sender whatever the client asked for (generator.c:2725-2726).
+        // The client-visible emit stays on the original gate.
+        if emit_itemize || self.forwards_itemize_to_sender() || self.daemon_log_active {
             let iflags = crate::generator::ItemFlags::from_raw(unchanged_iflags);
             // Deferred on the run_pipelined path so an up-to-date file's
             // metadata-only row interleaves with directory and transfer rows in
             // flist-index order at flush time; emitted immediately otherwise.
             let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, entry);
-            if emit_itemize {
-                self.record_server_no_transfer_itemize(flist_idx, unchanged_iflags);
-            }
+            self.record_server_no_transfer_itemize(flist_idx, unchanged_iflags);
         }
 
         // upstream: generator.c:468 unchanged_attrs() - fast-path check avoids
