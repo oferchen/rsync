@@ -971,6 +971,11 @@ impl ReceiverContext {
         // upstream: xattrs.c:849 - receive_xattr() keeps rsync.%FOO only at
         // preserve_xattrs >= 2, so the level has to reach the reader.
         .with_xattr_level(u32::from(self.config.flags.xattrs_level))
+        // upstream: xattrs.c:876 - receive_xattr() drops a non-user.* name
+        // only when `am_root <= 0`, so a real root receiver keeps security.*
+        // and trusted.* verbatim. --fake-super sets `am_root = -1`
+        // (options.c), which stays on the non-root side of that test.
+        .with_am_root(metadata::am_root() && !self.config.fake_super)
         .with_preserve_atimes(self.config.flags.atimes)
         // upstream: flist.c:968-971 - `recv_file_entry()` reads the crtime
         // varlong whenever `crtimes_ndx` is set and XMIT_CRTIME_EQ_MTIME is

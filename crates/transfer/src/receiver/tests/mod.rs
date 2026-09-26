@@ -54,3 +54,5 @@ mod windows_receiver_symlinks;
 mod windows_special_skip;
 #[cfg(unix)]
 mod xattr_filter;
+#[cfg(target_os = "linux")]
+mod xattr_root_namespace;
