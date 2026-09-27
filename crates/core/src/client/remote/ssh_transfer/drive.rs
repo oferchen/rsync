@@ -414,9 +414,13 @@ fn run_server_over_ssh_connection(
     // `-v`/`-i` output to stdout and needs no callback - EXCEPT under a custom
     // `--out-format`, where it buffers metadata events the CLI renders, drained
     // into this callback after the receive loop (transfer/lib.rs receiver branch).
+    // `-v` is not the gate: upstream logs names whenever NAME >= 1 sets
+    // `stdout_format` (options.c:2521-2523), which `-P` does on its own.
     let wants_client_output = match config.role {
         ServerRole::Generator => {
-            config.flags.info_flags.itemize || config.flags.verbose || render_out_format_locally
+            config.flags.info_flags.itemize
+                || logging::info_gte(logging::InfoFlag::Name, 1)
+                || render_out_format_locally
         }
         ServerRole::Receiver => render_out_format_locally,
     };

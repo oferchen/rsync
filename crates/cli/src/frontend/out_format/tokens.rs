@@ -43,6 +43,25 @@ impl OutFormat {
         })
     }
 
+    /// Returns `true` when upstream logs each entry before transferring it.
+    ///
+    /// upstream: options.c:2502-2505 - `log_before_transfer` holds unless the
+    /// format asks for a value only known afterwards: `%b`, `%c` or `%C`.
+    pub(crate) fn logs_before_transfer(&self) -> bool {
+        !self.tokens().any(|token| {
+            matches!(
+                token,
+                OutFormatToken::Placeholder(placeholder)
+                    if matches!(
+                        placeholder.kind,
+                        OutFormatPlaceholder::BytesTransferred
+                            | OutFormatPlaceholder::ChecksumBytes
+                            | OutFormatPlaceholder::FullChecksum
+                    )
+            )
+        })
+    }
+
     /// Returns `true` when no tokens were parsed from the format string.
     #[cfg(test)]
     pub(crate) const fn is_empty(&self) -> bool {

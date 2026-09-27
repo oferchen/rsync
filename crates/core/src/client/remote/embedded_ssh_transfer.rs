@@ -398,8 +398,10 @@ fn run_transfer_over_embedded_ssh(
     // the russh transport dropped every itemize/out-format row.
     let wants_client_output = match server_config.role {
         ServerRole::Generator => {
+            // upstream logs names whenever NAME >= 1 sets `stdout_format`
+            // (options.c:2521-2523), which `-P` does without `-v`.
             server_config.flags.info_flags.itemize
-                || server_config.flags.verbose
+                || logging::info_gte(logging::InfoFlag::Name, 1)
                 || render_out_format_locally
         }
         ServerRole::Receiver => render_out_format_locally,

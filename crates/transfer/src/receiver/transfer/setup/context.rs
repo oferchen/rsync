@@ -240,6 +240,16 @@ impl ReceiverContext {
         {
             return Ok(());
         }
+        // A daemon receiver resolved the operand against the module root, but
+        // upstream names it as the client did, relative to the module it has
+        // chdir'd into (clientserver.c:rsync_module(), main.c:829), so the
+        // server's own path never reaches the client.
+        let dest_dir = self
+            .config
+            .connection
+            .served_module_root()
+            .and_then(|root| dest_dir.strip_prefix(root).ok())
+            .unwrap_or(dest_dir);
         // upstream lops the operand's single trailing slash (main.c:801-802);
         // mirror that here so `dest/` renders as `dest`, while keeping a bare
         // separator (a root path) intact.

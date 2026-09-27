@@ -25,6 +25,19 @@ impl ReceiverContext {
         self.config.flags.info_flags.itemize || self.collect_out_format_events()
     }
 
+    /// Returns whether this receiver itemizes every entry to a pushing
+    /// client's sender, whatever output the client asked for.
+    ///
+    /// upstream: generator.c:2725-2726 - at protocol >= 29 the generator sets
+    /// `itemizing = 1` unconditionally, so each significant entry's `NDX +
+    /// iflags` reaches the sender, which prints it under `-v` as well as `-i`
+    /// (sender.c:292 maybe_log_item()). Only the wire half applies here; a
+    /// client-mode receiver prints its own rows.
+    #[must_use]
+    pub(in crate::receiver) const fn forwards_itemize_to_sender(&self) -> bool {
+        !self.config.connection.client_mode && self.protocol.supports_iflags()
+    }
+
     /// Tallies one received file-list entry into the `--stats` counters.
     ///
     /// Called from the read loop for every entry of the initial list and of

@@ -662,6 +662,24 @@ mod tests {
     // These tests verify that each placeholder letter maps to the correct
     // OutFormatPlaceholder variant, not just that parsing succeeds.
 
+    /// upstream logs before the transfer unless the format needs a value only
+    /// known afterwards (options.c:2502-2505); `--progress` output order
+    /// depends on which side of the progress block the line lands.
+    #[test]
+    fn logs_before_transfer_unless_format_needs_post_transfer_values() {
+        for (input, before) in [
+            ("%i %n%L", true),
+            ("%n %l %o", true),
+            ("%n %b", false),
+            ("%n %c", false),
+            ("%n %C", false),
+            ("%%b %n", true),
+        ] {
+            let format = parse_out_format(&os(input)).unwrap_or_else(|_| panic!("parse {input}"));
+            assert_eq!(format.logs_before_transfer(), before, "{input}");
+        }
+    }
+
     fn assert_single_placeholder(input: &str, expected: OutFormatPlaceholder) {
         let format = parse_out_format(&os(input)).unwrap_or_else(|_| panic!("parse {input}"));
         let tokens: Vec<_> = format.tokens().collect();
