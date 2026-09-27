@@ -144,6 +144,41 @@ fn parse_quic_window(value: &std::ffi::OsStr) -> Result<u64, clap::Error> {
     })
 }
 
+/// Refuses `--dparam` in a client invocation, as upstream's option parser does.
+///
+/// upstream: options.c:867 lists `--dparam` in the client table as
+/// `OPT_DAEMON`, so naming it means "this is a daemon command line": argv is
+/// re-parsed with `long_daemon_options[]` (options.c:1538-1570), each value is
+/// checked for its `=` as it is collected, and without `--daemon` the parse
+/// ends in "Daemon option(s) used without --daemon." (options.c:1591-1596),
+/// exit `RERR_SYNTAX`. There is no client-side meaning: a daemon parameter is
+/// never sent to a remote daemon.
+fn check_daemon_params(
+    dparams: &[OsString],
+    daemon_mode: bool,
+    program_name: &str,
+) -> Result<(), clap::Error> {
+    if daemon_mode || dparams.is_empty() {
+        return Ok(());
+    }
+    let first = match dparams
+        .iter()
+        .find(|value| !value.as_encoded_bytes().contains(&b'='))
+    {
+        Some(value) => format!(
+            "--dparam value is missing an '=': {}",
+            value.to_string_lossy()
+        ),
+        None => "Daemon option(s) used without --daemon.".to_owned(),
+    };
+    Err(clap::Error::raw(
+        clap::error::ErrorKind::ValueValidation,
+        format!(
+            "{first}\n(Type \"{program_name} --daemon --help\" for assistance with daemon mode.)\n"
+        ),
+    ))
+}
+
 /// Rejects a `-M` / `--remote-option` value that does not begin with a dash.
 ///
 /// upstream: options.c `case 'M'` - `if (*arg != '-') { ... "Remote option
@@ -1151,10 +1186,11 @@ where
     let stop_after = matches.remove_one::<OsString>("stop-after");
     let stop_at_option = matches.remove_one::<OsString>("stop-at");
     let out_format = matches.remove_one::<OsString>("out-format");
-    let dparam = matches
+    let dparam: Vec<OsString> = matches
         .remove_many::<OsString>("dparam")
         .map(Iterator::collect)
         .unwrap_or_default();
+    check_daemon_params(&dparam, daemon_mode, program_name.as_str())?;
     let itemize_changes = itemize_changes_flag && !no_itemize_changes_flag;
     let mut no_motd = matches.get_flag("no-motd");
     if matches.get_flag("motd") {

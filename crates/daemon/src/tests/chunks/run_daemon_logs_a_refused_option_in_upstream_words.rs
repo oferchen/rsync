@@ -59,20 +59,33 @@ fn run_daemon_logs_a_refused_option_in_upstream_words() {
         .expect("send handshake response");
     stream.flush().expect("flush handshake response");
 
-    stream
-        .write_all(b"@RSYNCD: OPTION --compress\n")
-        .expect("send refused option");
-    stream.flush().expect("flush refused option");
-
     stream.write_all(b"docs\n").expect("send module request");
     stream.flush().expect("flush module request");
 
     line.clear();
-    reader.read_line(&mut line).expect("refusal message");
-    assert_eq!(
-        line.trim_end(),
-        "@ERROR: The server is configured to refuse --compress",
-    );
+    reader.read_line(&mut line).expect("module acknowledgement");
+    assert_eq!(line, "@RSYNCD: OK\n");
+
+    // upstream: clientserver.c:1156-1171 - the refusal is decided by
+    // parse_arguments() over the post-OK argv, so `-z` arrives bundled in the
+    // client's server-option string exactly as a stock client sends it.
+    for arg in [
+        "--server",
+        "--sender",
+        "-vlogDtprez.iLsfxCIvu",
+        ".",
+        "docs/",
+    ] {
+        stream.write_all(arg.as_bytes()).expect("write client arg");
+        stream.write_all(&[0]).expect("write arg terminator");
+    }
+    stream.write_all(&[0]).expect("terminate args list");
+    stream.flush().expect("flush client args");
+
+    // Drain the framed refusal; its layout is pinned by
+    // run_daemon_post_ok_refused_option_uses_multiplexed_error.
+    let mut framed = Vec::new();
+    let _ = reader.read_to_end(&mut framed);
 
     drop(reader);
     if let Some(result) = finish_daemon(handle) {

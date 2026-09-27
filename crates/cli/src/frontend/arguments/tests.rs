@@ -3029,16 +3029,18 @@ mod msgs_stderr_tests {
 mod dparam_tests {
     use super::*;
 
+    // `--dparam` is a daemon option (upstream options.c:867 `OPT_DAEMON`), so
+    // it parses only alongside `--daemon`.
     #[test]
     fn dparam_single() {
-        let parsed = parse_test_args(["--dparam=foo=bar", "src/", "dst/"]).expect("parse");
+        let parsed = parse_test_args(["--daemon", "--dparam=foo=bar"]).expect("parse");
         assert_eq!(parsed.dparam, vec![OsString::from("foo=bar")]);
     }
 
     #[test]
     fn dparam_multiple() {
-        let parsed = parse_test_args(["--dparam=foo=bar", "--dparam=baz=qux", "src/", "dst/"])
-            .expect("parse");
+        let parsed =
+            parse_test_args(["--daemon", "--dparam=foo=bar", "--dparam=baz=qux"]).expect("parse");
         assert_eq!(
             parsed.dparam,
             vec![OsString::from("foo=bar"), OsString::from("baz=qux")]
