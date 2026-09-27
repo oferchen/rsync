@@ -6,20 +6,6 @@
 // options that wildcards cannot touch, short/long option aliasing, and glob
 // pattern matching.
 
-fn parse_daemon_option(payload: &str) -> Option<&str> {
-    let (keyword, remainder) = payload.split_once(char::is_whitespace)?;
-    if !keyword.eq_ignore_ascii_case("OPTION") {
-        return None;
-    }
-
-    let option = remainder.trim();
-    if option.is_empty() {
-        None
-    } else {
-        Some(option)
-    }
-}
-
 /// Options that cannot be refused via wildcard-only patterns.
 ///
 /// upstream: clientserver.c - `parse_refuse_options()` marks certain options as
@@ -72,6 +58,11 @@ const DEFAULT_REFUSED_OPTIONS: &[&str] = &["copy-devices", "write-devices"];
 /// by wildcard patterns and require explicit naming.
 ///
 /// upstream: clientserver.c - `check_refuse_options()` with fnmatch semantics.
+///
+/// Test-only: the live refusal point is `refused_client_arg`, applied to the
+/// post-`@RSYNCD: OK` argv as upstream's `parse_arguments()` does. This helper
+/// pins the per-option matcher both share.
+#[cfg(test)]
 fn refused_option<'a>(module: &ModuleDefinition, options: &'a [String]) -> Option<&'a str> {
     // No early-out on an empty refuse list: a daemon still refuses the default
     // device options (`copy-devices`/`write-devices`) even with no `refuse

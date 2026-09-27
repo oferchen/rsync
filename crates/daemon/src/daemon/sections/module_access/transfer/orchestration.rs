@@ -111,7 +111,6 @@ fn refuse_shell_hook(
 fn process_approved_module(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
-    options: &[String],
     negotiated_protocol: Option<ProtocolVersion>,
 ) -> io::Result<()> {
     let _connection_guard = match module.try_acquire_connection() {
@@ -128,29 +127,6 @@ fn process_approved_module(
         log_module_request(log, ctx.host_display(), ctx.peer_ip, ctx.request);
     }
 
-    if let Some(refused) = refused_option(module, options) {
-        return handle_refused_option(ctx, refused);
-    }
-
-    // The module's effective configuration is the operator's, never the peer's.
-    //
-    // upstream: `--dparam`/`-M` is a DAEMON-side, process-local option and has
-    // no wire representation at all. `options.c:867` maps the client-mode
-    // `--dparam` to `OPT_DAEMON`, i.e. "you meant --daemon", and `options.c:1538`
-    // re-parses argv with `long_daemon_options[]`, where `options.c:875` collects
-    // it into `dparam_list` (`options.c:1558-1568`). That list is applied by
-    // `loadparm.c:667 set_dparams()` from exactly two places, both reading the
-    // daemon's OWN argv: `loadparm.c:618-621` at the end of the global section
-    // during `lp_load()`, and `clientserver.c:1766` in `daemon_main()`. A client
-    // that passes `--dparam` is refused outright by `options.c:1590-1595`
-    // ("Daemon option(s) used without --daemon.", RERR_SYNTAX). Short `-M` in
-    // client mode is `--remote-option` (`options.c:859`), a different option.
-    //
-    // Honouring a peer-supplied override here let an UNAUTHENTICATED client
-    // relax `read only`, `use chroot`, `max connections` and the chmod
-    // directives before the module's own auth ran, because
-    // `process_approved_module` is reached before `handle_authentication`.
-    //
     // Expand %-variables (e.g. %MODULE%, %ADDR%) in path-type fields using the
     // connection's client address and hostname.
     // upstream: loadparm.c:lp_string() - variable substitution at access time.
@@ -434,9 +410,7 @@ fn process_approved_module(
 
     // upstream: clientserver.c:rsync_module() -> parse_arguments() applies the
     // module's `refuse options` list against the actual client argv after the
-    // post-OK `read_args()` round-trip. The earlier check at the OPTION-line
-    // pre-handshake stage only sees client-supplied dparam overrides, never
-    // the real transfer flags (e.g. `-z` packed into `-vlogDtprez.iLsfxCIvu`).
+    // post-OK `read_args()` round-trip; this is the only refusal point.
     //
     // Because `@RSYNCD: OK` has already been emitted, the client has switched
     // to multiplexed input. The error must travel as `MSG_ERROR_XFER` +
@@ -464,8 +438,8 @@ fn process_approved_module(
     }
 
     // Enforce read-only / write-only access restrictions.
-    // upstream: main.c:1201-1205 `do_server_recv()` rejects a read-only push
-    // and main.c:962-965 `do_server_sender()` rejects a write-only pull, both
+    // upstream: main.c:1183-1187 `do_server_recv()` rejects a read-only push
+    // and main.c:949-952 `do_server_sender()` rejects a write-only pull, both
     // via `rprintf(FERROR, "ERROR: module is ...\n")` + `exit_cleanup(
     // RERR_SYNTAX)`. When --sender is absent the client is pushing (server =
     // Receiver); a read-only module must reject pushes and a write-only module
@@ -537,7 +511,7 @@ fn process_approved_module(
     // operator's configuration permits, so the Landlock allowlist below can
     // be widened to cover them (URV-5.b.REOPEN). Out-of-module paths are
     // silently dropped here and again in `build_server_config`'s ref_dir
-    // retain block - upstream `main.c:880 check_alt_basis_dirs` warns on
+    // retain block - upstream `main.c:867 check_alt_basis_dirs` warns on
     // a missing/out-of-tree basis but never aborts, and the standalone
     // link-dest / copy-dest interop fixtures rely on that contract.
     //
@@ -716,13 +690,13 @@ fn process_approved_module(
     // `iouring-send-zc` cargo feature, so a stock build's default path is byte-
     // and behavior-identical.
     let zero_copy_policy = config.write.zero_copy_policy;
-    // upstream: io.c:229-268 `check_timeout()`. The reconciled `io_timeout` is
+    // upstream: io.c:211-250 `check_timeout()`. The reconciled `io_timeout` is
     // armed on the socket as `SO_RCVTIMEO`/`SO_SNDTIMEO`, but that option lives
     // on the shared socket and the drain thread's own 50 ms poll cadence
     // overwrites it on a `try_clone`d fd - so the session timeout needs a
     // userspace clock of its own. See `io_progress.rs`.
     //
-    // upstream: io.c:257-258 `if (am_receiver) return;`. A receiver can spend a
+    // upstream: io.c:239-240 `if (am_receiver) return;`. A receiver can spend a
     // long time hashing without touching the socket; upstream leaves the timing
     // decision to the generator process sharing that socket. oc fuses both roles
     // into one thread, so honouring the gate means a daemon RECEIVING a push has
@@ -987,7 +961,7 @@ fn process_approved_module(
     // Every drain is bounded by a read timeout so a wedged peer can never
     // pin the connection thread (never an unbounded blocking read).
     //
-    // upstream: io.c:961-981 noop_io_until_death() loops on read() until
+    // upstream: io.c:943-963 noop_io_until_death() loops on read() until
     // the peer sends FIN; cleanup.c:265 then calls close_all(). Our
     // sequence collapses that pattern to fit the threaded daemon model.
     //

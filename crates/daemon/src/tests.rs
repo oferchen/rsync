@@ -209,7 +209,7 @@ include!("tests/chunks/run_daemon_lists_host_denied_module.rs");
 include!("tests/chunks/run_daemon_handles_binary_negotiation.rs");
 include!("tests/chunks/run_daemon_handles_parallel_sessions.rs");
 include!("tests/chunks/run_daemon_honours_max_sessions.rs");
-include!("tests/chunks/run_daemon_ignores_a_client_supplied_daemon_param_override.rs");
+include!("tests/chunks/run_daemon_answers_an_option_line_as_an_unknown_module.rs");
 include!("tests/chunks/run_daemon_lists_modules_on_request.rs");
 include!("tests/chunks/run_daemon_config_flag_overrides_default_path.rs");
 include!("tests/chunks/run_daemon_loads_modules_from_config_file.rs");
@@ -224,7 +224,6 @@ include!("tests/chunks/run_daemon_post_ok_refused_option_uses_multiplexed_error.
 include!("tests/chunks/run_daemon_post_ok_bad_option_value_uses_multiplexed_error.rs");
 include!("tests/chunks/run_daemon_refusal_lingers_so_the_peer_can_read_it.rs");
 include!("tests/chunks/run_daemon_records_log_file_entries.rs");
-include!("tests/chunks/run_daemon_refuses_disallowed_module_options.rs");
 include!("tests/chunks/run_daemon_rejects_duplicate_session_limits.rs");
 include!("tests/chunks/run_daemon_rejects_invalid_max_sessions.rs");
 include!("tests/chunks/run_daemon_rejects_invalid_port.rs");
