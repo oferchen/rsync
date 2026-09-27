@@ -35,8 +35,9 @@
 
 use std::fs;
 use std::io::Read;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -69,15 +70,22 @@ fn setup() -> tempfile::TempDir {
 }
 
 /// Runs `<binary> <flags> zzz/ qqq` inside `workdir` with stderr merged into
-/// stdout, as `2>&1 | cat` does, and returns the combined stream.
+/// stdout, as `2>&1 | cat` does, and returns the combined stream. `flags` is
+/// split on whitespace into separate arguments.
 fn run_merged(binary: &Path, flags: &str, workdir: &Path) -> String {
+    let args: Vec<&str> = flags.split_whitespace().chain(["zzz/", "qqq"]).collect();
+    run_merged_args(binary, &args, workdir)
+}
+
+/// Runs `<binary> <args>` inside `workdir` with stderr merged into stdout and
+/// returns the combined stream, failing the test if the transfer fails.
+fn run_merged_args(binary: &Path, args: &[&str], workdir: &Path) -> String {
+    let flags = args.join(" ");
     let mut child = Command::new("sh")
         .arg("-c")
         .arg("exec \"$0\" \"$@\" 2>&1")
         .arg(binary)
-        .arg(flags)
-        .arg("zzz/")
-        .arg("qqq")
+        .args(args)
         .current_dir(workdir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -146,45 +154,95 @@ fn normalize(output: &str) -> Vec<String> {
         .collect()
 }
 
-/// upstream 3.5.0's normalized output for the fixture, with a progress block
-/// after every regular file when `progress` is set.
-fn upstream_sequence(progress: bool) -> Vec<String> {
+/// How upstream names each entry of the fixture.
+#[derive(Clone, Copy)]
+enum Listing {
+    /// `-v` / `--info=name`: the bare name.
+    Names,
+    /// `-i`: the itemized line of a newly created entry.
+    Itemized,
+}
+
+/// Which parts of upstream's output a command produces for the fixture.
+#[derive(Clone, Copy)]
+struct Expected {
+    listing: Listing,
+    /// A progress block after every regular file.
+    progress: bool,
+    /// The `sent` / `total size` trailer, which needs `-v` or `--stats`.
+    trailer: bool,
+}
+
+/// upstream 3.5.0's normalized output for the fixture.
+fn expected_sequence(expected: Expected) -> Vec<String> {
+    let entry = |name: &str, dir: bool| match expected.listing {
+        Listing::Names => name.to_owned(),
+        Listing::Itemized if dir => format!("cd+++++++++ {name}"),
+        Listing::Itemized => format!(">f+++++++++ {name}"),
+    };
     let file = |name: &str| {
-        let mut lines = vec![name.to_owned()];
-        if progress {
+        let mut lines = vec![entry(name, false)];
+        if expected.progress {
             lines.push(PROGRESS.to_owned());
         }
         lines
     };
-    let mut expected: Vec<String> = [
-        "sending incremental file list",
-        "created directory qqq",
-        "./",
+    let mut lines: Vec<String> = [
+        "sending incremental file list".to_owned(),
+        "created directory qqq".to_owned(),
+        entry("./", true),
     ]
-    .map(str::to_owned)
     .to_vec();
-    expected.extend(file("top.txt"));
-    expected.extend(["bad/".to_owned(), "bad/Album A/".to_owned()]);
-    expected.extend(file("bad/Album A/01 - t.opus"));
-    expected.extend(file("bad/Album A/02 - u.opus"));
-    expected.push("bad/Album B/".to_owned());
-    expected.extend(file("bad/Album B/01 - v.opus"));
-    expected.push("good/".to_owned());
-    expected.extend(file("good/x.txt"));
-    expected.extend(["", "sent <stats>", "total size is 19"].map(str::to_owned));
-    expected
+    lines.extend(file("top.txt"));
+    lines.extend([entry("bad/", true), entry("bad/Album A/", true)]);
+    lines.extend(file("bad/Album A/01 - t.opus"));
+    lines.extend(file("bad/Album A/02 - u.opus"));
+    lines.push(entry("bad/Album B/", true));
+    lines.extend(file("bad/Album B/01 - v.opus"));
+    lines.push(entry("good/", true));
+    lines.extend(file("good/x.txt"));
+    if expected.trailer {
+        lines.extend(["", "sent <stats>", "total size is 19"].map(str::to_owned));
+    }
+    lines
 }
 
-fn assert_upstream_order(flags: &str, progress: bool) {
+/// upstream's `-v` listing, with a progress block per file when `progress`.
+fn upstream_sequence(progress: bool) -> Vec<String> {
+    expected_sequence(Expected {
+        listing: Listing::Names,
+        progress,
+        trailer: true,
+    })
+}
+
+/// upstream's `-vP` output for the fixture: without `-r` the source directory
+/// is skipped (flist.c:1484) and reported once.
+fn skipped_directory_sequence() -> Vec<String> {
+    [
+        "skipping directory .",
+        "",
+        "sent <stats>",
+        "total size is 0",
+    ]
+    .map(str::to_owned)
+    .to_vec()
+}
+
+fn assert_sequence(flags: &str, expected: &[String]) {
     let temp = setup();
     let output = run_merged(&oc_rsync_binary(), flags, temp.path());
     assert_eq!(
         normalize(&output),
-        upstream_sequence(progress),
+        expected,
         "{flags}: upstream prints the banner, then `created directory`, then every \
-         entry name - directories included - in the order the generator reaches it, \
-         each file's progress right after its name\nraw output:\n{output}",
+         entry line - directories included - in the order the generator reaches it, \
+         each file's progress right after its line\nraw output:\n{output}",
     );
+}
+
+fn assert_upstream_order(flags: &str, progress: bool) {
+    assert_sequence(flags, &upstream_sequence(progress));
 }
 
 /// The reporter's command: `-P` plus `-c`.
@@ -205,6 +263,246 @@ fn progress_local_copy_prints_header_and_dirs_in_upstream_order() {
 fn verbose_local_copy_prints_header_and_dirs_in_upstream_order() {
     assert_upstream_order("-av", false);
     assert_upstream_order("-avc", false);
+}
+
+/// `-P` without `-v` still prints the banner and `created directory`: upstream
+/// raises FLIST to 2 and an unset NAME to 1 for `--progress` (options.c:2511-2515),
+/// and both lines are gated on those levels, not on `-v`.
+#[test]
+fn progress_without_verbose_prints_banner_and_created_directory() {
+    let expected = expected_sequence(Expected {
+        listing: Listing::Names,
+        progress: true,
+        trailer: false,
+    });
+    assert_sequence("-aP", &expected);
+}
+
+/// Under `-i` upstream logs each entry before its transfer
+/// (options.c:2507 `log_before_transfer`), so every itemized line is written as
+/// the entry is reached, with a file's progress right after it - not the whole
+/// itemized list after the run.
+#[test]
+fn itemized_progress_interleaves_itemized_lines_with_progress() {
+    let expected = expected_sequence(Expected {
+        listing: Listing::Itemized,
+        progress: true,
+        trailer: false,
+    });
+    assert_sequence("-aiP", &expected);
+}
+
+/// `--info=progress2` is not `--progress`, but `-v` still sets NAME to 1, so
+/// upstream names every entry and ends each file with the overall progress line.
+#[test]
+fn verbose_overall_progress_names_every_entry() {
+    assert_upstream_order("-av --info=progress2", true);
+}
+
+/// A dry run moves no data, so upstream prints no progress block: under
+/// `!do_xfers` the sender logs the entry and skips the transfer
+/// (sender.c:638-642).
+#[test]
+fn dry_run_progress_prints_names_without_progress() {
+    assert_upstream_order("-avPn", false);
+}
+
+/// The `--progress` forwarder previews the copy with a dry run before the real
+/// one; a notice the preview produces must not reach the output a second time.
+#[test]
+fn progress_without_recursion_reports_skipped_directory_once() {
+    assert_sequence("-vP", &skipped_directory_sequence());
+}
+
+/// Builds the fixture for the `is uptodate` ordering: `zzz/` holds `d1/f1`
+/// and `same`, already copied to `qqq/`, plus a new symlink `link -> d1/f1`
+/// and an `extra` file only in `qqq/` for `--delete`.
+fn setup_uptodate(binary: &Path) -> tempfile::TempDir {
+    let temp = tempfile::TempDir::new().expect("create temp dir");
+    let src = temp.path().join("zzz");
+    fs::create_dir_all(src.join("d1")).unwrap();
+    fs::write(src.join("d1/f1"), b"f1\n").unwrap();
+    fs::write(src.join("same"), b"same\n").unwrap();
+    run_merged(binary, "-a", temp.path());
+    std::os::unix::fs::symlink("d1/f1", src.join("link")).unwrap();
+    fs::write(temp.path().join("qqq/extra"), b"x\n").unwrap();
+    temp
+}
+
+/// The generator writes `is uptodate` itself (generator.c:1305, rsync.c:828),
+/// while a new symlink's line is itemized to the sender, which logs it when it
+/// gets there. upstream therefore prints `same is uptodate` ahead of `link ->
+/// d1/f1` although `link` sorts first. Where `d1/f1 is uptodate` lands against
+/// the symlink line is a race in upstream; this is its usual order.
+#[test]
+fn uptodate_notice_precedes_the_symlink_entry_under_progress() {
+    let binary = oc_rsync_binary();
+    let temp = setup_uptodate(&binary);
+    let output = run_merged(&binary, "-avvP --delete", temp.path());
+    let expected: Vec<String> = [
+        "sending incremental file list",
+        "delta-transmission disabled for local transfer or --whole-file",
+        "deleting extra",
+        "same is uptodate",
+        "d1/f1 is uptodate",
+        "link -> d1/f1",
+        "total: matches=0  hash_hits=0  false_alarms=0 data=0",
+        "",
+        "sent <stats>",
+        "total size is 13",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    assert_eq!(normalize(&output), expected, "raw output:\n{output}");
+}
+
+/// Writes an `--rsh` shim that drops the options and host of an SSH-style argv
+/// and runs the remote command locally: a real two-process push over a pipe
+/// pair, without an SSH server.
+fn write_rsh_shim(dir: &Path) -> PathBuf {
+    let script = dir.join("fake_rsh.sh");
+    let body = "#!/bin/sh\n\
+         while [ $# -gt 0 ]; do\n\
+         case \"$1\" in\n\
+         -*) shift ;;\n\
+         *) break ;;\n\
+         esac\n\
+         done\n\
+         shift || true\n\
+         exec \"$@\"\n";
+    fs::write(&script, body).expect("write rsh shim");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("chmod rsh shim");
+    script
+}
+
+/// Pushes `zzz/` to `<workdir>/qqq` over the `--rsh` shim, with `client` as
+/// the sender and `server` as the remote receiver.
+fn run_rsh_push(client: &Path, server: &Path, flags: &str, workdir: &Path) -> String {
+    let shim = write_rsh_shim(workdir);
+    let dest = format!("localhost:{}/qqq", workdir.display());
+    let mut args: Vec<&str> = flags.split_whitespace().collect();
+    args.extend([
+        "--rsh",
+        shim.to_str().expect("utf-8 shim path"),
+        "--rsync-path",
+        server.to_str().expect("utf-8 binary path"),
+        "zzz/",
+        &dest,
+    ]);
+    run_merged_args(client, &args, workdir)
+}
+
+/// upstream's `-avP` push output for the fixture: the receiver names the
+/// destination root as the client passed it.
+fn rsh_push_sequence(workdir: &Path) -> Vec<String> {
+    let created = format!("created directory {}/qqq", workdir.display());
+    upstream_sequence(true)
+        .into_iter()
+        .map(|line| {
+            if line == "created directory qqq" {
+                created.clone()
+            } else {
+                line
+            }
+        })
+        .collect()
+}
+
+/// On a push the client's sender logs every entry, directories included, from
+/// the receiver's itemize records (sender.c:292 maybe_log_item()), and names a
+/// file before its progress line (sender.c:774-777); the progress line itself
+/// carries no name. oc printed each file twice and no directory at all: the
+/// progress renderer repeated the sender's name, and the receiver forwarded no
+/// directory record unless `-i` was given, although upstream's generator
+/// itemizes every entry at protocol >= 29 (generator.c:2725-2726).
+#[test]
+fn rsh_push_names_each_entry_once_with_directory_lines() {
+    let binary = oc_rsync_binary();
+    let temp = setup();
+    let output = run_rsh_push(&binary, &binary, "-avP", temp.path());
+    assert_eq!(
+        normalize(&output),
+        rsh_push_sequence(temp.path()),
+        "raw output:\n{output}"
+    );
+}
+
+/// upstream's `-aP` push output: the client's `-P` raises NAME to 1
+/// (options.c:2511-2513), which is what makes its sender log names
+/// (options.c:2521-2523), not `-v`. `-P` is not forwarded, so the server's
+/// NAME stays 0 and it prints no `created directory` (main.c:828).
+fn rsh_push_progress_sequence() -> Vec<String> {
+    let mut lines = expected_sequence(Expected {
+        listing: Listing::Names,
+        progress: true,
+        trailer: false,
+    });
+    lines.retain(|line| line != "created directory qqq");
+    lines
+}
+
+#[test]
+fn rsh_push_progress_without_verbose_names_entries() {
+    let binary = oc_rsync_binary();
+    let temp = setup();
+    let output = run_rsh_push(&binary, &binary, "-aP", temp.path());
+    assert_eq!(
+        normalize(&output),
+        rsh_push_progress_sequence(),
+        "raw output:\n{output}"
+    );
+}
+
+/// Kills and reaps the daemon when the test ends, pass or fail.
+struct DaemonGuard(Child);
+
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// The daemon push takes the same sender and receiver paths as an `--rsh`
+/// push. The receiver also names the created destination root relative to
+/// the module, as upstream prints the operand after chdir'ing into the module
+/// (main.c:829) - never the module's path on the server.
+#[test]
+fn daemon_push_names_each_entry_once_with_directory_lines() {
+    let binary = oc_rsync_binary();
+    let temp = setup();
+    let module = temp.path().join("mod");
+    fs::create_dir(&module).expect("create module dir");
+    let config = temp.path().join("rsyncd.conf");
+    fs::write(
+        &config,
+        format!(
+            "use chroot = no\n[m]\npath = {}\nread only = no\n",
+            module.display()
+        ),
+    )
+    .expect("write daemon config");
+    let (child, port) = test_support::spawn_daemon_on_free_port(|port| {
+        Command::new(&binary)
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg(format!("--port={port}"))
+            .arg("--address=127.0.0.1")
+            .arg(format!("--config={}", config.display()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+    })
+    .expect("start daemon");
+    let _daemon = DaemonGuard(child);
+    let dest = format!("rsync://127.0.0.1:{port}/m/qqq");
+    let output = run_merged_args(&binary, &["-avP", "zzz/", &dest], temp.path());
+    assert_eq!(
+        normalize(&output),
+        upstream_sequence(true),
+        "raw output:\n{output}"
+    );
 }
 
 /// Locates an upstream rsync 3.5.0 to use as a live oracle: the
@@ -240,12 +538,34 @@ fn local_copy_output_order_matches_live_upstream_oracle() {
         eprintln!("skipping: no upstream rsync 3.5.0 found (set OC_RSYNC_UPSTREAM_RSYNC)");
         return;
     };
-    for (flags, progress) in [("-avPc", true), ("-avP", true), ("-av", false)] {
+    let names = |progress, trailer| {
+        expected_sequence(Expected {
+            listing: Listing::Names,
+            progress,
+            trailer,
+        })
+    };
+    let itemized = expected_sequence(Expected {
+        listing: Listing::Itemized,
+        progress: true,
+        trailer: false,
+    });
+    let cells = [
+        ("-avPc", upstream_sequence(true)),
+        ("-avP", upstream_sequence(true)),
+        ("-av", upstream_sequence(false)),
+        ("-aP", names(true, false)),
+        ("-aiP", itemized),
+        ("-av --info=progress2", upstream_sequence(true)),
+        ("-avPn", upstream_sequence(false)),
+        ("-vP", skipped_directory_sequence()),
+    ];
+    for (flags, expected) in cells {
         let upstream_temp = setup();
         let upstream_output = run_merged(&upstream, flags, upstream_temp.path());
         assert_eq!(
             normalize(&upstream_output),
-            upstream_sequence(progress),
+            expected,
             "{flags}: the pinned sequence must be upstream's own output\n{upstream_output}",
         );
         let oc_temp = setup();
@@ -257,4 +577,30 @@ fn local_copy_output_order_matches_live_upstream_oracle() {
              oc:\n{oc_output}\nupstream:\n{upstream_output}",
         );
     }
+    let temp = setup();
+    let output = run_rsh_push(&upstream, &upstream, "-avP", temp.path());
+    assert_eq!(
+        normalize(&output),
+        rsh_push_sequence(temp.path()),
+        "-avP push: the pinned sequence must be upstream's own output\n{output}",
+    );
+    let temp = setup();
+    let output = run_rsh_push(&upstream, &upstream, "-aP", temp.path());
+    assert_eq!(
+        normalize(&output),
+        rsh_push_progress_sequence(),
+        "-aP push: the pinned sequence must be upstream's own output\n{output}",
+    );
+    let temp = setup_uptodate(&upstream);
+    let output = normalize(&run_merged(&upstream, "-avvP --delete", temp.path()));
+    let position = |line: &str| {
+        output
+            .iter()
+            .position(|l| l == line)
+            .unwrap_or_else(|| panic!("upstream printed no `{line}`: {output:?}"))
+    };
+    assert!(
+        position("same is uptodate") < position("link -> d1/f1"),
+        "upstream writes `is uptodate` ahead of the itemized symlink: {output:?}",
+    );
 }

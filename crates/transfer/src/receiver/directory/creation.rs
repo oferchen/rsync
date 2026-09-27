@@ -509,11 +509,12 @@ impl ReceiverContext {
         // records instead of MSG_INFO frames).
         // A daemon receiver with `transfer logging = yes` must itemize every
         // directory for its FLOG write even when the client did not request `-i`
-        // (upstream receiver.c:823 `itemizing = logfile_format_has_i`). The
-        // client-visible emit and the wire-forward below stay gated on the
-        // original `should_emit_itemize()`; only `emit_or_record_itemize`'s
-        // daemon-log hook fires on the widened arm.
-        if self.should_emit_itemize() || self.daemon_log_active {
+        // (upstream receiver.c:823 `itemizing = logfile_format_has_i`), and a
+        // push receiver forwards every directory's row to the client's sender
+        // whatever the client asked for (generator.c:2725-2726). Only the
+        // client-visible emit stays on `should_emit_itemize()`.
+        if self.should_emit_itemize() || self.forwards_itemize_to_sender() || self.daemon_log_active
+        {
             for (pos, ((idx, _, dir_path), is_new)) in
                 dir_entries.iter().zip(dir_was_new.iter()).enumerate()
             {
@@ -521,7 +522,11 @@ impl ReceiverContext {
                     continue;
                 }
                 let entry = &self.file_list[*idx];
-                let iflags = if *is_new {
+                // upstream: generator.c:1853-1854 - the destination root the
+                // receiver pre-flight-mkdir'd carries FLAG_DIR_CREATED, which
+                // forces `statret = -1`: it itemizes as new, like any dir made here.
+                let created_root = self.dest_root_created && entry.path().as_os_str() == ".";
+                let iflags = if *is_new || created_root {
                     // upstream: generator.c:1481 - new dir is itemize()'d with
                     // statret < 0, which ORs ITEM_LOCAL_CHANGE | ITEM_IS_NEW.
                     crate::generator::ItemFlags::from_raw(
@@ -554,9 +559,7 @@ impl ReceiverContext {
                 // arm this is a no-op client-side (server, no -i) that only feeds
                 // the FLOG hook.
                 let _ = self.emit_or_record_itemize(writer, *idx, &iflags, entry);
-                if self.should_emit_itemize() {
-                    self.record_server_no_transfer_itemize(*idx, iflags.raw());
-                }
+                self.record_server_no_transfer_itemize(*idx, iflags.raw());
             }
         }
 
