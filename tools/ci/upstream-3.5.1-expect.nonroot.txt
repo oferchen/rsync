@@ -273,7 +273,7 @@ relative-implied pass
 relative-implied-symlink pass
 relative-mkpath-dir-symlink pass
 relative-mkpath-symlink pass
-relative-source-ancestor fail  # SECURITY: --files-from follows a link outside --confine-root - owner: task 1567 (U351)
+relative-source-ancestor pass
 relative-symlinked-parent pass
 relative-symlinked-parent-dotdot pass
 remote-shell-newline-escaping pass
