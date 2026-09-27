@@ -116,6 +116,14 @@ fn seed_delta_basis(dest: &Path) -> io::Result<()> {
     // cannot skip the file and the delta transfer actually runs.
     let old = filetime::FileTime::from_unix_time(946_684_800, 0);
     filetime::set_file_mtime(&path, old)?;
+    // Pin the directories too. Their mtimes otherwise come from the wall clock
+    // at seed time, and upstream itemizes a directory whenever its whole-second
+    // mtime differs from the source's (generator.c:532-536, util1.c:1744-1747),
+    // so a seed that straddles a second boundary for only one transport adds a
+    // `.d..t......` row to that transport alone. The same fixed time on both
+    // destinations makes the directory rows identical and deterministic.
+    filetime::set_file_mtime(dest.join("sub"), old)?;
+    filetime::set_file_mtime(dest, old)?;
     Ok(())
 }
 

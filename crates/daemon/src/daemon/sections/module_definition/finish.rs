@@ -148,21 +148,14 @@ impl ModuleDefinitionBuilder {
         // the global section is the default for every module that does not set
         // its own, exactly like `auth users` above.
         let auth_digest = self.auth_digest.or_else(|| defaults.auth_digest.clone());
+        // upstream: authenticate.c:143-146 check_secret() - a module that
+        // requires authentication but has no secrets file is not a config
+        // error; every login to it fails with "no secrets file".
         let secrets_file = if auth_users.is_empty() {
             self.secrets_file
-        } else if let Some(path) = self.secrets_file {
-            Some(path)
-        } else if let Some(default) = default_secrets {
-            Some(default.to_path_buf())
         } else {
-            return Err(config_parse_error(
-                config_path,
-                self.declaration_line,
-                format!(
-                    "module '{}' specifies 'auth users' but is missing the required 'secrets file' directive",
-                    self.name
-                ),
-            ));
+            self.secrets_file
+                .or_else(|| default_secrets.map(Path::to_path_buf))
         };
 
         // upstream: loadparm.c - exclude/include/filter are STRING parameters.
