@@ -25,58 +25,44 @@ struct VarExpansionContext<'a> {
 /// - `%RSYNC_MODULE_NAME%` - same as `%MODULE%`
 /// - `%RSYNC_MODULE_PATH%` - the module's configured path
 /// - `%ADDR%` - the client's IP address
-/// - `%%` - literal `%`
 /// - Any other all-uppercase `%NAME%` token is looked up in the process
 ///   environment (upstream `loadparm.c:expand_vars` calls `getenv`); a set
 ///   variable is substituted, an unset one is left as-is
 /// - Any remaining `%FOO%` token is left as-is
 ///
-/// upstream: `loadparm.c:expand_vars()` walks the string and, for every
-/// `%UPPERCASE...%` token, calls `getenv()` on the name between the percents,
-/// substituting the value when set and leaving the raw token unchanged when not.
+/// upstream: `loadparm.c:expand_vars()` (loadparm.c:249-313) starts a
+/// reference only at a `%` followed by an uppercase letter, and calls `getenv()`
+/// on the name up to the next `%`. A name that does not resolve is copied
+/// through one byte at a time, so its closing `%` may start the next reference.
+/// Every other `%` - including `%%` - is kept as written.
 fn expand_config_vars(template: &str, ctx: &VarExpansionContext<'_>) -> String {
     let mut result = String::with_capacity(template.len());
     let mut rest = template;
 
     while let Some(pct_pos) = rest.find('%') {
         result.push_str(&rest[..pct_pos]);
-        rest = &rest[pct_pos + 1..];
+        let after = &rest[pct_pos + 1..];
 
-        if rest.starts_with('%') {
-            result.push('%');
-            rest = &rest[1..];
-            continue;
-        }
-
-        match find_closing_percent(rest) {
-            Some(end) => {
-                let var_name = &rest[..end];
-                match resolve_variable(var_name, ctx) {
-                    Some(value) => result.push_str(value),
-                    None => match env_expansion(var_name) {
-                        Some(value) => result.push_str(&value),
-                        None => {
-                            result.push('%');
-                            result.push_str(var_name);
-                            result.push('%');
-                        }
-                    },
-                }
-                rest = &rest[end + 1..];
-            }
-            None => {
-                result.push('%');
+        if after.starts_with(|c: char| c.is_ascii_uppercase())
+            && let Some(end) = after.find('%')
+        {
+            let name = &after[..end];
+            let value = resolve_variable(name, ctx)
+                .map(str::to_owned)
+                .or_else(|| env_expansion(name));
+            if let Some(value) = value {
+                result.push_str(&value);
+                rest = &after[end + 1..];
+                continue;
             }
         }
+
+        result.push('%');
+        rest = after;
     }
 
     result.push_str(rest);
     result
-}
-
-/// Returns the byte offset of the next `%` in `s`, or `None` if absent.
-fn find_closing_percent(s: &str) -> Option<usize> {
-    s.find('%')
 }
 
 /// Maps a variable name to its substitution value.
@@ -620,15 +606,29 @@ mod variable_expansion_tests {
     }
 
     #[test]
-    fn expand_literal_percent() {
+    fn expand_keeps_double_percent_verbatim() {
+        // upstream: loadparm.c:expand_vars has no `%%` escape - a '%' not
+        // followed by an uppercase letter is copied as-is. `path = /srv/100%%`
+        // serves the directory literally named `100%%`, not `100%`.
         let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("100%%", &ctx), "100%");
+        assert_eq!(expand_config_vars("100%%", &ctx), "100%%");
+        assert_eq!(expand_config_vars("a%%b%%c", &ctx), "a%%b%%c");
     }
 
     #[test]
-    fn expand_double_percent_mid_string() {
+    fn expand_unresolved_name_lets_its_closing_percent_start_a_reference() {
+        // upstream: loadparm.c:expand_vars copies an unresolved `%NAME` one
+        // byte at a time, so the '%' that closed it is scanned again and can
+        // open the next reference.
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_env::EnvGuard::remove("OC_RSYNC_TEST_EXPAND_UNSET");
         let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("a%%b%%c", &ctx), "a%b%c");
+        assert_eq!(
+            expand_config_vars("%OC_RSYNC_TEST_EXPAND_UNSET%RSYNC_MODULE_NAME%", &ctx),
+            "%OC_RSYNC_TEST_EXPAND_UNSETbackup"
+        );
     }
 
     #[test]
@@ -702,7 +702,7 @@ mod variable_expansion_tests {
     #[test]
     fn expand_empty_variable_name() {
         let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("/path/%%/dir", &ctx), "/path/%/dir");
+        assert_eq!(expand_config_vars("/path/%%/dir", &ctx), "/path/%%/dir");
     }
 
     #[test]
@@ -752,7 +752,7 @@ mod variable_expansion_tests {
     #[test]
     fn expand_percent_before_variable() {
         let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("100%% %MODULE%", &ctx), "100% backup");
+        assert_eq!(expand_config_vars("100%% %MODULE%", &ctx), "100%% backup");
     }
 
     #[test]

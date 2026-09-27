@@ -1,36 +1,7 @@
-/// Validates a secrets file path from a config directive.
-///
-/// Checks that the file exists and is a regular file. Returns a [`DaemonError`]
-/// with config context on failure. Permission enforcement is deliberately NOT
-/// done here - see [`ensure_secrets_file`].
-fn validate_secrets_file(
-    path: &Path,
-    config_path: &Path,
-    line: usize,
-) -> Result<PathBuf, DaemonError> {
-    let metadata = fs::metadata(path).map_err(|error| {
-        config_parse_error(
-            config_path,
-            line,
-            format!(
-                "failed to access secrets file '{}': {}",
-                path.display(),
-                error
-            ),
-        )
-    })?;
-
-    if let Err(detail) = ensure_secrets_file(path, &metadata) {
-        return Err(config_parse_error(config_path, line, detail));
-    }
-
-    Ok(path.to_path_buf())
-}
-
 /// Validates a secrets file path from an environment variable.
 ///
-/// Similar to [`validate_secrets_file`], but returns `Ok(None)` if the file
-/// doesn't exist, and includes the environment variable name in error messages.
+/// Returns `Ok(None)` if the file doesn't exist, and includes the environment
+/// variable name in error messages.
 fn validate_secrets_file_from_env(
     path: &Path,
     env: &'static str,

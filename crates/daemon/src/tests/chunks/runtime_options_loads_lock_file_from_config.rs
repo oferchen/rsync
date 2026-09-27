@@ -14,6 +14,8 @@ fn runtime_options_loads_lock_file_from_config() {
     ])
     .expect("parse config with lock file");
 
-    let expected = dir.path().join("daemon.lock");
-    assert_eq!(options.lock_file(), Some(expected.as_path()));
+    // upstream: connection.c claim_connection() opens the value as given, so
+    // a relative lock file resolves against the daemon's cwd, not the config
+    // file's directory.
+    assert_eq!(options.lock_file(), Some(Path::new("daemon.lock")));
 }

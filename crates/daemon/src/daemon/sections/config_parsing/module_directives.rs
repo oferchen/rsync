@@ -32,6 +32,7 @@ const GLOBAL_ONLY_DIRECTIVES: &[&str] = &[
     "listenbacklog",
     "port",
     "proxyprotocol",
+    "proxyprotocolhosts",
 ];
 
 /// Returns `true` when `key` names an upstream `P_GLOBAL` parameter that is
@@ -50,9 +51,12 @@ fn apply_module_directive(
     value: &str,
     path: &Path,
     line_number: usize,
-    canonical: &Path,
 ) -> Result<(), DaemonError> {
     match key {
+        // upstream: daemon-parm.txt `STRING name` (P_LOCAL) - a `name` line
+        // overwrites the section's own name, which is what lp_number() looks a
+        // module up by and what the listing prints (clientserver.c:1381).
+        "name" => builder.name = value.to_owned(),
         "path" => {
             if value.is_empty() {
                 return Err(config_parse_error(
@@ -92,16 +96,13 @@ fn apply_module_directive(
         "authdigest" => {
             builder.set_auth_digest(value);
         }
-        "secretsfile" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'secrets file' directive must not be empty",
-                ));
-            }
-            builder.set_secrets_file(PathBuf::from(value), path, line_number)?;
-        }
+        // upstream: authenticate.c:143-160 check_secret() opens the file when a
+        // client authenticates, so a missing or unusable file fails only that
+        // authentication. An empty value is legal and means no secrets file.
+        "secretsfile" if value.is_empty() => builder.secrets_file = None,
+        "secretsfile" => builder.set_secrets_file(daemon_parameter_path(value)),
+        // upstream: an empty P_STRING stores "", which refuses nothing.
+        "refuseoptions" if value.is_empty() => builder.refuse_options = Some(Vec::new()),
         "refuseoptions" => {
             let options = parse_refuse_option_list(value).map_err(|error| {
                 config_parse_error(
@@ -166,6 +167,10 @@ fn apply_module_directive(
                 builder.set_munge_symlinks(Some(parsed));
             }
         }
+        // upstream: clientserver.c:833 - an empty `uid` means the default
+        // (`*lp_uid(i) ? ... : am_root ? NOBODY_USER : NULL`).
+        "uid" if value.is_empty() => builder.uid = None,
+        "gid" if value.is_empty() => builder.gid = None,
         "uid" => {
             let uid = parse_uid_setting(value).ok_or_else(|| {
                 config_parse_error(path, line_number, format!("invalid uid '{value}'"))
@@ -199,24 +204,10 @@ fn apply_module_directive(
             builder.set_max_connections(max);
         }
         "incomingchmod" | "incoming-chmod" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'incoming chmod' directive must not be empty",
-                ));
-            }
-            builder.set_incoming_chmod(Some(value.to_owned()));
+            builder.set_incoming_chmod((!value.is_empty()).then(|| value.to_owned()));
         }
         "outgoingchmod" | "outgoing-chmod" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'outgoing chmod' directive must not be empty",
-                ));
-            }
-            builder.set_outgoing_chmod(Some(value.to_owned()));
+            builder.set_outgoing_chmod((!value.is_empty()).then(|| value.to_owned()));
         }
         "maxverbosity" => {
             let parsed = parse_atoi(value);
@@ -251,16 +242,8 @@ fn apply_module_directive(
             };
             builder.set_log_format(format);
         }
-        "logfile" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'log file' directive must not be empty",
-                ));
-            }
-            builder.set_log_file(daemon_parameter_path(value));
-        }
+        "logfile" if value.is_empty() => builder.log_file = None,
+        "logfile" => builder.set_log_file(daemon_parameter_path(value)),
         "dontcompress" => {
             let patterns = if value.is_empty() {
                 None
@@ -344,29 +327,13 @@ fn apply_module_directive(
         // daemon's working directory at read time (pre-change_dir, so the
         // launch cwd), never against the config file's directory. See
         // `daemon_parameter_path` for the storage rule.
-        "excludefrom" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'exclude from' directive must not be empty",
-                ));
-            }
-            builder.set_exclude_from(daemon_parameter_path(value));
-        }
+        "excludefrom" if value.is_empty() => builder.exclude_from = None,
+        "excludefrom" => builder.set_exclude_from(daemon_parameter_path(value)),
         // upstream: daemon-parm.txt - `include_from` STRING, default NULL.
         // Same storage rule as `exclude from` above: the value is kept
         // verbatim and resolved at read time against the daemon's cwd.
-        "includefrom" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'include from' directive must not be empty",
-                ));
-            }
-            builder.set_include_from(daemon_parameter_path(value));
-        }
+        "includefrom" if value.is_empty() => builder.include_from = None,
+        "includefrom" => builder.set_include_from(daemon_parameter_path(value)),
         // upstream: daemon-parm.h - `filter` STRING, P_LOCAL. Last-wins like
         // every other directive: `do_parameter()` reaches `string_set()`, which
         // frees the previous value before storing the new one
@@ -401,39 +368,15 @@ fn apply_module_directive(
         }
         // upstream: daemon-parm.h:46 `lock_file` STRING, P_LOCAL. Consumed
         // per-module at clientserver.c:746 `claim_connection(lp_lock_file(i), ...)`.
-        "lockfile" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'lock file' directive must not be empty",
-                ));
-            }
-            let resolved = resolve_config_relative_path(canonical, value);
-            builder.set_lock_file(resolved);
-        }
+        "lockfile" if value.is_empty() => builder.lock_file = None,
+        "lockfile" => builder.set_lock_file(daemon_parameter_path(value)),
         // upstream: loadparm.c syslog_tag (P_STRING, P_LOCAL). Consumed
         // per-module at log.c:143 `openlog(lp_syslog_tag(module_id), ...)`.
-        "syslogtag" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'syslog tag' directive must not be empty",
-                ));
-            }
-            builder.set_syslog_tag(value.to_owned());
-        }
+        "syslogtag" if value.is_empty() => builder.syslog_tag = None,
+        "syslogtag" => builder.set_syslog_tag(value.to_owned()),
         // upstream: loadparm.c syslog_facility (P_ENUM, P_LOCAL). Consumed
         // per-module at log.c:143 `openlog(..., lp_syslog_facility(module_id))`.
         "syslogfacility" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'syslog facility' directive must not be empty",
-                ));
-            }
             // upstream: loadparm.c:456-467 `case P_ENUM` - a name that matches a
             // facility is stored canonically; an unrecognised name that parses as
             // a positive integer (`atoi(value) > 0`) is stored as that raw
@@ -442,7 +385,7 @@ fn apply_module_directive(
             if let Some(canonical) = logging_sink::canonical_syslog_facility(value) {
                 builder.set_syslog_facility(canonical.to_owned());
             } else if parse_atoi(value) > 0 {
-                builder.set_syslog_facility(value.to_owned());
+                builder.set_syslog_facility(parse_atoi(value).to_string());
             }
         }
         // oc extension (docs/design/quic-transport-policy.md, decision A): the

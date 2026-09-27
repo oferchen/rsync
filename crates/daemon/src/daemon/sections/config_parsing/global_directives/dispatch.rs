@@ -37,14 +37,11 @@ fn apply_global_directive(
     canonical: &Path,
 ) -> Result<(), DaemonError> {
     match key {
+        // upstream: loadparm.c:do_parameter - every P_STRING/P_PATH parameter
+        // accepts an empty value and stores "", which each consumer treats as
+        // unset. The empty arms below clear the slot instead of failing the load.
+        "refuseoptions" if value.is_empty() => state.global_refuse_directives.clear(),
         "refuseoptions" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'refuse options' directive must not be empty",
-                ));
-            }
             let options = parse_refuse_option_list(value).map_err(|error| {
                 config_parse_error(
                     path,
@@ -65,17 +62,11 @@ fn apply_global_directive(
                 },
             ));
         }
+        "motdfile" if value.is_empty() => state.motd_lines.clear(),
         "motdfile" => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'motd file' directive must not be empty",
-                ));
-            }
-
-            let motd_path = resolve_config_relative_path(path, trimmed);
+            // upstream: clientserver.c:183-188 opens `lp_motd_file()` as given,
+            // so a relative value resolves against the daemon's cwd.
+            let motd_path = daemon_parameter_path(value.trim());
             // upstream: clientserver.c:188 reads the motd through
             // `open_no_attacker_symlinks()`. The daemon is typically root here,
             // so a symlink planted at any component of an operator-named motd
@@ -118,17 +109,9 @@ fn apply_global_directive(
                 .motd_lines
                 .push(value.trim_end_matches(['\r', '\n']).to_owned());
         }
+        "pidfile" if value.is_empty() => state.pid_file = None,
         "pidfile" => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'pid file' directive must not be empty",
-                ));
-            }
-
-            let resolved = daemon_parameter_path(trimmed);
+            let resolved = daemon_parameter_path(value.trim());
             store_global_directive(&mut state.pid_file, resolved, canonical, line_number);
         }
         "reverselookup" => {
@@ -162,34 +145,22 @@ fn apply_global_directive(
                 line_number,
             );
         }
+        "secretsfile" if value.is_empty() => state.global_secrets_file = None,
+        // upstream: authenticate.c:143-160 check_secret() opens the value as
+        // given when a client authenticates, so a missing or unusable file
+        // fails only that authentication, never the config load.
         "secretsfile" => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'secrets file' directive must not be empty",
-                ));
-            }
-
-            let resolved = resolve_config_relative_path(path, trimmed);
-            let validated = validate_secrets_file(&resolved, path, line_number)?;
             store_global_directive(
                 &mut state.global_secrets_file,
-                validated,
+                daemon_parameter_path(value.trim()),
                 canonical,
                 line_number,
             );
         }
+        "incomingchmod" | "incoming-chmod" if value.is_empty() => {
+            state.global_incoming_chmod = None
+        }
         "incomingchmod" | "incoming-chmod" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'incoming chmod' directive must not be empty",
-                ));
-            }
-
             store_global_directive(
                 &mut state.global_incoming_chmod,
                 value.to_owned(),
@@ -197,15 +168,10 @@ fn apply_global_directive(
                 line_number,
             );
         }
+        "outgoingchmod" | "outgoing-chmod" if value.is_empty() => {
+            state.global_outgoing_chmod = None
+        }
         "outgoingchmod" | "outgoing-chmod" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'outgoing chmod' directive must not be empty",
-                ));
-            }
-
             store_global_directive(
                 &mut state.global_outgoing_chmod,
                 value.to_owned(),
@@ -213,26 +179,20 @@ fn apply_global_directive(
                 line_number,
             );
         }
+        "lockfile" if value.is_empty() => state.lock_file = None,
+        // upstream: connection.c claim_connection() opens `lp_lock_file(i)` as
+        // given, so a relative value resolves against the daemon's cwd.
         "lockfile" => {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'lock file' directive must not be empty",
-                ));
-            }
-
-            let resolved = resolve_config_relative_path(path, trimmed);
+            let resolved = daemon_parameter_path(value.trim());
             store_global_directive(&mut state.lock_file, resolved, canonical, line_number);
         }
         // oc extension (no upstream counterpart - upstream terminates no TLS in
         // the daemon). `quic cert file` / `quic key file` name the certificate
         // and private key the QUIC listener presents. They describe the shared
         // per-listener identity, so they are global-only; a module section that
-        // sets one is rejected in `apply_module_directive`. Path handling mirrors
-        // `pid file` / `lock file` exactly (config-relative resolution, with any
-        // `%` token left verbatim for expansion at listener-bind time).
+        // sets one is rejected in `apply_module_directive`. A relative path
+        // resolves against the config file's directory, with any `%` token left
+        // verbatim for expansion at listener-bind time.
         // See docs/design/quic-transport-policy.md (decision A).
         #[cfg(feature = "quic")]
         "quiccertfile" => {
@@ -318,36 +278,27 @@ fn apply_global_directive(
         // upstream: loadparm.c - syslog facility sets the syslog facility
         // for daemon log messages (e.g., "daemon", "local0"-"local7").
         "syslogfacility" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'syslog facility' directive must not be empty",
-                ));
-            }
-
+            // upstream: loadparm.c:575-586 `case P_ENUM` - a facility name is
+            // stored as that facility, otherwise `atoi(value) > 0` stores the
+            // raw number, and any other value leaves the setting unchanged.
+            let facility = match logging_sink::canonical_syslog_facility(value) {
+                Some(name) => name.to_owned(),
+                None if parse_atoi(value) > 0 => parse_atoi(value).to_string(),
+                None => return Ok(()),
+            };
             // upstream: loadparm.c - `syslog facility` is P_LOCAL, so a
             // global-section value becomes the default every later module
             // inherits (init_section copies Vars.l). state.syslog_facility is
             // the daemon-wide value read as `lp_syslog_facility(-1)`.
-            state.module_defaults.syslog_facility = Some(value.to_owned());
-            store_global_directive(
-                &mut state.syslog_facility,
-                value.to_owned(),
-                canonical,
-                line_number,
-            );
+            state.module_defaults.syslog_facility = Some(facility.clone());
+            store_global_directive(&mut state.syslog_facility, facility, canonical, line_number);
         }
         // upstream: loadparm.c - syslog tag sets the syslog ident prefix.
+        "syslogtag" if value.is_empty() => {
+            state.module_defaults.syslog_tag = None;
+            state.syslog_tag = None;
+        }
         "syslogtag" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'syslog tag' directive must not be empty",
-                ));
-            }
-
             // upstream: loadparm.c - `syslog tag` is P_LOCAL; the
             // global-section value seeds every module's inherited default.
             state.module_defaults.syslog_tag = Some(value.to_owned());
@@ -360,15 +311,8 @@ fn apply_global_directive(
         }
         // upstream: loadparm.c - `address` sets the bind address for
         // the daemon listener.
+        "address" if value.is_empty() => state.bind_address = None,
         "address" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'address' directive must not be empty",
-                ));
-            }
-
             let parsed_addr = parse_bind_address(&OsString::from(value)).map_err(|_| {
                 config_parse_error(path, line_number, format!("invalid bind address '{value}'"))
             })?;
@@ -381,14 +325,8 @@ fn apply_global_directive(
         // Conflating it with the P_GLOBAL `daemon uid` made a root daemon drop
         // every uid-less module to `nobody` (clientserver.c:781 `am_root ?
         // NOBODY_USER`) even when the operator set a global `uid = 0`.
+        "uid" if value.is_empty() => state.module_defaults.uid = None,
         "uid" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'uid' directive must not be empty",
-                ));
-            }
             let uid = parse_uid_setting(value).ok_or_else(|| {
                 config_parse_error(path, line_number, format!("invalid uid '{value}'"))
             })?;
@@ -397,14 +335,8 @@ fn apply_global_directive(
         // upstream: daemon-parm.txt `Locals:` `gid` is P_LOCAL - the global
         // value is the default `lp_gid(module_id)` every module inherits
         // (clientserver.c:790), distinct from the P_GLOBAL `daemon gid` drop.
+        "gid" if value.is_empty() => state.module_defaults.gid = None,
         "gid" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'gid' directive must not be empty",
-                ));
-            }
             let gid = parse_gid_setting(value).map_err(|reason| {
                 config_parse_error(
                     path,
@@ -417,15 +349,8 @@ fn apply_global_directive(
         // upstream: daemon-parm.txt `Globals:` `daemon_uid`/`daemon_gid` are
         // P_GLOBAL. `daemon uid` sets the process-wide uid the listener drops
         // to once, before the accept loop (clientserver.c:1376 `lp_daemon_uid`).
+        "daemonuid" if value.is_empty() => state.daemon_uid = None,
         "daemonuid" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'daemon uid' directive must not be empty",
-                ));
-            }
-
             store_global_directive(
                 &mut state.daemon_uid,
                 value.to_owned(),
@@ -435,15 +360,8 @@ fn apply_global_directive(
         }
         // upstream: clientserver.c:1500 `lp_daemon_gid` - `daemon gid` sets the
         // process-wide gid the listener drops to before the accept loop.
+        "daemongid" if value.is_empty() => state.daemon_gid = None,
         "daemongid" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'daemon gid' directive must not be empty",
-                ));
-            }
-
             store_global_directive(
                 &mut state.daemon_gid,
                 value.to_owned(),
@@ -488,16 +406,9 @@ fn apply_global_directive(
         }
         // upstream: daemon-parm.txt - socket options STRING.
         // Comma-separated TCP/IP socket options for the listener.
+        "socketoptions" if value.is_empty() => state.socket_options = None,
         "socketoptions" => {
             let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'socket options' directive must not be empty",
-                ));
-            }
-
             store_global_directive(
                 &mut state.socket_options,
                 trimmed.to_owned(),
@@ -528,16 +439,9 @@ fn apply_global_directive(
                 line_number,
             );
         }
+        "daemonchroot" if value.is_empty() => state.daemon_chroot = None,
         "daemonchroot" => {
             let trimmed = value.trim();
-            if trimmed.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'daemon chroot' must not be empty",
-                ));
-            }
-
             store_global_directive(
                 &mut state.daemon_chroot,
                 PathBuf::from(trimmed),
@@ -810,7 +714,9 @@ fn apply_global_directive(
             state.module_defaults.auth_digest = normalize_auth_digest(value);
         }
         // `path` only makes sense per-module - silently accepted, not inherited.
-        "path" => {}
+        // upstream: loadparm.c:add_a_section - a global `name` is copied into
+        // each new section and then overwritten by the section's own name.
+        "path" | "name" => {}
         _ => {
             eprintln!(
                 "warning: unknown global directive '{}' in '{}' line {} [daemon={}]",

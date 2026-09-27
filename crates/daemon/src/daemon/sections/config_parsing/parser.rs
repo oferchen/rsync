@@ -144,15 +144,9 @@ fn parse_config_file(
                 ensure_valid_section_name(name)
                     .map_err(|msg| config_parse_error(path, line_number, msg))?;
 
-                let trailing = line[end + 1..].trim();
-                if !trailing.is_empty() && !trailing.starts_with('#') && !trailing.starts_with(';')
-                {
-                    return Err(config_parse_error(
-                        path,
-                        line_number,
-                        "unexpected characters after module header",
-                    ));
-                }
+                // upstream: params.c:Section() - once the ']' is found and the
+                // section is accepted, EatComment() discards the rest of the
+                // line, so `[mod] junk` defines `mod`.
 
                 // upstream: loadparm.c:do_section:497-510 - a section named
                 // "global" (whitespace/case-insensitive via strwiEQ) returns to
@@ -169,52 +163,54 @@ fn parse_config_file(
 
             // upstream: params.c:Parameter() - directives that start with '&'
             // (e.g. `&include /path/to/file.conf`, `&merge /path/to/snippet.inc`)
-            // use whitespace as the name/value separator and treat a following
-            // '=' as optional. Detect them before the regular `key = value`
-            // dispatch so the file inclusion syntax is accepted as-written.
-            let (key, value) = if let Some(rest) = line.strip_prefix('&') {
-                let (name, raw_value) = rest
-                    .split_once(|c: char| c.is_whitespace() || c == '=')
-                    .ok_or_else(|| {
-                        config_parse_error(
-                            path,
-                            line_number,
-                            "expected '&directive value' or '&directive = value'",
-                        )
-                    })?;
-                let trimmed_value = raw_value
-                    .trim_start()
-                    .strip_prefix('=')
-                    .unwrap_or(raw_value);
-                (
-                    format!("&{}", normalize_param_name(name)),
-                    trimmed_value.trim(),
-                )
-            } else {
-                let (raw_key, raw_value) = line.split_once('=').ok_or_else(|| {
-                    config_parse_error(path, line_number, "expected 'key = value' directive")
-                })?;
-                (normalize_param_name(raw_key), raw_value.trim())
-            };
-
-            // upstream: params.c:Parse() - `&include`/`&merge` are dispatched
-            // from the scanner itself, before the section cursor is consulted:
-            // they act on the whole parse state, never on one section.
-            if key == "&include" || key == "&merge" {
+            // end their name at the first space, tab or '=' and treat a '='
+            // after the space as optional. The untrimmed line is scanned so a
+            // trailing space still separates an empty value from the name.
+            if let Some(rest) = logical_line.trim_start().strip_prefix('&') {
+                let Some((name, raw_value)) = rest.split_once([' ', '\t', '=']) else {
+                    warn_badly_formed_line(line, path, line_number);
+                    continue;
+                };
+                let raw_value = raw_value.trim_start();
+                let value = raw_value.strip_prefix('=').unwrap_or(raw_value).trim();
+                // upstream: params.c:parse_directives - only `&include` and
+                // `&merge` exist (strcasecmp); any other name fails the load.
+                let key = format!("&{}", name.to_ascii_lowercase());
+                if key != "&include" && key != "&merge" {
+                    return Err(config_parse_error(
+                        path,
+                        line_number,
+                        format!("Unknown directive: &{name}."),
+                    ));
+                }
                 apply_include_directive(parse, &key, value, path, line_number, &canonical, stack)?;
                 continue;
             }
 
-            if let Some(index) = parse.current
-                && !key.starts_with('&')
-            {
+            // upstream: params.c:Parameter() - a line that ends before any '='
+            // is logged and skipped, while an empty name before the '=' fails
+            // the load.
+            let Some((raw_key, raw_value)) = line.split_once('=') else {
+                warn_badly_formed_line(line, path, line_number);
+                continue;
+            };
+            let key = normalize_param_name(raw_key);
+            if key.is_empty() {
+                return Err(config_parse_error(
+                    path,
+                    line_number,
+                    "Invalid parameter name in config file.",
+                ));
+            }
+            let value = raw_value.trim();
+
+            if let Some(index) = parse.current {
                 apply_module_directive(
                     &mut parse.sections[index].builder,
                     &key,
                     value,
                     path,
                     line_number,
-                    &canonical,
                 )?;
                 continue;
             }
@@ -227,6 +223,17 @@ fn parse_config_file(
 
     stack.pop();
     result
+}
+
+/// Reports a config line that has no '=' and is therefore skipped.
+///
+/// upstream: params.c:Parameter() - "Ignoring badly formed line in config
+/// file", after which parsing continues with the next line.
+fn warn_badly_formed_line(line: &str, path: &Path, line_number: usize) {
+    eprintln!(
+        "Ignoring badly formed line in config file: {line} ('{}' line {line_number})",
+        path.display()
+    );
 }
 
 /// A module section, together with the values it copied from `Vars` when its
@@ -278,7 +285,7 @@ impl CapturedModuleDefaults {
 /// Returns the index of the module section named `name`, creating it when no
 /// earlier header in any file of the parse named it.
 ///
-/// upstream: loadparm.c:add_a_section:431-450 - "it might already exist":
+/// upstream: loadparm.c:add_a_section:439-459 - "it might already exist":
 /// getsectionbyname() searches the whole `section_list` with the
 /// whitespace- and case-insensitive `strwiEQ`, and a match is returned as-is,
 /// so a repeated header re-opens that section instead of adding a second one.
