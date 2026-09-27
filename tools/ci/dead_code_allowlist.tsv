@@ -47,7 +47,6 @@ set_role	crates/matching/src/index/mod.rs	2026-11-07	unreviewed baseline row
 read_sddl_with_sacl	crates/metadata/src/acl_windows/sddl.rs	2026-11-07	SACL read half awaiting the wire-or-delete decision (task 953)
 read_ndx_from_carry_async	crates/protocol/src/codec/ndx/codec.rs	2026-11-07	unreviewed baseline row
 flist_stats	crates/protocol/src/flist/batched_writer/writer.rs	2026-11-07	unreviewed baseline row
-with_am_root	crates/protocol/src/flist/read/mod.rs	2026-11-07	unreviewed baseline row
 xattr_cache_mut	crates/protocol/src/flist/read/mod.rs	2026-11-07	unreviewed baseline row
 is_io_error_end_marker	crates/protocol/src/wire/file_entry_decode/flags.rs	2026-11-07	unreviewed baseline row
 take_stdin	crates/rsync_io/src/ssh/async_transport.rs	2026-11-07	unreviewed baseline row

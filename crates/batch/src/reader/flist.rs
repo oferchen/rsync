@@ -134,6 +134,8 @@ impl BatchReader {
             .with_preserve_hard_links(flags.preserve_hard_links)
             .with_preserve_acls(flags.preserve_acls)
             .with_preserve_xattrs(flags.preserve_xattrs)
+            // upstream: xattrs.c:876 - a root replay keeps non-user.* names.
+            .with_am_root(metadata::am_root())
             .with_preserve_atimes(preserve_atimes)
             .with_preserve_crtimes(preserve_crtimes);
 
