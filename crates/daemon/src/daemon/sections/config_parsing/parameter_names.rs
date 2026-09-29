@@ -5,8 +5,8 @@
 ///
 /// upstream: daemon-parm.txt - the `Globals:` and `Locals:` blocks generate
 /// loadparm.c's `parm_table`, whose labels are the public names with `_`
-/// rendered as a space (daemon-parm.awk). The oc-only names follow them; see
-/// docs/oc-extension-env-reference.md.
+/// rendered as a space (daemon-parm.awk). The oc-only QUIC names follow them;
+/// see docs/oc-extension-env-reference.md.
 const PARAMETER_NAMES: &[&str] = &[
     // Globals
     "address",
@@ -69,13 +69,7 @@ const PARAMETER_NAMES: &[&str] = &[
     "numericids",
     "opennoatime",
     "usechroot",
-    // oc-only
-    "bwlimit",
-    "motd",
-    "acceptorthreads",
-    "rsyncport",
-    "incoming-chmod",
-    "outgoing-chmod",
+    // oc-only QUIC listener parameters
     #[cfg(feature = "quic")]
     "quiccertfile",
     #[cfg(feature = "quic")]

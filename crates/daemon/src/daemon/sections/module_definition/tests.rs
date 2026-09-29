@@ -1,4 +1,5 @@
 use super::*;
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 fn test_config_path() -> PathBuf {

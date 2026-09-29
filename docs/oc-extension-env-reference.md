@@ -369,13 +369,6 @@ behaves differently under an upstream daemon.
 
 Directives:
 
-- `bwlimit` (global) - daemon-wide bandwidth limit, same syntax as `--bwlimit`.
-- `motd` (global) - adds one inline greeting line.
-- `acceptor threads` (global) - number of `SO_REUSEPORT` listener replicas per
-  address family (default 1).
-- `rsync port` - alias of `port`. Upstream's label is `port` only.
-- `incoming-chmod` / `outgoing-chmod` - hyphenated aliases of `incoming chmod`
-  / `outgoing chmod`. Upstream folds only whitespace in parameter names.
 - `quic cert file`, `quic key file`, `quic client ca file`, `quic port`
   (global, `quic` feature) - QUIC listener identity and port.
 
