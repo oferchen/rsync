@@ -432,7 +432,7 @@ impl ReceiverContext {
     {
         let _ = self.emit_error_xfer_line(
             writer,
-            &format!(
+            format!(
                 "could not make way for new {}: {}\n",
                 make_way_for.description(),
                 relative_path.display()

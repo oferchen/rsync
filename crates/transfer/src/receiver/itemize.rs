@@ -312,7 +312,9 @@ impl ReceiverContext {
     /// sets `got_xfer_error` in `rwrite()` before the server-vs-client branch -
     /// a daemon that only *reports* the refusal still exits `RERR_PARTIAL`.
     ///
-    /// `line` carries its trailing newline, as upstream's payload does.
+    /// `line` carries its trailing newline, as upstream's payload does. It is
+    /// raw bytes so a file name that is not valid UTF-8 reaches the peer
+    /// verbatim; the peer escapes it for display.
     ///
     /// # Upstream Reference
     ///
@@ -324,15 +326,26 @@ impl ReceiverContext {
     pub(in crate::receiver) fn emit_error_xfer_line<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         writer: &mut W,
-        line: &str,
+        line: impl AsRef<[u8]>,
     ) -> std::io::Result<()> {
         self.got_xfer_error.set(true);
         if self.config.connection.client_mode {
             use std::io::Write as _;
-            std::io::stderr().write_all(line.as_bytes())
+            std::io::stderr().write_all(line.as_ref())
         } else {
-            writer.send_msg_error_xfer(line.as_bytes())
+            writer.send_msg_error_xfer(line.as_ref())
         }
+    }
+
+    /// Builds the `ERROR: daemon refused to receive <kind> "<name>"` line from
+    /// the entry's raw name bytes.
+    ///
+    /// upstream: generator.c:1670-1672 prints `fname` verbatim.
+    pub(in crate::receiver) fn daemon_refusal_line(kind: &str, name: &[u8]) -> Vec<u8> {
+        let mut line = format!("ERROR: daemon refused to receive {kind} \"").into_bytes();
+        line.extend_from_slice(name);
+        line.extend_from_slice(b"\"\n");
+        line
     }
 
     /// Reports a failed generator-side operation the way upstream's
@@ -357,7 +370,7 @@ impl ReceiverContext {
     ) -> std::io::Result<()> {
         self.emit_error_xfer_line(
             writer,
-            &format!(
+            format!(
                 "rsync: [{}] {what}: {}\n",
                 crate::role_trailer::GENERATOR,
                 logging::upstream_errno_text(error)
@@ -390,7 +403,7 @@ impl ReceiverContext {
             .unwrap_or_else(|| error.to_string());
         self.emit_error_xfer_line(
             writer,
-            &format!("rsync: [{}] {text}\n", crate::role_trailer::GENERATOR),
+            format!("rsync: [{}] {text}\n", crate::role_trailer::GENERATOR),
         )
     }
 
