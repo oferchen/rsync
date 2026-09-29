@@ -500,20 +500,36 @@ build_upstream_from_source() {
   popd >/dev/null
 }
 
+# Identifies how an upstream install was produced. CI restores upstream
+# installs through a key prefix, so a binary built by an older recipe can be
+# restored; an install whose stamp differs is rebuilt instead of reused.
+upstream_build_recipe() {
+  declare -f build_upstream_from_source | sha256sum | cut -c1-16
+}
+
 ensure_upstream_build() {
   local version=$1
   local install_dir="${upstream_install_root}/${version}"
   local binary="${install_dir}/bin/rsync"
-  local arch="${DEB_ARCH:-$(detect_deb_arch)}"
+  local stamp="${install_dir}/.oc-build-recipe"
+  local recipe
+  recipe=$(upstream_build_recipe)
 
-  if [[ -x "$binary" ]]; then
+  if [[ -x "$binary" && "$(cat "$stamp" 2>/dev/null)" == "$recipe" ]]; then
     if "$binary" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
       return
     fi
-    rm -rf "$install_dir"
   fi
-
+  rm -rf "$install_dir"
   mkdir -p "$install_dir"
+  install_upstream "$version" "$install_dir"
+  printf '%s\n' "$recipe" >"$stamp"
+}
+
+install_upstream() {
+  local version=$1
+  local install_dir=$2
+  local arch="${DEB_ARCH:-$(detect_deb_arch)}"
 
   local url
   url=$(build_version_url "$version" "$arch")
