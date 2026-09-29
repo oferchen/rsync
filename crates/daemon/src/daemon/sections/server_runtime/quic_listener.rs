@@ -200,8 +200,9 @@ fn materialize_and_serve_quic(
 /// path forks per connection for `chroot`/cwd isolation (upstream
 /// `clientserver.c` `start_accept_loop`); QUIC (oc extension, default off) runs
 /// the session in-thread instead, matching the non-unix thread-backed session
-/// model. The acceptor is one-shot at the transport layer (`rsync_io` refuses a
-/// second connection per endpoint), so this serves exactly one session.
+/// model. Because that thread shares the daemon parent's process-wide state
+/// (root, cwd, credentials), this serves exactly one session per listener even
+/// though the acceptor can hand out any number of connections.
 fn serve_quic_acceptor(acceptor: QuicAcceptor, context: ConnectionContext) {
     match acceptor.accept() {
         Ok(stream) => {
