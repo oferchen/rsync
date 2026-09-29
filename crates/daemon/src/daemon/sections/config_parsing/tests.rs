@@ -834,10 +834,10 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_empty_path_errors() {
+    fn parse_empty_path_loads_as_no_path() {
         let file = write_config("[mod]\npath = \n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("must not be empty"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].path.as_os_str().is_empty());
     }
 
     /// A bare global `include` is the P_LOCAL include-filter parameter, so an
@@ -4388,5 +4388,93 @@ mod config_parsing_tests {
             result.modules[0].lock_file.as_deref(),
             Some(Path::new("mod.lock"))
         );
+    }
+
+    #[test]
+    fn unresolvable_uid_and_gid_load_and_are_refused_per_module() {
+        // upstream: clientserver.c:833-870 resolves `uid`/`gid` when a client
+        // selects the module, so a name the host does not know yet still
+        // loads, refuses only that module, and `uid` is reported before `gid`.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\n[u]\npath = {data}\nuid = oc_no_such_user_zz\ngid = oc_no_such_group_zz\n\
+             [g]\npath = {data}\ngid = 0, oc_no_such_group_zz\n[star]\npath = {data}\ngid = 0 *\n\
+             [ok]\npath = {data}\nuid = 0\ngid = 0\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            module_named(&result, "u").unresolved_id,
+            Some(UnresolvedId::Uid("oc_no_such_user_zz".to_owned()))
+        );
+        assert_eq!(
+            module_named(&result, "g").unresolved_id,
+            Some(UnresolvedId::Gid("oc_no_such_group_zz".to_owned()))
+        );
+        assert_eq!(
+            module_named(&result, "star").unresolved_id,
+            Some(UnresolvedId::Gid("*".to_owned()))
+        );
+        let ok = module_named(&result, "ok");
+        assert_eq!(ok.unresolved_id, None);
+        assert_eq!(ok.uid, Some(0));
+    }
+
+    #[test]
+    fn a_later_resolvable_uid_replaces_an_unresolvable_one() {
+        // upstream: do_parameter() overwrites the stored string, so only the
+        // last `uid` line is resolved at connect time.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\nuid = oc_no_such_user_zz\n[m]\npath = {data}\nuid = 0\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].unresolved_id, None);
+        assert_eq!(result.modules[0].uid, Some(0));
+    }
+
+    #[test]
+    fn malformed_host_tokens_load_and_never_match() {
+        // upstream: access.c stores the list verbatim; a malformed mask is
+        // logged per connection and never matches, while `addr/a.b.c.d`
+        // masks are honoured.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\n[m]\npath = {data}\nhosts allow = 10.0.0.0/99 bad/x 192.168.0.0/255.255.0.0\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let allow = &result.modules[0].hosts_allow;
+        assert_eq!(allow[0], HostPattern::Unmatchable("10.0.0.0/99".to_owned()));
+        assert_eq!(allow[1], HostPattern::Unmatchable("bad/x".to_owned()));
+        let peer = IpAddr::V4(Ipv4Addr::new(192, 168, 7, 9));
+        assert!(allow[2].matches(peer, "host"));
+        assert!(!allow[2].matches(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), "host"));
+        assert!(!allow[0].matches(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), "host"));
+    }
+
+    #[test]
+    fn module_without_path_loads_and_a_global_path_is_its_default() {
+        // upstream: `path` is P_LOCAL (a global value is copied into later
+        // sections) and a section with no path still loads; rsync_module()
+        // refuses it with `@ERROR: no path setting.` (clientserver.c:877-881).
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config("use chroot = no\n[nopath]\ncomment = none\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].path.as_os_str().is_empty());
+
+        // A path is a NULL-default string, so a global set after the section
+        // is still its fallback (FN_LOCAL_STRING, loadparm.c:347-348).
+        let file = write_config(&format!(
+            "use chroot = no\n[early]\n[global]\npath = {data}\n[late]\n"
+        ));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(module_named(&result, "early").path, PathBuf::from(&data));
+        assert_eq!(module_named(&result, "late").path, PathBuf::from(&data));
     }
 }

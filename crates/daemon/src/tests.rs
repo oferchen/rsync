@@ -38,6 +38,7 @@ use crate::daemon::{
     RuntimeOptions,
     TestSecretsEnvOverride,
     UNSUPPORTED_AUTH_DIGEST_EXIT_CODE,
+    UnresolvedId,
     advertised_capability_lines,
     // From daemon.rs apply_verbosity helper
     apply_verbosity,
@@ -395,7 +396,7 @@ include!("tests/chunks/runtime_options_reject_duplicate_log_file_argument.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_pid_file_argument.rs");
 include!("tests/chunks/runtime_options_reject_invalid_bwlimit.rs");
 include!("tests/chunks/runtime_options_reject_whitespace_wrapped_bwlimit_argument.rs");
-include!("tests/chunks/runtime_options_rejects_config_missing_path.rs");
+include!("tests/chunks/runtime_options_loads_a_module_without_path.rs");
 include!("tests/chunks/runtime_options_rejects_duplicate_module_across_config_and_cli.rs");
 include!("tests/chunks/runtime_options_accepts_empty_refuse_options_directive.rs");
 include!("tests/chunks/runtime_options_rejects_invalid_boolean_directive.rs");
@@ -403,7 +404,7 @@ include!("tests/chunks/runtime_options_rejects_invalid_bwlimit_in_config.rs");
 include!("tests/chunks/runtime_options_rejects_invalid_list_directive.rs");
 include!("tests/chunks/runtime_options_rejects_invalid_max_connections.rs");
 include!("tests/chunks/runtime_options_rejects_invalid_timeout.rs");
-include!("tests/chunks/runtime_options_rejects_invalid_uid.rs");
+include!("tests/chunks/runtime_options_defers_an_unresolvable_uid.rs");
 include!("tests/chunks/runtime_options_rejects_ipv4_ipv6_combo.rs");
 include!("tests/chunks/runtime_options_rejects_missing_secrets_from_environment.rs");
 include!("tests/chunks/runtime_options_resolves_a_relative_module_path.rs");
