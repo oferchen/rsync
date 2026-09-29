@@ -31,6 +31,8 @@ pub mod daemonize;
 pub mod env;
 /// Typed platform error variants used by daemon/cli/core for I/O failures.
 pub mod error;
+/// Passing a descriptor plus a metadata record over a socket pair (Unix only).
+pub mod fd_pass;
 /// System group membership lookups.
 pub mod group;
 /// Per-instant local timezone offset (mirrors upstream `timestring()`'s
