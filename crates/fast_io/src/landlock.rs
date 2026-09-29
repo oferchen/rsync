@@ -213,6 +213,42 @@ pub fn restrict_to_module_paths(allowed_roots: &[&Path]) -> LandlockOutcome {
     }
 }
 
+/// Removes every filesystem access right from the calling thread.
+///
+/// Installs a ruleset that handles the full `ABI::V5` filesystem access set
+/// and grants nothing, so every later path-based open, create, rename or
+/// unlink from this thread - and from every thread or process it spawns
+/// afterwards - fails with `EACCES`. Descriptors already open keep working:
+/// Landlock checks access when a path is resolved, not on each read or write.
+///
+/// For a helper process that needs no filesystem once its inputs are loaded
+/// (the daemon's QUIC front process). Call it before spawning any thread that
+/// must also be confined: threads that already exist are not restricted.
+///
+/// # Errors
+///
+/// Returns [`LandlockOutcome::Unavailable`] on kernels without Landlock and
+/// [`LandlockOutcome::Error`] when the kernel advertised support but refused
+/// the ruleset.
+pub fn deny_all_filesystem_access() -> LandlockOutcome {
+    let access = AccessFs::from_all(ABI::V5);
+    let ruleset = match Ruleset::default()
+        .set_compatibility(CompatLevel::BestEffort)
+        .handle_access(access)
+    {
+        Ok(rs) => rs,
+        Err(err) => return LandlockOutcome::Error(io::Error::other(err.to_string())),
+    };
+    let created = match ruleset.create() {
+        Ok(c) => c,
+        Err(err) => return LandlockOutcome::Error(io::Error::other(err.to_string())),
+    };
+    match created.restrict_self() {
+        Ok(status) => LandlockOutcome::Enforced(EnforcementStatus::from(status.ruleset)),
+        Err(err) => LandlockOutcome::Error(io::Error::other(err.to_string())),
+    }
+}
+
 /// Names the filesystem access rights the running kernel's Landlock ABI lacks
 /// relative to the `ABI::V5` set that [`restrict_to_module_paths`] requests.
 ///
@@ -347,6 +383,45 @@ mod tests {
         let tmp = TempDir::new().expect("tempdir");
         let outcome = restrict_to_module_paths(&[tmp.path()]);
         assert!(matches!(outcome, LandlockOutcome::Unavailable));
+    }
+
+    /// The empty ruleset leaves no path reachable: a read of a world-readable
+    /// system file and a write into a fresh temp dir both fail, while a
+    /// descriptor opened before the restriction keeps working.
+    #[test]
+    fn deny_all_blocks_every_path_but_keeps_open_descriptors() {
+        if !is_supported() {
+            return;
+        }
+        let tmp = TempDir::new().expect("tempdir");
+        let dir = tmp.path().to_path_buf();
+        run_isolated(move || {
+            let pre_opened = fs::File::create(dir.join("pre.txt"))
+                .map_err(|e| format!("pre-open failed: {e}"))?;
+            match deny_all_filesystem_access() {
+                LandlockOutcome::Enforced(EnforcementStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(_) => {}
+                LandlockOutcome::Unavailable => return Ok(()),
+                LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
+            }
+            use std::io::Write as _;
+            (&pre_opened)
+                .write_all(b"still writable")
+                .map_err(|e| format!("pre-opened descriptor lost: {e}"))?;
+            for attempt in [
+                fs::read("/etc/hostname").map(|_| ()),
+                fs::write(dir.join("new.txt"), b"x"),
+            ] {
+                match attempt {
+                    Ok(()) => return Err("path access unexpectedly succeeded".to_owned()),
+                    Err(err) if err.kind() == ErrorKind::PermissionDenied => {}
+                    Err(err) if err.kind() == ErrorKind::NotFound => {}
+                    Err(err) => return Err(format!("unexpected error {:?}: {err}", err.kind())),
+                }
+            }
+            Ok(())
+        })
+        .expect("deny-all scenario");
     }
 
     #[test]
