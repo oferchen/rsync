@@ -62,8 +62,8 @@ class ScratchHomeIsolationTests(unittest.TestCase):
         )
         self.assertEqual(a.returncode, 0, a.stderr)
         self.assertEqual(b.returncode, 0, b.stderr)
-        self.assertEqual(a.stdout.strip(), "/tmp/oc-rsync-uts-scratch-nonroot-pipe-RUNA")
-        self.assertEqual(b.stdout.strip(), "/tmp/oc-rsync-uts-scratch-nonroot-pipe-RUNB")
+        self.assertEqual(a.stdout.strip(), "/tmp/ocuts-nonroot-pipe-RUNA")
+        self.assertEqual(b.stdout.strip(), "/tmp/ocuts-nonroot-pipe-RUNB")
         self.assertNotEqual(a.stdout.strip(), b.stdout.strip())
 
     def test_path_is_stable_within_one_run(self) -> None:
@@ -85,7 +85,20 @@ class ScratchHomeIsolationTests(unittest.TestCase):
             'uts_run_id=R; uts_scratch_home_path /tmp nonroot tcp'
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "/tmp/oc-rsync-uts-scratch-nonroot-tcp-R")
+        self.assertEqual(result.stdout.strip(), "/tmp/ocuts-nonroot-tcp-R")
+
+    def test_socket_fixture_fits_macos_sun_path(self) -> None:
+        # daemon-unix-socket-atfd_test.py binds <scratch>/testtmp/<test>/
+        # sock-src/s. macOS caps sun_path at 104 bytes including the NUL, and
+        # the macOS scratch base is the canonical /private/tmp, so the longest
+        # leg name with a real auto-generated run id must leave that bind
+        # within 103 bytes, or the cell skips with "AF_UNIX path too long".
+        result = _source_and_eval('uts_scratch_home_path /private/tmp nonroot tcp')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        socket_path = (
+            result.stdout.strip() + "/testtmp/daemon-unix-socket-atfd/sock-src/s"
+        )
+        self.assertLessEqual(len(socket_path.encode()), 103, socket_path)
 
     def test_auto_generated_run_id_differs_across_processes(self) -> None:
         # Documents WHERE the per-run identity comes from: $$ differs between two

@@ -830,9 +830,15 @@ adopt_primary_group() {
 # THIS function, not a hand copy of the naming (the fixture reads the real
 # behaviour). The $uts_run_id suffix is what makes it per-run rather than
 # per-leg; the leg tags stay so a preserved tree remains identifiable by leg.
+#
+# The prefix is kept short because some cells bind AF_UNIX sockets beneath
+# it: daemon-unix-socket-atfd_test.py binds <scratch>/testtmp/<test>/sock-src/s,
+# and sun_path holds at most 103 bytes plus the NUL on macOS (104 on the BSDs,
+# 108 on Linux). Under the canonical /private/tmp base a longer prefix pushes
+# that path past the limit and the cell skips ("AF_UNIX path too long").
 uts_scratch_home_path() {
     local base=$1 mode_tag=$2 transport_tag=$3
-    printf '%s/oc-rsync-uts-scratch-%s-%s-%s' \
+    printf '%s/ocuts-%s-%s-%s' \
         "$base" "$mode_tag" "$transport_tag" "$uts_run_id"
 }
 
