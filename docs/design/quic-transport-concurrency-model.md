@@ -41,10 +41,10 @@ prompt teardown < 1 s) passed for both candidates before deletion.
 
 Loopback throughput, 1 GiB, 64 KiB chunks, client-side MB/s, 3 runs:
 
-| Direction | Confined runtime | Sans-IO |
-|-----------|------------------|---------|
-| client sends | 758.9 / 783.3 / 805.9 | 232.0 / 237.7 / 232.6 |
-| server sends | 758.4 / 769.8 / 685.0 | 227.1 / 231.9 / 228.4 |
+| Direction | Confined run 1 (MB/s) | Confined run 2 (MB/s) | Confined run 3 (MB/s) | Sans-IO run 1 (MB/s) | Sans-IO run 2 (MB/s) | Sans-IO run 3 (MB/s) |
+|-----------|---:|---:|---:|---:|---:|---:|
+| client sends | 758.9 | 783.3 | 805.9 | 232.0 | 237.7 | 232.6 |
+| server sends | 758.4 | 769.8 | 685.0 | 227.1 | 231.9 | 228.4 |
 
 Client syscalls (`strace -c -f`), 64 MiB in 4 KiB read/write cycles
 (16384 cycles):
@@ -65,10 +65,10 @@ client reads and pauses 50 ms after every MiB without touching the stream,
 simulating rsync's checksum/delta phases. Ideal time is ~6.4 s of pauses
 plus the transfer.
 
-| Metric | Confined runtime | Sans-IO |
-|--------|------------------|---------|
-| client elapsed (3 runs) | 7241 / 7279 / 7216 ms | 6503 / 6508 / 6508 ms |
-| client teardown | 198 / 283 / 275 ms | 0.13 / 0.15 / 0.15 ms |
+| Metric (ms) | Confined run 1 | Confined run 2 | Confined run 3 | Sans-IO run 1 | Sans-IO run 2 | Sans-IO run 3 |
+|--------|---:|---:|---:|---:|---:|---:|
+| client elapsed | 7241 | 7279 | 7216 | 6503 | 6508 | 6508 |
+| client teardown | 198 | 283 | 275 | 0.13 | 0.15 | 0.15 |
 
 Glue size (non-blank, non-comment lines): confined runtime 185; sans-IO 815
 (`quic/mod.rs` 364 + `quic/driver.rs` 451).
