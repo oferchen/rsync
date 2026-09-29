@@ -541,6 +541,22 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
 /// the operator to use the synchronous daemon. Non-privileged modules
 /// (`use chroot = false`, no `uid`/`gid`) - the benchmark case - run fine.
 ///
+/// It also refuses to start as root. A root daemon drops every session to
+/// `nobody` even when a module names no `uid` (upstream's default), and the
+/// async path runs sessions inside the daemon process, so the first session
+/// would drop the whole daemon.
+///
+/// # Signals
+///
+/// `SIGTERM` and `SIGINT` drain the listener as on the sync path. `SIGHUP` is
+/// caught and ignored, and the listener keeps the configuration it started
+/// with. This is not upstream behaviour: upstream treats `SIGHUP` like
+/// `SIGINT` and terminates, and it never reloads on a signal; each forked
+/// session re-reads `rsyncd.conf` instead.
+///
+/// upstream: main.c:1920 `SIGACTMASK(SIGHUP, sig_int)`; clientserver.c:1434
+/// `start_daemon()` calls `load_config(0)` per connection.
+///
 /// # Errors
 ///
 /// Returns a `DaemonError` if option parsing, config loading, capability
@@ -583,6 +599,12 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     if daemon_uid.is_some() || daemon_gid.is_some() || daemon_chroot.is_some() {
         return Err(async_privileged_module_error());
     }
+    if daemon_is_root() {
+        return Err(async_root_daemon_error());
+    }
+    // Sessions run inside this process, so none of them may confine it.
+    #[cfg(unix)]
+    mark_daemon_parent();
 
     let log_sink = if let Some(path) = log_file {
         Some(open_log_sink(&path, brand)?)
@@ -736,6 +758,21 @@ fn async_privileged_module_error() -> DaemonError {
         rsync_error!(
             FEATURE_UNAVAILABLE_EXIT_CODE,
             "async-daemon does not support privileged (uid/gid/chroot) modules; \
+             use the sync daemon"
+                .to_owned()
+        )
+        .with_role(Role::Daemon),
+    )
+}
+
+#[cfg(feature = "async-daemon")]
+fn async_root_daemon_error() -> DaemonError {
+    DaemonError::new(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        rsync_error!(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            "async-daemon cannot run as root: a root daemon drops each session \
+             to nobody, which the async path would do to the daemon itself; \
              use the sync daemon"
                 .to_owned()
         )
