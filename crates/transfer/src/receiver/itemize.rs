@@ -830,7 +830,7 @@ impl ReceiverContext {
             let Some(leader) = leaders.get(&gnum).copied() else {
                 continue;
             };
-            let leader_name = leader.name();
+            let leader_name = leader.name_bytes();
 
             // upstream: hlink.c:215-227 maybe_hard_link - an up-to-date follower
             // (destination already shares the leader's dev/ino) itemizes with
@@ -853,7 +853,7 @@ impl ReceiverContext {
                 | crate::generator::ItemFlags::ITEM_IS_NEW) as u16;
             writer.write_all(&iflags.to_le_bytes())?;
             // upstream: generator.c:591 write_vstring(sock_f_out, xname, len)
-            protocol::write_vstring(writer, leader_name.as_bytes())?;
+            protocol::write_vstring(writer, &leader_name)?;
             emitted += 1;
         }
 

@@ -302,14 +302,14 @@ impl ReceiverContext {
                 }
                 if has_failed_dirs {
                     let fd = failed_dirs.expect("failed_dirs is Some when has_failed_dirs");
-                    if let Some(failed_parent) = fd.failed_ancestor(e.name()) {
+                    if let Some(failed_parent) = fd.failed_ancestor(e.path()) {
                         if verbose_client {
                             info_log!(
                                 Skip,
                                 1,
                                 "skipping {} (parent {} failed)",
-                                e.name(),
-                                failed_parent
+                                e.path().display(),
+                                failed_parent.display()
                             );
                         }
                         stats.files_skipped += 1;

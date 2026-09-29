@@ -1074,3 +1074,36 @@ fn phase_done_read_drains_pending_follower_echoes() {
         "every echo plus the trailing NDX_DONE must be consumed from the stream",
     );
 }
+
+/// A non-UTF-8 leader name must reach the xname as its raw bytes. Upstream
+/// writes `f_name()` verbatim (`generator.c:591`); an empty xname tells the
+/// peer the follower is already linked, so a lossy name drops the `=> leader`
+/// half of the row.
+#[cfg(unix)]
+#[test]
+fn server_push_leader_xname_keeps_non_utf8_bytes() {
+    use crate::generator::ItemFlags;
+    use protocol::codec::{NdxCodec, create_ndx_codec};
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut leader = FileEntry::new_file(OsStr::from_bytes(b"na\xefve").into(), 14, 0o644);
+    leader.set_hlinked(true);
+    leader.set_hlink_first(true);
+    leader.set_hardlink_idx(7);
+    let ctx = receiver_with_hardlinks(vec![leader, make_hlink_follower("f.txt", 14, 7)]);
+
+    let dest = tempfile::TempDir::new().unwrap();
+    let mut buf: Vec<u8> = Vec::new();
+    let mut ndx_codec = create_ndx_codec(32);
+    call_emit_follower_itemize(&ctx, dest.path(), &mut buf, &mut ndx_codec)
+        .expect("server-mode follower itemize must serialize");
+
+    let mut cur = std::io::Cursor::new(buf);
+    create_ndx_codec(32)
+        .read_ndx(&mut cur)
+        .expect("NDX must decode");
+    let iflags = ItemFlags::read(&mut cur, 32).expect("iflags must decode");
+    let (_ft, xname, _n) = iflags.read_trailing(&mut cur).expect("xname must decode");
+    assert_eq!(xname.as_deref(), Some(b"na\xefve".as_ref()));
+}

@@ -176,6 +176,7 @@ fn path_contains_dot_dot_double_dotdot() {
 
 mod failed_directories_tests {
     use super::FailedDirectories;
+    use std::path::Path;
 
     #[test]
     fn failed_directories_empty_has_no_ancestors() {
@@ -196,7 +197,7 @@ mod failed_directories_tests {
         failed.mark_failed("foo/bar");
         assert_eq!(
             failed.failed_ancestor("foo/bar/baz/file.txt"),
-            Some("foo/bar")
+            Some(Path::new("foo/bar"))
         );
     }
 
@@ -250,7 +251,10 @@ mod failed_directories_tests {
         failed.mark_failed("a/b/c");
 
         // Nested marks all match; the walk reports the nearest one.
-        assert_eq!(failed.failed_ancestor("a/b/c/d/file.txt"), Some("a/b/c"));
+        assert_eq!(
+            failed.failed_ancestor("a/b/c/d/file.txt"),
+            Some(Path::new("a/b/c"))
+        );
     }
 
     #[test]
@@ -269,8 +273,14 @@ mod failed_directories_tests {
         failed.mark_failed("a/b");
         failed.mark_failed("x/y");
 
-        assert_eq!(failed.failed_ancestor("a/b/c/file.txt"), Some("a/b"));
-        assert_eq!(failed.failed_ancestor("x/y/z/file.txt"), Some("x/y"));
+        assert_eq!(
+            failed.failed_ancestor("a/b/c/file.txt"),
+            Some(Path::new("a/b"))
+        );
+        assert_eq!(
+            failed.failed_ancestor("x/y/z/file.txt"),
+            Some(Path::new("x/y"))
+        );
         assert!(failed.failed_ancestor("a/c/file.txt").is_none());
         assert!(failed.failed_ancestor("x/z/file.txt").is_none());
     }
@@ -288,7 +298,7 @@ mod failed_directories_tests {
         let mut failed = FailedDirectories::new();
         failed.mark_failed("file");
 
-        assert_eq!(failed.failed_ancestor("file"), Some("file"));
+        assert_eq!(failed.failed_ancestor("file"), Some(Path::new("file")));
         assert!(failed.failed_ancestor("other").is_none());
     }
 }

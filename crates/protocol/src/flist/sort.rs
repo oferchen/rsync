@@ -468,8 +468,9 @@ pub fn flist_clean(
 
         // upstream: flist.c:3293-3304 - a duplicate is either the same name as
         // the previous kept entry, or (for a directory) an earlier same-named
-        // non-dir found via flist_find().
-        let dup = if file_list[i].name() == file_list[prev].name() {
+        // non-dir found via flist_find(). Names compare as raw bytes
+        // (`f_name_cmp()`), so distinct non-UTF-8 names never collide.
+        let dup = if file_list[i].name_bytes() == file_list[prev].name_bytes() {
             Some(prev)
         } else if file_list[i].is_dir() {
             find_regfile_dup(&file_list, i)
@@ -828,6 +829,24 @@ mod tests {
             .map(|e| (e.name(), e.is_dir()))
             .collect();
         assert_eq!(survivors, vec![("item!", false), ("item", true)]);
+    }
+
+    /// Two distinct names that are not valid UTF-8 must both survive the clean
+    /// pass. Upstream compares raw name bytes (flist.c:3295 `f_name_cmp()`), so
+    /// `f\xef` and `g\xef` are different entries; a lossy comparison that maps
+    /// every non-UTF-8 name to the same string would tombstone the second one
+    /// and the receiver would silently skip it with exit code 0.
+    #[cfg(unix)]
+    #[test]
+    fn flist_clean_keeps_distinct_non_utf8_names() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let named = |bytes: &[u8]| FileEntry::new_file(OsStr::from_bytes(bytes).into(), 0, 0o644);
+        let entries = vec![named(b"f\xef"), named(b"g\xef"), make_file("ok")];
+        let (cleaned, stats) = flist_clean(entries, false, false);
+        assert_eq!(stats.duplicates_removed, 0);
+        assert!(cleaned.iter().all(FileEntry::is_active));
+        assert_eq!(&*cleaned[1].name_bytes(), b"g\xef");
     }
 
     #[test]
