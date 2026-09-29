@@ -93,9 +93,9 @@ workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # Default to the current upstream stable release. Every CI caller passes
 # UPSTREAM_VERSION explicitly, so this default is what a bare local invocation
 # gets - and 3.4.4 silently routed those runs into the 57-cell `*.test` shell
-# suite instead of the 345-cell Python suite the committed expect-manifests are
-# written against, which reads as a passing run over a fifth of the coverage.
-upstream_version="${UPSTREAM_VERSION:-3.5.0}"
+# suite instead of the 360-cell Python suite the committed expect-manifests are
+# written against, which reads as a passing run over a sixth of the coverage.
+upstream_version="${UPSTREAM_VERSION:-3.5.1}"
 # Git-ref mode is selected by an explicit UPSTREAM_REF, or by the sentinel
 # UPSTREAM_VERSION=master. Default (empty UPSTREAM_REF, numeric version) keeps
 # the release-tarball path untouched.
@@ -122,7 +122,7 @@ fi
 # runtests.py. The suite is invoked from inside the extracted upstream tree
 # (`cd "$upstream_src_dir"` below) and the individual test scripts cd further
 # still, so a relative path handed across that boundary resolves against the
-# wrong directory. MEASURED: `--expect-result tools/ci/upstream-3.5.0-expect.
+# wrong directory. MEASURED: `--expect-result tools/ci/upstream-3.5.1-expect.
 # root.txt` reached runtests.py verbatim and died with FileNotFoundError -
 # after this script had already stat'd the very same file successfully from
 # the workspace root, which is why the validation block above it could not

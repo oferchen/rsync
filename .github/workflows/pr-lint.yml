@@ -1,0 +1,95 @@
+name: PR lint
+
+# Fast, cargo-free guards over the workflows, the CI scripts and the upstream
+# citations, run as the steps of ONE job so a pull request takes one runner
+# slot for them instead of three. Each step is independent and runs even when
+# an earlier one fails, so a single run reports every broken guard.
+#
+# 1. Bin build coverage. No CI test cell may reach the oc-rsync binary resolver
+#    without building the binary first. `tools/ci/check_bin_build_coverage.py`
+#    expands every workflow matrix and replays each job's steps in order, so a
+#    package-scoped cell that would report green having spawned nothing cannot
+#    come back through a new matrix row, an un-ignored test or a widened `-E`
+#    filter.
+#
+# 2. `--locked` on every gated cargo invocation (build, check, clippy, run,
+#    test, nextest run) in `.github/workflows/` and `tools/ci/`, plus the shape
+#    of the Cargo.lock auto-sync workflow (`cargo-lockfile-sync.yml`). The full
+#    scan covers every file on every run, so it is a strict superset of a gate
+#    that inspects only the workflow files a pull request changed.
+#
+# 3. Citation drift. `// upstream: <file>.c:<line>` comments must keep pointing
+#    at the pinned upstream rsync source. `tools/ci/citation_drift_audit.py`
+#    locates a distinctive quoted C string from each comment and flags
+#    citations whose cited line is far from it. RATCHET, NOT A HARD GATE:
+#    `--ratchet` fails only when a crate's count rises above
+#    tools/ci/citation_drift_baseline.json, so new drift is caught while the
+#    standing false positives cost nothing. Citations written as bullets under
+#    a `/// # Upstream Reference` heading are REPORTED in the step summary with
+#    their own count, not gated, so an empty report cannot be mistaken for a
+#    clean one.
+#
+# No cargo and no build lock. The only network access is the cached,
+# checksum-verified upstream tarball for the citation audit.
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-lint-${{ github.ref }}${{ github.ref == 'refs/heads/master' && format('-{0}', github.sha) || '' }}
+  # Superseded pull request pushes cancel; each master commit gets its own
+  # group, so every merge keeps a completed run.
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: PR lint (workflows, --locked, citations)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Bin build coverage
+        if: ${{ !cancelled() }}
+        run: python3 tools/ci/check_bin_build_coverage.py --verbose
+
+      - name: Self-test check_bin_build_coverage.py
+        if: ${{ !cancelled() }}
+        run: bash tools/ci/tests/test_check_bin_build_coverage.sh
+
+      - name: Gate --locked on cargo invocations
+        if: ${{ !cancelled() }}
+        run: bash tools/ci/check_locked_flags.sh
+
+      - name: Self-test check_locked_flags.sh
+        if: ${{ !cancelled() }}
+        run: bash tools/ci/tests/test_check_locked_flags.sh
+
+      - name: Install PyYAML for the workflow-shape gate
+        if: ${{ !cancelled() }}
+        run: python3 -m pip install --quiet 'pyyaml>=6'
+
+      - name: Check the Cargo.lock auto-sync workflow shape
+        if: ${{ !cancelled() }}
+        run: bash tools/ci/check_cargo_lockfile_sync.sh
+
+      - name: Self-test check_cargo_lockfile_sync.sh
+        if: ${{ !cancelled() }}
+        run: bash tools/ci/tests/test_check_cargo_lockfile_sync.sh
+
+      - name: Fetch upstream rsync 3.5.1
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/fetch-upstream-rsync
+        with:
+          version: '3.5.1'
+          extract-dir: target/interop/upstream-src
+
+      - name: Audit upstream citations against the baseline
+        if: ${{ !cancelled() }}
+        run: python3 tools/ci/citation_drift_audit.py --ratchet

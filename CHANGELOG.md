@@ -12,10 +12,10 @@ oc-rsync is wire-compatible with upstream rsync 3.5.0 and the 3.4.x series
 
 This cycle moves the reference implementation to upstream rsync 3.5.0. It adopts
 the 3.5.0 option and directive surface, works through the path-confinement and
-daemon CVE families, and gates every pull request on the 3.5.0 test suite. The
+daemon CVE families, and gates every pull request on upstream's test suite. The
 wire protocol is unchanged at 32. It also starts the move to rsync 3.5.1: the
-3.5.1 test suite runs on master and the first 3.5.1 fixes are mirrored. One
-entry per change; see the linked PRs for detail.
+required test-suite gate now runs the 3.5.1 corpus, and the first 3.5.1 fixes
+are mirrored. One entry per change; see the linked PRs for detail.
 
 ### Security
 
@@ -118,6 +118,7 @@ entry per change; see the linked PRs for detail.
 - The upstream reference is rsync 3.5.0 (#7305, #7321, #7331, #7607)
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down instead of refused (#7916)
 - The required upstream-testsuite gate runs the 3.5.0 Python corpus on Linux (pipe and TCP, root and non-root); macOS legs run on every PR (#7387, #7339, #7405, #7408, #7392, #7391)
+- The required upstream-testsuite gate moves to the 3.5.1 corpus, in its own workflow with its own badge and the same check names; the 3.5.0 testsuite legs, workflow, manifests and badge are retired (3.5.0 stays in the interop matrix)
 - rsync 3.5.0 joins the interop matrix as a gating peer (#7290, #7337)
 - Release benchmarks compare against both 3.4.4 and 3.5.0 and report peak RSS for every mode (#7595)
 - `daemon-seccomp` is reachable from the `oc-rsync` binary; it stays opt-in (#7589)
