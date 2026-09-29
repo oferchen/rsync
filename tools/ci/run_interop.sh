@@ -71,7 +71,7 @@ interop_log_dir="${workspace_root}/target/interop/logs"
 # deliberately not gated here - a wire-compatible peer with different local
 # path-resolution rules should pass interop and fail testsuite cells, and
 # conflating the two would hide which one broke.
-versions=(3.0.9 3.1.3 3.4.4 3.5.0)
+versions=(3.0.9 3.1.3 3.4.4 3.5.0 3.5.1)
 # Versions we only build and cache (no scenarios wired up yet). 2.6.9 is the
 # protocol-28 cutoff peer (advertises protocol 29, accepts down to 28); the
 # binary is needed so follow-up tasks can wire push/pull cells against it.
@@ -82,7 +82,7 @@ extra_build_versions=(2.6.9)
 # pool coverage; 3.4.4 and 3.5.0 are too recent for a distro to have packaged.
 # Both the primary URL builder and the generic fallback consult this list, so
 # the "source-only" fact is stated once.
-source_only_versions=(2.6.9 3.4.4 3.5.0)
+source_only_versions=(2.6.9 3.4.4 3.5.0 3.5.1)
 
 version_is_source_only() {
   local version=$1 candidate
@@ -102,7 +102,7 @@ version_is_source_only() {
 # --protocol=28..31 runs and move the known-failure baseline. The one leg that
 # genuinely needs a protocol floor (xattrs) carries its own `eff_proto >= 30`
 # plus capability check at the point of use.
-extended_matrix_versions=(3.4.4 3.5.0)
+extended_matrix_versions=(3.4.4 3.5.0 3.5.1)
 
 version_has_extended_matrix() {
   local version=$1 candidate
@@ -461,7 +461,17 @@ build_upstream_from_source() {
   # That binary still compiles and prints its version, so without this the
   # harness gets a silently broken oracle. This suppresses a false positive
   # against a 2013 allocation idiom, not a defect in rsync's transfer logic.
-  local legacy_cflags="$extra_cflags -std=gnu89 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+  #
+  # That need is tied to the release, not to which dialect compiles. A
+  # compiler old enough to build a pre-3.2 release in its default dialect
+  # (gcc 13 on ubuntu-24.04) never reaches the fallback, and the fortified
+  # binary then aborts on -F (dir-merge) cells with SIGABRT. So pre-3.2
+  # releases get fortify off on every attempt.
+  local fortify_off="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+  if [[ "$(printf '%s\n' "$version" 3.2 | sort -V | head -n1)" != 3.2 ]]; then
+    extra_cflags="$extra_cflags $fortify_off"
+  fi
+  local legacy_cflags="$extra_cflags -std=gnu89 $fortify_off"
   if ! try_upstream_build "$build_log" "$extra_cflags" "${configure_args[@]}" \
     && ! try_upstream_build "$build_log" "$legacy_cflags" "${configure_args[@]}"; then
     echo "Upstream rsync ${version} build failed; see ${build_log}" >&2
@@ -490,20 +500,36 @@ build_upstream_from_source() {
   popd >/dev/null
 }
 
+# Identifies how an upstream install was produced. CI restores upstream
+# installs through a key prefix, so a binary built by an older recipe can be
+# restored; an install whose stamp differs is rebuilt instead of reused.
+upstream_build_recipe() {
+  declare -f build_upstream_from_source | sha256sum | cut -c1-16
+}
+
 ensure_upstream_build() {
   local version=$1
   local install_dir="${upstream_install_root}/${version}"
   local binary="${install_dir}/bin/rsync"
-  local arch="${DEB_ARCH:-$(detect_deb_arch)}"
+  local stamp="${install_dir}/.oc-build-recipe"
+  local recipe
+  recipe=$(upstream_build_recipe)
 
-  if [[ -x "$binary" ]]; then
+  if [[ -x "$binary" && "$(cat "$stamp" 2>/dev/null)" == "$recipe" ]]; then
     if "$binary" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
       return
     fi
-    rm -rf "$install_dir"
   fi
-
+  rm -rf "$install_dir"
   mkdir -p "$install_dir"
+  install_upstream "$version" "$install_dir"
+  printf '%s\n' "$recipe" >"$stamp"
+}
+
+install_upstream() {
+  local version=$1
+  local install_dir=$2
+  local arch="${DEB_ARCH:-$(detect_deb_arch)}"
 
   local url
   url=$(build_version_url "$version" "$arch")
@@ -1243,8 +1269,11 @@ comp_run_scenario() {
     update)
       rm -rf "$ddir"/*; mkdir -p "$ddir"
       cp -r "$sdir"/* "$ddir"/
-      # Set dest file timestamps to future (newer than source)
-      find "$ddir" -type f -exec touch -t 203001010000 {} +
+      # Set dest file timestamps to future (newer than source). touch -t reads
+      # its argument in local time while the check below compares against a
+      # UTC epoch, so pin the zone: east of UTC the stamp otherwise lands
+      # before 2030-01-01 00:00 UTC and the check fails.
+      find "$ddir" -type f -exec env TZ=UTC0 touch -t 203001010000 {} +
       ;;
     checksum-skip)
       rm -rf "$ddir"/*; mkdir -p "$ddir"
@@ -12363,6 +12392,24 @@ else
   echo "Skipping standalone tests (no upstream binary available)"
 fi
 
+# Oracle cells: each transfer is compared with the upstream->upstream run of
+# the same release on exit code, tree, itemize and core stats, not only on the
+# tree. Known divergences are listed with their owner task in
+# tools/ci/interop_oracle_expect.txt; an unlisted failure or an unexpected pass
+# fails the run.
+oracle_args=()
+for version in "${versions[@]}" ${extra_build_versions[@]+"${extra_build_versions[@]}"}; do
+  if [[ -x "${upstream_install_root}/${version}/bin/rsync" ]]; then
+    oracle_args+=(--upstream "${version}=${upstream_install_root}/${version}/bin/rsync")
+  fi
+done
+echo ""
+echo "=== Oracle cells ($(( ${#oracle_args[@]} / 2 )) releases) ==="
+if ! python3 "$(dirname "${BASH_SOURCE[0]}")/interop_oracle.py" \
+    --oc "$oc_binary" "${oracle_args[@]}"; then
+  failed+=("oracle")
+fi
+
 # Final report
 if (( ${#failed[@]} > 0 )); then
   echo ""
@@ -12371,4 +12418,4 @@ if (( ${#failed[@]} > 0 )); then
 fi
 
 echo ""
-echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-32 + standalone)."
+echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-32 + standalone + oracle)."

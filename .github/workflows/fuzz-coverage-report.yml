@@ -41,7 +41,7 @@ permissions:
   contents: read
 
 env:
-  APT_PACKAGES: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev lcov
+  APT_PACKAGES: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev lcov libidn2-dev
   CARGO_TERM_COLOR: always
   FUZZ_DURATION: ${{ github.event.inputs.duration || '300' }}
 
