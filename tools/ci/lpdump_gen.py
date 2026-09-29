@@ -3,7 +3,8 @@
 
 The probe calls lp_load() and prints every global and module parameter through
 the lp_*() accessors daemon-parm.h generates, so its output is exactly what an
-upstream daemon reads for each module. tools/ci/rsyncd_conf_corpus.py uses it to
+upstream daemon reads for each module. With `-g` it loads the way a listening
+daemon does at startup, lp_load(file, 1), and prints only the globals. tools/ci/rsyncd_conf_corpus.py uses it to
 regenerate the corpus dumps.
 
 Build it inside a configured and built rsync 3.5.1 tree:
@@ -32,11 +33,12 @@ def emit(lst, arg):
 out.append('static void dump_globals(void) {'); emit(glob,''); emit(loc,'-1'); out.append('}')
 out.append('static void dump_module(int i) {'); emit(loc,'i'); out.append('}')
 out.append('''int main(int argc, char *argv[]) {
-  int i;
-  if (argc != 2) { fprintf(stderr, "usage: lpdump CONF\\n"); return 2; }
-  if (!lp_load(argv[1], 0)) { printf("load=FAIL\\n"); return 1; }
+  int i, globals_only = argc == 3 && strcmp(argv[1], "-g") == 0;
+  if (argc != 2 && !globals_only) { fprintf(stderr, "usage: lpdump [-g] CONF\\n"); return 2; }
+  if (!lp_load(argv[argc - 1], globals_only)) { printf("load=FAIL\\n"); return 1; }
   printf("load=OK\\n[global]\\n");
   dump_globals();
+  if (globals_only) return 0;
   for (i = 0; i < lp_num_modules(); i++) { printf("[module %d]\\n", i); dump_module(i); }
   return 0;
 }''')
