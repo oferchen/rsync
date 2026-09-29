@@ -492,12 +492,20 @@ mod imp {
         /// `LeafPolicy::FollowConfined` wants and refuses absolute targets on
         /// the kernel's behalf.
         ///
-        /// Returns `Ok(Some(file))` on success, `Ok(None)` when the kernel
-        /// lacks `openat2` (`ENOSYS`, cached by [`openat2_supported`]) so the
-        /// caller falls back to the portable walk, and `Err(_)` for every
-        /// other failure - including the deliberate confinement refusals
-        /// (`EXDEV` for an escape, `ELOOP` for a magic link or a refused leaf
-        /// symlink) the caller must surface.
+        /// Returns `Ok(Some(file))` on success, `Ok(None)` when the caller
+        /// must fall back to the portable walk, and `Err(_)` for every other
+        /// failure - including the deliberate confinement refusals (`EXDEV`
+        /// for an escape, `ELOOP` for a magic link or a refused leaf symlink)
+        /// the caller must surface.
+        ///
+        /// The walk takes over when the kernel lacks `openat2` (`ENOSYS`,
+        /// cached by [`openat2_supported`]) and when it returns `EAGAIN`: a
+        /// scoped lookup reports that when a rename or mount anywhere on the
+        /// system races the resolution of a `..` in a followed symlink
+        /// (openat2(2)). That is not a verdict on the path, and on a busy host
+        /// it failed in-module `../` targets intermittently. The walk is
+        /// upstream's own resolver (`syscall.c:3032-3115`); it pops a pinned
+        /// parent descriptor for `..`, so it has no such race.
         pub(super) fn openat2_confined(
             root_fd: BorrowedFd<'_>,
             relative: &Path,
@@ -578,7 +586,7 @@ mod imp {
             }
 
             let err = io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::ENOSYS) {
+            if matches!(err.raw_os_error(), Some(libc::ENOSYS | libc::EAGAIN)) {
                 return Ok(None);
             }
             Err(err)
