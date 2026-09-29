@@ -523,16 +523,19 @@ fn warn_once_on_fd_exhaustion(err: &io::Error) {
 /// The resolution itself, with no diagnostics attached.
 fn openat_dir_strict(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<OwnedFd> {
     #[cfg(target_os = "linux")]
-    {
-        if openat2_supported()
-            && let Some(fd) = linux::openat2_beneath(
-                parent_fd,
-                child_name,
-                libc::RESOLVE_BENEATH | libc::RESOLVE_NO_MAGICLINKS,
-            )?
-        {
+    if openat2_supported() {
+        if let Some(fd) = linux::openat2_beneath(
+            parent_fd,
+            child_name,
+            libc::RESOLVE_BENEATH | libc::RESOLVE_NO_MAGICLINKS,
+        )? {
             return Ok(fd);
         }
+        // The kernel declined to vouch for a `..` in a followed symlink
+        // (`EAGAIN`, see `openat2_beneath`). Resolve with the portable walk,
+        // which follows the same in-tree symlinks, rather than the
+        // `O_NOFOLLOW` fallback below, which would refuse them.
+        return walk_beneath(parent_fd, Path::new(child_name));
     }
     // Suppress the unused-import warning on non-Linux Unix targets.
     let _ = openat2_supported;
@@ -563,11 +566,20 @@ mod linux {
     /// Issue an `openat2(2)` for `child_name` beneath `parent_fd` with
     /// `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`.
     ///
-    /// Returns `Ok(Some(fd))` on success, `Ok(None)` only if the kernel
-    /// reports `ENOSYS` (which the `openat2_supported` cache should
-    /// already have ruled out, but we defend against the race where the
-    /// probe ran in a seccomp profile that has since been relaxed),
-    /// and `Err` for every other failure - including the deliberate
+    /// Returns `Ok(Some(fd))` on success and `Ok(None)` when the kernel
+    /// cannot answer, so the caller resolves with a userspace walk instead:
+    ///
+    /// - `ENOSYS`, which the `openat2_supported` cache should already have
+    ///   ruled out, but we defend against the race where the probe ran in a
+    ///   seccomp profile that has since been relaxed.
+    /// - `EAGAIN`, which a scoped lookup returns when a rename or mount
+    ///   anywhere on the system races the resolution of a `..` (see
+    ///   openat2(2)). It is not a verdict on the path, and a busy host turns
+    ///   it into an intermittent failure. Upstream never sees it: its
+    ///   resolver is the per-component walk (`syscall.c:3032-3115`), which
+    ///   pops a pinned parent descriptor for `..` and so has no race to report.
+    ///
+    /// `Err` covers every other failure - including the deliberate
     /// strict-resolution refusals (`ELOOP`, `EXDEV`).
     pub(super) fn openat2_beneath(
         parent_fd: BorrowedFd<'_>,
@@ -634,7 +646,7 @@ mod linux {
         }
 
         let err = io::Error::last_os_error();
-        if err.raw_os_error() == Some(libc::ENOSYS) {
+        if matches!(err.raw_os_error(), Some(libc::ENOSYS | libc::EAGAIN)) {
             return Ok(None);
         }
         Err(err)
@@ -1012,17 +1024,29 @@ impl DirSandbox {
     /// - `rsync-3.5.1/syscall.c:3107-3118` `ds_walk_path()`
     #[cfg(unix)]
     pub fn open_subdir_confined(&self, relative: &Path) -> io::Result<OwnedFd> {
-        let exclude = NoExclude;
-        let mut walk = ConfinedWalk {
-            anchor: self.current_dirfd().try_clone_to_owned()?,
-            pushed: Vec::new(),
-            abspath: PathBuf::new(),
-            exclude: &exclude,
-            hops: SECURE_OPEN_MAXSYMLINKS,
-        };
-        walk.walk_relative(relative)?;
-        Ok(walk.into_leaf())
+        walk_beneath(self.current_dirfd(), relative)
     }
+}
+
+/// Walk `relative` beneath `anchor` with the portable resolver, following
+/// in-tree symlinks and refusing escapes; see
+/// [`DirSandbox::open_subdir_confined`] for the admissions and refusals.
+///
+/// # Upstream Reference
+///
+/// - `syscall.c:3107-3115` `ds_walk_path()`
+#[cfg(unix)]
+fn walk_beneath(anchor: BorrowedFd<'_>, relative: &Path) -> io::Result<OwnedFd> {
+    let exclude = NoExclude;
+    let mut walk = ConfinedWalk {
+        anchor: anchor.try_clone_to_owned()?,
+        pushed: Vec::new(),
+        abspath: PathBuf::new(),
+        exclude: &exclude,
+        hops: SECURE_OPEN_MAXSYMLINKS,
+    };
+    walk.walk_relative(relative)?;
+    Ok(walk.into_leaf())
 }
 
 /// Open the directory `tail` names beneath an already-open `anchor`, refusing
