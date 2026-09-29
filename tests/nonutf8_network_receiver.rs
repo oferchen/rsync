@@ -1,9 +1,12 @@
 //! A network receiver must keep names that are not valid UTF-8 byte-exact.
 //!
 //! Upstream never decodes a file name: `flist.c:3295` compares raw bytes in
-//! `flist_sort_and_clean()`. oc's receiver compared lossy names in that
-//! duplicate pass, so distinct non-UTF-8 names looked equal and all but one
-//! were dropped with exit code 0.
+//! `flist_sort_and_clean()` and `receiver.c:322 get_tmpname()` copies raw
+//! bytes into the temp path. oc lost such names two ways: the receiver's
+//! duplicate pass compared lossy names, so distinct non-UTF-8 names looked
+//! equal and all but one were dropped with exit code 0; and the temp name was
+//! built through a lossy string, so a file under a non-UTF-8 directory was
+//! created in a directory that does not exist (exit code 3).
 //!
 //! Both directions run the receiver in oc: a PUSH puts it in the `--server`
 //! process, a PULL in the local client.
@@ -19,11 +22,12 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-/// `(relative path bytes, contents)`. Two files differ only before a shared
-/// invalid byte.
+/// `(relative path bytes, contents)`. Two top-level files differ only before a
+/// shared invalid byte, and one file sits under a non-UTF-8 directory.
 const FILES: &[(&[u8], &str)] = &[
     (b"f\xef", "one\n"),
     (b"g\xef", "two\n"),
+    (b"na\xefve/a.txt", "nested\n"),
     (b"ok", "plain\n"),
 ];
 

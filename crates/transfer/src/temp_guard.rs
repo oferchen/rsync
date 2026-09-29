@@ -187,23 +187,22 @@ const MAXPATHLEN: usize = 4096;
 /// A path template with a `.XXXXXX` suffix that must be filled with random chars
 /// before use. Use [`open_tmpfile`] to atomically create the file.
 fn get_tmpname(dest: &Path, temp_dir: Option<&Path>) -> io::Result<PathBuf> {
+    // upstream: receiver.c:322 get_tmpname() copies the raw bytes of `fname`,
+    // so a name that is not valid UTF-8 keeps its exact bytes.
     let file_name = dest
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "rsync".to_owned());
+        .map_or(&b"rsync"[..], std::ffi::OsStr::as_encoded_bytes);
 
     // upstream: receiver.c:get_tmpname() - ".filename.XXXXXX" convention.
     // No leading dot when using --temp-dir. Dotfiles consume original dot.
-    let temp_name = if temp_dir.is_some() {
-        format!("{file_name}.XXXXXX")
+    let mut temp_name = Vec::with_capacity(file_name.len() + 1 + TMPNAME_SUFFIX_LEN);
+    if temp_dir.is_some() {
+        temp_name.extend_from_slice(file_name);
     } else {
-        let name = if let Some(stripped) = file_name.strip_prefix('.') {
-            stripped
-        } else {
-            &file_name
-        };
-        format!(".{name}.XXXXXX")
-    };
+        temp_name.push(b'.');
+        temp_name.extend_from_slice(file_name.strip_prefix(b".").unwrap_or(file_name));
+    }
+    temp_name.extend_from_slice(b".XXXXXX");
 
     let dir = temp_dir.unwrap_or_else(|| dest.parent().unwrap_or(Path::new(".")));
 
@@ -221,35 +220,49 @@ fn get_tmpname(dest: &Path, temp_dir: Option<&Path>) -> io::Result<PathBuf> {
         .saturating_sub(length + TMPNAME_SUFFIX_LEN)
         .min(NAME_MAX - 1 - TMPNAME_SUFFIX_LEN);
     let max_name_len = lead + TMPNAME_SUFFIX_LEN + name_budget;
-    let truncated = if temp_name.len() > max_name_len {
-        truncate_utf8_safe(&temp_name, max_name_len)
-    } else {
-        temp_name
-    };
+    if temp_name.len() > max_name_len {
+        truncate_tmpname(&mut temp_name, max_name_len);
+    }
 
-    Ok(dir.join(truncated))
+    Ok(dir.join(os_string_from_bytes(temp_name)))
 }
 
-/// Truncates a UTF-8 string to at most `max_len` bytes without splitting
-/// multi-byte sequences, preserving the `.XXXXXX` suffix.
+/// Truncates a `<name>.XXXXXX` byte string to at most `max_len` bytes,
+/// preserving the `.XXXXXX` suffix.
 ///
-/// Mirrors upstream rsync's multi-byte truncation safety in `get_tmpname()`.
-fn truncate_utf8_safe(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        return s.to_owned();
+/// upstream: receiver.c:367-376 - when the first byte cut off has its high bit
+/// set, trailing high-bit bytes are trimmed too so a multi-byte sequence is
+/// never split; then one trailing dot is dropped before the suffix's dot.
+fn truncate_tmpname(name: &mut Vec<u8>, max_len: usize) {
+    let suffix_at = name.len() - TMPNAME_SUFFIX_LEN;
+    let mut end = (max_len - TMPNAME_SUFFIX_LEN).min(suffix_at);
+    if name[end] & 0x80 != 0 {
+        while end > 0 && name[end - 1] & 0x80 != 0 {
+            end -= 1;
+        }
     }
-
-    let suffix = &s[s.len() - TMPNAME_SUFFIX_LEN..];
-    let prefix_budget = max_len - TMPNAME_SUFFIX_LEN;
-    let prefix = &s[..s.len() - TMPNAME_SUFFIX_LEN];
-    let mut safe_end = prefix_budget.min(prefix.len());
-    while safe_end > 0 && !prefix.is_char_boundary(safe_end) {
-        safe_end -= 1;
+    if end > 0 && name[end - 1] == b'.' {
+        end -= 1;
     }
+    name.drain(end..suffix_at);
+}
 
-    let trimmed = prefix[..safe_end].trim_end_matches('.');
+/// Rebuilds an `OsString` from bytes taken from an `OsStr`.
+#[cfg(unix)]
+fn os_string_from_bytes(bytes: Vec<u8>) -> std::ffi::OsString {
+    use std::os::unix::ffi::OsStringExt;
+    std::ffi::OsString::from_vec(bytes)
+}
 
-    format!("{trimmed}{suffix}")
+/// Rebuilds an `OsString` from bytes taken from an `OsStr`.
+///
+/// Windows names are UTF-16, whose encoded form is UTF-8 for every name that
+/// is valid Unicode; only an unpaired surrogate is replaced.
+#[cfg(not(unix))]
+fn os_string_from_bytes(bytes: Vec<u8>) -> std::ffi::OsString {
+    String::from_utf8(bytes)
+        .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
+        .into()
 }
 
 /// Fills the `XXXXXX` placeholder in a path template with random characters
@@ -307,11 +320,9 @@ fn open_tmpfile_inner(
     #[cfg(unix)] dest_dir: Option<&Path>,
 ) -> io::Result<(fs::File, TempFileGuard)> {
     let template = get_tmpname(dest, temp_dir)?;
-    let template_str = template.to_string_lossy().into_owned();
 
     for _ in 0..MAX_OPEN_ATTEMPTS {
-        let concrete = fill_random_suffix(&template_str);
-        let concrete_path = PathBuf::from(&concrete);
+        let concrete_path = fill_random_suffix(&template);
 
         match try_create_new(
             &concrete_path,
@@ -362,7 +373,10 @@ fn open_tmpfile_inner(
 
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
-        format!("failed to create temp file after {MAX_OPEN_ATTEMPTS} attempts: {template_str}"),
+        format!(
+            "failed to create temp file after {MAX_OPEN_ATTEMPTS} attempts: {}",
+            template.display()
+        ),
     ))
 }
 
@@ -431,19 +445,22 @@ fn try_create_new(
     opened
 }
 
-/// Replaces the trailing `XXXXXX` in a template string with random alphanumeric
-/// characters using `getrandom` for entropy.
-fn fill_random_suffix(template: &str) -> String {
+/// Replaces the trailing `XXXXXX` of a template's file name with random
+/// alphanumeric characters using `getrandom` for entropy.
+fn fill_random_suffix(template: &Path) -> PathBuf {
     let mut random_bytes = [0u8; 6];
     getrandom::fill(&mut random_bytes).expect("getrandom failed");
 
-    let suffix: String = random_bytes
-        .iter()
-        .map(|&b| RAND_CHARS[(b as usize) % RAND_CHARS.len()] as char)
-        .collect();
-
-    let prefix = &template[..template.len() - 6];
-    format!("{prefix}{suffix}")
+    let name = template
+        .file_name()
+        .map_or(&[][..], std::ffi::OsStr::as_encoded_bytes);
+    let mut filled = name[..name.len() - random_bytes.len()].to_vec();
+    filled.extend(
+        random_bytes
+            .iter()
+            .map(|&b| RAND_CHARS[usize::from(b) % RAND_CHARS.len()]),
+    );
+    template.with_file_name(os_string_from_bytes(filled))
 }
 
 /// SEC-1.r sandbox anchor carried by [`TempFileGuard`] so the Drop unlink
@@ -1018,10 +1035,44 @@ mod tests {
         assert!(name.starts_with(".rsync."), "got: {name}");
     }
 
+    /// A name that is not valid UTF-8, in a directory that is not valid UTF-8
+    /// either, must reach the temp path byte-for-byte. upstream: receiver.c:322
+    /// get_tmpname() copies raw bytes; a lossy conversion turns `\xef` into
+    /// U+FFFD, so the create targets a directory that does not exist and the
+    /// whole subtree is lost.
+    #[cfg(unix)]
+    #[test]
+    fn tmpname_keeps_non_utf8_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let dest = Path::new(std::ffi::OsStr::from_bytes(b"/d/na\xefve/f\xef"));
+        let template = get_tmpname(dest, None).unwrap();
+        assert_eq!(
+            template.as_os_str().as_bytes(),
+            b"/d/na\xefve/.f\xef.XXXXXX"
+        );
+    }
+
+    /// End-to-end through the create: the temp file lands inside the real
+    /// non-UTF-8 parent directory.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn open_tmpfile_in_non_utf8_directory() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempdir().expect("create temp dir");
+        let parent = dir.path().join(std::ffi::OsStr::from_bytes(b"na\xefve"));
+        fs::create_dir(&parent).expect("non-UTF-8 dir");
+        let dest = parent.join(std::ffi::OsStr::from_bytes(b"f\xef"));
+        let (_file, guard) = open_tmpfile(&dest, None).expect("temp file");
+        assert_eq!(guard.path().parent(), Some(parent.as_path()));
+        let leaf = guard.path().file_name().unwrap().as_bytes();
+        assert!(leaf.starts_with(b".f\xef."), "got {leaf:?}");
+    }
+
     #[test]
     fn fill_random_suffix_replaces_xs() {
         let template = "/path/to/.file.txt.XXXXXX";
-        let result = fill_random_suffix(template);
+        let result = fill_random_suffix(Path::new(template));
+        let result = result.to_str().unwrap();
         assert!(!result.ends_with("XXXXXX"), "Xs not replaced: {result}");
         assert_eq!(result.len(), template.len());
         assert!(result.starts_with("/path/to/.file.txt."));
@@ -1030,7 +1081,9 @@ mod tests {
     #[test]
     fn fill_random_suffix_produces_unique_names() {
         let template = "/tmp/.test.XXXXXX";
-        let names: Vec<String> = (0..10).map(|_| fill_random_suffix(template)).collect();
+        let names: Vec<PathBuf> = (0..10)
+            .map(|_| fill_random_suffix(Path::new(template)))
+            .collect();
         // With 62^6 = ~56 billion possibilities, duplicates are near-impossible.
         let unique: std::collections::HashSet<_> = names.iter().collect();
         assert!(unique.len() > 1, "all names identical: {names:?}");
@@ -1040,7 +1093,8 @@ mod tests {
     fn fill_random_suffix_uses_valid_chars() {
         let template = ".test.XXXXXX";
         for _ in 0..100 {
-            let result = fill_random_suffix(template);
+            let result = fill_random_suffix(Path::new(template));
+            let result = result.to_str().unwrap();
             let suffix = &result[result.len() - 6..];
             for c in suffix.chars() {
                 assert!(
@@ -1117,14 +1171,17 @@ mod tests {
 
     #[test]
     fn truncate_short_string_unchanged() {
-        let s = ".file.XXXXXX";
-        assert_eq!(truncate_utf8_safe(s, 255), s);
+        let mut name = b".file.XXXXXX".to_vec();
+        let len = name.len();
+        truncate_tmpname(&mut name, len);
+        assert_eq!(name, b".file.XXXXXX");
     }
 
     #[test]
     fn truncate_preserves_suffix() {
-        let name = format!(".{}.XXXXXX", "a".repeat(300));
-        let result = truncate_utf8_safe(&name, 255);
+        let mut result = format!(".{}.XXXXXX", "a".repeat(300)).into_bytes();
+        truncate_tmpname(&mut result, 255);
+        let result = String::from_utf8(result).unwrap();
         assert!(result.len() <= 255);
         assert!(result.ends_with(".XXXXXX"));
         assert!(result.starts_with('.'));
@@ -1134,8 +1191,9 @@ mod tests {
     fn truncate_no_split_multibyte() {
         // é is 2 bytes (0xC3 0xA9); 130 of them is 260 bytes, exceeding NAME_MAX.
         let chars = "é".repeat(130);
-        let name = format!(".{chars}.XXXXXX");
-        let result = truncate_utf8_safe(&name, 255);
+        let mut result = format!(".{chars}.XXXXXX").into_bytes();
+        truncate_tmpname(&mut result, 255);
+        let result = String::from_utf8(result).expect("no split multi-byte sequence");
         assert!(result.len() <= 255);
         assert!(result.ends_with(".XXXXXX"));
         assert!(!result.contains('\u{FFFD}'));
