@@ -71,7 +71,7 @@ interop_log_dir="${workspace_root}/target/interop/logs"
 # deliberately not gated here - a wire-compatible peer with different local
 # path-resolution rules should pass interop and fail testsuite cells, and
 # conflating the two would hide which one broke.
-versions=(3.0.9 3.1.3 3.4.4 3.5.0)
+versions=(3.0.9 3.1.3 3.4.4 3.5.0 3.5.1)
 # Versions we only build and cache (no scenarios wired up yet). 2.6.9 is the
 # protocol-28 cutoff peer (advertises protocol 29, accepts down to 28); the
 # binary is needed so follow-up tasks can wire push/pull cells against it.
@@ -82,7 +82,7 @@ extra_build_versions=(2.6.9)
 # pool coverage; 3.4.4 and 3.5.0 are too recent for a distro to have packaged.
 # Both the primary URL builder and the generic fallback consult this list, so
 # the "source-only" fact is stated once.
-source_only_versions=(2.6.9 3.4.4 3.5.0)
+source_only_versions=(2.6.9 3.4.4 3.5.0 3.5.1)
 
 version_is_source_only() {
   local version=$1 candidate
@@ -102,7 +102,7 @@ version_is_source_only() {
 # --protocol=28..31 runs and move the known-failure baseline. The one leg that
 # genuinely needs a protocol floor (xattrs) carries its own `eff_proto >= 30`
 # plus capability check at the point of use.
-extended_matrix_versions=(3.4.4 3.5.0)
+extended_matrix_versions=(3.4.4 3.5.0 3.5.1)
 
 version_has_extended_matrix() {
   local version=$1 candidate
