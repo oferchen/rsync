@@ -15,16 +15,20 @@ enum TransferOperation {
     Send,
     /// Daemon is receiving files from the client.
     Recv,
+    /// Daemon removed an extraneous entry (upstream `log_delete()`).
+    Delete,
 }
 
 impl TransferOperation {
     /// Returns the upstream-compatible string representation.
     ///
-    /// Upstream: `log.c` -- `am_sender ? "send" : "recv"`.
+    /// Upstream: `log.c` -- `am_sender ? "send" : "recv"`, and `"del."` for
+    /// the rows `log_delete()` writes (log.c:928).
     const fn as_str(self) -> &'static str {
         match self {
             Self::Send => "send",
             Self::Recv => "recv",
+            Self::Delete => "del.",
         }
     }
 }
@@ -442,30 +446,32 @@ fn log_transfer(format: &str, ctx: &LogFormatContext<'_>, log_sink: &SharedLogSi
     log_message(log_sink, &message);
 }
 
-/// Returns the per-file transfer log format for a module, or `None` when the
-/// module writes no per-file lines.
+/// Returns the module's `logfile_format`, or `None` when the module writes no
+/// per-file lines at all.
 ///
 /// Falls back to `DEFAULT_LOG_FORMAT` when the module does not specify a
-/// custom `log_format` directive.
+/// custom `log_format` directive. An empty format is still `Some`: it silences
+/// the per-file rows but not the `deleting` lines.
 ///
 /// upstream: clientserver.c:823 takes the module format only under `transfer
-/// logging`, and log.c:871 `log_item()` writes only when `*logfile_format` is
-/// non-empty.
+/// logging`; log.c:871 `log_item()` then writes only when `*logfile_format` is
+/// non-empty, while log.c:924 `log_delete()` only needs it non-NULL.
 fn transfer_log_format(module: &ModuleDefinition) -> Option<&str> {
     module
         .transfer_logging
         .then(|| module.log_format.as_deref().unwrap_or(DEFAULT_LOG_FORMAT))
-        .filter(|format| !format.is_empty())
 }
 
-/// Returns whether the format string contains a `%i` escape.
+/// Returns whether the format string contains a `%<escape>` escape.
 ///
-/// Mirrors upstream `log_format_has(format, 'i')` (`log.c:829-846`), which
-/// controls `logfile_format_has_i` (`clientserver.c:826`): the daemon logs
-/// non-transfer per-file rows only when its `log format` carries `%i`. The scan
-/// skips the same `'`/`-`/digit modifier run `log_formatted()` skips, so `%-8i`
-/// and `%'i` are recognised and a literal `%%` is not mistaken for an escape.
-fn log_format_has_i(format: &str) -> bool {
+/// Mirrors upstream `log_format_has()` (`log.c:829-846`), which sets
+/// `logfile_format_has_i` and `logfile_format_has_o_or_i`
+/// (`clientserver.c:825-828`): the daemon logs non-transfer per-file rows only
+/// when its `log format` carries `%i`, and renders deletions with that format
+/// only when it carries `%i` or `%o`. The scan skips the same `'`/`-`/digit
+/// modifier run `log_formatted()` skips, so `%-8i` and `%'i` are recognised and
+/// a literal `%%` is not mistaken for an escape.
+fn log_format_has(format: &str, escape: char) -> bool {
     let mut chars = format.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch != '%' {
@@ -487,9 +493,8 @@ fn log_format_has_i(format: &str) -> bool {
         }
         match chars.next() {
             None => break,
-            Some('i') => return true,
-            // `%%` is a literal '%', not the start of an escape.
-            Some('%') => {}
+            Some(found) if found == escape => return true,
+            // Any other letter, including the `%` of a literal `%%`.
             Some(_) => {}
         }
     }
@@ -781,18 +786,18 @@ mod log_format_tests {
         assert_eq!(transfer_log_format(&module), None);
     }
 
-    /// upstream: log.c:871 `logfile_format && *logfile_format` - an empty format
-    /// (e.g. `--log-file-format=`) turns per-file logging off rather than
-    /// writing an empty line per file. rsyncd.conf(5): "unless the string is
-    /// empty, in which case transfer logging is turned off".
+    /// upstream: log.c:924 `log_delete()` tests `logfile_format` for NULL, not
+    /// for emptiness, so an empty format (e.g. `--log-file-format=`) must stay
+    /// visible to the writer: it still logs `deleting <name>` lines while
+    /// log.c:871 `log_item()` writes no per-file rows.
     #[test]
-    fn transfer_log_format_is_none_for_an_empty_format() {
+    fn transfer_log_format_keeps_an_empty_format() {
         let module = ModuleDefinition {
             transfer_logging: true,
             log_format: Some(String::new()),
             ..Default::default()
         };
-        assert_eq!(transfer_log_format(&module), None);
+        assert_eq!(transfer_log_format(&module), Some(""));
     }
 
     // --- Modifier scan (upstream log.c:558-576) --------------------------

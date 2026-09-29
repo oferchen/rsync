@@ -139,6 +139,9 @@ pub struct DaemonLogRow {
     pub bytes_transferred: u64,
     /// `%c`: payload bytes of checksum data moved for this file, 0 when none.
     pub bytes_checksummed: u64,
+    /// Whether the row records a deletion (`log_delete()`, op `del.`) rather
+    /// than a transferred or itemized entry.
+    pub deleted: bool,
 }
 
 impl DaemonLogRow {
@@ -167,6 +170,36 @@ impl DaemonLogRow {
             checksum,
             bytes_transferred: 0,
             bytes_checksummed: 0,
+            deleted: false,
+        }
+    }
+
+    /// Builds the row upstream's `log_delete()` logs for a removed entry.
+    ///
+    /// upstream: log.c:892-929 renders a zeroed `file_struct` whose only set
+    /// field is `mode`, with `ITEM_DELETED`: `%l`, `%U` and `%M` read 0, `%G`
+    /// reads 0 under `-g` (`gid_ndx`) and `DEFAULT` otherwise, `%C` is blank
+    /// and `%i` is `*deleting  `.
+    pub(crate) fn deletion(
+        name: std::path::PathBuf,
+        mode: u32,
+        gid: Option<u32>,
+        checksum: String,
+    ) -> Self {
+        Self {
+            name,
+            size: 0,
+            itemize: "*deleting  ".to_owned(),
+            mode,
+            mtime: 0,
+            uid: 0,
+            gid,
+            symlink_target: None,
+            hardlink_target: None,
+            checksum,
+            bytes_transferred: 0,
+            bytes_checksummed: 0,
+            deleted: true,
         }
     }
 

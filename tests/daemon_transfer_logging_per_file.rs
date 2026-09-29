@@ -67,8 +67,16 @@ fn make_daemon(root: &Path, port: u16, module_dir: &Path, log: &Path) {
 }
 
 fn spawn_daemon(binary: &Path, conf: &Path, port: u16) -> ReapOnDrop {
+    spawn_daemon_with(binary, conf, port, &[])
+}
+
+/// Starts the daemon with extra command-line arguments. It runs with `TZ=UTC`
+/// so a `%M` field renders a fixed wall-clock string.
+fn spawn_daemon_with(binary: &Path, conf: &Path, port: u16, args: &[&str]) -> ReapOnDrop {
     let child = ReapOnDrop::new(
         Command::new(binary)
+            .env("TZ", "UTC")
+            .args(args)
             .arg("--daemon")
             .arg("--no-detach")
             .arg(format!("--config={}", conf.display()))
@@ -618,6 +626,29 @@ fn module_log_lines(
     push: bool,
     prepare: impl FnOnce(&Path, &Path),
 ) -> Option<Vec<String>> {
+    let op = if push { "recv|" } else { "send|" };
+    let text = module_log(
+        format,
+        &[],
+        client_args,
+        push,
+        prepare,
+        &format!("{op}d/f|"),
+    )?;
+    Some(transfer_lines(&text, op))
+}
+
+/// Runs one transfer against a fresh daemon started with `daemon_args` whose
+/// module logs `format`, waits for a log line containing `marker`, and returns
+/// the whole log.
+fn module_log(
+    format: &str,
+    daemon_args: &[&str],
+    client_args: &[&str],
+    push: bool,
+    prepare: impl FnOnce(&Path, &Path),
+    marker: &str,
+) -> Option<String> {
     let port = free_port()?;
     let tmp = tempfile::tempdir().expect("temp dir");
     let root = tmp.path();
@@ -647,25 +678,24 @@ fn module_log_lines(
     );
     fs::write(root.join("rsyncd.conf"), conf).expect("config");
     let oc = oc_binary();
-    let daemon = spawn_daemon(&oc, &root.join("rsyncd.conf"), port);
+    let daemon = spawn_daemon_with(&oc, &root.join("rsyncd.conf"), port, daemon_args);
 
     let url = format!("rsync://127.0.0.1:{port}/m/");
     let local = format!("{}/", if push { &src } else { &dest }.display());
-    let (from, to, op) = if push {
-        (local.as_str(), url.as_str(), "recv|")
+    let (from, to) = if push {
+        (local.as_str(), url.as_str())
     } else {
-        (url.as_str(), local.as_str(), "send|")
+        (url.as_str(), local.as_str())
     };
     let status = Command::new(&oc)
         .args(client_args)
         .args([from, to])
         .status()
         .expect("run client");
-    wait_for_lines(&log, &format!("{op}d/f|"), 1);
+    wait_for_lines(&log, marker, 1);
     drop(daemon);
     assert!(status.success(), "transfer {client_args:?} failed");
-    let text = fs::read_to_string(&log).expect("read log");
-    Some(transfer_lines(&text, op))
+    Some(fs::read_to_string(&log).expect("read log"))
 }
 
 fn assert_has_line(lines: &[String], want: &str) {
@@ -774,4 +804,187 @@ fn pull_logs_sent_and_checksum_bytes_for_percent_b_and_c() {
         return;
     };
     assert_has_line(&lines, "send|d/f|53|16|<f+++++++++");
+}
+
+/// Seeds the module with the extraneous entries the delete tests expect the
+/// push to remove: a file `extra` and a directory `xdir` holding `y`.
+fn seed_extraneous(module: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::create_dir_all(module.join("xdir")).expect("module xdir");
+    fs::write(module.join("extra"), b"").expect("seed extra");
+    fs::write(module.join("xdir/y"), b"").expect("seed y");
+    fs::set_permissions(module.join("extra"), fs::Permissions::from_mode(0o644)).expect("chmod");
+    fs::set_permissions(module.join("xdir/y"), fs::Permissions::from_mode(0o600)).expect("chmod");
+    fs::set_permissions(module.join("xdir"), fs::Permissions::from_mode(0o750)).expect("chmod");
+}
+
+/// Returns the body of every line that carries `needle`, from `needle` on.
+fn lines_from(log: &str, needle: &str) -> Vec<String> {
+    log.lines()
+        .filter_map(|line| line.find(needle).map(|start| line[start..].to_owned()))
+        .collect()
+}
+
+const DELETE_FORMAT: &str = "%o|%f|%n|%l|%U|%G|%M|%B|%b|%c|%C|%i";
+
+/// A `--delete` push logs one `del.` row per removed entry, rendered from a
+/// zeroed entry that keeps only the victim's mode, ahead of the per-file rows.
+///
+/// Upstream oracle (rsync 3.5.1 daemon, lxhost, `xferlog_oracle.sh` step 3):
+/// log.c:892-929 `log_delete()` renders `del.`, the victim's name (`%n` with a
+/// slash for a directory), length/uid 0, gid 0 under `-g`, mtime 0, the real
+/// permission bits, zero byte counts, a blank `%C` and `*deleting  `; the
+/// generator deletes a directory's descendants first and walks each directory
+/// in reverse name order, and it runs before the receiver logs any file.
+#[test]
+fn push_delete_logs_a_del_row_per_removed_entry() {
+    assert_del_rows_lead(&["-a", "--delete"]);
+}
+
+/// The leaf-granular executor `--max-delete` selects logs the same rows.
+#[test]
+fn push_capped_delete_logs_a_del_row_per_removed_entry() {
+    assert_del_rows_lead(&["-a", "--delete", "--max-delete=10"]);
+}
+
+/// Pushes with `client_args` and asserts the three `del.` rows for the seeded
+/// extraneous entries come first, in upstream's order and rendering.
+fn assert_del_rows_lead(client_args: &[&str]) {
+    let Some(text) = module_log(
+        DELETE_FORMAT,
+        &[],
+        client_args,
+        true,
+        |_, module| seed_extraneous(module),
+        "recv|d/f|",
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    let blank = " ".repeat(32);
+    let epoch = "1970/01/01-00:00:00";
+    let want = [
+        format!("del.|xdir/y|xdir/y|0|0|0|{epoch}|rw-------|0|0|{blank}|*deleting  "),
+        format!("del.|xdir|xdir/|0|0|0|{epoch}|rwxr-x---|0|0|{blank}|*deleting  "),
+        format!("del.|extra|extra|0|0|0|{epoch}|rw-r--r--|0|0|{blank}|*deleting  "),
+    ];
+    let rows: Vec<String> = text
+        .lines()
+        .filter_map(|line| {
+            ["del.|", "recv|"]
+                .iter()
+                .find_map(|op| line.find(op))
+                .map(|start| line[start..].to_owned())
+        })
+        .collect();
+    assert_eq!(rows[..3], want, "del rows and order, got:\n{text}");
+    assert!(
+        rows[3..].iter().all(|row| row.starts_with("recv|")),
+        "every del row precedes the per-file rows, got:\n{text}"
+    );
+}
+
+/// A format without `%o` or `%i` logs a deletion as the fixed `deleting %n`.
+///
+/// Upstream oracle (step 6, module `log format = %f %l`): `deleting gone`.
+#[test]
+fn push_delete_without_o_or_i_logs_deleting_name() {
+    let Some(text) = module_log(
+        "%f %l",
+        &[],
+        &["-r", "--delete"],
+        true,
+        |_, module| seed_extraneous(module),
+        "d/f 10",
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert_eq!(
+        lines_from(&text, "deleting "),
+        ["deleting xdir/y", "deleting xdir/", "deleting extra"],
+        "got:\n{text}"
+    );
+}
+
+/// An empty `--log-file-format` silences the per-file rows but not the
+/// deletions, which fall back to `deleting %n`.
+///
+/// Upstream oracle (step 10, `--log-file-format=`): `deleting stale` and no
+/// per-file row.
+#[test]
+fn push_delete_with_empty_log_file_format_logs_only_deleting_lines() {
+    let Some(text) = module_log(
+        DELETE_FORMAT,
+        &["--log-file-format="],
+        &["-r", "--delete"],
+        true,
+        |_, module| seed_extraneous(module),
+        "deleting extra",
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert_eq!(
+        lines_from(&text, "deleting "),
+        ["deleting xdir/y", "deleting xdir/", "deleting extra"],
+        "got:\n{text}"
+    );
+    assert!(
+        lines_from(&text, "recv|").is_empty() && lines_from(&text, "del.|").is_empty(),
+        "an empty format writes no per-file row, got:\n{text}"
+    );
+}
+
+/// A dry run deletes nothing and logs no deletion (log.c:924 `dry_run`).
+#[test]
+fn push_delete_dry_run_logs_no_deletion() {
+    let Some(text) = module_log(
+        DELETE_FORMAT,
+        &[],
+        &["-rn", "--delete"],
+        true,
+        |_, module| seed_extraneous(module),
+        "total size",
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert!(lines_from(&text, "del.|").is_empty(), "got:\n{text}");
+}
+
+/// `--delete-after` deletes once every file has landed, so its rows follow the
+/// per-file rows.
+#[test]
+fn push_delete_after_logs_del_rows_after_the_transfer_rows() {
+    assert_del_rows_trail("--delete-after");
+}
+
+/// `--delete-delay` decides during the walk but unlinks, and so logs, only
+/// after the transfer (generator.c:2419 `do_delayed_deletions()`).
+#[test]
+fn push_delete_delay_logs_del_rows_after_the_transfer_rows() {
+    assert_del_rows_trail("--delete-delay");
+}
+
+fn assert_del_rows_trail(mode: &str) {
+    let Some(text) = module_log(
+        DELETE_FORMAT,
+        &[],
+        &["-r", mode],
+        true,
+        |_, module| seed_extraneous(module),
+        "del.|extra|",
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let last_recv = lines.iter().rposition(|l| l.contains("recv|"));
+    let first_del = lines.iter().position(|l| l.contains("del.|"));
+    assert!(
+        matches!((last_recv, first_del), (Some(r), Some(d)) if r < d),
+        "got:\n{text}"
+    );
 }
