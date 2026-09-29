@@ -230,8 +230,8 @@ pub(crate) struct MultiplexReader<R> {
     /// / role invariant (upstream `goto invalid_msg`, fatal `RERR_STREAMIO`).
     io_timeout_invalid: bool,
     /// Set once a fixed-size control message (`MSG_IO_ERROR`, `MSG_REDO`,
-    /// `MSG_NO_SEND`, `MSG_SUCCESS`) arrived with a payload whose size does not
-    /// match upstream's expectation. Upstream treats this as fatal
+    /// `MSG_NO_SEND`, `MSG_SUCCESS`, `MSG_NOOP`) arrived with a payload whose
+    /// size does not match upstream's expectation. Upstream treats this as fatal
     /// (`goto invalid_msg` -> `exit_cleanup(RERR_STREAMIO)`); oc surfaces it via
     /// [`MultiplexReader::check_control_msg`]. upstream: io.c:read_a_msg invalid_msg.
     invalid_control_msg: bool,
@@ -889,6 +889,14 @@ impl<R> MultiplexReader<R> {
                     0
                 };
                 self.error_exit_code = Some(exit_code);
+            }
+            protocol::MessageCode::NoOp => {
+                // upstream: io.c:1770-1777 - the protocol-30 keep-alive of a
+                // <= 3.0.x peer (3.0.9 io.c:960). A payload is invalid_msg in
+                // every role. Upstream's sender also answers with
+                // maybe_send_keepalive(); this reader holds no writer, so no
+                // reply is sent.
+                self.require_payload_len(&[0]);
             }
             protocol::MessageCode::IoError => {
                 // upstream: io.c:1568-1573
@@ -1694,5 +1702,43 @@ mod resume_tests {
         budget.store(usize::MAX, Ordering::SeqCst);
         let n = reader.read(&mut chunk).unwrap();
         assert_eq!(&chunk[..n], &payload[..], "the whole frame lands at once");
+    }
+}
+
+/// `MSG_NOOP` payload-length validation.
+///
+/// upstream: io.c:1770-1773 `read_a_msg()` - `if (msg_bytes != 0) goto
+/// invalid_msg;`, a `RERR_STREAMIO` abort in every role. A catch-all arm that
+/// silently skipped the frame let a non-empty keep-alive through, hiding
+/// stream corruption that upstream refuses.
+#[cfg(test)]
+mod noop_length_tests {
+    use super::*;
+
+    /// A `MSG_NOOP` frame carrying `payload`, then a one-byte data frame.
+    fn read_after_noop(payload: &[u8]) -> io::Result<Vec<u8>> {
+        let mut wire = Vec::new();
+        protocol::send_msg(&mut wire, protocol::MessageCode::NoOp, payload).unwrap();
+        protocol::send_msg(&mut wire, protocol::MessageCode::Data, b"x").unwrap();
+        let mut reader = MultiplexReader::new(io::Cursor::new(wire));
+        let mut buf = [0u8; 8];
+        let n = reader.read(&mut buf)?;
+        Ok(buf[..n].to_vec())
+    }
+
+    #[test]
+    fn non_empty_noop_is_an_invalid_message() {
+        for len in [1usize, 4] {
+            let err = read_after_noop(&vec![0u8; len])
+                .expect_err("a non-empty MSG_NOOP must abort the stream");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{len} bytes: {err}");
+        }
+    }
+
+    /// NON-VACUITY: the legal empty keep-alive is absorbed and the data that
+    /// follows it is delivered untouched.
+    #[test]
+    fn empty_noop_is_absorbed() {
+        assert_eq!(read_after_noop(&[]).expect("empty MSG_NOOP is legal"), b"x");
     }
 }
