@@ -38,7 +38,7 @@ permissions:
   contents: read
 
 env:
-  APT_PACKAGES: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+  APT_PACKAGES: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev libidn2-dev
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
   CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
