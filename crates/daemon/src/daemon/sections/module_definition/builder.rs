@@ -20,8 +20,10 @@ struct ModuleDefinitionBuilder {
     read_only: Option<bool>,
     write_only: Option<bool>,
     numeric_ids: Option<bool>,
-    uid: Option<u32>,
-    gid: Option<GidSetting>,
+    /// `Err` holds a value that did not resolve; see `UnresolvedId`.
+    uid: Option<Result<u32, String>>,
+    /// `Err` holds the rejected token; see `UnresolvedId`.
+    gid: Option<Result<GidSetting, String>>,
     timeout: Option<Option<NonZeroU64>>,
     listable: Option<bool>,
     use_chroot: Option<bool>,
