@@ -451,16 +451,16 @@ fn fill_random_suffix(template: &Path) -> PathBuf {
     let mut random_bytes = [0u8; 6];
     getrandom::fill(&mut random_bytes).expect("getrandom failed");
 
-    let name = template
-        .file_name()
-        .map_or(&[][..], std::ffi::OsStr::as_encoded_bytes);
-    let mut filled = name[..name.len() - random_bytes.len()].to_vec();
+    // Replace the trailing Xs in place: rebuilding through with_file_name
+    // would re-join with the platform separator and change the path on Windows.
+    let mut filled = template.as_os_str().as_encoded_bytes().to_vec();
+    filled.truncate(filled.len() - random_bytes.len());
     filled.extend(
         random_bytes
             .iter()
             .map(|&b| RAND_CHARS[usize::from(b) % RAND_CHARS.len()]),
     );
-    template.with_file_name(os_string_from_bytes(filled))
+    PathBuf::from(os_string_from_bytes(filled))
 }
 
 /// SEC-1.r sandbox anchor carried by [`TempFileGuard`] so the Drop unlink
