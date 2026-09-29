@@ -70,8 +70,34 @@ pub(crate) fn parse_config_modules_with_dparams(
     path: &Path,
     dparams: &[String],
 ) -> Result<ParsedConfigModules, DaemonError> {
+    parse_config(path, dparams, false)
+}
+
+/// Parses only the global parameters a listening daemon reads at startup.
+///
+/// upstream: clientserver.c:1762 daemon_main() calls load_config(1), which is
+/// lp_load() without a section function: params.c Parse() stops at the first
+/// `[`, whether it is in this file or in one an `&include` or `&merge` pulls
+/// in, and an `&include` then has no `]push`/`]pop` around it
+/// (params.c:include_config tests `the_sfunc`). So `port`, `address`,
+/// `pid file`, `socket options` and `listen backlog` set only after the first
+/// module header are not seen at startup. The `--dparam` overrides follow at
+/// clientserver.c:1766.
+pub(crate) fn parse_config_globals_only(
+    path: &Path,
+    dparams: &[String],
+) -> Result<ParsedConfigModules, DaemonError> {
+    parse_config(path, dparams, true)
+}
+
+fn parse_config(
+    path: &Path,
+    dparams: &[String],
+    globals_only: bool,
+) -> Result<ParsedConfigModules, DaemonError> {
     let mut stack = Vec::new();
     let mut parse = ConfigParse::new(dparams);
+    parse.globals_only = globals_only;
     parse_config_file(path, &mut stack, &mut parse)?;
     if !parse.dparams_applied {
         apply_dparams(&mut parse.vars, dparams)?;
@@ -112,6 +138,11 @@ struct ConfigParse<'a> {
     dparams: &'a [String],
     /// Whether the overrides have been applied.
     dparams_applied: bool,
+    /// Parse without a section function, as upstream's load_config(1) does.
+    globals_only: bool,
+    /// Set when a globals-only parse reaches a section header; the whole
+    /// parse ends there (upstream: params.c Parse() returns 2).
+    stopped: bool,
 }
 
 impl<'a> ConfigParse<'a> {
@@ -122,6 +153,8 @@ impl<'a> ConfigParse<'a> {
             current: None,
             dparams,
             dparams_applied: false,
+            globals_only: false,
+            stopped: false,
         }
     }
 }
@@ -167,6 +200,10 @@ fn parse_config_file(
             }
 
             if line.starts_with('[') {
+                if parse.globals_only {
+                    parse.stopped = true;
+                    break;
+                }
                 let end = line.find(']').ok_or_else(|| {
                     config_parse_error(path, line_number, "unterminated module header")
                 })?;
@@ -231,6 +268,9 @@ fn parse_config_file(
                     ));
                 }
                 apply_include_directive(parse, &key, value, path, line_number, &canonical, stack)?;
+                if parse.stopped {
+                    break;
+                }
                 continue;
             }
 

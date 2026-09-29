@@ -1095,4 +1095,24 @@ mod runtime_options_tests {
             .expect("parse");
         assert_eq!(options.socket_options(), Some("SO_KEEPALIVE"));
     }
+
+    #[test]
+    fn listener_settings_come_from_the_globals_before_the_first_module() {
+        // upstream: clientserver.c:1762 load_config(1) stops at the first
+        // module header, so a later [global] block changes neither the port
+        // nor the pid file the listening daemon uses.
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("rsyncd.conf");
+        fs::write(
+            &path,
+            "port = 1111\n[m]\npath = /srv/m\n[global]\nport = 2222\npid file = /run/late.pid\n",
+        )
+        .expect("write config");
+
+        let options = RuntimeOptions::parse(&[OsString::from("--config"), path.into_os_string()])
+            .expect("parse");
+        assert_eq!(options.port, 1111);
+        assert_eq!(options.pid_file(), None);
+        assert_eq!(options.modules().len(), 1);
+    }
 }
