@@ -1015,6 +1015,12 @@ fn process_approved_module(
             let message = rsync_warning!(text).with_role(Role::Daemon);
             log_message(log, &message);
         }
+        // A QUIC relay half-closes the same way; the front process turns it
+        // into a QUIC FIN.
+        #[cfg(all(unix, feature = "quic"))]
+        if stream.quic_relay_stream().is_some() {
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+        }
 
         // Post-shutdown drain: now that our FIN is on the wire, wait for the
         // peer to observe it and close, consuming any last bytes so the final

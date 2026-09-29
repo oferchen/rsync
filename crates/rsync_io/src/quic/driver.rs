@@ -1,9 +1,15 @@
 //! The QUIC I/O thread: owns the UDP socket and drives the `quinn-proto`
 //! state machines (datagrams, timers, transmits) plus the facade buffers.
+//!
+//! One driver serves every connection on its endpoint. A client endpoint
+//! carries exactly the one connection it dialled; a server endpoint accepts
+//! any number, each with its own facade [`Shared`] state, and hands each to
+//! [`QuicAcceptor::accept`](super::QuicAcceptor::accept) once its
+//! bidirectional stream exists.
 
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::{Bytes, BytesMut};
@@ -12,7 +18,7 @@ use quinn_proto::{
     ReadableError, StreamEvent, StreamId, VarInt, WriteError,
 };
 
-use super::{DATAGRAM_BUF, Io, MAX_SLEEP, RECV_HIGH_WATER, Shared, Terminal, error, loopback_of};
+use super::{DATAGRAM_BUF, Hub, MAX_SLEEP, RECV_HIGH_WATER, Shared, Terminal, error, loopback_of};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Role {
@@ -20,10 +26,19 @@ pub(super) enum Role {
     Server,
 }
 
+/// Connections a server endpoint holds that the application has not yet
+/// accepted: those still handshaking plus those queued for
+/// [`QuicAcceptor::accept`](super::QuicAcceptor::accept). Further incoming
+/// connections are refused until the backlog drains, the QUIC counterpart of
+/// a TCP listener's `listen(2)` backlog, so a peer flooding handshakes cannot
+/// grow the endpoint's state without bound.
+const ACCEPT_BACKLOG: usize = 128;
+
 /// Per-connection driver bookkeeping.
 struct ConnDriver {
     handle: ConnectionHandle,
     conn: Connection,
+    shared: Arc<Shared>,
     stream: Option<StreamId>,
     readable: bool,
     fin_sent: bool,
@@ -31,15 +46,29 @@ struct ConnDriver {
 }
 
 impl ConnDriver {
-    fn new(handle: ConnectionHandle, conn: Connection) -> Self {
+    fn new(handle: ConnectionHandle, conn: Connection, shared: Arc<Shared>) -> Self {
         Self {
             handle,
             conn,
+            shared,
             stream: None,
             readable: false,
             fin_sent: false,
             close_sent: false,
         }
+    }
+
+    /// Marks this connection's facade as finished: records `fault` as the
+    /// terminal state unless one is already set, then wakes every waiter.
+    fn release(&self, fault: Option<&error::TransportFault>) {
+        let mut st = self.shared.lock();
+        if st.terminal.is_none()
+            && let Some(fault) = fault
+        {
+            st.terminal = Some(Terminal::Error(fault.clone()));
+        }
+        st.drained = true;
+        self.shared.cond.notify_all();
     }
 }
 
@@ -47,14 +76,15 @@ impl ConnDriver {
 struct Driver {
     socket: UdpSocket,
     endpoint: Endpoint,
-    conn: Option<ConnDriver>,
-    shared: Arc<Shared>,
+    conns: Vec<ConnDriver>,
+    hub: Arc<Hub>,
     wake_addr: SocketAddr,
     role: Role,
-    /// Whether this endpoint OPENS the single bidirectional stream (speaks
-    /// first) rather than accepting a peer-opened one. Set per connection so
-    /// both client-first (request/reply) and server-first (rsync daemon
-    /// greeting) exchanges avoid the frameless-stream deadlock.
+    /// Whether this endpoint OPENS each connection's single bidirectional
+    /// stream (speaks first) rather than accepting a peer-opened one. Both
+    /// client-first (request/reply) and server-first (rsync daemon greeting)
+    /// exchanges need the speaker to be the opener to avoid the
+    /// frameless-stream deadlock.
     opens_stream: bool,
     /// Scratch buffer `poll_transmit`/`Endpoint::handle` write packets into.
     buf: Vec<u8>,
@@ -66,41 +96,36 @@ struct Driver {
 
 impl Driver {
     fn run(mut self) {
-        let result = self.drive();
-        let mut st = self.shared.lock();
-        if st.terminal.is_none()
-            && let Err(err) = result
-        {
-            st.terminal = Some(Terminal::Error(error::io_fault(&err)));
+        let fault = self.drive().err().map(|err| error::io_fault(&err));
+        for c in &self.conns {
+            c.release(fault.as_ref());
         }
-        st.drained = true;
-        self.shared.cond.notify_all();
+        let mut hub = self.hub.lock();
+        hub.driver_exited = true;
+        hub.fault = fault;
+        self.hub.cond.notify_all();
     }
 
     fn drive(&mut self) -> io::Result<()> {
         loop {
             let now = Instant::now();
             self.pump(now)?;
+            self.release_drained();
             if self.done() {
                 return Ok(());
             }
-            let deadline = self.conn.as_mut().and_then(|c| c.conn.poll_timeout());
+            let deadline = self.next_deadline();
             if let Some(d) = deadline
                 && d <= now
             {
-                if let Some(c) = &mut self.conn {
-                    c.conn.handle_timeout(now);
-                }
+                self.fire_timeouts(now);
                 continue;
             }
             if !self.enter_sleep() {
                 continue;
             }
             let received = self.recv(deadline);
-            {
-                let mut st = self.shared.lock();
-                st.sleeping = false;
-            }
+            self.hub.lock().sleeping = false;
             match received? {
                 Some((len, from)) => {
                     let now = Instant::now();
@@ -110,13 +135,9 @@ impl Driver {
                     self.recv_burst(now)?;
                 }
                 None => {
-                    if let Some(d) = deadline {
-                        let now = Instant::now();
-                        if d <= now
-                            && let Some(c) = &mut self.conn
-                        {
-                            c.conn.handle_timeout(now);
-                        }
+                    let now = Instant::now();
+                    if deadline.is_some_and(|d| d <= now) {
+                        self.fire_timeouts(now);
                     }
                 }
             }
@@ -137,12 +158,42 @@ impl Driver {
         }
     }
 
+    /// Drops every connection that has fully drained, telling its facade.
+    fn release_drained(&mut self) {
+        self.conns.retain(|c| {
+            if c.conn.is_drained() {
+                c.release(None);
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    /// A client endpoint exits once its one connection has drained; a server
+    /// endpoint exits once its acceptor is gone and every connection it
+    /// accepted has drained.
     fn done(&self) -> bool {
-        match &self.conn {
-            Some(c) => c.conn.is_drained(),
-            None => {
-                let st = self.shared.lock();
-                st.shutdown
+        if !self.conns.is_empty() {
+            return false;
+        }
+        match self.role {
+            Role::Client => true,
+            Role::Server => self.hub.lock().accept_closed,
+        }
+    }
+
+    fn next_deadline(&mut self) -> Option<Instant> {
+        self.conns
+            .iter_mut()
+            .filter_map(|c| c.conn.poll_timeout())
+            .min()
+    }
+
+    fn fire_timeouts(&mut self, now: Instant) {
+        for c in &mut self.conns {
+            if c.conn.poll_timeout().is_some_and(|t| t <= now) {
+                c.conn.handle_timeout(now);
             }
         }
     }
@@ -150,222 +201,235 @@ impl Driver {
     /// Returns `false` (and consumes the pending flag) if facade work arrived
     /// after the last pump, in which case the caller must not sleep.
     fn enter_sleep(&self) -> bool {
-        let mut st = self.shared.lock();
-        if st.pending {
-            st.pending = false;
+        let mut hub = self.hub.lock();
+        if hub.pending {
+            hub.pending = false;
             return false;
         }
-        st.sleeping = true;
+        hub.sleeping = true;
         true
     }
 
-    /// Applies facade intents: queued bytes, FIN, and close requests.
+    /// Applies facade intents on every connection: queued bytes, FIN, and
+    /// close requests.
     fn pump_facade(&mut self, now: Instant) -> bool {
-        let Some(c) = &mut self.conn else {
-            return false;
-        };
+        // A server whose acceptor is gone closes every connection nobody will
+        // ever accept; those already handed out keep running.
+        let orphan_unaccepted = self.role == Role::Server && self.hub.lock().accept_closed;
         let mut progress = false;
-        let mut st = self.shared.lock();
-        if let Some(id) = c.stream {
-            while !st.send.is_empty() {
-                let (front, back) = st.send.as_slices();
-                let chunk: &[u8] = if front.is_empty() { back } else { front };
-                match c.conn.send_stream(id).write(chunk) {
-                    Ok(n) => {
-                        st.send.drain(..n);
-                        progress = true;
-                        self.shared.cond.notify_all();
+        for c in &mut self.conns {
+            let mut st = c.shared.lock();
+            if let Some(id) = c.stream {
+                while !st.send.is_empty() {
+                    let (front, back) = st.send.as_slices();
+                    let chunk: &[u8] = if front.is_empty() { back } else { front };
+                    match c.conn.send_stream(id).write(chunk) {
+                        Ok(n) => {
+                            st.send.drain(..n);
+                            progress = true;
+                            c.shared.cond.notify_all();
+                        }
+                        Err(WriteError::Blocked) => break,
+                        Err(WriteError::Stopped(_) | WriteError::ClosedStream) => {
+                            st.send.clear();
+                            st.send_stopped = true;
+                            st.send_finished = true;
+                            c.shared.cond.notify_all();
+                            break;
+                        }
                     }
-                    Err(WriteError::Blocked) => break,
-                    Err(WriteError::Stopped(_) | WriteError::ClosedStream) => {
-                        st.send.clear();
-                        st.send_stopped = true;
-                        st.send_finished = true;
-                        self.shared.cond.notify_all();
-                        break;
+                }
+                if st.send_fin && st.send.is_empty() && !c.fin_sent {
+                    c.fin_sent = true;
+                    progress = true;
+                    match c.conn.send_stream(id).finish() {
+                        Ok(()) => {}
+                        Err(FinishError::Stopped(_) | FinishError::ClosedStream) => {
+                            st.send_finished = true;
+                            c.shared.cond.notify_all();
+                        }
                     }
                 }
             }
-            if st.send_fin && st.send.is_empty() && !c.fin_sent {
-                c.fin_sent = true;
+            let orphaned = orphan_unaccepted && !st.accepted;
+            if (st.close_requested || st.shutdown || orphaned) && !c.close_sent {
+                c.close_sent = true;
                 progress = true;
-                match c.conn.send_stream(id).finish() {
-                    Ok(()) => {}
-                    Err(FinishError::Stopped(_) | FinishError::ClosedStream) => {
-                        st.send_finished = true;
-                        self.shared.cond.notify_all();
-                    }
-                }
+                c.conn.close(now, VarInt::from_u32(0), Bytes::new());
             }
-        }
-        if (st.close_requested || st.shutdown) && !c.close_sent {
-            c.close_sent = true;
-            progress = true;
-            c.conn.close(now, VarInt::from_u32(0), Bytes::new());
         }
         progress
     }
 
     /// Shuttles connection<->endpoint events and application events.
     fn pump_events(&mut self) -> bool {
-        let Some(c) = &mut self.conn else {
-            return false;
-        };
         let mut progress = false;
-        while let Some(event) = c.conn.poll_endpoint_events() {
-            progress = true;
-            if let Some(conn_event) = self.endpoint.handle_event(c.handle, event) {
-                c.conn.handle_event(conn_event);
-            }
-        }
-        while let Some(event) = c.conn.poll() {
-            progress = true;
-            match event {
-                Event::Stream(StreamEvent::Readable { .. } | StreamEvent::Opened { .. }) => {
-                    c.readable = true;
-                }
-                Event::Stream(StreamEvent::Finished { id } | StreamEvent::Stopped { id, .. }) => {
-                    if c.stream == Some(id) {
-                        let mut st = self.shared.lock();
-                        st.send_finished = true;
-                        self.shared.cond.notify_all();
-                    }
-                }
-                Event::ConnectionLost { reason } => {
-                    let mut st = self.shared.lock();
-                    if st.terminal.is_none() {
-                        st.terminal = Some(Terminal::from_loss(&reason));
-                    }
-                    self.shared.cond.notify_all();
-                }
-                _ => {}
-            }
-        }
-        if c.stream.is_none() && !c.conn.is_handshaking() {
-            // A QUIC stream only becomes visible to its peer once a frame is
-            // sent on it, so the party that speaks first must be the one that
-            // OPENS the single bidirectional stream - otherwise the peer's
-            // `accept` blocks on a frameless stream while the opener waits to
-            // read, and both sides deadlock. `opens_stream` records that choice
-            // per connection: a client-speaks-first exchange (the transport's
-            // request/reply tests) has the client open; the rsync daemon is
-            // server-speaks-first (it writes the `@RSYNCD:` greeting before the
-            // client sends anything), so its acceptor opens and the client
-            // connecting to it accepts.
-            let opened = if self.opens_stream {
-                c.conn.streams().open(Dir::Bi)
-            } else {
-                c.conn.streams().accept(Dir::Bi)
-            };
-            if let Some(id) = opened {
-                c.stream = Some(id);
-                c.readable = true;
+        for c in &mut self.conns {
+            while let Some(event) = c.conn.poll_endpoint_events() {
                 progress = true;
-                let peer = c.conn.remote_address();
-                let mut st = self.shared.lock();
-                st.stream_ready = true;
-                st.peer = Some(peer);
-                self.shared.cond.notify_all();
+                if let Some(conn_event) = self.endpoint.handle_event(c.handle, event) {
+                    c.conn.handle_event(conn_event);
+                }
+            }
+            while let Some(event) = c.conn.poll() {
+                progress = true;
+                match event {
+                    Event::Stream(StreamEvent::Readable { .. } | StreamEvent::Opened { .. }) => {
+                        c.readable = true;
+                    }
+                    Event::Stream(
+                        StreamEvent::Finished { id } | StreamEvent::Stopped { id, .. },
+                    ) => {
+                        if c.stream == Some(id) {
+                            let mut st = c.shared.lock();
+                            st.send_finished = true;
+                            c.shared.cond.notify_all();
+                        }
+                    }
+                    Event::ConnectionLost { reason } => {
+                        let mut st = c.shared.lock();
+                        if st.terminal.is_none() {
+                            st.terminal = Some(Terminal::from_loss(&reason));
+                        }
+                        c.shared.cond.notify_all();
+                    }
+                    _ => {}
+                }
+            }
+            if c.stream.is_none() && !c.conn.is_handshaking() {
+                // A QUIC stream only becomes visible to its peer once a frame
+                // is sent on it, so the party that speaks first must be the
+                // one that OPENS the single bidirectional stream - otherwise
+                // the peer's `accept` blocks on a frameless stream while the
+                // opener waits to read, and both sides deadlock. The rsync
+                // daemon is server-speaks-first (it writes the `@RSYNCD:`
+                // greeting before the client sends anything), so its acceptor
+                // opens and the client connecting to it accepts.
+                let opened = if self.opens_stream {
+                    c.conn.streams().open(Dir::Bi)
+                } else {
+                    c.conn.streams().accept(Dir::Bi)
+                };
+                if let Some(id) = opened {
+                    c.stream = Some(id);
+                    c.readable = true;
+                    progress = true;
+                    let peer = c.conn.remote_address();
+                    {
+                        let mut st = c.shared.lock();
+                        st.stream_ready = true;
+                        st.peer = Some(peer);
+                        c.shared.cond.notify_all();
+                    }
+                    if self.role == Role::Server {
+                        let mut hub = self.hub.lock();
+                        if !hub.accept_closed {
+                            hub.queue.push_back(Arc::clone(&c.shared));
+                            self.hub.cond.notify_all();
+                        }
+                    }
+                }
             }
         }
         progress
     }
 
-    /// Moves ordered stream data into the facade buffer, up to the high-water
-    /// mark; beyond it the data stays in quinn so flow control throttles the
-    /// peer.
+    /// Moves ordered stream data into each facade buffer, up to the
+    /// high-water mark; beyond it the data stays in quinn so flow control
+    /// throttles the peer.
     fn drain_recv(&mut self) -> bool {
-        let Some(c) = &mut self.conn else {
-            return false;
-        };
-        if !c.readable {
-            return false;
-        }
-        let Some(id) = c.stream else {
-            return false;
-        };
-        let mut st = self.shared.lock();
-        if st.recv_len >= RECV_HIGH_WATER {
-            st.recv_paused = true;
-            return false;
-        }
         let mut progress = false;
-        match c.conn.recv_stream(id).read(true) {
-            Ok(mut chunks) => {
-                loop {
-                    if st.recv_len >= RECV_HIGH_WATER {
-                        st.recv_paused = true;
-                        break;
-                    }
-                    match chunks.next(usize::MAX) {
-                        Ok(Some(chunk)) => {
-                            st.recv_len += chunk.bytes.len();
-                            st.recv.push_back(chunk.bytes);
-                            progress = true;
-                        }
-                        Ok(None) => {
-                            st.recv_fin = true;
-                            c.readable = false;
-                            progress = true;
+        for c in &mut self.conns {
+            if !c.readable {
+                continue;
+            }
+            let Some(id) = c.stream else {
+                continue;
+            };
+            let mut st = c.shared.lock();
+            if st.recv_len >= RECV_HIGH_WATER {
+                st.recv_paused = true;
+                continue;
+            }
+            let mut delivered = false;
+            match c.conn.recv_stream(id).read(true) {
+                Ok(mut chunks) => {
+                    loop {
+                        if st.recv_len >= RECV_HIGH_WATER {
+                            st.recv_paused = true;
                             break;
                         }
-                        Err(ReadError::Blocked) => {
-                            c.readable = false;
-                            break;
-                        }
-                        Err(ReadError::Reset(code)) => {
-                            if st.terminal.is_none() {
-                                st.terminal = Some(Terminal::Error(error::stream_reset(code)));
+                        match chunks.next(usize::MAX) {
+                            Ok(Some(chunk)) => {
+                                st.recv_len += chunk.bytes.len();
+                                st.recv.push_back(chunk.bytes);
+                                delivered = true;
                             }
-                            c.readable = false;
-                            progress = true;
-                            break;
+                            Ok(None) => {
+                                st.recv_fin = true;
+                                c.readable = false;
+                                delivered = true;
+                                break;
+                            }
+                            Err(ReadError::Blocked) => {
+                                c.readable = false;
+                                break;
+                            }
+                            Err(ReadError::Reset(code)) => {
+                                if st.terminal.is_none() {
+                                    st.terminal = Some(Terminal::Error(error::stream_reset(code)));
+                                }
+                                c.readable = false;
+                                delivered = true;
+                                break;
+                            }
                         }
                     }
+                    // Flow-control (MAX_STREAM_DATA) updates ride the next
+                    // flush_transmits pass.
+                    let _ = chunks.finalize();
+                    if delivered {
+                        c.shared.cond.notify_all();
+                    }
                 }
-                // Flow-control (MAX_STREAM_DATA) updates ride the next
-                // flush_transmits pass.
-                let _ = chunks.finalize();
-                if progress {
-                    self.shared.cond.notify_all();
+                Err(ReadableError::ClosedStream | ReadableError::IllegalOrderedRead) => {
+                    c.readable = false;
                 }
             }
-            Err(ReadableError::ClosedStream | ReadableError::IllegalOrderedRead) => {
-                c.readable = false;
-            }
+            progress |= delivered;
         }
         progress
     }
 
-    /// Sends every packet the connection wants on the wire right now.
+    /// Sends every packet each connection wants on the wire right now.
     fn flush_transmits(&mut self, now: Instant) -> io::Result<bool> {
-        let Some(c) = &mut self.conn else {
-            return Ok(false);
-        };
         let mut progress = false;
-        loop {
-            self.buf.clear();
-            // max_datagrams = 1: no GSO with a std UdpSocket.
-            let Some(t) = c.conn.poll_transmit(now, 1, &mut self.buf) else {
-                break;
-            };
-            progress = true;
-            match self.socket.send_to(&self.buf[..t.size], t.destination) {
-                Ok(_) => {}
-                // ICMP-derived errors surface here on some platforms when the
-                // peer is gone; QUIC's own loss handling covers the drop.
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionReset
-                    ) => {}
-                Err(e) => return Err(e),
+        for c in &mut self.conns {
+            loop {
+                self.buf.clear();
+                // max_datagrams = 1: no GSO with a std UdpSocket.
+                let Some(t) = c.conn.poll_transmit(now, 1, &mut self.buf) else {
+                    break;
+                };
+                progress = true;
+                match self.socket.send_to(&self.buf[..t.size], t.destination) {
+                    Ok(_) => {}
+                    // ICMP-derived errors surface here on some platforms when
+                    // the peer is gone; QUIC's own loss handling covers the
+                    // drop.
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionReset
+                        ) => {}
+                    Err(e) => return Err(e),
+                }
             }
         }
         Ok(progress)
     }
 
-    /// One blocking receive, bounded by the quinn timer deadline and
+    /// One blocking receive, bounded by the earliest quinn timer deadline and
     /// [`MAX_SLEEP`]. Returns `None` on timeout.
     fn recv(&mut self, deadline: Option<Instant>) -> io::Result<Option<(usize, SocketAddr)>> {
         let now = Instant::now();
@@ -402,7 +466,7 @@ impl Driver {
 
     /// After a blocking receive delivered one datagram, drains whatever else
     /// is already queued on the socket without blocking, so a burst is fed to
-    /// the state machine as a batch: one pump pass (and one coalesced set of
+    /// the state machines as a batch: one pump pass (and one coalesced set of
     /// ACKs) per burst instead of per datagram.
     fn recv_burst(&mut self, now: Instant) -> io::Result<()> {
         // Bounded so a firehose peer cannot starve timers and facade writes.
@@ -441,6 +505,16 @@ impl Driver {
         result
     }
 
+    /// Whether a server endpoint may take on another connection now.
+    fn has_backlog_room(&self) -> bool {
+        let unaccepted = self
+            .conns
+            .iter()
+            .filter(|c| !c.shared.lock().accepted)
+            .count();
+        unaccepted < ACCEPT_BACKLOG
+    }
+
     /// Feeds one datagram to the endpoint and dispatches the outcome.
     fn handle_datagram(&mut self, now: Instant, from: SocketAddr, len: usize) -> io::Result<()> {
         let data = BytesMut::from(&self.recv_buf[..len]);
@@ -450,23 +524,20 @@ impl Driver {
             .handle(now, from, None, None, data, &mut self.buf)
         {
             Some(DatagramEvent::ConnectionEvent(ch, event)) => {
-                if let Some(c) = &mut self.conn
-                    && c.handle == ch
-                {
+                if let Some(c) = self.conns.iter_mut().find(|c| c.handle == ch) {
                     c.conn.handle_event(event);
                 }
             }
             Some(DatagramEvent::NewConnection(incoming)) => {
-                if self.conn.is_some() || self.role == Role::Client {
-                    // One connection per endpoint: refuse any further ones.
-                    self.buf.clear();
-                    let t = self.endpoint.refuse(incoming, &mut self.buf);
-                    let _ = self.socket.send_to(&self.buf[..t.size], t.destination);
-                } else {
-                    self.buf.clear();
+                let admit = self.role == Role::Server
+                    && self.has_backlog_room()
+                    && !self.hub.lock().accept_closed;
+                self.buf.clear();
+                if admit {
                     match self.endpoint.accept(incoming, now, &mut self.buf, None) {
                         Ok((handle, conn)) => {
-                            self.conn = Some(ConnDriver::new(handle, conn));
+                            let shared = Arc::new(Shared::new());
+                            self.conns.push(ConnDriver::new(handle, conn, shared));
                         }
                         Err(err) => {
                             if let Some(t) = err.response {
@@ -474,6 +545,9 @@ impl Driver {
                             }
                         }
                     }
+                } else {
+                    let t = self.endpoint.refuse(incoming, &mut self.buf);
+                    let _ = self.socket.send_to(&self.buf[..t.size], t.destination);
                 }
             }
             Some(DatagramEvent::Response(t)) => {
@@ -485,14 +559,18 @@ impl Driver {
     }
 }
 
-/// Spawns the driver thread and builds the shared facade handle.
+/// Spawns the driver thread and builds the shared endpoint handle.
+///
+/// `conn` is the connection a client endpoint dialled, paired with the facade
+/// state its stream will use; a server endpoint passes `None` and accepts its
+/// connections as they arrive.
 pub(super) fn spawn_io(
     socket: UdpSocket,
     endpoint: Endpoint,
     role: Role,
     opens_stream: bool,
-    conn: Option<(ConnectionHandle, Connection)>,
-) -> io::Result<Arc<Io>> {
+    conn: Option<(ConnectionHandle, Connection, Arc<Shared>)>,
+) -> io::Result<Arc<Hub>> {
     let local = socket.local_addr()?;
     let wake = UdpSocket::bind(SocketAddr::new(loopback_of(local.ip()), 0))?;
     let wake_addr = wake.local_addr()?;
@@ -502,12 +580,15 @@ pub(super) fn spawn_io(
         local
     };
     wake.connect(target)?;
-    let shared = Arc::new(Shared::new());
+    let hub = Arc::new(Hub::new(wake, role));
     let driver = Driver {
         socket,
         endpoint,
-        conn: conn.map(|(handle, c)| ConnDriver::new(handle, c)),
-        shared: Arc::clone(&shared),
+        conns: conn
+            .map(|(handle, c, shared)| ConnDriver::new(handle, c, shared))
+            .into_iter()
+            .collect(),
+        hub: Arc::clone(&hub),
         wake_addr,
         role,
         opens_stream,
@@ -518,9 +599,6 @@ pub(super) fn spawn_io(
     let handle = std::thread::Builder::new()
         .name("quic-io".to_owned())
         .spawn(move || driver.run())?;
-    Ok(Arc::new(Io {
-        shared,
-        wake,
-        thread: Mutex::new(Some(handle)),
-    }))
+    hub.set_thread(handle);
+    Ok(hub)
 }
