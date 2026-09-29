@@ -968,6 +968,13 @@ impl ReceiverContext {
                     }
                 };
 
+                // upstream: receiver.c:687 - the sum read here stays in
+                // `sender_file_sum` for the log_item() that follows.
+                if self.daemon_log_active {
+                    self.sender_file_sum.set(crate::progress::file_sum_buf(
+                        &result.expected_checksum[..result.checksum_len],
+                    ));
+                }
                 pipelined_receiver.note_commit_sent(
                     result.expected_checksum,
                     result.checksum_len,

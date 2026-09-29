@@ -428,6 +428,7 @@ impl DaemonFileLog for DaemonFileLogWriter<'_> {
             gid: row.gid,
             mtime: &mtime,
             permissions: &permissions,
+            checksum: &row.checksum,
         };
         log_transfer(&self.fmt, &log_ctx, self.log);
     }

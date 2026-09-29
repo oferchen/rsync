@@ -1168,6 +1168,7 @@ impl GeneratorContext {
                         poison_file_checksum(&mut checksum_buf, result.checksum_len);
                     }
                     cw.write_all(&checksum_buf[..result.checksum_len])?;
+                    self.note_sender_file_sum(&checksum_buf[..result.checksum_len]);
                     sent_bytes(cw.bytes_written(), divert_xfer)
                 };
                 bytes_sent += wire_bytes;
@@ -1341,6 +1342,7 @@ impl GeneratorContext {
                     // of printing them itself.
                     matching::trace_deltasum::trace_sending_file_sum();
                     cw.write_all(&checksum_buf[..result.checksum_len])?;
+                    self.note_sender_file_sum(&checksum_buf[..result.checksum_len]);
                     matching::trace_deltasum::trace_match_counters(
                         scan_counters.false_alarms,
                         scan_counters.hash_hits,
@@ -1456,6 +1458,7 @@ impl GeneratorContext {
                         poison_file_checksum(&mut checksum_buf, result.checksum_len);
                     }
                     cw.write_all(&checksum_buf[..result.checksum_len])?;
+                    self.note_sender_file_sum(&checksum_buf[..result.checksum_len]);
                     sent_bytes(cw.bytes_written(), divert_xfer)
                 };
                 bytes_sent += wire_bytes;

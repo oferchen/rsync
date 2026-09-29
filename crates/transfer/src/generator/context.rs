@@ -278,6 +278,9 @@ pub struct GeneratorContext {
     ///
     /// upstream: `flist.c:240-242` `sender_source_roots`
     pub(crate) source_roots: Arc<fast_io::SourceRoots>,
+    /// The last whole-file sum sent, which `%C` shows for a transfer
+    /// (upstream's `sender_file_sum` global).
+    pub(crate) sender_file_sum: std::cell::Cell<[u8; crate::progress::MAX_FILE_SUM_LEN]>,
 }
 
 /// Handle on the `--write-batch` file, held by a client sender so it can write
@@ -411,6 +414,7 @@ impl GeneratorContext {
             daemon_log_rows: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             confined_source_root: std::sync::OnceLock::new(),
             source_roots: Arc::new(fast_io::SourceRoots::new()),
+            sender_file_sum: std::cell::Cell::new([0; crate::progress::MAX_FILE_SUM_LEN]),
         }
     }
 
@@ -466,12 +470,34 @@ impl GeneratorContext {
             entry.gid(),
             entry.link_target().cloned(),
             xname,
+            self.daemon_log_checksum(entry, is_transfer),
         );
         self.daemon_log_rows
             .borrow_mut()
             .entry(ndx)
             .or_default()
             .push(row);
+    }
+
+    /// Remembers the whole-file sum just sent, for the next `%C` log row.
+    ///
+    /// upstream: match.c:452 `sum_end(sender_file_sum)` - a global that
+    /// `log_item()` (sender.c:462) reads after `match_sums()` returns.
+    pub(super) fn note_sender_file_sum(&self, sum: &[u8]) {
+        if self.daemon_log_active {
+            self.sender_file_sum.set(crate::progress::file_sum_buf(sum));
+        }
+    }
+
+    /// Renders the `%C` field for a logged entry.
+    fn daemon_log_checksum(&self, entry: &protocol::flist::FileEntry, is_transfer: bool) -> String {
+        crate::progress::LogChecksumFormat::new(self.get_checksum_algorithm(), self.protocol)
+            .render(
+                entry,
+                self.config.flags.checksum,
+                is_transfer,
+                &self.sender_file_sum.get(),
+            )
     }
 
     /// Drains the collected per-file daemon-log rows in ascending flist-index

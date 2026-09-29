@@ -1174,7 +1174,22 @@ impl ReceiverContext {
         let symlink_target = self
             .stored_symlink_target(entry)
             .map(std::borrow::Cow::into_owned);
-        let row = crate::progress::DaemonLogRow::new(entry, itemize, gid, symlink_target, xname);
+        let checksum =
+            crate::progress::LogChecksumFormat::new(self.get_checksum_algorithm(), self.protocol)
+                .render(
+                    entry,
+                    self.config.flags.checksum,
+                    is_transfer,
+                    &self.sender_file_sum.get(),
+                );
+        let row = crate::progress::DaemonLogRow::new(
+            entry,
+            itemize,
+            gid,
+            symlink_target,
+            xname,
+            checksum,
+        );
         self.daemon_log_rows
             .borrow_mut()
             .entry(flist_idx)
