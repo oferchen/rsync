@@ -1,0 +1,52 @@
+name: Upstream Testsuite 3.5.1 (root, tcp, macOS)
+
+# One of the eight rsync 3.5.1 testsuite legs: {pipe,tcp} x {nonroot,root}
+# x {Linux,macOS}. Each leg is its own workflow so each has its own README
+# status badge; all eight call the SAME reusable workflows the 3.5.0 legs use,
+# with only the version, privilege, transport and manifest changed.
+#
+# NOT A PULL-REQUEST GATE, deliberately: CI runs about one workflow at a time,
+# and eight more jobs on every PR would gridlock the merge queue. The legs run
+# on push to master, nightly and on demand; the 3.5.0 legs in ci.yml stay the
+# required gate until the pin flip retires them.
+#
+# Every manifest row is GENERATED from an executed run (EMIT_EXPECT_RESULT),
+# and every `fail` row carries its cause and owning task inline. runtests.py
+# compares outcomes exactly - an unexpected PASS fails the leg too - so a cell
+# fixed by its owner turns this red until its row is flipped to `pass`.
+#
+# `bootstrap: true` runs the leg WITHOUT a manifest and uploads the manifest it
+# would hold itself to (expect-result.*.txt in its logs artifact); that is how
+# a re-baseline is taken.
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: 'Run without a manifest and emit a fresh one as an artifact'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-testsuite-3.5.1-macos-root-tcp-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Job ids are distinct from ci.yml's 3.5.0 callers, so no context reported
+  # here can satisfy - or be mistaken for - a required 3.5.0 check.
+  macos-tcp-root:
+    uses: ./.github/workflows/_upstream-testsuite-macos.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: '3.5.1'
+      variant: 'root'
+      transport: 'tcp'
+      # `!bootstrap && path || ''`, never `bootstrap && '' || path`: an empty
+      # string is falsy, so the second form would always yield the path.
+      expect_result_macos_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.macos.root.tcp.txt' || '' }}

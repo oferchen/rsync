@@ -1,8 +1,9 @@
 """The rsync 3.5.1 testsuite legs: manifests, owners and scheduling.
 
-`.github/workflows/upstream-testsuite-3.5.1.yml` runs upstream's 3.5.1 corpus on
-eight contexts ({pipe,tcp} x {nonroot,root} x {Linux,macOS}), each against its
-own --expect-result manifest. These tests hold that ledger to three rules:
+`.github/workflows/upstream-testsuite-3.5.1-<platform>-<privilege>-<transport>.yml`
+run upstream's 3.5.1 corpus on eight contexts ({pipe,tcp} x {nonroot,root} x
+{Linux,macOS}), one workflow per context so each has its own status badge, each
+against its own --expect-result manifest. These tests hold that ledger to three rules:
 
 1. Every expected failure names its cause and owner. The manifests accept
    known divergences, and an unexplained `fail` row is a silent waiver: nobody
@@ -25,7 +26,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 CI_DIR = REPO / "tools" / "ci"
-WORKFLOW = REPO / ".github" / "workflows" / "upstream-testsuite-3.5.1.yml"
+WORKFLOWS = sorted((REPO / ".github" / "workflows").glob("upstream-testsuite-3.5.1-*.yml"))
 CI_YML = REPO / ".github" / "workflows" / "ci.yml"
 SUITE = REPO / "target" / "interop" / "upstream-src" / "rsync-3.5.1" / "testsuite"
 
@@ -97,17 +98,22 @@ class Uts351ManifestTests(unittest.TestCase):
             unknown = {r[0] for r in _rows(CI_DIR / name)} - corpus
             self.assertFalse(unknown, f"{name}: not in the 3.5.1 corpus: {unknown}")
 
-    def test_workflow_reads_exactly_the_eight_manifests(self) -> None:
-        named = set(re.findall(r"tools/ci/(upstream-3\.5\.1-expect\.[\w.]+\.txt)",
-                               WORKFLOW.read_text()))
-        self.assertEqual(named, set(CONTEXTS))
+    def test_workflows_read_exactly_the_eight_manifests(self) -> None:
+        self.assertEqual(len(WORKFLOWS), len(CONTEXTS), "one workflow per context")
+        named = []
+        for workflow in WORKFLOWS:
+            found = re.findall(r"tools/ci/(upstream-3\.5\.1-expect\.[\w.]+\.txt)",
+                               workflow.read_text())
+            self.assertEqual(len(found), 1, f"{workflow.name}: exactly one manifest")
+            named += found
+        self.assertEqual(sorted(named), sorted(CONTEXTS))
 
     def test_legs_are_not_a_pull_request_gate(self) -> None:
-        text = WORKFLOW.read_text()
-        on_block = text.split("\non:", 1)[1].split("\njobs:", 1)[0]
-        self.assertNotIn("pull_request", on_block)
-        for trigger in ("push:", "schedule:", "workflow_dispatch:"):
-            self.assertIn(trigger, on_block)
+        for workflow in WORKFLOWS:
+            on_block = workflow.read_text().split("\non:", 1)[1].split("\njobs:", 1)[0]
+            self.assertNotIn("pull_request", on_block, workflow.name)
+            for trigger in ("push:", "schedule:", "workflow_dispatch:"):
+                self.assertIn(trigger, on_block, workflow.name)
         self.assertNotIn("upstream-3.5.1-", CI_YML.read_text())
 
 
