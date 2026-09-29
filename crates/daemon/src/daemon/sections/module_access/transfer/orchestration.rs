@@ -578,7 +578,15 @@ fn process_approved_module(
     // `/./` marker, in which case it is the normalized remainder after it.
     // upstream: clientserver.c:847-864 - `module_dir` after the `/./` split.
     let effective_module;
-    let config_module = if privilege_outcome.chroot_applied {
+    // An unchrooted module whose root is now the working directory is served
+    // as `.`; see `enter_pinned_module_root`.
+    let config_module = if let Some(served_root) = privilege_outcome.served_root.as_deref() {
+        effective_module = ModuleRuntime::from(chroot_adjusted_definition(
+            &module.definition,
+            Some(served_root),
+        ));
+        &effective_module
+    } else if privilege_outcome.chroot_applied {
         effective_module = ModuleRuntime::from(chroot_adjusted_definition(
             &module.definition,
             privilege_outcome.inner_module_path.as_deref(),
