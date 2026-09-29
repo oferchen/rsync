@@ -121,16 +121,12 @@ fn apply_module_directive(
             }
         }
         "usechroot" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "use chroot", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "use chroot", path, line_number) {
                 builder.set_use_chroot(parsed);
             }
         }
         "numericids" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "numeric ids", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "numeric ids", path, line_number) {
                 builder.set_numeric_ids(parsed);
             }
         }
@@ -154,10 +150,9 @@ fn apply_module_directive(
             }
         }
         "mungesymlinks" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "munge symlinks", path, line_number)
+            if let Some(parsed) = apply_bool3_directive(value, "munge symlinks", path, line_number)
             {
-                builder.set_munge_symlinks(Some(parsed));
+                builder.set_munge_symlinks(parsed);
             }
         }
         // upstream: clientserver.c:833 - an empty `uid` means the default
@@ -297,9 +292,7 @@ fn apply_module_directive(
             }
         }
         "opennoatime" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "open noatime", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "open noatime", path, line_number) {
                 builder.set_open_noatime(parsed);
             }
         }
