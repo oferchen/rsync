@@ -10,50 +10,33 @@ use super::output_words::{self, OutputWord, TokenFlow};
 
 /// Per-flag descriptor for an `--info=` token.
 ///
-/// upstream: options.c `output_struct` (rsync-3.4.1:259-266) plus the
-/// `info_verbosity[]` grouping at options.c:239-243. `max_level` is the
-/// per-flag ceiling used when `--info=all<N>` fans out
-/// across every flag (it caps each flag at its highest meaningful level,
-/// mirroring upstream's runtime `INFO_GTE(...)` checks). `priority`
-/// records the upstream verbosity group at which the flag is auto-enabled
-/// from `-v` (NONREG=0, level-1 group covers COPY/DEL/FLIST/MISC/NAME/
-/// STATS/SYMSAFE=1, level-2 group covers BACKUP/MOUNT/REMOVE/SKIP=2). It
-/// is currently informational, exposed for the daemon-side limit handling
-/// tracked by audit I16 (`limit_output_verbosity()`, options.c:527-552).
+/// upstream: options.c `output_struct` (rsync-3.4.1:259-266). `max_level` is
+/// the per-flag ceiling used when `--info=all<N>` fans out across every flag
+/// (it caps each flag at its highest meaningful level, mirroring upstream's
+/// runtime `INFO_GTE(...)` checks). The `-v` verbosity grouping lives in the
+/// single `logging::VerbosityConfig::from_verbose_level` table.
 #[derive(Clone, Copy)]
 pub(crate) struct InfoFlagSpec {
     pub(crate) name: &'static str,
     pub(crate) max_level: u8,
-    // Exposed for future daemon-side `limit_output_verbosity()` parity. The
-    // current client-side `enable_all_at_level()` clamps by max_level rather
-    // than priority, mirroring upstream's `parse_output_words` behavior.
-    #[allow(dead_code)]
-    pub(crate) priority: u8,
 }
 
-/// Every `--info` flag, with the verbosity group that enables it.
-///
-/// upstream: options.c info_verbosity[] (rsync-3.4.1:239-243) - priority is
-/// the verbosity-group index. NONREG sits in group 0 (always-on default),
-/// the level-1 group covers COPY/DEL/FLIST/MISC/NAME/STATS/SYMSAFE, and the
-/// level-2 group covers BACKUP/MOUNT/REMOVE/SKIP. PROGRESS has no upstream
-/// verbosity-group entry; oc-rsync treats it as priority 1 so `--info=all1`
-/// enables per-file progress, matching upstream `-v` parity for `--info`.
+/// Every `--info` flag with its `all<N>` ceiling.
 #[rustfmt::skip]
 pub(crate) const INFO_FLAG_SPECS: &[InfoFlagSpec] = &[
-    InfoFlagSpec { name: "backup",   max_level: 1, priority: 2 },
-    InfoFlagSpec { name: "copy",     max_level: 1, priority: 1 },
-    InfoFlagSpec { name: "del",      max_level: 1, priority: 1 },
-    InfoFlagSpec { name: "flist",    max_level: 2, priority: 1 },
-    InfoFlagSpec { name: "misc",     max_level: 2, priority: 1 },
-    InfoFlagSpec { name: "mount",    max_level: 1, priority: 2 },
-    InfoFlagSpec { name: "name",     max_level: 2, priority: 1 },
-    InfoFlagSpec { name: "nonreg",   max_level: 1, priority: 0 },
-    InfoFlagSpec { name: "progress", max_level: 2, priority: 1 },
-    InfoFlagSpec { name: "remove",   max_level: 1, priority: 2 },
-    InfoFlagSpec { name: "skip",     max_level: 2, priority: 2 },
-    InfoFlagSpec { name: "stats",    max_level: 3, priority: 1 },
-    InfoFlagSpec { name: "symsafe",  max_level: 1, priority: 1 },
+    InfoFlagSpec { name: "backup",   max_level: 1 },
+    InfoFlagSpec { name: "copy",     max_level: 1 },
+    InfoFlagSpec { name: "del",      max_level: 1 },
+    InfoFlagSpec { name: "flist",    max_level: 2 },
+    InfoFlagSpec { name: "misc",     max_level: 2 },
+    InfoFlagSpec { name: "mount",    max_level: 1 },
+    InfoFlagSpec { name: "name",     max_level: 2 },
+    InfoFlagSpec { name: "nonreg",   max_level: 1 },
+    InfoFlagSpec { name: "progress", max_level: 2 },
+    InfoFlagSpec { name: "remove",   max_level: 1 },
+    InfoFlagSpec { name: "skip",     max_level: 2 },
+    InfoFlagSpec { name: "stats",    max_level: 3 },
+    InfoFlagSpec { name: "symsafe",  max_level: 1 },
 ];
 
 /// Parsed `--info` flag settings controlling informational output levels.
@@ -77,10 +60,7 @@ pub(crate) struct InfoFlagSettings {
 
 impl InfoFlagSettings {
     // upstream: options.c parse_output_words - the "all<N>" token sets every
-    // flag to level `min(N, spec.max_level)`. The `priority` field on each
-    // spec records the upstream verbosity-group ordering (NONREG=0, level-1
-    // group=1, level-2 group=2) and is exposed via `InfoFlagSpec::priority`
-    // for future daemon-side `limit_output_verbosity()` parity (audit I16).
+    // flag to level `min(N, spec.max_level)`.
     fn enable_all_at_level(&mut self, level: u8) {
         for spec in INFO_FLAG_SPECS {
             let effective = level.min(spec.max_level);

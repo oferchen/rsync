@@ -7,11 +7,106 @@
 //! `--debug=FLAGS`).
 //!
 //! The cumulative mapping in [`VerbosityConfig::from_verbose_level`] mirrors
-//! upstream's `set_output_verbosity()` (upstream: options.c:513), which
+//! upstream's `set_output_verbosity()` (upstream: options.c:532), which
 //! iterates `j = 0..=level` over the `info_verbosity[]` and
-//! `debug_verbosity[]` tables (upstream: options.c:228-243).
+//! `debug_verbosity[]` tables (upstream: options.c:244-259).
 
 use super::levels::{DebugFlag, DebugLevels, InfoFlag, InfoLevels};
+
+/// Debug categories each `-v` adds, indexed by verbose count.
+///
+/// upstream: options.c:244-251 `debug_verbosity[]` - rows 0 and 1 are NULL,
+/// so `-v` enables no debug category.
+const DEBUG_VERBOSITY: [&[(DebugFlag, u8)]; 6] = {
+    use DebugFlag::*;
+    [
+        &[],
+        &[],
+        &[
+            (Bind, 1),
+            (Cmd, 1),
+            (Connect, 1),
+            (Del, 1),
+            (Deltasum, 1),
+            (Dup, 1),
+            (Filter, 1),
+            (Flist, 1),
+            (Iconv, 1),
+        ],
+        &[
+            (Acl, 1),
+            (Backup, 1),
+            (Connect, 2),
+            (Deltasum, 2),
+            (Del, 2),
+            (Exit, 1),
+            (Filter, 2),
+            (Flist, 2),
+            (Fuzzy, 1),
+            (Genr, 1),
+            (Own, 1),
+            (Recv, 1),
+            (Send, 1),
+            (Time, 1),
+        ],
+        &[
+            (Cmd, 2),
+            (Deltasum, 3),
+            (Del, 3),
+            (Exit, 2),
+            (Flist, 3),
+            (Iconv, 2),
+            (Own, 2),
+            (Proto, 1),
+            (Time, 2),
+        ],
+        &[
+            (Chdir, 1),
+            (Deltasum, 4),
+            (Flist, 4),
+            (Fuzzy, 2),
+            (Hash, 1),
+            (Hlink, 1),
+        ],
+    ]
+};
+
+/// Highest verbose count with its own table row; larger counts clamp to it.
+///
+/// upstream: options.c:253 `#define MAX_VERBOSITY` - derived from the length
+/// of `debug_verbosity[]`.
+pub const MAX_VERBOSITY: u8 = (DEBUG_VERBOSITY.len() - 1) as u8;
+
+/// Info categories each `-v` adds, indexed by verbose count.
+///
+/// upstream: options.c:255-259 `info_verbosity[1+MAX_VERBOSITY]` - rows past
+/// 2 are NULL.
+const INFO_VERBOSITY: [&[(InfoFlag, u8)]; DEBUG_VERBOSITY.len()] = {
+    use InfoFlag::*;
+    [
+        &[(Nonreg, 1)],
+        &[
+            (Copy, 1),
+            (Del, 1),
+            (Flist, 1),
+            (Misc, 1),
+            (Name, 1),
+            (Stats, 1),
+            (Symsafe, 1),
+        ],
+        &[
+            (Backup, 1),
+            (Misc, 2),
+            (Mount, 1),
+            (Name, 2),
+            (Remove, 1),
+            (Skip, 1),
+        ],
+        &[],
+        &[],
+        &[],
+    ]
+};
 
 /// Combined verbosity configuration for info and debug flags.
 ///
@@ -32,164 +127,24 @@ pub struct VerbosityConfig {
 }
 
 impl VerbosityConfig {
-    /// Create a new configuration from a verbose level (0-5).
+    /// Create a new configuration from a verbose count.
     ///
-    /// Applies cumulative upstream rsync verbosity mapping. Each level adds flags
-    /// from all lower levels, matching `set_output_verbosity()` which iterates
-    /// `j = 0..=level` over the `info_verbosity[]` and `debug_verbosity[]` tables.
-    /// upstream: options.c:513 set_output_verbosity()
-    /// upstream: options.c:228-243 debug_verbosity[] / info_verbosity[]
+    /// Applies rows `0..=level` of the info and debug verbosity tables in
+    /// order, each entry overwriting its flag's level, so every level includes
+    /// all lower ones. Counts above [`MAX_VERBOSITY`] clamp to it.
+    /// upstream: options.c:532 set_output_verbosity()
     #[must_use]
     pub fn from_verbose_level(level: u8) -> Self {
         let mut config = Self::default();
-
-        match level {
-            0 => {
-                // upstream info_verbosity[0] = "NONREG"
-                config.info.nonreg = 1;
+        let rows = usize::from(level.min(MAX_VERBOSITY)) + 1;
+        for (info_row, debug_row) in INFO_VERBOSITY.iter().zip(DEBUG_VERBOSITY).take(rows) {
+            for &(flag, flag_level) in *info_row {
+                config.info.set(flag, flag_level);
             }
-            1 => {
-                // upstream info_verbosity[1] = "COPY,DEL,FLIST,MISC,NAME,STATS,SYMSAFE"
-                config.info.nonreg = 1;
-                config.info.copy = 1;
-                config.info.del = 1;
-                config.info.flist = 1;
-                config.info.misc = 1;
-                config.info.name = 1;
-                config.info.stats = 1;
-                config.info.symsafe = 1;
-            }
-            2 => {
-                // upstream info_verbosity[2] = "BACKUP,MISC2,MOUNT,NAME2,REMOVE,SKIP"
-                // upstream debug_verbosity[2] = "BIND,CMD,CONNECT,DEL,DELTASUM,DUP,FILTER,FLIST,ICONV"
-                config.info.nonreg = 1;
-                config.info.copy = 1;
-                config.info.del = 1;
-                config.info.flist = 1;
-                config.info.misc = 2;
-                config.info.name = 2;
-                config.info.stats = 1;
-                config.info.symsafe = 1;
-                config.info.backup = 1;
-                config.info.mount = 1;
-                config.info.remove = 1;
-                config.info.skip = 1;
-                config.debug.bind = 1;
-                config.debug.cmd = 1;
-                config.debug.connect = 1;
-                config.debug.del = 1;
-                config.debug.deltasum = 1;
-                config.debug.dup = 1;
-                config.debug.filter = 1;
-                config.debug.flist = 1;
-                config.debug.iconv = 1;
-            }
-            3 => {
-                // upstream debug_verbosity[3] = "ACL,BACKUP,CONNECT2,DELTASUM2,DEL2,EXIT,FILTER2,FLIST2,FUZZY,GENR,OWN,RECV,SEND,TIME"
-                config.info.nonreg = 1;
-                config.info.copy = 1;
-                config.info.del = 1;
-                config.info.flist = 1;
-                config.info.misc = 2;
-                config.info.name = 2;
-                config.info.stats = 1;
-                config.info.symsafe = 1;
-                config.info.backup = 1;
-                config.info.mount = 1;
-                config.info.remove = 1;
-                config.info.skip = 1;
-                config.debug.bind = 1;
-                config.debug.cmd = 1;
-                config.debug.connect = 2;
-                config.debug.del = 2;
-                config.debug.deltasum = 2;
-                config.debug.dup = 1;
-                config.debug.filter = 2;
-                config.debug.flist = 2;
-                config.debug.iconv = 1;
-                config.debug.acl = 1;
-                config.debug.backup = 1;
-                config.debug.fuzzy = 1;
-                config.debug.genr = 1;
-                config.debug.own = 1;
-                config.debug.recv = 1;
-                config.debug.send = 1;
-                config.debug.time = 1;
-                config.debug.exit = 1;
-            }
-            4 => {
-                // upstream debug_verbosity[4] = "CMD2,DELTASUM3,DEL3,EXIT2,FLIST3,ICONV2,OWN2,PROTO,TIME2"
-                config.info.nonreg = 1;
-                config.info.copy = 1;
-                config.info.del = 1;
-                config.info.flist = 1;
-                config.info.misc = 2;
-                config.info.name = 2;
-                config.info.stats = 1;
-                config.info.symsafe = 1;
-                config.info.backup = 1;
-                config.info.mount = 1;
-                config.info.remove = 1;
-                config.info.skip = 1;
-                config.debug.bind = 1;
-                config.debug.cmd = 2;
-                config.debug.connect = 2;
-                config.debug.del = 3;
-                config.debug.deltasum = 3;
-                config.debug.dup = 1;
-                config.debug.filter = 2;
-                config.debug.flist = 3;
-                config.debug.iconv = 2;
-                config.debug.acl = 1;
-                config.debug.backup = 1;
-                config.debug.fuzzy = 1;
-                config.debug.genr = 1;
-                config.debug.own = 2;
-                config.debug.recv = 1;
-                config.debug.send = 1;
-                config.debug.time = 2;
-                config.debug.exit = 2;
-                config.debug.proto = 1;
-            }
-            _ => {
-                // upstream debug_verbosity[5] = "CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK"
-                config.info.nonreg = 1;
-                config.info.copy = 1;
-                config.info.del = 1;
-                config.info.flist = 1;
-                config.info.misc = 2;
-                config.info.name = 2;
-                config.info.stats = 1;
-                config.info.symsafe = 1;
-                config.info.backup = 1;
-                config.info.mount = 1;
-                config.info.remove = 1;
-                config.info.skip = 1;
-                config.debug.bind = 1;
-                config.debug.cmd = 2;
-                config.debug.connect = 2;
-                config.debug.del = 3;
-                config.debug.deltasum = 4;
-                config.debug.dup = 1;
-                config.debug.filter = 2;
-                config.debug.flist = 4;
-                config.debug.iconv = 2;
-                config.debug.acl = 1;
-                config.debug.backup = 1;
-                config.debug.fuzzy = 2;
-                config.debug.genr = 1;
-                config.debug.own = 2;
-                config.debug.recv = 1;
-                config.debug.send = 1;
-                config.debug.time = 2;
-                config.debug.exit = 2;
-                config.debug.proto = 1;
-                config.debug.chdir = 1;
-                config.debug.hash = 1;
-                config.debug.hlink = 1;
+            for &(flag, flag_level) in debug_row {
+                config.debug.set(flag, flag_level);
             }
         }
-
         config
     }
 

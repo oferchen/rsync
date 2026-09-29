@@ -547,8 +547,11 @@ fn verbose_1_distinct_from_level_2() {
 }
 
 /// Verifies verbose level 1 has no debug output unlike level 2+.
+///
+/// upstream: options.c:244-251 - `debug_verbosity[1]` is NULL, so `-v` adds
+/// no debug category; `debug_verbosity[2]` adds FLIST but not RECV, which only
+/// joins at `debug_verbosity[3]`.
 #[test]
-#[ignore = "verbose level 1 currently enables debug flags - behavior needs clarification"]
 fn verbose_1_no_debug_unlike_level_2() {
     let config1 = VerbosityConfig::from_verbose_level(1);
     let config2 = VerbosityConfig::from_verbose_level(2);
@@ -559,7 +562,7 @@ fn verbose_1_no_debug_unlike_level_2() {
 
     init(config2);
     assert!(debug_gte(DebugFlag::Flist, 1));
-    assert!(debug_gte(DebugFlag::Recv, 1));
+    assert!(!debug_gte(DebugFlag::Recv, 1));
 }
 
 /// Verifies verbose level 1 can mix different info event types.
