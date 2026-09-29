@@ -275,7 +275,7 @@ impl DualFileList {
         let mut w: usize = 0;
         let mut r: usize = 1;
         while r < len {
-            if self.legacy[w].name() != self.legacy[r].name() {
+            if self.legacy[w].name_bytes() != self.legacy[r].name_bytes() {
                 w += 1;
                 if w != r {
                     self.legacy.swap(w, r);
@@ -297,7 +297,7 @@ impl DualFileList {
             // duplicates are collapsed below. Only top-level duplicates (the
             // genuine repeated source args) are kept, matching upstream's wire
             // entry count and NDX numbering.
-            let top_level = !self.legacy[r].name().contains('/');
+            let top_level = !self.legacy[r].name_bytes().contains(&b'/');
             if am_sender && top_level {
                 let both_dirs = self.legacy[w].is_dir() && self.legacy[r].is_dir();
                 w += 1;
@@ -646,6 +646,34 @@ mod tests {
             "the earlier survivor is not a duplicate"
         );
         assert!(list[1].duplicate(), "the later foo carries FLAG_DUPLICATE");
+    }
+
+    /// Distinct non-UTF-8 directory names are not duplicates. Upstream compares
+    /// raw bytes (flist.c:3295 `f_name_cmp()`); a lossy comparison would see
+    /// equal names, flag the later dir FLAG_DUPLICATE and batch two unrelated
+    /// directories into one sub-list.
+    #[cfg(unix)]
+    #[test]
+    fn dedup_with_parallel_keeps_distinct_non_utf8_dirs() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let mut list = DualFileList::new();
+        list.push(FileEntry::new_directory(
+            OsStr::from_bytes(b"a\xef").into(),
+            0o755,
+        ));
+        list.push(FileEntry::new_directory(
+            OsStr::from_bytes(b"b\xef").into(),
+            0o755,
+        ));
+        let mut bases = vec!["b0", "b1"];
+        let stats = list.dedup_with_parallel(&mut bases, true, true);
+        assert_eq!(stats.duplicates_removed, 0);
+        assert_eq!(list.len(), 2);
+        assert!(
+            !list[1].duplicate(),
+            "a distinct name is not FLAG_DUPLICATE"
+        );
     }
 
     #[test]

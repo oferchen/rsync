@@ -887,17 +887,17 @@ impl ReceiverContext {
         };
 
         // Check if parent is under a failed directory
-        if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.name()) {
+        if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.path()) {
             if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(
                     Skip,
                     1,
                     "skipping directory {} (parent {} failed)",
-                    entry.name(),
-                    failed_parent
+                    entry.path().display(),
+                    failed_parent.display()
                 );
             }
-            failed_dirs.mark_failed(entry.name());
+            failed_dirs.mark_failed(entry.path());
             return Ok(None);
         }
 
@@ -940,7 +940,7 @@ impl ReceiverContext {
                     );
                 }
                 emit_lsm_audit_hint_once();
-                failed_dirs.mark_failed(entry.name());
+                failed_dirs.mark_failed(entry.path());
                 return Ok(None);
             }
         };
@@ -962,7 +962,7 @@ impl ReceiverContext {
                     dir_path.display()
                 );
             }
-            failed_dirs.mark_failed(entry.name());
+            failed_dirs.mark_failed(entry.path());
             return Ok(None);
         }
         // upstream: generator.c:1480-1483 - itemize() runs before set_file_attrs
@@ -1020,7 +1020,7 @@ impl ReceiverContext {
                             e
                         );
                     }
-                    failed_dirs.mark_failed(entry.name());
+                    failed_dirs.mark_failed(entry.path());
                     return Ok(None);
                 }
                 // SEC-1.h fail-loud: ELOOP from a mid-syscall symlink

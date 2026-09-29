@@ -46,8 +46,9 @@ fn normalize_filename_for_compare(name: &std::ffi::OsStr) -> std::ffi::OsString 
 /// subtree to be skipped rather than producing cascading permission errors.
 #[derive(Debug, Default)]
 pub(in crate::receiver) struct FailedDirectories {
-    /// Failed directory paths (normalized, no trailing slash).
-    paths: std::collections::HashSet<String>,
+    /// Failed directory paths, keyed by their exact bytes so distinct
+    /// non-UTF-8 names never alias each other.
+    paths: std::collections::HashSet<std::path::PathBuf>,
 }
 
 impl FailedDirectories {
@@ -57,28 +58,21 @@ impl FailedDirectories {
     }
 
     /// Marks a directory as failed.
-    pub(in crate::receiver) fn mark_failed(&mut self, path: &str) {
-        self.paths.insert(path.to_string());
+    pub(in crate::receiver) fn mark_failed(&mut self, path: impl AsRef<std::path::Path>) {
+        self.paths.insert(path.as_ref().to_path_buf());
     }
 
-    /// Checks if an entry path has a failed ancestor directory.
+    /// Checks if an entry path, or any of its ancestors, is a failed directory.
     ///
-    /// Returns the failed ancestor path if found, `None` otherwise.
-    pub(in crate::receiver) fn failed_ancestor(&self, entry_path: &str) -> Option<&str> {
-        // Check if exact path is failed
-        if self.paths.contains(entry_path) {
-            return self.paths.get(entry_path).map(|s| s.as_str());
-        }
-
-        // Check each parent path component
-        let mut check_path = entry_path;
-        while let Some(pos) = check_path.rfind('/') {
-            check_path = &check_path[..pos];
-            if let Some(failed) = self.paths.get(check_path) {
-                return Some(failed.as_str());
-            }
-        }
-        None
+    /// Returns the closest failed path if found, `None` otherwise.
+    pub(in crate::receiver) fn failed_ancestor(
+        &self,
+        entry_path: impl AsRef<std::path::Path>,
+    ) -> Option<&std::path::Path> {
+        entry_path
+            .as_ref()
+            .ancestors()
+            .find_map(|p| self.paths.get(p).map(std::path::PathBuf::as_path))
     }
 
     /// Returns the number of failed directories.
