@@ -972,4 +972,101 @@ mod runtime_options_tests {
         assert_eq!(options.port, DEFAULT_PORT);
         assert!(options.rsync_port.is_none());
     }
+
+    /// Writes `config` to a temp file and parses the daemon arguments built by
+    /// `args`, which receives that file's path.
+    fn parse_with_config(
+        config: &str,
+        args: impl FnOnce(OsString) -> Vec<OsString>,
+    ) -> Result<RuntimeOptions, DaemonError> {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("rsyncd.conf");
+        fs::write(&path, config).expect("write config");
+        RuntimeOptions::parse(&args(path.into_os_string()))
+    }
+
+    const DPARAM_CONFIG: &str =
+        "use chroot = no\n[a]\npath = /srv/a\n[global]\nread only = yes\n[b]\npath = /srv/b\n";
+
+    #[test]
+    fn dparam_overrides_the_config_where_upstream_applies_it() {
+        // upstream: loadparm.c:618-621 - set_dparams(0) runs when the first
+        // module section opens, so `a` copies the override and a later
+        // global line still changes it for `b`.
+        for form in [["--dparam", "read only=no"], ["-M", "read only=no"]] {
+            let options = parse_with_config(DPARAM_CONFIG, |path| {
+                vec![
+                    OsString::from(form[0]),
+                    OsString::from(form[1]),
+                    OsString::from("--config"),
+                    path,
+                ]
+            })
+            .expect("parse");
+            let modules = options.modules();
+            assert!(!modules[0].read_only, "{form:?}: a copies the override");
+            assert!(modules[1].read_only, "{form:?}: b follows the later global");
+        }
+    }
+
+    #[test]
+    fn dparam_after_config_still_applies() {
+        // upstream: options.c collects every --dparam before lp_load() runs,
+        // so its position relative to --config does not matter.
+        let options = parse_with_config(DPARAM_CONFIG, |path| {
+            vec![
+                OsString::from("--config"),
+                path,
+                OsString::from("-Mread only=no"),
+            ]
+        })
+        .expect("parse");
+        assert!(!options.modules()[0].read_only);
+    }
+
+    #[test]
+    fn dparam_sets_daemon_values_of_a_config_without_modules() {
+        // upstream: clientserver.c:1765-1766 daemon_main() applies the
+        // overrides after reading the global section.
+        let options = parse_with_config("pid file = /run/a.pid\n", |path| {
+            vec![
+                OsString::from("--config"),
+                path,
+                OsString::from("--dparam=pid file=/run/b.pid"),
+            ]
+        })
+        .expect("parse");
+        assert_eq!(options.pid_file(), Some(Path::new("/run/b.pid")));
+    }
+
+    #[test]
+    fn dparam_without_equals_is_refused() {
+        // upstream: options.c:1559-1562 and :1594-1596.
+        let error = RuntimeOptions::parse(&[OsString::from("--dparam=noequals")])
+            .expect_err("missing '=' must fail");
+        let text = error.to_string();
+        assert!(
+            text.contains("--dparam value is missing an '=': noequals"),
+            "{text}"
+        );
+        assert!(
+            text.contains("--daemon --help\" for assistance with daemon mode."),
+            "{text}"
+        );
+        assert_eq!(error.exit_code(), 1);
+    }
+
+    #[test]
+    fn dparam_with_an_unknown_name_is_refused() {
+        // upstream: options.c:1583-1584 set_dparams(1) - `Unknown parameter`.
+        let error = RuntimeOptions::parse(&[OsString::from("--dparam=no such thing=1")])
+            .expect_err("unknown name must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Unknown parameter \"no such thing\""),
+            "{error}"
+        );
+        assert_eq!(error.exit_code(), 1);
+    }
 }

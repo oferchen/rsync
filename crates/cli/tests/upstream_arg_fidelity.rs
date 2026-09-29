@@ -670,6 +670,28 @@ fn client_dparam_is_refused_as_a_daemon_option() {
     );
 }
 
+/// A `--dparam` name that is not a daemon parameter is reported before the
+/// missing `--daemon`.
+///
+/// upstream: options.c:1583-1584 runs set_dparams(1) after the daemon-option
+/// re-parse and before the `!daemon_opt` check at options.c:1591. Measured on
+/// 3.5.1: `rsync --dparam=x=1 a b` exits 1 with `Unknown parameter "x"` and
+/// no usage hint.
+#[test]
+fn client_dparam_unknown_name_is_reported_before_the_missing_daemon() {
+    let err = parse_args(["oc-rsync", "--dparam=x=1", "src", "dst"])
+        .expect_err("an unknown --dparam name must be refused");
+    let text = err.to_string();
+    assert!(
+        text.contains("Unknown parameter \"x\""),
+        "unexpected refusal: {text:?}"
+    );
+    assert!(
+        !text.contains("Daemon option(s)"),
+        "unexpected refusal: {text:?}"
+    );
+}
+
 // --- Tracked divergences (upstream-correct contract; oc not yet compliant) ---
 //
 // Each test below asserts the UPSTREAM behaviour. It is `#[ignore]`d because

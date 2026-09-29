@@ -5,7 +5,7 @@ impl RuntimeOptions {
         seen_modules: &mut HashSet<String>,
     ) -> Result<(), DaemonError> {
         let path = PathBuf::from(value.clone());
-        let parsed = parse_config_modules(&path)?;
+        let parsed = parse_config_modules_with_dparams(&path, &self.dparams)?;
 
         // Retain the config path for SIGHUP reload. Only the first config
         // file loaded is reloadable; subsequent --config flags add modules

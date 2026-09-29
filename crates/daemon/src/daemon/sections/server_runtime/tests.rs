@@ -458,7 +458,15 @@ fn reload_config_with_no_config_path_is_noop() {
     let mut motd: Arc<Vec<String>> = Arc::new(Vec::new());
     let notifier = systemd::ServiceNotifier::new();
 
-    reload_daemon_config(None, &limiter, &mut modules, &mut motd, None, &notifier);
+    reload_daemon_config(
+        None,
+        &[],
+        &limiter,
+        &mut modules,
+        &mut motd,
+        None,
+        &notifier,
+    );
 
     assert!(modules.is_empty());
     assert!(motd.is_empty());
@@ -482,6 +490,7 @@ fn reload_config_with_missing_file_keeps_old_config() {
     let missing = PathBuf::from("/nonexistent/rsyncd.conf");
     reload_daemon_config(
         Some(&missing),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -521,6 +530,7 @@ fn reload_config_replaces_modules_and_motd() {
 
     reload_daemon_config(
         Some(&conf_path),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -553,6 +563,7 @@ fn reload_config_existing_connections_keep_old_config() {
 
     reload_daemon_config(
         Some(&conf_path),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -571,6 +582,7 @@ fn reload_config_existing_connections_keep_old_config() {
     }
     reload_daemon_config(
         Some(&conf_path),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -606,6 +618,7 @@ fn reload_config_with_invalid_syntax_keeps_old_config() {
 
     reload_daemon_config(
         Some(&conf_path),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -622,6 +635,7 @@ fn reload_config_with_invalid_syntax_keeps_old_config() {
 
     reload_daemon_config(
         Some(&conf_path),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -1091,6 +1105,7 @@ fn test_accept_loop_state<'a>(
         max_sessions: None,
         max_connections,
         config_path,
+        dparams: &[],
         connection_limiter: limiter,
         modules: Arc::new(Vec::new()),
         motd_lines: Arc::new(Vec::new()),

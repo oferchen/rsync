@@ -18,6 +18,7 @@ struct AcceptLoopState<'a> {
     /// the same behaviour at the daemon level.
     max_connections: Option<usize>,
     config_path: &'a Option<PathBuf>,
+    dparams: &'a [String],
     connection_limiter: &'a Option<Arc<ConnectionLimiter>>,
     modules: Arc<Vec<ModuleRuntime>>,
     motd_lines: Arc<Vec<String>>,
@@ -90,6 +91,7 @@ fn check_signals_and_maintain(state: &mut AcceptLoopState<'_>) -> Option<bool> {
     {
         reload_daemon_config(
             state.config_path.as_deref(),
+            state.dparams,
             state.connection_limiter,
             &mut state.modules,
             &mut state.motd_lines,

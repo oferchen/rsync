@@ -13,9 +13,9 @@ const DESCRIPTION_COLUMN: usize = 25;
 /// blank line, the `Usage:` line, the option list, a blank line, then the
 /// two-line trailer steering operators who did not mean to start a daemon.
 ///
-/// Options upstream lists that this daemon's parser rejects - `--dparam=OVERRIDE,
-/// -M`, `--log-file-format=FMT` and `--sockopts=OPTIONS` - are omitted rather
-/// than advertised: a help text naming an option the parser refuses is worse
+/// Options upstream lists that this daemon's parser rejects -
+/// `--log-file-format=FMT` and `--sockopts=OPTIONS` - are omitted rather than
+/// advertised: a help text naming an option the parser refuses is worse
 /// than a shorter one. See [`push_upstream_options`].
 ///
 /// upstream: usage.c:daemon_usage
@@ -63,9 +63,9 @@ fn push_option(text: &mut String, option: &str, description: &str) {
 /// Appends the options shared with upstream, in `help-rsyncd.h` order and
 /// wording.
 ///
-/// Upstream's `--dparam=OVERRIDE, -M`, `--log-file-format=FMT` and
-/// `--sockopts=OPTIONS` rows are absent because `RuntimeOptions::parse_with_brand`
-/// rejects those spellings; they are tracked as feature gaps, not hidden here.
+/// Upstream's `--log-file-format=FMT` and `--sockopts=OPTIONS` rows are absent
+/// because `RuntimeOptions::parse_with_brand` rejects those spellings; they are
+/// tracked as feature gaps, not hidden here.
 ///
 /// upstream: help-rsyncd.h
 fn push_upstream_options(text: &mut String, config_name: &str) {
@@ -76,6 +76,11 @@ fn push_upstream_options(text: &mut String, config_name: &str) {
         text,
         "--config=FILE",
         &format!("specify alternate {config_name} file"),
+    );
+    push_option(
+        text,
+        "--dparam=OVERRIDE, -M",
+        "override global daemon config parameter",
     );
     push_option(text, "--no-detach", "do not detach from the parent");
     push_option(text, "--port=PORT", "listen on alternate port number");

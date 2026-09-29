@@ -11,6 +11,7 @@
 /// upstream: clientserver.c - `re_read_config()` called from SIGHUP handler.
 fn reload_daemon_config(
     config_path: Option<&Path>,
+    dparams: &[String],
     connection_limiter: &Option<Arc<ConnectionLimiter>>,
     modules: &mut Arc<Vec<ModuleRuntime>>,
     motd_lines: &mut Arc<Vec<String>>,
@@ -38,7 +39,7 @@ fn reload_daemon_config(
         }
     };
 
-    let parsed = match parse_config_modules(path) {
+    let parsed = match parse_config_modules_with_dparams(path, dparams) {
         Ok(parsed) => parsed,
         Err(error) => {
             if let Some(log) = log_sink {
