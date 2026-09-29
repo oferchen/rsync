@@ -165,6 +165,9 @@ class CatalogueTest(unittest.TestCase):
         self.assertNotIn("files-from/3.0.9/rsh/pull/oc-server", ids)
         self.assertIn("files-from/3.0.9/rsh/pull/oc-server",
                       [c.cell_id for c in cells.catalogue({"3.0.9"})])
+        # 3.0.9's own daemon ignores octal outgoing chmod, so no such cell.
+        self.assertNotIn("outgoing-chmod/3.0.9/daemon/pull/oc-server",
+                         [c.cell_id for c in cells.catalogue({"3.0.9"})])
 
     def test_core_oc_client_push_cells_avoid_the_inc_recurse_race(self):
         # task-2520 makes these cells pass or fail by timing; the defect is
@@ -180,7 +183,7 @@ class CatalogueTest(unittest.TestCase):
                        "non-utf8/3.5.1/rsh/pull/oc-client",
                        "copy-unsafe-links/3.5.1/rsh/pull/oc-server",
                        "append-longer-dest/3.5.1/rsh/push/oc-server",
-                       "outgoing-chmod/3.0.9/daemon/pull/oc-server",
+                       "outgoing-chmod/3.5.1/daemon/pull/oc-server",
                        "files-from/3.0.9/rsh/pull/oc-server",
                        "prune-empty-dirs/3.5.1/rsh/push/oc-client",
                        "batch-local/3.4.4/local/push/oc-client",

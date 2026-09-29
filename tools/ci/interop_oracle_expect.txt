@@ -56,6 +56,5 @@ max-delete/3.5.1/rsh/push/oc-server task-2521 --max-delete limit exits 0, upstre
 non-utf8/3.5.1/daemon/push/oc-server task-2522 non-UTF-8 names collapse in the flist dedup (sort.rs name())
 non-utf8/3.5.1/rsh/pull/oc-client task-2522 non-UTF-8 names collapse in the flist dedup (sort.rs name())
 non-utf8/3.5.1/rsh/push/oc-server task-2522 non-UTF-8 names collapse in the flist dedup (sort.rs name())
-outgoing-chmod/3.0.9/daemon/pull/oc-server task-2525 daemon outgoing chmod not applied for a protocol-30 client
 prune-empty-dirs-protocol-28/2.6.9/rsh/push/oc-client task-2521 no client-side -m at protocol 28 refusal (exit 12 vs 2)
 prune-empty-dirs/3.5.1/rsh/push/oc-client task-1321 -m push: upstream receiver 'buffer overflow: recv_rules'

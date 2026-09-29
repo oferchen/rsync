@@ -103,10 +103,13 @@ def _targeted(have: set[str]) -> list[Cell]:
         for t in ("rsh", "daemon"):
             add(v, case="inc-recurse-dirs", transport=t, direction="push", role="oc-client",
                 fixture="incdirs", opts=("-a",))
+    # No 3.0.9 outgoing-chmod cell: 3.0.9's parse_chmod has no octal state
+    # (chmod.c:140-141), so its own daemon ignores F600 and the baseline can
+    # never match the 3.1.3+ behaviour oc mirrors.
+    add("3.5.1", case="outgoing-chmod", transport="daemon", direction="pull", role="oc-server",
+        fixture="basic", opts=("-a",), module_extra="  outgoing chmod = F600\n")
     # Old clients against an oc server, with the 3.5.1 client as the control.
     for v in ("3.0.9", "3.5.1"):
-        add(v, case="outgoing-chmod", transport="daemon", direction="pull", role="oc-server",
-            fixture="basic", opts=("-a",), module_extra="  outgoing chmod = F600\n")
         add(v, case="files-from", transport="rsh", direction="pull", role="oc-server",
             fixture="filters", opts=("-a",), extra_args=("--files-from=@FIX@/files-from.txt",),
             timeout=30)
