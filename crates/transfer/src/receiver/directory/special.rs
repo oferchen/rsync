@@ -137,6 +137,15 @@ impl ReceiverContext {
                 continue;
             }
 
+            // upstream: generator.c:1943-1945 - a follower is handed to
+            // hard_link_check() before the FT_SPECIAL/FT_DEVICE branch, so it
+            // is linked to its leader (create_hardlinks) and never mknod'ed.
+            if self.config.flags.hard_links
+                && crate::receiver::quick_check::is_hardlink_follower(entry)
+            {
+                continue;
+            }
+
             let relative_path = entry.path();
             let node_path = dest_dir.join(relative_path);
 
