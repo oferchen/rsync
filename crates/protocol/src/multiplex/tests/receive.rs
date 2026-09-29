@@ -70,7 +70,7 @@ fn recv_msg_reports_truncated_header() {
 
 #[test]
 fn recv_msg_rejects_unknown_message_codes() {
-    let unknown_code = 11u8;
+    let unknown_code = 12u8;
     let tag = u32::from(MPLEX_BASE) + u32::from(unknown_code);
     let raw = (tag << 24).to_le_bytes();
     let err = recv_msg(&mut Cursor::new(raw)).unwrap_err();

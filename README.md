@@ -3,16 +3,18 @@
 
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/ci.yml)
 [![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml)
-[![Upstream Testsuite 3.5.0 (nonroot, pipe)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml)
-[![Upstream Testsuite 3.5.0 (root, pipe)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml)
-[![Upstream Testsuite 3.5.0 (nonroot, tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml)
-[![Upstream Testsuite 3.5.0 (root, tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml)
-[![Upstream Testsuite 3.5.1 (Linux + macOS, root + nonroot, pipe + tcp)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml)
+
+[![Upstream Rsync Testsuite 3.5.0 root PIPE Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-root.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20root%20PIPE%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml)
+[![Upstream Rsync Testsuite 3.5.0 root TCP Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-root-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20root%20TCP%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml)<br>
+[![Upstream Rsync Testsuite 3.5.0 non-root PIPE Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20non-root%20PIPE%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml)
+[![Upstream Rsync Testsuite 3.5.0 non-root TCP Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20non-root%20TCP%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml)<br>
+[![Upstream Rsync Testsuite 3.5.1 root|non-root TCP|PIPE Linux|macOS](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1%20root%7Cnon-root%20TCP%7CPIPE%20Linux%7CmacOS)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml)
+
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
 # oc-rsync
 
-`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.5.0 and the 3.4.x series (protocol 32). Works as a drop-in replacement.
+`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.5.1 (protocol 33), 3.5.0 and the 3.4.x series (protocol 32). Works as a drop-in replacement.
 
 Binary name: **`oc-rsync`**. It installs alongside the system `rsync` without conflict.
 
@@ -20,7 +22,7 @@ Binary name: **`oc-rsync`**. It installs alongside the system `rsync` without co
 
 ## Status
 
-**Release:** 0.6.4. **Upstream reference:** rsync 3.5.0, protocol 32, with back-negotiation to protocol 28.
+**Release:** 0.6.4. **Upstream reference:** rsync 3.5.0, protocol 33 (rsync 3.5.1), with back-negotiation to protocol 28.
 
 All transfer modes (local, SSH, daemon), the delta algorithm, metadata preservation and compression are complete.
 
@@ -109,7 +111,8 @@ Interop scenarios run in CI against the upstream releases listed in [`tools/ci/r
 
 | Protocol | Upstream versions | oc-rsync status | Coverage |
 |----------|-------------------|-----------------|----------|
-| 32 | 3.4.x, 3.5.0 | Full support (default) | Interop matrix against 3.4.4 and 3.5.0 |
+| 33 | 3.5.1 | Full support (default) | Adds `MSG_BLOCK_STATS` and the `--stats` touched-blocks line |
+| 32 | 3.4.x, 3.5.0 | Full support | Interop matrix against 3.4.4 and 3.5.0 |
 | 31 | 3.1.x - 3.3.x | Full support | Interop matrix against 3.1.3 |
 | 30 | 3.0.x | Full support | Interop matrix against 3.0.9 |
 | 29 | 2.6.9 | Full support | Non-blocking daemon push/pull cells against 2.6.9, plus golden-byte tests |
@@ -363,7 +366,7 @@ cargo nextest run --workspace --all-features
 src/bin/oc-rsync.rs     # Entry point
 crates/cli/             # CLI flags, help, output formatting
 crates/core/            # Orchestration facade, session management, config
-crates/protocol/        # Wire protocol (v28-32), multiplex framing
+crates/protocol/        # Wire protocol (v28-33), multiplex framing
 crates/transfer/        # Generator, receiver, delta transfer pipeline
 crates/engine/          # Local copy executor, sparse writes, temp-file commit
 crates/daemon/          # Daemon mode, module access control, systemd

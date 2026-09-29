@@ -222,6 +222,10 @@ pub struct BackupNotice {
 pub struct CommitResult {
     /// Number of bytes written to the file.
     pub bytes_written: u64,
+    /// Distinct 4 KiB logical blocks written for this file (upstream:
+    /// fileio.c:218-243 `track_block_touches()`, reset per file at
+    /// receiver.c:489).
+    pub touched_blocks_4k: u64,
     /// Index into the file list (correlates with `BeginMessage::file_entry_index`).
     pub file_entry_index: usize,
     /// Non-fatal metadata error, if any (path, description).

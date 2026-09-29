@@ -32,6 +32,7 @@ macro_rules! last_wins_setters {
 
 last_wins_setters! {
     set_path => path: PathBuf,
+    set_secrets_file => secrets_file: PathBuf,
     set_hosts_allow => hosts_allow: Vec<HostPattern>,
     set_hosts_deny => hosts_deny: Vec<HostPattern>,
     set_read_only => read_only: bool,
@@ -169,18 +170,6 @@ impl ModuleDefinitionBuilder {
     /// (authenticate.c:316-322).
     fn set_auth_digest(&mut self, digest: &str) {
         self.auth_digest = normalize_auth_digest(digest);
-    }
-
-    /// Stores the `secrets file` path after validating its ownership and mode.
-    fn set_secrets_file(
-        &mut self,
-        path: PathBuf,
-        config_path: &Path,
-        line: usize,
-    ) -> Result<(), DaemonError> {
-        let validated = validate_secrets_file(&path, config_path, line)?;
-        self.secrets_file = Some(validated);
-        Ok(())
     }
 
     /// Stores the `refuse options` list, rejecting an empty one.

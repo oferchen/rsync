@@ -97,6 +97,11 @@ pub struct ReceiverContext {
     /// finalize byte-identical. Only the mid-walk EMISSION moves; the heap
     /// reclaim stays at finalize until RS-3c.
     pub(in crate::receiver) segments_released_mid_walk: usize,
+    /// Distinct 4 KiB logical blocks written across every received file,
+    /// including the phase-2 redo. A server receiver reports it to the client
+    /// in `MSG_BLOCK_STATS` at protocol 33+.
+    /// upstream: fileio.c:218-243 `stats.touched_blocks_4k`; main.c:1112-1117.
+    pub(in crate::receiver) touched_blocks_4k: u64,
     /// The receiver's directory numbering, addressed by the wire `dir_ndx` of an
     /// INC_RECURSE sub-list header (`NDX_FLIST_OFFSET - dir_ndx`).
     ///
@@ -617,6 +622,7 @@ impl ReceiverContext {
             segment_parent_dir_ndx: vec![None],
             first_segment_idx: 0,
             segments_released_mid_walk: 0,
+            touched_blocks_4k: 0,
             dir_flist: DirFlist::default(),
             served_dir_flists: HashSet::new(),
             flist_reader_cache: None,
@@ -1000,6 +1006,11 @@ impl ReceiverContext {
         // upstream: xattrs.c:849 - receive_xattr() keeps rsync.%FOO only at
         // preserve_xattrs >= 2, so the level has to reach the reader.
         .with_xattr_level(u32::from(self.config.flags.xattrs_level))
+        // upstream: xattrs.c:876 - receive_xattr() drops a non-user.* name
+        // only when `am_root <= 0`, so a real root receiver keeps security.*
+        // and trusted.* verbatim. --fake-super sets `am_root = -1`
+        // (options.c), which stays on the non-root side of that test.
+        .with_am_root(metadata::am_root() && !self.config.fake_super)
         .with_preserve_atimes(self.config.flags.atimes)
         // upstream: flist.c:968-971 - `recv_file_entry()` reads the crtime
         // varlong whenever `crtimes_ndx` is set and XMIT_CRTIME_EQ_MTIME is

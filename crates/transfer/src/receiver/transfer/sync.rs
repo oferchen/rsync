@@ -625,6 +625,7 @@ impl ReceiverContext {
             delete_limit_exceeded: false,
             literal_data: 0,
             matched_data: 0,
+            touched_blocks_4k: 0,
             redo_count: 0,
             segments_released_mid_walk: 0,
             list_only_entries,

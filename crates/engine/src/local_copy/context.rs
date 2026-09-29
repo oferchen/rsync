@@ -44,6 +44,7 @@ use super::{
     trace_make_backup_symlink, write_sparse_chunk,
 };
 use super::{ScanRoot, SourceSpec};
+use crate::block_touch::BlockTouchTracker;
 use crate::delta::{DeltaSignatureIndex, ProbeCounters};
 use crate::signature::SignatureBlock;
 use ::metadata::{
@@ -262,6 +263,11 @@ pub(crate) struct CopyContext<'a> {
     /// %s` at `FERROR_XFER`.
     // upstream: delete.c:283-285; log.c:310-311 got_xfer_error
     make_way_error: bool,
+    /// Set when `atomic_create()` could not make a FIFO, socket, device node,
+    /// symlink, or hard link. The entry is skipped and the run continues, but
+    /// this flag drives the final `RERR_PARTIAL` (exit 23) exit code.
+    // upstream: generator.c:2490-2522, hlink.c:486; log.c:337-338 got_xfer_error
+    create_error: bool,
     /// Set when the delete emitter reported a genuine swallowed unlink/rmdir
     /// error during the recursive peel (an `EACCES` and friends the walker
     /// logged and stepped over). The pass keeps deleting the rest of the
@@ -519,12 +525,13 @@ impl<'a> FinalizeMetadataParams<'a> {
 }
 
 /// Byte-level statistics from a single file copy (literal and optional
-/// compressed sizes).
+/// compressed sizes, plus the 4 KiB logical blocks written).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct FileCopyOutcome {
     literal_bytes: u64,
     matched_bytes: u64,
     compressed_bytes: Option<u64>,
+    touched_blocks: u64,
 }
 
 /// Matched-byte count for copy paths that never match a basis block.
@@ -545,7 +552,22 @@ impl FileCopyOutcome {
             literal_bytes,
             matched_bytes,
             compressed_bytes,
+            touched_blocks: 0,
         }
+    }
+
+    /// Attaches the number of distinct 4 KiB logical blocks the copy wrote.
+    ///
+    /// upstream: fileio.c:218-243 track_block_touches() - counted per write,
+    /// never for seeked sparse holes or in-place matched blocks.
+    pub(crate) const fn with_touched_blocks(mut self, touched_blocks: u64) -> Self {
+        self.touched_blocks = touched_blocks;
+        self
+    }
+
+    /// Returns the number of distinct 4 KiB logical blocks the copy wrote.
+    pub(crate) const fn touched_blocks(self) -> u64 {
+        self.touched_blocks
     }
 
     /// Returns the number of literal (unmatched) bytes transferred.

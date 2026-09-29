@@ -84,9 +84,8 @@ digraph daemon_connection_fsm {
 - **Actions:**
   - Server writes `@RSYNCD: <version>.<sub> <digest-list>\n` (cached per-process).
   - Client reads greeting, sends `@RSYNCD: <version>.<sub>\n`.
-  - Client may also send `@RSYNCD: OPTION --<name>\n` lines for refused options.
   - Client may send `#early_input=<len>` followed by raw bytes.
-- **Exit condition:** First non-`@RSYNCD:` line (or `#early_input`) received - this is the module name.
+- **Exit condition:** The first line after the version response (after an optional `#early_input`) is the module name, whatever it contains; an `@RSYNCD: OPTION ...` line is answered `@ERROR: Unknown module`.
 - **Error handling:** I/O error closes socket. Malformed version line is tolerated (line becomes module name).
 - **Wire messages:** `@RSYNCD: 32.0 sha512 sha256 sha1 md5 md4\n` (server to client).
 - **Upstream reference:** `clientserver.c:455` `output_daemon_greeting`.
@@ -589,7 +588,6 @@ All daemon-phase messages are line-oriented ASCII, terminated by `\n`:
 |---------|-----------|--------|
 | Version greeting | S -> C | `@RSYNCD: <ver>.<sub> <digest1> <digest2> ...\n` |
 | Version response | C -> S | `@RSYNCD: <ver>.<sub>\n` |
-| Refused option | C -> S | `@RSYNCD: OPTION --<name>\n` |
 | Capability | S -> C | `@RSYNCD: CAP <flags>\n` |
 | Auth challenge | S -> C | `@RSYNCD: AUTHREQD <base64-nonce>\n` |
 | Auth response | C -> S | `<username> <base64-digest>\n` |

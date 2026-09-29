@@ -1,6 +1,7 @@
 //! Execution primitives for local copy operations.
 
 mod cleanup;
+mod create_failure;
 mod directory;
 mod file;
 mod iconv;
@@ -14,6 +15,9 @@ pub(crate) use cleanup::{
     decide_and_defer_delayed_deletions, delete_extraneous_entries, execute_decided_deletion,
     record_directory_subtree, remove_source_entry_if_requested,
 };
+#[cfg(unix)]
+pub(crate) use create_failure::report_mknod_failure;
+pub(crate) use create_failure::{report_link_failure, report_symlink_failure};
 pub(crate) use directory::ChecksumCache;
 pub(crate) use directory::ScanRoot;
 pub(crate) use directory::{

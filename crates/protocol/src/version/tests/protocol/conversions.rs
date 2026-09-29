@@ -53,7 +53,7 @@ fn from_supported_accepts_values_within_range() {
 fn from_supported_rejects_values_outside_range() {
     assert_eq!(ProtocolVersion::from_supported(0), None);
     assert_eq!(ProtocolVersion::from_supported(27), None);
-    assert_eq!(ProtocolVersion::from_supported(33), None);
+    assert_eq!(ProtocolVersion::from_supported(34), None);
 }
 
 #[test]

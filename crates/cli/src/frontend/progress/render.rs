@@ -315,7 +315,10 @@ pub(crate) fn emit_transfer_summary(
         )?;
     }
 
-    let formatted_rendered = if let Some(format) = out_format {
+    // A live listing has already written each entry's formatted line.
+    let formatted_rendered = if let Some(format) = out_format
+        && !live.listing
+    {
         if events.is_empty() {
             false
         } else {
@@ -328,7 +331,12 @@ pub(crate) fn emit_transfer_summary(
 
     let progress_rendered = if live.progress {
         true
-    } else if matches!(progress_mode, Some(ProgressMode::PerFile)) && !events.is_empty() {
+    } else if matches!(progress_mode, Some(ProgressMode::PerFile))
+        && !live.listing
+        && !events.is_empty()
+    {
+        // A live listing owns the progress too: when it wrote none (a dry
+        // run), upstream printed none either (sender.c:638-642).
         emit_progress(events, writer, human_readable_mode, escape, pending)?
     } else {
         false
@@ -857,6 +865,15 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
         "Total transferred file size: {transferred_size_display} bytes"
     )?;
     writeln!(stdout, "Literal data: {literal_bytes_display} bytes")?;
+    // upstream: main.c:446-448 - `if (protocol_version >= 33)`, a comma_num()
+    // count printed even when no MSG_BLOCK_STATS arrived (then 0).
+    if summary.protocol_version() >= 33 {
+        writeln!(
+            stdout,
+            "Number of 4 KiB logical blocks touched: {}",
+            format_count(summary.touched_blocks_4k(), human_readable)
+        )?;
+    }
     writeln!(stdout, "Matched data: {matched_bytes_display} bytes")?;
     writeln!(stdout, "File list size: {file_list_size_display}")?;
     // upstream: main.c:449 `if (stats.flist_buildtime)` gates both timing
@@ -1014,6 +1031,19 @@ fn is_generator_phase_skip(event: &ClientEvent) -> bool {
             | ClientEventKind::SkippedOverMaxSize
             | ClientEventKind::SkippedUnderMinSize
     )
+}
+
+/// Returns whether upstream's generator writes this entry's line itself, the
+/// moment it checks the entry, instead of itemizing it to the sender.
+///
+/// upstream: generator.c:1154,1305 and rsync.c:828 write `is uptodate`, and
+/// recv_generator() the skip notices, with rprintf(), and log.c:log_delete()
+/// sends a deletion as its own MSG_DELETED. Every other entry is itemized to the
+/// sender, which logs it when it reaches that entry (sender.c:send_files()).
+pub(crate) fn is_generator_notice(event: &ClientEvent) -> bool {
+    is_uptodate_event(event)
+        || is_generator_phase_skip(event)
+        || matches!(event.kind(), ClientEventKind::EntryDeleted)
 }
 
 /// Returns `true` for a HardLink event describing a hard-linked symlink (`hL`).
@@ -1705,6 +1735,78 @@ mod tests {
             LocalCopyChangeSet::new(),
         );
         assert_eq!(render_verbose(unchanged_subdir), "");
+    }
+
+    /// Renders the `--stats` level-2 detail block for `summary`.
+    fn render_stats_detail(summary: &ClientSummary, human_readable: HumanReadableMode) -> String {
+        let mut out = Vec::new();
+        emit_stats_detail_block(summary, &mut out, human_readable)
+            .expect("emit_stats_detail_block writes to an in-memory buffer");
+        String::from_utf8(out).expect("output is valid UTF-8")
+    }
+
+    fn touched_blocks_summary(protocol_version: u8) -> ClientSummary {
+        ClientSummary::for_stats_test(
+            engine::local_copy::LocalCopySummary::default().with_touched_blocks_4k(1_024),
+            protocol_version,
+        )
+    }
+
+    /// WHY: upstream prints `Number of 4 KiB logical blocks touched` directly
+    /// after `Literal data` and before `Matched data`, comma-grouped via
+    /// comma_num(); a parser keyed on line order or the exact text breaks on
+    /// any other placement or wording. upstream: main.c:444-450.
+    #[test]
+    fn proto33_stats_prints_touched_blocks_between_literal_and_matched() {
+        let out = render_stats_detail(&touched_blocks_summary(33), HumanReadableMode::Grouped);
+        let lines: Vec<&str> = out.lines().collect();
+        let literal = lines
+            .iter()
+            .position(|line| line.starts_with("Literal data: "))
+            .expect("Literal data line");
+        assert_eq!(
+            lines[literal + 1],
+            "Number of 4 KiB logical blocks touched: 1,024"
+        );
+        assert!(lines[literal + 2].starts_with("Matched data: "));
+    }
+
+    /// WHY: the line exists only from protocol 33 (main.c:446); a protocol-32
+    /// transfer must render byte-identically to before it was added.
+    #[test]
+    fn proto32_stats_omits_touched_blocks_line() {
+        let out = render_stats_detail(&touched_blocks_summary(32), HumanReadableMode::Grouped);
+        assert!(!out.contains("logical blocks touched"), "{out}");
+        let lines: Vec<&str> = out.lines().collect();
+        let literal = lines
+            .iter()
+            .position(|line| line.starts_with("Literal data: "))
+            .expect("Literal data line");
+        assert!(lines[literal + 1].starts_with("Matched data: "));
+    }
+
+    /// WHY: comma_num() drops the grouping under `--no-h` (human_readable 0),
+    /// so the raw count prints as bare digits. upstream: inums.h:26-30.
+    #[test]
+    fn proto33_stats_touched_blocks_raw_without_grouping() {
+        let out = render_stats_detail(&touched_blocks_summary(33), HumanReadableMode::Raw);
+        assert!(
+            out.contains("Number of 4 KiB logical blocks touched: 1024\n"),
+            "{out}"
+        );
+    }
+
+    /// WHY: a protocol-33 run that received no count still prints the line with
+    /// 0 - upstream gates it on the protocol alone (main.c:446).
+    #[test]
+    fn proto33_stats_prints_zero_touched_blocks() {
+        let summary =
+            ClientSummary::for_stats_test(engine::local_copy::LocalCopySummary::default(), 33);
+        let out = render_stats_detail(&summary, HumanReadableMode::Grouped);
+        assert!(
+            out.contains("Number of 4 KiB logical blocks touched: 0\n"),
+            "{out}"
+        );
     }
 
     /// Renders the summary trailer for an empty (default) transfer at the given

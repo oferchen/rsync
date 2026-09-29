@@ -114,7 +114,7 @@ mod protocol_32_handshake {
     /// Protocol 32 equals NEWEST.
     #[test]
     fn version_32_equals_newest() {
-        assert_eq!(ProtocolVersion::V32, ProtocolVersion::NEWEST);
+        assert_eq!(ProtocolVersion::V33, ProtocolVersion::NEWEST);
     }
 
     /// Protocol 32 Display formatting works.
@@ -671,7 +671,7 @@ mod protocol_32_future_versions {
         // Version 33-40 should clamp to 32
         for v in 33..=40 {
             let result = ProtocolVersion::from_peer_advertisement(v).unwrap();
-            assert_eq!(result, ProtocolVersion::V32);
+            assert_eq!(result, ProtocolVersion::V33);
         }
     }
 
@@ -713,7 +713,7 @@ mod protocol_32_ordering {
     #[test]
     fn version_32_equality() {
         assert_eq!(ProtocolVersion::V32, ProtocolVersion::V32);
-        assert_eq!(ProtocolVersion::V32, ProtocolVersion::NEWEST);
+        assert_eq!(ProtocolVersion::V33, ProtocolVersion::NEWEST);
         assert_ne!(ProtocolVersion::V32, ProtocolVersion::V31);
     }
 
@@ -734,20 +734,20 @@ mod protocol_32_ordering {
     /// v32 offset from newest.
     #[test]
     fn version_32_offset_from_newest() {
-        assert_eq!(ProtocolVersion::V32.offset_from_newest(), 0);
+        assert_eq!(ProtocolVersion::V33.offset_from_newest(), 0);
     }
 
     /// v32 is first in supported list.
     #[test]
     fn version_32_first_in_list() {
         let versions = ProtocolVersion::supported_versions();
-        assert_eq!(versions[0], ProtocolVersion::V32);
+        assert_eq!(versions[0], ProtocolVersion::V33);
     }
 
-    /// v32 is at index 0 in supported versions.
+    /// v32 is at index 1 in supported versions, after v33.
     #[test]
-    fn version_32_at_index_zero() {
-        let version = ProtocolVersion::from_supported_index(0);
+    fn version_32_at_index_one() {
+        let version = ProtocolVersion::from_supported_index(1);
         assert_eq!(version, Some(ProtocolVersion::V32));
     }
 }
@@ -866,8 +866,8 @@ mod protocol_32_edge_cases {
         set.insert(ProtocolVersion::V32);
         set.insert(ProtocolVersion::NEWEST);
 
-        // All are the same, so 1 element
-        assert_eq!(set.len(), 1);
+        // V32 twice plus the newer NEWEST (V33): 2 elements
+        assert_eq!(set.len(), 2);
         assert!(set.contains(&ProtocolVersion::V32));
     }
 
@@ -894,7 +894,7 @@ mod protocol_32_edge_cases {
     /// v32 has no next newer version.
     #[test]
     fn version_32_no_next_newer() {
-        assert!(ProtocolVersion::V32.next_newer().is_none());
+        assert!(ProtocolVersion::V33.next_newer().is_none());
     }
 
     /// v32 next older is v31.

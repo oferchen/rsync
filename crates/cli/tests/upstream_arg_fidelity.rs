@@ -639,6 +639,37 @@ fn internal_and_daemon_options_are_recognized() {
     assert_eq!(dparam.dparam, vec![OsString::from("max connections=1")]);
 }
 
+/// `--dparam` is a daemon option: in a client invocation it is refused, never
+/// forwarded to a remote daemon as a module override.
+///
+/// upstream: options.c:867 maps the client-table `--dparam` to `OPT_DAEMON`,
+/// whose re-parse (options.c:1538-1596) checks each value for its `=` and then
+/// stops with "Daemon option(s) used without --daemon." (RERR_SYNTAX) because
+/// `--daemon` was not given. Measured on 3.5.1:
+/// `rsync --dparam='read only=no' a rsync://h/m/` exits 1 with that text.
+#[test]
+fn client_dparam_is_refused_as_a_daemon_option() {
+    let err = parse_args(["oc-rsync", "--dparam=read only=no", "src", "rsync://h/m/"])
+        .expect_err("--dparam without --daemon must be refused");
+    let text = err.to_string();
+    assert!(
+        text.contains("Daemon option(s) used without --daemon."),
+        "unexpected refusal: {text:?}"
+    );
+    assert!(
+        text.contains("--daemon --help\" for assistance with daemon mode."),
+        "unexpected refusal: {text:?}"
+    );
+
+    let err = parse_args(["oc-rsync", "--dparam", "noequals", "src", "dst"])
+        .expect_err("a --dparam value without '=' must be refused");
+    assert!(
+        err.to_string()
+            .contains("--dparam value is missing an '=': noequals"),
+        "unexpected refusal: {err}"
+    );
+}
+
 // --- Tracked divergences (upstream-correct contract; oc not yet compliant) ---
 //
 // Each test below asserts the UPSTREAM behaviour. It is `#[ignore]`d because

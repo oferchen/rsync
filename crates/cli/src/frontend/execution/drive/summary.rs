@@ -8,7 +8,7 @@ use core::{
         ClientConfig, ClientProgressObserver, ClientSummary, HumanReadableMode,
         StrongChecksumAlgorithm, run_client_with_observer,
     },
-    message::Message,
+    message::{Message, Role},
 };
 use logging::{DebugFlag, InfoFlag, LogCode, debug_gte, drain_stamped_events_for_client, info_gte};
 use logging_sink::{MessageSink, logfile::LogFileWriter};
@@ -114,17 +114,6 @@ where
     // for local transfers it behaves identically to `Errors`.
     let _ = stderr_mode;
 
-    let mut live_progress = requested_progress_mode.map(|mode| {
-        with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
-            LiveProgress::with_output_config(
-                writer,
-                mode,
-                human_readable_mode,
-                progress_output_config,
-            )
-        })
-    });
-
     // Capture the sender role before `config` is consumed by the client driver.
     // Threaded into `OutFormatContext` so the itemize renderer picks the correct
     // direction arrow (upstream: log.c:701-704 - `<` for sender, `>` otherwise).
@@ -161,9 +150,12 @@ where
     // `xfer_dirs` is `recurse || dirs || list_only` (options.c:2326-2329); the
     // `!inc_recurse` term already rules out the `recurse` disjunct here.
     // upstream: flist.c:177 - `start_filelist_progress()` returns early under
-    // `quiet`, which `info_gte` does not model, so it needs its own term.
+    // `quiet`, which `info_gte` does not model, so it needs its own term. The
+    // incremental banner is an FCLIENT line, which rwrite() turns into FINFO
+    // and drops under `quiet` (log.c:310, log.c:345). Neither banner has a
+    // verbosity gate: `-P` raises FLIST to 2 without `-v` (options.c:2514).
     let flist_banner = if config.recursive() {
-        if info_gte(InfoFlag::Flist, 1) && verbosity > 0 && !config.is_pull() && !is_sender {
+        if info_gte(InfoFlag::Flist, 1) && !config.quiet() && !config.is_pull() && !is_sender {
             FlistBanner::Incremental
         } else {
             FlistBanner::None
@@ -205,28 +197,6 @@ where
         // `-rvv --no-whole-file` print the line.
         emit_total: is_local_transfer && debug_gte(DebugFlag::Deltasum, 1),
     };
-    // upstream writes a local copy's header and entry names as they happen, so
-    // under `--progress` they interleave with the live progress lines instead of
-    // trailing them. The itemize/`--out-format` listing and `--list-only` stay
-    // with the post-hoc renderer.
-    if is_local_transfer && !list_only {
-        let listing = (matches!(requested_progress_mode, Some(ProgressMode::PerFile))
-            && out_format_template.is_none())
-        .then_some(LiveListing {
-            verbosity,
-            name_level,
-            name_overridden,
-        });
-        live_progress = live_progress.map(|live| {
-            live.with_local_session(LocalSessionOutput {
-                banner: flist_banner,
-                delta_notice: delta_notice.notice,
-                itemizing: out_format_template.is_some(),
-                escape: EscapeStyle::terminal(eight_bit_output),
-                listing,
-            })
-        });
-    }
     // Capture the preserve-links state before `config` is consumed so the
     // `--list-only` renderer knows whether to append the ` -> <target>` arrow
     // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).
@@ -240,6 +210,61 @@ where
     } else {
         config.checksum_choice().transfer()
     };
+    // upstream: generator.c:588-589 - `INFO_GTE(NAME, 2)` (i.e. `-vv`
+    // or `--info=name2`) keeps emitting itemize lines for unchanged
+    // entries. Thread the resolved name-level into the renderer so it
+    // bypasses the empty-change-set suppression and surfaces all-dot
+    // rows for unchanged dirs, files, and symlinks.
+    let emit_unchanged = matches!(name_level, NameOutputLevel::UpdatedAndUnchanged);
+    let out_format_context = OutFormatContext::with_is_sender(is_sender)
+        .with_is_pull(is_pull)
+        .with_id_preservation(preserve_owner, preserve_group)
+        .with_emit_unchanged(emit_unchanged)
+        .with_itemize_repeated(itemize_repeated)
+        .with_escape_style(EscapeStyle::terminal(eight_bit_output))
+        .with_preserve_links(preserve_links)
+        .with_full_checksum(full_checksum_algorithm, always_checksum);
+
+    let mut live_progress = requested_progress_mode.map(|mode| {
+        with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+            LiveProgress::with_output_config(
+                writer,
+                mode,
+                human_readable_mode,
+                progress_output_config,
+            )
+        })
+    });
+    if is_sender {
+        live_progress = live_progress.map(LiveProgress::with_sender_named_files);
+    }
+    // upstream writes a local copy's header and entry lines as they happen, so
+    // under `--progress` they interleave with the live progress lines instead of
+    // trailing them. `--list-only`, and an `--out-format` that upstream logs
+    // after the transfer, stay with the post-hoc renderer.
+    if is_local_transfer && !list_only {
+        let listing = match out_format_template {
+            None => Some(LiveListing::Names {
+                verbosity,
+                name_level,
+                name_overridden,
+            }),
+            Some(format) if format.logs_before_transfer() => Some(LiveListing::Formatted {
+                format,
+                context: &out_format_context,
+            }),
+            Some(_) => None,
+        };
+        live_progress = live_progress.map(|live| {
+            live.with_local_session(LocalSessionOutput {
+                banner: flist_banner,
+                delta_notice: delta_notice.notice,
+                itemizing: out_format_template.is_some(),
+                escape: EscapeStyle::terminal(eight_bit_output),
+                listing,
+            })
+        });
+    }
 
     let result = {
         let observer = live_progress
@@ -264,20 +289,6 @@ where
                 });
             }
 
-            // upstream: generator.c:588-589 - `INFO_GTE(NAME, 2)` (i.e. `-vv`
-            // or `--info=name2`) keeps emitting itemize lines for unchanged
-            // entries. Thread the resolved name-level into the renderer so it
-            // bypasses the empty-change-set suppression and surfaces all-dot
-            // rows for unchanged dirs, files, and symlinks.
-            let emit_unchanged = matches!(name_level, NameOutputLevel::UpdatedAndUnchanged);
-            let out_format_context = OutFormatContext::with_is_sender(is_sender)
-                .with_is_pull(is_pull)
-                .with_id_preservation(preserve_owner, preserve_group)
-                .with_emit_unchanged(emit_unchanged)
-                .with_itemize_repeated(itemize_repeated)
-                .with_escape_style(EscapeStyle::terminal(eight_bit_output))
-                .with_preserve_links(preserve_links)
-                .with_full_checksum(full_checksum_algorithm, always_checksum);
             // upstream: log.c:272-373 rwrite() writes each diagnostic the moment
             // it is produced, so it lands among the per-file lines rather than
             // after them. oc buffers the event stream and renders it here, so
@@ -371,10 +382,11 @@ where
             // (cleanup.c:113-117). A second interrupt arriving while this code
             // propagates back to `run`'s tail then finds the latch already set
             // and cannot substitute RERR_SIGNAL.
-            core::exit_code::record_exit(
-                core::exit_code::process_latch(),
-                summary.io_error_exit_code().unwrap_or(0),
-            )
+            let code = summary.io_error_exit_code().unwrap_or(0);
+            if code != 0 {
+                emit_exit_diagnostic(code, is_sender, stderr);
+            }
+            core::exit_code::record_exit(core::exit_code::process_latch(), code)
         }
         Err(error) => {
             if let Some(observer) = live_progress
@@ -397,6 +409,39 @@ where
             core::exit_code::record_exit(core::exit_code::process_latch(), error.exit_code())
         }
     }
+}
+
+/// Prints the closing `rsync error: ... (code N)` line a remote transfer owes
+/// when it finished its run but still exits non-zero.
+///
+/// The per-file causes already reached the terminal; this is the summary line
+/// upstream's `log_exit()` adds on the client. A pushing client is the sender,
+/// a pulling client's main process is the generator, and `who_am_i()` tags the
+/// line accordingly. `RERR_VANISHED` renders as a warning, as upstream does.
+///
+/// # Upstream Reference
+///
+/// - `log.c:937-963` - `log_exit()` prints `rsync error: %s (code %d) at
+///   %s(%d) [%s=%s]` for any non-zero code
+/// - `main.c:1412` - the push client's `client_run()` exit (`[sender]`)
+/// - `main.c:1983` - the pull client's exit after `do_recv()` (`[generator]`)
+fn emit_exit_diagnostic<Err>(code: i32, is_sender: bool, stderr: &mut MessageSink<Err>)
+where
+    Err: Write,
+{
+    let Some(message) = Message::from_exit_code(code) else {
+        return;
+    };
+    let role = if is_sender {
+        Role::Sender
+    } else {
+        Role::Generator
+    };
+    let message = message
+        .with_source(core::tracked_message_source!())
+        .with_role(role);
+    let fallback = message.clone().with_brand(stderr.brand()).to_string();
+    emit_message_with_fallback(&message, &fallback, stderr);
 }
 
 /// Parameters for writing transfer output to a log file.

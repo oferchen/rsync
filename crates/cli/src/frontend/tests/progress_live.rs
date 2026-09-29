@@ -873,7 +873,7 @@ fn run_with_local_session() -> (String, crate::frontend::progress::LiveRendered)
         delta_notice: None,
         itemizing: false,
         escape: EscapeStyle::terminal(false),
-        listing: Some(LiveListing {
+        listing: Some(LiveListing::Names {
             verbosity: 1,
             name_level: NameOutputLevel::UpdatedOnly,
             name_overridden: false,

@@ -384,7 +384,6 @@ fn handle_legacy_session(
     }
 
     let mut request = None;
-    let mut refused_options = Vec::new();
     let mut negotiated_protocol = None;
     let mut client_digests: Option<String> = None;
     let mut session_exit_code: Option<ExitCode> = None;
@@ -482,29 +481,14 @@ fn handle_legacy_session(
                 continue;
             }
             // A banner arriving after the version exchange is the request line.
-            Ok(LegacyDaemonMessage::Version(_)) => {}
-            // ⚠ oc-only: upstream has no `OPTION` handshake line. `grep '"@RSYNCD'
-            // *.c *.h` over 3.5.0 yields only the greeting (compat.c:853),
-            // `AUTHREQD` (clientserver.c:809), `OK` (clientserver.c:1152) and
-            // `EXIT` (clientserver.c:1385), and `start_daemon` reads exactly one
-            // request line after the greeting (clientserver.c:1537-1571), so an
-            // upstream daemon answers this line `@ERROR: Unknown module
-            // '@RSYNCD: OPTION ...'`.
-            //
-            // What survives here is deliberately one-way: the payload is kept
-            // ONLY as a refuse-options hint, which can refuse a request and can
-            // never grant anything. It is NOT a configuration channel - a
-            // peer-supplied `key=value` used to reach a module-definition
-            // override evaluator, which let an unauthenticated client relax
-            // `read only`/`use chroot` before the module's own auth ran. See
-            // `process_approved_module` for why upstream's `--dparam` cannot
-            // reach the wire at all.
-            Ok(LegacyDaemonMessage::Other(payload)) => {
-                if let Some(option) = parse_daemon_option(payload) {
-                    refused_options.push(option.to_owned());
-                    continue;
-                }
-            }
+            // So is any other `@RSYNCD: ...` payload, `@RSYNCD: OPTION ...`
+            // included: upstream has no client-to-daemon option line, and
+            // `start_daemon` reads exactly one request line after the greeting
+            // (clientserver.c:1541-1575), so it answers `@ERROR: Unknown module
+            // '@RSYNCD: OPTION ...'`. Module parameters come only from the
+            // operator's config and the daemon's own `--dparam`
+            // (loadparm.c:667 set_dparams()), never from the peer.
+            Ok(LegacyDaemonMessage::Version(_) | LegacyDaemonMessage::Other(_)) => {}
             Ok(LegacyDaemonMessage::Exit) => {
                 // FSM: -> Closing on client-initiated exit.
                 return Ok(end_session(conn_state, None));
@@ -580,7 +564,6 @@ fn handle_legacy_session(
             &request,
             peer_addr.ip(),
             peer_host.as_deref(),
-            &refused_options,
             log_sink.as_ref(),
             reverse_lookup,
             messages,

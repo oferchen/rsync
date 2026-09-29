@@ -240,6 +240,15 @@ pub(crate) struct MultiplexReader<R> {
     /// every other reader leaves it `None` so the frame is dropped like upstream
     /// drops it on `am_server`. upstream: log.c:870-874.
     deleted_render: Option<DeletedRender>,
+    /// Whether a received `MSG_BLOCK_STATS` is valid here. Set only on a sender
+    /// reader once protocol 33 is negotiated; on every other reader the frame
+    /// is an invalid message. upstream: io.c:1722 `if (msg_bytes != 8 ||
+    /// protocol_version < 33 || (!am_generator && !am_sender)) goto invalid_msg;`
+    block_stats_accepted: bool,
+    /// The remote receiver's touched-block count from its last
+    /// `MSG_BLOCK_STATS`. upstream: io.c:1727 `stats.touched_blocks_4k =
+    /// IVAL64(b, 0);`
+    touched_blocks_4k: u64,
 }
 
 /// Exit code for partial transfer due to error.
@@ -379,6 +388,8 @@ impl<R> MultiplexReader<R> {
             io_timeout_invalid: false,
             invalid_control_msg: false,
             deleted_render: None,
+            block_stats_accepted: false,
+            touched_blocks_4k: 0,
         }
     }
 
@@ -406,6 +417,21 @@ impl<R> MultiplexReader<R> {
     /// upstream: log.c:870-874 `log_delete()` renders on the non-server side.
     pub(super) fn set_deleted_render(&mut self, render: DeletedRender) {
         self.deleted_render = Some(render);
+    }
+
+    /// Accepts `MSG_BLOCK_STATS` frames on this reader.
+    ///
+    /// Called only for a sender reader once protocol 33 is negotiated; every
+    /// other reader treats the frame as an invalid message.
+    /// upstream: io.c:1721-1732 `read_a_msg()` case `MSG_BLOCK_STATS`.
+    pub(super) const fn accept_block_stats(&mut self) {
+        self.block_stats_accepted = true;
+    }
+
+    /// Returns the touched-block count from the last `MSG_BLOCK_STATS`, or 0
+    /// when none arrived (upstream prints 0 then too, main.c:446-448).
+    pub(super) const fn touched_blocks_4k(&self) -> u64 {
+        self.touched_blocks_4k
     }
 
     /// Installs client-receiver I/O-timeout adoption state.
@@ -583,6 +609,27 @@ impl<R> MultiplexReader<R> {
         self.redo_indices.push(ndx);
     }
 
+    /// Handles a `MSG_BLOCK_STATS` payload by storing the receiver's count.
+    ///
+    /// Valid only where [`Self::accept_block_stats`] enabled it (a sender at
+    /// protocol >= 33) and only as an exact 8-byte little-endian `int64`;
+    /// anything else is the fatal invalid-message path. A negative count, which
+    /// no conforming receiver produces, is stored as 0.
+    ///
+    /// oc never forwards the frame: its server receiver writes the count to the
+    /// client directly, where upstream's receiver hands it to its generator,
+    /// which re-sends it (`if (am_server && am_generator) send_msg(...)`).
+    /// upstream: io.c:1721-1732.
+    fn handle_block_stats_msg(&mut self) {
+        if !self.block_stats_accepted || !self.require_payload_len(&[8]) {
+            self.invalid_control_msg = true;
+            return;
+        }
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(&self.buffer[..8]);
+        self.touched_blocks_4k = u64::try_from(i64::from_le_bytes(raw)).unwrap_or(0);
+    }
+
     /// Handles a `MSG_NO_SEND` payload by recording the file index.
     ///
     /// The payload must be exactly 4 bytes (little-endian `i32` file index); any
@@ -713,7 +760,9 @@ impl<R> MultiplexReader<R> {
     /// Returns an error if a fixed-size control message arrived malformed.
     ///
     /// upstream: io.c `invalid_msg` label - a wrong `msg_bytes` for a fixed-size
-    /// control frame (`MSG_IO_ERROR`/`MSG_REDO`/`MSG_NO_SEND`/`MSG_SUCCESS`) is
+    /// control frame (`MSG_IO_ERROR`/`MSG_REDO`/`MSG_NO_SEND`/`MSG_SUCCESS`/
+    /// `MSG_BLOCK_STATS`), or a `MSG_BLOCK_STATS` below protocol 33 or off the
+    /// sender, is
     /// fatal (`exit_cleanup(RERR_STREAMIO)`); oc surfaces it as an `InvalidData`
     /// error so the read loop aborts the transfer instead of dropping the frame.
     /// Surfaces the oldest pending `MSG_NO_SEND` as an error, one file per call.
@@ -852,6 +901,10 @@ impl<R> MultiplexReader<R> {
             protocol::MessageCode::Redo => {
                 // upstream: io.c:1561-1566
                 self.handle_redo_msg();
+            }
+            protocol::MessageCode::BlockStats => {
+                // upstream: io.c:1721-1732
+                self.handle_block_stats_msg();
             }
             protocol::MessageCode::Success => {
                 // upstream: io.c:1649-1663 - MSG_SUCCESS carries a committed

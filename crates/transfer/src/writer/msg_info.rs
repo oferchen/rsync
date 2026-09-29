@@ -121,6 +121,21 @@ pub trait MsgInfoSender {
         Ok(())
     }
 
+    /// Sends a `MSG_BLOCK_STATS` frame carrying the receiver's count of
+    /// distinct 4 KiB logical blocks written, as an 8-byte little-endian
+    /// `int64`.
+    ///
+    /// Callers gate on protocol >= 33. The default implementation is a no-op,
+    /// matching [`Self::send_msg_info`].
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1112-1117` - `SIVAL64(b, 0, stats.touched_blocks_4k);
+    ///   send_msg(MSG_BLOCK_STATS, b, sizeof b, 0);`
+    fn send_msg_block_stats(&mut self, _touched_blocks_4k: u64) -> io::Result<()> {
+        Ok(())
+    }
+
     /// Emits a lull keepalive if a `--timeout` is configured and the keepalive
     /// interval has elapsed with no output, returning `true` when an empty
     /// `MSG_DATA` frame was written.
@@ -243,6 +258,17 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
         }
     }
 
+    fn send_msg_block_stats(&mut self, touched_blocks_4k: u64) -> io::Result<()> {
+        // upstream: main.c:1115 SIVAL64 - the count is an int64 on the wire;
+        // the tracker saturates at INT64_MAX so the cast never wraps.
+        if self.is_multiplexed() {
+            let count = i64::try_from(touched_blocks_4k).unwrap_or(i64::MAX);
+            self.send_message(MessageCode::BlockStats, &count.to_le_bytes())
+        } else {
+            Ok(())
+        }
+    }
+
     fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
         // Delegate to the lull-gated emitter. Duplicating the tiny variant match
         // (rather than calling the inherent method of the same name) keeps the
@@ -272,6 +298,11 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
     }
 }
 
+/// Unit tests drive the goodbye handshake into a bare byte buffer; with no
+/// message channel every `MSG_*` frame is a no-op there, as on any plain writer.
+#[cfg(test)]
+impl MsgInfoSender for Vec<u8> {}
+
 impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
     fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
         (**self).send_msg_info(data)
@@ -295,6 +326,10 @@ impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
 
     fn send_msg_success(&mut self, ndx: i32) -> io::Result<()> {
         (**self).send_msg_success(ndx)
+    }
+
+    fn send_msg_block_stats(&mut self, touched_blocks_4k: u64) -> io::Result<()> {
+        (**self).send_msg_block_stats(touched_blocks_4k)
     }
 
     fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
@@ -339,6 +374,10 @@ impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
         self.inner_ref_mut().send_msg_success(ndx)
     }
 
+    fn send_msg_block_stats(&mut self, touched_blocks_4k: u64) -> io::Result<()> {
+        self.inner_ref_mut().send_msg_block_stats(touched_blocks_4k)
+    }
+
     fn maybe_send_keepalive(&mut self) -> io::Result<bool> {
         self.inner_ref_mut().maybe_send_keepalive()
     }
@@ -353,5 +392,47 @@ impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
 
     fn write_files_from_unframed(&mut self, data: &[u8]) -> io::Result<()> {
         self.inner_ref_mut().write_files_from_unframed(data)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WHY: the frame must be byte-identical to upstream's
+    /// `SIVAL64(b, 0, n); send_msg(MSG_BLOCK_STATS, b, 8, 0)` - header tag
+    /// `MPLEX_BASE + 11 = 18`, length 8, then the count as LE int64 - or a
+    /// protocol-33 client rejects it as an invalid message.
+    /// upstream: main.c:1112-1117, rsync.h:302.
+    #[test]
+    fn block_stats_frame_matches_upstream_bytes() {
+        let count: u64 = 0x0102_0304_0506;
+        let mut out = Vec::new();
+        {
+            let mut writer = ServerWriter::new_plain(&mut out)
+                .activate_multiplex()
+                .unwrap();
+            writer.send_msg_block_stats(count).unwrap();
+            writer.flush().unwrap();
+        }
+        let mut expected = vec![8, 0, 0, 18];
+        expected.extend_from_slice(&(count as i64).to_le_bytes());
+        assert!(
+            out.ends_with(&expected),
+            "expected MSG_BLOCK_STATS frame {expected:02x?} at the tail of {out:02x?}"
+        );
+    }
+
+    /// WHY: an unmultiplexed stream has no message channel; upstream never
+    /// sends MSG_BLOCK_STATS without multiplexing, so plain mode stays silent.
+    #[test]
+    fn block_stats_on_plain_writer_writes_nothing() {
+        let mut out = Vec::new();
+        {
+            let mut writer = ServerWriter::new_plain(&mut out);
+            writer.send_msg_block_stats(5).unwrap();
+            writer.flush().unwrap();
+        }
+        assert!(out.is_empty());
     }
 }
