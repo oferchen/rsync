@@ -38,7 +38,9 @@
 //! equivalent of the confined runtime's "nothing polls between blocking
 //! calls" hazard. [`QuicStream::finish`] still blocks until the peer
 //! acknowledged (or stopped) the send stream, and [`QuicStream::close`]
-//! blocks until the connection has drained and the driver thread exited.
+//! blocks until the connection has drained (and, on a client endpoint, the
+//! driver thread exited; a server endpoint's driver keeps serving its other
+//! connections).
 //!
 //! # Scope
 //!
@@ -171,16 +173,16 @@ struct State {
     send_stopped: bool,
     /// Facade requested a graceful connection close.
     close_requested: bool,
-    /// Last facade handle dropped; close and exit.
+    /// Last facade handle dropped; close the connection.
     shutdown: bool,
+    /// The application owns this connection: a client dialled it, or a
+    /// server's [`QuicAcceptor::accept`] handed it out. A server connection
+    /// that is not yet accepted when its acceptor is dropped is closed.
+    accepted: bool,
     /// How the connection ended, if it has.
     terminal: Option<Terminal>,
-    /// Driver thread has exited (connection drained or socket failure).
+    /// The connection has drained, or the driver thread exited.
     drained: bool,
-    /// Facade work is queued for the driver.
-    pending: bool,
-    /// Driver is blocked in `recv_from` and needs a wake datagram.
-    sleeping: bool,
 }
 
 struct Shared {
@@ -207,20 +209,60 @@ impl Shared {
     }
 }
 
-/// Handle shared by the facade types; owns the waker socket and the driver
-/// thread handle. The driver itself only holds `Arc<Shared>`, so dropping the
-/// last facade handle runs `Drop for Io` and tells the driver to exit.
-struct Io {
-    shared: Arc<Shared>,
-    wake: UdpSocket,
-    thread: Mutex<Option<JoinHandle<()>>>,
+/// Endpoint-wide state shared between the facades and the driver thread.
+#[derive(Default)]
+struct HubState {
+    /// Facade work is queued for the driver.
+    pending: bool,
+    /// Driver is blocked in `recv_from` and needs a wake datagram.
+    sleeping: bool,
+    /// Server connections whose stream is ready, awaiting
+    /// [`QuicAcceptor::accept`].
+    queue: VecDeque<Arc<Shared>>,
+    /// The acceptor was dropped: no further connection will be accepted.
+    accept_closed: bool,
+    /// The driver thread has exited.
+    driver_exited: bool,
+    /// Why the driver exited, when it failed rather than finished.
+    fault: Option<error::TransportFault>,
 }
 
-impl Io {
+/// One endpoint's driver: its wake socket, thread handle, and accept queue.
+///
+/// Lock order: a facade may take the [`Hub`] lock while holding its
+/// connection's [`Shared`] lock, never the reverse.
+struct Hub {
+    state: Mutex<HubState>,
+    cond: Condvar,
+    wake: UdpSocket,
+    thread: Mutex<Option<JoinHandle<()>>>,
+    role: Role,
+}
+
+impl Hub {
+    fn new(wake: UdpSocket, role: Role) -> Self {
+        Self {
+            state: Mutex::new(HubState::default()),
+            cond: Condvar::new(),
+            wake,
+            thread: Mutex::new(None),
+            role,
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, HubState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn set_thread(&self, handle: JoinHandle<()>) {
+        *self.thread.lock().unwrap_or_else(PoisonError::into_inner) = Some(handle);
+    }
+
     /// Marks facade work pending and wakes the driver if it is asleep.
-    fn signal(&self, st: &mut State) {
-        st.pending = true;
-        if st.sleeping {
+    fn signal(&self) {
+        let mut hub = self.lock();
+        hub.pending = true;
+        if hub.sleeping {
             let _ = self.wake.send(&[0]);
         }
     }
@@ -237,11 +279,35 @@ impl Io {
     }
 }
 
+/// Handle shared by the facade types of one connection. Dropping the last
+/// facade handle runs `Drop for Io` and tells the driver to close that
+/// connection.
+struct Io {
+    shared: Arc<Shared>,
+    hub: Arc<Hub>,
+}
+
+impl Io {
+    /// Marks facade work pending and wakes the driver if it is asleep.
+    fn signal(&self) {
+        self.hub.signal();
+    }
+
+    /// Joins the driver thread once the connection has drained, when the
+    /// driver exists only for this connection (a client endpoint). A server
+    /// endpoint's driver outlives each connection and keeps serving the rest.
+    fn join(&self) {
+        if self.hub.role == Role::Client {
+            self.hub.join();
+        }
+    }
+}
+
 impl Drop for Io {
     fn drop(&mut self) {
         let mut st = self.shared.lock();
         st.shutdown = true;
-        self.signal(&mut st);
+        self.signal();
     }
 }
 
@@ -339,10 +405,101 @@ impl QuicServerIdentity {
     }
 }
 
+/// A server endpoint's TLS identity and transport configuration, loaded once
+/// and reusable for any number of [`QuicAcceptor::from_setup`] endpoints.
+///
+/// Building it is the step that reads the operator's certificate, key and
+/// client CA from disk; turning it into a live acceptor reads nothing.
+#[derive(Clone)]
+pub struct QuicServerSetup {
+    certificate: CertificateDer<'static>,
+    config: Arc<ServerConfig>,
+    opens_stream: bool,
+}
+
+impl QuicServerSetup {
+    /// Builds the setup for the rsync daemon: the server OPENS each
+    /// connection's bidirectional stream and speaks first (see
+    /// [`QuicAcceptor::from_socket_server_first`]). With `client_ca`, every
+    /// client must present a certificate anchored by it (see
+    /// [`QuicAcceptor::from_socket_server_first_mutual`]).
+    pub fn server_first(
+        identity: &QuicServerIdentity,
+        client_ca: Option<RootCertStore>,
+    ) -> io::Result<Self> {
+        Self::build(identity, true, client_ca)
+    }
+
+    fn build(
+        identity: &QuicServerIdentity,
+        opens_stream: bool,
+        client_ca: Option<RootCertStore>,
+    ) -> io::Result<Self> {
+        let (certificate, chain, key) = identity.materialize()?;
+
+        let versions = rustls::ServerConfig::builder_with_provider(ring_provider())
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .map_err(io_err)?;
+        // Default off: no `client_ca` means `with_no_client_auth`, byte-identical
+        // to the pre-mutual-TLS path. A configured client CA installs a
+        // `WebPkiClientVerifier` that requires and verifies a client certificate
+        // against those roots (the daemon-side mirror of `--quic-ca`).
+        let mut server_crypto = match client_ca {
+            None => versions
+                .with_no_client_auth()
+                .with_single_cert(chain, key)
+                .map_err(io_err)?,
+            Some(roots) => {
+                let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+                    Arc::new(roots),
+                    ring_provider(),
+                )
+                .build()
+                .map_err(io_err)?;
+                versions
+                    .with_client_cert_verifier(verifier)
+                    .with_single_cert(chain, key)
+                    .map_err(io_err)?
+            }
+        };
+        server_crypto.alpn_protocols = vec![ALPN_RSYNC.to_vec()];
+
+        let mut server_config = ServerConfig::with_crypto(Arc::new(
+            QuicServerConfig::try_from(server_crypto).map_err(io_err)?,
+        ));
+        // The daemon's own endpoint takes env/default tuning; client `--quic-*`
+        // flags configure the client endpoint, never the server's.
+        server_config.transport_config(build_transport_config(QuicTransportTuning::default())?);
+        Ok(Self {
+            certificate,
+            config: Arc::new(server_config),
+            opens_stream,
+        })
+    }
+
+    /// DER encoding of the certificate the endpoint presents.
+    pub fn certificate(&self) -> &CertificateDer<'static> {
+        &self.certificate
+    }
+}
+
+impl std::fmt::Debug for QuicServerSetup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QuicServerSetup")
+            .field("opens_stream", &self.opens_stream)
+            .finish_non_exhaustive()
+    }
+}
+
 /// QUIC listener: binds a UDP socket, generates a self-signed certificate,
-/// and accepts one blocking stream for its single incoming connection.
+/// and accepts a blocking stream for each incoming connection.
+///
+/// One driver thread serves every connection on the endpoint. Dropping the
+/// acceptor stops admitting connections and closes those not yet accepted;
+/// streams already handed out keep working until they close, after which the
+/// driver exits.
 pub struct QuicAcceptor {
-    io: Arc<Io>,
+    hub: Arc<Hub>,
     certificate: CertificateDer<'static>,
     local: SocketAddr,
 }
@@ -419,55 +576,32 @@ impl QuicAcceptor {
         opens_stream: bool,
         client_ca: Option<RootCertStore>,
     ) -> io::Result<Self> {
-        let (certificate, chain, key) = identity.materialize()?;
+        let setup = QuicServerSetup::build(identity, opens_stream, client_ca)?;
+        Self::from_setup(socket, &setup)
+    }
 
-        let versions = rustls::ServerConfig::builder_with_provider(ring_provider())
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .map_err(io_err)?;
-        // Default off: no `client_ca` means `with_no_client_auth`, byte-identical
-        // to the pre-mutual-TLS path. A configured client CA installs a
-        // `WebPkiClientVerifier` that requires and verifies a client certificate
-        // against those roots (the daemon-side mirror of `--quic-ca`).
-        let mut server_crypto = match client_ca {
-            None => versions
-                .with_no_client_auth()
-                .with_single_cert(chain, key)
-                .map_err(io_err)?,
-            Some(roots) => {
-                let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
-                    Arc::new(roots),
-                    ring_provider(),
-                )
-                .build()
-                .map_err(io_err)?;
-                versions
-                    .with_client_cert_verifier(verifier)
-                    .with_single_cert(chain, key)
-                    .map_err(io_err)?
-            }
-        };
-        server_crypto.alpn_protocols = vec![ALPN_RSYNC.to_vec()];
-
-        let mut server_config = ServerConfig::with_crypto(Arc::new(
-            QuicServerConfig::try_from(server_crypto).map_err(io_err)?,
-        ));
-        // The daemon's own endpoint takes env/default tuning; client `--quic-*`
-        // flags configure the client endpoint, never the server's.
-        server_config.transport_config(build_transport_config(QuicTransportTuning::default())?);
-
+    /// Wraps an already-bound `socket` in a QUIC server endpoint configured by
+    /// a [`QuicServerSetup`] built earlier.
+    ///
+    /// This is the only constructor that reads nothing from the filesystem:
+    /// the certificate, key and client CA were loaded when `setup` was built.
+    /// A process that must give up filesystem access before its QUIC driver
+    /// thread exists (the daemon's QUIC front process) builds the setup first,
+    /// sandboxes itself, and only then calls this.
+    pub fn from_setup(socket: UdpSocket, setup: &QuicServerSetup) -> io::Result<Self> {
         let local = socket.local_addr()?;
         // allow_mtud = false: a std UdpSocket cannot set the don't-fragment
         // bit, so MTU discovery probes could be silently fragmented.
         let endpoint = Endpoint::new(
             Arc::new(EndpointConfig::default()),
-            Some(Arc::new(server_config)),
+            Some(Arc::clone(&setup.config)),
             false,
             None,
         );
-        let io = spawn_io(socket, endpoint, Role::Server, opens_stream, None)?;
+        let hub = spawn_io(socket, endpoint, Role::Server, setup.opens_stream, None)?;
         Ok(Self {
-            io,
-            certificate,
+            hub,
+            certificate: setup.certificate.clone(),
             local,
         })
     }
@@ -483,9 +617,51 @@ impl QuicAcceptor {
         &self.certificate
     }
 
-    /// Blocks until a client connects and opens a bidirectional stream.
+    /// Blocks until the next client connects and its bidirectional stream
+    /// exists, and returns that stream.
+    ///
+    /// May be called any number of times: each call yields the next
+    /// connection, in the order their streams became ready. Fails once the
+    /// driver thread has exited (a socket failure).
     pub fn accept(&self) -> io::Result<QuicStream> {
-        wait_stream(&self.io)
+        let mut hub = self.hub.lock();
+        loop {
+            if let Some(shared) = hub.queue.pop_front() {
+                drop(hub);
+                shared.lock().accepted = true;
+                return Ok(QuicStream {
+                    io: Arc::new(Io {
+                        shared,
+                        hub: Arc::clone(&self.hub),
+                    }),
+                });
+            }
+            if hub.driver_exited {
+                return Err(match &hub.fault {
+                    Some(fault) => fault.to_io_error(),
+                    None => error::driver_gone("QUIC driver exited"),
+                });
+            }
+            hub = self
+                .hub
+                .cond
+                .wait(hub)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
+impl Drop for QuicAcceptor {
+    fn drop(&mut self) {
+        let queued = {
+            let mut hub = self.hub.lock();
+            hub.accept_closed = true;
+            std::mem::take(&mut hub.queue)
+        };
+        // Released outside the hub lock: the driver closes these connections
+        // because nobody accepted them.
+        drop(queued);
+        self.hub.signal();
     }
 }
 
@@ -665,14 +841,16 @@ impl QuicConnector {
         let (handle, conn) = endpoint
             .connect(Instant::now(), self.config.clone(), addr, server_name)
             .map_err(|e| error::connect_fault(&e))?;
-        let io = spawn_io(
+        let shared = Arc::new(Shared::new());
+        shared.lock().accepted = true;
+        let hub = spawn_io(
             socket,
             endpoint,
             Role::Client,
             opens_stream,
-            Some((handle, conn)),
+            Some((handle, conn, Arc::clone(&shared))),
         )?;
-        wait_stream(&io)
+        wait_stream(&Arc::new(Io { shared, hub }))
     }
 }
 
@@ -704,7 +882,7 @@ impl QuicStream {
         let shared = &self.io.shared;
         let mut st = shared.lock();
         st.send_fin = true;
-        self.io.signal(&mut st);
+        self.io.signal();
         loop {
             if st.send_finished {
                 return Ok(());
@@ -789,13 +967,13 @@ impl QuicStream {
     }
 
     /// Gracefully closes the connection (application error code 0) and blocks
-    /// until it has drained and the driver thread exited.
+    /// until it has drained (and, on a client, until the driver thread exited).
     pub fn close(self) {
         {
             let shared = &self.io.shared;
             let mut st = shared.lock();
             st.close_requested = true;
-            self.io.signal(&mut st);
+            self.io.signal();
             while !st.drained {
                 st = shared.wait(st);
             }
@@ -830,7 +1008,7 @@ impl Read for QuicStream {
                 }
                 if st.recv_paused && st.recv_len < RECV_HIGH_WATER / 2 {
                     st.recv_paused = false;
-                    self.io.signal(&mut st);
+                    self.io.signal();
                 }
                 return Ok(copied);
             }
@@ -887,7 +1065,7 @@ impl Write for QuicStream {
             if space > 0 {
                 let take = space.min(buf.len());
                 st.send.extend(buf[..take].iter().copied());
-                self.io.signal(&mut st);
+                self.io.signal();
                 return Ok(take);
             }
             if st.drained {
@@ -931,7 +1109,7 @@ impl Drop for QuicShutdown {
         {
             let mut st = shared.lock();
             st.send_fin = true;
-            self.io.signal(&mut st);
+            self.io.signal();
             while !st.send_finished && st.terminal.is_none() && !st.drained {
                 st = shared.wait(st);
             }
@@ -940,7 +1118,7 @@ impl Drop for QuicShutdown {
         {
             let mut st = shared.lock();
             st.close_requested = true;
-            self.io.signal(&mut st);
+            self.io.signal();
             while !st.drained {
                 st = shared.wait(st);
             }
@@ -1322,9 +1500,9 @@ mod tests {
     /// sends `b"ok"`, and returns `(addr, pinned_server_cert, join_handle)`. The
     /// server tolerates a rejected handshake (`accept` returning `Err`) so the
     /// refusal tests do not panic in the server thread.
-    fn spawn_mutual_server(
+    fn bind_mutual_server(
         client_ca_roots: RootCertStore,
-    ) -> (SocketAddr, CertificateDer<'static>, thread::JoinHandle<()>) {
+    ) -> (SocketAddr, CertificateDer<'static>, QuicAcceptor) {
         let socket = UdpSocket::bind("127.0.0.1:0").expect("udp bind");
         let acceptor = QuicAcceptor::from_socket_server_first_mutual(
             socket,
@@ -1334,13 +1512,7 @@ mod tests {
         .expect("bind mutual acceptor");
         let addr = acceptor.local_addr().expect("local addr");
         let server_cert = acceptor.certificate().clone().into_owned();
-        let handle = thread::spawn(move || {
-            if let Ok(mut stream) = acceptor.accept() {
-                let _ = stream.write_all(b"ok");
-                let _ = stream.finish();
-            }
-        });
-        (addr, server_cert, handle)
+        (addr, server_cert, acceptor)
     }
 
     /// Mutual TLS happy path: a client presenting a certificate anchored by the
@@ -1355,7 +1527,12 @@ mod tests {
         let (ca_path, cert_path, key_path) = write_pems(dir.path(), &ca_pem, &cert_pem, &key_pem);
 
         let client_ca = load_private_ca(&ca_path).expect("load client ca");
-        let (addr, server_cert, server) = spawn_mutual_server(client_ca);
+        let (addr, server_cert, acceptor) = bind_mutual_server(client_ca);
+        let server = thread::spawn(move || {
+            let mut stream = acceptor.accept().expect("accept mutual session");
+            stream.write_all(b"ok").expect("write greeting");
+            stream.finish().expect("finish");
+        });
 
         let client_auth = ClientAuth::from_pem_files(&cert_path, &key_path).expect("client auth");
         let connector = QuicConnector::with_trust_tuned_client_auth(
@@ -1390,7 +1567,7 @@ mod tests {
         std::fs::write(&ca_path, &ca_pem).expect("write ca");
 
         let client_ca = load_private_ca(&ca_path).expect("load client ca");
-        let (addr, server_cert, server) = spawn_mutual_server(client_ca);
+        let (addr, server_cert, acceptor) = bind_mutual_server(client_ca);
 
         // No client auth: the default connect path, which presents no cert.
         let connector = QuicConnector::with_trust_tuned_client_auth(
@@ -1403,7 +1580,7 @@ mod tests {
         connector
             .connect_server_first(addr, "localhost")
             .expect_err("a client presenting no certificate must be refused");
-        server.join().expect("server thread");
+        drop(acceptor);
     }
 
     /// A daemon requiring client auth refuses a client whose certificate is
@@ -1424,7 +1601,7 @@ mod tests {
         std::fs::write(&key_path, &rogue_key_pem).expect("write key");
 
         let client_ca = load_private_ca(&ca_path).expect("load client ca");
-        let (addr, server_cert, server) = spawn_mutual_server(client_ca);
+        let (addr, server_cert, acceptor) = bind_mutual_server(client_ca);
 
         let rogue_auth = ClientAuth::from_pem_files(&cert_path, &key_path).expect("rogue auth");
         let connector = QuicConnector::with_trust_tuned_client_auth(
@@ -1437,7 +1614,7 @@ mod tests {
         connector
             .connect_server_first(addr, "localhost")
             .expect_err("a client cert signed by an untrusted CA must be refused");
-        server.join().expect("server thread");
+        drop(acceptor);
     }
 
     /// Default off: a non-mutual acceptor (no `quic client ca file`) accepts a

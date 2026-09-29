@@ -1,13 +1,11 @@
-/// Accepts TCP connections and spawns a thread per session.
+/// Accepts connections and serves each session in its own backing.
 ///
-/// Unlike upstream rsync which forks a child process per connection
-/// (giving each session its own address space), this function uses
-/// `std::thread::spawn` with `catch_unwind` to isolate panics.  A panic
-/// in one session is caught and logged without tearing down the daemon,
-/// matching upstream's crash-isolation semantics.
+/// On Unix every session - TCP or relayed from the QUIC front process - runs
+/// in a forked child, as upstream does, and the parent stays single-threaded:
+/// it never chroots, changes uid/gid or starts a thread. Windows has no `fork`
+/// and serves each session on a thread with `catch_unwind` isolating panics.
 ///
-/// See `docs/DAEMON_PROCESS_MODEL.md` for details on the thread-vs-fork
-/// trade-offs.
+/// upstream: socket.c:761-773 `start_accept_loop()` forks per connection.
 fn serve_connections(
     options: RuntimeOptions,
     external_signal_flags: Option<platform::signal::SignalFlags>,
@@ -243,10 +241,9 @@ fn serve_connections(
     // listeners, over the identical `resolve_bind_addresses` set, while
     // CAP_NET_BIND_SERVICE is still held (the default port 873 is privileged).
     // Only the raw sockets are bound here; each is turned into a live
-    // `QuicAcceptor` (which spawns an I/O driver thread) and served after the
-    // `become_daemon` fork and privilege drop below, so the driver lives in the
-    // final serving process rather than a pre-fork parent whose threads the
-    // fork discards. See `materialize_and_serve_quic`.
+    // QUIC front process forked just before the accept loop, which terminates
+    // QUIC in its own threads so this process stays single-threaded. See
+    // `start_quic_front`.
     #[cfg(all(unix, feature = "quic"))]
     let quic_sockets: Vec<std::net::UdpSocket> = if let Some((quic_port, _)) = &quic_bind {
         match bind_quic_sockets_per_family(&bind_addresses, *quic_port, log_sink.as_ref()) {
@@ -299,6 +296,8 @@ fn serve_connections(
     if detach {
         become_daemon()?;
     }
+    #[cfg(unix)]
+    mark_daemon_parent();
 
     // Suppress unused-variable warning on platforms where fork is unavailable.
     #[cfg(not(unix))]
@@ -388,32 +387,22 @@ fn serve_connections(
         log_sd_notify_failure(log_sink.as_ref(), "service readiness", &error);
     }
 
-    // QUIC accept->session handoff (oc extension): the daemon now holds its
-    // final identity (detached, privileges dropped, chroot applied), so turn
-    // each pre-bound QUIC socket into a live acceptor and serve it with the
-    // SAME `serve_session` core the TCP path uses. Building the context from the
-    // same runtime state as the TCP `ConnectionContext` keeps the served
-    // session transport-agnostic; the driver thread each acceptor spawns lives
-    // here in the post-fork process.
+    // QUIC (oc extension): fork the QUIC front process. It terminates QUIC in
+    // its own threads and hands each connection back over a socketpair, which
+    // this loop admits exactly like an accepted TCP socket - forked session,
+    // `max connections` slot and all. The daemon has its final identity now,
+    // and forking here, before any thread exists, keeps this process
+    // single-threaded for every session fork that follows.
     #[cfg(all(unix, feature = "quic"))]
-    if let Some((_, quic_identity)) = quic_bind.as_ref() {
-        let quic_context = ConnectionContext::new(
-            Arc::clone(&modules),
-            Arc::clone(&motd_lines),
-            log_sink.as_ref().map(Arc::clone),
-            Arc::clone(&client_socket_options),
-            bandwidth_limit,
-            reverse_lookup,
-            proxy_policy.clone(),
-            daemon_timeout,
-        );
-        materialize_and_serve_quic(
-            quic_sockets,
-            quic_identity,
-            &quic_context,
-            log_sink.as_ref(),
-        );
-    }
+    let quic_front = match quic_bind.as_ref() {
+        Some((_, quic_identity)) if !quic_sockets.is_empty() => {
+            use std::os::fd::AsRawFd;
+            let tcp_fds: Vec<std::os::fd::RawFd> =
+                listeners.iter().map(AsRawFd::as_raw_fd).collect();
+            start_quic_front(quic_sockets, quic_identity, &tcp_fds, log_sink.as_ref())
+        }
+        _ => None,
+    };
 
     let mut state = AcceptLoopState {
         signal_flags: &signal_flags,
@@ -442,7 +431,13 @@ fn serve_connections(
     // Select the accept engine once from the bound listener topology, then run
     // the shared accept loop. The engine hides the readiness mechanism
     // (non-blocking accept vs acceptor-thread fan-in) behind a uniform poll.
-    let mut engine = build_accept_engine(listeners, &bound_addresses, &state)?;
+    let mut engine = build_accept_engine(
+        listeners,
+        &bound_addresses,
+        &state,
+        #[cfg(all(unix, feature = "quic"))]
+        quic_front,
+    )?;
     // The engine now owns the listeners, so only it can name them. Record them
     // for the forked session children, which must close every one.
     #[cfg(unix)]

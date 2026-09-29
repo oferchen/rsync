@@ -32,6 +32,25 @@
 /// neither chroot nor a privilege drop is configured - the commonest rootless
 /// deployment, and precisely the path an install placed after the chroot would
 /// skip.
+/// Pid of the daemon's serving parent; 0 until [`mark_daemon_parent`] runs.
+static DAEMON_PARENT_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Records the calling process as the daemon's serving parent.
+///
+/// Called once the daemon holds its final pid (after `become_daemon`). From
+/// then on [`apply_privilege_restrictions_with_upstream_errors`] refuses to
+/// chroot or drop privileges in this process, so a session that was not forked
+/// fails closed instead of confining the whole daemon.
+#[cfg(unix)]
+fn mark_daemon_parent() {
+    DAEMON_PARENT_PID.store(std::process::id(), Ordering::Relaxed);
+}
+
+/// Returns `true` in the process recorded by [`mark_daemon_parent`].
+fn is_daemon_parent() -> bool {
+    DAEMON_PARENT_PID.load(Ordering::Relaxed) == std::process::id()
+}
+
 fn publish_module_confinement(module: &ModuleRuntime, root: &Path, chrooted: bool) {
     fast_io::confinement::install_daemon_session(fast_io::confinement::ModuleState {
         root: Some(root.to_path_buf()),
@@ -70,6 +89,21 @@ fn apply_privilege_restrictions_with_upstream_errors(
             &fallback_sink
         }
     };
+
+    // The serving parent must never confine itself: its identity is every
+    // later session's identity. Only a forked session child reaches the
+    // chroot and privilege drop below.
+    if is_daemon_parent() {
+        let message = rsync_error!(
+            1,
+            "refusing to chroot or drop privileges in the daemon parent"
+        )
+        .with_role(Role::Daemon);
+        log_message(log_sink, &message);
+        let error = AtError::message("session is not isolated from the daemon");
+        send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+        return Ok(None);
+    }
 
     // Resolve the identity BEFORE the chroot, because resolving it is a name
     // lookup and the chroot is what makes names unresolvable.

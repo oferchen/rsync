@@ -59,6 +59,15 @@ pub fn restrict_to_module_paths(_allowed_roots: &[&Path]) -> LandlockOutcome {
     LandlockOutcome::Unavailable
 }
 
+/// Always returns [`LandlockOutcome::Unavailable`] on this build.
+///
+/// # Errors
+///
+/// The stub never returns the `Error` variant.
+pub fn deny_all_filesystem_access() -> LandlockOutcome {
+    LandlockOutcome::Unavailable
+}
+
 /// Always returns `None` on this build: Landlock is unavailable, so there is
 /// no engaged ruleset that could have been downgraded. Mirrors the Linux
 /// signature so the daemon reports downgrades without `#[cfg]` branching.

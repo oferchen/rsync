@@ -107,6 +107,13 @@ impl DrainSource for TcpStream {
     }
 }
 
+#[cfg(all(unix, feature = "quic"))]
+impl DrainSource for std::os::unix::net::UnixStream {
+    fn set_drain_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+        self.set_read_timeout(timeout)
+    }
+}
+
 /// A blocking `Read` adapter backed by a background socket-drain thread.
 ///
 /// Wraps the daemon's read-clone fd and spawns a thread that continuously

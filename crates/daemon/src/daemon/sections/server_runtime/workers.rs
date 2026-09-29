@@ -62,10 +62,11 @@ impl SessionWorker {
 ///
 /// The two can never coexist in one process, which is why this is a `cfg`
 /// split rather than an enum with two variants. `session_fork::fork_session`
-/// requires a single-threaded parent, and the connection workers are the only
-/// other threads the daemon runs; a child forked while a thread-backed session
-/// was still live could deadlock on the allocator or on the log sink's mutex,
-/// holding a lock no thread exists in the child to release.
+/// requires a single-threaded parent: a child forked while another thread was
+/// live could deadlock on the allocator or on the log sink's mutex, holding a
+/// lock no thread exists in the child to release. A Unix parent therefore runs
+/// no threads at all - QUIC's endpoint threads live in the separate front
+/// process started by `start_quic_front`.
 ///
 /// upstream: `socket.c:761-773` `start_accept_loop()` forks per accepted
 /// connection and keeps only the pid.

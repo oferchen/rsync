@@ -196,25 +196,38 @@ fn setup_transfer_streams(
         }));
     }
 
-    // QUIC transport (oc extension): split the single bidirectional stream into
-    // independent blocking read/write handles with `QuicStream::try_clone` - the
-    // QUIC counterpart of `TcpStream::try_clone`. Reads touch only the receive
-    // path and writes only the send path, so the two handles never contend
-    // beyond the driver's shared lock. No #503 drain thread is needed: the QUIC
-    // driver continuously pulls datagrams off the socket into a receive buffer
-    // regardless of facade reads, so the single-socket write-write deadlock the
-    // TCP path guards against cannot occur (the same property that lets the
-    // stdio branch above skip the drain). Teardown is the stream's own graceful
-    // FIN + close, not a TCP half-close, so `supports_tcp_shutdown` is false.
-    #[cfg(feature = "quic")]
-    if let Some(quic) = stream.quic_stream() {
-        let read_half = quic.try_clone();
-        let write_half = quic.try_clone();
+    // QUIC transport (oc extension): the QUIC front process relays the
+    // connection over a Unix socketpair, so the session splits it exactly like
+    // a TCP socket. The relay has the same single-socket write-write deadlock
+    // (#503) as TCP - the front process stops reading QUIC while the socket is
+    // full - so it takes the same drain thread. The goodbye drain and
+    // half-close work on the relay too; only SO_LINGER, which needs a
+    // `TcpStream`, is skipped.
+    #[cfg(all(unix, feature = "quic"))]
+    if let Some(relay) = stream.quic_relay_stream() {
+        let (read_stream, write_stream) = match (relay.try_clone(), relay.try_clone()) {
+            (Ok(read), Ok(write)) => (read, write),
+            (Err(err), _) | (_, Err(err)) => {
+                return Err(io::Error::other(format!(
+                    "failed to clone relay stream: {err}"
+                )));
+            }
+        };
+        if !arm_drain {
+            return Ok(Some(TransferStreams {
+                read: Box::new(read_stream),
+                write: Box::new(write_stream),
+                supports_tcp_shutdown: true,
+                drain_handle: None,
+            }));
+        }
+        let writer = writer_marking_progress(Box::new(write_stream), deadline.as_ref());
+        let (draining_reader, drain_handle) = DrainingReader::new(read_stream, deadline);
         return Ok(Some(TransferStreams {
-            read: Box::new(read_half),
-            write: Box::new(write_half),
-            supports_tcp_shutdown: false,
-            drain_handle: None,
+            read: Box::new(draining_reader),
+            write: writer,
+            supports_tcp_shutdown: true,
+            drain_handle: Some(drain_handle),
         }));
     }
 

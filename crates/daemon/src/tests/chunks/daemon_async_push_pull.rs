@@ -15,6 +15,10 @@
 #[cfg(all(unix, feature = "async-daemon"))]
 #[test]
 fn daemon_async_accept_push_pull_byte_identical() {
+    if platform::privilege::is_effective_root() {
+        eprintln!("skipping: a root async daemon refuses to start");
+        return;
+    }
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
@@ -174,6 +178,56 @@ fn daemon_async_rejects_privileged_module() {
     assert!(
         rendered.contains("async-daemon does not support privileged"),
         "expected privileged-module refusal, got: {rendered}"
+    );
+}
+
+/// A root async daemon must refuse to start even with an unprivileged module.
+///
+/// WHY: a root daemon drops every session to `nobody` when the module names no
+/// `uid` (upstream's default), and the async path runs sessions inside the
+/// daemon process, so the first pull would leave the whole daemon running as
+/// `nobody`. Only meaningful as root; as any other user there is nothing to
+/// drop and the push/pull test above covers startup.
+#[cfg(all(unix, feature = "async-daemon"))]
+#[test]
+fn daemon_async_refuses_to_run_as_root() {
+    if !platform::privilege::is_effective_root() {
+        eprintln!("skipping: the root refusal is only reachable as root");
+        return;
+    }
+    let _lock = ENV_LOCK.lock().expect("env lock");
+
+    let temp = tempdir().expect("tempdir");
+    let module_dir = temp.path().join("module");
+    fs::create_dir_all(&module_dir).expect("create module dir");
+    let config_file = temp.path().join("rsyncd.conf");
+    let config_content = format!(
+        "[plain]\npath = {}\nuse chroot = false\n",
+        module_dir.display()
+    );
+    fs::write(&config_file, config_content).expect("write daemon config");
+
+    let (port, held_listener) = allocate_test_port();
+    drop(held_listener);
+
+    let daemon_config = DaemonConfig::builder()
+        .disable_default_paths()
+        .arguments([
+            OsString::from("--config"),
+            config_file.as_os_str().to_owned(),
+            OsString::from("--no-detach"),
+            OsString::from("--address"),
+            OsString::from("127.0.0.1"),
+            OsString::from("--port"),
+            OsString::from(port.to_string()),
+        ])
+        .build();
+
+    let error = crate::run_async_daemon(daemon_config).expect_err("root must be refused");
+    let rendered = error.message().to_string();
+    assert!(
+        rendered.contains("async-daemon cannot run as root"),
+        "expected the root refusal, got: {rendered}"
     );
 }
 

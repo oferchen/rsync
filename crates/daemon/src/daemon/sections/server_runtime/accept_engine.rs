@@ -45,6 +45,10 @@ trait AcceptEngine {
 enum AcceptOutcome {
     /// A client connection was accepted (stream already set to blocking).
     Connection(TcpStream, SocketAddr),
+    /// A QUIC connection the QUIC front process relayed over a Unix socket,
+    /// with the QUIC client's address.
+    #[cfg(all(unix, feature = "quic"))]
+    Relayed(std::os::unix::net::UnixStream, SocketAddr),
     /// No connection was ready within the poll interval. The engine has
     /// already waited the appropriate amount, so the caller must re-check
     /// signal flags and poll again without adding its own sleep.
@@ -73,9 +77,13 @@ const READINESS_WAIT_MILLIS: u16 = 50;
 ///
 /// upstream: socket.c `start_accept_loop()` parks in `select(2)` over all
 /// listener fds before calling `accept(2)`.
+///
+/// `relay` is the QUIC front channel, when one exists; it is reported ready as
+/// index `listeners.len()`.
 #[cfg(unix)]
 fn poll_ready(
     listeners: &[(TcpListener, SocketAddr)],
+    relay: Option<std::os::fd::BorrowedFd<'_>>,
     timeout_millis: u16,
 ) -> io::Result<Vec<usize>> {
     use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
@@ -84,6 +92,7 @@ fn poll_ready(
     let mut fds: Vec<PollFd<'_>> = listeners
         .iter()
         .map(|(listener, _)| PollFd::new(listener.as_fd(), PollFlags::POLLIN))
+        .chain(relay.map(|fd| PollFd::new(fd, PollFlags::POLLIN)))
         .collect();
     match poll(&mut fds, PollTimeout::from(timeout_millis)) {
         Ok(0) => Ok(Vec::new()),
@@ -168,6 +177,11 @@ struct PollAcceptEngine {
     /// accept so no family can monopolise the loop.
     next_start: usize,
     log_sink: Option<SharedLogSink>,
+    /// The QUIC front process, whose channel is polled alongside the
+    /// listeners as one more source of connections. `None` when QUIC is not
+    /// configured, or once the front process has gone.
+    #[cfg(all(unix, feature = "quic"))]
+    quic_front: Option<QuicFront>,
 }
 
 impl PollAcceptEngine {
@@ -190,7 +204,53 @@ impl PollAcceptEngine {
             listeners: paired,
             next_start: 0,
             log_sink,
+            #[cfg(all(unix, feature = "quic"))]
+            quic_front: None,
         })
+    }
+
+    /// Adds the QUIC front process's channel as one more connection source.
+    #[cfg(all(unix, feature = "quic"))]
+    fn with_quic_front(mut self, quic_front: Option<QuicFront>) -> Self {
+        self.quic_front = quic_front;
+        self
+    }
+
+    /// The QUIC front channel to poll, if a front process is running.
+    #[cfg(unix)]
+    fn relay_fd(&self) -> Option<std::os::fd::BorrowedFd<'_>> {
+        #[cfg(feature = "quic")]
+        {
+            self.quic_front.as_ref().and_then(QuicFront::fd)
+        }
+        #[cfg(not(feature = "quic"))]
+        {
+            None
+        }
+    }
+
+    /// Takes one relayed QUIC connection from the front channel.
+    ///
+    /// A closed channel means the front process exited. It is reaped, the
+    /// failure is logged, and the daemon keeps serving TCP: there is no
+    /// respawn, because a front process that died once would be restarted
+    /// into the same failure.
+    #[cfg(all(unix, feature = "quic"))]
+    fn accept_relayed(&mut self) -> AcceptOutcome {
+        let Some(front) = self.quic_front.as_ref() else {
+            return AcceptOutcome::Idle;
+        };
+        match front.receive(self.log_sink.as_ref()) {
+            RelayEvent::Connection(stream, peer) => AcceptOutcome::Relayed(stream, peer),
+            RelayEvent::Closed => {
+                drop(self.quic_front.take());
+                log_quic_front_error(
+                    self.log_sink.as_ref(),
+                    "QUIC front process exited; QUIC connections are no longer accepted".to_owned(),
+                );
+                AcceptOutcome::Idle
+            }
+        }
     }
 
     /// Takes one connection from the listener at `index`, mapping every
@@ -226,7 +286,11 @@ impl PollAcceptEngine {
 
 impl AcceptEngine for PollAcceptEngine {
     fn poll(&mut self) -> Result<AcceptOutcome, DaemonError> {
-        let ready = match poll_ready(&self.listeners, READINESS_WAIT_MILLIS) {
+        #[cfg(unix)]
+        let ready = poll_ready(&self.listeners, self.relay_fd(), READINESS_WAIT_MILLIS);
+        #[cfg(not(unix))]
+        let ready = poll_ready(&self.listeners, READINESS_WAIT_MILLIS);
+        let ready = match ready {
             Ok(ready) => ready,
             Err(error) => {
                 // A poll(2) failure over valid listener fds is as transient as
@@ -245,6 +309,11 @@ impl AcceptEngine for PollAcceptEngine {
             return Ok(AcceptOutcome::Idle);
         }
 
+        // The QUIC front channel, when present, takes the slot after the last
+        // listener and joins the same rotation.
+        #[cfg(unix)]
+        let count = self.listeners.len() + usize::from(self.relay_fd().is_some());
+        #[cfg(not(unix))]
         let count = self.listeners.len();
         for offset in 0..count {
             let index = (self.next_start + offset) % count;
@@ -252,6 +321,10 @@ impl AcceptEngine for PollAcceptEngine {
                 continue;
             }
             self.next_start = (index + 1) % count;
+            #[cfg(all(unix, feature = "quic"))]
+            if index == self.listeners.len() {
+                return Ok(self.accept_relayed());
+            }
             return Ok(self.accept_from(index));
         }
         Ok(AcceptOutcome::Idle)
@@ -266,6 +339,7 @@ impl AcceptEngine for PollAcceptEngine {
         self.listeners
             .iter()
             .map(|(listener, _)| listener.as_raw_fd())
+            .chain(self.relay_fd().map(|fd| fd.as_raw_fd()))
             .collect()
     }
 }
@@ -510,18 +584,33 @@ fn try_build_kqueue_engine(
 /// Both engines are single-threaded, so the accept path spawns no threads of
 /// its own on any platform or listener count. [`PollAcceptEngine`] documents
 /// why that is a correctness precondition rather than a preference.
+///
+/// A running QUIC front process forces [`PollAcceptEngine`], which polls the
+/// front channel alongside the listeners; the kqueue engine watches listeners
+/// only.
 fn build_accept_engine(
     listeners: Vec<TcpListener>,
     bound_addresses: &[SocketAddr],
     state: &AcceptLoopState<'_>,
+    #[cfg(all(unix, feature = "quic"))] quic_front: Option<QuicFront>,
 ) -> Result<Box<dyn AcceptEngine>, DaemonError> {
+    #[cfg(all(target_os = "macos", feature = "macos-kqueue", feature = "quic"))]
+    let use_kqueue = quic_front.is_none();
+    #[cfg(all(target_os = "macos", feature = "macos-kqueue", not(feature = "quic")))]
+    let use_kqueue = true;
     #[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
-    let listeners = match try_build_kqueue_engine(listeners, bound_addresses, state) {
-        Ok(engine) => return Ok(engine),
-        Err(listeners) => listeners,
+    let listeners = if use_kqueue {
+        match try_build_kqueue_engine(listeners, bound_addresses, state) {
+            Ok(engine) => return Ok(engine),
+            Err(listeners) => listeners,
+        }
+    } else {
+        listeners
     };
 
     let engine = PollAcceptEngine::new(listeners, bound_addresses, state.log_sink.clone())?;
+    #[cfg(all(unix, feature = "quic"))]
+    let engine = engine.with_quic_front(quic_front);
     Ok(Box::new(engine))
 }
 
@@ -543,6 +632,12 @@ fn run_accept_loop(
         match engine.poll()? {
             AcceptOutcome::Connection(tcp_stream, raw_peer_addr) => {
                 if handle_accepted_connection(tcp_stream, raw_peer_addr, state) {
+                    break;
+                }
+            }
+            #[cfg(all(unix, feature = "quic"))]
+            AcceptOutcome::Relayed(stream, raw_peer_addr) => {
+                if admit_connection(DaemonStream::quic_relay(stream), raw_peer_addr, state) {
                     break;
                 }
             }
