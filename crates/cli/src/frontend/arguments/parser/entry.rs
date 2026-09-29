@@ -149,10 +149,12 @@ fn parse_quic_window(value: &std::ffi::OsStr) -> Result<u64, clap::Error> {
 /// upstream: options.c:867 lists `--dparam` in the client table as
 /// `OPT_DAEMON`, so naming it means "this is a daemon command line": argv is
 /// re-parsed with `long_daemon_options[]` (options.c:1538-1570), each value is
-/// checked for its `=` as it is collected, and without `--daemon` the parse
-/// ends in "Daemon option(s) used without --daemon." (options.c:1591-1596),
-/// exit `RERR_SYNTAX`. There is no client-side meaning: a daemon parameter is
-/// never sent to a remote daemon.
+/// checked for its `=` as it is collected, every name is then checked by
+/// set_dparams(1) (options.c:1583-1584, `Unknown parameter "<name>"` with no
+/// usage hint), and only then does a parse without `--daemon` end in "Daemon
+/// option(s) used without --daemon." (options.c:1591-1596). Each is
+/// `RERR_SYNTAX`. There is no client-side meaning: a daemon parameter is never
+/// sent to a remote daemon.
 fn check_daemon_params(
     dparams: &[OsString],
     daemon_mode: bool,
@@ -161,6 +163,11 @@ fn check_daemon_params(
     if daemon_mode || dparams.is_empty() {
         return Ok(());
     }
+    let unknown = dparams.iter().find_map(|value| {
+        let value = value.to_string_lossy();
+        let name = value.split_once('=')?.0.to_owned();
+        (!daemon::is_daemon_parameter(&name)).then_some(name)
+    });
     let first = match dparams
         .iter()
         .find(|value| !value.as_encoded_bytes().contains(&b'='))
@@ -169,7 +176,15 @@ fn check_daemon_params(
             "--dparam value is missing an '=': {}",
             value.to_string_lossy()
         ),
-        None => "Daemon option(s) used without --daemon.".to_owned(),
+        None => {
+            if let Some(name) = unknown {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::ValueValidation,
+                    format!("Unknown parameter \"{name}\"\n"),
+                ));
+            }
+            "Daemon option(s) used without --daemon.".to_owned()
+        }
     };
     Err(clap::Error::raw(
         clap::error::ErrorKind::ValueValidation,
