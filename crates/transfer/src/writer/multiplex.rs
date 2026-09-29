@@ -86,6 +86,10 @@ pub(crate) struct MultiplexWriter<W> {
     /// (io.c:1169); a keepalive is emitted once this much time has elapsed with
     /// no output.
     allowed_lull: Option<Duration>,
+    /// Payload bytes accepted through the `Write` trait and bound for the
+    /// wire; bytes diverted to the batch file are not counted.
+    /// upstream: io.c:2502 `total_data_written += len` in `write_buf()`.
+    data_written: u64,
 }
 
 /// Default buffer size - 64KB to batch ~2 wire chunks per flush.
@@ -121,7 +125,13 @@ impl<W: Write> MultiplexWriter<W> {
             batch_route: BatchRoute::default(),
             last_io_out: Instant::now(),
             allowed_lull: None,
+            data_written: 0,
         }
+    }
+
+    /// Payload bytes written for the wire so far (upstream `total_data_written`).
+    pub(crate) const fn data_written(&self) -> u64 {
+        self.data_written
     }
 
     /// Configures the keep-alive lull interval.
@@ -325,6 +335,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
         if self.record_to_batch(std::iter::once(buf))? {
             return Ok(buf.len());
         }
+        self.data_written += buf.len() as u64;
 
         if self.buffer.data_len() + buf.len() > self.buffer_size {
             self.flush_buffer()?;
@@ -366,6 +377,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
         if self.record_to_batch(bufs.iter().map(|b| &b[..]))? {
             return Ok(total_len);
         }
+        self.data_written += total_len as u64;
 
         // Fast path: if everything fits in remaining buffer space, copy all at once
         if self.buffer.data_len() + total_len <= self.buffer_size {

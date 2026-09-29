@@ -1182,6 +1182,15 @@ impl ReceiverContext {
                     is_transfer,
                     &self.sender_file_sum.get(),
                 );
+        // upstream: log.c `case 'b'`/`case 'c'` - a receiver's `%b` is the data
+        // read for a transfer; its `%c` counts data written, and the receiver
+        // writes none between remember_initial_stats() (receiver.c:995) and
+        // log_item().
+        let data_read = if is_transfer {
+            self.daemon_log_data_read.get()
+        } else {
+            0
+        };
         let row = crate::progress::DaemonLogRow::new(
             entry,
             itemize,
@@ -1189,7 +1198,8 @@ impl ReceiverContext {
             symlink_target,
             xname,
             checksum,
-        );
+        )
+        .with_byte_counts(data_read, 0);
         self.daemon_log_rows
             .borrow_mut()
             .entry(flist_idx)

@@ -491,6 +491,8 @@ pub struct ReceiverContext {
     /// transfer (upstream's `sender_file_sum` global, receiver.c:687).
     pub(in crate::receiver) sender_file_sum:
         std::cell::Cell<[u8; crate::progress::MAX_FILE_SUM_LEN]>,
+    /// `%b` for the transfer about to be logged: payload read for the file.
+    pub(in crate::receiver) daemon_log_data_read: std::cell::Cell<u64>,
     /// Per-type tally of entries this receiver created (destination absent
     /// before the transfer), keyed by `ITEM_IS_NEW`. Reconstructs the
     /// `--stats` "Number of created files" breakdown locally, exactly as
@@ -708,6 +710,7 @@ impl ReceiverContext {
             daemon_logfile_format_has_i: false,
             daemon_log_rows: RefCell::new(BTreeMap::new()),
             sender_file_sum: std::cell::Cell::new([0; crate::progress::MAX_FILE_SUM_LEN]),
+            daemon_log_data_read: std::cell::Cell::new(0),
             created_stats: std::cell::Cell::new(protocol::stats::CreatedStats::new()),
             got_xfer_error: std::cell::Cell::new(false),
             delayed_delete_victims: Vec::new(),

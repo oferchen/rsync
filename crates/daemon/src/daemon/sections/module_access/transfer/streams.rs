@@ -416,11 +416,8 @@ impl DaemonFileLog for DaemonFileLogWriter<'_> {
             pid: self.pid,
             module_path: &self.module_path,
             timestamp: &timestamp,
-            // upstream renders %b/%c from per-file byte counters; oc's per-entry
-            // FLOG row does not carry them yet, so byte-count escapes render
-            // as 0. The default and %i-bearing formats do not use them.
-            bytes_transferred: 0,
-            bytes_checksumed: 0,
+            bytes_transferred: row.bytes_transferred,
+            bytes_checksumed: row.bytes_checksummed,
             itemize_string: &row.itemize,
             name: &name,
             link,

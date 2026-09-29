@@ -135,6 +135,10 @@ pub struct DaemonLogRow {
     pub hardlink_target: Option<Vec<u8>>,
     /// Rendered `%C` field: the hex digest, or `sum_len * 2` spaces.
     pub checksum: String,
+    /// `%b`: payload bytes moved for this file's transfer, 0 when none.
+    pub bytes_transferred: u64,
+    /// `%c`: payload bytes of checksum data moved for this file, 0 when none.
+    pub bytes_checksummed: u64,
 }
 
 impl DaemonLogRow {
@@ -161,7 +165,19 @@ impl DaemonLogRow {
             symlink_target,
             hardlink_target: xname.filter(|name| !name.is_empty()).map(<[u8]>::to_vec),
             checksum,
+            bytes_transferred: 0,
+            bytes_checksummed: 0,
         }
+    }
+
+    /// Sets the `%b`/`%c` byte counts of a transfer row.
+    ///
+    /// upstream: log.c `case 'b'`/`case 'c'` - the payload moved since
+    /// `remember_initial_stats()`, 0 for an entry without `ITEM_TRANSFER`.
+    pub(crate) const fn with_byte_counts(mut self, transferred: u64, checksummed: u64) -> Self {
+        self.bytes_transferred = transferred;
+        self.bytes_checksummed = checksummed;
+        self
     }
 }
 

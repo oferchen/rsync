@@ -281,6 +281,9 @@ pub struct GeneratorContext {
     /// The last whole-file sum sent, which `%C` shows for a transfer
     /// (upstream's `sender_file_sum` global).
     pub(crate) sender_file_sum: std::cell::Cell<[u8; crate::progress::MAX_FILE_SUM_LEN]>,
+    /// `(%b, %c)` for the transfer about to be logged: payload written and
+    /// read since the file's attributes were read.
+    pub(crate) daemon_log_byte_counts: std::cell::Cell<(u64, u64)>,
 }
 
 /// Handle on the `--write-batch` file, held by a client sender so it can write
@@ -415,6 +418,7 @@ impl GeneratorContext {
             confined_source_root: std::sync::OnceLock::new(),
             source_roots: Arc::new(fast_io::SourceRoots::new()),
             sender_file_sum: std::cell::Cell::new([0; crate::progress::MAX_FILE_SUM_LEN]),
+            daemon_log_byte_counts: std::cell::Cell::new((0, 0)),
         }
     }
 
@@ -464,6 +468,13 @@ impl GeneratorContext {
         let itemize = itemize::format_iflags(iflags, entry, true, &ctx);
         // upstream: log.c `case 'G'` - the sender never sets FLAG_SKIP_GROUP,
         // so the entry's gid (present only under -g) is logged as is.
+        // upstream: log.c `case 'b'`/`case 'c'` - a sender's `%b` is the data
+        // written and its `%c` the data read (the block sums) for a transfer.
+        let (written, read) = if is_transfer {
+            self.daemon_log_byte_counts.get()
+        } else {
+            (0, 0)
+        };
         let row = crate::progress::DaemonLogRow::new(
             entry,
             itemize,
@@ -471,7 +482,8 @@ impl GeneratorContext {
             entry.link_target().cloned(),
             xname,
             self.daemon_log_checksum(entry, is_transfer),
-        );
+        )
+        .with_byte_counts(written, read);
         self.daemon_log_rows
             .borrow_mut()
             .entry(ndx)

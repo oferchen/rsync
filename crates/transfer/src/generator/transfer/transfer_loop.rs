@@ -851,6 +851,11 @@ impl GeneratorContext {
             // vstring (1- or 2-byte prefix + payload). read_trailing reports the
             // exact wire bytes consumed so this count never drifts from the wire.
             self.timing.total_bytes_read += trailing_bytes;
+            // upstream: sender.c:637 remember_initial_stats() - `%b`/`%c`
+            // count from here, so the echoed attributes are included.
+            let initial_written = writer.data_written();
+            let initial_read = self.timing.total_bytes_read;
+            self.daemon_log_byte_counts.set((0, 0));
 
             // upstream: rsync.c:387-391 - the protocol-29 keep-alive frame. A
             // <=3.0.x generator running --timeout writes `NDX ==
@@ -1495,6 +1500,10 @@ impl GeneratorContext {
             debug_log!(Send, 1, "sender finished {}", file_entry.path().display());
 
             // upstream: sender.c:462 - log_item(log_code, file, iflags, xname)
+            self.daemon_log_byte_counts.set((
+                writer.data_written() - initial_written,
+                self.timing.total_bytes_read - initial_read,
+            ));
             self.emit_client_item(writer, &iflags, ndx, xname.as_deref(), itemize, true)?;
 
             if let Some(cb) = progress.as_mut() {
