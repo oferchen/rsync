@@ -870,6 +870,18 @@ impl GeneratorContext {
                 );
                 match fast_io::pinned_root::metadata(&path) {
                     Ok(followed) => meta = followed,
+                    // upstream: flist.c:1676-1681 - a --copy*links symlink that
+                    // points nowhere is reported as such under FERROR_XFER with
+                    // IOERR_GENERAL (exit 23), never as a vanished file (24).
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                        let text = format!(
+                            "symlink has no referent: {}\n",
+                            full_fname_path(&path, self.full_fname_paths())
+                        );
+                        self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
+                        self.add_io_error(io_error_flags::IOERR_GENERAL);
+                        return None;
+                    }
                     Err(e) => {
                         self.log_stat_error(&path, &e);
                         self.record_io_error(&e);

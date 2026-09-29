@@ -372,6 +372,11 @@ where
     // transmits every symlink. Mirrors the daemon long-form parser
     // (long_form_args.rs).
     config.flags.safe_links = long_flags.safe_links;
+    // upstream: options.c:3075-3076 - `--copy-unsafe-links` arrives as a bare
+    // long flag. A server sender dereferences every symlink whose target is
+    // absolute or escapes the tree (flist.c:492); the receiver clears it
+    // (main.c:1024) and oc's receiver never reads it.
+    config.flags.copy_unsafe_links = long_flags.copy_unsafe_links;
     apply_fake_super(&mut config, long_flags.fake_super);
     config.file_selection.size_only = long_flags.size_only;
     // upstream: options.c:3003-3004 - `--open-noatime` forwarded to the sender so
