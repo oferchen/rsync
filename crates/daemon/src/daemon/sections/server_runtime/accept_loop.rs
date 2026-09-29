@@ -35,7 +35,6 @@ fn serve_connections(
     let version = manifest.rust_version();
     let detach = options.detach();
     let listen_backlog = options.listen_backlog();
-    let acceptor_threads = options.acceptor_threads();
     let socket_options_str = options.socket_options().map(str::to_string);
     let tcp_fastopen_mode = options.tcp_fastopen();
 
@@ -215,7 +214,6 @@ fn serve_connections(
             port,
             backlog,
             tcp_fastopen_mode,
-            acceptor_threads,
             &socket_options,
             log_sink.as_ref(),
         ) {

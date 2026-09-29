@@ -17,7 +17,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
-use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex, OnceLock,
@@ -40,9 +40,7 @@ use core::{
         DaemonAuthDigest, daemon_auth_digest_by_name, negotiate_server_daemon_digest,
         supported_daemon_digest_list, verify_daemon_auth_response,
     },
-    bandwidth::{
-        BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, parse_bandwidth_limit,
-    },
+    bandwidth::{BandwidthLimitComponents, BandwidthLimiter, parse_bandwidth_limit},
     branding::{self, Brand, manifest},
     exit_code::ExitCode,
     message::{Message, Role},

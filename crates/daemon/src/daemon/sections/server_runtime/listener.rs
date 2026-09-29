@@ -232,7 +232,6 @@ fn bind_with_backlog(
     addr: SocketAddr,
     backlog: i32,
     tcp_fastopen: TcpFastOpenMode,
-    reuse_port: bool,
     socket_options: &str,
     log_sink: Option<&SharedLogSink>,
 ) -> io::Result<TcpListener> {
@@ -257,37 +256,6 @@ fn bind_with_backlog(
     // upstream: socket.c:455 - open_socket_in() sets SO_REUSEADDR (and only
     // SO_REUSEADDR) on every listener.
     socket.set_reuse_address(true)?;
-
-    // SO_REUSEPORT is set ONLY for the opt-in multi-acceptor daemon (more than
-    // one replica socket per address), where several listener sockets must
-    // share the bind address and the kernel load-balances accepts across them.
-    // The default single-listener daemon (`reuse_port == false`) must NOT set
-    // it: upstream (socket.c:455) sets only SO_REUSEADDR, so a second daemon
-    // attempting to bind the same port is refused with EADDRINUSE rather than
-    // silently co-binding. Best-effort when enabled: a failure downgrades to a
-    // debug log. socket2's setter is Unix-only; Windows has no equivalent, so
-    // the flag is consumed but unused there.
-    #[cfg(not(unix))]
-    let _ = reuse_port;
-    #[cfg(unix)]
-    if reuse_port {
-        if fast_io::reuse_port_supported() {
-            match socket.set_reuse_port(true) {
-                Ok(()) => logging::debug_log!(Sockopt, 1, "SO_REUSEPORT set on listener {addr}"),
-                Err(_) => logging::debug_log!(
-                    Sockopt,
-                    1,
-                    "SO_REUSEPORT apply failed on listener {addr}: single-listener fallback"
-                ),
-            }
-        } else {
-            logging::debug_log!(
-                Sockopt,
-                1,
-                "SO_REUSEPORT unsupported on this platform: skipped for listener {addr}"
-            );
-        }
-    }
 
     // upstream: socket.c:457-460 - set_socket_options(s, sockopts) runs here,
     // after SO_REUSEADDR and before bind(2), so options that shape the SYN-ACK
@@ -449,73 +417,35 @@ fn bind_listeners_per_family(
     port: u16,
     backlog: i32,
     tcp_fastopen: TcpFastOpenMode,
-    acceptor_threads: u32,
     socket_options: &str,
     log_sink: Option<&SharedLogSink>,
 ) -> Result<(Vec<TcpListener>, Vec<SocketAddr>), io::Error> {
-    let replicas = acceptor_threads.max(1) as usize;
-    // SO_REUSEPORT is only needed when more than one replica socket must
-    // co-bind the same address (the opt-in multi-acceptor extension). The
-    // default single-listener daemon binds with SO_REUSEADDR only, matching
-    // upstream socket.c:455 so a duplicate bind is refused with EADDRINUSE.
-    let reuse_port = replicas > 1;
-    let mut listeners = Vec::with_capacity(bind_addresses.len() * replicas);
-    let mut bound_addresses = Vec::with_capacity(bind_addresses.len() * replicas);
+    let mut listeners = Vec::with_capacity(bind_addresses.len());
+    let mut bound_addresses = Vec::with_capacity(bind_addresses.len());
     let dual_stack = bind_addresses.len() > 1;
     let mut last_error: Option<io::Error> = None;
 
     for addr in bind_addresses {
         let requested_addr = SocketAddr::new(*addr, port);
 
-        // Bind up to `replicas` SO_REUSEPORT sockets for this family. The kernel
-        // load-balances accepted connections across them, but every replica is
-        // polled from the single accept thread - see `PollAcceptEngine`, whose
-        // single-threadedness is a fork precondition, not a preference. With
-        // replicas == 1 this is the historical single-listener-per-family
-        // behaviour.
-        let mut family_bound = 0usize;
-        let mut family_error: Option<io::Error> = None;
-        for _ in 0..replicas {
-            match bind_with_backlog(
-                requested_addr,
-                backlog,
-                tcp_fastopen,
-                reuse_port,
-                socket_options,
-                log_sink,
-            ) {
-                Ok(listener) => {
-                    let local_addr = listener.local_addr().unwrap_or(requested_addr);
-                    bound_addresses.push(local_addr);
-                    listeners.push(listener);
-                    family_bound += 1;
-                }
-                Err(error) => {
-                    family_error = Some(error);
-                    break;
-                }
+        match bind_with_backlog(
+            requested_addr,
+            backlog,
+            tcp_fastopen,
+            socket_options,
+            log_sink,
+        ) {
+            Ok(listener) => {
+                bound_addresses.push(listener.local_addr().unwrap_or(requested_addr));
+                listeners.push(listener);
             }
-        }
-
-        if family_bound == 0 {
-            // Whole family failed to bind even once - apply the existing
-            // per-family tolerance: warn and continue in dual-stack mode so a
-            // surviving family keeps the daemon up, else propagate.
-            let error = family_error.expect("a bind failure was recorded");
-            if dual_stack {
+            // A family that fails to bind is tolerated in dual-stack mode so a
+            // surviving family keeps the daemon up, else it is fatal.
+            Err(error) if dual_stack => {
                 warn_per_family_bind_failure(log_sink, requested_addr, &error);
                 last_error = Some(error);
-                continue;
             }
-            return Err(error);
-        }
-
-        // The family is serving with at least one replica. If a later replica
-        // failed, surface it as a warning but keep the bound replicas.
-        if family_bound < replicas
-            && let Some(error) = family_error
-        {
-            warn_per_family_bind_failure(log_sink, requested_addr, &error);
+            Err(error) => return Err(error),
         }
     }
 

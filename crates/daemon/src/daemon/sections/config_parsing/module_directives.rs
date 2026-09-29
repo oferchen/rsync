@@ -180,10 +180,10 @@ fn apply_module_directive(
             })?;
             builder.set_max_connections(max);
         }
-        "incomingchmod" | "incoming-chmod" => {
+        "incomingchmod" => {
             builder.set_incoming_chmod((!value.is_empty()).then(|| value.to_owned()));
         }
-        "outgoingchmod" | "outgoing-chmod" => {
+        "outgoingchmod" => {
             builder.set_outgoing_chmod((!value.is_empty()).then(|| value.to_owned()));
         }
         "maxverbosity" => {
@@ -394,15 +394,9 @@ fn apply_module_directive(
             // found in module section!").
             eprintln!("Global parameter {key} found in module section!");
         }
-        _ => {
-            eprintln!(
-                "warning: unknown per-module directive '{}' in '{}' line {} [daemon={}]",
-                key,
-                path.display(),
-                line_number,
-                env!("CARGO_PKG_VERSION"),
-            );
-        }
+        // Every other name is not a daemon parameter; the parser reported
+        // and skipped it before dispatching (`report_unknown_parameter`).
+        _ => {}
     }
     Ok(())
 }
