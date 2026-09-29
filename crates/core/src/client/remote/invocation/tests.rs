@@ -1030,6 +1030,25 @@ fn includes_verbosity_flags() {
     assert_eq!(v_count, 3, "expected 3 'v' chars in flags: {flags}");
 }
 
+/// upstream: options.c:2801 - `for (i = 0; i < verbose && i < 9; i++)
+/// argstr[x++] = 'v';`. The server's compact flag string carries at most nine
+/// 'v's however many the user typed, so a remote shell invocation built from
+/// `-v` x 12 must match upstream's argv byte for byte.
+#[test]
+fn verbosity_letters_are_capped_at_nine() {
+    for (verbosity, expected) in [(9u8, 9usize), (10, 9), (255, 9)] {
+        let config = ClientConfig::builder().verbosity(verbosity).build();
+        let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+        let args = builder.build(std::ffi::OsStr::new("/path"));
+        let flags = args[2].to_string_lossy();
+        let v_count = transfer_flags_portion(&flags)
+            .chars()
+            .filter(|c| *c == 'v')
+            .count();
+        assert_eq!(v_count, expected, "verbosity {verbosity}: {flags}");
+    }
+}
+
 #[test]
 fn includes_backup_related_args() {
     let config = ClientConfig::builder()
