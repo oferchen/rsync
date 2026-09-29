@@ -71,6 +71,11 @@ pub(crate) fn copy_file(
     context.summary_mut().record_regular_file_total();
     context.summary_mut().record_total_bytes(file_size);
 
+    if context.list_only_enabled() {
+        context.record_listed_entry(record_path, LocalCopyAction::MetadataReused, metadata, None);
+        return Ok(true);
+    }
+
     // Reuse the destination lstat gathered by the checksum-mode prefetch when
     // present; otherwise lstat here. This keeps checksum mode at one generator
     // link_stat per destination instead of two. upstream: generator.c:recv_generator().

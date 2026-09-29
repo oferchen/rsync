@@ -53,6 +53,19 @@ pub(crate) fn copy_device(
     #[cfg(not(all(any(unix, windows), feature = "acl")))]
     let _ = mode;
 
+    let record_path = relative
+        .map(Path::to_path_buf)
+        .or_else(|| destination.file_name().map(PathBuf::from));
+
+    context.summary_mut().record_device_total();
+
+    if context.list_only_enabled() {
+        if let Some(path) = record_path {
+            context.record_listed_entry(path, LocalCopyAction::DeviceCopied, metadata, None);
+        }
+        return Ok(());
+    }
+
     // upstream: generator.c:565-570 / 550-556 - a replace itemize reports
     // ITEM_REPORT_XATTR / ITEM_REPORT_ACL when those features are active and the
     // basis differs. Mirror the enabled flags across all platforms so the
@@ -76,12 +89,6 @@ pub(crate) fn copy_device(
     let itemize_acls = preserve_acls;
     #[cfg(not(all(any(unix, windows), feature = "acl")))]
     let itemize_acls = false;
-
-    let record_path = relative
-        .map(Path::to_path_buf)
-        .or_else(|| destination.file_name().map(PathBuf::from));
-
-    context.summary_mut().record_device_total();
 
     let mut existing_metadata = match fs::symlink_metadata(destination) {
         Ok(existing) => Some(existing),

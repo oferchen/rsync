@@ -30,7 +30,7 @@ pub(crate) use checksum::prefetch_directory_checksums;
 use deletion::{
     apply_during_transfer_deletions, handle_empty_directory_pruning, handle_post_transfer_deletions,
 };
-use destination::{check_destination_state, record_skipped_missing_destination};
+use destination::{DestinationState, check_destination_state, record_skipped_missing_destination};
 use dir_metadata::{
     DirectoryFinalize, apply_final_directory_metadata, enforce_transfer_root_self_lock,
     keep_preexisting_directory_writable, record_directory_completion,
@@ -158,6 +158,9 @@ fn copy_directory_recursive_inner(
     let preserve_acls = context.acls_enabled();
 
     let prune_enabled = context.prune_empty_dirs_enabled();
+    // upstream: main.c:725 get_local_name() returns NULL under list_only, so
+    // the generator never looks at a destination (generator.c:1638-1643).
+    let list_only = context.list_only_enabled();
 
     let root_device = if context.one_file_system_enabled() {
         root_device.or_else(|| device_identifier(source, metadata))
@@ -165,7 +168,11 @@ fn copy_directory_recursive_inner(
         None
     };
 
-    let destination_state = check_destination_state(context, destination, relative)?;
+    let destination_state = if list_only {
+        DestinationState::Ready(None)
+    } else {
+        check_destination_state(context, destination, relative)?
+    };
     let destination_missing = destination_state.is_missing();
     // Box the owned metadata so it lives on the heap, not on this stack frame.
     // `copy_directory_recursive_inner` recurses once per directory level; an
@@ -267,8 +274,11 @@ fn copy_directory_recursive_inner(
     // `rsync -a src src/child`) never appears in the list. oc reads each source
     // directory live, after the destination root is created, so drop the entry
     // that IS the destination root to avoid descending into our own output.
-    let destination_root = context.destination_root().to_path_buf();
-    entries.retain(|entry| entry.path != destination_root);
+    // A listing creates no destination, so there is nothing to drop.
+    if !list_only {
+        let destination_root = context.destination_root().to_path_buf();
+        entries.retain(|entry| entry.path != destination_root);
+    }
     context.record_file_list_generation(list_start.elapsed());
     context.reserve_event_capacity(entries.len());
     context.register_progress();
@@ -279,7 +289,7 @@ fn copy_directory_recursive_inner(
     }
     let _dir_merge_guard = dir_merge_guard;
 
-    let directory_ready = Cell::new(!destination_missing);
+    let directory_ready = Cell::new(!destination_missing && !list_only);
     let mut created_directory_on_disk = false;
     let creation_record_pending = destination_missing && relative.is_some();
     let mut record_emitted = false;
@@ -440,6 +450,19 @@ fn copy_directory_recursive_inner(
             return Ok(());
         }
 
+        if list_only {
+            directory_ready.set(true);
+            if let Some((ref rel_path, _)) = metadata_record {
+                context.record_listed_entry(
+                    rel_path.clone(),
+                    LocalCopyAction::MetadataReused,
+                    metadata,
+                    None,
+                );
+            }
+            return Ok(());
+        }
+
         if context.mode().is_dry_run() {
             if !context.implied_dirs_enabled()
                 && let Some(parent) = destination.parent()
@@ -577,7 +600,7 @@ fn copy_directory_recursive_inner(
     // follow it as `hf ... => <holder>` aliases. Reorder the plan so the executor's
     // per-inode tracker records the holder first and every alias points at it.
     reorder_hardlink_group_holders(
-        context.options().hard_links_enabled(),
+        context.options().hard_links_enabled() && !list_only,
         !context.reference_directories().is_empty(),
         context.options().fake_super_enabled(),
         destination,
@@ -618,7 +641,7 @@ fn copy_directory_recursive_inner(
         context.record(record);
     }
 
-    {
+    if !list_only {
         let cache = prefetch_directory_checksums(context, &plan, destination);
         if !cache.is_empty() {
             context.set_checksum_cache(cache);

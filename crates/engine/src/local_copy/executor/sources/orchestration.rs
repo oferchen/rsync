@@ -28,7 +28,7 @@ use super::handlers::{
     handle_directory_contents_copy, handle_directory_copy, handle_non_directory_source,
 };
 use super::metadata::{compute_relative_paths, fetch_source_metadata, operand_stat_path};
-use super::types::{SourceMetadataResult, SourceProcessingContext};
+use super::types::{DestinationState, SourceMetadataResult, SourceProcessingContext};
 
 /// Returns the current time truncated to whole seconds since the Unix epoch.
 ///
@@ -137,7 +137,8 @@ struct MergedRootEntry {
 /// f_name_cmp comparator via [`compare_file_entries`].
 ///
 /// Scope is deliberately narrow so no other feature's semantics shift: it
-/// engages only for a non-`--relative`, recursive, plain copy of >= 2
+/// engages only for a non-`--relative`, directory-transferring (`xfer_dirs`:
+/// `-r`, `-d`, or a bare `--list-only`), plain copy of >= 2
 /// copy-contents sources with no batch writer (whose wire format is built by
 /// the per-source walk) and no `--one-file-system` (whose mount-point pruning
 /// keys off each source root's device). A fresh destination under `--dry-run`
@@ -157,7 +158,7 @@ fn merged_contents_worklist(
     let engaged = sources.len() > 1
         && sources.iter().all(SourceSpec::copy_contents)
         && !context.relative_paths_enabled()
-        && context.recursive_enabled()
+        && context.xfer_dirs_enabled()
         && !context.one_file_system_enabled()
         && context.options().get_batch_writer().is_none()
         && !(destination_root_created && context.mode().is_dry_run());
@@ -187,7 +188,7 @@ fn merged_contents_worklist(
             // Never descend into our own output: skip a child that IS the
             // destination root (mirrors the per-directory retain in the
             // recursive walk).
-            if path == destination_root {
+            if path == destination_root && !context.list_only_enabled() {
                 continue;
             }
             let name = entry.file_name();
@@ -208,8 +209,10 @@ fn merged_contents_worklist(
                     let merged = &mut order[existing];
                     // Merge same-named directories (their contents combine under
                     // one dest dir); a file, or a type that disagrees with the
-                    // first occurrence, keeps the first operand's entry.
-                    if merged.is_dir && is_dir {
+                    // first occurrence, keeps the first operand's entry. Without
+                    // recursion a directory contributes only its own entry, so
+                    // the first operand's one stands for all.
+                    if merged.is_dir && is_dir && context.recursive_enabled() {
                         merged.paths.push(path);
                     }
                 }
@@ -464,9 +467,13 @@ fn emit_merged_transfer_root(
     };
     let source_meta = fs::symlink_metadata(source_root)
         .map_err(|error| LocalCopyError::io("inspect source", source_root, error))?;
+    let dot = PathBuf::from(".");
+    if context.list_only_enabled() {
+        context.record_listed_entry(dot, LocalCopyAction::MetadataReused, &source_meta, None);
+        return Ok(());
+    }
     let snapshot = LocalCopyMetadata::from_metadata(&source_meta, None);
     let snapshot_len = snapshot.len();
-    let dot = PathBuf::from(".");
     let record = if destination_root_created {
         LocalCopyRecord::new(
             dot,
@@ -549,7 +556,19 @@ pub(crate) fn copy_sources(
         (|| -> Result<(), LocalCopyError> {
             let multiple_sources = plan.sources().len() > 1;
             let destination_path = plan.destination_spec().path();
-            let mut destination_state = query_destination_state(destination_path)?;
+            // upstream: main.c:725 get_local_name() returns NULL under list_only,
+            // so the destination operand is never examined or created. Model it
+            // as an existing directory: every operand keeps its source name and
+            // no pre-flight mkdir fires.
+            let mut destination_state = if context.list_only_enabled() {
+                DestinationState {
+                    exists: true,
+                    is_dir: true,
+                    symlink_to_dir: false,
+                }
+            } else {
+                query_destination_state(destination_path)?
+            };
             if context.keep_dirlinks_enabled() && destination_state.symlink_to_dir {
                 destination_state.is_dir = true;
             }
@@ -1221,10 +1240,7 @@ fn emit_relative_implied_parents(
             // `recurse || -d || (list_only when neither was given)`;
             // options.c:2199-2200 forces it on for --files-from, which takes
             // the operand's own path and never reaches this branch.
-            let xfer_dirs = context.recursive_enabled()
-                || context.dirs_enabled()
-                || context.list_only_enabled();
-            if xfer_dirs {
+            if context.xfer_dirs_enabled() {
                 context.record_file_list_entry(non_empty_path(dot.as_path()));
                 context.summary_mut().record_directory_total();
 
