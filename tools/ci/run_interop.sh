@@ -12366,6 +12366,24 @@ else
   echo "Skipping standalone tests (no upstream binary available)"
 fi
 
+# Oracle cells: each transfer is compared with the upstream->upstream run of
+# the same release on exit code, tree, itemize and core stats, not only on the
+# tree. Known divergences are listed with their owner task in
+# tools/ci/interop_oracle_expect.txt; an unlisted failure or an unexpected pass
+# fails the run.
+oracle_args=()
+for version in "${versions[@]}" ${extra_build_versions[@]+"${extra_build_versions[@]}"}; do
+  if [[ -x "${upstream_install_root}/${version}/bin/rsync" ]]; then
+    oracle_args+=(--upstream "${version}=${upstream_install_root}/${version}/bin/rsync")
+  fi
+done
+echo ""
+echo "=== Oracle cells ($(( ${#oracle_args[@]} / 2 )) releases) ==="
+if ! python3 "$(dirname "${BASH_SOURCE[0]}")/interop_oracle.py" \
+    --oc "$oc_binary" "${oracle_args[@]}"; then
+  failed+=("oracle")
+fi
+
 # Final report
 if (( ${#failed[@]} > 0 )); then
   echo ""
@@ -12374,4 +12392,4 @@ if (( ${#failed[@]} > 0 )); then
 fi
 
 echo ""
-echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-32 + standalone)."
+echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-32 + standalone + oracle)."
