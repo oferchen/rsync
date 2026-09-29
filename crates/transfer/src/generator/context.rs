@@ -483,12 +483,29 @@ impl GeneratorContext {
             xname,
             self.daemon_log_checksum(entry, is_transfer),
         )
-        .with_byte_counts(written, read);
+        .with_byte_counts(written, read)
+        .with_dir(self.daemon_log_dir(ndx));
         self.daemon_log_rows
             .borrow_mut()
             .entry(ndx)
             .or_default()
             .push(row);
+    }
+
+    /// The source directory of entry `ndx` below the daemon module root, which
+    /// `%f` joins in front of the name.
+    ///
+    /// upstream: log.c `case 'f'` - a sender joins `F_PATHNAME(file)`, the
+    /// `dir` half of the positional the entry came from (flist.c:2848-2877),
+    /// which a daemon sender resolves from the module root.
+    fn daemon_log_dir(&self, ndx: usize) -> PathBuf {
+        let (Some(base), Some(root)) = (
+            self.source_bases.get(ndx),
+            self.config.connection.daemon_module_root.as_deref(),
+        ) else {
+            return PathBuf::new();
+        };
+        base.strip_prefix(root).unwrap_or(base).to_path_buf()
     }
 
     /// Remembers the whole-file sum just sent, for the next `%C` log row.

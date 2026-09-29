@@ -1260,6 +1260,9 @@ impl ReceiverContext {
                 .flatten(),
         );
         rows.append(&mut self.daemon_log_late_deletions);
+        for row in &mut rows {
+            row.dir.clone_from(&self.daemon_log_dir);
+        }
         rows
     }
 

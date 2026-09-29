@@ -746,6 +746,17 @@ impl ReceiverContext {
         // SEC-1.{e..s} symlink-race defences continue to apply at the
         // same dirfd they always did.
         let dest_dir = self.apply_single_file_rename(dest_dir, file_count, trailing_slash);
+        // upstream: log.c `case 'f'` - a daemon receiver prefixes each logged
+        // name with its `curr_dir` below the module root, the directory
+        // get_local_name() left it in (main.c:731-845).
+        if self.daemon_log_active
+            && let Some(root) = self.config.connection.daemon_module_root.as_deref()
+        {
+            self.daemon_log_dir = dest_dir
+                .strip_prefix(root)
+                .unwrap_or(&dest_dir)
+                .to_path_buf();
+        }
 
         // upstream: main.c:791-805 get_local_name() - pre-flight mkdir of the
         // destination root when the transfer is multi-file or the operand

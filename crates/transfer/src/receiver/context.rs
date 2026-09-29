@@ -494,6 +494,10 @@ pub struct ReceiverContext {
     /// Daemon-log `del.` rows from a delete pass that ran after the transfer
     /// loop (`--delete-after`/`--delete-delay`), logged after the file rows.
     pub(in crate::receiver) daemon_log_late_deletions: Vec<crate::progress::DaemonLogRow>,
+    /// The destination directory relative to the daemon module root, which
+    /// `%f` joins in front of every logged name (upstream's receiver
+    /// `curr_dir + module_dirlen`, log.c `case 'f'`). Empty at the root.
+    pub(in crate::receiver) daemon_log_dir: std::path::PathBuf,
     /// The last whole-file sum read from the sender, which `%C` shows for a
     /// transfer (upstream's `sender_file_sum` global, receiver.c:687).
     pub(in crate::receiver) sender_file_sum:
@@ -718,6 +722,7 @@ impl ReceiverContext {
             daemon_log_rows: RefCell::new(BTreeMap::new()),
             daemon_log_early_deletions: Vec::new(),
             daemon_log_late_deletions: Vec::new(),
+            daemon_log_dir: std::path::PathBuf::new(),
             sender_file_sum: std::cell::Cell::new([0; crate::progress::MAX_FILE_SUM_LEN]),
             daemon_log_data_read: std::cell::Cell::new(0),
             created_stats: std::cell::Cell::new(protocol::stats::CreatedStats::new()),

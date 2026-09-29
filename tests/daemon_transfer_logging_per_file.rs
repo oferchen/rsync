@@ -649,6 +649,19 @@ fn module_log(
     prepare: impl FnOnce(&Path, &Path),
     marker: &str,
 ) -> Option<String> {
+    module_log_at(format, daemon_args, client_args, push, prepare, marker, "")
+}
+
+/// [`module_log`] against `rsync://host/m/{tail}` instead of the module root.
+fn module_log_at(
+    format: &str,
+    daemon_args: &[&str],
+    client_args: &[&str],
+    push: bool,
+    prepare: impl FnOnce(&Path, &Path),
+    marker: &str,
+    tail: &str,
+) -> Option<String> {
     let port = free_port()?;
     let tmp = tempfile::tempdir().expect("temp dir");
     let root = tmp.path();
@@ -680,7 +693,7 @@ fn module_log(
     let oc = oc_binary();
     let daemon = spawn_daemon_with(&oc, &root.join("rsyncd.conf"), port, daemon_args);
 
-    let url = format!("rsync://127.0.0.1:{port}/m/");
+    let url = format!("rsync://127.0.0.1:{port}/m/{tail}");
     let local = format!("{}/", if push { &src } else { &dest }.display());
     let (from, to) = if push {
         (local.as_str(), url.as_str())
@@ -987,4 +1000,71 @@ fn assert_del_rows_trail(mode: &str) {
         matches!((last_recv, first_del), (Some(r), Some(d)) if r < d),
         "got:\n{text}"
     );
+}
+
+/// upstream: log.c `case 'f'` - a daemon receiver joins its `curr_dir` below
+/// the module root in front of each name, so a push into `m/a/b/` logs
+/// `a/b/d/f` while `%n` stays transfer-relative (measured against rsync 3.5.1).
+#[test]
+fn push_into_a_module_subdirectory_prefixes_percent_f() {
+    let Some(text) = module_log_at(
+        "%o|%f|%n",
+        &[],
+        &["-rt"],
+        true,
+        |_, module| fs::create_dir_all(module.join("a")).expect("mkdir"),
+        "recv|a/b/d/f|",
+        "a/b/",
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    let lines = transfer_lines(&text, "recv|");
+    assert_has_line(&lines, "recv|a/b/d/f|d/f");
+}
+
+/// A deletion below a module subdirectory carries the same prefix as the
+/// transfer rows (log.c:924 `log_formatted()` takes the same `case 'f'`).
+#[test]
+fn push_delete_into_a_module_subdirectory_prefixes_del_rows() {
+    let Some(text) = module_log_at(
+        "%o|%f|%n",
+        &[],
+        &["-rt", "--delete"],
+        true,
+        |_, module| {
+            fs::create_dir_all(module.join("a")).expect("mkdir");
+            fs::write(module.join("a/extra"), b"x").expect("extra");
+        },
+        "recv|a/d/f|",
+        "a/",
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert_has_line(&lines_from(&text, "del.|"), "del.|a/extra|extra");
+}
+
+/// upstream: log.c `case 'f'` - a sender joins `F_PATHNAME(file)`, the
+/// positional's directory below the module root, so a pull of `m/p/sub/`
+/// logs `p/sub/g` (measured against rsync 3.5.1).
+#[test]
+fn pull_from_a_module_subdirectory_prefixes_percent_f() {
+    let Some(text) = module_log_at(
+        "%o|%f|%n",
+        &[],
+        &["-rt"],
+        false,
+        |_, module| {
+            fs::create_dir_all(module.join("p/sub")).expect("mkdir");
+            fs::write(module.join("p/sub/g"), b"g").expect("file");
+        },
+        "send|p/sub/g|",
+        "p/sub/",
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    let lines = transfer_lines(&text, "send|");
+    assert_has_line(&lines, "send|p/sub/g|g");
 }
