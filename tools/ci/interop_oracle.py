@@ -465,6 +465,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"      problems: {r.problems}")
             print(f"      candidate: {r.candidate.cmd}")
             print(f"      stderr: {r.candidate.stderr[-400:]!r}")
+            print(f"      baseline: rc={r.baseline.rc} {r.baseline.cmd}")
+            print(f"      baseline stderr: {r.baseline.stderr[-400:]!r}")
     for sid in verdict["STALE"]:
         print(f"STALE {sid}: expectation row names no cell in the catalogue")
     counts = {k: len(v) for k, v in verdict.items()}

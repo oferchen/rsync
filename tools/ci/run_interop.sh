@@ -461,7 +461,17 @@ build_upstream_from_source() {
   # That binary still compiles and prints its version, so without this the
   # harness gets a silently broken oracle. This suppresses a false positive
   # against a 2013 allocation idiom, not a defect in rsync's transfer logic.
-  local legacy_cflags="$extra_cflags -std=gnu89 -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+  #
+  # That need is tied to the release, not to which dialect compiles. A
+  # compiler old enough to build a pre-3.2 release in its default dialect
+  # (gcc 13 on ubuntu-24.04) never reaches the fallback, and the fortified
+  # binary then aborts on -F (dir-merge) cells with SIGABRT. So pre-3.2
+  # releases get fortify off on every attempt.
+  local fortify_off="-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0"
+  if [[ "$(printf '%s\n' "$version" 3.2 | sort -V | head -n1)" != 3.2 ]]; then
+    extra_cflags="$extra_cflags $fortify_off"
+  fi
+  local legacy_cflags="$extra_cflags -std=gnu89 $fortify_off"
   if ! try_upstream_build "$build_log" "$extra_cflags" "${configure_args[@]}" \
     && ! try_upstream_build "$build_log" "$legacy_cflags" "${configure_args[@]}"; then
     echo "Upstream rsync ${version} build failed; see ${build_log}" >&2
