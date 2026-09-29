@@ -1228,32 +1228,62 @@ impl ReceiverContext {
         if !self.captures_victim_modes() {
             return;
         }
-        // upstream: log.c `case 'G'` - the zeroed entry carries gid 0, shown
-        // only when `gid_ndx` is set (`-g`).
-        let gid = self.config.flags.group.then_some(0);
-        let checksum =
-            crate::progress::LogChecksumFormat::new(self.get_checksum_algorithm(), self.protocol)
-                .blank();
-        let rows = deleted.into_iter().map(|entry| {
-            crate::progress::DaemonLogRow::deletion(
-                entry.rel().to_path_buf(),
-                entry.mode(),
-                gid,
-                checksum.clone(),
-            )
-        });
+        let rows = self.daemon_log_deletion_rows(deleted);
         match phase {
             super::transfer::DeletePassPhase::Early => self.daemon_log_early_deletions.extend(rows),
             super::transfer::DeletePassPhase::Late => self.daemon_log_late_deletions.extend(rows),
         }
     }
 
+    /// Collects the daemon-log `del.` rows for the contents of a directory
+    /// cleared to make room for an incoming entry.
+    ///
+    /// upstream: delete.c:126 - delete_dir_contents() strips `DEL_MAKE_ROOM`
+    /// before it recurses, so every entry inside the obstacle reaches
+    /// log_delete(); only the obstacle itself (delete.c:242) is not logged.
+    pub(in crate::receiver) fn record_daemon_log_make_room_deletions<'a>(
+        &self,
+        deleted: impl IntoIterator<Item = &'a super::directory::deletion::DeletedEntry>,
+    ) {
+        if self.captures_victim_modes() {
+            let rows = self.daemon_log_deletion_rows(deleted);
+            self.daemon_log_make_room_deletions
+                .borrow_mut()
+                .extend(rows);
+        }
+    }
+
+    /// Builds one `del.` row per removed entry.
+    fn daemon_log_deletion_rows<'a>(
+        &self,
+        deleted: impl IntoIterator<Item = &'a super::directory::deletion::DeletedEntry>,
+    ) -> Vec<crate::progress::DaemonLogRow> {
+        // upstream: log.c `case 'G'` - the zeroed entry carries gid 0, shown
+        // only when `gid_ndx` is set (`-g`).
+        let gid = self.config.flags.group.then_some(0);
+        let checksum =
+            crate::progress::LogChecksumFormat::new(self.get_checksum_algorithm(), self.protocol)
+                .blank();
+        deleted
+            .into_iter()
+            .map(|entry| {
+                crate::progress::DaemonLogRow::deletion(
+                    entry.rel().to_path_buf(),
+                    entry.mode(),
+                    gid,
+                    checksum.clone(),
+                )
+            })
+            .collect()
+    }
+
     /// Drains the collected daemon-log rows in the order upstream writes them
-    /// to the module log file: an early delete pass's `del.` rows, the
-    /// per-file rows in ascending flist-index order, then a late delete pass's
-    /// `del.` rows.
+    /// to the module log file: an early delete pass's `del.` rows, the rows for
+    /// directories cleared to make room, the per-file rows in ascending
+    /// flist-index order, then a late delete pass's `del.` rows.
     pub fn drain_daemon_log_rows(&mut self) -> Vec<crate::progress::DaemonLogRow> {
         let mut rows = std::mem::take(&mut self.daemon_log_early_deletions);
+        rows.append(self.daemon_log_make_room_deletions.get_mut());
         rows.extend(
             std::mem::take(&mut *self.daemon_log_rows.borrow_mut())
                 .into_values()
