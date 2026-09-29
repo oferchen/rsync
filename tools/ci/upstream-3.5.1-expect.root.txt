@@ -332,7 +332,7 @@ source-change-size-continues pass
 sparse pass
 ssh-basic pass
 stop-time pass
-strict-basis fail  # missing 'got a block match with no basis file' diagnostic - owner: task 1573 (U351)
+strict-basis pass
 symlink-dest-backupdir pass
 symlink-dirlink-basis pass
 symlink-exclude pass

@@ -155,7 +155,7 @@ scanner-daemon-log-checksum pass
 sender-flist-symlink-leak pass
 sender-readlink-atfd pass
 sender-remove-source-secure pass
-strict-basis fail  # missing 'got a block match with no basis file' diagnostic - owner: task 1573 (U351)
+strict-basis pass
 symlink-exclude pass
 symlink-exclude-chdir-alias pass
 symlink-exclude-component pass

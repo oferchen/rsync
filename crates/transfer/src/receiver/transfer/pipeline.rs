@@ -876,15 +876,11 @@ impl ReceiverContext {
                     )?
                     .is_none()
                     {
-                        // upstream: rsync.c:334-335 - NDX_DONE ends the phase.
-                        // Reaching it with a non-transfer echo still outstanding
-                        // means the sender dropped it; fail loudly rather than
-                        // desync the following replies.
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "sender ended the phase (NDX_DONE) while a non-transfer \
-                             itemize echo was still outstanding - protocol violation",
-                        ));
+                        // upstream: rsync.c:334-335 + receiver.c:852-876 - the
+                        // sender's NDX_DONE is its phase boundary, whatever is
+                        // still outstanding.
+                        self.note_early_sender_ndx_done();
+                        break;
                     }
                     continue;
                 }
@@ -925,6 +921,15 @@ impl ReceiverContext {
                 );
                 let result = match response? {
                     crate::transfer_ops::ResponseProgress::Received(result) => result,
+                    // upstream: receiver.c:852-876 - the sender ended the phase
+                    // with this request unanswered. Upstream's receiver tracks no
+                    // outstanding requests and takes the NDX_DONE as the phase
+                    // advance, so the pass ends here and the rest of the window
+                    // is abandoned; nothing reached the disk thread for it.
+                    crate::transfer_ops::ResponseProgress::PhaseEnd => {
+                        self.note_early_sender_ndx_done();
+                        break;
+                    }
                     crate::transfer_ops::ResponseProgress::Declined { pending, ndx } => {
                         // upstream: io.c:1847-1856 -> got_flist_entry_status(FES_NO_SEND, ndx).
                         // The sender declined a file (sender.c:670,725,753) and moved on
