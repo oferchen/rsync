@@ -156,6 +156,11 @@ pub(crate) struct RuntimeOptions {
     /// new connections pick up module definition changes without a restart.
     /// `None` when no config file was loaded (all modules from CLI flags).
     config_path: Option<PathBuf>,
+    /// `--dparam`/`-M` overrides (`name=value`), applied to every config file
+    /// this daemon parses, including a SIGHUP reload.
+    ///
+    /// upstream: options.c:1556-1566 collects them into `dparam_list`.
+    dparams: Vec<String>,
     /// CLI verbosity counter incremented per `-v` / `--verbose` flag.
     ///
     /// upstream: options.c:877 - `{"verbose", 'v', POPT_ARG_NONE, 0, 'v', 0, 0}`
@@ -222,6 +227,7 @@ impl Default for RuntimeOptions {
             daemon_chroot: None,
             detach: cfg!(unix),
             config_path: None,
+            dparams: Vec::new(),
             verbosity: 0,
         }
     }
