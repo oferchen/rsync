@@ -49,8 +49,8 @@ pub(in crate::receiver) struct DaemonFilterGate {
     /// no reloads.
     per_dir: bool,
     /// The directory whose merge files `chain` currently holds, relative to
-    /// [`Self::dest_dir`] and `/`-separated, plus that loaded chain.
-    loaded: Option<(String, FilterChain)>,
+    /// [`Self::dest_dir`], plus that loaded chain.
+    loaded: Option<(PathBuf, FilterChain)>,
 }
 
 impl DaemonFilterGate {
@@ -86,15 +86,18 @@ impl DaemonFilterGate {
     /// Reports whether the module's filter list admits `name`.
     ///
     /// `name` is a wire-format path relative to the destination root, always
-    /// `/`-separated. The rules consulted are the module's own plus the merge
+    /// `/`-separated, and is matched on its exact bytes as upstream's
+    /// `check_filter()` does - a name that is not valid UTF-8 is judged like
+    /// any other. The rules consulted are the module's own plus the merge
     /// files of the directory holding `name` and its ancestors - never
     /// `name`'s own merge file when it is itself a directory, matching
     /// upstream, where `recv_generator` refuses a directory before the
     /// `delete_during` branch below it pushes that directory's filters
     /// (`generator.c:1662` precedes `generator.c:1924-1929`).
-    pub(in crate::receiver) fn allows(&mut self, name: &str, is_dir: bool) -> bool {
-        let directory = name.rsplit_once('/').map_or("", |(parent, _)| parent);
-        self.chain_for(directory).allows(Path::new(name), is_dir)
+    pub(in crate::receiver) fn allows(&mut self, name: impl AsRef<Path>, is_dir: bool) -> bool {
+        let name = name.as_ref();
+        let directory = name.parent().unwrap_or(Path::new(""));
+        self.chain_for(directory).allows(name, is_dir)
     }
 
     /// Reports whether any ancestor directory of `name` is refused, in which
@@ -112,18 +115,12 @@ impl DaemonFilterGate {
     /// - `generator.c:1258-1266` - `if (skip_dir) { if (is_below(file, skip_dir)) ... return; }`
     /// - `generator.c:1284-1285` / `generator.c:1491-1495` - a refused directory
     ///   jumps to `skipping_dir_contents`, which assigns `skip_dir = file`
-    pub(in crate::receiver) fn refuses_ancestor(&mut self, name: &str) -> bool {
-        let mut cursor = name;
-        while let Some(separator) = cursor.rfind('/') {
-            cursor = &cursor[..separator];
-            if cursor.is_empty() {
-                break;
-            }
-            if !self.allows(cursor, true) {
-                return true;
-            }
-        }
-        false
+    pub(in crate::receiver) fn refuses_ancestor(&mut self, name: impl AsRef<Path>) -> bool {
+        name.as_ref()
+            .ancestors()
+            .skip(1)
+            .take_while(|ancestor| !ancestor.as_os_str().is_empty())
+            .any(|ancestor| !self.allows(ancestor, true))
     }
 
     /// Returns the rule chain as it stands inside `directory`, reloading that
@@ -134,7 +131,7 @@ impl DaemonFilterGate {
     /// and directory passes do not descend in a single ordered walk, so the
     /// state is rebuilt from the destination root instead of popped down to a
     /// depth; the loaded rules are the same either way.
-    fn chain_for(&mut self, directory: &str) -> &FilterChain {
+    fn chain_for(&mut self, directory: &Path) -> &FilterChain {
         if !self.per_dir {
             return &self.prototype;
         }
@@ -144,8 +141,8 @@ impl DaemonFilterGate {
             .is_none_or(|(loaded, _)| loaded != directory)
         {
             let mut chain = self.prototype.clone();
-            chain.reload_for_directory(&self.dest_dir, Path::new(directory));
-            self.loaded = Some((directory.to_owned(), chain));
+            chain.reload_for_directory(&self.dest_dir, directory);
+            self.loaded = Some((directory.to_path_buf(), chain));
         }
         &self
             .loaded
