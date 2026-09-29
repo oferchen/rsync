@@ -967,7 +967,8 @@ impl GeneratorContext {
             }
 
             // upstream: sender.c:124 - receive_sums(), which calls
-            // io.c:read_sum_head(). That reader rejects an s2length wider than
+            // io.c:read_sum_head(). That reader bounds blength by the
+            // protocol's ceiling (io.c:2235) and rejects an s2length wider than
             // the negotiated transfer digest (`xfer_sum_len`): the block loop
             // below consumes `4 + s2length` bytes per block, so a strong sum
             // wider than the checksum the generator wrote would desync the
@@ -975,7 +976,8 @@ impl GeneratorContext {
             // protocol-default) transfer checksum, whose digest_len is upstream's
             // xfer_sum_len (checksum.c:214 csum_len_for_type()).
             let xfer_sum_len = self.get_checksum_algorithm().digest_len() as u32;
-            let sum_head = SumHead::read_negotiated(&mut *reader, xfer_sum_len)?;
+            let sum_head =
+                SumHead::read_negotiated(&mut *reader, self.protocol.as_u8(), xfer_sum_len)?;
             self.timing.total_bytes_read += 16;
 
             self.validate_file_index(ndx)?;
@@ -2823,7 +2825,7 @@ mod proto29_keepalive_tests {
 
     /// Builds a sender at `protocol` over a single source file, so the
     /// keep-alive NDX (`cur_flist->used`) is 1.
-    fn generator_at(protocol: u8) -> (tempfile::TempDir, GeneratorContext) {
+    pub(super) fn generator_at(protocol: u8) -> (tempfile::TempDir, GeneratorContext) {
         let dir = tempfile::tempdir().expect("tempdir");
         let file = dir.path().join("only.txt");
         std::fs::write(&file, b"payload").expect("write source");
@@ -2854,7 +2856,10 @@ mod proto29_keepalive_tests {
     /// Drives the sender loop over a MULTIPLEXED writer (the production shape:
     /// the server-to-client stream is multiplexed at every supported protocol)
     /// and returns the exact bytes it wrote.
-    fn drive_multiplexed(ctx: &mut GeneratorContext, incoming: Vec<u8>) -> io::Result<Vec<u8>> {
+    pub(super) fn drive_multiplexed(
+        ctx: &mut GeneratorContext,
+        incoming: Vec<u8>,
+    ) -> io::Result<Vec<u8>> {
         let mut out: Vec<u8> = Vec::new();
         {
             let mut reader = Cursor::new(incoming);
@@ -3480,5 +3485,86 @@ mod sender_batch_flush_tests {
              not one flush per file",
             flushes.get()
         );
+    }
+}
+
+#[cfg(test)]
+mod sum_head_block_length_tests {
+    //! The sender's protocol-dependent `sum_head` block-length ceiling.
+    //!
+    //! upstream: io.c:2235,2257-2262 `read_sum_head()` - `max_blength =
+    //! protocol_version < 30 ? OLD_MAX_BLOCK_SIZE : MAX_BLOCK_SIZE` (rsync.h:161,
+    //! 164: `1 << 29` and `1 << 17`). A larger `blength` prints `Invalid block
+    //! length %ld [%s]` and exits `RERR_PROTOCOL`. The sender sizes its block
+    //! table and match buffers from this field, so a protocol >= 30 peer that
+    //! advertises up to 512 MiB blocks must be refused exactly where upstream
+    //! refuses it, not accepted under the legacy ceiling.
+
+    use protocol::codec::{MonotonicNdxWriter, NdxCodec};
+
+    use super::proto29_keepalive_tests::{drive_multiplexed, generator_at};
+
+    /// `ITEM_TRANSFER` (0x8000) as its 2-byte little-endian wire encoding.
+    const ITEM_TRANSFER_LE: [u8; 2] = [0x00, 0x80];
+
+    /// upstream: rsync.h:161 `MAX_BLOCK_SIZE ((int32)1 << 17)`.
+    const MAX_BLOCK_SIZE: i32 = 1 << 17;
+
+    /// A transfer request for entry 0 whose `sum_head` advertises one block
+    /// of `blength` bytes, followed by that block's sums and the phase ends.
+    fn request_with_blength(protocol: u8, blength: i32) -> Vec<u8> {
+        let mut ndx = MonotonicNdxWriter::new(protocol);
+        let mut wire = Vec::new();
+        ndx.write_ndx(&mut wire, 0).expect("request ndx");
+        wire.extend_from_slice(&ITEM_TRANSFER_LE);
+        for field in [1i32, blength, 2, 0] {
+            wire.extend_from_slice(&field.to_le_bytes());
+        }
+        // One block: 4-byte rolling sum + 2-byte strong sum.
+        wire.extend_from_slice(&[0u8; 6]);
+        for _ in 0..3 {
+            ndx.write_ndx_done(&mut wire).expect("done");
+        }
+        wire
+    }
+
+    #[test]
+    fn protocol_30_plus_refuses_a_block_length_past_max_block_size() {
+        let (_dir, mut ctx) = generator_at(32);
+        let err = drive_multiplexed(&mut ctx, request_with_blength(32, MAX_BLOCK_SIZE + 1))
+            .expect_err("a 128 KiB + 1 block must be refused at protocol 32");
+        let text = err.to_string();
+        assert!(
+            text.contains("Invalid block length 131073"),
+            "expected upstream's rejection text, got {text}"
+        );
+        assert!(
+            text.contains("[sender="),
+            "the who_am_i() tag must name the sender: {text}"
+        );
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.is::<protocol::ProtocolViolation>()),
+            "the abort must map to RERR_PROTOCOL"
+        );
+    }
+
+    /// NON-VACUITY: the ceiling is inclusive, so the largest legal block still
+    /// transfers. A guard that refused every block head would fail here.
+    #[test]
+    fn protocol_30_plus_accepts_a_block_length_of_exactly_max_block_size() {
+        let (_dir, mut ctx) = generator_at(32);
+        drive_multiplexed(&mut ctx, request_with_blength(32, MAX_BLOCK_SIZE))
+            .expect("MAX_BLOCK_SIZE itself is a legal block length");
+    }
+
+    /// PROTOCOL CONTROL: below protocol 30 upstream keeps OLD_MAX_BLOCK_SIZE,
+    /// so the same head that protocol 32 refuses is legal. A guard that
+    /// ignored the protocol version would fail here.
+    #[test]
+    fn protocol_29_keeps_the_legacy_ceiling() {
+        let (_dir, mut ctx) = generator_at(29);
+        drive_multiplexed(&mut ctx, request_with_blength(29, MAX_BLOCK_SIZE + 1))
+            .expect("protocol 29 allows blocks up to OLD_MAX_BLOCK_SIZE");
     }
 }

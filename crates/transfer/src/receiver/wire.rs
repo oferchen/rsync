@@ -245,24 +245,37 @@ impl SumHead {
         })
     }
 
-    /// Decodes a sum_head and additionally rejects an `s2length` wider than the
-    /// negotiated transfer digest width `xfer_sum_len`.
+    /// Decodes a sum_head against the negotiated protocol and transfer digest,
+    /// as the sender's `read_sum_head()` does.
     ///
-    /// [`from_wire_bytes`](Self::from_wire_bytes) bounds `s2length` only by the
-    /// static SHA-1 ceiling; a peer that negotiated a narrower checksum
-    /// (XXH64 / XXH3-64 = 8 bytes) could still advertise a legal-looking 16-byte
-    /// strong sum, making [`read_signature_blocks`] consume `4 + s2length` bytes
-    /// per block while the generator wrote only `4 + xfer_sum_len`, desyncing
-    /// the stream. Gating on the negotiated width closes that gap.
+    /// `blength` is bounded by the protocol's ceiling (`1 << 17` from protocol
+    /// 30, `1 << 29` below it). [`from_wire_bytes`](Self::from_wire_bytes)
+    /// bounds `s2length` only by the static SHA-1 ceiling; a peer that
+    /// negotiated a narrower checksum (XXH64 / XXH3-64 = 8 bytes) could still
+    /// advertise a legal-looking 16-byte strong sum, making
+    /// [`read_signature_blocks`] consume `4 + s2length` bytes per block while
+    /// the generator wrote only `4 + xfer_sum_len`, desyncing the stream.
+    /// Gating on the negotiated width closes that gap.
     ///
-    /// upstream: io.c:read_sum_head - `if (sum->s2length > xfer_sum_len)
-    /// exit_cleanup(RERR_PROTOCOL)`.
+    /// upstream: io.c:2235 `max_blength = protocol_version < 30 ?
+    /// OLD_MAX_BLOCK_SIZE : MAX_BLOCK_SIZE` and io.c:read_sum_head - `if
+    /// (sum->s2length > xfer_sum_len) exit_cleanup(RERR_PROTOCOL)`.
     ///
     /// [`read_signature_blocks`]: crate::generator::read_signature_blocks
-    fn from_wire_bytes_negotiated(buf: &[u8; 16], xfer_sum_len: u32) -> io::Result<Self> {
-        let head = protocol::wire::SumHead::decode(*buf)
+    fn from_wire_bytes_negotiated(
+        buf: &[u8; 16],
+        protocol_version: u8,
+        xfer_sum_len: u32,
+    ) -> io::Result<Self> {
+        let head = protocol::wire::SumHead::decode_for_protocol(*buf, protocol_version)
             .and_then(|head| head.ensure_s2length_within(xfer_sum_len))
-            .map_err(Self::malformed)?;
+            .map_err(|detail| {
+                protocol::protocol_violation(format!(
+                    "malformed sum_head: {detail} {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::sender()
+                ))
+            })?;
         Ok(Self {
             count: head.count(),
             blength: head.blength(),
@@ -293,19 +306,24 @@ impl SumHead {
         Self::from_wire_bytes(&buf)
     }
 
-    /// Reads a sum_head, rejecting an `s2length` wider than the negotiated
-    /// transfer digest width `xfer_sum_len`.
+    /// The sender's sum_head read: rejects a `blength` past the ceiling of
+    /// `protocol_version` and an `s2length` wider than the negotiated transfer
+    /// digest width `xfer_sum_len`, tagging the refusal with the sender role.
     ///
     /// The signature-block reader that follows consumes `4 + s2length` bytes
     /// per block, so a header advertising a strong sum wider than the checksum
     /// the generator actually wrote would desync the stream. This is the read
     /// used before [`read_signature_blocks`](crate::generator::read_signature_blocks).
     ///
-    /// upstream: io.c:read_sum_head.
-    pub fn read_negotiated<R: Read>(reader: &mut R, xfer_sum_len: u32) -> io::Result<Self> {
+    /// upstream: io.c:read_sum_head, called from sender.c:345 receive_sums().
+    pub fn read_negotiated<R: Read>(
+        reader: &mut R,
+        protocol_version: u8,
+        xfer_sum_len: u32,
+    ) -> io::Result<Self> {
         let mut buf = [0u8; 16];
         reader.read_exact(&mut buf)?;
-        Self::from_wire_bytes_negotiated(&buf, xfer_sum_len)
+        Self::from_wire_bytes_negotiated(&buf, protocol_version, xfer_sum_len)
     }
 }
 
