@@ -10,7 +10,7 @@
 
 # oc-rsync
 
-`rsync` re-implemented in Rust. It speaks rsync protocols 28 through 33 and interoperates with upstream rsync 3.5.0 and the 3.4.x series (protocol 32), which the interop matrix tests. Protocol 33 (rsync 3.5.1) is implemented but not yet in that matrix; see [Protocol and interop](#protocol-and-interop). The aim is a drop-in replacement, and the known divergences are listed per test in the [upstream testsuite](#upstream-testsuite) manifests.
+`rsync` re-implemented in Rust. The reference version is upstream rsync 3.5.1. oc-rsync speaks protocols 28 through 33 and aims to be a drop-in replacement. Known divergences are listed per test in the [upstream testsuite](#upstream-testsuite) manifests.
 
 The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` without conflict.
 
@@ -20,7 +20,7 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 
 **Release:** 0.6.4 (2026-07-18). Changes merged since then are listed under *Unreleased* in the [CHANGELOG](./CHANGELOG.md). All transfer modes (local, SSH, daemon), the delta algorithm, metadata preservation and compression are implemented; the table below lists the gaps.
 
-**Upstream pins.** Behaviour is checked against rsync 3.5.0, the reference version (`upstream_version` in `Cargo.toml`); oc-rsync speaks protocol 33 and negotiates down to 28; upstream source citations are pinned to 3.5.1 (#7994). rsync 3.5.0 (13 Aug 2026) kept protocol 32 and fixed 33 CVEs in path handling and the daemon; oc-rsync implements all of its new options and daemon directives (listed below), and the per-CVE audit trail is in [`SECURITY.md`](./SECURITY.md). rsync 3.5.1 (21 Sep 2026) raised the protocol to 33: oc-rsync speaks it, with `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003), and negotiates a newer peer down instead of refusing it (#7916). Moving the reference version to 3.5.1 is in progress; its test suite is already the required testsuite gate, and a first set of 3.5.1 divergences is fixed (#8010, #8011, #8012, #8016).
+**Upstream reference.** Behaviour, source citations and the testsuite gate all track rsync 3.5.1 (`upstream_version` in `Cargo.toml`). 3.5.1 raised the protocol to 33. oc-rsync speaks 33, including `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003). It negotiates down to 28 for older peers and caps a newer peer at 33 instead of refusing it (#7916). The new options and daemon directives from 3.5.0 are implemented (listed below). The per-CVE audit is in [`SECURITY.md`](./SECURITY.md).
 
 | Component | Status |
 |-----------|--------|
@@ -37,7 +37,7 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 | **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
 | **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
 | **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
-| **3.5.0 surface** | `--confine-root`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links`; daemon `auth digest`, `insecure links`, `proxy protocol hosts` |
+| **Path confinement** | `--confine-root`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links`; daemon `auth digest`, `insecure links`, `proxy protocol hosts` |
 | **I/O** | io_uring (Linux 5.6+), `copy_file_range`, `clonefile` (macOS), adaptive buffers |
 
 ### Upstream testsuite
@@ -68,8 +68,6 @@ awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.1-expect.*.txt | sort
 ```
 
 **Eleven distinct 3.5.1 tests** carry a `fail` row, and every one names its cause and owning task. Four are the `proto-*` cluster, which fails on every tcp leg. `strict-basis` fails on all eight legs. None fails only on macOS. The rest are 3.5.1 behaviour oc-rsync does not match yet, such as the `/dev/fd/N` cells and the untrusted-symlink refusal. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
-
-A manual dispatch of `upstream-testsuite-3.5.1.yml` with `bootstrap` set runs every leg without a manifest and uploads the manifest each leg would hold itself to, which is how a re-baseline is measured.
 
 ---
 
@@ -289,7 +287,7 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 
 | Protocol | Upstream versions | oc-rsync status | Coverage |
 |----------|-------------------|-----------------|----------|
-| 33 | 3.5.1 | Full support (default) | `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003); unit and golden-byte tests |
+| 33 | 3.5.1 | Full support (default) | Unit and golden-byte tests; the 3.5.1 testsuite legs |
 | 32 | 3.4.x, 3.5.0 | Full support | Interop matrix against 3.4.4 and 3.5.0 |
 | 31 | 3.1.x - 3.3.x | Full support | Interop matrix against 3.1.3 |
 | 30 | 3.0.x | Full support | Interop matrix against 3.0.9 |
@@ -297,7 +295,7 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 | 28 | 2.6.0 - 2.6.3 | Wire-level support | Golden-byte tests in `crates/protocol/tests/` |
 | <= 27 | <= 2.5.x | Not supported | |
 
-Per-version behaviour is implemented as `protocol_version` gates in the wire codecs, for example [`zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs).
+oc-rsync advertises protocol 33 and uses the lower of its own and the peer's version, so a 3.5.0 or 3.4.x peer runs at 32. A 3.5.1 peer runs at 33, but 3.5.1 is not yet in the interop matrix below. Per-version behaviour is implemented as `protocol_version` gates in the wire codecs, for example [`zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs).
 
 Interop scenarios run in CI against the upstream releases listed in [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh): `versions=` for the scenario matrix, `extra_build_versions=` for build-only peers, and `extended_matrix_versions=` for the extended matrix. Push and pull are both covered, across transfer modes, deletion, compression, metadata, reference dirs, file selection, batch round trip, path handling, device nodes and daemon auth. See the [interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for detail.
 
@@ -342,7 +340,7 @@ oc-rsync uses threads where upstream forks, while keeping the same protocol. I/O
 
 ## Testing and CI
 
-- **Upstream testsuite.** The 3.5.1 legs run from [`upstream-testsuite-3.5.1.yml`](./.github/workflows/upstream-testsuite-3.5.1.yml) on every pull request and on push to master, behind the 3.5.1 badge. Legs, counts and manifests: [Upstream testsuite](#upstream-testsuite).
+- **Upstream testsuite.** Legs, counts and manifests: [Upstream testsuite](#upstream-testsuite).
 - **Interop.** Push and pull against real upstream binaries: [Protocol and interop](#protocol-and-interop).
 - **Required checks.** The ten required contexts, and the command that re-derives them from the branch ruleset, are in [`docs/contributing/TESTING.md`](./docs/contributing/TESTING.md).
 
@@ -366,8 +364,8 @@ Upstream CVE status, in short:
 
 - **2024 batch** (CVE-2024-12084 to CVE-2024-12088, CVE-2024-12747): not vulnerable or mitigated.
 - **rsync 3.4.3 batch** (CVE-2026-29518, 43617, 43618, 43619, 43620, 45232): fixed or not vulnerable. Receiver filesystem calls go through `*at` syscalls anchored on a directory fd, with a Landlock layer for the daemon on Linux.
-- **rsync 3.5.0 batch** (33 CVEs): partially assessed. 14 of the 33 ids have a row in [`SECURITY.md`](./SECURITY.md), some still under audit. The other 19 are listed there by id as untriaged.
-- **rsync 3.5.1**: its release notes name no CVE. Its path-handling and daemon fixes are tracked in [`SECURITY.md`](./SECURITY.md#upstream-rsync-351-21-sep-2026), some already mirrored on master.
+- **rsync 3.5.0 batch** (33 CVEs): 24 fixed, 5 not applicable, 4 unverified, 0 open. Each has a row in [`SECURITY.md`](./SECURITY.md), with the evidence and the command that recounts them.
+- **rsync 3.5.1** names no CVE. Of its nine security-relevant fixes, five are mirrored, two are open (the `/dev/fd/N` paths and partial-directory validation) and two do not apply.
 
 See [`SECURITY.md`](./SECURITY.md) for the per-CVE detail and how to report a vulnerability.
 

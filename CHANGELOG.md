@@ -5,19 +5,16 @@ All notable changes to oc-rsync are recorded here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 oc-rsync speaks rsync protocols 28 through 33. Its reference version is upstream
-rsync 3.5.0, and it interoperates with 3.5.0 and the 3.4.x series (protocol 32);
-protocol 33 from rsync 3.5.1 arrives in *Unreleased*. Release tags are
-mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
+rsync 3.5.1. Release tags are mirrored on GitHub at
+<https://github.com/oferchen/rsync/releases>.
 
 ## [Unreleased]
 
-This cycle moves the reference implementation to upstream rsync 3.5.0. It adopts
-the 3.5.0 option and directive surface, works through the path-confinement and
-daemon CVE families, and gates every pull request on upstream's test suite. It
-also starts the move to rsync 3.5.1: protocol 33 is added (#8003) while the
-reference stays at 3.5.0, the required test-suite gate now runs the 3.5.1
-corpus, and the first 3.5.1 fixes are mirrored. One entry per change; see the
-linked PRs for detail.
+This cycle moves the reference implementation to upstream rsync 3.5.1, by way of
+3.5.0. It adopts the 3.5.0 option and directive surface, works through the
+path-confinement and daemon CVE families, adds protocol 33, and gates every pull
+request on upstream's 3.5.1 test suite. One entry per change; see the linked PRs
+for detail.
 
 ### Security
 
@@ -117,10 +114,10 @@ linked PRs for detail.
 
 ### Changed
 
-- The upstream reference is rsync 3.5.0 (#7305, #7321, #7331, #7607)
+- The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down instead of refused (#7916)
-- The required upstream-testsuite gate runs the 3.5.0 Python corpus on Linux (pipe and TCP, root and non-root); macOS legs run on every PR (#7387, #7339, #7405, #7408, #7392, #7391)
-- The required upstream-testsuite gate moves to the 3.5.1 corpus, in its own workflow with its own badge and the same check names; the 3.5.0 testsuite legs, workflow, manifests and badge are retired (3.5.0 stays in the interop matrix)
+- Every pull request is gated on upstream's 3.5.1 test suite, on Linux and macOS, over a pipe and a TCP daemon, as root and non-root (#7387, #7339, #7405, #7408, #7392, #7391, #7996, #8019)
+- The 3.5.0 test suite is retired; its test names are a subset of 3.5.1's. 3.5.0 stays in the interop matrix
 - rsync 3.5.0 joins the interop matrix as a gating peer (#7290, #7337)
 - Release benchmarks compare against both 3.4.4 and 3.5.0 and report peak RSS for every mode (#7595)
 - `daemon-seccomp` is reachable from the `oc-rsync` binary; it stays opt-in (#7589)
@@ -168,7 +165,7 @@ linked PRs for detail.
 - Carry hard links through `--write-batch` and `--read-batch`, in upstream's member order (#7596, #7928, #7959)
 - Skip the delayed rename when the backup fails (#7531)
 
-**3.5.0 testsuite divergences**
+**Upstream testsuite divergences**
 - Backup error naming, directory crtimes, macOS set-group-ID, the sender scan anchor, trailing `/.` handling, cleared `dir_flist` slots and upstream error wording (#7635, #7641, #7642, #7646, #7647, #7652, #7654, #7655, #7656, #7658)
 
 **Interop**
@@ -316,7 +313,7 @@ linked PRs for detail.
 ### Internal
 
 - CI: macOS testsuite legs (#7638), old-rsync oracles (#7636, #7855), a skip oracle on a full-run leg (#7837), `quic` build coverage (#7902), and one publisher per required check (#7438)
-- CI: the upstream 3.5.1 test suite on Linux and macOS, root and non-root, nightly (#7996), with per-leg results and badges (#8019); pinned and cached upstream tarballs (#7993); distinct daemon ports for parallel interop workers (#8006); Windows long-path and case-insensitive legs on pull requests (#7967, #7969)
+- CI: per-leg testsuite results and badges (#8019); pinned and cached upstream tarballs (#7993); distinct daemon ports for parallel interop workers (#8006); Windows long-path and case-insensitive legs on pull requests (#7967, #7969)
 - Tests pinning confinement, INC_RECURSE ordering, daemon session handling, SIMD over-reads, PULL wire transcripts and batch hard-link replay (#7953, #7956, #7971, #7976, #7985, #7989, #7990)
 - Upstream citations retargeted at 3.5.0 and then 3.5.1, and a stricter citation gate (#7286, #7308, #7315, #7318, #7994)
 - `#![deny(unsafe_code)]` on the crates that lacked it (#7781), plus blocking gates for zero-caller public functions, placeholders and rustdoc links (#7767, #7770, #7776)
