@@ -459,38 +459,37 @@ fn min_size_prunes_empty_directories_when_enabled() {
     );
 }
 
+/// upstream: generator.c:2109-2133 recv_generator() - `--min-size` is tested
+/// only after the `ftype != FT_REG` branch has returned, so it gates regular
+/// files alone. A symlink's `F_LENGTH` is its target length, yet the link is
+/// still created even when that length is under the limit, while a regular
+/// file under the limit is skipped.
 #[cfg(unix)]
 #[test]
-#[ignore = "symlinks are currently filtered by --min-size; size-exempt symlink handling not yet implemented"]
 fn min_size_does_not_affect_symlinks() {
     let ctx = test_helpers::setup_copy_test();
-
-    test_helpers::create_test_tree(&ctx.source, &[("target.txt", Some(b"x"))]);
-
-    std::os::unix::fs::symlink("target.txt", ctx.source.join("link.txt")).expect("create symlink");
+    test_helpers::create_test_tree(&ctx.source, &[("small.txt", Some(b"x"))]);
+    std::os::unix::fs::symlink("t", ctx.source.join("link")).expect("create symlink");
 
     let operands = vec![
-        ctx.source.into_os_string(),
+        ctx.source.clone().into_os_string(),
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-
-    // Set min-size to 100 bytes (target is only 1 byte)
     let options = LocalCopyOptions::default()
         .min_file_size(Some(100))
         .links(true);
-
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
+    let target_root = ctx.dest.join("source");
     assert!(
-        !ctx.dest.join("source").join("source/target.txt").exists(),
-        "small target excluded"
+        fs::symlink_metadata(target_root.join("small.txt")).is_err(),
+        "a regular file under --min-size is skipped"
     );
-
-    // Symlink should still be created (symlinks are not filtered by size)
-    assert!(
-        ctx.dest.join("source").join("source/link.txt").exists(),
-        "symlink should be included"
+    assert_eq!(
+        fs::read_link(target_root.join("link")).expect("symlink is created"),
+        Path::new("t"),
+        "a symlink is never size-gated"
     );
 }
