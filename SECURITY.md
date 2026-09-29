@@ -8,6 +8,8 @@
 | 0.5.x   | :warning: critical fixes only |
 | < 0.5   | :x:                |
 
+Fixes land on `master` first and ship in the next 0.6.x release. Changes merged since 0.6.4 are listed under *Unreleased* in [`CHANGELOG.md`](./CHANGELOG.md).
+
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in oc-rsync, please report it responsibly:
@@ -27,16 +29,11 @@ You can expect:
 
 ## Security Design
 
-oc-rsync leverages Rust's memory safety to eliminate entire vulnerability classes:
+### Memory safety
 
-### Memory Safety Guarantees
+Safe Rust rules out out-of-bounds access, use-after-free, reads of uninitialised memory and data races in the code it covers. It does **not** rule out logic flaws: a fail-open access check, an unconfined path or an unbounded peer-supplied count is as reachable in safe Rust as in C. OS-level races at filesystem boundaries (TOCTOU) are also outside what the language prevents, which is why path handling goes through the confined `*at` walk described below.
 
-- **No buffer overflows**: Rust's bounds checking prevents out-of-bounds memory access
-- **No use-after-free**: Rust's ownership system prevents dangling pointer access
-- **No uninitialized memory**: All memory must be initialized before use
-- **No data races**: Rust's type system prevents concurrent memory access bugs
-
-### Unsafe Code Policy
+### Unsafe code policy
 
 Crates that enforce `#![deny(unsafe_code)]` with no allow-listed exceptions in production code:
 - `daemon`, `cli`, `core`, `transfer`, `batch`, `filters`, `signature`, `matching`, `bandwidth`, `logging`, `logging-sink`, `branding`, `rsync_io`, `compress`, `apple-fs`, `flist`, `embedding`, `test-support` - business logic, parsers, orchestration, and high-level I/O wrappers. Some of these crates carry `#[allow(unsafe_code)]` inside `#[cfg(test)]` modules only, for example to set environment variables in tests.
@@ -52,13 +49,17 @@ Crates with `#![deny(unsafe_code)]` and targeted `#[allow(unsafe_code)]` for doc
 
 **Long-term direction.** Unsafe code is being consolidated into two owning crates: `fast_io` for I/O syscalls and `platform` for process, identity, environment and signals. Both expose safe public APIs. `metadata`, `checksums`, `engine` and `protocol` still hold production unsafe until their sites migrate. New `#[allow(unsafe_code)]` annotations in any other crate require explicit review.
 
-**Note:** OS-level race conditions (TOCTOU) remain possible at filesystem boundaries; Rust's memory safety does not prevent them.
+## Upstream CVE Status
 
-## CVE Monitoring
+| Upstream batch | oc-rsync status |
+|---|---|
+| 2024 (CVE-2024-12084 to 12088, CVE-2024-12747) | Not vulnerable or mitigated |
+| rsync 3.4.2 fixes | Audited in v0.6.2; equivalent paths verified safe |
+| rsync 3.4.3 (six CVEs) | Fixed or not vulnerable |
+| rsync 3.5.0 (33 CVEs) | 14 ids assessed, some still under audit; 19 untriaged |
+| rsync 3.5.1 | No CVE ids in upstream's notes; hardening fixes tracked below |
 
-### Upstream rsync CVEs
-
-oc-rsync monitors upstream rsync CVEs to verify continued non-applicability. Recent CVEs and our status:
+### 2024 and rsync 3.4.3 CVEs
 
 | CVE | Upstream Issue | oc-rsync Status | Reason |
 |-----|---------------|-----------------|--------|
@@ -77,9 +78,9 @@ oc-rsync monitors upstream rsync CVEs to verify continued non-applicability. Rec
 
 ### Upstream rsync 3.5.0 (13 Aug 2026) - triage in progress
 
-rsync 3.5.0 is a major security release closing **33 CVEs**, concentrated in path handling and the daemon. That figure is upstream's own: "This release fixes 33 security issues found during a focused audit of rsync's..." (`NEWS.md:37` in the 3.5.0 tarball). Unlike the 3.4.2/3.4.3 batches below, this set is **not yet fully audited against oc-rsync**, and this section states that plainly rather than implying coverage that does not exist.
+rsync 3.5.0 is a major security release closing **33 CVEs**, concentrated in path handling and the daemon. That figure is upstream's own: "This release fixes 33 security issues found during a focused audit of rsync's..." (`NEWS.md:37` in the 3.5.0 tarball). Unlike the 3.4.2/3.4.3 batches, this set is **not yet fully audited against oc-rsync**, and this section says so plainly rather than implying coverage that does not exist.
 
-**How much is assessed: 14 of 33.** A disclaimer without a number cannot be checked, so here is the count. 14 of the 3.5.0 CVE ids appear in a table row below, and some of those rows are still marked "under audit". The other 19 have **no entry yet**. They are neither claimed fixed nor claimed inapplicable:
+**How much is assessed: 14 of 33.** 14 of the 3.5.0 CVE ids appear in a table row below, and some of those rows are still marked "under audit". The other 19 have **no entry yet**. They are neither claimed fixed nor claimed inapplicable:
 
 ```
 CVE-2026-53785  CVE-2026-53786  CVE-2026-53788  CVE-2026-53789
@@ -101,9 +102,9 @@ comm -23 /tmp/batch /tmp/assessed          # ids with no table row
 
 Lines 1-451 are upstream's 3.5.0 section. They name 35 ids: upstream's 33 plus two back-references to 3.4.3 fixes (`CVE-2026-43617`, `CVE-2026-43620`), which have their own rows above. The command prints the 19 ids listed here.
 
-**What is established.** 3.5.0 is wire-identical to 3.4.4 (`PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h`), so none of these CVEs stem from a protocol change and none require a wire-format response. They are implementation vulnerabilities in areas oc-rsync reimplements independently, which means neither "inherited" nor "not applicable" can be assumed for any of them - each needs its own evidence.
+**What is established.** 3.5.0 is wire-identical to 3.4.4 (`PROTOCOL_VERSION` 32, `SUBPROTOCOL_VERSION` 0, unchanged `errcode.h`), so none of these CVEs stem from a protocol change and none require a wire-format response. They are implementation vulnerabilities in areas oc-rsync reimplements independently, so neither "inherited" nor "not applicable" can be assumed for any of them; each needs its own evidence.
 
-**What is measured.** Upstream's 3.5.0 test suite runs against oc-rsync on every pull request in eight legs: platform {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege {non-root, root}. Each leg carries an expected-outcome manifest generated from a real run (`tools/ci/upstream-3.5.0-expect.*.txt`). The per-leg counts and the command that re-derives them are in the [README](./README.md#upstream-testsuite). No test fails on either full-corpus Linux leg, and **6 distinct tests** fail across all eight manifests (`awk '!/^#/ && $NF=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). That set is triage input, not a vulnerability count. A fix flips its manifest rows in the same commit, and the gate fails on an unexpected *pass* so a row cannot be re-baselined without a fix.
+**What is measured.** Upstream's 3.5.0 test suite runs against oc-rsync on every pull request in eight legs, the four Linux ones as required checks; the per-leg counts and the command that re-derives them are in the [README](./README.md#upstream-testsuite). The testsuite jobs read their own `UPSTREAM_TESTSUITE_VERSION` (default `3.5.0`) rather than the interop matrix's `UPSTREAM_RSYNC_VERSION`, so retargeting interop cannot move the conformance gate. **Nine distinct tests** carry a `fail` row across the eight manifests (`awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u`). Three of them assert 3.5.0 behaviour that 3.5.1 reverted (`--max-alloc=0` and inetd detection, PR #8011). That set is triage input, not a vulnerability count. A fix flips its manifest rows in the same commit, and the gate fails on an unexpected *pass*, so a row cannot be re-baselined without a fix.
 
 **Highest-severity items and their oc-rsync bearing:**
 
@@ -112,72 +113,75 @@ Lines 1-451 are upstream's 3.5.0 section. They name 35 ids: upstream's 33 plus t
 | CVE-2026-53791 | CRITICAL | `proxy protocol = true` let a directly-connecting client forge a PROXY header and spoof its source address, defeating `hosts allow`/`hosts deny`. Fixed by a new `proxy protocol hosts` allow-list that fails **closed** when unset. | **Fixed.** `proxy protocol hosts` is parsed into a `ProxyProtocolPolicy` that mirrors upstream's `allow_proxy_protocol_peer()` (access.c:311-317): an empty or unset trusted-proxy list makes the policy reject **every** peer rather than accept any, and the daemon warns at startup on the `proxy protocol = true` with no list combination exactly as upstream does (clientserver.c:1771-1772). A PROXY header from a direct peer that is not on the list is refused (PR #7648). The prerequisite was fixed earlier: the daemon's two stdio entry points fabricated `127.0.0.1` as the peer address, which made every `hosts allow` / `hosts deny` rule evaluate against a synthetic localhost. Both now mirror upstream `client_addr()` - `getpeername` under inetd, the `REMOTE_HOST` / `SSH_CONNECTION` / `SSH_CLIENT` / `SSH2_CLIENT` environment chain under a remote shell - and abort with `RERR_SOCKETIO` rather than inventing a value (PR #7303). |
 | CVE-2026-70452 | HIGH | `hosts deny` failed **open** when a configured hostname would not resolve. | **Fixed.** The root cause was a missing distinction, not a missing check: `forward_resolve` collapsed "lookup failed" and "resolved but did not match" into one empty result, which is what made the deny side fail open. The resolver now returns `Option<Vec<IpAddr>>` so the two are separable, and hostname matching is case-insensitive against a lowercased list per upstream `iwildmatch` (access.c:57) (PR #7314). |
 | CVE-2026-70464 | HIGH | An unauthenticated peer could complete the `@RSYNCD` handshake. | Under audit. The related `auth digest` minimum-digest floor has **shipped** (PR #7350); `Md4Old` must rank as md4 or the floor locks out the very clients it exists to reason about. Related pre-auth hardening: a peer-supplied `@RSYNCD: OPTION` line can no longer override daemon parameters before authentication (PR #7754). |
-| CVE-2026-53784 / 53793 | HIGH | Daemon module-root chdir escape under `use chroot`, and a `/./` inner-module escape via a symlinked path. | Under audit. Related and fixed: the daemon fused the operator module root and the peer-supplied tail into one absolute string and applied `RESOLVE_NO_SYMLINKS` to the whole thing. Upstream keeps the two in different mechanisms - plain `chdir`/`openat` for the root, a confined `RESOLVE_BENEATH` walk for the tail - and oc-rsync now does the same (PR #7304). Since then the module identity is resolved before the chroot (PR #7585), each connection is served from its own forked session so per-module chroot state cannot leak across peers, and the daemon-chroot testsuite cells pass on the gating legs; the symlinked-path `/./` arm remains under audit. |
-| CVE-2026-53795 | HIGH | An absolute `--temp-dir` or `--link-dest` **disabled path confinement entirely**. | Directly applicable, and **largely closed**. oc-rsync's confinement was narrower than 3.5.0's and has been widened onto one shared per-component resolver: the staging family (`--temp-dir`, `--partial-dir`, `--backup-dir`), `--log-file`, the alt-dest basis leaf, `--relative` implied parents, and absolute rename endpoints all now resolve through the ownership walk (PRs #7398, #7404, #7415, #7419, #7393). The operator-named **auxiliary file** family followed: the daemon config, motd, secrets and `lock file`, `--password-file`, `--log-file`, `--files-from`, `--early-input`, the `--*clude-from` and merge files, and the batch files all open through the walk, and the alt-dest basis entry is stat-ed through it rather than opened (PRs #7421-#7426, #7439, #7441-#7443, #7459, #7463). The `operator-path-*` testsuite cluster now passes in full: no `operator-path-*` row remains `fail` in any committed manifest. |
+| CVE-2026-53784 / 53793 | HIGH | Daemon module-root chdir escape under `use chroot`, and a `/./` inner-module escape via a symlinked path. | Under audit. Related and fixed: the daemon fused the operator module root and the peer-supplied tail into one absolute string and applied `RESOLVE_NO_SYMLINKS` to the whole thing. Upstream keeps the two in different mechanisms - plain `chdir`/`openat` for the root, a confined `RESOLVE_BENEATH` walk for the tail - and oc-rsync now does the same (PR #7304). Since then the module identity is resolved before the chroot (PR #7585), each connection is served from its own forked session so per-module chroot state cannot leak across peers, and the daemon-chroot testsuite cells pass on the gating legs. A daemon now enters the peer's destination beneath the module root through a port of upstream's `secure_relative_dirfd()` walk (PR #8010). The symlinked-path `/./` arm remains under audit. |
+| CVE-2026-53795 | HIGH | An absolute `--temp-dir` or `--link-dest` **disabled path confinement entirely**. | Directly applicable, and **largely closed**. oc-rsync's confinement was narrower than 3.5.0's and has been widened onto one shared per-component resolver: the staging family (`--temp-dir`, `--partial-dir`, `--backup-dir`), `--log-file`, the alt-dest basis leaf, `--relative` implied parents, and absolute rename endpoints all now resolve through the ownership walk (PRs #7398, #7404, #7415, #7419, #7393). The operator-named **auxiliary file** family followed: the daemon config, motd, secrets and `lock file`, `--password-file`, `--log-file`, `--files-from`, `--early-input`, the `--*clude-from` and merge files, and the batch files all open through the walk, and the alt-dest basis entry is stat-ed through it rather than opened (PRs #7421-#7426, #7439, #7441-#7443, #7459, #7463). `--files-from` entries on a local sender now resolve through the same walk and are refused outside `--confine-root` (PR #8012). The `operator-path-*` testsuite cluster passes in full: no `operator-path-*` row is `fail` in any committed manifest. |
 | CVE-2026-53783 | HIGH | `rrsync` restricted-directory escape - each path was validated, but the validation could be walked out of. | oc-rsync ships no restricted-shell wrapper today; one is being added, enforcing through the same path resolver rather than a separate validator. The upstream rule set is extracted as a spec (PR #7283) - note it forces `--drop-D`, not `--no-D`. |
 | CVE-2026-53790 | HIGH | Command / argument injection via unquoted peer- or config-supplied values. | **Largely closed.** Upstream has four sinks and three remedies; oc-rsync has two of the same shape, one structurally different, and one that does not apply. The live sink here is oc-rsync's own single-character config expansion, which upstream does not have - so an upstream-shaped port alone would have been inert, and the refusal was applied at that sink instead: shell metacharacters are now rejected when expanding a hook variable for `pre-xfer exec` / `post-xfer exec` (PR #7465), and the `RSYNC_CONNECT_PROG` `%H` substitution is validated and quoted rather than interpolated verbatim (PR #7430). The batch replay script closed two further injections in its generated `.sh` (PR #7445). |
 | CVE-2026-70453 | HIGH | Quadratic CPU exhaustion in `hash_search()` from a long equal-weak-checksum chain. | **Fixed** (PR #7293). oc-rsync's block matcher differs from upstream's, so the bound was derived independently rather than copied. |
 | CVE-2026-70463 | HIGH | `auth users` separator handling. | **Fixed** (PR #7345). Upstream's leading-comma separator form is honoured at both affected sites - `auth users` and `gid`, not just the one named in the advisory. |
 | CVE-2026-70455 / 70461 / 70458 / 70456 | HIGH | Peer-controlled Zstandard thread count; three out-of-bounds heap writes. | The memory-safety trio has no direct Rust analogue, and the observable halves are checked rather than assumed: the live wire-token decoder rejects the malformed frames only the test-only decoders had guarded against (PR #7297), the AVX2 checksum over-read is disproven by a guard-page harness with a negative control (PR #7294), and the duplicate-suffix merge path collapses where it previously had no collapse at all (PR #7288). The peer-controlled Zstandard thread count is measured non-applicable: the option never reaches a peer-controlled decision in oc-rsync, whose only divergence runs the opposite direction (stricter on the client). |
 
-**New defensive surfaces in 3.5.0.** `--confine-root=DIR`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links` and the `auth digest` daemon directive have **shipped** (PRs #7396, #7299, #7350). Like upstream, `--confine-root` and `--drop-D` are deliberately **not forwarded** to the remote side: both are meant to be applied to one end of a connection by itself. The `insecure links` and `proxy protocol hosts` daemon directives have **shipped** as well (PRs #7484, #7648).
+**New defensive surfaces in 3.5.0.** `--confine-root=DIR`, `--drop-D` / `--no-drop-D`, `--insecure-links` / `--no-insecure-links` and the `auth digest` daemon directive have **shipped** (PRs #7396, #7299, #7350), as have the `insecure links` and `proxy protocol hosts` daemon directives (PRs #7484, #7648). Like upstream, `--confine-root` and `--drop-D` are deliberately **not forwarded** to the remote side: both are meant to be applied to one end of a connection by itself.
 
-`--drop-D` tells a receiver to refuse to create device and special files whatever the transfer requested. It exists because the obvious alternative does not work: `--no-D` also frames the file list's rdev fields, and only one end of a connection receives the option, so a `-D` sender writes rdev that a `--no-D` receiver never reads. That desynchronises the list - a FIFO hangs the transfer at protocol 29 and corrupts it at 30, and a device node breaks every protocol. `--drop-D` refuses the creation while leaving the wire format untouched. Like `--confine-root`, it is deliberately **not forwarded** to the remote side: both are meant to be applied to one end of a connection by itself.
+`--drop-D` tells a receiver to refuse to create device and special files whatever the transfer requested. It exists because the obvious alternative does not work: `--no-D` also frames the file list's rdev fields, and only one end of a connection receives the option, so a `-D` sender writes rdev that a `--no-D` receiver never reads. That desynchronises the list: a FIFO hangs the transfer at protocol 29 and corrupts it at 30, and a device node breaks every protocol. `--drop-D` refuses the creation while leaving the wire format untouched.
 
-A Rust reimplementation is immune to the *memory-corruption* half of several of these by construction. It is **not** immune to the logic half - a fail-open access check, an unconfined path, or an unbounded peer-supplied count is equally reachable in safe Rust. This section will be updated per-CVE as each is closed or evidenced as non-applicable.
+This section is updated per CVE as each is closed or evidenced as non-applicable.
 
-### Upstream rsync 3.5.1
+### Upstream rsync 3.5.1 (21 Sep 2026)
 
-Upstream has released rsync 3.5.1, which advertises protocol 33. Its security fixes are being tracked against oc-rsync. No disposition is claimed for any of them yet. oc-rsync still pins 3.5.0 as its reference; a peer advertising protocol 33 is negotiated down to 32 (PR #7916).
+rsync 3.5.1 raises the protocol to 33 and names **no CVE ids** in its release notes. Its bug fixes tighten path handling and the daemon on top of 3.5.0. oc-rsync still pins 3.5.0 as its reference version but speaks protocol 33 (PR #8003), and negotiates a newer peer down instead of refusing it (PR #7916). The 3.5.1 test suite runs on push to master and nightly, not on pull requests, and every `fail` row in its manifests (`tools/ci/upstream-3.5.1-expect.*.txt`) names its cause and owning task.
 
-### Upstream rsync 3.4.3 audits (2026-05-20)
+On master:
 
-rsync 3.4.3 (released 2026-05-20) is a major security release closing six CVEs and a defense-in-depth batch. Per-CVE applicability is captured in the table above (CVE-2026-29518 / 43617 / 43618 / 43619 / 43620 / 45232). The defense-in-depth items were audited as follows:
+- **`--files-from` confinement.** A local sender now stats, opens and enumerates each `--files-from` entry through the ownership walk from the held files-from base, and refuses an entry that resolves outside `--confine-root`, including through an in-root symlink to an outside directory. The walk carries 3.5.1's final flag: an ancestor of the root is allowed only while descending (PR #8012).
+- **Destination root attributes.** The destination root's owner, times and mode are applied through its own descriptor, as upstream applies them to `.` after `change_dir()`, instead of by opening its parent, which lay outside the Landlock grant. A daemon enters the peer's destination beneath the module root through a port of upstream's `secure_relative_dirfd()` walk, which follows a relative in-module symlink but refuses an absolute target or a climb out of the module (PR #8010).
+- **Basis and stream errors.** A block match with no basis file is a protocol error (exit 2) naming the file, and a daemon stream that closes mid-transfer reports `connection unexpectedly closed` and exits 12, as upstream does (PR #8016). This covers the first two sub-cases of the `strict-basis` cell.
+- **Option and startup rules.** `--contimeout` is refused unless there is a daemon connection and bounds a daemon-over-`--rsh` handshake; `--max-alloc=0` is accepted again and resolves to the bounded maximum; the daemon enters inetd mode only for an `AF_INET`/`AF_INET6` stream on stdin (PR #8011).
+
+Still carrying a `fail` row in the 3.5.1 manifests: `strict-basis` (remaining sub-cases), `symlink-race-dest`, `search-only-held-dirfd`, the `/dev/fd/N` cells (`pseudo-paths`, `pseudo-paths-daemon`, `read-batch-pipe`), and `batch-file-symlink`. `write-touched-blocks` passes since PR #8003 added protocol 33. `relative-source-ancestor`, whose row names the `--files-from` escape, passes since PR #8012; PR #8017 flips its rows to `pass`.
+
+### Upstream rsync 3.4.3 defense-in-depth audit (2026-05-20)
+
+Per-CVE applicability for the six 3.4.3 CVEs is in the table above. The defense-in-depth items were audited as follows:
 
 - **Bounded wire-supplied counts and lengths** in flist/io/acls/xattrs - oc-rsync already validates these at decode (`crates/protocol/src/flist/read/`, `xattr/cache.rs:123,141`, `acl/`). Re-audit confirmed no path accepts an unbounded length without a `MAX_*` ceiling.
 - **Length-underflow guard in cumulative `snprintf()` callers** - oc-rsync uses `format!()`/`write!()` which do not underflow; the equivalent risk is `usize` subtraction, audited cleanly.
-- **Parent block-index bounds check on receiver** - addressed by CVE-2026-43620 entry above.
+- **Parent block-index bounds check on receiver** - addressed by the CVE-2026-43620 entry above.
 - **NULL check in `read_delay_line()`** - oc-rsync uses `Option<&str>` so the C null-dereference is impossible.
-- **Lower ceiling on `MAX_WIRE_DEL_STAT`** - re-audited against the tree: the delete-stats reader lives at `crates/protocol/src/stats/delete.rs`, reads each category as a varint, and caps every one at `MAX_WIRE_DEL_STAT = 1 << 28` - the same value upstream lowered to (`rsync.h:187`, unchanged in 3.4.4 and 3.5.0), rejecting anything above it rather than clamping.
-- **Reject hyphen-prefixed remote-shell hostnames** - fixed under SEC-3 below; `crates/rsync_io/src/ssh/operand.rs` rejects a leading `-`.
+- **Lower ceiling on `MAX_WIRE_DEL_STAT`** - the delete-stats reader lives at `crates/protocol/src/stats/delete.rs`, reads each category as a varint, and caps every one at `MAX_WIRE_DEL_STAT = 1 << 28` - the same value upstream lowered to (`rsync.h:187`, unchanged in 3.4.4 and 3.5.0), rejecting anything above it rather than clamping.
+- **Reject hyphen-prefixed remote-shell hostnames** - `crates/rsync_io/src/ssh/operand.rs` rejects a leading `-` (SEC-3: audit, validation and regression coverage completed).
 - **NULL-check on `localtime_r()` in `timestring()`** - oc-rsync uses `chrono`/`time` for timestamp formatting; out-of-range timestamps return `Err` rather than dereferencing a null pointer.
 
-Open follow-ups:
-- **SEC-1** (TOCTOU on path-based daemon syscalls under `use_chroot=false`) - **Fixed.** Umbrella issue #2516, decomposed into SEC-1.a..s. All `*at` helpers shipped (SEC-1.a..n), receiver call-site wiring completed (SEC-1.q/q2), `DeleteFs` trait sandbox refactor shipped (SEC-1.q), `recursive_unlinkat` helper shipped (SEC-1.s), and `mknodat`/`mkfifoat` migration completed (SEC-MK.a..h). The SEC-1.p Landlock LSM defense-in-depth layer shipped (PR #4702).
-- **SEC-2.b** (align proxy-line cap to upstream's ceiling) - **Fixed** (PR #4812). SEC-2.a confirmed the structural mitigation (bounds-checked `Vec::push`); SEC-2.b tightened the numeric cap to 1023 bytes, matching upstream's 1024-byte `establish_proxy_connection()` stack buffer. The cap is now **derived** rather than typed - `connect/proxy.rs` names `PROXY_BUF_SIZE = 1024` after socket.c:52 and defines `MAX_PROXY_LINE_BYTES = PROXY_BUF_SIZE - 1` - so the two cannot drift apart (PR #7650).
-- **SEC-3** (confirm hyphen-prefixed hostname rejection in SSH operand parse) - **Fixed.** SEC-3.a audit, SEC-3.b validation, and SEC-3.c regression coverage all completed.
-- **SEC-4** (regression test for malformed `parent_node_idx` per CVE-2026-43620 mitigation) - closed. `DirectoryTree::try_add_directory` validates the wire-supplied parent index and returns `DirTreeError::OutOfBoundsParent`; three regression tests in `crates/protocol/src/flist/dir_tree.rs` pin down both the graceful-reject path and the worst-case controlled-panic path (no SIGSEGV).
+Follow-ups, all closed:
 
-#### SEC-1 progress (CVE-2026-29518 / CVE-2026-43619)
+- **SEC-1** (TOCTOU on path-based daemon syscalls, CVE-2026-29518 / CVE-2026-43619) - fixed; see the implementation record below.
+- **SEC-2** (proxy-line cap) - SEC-2.a confirmed the structural mitigation (bounds-checked `Vec::push`); SEC-2.b (PR #4812) tightened the cap to 1023 bytes, matching upstream's 1024-byte `establish_proxy_connection()` stack buffer. The cap is **derived** rather than typed: `connect/proxy.rs` names `PROXY_BUF_SIZE = 1024` after socket.c:52 and defines `MAX_PROXY_LINE_BYTES = PROXY_BUF_SIZE - 1`, so the two cannot drift apart (PR #7650).
+- **SEC-3** (hyphen-prefixed hostname rejection in SSH operand parse) - fixed.
+- **SEC-4** (malformed `parent_node_idx`, CVE-2026-43620) - `DirectoryTree::try_add_directory` validates the wire-supplied parent index and returns `DirTreeError::OutOfBoundsParent`; three regression tests in `crates/protocol/src/flist/dir_tree.rs` pin both the graceful-reject path and the worst-case controlled-panic path (no SIGSEGV).
 
-Shipped:
-- **SEC-1.a/b/c/d/e**: `DirSandbox` carrier with in-tree dirfd cache, `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` runtime detection, and receiver pipeline wiring (PRs #4643, #4650 and prior).
-- **SEC-1.f** (PR #4668): receiver `lstat` / `symlink_metadata` path resolves via `fstatat(AT_SYMLINK_NOFOLLOW)` routed through `DirSandbox`.
-- **SEC-1.g** (PR #4671): receiver `remove_file` / `remove_dir` path uses `unlinkat` routed through `DirSandbox`.
-- **SEC-1.h** (PR #4683): receiver `mkdir` / `symlink` / `hard_link` creation paths use `mkdirat` / `symlinkat` / `linkat` routed through `DirSandbox`.
-- **SEC-1.i** (PR #4690): `fchmodat` / `fchownat` / `utimensat` sandbox helpers replace path-based `chmod` / `lchown` / `utimes`.
-- **SEC-1.j** (PR #4693): `renameat` sandbox helper replaces path-based `rename`.
-- **SEC-1.k**: macOS verified - the `*at` syscall family is available and behaves consistently with the Linux migration.
-- **SEC-1.l**: Windows audited - NTFS handle-based APIs naturally sidestep the TOCTOU window, so Windows is not affected by either CVE.
-- **SEC-1.m** (PR #4675): comprehensive symlink-swap attack regression coverage against the daemon receiver.
-- **SEC-1.n** (PR #4678): interop regression coverage confirming legitimate symlinks still transfer correctly under the new `*at` paths.
-- **SEC-1.p** (PR #4702, shipped 2026-05-22): Landlock LSM defense-in-depth for the daemon receiver. `crates/fast_io/src/landlock.rs` wraps Landlock 0.4 (requests up to ABI v5 with best-effort downgrade; v1 on kernel 5.13+); `crates/daemon/src/daemon/sections/module_access/transfer.rs::engage_landlock_sandbox` allowlists `module.path` immediately before the receiver pipeline starts, so any residual unconverted path-based syscall is bounded by a kernel-enforced filesystem allowlist.
+#### SEC-1 implementation record (CVE-2026-29518 / CVE-2026-43619)
 
-Additionally shipped since the last update:
-- **SEC-1.q** (DeleteFs trait sandbox refactor): deletion operations route through the `DirSandbox`-backed `DeleteFs` trait.
-- **SEC-1.q2** (Receiver-deletion sandbox wiring): all receiver deletion call sites fully wired through `DirSandbox`.
-- **SEC-1.s** (`recursive_unlinkat` helper): recursive directory removal uses `unlinkat` throughout, closing the last TOCTOU window in directory tree deletion.
-- **SEC-MK.a..h** (`mknodat`/`mkfifoat` sandbox migration): device and FIFO node creation migrated to `*at` variants routed through `DirSandbox`. Previously deferred (closure doc #4694); now complete.
-- **SEC-1.p Landlock LSM defense-in-depth** - Linux 5.13+ kernel-side allowlist over the module root, engaged per-connection after `apply_module_privilege_restrictions` returns. Even a future regression that calls a path-based syscall directly (bypassing `DirSandbox`) is rejected by the kernel with `EACCES`. Client-supplied `--temp-dir` / `--partial-dir` / `--backup-dir` / `--compare-dest` / `--copy-dest` / `--link-dest` paths that resolve outside the module root are rejected at the wire-protocol layer (PR #5568, URV-5.b.1); the in-module subset is admitted to the Landlock allowlist alongside the module root so a default-on Landlock posture (URV-5.c.5) does not EACCES legitimate writes (URV-5.b.REOPEN). The helper requests `AccessFs::from_all(ABI::V5)` and best-effort downgrade picks the highest level the running kernel exposes (v5 and v4 on recent kernels, v3 on 6.2+, v2 on 5.19+, v1 on 5.13+), naming the rights it had to drop. Stub returns `Unavailable` on non-Linux targets so the SEC-1 `*at` chain remains the sole defense there.
-- **SEC-1.t** (receiver pre-flight dest_root symlink refusal): `ensure_dest_root_exists` in `crates/transfer/src/receiver/mod.rs` uses `symlink_metadata()` (lstat) rather than `metadata()` (stat) so a symlink at the destination root is observed directly. The helper refuses with `InvalidInput` for any symlinked dest - broken or pointing at an existing directory, inside or outside the module - because `create_dir_all` against a stat-NotFound result would otherwise resolve through the link and materialize the directory at the symlink target, sidestepping the SEC-1 `*at` chain that protects every subsequent per-entry write. The receiver never auto-creates through a symlink; operators that genuinely need a symlinked dest must materialize the real directory themselves. Follow-up to PR #5567 which added the pre-flight mkdir path.
+Umbrella issue #2516. **Status: fixed.** All receiver call sites are wired through `DirSandbox`, and the SEC-1.m / SEC-1.n regression suites pass against the fully wired pipeline.
 
-**Status: Fixed.** All receiver call sites are wired through `DirSandbox`, and the SEC-1.m / SEC-1.n regression suites pass against the fully-wired pipeline. The SEC-1.p Landlock layer provides defense-in-depth.
-
-CI integration: upstream rsync's own testsuite runs against oc-rsync as `$RSYNC` on every pull request. The gating corpus has been the rewritten **3.5.0 Python suite** since PR #7387, with the loopback-TCP legs added in PR #7408. All four Linux legs are required status checks: `upstream-testsuite / upstream testsuite{,(root)}` and `upstream-testsuite-tcp / upstream testsuite{,(root)}`. The four macOS legs run on every PR but are not required contexts; their manifests still gate them on drift. The testsuite jobs read their own `UPSTREAM_TESTSUITE_VERSION` (default `3.5.0`) rather than the interop matrix's `UPSTREAM_RSYNC_VERSION`, so retargeting interop cannot move the conformance gate.
+- **SEC-1.a-e**: `DirSandbox` carrier with in-tree dirfd cache, `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` runtime detection, and receiver pipeline wiring (PRs #4643, #4650 and prior).
+- **SEC-1.f** (PR #4668): receiver `lstat` / `symlink_metadata` via `fstatat(AT_SYMLINK_NOFOLLOW)`.
+- **SEC-1.g** (PR #4671): receiver `remove_file` / `remove_dir` via `unlinkat`.
+- **SEC-1.h** (PR #4683): receiver `mkdir` / `symlink` / `hard_link` via `mkdirat` / `symlinkat` / `linkat`.
+- **SEC-1.i** (PR #4690): `fchmodat` / `fchownat` / `utimensat` replace `chmod` / `lchown` / `utimes`.
+- **SEC-1.j** (PR #4693): `renameat` replaces `rename`.
+- **SEC-1.k**: macOS verified - the `*at` family is available and behaves as on Linux.
+- **SEC-1.l**: Windows audited - NTFS handle-based APIs sidestep the TOCTOU window, so Windows is not affected by either CVE.
+- **SEC-1.m** (PR #4675): symlink-swap attack regression coverage against the daemon receiver.
+- **SEC-1.n** (PR #4678): interop coverage confirming legitimate symlinks still transfer under the `*at` paths.
+- **SEC-1.p** (PR #4702): Landlock defense in depth. `crates/fast_io/src/landlock.rs` wraps Landlock 0.4 and requests `AccessFs::from_all(ABI::V5)` with best-effort downgrade (v5 and v4 on recent kernels, v3 on 6.2+, v2 on 5.19+, v1 on 5.13+), naming the rights it had to drop. `crates/daemon/src/daemon/sections/module_access/transfer.rs::engage_landlock_sandbox` allowlists `module.path` per connection after `apply_module_privilege_restrictions` returns, so a path-based syscall that bypasses `DirSandbox` is refused by the kernel with `EACCES`. Client-supplied `--temp-dir` / `--partial-dir` / `--backup-dir` / `--compare-dest` / `--copy-dest` / `--link-dest` paths that resolve outside the module root are rejected at the wire-protocol layer (PR #5568); the in-module subset joins the allowlist so legitimate writes are not refused. On non-Linux targets the stub returns `Unavailable` and the `*at` chain is the sole defense.
+- **SEC-1.q / q2**: deletion routes through the `DirSandbox`-backed `DeleteFs` trait, and every receiver deletion call site is wired through it.
+- **SEC-1.s**: `recursive_unlinkat` removes directory trees with `unlinkat` throughout.
+- **SEC-1.t**: `ensure_dest_root_exists` in `crates/transfer/src/receiver/mod.rs` uses `symlink_metadata()` so a symlink at the destination root is seen directly, and refuses any symlinked destination with `InvalidInput` rather than letting `create_dir_all` materialise the directory at the link target (follow-up to PR #5567).
+- **SEC-MK.a-h**: device and FIFO creation uses `mknodat` / `mkfifoat` through `DirSandbox`.
 
 ### Upstream rsync 3.4.2 audits
 
-In v0.6.2 the codebase was audited against every fix that landed in upstream rsync 3.4.2 (released 2026). The equivalent code paths were verified safe in oc-rsync:
+In v0.6.2 the codebase was audited against every fix that landed in upstream rsync 3.4.2. The equivalent code paths were verified safe in oc-rsync:
 
 - Compressed-stream negative-token decoder bounds (#2225)
 - Xattr `qsort` element-count parity (#2226)
@@ -194,21 +198,22 @@ In v0.6.2 the codebase was audited against every fix that landed in upstream rsy
 - MD4 `get_checksum2` `buf1` uninitialised-regression audit (#2223)
 - SIMD vs scalar self-test that cross-validates AVX2/SSE2/NEON paths at startup (#2224)
 
-### Monitoring Process
+## CVE Monitoring Process
 
-1. **Subscribe to rsync-announce**: https://lists.samba.org/mailman/listinfo/rsync-announce
-2. **Monitor NVD**: https://nvd.nist.gov/vuln/search?query=rsync
-3. **GitHub Security Advisories**: Watch this repository for security advisories
-4. **Scheduled CI watcher**: `tools/ci/check_upstream_release.sh` runs weekly via GitHub Actions and opens a tracking issue when a new upstream rsync release ships, so new CVEs are surfaced automatically
+Sources:
 
-### When New CVEs Are Published
+1. **rsync-announce**: https://lists.samba.org/mailman/listinfo/rsync-announce
+2. **NVD**: https://nvd.nist.gov/vuln/search?query=rsync
+3. **GitHub Security Advisories** for this repository
+4. **Scheduled watcher**: [`upstream-release-watch.yml`](./.github/workflows/upstream-release-watch.yml) runs `tools/ci/check_upstream_release.sh` every Monday and opens a tracking issue when a new upstream rsync release ships
 
-For each new upstream rsync CVE:
-1. Analyze the root cause (memory corruption, logic error, etc.)
-2. Check if oc-rsync has equivalent code paths
-3. Verify Rust's safety guarantees apply
-4. Document the analysis in this file
-5. If vulnerable, issue a security advisory and patch
+For each new upstream CVE:
+
+1. Analyse the root cause (memory corruption, logic error, etc.)
+2. Check whether oc-rsync has an equivalent code path
+3. Check whether Rust's guarantees actually cover it (logic flaws are not covered)
+4. Record the analysis in this file
+5. If oc-rsync is affected, issue a security advisory and a fix
 
 ## Fuzzing
 
@@ -260,56 +265,34 @@ See `fuzz/README.md` for detailed fuzzing instructions.
 
 ## Hardening Notes
 
-These cover operationally relevant trade-offs in the current code base and how to mitigate them.
-
 ### Buffer pool bounds checks
 
-`recycle_buffer(buf_id)` in the io_uring path (`crates/fast_io/src/io_uring/buffer_ring/mod.rs`) validates that `buf_id` falls within the registered buffer pool and returns `BufferRingError::BufferIdOutOfRange` when it does not. The check runs in **both debug and release builds**, and the recycle is refused before any state is mutated, so a corrupted or attacker-influenced `buf_id` cannot advance the ring tail or write into kernel-shared memory. Callers may log and ignore the error or surface it through the `From<BufferRingError> for io::Error` conversion.
+`recycle_buffer(buf_id)` in the io_uring path (`crates/fast_io/src/io_uring/buffer_ring/mod.rs`) validates that `buf_id` falls within the registered buffer pool and returns `BufferRingError::BufferIdOutOfRange` when it does not. The check runs in **both debug and release builds**, and the recycle is refused before any state is mutated, so a corrupted or attacker-influenced `buf_id` cannot advance the ring tail or write into kernel-shared memory.
 
 ### io_uring buffer-group ID namespace
 
-io_uring buffer-group IDs (`bgid`) live in a 16-bit namespace. The provided-buffer ring helpers in `fast_io` cap allocation at this bound, and exhaustion returns `BgidAllocError::Exhausted` rather than wrapping - it is never silent. Released ids go back to a free list rather than accumulating. No production caller allocates one today: `BufferRing` and `BgidAllocator` appear only inside `fast_io` and its tests, so an accepted connection consumes no bgid and the namespace is untouched in the steady state (`docs/audits/bgid-lifecycle.md`, section 5). Exhaustion is therefore not a live operational condition, and the audit's open follow-up - peak-occupancy telemetry, BGE-3 - becomes relevant when per-session rings are wired in, not before.
+io_uring buffer-group IDs (`bgid`) live in a 16-bit namespace. Allocation is capped at this bound, and exhaustion returns `BgidAllocError::Exhausted` rather than wrapping. Released ids go back to a free list. No production caller allocates one today: `BufferRing` and `BgidAllocator` appear only inside `fast_io` and its tests, so exhaustion is not a live operational condition (`docs/audits/bgid-lifecycle.md`, section 5). Peak-occupancy telemetry (BGE-3) becomes relevant when per-session rings are wired in.
 
 ### SSH double compression
 
-If the SSH transport itself compresses the stream (`Compression yes` in `ssh_config` or a cipher with built-in compression), running `oc-rsync -z` will compress payloads twice. The amplification surface is small in practice but adds CPU and can mask compressor-specific bugs. Disable one layer; the canonical choice is to leave compression to rsync (`-z` / `--compress`) and disable it in SSH.
+If the SSH transport compresses the stream (`Compression yes` in `ssh_config`), `oc-rsync -z` compresses payloads twice. This costs CPU and can mask compressor-specific bugs. Leave compression to rsync (`-z`) and disable it in SSH.
 
-### Daemon encryption
+## Operator Guidance
 
-The daemon protocol is plaintext, matching upstream rsync: the daemon provides authentication but not encryption. To expose a daemon over an untrusted network, deploy it behind one of:
+### Daemon
 
-- **SSH tunnel** (`ssh -L` to a localhost-bound daemon), or use the ssh transport directly
-- **stunnel** in front of `rsync://`-style daemon traffic
-- **A reverse proxy** that performs TLS termination (e.g., HAProxy in TCP mode, or nginx)
+- **Transport.** The daemon protocol is plaintext, like upstream: it authenticates but does not encrypt. On an untrusted network, bind the daemon to `127.0.0.1` or a private interface and reach it through an SSH tunnel (`ssh -L`) or the SSH transport, or through a TLS terminator such as `stunnel` or HAProxy / nginx in TCP mode. oc-rsync has no built-in TLS client (the former `--ssl` / `client-tls` path was removed to match upstream), so clients use an external wrapper such as `rsync-ssl` or `stunnel`.
+- **Confinement.** `use chroot = yes`, and expose only the paths you need. Prefer `read only = yes` where possible.
+- **Access control.** `hosts allow` / `hosts deny` run before authentication; `auth users` with a `secrets file` of mode `0600`, owned by the daemon user only. With `proxy protocol = true`, list the trusted proxies in `proxy protocol hosts`; left unset, every PROXY header is refused.
+- **Identity mapping.** `numeric ids = yes` keeps uid/gid mapping independent of the daemon's `passwd`/`group`.
+- **Options.** `refuse options = delete *` for read-only mirrors.
 
-Bind the daemon to `127.0.0.1` (or a private VPC interface) and route external clients exclusively through the TLS terminator. oc-rsync has no built-in TLS client (the former `--ssl` / `client-tls` path was removed to match upstream), so clients reach an SSL-proxied daemon through an external wrapper such as `rsync-ssl` or `stunnel`, the same model as upstream.
+### Client
 
-### Daemon module hardening
-
-In addition to `use chroot = yes`, prefer:
-
-- `numeric ids = yes` so uid/gid mapping does not depend on the daemon's `passwd`/`group`
-- `refuse options = delete *` for read-only mirrors
-- `hosts allow` / `hosts deny` ACLs at the daemon layer (these run before authentication)
-- `secrets file` permissions of `0600`, owned by the daemon user only
-
-## Security Best Practices for Users
-
-### Daemon Mode
-
-When running `oc-rsync --daemon`:
-
-1. **Use chroot**: Configure `use chroot = yes` in rsyncd.conf
-2. **Restrict modules**: Only expose necessary paths
-3. **Authentication**: Use `auth users` and `secrets file` for access control
-4. **Network security**: Run behind a firewall, use SSH tunneling for remote access
-5. **Read-only modules**: Use `read only = yes` where possible
-
-### Client Mode
-
-1. **Verify server identity**: Use SSH for transport when possible
-2. **Careful with --delete**: Ensure you're syncing to the intended destination
-3. **Review exclude patterns**: Avoid accidentally transferring sensitive files
+1. **Verify the server's identity**: use SSH for transport when possible
+2. **Check `--delete` targets**: make sure you are syncing to the intended destination
+3. **Review exclude patterns**: avoid transferring sensitive files by accident
+4. **Confine untrusted transfers**: `--confine-root=DIR` confines every operator- and peer-supplied path beneath `DIR`, and `--drop-D` makes a receiver refuse device and special files
 
 ## Acknowledgments
 

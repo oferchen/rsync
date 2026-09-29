@@ -13,8 +13,9 @@ oc-rsync is wire-compatible with upstream rsync 3.5.0 and the 3.4.x series
 This cycle moves the reference implementation to upstream rsync 3.5.0. It adopts
 the 3.5.0 option and directive surface, works through the path-confinement and
 daemon CVE families, and gates every pull request on the 3.5.0 test suite. The
-wire protocol is unchanged at 32. One entry per change; see the linked PRs for
-detail.
+wire protocol is unchanged at 32. It also starts the move to rsync 3.5.1: the
+3.5.1 test suite runs on master and the first 3.5.1 fixes are mirrored. One
+entry per change; see the linked PRs for detail.
 
 ### Security
 
@@ -32,6 +33,8 @@ detail.
 - Bound a peer-named merge file by `--confine-root` (#7598)
 - Confine receiver FIFO and device-node creation to the destination dirfd (#7872)
 - Confine a peer-supplied alternate-basis name to its basedir (#7651)
+- Refuse `--files-from` entries on a local sender that resolve outside `--confine-root`, walking each one from the files-from base (#8012)
+- Apply the destination root's attributes through its own descriptor, and enter a daemon destination beneath the module root as upstream's `secure_relative_dirfd()` does (#8010)
 - Refuse a staging directory the module filter excludes, confine the filter-file open, and honour the admin symlink opt-out at the sender root (#7495, #7512, #7517)
 - Stop confining a client's own destination on a daemon pull (#7503)
 - Anchor ownership and timestamp writes against parent symlink swaps (#6808)
@@ -72,7 +75,7 @@ detail.
 - Reject a `sum_head` strong-sum length wider than the negotiated digest (#7084)
 - Abort on malformed multiplex control payloads (#7096)
 - Reject stray negative or overflowing NDX values (#7365, #7630)
-- Reject `--max-alloc=0` locally and on the wire (#7285, #7693)
+- Parse `--max-alloc` on the wire as well as locally; `0` resolves to the bounded maximum, as in rsync 3.5.1 (#7285, #7693, #8011)
 - Mask peer `io_error` to the defined bits (#7291)
 - Reject a non-directory encoding of the `.` transfer root (#7625)
 - Sanitize received symlink targets when munging is off (#7333)
@@ -80,6 +83,7 @@ detail.
 - Stop a sender widening the receiver's `--delete` scope through an implied parent (#7446)
 - Bound merge-file nesting by depth (#7432)
 - Refuse an `ITEM_TRANSFER` request for a non-regular file (#7744)
+- Refuse a peer's unrequested INC_RECURSE under `--delete-before`, `--delete-after`, `--delay-updates` or `-m`, as upstream does (#7975)
 - Refuse over-long proxy CONNECT requests and headers (#7650)
 - Escape control characters in log-file output and before terminal writes (#7296, #7357, #7933)
 - Redact peer rule text in filter diagnostics (#7384, #7662)
@@ -87,7 +91,7 @@ detail.
 
 ### Added
 
-- Protocol 33 from rsync 3.5.1: `MSG_BLOCK_STATS` and the `--stats` line `Number of 4 KiB logical blocks touched`; newer peers clamp to 33, 3.5.0 and older negotiate down
+- Protocol 33 from rsync 3.5.1: `MSG_BLOCK_STATS` and the `--stats` line `Number of 4 KiB logical blocks touched`; newer peers clamp to 33, 3.5.0 and older negotiate down (#8003)
 - `--confine-root`, `--insecure-links` / `--no-insecure-links` and `--drop-D` / `--no-drop-D` from rsync 3.5.0 (#7396, #7299)
 - Daemon directives `auth digest` (#7350), `insecure links` (#7484) and `proxy protocol hosts` (see Security)
 - QUIC transport behind the `quic` feature (off by default): `quic://` and `--quic`, daemon listener, TOFU and private-CA trust, mutual TLS, `--quic-cipher`, BBR/Cubic congestion control and `--bwlimit` pacing (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #7910)
@@ -111,8 +115,8 @@ detail.
 
 ### Changed
 
-- The upstream reference is rsync 3.5.0. It keeps protocol 32, so wire compatibility is unchanged (#7305, #7321, #7331, #7607)
-- A peer that advertises a newer protocol, such as rsync 3.5.1 with 33, is negotiated down to 32 instead of refused (#7916)
+- The upstream reference is rsync 3.5.0 (#7305, #7321, #7331, #7607)
+- A peer that advertises a newer protocol than oc-rsync's is negotiated down instead of refused (#7916)
 - The required upstream-testsuite gate runs the 3.5.0 Python corpus on Linux (pipe and TCP, root and non-root); macOS legs run on every PR (#7387, #7339, #7405, #7408, #7392, #7391)
 - rsync 3.5.0 joins the interop matrix as a gating peer (#7290, #7337)
 - Release benchmarks compare against both 3.4.4 and 3.5.0 and report peak RSS for every mode (#7595)
@@ -130,6 +134,7 @@ detail.
 - `--quiet` suppresses info output regardless of `-v` (#7277)
 - Diagnostics are routed by log code rather than always to stdout (#7242, #7042)
 - The INC_RECURSE receiver is selected at runtime from the negotiated flags, and the sender sizes its lookahead window (#7965, #7968, #7539)
+- Follow rsync 3.5.1 option and startup rules: `--contimeout` needs a daemon connection and bounds a daemon-over-`--rsh` handshake, which now also accepts `rsync://` operands; the daemon enters inetd mode only for an `AF_INET`/`AF_INET6` stream on stdin (#8011)
 
 ### Performance
 
@@ -164,8 +169,11 @@ detail.
 - Backup error naming, directory crtimes, macOS set-group-ID, the sender scan anchor, trailing `/.` handling, cleared `dir_flist` slots and upstream error wording (#7635, #7641, #7642, #7646, #7647, #7652, #7654, #7655, #7656, #7658)
 
 **Interop**
-- A basis block matches every repeat of its content, as upstream does: repeated data (zero runs in sparse or VM images) went out as literals where upstream sends copy tokens, changing the wire and the `--stats` Literal/Matched split
+- A basis block matches every repeat of its content, as upstream does: repeated data (zero runs in sparse or VM images) went out as literals where upstream sends copy tokens, changing the wire and the `--stats` Literal/Matched split (#8009)
 - Upstream clients pulling with `-H` under INC_RECURSE no longer abort on hard links that span directories (#7982)
+- The entry after an abbreviated hard-link follower is encoded against the right previous entry (#7997)
+- A block match with no basis file exits 2, and a daemon stream closed mid-transfer exits 12, with upstream's messages (#8016)
+- `--stop-at` and `--stop-after` are no longer forwarded to the server (#8001)
 - `--stats` file list times reach upstream clients (#7986)
 - Honour `-B` / `--block-size` on every wire transport (#7301)
 - Send the server exit code via `MSG_ERROR_EXIT` and honour the peer's (#7609, #6935)
@@ -196,7 +204,7 @@ detail.
 **Daemon**
 - Resolve module identity before `chroot`, so chrooted modules no longer fail with `invalid uid nobody` (#7585)
 - Honour a client's `--timeout`, `--partial-dir`, `--backup-dir`, `--max-size` and `--min-size` (#7584, #7498, #7501, #7577, #7449)
-- `rsyncd.conf` parser parity: section names, repeated directives, `%ENV%` expansion, and module defaults set after a module (#6924, #6930, #6933, #7088, #7519)
+- `rsyncd.conf` parser parity: section names, repeated directives, `%ENV%` expansion, and upstream's copy-at-creation model for module defaults, `&merge` and `&include` (#6924, #6930, #6933, #7088, #7519, #8000)
 - Exit 4 on a refused option (#7563, #7587)
 - Linger before closing a refused connection (#7457)
 - Match upstream log lines for connections, auth, requests and per-file transfers (#7060, #7697, #7936, #7395)
@@ -238,10 +246,15 @@ detail.
 - `--compare-dest` clears a destination its basis makes redundant (#7464)
 - Report a refused `--remove-source-files` unlink (#7576, #7581)
 - Copy a backup across filesystems when rename fails (#6831)
+- Copy across filesystems when a `--temp-dir` commit rename hits `EXDEV`, and admit `--temp-dir` to a `--server` receiver's Landlock allowlist (#7995)
+- Reuse a matching FIFO, socket or device node in place and itemize a metadata-only change as `.S` / `.D` (#7966)
+- Report failed special, symlink and hard-link creation, and generator-side attribute failures, with upstream's text and exit 23 (#7991, #7999)
 - Gate the delete pass on a complete file list and on sender I/O errors (#7828, #7082)
 - `--dry-run` no longer creates destination directories (#6947)
 - Drive `--read-batch` through the real receiver, honouring `--delete`, `-b` and itemize; refuse a non-regular batch path (#7838, #7897, #7515)
 - Local `--write-batch` encodes the flist the reader decodes (#7355)
+- `--write-batch` records itemize flags for created and metadata-changed non-regular entries, so an upstream `--read-batch` replays them (#7957, #7970)
+- Quote the injected `--filter` value in the batch replay script like upstream `write_arg()` (#7972)
 - Resolve a relative `--temp-dir` against the destination (#7397)
 - Keep an absolute `--partial-dir` through the delayed sweep, clear a non-directory at its name, reuse its leaf as a basis, and stage a resume in place (#7499, #7500, #7556, #7557, #7599, #7868)
 - Recover a read-only in-place destination (#7485)
@@ -271,6 +284,7 @@ detail.
 - Match upstream `--out-format` codes and `--info` / `--debug` parsing (#6914, #6915, #6916, #7412, #7637)
 - Latch the first error's exit code (#7768, #7871)
 - Print the non-incremental `building file list ... done` banner (#7580)
+- A local copy under `--progress` prints the file-list banner, `created directory` and directory names in upstream order (#7992)
 - Honour `--port` on daemon transfers and take the `rsync://` host verbatim (#7456, #7431)
 - Clear errors when `ssh://` or `quic://` is used without its feature, or `ssh://` with `--rsh` (#7175, #7181, #7166)
 - Out-format width and `%%`, attribute-only change reporting, and the non-regular skip notice match upstream (#7344, #7353, #7400, #7401, #7407)
@@ -299,11 +313,13 @@ detail.
 ### Internal
 
 - CI: macOS testsuite legs (#7638), old-rsync oracles (#7636, #7855), a skip oracle on a full-run leg (#7837), `quic` build coverage (#7902), and one publisher per required check (#7438)
-- Tests pinning confinement, INC_RECURSE ordering, daemon session handling and SIMD over-reads
-- Upstream citations retargeted at 3.5.0, and a stricter citation gate (#7286, #7308, #7315, #7318)
+- CI: the upstream 3.5.1 test suite on Linux and macOS, root and non-root, on push to master and nightly (#7996); pinned and cached upstream tarballs (#7993); distinct daemon ports for parallel interop workers (#8006); Windows long-path and case-insensitive legs on pull requests (#7967, #7969)
+- Tests pinning confinement, INC_RECURSE ordering, daemon session handling, SIMD over-reads, PULL wire transcripts and batch hard-link replay (#7953, #7956, #7971, #7976, #7985, #7989, #7990)
+- Upstream citations retargeted at 3.5.0 and then 3.5.1, and a stricter citation gate (#7286, #7308, #7315, #7318, #7994)
 - `#![deny(unsafe_code)]` on the crates that lacked it (#7781), plus blocking gates for zero-caller public functions, placeholders and rustdoc links (#7767, #7770, #7776)
-- Refactors with no behaviour change, including one owner for the SIMD batch cap, the matcher's dead search paths, and the daemon session-worker seam (#7715, #7716, #7762, #7787, #7790, #7794, #7798)
+- Refactors with no behaviour change, including one owner for the SIMD batch cap, the matcher's dead search paths, the daemon session-worker seam and the receiver's flist index cursor (#7715, #7716, #7762, #7787, #7790, #7794, #7798, #7954, #7955, #7962, #7978, #7980)
 - Throughput-governor telemetry and control loop, off by default (#7137, #7142, #7147, #7148, #7150)
+- Documentation: README, SECURITY and CHANGELOG refreshed against master, testsuite badges labelled per leg, and the INC_RECURSE receiver plan (#7960, #7963, #7998, #8018)
 - Dependency, action and toolchain updates (#7911, #7912)
 
 ## [0.6.4] - 2026-07-18
