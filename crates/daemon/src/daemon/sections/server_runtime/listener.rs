@@ -233,7 +233,7 @@ fn bind_with_backlog(
     backlog: i32,
     tcp_fastopen: TcpFastOpenMode,
     reuse_port: bool,
-    socket_options: &[SocketOption],
+    socket_options: &str,
     log_sink: Option<&SharedLogSink>,
 ) -> io::Result<TcpListener> {
     let domain = if addr.is_ipv4() {
@@ -293,7 +293,7 @@ fn bind_with_backlog(
     // after SO_REUSEADDR and before bind(2), so options that shape the SYN-ACK
     // (e.g. SO_SNDBUF/SO_RCVBUF window scaling) take effect from the first
     // connection the listener accepts.
-    apply_socket_options_impl(socket2::SockRef::from(&socket), socket_options, log_sink);
+    apply_daemon_socket_options(&socket, socket_options, log_sink);
 
     // For IPv6 sockets, set IPV6_V6ONLY to avoid conflicts with the separate
     // IPv4 listener in dual-stack mode.
@@ -450,7 +450,7 @@ fn bind_listeners_per_family(
     backlog: i32,
     tcp_fastopen: TcpFastOpenMode,
     acceptor_threads: u32,
-    socket_options: &[SocketOption],
+    socket_options: &str,
     log_sink: Option<&SharedLogSink>,
 ) -> Result<(Vec<TcpListener>, Vec<SocketAddr>), io::Error> {
     let replicas = acceptor_threads.max(1) as usize;

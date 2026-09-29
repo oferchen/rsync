@@ -621,22 +621,7 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         ));
     }
 
-    let client_socket_options: Arc<Vec<SocketOption>> =
-        if let Some(ref opts_str) = socket_options_str {
-            let parsed = parse_socket_options(opts_str, log_sink.as_ref()).map_err(|msg| {
-                DaemonError::new(
-                    FEATURE_UNAVAILABLE_EXIT_CODE,
-                    rsync_error!(
-                        FEATURE_UNAVAILABLE_EXIT_CODE,
-                        format!("invalid socket options: {msg}")
-                    )
-                    .with_role(Role::Daemon),
-                )
-            })?;
-            Arc::new(parsed)
-        } else {
-            Arc::new(Vec::new())
-        };
+    let client_socket_options: Arc<str> = Arc::from(socket_options_str.unwrap_or_default());
 
     // The async accept path carries the same trust gate as the sync one: a
     // PROXY header is read only from a listed trusted proxy, and an enabled
