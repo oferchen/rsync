@@ -136,7 +136,7 @@ Explicit states with validated transitions:
 
 ## How to Add a Feature
 
-1. **Read upstream C source first.** The C code at `target/interop/upstream-src/rsync-3.5.0/` - the release `workspace.metadata.oc_rsync.upstream_version` pins - is the only source of truth for protocol behavior. Do not rely on man pages or third-party descriptions.
+1. **Read upstream C source first.** The C code at `target/interop/upstream-src/rsync-3.5.1/` - the release `workspace.metadata.oc_rsync.upstream_version` pins - is the only source of truth for protocol behavior. Do not rely on man pages or third-party descriptions.
 
 2. **Create a feature branch:**
    ```sh
@@ -200,11 +200,11 @@ The upstream C source is the authoritative reference for all protocol behavior.
 ### Fetch it
 
 ```sh
-mkdir -p target/interop/upstream-src && cd target/interop/upstream-src
-curl -L https://download.samba.org/pub/rsync/src/rsync-3.5.0.tar.gz | tar xz
+tools/ci/fetch_upstream_rsync.sh 3.5.1 target/interop/upstream-src
 ```
 
-`3.5.0` is the version `workspace.metadata.oc_rsync.upstream_version` pins, and the
+The script checks the tarball against its pin in `tools/ci/upstream-tarballs.sha256`
+before extracting it. `3.5.1` is the version `workspace.metadata.oc_rsync.upstream_version` pins, and the
 one every `// upstream:` citation resolves against.
 
 Or run the interop harness, which downloads every tested version - the set lives in
