@@ -316,7 +316,10 @@ mod create_directory_incremental_tests {
     /// The failed-directory set is keyed on the entry's exact bytes; keyed on a
     /// lossy name every such directory aliases the same key, so an existing
     /// `b\xef` would be dropped as a child of the missing `a\xef`.
-    #[cfg(unix)]
+    ///
+    /// Linux only: macOS (APFS) refuses names that are not valid UTF-8, and the
+    /// fixture needs one on disk.
+    #[cfg(target_os = "linux")]
     #[test]
     fn existing_only_skip_does_not_alias_non_utf8_siblings() {
         use std::ffi::OsStr;
