@@ -66,18 +66,18 @@ Upstream's own 3.5.0 test suite runs against `oc-rsync` as `$RSYNC` on every pul
 
 The four Linux legs are required status checks. The four macOS legs run on every PR and gate on their own manifests, but are not required contexts. Each leg also runs nightly from its own workflow so its README badge tracks master: `upstream-testsuite{,-root,-tcp,-root-tcp}.yml` for Linux and `upstream-testsuite-3.5.0-macos-<privilege>-<transport>.yml` for macOS.
 
-Outcomes, counted from each leg's committed manifest (pass / fail / skip). The 3.5.1 column is for comparison; that suite is not a gate yet.
+Outcomes, counted from each leg's committed manifest. The 3.5.1 columns are for comparison; that suite is not a gate yet. Each 3.5.0 pipe leg runs 345 tests and each TCP leg 155; for 3.5.1 the counts are 360 and 161.
 
-| leg | 3.5.0 (345 pipe, 155 tcp tests) | 3.5.1 (360 pipe, 161 tcp tests) |
-|---|---:|---:|
-| Linux, non-root, pipe | 258 / 3 / 84 | 269 / 5 / 86 |
-| Linux, root, pipe | 287 / 3 / 55 | 296 / 7 / 57 |
-| Linux, non-root, tcp | 117 / 6 / 32 | 121 / 6 / 34 |
-| Linux, root, tcp | 135 / 6 / 14 | 139 / 6 / 16 |
-| macOS, non-root, pipe | 238 / 2 / 105 | 247 / 1 / 112 |
-| macOS, root, pipe | 266 / 2 / 77 | 273 / 3 / 84 |
-| macOS, non-root, tcp | 115 / 5 / 35 | 119 / 5 / 37 |
-| macOS, root, tcp | 131 / 5 / 19 | 135 / 5 / 21 |
+| leg | 3.5.0 pass | 3.5.0 fail | 3.5.0 skip | 3.5.1 pass | 3.5.1 fail | 3.5.1 skip |
+|---|---:|---:|---:|---:|---:|---:|
+| Linux, non-root, pipe | 258 | 3 | 84 | 269 | 5 | 86 |
+| Linux, root, pipe | 287 | 3 | 55 | 296 | 7 | 57 |
+| Linux, non-root, tcp | 117 | 6 | 32 | 121 | 6 | 34 |
+| Linux, root, tcp | 135 | 6 | 14 | 139 | 6 | 16 |
+| macOS, non-root, pipe | 238 | 2 | 105 | 247 | 1 | 112 |
+| macOS, root, pipe | 266 | 2 | 77 | 273 | 3 | 84 |
+| macOS, non-root, tcp | 115 | 5 | 35 | 119 | 5 | 37 |
+| macOS, root, tcp | 131 | 5 | 19 | 135 | 5 | 21 |
 
 Re-derive any cell, and list a release's failing tests (the outcome is the second field; a `fail` row carries its cause and owner in a trailing comment):
 
