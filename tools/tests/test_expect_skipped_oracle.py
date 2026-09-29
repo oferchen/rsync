@@ -1,14 +1,14 @@
-"""The 3.5.0 expected-skip oracle: guards, emitter, and the committed ledger.
+"""The expected-skip oracle: guards, emitter, and the committed ledger.
 
 WHAT IS BEING GUARDED
 
 runtests.py's expected-skip oracle is what stops a test from quietly becoming
 a permanent no-op: on a full run the set of skipped tests must be EXACTLY the
 expected set (testsuite/skiplist/README.md). But the oracle is gated on
-full_run (3.5.0 runtests.py:998), and both --expect-result (:850) and
---daemon-tests-only (:836) clear full_run - so a leg that passes
---expect-skipped alongside either flag gets no error and no oracle: the flag
-is accepted and silently never checked. Every expect-result leg in CI had
+full_run (runtests.py:998, byte-identical in 3.5.0 and 3.5.1), and both
+--expect-result (:850) and --daemon-tests-only (:836) clear full_run - so a
+leg that passes --expect-skipped alongside either flag gets no error and no
+oracle: the flag is accepted and silently never checked. Every expect-result leg in CI had
 exactly that shape, which is why the skip-oracle leg exists and why the
 harness refuses the dead combinations outright.
 
@@ -40,10 +40,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 HARNESS = REPO / "tools" / "ci" / "run_upstream_testsuite.sh"
-SKIPLIST = REPO / "tools" / "ci" / "upstream-3.5.0-skiplist.nonroot.txt"
-EXPECT = REPO / "tools" / "ci" / "upstream-3.5.0-expect.nonroot.txt"
+SKIPLIST = REPO / "tools" / "ci" / "upstream-3.5.1-skiplist.nonroot.txt"
+EXPECT = REPO / "tools" / "ci" / "upstream-3.5.1-expect.nonroot.txt"
 RUNTESTS = (
-    REPO / "target" / "interop" / "upstream-src" / "rsync-3.5.0" / "runtests.py"
+    REPO / "target" / "interop" / "upstream-src" / "rsync-3.5.1" / "runtests.py"
 )
 
 TEST_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$")
@@ -107,7 +107,7 @@ class AcceptedFailuresTests(unittest.TestCase):
     """reconcile_accepted_failures(): accepted divergences keep the oracle live.
 
     runtests.py exits with the failure count and, when that is non-zero,
-    never compares the skip set (3.5.0 runtests.py:1008-1009). A corpus with
+    never compares the skip set (runtests.py:1008-1009). A corpus with
     accepted divergences therefore needs the driver to judge the full run:
     FAIL set == the manifest's `fail` rows, skip set == the ledger.
     """
@@ -274,7 +274,7 @@ class CommittedLedgerTests(unittest.TestCase):
 class SkipOracleFiresTests(unittest.TestCase):
     """Upstream's runner enforces the skip set - proven against runtests.py.
 
-    A two-test suite (one pass, one skip) driven by the PINNED 3.5.0
+    A two-test suite (one pass, one skip) driven by the PINNED 3.5.1
     runtests.py: the right expected set passes, a wrong one fails, and the
     same wrong one under --expect-result passes - the inertness the harness
     guards against. Skipped, never faked, when the tarball is not extracted.

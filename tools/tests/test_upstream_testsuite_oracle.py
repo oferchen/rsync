@@ -165,7 +165,7 @@ class LegacyOracleDiscoveryTests(unittest.TestCase):
         # The population this gate exists for, read from the real tree rather
         # than from a fixture shaped like it. Skipped, never faked, when the
         # tarball is not extracted here.
-        tree = REPO / "target" / "interop" / "upstream-src" / "rsync-3.5.0"
+        tree = REPO / "target" / "interop" / "upstream-src" / "rsync-3.5.1"
         consumer = tree / "testsuite" / "daemon-symlink-escape-matrix_test.py"
         if not consumer.is_file():
             self.skipTest(f"{consumer} is not extracted here")
@@ -200,7 +200,7 @@ class LegacyOracleDiscoveryTests(unittest.TestCase):
         # every row must be version/test/yes-or-no/yes-or-no. Skipped rather
         # than faked when the tree is absent, so it never reports on a
         # population it did not read.
-        tree = REPO / "target" / "interop" / "upstream-src" / "rsync-3.5.0"
+        tree = REPO / "target" / "interop" / "upstream-src" / "rsync-3.5.1"
         if not (tree / "testsuite").is_dir():
             self.skipTest(f"{tree} is not extracted here")
         self.tree = tree

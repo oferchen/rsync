@@ -17,8 +17,9 @@ on:
       - '.github/workflows/**'
       - 'docker/**'
       - 'Cross.toml'
-  # Deliberately UNFILTERED. This workflow declares every required context, so
-  # it must run on every pull request or a required check never arrives and the
+  # Deliberately UNFILTERED. This workflow declares every required context
+  # except the upstream-testsuite ones (upstream-testsuite-3.5.1.yml), so it
+  # must run on every pull request or a required check never arrives and the
   # pull request is unmergeable.
   #
   # A `paths` filter here previously left docs-only pull requests uncovered, and
@@ -35,29 +36,21 @@ on:
   # The only property that makes a publisher unique is a unique job name, which
   # tools/ci/check_pr_check_name_uniqueness.py now asserts in the lint job.
   pull_request:
-  # Merge-queue validation. This is the workflow that publishes every required
-  # context, so without this trigger a merge group would never receive them and
-  # would sit unmergeable forever. `merge_group` accepts no `paths` filter, so
-  # the full matrix runs for every batch regardless of what it touches - which
-  # is the intent: the merge group is the last gate before master.
-  merge_group:
-    types: [checks_requested]
   workflow_dispatch:
   schedule:
-    # Run nightly to exercise beta/nightly toolchains (not run on PRs)
+    # Nightly run of the whole matrix on master. The beta and nightly toolchain
+    # cells of nextest, Windows, macOS and Linux musl run here AND on every pull
+    # request; they are non-blocking there (continue-on-error), so a churning
+    # compiler shows up without holding up a merge.
     - cron: '30 3 * * *'
 
 concurrency:
-  group: ci-${{ github.ref }}${{ (github.ref == 'refs/heads/master' || github.event_name == 'merge_group') && format('-{0}', github.sha) || '' }}
+  group: ci-${{ github.ref }}${{ github.ref == 'refs/heads/master' && format('-{0}', github.sha) || '' }}
   # Superseded pull request pushes still cancel; pushes to master do not, so
   # every merge commit keeps a completed run for bisection. The master
   # exemption lives in the GROUP KEY, not in cancel-in-progress: giving each
   # master commit its own group means there is never an older run in the group
   # to evict, which holds regardless of how the flag is evaluated.
-  #
-  # Merge groups take the same exemption for a sharper reason: a cancelled
-  # merge-group run reports as a FAILED required context, which evicts the whole
-  # batch from the queue. Batches must never cancel one another.
   cancel-in-progress: true
 
 permissions:
@@ -1130,238 +1123,6 @@ jobs:
       timeout_minutes: 30
 
   # ===========================================================================
-  # Upstream Testsuite - Drive upstream rsync's own testsuite corpus against
-  # oc-rsync (reusable workflow)
-  # ---------------------------------------------------------------------------
-  # Required check. Pinned to 3.5.0, the release this project targets. The
-  # driver dispatches on the extracted tree's SHAPE, not its version string:
-  # 3.5.0 ships runtests.py + 345 `*_test.py` and takes upstream's own runner,
-  # where 3.4.4 shipped 57 `*.test` shell scripts. That matters because the
-  # behavioural axis is what 3.5.0 changed (33 CVEs, a rewritten path resolver,
-  # new options and daemon directives) - the wire format did not move, so the
-  # interop cells above cannot see any of it.
-  #
-  # The harness exits non-zero on UNEXPECTED failures or UNEXPECTED passes;
-  # both surface regressions worth blocking on.
-  # ===========================================================================
-  upstream-testsuite:
-    needs: lint
-    uses: ./.github/workflows/_upstream-testsuite.yml
-    with:
-      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      # Its OWN variable, deliberately not the interop job's
-      # `UPSTREAM_RSYNC_VERSION`. The two now want different versions - interop
-      # sweeps a multi-version matrix from run_interop.sh, this gate pins the
-      # single release we conform to - so sharing one knob would let an
-      # operator override drag the conformance gate back to 3.4.4 as a side
-      # effect of retargeting interop.
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
-      # The accepted-divergence ledger, GENERATED from run 32260924822 and
-      # committed. --expect-result runs ONLY these tests and fails on any
-      # mismatch INCLUDING an unexpected PASS, so a test that starts passing
-      # reddens the gate until the baseline is regenerated - the divergence
-      # set can only shrink deliberately, never drift.
-      expect_result_nonroot: tools/ci/upstream-3.5.0-expect.nonroot.txt
-      expect_result_root: tools/ci/upstream-3.5.0-expect.root.txt
-
-  # ===========================================================================
-  # Upstream Testsuite over a real loopback TCP daemon
-  # ---------------------------------------------------------------------------
-  # The same 3.5.0 corpus as the job above, run with `transport: tcp`. The two
-  # transports are NOT redundant: the job above uses upstream's secure default,
-  # a stdio socketpair with no listening socket, so it never exercises accept(),
-  # the `hosts allow`/`hosts deny` decision, or the peer-address resolution that
-  # only a real bound socket can reach. Those are exactly the surfaces the 3.5.0
-  # daemon CVEs live on, so a pipe-only gate cannot see a regression in them.
-  #
-  # `tcp` also passes --daemon-tests-only, which is the pairing upstream ships
-  # the option for - the dropped tests never call start_test_daemon(), so they
-  # cannot observe --use-tcp and would only repeat the pipe leg. That is why
-  # this leg runs 155 tests, not 345, and why it carries its OWN manifests
-  # rather than reusing the pipe ones.
-  #
-  # Reported as `upstream-testsuite-tcp / upstream testsuite` and
-  # `... / upstream testsuite (root)` - the job id below supplies the prefix
-  # that distinguishes them from the pipe leg, which is why the reusable
-  # workflow's own job names are literals rather than expressions.
-  #
-  # Not yet a required status check: registering a context in branch protection
-  # is a repo-admin action. Until that happens these run and report on every PR
-  # but do not block, so a regression is visible rather than silently unmeasured
-  # - which is the state this replaces, where the TCP legs ran only on
-  # workflow_dispatch and cron and no pull request ever validated them.
-  # ===========================================================================
-  upstream-testsuite-tcp:
-    needs: lint
-    uses: ./.github/workflows/_upstream-testsuite.yml
-    with:
-      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
-      transport: 'tcp'
-      # Separate from the pipe manifests by measurement, not by convention: the
-      # tcp legs select a different (smaller) test set, so a shared file would
-      # fail the driver's own coverage guard.
-      expect_result_nonroot: tools/ci/upstream-3.5.0-expect.nonroot.tcp.txt
-      expect_result_root: tools/ci/upstream-3.5.0-expect.root.tcp.txt
-
-  # ===========================================================================
-  # Upstream Testsuite skip oracle (3.5.0, nonroot/pipe, full run)
-  # ---------------------------------------------------------------------------
-  # The same corpus as `upstream-testsuite`, run WITHOUT --expect-result so
-  # upstream's own anti-vacuity oracle actually fires. The two flags are
-  # mutually exclusive by construction: --expect-result clears full_run
-  # (3.5.0 runtests.py:850) and the skip oracle is gated on full_run (:998),
-  # so every expect-result leg above runs with the oracle permanently dark -
-  # a test could start skipping only where its manifest row already says
-  # `skip`, but nothing proves the 85 `skip` rows themselves are the whole
-  # story on a bare full run. Here runtests.py compares the run's skip set
-  # against the committed ledger EXACTLY (testsuite/skiplist/README.md: "if a
-  # test starts skipping - a probe regresses, a helper goes missing - the run
-  # fails instead of reporting green"), and an un-skip fails it too, so the
-  # ledger can only shrink deliberately.
-  #
-  # One leg is enough for the oracle's purpose and it must be a pipe leg: the
-  # tcp legs run the --daemon-tests-only subset, which also clears full_run
-  # (:836) - the driver refuses EXPECT_SKIPPED on such a leg. The skip set is
-  # leg-dependent (require_root/require_tcp), so the ledger names its leg:
-  # ubuntu-latest, non-root, stdio-pipe, no --rsync-bin2 peer,
-  # LEGACY_ORACLES=on (the default) - the `upstream-testsuite` gate's exact
-  # configuration. The built old_versions/ archive is part of that
-  # configuration: it is what un-skips daemon-max-alloc-zero, so the ledger
-  # measured with it differs from one measured without it.
-  #
-  # A bare full run fails on any FAIL outcome, and runtests.py then skips the
-  # skip-set comparison altogether (3.5.0 runtests.py:1008-1009). The pipe
-  # gate's manifest records accepted divergences as `fail` rows (3.5.1
-  # behaviour the 3.5.0 corpus still asserts against), so the driver is handed
-  # that same manifest as EXPECT_FAILURES: the run passes only when its FAIL
-  # set is exactly those rows AND its skip set is exactly the ledger. Not yet
-  # a required status check - registering a context is a repo-admin action -
-  # but it fails loud on every PR either way.
-  #
-  # artifact_suffix disambiguates from `upstream-testsuite`, which uploads
-  # `upstream-testsuite-logs-pipe` in the same run.
-  # ===========================================================================
-  upstream-testsuite-skip-oracle:
-    needs: lint
-    uses: ./.github/workflows/_upstream-testsuite.yml
-    with:
-      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
-      variant: 'nonroot'
-      expect_skipped_nonroot: tools/ci/upstream-3.5.0-skiplist.nonroot.txt
-      expect_failures_nonroot: tools/ci/upstream-3.5.0-expect.nonroot.txt
-      artifact_suffix: '-skip-oracle'
-
-  # ===========================================================================
-  # Upstream testsuite - macOS (3.5.0, nonroot/pipe)
-  # ---------------------------------------------------------------------------
-  # The four Linux legs ({nonroot,root} x {pipe,tcp}) cannot observe a
-  # platform-conditional divergence. partial-protected-regular-retry-policy
-  # SKIPS there (it needs dyld interposing), and chmod-setid only meets BSD
-  # group inheritance here. Counted from the committed manifest, this leg's 2
-  # expected failures are both shared with the Linux legs; none is macOS-only.
-  #
-  # Uses its own reusable workflow rather than a `runs-on` input on
-  # `_upstream-testsuite.yml`; the reasoning is in that file's header. The
-  # platform-agnostic half - `tools/ci/run_upstream_testsuite.sh` - IS shared.
-  #
-  # Not yet a required status check: registering a context in branch protection
-  # is a repo-admin action. The manifest makes it non-vacuous from the first
-  # run regardless - it records those failures as EXPECTED, so the gate fires
-  # on drift, exactly as the Linux legs do with their own `fail` rows.
-  # ===========================================================================
-  upstream-testsuite-macos:
-    needs: lint
-    uses: ./.github/workflows/_upstream-testsuite-macos.yml
-    with:
-      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
-
-  # ===========================================================================
-  # Upstream testsuite - macOS over a real loopback TCP daemon (3.5.0)
-  # ---------------------------------------------------------------------------
-  # The macOS pipe leg above uses upstream's secure default, a stdio socketpair
-  # with no listening socket, so it never reaches accept(), the `hosts allow`
-  # decision, or peer-address resolution. Until this leg existed, NO macOS run
-  # covered any of that: the daemon surface was Linux-only.
-  #
-  # MEASURED before adding, on a real run of this exact configuration rather
-  # than predicted from the Linux manifests:
-  #
-  #   155 selected / 120 run - 113 pass, 7 fail, 35 skip
-  #   32 cells RUN here that the macOS pipe leg skips, 25 of them passing
-  #   0 regressions: nothing passing on macOS/pipe fails here
-  #   0 macOS-only failures: all 7 are shared with the Linux tcp legs
-  #     (the proto-* cluster, daemon-zstd-thread-exhaustion, and
-  #      malicious-server-partial-basis-symlink-overwrite - all already tracked)
-  #
-  # ⚠ The prediction that preceded this run said 52 cells, not 32: cells can
-  # skip on macOS for platform reasons the Linux manifests cannot show. That is
-  # why the committed manifest comes from the executed run and why a macOS ROOT
-  # leg must wait for its own - see the header of the reusable workflow.
-  #
-  # Not a required status check, matching the macOS pipe leg: registering a
-  # context in branch protection is a repo-admin action. The manifest makes it
-  # non-vacuous from the first run regardless - the 7 failures are recorded as
-  # EXPECTED, so the gate fires on drift.
-  #
-  # Reported as `upstream-testsuite-macos-tcp / upstream testsuite (macOS)`; the
-  # job id supplies the prefix that distinguishes it from the pipe leg, which is
-  # why the reusable workflow's own job name is a literal.
-  # ===========================================================================
-  upstream-testsuite-macos-tcp:
-    needs: lint
-    uses: ./.github/workflows/_upstream-testsuite-macos.yml
-    with:
-      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
-      transport: 'tcp'
-      # Its OWN manifests: --daemon-tests-only selects a different (smaller) set,
-      # so the pipe manifests would fail the driver's coverage guard outright.
-      expect_result_macos: tools/ci/upstream-3.5.0-expect.macos.nonroot.tcp.txt
-      expect_result_macos_root: tools/ci/upstream-3.5.0-expect.macos.root.tcp.txt
-
-  # ===========================================================================
-  # 3.5.0 testsuite, macOS, ROOT - both transports
-  # ---------------------------------------------------------------------------
-  # These complete the {nonroot,root} x {pipe,tcp} matrix on macOS, which Linux
-  # has carried since PR #7408. The privilege axis is what unlocks the
-  # symlink-race and confinement family - the cells whose Linux passes rest on
-  # Landlock rather than on the userspace guard (task 1137 measured that guard
-  # failing on BOTH platforms under a symlinked ancestor). macOS has no
-  # Landlock, so this is the only place the guard is exercised unaided.
-  #
-  # MEASURED, each from an executed run of the leg it describes - never
-  # predicted from the Linux legs, because that prediction was measured wrong
-  # once already (52 cells forecast for the macOS tcp leg, 32 actually run):
-  #
-  #   root/pipe  266 pass /  2 fail / 77 skip   (345 selected)
-  #   root/tcp   124 pass / 12 fail / 19 skip   (155 selected)
-  #
-  # The root/tcp failure set is IDENTICAL to the Linux root/tcp one, cell for
-  # cell, all twelve. So the macOS privilege axis adds no divergence of its own
-  # over Linux on this transport; it re-runs the same known-failing cells
-  # unaided by Landlock, which is the point of having it.
-  #
-  # root/pipe's two are `daemon-module-private-parent` and
-  # `partial-protected-regular-retry-policy` - both pre-existing and owned, and
-  # both recorded as `fail` rows rather than hidden, exactly as the Linux legs
-  # record theirs. The gate therefore fires on DRIFT from this state.
-  #
-  # Non-required, matching the macOS pipe leg. NO new caller job: the two
-  # callers above already invoke the reusable workflow, whose `variant` input
-  # defaults to `all`, so each of them now publishes BOTH legs -
-  # `upstream-testsuite-macos / upstream testsuite (macOS, root)` and
-  # `upstream-testsuite-macos-tcp / upstream testsuite (macOS, root)`.
-  #
-  # That is the shape `_upstream-testsuite.yml` already uses on Linux, and it
-  # is the reason not to add a caller per privilege leg: pinning one variant
-  # per caller makes the deselected job report a permanently SKIPPED check,
-  # four of them here, which is noise no reader can act on.
-  # ===========================================================================
-
-  # ===========================================================================
   # DG-3.e: concurrent_register_and_dispatch stress (#2694)
   # ---------------------------------------------------------------------------
   # Runs the 1000-thread x 10K-iter stress in
@@ -1376,6 +1137,10 @@ jobs:
   dg3-stress:
     name: DG-3 stress (${{ matrix.os }}, non-required)
     needs: lint
+    # Master pushes and the nightly schedule only, not pull requests: three
+    # extra jobs per PR bought no gate (the cell is non-required), and a
+    # regression still surfaces on the next merge.
+    if: github.event_name != 'pull_request'
     timeout-minutes: 30
     continue-on-error: true
     strategy:
