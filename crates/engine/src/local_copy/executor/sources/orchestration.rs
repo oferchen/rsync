@@ -805,9 +805,7 @@ pub(crate) fn copy_sources(
                 if let Some(error) = first_io_error {
                     return Err(error);
                 }
-                if context.iconv_conversion_error_occurred()
-                    || context.unsupported_operation_skipped()
-                {
+                if context.flist_io_error_occurred() || context.unsupported_operation_skipped() {
                     return Err(LocalCopyError::partial_transfer());
                 }
                 return Ok(());
@@ -824,11 +822,11 @@ pub(crate) fn copy_sources(
             if context.unsupported_operation_skipped() {
                 return Err(LocalCopyError::partial_transfer());
             }
-            // upstream: flist.c:1856 send_file1() sets io_error |= IOERR_GENERAL
-            // when a filename cannot be transcoded under --iconv; main.c:1374
-            // then exits RERR_PARTIAL (23). The per-entry diagnostic was already
+            // upstream: flist.c:1856 send_file1() and flist.c:1692-1695
+            // make_file() set io_error |= IOERR_GENERAL when an entry is dropped
+            // from the file list; main.c:1374 then exits RERR_PARTIAL (23). The per-entry diagnostic was already
             // printed at the skip site, so surface only the summary error here.
-            if context.iconv_conversion_error_occurred() {
+            if context.flist_io_error_occurred() {
                 return Err(LocalCopyError::partial_transfer());
             }
             // upstream: sender.c:successful_send() - a source refused by a
@@ -1097,7 +1095,7 @@ fn process_single_source(
             .clone()
             .unwrap_or_else(|| PathBuf::from(Path::new(leaf)));
         emit_cannot_convert_filename(display.as_os_str());
-        context.record_iconv_conversion_error();
+        context.record_flist_io_error();
         return Ok(());
     }
 

@@ -101,13 +101,15 @@ mod error_recovery {
         });
     }
 
-    /// A symlink loop (a -> b -> a) should be handled gracefully without
-    /// hanging or panicking. With --copy-links the engine dereferences
-    /// symlinks and should detect the cycle.
+    /// A symlink loop (a -> b -> a) under --copy-links must neither hang nor
+    /// abort the transfer: each looping entry is dropped with its own error and
+    /// the rest of the tree is still copied.
     ///
-    /// upstream: rsync warns about symlink loops and skips them, exits 23.
+    /// upstream: flist.c:1658-1697 make_file() - `readlink_stat()` fails with
+    /// ELOOP, the entry is omitted with `io_error |= IOERR_GENERAL`, the walk
+    /// continues, and main.c exits RERR_PARTIAL (23). There is no cycle
+    /// detector; the kernel's ELOOP is the bound.
     #[test]
-    #[ignore = "symlink loop error recovery not yet implemented"]
     fn error_recovery_symlink_loop() {
         run_with_timeout(LOCAL_TIMEOUT, || {
             let temp = tempdir().expect("tempdir");
@@ -129,37 +131,21 @@ mod error_recovery {
             let mut source_arg = source.into_os_string();
             source_arg.push("/");
 
-            // With --copy-links the engine tries to dereference and should detect the loop.
             let config = ClientConfig::builder()
                 .transfer_args([source_arg, dest.clone().into_os_string()])
                 .mkpath(true)
                 .copy_links(true)
                 .build();
 
-            let result = run_client(config);
+            let err = run_client(config).expect_err("a dropped entry fails the run");
+            assert_eq!(err.exit_code(), PARTIAL_TRANSFER_EXIT_CODE);
 
-            // The transfer may succeed (skipping loops) or return partial transfer.
-            // Either way it must not hang or panic.
-            match result {
-                Ok(_) => {
-                    // Acceptable - the engine skipped the loop entries.
-                }
-                Err(err) => {
-                    // Partial transfer (23) is the expected upstream behavior.
-                    assert_eq!(
-                        err.exit_code(),
-                        PARTIAL_TRANSFER_EXIT_CODE,
-                        "expected exit code 23, got {}",
-                        err.exit_code()
-                    );
-                }
-            }
-
-            // The normal file should always be copied regardless of the loop.
-            assert!(
-                dest.join("normal.txt").exists(),
-                "normal.txt should be copied despite symlink loop"
+            assert_eq!(
+                fs::read(dest.join("normal.txt")).expect("normal.txt copied"),
+                b"normal file content"
             );
+            assert!(fs::symlink_metadata(dest.join("link_a")).is_err());
+            assert!(fs::symlink_metadata(dest.join("link_b")).is_err());
         });
     }
 
