@@ -1257,12 +1257,10 @@ jobs:
   # Upstream testsuite - macOS (3.5.0, nonroot/pipe)
   # ---------------------------------------------------------------------------
   # The four Linux legs ({nonroot,root} x {pipe,tcp}) cannot observe a
-  # platform-conditional divergence. Counted from the committed manifest: this
-  # leg carries 2 expected failures, and NEITHER is shared with the Linux
-  # nonroot/pipe leg - chmod-setid passes on Linux, and
-  # partial-protected-regular-retry-policy SKIPS there, so it had never
-  # executed in CI at all. Both full-corpus Linux pipe legs now carry ZERO
-  # expected failures, so this leg is the only one that can observe one.
+  # platform-conditional divergence. partial-protected-regular-retry-policy
+  # SKIPS there (it needs dyld interposing), and chmod-setid only meets BSD
+  # group inheritance here. Counted from the committed manifest, this leg's 2
+  # expected failures are both shared with the Linux legs; none is macOS-only.
   #
   # Uses its own reusable workflow rather than a `runs-on` input on
   # `_upstream-testsuite.yml`; the reasoning is in that file's header. The

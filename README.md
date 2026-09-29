@@ -66,18 +66,18 @@ Upstream's own 3.5.0 test suite runs against `oc-rsync` as `$RSYNC` on every pul
 
 The four Linux legs are required status checks. The four macOS legs run on every PR and gate on their own manifests, but are not required contexts. Each leg also runs nightly from its own workflow so its README badge tracks master: `upstream-testsuite{,-root,-tcp,-root-tcp}.yml` for Linux and `upstream-testsuite-3.5.0-macos-<privilege>-<transport>.yml` for macOS.
 
-Outcomes, counted from each leg's committed manifest (pass / fail / skip). The 3.5.1 column is for comparison; that suite is not a gate yet.
+Outcomes, counted from each leg's committed manifest. The 3.5.1 columns are for comparison; that suite is not a gate yet. Each 3.5.0 pipe leg runs 345 tests and each TCP leg 155; for 3.5.1 the counts are 360 and 161.
 
-| leg | 3.5.0 (345 pipe, 155 tcp tests) | 3.5.1 (360 pipe, 161 tcp tests) |
-|---|---:|---:|
-| Linux, non-root, pipe | 258 / 3 / 84 | 266 / 8 / 86 |
-| Linux, root, pipe | 287 / 3 / 55 | 293 / 10 / 57 |
-| Linux, non-root, tcp | 117 / 6 / 32 | 121 / 6 / 34 |
-| Linux, root, tcp | 135 / 6 / 14 | 139 / 6 / 16 |
-| macOS, non-root, pipe | 236 / 4 / 105 | 242 / 6 / 112 |
-| macOS, root, pipe | 265 / 3 / 77 | 269 / 7 / 84 |
-| macOS, non-root, tcp | 115 / 5 / 35 | 119 / 5 / 37 |
-| macOS, root, tcp | 131 / 5 / 19 | 135 / 5 / 21 |
+| leg | 3.5.0 pass | 3.5.0 fail | 3.5.0 skip | 3.5.1 pass | 3.5.1 fail | 3.5.1 skip |
+|---|---:|---:|---:|---:|---:|---:|
+| Linux, non-root, pipe | 258 | 3 | 84 | 269 | 5 | 86 |
+| Linux, root, pipe | 287 | 3 | 55 | 296 | 7 | 57 |
+| Linux, non-root, tcp | 117 | 6 | 32 | 121 | 6 | 34 |
+| Linux, root, tcp | 135 | 6 | 14 | 139 | 6 | 16 |
+| macOS, non-root, pipe | 238 | 2 | 105 | 247 | 1 | 112 |
+| macOS, root, pipe | 266 | 2 | 77 | 273 | 3 | 84 |
+| macOS, non-root, tcp | 115 | 5 | 35 | 119 | 5 | 37 |
+| macOS, root, tcp | 131 | 5 | 19 | 135 | 5 | 21 |
 
 Re-derive any cell, and list a release's failing tests (the outcome is the second field; a `fail` row carries its cause and owner in a trailing comment):
 
@@ -87,7 +87,7 @@ awk '!/^#/ && NF {c[$2]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' 
 awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort -u
 ```
 
-**Nine distinct 3.5.0 tests** carry a `fail` row. Four are the `proto-*` cluster, which fails on every tcp leg. Two (`chmod-setid`, `partial-protected-regular-retry-policy`) fail only on macOS, where the real upstream 3.5.0 binary lands on the same outcome. The other three (`max-alloc-zero-rejected`, `daemon-max-alloc-zero`, `daemon-copylinks-parent-target-regression`) assert 3.5.0 behaviour that 3.5.1 changed and oc-rsync now follows (#8011); they retire when the gate moves to 3.5.1. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently.
+**Seven distinct 3.5.0 tests** carry a `fail` row. Four are the `proto-*` cluster, which fails on every tcp leg. The other three (`max-alloc-zero-rejected`, `daemon-max-alloc-zero`, `daemon-copylinks-parent-target-regression`) assert 3.5.0 behaviour that 3.5.1 changed and oc-rsync now follows (#8011); they retire when the gate moves to 3.5.1. No cell fails only on macOS. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently.
 
 The 3.5.1 test suite runs the same eight legs, one workflow per leg (`.github/workflows/upstream-testsuite-3.5.1-<platform>-<privilege>-<transport>.yml`, e.g. [`upstream-testsuite-3.5.1-linux-root-pipe.yml`](./.github/workflows/upstream-testsuite-3.5.1-linux-root-pipe.yml)), on push to master, nightly, and on demand. It does not run on pull requests and is not a required check. Every expected failure in its manifests (`tools/ci/upstream-3.5.1-expect.*.txt`) names the task that owns it. An unexpected pass fails the leg, so the PR that fixes a cell must also flip its row to `pass`.
 
