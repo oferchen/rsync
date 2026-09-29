@@ -70,12 +70,12 @@ Outcomes, counted from each leg's committed manifest (pass / fail / skip). The 3
 
 | leg | 3.5.0 (345 pipe, 155 tcp tests) | 3.5.1 (360 pipe, 161 tcp tests) |
 |---|---:|---:|
-| Linux, non-root, pipe | 258 / 3 / 84 | 266 / 8 / 86 |
-| Linux, root, pipe | 287 / 3 / 55 | 293 / 10 / 57 |
+| Linux, non-root, pipe | 258 / 3 / 84 | 268 / 6 / 86 |
+| Linux, root, pipe | 287 / 3 / 55 | 295 / 8 / 57 |
 | Linux, non-root, tcp | 117 / 6 / 32 | 121 / 6 / 34 |
 | Linux, root, tcp | 135 / 6 / 14 | 139 / 6 / 16 |
-| macOS, non-root, pipe | 236 / 4 / 105 | 242 / 6 / 112 |
-| macOS, root, pipe | 265 / 3 / 77 | 269 / 7 / 84 |
+| macOS, non-root, pipe | 238 / 2 / 105 | 247 / 1 / 112 |
+| macOS, root, pipe | 266 / 2 / 77 | 273 / 3 / 84 |
 | macOS, non-root, tcp | 115 / 5 / 35 | 119 / 5 / 37 |
 | macOS, root, tcp | 131 / 5 / 19 | 135 / 5 / 21 |
 
