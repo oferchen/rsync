@@ -312,6 +312,46 @@ mod create_directory_incremental_tests {
         assert_eq!(failed.count(), 0);
     }
 
+    /// A skipped non-UTF-8 directory must not skip its non-UTF-8 siblings.
+    /// The failed-directory set is keyed on the entry's exact bytes; keyed on a
+    /// lossy name every such directory aliases the same key, so an existing
+    /// `b\xef` would be dropped as a child of the missing `a\xef`.
+    #[cfg(unix)]
+    #[test]
+    fn existing_only_skip_does_not_alias_non_utf8_siblings() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
+        let present = OsStr::from_bytes(b"b\xef");
+        std::fs::create_dir(dest.join(present)).unwrap();
+
+        let opts = metadata::MetadataOptions::default();
+        let mut failed = FailedDirectories::new();
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.file_selection.existing_only = true;
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        let mut create = |name: &OsStr| {
+            let entry = FileEntry::new_directory(name.into(), 0o755);
+            ctx.create_directory_incremental(dest, &entry, &opts, &mut failed, None, None, None)
+                .expect("create_directory_incremental succeeds")
+        };
+
+        assert_eq!(
+            create(OsStr::from_bytes(b"a\xef")),
+            None,
+            "missing dir is skipped"
+        );
+        assert_eq!(
+            create(present).map(|(is_new, _)| is_new),
+            Some(false),
+            "an existing sibling with a different non-UTF-8 name is kept"
+        );
+    }
+
     /// An existing destination directory whose mtime differs from the sender
     /// entry must report `ITEM_REPORT_TIME`, so the transfer root `.` (and any
     /// existing directory) emits a `.d..t......` itemize row.
