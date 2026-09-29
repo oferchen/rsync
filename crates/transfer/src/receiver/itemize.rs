@@ -1262,6 +1262,13 @@ impl ReceiverContext {
         rows.append(&mut self.daemon_log_late_deletions);
         for row in &mut rows {
             row.dir.clone_from(&self.daemon_log_dir);
+            if let Some(name) = self
+                .daemon_log_renamed_from
+                .as_ref()
+                .filter(|_| !row.deleted)
+            {
+                row.name.clone_from(name);
+            }
         }
         rows
     }

@@ -1068,3 +1068,51 @@ fn pull_from_a_module_subdirectory_prefixes_percent_f() {
     let lines = transfer_lines(&text, "send|");
     assert_has_line(&lines, "send|p/sub/g|g");
 }
+
+/// upstream: receiver.c:722 writes the lone file of a single-file push to the
+/// destination's basename (`local_name`), but log_item() renders
+/// `f_name(file)`, so the log keeps the file-list name below the parent
+/// directory (measured against rsync 3.5.1: `recv|a/t0|t0`).
+#[test]
+fn single_file_push_to_a_new_name_logs_the_file_list_name() {
+    let Some(port) = free_port() else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path();
+    let module_dir = root.join("mod");
+    fs::create_dir_all(module_dir.join("a")).expect("mkdir");
+    let src = root.join("t0");
+    fs::write(&src, b"t").expect("src file");
+    let log = root.join("daemon.log");
+    let conf = format!(
+        "port = {port}\n\
+         use chroot = no\n\
+         log file = {log}\n\
+         reverse lookup = no\n\
+         \n\
+         [m]\n\
+         \tpath = {module}\n\
+         \tread only = no\n\
+         \ttransfer logging = yes\n\
+         \tlog format = %o|%f|%n\n",
+        log = log.display(),
+        module = module_dir.display(),
+    );
+    fs::write(root.join("rsyncd.conf"), conf).expect("config");
+    let oc = oc_binary();
+    let daemon = spawn_daemon_with(&oc, &root.join("rsyncd.conf"), port, &[]);
+    let status = Command::new(&oc)
+        .arg("-t")
+        .arg(&src)
+        .arg(format!("rsync://127.0.0.1:{port}/m/a/newname"))
+        .status()
+        .expect("run client");
+    wait_for_lines(&log, "recv|", 1);
+    drop(daemon);
+    assert!(status.success(), "single-file push failed");
+    assert!(module_dir.join("a/newname").is_file(), "file not renamed");
+    let text = fs::read_to_string(&log).expect("read log");
+    assert_has_line(&transfer_lines(&text, "recv|"), "recv|a/t0|t0");
+}
