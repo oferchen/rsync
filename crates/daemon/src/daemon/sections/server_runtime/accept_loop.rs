@@ -296,6 +296,8 @@ fn serve_connections(
     if detach {
         become_daemon()?;
     }
+    #[cfg(unix)]
+    mark_daemon_parent();
 
     // Suppress unused-variable warning on platforms where fork is unavailable.
     #[cfg(not(unix))]

@@ -578,6 +578,36 @@ mod privilege_tests {
         );
     }
 
+    /// WHY: the serving parent's identity is every later session's identity, so
+    /// a session that reaches the chroot in the parent - a transport served
+    /// in-process instead of in a forked child - must be refused rather than
+    /// confine the whole daemon. The module asks for a chroot that would fail
+    /// anyway: without the guard the reply is `@ERROR: chroot failed`, so only
+    /// a guard that runs before the chroot produces the isolation refusal.
+    #[cfg(unix)]
+    #[test]
+    fn privilege_setup_refuses_to_confine_the_daemon_parent() {
+        let module = ModuleDefinition {
+            name: "parent".to_owned(),
+            path: PathBuf::from("/nonexistent_oc_rsync_parent_xyz_31337"),
+            use_chroot: true,
+            use_chroot_explicit: true,
+            ..Default::default()
+        };
+
+        mark_daemon_parent();
+        let (served, reply) = run_privilege_setup(module);
+
+        assert!(
+            !served,
+            "the daemon parent must not serve a confined module"
+        );
+        assert_eq!(
+            reply, "@ERROR: session is not isolated from the daemon\n",
+            "the refusal must come before the chroot is attempted, got: {reply:?}"
+        );
+    }
+
     /// WHY: upstream opens `module_dirfd` on the served root at
     /// clientserver.c:1065, AFTER `chroot()` at :1050 - the root it pins is the
     /// post-chroot one. oc publishes the same root through
