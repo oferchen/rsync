@@ -1954,7 +1954,7 @@ fn poll_ready_times_out_on_idle_listener() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
     assert!(
-        poll_ready(&[(listener, local)], 10)
+        poll_ready(&[(listener, local)], None, 10)
             .expect("poll(2)")
             .is_empty(),
         "an idle listener must time out with no listener reported ready"
@@ -1978,7 +1978,7 @@ fn poll_ready_wakes_on_connection_while_parked() {
     });
 
     let start = std::time::Instant::now();
-    let ready = poll_ready(&[(listener, local)], 5000).expect("poll(2)");
+    let ready = poll_ready(&[(listener, local)], None, 5000).expect("poll(2)");
     let elapsed = start.elapsed();
 
     assert_eq!(
@@ -2115,6 +2115,8 @@ fn poll_until_connection(engine: &mut PollAcceptEngine) -> SocketAddr {
                 return stream.local_addr().expect("accepted local addr");
             }
             AcceptOutcome::Idle => continue,
+            #[cfg(all(unix, feature = "quic"))]
+            AcceptOutcome::Relayed(..) => unreachable!("no QUIC front was configured"),
         }
     }
     panic!("engine never delivered the pending connection");
@@ -2169,6 +2171,8 @@ fn poll_accept_engine_poll_returns_connection_with_blocking_reset() {
                 break;
             }
             AcceptOutcome::Idle => continue,
+            #[cfg(all(unix, feature = "quic"))]
+            AcceptOutcome::Relayed(..) => unreachable!("no QUIC front was configured"),
         }
     }
 
@@ -2298,6 +2302,8 @@ fn kqueue_engine_poll_returns_connection_with_blocking_reset() {
                 break;
             }
             AcceptOutcome::Idle => continue,
+            #[cfg(all(unix, feature = "quic"))]
+            AcceptOutcome::Relayed(..) => unreachable!("no QUIC front was configured"),
         }
     }
 
@@ -2349,6 +2355,8 @@ fn kqueue_engine_level_triggered_backlog_is_not_stranded() {
                 }
             }
             AcceptOutcome::Idle => continue,
+            #[cfg(all(unix, feature = "quic"))]
+            AcceptOutcome::Relayed(..) => unreachable!("no QUIC front was configured"),
         }
     }
     assert_eq!(
@@ -2402,6 +2410,8 @@ fn kqueue_engine_needs_one_poll_per_queued_connection() {
                 }
             }
             AcceptOutcome::Idle => continue,
+            #[cfg(all(unix, feature = "quic"))]
+            AcceptOutcome::Relayed(..) => unreachable!("no QUIC front was configured"),
         }
     }
 
@@ -2630,14 +2640,16 @@ fn read_first_line(mut reader: impl std::io::Read) -> Vec<u8> {
     line
 }
 
-/// A QUIC session reaches the `@RSYNCD:` greeting byte-for-byte identically to
-/// the TCP session, proving the accept->`serve_session` handoff (QUIC-6d) routes
-/// an accepted `QuicStream` through the SAME transport-agnostic session core the
-/// TCP path uses - not a parallel runner.
+/// A relayed QUIC session reaches the `@RSYNCD:` greeting byte-for-byte
+/// identically to the TCP session, proving the QUIC front's relay hands the
+/// session core a plain byte stream it serves exactly like TCP.
 ///
 /// Both arms drive the private `serve_session` core over the SAME
-/// [`ConnectionContext`]; the QUIC arm goes through the production
-/// [`serve_quic_acceptor`] handoff. Non-vacuity: the TCP arm asserts the bytes
+/// [`ConnectionContext`]; the QUIC arm goes through the production hand-off -
+/// `hand_off_quic_stream` sends the relay socket over an fd channel and the
+/// daemon side decodes the record and serves the received socket. The fork of
+/// the front process itself is left out so the test stays in one process.
+/// Non-vacuity: the TCP arm asserts the bytes
 /// are the real `@RSYNCD:` banner (a broken wiring yields EOF, an empty line, so
 /// the parity `assert_eq!` alone could pass vacuously on two empty reads - the
 /// banner and non-empty checks close that). The `recv_timeout` guard turns a
@@ -2682,18 +2694,42 @@ fn quic_session_reaches_rsyncd_greeting_parity_with_tcp() {
         String::from_utf8_lossy(&tcp_greeting),
     );
 
-    // QUIC arm: the SAME serve_session core, reached through the production
-    // serve_quic_acceptor handoff over a loopback QUIC connection.
+    // QUIC arm: the SAME serve_session core, reached through the relay the
+    // QUIC front process hands over.
     let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("udp bind");
-    // Server-speaks-first, exactly as the daemon builds it in
-    // `materialize_and_serve_quic`: the acceptor opens the stream and writes the
-    // greeting before the client sends anything.
+    // Server-speaks-first, exactly as the front process builds it: the acceptor
+    // opens the stream and the daemon writes the greeting before the client
+    // sends anything.
     let acceptor =
         QuicAcceptor::from_socket_server_first(socket, &server_identity).expect("quic acceptor");
     let quic_addr = acceptor.local_addr().expect("quic addr");
     let server_cert = acceptor.certificate().clone().into_owned();
+    let (daemon_end, front_end) = platform::fd_pass::fd_channel_pair().expect("fd channel");
+    let front = thread::spawn(move || {
+        let stream = acceptor.accept().expect("quic accept");
+        let record = platform::fd_pass::RelayRecord {
+            peer: stream.peer_addr().expect("quic peer"),
+            local: acceptor.local_addr().expect("quic local"),
+            client_identity: None,
+        };
+        hand_off_quic_stream(stream, &record, &front_end).expect("hand off");
+        // Keep the acceptor, and so the endpoint driver, alive until the
+        // session is done with the connection.
+        acceptor
+    });
     let quic_ctx = quic_parity_context();
-    let quic_server = thread::spawn(move || serve_quic_acceptor(acceptor, quic_ctx));
+    let quic_server = thread::spawn(move || {
+        let mut record = [0u8; platform::fd_pass::MAX_RECORD];
+        let (len, fd) = daemon_end
+            .recv(&mut record)
+            .expect("relay recv")
+            .expect("relay record");
+        let peer = platform::fd_pass::RelayRecord::decode(&record[..len])
+            .expect("relay record")
+            .peer;
+        let stream = std::os::unix::net::UnixStream::from(fd);
+        let _ = quic_ctx.serve_session(DaemonStream::quic_relay(stream), peer);
+    });
 
     let connector = QuicConnector::pinned(server_cert).expect("connector");
     // Server-speaks-first: the client accepts the daemon-opened stream and reads
@@ -2713,6 +2749,7 @@ fn quic_session_reaches_rsyncd_greeting_parity_with_tcp() {
         .expect("the QUIC daemon must write its @RSYNCD greeting; accept()->serve_session must not deadlock");
     let _ = reader.join();
     let _ = quic_server.join();
+    drop(front.join());
 
     assert!(
         !quic_greeting.is_empty(),
