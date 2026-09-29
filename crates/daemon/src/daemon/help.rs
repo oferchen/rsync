@@ -13,11 +13,6 @@ const DESCRIPTION_COLUMN: usize = 25;
 /// blank line, the `Usage:` line, the option list, a blank line, then the
 /// two-line trailer steering operators who did not mean to start a daemon.
 ///
-/// The one option upstream lists that this daemon's parser rejects -
-/// `--sockopts=OPTIONS` - is omitted rather than advertised: a help text
-/// naming an option the parser refuses is worse than a shorter one. See
-/// [`push_upstream_options`].
-///
 /// upstream: usage.c:daemon_usage
 pub(crate) fn help_text(brand: Brand) -> String {
     let program = brand.daemon_program_name();
@@ -63,10 +58,6 @@ fn push_option(text: &mut String, option: &str, description: &str) {
 /// Appends the options shared with upstream, in `help-rsyncd.h` order and
 /// wording.
 ///
-/// Upstream's `--sockopts=OPTIONS` row is absent because
-/// `RuntimeOptions::parse_with_brand` rejects that spelling; it is tracked as a
-/// feature gap, not hidden here.
-///
 /// upstream: help-rsyncd.h
 fn push_upstream_options(text: &mut String, config_name: &str) {
     push_option(text, "--daemon", "run as an rsync daemon");
@@ -90,6 +81,7 @@ fn push_upstream_options(text: &mut String, config_name: &str) {
         "--log-file-format=FMT",
         "override the \"log format\" setting",
     );
+    push_option(text, "--sockopts=OPTIONS", "specify custom TCP options");
     push_option(text, "--verbose, -v", "increase verbosity");
     push_option(text, "--ipv4, -4", "prefer IPv4");
     push_option(text, "--ipv6, -6", "prefer IPv6");

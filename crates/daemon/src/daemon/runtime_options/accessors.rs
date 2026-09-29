@@ -27,7 +27,9 @@ impl RuntimeOptions {
     /// list of TCP/IP socket options applied to the daemon listener socket
     /// (e.g., `TCP_NODELAY`, `SO_KEEPALIVE`, `SO_SNDBUF=65536`).
     pub(crate) fn socket_options(&self) -> Option<&str> {
-        self.socket_options.as_deref()
+        // upstream: socket.c:606-610 - `if (sockopts) set_socket_options(s,
+        // sockopts); else set_socket_options(s, lp_socket_options());`
+        self.sockopts.as_deref().or(self.socket_options.as_deref())
     }
 
     /// Returns the configured TCP Fast Open mode.

@@ -32,6 +32,22 @@ use super::types::SocketOptionKind;
 /// option never aborts the connection. We mirror that warn-and-continue
 /// contract rather than propagating a fatal error.
 pub(crate) fn apply_socket_options(socket: &socket2::Socket, options: &OsStr) {
+    apply_socket_options_reporting(socket, options, &mut |text| eprintln!("{text}"));
+}
+
+/// Applies an upstream socket-options string to `socket`, handing each
+/// warning line to `report` instead of printing it.
+///
+/// This is the one parser for both the client's `--sockopts` and the daemon's
+/// `socket options` / `--sockopts`: upstream uses the single
+/// socket.c:set_socket_options() for all of them, and its `rprintf(FERROR)`
+/// lands wherever the calling process sends errors - the terminal for a
+/// client, the log for a daemon.
+pub fn apply_socket_options_reporting(
+    socket: &socket2::Socket,
+    options: &OsStr,
+    report: &mut dyn FnMut(String),
+) {
     let list = options.to_string_lossy();
 
     if list.trim().is_empty() {
@@ -52,7 +68,7 @@ pub(crate) fn apply_socket_options(socket: &socket2::Socket, options: &OsStr) {
         let Some(kind) = lookup_socket_option(name) else {
             // upstream: socket.c:712-715 - an unknown option name reports
             // `rprintf(FERROR,"Unknown socket option %s\n",tok)` and `continue`s.
-            eprintln!("Unknown socket option {name}");
+            report(format!("Unknown socket option {name}"));
             continue;
         };
 
@@ -64,7 +80,7 @@ pub(crate) fn apply_socket_options(socket: &socket2::Socket, options: &OsStr) {
                     // value warns (`syntax error -- %s does not take a value`)
                     // but still applies its fixed value.
                     if value_str.is_some() {
-                        eprintln!("syntax error -- {name} does not take a value");
+                        report(format!("syntax error -- {name} does not take a value"));
                     }
                     parsed.push(ParsedSocketOption {
                         kind,
@@ -101,7 +117,10 @@ pub(crate) fn apply_socket_options(socket: &socket2::Socket, options: &OsStr) {
             // upstream: socket.c:738-741 - a failed `setsockopt(2)` reports
             // `rsyserr(FERROR, errno, "failed to set socket option %s")` and
             // keeps applying the remaining options.
-            eprintln!("failed to set socket option {}: {error}", option.name());
+            report(format!(
+                "failed to set socket option {}: {error}",
+                option.name()
+            ));
         }
     }
 }
