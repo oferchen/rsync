@@ -281,8 +281,10 @@ impl ReceiverContext {
                 // without that frame would let a push of module-excluded files
                 // exit 0 with no diagnostic at all.
                 if let Some(filters) = daemon_filters.as_mut() {
-                    let name = e.name();
-                    if name != "." {
+                    // upstream: generator.c:1662 check_filter() sees the raw
+                    // name bytes, so the gate is probed with the path itself.
+                    let name = e.path();
+                    if name.as_os_str() != "." {
                         // upstream: generator.c:1258-1266 - the `skip_dir` check
                         // runs before the filter check, so a file below an
                         // already-refused directory is dropped in silence.
@@ -293,7 +295,7 @@ impl ReceiverContext {
                         if !filters.allows(name, false) {
                             let _ = self.emit_error_xfer_line(
                                 writer,
-                                &format!("ERROR: daemon refused to receive file \"{name}\"\n"),
+                                Self::daemon_refusal_line("file", &e.name_bytes()),
                             );
                             stats.files_skipped += 1;
                             return false;

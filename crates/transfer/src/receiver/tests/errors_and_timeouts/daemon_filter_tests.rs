@@ -474,3 +474,88 @@ fn no_daemon_filter_list_never_refuses_a_basis_dir() {
         "without a module filter list there is no rule to enforce"
     );
 }
+
+/// A module rule must refuse a pushed name that is not valid UTF-8 exactly as
+/// it refuses any other. Upstream matches the raw name bytes
+/// (`generator.c:1662` `check_filter(&daemon_filter_list, ..., fname, ...)`,
+/// `exclude.c` `wildmatch` on the bytes). Probing the gate with a lossy name
+/// hands it an empty string, which no rule matches, so the module's exclude is
+/// silently bypassed: the file is accepted and the directory is created.
+#[cfg(unix)]
+#[test]
+fn daemon_rules_refuse_non_utf8_names() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    use metadata::MetadataOptions;
+    use protocol::flist::FileEntry;
+
+    use crate::receiver::stats::TransferStats;
+
+    let named = |bytes: &[u8]| std::path::PathBuf::from(OsStr::from_bytes(bytes));
+    let dest = tempfile::tempdir().expect("tempdir");
+    let opts = MetadataOptions::default();
+
+    let mut ctx = ctx_excluding("sec*");
+    ctx.file_list = vec![
+        FileEntry::new_directory(named(b"secdir\xef"), 0o755),
+        FileEntry::new_directory("okdir".into(), 0o755),
+        FileEntry::new_file(named(b"secret\xef"), 4, 0o644),
+        FileEntry::new_file("ok".into(), 4, 0o644),
+    ];
+
+    let mut writer: Vec<u8> = Vec::new();
+    ctx.create_directories(
+        dest.path(),
+        &opts,
+        None,
+        None,
+        &mut writer,
+        #[cfg(unix)]
+        None,
+    )
+    .expect("create_directories");
+    assert!(
+        dest.path().join("okdir").is_dir(),
+        "the control dir is created"
+    );
+    assert!(
+        !dest.path().join(named(b"secdir\xef")).exists(),
+        "the module excludes sec*, so the non-UTF-8 dir must not be created"
+    );
+
+    let mut errors = Vec::new();
+    let mut stats = TransferStats::default();
+    let candidates = ctx.build_files_to_transfer(
+        &mut writer,
+        dest.path(),
+        #[cfg(unix)]
+        None,
+        &opts,
+        None,
+        &mut errors,
+        &mut stats,
+        None,
+        None,
+    );
+    let names: Vec<&std::path::Path> = candidates
+        .iter()
+        .map(|&(idx, _, _)| ctx.file_list[idx].path().as_path())
+        .collect();
+    assert_eq!(
+        names,
+        [std::path::Path::new("ok")],
+        "the module excludes sec*, so only the control file is a candidate"
+    );
+}
+
+/// The refusal carries the name's raw bytes, as upstream's `rprintf` of `fname`
+/// does (generator.c:1670-1672); the pushing client escapes it for display.
+/// A lossy rendering would show the user a different name than the one sent.
+#[test]
+fn daemon_refusal_line_keeps_the_raw_name_bytes() {
+    assert_eq!(
+        ReceiverContext::daemon_refusal_line("file", b"secret\xef"),
+        b"ERROR: daemon refused to receive file \"secret\xef\"\n"
+    );
+}

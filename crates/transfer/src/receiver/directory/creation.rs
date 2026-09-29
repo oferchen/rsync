@@ -259,8 +259,10 @@ impl ReceiverContext {
             .filter(|(_, e)| e.is_dir())
             .filter(|(_, e)| {
                 if let Some(filters) = daemon_filters.as_mut() {
-                    let name = e.name();
-                    if name != "." && !name.is_empty() {
+                    // upstream: generator.c:1662 check_filter() sees the raw
+                    // name bytes, so the gate is probed with the path itself.
+                    let name = e.path();
+                    if name.as_os_str() != "." && !name.as_os_str().is_empty() {
                         // upstream: generator.c:1258-1266 - a directory below an
                         // already-refused one is dropped in silence; only the
                         // outermost refusal is reported.
@@ -270,7 +272,7 @@ impl ReceiverContext {
                         if !filters.allows(name, true) {
                             let _ = self.emit_error_xfer_line(
                                 writer,
-                                &format!("ERROR: daemon refused to receive directory \"{name}\"\n"),
+                                Self::daemon_refusal_line("directory", &e.name_bytes()),
                             );
                             // upstream: generator.c:1284-1285 jumps to
                             // `skipping_dir_contents`, whose FERROR notice
