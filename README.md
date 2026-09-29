@@ -10,7 +10,7 @@
 
 # oc-rsync
 
-`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.5.1 (protocol 33), 3.5.0 and the 3.4.x series (protocol 32), and usable as a drop-in replacement.
+`rsync` re-implemented in Rust. It speaks rsync protocols 28 through 33 and interoperates with upstream rsync 3.5.0 and the 3.4.x series (protocol 32), which the interop matrix tests. Protocol 33 (rsync 3.5.1) is implemented but not yet in that matrix; see [Protocol and interop](#protocol-and-interop). The aim is a drop-in replacement, and the known divergences are listed per test in the [upstream testsuite](#upstream-testsuite) manifests.
 
 The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` without conflict.
 
@@ -18,13 +18,9 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 
 ## Status
 
-**Release:** 0.6.4 (2026-07-18). **Upstream reference:** rsync 3.5.0, speaking protocol 33 (rsync 3.5.1) with back-negotiation to protocol 28. Changes merged since the release are listed under *Unreleased* in the [CHANGELOG](./CHANGELOG.md).
+**Release:** 0.6.4 (2026-07-18). Changes merged since then are listed under *Unreleased* in the [CHANGELOG](./CHANGELOG.md). All transfer modes (local, SSH, daemon), the delta algorithm, metadata preservation and compression are implemented; the table below lists the gaps.
 
-All transfer modes (local, SSH, daemon), the delta algorithm, metadata preservation and compression are complete.
-
-**rsync 3.5.0** (13 Aug 2026) keeps `PROTOCOL_VERSION` 32, so wire compatibility carries over from 3.4.4. Its changes are behavioural: 33 CVE fixes in path handling and the daemon, plus new options and directives. oc-rsync implements all five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`) and all three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`). The per-CVE audit trail is in [`SECURITY.md`](./SECURITY.md).
-
-**rsync 3.5.1** (21 Sep 2026) raises the protocol to 33. oc-rsync speaks protocol 33, with `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003); a peer that advertises a newer protocol is negotiated down instead of refused (#7916). Moving the reference version to 3.5.1 is in progress. Also on master: upstream citations are pinned to 3.5.1 (#7994), the 3.5.1 test suite is the required testsuite gate, and a first set of 3.5.1 divergences is fixed (#8010, #8011, #8012, #8016). The reference-version switch is not on master yet.
+**Upstream pins.** Behaviour is checked against rsync 3.5.0, the reference version (`upstream_version` in `Cargo.toml`); oc-rsync speaks protocol 33 and negotiates down to 28; upstream source citations are pinned to 3.5.1 (#7994). rsync 3.5.0 (13 Aug 2026) kept protocol 32 and fixed 33 CVEs in path handling and the daemon; oc-rsync implements all of its new options and daemon directives (listed below), and the per-CVE audit trail is in [`SECURITY.md`](./SECURITY.md). rsync 3.5.1 (21 Sep 2026) raised the protocol to 33: oc-rsync speaks it, with `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003), and negotiates a newer peer down instead of refusing it (#7916). Moving the reference version to 3.5.1 is in progress; its test suite is already the required testsuite gate, and a first set of 3.5.1 divergences is fixed (#8010, #8011, #8012, #8016).
 
 | Component | Status |
 |-----------|--------|
@@ -142,6 +138,7 @@ cargo build --workspace --release
 | `multi-producer` | `engine` | no | Relaxes the single-producer invariant on `WorkQueueSender`. | experimental |
 | `thread-slab-pool` | `engine` | no | Per-thread slab in front of `BufferPool`. | experimental |
 | `vmsplice` | `fast_io`, `transfer` | no | Linux `vmsplice(2)` + `splice(2)` writer. | experimental |
+| `adaptive-basis-dispatch` | `fast_io` | no | Per-file basis-read dispatch between mmap and io_uring by recent throughput; on Windows it also selects the IOCP file reader. | experimental |
 | `async-ssh` | `core`, `rsync_io` | no | Async SSH transport; enable at runtime with `OC_RSYNC_ASYNC_SSH=1`. | experimental |
 | `ssh-socketpair-stderr` | `rsync_io` | no | SSH stderr over a socketpair (see [Performance tuning](#performance-tuning)). | experimental |
 | `async-daemon` | `daemon` | no | tokio accept loop dispatching sync workers. | experimental |
@@ -296,8 +293,8 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 | 32 | 3.4.x, 3.5.0 | Full support | Interop matrix against 3.4.4 and 3.5.0 |
 | 31 | 3.1.x - 3.3.x | Full support | Interop matrix against 3.1.3 |
 | 30 | 3.0.x | Full support | Interop matrix against 3.0.9 |
-| 29 | 2.6.9 | Full support | Non-blocking daemon push/pull cells against 2.6.9, plus golden-byte tests |
-| 28 | 2.6.0 - 2.6.8 | Wire-level support | Golden-byte tests in `crates/protocol/tests/` |
+| 29 | 2.6.4 - 2.6.9 | Full support | Non-blocking daemon push/pull cells against 2.6.9, plus golden-byte tests |
+| 28 | 2.6.0 - 2.6.3 | Wire-level support | Golden-byte tests in `crates/protocol/tests/` |
 | <= 27 | <= 2.5.x | Not supported | |
 
 Per-version behaviour is implemented as `protocol_version` gates in the wire codecs, for example [`zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs).

@@ -4,18 +4,20 @@ All notable changes to oc-rsync are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-oc-rsync is wire-compatible with upstream rsync 3.5.0 and the 3.4.x series
-(protocol 32). Release tags are mirrored on GitHub at
-<https://github.com/oferchen/rsync/releases>.
+oc-rsync speaks rsync protocols 28 through 33. Its reference version is upstream
+rsync 3.5.0, and it interoperates with 3.5.0 and the 3.4.x series (protocol 32);
+protocol 33 from rsync 3.5.1 arrives in *Unreleased*. Release tags are
+mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ## [Unreleased]
 
 This cycle moves the reference implementation to upstream rsync 3.5.0. It adopts
 the 3.5.0 option and directive surface, works through the path-confinement and
-daemon CVE families, and gates every pull request on upstream's test suite. The
-wire protocol is unchanged at 32. It also starts the move to rsync 3.5.1: the
-required test-suite gate now runs the 3.5.1 corpus, and the first 3.5.1 fixes
-are mirrored. One entry per change; see the linked PRs for detail.
+daemon CVE families, and gates every pull request on upstream's test suite. It
+also starts the move to rsync 3.5.1: protocol 33 is added (#8003) while the
+reference stays at 3.5.0, the required test-suite gate now runs the 3.5.1
+corpus, and the first 3.5.1 fixes are mirrored. One entry per change; see the
+linked PRs for detail.
 
 ### Security
 
@@ -314,7 +316,7 @@ are mirrored. One entry per change; see the linked PRs for detail.
 ### Internal
 
 - CI: macOS testsuite legs (#7638), old-rsync oracles (#7636, #7855), a skip oracle on a full-run leg (#7837), `quic` build coverage (#7902), and one publisher per required check (#7438)
-- CI: the upstream 3.5.1 test suite on Linux and macOS, root and non-root, on push to master and nightly (#7996); pinned and cached upstream tarballs (#7993); distinct daemon ports for parallel interop workers (#8006); Windows long-path and case-insensitive legs on pull requests (#7967, #7969)
+- CI: the upstream 3.5.1 test suite on Linux and macOS, root and non-root, nightly (#7996), with per-leg results and badges (#8019); pinned and cached upstream tarballs (#7993); distinct daemon ports for parallel interop workers (#8006); Windows long-path and case-insensitive legs on pull requests (#7967, #7969)
 - Tests pinning confinement, INC_RECURSE ordering, daemon session handling, SIMD over-reads, PULL wire transcripts and batch hard-link replay (#7953, #7956, #7971, #7976, #7985, #7989, #7990)
 - Upstream citations retargeted at 3.5.0 and then 3.5.1, and a stricter citation gate (#7286, #7308, #7315, #7318, #7994)
 - `#![deny(unsafe_code)]` on the crates that lacked it (#7781), plus blocking gates for zero-caller public functions, placeholders and rustdoc links (#7767, #7770, #7776)
@@ -405,6 +407,46 @@ user-facing work; consult the linked PRs for full detail.
 
 **Other**
 - Emit per-directory itemize rows on receiver creation (#6007)
+
+### Changed
+
+- Removed the dormant async-pipeline and ack-batcher from the transfer path (#6676)
+- Removed non-upstream in-binary TLS: the client-tls scaffold and deps (#6301) and the `daemon-tls` native TLS feature (#6139)
+- Unified `rsyncd.conf` parsing on a single path (#6672); consolidated daemon config parsing into submodules (#6207, #6203)
+- Decomposed the receiver and transfer setup into submodules (#6210, #6206), with lazy on-demand flist-segment fetch in the receiver, no behavior change (#6479)
+- Split the client remote `ssh_transfer` (#6209) and `disk_commit` (#6208) into submodules
+- Split CLI frontend argument and filter-rule parsing into submodules (#6195, #6202)
+- Split engine `local_copy` buffer pool (#6199) and `concurrent_delta` parallel-apply (#6196) into submodules; collapsed the transitional `SlotBarrier` adapter (#6430)
+- Split `fast_io` `at_syscalls` per syscall (#6189) and retired the dead `send_zc` `from_shared_ring` constructor (`IUC-4`) (#6200)
+- Introduced sans-io compressed-token decoding, byte-identical and async-driver ready (#6226), and split the wire `zstd_codec` into submodules (#6204)
+- Added the `AcceptEngine` trait to abstract accept-loop polling (#6165) and encapsulated generator sort behind a `DualFileList` API (#5782)
+- Removed the flat-flist dead-weight dual path (#6137)
+- Consolidated default sources: skip-compress suffixes (#6383) and CVS-ignore patterns (#6374)
+
+### Performance
+
+- **Engine/delta**: small-transfer fast path for the delete pass (`DML-4`) (#6550) and incremental destination filter stack for the delete pass (#6213)
+- **Engine/delta**: gate spill zstd on compressibility to cut round-trip CPU (#6537)
+- **Engine/delta**: parallelize local-copy delta basis-signature generation (#6182) with bounded-memory parallel signature generation (#6176)
+- **Engine/delta**: eliminate per-file copy-buffer churn in local copy (#6312)
+- **Engine/delta**: dedupe redundant destination `statx` in `--checksum` local copy (#6424); cache parent device id to drop redundant per-file `statx` (#6416)
+- **Transfer & SSH**: track sparse offset in a variable, one `lseek` per hole (#6665)
+- **Transfer & SSH**: default `mmap` for large-basis signature reads, byte-transparent (#6347)
+- **Transfer & SSH**: intern per-source base instead of per-file full path (#6427)
+- **Transfer & SSH**: cork around mux flush burst to coalesce delta-stream segments (`NBUF-2`) (#6235)
+- **Transfer & SSH**: opt-in parallel basis signature generation (#6177)
+- **fast_io / io_uring**: `RWF_DONTCACHE` basis-window reads (`UNCACHE-5`) (#6164) with version-gated writer selection (#6154)
+- **fast_io / io_uring**: shared same-device helper, gate whole-file `FICLONE` on `st_dev` (#6163); skip `FICLONE` on cross-filesystem local copies (#6152)
+- **fast_io / io_uring**: gate partial-range `FICLONERANGE` on same filesystem (#6153)
+- **fast_io / io_uring**: apply `FILE_FLAG_SEQUENTIAL_SCAN` to basis reads on Windows (#6156)
+- **Matching**: drop discarded per-block copies in the gated delta scan (#6658)
+- **Matching**: chunked parallel sender-scan delta generator (#6183)
+- **Daemon**: honor max connections in the async accept-loop worker cap (#6540)
+- **Daemon**: `kqueue` socket-readiness for the macOS daemon accept path, default-off (#6329)
+- **Protocol**: stream zstd token literals per `CHUNK_SIZE` (#6592)
+- **Memory/RSS**: return freed pages promptly via jemalloc to bound RSS at scale (#6313)
+- **Memory/RSS**: memoize uid/gid name lookups during flist build (#6422)
+- **Other**: `kqueue` `EVFILT_TIMER` for sub-ms bandwidth sleeps on macOS (#5818)
 
 ### Fixed
 
@@ -553,47 +595,7 @@ user-facing work; consult the linked PRs for full detail.
 - Bound recursive copy depth to prevent stack overflow (#6048)
 - Windows fast-copy: drain in-flight IOCP ops on mid-batch error (data-loss/UAF), honor `-X` and xattr filters, and correct the `COPY_FILE_NO_BUFFERING` flag value (#6331, #6325, #6121)
 
-### Performance
-
-- **Engine/delta**: small-transfer fast path for the delete pass (`DML-4`) (#6550) and incremental destination filter stack for the delete pass (#6213)
-- **Engine/delta**: gate spill zstd on compressibility to cut round-trip CPU (#6537)
-- **Engine/delta**: parallelize local-copy delta basis-signature generation (#6182) with bounded-memory parallel signature generation (#6176)
-- **Engine/delta**: eliminate per-file copy-buffer churn in local copy (#6312)
-- **Engine/delta**: dedupe redundant destination `statx` in `--checksum` local copy (#6424); cache parent device id to drop redundant per-file `statx` (#6416)
-- **Transfer & SSH**: track sparse offset in a variable, one `lseek` per hole (#6665)
-- **Transfer & SSH**: default `mmap` for large-basis signature reads, byte-transparent (#6347)
-- **Transfer & SSH**: intern per-source base instead of per-file full path (#6427)
-- **Transfer & SSH**: cork around mux flush burst to coalesce delta-stream segments (`NBUF-2`) (#6235)
-- **Transfer & SSH**: opt-in parallel basis signature generation (#6177)
-- **fast_io / io_uring**: `RWF_DONTCACHE` basis-window reads (`UNCACHE-5`) (#6164) with version-gated writer selection (#6154)
-- **fast_io / io_uring**: shared same-device helper, gate whole-file `FICLONE` on `st_dev` (#6163); skip `FICLONE` on cross-filesystem local copies (#6152)
-- **fast_io / io_uring**: gate partial-range `FICLONERANGE` on same filesystem (#6153)
-- **fast_io / io_uring**: apply `FILE_FLAG_SEQUENTIAL_SCAN` to basis reads on Windows (#6156)
-- **Matching**: drop discarded per-block copies in the gated delta scan (#6658)
-- **Matching**: chunked parallel sender-scan delta generator (#6183)
-- **Daemon**: honor max connections in the async accept-loop worker cap (#6540)
-- **Daemon**: `kqueue` socket-readiness for the macOS daemon accept path, default-off (#6329)
-- **Protocol**: stream zstd token literals per `CHUNK_SIZE` (#6592)
-- **Memory/RSS**: return freed pages promptly via jemalloc to bound RSS at scale (#6313)
-- **Memory/RSS**: memoize uid/gid name lookups during flist build (#6422)
-- **Other**: `kqueue` `EVFILT_TIMER` for sub-ms bandwidth sleeps on macOS (#5818)
-
-### Changed
-
-- Removed the dormant async-pipeline and ack-batcher from the transfer path (#6676)
-- Removed non-upstream in-binary TLS: the client-tls scaffold and deps (#6301) and the `daemon-tls` native TLS feature (#6139)
-- Unified `rsyncd.conf` parsing on a single path (#6672); consolidated daemon config parsing into submodules (#6207, #6203)
-- Decomposed the receiver and transfer setup into submodules (#6210, #6206), with lazy on-demand flist-segment fetch in the receiver, no behavior change (#6479)
-- Split the client remote `ssh_transfer` (#6209) and `disk_commit` (#6208) into submodules
-- Split CLI frontend argument and filter-rule parsing into submodules (#6195, #6202)
-- Split engine `local_copy` buffer pool (#6199) and `concurrent_delta` parallel-apply (#6196) into submodules; collapsed the transitional `SlotBarrier` adapter (#6430)
-- Split `fast_io` `at_syscalls` per syscall (#6189) and retired the dead `send_zc` `from_shared_ring` constructor (`IUC-4`) (#6200)
-- Introduced sans-io compressed-token decoding, byte-identical and async-driver ready (#6226), and split the wire `zstd_codec` into submodules (#6204)
-- Added the `AcceptEngine` trait to abstract accept-loop polling (#6165) and encapsulated generator sort behind a `DualFileList` API (#5782)
-- Removed the flat-flist dead-weight dual path (#6137)
-- Consolidated default sources: skip-compress suffixes (#6383) and CVS-ignore patterns (#6374)
-
-### Documentation
+### Internal
 
 - Systematic rustdoc and comment-cleanup campaign across every workspace crate: `filters`, `compress`, `checksums`, `metadata`, `protocol`, `daemon`, `engine`, `transfer`, `fast_io`, `rsync_io`, `xtask`, plus a batch of smaller crates (#6731, #6732, #6737, #6741, #6760)
 - Per-submodule rustdoc tidy for hot paths: `local_copy` executor, `concurrent_delta`, `delete/`, generator, receiver, `disk_commit`, `io_uring` (#6776, #6743, #6738, #6745, #6744)
@@ -612,8 +614,6 @@ user-facing work; consult the linked PRs for full detail.
 - Packaging and operator guidance: AppArmor profile and SELinux policy templates for `oc-rsyncd`, landlock build guidance, `rust-landlock` as preferred sandboxing primitive (#5602, #6215, #5549)
 - Environment and infra notes: GHA IPv6 dual-stack listener quirk, SQPOLL in rootless containers, `Cargo.lock` maintenance discipline (#5956, #5896, #5753)
 
-### Testing
-
 - Ported upstream testsuite edge cases to nextest in successive rounds, covering hardlinks INC_RECURSE, atimes/crtimes round-trip, delete-missing sentinels, chdir-symlink-race, compress-zlib-insert overflow (#6335, #6330, #6324, #5950, #5895)
 - Added an upstream CLI-argument fidelity suite and pinned exclude-lsh six-leg sub-transfer and files-from dotdir-walk matrices (#6516, #5979, #5883)
 - Interop-validated filter `protect`/`risk`/`hide`/`show` modifiers and `:C` bare-modifier wire bytes against upstream (#6273, #5980)
@@ -627,8 +627,6 @@ user-facing work; consult the linked PRs for full detail.
 - Added shared test-support harnesses: `DirDiff` tree comparison, `OcRsyncCliRunner` + `LshRunnerStub`, self-skip prerequisite helpers (#6279, #6288, #6282)
 - Security-focused coverage: hostname ACL resolution before chroot (GHSA-rjfm-3w2m-jf4f), `security.selinux` xattr round-trip, DirSandbox error contract (#5533, #98, #97)
 
-### CI
-
 - Made the upstream rsync testsuite a required check with reusable real+skip legs, and added root and non-root testsuite legs for the 3.4.4 gate (#6233, #6245)
 - Added a standalone Upstream Testsuite workflow with README badge and surfaced per-test FAIL via annotations, summaries and XFAIL log detail (#6683, #6006, #5850, #6161)
 - Added a one-shot validation workflow that re-runs a failing testsuite test against the upstream rsync binary (#5851)
@@ -641,8 +639,6 @@ user-facing work; consult the linked PRs for full detail.
 - Reliability fixes for flaky infra: free disk space on Linux jobs, retry musl rustup fetch timeouts, retry interop smoke on daemon max-connections, tolerate cold-cache offline `cargo update` (#6201, #6300, #6309, #5729)
 - Pinned the nightly toolchain around a `rustc_ast` ICE and tracked a non-required nightly 3.5.0dev testsuite cell (#6585, #6240)
 - Grouped dependency bumps via the actions group and DRY'd release-binary builds into a composite action (#6320, #6186, #5797, #6035)
-
-### Maintenance
 
 - Removed validated orphan and never-compiled source files, plus orphaned `set_tcp_congestion` helper and dead non-unix `sendfile`/`recv_fd` re-exports (#6749, #6144, #99)
 - Dependency bumps: `russh` 0.62.1, `tikv-jemallocator` 0.7.0, `zlib-rs` 0.6.6, `cargo_metadata` 0.23.1, plus grouped minor-and-patch batches (#6321, #6322, #6419, #5512, #6551)
@@ -663,7 +659,7 @@ user-facing work; consult the linked PRs for full detail.
 - Replace `remove_file`/`remove_dir` with `unlinkat` in `fast_io` + `transfer` (SEC-1.g) (#4671)
 - Replace `lstat`/`symlink_metadata` with `fstatat(AT_SYMLINK_NOFOLLOW)` (SEC-1.f) (#4668)
 
-### Features
+### Added
 
 - `pre-xfer exec` / `post-xfer exec` daemon directives with `RSYNC_ARG#` env vars and stdout capture (#5503)
 - `--password-command` option for daemon authentication (#5500)
@@ -706,193 +702,9 @@ user-facing work; consult the linked PRs for full detail.
 - RSS-aware spill trigger (STN-6) (#4421)
 - Async stderr drain task for SSH socketpair (#4363)
 
-### Bug Fixes
-
-- Align daemon `@ERROR` responses with upstream rsync wording (#5504)
-- Forward `--trust-sender` and `--checksum-seed` to remote server (#5501)
-- Wire `--contimeout` to embedded SSH (russh) connection path (#5497)
-- Increase default daemon listen backlog from 5 to 128 (#5487)
-- Suppress descendant matchers for anchored wildcard filter patterns (#5441)
-- Build delta signature before backup rename to prevent false vanished error (#5440)
-- Skip parent directory preparation in dry-run mode (#5439)
-- Re-apply directory mtimes after transfer to prevent clobbering by child writes (#5442)
-- Emit directory records before children in itemize output (#5432)
-- Apply umask masking for chmod clauses without explicit who-specifier (#5428)
-- Implement `dest_mode()` computation for non-preserve-perms transfers (#5427)
-- Deduplicate repeated source operands to prevent duplicate transfers (#5425)
-- Handle embedded `/./` markers in `--files-from` entries (#5433)
-- Follow symlinks when emitting implied parent directories (#5436)
-- Preserve directory mtime after deferred deletions (#5431)
-- Force dry-run mode for `--only-write-batch` local transfers (#5424)
-- Allow `--rsync-path` on local copies to match upstream behavior
-- Gracefully skip daemon scenarios when upstream rsync cannot bind
-- Remove erroneous CAP assertion from daemon config test (#5367)
-- Align daemon module listing protocol with upstream behavior (#5366)
-- Remove stale SEC-1.j TODO comments from completed task (#5365)
-- Use socketpair instead of pipes for RSYNC_CONNECT_PROG child stdin (#5363)
-- Detect inetd/connect-program stdin socket in standalone daemon (#5359)
-- Build tls/getgroups helpers for upstream testsuite and remove last known failures (#5358)
-- Run daemon protocol over stdio for remote-shell and connect-program modes (#5357)
-- Add `build_capability_string_suffix` and remove ssh-basic from known failures (#5356)
-- Embed capability string in compact flag string for server mode (#5352)
-- Prevent deadlock in sync bridge multi-chunk wire parity test (#5351)
-- Add `.nojekyll` to prevent Liquid template errors in GitHub Pages (#5349)
-- Upstream testsuite hardlinks test compatibility (#5346)
-- Resolve relative `OC_RSYNC_BIN` path in upstream testsuite runner (#5345)
-- Remove chmod-temp-dir from upstream testsuite known failures (#5344)
-- Export `setfacl_nodef` in upstream testsuite harness for ACL tests (#5343)
-- Apply metadata before rename to match upstream `finish_transfer` semantics (#5338)
-- Parse secluded-args and capability string from compact server flag string (#5336)
-- Inherit `P_LOCAL` directives from global `rsyncd.conf` section into module context (#5334)
-- Update clap error message assertion for clap 4.6 wording (#5331)
-- Preserve atime independently of mtime in local copy metadata path (#5328)
-- Unlink destination before cross-device copy in temp-dir fallback (#5327)
-- Widen `open_daemon_stream` visibility for cross-module re-export (#5323)
-- Use explicit builder in `to_builder_allows_modification` test (#5322)
-- Align debug flag level tests with upstream clamping behavior (#5321)
-- Wire `--old-args` through client config to unblock upstream 00-hello test (#5320)
-- Clamp `--debug` flag levels to `MAX_OUT_LEVEL` instead of rejecting (#5319)
-- Preserve original wire NDX for INC_RECURSE gap echo-back (#5318)
-- Support `RSYNC_CONNECT_PROG` and double-colon syntax in daemon transport (#5317)
-- Implement `-VV` JSON output and remove atimes from known failures (#5316)
-- Gate `kqueue_stub` `c_int` import on non-unix only (#4429)
-- Import `FileReader` trait for `IoUringFileReader::open` (#4452)
-- Clippy compliance in `nvme_data_path` bench (#4454)
-
 ### Changed
 
 - Enable parallel receive-delta by default via Path B heuristic (PIP-3 + PIP-5) (#4666)
-
-### Refactoring
-
-- Comment cleanup for daemon crate (#5362)
-- Rename `apply_chunk_parallel` to `apply_one_chunk` for clarity (RJN-2) (#4660)
-- Extract `spill/tempfile.rs` (SPL-3) (#4434)
-- Channel-based drain shutdown for delete emitter (ATU-4) (#4401)
-- MPE `traversal.rs` audit followup (#4380)
-- Replace `lock().expect()` in `delete/emitter` (#4379)
-- Replace `lock().expect()` in `delete/plan_map.rs` (#4375)
-- Extract `spill/error.rs` (SPL-2) (#4345)
-- Replace bare `io::ErrorKind::Other` with typed errors (#4377)
-
-### Tests
-
-- IP/CIDR host ACL allow/deny validation tests (#5502)
-- `--partial` interrupt parity interop tests (#5480)
-- Wire-byte parity for batched generator flush (#5463)
-- Validate progress2 output format matches upstream rsync (#5392)
-- `--delay-updates` sweep tests for remote transfer path (#5397)
-- Interop test for no-partial mid-transfer temp file removal
-- `--partial-dir` mid-transfer interrupt interop tests (#5395)
-- Verify `mtime=0` partial files are not skipped by `--update` (#5389)
-- Interop tests for `--partial` mid-transfer kill retention
-- `--iconv=utf8,latin1` filename round-trip integration test
-- `CleanupManager` integration tests for disk commit thread
-- FFV-5/6/7 tests for `--files-from` vanished file handling
-- `--iconv` with non-ASCII filter rules interop tests
-- `--delay-updates` interrupt leaves files in partial-dir
-- Comprehensive symlink-swap attack regression for SEC-1 sandbox (SEC-1.m) (#4675)
-- Legitimate symlink transfers must not regress under SEC-1 sandbox (SEC-1.n) (#4678)
-- Socketpair-to-pipe fallback warning fires exactly once (SSF-4) (#4684)
-- Re-enable stale ignored tests and remove obsolete entries (#4431)
-- Windows source to Linux destination ACL round-trip (WAS-7) (#4420)
-- Env-var driven E2E spill integration test (STN-14) (#4408)
-- Byte-identical regression for io_uring data path (IUD-8) (#4395)
-- Isolated unit tests per `SpillPolicy` knob (STN-13) (#4393)
-- Fuzz targets for `rsyncd.conf`, auth response, incremental flist (FCV-3) (#4444)
-- Thread panic recovery for delete pipeline (MPE-10) (#4376)
-- 100K session BGID leak stress (#4373)
-- Extend filter parser fuzz edge cases (#4371)
-- `NegotiationPrologueSniffer` pre-auth fuzz target (FCV-3 P0) (#4367)
-- Legacy greeting + version negotiation fuzz target (#4414)
-- Daemon `@RSYNCD` greeting parser fuzz target (FCV-3 P0) (#4409)
-- Extend varint decode fuzz target with round-trip (FCV-5) (#4405)
-
-### Documentation
-
-- User guide for partial file interrupt behavior (#5437)
-- Document `--partial` interrupt semantics (#5399)
-- Add interop compatibility status document (#5361)
-- Publish interop compatibility status document (#5360)
-- **SSH transport**: documented the opt-in `rsync_io/ssh-socketpair-stderr`
-  Cargo feature - what it does (socketpair-backed SSH stderr instead of an
-  anonymous pipe), why it exists (avoid deadlock when chatty remote children
-  fill the 64 KiB pipe buffer), when to enable it, and platform constraints.
-  Added `docs/ssh-transport.md` and cross-linked from the Cargo features
-  table in `README.md` (#2377).
-- Refresh spill layout and migration status (SPL-12) (#4394).
-- Cross-platform CI hazard preflight audit (#4427).
-- BR-6 beta-readiness sign-off check-in (#4692)
-- Close WPG-1 as deferred to post-beta Windows hardware capture (#4688)
-- Close PIP-4: interop suite exercises parallel-receive-delta path via PIP-5 default flip (#4689) [SUPERSEDED: PIP-7 (#4730) proved the dispatch scaffolding was a side-effect-only no-op; PIP-8 tore out the dead receiver-side wiring, and the proper integration is tracked by PIP-9]
-- Close FFB-3/FFB-4/PIP-2 as satisfied by FFB-1 design + PIP-3+5 wire-up (#4677)
-- Close RJN-4 as N/A after RJN-3 was rename-only (#4686)
-- Defer RJN-3 (fanout) and RJN-4 (bench) as N/A after RJN-2 rename (#4676)
-- Close ABW-3 as N/A pending per-file `Mutex` refactor (#4685)
-- Defer ABW-2/3/4 pending BR-3j.f bench evidence (ABW-1 audit closure) (#4673)
-- `apply_batch_parallel` verify-vs-write overlap audit (ABW-1) (#4670)
-- Pre-frame IUS-4 SEND_ZC opt-in vs default-on decision (#4687)
-- IORING_OP_SEND_ZC kernel compatibility matrix (IUS-2) (#4664)
-- `--zero-copy` SEND_ZC build-time dependency note (IUS-1) (#4661)
-- `flush_workers` barrier API design for `ParallelDeltaApplier` (FFB-1) (#4659)
-- Token loop vs `ParallelDeltaApplier` migration surface audit (PIP-1) (#4657)
-- `apply_chunk_parallel` call sites and per-chunk dispatch benefit audit (RJN-1) (#4656)
-- SSH stderr socketpair-to-pipe fallback site audit (SSF-1) (#4658)
-- Document `ssh-socketpair-stderr` feature and fallback warnings (SSF-3) (#4669)
-- README warning for SSH+rsync double-compression (SSC-2) (#4655)
-- Evaluate `ssh_config` parsers for SSC-3 double-compression detection (#4674)
-- Formalize SEC-1.h `mknodat` deferral and document re-open triggers (#4694)
-- Plan re-fold of SEC-1 `*at` helper modules post SEC-1.j ship (#4695)
-- Runnable Windows IOCP vs MSYS2 profiling methodology (WPG-1) (#4442)
-- SPL-8 still blocked until SPL-3/4 merge (#4439)
-- Workspace dependency consolidation opportunities (#4425)
-- Workspace rustdoc coverage audit (#4424)
-- CI workflow hazards and quick wins (#4419)
-- Catalogue ignored tests with re-enable recommendations (#4418)
-- mmap-vs-SQPOLL decision framework (SMR-2) (#4417)
-- SPL-10 enforce-limits audit (#4413)
-- Record recent series completions in agents notes (#4411)
-- FCV-3 protocol-parsing fuzz coverage gaps (#4407)
-- Windows ACL behavior for `--acls` (WAS-8) (#4406)
-- mmap-vs-SQPOLL status table and SHIPPED marker (SMR-5) (#4402)
-- WAS-6 Windows hardlink ACL inheritance (#4399)
-- Module-level rustdoc on spill submodules (SPL-11) (#4392)
-- Add `///` on `pub mod` declarations, round 1 (#4437)
-- SMR-4 regression strategy for SQPOLL-on-large-deltas test (#4433)
-- Add `///` on remaining `pub mod` declarations, round 2 (#4449)
-- Rolling SIMD checksum-sync regression hypothesis (CSP-1) (#4450)
-- PRC-3a DACL-POSIX overlap analysis (#4453)
-
-### CI/Build
-
-- Add iconv feature to CI test matrix (#5386)
-- Install `libxxhash-dev` and guard grep pipeline in upstream testsuite (#5350)
-- Add upstream rsync testsuite workflow with UPASS detection (#5342)
-- Standardize cache keys and add missing `CARGO_TERM_COLOR` (#5341)
-- Align ci-skip interop job names with `ci.yml` check names (#5340)
-- Fix ci-skip path filters to avoid overlap with `ci.yml` (#5339)
-- Add `--no-tests=warn` to async-wire-parity workflow (#5337)
-- Add nextest `--profile ci`, `--locked`, and missing timeouts (#5335)
-- Pin all GitHub Actions to SHA hashes (#5333)
-- Standardize cache keys on `Cargo.lock` (#5332)
-- Fix daemon bench workflows using wrong package name (#5330)
-- Fix xargs flag conflict and proc/status race in daemon concurrency CI (#5329)
-- Remove job-level `if` conditions that broke push-triggered CI runs (#5326)
-- Reduce runner contention by limiting non-required jobs to schedule (#5324)
-- Matrix benchmark-release and harden `parallel_determinism` (#4443)
-- Apply top quick wins from workflow audit (#4432)
-- Weekly fuzz coverage report workflow (FCV-9) (#4403)
-- mmap vs read_fixed+SQPOLL basis-read characterization bench (SMR-1) (#4387)
-- Production io_uring path vs stdlib baseline bench (IUD-9) (#4398)
-
-### Other Changes
-
-- Triage environment-dependent upstream testsuite known failures (#5355)
-- Triage environment-dependent upstream testsuite known failures as root (#5354)
-- Format crtime test builder chain inline (#5325)
-- Add SAFETY comments to the remaining 21 unsafe blocks (#4440)
-- Consolidate cross-crate deps into `[workspace.dependencies]` (#4436)
-- Gate Unix-only test modules and deny broken rustdoc links (#4430)
 
 ### Performance
 
@@ -955,6 +767,186 @@ user-facing work; consult the linked PRs for full detail.
     `FxHashMap<(u16, u16), Vec<usize>>` with a flat open-addressing table
     keyed by packed `(rsum_low, bucket_idx)` entries, giving sequential probes
     cache-friendly access and removing per-bucket heap allocations.
+
+### Fixed
+
+- Align daemon `@ERROR` responses with upstream rsync wording (#5504)
+- Forward `--trust-sender` and `--checksum-seed` to remote server (#5501)
+- Wire `--contimeout` to embedded SSH (russh) connection path (#5497)
+- Increase default daemon listen backlog from 5 to 128 (#5487)
+- Suppress descendant matchers for anchored wildcard filter patterns (#5441)
+- Build delta signature before backup rename to prevent false vanished error (#5440)
+- Skip parent directory preparation in dry-run mode (#5439)
+- Re-apply directory mtimes after transfer to prevent clobbering by child writes (#5442)
+- Emit directory records before children in itemize output (#5432)
+- Apply umask masking for chmod clauses without explicit who-specifier (#5428)
+- Implement `dest_mode()` computation for non-preserve-perms transfers (#5427)
+- Deduplicate repeated source operands to prevent duplicate transfers (#5425)
+- Handle embedded `/./` markers in `--files-from` entries (#5433)
+- Follow symlinks when emitting implied parent directories (#5436)
+- Preserve directory mtime after deferred deletions (#5431)
+- Force dry-run mode for `--only-write-batch` local transfers (#5424)
+- Allow `--rsync-path` on local copies to match upstream behavior
+- Gracefully skip daemon scenarios when upstream rsync cannot bind
+- Remove erroneous CAP assertion from daemon config test (#5367)
+- Align daemon module listing protocol with upstream behavior (#5366)
+- Remove stale SEC-1.j TODO comments from completed task (#5365)
+- Use socketpair instead of pipes for RSYNC_CONNECT_PROG child stdin (#5363)
+- Detect inetd/connect-program stdin socket in standalone daemon (#5359)
+- Build tls/getgroups helpers for upstream testsuite and remove last known failures (#5358)
+- Run daemon protocol over stdio for remote-shell and connect-program modes (#5357)
+- Add `build_capability_string_suffix` and remove ssh-basic from known failures (#5356)
+- Embed capability string in compact flag string for server mode (#5352)
+- Prevent deadlock in sync bridge multi-chunk wire parity test (#5351)
+- Add `.nojekyll` to prevent Liquid template errors in GitHub Pages (#5349)
+- Upstream testsuite hardlinks test compatibility (#5346)
+- Resolve relative `OC_RSYNC_BIN` path in upstream testsuite runner (#5345)
+- Remove chmod-temp-dir from upstream testsuite known failures (#5344)
+- Export `setfacl_nodef` in upstream testsuite harness for ACL tests (#5343)
+- Apply metadata before rename to match upstream `finish_transfer` semantics (#5338)
+- Parse secluded-args and capability string from compact server flag string (#5336)
+- Inherit `P_LOCAL` directives from global `rsyncd.conf` section into module context (#5334)
+- Update clap error message assertion for clap 4.6 wording (#5331)
+- Preserve atime independently of mtime in local copy metadata path (#5328)
+- Unlink destination before cross-device copy in temp-dir fallback (#5327)
+- Widen `open_daemon_stream` visibility for cross-module re-export (#5323)
+- Use explicit builder in `to_builder_allows_modification` test (#5322)
+- Align debug flag level tests with upstream clamping behavior (#5321)
+- Wire `--old-args` through client config to unblock upstream 00-hello test (#5320)
+- Clamp `--debug` flag levels to `MAX_OUT_LEVEL` instead of rejecting (#5319)
+- Preserve original wire NDX for INC_RECURSE gap echo-back (#5318)
+- Support `RSYNC_CONNECT_PROG` and double-colon syntax in daemon transport (#5317)
+- Implement `-VV` JSON output and remove atimes from known failures (#5316)
+- Gate `kqueue_stub` `c_int` import on non-unix only (#4429)
+- Import `FileReader` trait for `IoUringFileReader::open` (#4452)
+- Clippy compliance in `nvme_data_path` bench (#4454)
+
+### Internal
+
+- Comment cleanup for daemon crate (#5362)
+- Rename `apply_chunk_parallel` to `apply_one_chunk` for clarity (RJN-2) (#4660)
+- Extract `spill/tempfile.rs` (SPL-3) (#4434)
+- Channel-based drain shutdown for delete emitter (ATU-4) (#4401)
+- MPE `traversal.rs` audit followup (#4380)
+- Replace `lock().expect()` in `delete/emitter` (#4379)
+- Replace `lock().expect()` in `delete/plan_map.rs` (#4375)
+- Extract `spill/error.rs` (SPL-2) (#4345)
+- Replace bare `io::ErrorKind::Other` with typed errors (#4377)
+
+- IP/CIDR host ACL allow/deny validation tests (#5502)
+- `--partial` interrupt parity interop tests (#5480)
+- Wire-byte parity for batched generator flush (#5463)
+- Validate progress2 output format matches upstream rsync (#5392)
+- `--delay-updates` sweep tests for remote transfer path (#5397)
+- Interop test for no-partial mid-transfer temp file removal
+- `--partial-dir` mid-transfer interrupt interop tests (#5395)
+- Verify `mtime=0` partial files are not skipped by `--update` (#5389)
+- Interop tests for `--partial` mid-transfer kill retention
+- `--iconv=utf8,latin1` filename round-trip integration test
+- `CleanupManager` integration tests for disk commit thread
+- FFV-5/6/7 tests for `--files-from` vanished file handling
+- `--iconv` with non-ASCII filter rules interop tests
+- `--delay-updates` interrupt leaves files in partial-dir
+- Comprehensive symlink-swap attack regression for SEC-1 sandbox (SEC-1.m) (#4675)
+- Legitimate symlink transfers must not regress under SEC-1 sandbox (SEC-1.n) (#4678)
+- Socketpair-to-pipe fallback warning fires exactly once (SSF-4) (#4684)
+- Re-enable stale ignored tests and remove obsolete entries (#4431)
+- Windows source to Linux destination ACL round-trip (WAS-7) (#4420)
+- Env-var driven E2E spill integration test (STN-14) (#4408)
+- Byte-identical regression for io_uring data path (IUD-8) (#4395)
+- Isolated unit tests per `SpillPolicy` knob (STN-13) (#4393)
+- Fuzz targets for `rsyncd.conf`, auth response, incremental flist (FCV-3) (#4444)
+- Thread panic recovery for delete pipeline (MPE-10) (#4376)
+- 100K session BGID leak stress (#4373)
+- Extend filter parser fuzz edge cases (#4371)
+- `NegotiationPrologueSniffer` pre-auth fuzz target (FCV-3 P0) (#4367)
+- Legacy greeting + version negotiation fuzz target (#4414)
+- Daemon `@RSYNCD` greeting parser fuzz target (FCV-3 P0) (#4409)
+- Extend varint decode fuzz target with round-trip (FCV-5) (#4405)
+
+- User guide for partial file interrupt behavior (#5437)
+- Document `--partial` interrupt semantics (#5399)
+- Add interop compatibility status document (#5361)
+- Publish interop compatibility status document (#5360)
+- **SSH transport**: documented the opt-in `rsync_io/ssh-socketpair-stderr`
+  Cargo feature - what it does (socketpair-backed SSH stderr instead of an
+  anonymous pipe), why it exists (avoid deadlock when chatty remote children
+  fill the 64 KiB pipe buffer), when to enable it, and platform constraints.
+  Added `docs/ssh-transport.md` and cross-linked from the Cargo features
+  table in `README.md` (#2377).
+- Refresh spill layout and migration status (SPL-12) (#4394).
+- Cross-platform CI hazard preflight audit (#4427).
+- BR-6 beta-readiness sign-off check-in (#4692)
+- Close WPG-1 as deferred to post-beta Windows hardware capture (#4688)
+- Close PIP-4: interop suite exercises parallel-receive-delta path via PIP-5 default flip (#4689) [SUPERSEDED: PIP-7 (#4730) proved the dispatch scaffolding was a side-effect-only no-op; PIP-8 tore out the dead receiver-side wiring, and the proper integration is tracked by PIP-9]
+- Close FFB-3/FFB-4/PIP-2 as satisfied by FFB-1 design + PIP-3+5 wire-up (#4677)
+- Close RJN-4 as N/A after RJN-3 was rename-only (#4686)
+- Defer RJN-3 (fanout) and RJN-4 (bench) as N/A after RJN-2 rename (#4676)
+- Close ABW-3 as N/A pending per-file `Mutex` refactor (#4685)
+- Defer ABW-2/3/4 pending BR-3j.f bench evidence (ABW-1 audit closure) (#4673)
+- `apply_batch_parallel` verify-vs-write overlap audit (ABW-1) (#4670)
+- Pre-frame IUS-4 SEND_ZC opt-in vs default-on decision (#4687)
+- IORING_OP_SEND_ZC kernel compatibility matrix (IUS-2) (#4664)
+- `--zero-copy` SEND_ZC build-time dependency note (IUS-1) (#4661)
+- `flush_workers` barrier API design for `ParallelDeltaApplier` (FFB-1) (#4659)
+- Token loop vs `ParallelDeltaApplier` migration surface audit (PIP-1) (#4657)
+- `apply_chunk_parallel` call sites and per-chunk dispatch benefit audit (RJN-1) (#4656)
+- SSH stderr socketpair-to-pipe fallback site audit (SSF-1) (#4658)
+- Document `ssh-socketpair-stderr` feature and fallback warnings (SSF-3) (#4669)
+- README warning for SSH+rsync double-compression (SSC-2) (#4655)
+- Evaluate `ssh_config` parsers for SSC-3 double-compression detection (#4674)
+- Formalize SEC-1.h `mknodat` deferral and document re-open triggers (#4694)
+- Plan re-fold of SEC-1 `*at` helper modules post SEC-1.j ship (#4695)
+- Runnable Windows IOCP vs MSYS2 profiling methodology (WPG-1) (#4442)
+- SPL-8 still blocked until SPL-3/4 merge (#4439)
+- Workspace dependency consolidation opportunities (#4425)
+- Workspace rustdoc coverage audit (#4424)
+- CI workflow hazards and quick wins (#4419)
+- Catalogue ignored tests with re-enable recommendations (#4418)
+- mmap-vs-SQPOLL decision framework (SMR-2) (#4417)
+- SPL-10 enforce-limits audit (#4413)
+- Record recent series completions in agents notes (#4411)
+- FCV-3 protocol-parsing fuzz coverage gaps (#4407)
+- Windows ACL behavior for `--acls` (WAS-8) (#4406)
+- mmap-vs-SQPOLL status table and SHIPPED marker (SMR-5) (#4402)
+- WAS-6 Windows hardlink ACL inheritance (#4399)
+- Module-level rustdoc on spill submodules (SPL-11) (#4392)
+- Add `///` on `pub mod` declarations, round 1 (#4437)
+- SMR-4 regression strategy for SQPOLL-on-large-deltas test (#4433)
+- Add `///` on remaining `pub mod` declarations, round 2 (#4449)
+- Rolling SIMD checksum-sync regression hypothesis (CSP-1) (#4450)
+- PRC-3a DACL-POSIX overlap analysis (#4453)
+
+- Add iconv feature to CI test matrix (#5386)
+- Install `libxxhash-dev` and guard grep pipeline in upstream testsuite (#5350)
+- Add upstream rsync testsuite workflow with UPASS detection (#5342)
+- Standardize cache keys and add missing `CARGO_TERM_COLOR` (#5341)
+- Align ci-skip interop job names with `ci.yml` check names (#5340)
+- Fix ci-skip path filters to avoid overlap with `ci.yml` (#5339)
+- Add `--no-tests=warn` to async-wire-parity workflow (#5337)
+- Add nextest `--profile ci`, `--locked`, and missing timeouts (#5335)
+- Pin all GitHub Actions to SHA hashes (#5333)
+- Standardize cache keys on `Cargo.lock` (#5332)
+- Fix daemon bench workflows using wrong package name (#5330)
+- Fix xargs flag conflict and proc/status race in daemon concurrency CI (#5329)
+- Remove job-level `if` conditions that broke push-triggered CI runs (#5326)
+- Reduce runner contention by limiting non-required jobs to schedule (#5324)
+- Matrix benchmark-release and harden `parallel_determinism` (#4443)
+- Apply top quick wins from workflow audit (#4432)
+- Weekly fuzz coverage report workflow (FCV-9) (#4403)
+- mmap vs read_fixed+SQPOLL basis-read characterization bench (SMR-1) (#4387)
+- Production io_uring path vs stdlib baseline bench (IUD-9) (#4398)
+
+- Triage environment-dependent upstream testsuite known failures (#5355)
+- Triage environment-dependent upstream testsuite known failures as root (#5354)
+- Format crtime test builder chain inline (#5325)
+- Add SAFETY comments to the remaining 21 unsafe blocks (#4440)
+- Consolidate cross-crate deps into `[workspace.dependencies]` (#4436)
+- Gate Unix-only test modules and deny broken rustdoc links (#4430)
+
+## Older releases
+
+Releases before 0.6.3 are described on [GitHub Releases](https://github.com/oferchen/rsync/releases).
 
 [Unreleased]: https://github.com/oferchen/rsync/compare/v0.6.4...HEAD
 [0.6.4]: https://github.com/oferchen/rsync/compare/v0.6.3...v0.6.4
