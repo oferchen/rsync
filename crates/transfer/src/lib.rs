@@ -204,7 +204,7 @@ pub use pipeline::{
     PipelineConfig, PipelineState,
 };
 pub use progress::{
-    DaemonFileLog, DaemonLogRow, ItemizeCallback, ItemizeRow, OwnedItemizeRow,
+    DaemonFileLog, DaemonLogEntry, DaemonLogRow, ItemizeCallback, ItemizeRow, OwnedItemizeRow,
     TransferProgressCallback, TransferProgressEvent,
 };
 pub use transfer_state::{InvalidTransition, TransferPhase, TransferPipeline};
@@ -774,16 +774,20 @@ pub fn run_server_with_handshake<W: Write>(
     )
 }
 
-/// Per-entry daemon transfer-log hook plus the module-format facts the transfer
-/// engine needs to gate it.
+/// Daemon module-log hook plus the module-format facts the transfer engine
+/// needs to gate it.
 ///
-/// Supplied only by the daemon (via [`ServerTransferHooks`]) when a module has
-/// `transfer logging = yes`. `format_has_i` mirrors upstream's
-/// `logfile_format_has_i` (`clientserver.c:826`): the daemon logs non-transfer
-/// items (dirs, up-to-date files) only when the `log format` contains a `%i`
-/// escape, while transferred files are always logged. `sink` receives one call
-/// per logged entry after the transfer, in flist-index order.
+/// Supplied by the daemon (via [`ServerTransferHooks`]) whenever it has a log
+/// sink. Diagnostics reach the sink regardless of `transfer logging`, since
+/// upstream's `rwrite()` logs on `am_daemon` alone (`log.c:312`); per-entry
+/// rows are collected only when `transfer_logging` is set. `format_has_i`
+/// mirrors upstream's `logfile_format_has_i` (`clientserver.c:826`): the daemon
+/// logs non-transfer items (dirs, up-to-date files) only when the `log format`
+/// contains a `%i` escape, while transferred files are always logged. `sink`
+/// receives the queued lines after the transfer.
 pub struct DaemonLog<'d> {
+    /// Whether the module has `transfer logging = yes`.
+    pub transfer_logging: bool,
     /// Whether the module's `log format` contains a `%i` escape.
     pub format_has_i: bool,
     /// Per-entry sink that renders and writes each daemon-log line.
@@ -1277,7 +1281,10 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 // `maybe_log_item()`/`log_item(FLOG)` for the module log file. Arm
                 // the per-entry FLOG collection before the transfer runs.
                 if let Some(dl) = daemon_log.as_ref() {
-                    ctx.enable_daemon_log(dl.format_has_i);
+                    ctx.enable_daemon_log_messages();
+                    if dl.transfer_logging {
+                        ctx.enable_daemon_log(dl.format_has_i);
+                    }
                 }
                 // upstream: flist.c:2855/3032 - recv_file_list() measures its span
                 // against the raw read counter to accumulate stats.flist_size.
@@ -1330,8 +1337,11 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 // collects them during the run and flushes them here in
                 // flist-index order, which is the order upstream logs them.
                 if let Some(dl) = daemon_log {
-                    for row in ctx.drain_daemon_log_rows() {
-                        dl.sink.on_entry(&row);
+                    for entry in ctx.drain_daemon_log_entries() {
+                        match entry {
+                            DaemonLogEntry::Row(row) => dl.sink.on_entry(&row),
+                            DaemonLogEntry::Message(line) => dl.sink.on_message(&line),
+                        }
                     }
                 }
 
@@ -1346,7 +1356,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 // upstream: sender.c:500/585 - a daemon sender's `itemizing` is
                 // `logfile_format_has_i`, and every processed entry reaches
                 // `maybe_log_item()`/`log_item(FLOG)` for the module log file.
-                if let Some(dl) = daemon_log.as_ref() {
+                if let Some(dl) = daemon_log.as_ref().filter(|dl| dl.transfer_logging) {
                     ctx.enable_daemon_log(dl.format_has_i);
                 }
                 // upstream: io.c:838/877 - the sender's handle_stats() reports the raw

@@ -449,6 +449,12 @@ impl DaemonFileLog for DaemonFileLogWriter<'_> {
         };
         log_transfer(fmt, &log_ctx, self.log);
     }
+
+    fn on_message(&mut self, line: &str) {
+        // upstream: log.c:328 - logit() writes the message text as-is behind
+        // the log file's own timestamp and pid prefix.
+        log_message(self.log, &rsync_info!(line.to_owned()).with_role(Role::Daemon));
+    }
 }
 
 /// Executes the server transfer and logs the result.
@@ -486,8 +492,13 @@ fn execute_transfer(
     // module's `log format`; `%i` renders on the daemon path whenever the format
     // carries it, since `logfile_format_has_i` is set from the module format
     // independently of the client's `-i`.
+    //
+    // The writer exists whenever the daemon has a log sink, because upstream's
+    // rwrite() (log.c:312) logs every diagnostic on `am_daemon` whether or not
+    // the module has `transfer logging`; the per-file rows stay gated on it.
     let transfer_format = transfer_log_format(module);
-    let mut daemon_log_writer = ctx.log_sink.zip(transfer_format).map(|(log, fmt)| {
+    let mut daemon_log_writer = ctx.log_sink.map(|log| {
+        let fmt = transfer_format.unwrap_or_default();
         let operation = match role {
             ServerRole::Generator => TransferOperation::Send,
             ServerRole::Receiver => TransferOperation::Recv,
@@ -508,6 +519,7 @@ fn execute_transfer(
         }
     });
     let daemon_log = daemon_log_writer.as_mut().map(|w| DaemonLog {
+        transfer_logging: transfer_format.is_some(),
         format_has_i: log_format_has(&w.fmt, 'i'),
         sink: w,
     });
