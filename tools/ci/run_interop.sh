@@ -1243,8 +1243,11 @@ comp_run_scenario() {
     update)
       rm -rf "$ddir"/*; mkdir -p "$ddir"
       cp -r "$sdir"/* "$ddir"/
-      # Set dest file timestamps to future (newer than source)
-      find "$ddir" -type f -exec touch -t 203001010000 {} +
+      # Set dest file timestamps to future (newer than source). touch -t reads
+      # its argument in local time while the check below compares against a
+      # UTC epoch, so pin the zone: east of UTC the stamp otherwise lands
+      # before 2030-01-01 00:00 UTC and the check fails.
+      find "$ddir" -type f -exec env TZ=UTC0 touch -t 203001010000 {} +
       ;;
     checksum-skip)
       rm -rf "$ddir"/*; mkdir -p "$ddir"
