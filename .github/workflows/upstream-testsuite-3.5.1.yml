@@ -1,82 +1,223 @@
 name: Upstream Testsuite 3.5.1
 
-# Nightly run of all eight rsync 3.5.1 testsuite legs on master:
-# {Linux, macOS} x {non-root, root} x {pipe, loopback tcp}, with one aggregate
-# README badge. All legs call the SAME reusable workflows the 3.5.0 legs use,
-# with only the version and manifest changed.
+# The REQUIRED upstream-testsuite gate: rsync 3.5.1's own testsuite corpus run
+# against oc-rsync on {Linux, macOS} x {non-root, root} x {pipe, loopback tcp},
+# plus the Linux skip oracle.
 #
-# NOT A PULL-REQUEST OR PUSH GATE, deliberately. CI runs about one workflow at
-# a time, and eight more legs per pull request or per merge would starve the
-# required checks. The legs run nightly and on demand; the 3.5.0 legs in ci.yml
-# stay the required gate until the pin flip retires them.
+# These jobs lived in ci.yml. They have their own workflow so the README can
+# carry an aggregate badge for them, and a badge reports a whole workflow. The
+# job ids are unchanged, and a check context is "<caller job> / <reusable job>" -
+# the workflow name is not part of it - so the required contexts are the ones
+# ci.yml used to publish, now published here and nowhere else
+# (tools/ci/check_pr_check_name_uniqueness.py).
 #
-# Every manifest row is GENERATED from an executed run (EMIT_EXPECT_RESULT),
-# and every `fail` row carries its cause and owning task inline. runtests.py
-# compares outcomes exactly - an unexpected PASS fails the leg too - so a cell
-# fixed by its owner turns this red until its row is flipped to `pass`.
+# Unlike ci.yml's copy, these jobs do not wait for `fmt + clippy`: `needs:`
+# cannot cross workflows.
 #
-# `bootstrap: true` runs every leg WITHOUT a manifest and uploads the manifest
-# each would hold itself to (expect-result.*.txt in its logs artifact); that is
-# how a re-baseline is taken.
-#
-# The job names are distinct from ci.yml's 3.5.0 callers, so no context
-# reported here can satisfy - or be mistaken for - a required check.
+# `bootstrap: true` (dispatch only) runs every leg WITHOUT a manifest. Each leg
+# always uploads the manifest it would hold itself to (expect-result.*.txt in
+# its logs artifact), and without a manifest that covers the whole corpus,
+# which is how a new release or a new leg gets its first measured manifest.
 on:
-  schedule:
-    - cron: '0 8 * * *'
+  push:
+    branches: [ master ]
+  # Unfiltered for the reason given on ci.yml's pull_request trigger: this
+  # workflow publishes required contexts, so it must run on every pull request.
+  pull_request:
   workflow_dispatch:
     inputs:
       bootstrap:
-        description: 'Run without a manifest and emit a fresh one as an artifact'
+        description: 'Run without manifests and emit fresh ones as artifacts'
         type: boolean
         default: false
+
+# Same keying as ci.yml: a newer push to a pull request cancels the older run,
+# while every master push gets its own group, so a master run is never shown
+# as cancelled by the next merge.
+concurrency:
+  group: upstream-testsuite-3.5.1-${{ github.ref }}${{ github.ref == 'refs/heads/master' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
-concurrency:
-  group: upstream-testsuite-3.5.1-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  linux:
-    name: 3.5.1 Linux ${{ matrix.variant }} ${{ matrix.transport }}
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        include:
-          - { variant: nonroot, transport: pipe, manifest: tools/ci/upstream-3.5.1-expect.nonroot.txt }
-          - { variant: root, transport: pipe, manifest: tools/ci/upstream-3.5.1-expect.root.txt }
-          - { variant: nonroot, transport: tcp, manifest: tools/ci/upstream-3.5.1-expect.nonroot.tcp.txt }
-          - { variant: root, transport: tcp, manifest: tools/ci/upstream-3.5.1-expect.root.tcp.txt }
+  # ===========================================================================
+  # Upstream Testsuite - Drive upstream rsync's own testsuite corpus against
+  # oc-rsync (reusable workflow)
+  # ---------------------------------------------------------------------------
+  # Required check. Pinned to 3.5.1, the release this project targets. The
+  # driver dispatches on the extracted tree's SHAPE, not its version string:
+  # 3.5.1 ships runtests.py + 360 `*_test.py` and takes upstream's own runner,
+  # where 3.4.4 shipped 57 `*.test` shell scripts. That matters because the
+  # behavioural axis is what 3.5.x changed (33 CVEs, a rewritten path resolver,
+  # new options and daemon directives) - the interop cells in ci.yml cannot see
+  # any of it. The 3.5.0 corpus is not run: its test names are a subset of
+  # 3.5.1's apart from two cells asserting 3.5.0 behaviour that 3.5.1 changed.
+  #
+  # The harness exits non-zero on UNEXPECTED failures or UNEXPECTED passes;
+  # both surface regressions worth blocking on.
+  # ===========================================================================
+  upstream-testsuite:
     uses: ./.github/workflows/_upstream-testsuite.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: '3.5.1'
-      variant: ${{ matrix.variant }}
-      transport: ${{ matrix.transport }}
-      # `!bootstrap && ... && path || ''`, never `bootstrap && '' || path`: an
-      # empty string is falsy, so the second form would always yield the path.
-      expect_result_nonroot: ${{ !inputs.bootstrap && matrix.variant == 'nonroot' && matrix.manifest || '' }}
-      expect_result_root: ${{ !inputs.bootstrap && matrix.variant == 'root' && matrix.manifest || '' }}
+      # Its OWN variable, deliberately not the interop job's
+      # `UPSTREAM_RSYNC_VERSION`. The two now want different versions - interop
+      # sweeps a multi-version matrix from run_interop.sh, this gate pins the
+      # single release we conform to - so sharing one knob would let an
+      # operator override drag the conformance gate back to 3.4.4 as a side
+      # effect of retargeting interop.
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      # The accepted-divergence ledger, GENERATED from an executed run (each
+      # manifest names its run) and committed. --expect-result runs ONLY these
+      # tests and fails on any mismatch INCLUDING an unexpected PASS, so a test
+      # that starts passing reddens the gate until the baseline is regenerated
+      # - the divergence set can only shrink deliberately, never drift.
+      expect_result_nonroot: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.nonroot.txt' || '' }}
+      expect_result_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.root.txt' || '' }}
 
-  macos:
-    name: 3.5.1 macOS ${{ matrix.variant }} ${{ matrix.transport }}
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        include:
-          - { variant: nonroot, transport: pipe, manifest: tools/ci/upstream-3.5.1-expect.macos.nonroot.txt }
-          - { variant: root, transport: pipe, manifest: tools/ci/upstream-3.5.1-expect.macos.root.txt }
-          - { variant: nonroot, transport: tcp, manifest: tools/ci/upstream-3.5.1-expect.macos.nonroot.tcp.txt }
-          - { variant: root, transport: tcp, manifest: tools/ci/upstream-3.5.1-expect.macos.root.tcp.txt }
+  # ===========================================================================
+  # Upstream Testsuite over a real loopback TCP daemon
+  # ---------------------------------------------------------------------------
+  # The same 3.5.1 corpus as the job above, run with `transport: tcp`. The two
+  # transports are NOT redundant: the job above uses upstream's secure default,
+  # a stdio socketpair with no listening socket, so it never exercises accept(),
+  # the `hosts allow`/`hosts deny` decision, or the peer-address resolution that
+  # only a real bound socket can reach. Those are exactly the surfaces the 3.5.x
+  # daemon CVEs live on, so a pipe-only gate cannot see a regression in them.
+  #
+  # `tcp` also passes --daemon-tests-only, which is the pairing upstream ships
+  # the option for - the dropped tests never call start_test_daemon(), so they
+  # cannot observe --use-tcp and would only repeat the pipe leg. That is why
+  # this leg runs 161 tests, not 360, and why it carries its OWN manifests
+  # rather than reusing the pipe ones.
+  #
+  # Reported as `upstream-testsuite-tcp / upstream testsuite` and
+  # `... / upstream testsuite (root)` - the job id below supplies the prefix
+  # that distinguishes them from the pipe leg, which is why the reusable
+  # workflow's own job names are literals rather than expressions.
+  #
+  # Not yet a required status check: registering a context in branch protection
+  # is a repo-admin action. Until that happens these run and report on every PR
+  # but do not block, so a regression is visible rather than silently unmeasured
+  # - which is the state this replaces, where the TCP legs ran only on
+  # workflow_dispatch and cron and no pull request ever validated them.
+  # ===========================================================================
+  upstream-testsuite-tcp:
+    uses: ./.github/workflows/_upstream-testsuite.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      transport: 'tcp'
+      # Separate from the pipe manifests by measurement, not by convention: the
+      # tcp legs select a different (smaller) test set, so a shared file would
+      # fail the driver's own coverage guard.
+      expect_result_nonroot: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.nonroot.tcp.txt' || '' }}
+      expect_result_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.root.tcp.txt' || '' }}
+
+  # ===========================================================================
+  # Upstream Testsuite skip oracle (3.5.1, nonroot/pipe, full run)
+  # ---------------------------------------------------------------------------
+  # The same corpus as `upstream-testsuite`, run WITHOUT --expect-result so
+  # upstream's own anti-vacuity oracle actually fires. The two flags are
+  # mutually exclusive by construction: --expect-result clears full_run
+  # (runtests.py:850) and the skip oracle is gated on full_run (:998),
+  # so every expect-result leg above runs with the oracle permanently dark -
+  # a test could start skipping only where its manifest row already says
+  # `skip`, but nothing proves the 86 `skip` rows themselves are the whole
+  # story on a bare full run. Here runtests.py compares the run's skip set
+  # against the committed ledger EXACTLY (testsuite/skiplist/README.md: "if a
+  # test starts skipping - a probe regresses, a helper goes missing - the run
+  # fails instead of reporting green"), and an un-skip fails it too, so the
+  # ledger can only shrink deliberately.
+  #
+  # One leg is enough for the oracle's purpose and it must be a pipe leg: the
+  # tcp legs run the --daemon-tests-only subset, which also clears full_run
+  # (:836) - the driver refuses EXPECT_SKIPPED on such a leg. The skip set is
+  # leg-dependent (require_root/require_tcp), so the ledger names its leg:
+  # ubuntu-latest, non-root, stdio-pipe, no --rsync-bin2 peer,
+  # LEGACY_ORACLES=on (the default) - the `upstream-testsuite` gate's exact
+  # configuration. The built old_versions/ archive is part of that
+  # configuration: the cells that assert against a real old rsync skip
+  # without it, so the ledger measured with it differs from one measured
+  # without it. runtests.py is byte-identical between 3.5.0 and 3.5.1, so the
+  # line citations above hold for both.
+  #
+  # A bare full run fails on any FAIL outcome, and runtests.py then skips the
+  # skip-set comparison altogether (runtests.py:1008-1009). The pipe gate's
+  # manifest records accepted divergences as `fail` rows, so the driver is handed
+  # that same manifest as EXPECT_FAILURES: the run passes only when its FAIL
+  # set is exactly those rows AND its skip set is exactly the ledger. Not yet
+  # a required status check - registering a context is a repo-admin action -
+  # but it fails loud on every PR either way.
+  #
+  # artifact_suffix disambiguates from `upstream-testsuite`, which uploads
+  # `upstream-testsuite-logs-pipe` in the same run.
+  # ===========================================================================
+  upstream-testsuite-skip-oracle:
+    # A bootstrap run has no ledger to compare against; the pipe gate's own
+    # artifact carries the fresh skip set (expect-skipped.nonroot.pipe.txt).
+    if: ${{ !inputs.bootstrap }}
+    uses: ./.github/workflows/_upstream-testsuite.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      variant: 'nonroot'
+      expect_skipped_nonroot: tools/ci/upstream-3.5.1-skiplist.nonroot.txt
+      expect_failures_nonroot: tools/ci/upstream-3.5.1-expect.nonroot.txt
+      artifact_suffix: '-skip-oracle'
+
+  # ===========================================================================
+  # Upstream testsuite - macOS (3.5.1, pipe and tcp, nonroot and root)
+  # ---------------------------------------------------------------------------
+  # The four Linux legs ({nonroot,root} x {pipe,tcp}) cannot observe a
+  # platform-conditional divergence. macOS has no Landlock, so the confinement
+  # guard runs unaided here, and cells skip or fail for platform reasons the
+  # Linux manifests cannot show. Every macOS manifest therefore comes from an
+  # executed macOS run, never from a prediction off the Linux legs (one such
+  # prediction forecast 52 cells for the tcp leg; 32 ran).
+  #
+  # Counted from the committed manifests' own `Outcome:` headers:
+  #
+  #   nonroot/pipe  247 pass / 1 fail / 112 skip   (360 selected)
+  #   root/pipe     273 pass / 3 fail /  84 skip
+  #   nonroot/tcp   119 pass / 5 fail /  37 skip   (161 selected)
+  #   root/tcp      135 pass / 5 fail /  21 skip
+  #
+  # Every `fail` row names its cause and owning task inline, and
+  # runtests.py compares outcomes exactly, so the gate fires on DRIFT in either
+  # direction - a fixed cell must flip its row to `pass` in the same PR.
+  #
+  # Uses its own reusable workflow rather than a `runs-on` input on
+  # `_upstream-testsuite.yml`; the reasoning is in that file's header. The
+  # platform-agnostic half - `tools/ci/run_upstream_testsuite.sh` - IS shared.
+  # Each caller runs BOTH privilege legs (`variant` defaults to `all`), so no
+  # deselected job reports a permanently SKIPPED check.
+  #
+  # Not required status checks: registering a context in branch protection is
+  # a repo-admin action. The manifests make them non-vacuous regardless.
+  #
+  # Reported as `upstream-testsuite-macos / upstream testsuite (macOS)` and
+  # `upstream-testsuite-macos-tcp / ...`; the job ids supply the prefix that
+  # distinguishes the transports, which is why the reusable workflow's own job
+  # names are literals.
+  # ===========================================================================
+  upstream-testsuite-macos:
     uses: ./.github/workflows/_upstream-testsuite-macos.yml
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
-      upstream_rsync_version: '3.5.1'
-      variant: ${{ matrix.variant }}
-      transport: ${{ matrix.transport }}
-      expect_result_macos: ${{ !inputs.bootstrap && matrix.variant == 'nonroot' && matrix.manifest || '' }}
-      expect_result_macos_root: ${{ !inputs.bootstrap && matrix.variant == 'root' && matrix.manifest || '' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      expect_result_macos: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.macos.nonroot.txt' || '' }}
+      expect_result_macos_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.macos.root.txt' || '' }}
+
+  upstream-testsuite-macos-tcp:
+    uses: ./.github/workflows/_upstream-testsuite-macos.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}
+      transport: 'tcp'
+      # Its OWN manifests: --daemon-tests-only selects a different (smaller) set,
+      # so the pipe manifests would fail the driver's coverage guard outright.
+      expect_result_macos: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.macos.nonroot.tcp.txt' || '' }}
+      expect_result_macos_root: ${{ !inputs.bootstrap && 'tools/ci/upstream-3.5.1-expect.macos.root.tcp.txt' || '' }}

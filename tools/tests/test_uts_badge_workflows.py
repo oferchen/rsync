@@ -1,15 +1,12 @@
-"""The two nightly testsuite badge workflows must never impersonate a required check.
+"""The upstream testsuite legs have one workflow, and one README badge.
 
-`upstream-testsuite-3.5.0.yml` and `upstream-testsuite-3.5.1.yml` each run eight
-legs from a matrix and feed one README badge. They call the same reusable
-workflows as ci.yml, whose callers publish required contexts such as
-`upstream-testsuite / upstream testsuite`. GitHub matches a required context
-by NAME alone, so if a badge job ever expanded to one of those names - and
-someone later added a trigger that reaches pull requests - the ruleset could be
-satisfied by the wrong run. These tests expand every matrix, compose the check
-names the way GitHub does (`<caller job name> / <reusable job name>`), and assert
-none of them is required. They also pin the triggers: nightly and on demand,
-never on pull requests, pushes or merge groups.
+`upstream-testsuite-3.5.1.yml` is the required gate: its caller jobs publish
+contexts such as `upstream-testsuite / upstream testsuite`, which the branch
+ruleset lists by NAME. GitHub matches a required context by name alone and a
+context carries no workflow name, so the tests compose check names the way
+GitHub does (`<caller job name> / <reusable job name>`) and assert that the gate
+publishes every required testsuite context, that no other workflow calls the
+testsuite at all, and that the gate runs wherever a required check must arrive.
 """
 
 from __future__ import annotations
@@ -23,11 +20,10 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOWS_DIR = REPO / ".github" / "workflows"
-BADGE_WORKFLOWS = {
-    "3.5.0": WORKFLOWS_DIR / "upstream-testsuite-3.5.0.yml",
-    "3.5.1": WORKFLOWS_DIR / "upstream-testsuite-3.5.1.yml",
-}
+GATE = WORKFLOWS_DIR / "upstream-testsuite-3.5.1.yml"
+CI_YML = WORKFLOWS_DIR / "ci.yml"
 TESTING_MD = REPO / "docs" / "contributing" / "TESTING.md"
+TESTSUITE_REUSABLES = ("_upstream-testsuite.yml", "_upstream-testsuite-macos.yml")
 
 # The branch ruleset's required contexts. docs/contributing/TESTING.md lists
 # the same ten with the command that re-derives them; the last test keeps the
@@ -73,9 +69,11 @@ def _reusable_job_names(uses: str) -> list[str]:
     return [job.get("name", job_id) for job_id, job in called["jobs"].items()]
 
 
-def _published_contexts(path: Path) -> set[str]:
+def _published_contexts(path: Path, only_reusable: bool = False) -> set[str]:
     contexts = set()
     for job_id, job in _load(path)["jobs"].items():
+        if only_reusable and not job.get("uses", "").startswith("./"):
+            continue
         inner = _reusable_job_names(job["uses"]) if "uses" in job else [None]
         for row in _matrix_rows(job):
             outer = _expand(job.get("name", job_id), row)
@@ -85,45 +83,57 @@ def _published_contexts(path: Path) -> set[str]:
 
 
 class UtsBadgeWorkflowTests(unittest.TestCase):
-    def test_no_badge_job_publishes_a_required_context(self) -> None:
-        for version, path in BADGE_WORKFLOWS.items():
-            contexts = _published_contexts(path)
-            self.assertTrue(contexts, f"{path.name}: expanded to no contexts")
-            self.assertEqual(contexts & REQUIRED_CONTEXTS, set(), path.name)
+    REQUIRED_TESTSUITE = {c for c in REQUIRED_CONTEXTS if c.startswith("upstream-testsuite")}
 
-    def test_each_workflow_runs_all_eight_legs(self) -> None:
-        for version, path in BADGE_WORKFLOWS.items():
-            legs = set()
-            for job_id, job in _load(path)["jobs"].items():
-                for row in _matrix_rows(job):
-                    legs.add((job_id, row["variant"], row["transport"]))
-                    self.assertIn(f"upstream-{version}-expect.", row["manifest"], path.name)
-            self.assertEqual(
-                legs,
-                {(p, v, t) for p in ("linux", "macos")
-                 for v in ("nonroot", "root") for t in ("pipe", "tcp")},
-                path.name,
-            )
+    def test_the_gate_publishes_every_required_testsuite_context(self) -> None:
+        # The gate moved workflow, not name: the ruleset lists these contexts
+        # verbatim, so a renamed caller job would leave them permanently pending.
+        published = _published_contexts(GATE, only_reusable=True)
+        self.assertEqual(self.REQUIRED_TESTSUITE - published, set())
 
-    def test_badge_workflows_run_nightly_and_on_demand_only(self) -> None:
-        crons = []
-        for path in BADGE_WORKFLOWS.values():
-            triggers = _triggers(_load(path))
-            self.assertEqual(set(triggers), {"schedule", "workflow_dispatch"}, path.name)
-            crons += [entry["cron"] for entry in triggers["schedule"]]
-        self.assertEqual(len(crons), len(set(crons)), "two badge workflows share a cron minute")
+    def test_only_the_gate_runs_the_testsuite(self) -> None:
+        # One caller per upstream release keeps one publisher per context and
+        # one badge per suite. The 3.5.0 corpus was retired rather than kept
+        # alongside: its test names are a subset of 3.5.1's apart from two
+        # cells asserting 3.5.0 behaviour that 3.5.1 changed.
+        callers = set()
+        for path in WORKFLOWS_DIR.glob("*.yml"):
+            if path.name.startswith("_"):
+                continue
+            for job in (_load(path).get("jobs") or {}).values():
+                if job.get("uses", "").rsplit("/", 1)[-1] in TESTSUITE_REUSABLES:
+                    callers.add(path.name)
+        self.assertEqual(callers, {GATE.name})
 
-    def test_3_5_0_badge_passes_the_same_inputs_as_the_ci_gate(self) -> None:
-        # The badge reports the gate's result only while both run the same
-        # upstream version with the same cache key.
-        ci_inputs = [
-            job["with"] for job in _load(WORKFLOWS_DIR / "ci.yml")["jobs"].values()
-            if job.get("uses", "").endswith("/_upstream-testsuite.yml")
-        ]
-        self.assertTrue(ci_inputs, "ci.yml calls no testsuite reusable")
-        for job in _load(BADGE_WORKFLOWS["3.5.0"])["jobs"].values():
-            for key in ("upstream_rsync_version", "cache_version"):
-                self.assertEqual({job["with"][key]}, {w[key] for w in ci_inputs}, key)
+    def test_ci_publishes_no_required_testsuite_context(self) -> None:
+        contexts = _published_contexts(CI_YML)
+        self.assertTrue(contexts, "ci.yml expanded to no contexts")
+        self.assertEqual(contexts & self.REQUIRED_TESTSUITE, set())
+
+    def test_triggers(self) -> None:
+        # The gate must run on every pull request, unfiltered, or a required
+        # check never arrives; master pushes feed its badge.
+        gate = _triggers(_load(GATE))
+        self.assertEqual(set(gate), {"push", "pull_request", "workflow_dispatch"})
+        self.assertIsNone(gate["pull_request"])
+        self.assertEqual(gate["push"], {"branches": ["master"]})
+
+    def test_the_gate_cancels_like_ci(self) -> None:
+        # A newer push to a pull request supersedes the older run, but every
+        # master push keeps its own group, so no master run shows as cancelled.
+        ci, gate = _load(CI_YML)["concurrency"], _load(GATE)["concurrency"]
+        self.assertEqual(gate["cancel-in-progress"], ci["cancel-in-progress"])
+        self.assertEqual(gate["group"].removeprefix("upstream-testsuite-3.5.1-"),
+                         ci["group"].removeprefix("ci-"))
+        self.assertIn("github.sha", gate["group"])
+
+    def test_every_leg_runs_the_gate_release(self) -> None:
+        # One cache key across the legs, so they share the built upstream tree.
+        gate_jobs = _load(GATE)["jobs"].values()
+        self.assertEqual(len({job["with"]["cache_version"] for job in gate_jobs}), 1)
+        for job in gate_jobs:
+            self.assertEqual(job["with"]["upstream_rsync_version"],
+                             "${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.1' }}")
 
     def test_required_contexts_match_the_testing_guide(self) -> None:
         text = TESTING_MD.read_text()

@@ -10,7 +10,7 @@ on:
       upstream_rsync_version:
         description: 'Upstream rsync version for cache key'
         type: string
-        default: '3.5.0'
+        default: '3.5.1'
       variant:
         description: 'Which variant(s) to run: all | nonroot | root'
         type: string
@@ -27,9 +27,9 @@ on:
       expect_result_root:
         description: >-
           The ROOT leg's manifest. Deliberately a separate input: the two legs
-          run the same 345 tests at different privilege, and 40 of them resolve
-          to a DIFFERENT outcome (measured, run 32260924822), so one shared file
-          would be wrong for 40 tests.
+          run the same tests at different privilege and many resolve to a
+          DIFFERENT outcome (3.5.0: 40 of 345, measured in run 32260924822), so
+          one shared file would be wrong for those tests.
         type: string
         default: ''
       expect_skipped_nonroot:
@@ -37,7 +37,7 @@ on:
           Repo-relative path to an expected-skip list for the non-root leg,
           passed to runtests.py --expect-skipped as an @FILE. Mutually
           exclusive with expect_result_nonroot BY CONSTRUCTION: runtests.py
-          gates the skip oracle on a full run (3.5.0 runtests.py:998) and
+          gates the skip oracle on a full run (runtests.py:998) and
           --expect-result clears full_run (:850), so the driver refuses the
           combination rather than letting the oracle sit silently unfired.
           On such a leg the run's skip set must be EXACTLY this list - the
@@ -49,7 +49,7 @@ on:
           Repo-relative path to the non-root leg's expect-result manifest,
           used only alongside expect_skipped_nonroot. Its `fail` rows are the
           accepted divergences: runtests.py stops checking the skip set once
-          any test fails (3.5.0 runtests.py:1008-1009), so the driver judges
+          any test fails (runtests.py:1008-1009), so the driver judges
           the full run itself - the FAIL set must be exactly those rows and
           the skip set exactly the skip list.
         type: string
@@ -67,14 +67,14 @@ on:
           Daemon transport for the Python suite: `pipe` (upstream's secure
           default - a stdio socketpair, no listening socket) or `tcp` (a real
           rsyncd bound to 127.0.0.1). Crossed with `variant` this gives the four
-          3.5.0 legs: {nonroot,root} x {pipe,tcp}.
+          legs: {nonroot,root} x {pipe,tcp}.
 
           `tcp` additionally passes --daemon-tests-only, which is what upstream
           ships it for: "Intended for a --use-tcp pass that follows a full
           default-transport run: the tests this drops never call
           start_test_daemon(), so they cannot observe --use-tcp and would just
-          repeat themselves." So the tcp legs run the 155 transport-observing
-          tests, not all 345, and their manifests are sized to match - the
+          repeat themselves." So the tcp legs run only the transport-observing
+          tests (161 of 360 in 3.5.1), and their manifests are sized to match - the
           driver derives that expected size from upstream's OWN
           select_daemon_tests(), so the coverage guard still refuses a manifest
           that names fewer tests than the run will select.
@@ -85,7 +85,7 @@ on:
         default: 'pipe'
       legacy_oracles:
         description: >-
-          `on` (default) builds the historical rsync binaries the 3.5.0
+          `on` (default) builds the historical rsync binaries the 3.5.x
           testsuite looks for in old_versions/ (see
           tools/ci/run_upstream_testsuite.sh, ensure_legacy_oracles) so the
           tests that name a release assert against that release. `off` builds
@@ -96,8 +96,8 @@ on:
           On by default because every committed expect manifest (and the skip
           ledger) is measured with the oracles on disk, so `on` is the
           configuration those ledgers describe. Flipping a leg to `off` MOVES
-          rows - putting the binaries on disk is what un-skips
-          daemon-max-alloc-zero - and manifest rows may only be re-baselined
+          rows - the cells that assert against a real old rsync skip without
+          the binaries - and manifest rows may only be re-baselined
           from a measured run, so such a caller needs its OWN re-measured
           manifest: runtests.py compares outcomes exactly, and re-baselining a
           shared file would move the failure to the other caller instead of
