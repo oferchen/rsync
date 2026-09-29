@@ -404,7 +404,7 @@ fn handle_accepted_connection(
     // `socket options` config applied below.
     enable_accepted_stream_keepalive(&tcp_stream, state.log_sink.as_ref());
 
-    let Some(mut stream) = wrap_accepted_stream(tcp_stream, state) else {
+    let Some(stream) = wrap_accepted_stream(tcp_stream, state) else {
         return false;
     };
 
@@ -414,6 +414,22 @@ fn handle_accepted_connection(
         state.log_sink.as_ref(),
     );
 
+    admit_connection(stream, raw_peer_addr, state)
+}
+
+/// Admits one connection from any transport: enforces the concurrent
+/// connection cap and forks the session.
+///
+/// Every transport enters here - an accepted TCP socket after its socket
+/// options, and a QUIC connection the QUIC front process relayed - so each gets
+/// the same `max connections` slot, per-session child, and reap. Returns `true`
+/// when the `--max-sessions` limit has been reached and the accept loop should
+/// stop.
+fn admit_connection(
+    mut stream: DaemonStream,
+    raw_peer_addr: SocketAddr,
+    state: &mut AcceptLoopState<'_>,
+) -> bool {
     // Release the slots of sessions that ended while the loop was blocked in
     // `poll`, so the capacity decision below reads freshly-reaped state.
     //

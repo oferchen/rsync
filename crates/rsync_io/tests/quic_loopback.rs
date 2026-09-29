@@ -433,3 +433,150 @@ fn round_trip_under_each_congestion_controller() {
         std::env::remove_var("OC_RSYNC_QUIC_CC");
     }
 }
+
+/// Runs one server-first exchange against `acceptor`'s endpoint: the client
+/// reads the server's greeting, answers with `reply`, and closes.
+fn server_first_client(
+    addr: std::net::SocketAddr,
+    cert: &rustls::pki_types::CertificateDer<'static>,
+    greeting: &[u8],
+    reply: &[u8],
+) {
+    let connector = QuicConnector::new(cert).expect("build connector");
+    let mut stream = connector
+        .connect_server_first(addr, "localhost")
+        .expect("connect");
+    let mut received = vec![0u8; greeting.len()];
+    stream.read_exact(&mut received).expect("read greeting");
+    assert_eq!(received, greeting, "server greeting corrupted");
+    stream.write_all(reply).expect("write reply");
+    stream.finish().expect("finish");
+    stream.close();
+}
+
+/// Serves one accepted connection: greet, read the client's reply, finish.
+fn serve_one(stream: &mut rsync_io::quic::QuicStream, greeting: &[u8], expected: &[u8]) {
+    stream.write_all(greeting).expect("write greeting");
+    let mut got = vec![0u8; expected.len()];
+    stream.read_exact(&mut got).expect("read reply");
+    assert_eq!(got, expected, "client reply corrupted");
+    stream.finish().expect("finish");
+}
+
+/// One acceptor serves a second connection after the first has closed.
+///
+/// A daemon listener is long-lived: a QUIC endpoint that served only its first
+/// connection would time out every later client of the same daemon. Each
+/// session must also see its own client, which the recorded peer addresses
+/// (distinct ephemeral client ports) prove.
+#[test]
+fn acceptor_serves_sequential_connections() {
+    use rsync_io::quic::QuicServerIdentity;
+
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("udp bind");
+    let acceptor = QuicAcceptor::from_socket_server_first(socket, &QuicServerIdentity::Ephemeral)
+        .expect("server-first acceptor");
+    let addr = acceptor.local_addr().expect("local addr");
+    let cert = acceptor.certificate().clone().into_owned();
+
+    let mut peers = Vec::new();
+    for seed in [0x21u8, 0x43] {
+        let greeting = pattern(seed);
+        let reply = pattern(seed.wrapping_add(1));
+        let client_cert = cert.clone();
+        let (client_greeting, client_reply) = (greeting.clone(), reply.clone());
+        let client = thread::spawn(move || {
+            server_first_client(addr, &client_cert, &client_greeting, &client_reply);
+        });
+        let mut stream = acceptor.accept().expect("accept stream");
+        peers.push(stream.peer_addr().expect("peer address"));
+        serve_one(&mut stream, &greeting, &reply);
+        client.join().expect("client thread");
+        drop(stream);
+    }
+    assert_ne!(peers[0], peers[1], "each session must see its own client");
+}
+
+/// One acceptor serves several connections at the same time, each on its own
+/// stream: bytes written on one never surface on another.
+#[test]
+fn acceptor_serves_concurrent_connections() {
+    use rsync_io::quic::QuicServerIdentity;
+
+    const CLIENTS: u8 = 4;
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("udp bind");
+    let acceptor = QuicAcceptor::from_socket_server_first(socket, &QuicServerIdentity::Ephemeral)
+        .expect("server-first acceptor");
+    let addr = acceptor.local_addr().expect("local addr");
+    let cert = acceptor.certificate().clone().into_owned();
+
+    // Every client connects before the server accepts any, so all
+    // connections are live on the endpoint at once.
+    let clients: Vec<_> = (0..CLIENTS)
+        .map(|_| {
+            let cert = cert.clone();
+            thread::spawn(move || {
+                let connector = QuicConnector::new(&cert).expect("build connector");
+                let mut stream = connector
+                    .connect_server_first(addr, "localhost")
+                    .expect("connect");
+                let mut greeting = vec![0u8; PAYLOAD_LEN];
+                stream.read_exact(&mut greeting).expect("read greeting");
+                // Echo the greeting back; the server checks it came home.
+                stream.write_all(&greeting).expect("write echo");
+                stream.finish().expect("finish");
+                stream.close();
+            })
+        })
+        .collect();
+
+    let mut streams: Vec<_> = (0..CLIENTS)
+        .map(|_| acceptor.accept().expect("accept stream"))
+        .collect();
+    for (index, stream) in streams.iter_mut().enumerate() {
+        stream
+            .write_all(&pattern(0x60 + index as u8))
+            .expect("write greeting");
+    }
+    for (index, stream) in streams.iter_mut().enumerate() {
+        let mut echo = vec![0u8; PAYLOAD_LEN];
+        stream.read_exact(&mut echo).expect("read echo");
+        assert_eq!(echo, pattern(0x60 + index as u8), "stream {index} crossed");
+        stream.finish().expect("finish");
+    }
+    for client in clients {
+        client.join().expect("client thread");
+    }
+}
+
+/// Dropping the acceptor while a session is live leaves that session intact:
+/// only connections nobody accepted are closed.
+#[test]
+fn dropping_acceptor_keeps_accepted_session() {
+    let acceptor =
+        QuicAcceptor::bind("127.0.0.1:0".parse().expect("loopback addr")).expect("bind acceptor");
+    let addr = acceptor.local_addr().expect("local addr");
+    let cert = acceptor.certificate().clone().into_owned();
+
+    let request = pattern(0x71);
+    let expected = request.clone();
+    let client = thread::spawn(move || {
+        let connector = QuicConnector::new(&cert).expect("build connector");
+        let mut stream = connector.connect(addr, "localhost").expect("connect");
+        stream.write_all(&request).expect("write request");
+        stream.finish().expect("finish request");
+        let mut echo = Vec::new();
+        stream.read_to_end(&mut echo).expect("read echo");
+        assert_eq!(echo, request, "echo corrupted");
+        stream.close();
+    });
+
+    let mut stream = acceptor.accept().expect("accept stream");
+    drop(acceptor);
+    let mut got = Vec::new();
+    stream.read_to_end(&mut got).expect("read request");
+    assert_eq!(got, expected, "request corrupted");
+    stream.write_all(&got).expect("write echo");
+    stream.finish().expect("finish echo");
+    client.join().expect("client thread");
+}

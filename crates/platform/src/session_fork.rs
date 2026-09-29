@@ -111,6 +111,29 @@ pub fn close_inherited_listeners(listener_fds: &[i32]) {
     }
 }
 
+/// Ties the calling process's life to its parent's, for a helper that must
+/// not outlive the daemon that forked it.
+///
+/// On Linux the kernel is asked to deliver `SIGKILL` when the parent exits
+/// (`PR_SET_PDEATHSIG`). The setting is cleared by any later credential
+/// change, so call this AFTER dropping privileges. Elsewhere there is no
+/// such request, and the caller must watch a channel to the parent for EOF
+/// instead.
+///
+/// Returns an error when the parent is already gone - its pid no longer
+/// matches `parent_pid` - since the kernel request would then never fire.
+pub fn die_with_parent(parent_pid: u32) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    nix::sys::prctl::set_pdeathsig(nix::sys::signal::Signal::SIGKILL)?;
+    if std::os::unix::process::parent_id() != parent_pid {
+        return Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "parent process exited before the child was tied to it",
+        ));
+    }
+    Ok(())
+}
+
 /// How a forked child ended.
 ///
 /// This is deliberately the *process* vocabulary, not the session's: what a
@@ -321,6 +344,27 @@ mod tests {
         // pid 1 is never a child of the test process.
         let error = try_reap(1).expect_err("reaping a non-child must fail");
         assert_eq!(error.raw_os_error(), Some(libc::ECHILD));
+    }
+
+    /// A child tied to its live parent is accepted, and one handed a pid that
+    /// is not its parent is refused - the case where the parent died before
+    /// the child could ask to die with it.
+    #[test]
+    fn die_with_parent_checks_the_actual_parent() {
+        let parent = std::process::id();
+        match fork_session().expect("fork failed") {
+            ForkSide::Child => {
+                let tied = die_with_parent(parent).is_ok();
+                let wrong_refused = die_with_parent(parent.wrapping_add(1)).is_err();
+                exit_child(if tied && wrong_refused { 0 } else { 1 });
+            }
+            ForkSide::Parent { child_pid } => {
+                assert_eq!(
+                    wait_for_child(child_pid).expect("wait failed"),
+                    ChildEnd::Exited(0)
+                );
+            }
+        }
     }
 
     /// Drives `try_reap` until it collects the child, and reports what it
