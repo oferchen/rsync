@@ -59,22 +59,22 @@ pub(crate) fn determine_append_mode(
         _ => return Ok(AppendMode::Disabled),
     };
 
+    // The skip precedes the empty-destination shortcut: upstream tests only
+    // `st_size >= F_LENGTH(file)`, so an empty source over an empty
+    // destination is skipped too.
     let existing_len = existing.len();
+    if crate::append_gate::append_skips(existing_len, file_size) {
+        reader
+            .seek(SeekFrom::Start(0))
+            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
+        return Ok(AppendMode::Skip);
+    }
+
     if existing_len == 0 {
         reader
             .seek(SeekFrom::Start(0))
             .map_err(|error| LocalCopyError::io("copy file", source, error))?;
         return Ok(AppendMode::Disabled);
-    }
-
-    // Upstream rsync: "If a file needs to be transferred and its size on the
-    // receiver is the same or longer than the size on the sender, the file is
-    // skipped."
-    if existing_len >= file_size {
-        reader
-            .seek(SeekFrom::Start(0))
-            .map_err(|error| LocalCopyError::io("copy file", source, error))?;
-        return Ok(AppendMode::Skip);
     }
 
     // Plain `--append` (append_mode == 1) never re-checksums: upstream skips the
@@ -239,6 +239,33 @@ mod tests {
             &dest_path,
             Some(&dest_meta),
             5, // source is 5 bytes
+        )
+        .expect("determine");
+
+        assert!(matches!(result, AppendMode::Skip));
+    }
+
+    /// upstream: generator.c:2261 tests `st_size >= F_LENGTH(file)` with no
+    /// empty-file exception, so an empty source over an empty destination whose
+    /// mtime differs is skipped and the destination mtime stays stale.
+    #[test]
+    fn determine_append_mode_skips_empty_source_over_empty_destination() {
+        let temp = tempdir().expect("tempdir");
+        let source_path = temp.path().join("source.txt");
+        let dest_path = temp.path().join("dest.txt");
+        fs::write(&source_path, b"").expect("write source");
+        fs::write(&dest_path, b"").expect("write dest");
+        let mut reader = fs::File::open(&source_path).expect("open source");
+        let dest_meta = fs::metadata(&dest_path).expect("dest metadata");
+
+        let result = determine_append_mode(
+            true,
+            false,
+            &mut reader,
+            &source_path,
+            &dest_path,
+            Some(&dest_meta),
+            0,
         )
         .expect("determine");
 
