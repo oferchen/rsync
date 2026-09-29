@@ -5,13 +5,17 @@
 //! not run sessions on itself; the helper hands each accepted connection back
 //! to the parent as a descriptor, together with the facts the parent needs to
 //! admit it (peer address and the like). This module is the kernel half of
-//! that hand-off: one [`FdChannel::send`] delivers one record and exactly one
-//! descriptor, and one [`FdChannel::recv`] yields them back as an owned pair.
+//! that hand-off: one
+//! [`FdChannel::send`](crate::fd_pass::FdChannel::send) delivers one record
+//! and exactly one descriptor, and one
+//! [`FdChannel::recv`](crate::fd_pass::FdChannel::recv) yields them back as
+//! an owned pair.
 //!
 //! The consumer is the daemon's QUIC front process: it accepts QUIC streams
 //! and relays each one to the single-threaded daemon parent, which forks the
-//! session exactly as it does for TCP. [`RelayRecord`] is the record that
-//! hand-off carries.
+//! session exactly as it does for TCP.
+//! [`RelayRecord`](crate::fd_pass::RelayRecord) is the record that hand-off
+//! carries.
 //!
 //! The channel is record-oriented, so a record can never be split across two
 //! receives or merged with the next: `SOCK_SEQPACKET` where the kernel offers
