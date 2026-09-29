@@ -319,7 +319,7 @@ jobs:
   # this job - there is no `continue-on-error` and no run-step `|| true`, so a
   # root-only regression surfaces as a RED check instead of a silently-masked
   # green. This job is deliberately NOT in the required status checks, so a red
-  # leg does not block the merge queue; it is a visible signal. Promote it to a
+  # leg does not block a merge; it is a visible signal. Promote it to a
   # required gate once it is reliably green.
   #
   # The two legs differ only in privilege, so their outcomes differ per test and

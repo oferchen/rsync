@@ -1,25 +1,10 @@
 [![RepoGrade](https://www.repo-grade.com/api/badge/oferchen/rsync)](https://www.repo-grade.com/report/oferchen/rsync)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/oferchen/rsync)
 
-[![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/ci.yml)
+[![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg?branch=master&event=push)](https://github.com/oferchen/rsync/actions/workflows/ci.yml?query=branch%3Amaster)
 [![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml)
-
-[![Upstream Rsync Testsuite 3.5.0 root PIPE Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-root.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20root%20PIPE%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root.yml)
-[![Upstream Rsync Testsuite 3.5.0 root TCP Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-root-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20root%20TCP%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-root-tcp.yml)<br>
-[![Upstream Rsync Testsuite 3.5.0 non-root PIPE Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20non-root%20PIPE%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite.yml)
-[![Upstream Rsync Testsuite 3.5.0 non-root TCP Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20non-root%20TCP%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-tcp.yml)<br>
-[![Upstream Rsync Testsuite 3.5.0 root PIPE macOS](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.0-macos-root-pipe.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20root%20PIPE%20macOS)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.0-macos-root-pipe.yml)
-[![Upstream Rsync Testsuite 3.5.0 root TCP macOS](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.0-macos-root-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20root%20TCP%20macOS)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.0-macos-root-tcp.yml)<br>
-[![Upstream Rsync Testsuite 3.5.0 non-root PIPE macOS](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.0-macos-nonroot-pipe.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20non-root%20PIPE%20macOS)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.0-macos-nonroot-pipe.yml)
-[![Upstream Rsync Testsuite 3.5.0 non-root TCP macOS](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.0-macos-nonroot-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0%20non-root%20TCP%20macOS)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.0-macos-nonroot-tcp.yml)<br>
-[![Upstream Rsync Testsuite 3.5.1 root PIPE Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1-linux-root-pipe.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1%20root%20PIPE%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1-linux-root-pipe.yml)
-[![Upstream Rsync Testsuite 3.5.1 root TCP Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1-linux-root-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1%20root%20TCP%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1-linux-root-tcp.yml)<br>
-[![Upstream Rsync Testsuite 3.5.1 non-root PIPE Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1-linux-nonroot-pipe.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1%20non-root%20PIPE%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1-linux-nonroot-pipe.yml)
-[![Upstream Rsync Testsuite 3.5.1 non-root TCP Linux](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1-linux-nonroot-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1%20non-root%20TCP%20Linux)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1-linux-nonroot-tcp.yml)<br>
-[![Upstream Rsync Testsuite 3.5.1 root PIPE macOS](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1-macos-root-pipe.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1%20root%20PIPE%20macOS)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1-macos-root-pipe.yml)
-[![Upstream Rsync Testsuite 3.5.1 root TCP macOS](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1-macos-root-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1%20root%20TCP%20macOS)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1-macos-root-tcp.yml)<br>
-[![Upstream Rsync Testsuite 3.5.1 non-root PIPE macOS](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1-macos-nonroot-pipe.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1%20non-root%20PIPE%20macOS)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1-macos-nonroot-pipe.yml)
-[![Upstream Rsync Testsuite 3.5.1 non-root TCP macOS](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1-macos-nonroot-tcp.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1%20non-root%20TCP%20macOS)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1-macos-nonroot-tcp.yml)
+[![Upstream Rsync Testsuite 3.5.0](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.0.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.0)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.0.yml)
+[![Upstream Rsync Testsuite 3.5.1](https://img.shields.io/github/actions/workflow/status/oferchen/rsync/upstream-testsuite-3.5.1.yml?branch=master&label=Upstream%20Rsync%20Testsuite%203.5.1)](https://github.com/oferchen/rsync/actions/workflows/upstream-testsuite-3.5.1.yml)
 
 [![Release](https://img.shields.io/github/v/release/oferchen/rsync?include_prereleases)](https://github.com/oferchen/rsync/releases)
 
@@ -40,7 +25,7 @@ All transfer modes (local, SSH, daemon), the delta algorithm, metadata preservat
 
 **rsync 3.5.0** (13 Aug 2026) keeps `PROTOCOL_VERSION` 32, so wire compatibility carries over from 3.4.4. Its changes are behavioural: 33 CVE fixes in path handling and the daemon, plus new options and directives. oc-rsync implements all five new options (`--confine-root`, `--drop-D`, `--no-drop-D`, `--insecure-links`, `--no-insecure-links`) and all three new daemon directives (`proxy protocol hosts`, `auth digest`, `insecure links`). The per-CVE audit trail is in [`SECURITY.md`](./SECURITY.md).
 
-**rsync 3.5.1** (21 Sep 2026) raises the protocol to 33. oc-rsync speaks protocol 33, with `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003); a peer that advertises a newer protocol is negotiated down instead of refused (#7916). Moving the reference version to 3.5.1 is in progress. Also on master: upstream citations are pinned to 3.5.1 (#7994), the 3.5.1 test suite runs on every push to master and nightly (#7996), and a first set of 3.5.1 divergences is fixed (#8010, #8011, #8012, #8016). The reference-version switch is not on master yet.
+**rsync 3.5.1** (21 Sep 2026) raises the protocol to 33. oc-rsync speaks protocol 33, with `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003); a peer that advertises a newer protocol is negotiated down instead of refused (#7916). Moving the reference version to 3.5.1 is in progress. Also on master: upstream citations are pinned to 3.5.1 (#7994), the 3.5.1 test suite runs nightly (#7996), and a first set of 3.5.1 divergences is fixed (#8010, #8011, #8012, #8016). The reference-version switch is not on master yet.
 
 | Component | Status |
 |-----------|--------|
@@ -64,7 +49,7 @@ All transfer modes (local, SSH, daemon), the delta algorithm, metadata preservat
 
 Upstream's own 3.5.0 test suite runs against `oc-rsync` as `$RSYNC` on every pull request, in **eight legs**: platform {Linux, macOS} x daemon transport {stdio pipe, loopback TCP} x privilege {non-root, root}. The pipe legs run the whole 345-test corpus. The TCP legs add `--daemon-tests-only` and run the 155 tests that start a daemon.
 
-The four Linux legs are required status checks. The four macOS legs run on every PR and gate on their own manifests, but are not required contexts. Each leg also runs nightly from its own workflow so its README badge tracks master: `upstream-testsuite{,-root,-tcp,-root-tcp}.yml` for Linux and `upstream-testsuite-3.5.0-macos-<privilege>-<transport>.yml` for macOS.
+The four Linux legs are required status checks. The four macOS legs run on every PR and gate on their own manifests, but are not required contexts. All eight legs also run nightly on master from one matrix workflow, [`upstream-testsuite-3.5.0.yml`](./.github/workflows/upstream-testsuite-3.5.0.yml), which feeds the aggregate 3.5.0 badge at the top; the run page shows each leg's result.
 
 Outcomes, counted from each leg's committed manifest. The 3.5.1 columns are for comparison; that suite is not a gate yet. Each 3.5.0 pipe leg runs 345 tests and each TCP leg 155; for 3.5.1 the counts are 360 and 161.
 
@@ -89,7 +74,7 @@ awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.0-expect.*.txt | sort
 
 **Seven distinct 3.5.0 tests** carry a `fail` row. Four are the `proto-*` cluster, which fails on every tcp leg. The other three (`max-alloc-zero-rejected`, `daemon-max-alloc-zero`, `daemon-copylinks-parent-target-regression`) assert 3.5.0 behaviour that 3.5.1 changed and oc-rsync now follows (#8011); they retire when the gate moves to 3.5.1. No cell fails only on macOS. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently.
 
-The 3.5.1 test suite runs the same eight legs, one workflow per leg (`.github/workflows/upstream-testsuite-3.5.1-<platform>-<privilege>-<transport>.yml`, e.g. [`upstream-testsuite-3.5.1-linux-root-pipe.yml`](./.github/workflows/upstream-testsuite-3.5.1-linux-root-pipe.yml)), on push to master, nightly, and on demand. It does not run on pull requests and is not a required check. Every expected failure in its manifests (`tools/ci/upstream-3.5.1-expect.*.txt`) names the task that owns it. An unexpected pass fails the leg, so the PR that fixes a cell must also flip its row to `pass`.
+The 3.5.1 test suite runs the same eight legs from one matrix workflow, [`upstream-testsuite-3.5.1.yml`](./.github/workflows/upstream-testsuite-3.5.1.yml), nightly and on demand, behind the aggregate 3.5.1 badge. It does not run on pull requests and is not a required check. Every expected failure in its manifests (`tools/ci/upstream-3.5.1-expect.*.txt`) names the task that owns it. An unexpected pass fails the leg, so the PR that fixes a cell must also flip its row to `pass`.
 
 ---
 
@@ -361,7 +346,7 @@ oc-rsync uses threads where upstream forks, while keeping the same protocol. I/O
 
 ## Testing and CI
 
-- **Upstream testsuite.** The 3.5.0 legs run from [`ci.yml`](./.github/workflows/ci.yml) on every pull request, in the merge queue and on push to master. The four 3.5.0 badges at the top come from standalone copies of the Linux legs that run daily and on demand. Legs, counts and manifests: [Upstream testsuite](#upstream-testsuite).
+- **Upstream testsuite.** The 3.5.0 legs run from [`ci.yml`](./.github/workflows/ci.yml) on every pull request and on push to master. The two testsuite badges at the top are nightly matrix runs of all eight legs for 3.5.0 and 3.5.1. Legs, counts and manifests: [Upstream testsuite](#upstream-testsuite).
 - **Interop.** Push and pull against real upstream binaries: [Protocol and interop](#protocol-and-interop).
 - **Required checks.** The ten required contexts, and the command that re-derives them from the branch ruleset, are in [`docs/contributing/TESTING.md`](./docs/contributing/TESTING.md).
 

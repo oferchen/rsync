@@ -80,19 +80,10 @@ Expected after MDF-2..MDF-6 close:
 
 ## 5. CI wiring
 
-`.github/workflows/mdf-8-filter-diff.yml` runs the harness under
-`workflow_dispatch` only. The job:
-
-1. Builds oc-rsync in release mode.
-2. Installs upstream rsync via apt.
-3. Invokes the harness with default arguments.
-4. Uploads `/tmp/mdf-8-diff/diff.txt` as an artifact.
-
-The workflow is advisory (`continue-on-error: true`). A failing diff
-does not block merges; it shows up in the workflow summary so MDF-* PR
-authors can grade their fix. The follow-up task to promote the
-workflow to required-check is gated on default-mode diff hitting zero
-and staying there for one release cycle.
+No workflow runs the harness. The advisory `workflow_dispatch` workflow
+that once wrapped it was retired unused; run
+`scripts/mdf_8_filter_diff_harness.sh` locally against an installed
+upstream rsync and a release build of oc-rsync to grade an MDF-* fix.
 
 ## 6. Acceptance for future MDF-* fix PRs
 

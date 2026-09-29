@@ -1,0 +1,71 @@
+name: Upstream Testsuite 3.5.0
+
+# Nightly run of all eight rsync 3.5.0 testsuite legs on master:
+# {Linux, macOS} x {non-root, root} x {pipe, loopback tcp}. Its only job is the
+# single aggregate README badge. The same eight legs already run in ci.yml on
+# every pull request and every push to master, where the four Linux legs are
+# required checks; this workflow re-runs them on an otherwise idle master so the
+# badge tracks the current tree.
+#
+# Every leg calls the same reusable workflow, reads the same committed
+# manifest and passes the same version and cache inputs as its ci.yml
+# counterpart, so the badge and the gate cannot drift apart. The pipe legs run the whole corpus; the
+# tcp legs add --daemon-tests-only and run the tests that start a daemon.
+#
+# The job names below are deliberately distinct from ci.yml's callers. A check
+# run is matched to a required context by NAME alone, so a context such as
+# `upstream-testsuite / upstream testsuite` must have exactly one publisher.
+# tools/tests/test_uts_badge_workflows.py asserts that none of these expanded
+# names equals a required context.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-testsuite-3.5.0-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: 3.5.0 Linux ${{ matrix.variant }} ${{ matrix.transport }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - { variant: nonroot, transport: pipe, manifest: tools/ci/upstream-3.5.0-expect.nonroot.txt }
+          - { variant: root, transport: pipe, manifest: tools/ci/upstream-3.5.0-expect.root.txt }
+          - { variant: nonroot, transport: tcp, manifest: tools/ci/upstream-3.5.0-expect.nonroot.tcp.txt }
+          - { variant: root, transport: tcp, manifest: tools/ci/upstream-3.5.0-expect.root.tcp.txt }
+    uses: ./.github/workflows/_upstream-testsuite.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
+      variant: ${{ matrix.variant }}
+      transport: ${{ matrix.transport }}
+      expect_result_nonroot: ${{ matrix.variant == 'nonroot' && matrix.manifest || '' }}
+      expect_result_root: ${{ matrix.variant == 'root' && matrix.manifest || '' }}
+
+  macos:
+    name: 3.5.0 macOS ${{ matrix.variant }} ${{ matrix.transport }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - { variant: nonroot, transport: pipe, manifest: tools/ci/upstream-3.5.0-expect.macos.nonroot.txt }
+          - { variant: root, transport: pipe, manifest: tools/ci/upstream-3.5.0-expect.macos.root.txt }
+          - { variant: nonroot, transport: tcp, manifest: tools/ci/upstream-3.5.0-expect.macos.nonroot.tcp.txt }
+          - { variant: root, transport: tcp, manifest: tools/ci/upstream-3.5.0-expect.macos.root.tcp.txt }
+    uses: ./.github/workflows/_upstream-testsuite-macos.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_TESTSUITE_VERSION || '3.5.0' }}
+      variant: ${{ matrix.variant }}
+      transport: ${{ matrix.transport }}
+      expect_result_macos: ${{ matrix.variant == 'nonroot' && matrix.manifest || '' }}
+      expect_result_macos_root: ${{ matrix.variant == 'root' && matrix.manifest || '' }}

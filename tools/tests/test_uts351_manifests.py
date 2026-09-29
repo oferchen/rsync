@@ -1,9 +1,9 @@
 """The rsync 3.5.1 testsuite legs: manifests, owners and scheduling.
 
-`.github/workflows/upstream-testsuite-3.5.1-<platform>-<privilege>-<transport>.yml`
-run upstream's 3.5.1 corpus on eight contexts ({pipe,tcp} x {nonroot,root} x
-{Linux,macOS}), one workflow per context so each has its own status badge, each
-against its own --expect-result manifest. These tests hold that ledger to three rules:
+`.github/workflows/upstream-testsuite-3.5.1.yml` runs upstream's 3.5.1 corpus
+on eight contexts ({pipe,tcp} x {nonroot,root} x {Linux,macOS}) as one matrix
+workflow with one aggregate badge, each leg against its own --expect-result
+manifest. These tests hold that ledger to three rules:
 
 1. Every expected failure names its cause and owner. The manifests accept
    known divergences, and an unexplained `fail` row is a silent waiver: nobody
@@ -12,10 +12,11 @@ against its own --expect-result manifest. These tests hold that ledger to three 
    here instead of quietly discarding them.
 2. The workflow and the files agree. A manifest nothing reads is dead, and a
    path the workflow names without a file fails the leg only at run time.
-3. The legs are not a pull-request gate yet. CI runs about one workflow at a
-   time; eight more jobs per PR would gridlock the merge queue. Making 3.5.1
-   the required gate is a separate, deliberate step (the pin flip), so the
-   3.5.0 callers in ci.yml must not pick up these manifests by accident.
+3. The legs run nightly and on demand only. CI runs about one workflow at a
+   time; eight more legs per pull request or per merge would starve the
+   required checks. Making 3.5.1 the required gate is a separate, deliberate
+   step (the pin flip), so the 3.5.0 callers in ci.yml must not pick up these
+   manifests by accident.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 CI_DIR = REPO / "tools" / "ci"
-WORKFLOWS = sorted((REPO / ".github" / "workflows").glob("upstream-testsuite-3.5.1-*.yml"))
+WORKFLOW = REPO / ".github" / "workflows" / "upstream-testsuite-3.5.1.yml"
 CI_YML = REPO / ".github" / "workflows" / "ci.yml"
 SUITE = REPO / "target" / "interop" / "upstream-src" / "rsync-3.5.1" / "testsuite"
 
@@ -98,22 +99,17 @@ class Uts351ManifestTests(unittest.TestCase):
             unknown = {r[0] for r in _rows(CI_DIR / name)} - corpus
             self.assertFalse(unknown, f"{name}: not in the 3.5.1 corpus: {unknown}")
 
-    def test_workflows_read_exactly_the_eight_manifests(self) -> None:
-        self.assertEqual(len(WORKFLOWS), len(CONTEXTS), "one workflow per context")
-        named = []
-        for workflow in WORKFLOWS:
-            found = re.findall(r"tools/ci/(upstream-3\.5\.1-expect\.[\w.]+\.txt)",
-                               workflow.read_text())
-            self.assertEqual(len(found), 1, f"{workflow.name}: exactly one manifest")
-            named += found
-        self.assertEqual(sorted(named), sorted(CONTEXTS))
+    def test_workflow_reads_exactly_the_eight_manifests(self) -> None:
+        named = re.findall(r"tools/ci/(upstream-3\.5\.1-expect\.[\w.]+\.txt)",
+                           WORKFLOW.read_text())
+        self.assertEqual(sorted(named), sorted(CONTEXTS), "one manifest per leg, each once")
 
-    def test_legs_are_not_a_pull_request_gate(self) -> None:
-        for workflow in WORKFLOWS:
-            on_block = workflow.read_text().split("\non:", 1)[1].split("\njobs:", 1)[0]
-            self.assertNotIn("pull_request", on_block, workflow.name)
-            for trigger in ("push:", "schedule:", "workflow_dispatch:"):
-                self.assertIn(trigger, on_block, workflow.name)
+    def test_legs_run_nightly_and_on_demand_only(self) -> None:
+        on_block = WORKFLOW.read_text().split("\non:", 1)[1].split("\njobs:", 1)[0]
+        for trigger in ("pull_request", "push:", "merge_group"):
+            self.assertNotIn(trigger, on_block, WORKFLOW.name)
+        for trigger in ("schedule:", "workflow_dispatch:"):
+            self.assertIn(trigger, on_block, WORKFLOW.name)
         self.assertNotIn("upstream-3.5.1-", CI_YML.read_text())
 
 

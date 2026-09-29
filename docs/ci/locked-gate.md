@@ -7,22 +7,14 @@ it ride along on an unrelated change, and keeps `cargo-lockfile-weekly`
 as the single intentional path for dep bumps.
 
 CIM-LOCKFILE-1..4 audited and fixed every cargo invocation in CI that
-should carry `--locked`. CIM-LOCKFILE-5 added two gates that prevent
-regressions:
-
-1. **`check-locked-flags.yml`** (full scan): runs
-   `tools/ci/check_locked_flags.sh` on every PR and on push to master.
-   Inspects every `.yml`/`.yaml`/`.sh` under `.github/workflows/` and
-   `tools/ci/` regardless of what changed in the PR.
-2. **`locked-gate.yml`** (fast PR gate): runs only on PRs that touch
-   `.github/workflows/**.yml`. Diffs HEAD against the PR base and only
-   inspects the workflow files that actually changed. Pure bash + grep,
-   no cargo invocation, finishes in seconds.
-
-The two gates intentionally overlap. The fast gate fails first on the
-common case of editing a workflow; the full scan catches anything the
-fast gate misses (renames, sneak-ins via merge commits, drift in shell
-helpers under `tools/ci/`).
+should carry `--locked`. The gate that prevents regressions is
+`tools/ci/check_locked_flags.sh`, run as a step of
+[`pr-lint.yml`](../../.github/workflows/pr-lint.yml) on every PR and on
+push to master. It inspects every `.yml`/`.yaml`/`.sh` under
+`.github/workflows/` and `tools/ci/` regardless of what changed in the
+PR, so renames, merge-commit sneak-ins and drift in shell helpers are
+all caught. An earlier diff-only fast gate covered a strict subset of
+these files and was retired.
 
 ## Gated subcommands
 
@@ -63,9 +55,6 @@ If a new invocation is genuinely lock-free (for example, a one-off
 plugin whose `--locked` flag does not exist), add a `path:line` entry
 to the `ALLOWLIST` array in
 [`tools/ci/check_locked_flags.sh`](../../tools/ci/check_locked_flags.sh)
-and document the rationale in the PR description. The fast PR gate
-shares the same conceptual allowlist by virtue of failing on the same
-condition; opting an invocation out means it stops appearing as a gated
-match in both gates.
+and document the rationale in the PR description.
 
 Routine cargo additions never need an exemption: just pass `--locked`.
