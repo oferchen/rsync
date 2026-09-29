@@ -725,10 +725,17 @@ publish_oc_rsync_bin() {
         # A per-RUN directory, not a fixed filename: two concurrent runs on one
         # host would otherwise publish over each other and each would test the
         # other's binary. The directory is 0755 so it stays traversable for the
-        # cap-dropped root leg, and the binary keeps the basename `oc-rsync`
-        # because argv[0] is load-bearing for mode dispatch.
+        # cap-dropped root leg.
+        #
+        # The basename is `rsync`, as upstream's own suite runs it
+        # (runtests.py:682 defaults --rsync-bin to $tooldir/rsync), because a
+        # test may locate the binary inside $RSYNC by that name:
+        # rrsync-userns-procfs_test.py:32-42 stages a copy into a user
+        # namespace and fails "cannot locate the rsync executable" otherwise.
+        # argv[0] also selects oc-rsync's brand, so run_python_suite_mode pins
+        # OC_RSYNC_BRAND=oc to keep every other cell on the oc brand.
         local run_dir="${dir}/${published_bin_prefix}${uts_run_id}"
-        local dst="${run_dir}/oc-rsync"
+        local dst="${run_dir}/rsync"
         if mkdir -p "$run_dir" 2>/dev/null \
             && chmod 0755 "$run_dir" 2>/dev/null \
             && cp -f "$src" "$dst" 2>/dev/null \
@@ -1381,7 +1388,9 @@ run_python_suite_mode() {
         cd "$upstream_src_dir"
         # scratchbase -> runtests.py places $scratchbase/testtmp here, off the
         # source tree, so the cleanup above owns the whole scratch lifecycle.
-        scratchbase="$scratch_home" "${runtests_argv[@]}"
+        # OC_RSYNC_BRAND: the published basename is `rsync` (see
+        # publish_oc_rsync_bin), so pin the brand argv[0] would otherwise flip.
+        OC_RSYNC_BRAND=oc scratchbase="$scratch_home" "${runtests_argv[@]}"
     ) 2>&1 | tee "$output_log" || rc=${PIPESTATUS[0]}
 
     # Force-clear the scratch tree again so the NEXT leg (or a re-run on the
