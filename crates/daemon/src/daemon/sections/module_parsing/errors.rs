@@ -72,6 +72,15 @@ fn unsupported_option(option: OsString, brand: Brand) -> DaemonError {
     config_error(text)
 }
 
+/// upstream: options.c:1559-1562 and the shared `daemon_error:` label at
+/// options.c:1594-1596.
+fn dparam_missing_equals(value: &str, brand: Brand) -> DaemonError {
+    let program = brand.daemon_program_name();
+    config_error(format!(
+        "--dparam value is missing an '=': {value}\n(Type \"{program} --daemon --help\" for assistance with daemon mode.)"
+    ))
+}
+
 fn config_error(text: String) -> DaemonError {
     DaemonError::new(
         FEATURE_UNAVAILABLE_EXIT_CODE,

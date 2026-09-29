@@ -28,6 +28,7 @@ impl RuntimeOptions {
     ) -> Result<Self, DaemonError> {
         let mut options = Self {
             brand,
+            dparams: collect_dparams(arguments, brand)?,
             ..Default::default()
         };
         let mut seen_modules = HashSet::new();
@@ -55,7 +56,13 @@ impl RuntimeOptions {
         let mut iter = arguments.iter();
 
         while let Some(argument) = iter.next() {
-            if let Some(value) = take_option_value(argument, &mut iter, "--port")? {
+            if take_option_value(argument, &mut iter, "--dparam")?.is_some() {
+                // Collected by `collect_dparams` before any config was read.
+            } else if argument == "-M" {
+                iter.next();
+            } else if argument.as_encoded_bytes().starts_with(b"-M") {
+                // `-Mname=value`, also collected by `collect_dparams`.
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--port")? {
                 options.port = parse_port(&value)?;
                 // upstream: clientserver.c:1573 - `--port 0` is treated as
                 // "unspecified": it does not override a config `port` directive
@@ -213,4 +220,48 @@ impl RuntimeOptions {
 fn is_stacked_short_verbose(arg: &OsString) -> bool {
     let bytes = arg.as_encoded_bytes();
     bytes.len() >= 2 && bytes[0] == b'-' && bytes[1..].iter().all(|&b| b == b'v')
+}
+
+/// Collects the `--dparam`/`-M` overrides from the daemon's arguments.
+///
+/// upstream: options.c:1556-1566 - each value must contain `=`, otherwise
+/// "--dparam value is missing an '='" ends the parse (`RERR_SYNTAX`); after
+/// the whole command line is read, options.c:1583 set_dparams(1) refuses a
+/// name that is not a daemon parameter with `Unknown parameter "<name>"`. The
+/// overrides are collected before any config file is read because
+/// `--config` loads its file as it is parsed here, and upstream applies the
+/// overrides to every config it reads.
+fn collect_dparams(arguments: &[OsString], brand: Brand) -> Result<Vec<String>, DaemonError> {
+    let mut dparams = Vec::new();
+    let mut iter = arguments.iter();
+    while let Some(argument) = iter.next() {
+        let value = if let Some(value) = take_option_value(argument, &mut iter, "--dparam")? {
+            value
+        } else if argument == "-M" {
+            iter.next()
+                .cloned()
+                .ok_or_else(|| missing_argument_value("-M"))?
+        } else if let Some(rest) = argument.as_encoded_bytes().strip_prefix(b"-M") {
+            OsString::from(String::from_utf8_lossy(rest).into_owned())
+        } else {
+            continue;
+        };
+        let value = value.to_string_lossy().into_owned();
+        if !value.contains('=') {
+            return Err(dparam_missing_equals(&value, brand));
+        }
+        dparams.push(value);
+    }
+    if let Some(unknown) = dparams
+        .iter()
+        .map(|dparam| {
+            dparam
+                .split_once('=')
+                .map_or(dparam.as_str(), |(name, _)| name)
+        })
+        .find(|name| !is_daemon_parameter(name))
+    {
+        return Err(config_error(format!("Unknown parameter \"{unknown}\"")));
+    }
+    Ok(dparams)
 }
