@@ -954,6 +954,28 @@ impl<R: Read> MultiplexReader<R> {
         Ok(code)
     }
 
+    /// Reads stream bytes that the peer sent without multiplex framing.
+    ///
+    /// Payload already demultiplexed from an earlier `MSG_DATA` frame is
+    /// delivered first; after that the bytes come straight from the
+    /// underlying stream and are never parsed as frame headers. Frame reads
+    /// consume exactly one frame, so no raw byte can be stranded in `buffer`.
+    ///
+    /// upstream: io.c:io_end_multiplex_in(MPLX_TO_BUFFERED) keeps the already
+    /// buffered input and stops demultiplexing what follows.
+    pub(super) fn read_unframed(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.frames.in_progress() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unframed read requested while a multiplex frame is partially received",
+            ));
+        }
+        if self.pos < self.buffer.len() {
+            return self.drain_buffered(buf);
+        }
+        self.inner.read(buf)
+    }
+
     /// Attempts to borrow exactly `len` bytes from the internal frame buffer.
     ///
     /// Returns `Some(&[u8])` if the current frame buffer has at least `len` bytes
