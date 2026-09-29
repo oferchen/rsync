@@ -262,6 +262,15 @@ pub(super) struct ServerLongFlags {
     /// convert each block/char device into a regular file whose contents are
     /// streamed (`flist.c:1644`).
     pub(super) copy_devices: bool,
+    /// Dereference symlinks that point outside the transfer tree (upstream:
+    /// `--copy-unsafe-links`, long-form only).
+    ///
+    /// upstream: options.c:695 - the popt entry binds `copy_unsafe_links`, and
+    /// server_options() forwards the bare long flag (options.c:3075-3076).
+    /// Only the sending side consumes it (flist.c:492 `readlink_stat()`); the
+    /// receiver clears it (main.c:1024).
+    pub(super) copy_unsafe_links: bool,
+
     /// Skip symlinks that point outside the transfer tree (upstream:
     /// `--safe-links`, long-form only).
     ///
@@ -548,6 +557,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         delete_excluded: false,
         remove_source_files: false,
         copy_devices: false,
+        copy_unsafe_links: false,
         safe_links: false,
         stats: false,
         ignore_existing: false,
@@ -757,6 +767,10 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // remote sender (pull) so it streams device contents as a regular
             // file (flist.c:1644). Long-form only.
             "--copy-devices" => flags.copy_devices = true,
+            // upstream: options.c:3075-3076 - `--copy-unsafe-links` forwarded as
+            // a bare long flag; a server sender dereferences unsafe symlinks
+            // while building the file list (flist.c:492).
+            "--copy-unsafe-links" => flags.copy_unsafe_links = true,
             // upstream: options.c:3083-3084 - `--safe-links` forwarded as a bare
             // long flag; the receiving side's generator consumes it
             // (generator.c:1951).

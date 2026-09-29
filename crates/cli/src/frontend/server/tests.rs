@@ -403,6 +403,44 @@ fn long_flags_capture_safe_links() {
     assert!(flags.safe_links);
 }
 
+/// upstream: options.c:3075-3076 forwards `--copy-unsafe-links` as a bare long
+/// flag, and flist.c:492 has the server SENDER dereference every unsafe
+/// symlink it walks. Swallowing the flag let an rsh pull deliver absolute and
+/// `..` symlinks as symlinks - an escape the client explicitly asked to close.
+#[test]
+fn long_flags_capture_copy_unsafe_links() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("--copy-unsafe-links"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.copy_unsafe_links);
+}
+
+/// Absent by default: a server that never receives `--copy-unsafe-links` must
+/// send unsafe symlinks as symlinks, exactly as upstream does.
+#[test]
+fn long_flags_default_copy_unsafe_links_is_off() {
+    let args = vec![OsString::from("--server"), OsString::from("--sender")];
+    let flags = parse_server_long_flags(&args);
+    assert!(!flags.copy_unsafe_links);
+}
+
+/// An operand literally named `--copy-unsafe-links` after the `--` marker is a
+/// path, not the option.
+#[test]
+fn long_flags_copy_unsafe_links_after_end_of_options_is_an_operand() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("--"),
+        OsString::from("--copy-unsafe-links"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert!(!flags.copy_unsafe_links);
+}
+
 /// Absent by default: a server that never receives `--safe-links` must not
 /// skip any symlink.
 #[test]
