@@ -662,6 +662,31 @@ fn module_log_at(
     marker: &str,
     tail: &str,
 ) -> Option<String> {
+    let module_params = format!("\ttransfer logging = yes\n\tlog format = {format}\n");
+    let (text, status) = run_module_log(
+        &module_params,
+        daemon_args,
+        client_args,
+        push,
+        prepare,
+        marker,
+        tail,
+    )?;
+    assert!(status.success(), "transfer {client_args:?} failed");
+    Some(text)
+}
+
+/// Runs one transfer against module `m`, whose logging directives are
+/// `module_params`, and returns the module log with the client's exit status.
+fn run_module_log(
+    module_params: &str,
+    daemon_args: &[&str],
+    client_args: &[&str],
+    push: bool,
+    prepare: impl FnOnce(&Path, &Path),
+    marker: &str,
+    tail: &str,
+) -> Option<(String, std::process::ExitStatus)> {
     let port = free_port()?;
     let tmp = tempfile::tempdir().expect("temp dir");
     let root = tmp.path();
@@ -684,8 +709,7 @@ fn module_log_at(
          [m]\n\
          \tpath = {module}\n\
          \tread only = no\n\
-         \ttransfer logging = yes\n\
-         \tlog format = {format}\n",
+         {module_params}",
         log = log.display(),
         module = module_dir.display(),
     );
@@ -707,8 +731,7 @@ fn module_log_at(
         .expect("run client");
     wait_for_lines(&log, marker, 1);
     drop(daemon);
-    assert!(status.success(), "transfer {client_args:?} failed");
-    Some(fs::read_to_string(&log).expect("read log"))
+    Some((fs::read_to_string(&log).expect("read log"), status))
 }
 
 fn assert_has_line(lines: &[String], want: &str) {
@@ -1155,4 +1178,75 @@ fn push_file_over_non_empty_dir_logs_its_contents_as_del_rows() {
         ],
         "log:\n{text}"
     );
+}
+
+/// Plants a regular file `x` in the push source over a non-empty `x/` in the
+/// module, which a push without `--delete` cannot clear.
+fn plant_file_over_non_empty_dir(src: &Path, module: &Path) {
+    fs::write(src.join("x"), b"x").expect("src file");
+    fs::create_dir_all(module.join("x")).expect("mkdir");
+    fs::write(module.join("x/a"), b"a").expect("a");
+}
+
+const MAKE_ROOM_REFUSAL: [&str; 2] = [
+    "cannot delete non-empty directory: x",
+    "could not make way for new regular file: x",
+];
+
+/// The make-room refusal reaches the module log as well as the client, ahead
+/// of the per-file rows, and the push exits `RERR_PARTIAL`.
+///
+/// upstream: delete.c:179 (`FINFO`) and delete.c:283 (`FERROR_XFER`) reach
+/// log.c:312-331 `rwrite()`, which `logit()`s every message on a daemon before
+/// the server frames it for the client (measured against rsync 3.5.1: both
+/// lines, then `recv|.|`, exit 23).
+#[test]
+fn push_refused_by_a_non_empty_dir_logs_the_refusal() {
+    let Some((text, status)) = run_module_log(
+        "\ttransfer logging = yes\n\tlog format = %o|%f|%i\n",
+        &[],
+        &["-rt"],
+        true,
+        plant_file_over_non_empty_dir,
+        "recv|d/f|",
+        "",
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert_eq!(status.code(), Some(23), "log:\n{text}");
+    let refusal: Vec<String> = MAKE_ROOM_REFUSAL
+        .iter()
+        .flat_map(|needle| lines_from(&text, needle))
+        .collect();
+    assert_eq!(refusal, MAKE_ROOM_REFUSAL, "log:\n{text}");
+    let position = |needle: &str| text.find(needle).expect(needle);
+    assert!(
+        position(MAKE_ROOM_REFUSAL[1]) < position("recv|"),
+        "the refusal precedes the per-file rows, log:\n{text}"
+    );
+}
+
+/// A module without `transfer logging` still logs diagnostics: upstream's
+/// `rwrite()` gates `logit()` on `am_daemon` alone (log.c:312), and only the
+/// per-file rows depend on `transfer logging` (clientserver.c:823).
+#[test]
+fn refusal_is_logged_without_transfer_logging() {
+    let Some((text, status)) = run_module_log(
+        "",
+        &[],
+        &["-rt"],
+        true,
+        plant_file_over_non_empty_dir,
+        MAKE_ROOM_REFUSAL[1],
+        "",
+    ) else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    assert_eq!(status.code(), Some(23), "log:\n{text}");
+    for needle in MAKE_ROOM_REFUSAL {
+        assert_eq!(lines_from(&text, needle), [needle], "log:\n{text}");
+    }
+    assert!(!text.contains("recv"), "no per-file rows, log:\n{text}");
 }

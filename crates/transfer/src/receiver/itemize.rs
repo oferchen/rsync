@@ -303,6 +303,7 @@ impl ReceiverContext {
             use std::io::Write as _;
             std::io::stdout().write_all(line.as_bytes())
         } else {
+            self.log_daemon_message(line);
             writer.send_msg_info(line.as_bytes())
         }
     }
@@ -341,7 +342,9 @@ impl ReceiverContext {
             use std::io::Write as _;
             std::io::stderr().write_all(line.as_ref())
         } else {
-            writer.send_msg_error_xfer(line.as_ref())
+            let line = line.as_ref();
+            self.log_daemon_message(&String::from_utf8_lossy(line));
+            writer.send_msg_error_xfer(line)
         }
     }
 
@@ -468,6 +471,7 @@ impl ReceiverContext {
             use std::io::Write as _;
             return std::io::stderr().write_all(line.as_bytes());
         }
+        self.log_daemon_message(line);
         if self.protocol.supports_generator_messages() {
             writer.send_msg_warning(line.as_bytes())
         } else {
@@ -494,7 +498,21 @@ impl ReceiverContext {
             use std::io::Write as _;
             std::io::stderr().write_all(line.as_bytes())
         } else {
+            self.log_daemon_message(line);
             writer.send_msg_error(line.as_bytes())
+        }
+    }
+
+    /// Queues a server-side diagnostic for the daemon's module log.
+    ///
+    /// upstream: log.c:312-331 - `rwrite()` hands the message to `logit()` on
+    /// `am_daemon` before the `am_server` branch frames it for the peer, so the
+    /// daemon's log and the client both receive it.
+    fn log_daemon_message(&self, line: &str) {
+        if self.daemon_log_messages {
+            self.daemon_log_generator_entries.borrow_mut().push(
+                crate::progress::DaemonLogEntry::Message(line.trim_end_matches('\n').to_owned()),
+            );
         }
     }
 
@@ -1119,6 +1137,15 @@ impl ReceiverContext {
         self.daemon_logfile_format_has_i = format_has_i;
     }
 
+    /// Routes this server receiver's diagnostics to the daemon's module log as
+    /// well as to the client.
+    ///
+    /// upstream: log.c:312 - `rwrite()` logs on `am_daemon` whether or not the
+    /// module has `transfer logging`.
+    pub(crate) fn enable_daemon_log_messages(&mut self) {
+        self.daemon_log_messages = true;
+    }
+
     /// Collects one per-file daemon-log row when daemon transfer logging is armed.
     ///
     /// Independent of the client-visible itemize gate: this is the daemon's own
@@ -1247,9 +1274,9 @@ impl ReceiverContext {
     ) {
         if self.captures_victim_modes() {
             let rows = self.daemon_log_deletion_rows(deleted);
-            self.daemon_log_make_room_deletions
+            self.daemon_log_generator_entries
                 .borrow_mut()
-                .extend(rows);
+                .extend(rows.into_iter().map(crate::progress::DaemonLogEntry::Row));
         }
     }
 
@@ -1277,20 +1304,37 @@ impl ReceiverContext {
             .collect()
     }
 
-    /// Drains the collected daemon-log rows in the order upstream writes them
-    /// to the module log file: an early delete pass's `del.` rows, the rows for
-    /// directories cleared to make room, the per-file rows in ascending
+    /// Drains the collected daemon-log lines in the order upstream writes them
+    /// to the module log file: an early delete pass's `del.` rows, the lines
+    /// raised while the generator walked the file list (make-room `del.` rows
+    /// and diagnostics, in emission order), the per-file rows in ascending
     /// flist-index order, then a late delete pass's `del.` rows.
-    pub fn drain_daemon_log_rows(&mut self) -> Vec<crate::progress::DaemonLogRow> {
-        let mut rows = std::mem::take(&mut self.daemon_log_early_deletions);
-        rows.append(self.daemon_log_make_room_deletions.get_mut());
-        rows.extend(
+    ///
+    /// A diagnostic raised by the receiver half after the walk (a failed
+    /// commit, say) still lands with the generator's lines: upstream orders
+    /// those by process timing, and the generator normally runs ahead.
+    pub fn drain_daemon_log_entries(&mut self) -> Vec<crate::progress::DaemonLogEntry> {
+        use crate::progress::DaemonLogEntry;
+        let mut entries: Vec<DaemonLogEntry> = std::mem::take(&mut self.daemon_log_early_deletions)
+            .into_iter()
+            .map(DaemonLogEntry::Row)
+            .collect();
+        entries.append(self.daemon_log_generator_entries.get_mut());
+        entries.extend(
             std::mem::take(&mut *self.daemon_log_rows.borrow_mut())
                 .into_values()
-                .flatten(),
+                .flatten()
+                .map(DaemonLogEntry::Row),
         );
-        rows.append(&mut self.daemon_log_late_deletions);
-        for row in &mut rows {
+        entries.extend(
+            std::mem::take(&mut self.daemon_log_late_deletions)
+                .into_iter()
+                .map(DaemonLogEntry::Row),
+        );
+        for entry in &mut entries {
+            let DaemonLogEntry::Row(row) = entry else {
+                continue;
+            };
             row.dir.clone_from(&self.daemon_log_dir);
             if let Some(name) = self
                 .daemon_log_renamed_from
@@ -1300,7 +1344,7 @@ impl ReceiverContext {
                 row.name.clone_from(name);
             }
         }
-        rows
+        entries
     }
 
     /// Drains every buffered itemize row in generator walk order, routing each
