@@ -13,45 +13,62 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::escape::{EscapeStyle, escape_for_output};
 
-/// Maximum epoch seconds accepted for timestamp formatting.
-///
-/// Corresponds to 9999-12-31 23:59:59 UTC - the last representable date in a
-/// 4-digit-year `YYYY/MM/DD HH:MM:SS` layout. upstream: util1.c:1558-1561
-/// `timestring()` falls back to a placeholder when `localtime_r()` fails.
-const MAX_TIMESTAMP_EPOCH_SECS: i64 = 253_402_300_799;
+/// `timestring()`'s result buffer: 20 bytes, so at most 19 characters survive
+/// `snprintf()` (upstream: util1.c:1725 `static char buffers[4][20]`).
+const TIMESTRING_MAX_LEN: usize = 19;
 
 /// Formats an instant as `YYYY/MM/DD HH:MM:SS` in the local timezone.
 ///
-/// upstream: util1.c:1551-1568 `timestring()` - `localtime_r()` followed by
+/// upstream: util1.c:1722-1739 `timestring()` - `localtime_r()` followed by
 /// `"%4d/%02d/%02d %02d:%02d:%02d"`. The local offset is computed per instant
 /// (DST-correct) via `platform::local_time`, matching `localtime_r`.
-/// Out-of-range instants render the placeholder `0000/00/00 00:00:00`,
-/// mirroring the upstream NULL-`localtime_r` fallback.
 #[must_use]
 pub fn format_log_timestamp(instant: SystemTime) -> String {
     let unix_secs = match instant.duration_since(UNIX_EPOCH) {
         Ok(duration) => i64::try_from(duration.as_secs()).unwrap_or(i64::MAX),
         Err(before_epoch) => -i64::try_from(before_epoch.duration().as_secs()).unwrap_or(i64::MAX),
     };
-    let offset = i64::from(platform::local_time::local_utc_offset_seconds(unix_secs));
-    let local_secs = unix_secs.saturating_add(offset);
-    if !(0..=MAX_TIMESTAMP_EPOCH_SECS).contains(&local_secs) {
-        // upstream: util1.c:1558-1561 timestring() NULL-check equivalent.
-        return "0000/00/00 00:00:00".to_owned();
-    }
+    format_timestring(unix_secs)
+}
 
-    let day_seconds = (local_secs % 86_400) as u32;
+/// Renders `unix_secs` exactly as upstream `timestring()` does, in the local
+/// timezone.
+///
+/// Pre-epoch times render normally, a year that does not fit `%4d` keeps its
+/// extra digits and loses the tail to the 19-character buffer, and a time
+/// `localtime_r()` cannot represent renders `(time out of range)`.
+#[must_use]
+pub fn format_timestring(unix_secs: i64) -> String {
+    let offset = i64::from(platform::local_time::local_utc_offset_seconds(unix_secs));
+    timestring_at_offset(unix_secs, offset)
+}
+
+/// [`format_timestring`] for a fixed UTC offset, in seconds east of UTC.
+fn timestring_at_offset(unix_secs: i64, offset: i64) -> String {
+    // A saturated sum lies far outside the int tm_year range checked below.
+    let local_secs = unix_secs.saturating_add(offset);
+    let (year, month, day) = civil_from_days(local_secs.div_euclid(86_400));
+    // upstream: util1.c:1729-1731 - a NULL localtime_r() renders the literal;
+    // localtime_r() fails exactly when tm_year (year - 1900) overflows an int.
+    let Ok(tm_year) = i32::try_from(year - 1900) else {
+        return "(time out of range)".to_owned();
+    };
+    let day_seconds = local_secs.rem_euclid(86_400);
     let hours = day_seconds / 3_600;
     let minutes = (day_seconds % 3_600) / 60;
     let seconds = day_seconds % 60;
-    let (year, month, day) = civil_from_days(local_secs / 86_400);
-    format!("{year:04}/{month:02}/{day:02} {hours:02}:{minutes:02}:{seconds:02}")
+    // upstream: util1.c:1732-1734 - `(int)tm->tm_year + 1900` wraps in C int
+    // arithmetic, `%4d` space-pads, and snprintf() truncates to the buffer.
+    let year = tm_year.wrapping_add(1900);
+    let mut rendered = format!("{year:4}/{month:02}/{day:02} {hours:02}:{minutes:02}:{seconds:02}");
+    rendered.truncate(TIMESTRING_MAX_LEN);
+    rendered
 }
 
 /// Converts a day count (days since 1970-01-01) to a civil `(year, month, day)`.
 ///
 /// Algorithm from Howard Hinnant's date library (public domain).
-fn civil_from_days(days: i64) -> (i32, u32, u32) {
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = (z - era * 146_097) as u32;
@@ -62,7 +79,7 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    (y as i32, m, d)
+    (y, m, d)
 }
 
 /// Returns the prefix upstream stamps on every log-file line, for `instant`
@@ -246,12 +263,39 @@ mod tests {
         assert_eq!(&rendered[11..13], format!("{expected_hour:02}").as_str());
     }
 
-    /// upstream: util1.c:1558-1561 - out-of-range instants render the
-    /// placeholder instead of overflowing the fixed-width year.
+    /// upstream: util1.c:1722-1739 `timestring()` over the whole `time_t`
+    /// range, each value measured against rsync 3.5.1 under `TZ=UTC`: `%4d`
+    /// space-pads short and negative years, a longer year pushes the tail out
+    /// of the 20-byte buffer, `tm_year + 1900` wraps in `int`, and only an
+    /// unrepresentable `tm_year` renders the out-of-range literal.
     #[test]
-    fn timestamp_out_of_range_renders_placeholder() {
-        let far = UNIX_EPOCH + std::time::Duration::from_secs(u64::MAX / 2);
-        assert_eq!(format_log_timestamp(far), "0000/00/00 00:00:00");
+    fn timestring_matches_upstream_across_the_time_t_range() {
+        let cases: [(i64, &str); 12] = [
+            (-40_000_000_000, " 702/06/15 00:53:20"),
+            (-62_135_596_800, "   1/01/01 00:00:00"),
+            (-30_610_224_001, " 999/12/31 23:59:59"),
+            (-2_208_988_800, "1900/01/01 00:00:00"),
+            (-1, "1969/12/31 23:59:59"),
+            (0, "1970/01/01 00:00:00"),
+            (253_402_300_799, "9999/12/31 23:59:59"),
+            (253_402_300_800, "10000/01/01 00:00:0"),
+            (67_767_976_233_316_799, "2147483647/12/29 11"),
+            (67_768_036_191_676_799, "-2147481749/12/31 2"),
+            (67_768_036_191_676_800, "(time out of range)"),
+            (i64::MAX, "(time out of range)"),
+        ];
+        for (secs, expected) in cases {
+            assert_eq!(timestring_at_offset(secs, 0), expected, "t={secs}");
+        }
+    }
+
+    /// The offset is applied before the range check, as `localtime_r()`
+    /// converts to local time before filling `tm_year`.
+    #[test]
+    fn timestring_applies_the_offset_before_the_range_check() {
+        assert_eq!(timestring_at_offset(-1, 3_600), "1970/01/01 00:59:59");
+        assert_eq!(timestring_at_offset(i64::MAX, 1), "(time out of range)");
+        assert_eq!(timestring_at_offset(i64::MIN, -1), "(time out of range)");
     }
 
     /// upstream: log.c:122-132 - each line written through the sink gains
