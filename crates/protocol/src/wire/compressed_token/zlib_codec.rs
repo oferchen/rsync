@@ -598,7 +598,20 @@ impl ZlibTokenDecoder {
                 }
                 let produced = (self.deflate.decompressor.total_out() - before_out) as usize;
 
-                if input.is_empty() || (consumed == 0 && produced == 0) {
+                if consumed == 0 && produced == 0 {
+                    // No forward progress with the stream idle: nothing is left
+                    // buffered, so looping again cannot make any.
+                    break;
+                }
+                if input.is_empty() && produced < self.deflate.output_buf.len() {
+                    // upstream: token.c:726 `} while (len || rx_strm.avail_out
+                    // == 0);` - consuming the input is only half the exit
+                    // condition; a filled output buffer may leave inflate
+                    // holding pending output. zlib copies a stored block
+                    // straight through, so today it never holds output once the
+                    // input is consumed, but the exit test must not rely on
+                    // that. The encoder's `see_token` carries the matching
+                    // `avail_out` clause (token.c:509).
                     break;
                 }
             }
