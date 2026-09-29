@@ -384,6 +384,53 @@ mod rsyncd_conf_corpus_tests {
         }
     }
 
+    /// Compares the settings a listening daemon reads at startup.
+    fn compare_startup(oc: &ParsedConfigModules, upstream: &Section, diffs: &mut String) {
+        let get = |key: &str| upstream.get(key).map(String::as_str).unwrap_or_default();
+        let mut check = |key: &str, ours: String, theirs: String| {
+            if ours != theirs {
+                let _ = writeln!(diffs, "  [startup] {key}: oc={ours:?} upstream={theirs:?}");
+            }
+        };
+        check(
+            "pid_file",
+            oc.pid_file
+                .as_ref()
+                .map(|(p, _)| p.display().to_string())
+                .unwrap_or_default(),
+            get("pid_file").to_owned(),
+        );
+        check(
+            "socket_options",
+            oc.socket_options
+                .as_ref()
+                .map(|(s, _)| s.clone())
+                .unwrap_or_default(),
+            get("socket_options").to_owned(),
+        );
+        check(
+            "bind_address",
+            oc.bind_address
+                .as_ref()
+                .map(|(a, _)| a.to_string())
+                .unwrap_or_default(),
+            get("bind_address").to_owned(),
+        );
+        check(
+            "listen_backlog",
+            oc.listen_backlog
+                .as_ref()
+                .map_or(5, |(n, _)| *n)
+                .to_string(),
+            get("listen_backlog").to_owned(),
+        );
+        check(
+            "rsync_port",
+            oc.rsync_port.as_ref().map_or(0, |(n, _)| *n).to_string(),
+            get("rsync_port").to_owned(),
+        );
+    }
+
     fn compare_globals(oc: &ParsedConfigModules, upstream: &Section, diffs: &mut String) {
         let get = |key: &str| upstream.get(key).map(String::as_str).unwrap_or_default();
         let mut check = |key: &str, ours: String, theirs: String| {
@@ -516,6 +563,13 @@ mod rsyncd_conf_corpus_tests {
                 compare_module(oc, global_lock, theirs, &mut diffs);
             }
             compare_globals(&parsed, &upstream.globals, &mut diffs);
+            let startup = read_dump(&entry.join("upstream-startup.dump"));
+            match parse_config_globals_only(&entry.join("rsyncd.conf"), &[]) {
+                Ok(ours) => compare_startup(&ours, &startup.globals, &mut diffs),
+                Err(error) => {
+                    let _ = writeln!(diffs, "  [startup] oc refused the config: {error}");
+                }
+            }
             if !diffs.is_empty() {
                 let _ = writeln!(report, "{}:\n{diffs}", entry.display());
             }

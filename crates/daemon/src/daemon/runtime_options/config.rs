@@ -6,6 +6,12 @@ impl RuntimeOptions {
     ) -> Result<(), DaemonError> {
         let path = PathBuf::from(value.clone());
         let parsed = parse_config_modules_with_dparams(&path, &self.dparams)?;
+        // upstream: clientserver.c:1762 - the listening daemon reads its own
+        // settings (pid file, port, address, listener socket options and
+        // backlog, the QUIC listener) from a globals-only load that stops at
+        // the first module header; each connection then re-reads the whole
+        // file (clientserver.c:1433 load_config(0)) for everything else.
+        let startup = parse_config_globals_only(&path, &self.dparams)?;
 
         // Retain the config path for SIGHUP reload. Only the first config
         // file loaded is reloadable; subsequent --config flags add modules
@@ -19,7 +25,7 @@ impl RuntimeOptions {
             self.inherit_global_refuse_options(options, &origin)?;
         }
 
-        if let Some((pid_file, origin)) = parsed.pid_file {
+        if let Some((pid_file, origin)) = startup.pid_file {
             self.set_config_pid_file(pid_file, &origin)?;
         }
 
@@ -54,11 +60,11 @@ impl RuntimeOptions {
         // policy of the other global path directives. Both-or-neither is
         // enforced once, after all config sources are merged, in parse_with_brand.
         #[cfg(feature = "quic")]
-        if let Some((cert, _origin)) = parsed.quic_cert_file {
+        if let Some((cert, _origin)) = startup.quic_cert_file {
             self.quic_cert_file = Some(cert);
         }
         #[cfg(feature = "quic")]
-        if let Some((key, _origin)) = parsed.quic_key_file {
+        if let Some((key, _origin)) = startup.quic_key_file {
             self.quic_key_file = Some(key);
         }
         // QUIC client-auth CA (oc extension). When set, the QUIC listener
@@ -66,7 +72,7 @@ impl RuntimeOptions {
         // TLS); unset, no client certificate is requested. Last-wins, like the
         // other global path directives; module-scoped use was already rejected.
         #[cfg(feature = "quic")]
-        if let Some((client_ca, _origin)) = parsed.quic_client_ca_file {
+        if let Some((client_ca, _origin)) = startup.quic_client_ca_file {
             self.quic_client_ca_file = Some(client_ca);
         }
         // QUIC listener port (oc extension). Unset means the QUIC listener
@@ -74,7 +80,7 @@ impl RuntimeOptions {
         // independently. Directive parsing already coerced a `quic port = 0`
         // to the well-known rsync port 873, mirroring the TCP `port = 0` path.
         #[cfg(feature = "quic")]
-        if let Some((port, _origin)) = parsed.quic_port {
+        if let Some((port, _origin)) = startup.quic_port {
             self.quic_port = Some(port);
         }
 
@@ -107,7 +113,7 @@ impl RuntimeOptions {
 
         // Apply the `address` directive only when no CLI --address/--bind was given.
         // upstream: clientserver.c - CLI --address overrides the config file `address`.
-        if let Some((addr, _origin)) = parsed.bind_address
+        if let Some((addr, _origin)) = startup.bind_address
             && !self.bind_address_overridden
         {
             self.bind_address = addr;
@@ -123,26 +129,26 @@ impl RuntimeOptions {
             self.set_daemon_gid_from_config(&gid_str, &origin)?;
         }
 
-        if let Some((backlog, origin)) = parsed.listen_backlog {
+        if let Some((backlog, origin)) = startup.listen_backlog {
             self.set_listen_backlog_from_config(backlog, &origin)?;
         }
 
         // Config-only option (no CLI flag); duplicate detection already happened
         // during directive parsing, so a direct assignment is sufficient.
-        if let Some((threads, _origin)) = parsed.acceptor_threads {
+        if let Some((threads, _origin)) = startup.acceptor_threads {
             self.acceptor_threads = Some(threads);
         }
 
         // upstream: clientserver.c - config `port` overrides the default
         // listening port unless CLI `--port` was already given.
-        if let Some((port, _origin)) = parsed.rsync_port {
+        if let Some((port, _origin)) = startup.rsync_port {
             self.rsync_port = Some(port);
             if !self.port_overridden {
                 self.port = port;
             }
         }
 
-        if let Some((opts, origin)) = parsed.socket_options {
+        if let Some((opts, origin)) = startup.socket_options {
             self.set_socket_options_from_config(opts, &origin)?;
         }
 
