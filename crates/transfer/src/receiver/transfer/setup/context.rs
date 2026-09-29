@@ -187,6 +187,8 @@ impl ReceiverContext {
 
         let (file_count, setup) = self.build_pipeline_setup(file_count)?;
 
+        self.check_server_temp_dir(writer, &setup.dest_dir)?;
+
         // upstream: main.c:820-821 - the receiver prints `created directory
         // <dest>` right after the file list arrives, before generate_files()
         // drives the per-entry itemize rows. Emit it here, after the dest-root
@@ -197,6 +199,60 @@ impl ReceiverContext {
         self.announce_created_directory(writer, &setup.dest_dir)?;
 
         Ok((reader, file_count, setup))
+    }
+
+    /// Checks a server receiver's `--temp-dir` and anchors a relative value at
+    /// the destination directory.
+    ///
+    /// upstream: main.c:1059-1073 do_recv() stats `tmpdir` after
+    /// get_local_name() has chdir'd into the destination, so a relative value
+    /// names a directory under the destination. A missing or non-directory
+    /// value ends the transfer with a message the peer prints (`RERR_SYNTAX`);
+    /// any other stat failure is `RERR_FILEIO`. The message names the value
+    /// as given, not the anchored path. A client receiver checked its own
+    /// value before connecting.
+    fn check_server_temp_dir<W: crate::writer::MsgInfoSender + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        dest_dir: &Path,
+    ) -> io::Result<()> {
+        if self.config.connection.client_mode {
+            return Ok(());
+        }
+        let Some(shown) = self.config.temp_dir.clone() else {
+            return Ok(());
+        };
+        let anchored = if shown.has_root() {
+            shown.clone()
+        } else {
+            dest_dir.join(&shown)
+        };
+        let failure = match std::fs::metadata(&anchored) {
+            Ok(meta) if meta.is_dir() => {
+                self.config.temp_dir = Some(anchored);
+                return Ok(());
+            }
+            Ok(_) => protocol::syntax_violation(format!(
+                "The temp-dir is not a directory: {}",
+                shown.display()
+            )),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => protocol::syntax_violation(
+                format!("The temp-dir does not exist: {}", shown.display()),
+            ),
+            Err(err) => {
+                let text = err.to_string();
+                let strerror = err
+                    .raw_os_error()
+                    .and_then(|code| text.strip_suffix(&format!(" (os error {code})")))
+                    .unwrap_or(&text);
+                io::Error::other(format!(
+                    "Failed to stat temp-dir {}: {strerror}",
+                    shown.display()
+                ))
+            }
+        };
+        let _ = self.emit_error_line(writer, &format!("{failure}\n"));
+        Err(failure)
     }
 
     /// Emits upstream's `created directory <dest>` notice when the receiver

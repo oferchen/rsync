@@ -448,5 +448,6 @@ include!("tests/chunks/daemon_delete_push_emits_stats.rs");
 include!("tests/chunks/daemon_delete_pull_emits_stats.rs");
 // Daemon inplace push end-to-end test
 include!("tests/chunks/daemon_inplace_push.rs");
+include!("tests/chunks/daemon_module_temp_dir_push.rs");
 // Daemon push/pull lifecycle end-to-end tests
 include!("tests/chunks/daemon_push_pull_lifecycle.rs");
