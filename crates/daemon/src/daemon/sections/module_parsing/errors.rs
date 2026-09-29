@@ -63,13 +63,14 @@ fn config_bwlimit_error(
     config_parse_error(path, line, detail)
 }
 
+/// upstream: options.c:1570-1574 and the `daemon_error:` hint at
+/// options.c:1594-1596 - `rsync: <option>: unknown option (in daemon mode)`.
 fn unsupported_option(option: OsString, brand: Brand) -> DaemonError {
     let option = option.to_string_lossy();
     let program = brand.daemon_program_name();
-    let text = format!(
-        "unknown option '{option}': run '{program} --help' to review supported daemon flags"
-    );
-    config_error(text)
+    config_error(format!(
+        "rsync: {option}: unknown option (in daemon mode)\n(Type \"{program} --daemon --help\" for assistance with daemon mode.)"
+    ))
 }
 
 /// upstream: options.c:1559-1562 and the shared `daemon_error:` label at
