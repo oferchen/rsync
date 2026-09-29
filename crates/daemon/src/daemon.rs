@@ -263,7 +263,7 @@ mod module_state;
 use self::module_state::TEST_CONFIG_CANDIDATES;
 pub(crate) use self::module_state::{
     AuthUser, ConnectionLimiter, GidSetting, MaxConnections, ModuleConnectionError,
-    ModuleDefinition, ModuleRuntime, PeerHost, UserAccessLevel, module_peer_hostname,
+    ModuleDefinition, ModuleRuntime, PeerHost, UnresolvedId, UserAccessLevel, module_peer_hostname,
 };
 #[cfg(test)]
 pub(crate) use self::module_state::{
@@ -624,6 +624,7 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     for module in modules.iter() {
         if module.definition.uid.is_some()
             || module.definition.gid.is_some()
+            || module.definition.unresolved_id.is_some()
             || module.definition.use_chroot
         {
             return Err(async_privileged_module_error());

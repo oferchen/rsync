@@ -280,31 +280,31 @@ fn set_use_chroot_last_assignment_wins() {
 #[test]
 fn set_uid_stores_value() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_uid(1000);
-    assert_eq!(builder.uid, Some(1000));
+    builder.set_uid(Ok(1000));
+    assert_eq!(builder.uid, Some(Ok(1000)));
 }
 
 #[test]
 fn set_uid_last_assignment_wins() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_uid(1000);
-    builder.set_uid(2000);
-    assert_eq!(builder.uid, Some(2000));
+    builder.set_uid(Ok(1000));
+    builder.set_uid(Ok(2000));
+    assert_eq!(builder.uid, Some(Ok(2000)));
 }
 
 #[test]
 fn set_gid_stores_value() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_gid(GidSetting::List(vec![100]));
-    assert_eq!(builder.gid, Some(GidSetting::List(vec![100])));
+    builder.set_gid(Ok(GidSetting::List(vec![100])));
+    assert_eq!(builder.gid, Some(Ok(GidSetting::List(vec![100]))));
 }
 
 #[test]
 fn set_gid_last_assignment_wins() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_gid(GidSetting::List(vec![100]));
-    builder.set_gid(GidSetting::List(vec![200]));
-    assert_eq!(builder.gid, Some(GidSetting::List(vec![200])));
+    builder.set_gid(Ok(GidSetting::List(vec![100])));
+    builder.set_gid(Ok(GidSetting::List(vec![200])));
+    assert_eq!(builder.gid, Some(Ok(GidSetting::List(vec![200]))));
 }
 
 #[test]
@@ -558,11 +558,15 @@ fn finish_succeeds_with_minimal_config() {
 }
 
 #[test]
-fn finish_fails_without_path() {
+fn finish_keeps_a_missing_path_empty() {
+    // upstream: a section with no path loads; rsync_module() refuses it with
+    // `@ERROR: no path setting.` when selected (clientserver.c:877-881).
     let builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     let defaults = GlobalModuleDefaults::default();
-    let result = builder.finish(&test_config_path(), None, None, None, None, &defaults);
-    assert!(result.is_err());
+    let def = builder
+        .finish(&test_config_path(), None, None, None, None, &defaults)
+        .expect("a module without path loads");
+    assert!(def.path.as_os_str().is_empty());
 }
 
 /// A relative path under `use chroot` is RESOLVED against the current
@@ -733,8 +737,8 @@ fn finish_transfers_all_set_values() {
     builder.set_write_only(true);
     builder.set_numeric_ids(true);
     builder.set_listable(false);
-    builder.set_uid(1000);
-    builder.set_gid(GidSetting::List(vec![100]));
+    builder.set_uid(Ok(1000));
+    builder.set_gid(Ok(GidSetting::List(vec![100])));
     builder.set_timeout(NonZeroU64::new(300));
     builder.set_max_connections(MaxConnections::Limited(
         NonZeroU32::new(5).expect("non-zero"),
