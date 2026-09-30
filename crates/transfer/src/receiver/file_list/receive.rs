@@ -216,7 +216,11 @@ impl ReceiverContext {
             metadata::am_root(),
         );
 
-        match_hard_links(&mut self.file_list, &mut self.prior_hlinks);
+        match_hard_links(
+            &mut self.file_list,
+            &mut self.prior_hlinks,
+            inc_recurse.then_some(initial_ndx_start),
+        )?;
 
         // For protocol < 30, normalize (dev, ino) pairs into hardlink_idx and
         // hlink_first flags so the rest of the code handles both protocol versions
@@ -430,7 +434,11 @@ impl ReceiverContext {
         // the same per-entry defense set, so sub-list dirs get it too.
         self.downgrade_implied_parent_dirs_from(flat_start)?;
 
-        match_hard_links(&mut self.file_list[flat_start..], &mut self.prior_hlinks);
+        match_hard_links(
+            &mut self.file_list[flat_start..],
+            &mut self.prior_hlinks,
+            Some(seg_ndx_start),
+        )?;
 
         // Normalize pre-30 hardlinks in this segment.
         if self.protocol.as_u8() < 30 && self.config.flags.hard_links {
