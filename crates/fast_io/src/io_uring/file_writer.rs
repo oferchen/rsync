@@ -362,10 +362,10 @@ mod tests {
             .collect()
     }
 
-    /// The receiver's writer constructor (`writer_from_file`, used by
-    /// `transfer_ops/response.rs`) must actually register buffers and route
+    /// The constructor behind the receiver's `writer_from_file` must, when
+    /// `register_buffers` is opted into, actually register buffers and route
     /// ring batches through `WRITE_FIXED`. Registered buffers were silently
-    /// dead in production once already; this pins the wiring, not a helper.
+    /// dead once already; this pins the wiring, not a helper.
     #[test]
     fn production_writer_writes_through_registered_buffers() {
         if with_ring(|_| Ok(())).is_err() {
@@ -375,13 +375,15 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("fixed.bin");
         let file = File::create(&path).expect("create");
-        let writer =
-            crate::io_uring::writer_from_file(file, 256 * 1024, crate::IoUringPolicy::Auto)
-                .expect("writer_from_file");
-        let crate::io_uring::IoUringOrStdWriter::IoUring(mut writer) = writer else {
-            panic!("Auto policy on an io_uring host must build the io_uring writer");
+        let config = IoUringConfig {
+            register_buffers: true,
+            ..IoUringConfig::default()
         };
-        if !expect_fixed_buffers(writer.registered_buffer_status(), "writer_from_file") {
+        let mut writer = IoUringWriter::with_ring(file, 256 * 1024, &config);
+        if !expect_fixed_buffers(
+            writer.registered_buffer_status(),
+            "IoUringWriter::with_ring",
+        ) {
             return;
         }
         assert_eq!(
@@ -423,6 +425,7 @@ mod tests {
             let dir = tempdir().expect("tempdir");
             let path = dir.path().join("fallback.bin");
             let config = IoUringConfig {
+                register_buffers: true,
                 registered_buffer_count: MAX_REGISTERED_BUFFERS + 1,
                 ..IoUringConfig::default()
             };
@@ -452,6 +455,46 @@ mod tests {
         })
         .join()
         .expect("fallback thread");
+    }
+
+    /// Registered buffers are opt-in: the copy-out fixed path measured slower
+    /// than plain `READ`/`WRITE`, so the production constructors must leave
+    /// both the writer and the reader unregistered.
+    #[test]
+    fn production_constructors_leave_registration_off() {
+        if with_ring(|_| Ok(())).is_err() {
+            eprintln!("skipping default-off registration test: io_uring unavailable");
+            return;
+        }
+        std::thread::spawn(|| {
+            let dir = tempdir().expect("tempdir");
+            let path = dir.path().join("default.bin");
+            let file = File::create(&path).expect("create");
+            let writer =
+                crate::io_uring::writer_from_file(file, 256 * 1024, crate::IoUringPolicy::Auto)
+                    .expect("writer_from_file");
+            let crate::io_uring::IoUringOrStdWriter::IoUring(writer) = writer else {
+                panic!("Auto policy on an io_uring host must build the io_uring writer");
+            };
+            assert_eq!(
+                writer.registered_buffer_status(),
+                &RegisteredBufferStatus::Disabled
+            );
+            drop(writer);
+
+            let reader = crate::io_uring::reader_from_path(&path, crate::IoUringPolicy::Auto)
+                .expect("reader_from_path");
+            let crate::io_uring::IoUringOrStdReader::IoUring(reader) = reader else {
+                panic!("Auto policy on an io_uring host must build the io_uring reader");
+            };
+            assert_eq!(
+                reader.registered_buffer_status(),
+                &RegisteredBufferStatus::Disabled
+            );
+            assert!(thread_buffer_stats().is_none());
+        })
+        .join()
+        .expect("default-off thread");
     }
 
     /// `register_buffers = false` must keep the kernel out of it entirely.

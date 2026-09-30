@@ -341,8 +341,8 @@ mod tests {
             .collect()
     }
 
-    /// The generator's reader constructor (`reader_from_path`, used by
-    /// `generator/context.rs`) must register buffers and serve both the
+    /// The constructor behind the generator's `reader_from_path` must, when
+    /// `register_buffers` is opted into, register buffers and serve both the
     /// streaming `Read` path and `read_all` through `READ_FIXED`.
     #[test]
     fn production_reader_reads_through_registered_buffers() {
@@ -356,12 +356,12 @@ mod tests {
         let data = payload();
         std::fs::write(&path, &data).expect("write fixture");
 
-        let reader = crate::io_uring::reader_from_path(&path, crate::IoUringPolicy::Auto)
-            .expect("reader_from_path");
-        let crate::io_uring::IoUringOrStdReader::IoUring(mut reader) = reader else {
-            panic!("Auto policy on an io_uring host must build the io_uring reader");
+        let config = IoUringConfig {
+            register_buffers: true,
+            ..IoUringConfig::default()
         };
-        if !expect_fixed_buffers(reader.registered_buffer_status(), "reader_from_path") {
+        let mut reader = IoUringReader::open(&path, &config).expect("open");
+        if !expect_fixed_buffers(reader.registered_buffer_status(), "IoUringReader::open") {
             return;
         }
         assert_eq!(
@@ -404,6 +404,7 @@ mod tests {
             let data = payload();
             std::fs::write(&path, &data).expect("write fixture");
             let config = IoUringConfig {
+                register_buffers: true,
                 registered_buffer_count: MAX_REGISTERED_BUFFERS + 1,
                 ..IoUringConfig::default()
             };

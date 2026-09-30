@@ -117,6 +117,12 @@ pub struct IoUringConfig {
     pub mmap_basis_active: bool,
     /// Whether to register fixed buffers
     /// (`IORING_REGISTER_BUFFERS` + `READ_FIXED` / `WRITE_FIXED`).
+    ///
+    /// Off by default: on buffered (page-cache) I/O the fixed path must copy
+    /// between the registered buffer and the caller's buffer, and measured
+    /// slower than plain `READ`/`WRITE` (1 GiB streamed reads +38-51%,
+    /// aarch64 tmpfs). Opt in only where that copy is avoided or the pinning
+    /// saving is real, e.g. `O_DIRECT`.
     pub register_buffers: bool,
     /// Number of fixed buffers to register when `register_buffers` is true.
     pub registered_buffer_count: usize,
@@ -134,7 +140,7 @@ impl Default for IoUringConfig {
             sqpoll: false,
             sqpoll_idle_ms: 1000,
             mmap_basis_active: false,
-            register_buffers: true,
+            register_buffers: false,
             registered_buffer_count: 8,
             zero_copy_policy: crate::ZeroCopyPolicy::Auto,
         }

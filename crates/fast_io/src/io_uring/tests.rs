@@ -1519,8 +1519,10 @@ fn test_empty_file_roundtrip_via_policy() {
 
 #[test]
 fn test_config_register_buffers_defaults() {
+    // Opt-in: the copy-out fixed path measured slower than plain READ/WRITE
+    // on buffered I/O, so the default must leave production unchanged.
     let config = IoUringConfig::default();
-    assert!(config.register_buffers);
+    assert!(!config.register_buffers);
     assert_eq!(config.registered_buffer_count, 8);
 }
 

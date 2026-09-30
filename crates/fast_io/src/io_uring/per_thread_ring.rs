@@ -288,7 +288,7 @@ pub(crate) fn expect_fixed_buffers(status: &RegisteredBufferStatus, owner: &str)
     let reason = match status {
         RegisteredBufferStatus::Enabled => return true,
         RegisteredBufferStatus::Disabled => {
-            panic!("{owner}: default config must register fixed buffers, got Disabled")
+            panic!("{owner}: register_buffers = true must register fixed buffers, got Disabled")
         }
         RegisteredBufferStatus::RegistrationFailed { reason } => reason,
     };
