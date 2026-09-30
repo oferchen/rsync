@@ -88,9 +88,13 @@ impl LocalCopyOptions {
     }
 
     /// Reports whether extraneous destination files should be removed.
+    ///
+    /// Always `false` under `--list-only`: upstream generator.c:371
+    /// `do_delete_pass()` returns early on `list_only` and generator.c:2789
+    /// skips the during sweep, so a listing never examines the destination.
     #[must_use]
     pub const fn delete_extraneous(&self) -> bool {
-        self.delete
+        self.delete && !self.list_only
     }
 
     /// Returns the configured maximum number of deletions, if any.
@@ -119,7 +123,7 @@ impl LocalCopyOptions {
     /// is not consulted; generator.c:2409-2419 is the barrier and 2425-2428
     /// the late passes it guards; generator.c:1532-1535 is the during sweep.
     pub const fn delete_timing(&self) -> Option<DeleteTiming> {
-        if self.delete {
+        if self.delete_extraneous() {
             Some(self.delete_timing)
         } else {
             None
@@ -129,25 +133,25 @@ impl LocalCopyOptions {
     /// Reports whether deletions should occur before content transfers.
     #[must_use]
     pub const fn delete_before_enabled(&self) -> bool {
-        matches!(self.delete_timing, DeleteTiming::Before) && self.delete
+        matches!(self.delete_timing, DeleteTiming::Before) && self.delete_extraneous()
     }
 
     /// Reports whether deletions should occur after transfers instead of immediately.
     #[must_use]
     pub const fn delete_after_enabled(&self) -> bool {
-        self.delete && matches!(self.delete_timing, DeleteTiming::After)
+        self.delete_extraneous() && matches!(self.delete_timing, DeleteTiming::After)
     }
 
     /// Reports whether deletions are deferred until after transfers but determined during the walk.
     #[must_use]
     pub const fn delete_delay_enabled(&self) -> bool {
-        matches!(self.delete_timing, DeleteTiming::Delay) && self.delete
+        matches!(self.delete_timing, DeleteTiming::Delay) && self.delete_extraneous()
     }
 
     /// Reports whether deletions should occur while processing directory entries.
     #[must_use]
     pub const fn delete_during_enabled(&self) -> bool {
-        matches!(self.delete_timing, DeleteTiming::During) && self.delete
+        matches!(self.delete_timing, DeleteTiming::During) && self.delete_extraneous()
     }
 
     /// Reports whether excluded paths should also be removed during deletion sweeps.

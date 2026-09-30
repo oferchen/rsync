@@ -160,6 +160,18 @@ pub(crate) fn copy_symlink(
         raw_target
     };
 
+    if context.list_only_enabled() {
+        if let Some(path) = record_path {
+            context.record_listed_entry(
+                path,
+                LocalCopyAction::SymlinkCopied,
+                metadata,
+                Some(target),
+            );
+        }
+        return Ok(());
+    }
+
     let mut destination_metadata = match fs::symlink_metadata(destination) {
         Ok(existing) => Some(existing),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,

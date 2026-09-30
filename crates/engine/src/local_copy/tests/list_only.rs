@@ -498,43 +498,81 @@ fn list_only_with_recursive_shows_nested_structure() {
     );
 }
 
-#[test]
-#[ignore = "non-recursive list-only with a trailing-slash source does not yet emit top-level entries"]
-fn list_only_without_recursive_shows_only_top_level() {
-    let temp = tempdir().expect("tempdir");
-    let source = temp.path().join("source");
-    let dest = temp.path().join("dest");
-
-    fs::create_dir(&source).expect("create source");
-    fs::create_dir(&dest).expect("create dest");
-
-    fs::write(source.join("top.txt"), b"top").expect("write top");
-    fs::create_dir(source.join("subdir")).expect("create subdir");
-    fs::write(source.join("subdir").join("nested.txt"), b"nested").expect("write nested");
-
-    let mut source_operand = source.into_os_string();
+/// Runs a non-recursive `--list-only` of `source/` into `dest` and returns the
+/// listed relative paths, sorted.
+fn list_top_level(source: &Path, dest: &Path) -> Vec<String> {
+    let mut source_operand = source.as_os_str().to_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR_STR);
-
-    let operands = vec![source_operand, dest.into_os_string()];
+    let operands = vec![source_operand, dest.as_os_str().to_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let mut collector = RecordCollector::new();
-
     plan.execute_with_options_and_handler(
         LocalCopyExecution::DryRun,
-        LocalCopyOptions::default().recursive(false),
+        LocalCopyOptions::default()
+            .recursive(false)
+            .dirs(true)
+            .list_only(true),
         Some(&mut collector),
     )
-    .expect("dry run succeeds");
+    .expect("listing succeeds");
 
-    let paths: Vec<_> = collector
+    let mut paths: Vec<_> = collector
         .records
         .iter()
         .map(|r| r.relative_path().to_string_lossy().to_string())
         .collect();
+    paths.sort();
+    paths
+}
 
-    assert!(paths.iter().any(|p| p == "top.txt"));
-    assert!(!paths.iter().any(|p| p.contains("nested.txt")));
+fn top_level_fixture(root: &Path) -> PathBuf {
+    let source = root.join("source");
+    fs::create_dir(&source).expect("create source");
+    fs::write(source.join("top.txt"), b"top").expect("write top");
+    fs::create_dir(source.join("subdir")).expect("create subdir");
+    fs::write(source.join("subdir").join("nested.txt"), b"nested").expect("write nested");
+    source
+}
+
+/// upstream: options.c:2324-2329 sets `xfer_dirs = 1` for a bare `--list-only`,
+/// so `source/` lists "." and its children exactly once and does not descend.
+#[test]
+fn list_only_without_recursive_shows_only_top_level() {
+    let temp = tempdir().expect("tempdir");
+    let source = top_level_fixture(temp.path());
+    let dest = temp.path().join("dest");
+    fs::create_dir(&dest).expect("create dest");
+
+    assert_eq!(list_top_level(&source, &dest), [".", "subdir", "top.txt"]);
+}
+
+/// upstream: main.c:725 get_local_name() returns NULL under list_only, so a
+/// destination inside the source is never created and cannot hide the entry
+/// it names.
+#[test]
+fn list_only_destination_inside_source_does_not_hide_that_entry() {
+    let temp = tempdir().expect("tempdir");
+    let source = top_level_fixture(temp.path());
+
+    assert_eq!(
+        list_top_level(&source, &source.join("subdir")),
+        [".", "subdir", "top.txt"]
+    );
+}
+
+/// upstream: generator.c:1638-1643 prints the entry and returns before any
+/// destination lookup, so a destination that is a regular file is never
+/// inspected and cannot fail the listing.
+#[test]
+fn list_only_never_inspects_a_file_destination() {
+    let temp = tempdir().expect("tempdir");
+    let source = top_level_fixture(temp.path());
+
+    assert_eq!(
+        list_top_level(&source, &source.join("top.txt")),
+        [".", "subdir", "top.txt"]
+    );
 }
 
 #[cfg(unix)]

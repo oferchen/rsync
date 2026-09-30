@@ -30,6 +30,12 @@ impl<'a> CopyContext<'a> {
         self.options.dirs_enabled()
     }
 
+    /// Mirrors upstream `xfer_dirs`: `recurse || -d || (list_only when
+    /// neither was given)` (options.c:2324-2329).
+    pub(super) const fn xfer_dirs_enabled(&self) -> bool {
+        self.recursive_enabled() || self.dirs_enabled() || self.list_only_enabled()
+    }
+
     pub(super) const fn implied_dirs_enabled(&self) -> bool {
         self.options.implied_dirs_enabled()
     }
