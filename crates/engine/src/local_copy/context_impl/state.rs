@@ -73,7 +73,7 @@ impl<'a> CopyContext<'a> {
             io_error_delete_warning_emitted: false,
             source_read_error: false,
             source_read_events: 0,
-            iconv_conversion_error: false,
+            flist_io_error: false,
             unsupported_operation_skipped: false,
             sender_remove_error: false,
             make_way_error: false,
@@ -645,21 +645,23 @@ impl<'a> CopyContext<'a> {
         self.io_errors_occurred = true;
     }
 
-    /// Records that an `--iconv` filename could not be strictly transcoded and
-    /// its entry was skipped.
+    /// Records that a source entry was dropped from the file list after its
+    /// diagnostic was printed (an untranscodable `--iconv` name or an
+    /// unfollowable `--copy-links` referent).
     ///
     /// Also suppresses deletions like any other general I/O error, matching
     /// upstream where `io_error |= IOERR_GENERAL` gates the delete pass.
-    /// upstream: flist.c:1856 send_file1() sets io_error |= IOERR_GENERAL.
-    pub(super) fn record_iconv_conversion_error(&mut self) {
-        self.iconv_conversion_error = true;
+    /// upstream: flist.c:1856 send_file1() and flist.c:1692-1695 make_file()
+    /// set io_error |= IOERR_GENERAL.
+    pub(super) fn record_flist_io_error(&mut self) {
+        self.flist_io_error = true;
         self.io_errors_occurred = true;
     }
 
-    /// Reports whether any `--iconv` filename conversion was skipped, so the
+    /// Reports whether any source entry was dropped from the file list, so the
     /// transfer can finish with exit code 23 (`RERR_PARTIAL`).
-    pub(super) const fn iconv_conversion_error_occurred(&self) -> bool {
-        self.iconv_conversion_error
+    pub(super) const fn flist_io_error_occurred(&self) -> bool {
+        self.flist_io_error
     }
 
     /// Reports whether any entry was skipped because its creation is

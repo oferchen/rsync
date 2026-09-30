@@ -83,7 +83,7 @@ fn report(context: &mut CopyContext, what: &str, error: &io::Error) {
 /// double quoted, with a relative name prefixed by the working directory.
 ///
 /// upstream: util1.c:1528 full_fname()
-fn full_fname(path: &Path) -> String {
+pub(crate) fn full_fname(path: &Path) -> String {
     let name = slash_path(path);
     if path.has_root() {
         return format!("\"{name}\"");

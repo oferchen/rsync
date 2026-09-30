@@ -235,12 +235,13 @@ pub(crate) struct CopyContext<'a> {
     // upstream: the per-file equivalent is `mbuf->status` handed back by
     // `unmap_file()` (fileio.c:427) - per-map, not global.
     source_read_events: u64,
-    /// Set when an `--iconv` filename could not be strictly transcoded to the
-    /// remote charset and its entry was skipped. Drives the final
+    /// Set when a source entry was dropped from the file list with a
+    /// diagnostic: an `--iconv` filename that could not be strictly transcoded,
+    /// or a `--copy-links` referent that could not be stat'ed. Drives the final
     /// `RERR_PARTIAL` (exit 23) exit code, mirroring upstream's
-    /// `io_error |= IOERR_GENERAL` on a failed `iconvbufs(ic_send, ...)`.
-    // upstream: flist.c:1856 send_file1()
-    iconv_conversion_error: bool,
+    /// `io_error |= IOERR_GENERAL` at both sites.
+    // upstream: flist.c:1856 send_file1(), flist.c:1658-1697 make_file()
+    flist_io_error: bool,
     /// Set when a file entry could not be materialised because the operation is
     /// unsupported on this platform without privilege (currently a Windows file
     /// symbolic link created by an unprivileged user without Developer Mode).

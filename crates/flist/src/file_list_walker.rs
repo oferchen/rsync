@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Depth-first iterator over filesystem entries.
 pub struct FileListWalker {
@@ -56,18 +56,12 @@ impl FileListWalker {
 
         if let Some(metadata) = walker.root_metadata.as_ref() {
             let file_type = metadata.file_type();
-            if file_type.is_dir() {
+            if file_type.is_dir()
+                || (file_type.is_symlink()
+                    && walker.follow_symlinks
+                    && follows_to_directory(&walker.root))
+            {
                 walker.push_directory(walker.root.clone(), PathBuf::new(), 0)?;
-            } else if file_type.is_symlink() && walker.follow_symlinks {
-                match fs::metadata(&walker.root) {
-                    Ok(target) if target.is_dir() => {
-                        walker.push_directory(walker.root.clone(), PathBuf::new(), 0)?;
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        return Err(FileListError::metadata(walker.root.clone(), error));
-                    }
-                }
             }
         }
 
@@ -119,18 +113,13 @@ impl FileListWalker {
 
         if metadata.file_type().is_dir() {
             next_state = Some((full_path.clone(), relative_path.clone(), depth));
-        } else if metadata.file_type().is_symlink() && self.follow_symlinks {
-            match fs::metadata(&full_path) {
-                Ok(target) if target.is_dir() => {
-                    let canonical = fs::canonicalize(&full_path)
-                        .map_err(|error| FileListError::canonicalize(full_path.clone(), error))?;
-                    next_state = Some((canonical, relative_path.clone(), depth));
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    return Err(FileListError::metadata(full_path, error));
-                }
-            }
+        } else if metadata.file_type().is_symlink()
+            && self.follow_symlinks
+            && follows_to_directory(&full_path)
+        {
+            let canonical = fs::canonicalize(&full_path)
+                .map_err(|error| FileListError::canonicalize(full_path.clone(), error))?;
+            next_state = Some((canonical, relative_path.clone(), depth));
         }
 
         if let Some((dir_path, rel_prefix, dir_depth)) = next_state {
@@ -145,6 +134,16 @@ impl FileListWalker {
             is_root: false,
         }))
     }
+}
+
+/// Reports whether a symlink names a directory the walk should descend into.
+///
+/// upstream: flist.c:518-522 link_stat() - a dirlink is followed only when its
+/// `stat()` succeeds and names a directory. Any other outcome, including ELOOP
+/// from a self-referencing link or ENOENT from a dangling one, keeps the
+/// symlink's own `lstat()` result, so the entry is listed and not an error.
+fn follows_to_directory(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|target| target.is_dir())
 }
 
 impl Iterator for FileListWalker {

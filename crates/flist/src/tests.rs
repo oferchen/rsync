@@ -220,22 +220,14 @@ fn walk_detects_symlink_cycles() {
     assert_eq!(paths, vec![PathBuf::from("self")]);
 }
 
+/// A self-referencing link under dirlink following is listed as the symlink it
+/// is, not reported as an error: upstream flist.c:518-522 `link_stat()` keeps
+/// the `lstat()` result whenever the follow `stat()` fails (here with ELOOP).
 #[cfg(unix)]
 #[test]
-#[ignore = "Loop detection not fully implemented - walker errors on self-referencing symlinks"]
 fn walk_detects_direct_symlink_loop() {
     use std::os::unix::fs::symlink;
 
-    // Test case: A symlink that points directly back to itself
-    // Structure: root/
-    //              link -> link
-    //
-    // Current behavior: When follow_symlinks is enabled, the walker attempts to
-    // follow the symlink, but fs::metadata() fails with "Too many levels of symbolic links".
-    // This causes the walker to return an error instead of gracefully handling the loop.
-    //
-    // Expected behavior: The walker should detect this loop and yield the symlink
-    // without attempting to follow it, similar to how it handles cycles via canonicalization.
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path().join("root");
     fs::create_dir(&root).expect("create root");
