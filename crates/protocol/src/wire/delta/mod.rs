@@ -38,7 +38,9 @@ mod tests;
 
 pub use self::int_encoding::{read_int, write_int};
 pub use self::internal::{read_delta, read_delta_op, write_delta, write_delta_op};
-pub use self::sum_head::{MAX_BLOCK_SIZE, MAX_STRONG_SUM_LEN, SumHead, SumHeadError};
+pub use self::sum_head::{
+    MAX_BLOCK_SIZE, MAX_STRONG_SUM_LEN, OLD_MAX_BLOCK_SIZE, SumHead, SumHeadError,
+};
 pub use self::token::{
     check_literal_token_len, read_token, write_token_block_match, write_token_end,
     write_token_literal, write_token_stream, write_whole_file_delta,
