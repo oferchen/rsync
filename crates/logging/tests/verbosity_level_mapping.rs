@@ -574,3 +574,69 @@ fn progressive_filtering_deltasum_example() {
     let events5 = drain_events();
     assert_eq!(events5.len(), 4); // All deltasum levels
 }
+
+/// upstream: options.c:244-251 `debug_verbosity[]`, copied verbatim.
+const UPSTREAM_DEBUG_VERBOSITY: [&str; 6] = [
+    "",
+    "",
+    "BIND,CMD,CONNECT,DEL,DELTASUM,DUP,FILTER,FLIST,ICONV",
+    "ACL,BACKUP,CONNECT2,DELTASUM2,DEL2,EXIT,FILTER2,FLIST2,FUZZY,GENR,OWN,RECV,SEND,TIME",
+    "CMD2,DELTASUM3,DEL3,EXIT2,FLIST3,ICONV2,OWN2,PROTO,TIME2",
+    "CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK",
+];
+
+/// upstream: options.c:255-259 `info_verbosity[1+MAX_VERBOSITY]`, copied
+/// verbatim; the unlisted tail entries are NULL.
+const UPSTREAM_INFO_VERBOSITY: [&str; 6] = [
+    "NONREG",
+    "COPY,DEL,FLIST,MISC,NAME,STATS,SYMSAFE",
+    "BACKUP,MISC2,MOUNT,NAME2,REMOVE,SKIP",
+    "",
+    "",
+    "",
+];
+
+/// Replays upstream `set_output_verbosity()` (options.c:532-543): clamp the
+/// level to `MAX_VERBOSITY`, then apply every table row `0..=level` in order,
+/// each word overwriting the previous level of its flag.
+fn upstream_set_output_verbosity(level: usize) -> VerbosityConfig {
+    let mut config = VerbosityConfig::default();
+    let rows = level.min(UPSTREAM_DEBUG_VERBOSITY.len() - 1) + 1;
+    let words = |row: &'static str| row.split(',').filter(|w| !w.is_empty());
+    for (info, debug) in UPSTREAM_INFO_VERBOSITY
+        .into_iter()
+        .zip(UPSTREAM_DEBUG_VERBOSITY)
+        .take(rows)
+    {
+        for word in words(info) {
+            config.apply_info_flag(word).expect("upstream info word");
+        }
+        for word in words(debug) {
+            config.apply_debug_flag(word).expect("upstream debug word");
+        }
+    }
+    config
+}
+
+/// Every `-v` count must yield exactly the info and debug levels upstream's
+/// tables produce: an extra category is output upstream never prints at that
+/// verbosity, a missing one is output oc silently drops. Comparing the full
+/// level structs also pins every flag the tables never name (IO, NSTR and the
+/// oc-only categories) at 0. Level 6 checks the `MAX_VERBOSITY` clamp.
+#[test]
+fn every_verbose_level_matches_upstream_verbosity_tables() {
+    for level in 0..=6u8 {
+        let expected = upstream_set_output_verbosity(usize::from(level));
+        let actual = VerbosityConfig::from_verbose_level(level);
+        assert_eq!(
+            format!("{:?}", actual.info),
+            format!("{:?}", expected.info),
+            "info levels at verbose level {level}"
+        );
+        assert_eq!(
+            format!("{:?}", actual.debug),
+            format!("{:?}", expected.debug),
+            "debug levels at verbose level {level}"
+        );
+    }
+}

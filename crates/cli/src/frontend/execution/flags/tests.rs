@@ -957,38 +957,12 @@ fn info_flag_numeric_overflow_does_not_panic() {
 }
 
 #[test]
-fn info_flag_spec_priority_matches_upstream_verbosity_groups() {
-    // upstream: options.c info_verbosity[] (rsync-3.4.1:239-243).
-    // NONREG sits in group 0 (always-on default); COPY/DEL/FLIST/MISC/NAME/
-    // STATS/SYMSAFE/PROGRESS are in the level-1 group; BACKUP/MOUNT/REMOVE/
-    // SKIP are in the level-2 group.
-    let priority = |name: &str| {
-        INFO_FLAG_SPECS
-            .iter()
-            .find(|spec| spec.name == name)
-            .map(|spec| spec.priority)
-    };
-    assert_eq!(priority("nonreg"), Some(0));
-    for name in [
-        "copy", "del", "flist", "misc", "name", "stats", "symsafe", "progress",
-    ] {
-        assert_eq!(priority(name), Some(1), "{name} should be priority 1");
-    }
-    for name in ["backup", "mount", "remove", "skip"] {
-        assert_eq!(priority(name), Some(2), "{name} should be priority 2");
-    }
-}
-
-#[test]
-fn info_flag_numeric_n_caps_each_priority_group_at_per_flag_max() {
-    // `--info=2` enables every priority<=2 flag; per-flag caps still apply
+fn info_flag_numeric_n_caps_each_flag_at_per_flag_max() {
+    // `--info=all2` enables every flag; per-flag caps still apply
     // (stats caps at 3, flist/misc/skip/name/progress at 2, others at 1).
     let mut settings = InfoFlagSettings::default();
     settings.apply("all2").unwrap();
     for spec in INFO_FLAG_SPECS {
-        if spec.priority > 2 {
-            continue;
-        }
         let observed = match spec.name {
             "progress" => match settings.progress {
                 ProgressSetting::Disabled | ProgressSetting::Unspecified => 0,
