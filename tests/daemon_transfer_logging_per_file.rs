@@ -269,3 +269,72 @@ fn pull_logs_one_send_line_per_file() {
         lines.len()
     );
 }
+
+/// `%u` renders the authenticated user name on every per-file row.
+///
+/// upstream: log.c `case 'u': n = auth_user;` - `auth_user` is set by
+/// `auth_server()` in clientserver.c and stays live for the whole session.
+#[test]
+fn push_logs_the_authenticated_user_for_percent_u() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some(port) = free_port() else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path();
+    let module_dir = root.join("mod");
+    let src = root.join("src");
+    fs::create_dir_all(&module_dir).expect("module dir");
+    fs::create_dir_all(&src).expect("src dir");
+    fs::write(src.join("file1.dat"), vec![b'x'; 100]).expect("src file");
+
+    let secrets = root.join("secrets");
+    fs::write(&secrets, "alice:sekrit\n").expect("secrets");
+    fs::set_permissions(&secrets, fs::Permissions::from_mode(0o600)).expect("chmod secrets");
+    let log = root.join("daemon.log");
+    let conf = format!(
+        "port = {port}\n\
+         use chroot = no\n\
+         log file = {log}\n\
+         reverse lookup = no\n\
+         \n\
+         [m]\n\
+         \tpath = {module}\n\
+         \tread only = no\n\
+         \ttransfer logging = yes\n\
+         \tauth users = alice\n\
+         \tsecrets file = {secrets}\n\
+         \tlog format = %o [%u] %f\n",
+        log = log.display(),
+        module = module_dir.display(),
+        secrets = secrets.display(),
+    );
+    fs::write(root.join("rsyncd.conf"), conf).expect("config");
+    let oc = oc_binary();
+    let daemon = spawn_daemon(&oc, &root.join("rsyncd.conf"), port);
+
+    let status = Command::new(&oc)
+        .env("RSYNC_PASSWORD", "sekrit")
+        .args([
+            "-rt",
+            &format!("{}/", src.display()),
+            &format!("rsync://alice@127.0.0.1:{port}/m/"),
+        ])
+        .status()
+        .expect("run push client");
+    wait_for_lines(&log, "recv ", 1);
+    drop(daemon);
+    assert!(status.success(), "authenticated push failed");
+
+    let text = fs::read_to_string(&log).expect("read log");
+    // Upstream oracle (rsync 3.5.1, `log format = %o [%u] %f`):
+    //   recv [alice] file1.dat
+    assert!(
+        transfer_lines(&text, "recv ")
+            .iter()
+            .any(|l| l == "recv [alice] file1.dat"),
+        "expected `recv [alice] file1.dat`, got:\n{text}"
+    );
+}
