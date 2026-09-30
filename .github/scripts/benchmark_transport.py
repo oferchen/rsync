@@ -367,28 +367,41 @@ def make_stale(ds: Dataset, root: str) -> None:
 
 
 def make_cert(workdir: str) -> dict:
-    """A throwaway ECDSA P-256 end-entity certificate for the QUIC daemon.
+    """A throwaway CA and an ECDSA P-256 server certificate it signs.
 
     Generated per run and deleted with the scratch directory; no key material
-    is ever committed. `CA:FALSE` matters: webpki refuses a certificate that
+    is ever committed. Every QUIC client is handed the CA with `--quic-ca`,
+    so the server chain is verified rather than trusted on first use. The
+    server certificate is `CA:FALSE`: webpki refuses a certificate that
     claims to be a CA as the server's end-entity certificate.
     """
+    ca = os.path.join(workdir, "quic-ca.pem")
+    ca_key = os.path.join(workdir, "quic-ca-key.pem")
     cert = os.path.join(workdir, "quic-cert.pem")
     key = os.path.join(workdir, "quic-key.pem")
-    subprocess.run(
-        [
-            "openssl", "req", "-x509", "-newkey", "ec",
-            "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
-            "-keyout", key, "-out", cert, "-days", "2", "-subj", "/CN=localhost",
-            "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
-            "-addext", "basicConstraints=critical,CA:FALSE",
-            "-addext", "keyUsage=critical,digitalSignature",
-            "-addext", "extendedKeyUsage=serverAuth",
-        ],
-        check=True,
-        capture_output=True,
-    )
+    csr = os.path.join(workdir, "quic.csr")
+    ext = os.path.join(workdir, "quic-ext.cnf")
+    with open(ext, "w") as f:
+        f.write(
+            "subjectAltName=DNS:localhost,IP:127.0.0.1\n"
+            "basicConstraints=critical,CA:FALSE\n"
+            "keyUsage=critical,digitalSignature\n"
+            "extendedKeyUsage=serverAuth\n"
+        )
+    ec = ["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes"]
+    for argv in (
+        ["openssl", "req", "-x509", *ec, "-keyout", ca_key, "-out", ca,
+         "-days", "2", "-subj", "/CN=oc-rsync benchmark CA",
+         "-addext", "basicConstraints=critical,CA:TRUE",
+         "-addext", "keyUsage=critical,keyCertSign"],
+        ["openssl", "req", "-new", *ec, "-keyout", key, "-out", csr,
+         "-subj", "/CN=localhost"],
+        ["openssl", "x509", "-req", "-in", csr, "-CA", ca, "-CAkey", ca_key,
+         "-CAcreateserial", "-out", cert, "-days", "2", "-extfile", ext],
+    ):
+        subprocess.run(argv, check=True, capture_output=True)
     return {
+        "ca": ca,
         "cert": cert,
         "key": key,
         "key_algorithm": "ECDSA P-256",
@@ -472,7 +485,7 @@ class Daemon:
 
     def _wait_quic(self, timeout=15.0):
         """The TCP listener answering does not mean the UDP one is bound yet."""
-        cmd = [self.binary, "--quic-ca", self.cert["cert"], f"quic://{HOST}:{self.quic_port}/"]
+        cmd = [self.binary, "--quic-ca", self.cert["ca"], f"quic://{HOST}:{self.quic_port}/"]
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if timed_run(cmd, self.client_env, 10)["exit"] == 0:
@@ -581,7 +594,7 @@ def client_cmd(binary, transport, daemon, direction, inc_mode, local, module, ce
     if inc_mode == "no-inc-recursive":
         cmd.append("--no-inc-recursive")
     if transport.quic:
-        cmd += ["--quic-ca", cert["cert"], "--quic-cipher", transport.cipher]
+        cmd += ["--quic-ca", cert["ca"], "--quic-cipher", transport.cipher]
         if transport.cc:
             cmd += ["--quic-cc", transport.cc]
         url = f"quic://{HOST}:{port or daemon.quic_port}/{module}/"
@@ -676,9 +689,6 @@ def run_cell(ds, transport, direction, scenario, inc_mode, ctx, args):
     # Everything the cell cost, fixtures and daemon lifecycle included: the
     # figure the CI wall-clock budget is made of.
     cell["cell_elapsed_s"] = round(time.monotonic() - started, 1)
-    pinned = any("pinning new host key" in r["stderr"] for r in runs)
-    if transport.quic:
-        cell["tofu_pin_notice"] = pinned
     return cell
 
 
@@ -700,7 +710,7 @@ def measure_handshakes(args, ctx, count=20):
         try:
             cmd = [binary]
             if transport.quic:
-                cmd += ["--quic-ca", ctx["cert"]["cert"], "--quic-cipher", transport.cipher]
+                cmd += ["--quic-ca", ctx["cert"]["ca"], "--quic-cipher", transport.cipher]
                 cmd.append(f"quic://{HOST}:{daemon.quic_port}/")
             else:
                 cmd.append(f"rsync://{HOST}:{daemon.port}/")
@@ -763,9 +773,7 @@ def main(argv=None):
     started = time.monotonic()
     scratch = tempfile.mkdtemp(prefix="oc_transport_bench_", dir=args.workdir)
     try:
-        xdg = os.path.join(scratch, "xdg")
-        os.makedirs(xdg)
-        env = dict(os.environ, XDG_CONFIG_HOME=xdg)
+        env = dict(os.environ)
         ctx = {
             "runs": args.runs or profile["runs"],
             "timeout": profile["timeout"],

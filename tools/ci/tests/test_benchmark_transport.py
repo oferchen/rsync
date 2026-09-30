@@ -152,10 +152,12 @@ class MatrixTests(unittest.TestCase):
         class D:
             port, quic_port = 1, 2
 
-        cert = {"cert": "/c.pem"}
+        cert = {"ca": "/ca.pem", "cert": "/c.pem"}
         cmd = bt.client_cmd("oc", tr, D, "pull", "no-inc-recursive", "/dst", "src", cert)
         self.assertIn("--no-inc-recursive", cmd)
         self.assertEqual(cmd[cmd.index("--quic-cipher") + 1], "aes")
+        # The CA, not the server certificate: trust comes from the chain.
+        self.assertEqual(cmd[cmd.index("--quic-ca") + 1], "/ca.pem")
         self.assertEqual(cmd[-2:], ["quic://127.0.0.1:2/src/", "/dst/"])
         default = bt.client_cmd("oc", tr, D, "push", "default", "/src", "dest", cert)
         self.assertNotIn("--no-inc-recursive", default)
@@ -224,6 +226,27 @@ class ResidentChildTests(unittest.TestCase):
                 os.kill(pid, 9)
             parent.kill()
             parent.wait()
+
+
+class CertificateTests(unittest.TestCase):
+    """QUIC clients verify the daemon against a per-run CA via --quic-ca;
+    nothing may depend on trust-on-first-use."""
+
+    def test_server_cert_chains_to_the_ca_and_is_not_a_ca(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cert = bt.make_cert(tmp)
+            verify = subprocess.run(
+                ["openssl", "verify", "-CAfile", cert["ca"], cert["cert"]],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(verify.returncode, 0, verify.stdout + verify.stderr)
+            text = subprocess.run(
+                ["openssl", "x509", "-in", cert["cert"], "-noout", "-text"],
+                capture_output=True, text=True, check=True,
+            ).stdout
+            self.assertIn("CA:FALSE", text)
+            self.assertIn("IP Address:127.0.0.1", text)
+            self.assertIn("DNS:localhost", text)
 
 
 class StaleTests(unittest.TestCase):
