@@ -172,6 +172,8 @@ pub mod same_fs;
 /// path TOCTOU naturally (see the SEC-1.l audit).
 #[cfg(unix)]
 pub mod secure_dir;
+/// Batched read-ahead of small sender source files (io_uring on Linux).
+pub mod source_prefetch;
 /// Cross-platform temporary file strategy abstraction.
 pub mod temp_file_strategy;
 /// Core traits for file I/O abstraction.
@@ -630,6 +632,9 @@ pub fn write_file_with_io_uring(_path: &std::path::Path, _data: &[u8]) -> std::i
 }
 
 pub use io_uring_common::IoBackend;
+pub use source_prefetch::{
+    PREFETCH_MAX_FILE_LEN, PrefetchOpen, PrefetchRequest, prefetch_sources,
+};
 pub use io_uring_depth::{
     IO_URING_DEPTH_MAX, IO_URING_DEPTH_MIN, IoUringDepthError, validate_io_uring_depth,
 };

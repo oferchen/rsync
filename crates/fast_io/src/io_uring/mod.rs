@@ -123,6 +123,8 @@ mod send_zc_pipeline;
 pub mod session_pool;
 /// Single io_uring ring shared by a reader fd and a writer fd in one session.
 pub mod shared_ring;
+/// Batched open + statx + read of small sender sources (`crate::source_prefetch`).
+pub(crate) mod source_prefetch;
 mod socket_factory;
 mod socket_reader;
 mod socket_writer;
