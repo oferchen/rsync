@@ -632,9 +632,6 @@ pub fn write_file_with_io_uring(_path: &std::path::Path, _data: &[u8]) -> std::i
 }
 
 pub use io_uring_common::IoBackend;
-pub use source_prefetch::{
-    PREFETCH_MAX_FILE_LEN, PrefetchOpen, PrefetchRequest, prefetch_sources,
-};
 pub use io_uring_depth::{
     IO_URING_DEPTH_MAX, IO_URING_DEPTH_MIN, IoUringDepthError, validate_io_uring_depth,
 };
@@ -645,6 +642,7 @@ pub use policy::{
     choose_basis_read_backend, choose_basis_read_backend_with_threshold,
     mmap_to_sqpoll_threshold_bytes, send_zc_policy_permits,
 };
+pub use source_prefetch::{PREFETCH_MAX_FILE_LEN, PrefetchOpen, PrefetchRequest, prefetch_sources};
 pub use sqpoll_basis::{
     MAX_WIRED_WINDOW_BYTES, MlockError, WiredBasisWindow, mlock_attempts, mlock_downgrades,
 };

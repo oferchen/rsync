@@ -1363,8 +1363,7 @@ impl GeneratorContext {
                     Some(data) => Ok((prefetched_reader(data), None, file_size)),
                     None => self.open_source_unbuffered(&source_path, file_size),
                 };
-                let (source, src_fd, file_size): (Box<dyn Read>, Option<_>, u64) = match opened
-                {
+                let (source, src_fd, file_size): (Box<dyn Read>, Option<_>, u64) = match opened {
                     Ok(triple) => triple,
                     // upstream: sender.c:408-410 - a device source without
                     // --copy-devices aborts with exit_cleanup(RERR_PROTOCOL).
@@ -3763,7 +3762,10 @@ mod io_uring_read_ahead_tests {
                 "every buffered whole-file source must come from an io_uring batch"
             );
         } else {
-            assert_eq!(served, 0, "without io_uring every source is opened per file");
+            assert_eq!(
+                served, 0,
+                "without io_uring every source is opened per file"
+            );
         }
     }
 
@@ -3779,7 +3781,11 @@ mod io_uring_read_ahead_tests {
         // stale length for file 3 and only the open path differs.
         let batched_ctx = generator(&paths, fast_io::IoUringPolicy::Auto);
         let plain_ctx = generator(&paths, fast_io::IoUringPolicy::Disabled);
-        std::fs::write(&paths[3], b"grown after the scan: now much longer than the recorded flist length").expect("rewrite");
+        std::fs::write(
+            &paths[3],
+            b"grown after the scan: now much longer than the recorded flist length",
+        )
+        .expect("rewrite");
 
         let (batched, served) = send(batched_ctx, FILES);
         let (plain, _) = send(plain_ctx, FILES);

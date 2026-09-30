@@ -227,7 +227,9 @@ impl Batch {
                 .build()
                 .flags(Flags::IO_HARDLINK)
                 .user_data(tag(i, 2));
-            let close = opcode::Close::new(types::Fd(fd)).build().user_data(tag(i, 3));
+            let close = opcode::Close::new(types::Fd(fd))
+                .build()
+                .user_data(tag(i, 3));
             // SAFETY: the statx buffer and read buffer live in `self.slots`,
             // which outlives the reap below (or is leaked on failure). The fd
             // was released from its `OwnedFd` above: the hard-linked CLOSE is

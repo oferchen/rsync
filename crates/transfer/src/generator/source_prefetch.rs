@@ -218,13 +218,9 @@ impl SourcePrefetcher {
         let mut batch = vec![(ndx, len)];
         let mut bytes = len;
         let files = ctx.file_list();
-        for wire in peek_whole_file_requests(
-            buffered,
-            codec,
-            shape,
-            flist_frees,
-            MAX_BATCH_FILES - 1,
-        ) {
+        for wire in
+            peek_whole_file_requests(buffered, codec, shape, flist_frees, MAX_BATCH_FILES - 1)
+        {
             let flat = ctx.resolve_itemize_ndx(wire);
             let Some(entry) = files.get(flat) else {
                 continue;
@@ -284,7 +280,10 @@ mod tests {
             peek_whole_file_requests(&wire, &codec, SHAPE, 0, 64),
             vec![3, 4, 9]
         );
-        assert_eq!(peek_whole_file_requests(&wire, &codec, SHAPE, 0, 2), vec![3, 4]);
+        assert_eq!(
+            peek_whole_file_requests(&wire, &codec, SHAPE, 0, 2),
+            vec![3, 4]
+        );
         let mut fresh = codec.clone();
         assert_eq!(fresh.read_ndx(&mut wire.as_slice()).unwrap(), 3);
     }
@@ -301,7 +300,10 @@ mod tests {
         wire.extend_from_slice(&[0xAB; 2 * (4 + 16)]);
         whole_file(&mut writer, &mut wire, 2);
         let codec = create_ndx_codec(32);
-        assert_eq!(peek_whole_file_requests(&wire, &codec, SHAPE, 0, 64), vec![2]);
+        assert_eq!(
+            peek_whole_file_requests(&wire, &codec, SHAPE, 0, 64),
+            vec![2]
+        );
     }
 
     /// NDX_DONE is a phase change unless it is one of the INC_RECURSE
@@ -315,7 +317,10 @@ mod tests {
         writer.write_ndx_done(&mut wire).unwrap();
         whole_file(&mut writer, &mut wire, 2);
         let codec = create_ndx_codec(32);
-        assert_eq!(peek_whole_file_requests(&wire, &codec, SHAPE, 0, 64), vec![1]);
+        assert_eq!(
+            peek_whole_file_requests(&wire, &codec, SHAPE, 0, 64),
+            vec![1]
+        );
         assert_eq!(
             peek_whole_file_requests(&wire, &codec, SHAPE, 1, 64),
             vec![1, 2]
@@ -332,7 +337,10 @@ mod tests {
         whole_file(&mut writer, &mut wire, 6);
         wire.truncate(wire.len() - 3);
         let codec = create_ndx_codec(32);
-        assert_eq!(peek_whole_file_requests(&wire, &codec, SHAPE, 0, 64), vec![5]);
+        assert_eq!(
+            peek_whole_file_requests(&wire, &codec, SHAPE, 0, 64),
+            vec![5]
+        );
     }
 
     /// With `--xattrs` an `ITEM_REPORT_XATTR` request carries an xattr list
@@ -350,6 +358,9 @@ mod tests {
             xattrs: true,
             ..SHAPE
         };
-        assert_eq!(peek_whole_file_requests(&wire, &codec, shape, 0, 64), vec![1]);
+        assert_eq!(
+            peek_whole_file_requests(&wire, &codec, shape, 0, 64),
+            vec![1]
+        );
     }
 }

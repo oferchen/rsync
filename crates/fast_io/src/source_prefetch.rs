@@ -177,7 +177,11 @@ mod tests {
     fn missing_and_oversized_files_fall_back() {
         let dir = tempfile::tempdir().expect("tempdir");
         let missing = dir.path().join("missing");
-        let big = write(dir.path(), "big", &vec![7u8; (PREFETCH_MAX_FILE_LEN + 1) as usize]);
+        let big = write(
+            dir.path(),
+            "big",
+            &vec![7u8; (PREFETCH_MAX_FILE_LEN + 1) as usize],
+        );
         let requests = [
             PrefetchRequest {
                 path: &missing,
@@ -244,7 +248,10 @@ mod tests {
             false,
             &requests,
         );
-        assert!(got[1].is_none(), "a path escaping the module root must not be read");
+        assert!(
+            got[1].is_none(),
+            "a path escaping the module root must not be read"
+        );
         if batching_expected() && crate::linux_capabilities::openat2_supported() {
             assert_eq!(got[0].as_deref(), Some(&b"inside"[..]));
         }
