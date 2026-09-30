@@ -18,6 +18,14 @@ on:
         description: 'Existing release tag to publish chart and notes to (e.g. v0.6.1). Use when re-running benchmarks against a release whose tag-triggered workflow failed.'
         required: false
         default: ''
+      transport_profile:
+        description: 'Daemon transport (TCP vs QUIC) benchmark size. ci runs on every tag; full (4 x 1 GiB and 1M x 1 KiB) takes hours and is dispatch-only.'
+        required: false
+        default: 'ci'
+        type: choice
+        options:
+          - ci
+          - full
 
 concurrency:
   group: benchmark-${{ github.ref }}
@@ -48,7 +56,10 @@ jobs:
     # aarch64 host took 3.5h, but that host is not this runner, and an
     # over-long timeout means a hung run holds a scarce runner for hours
     # before failing.
-    timeout-minutes: 120
+    #
+    # The full daemon-transport profile (dispatch only) is hours on its own,
+    # so it gets the hosted-runner maximum instead of stretching the tag run.
+    timeout-minutes: ${{ inputs.transport_profile == 'full' && 360 || 120 }}
 
     steps:
       - name: Checkout
@@ -102,6 +113,14 @@ jobs:
         run: |
           cargo build --locked --release --features openssl
           cp target/release/oc-rsync target/release/oc-rsync-openssl
+
+      # QUIC is not a default feature. Built before the embedded-ssh step,
+      # whose build is the default feature set, so target/release/oc-rsync
+      # is the default binary again by the time the main suite runs.
+      - name: Build oc-rsync with QUIC (release)
+        run: |
+          cargo build --locked --release --features quic
+          cp target/release/oc-rsync target/release/oc-rsync-quic
 
       - name: Build oc-rsync with embedded-ssh (release)
         run: |
@@ -170,6 +189,7 @@ jobs:
           python3 tools/ci/tests/test_benchmark_harness.py
           python3 tools/ci/tests/test_benchmark_chart.py
           python3 tools/ci/tests/test_benchmark_report.py
+          python3 tools/ci/tests/test_benchmark_transport.py
 
       - name: Set up SSH loopback
         run: |
@@ -208,13 +228,34 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/scripts/benchmark.py > benchmark_results.json
+
+      # oc-rsync client -> oc-rsync daemon over QUIC (AES-GCM and ChaCha20),
+      # with the oc-rsync and upstream TCP daemons alongside for reference:
+      # upstream rsync has no QUIC. Push and pull, initial and incremental,
+      # default and --no-inc-recursive. The step prints its own wall-clock so
+      # the cost it adds to the tag run stays visible.
+      - name: Run daemon transport benchmark (TCP vs QUIC)
+        env:
+          TRANSPORT_PROFILE: ${{ inputs.transport_profile || 'ci' }}
+        run: |
+          set -euo pipefail
+          start=$(date +%s)
+          python3 .github/scripts/benchmark_transport.py \
+            --oc target/release/oc-rsync-quic \
+            --upstream 3.5.0=target/interop/upstream-src/rsync-3.5.0/rsync \
+            --profile "$TRANSPORT_PROFILE" > benchmark_transport.json
+          echo "Transport benchmark ($TRANSPORT_PROFILE) took $(( $(date +%s) - start ))s"
+
+      - name: Render benchmark report
+        run: |
+          set -euo pipefail
           python3 .github/scripts/benchmark_report.py > benchmark_report.md
           cat benchmark_report.md
 
       - name: Generate benchmark chart
         run: |
           pip install cairosvg
-          python3 .github/scripts/benchmark_chart.py --input benchmark_results.json --output benchmark.svg
+          python3 .github/scripts/benchmark_chart.py --input benchmark_results.json --transport benchmark_transport.json --output benchmark.svg
           python3 -c "import cairosvg; cairosvg.svg2png(url='benchmark.svg', write_to='benchmark.png', output_width=1600)"
 
       - name: Upload benchmark results
@@ -224,6 +265,7 @@ jobs:
           retention-days: 90
           path: |
             benchmark_results.json
+            benchmark_transport.json
             benchmark_report.md
             benchmark.svg
             benchmark.png
@@ -308,7 +350,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.release_tag.outputs.tag }}"
-          gh release upload "$TAG" benchmark.png benchmark_results.json benchmark_report.md --clobber
+          gh release upload "$TAG" benchmark.png benchmark_results.json benchmark_transport.json benchmark_report.md --clobber
 
   # Windows throughput sniff: runs on tag, weekly schedule, and manual
   # dispatch. Best-effort (continue-on-error in the reusable workflow);
