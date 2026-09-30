@@ -66,9 +66,10 @@ pub enum LiteralData {
 ///
 /// # Lifetime
 ///
-/// A `TokenReader` is created per-file (reset between files) because the
-/// compressed token decoder maintains per-file inflate state that must be
-/// reset for each new file transfer.
+/// One `TokenReader` serves the whole session and is `reset()` between
+/// files. The reset clears per-file token state; the zstd decompression
+/// context survives it, because the sender's zstd stream spans every file
+/// (upstream: token.c:837-866 recv_zstd_token()).
 #[allow(clippy::large_enum_variant)]
 pub enum TokenReader {
     /// Plain 4-byte LE token format (no compression).
@@ -202,6 +203,15 @@ impl TokenReader {
             Self::Plain => {}
             Self::Compressed(decoder) => decoder.reset(),
         }
+    }
+}
+
+impl std::fmt::Debug for TokenReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Plain => "TokenReader::Plain",
+            Self::Compressed(_) => "TokenReader::Compressed",
+        })
     }
 }
 

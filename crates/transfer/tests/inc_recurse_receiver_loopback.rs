@@ -350,7 +350,8 @@ fn inc_recurse_zstd_pull_decodes_every_segment_with_one_stream() {
         let d = src.join(format!("dir{dir}"));
         fs::create_dir_all(&d).expect("create dir");
         for idx in 0..5 {
-            fs::write(d.join(format!("f{idx:05}")), file_content(dir, idx + 1)).expect("write file");
+            fs::write(d.join(format!("f{idx:05}")), file_content(dir, idx + 1))
+                .expect("write file");
         }
     }
 
