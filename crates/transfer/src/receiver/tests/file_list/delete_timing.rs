@@ -484,15 +484,11 @@ fn delete_pass_completeness_predicate_tracks_flist_state() {
 
 /// The delete-pass gate must refuse to sweep while INC_RECURSE segments are
 /// still outstanding: `stale.txt` is extraneous against the CURRENT partial
-/// list, but a segment that has not arrived yet could still list it, so an
-/// early sweep is the data-loss path the INC_RECURSE-on-pull conversion must
-/// never open (see `compute_allow_inc_recurse` in `lib.rs`). Today the state
-/// is unreachable (both live drivers drain every segment up front), so the
-/// gate's debug assertion fires; this pin is what turns the future eager-drain
-/// removal red instead of letting it delete data silently.
-#[cfg(debug_assertions)]
+/// list, but a segment that has not arrived yet could still list it. Only a
+/// driver bug reaches this state (the streaming driver deletes per segment
+/// instead), so the pass fails the transfer in every build and unlinks
+/// nothing.
 #[test]
-#[should_panic(expected = "incomplete file list")]
 fn delete_pass_refuses_an_incomplete_file_list() {
     use super::super::super::stats::TransferStats;
     use super::super::super::transfer::DeletePassPhase;
@@ -515,7 +511,7 @@ fn delete_pass_refuses_an_incomplete_file_list() {
     // flist_eof deliberately left false: later segments are still pending.
     let mut stats = TransferStats::default();
     let mut writer = TestDeletionWriter;
-    let _ = ctx.run_receiver_delete_pass(
+    let result = ctx.run_receiver_delete_pass(
         DeletePassPhase::Early,
         dest,
         #[cfg(unix)]
@@ -523,4 +519,7 @@ fn delete_pass_refuses_an_incomplete_file_list() {
         &mut writer,
         &mut stats,
     );
+    let err = result.expect_err("an incomplete file list must not be swept");
+    assert!(err.to_string().contains("incomplete file list"), "{err}");
+    assert!(dest.join("stale.txt").exists(), "nothing may be unlinked");
 }

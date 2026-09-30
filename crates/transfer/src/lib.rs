@@ -633,21 +633,15 @@ fn requires_multiplex_output(
 /// `exchange_phase_done` - so an oc receiver opposite an *oc* sender has
 /// neither release even though the upstream-peer case is covered.
 ///
-/// # ⚠⚠ Removing the up-front drain DESTROYS DATA on its own
+/// # Delete passes under INC_RECURSE
 ///
-/// Both delete passes build their keep-set from a full `file_list` walk. With
-/// the drain removed the list is incomplete by construction, so every entry not
-/// yet materialised is classified extraneous and UNLINKED. The completeness
-/// predicate now exists as `ReceiverContext::delete_pass_flist_complete`
-/// (`receiver/transfer.rs`), consumed at the single delete-pass dispatcher
-/// `run_receiver_delete_pass`: an incomplete list skips the sweep (soft, per
-/// upstream's incomplete-flist arm generator.c:304-311) with a `debug_assert!`
-/// so the conversion cannot silently sweep early. The drain conversion must
-/// either keep the predicate true at both delete sites or split the sweep
-/// per-segment the way upstream's `delete_in_dir` does. The candidate pass
-/// (`build_files_to_transfer`) no longer hands back borrows of the whole
-/// context - it returns owned flist indices - so that entanglement is gone,
-/// but the completeness requirement above keeps this from being a local edit.
+/// A whole-list delete pass builds its keep-set from the full `file_list`, so
+/// it is only sound once every list has arrived and none was reclaimed
+/// (`ReceiverContext::delete_pass_flist_complete`); a sweep over an incomplete
+/// list fails the transfer instead of unlinking. The streaming INC_RECURSE
+/// driver never sweeps the whole list: it deletes in each segment's parent as
+/// that segment is walked (`ReceiverContext::delete_in_segment`), the way
+/// upstream's `delete_in_dir()` runs per sub-list (generator.c:2780-2798).
 ///
 /// Order: completeness predicate (done - see above), then per-segment
 /// `NDX_DONE` during the walk, then the drain conversion, then re-run the A/B.
