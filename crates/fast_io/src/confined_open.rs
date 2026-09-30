@@ -337,7 +337,7 @@ pub fn read_link_confined(root: &Path, relative: &Path) -> io::Result<std::path:
 /// Lets a batched opener issue the same `openat2(RESOLVE_BENEATH |
 /// RESOLVE_NO_MAGICLINKS)` resolution without re-deriving the front-door
 /// refusals (`EINVAL` for `..`/absolute, `EISDIR` for a leafless path).
-#[cfg(unix)]
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
 pub(crate) fn confined_source_relative(relative: &Path) -> io::Result<&Path> {
     validate_relative(relative)?;
     imp::split_leaf(relative).map(|(trimmed, _, _)| trimmed)
