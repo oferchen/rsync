@@ -62,6 +62,15 @@ impl Seek for BatchSource {
     }
 }
 
+/// What an opened read-batch path turned out to be.
+#[derive(Debug, PartialEq, Eq)]
+enum BatchInput {
+    /// A regular file, read in place.
+    Regular,
+    /// A FIFO, such as shell process substitution produces.
+    Fifo,
+}
+
 /// Buffered reader over a [`BatchSource`], the concrete stream type threaded
 /// through header, file-list, delta, and replay decoding.
 pub(crate) type BatchStream = BufReader<BatchSource>;
@@ -148,34 +157,55 @@ impl BatchReader {
                     logging::upstream_errno_text(&e)
                 ))
             })?;
-            Self::reject_non_regular(&file, path)?;
+            if Self::classify(&file, path)? == BatchInput::Fifo {
+                // A FIFO cannot seek, and the codec auto-detection does; buffer
+                // it exactly as the `-` path buffers standard input.
+                let mut buf = Vec::new();
+                let mut file = file;
+                file.read_to_end(&mut buf).map_err(|e| {
+                    BatchError::Io(io::Error::new(
+                        e.kind(),
+                        format!("Failed to read batch file {}: {e}", path.display()),
+                    ))
+                })?;
+                return Ok(BatchSource::Stdin(Cursor::new(buf)));
+            }
             Ok(BatchSource::File(file))
         }
     }
 
-    /// Refuse a read-batch path that resolved to a non-regular file.
+    /// Classify an opened read-batch path, refusing anything but a regular
+    /// file or a FIFO.
     ///
-    /// The batch bytes drive the protocol parser, so a FIFO, device or socket
+    /// The batch bytes drive the protocol parser, so a device or socket
     /// planted at the batch path lets whoever planted it stream arbitrary
     /// protocol data into the replay. The ownership walk in
     /// [`crate::operator_file::open_read`] refuses a foreign-owned *symlink*
     /// but has nothing to say about a node the attacker created directly, so
-    /// upstream pairs the safe open with this check.
+    /// upstream pairs the safe open with this check. A FIFO is allowed because
+    /// shell process substitution (`--read-batch=<(...)`) hands rsync one.
     ///
     /// The stat is taken from the opened descriptor, not the path, so it
     /// describes the file the reader actually holds and cannot be raced. A
     /// failing `fstat` is not itself a refusal - upstream only rejects when the
-    /// stat succeeds and reports a non-regular mode.
+    /// stat succeeds and reports another mode.
     ///
-    /// upstream: batch.c:275-281
-    fn reject_non_regular(file: &File, path: &Path) -> BatchResult<()> {
-        match file.metadata() {
-            Ok(meta) if !meta.file_type().is_file() => Err(BatchError::BatchFileUnusable(format!(
-                "Batch file \"{}\" is not a regular file",
-                path.display()
-            ))),
-            _ => Ok(()),
+    /// upstream: `rsync-3.5.1/batch.c:274-282`
+    fn classify(file: &File, path: &Path) -> BatchResult<BatchInput> {
+        let Ok(meta) = file.metadata() else {
+            return Ok(BatchInput::Regular);
+        };
+        if meta.file_type().is_file() {
+            return Ok(BatchInput::Regular);
         }
+        #[cfg(unix)]
+        if std::os::unix::fs::FileTypeExt::is_fifo(&meta.file_type()) {
+            return Ok(BatchInput::Fifo);
+        }
+        Err(BatchError::BatchFileUnusable(format!(
+            "Batch file \"{}\" is neither a regular file nor a FIFO",
+            path.display()
+        )))
     }
 
     /// Construct a reader over an in-memory batch image, exactly as the

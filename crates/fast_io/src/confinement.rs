@@ -74,6 +74,14 @@ static SESSION_OPTOUT: AtomicBool = AtomicBool::new(false);
 /// [`Activation`] stays the single place the rule is written down.
 static SESSION_CHROOTED: AtomicBool = AtomicBool::new(false);
 
+/// Whether the session is a daemon's, published for the walk decisions
+/// upstream gates on `am_daemon`.
+///
+/// A daemon never honours `--confine-root`, so upstream's `confine_root`
+/// global is set only off the daemon path; [`session_local_confine_root`]
+/// needs this bit to tell the two roots apart.
+static SESSION_DAEMON: AtomicBool = AtomicBool::new(false);
+
 /// Publish `activation`'s opt-out answer for the ownership walk.
 ///
 /// Call once, as early as the flag and the daemon/module state are both known.
@@ -86,6 +94,7 @@ static SESSION_CHROOTED: AtomicBool = AtomicBool::new(false);
 pub fn install_session(activation: &Activation) {
     SESSION_OPTOUT.store(activation.optout_allowed(), Ordering::Relaxed);
     SESSION_CHROOTED.store(activation.chrooted(), Ordering::Relaxed);
+    SESSION_DAEMON.store(activation.is_daemon(), Ordering::Relaxed);
     // The pinned descriptor names the PREVIOUS root, so it stops being an
     // answer the moment the root changes. Dropping it here keeps one
     // invariant - the pin, when present, is always this root's - instead of
@@ -348,6 +357,21 @@ pub fn session_confinement_root() -> Option<PathBuf> {
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()
+}
+
+/// The `--confine-root` of a non-daemon session, or `None`.
+///
+/// Upstream keeps the two roots in separate globals - `module_dir` for a
+/// daemon, `confine_root` otherwise - and a few decisions read `confine_root`
+/// alone. This is that global.
+///
+/// upstream: `rsync-3.5.1/syscall.c:74` `extern char *confine_root;`
+#[must_use]
+pub fn session_local_confine_root() -> Option<PathBuf> {
+    if SESSION_DAEMON.load(Ordering::Relaxed) {
+        return None;
+    }
+    session_confinement_root()
 }
 
 /// The shared rule behind [`Activation::outside_root`] and
