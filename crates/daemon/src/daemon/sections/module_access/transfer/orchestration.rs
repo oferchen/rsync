@@ -702,25 +702,38 @@ fn process_approved_module(
         module
     };
 
-    let mut config =
-        match build_server_config(ctx, &client_args, config_module, negotiated_protocol)? {
-            Some(cfg) => cfg,
-            None => {
-                // upstream: clientserver.c - config assembly runs after the
-                // post-xfer-exec fork point (post-chroot, post-args), so a
-                // failure here is a child exit the waiting parent still hooks.
-                let host_owned = ctx.host_display().to_owned();
-                run_post_xfer_finalizer(
-                    ctx,
-                    module,
-                    &host_owned,
-                    auth_user.as_deref(),
-                    &client_args,
-                    MODULE_ABORT_EXIT_CODE,
-                );
-                return Ok(());
-            }
-        };
+    // upstream's `module_dir`: the chroot rewrites it (clientserver.c:916-926),
+    // entering the module as the working directory does not - the process is
+    // served from `.`, but `module_dir` stays the module's real path.
+    let module_dir = if privilege_outcome.served_root.is_some() {
+        &module.path
+    } else {
+        &config_module.path
+    };
+    let mut config = match build_server_config(
+        ctx,
+        &client_args,
+        config_module,
+        module_dir,
+        negotiated_protocol,
+    )? {
+        Some(cfg) => cfg,
+        None => {
+            // upstream: clientserver.c - config assembly runs after the
+            // post-xfer-exec fork point (post-chroot, post-args), so a
+            // failure here is a child exit the waiting parent still hooks.
+            let host_owned = ctx.host_display().to_owned();
+            run_post_xfer_finalizer(
+                ctx,
+                module,
+                &host_owned,
+                auth_user.as_deref(),
+                &client_args,
+                MODULE_ABORT_EXIT_CODE,
+            );
+            return Ok(());
+        }
+    };
 
     // Install the rules parsed before the chroot and the privilege drop. This
     // is the assignment half of the split described at the parse site; no file

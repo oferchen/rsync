@@ -481,47 +481,9 @@ fn glob_match_segment(pattern: &str, name: &str) -> bool {
     filters::wildmatch(pattern.as_bytes(), name.as_bytes())
 }
 
-/// Collapses `.` and `..` in a module-relative tail, the `Path`-typed
-/// counterpart of [`collapse_module_relative`].
-///
-/// Same rule, same anchor: upstream's `sanitize_path()` runs at **depth 0** for
-/// a daemon connection, so `util1.c:1280`'s `if (depth <= 0 || sanp != start)`
-/// arm always wins - a `..` either backs up over one already-emitted component
-/// or, with nothing to back up over, is discarded. There is no arm that
-/// refuses. The output is therefore closed under the module root by
-/// construction, which is what lets the caller join it onto the root without a
-/// separate containment check.
-///
-/// Two functions rather than one because the inputs differ in type and
-/// separator policy: [`collapse_module_relative`] walks a `/`-separated wire
-/// string, this one walks OS `Path` components so a non-UTF-8 basis keeps its
-/// bytes. Both implement the identical upstream rule.
-///
-/// Pure path arithmetic: no syscalls, no canonicalisation, so the result is
-/// well-defined even when the resolved directory does not exist yet (a
-/// `--link-dest` basis is allowed to be missing without aborting the transfer).
-fn collapse_under_root(path: &std::path::Path) -> std::path::PathBuf {
-    use std::path::{Component, PathBuf};
-
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Normal(name) => out.push(name),
-            // A tail is module-relative by construction; a root or drive
-            // prefix carries no meaning under the module and is dropped the
-            // way upstream drops the leading `/` at `util1.c:1248` (`p++`).
-            Component::Prefix(_) | Component::RootDir | Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-        }
-    }
-    out
-}
-
 /// Clamps a client-supplied alt-basis path (`--link-dest` / `--copy-dest` /
-/// `--compare-dest`) to the served module, mirroring upstream's
-/// `sanitize_path()` rewrite.
+/// `--compare-dest`) to the served module through upstream's own
+/// `sanitize_path()`.
 ///
 /// upstream: `main.c:1251-1254` - a daemon receiver passes every `basis_dir[]`
 /// through `sanitize_path(NULL, dir, NULL, curr_dir_depth, SP_DEFAULT)` before
@@ -534,91 +496,96 @@ fn collapse_under_root(path: &std::path::Path) -> std::path::PathBuf {
 /// climb one level to `mod/sibling`; the budget is exactly "up to the module
 /// root, no further".
 ///
-/// Two arms, both upstream's:
-/// - absolute: `util1.c:1242-1249` re-roots at `module_dir` and forces
-///   `depth = 0`, so `/etc` addresses `<module>/etc`.
-/// - relative: folded onto `curr_dir` (the receiver's destination), which oc
-///   supplies explicitly as `resolve_base` because the daemon does not chdir
-///   per connection.
+/// `module_dir` is upstream's `module_dir`: the module's REAL path, never the
+/// `.` a transfer entered before its privilege drop is served under. It is
+/// the rootdir `sanitize_path()` puts in place of a leading `/`
+/// (`util1.c:1242-1249`), so `/etc` addresses `<module>/etc`.
 ///
-/// The `..` collapse in [`collapse_under_root`] is what makes the result closed
-/// under the module root, so no separate containment check is needed - and no
-/// syscall either, which matters because a basis directory is allowed to be
-/// missing on disk.
+/// A relative value stays relative upstream and resolves against `curr_dir`,
+/// the destination. The daemon does not chdir into the destination, so the
+/// sanitized value is anchored there explicitly: re-rooting
+/// `/<destination>/<value>` at `module_dir` is the same `sanitize_path()` pass
+/// over the path the kernel would walk, and the depth budget guarantees its
+/// leading `..` stay inside the module.
 fn clamp_basis_to_module(
     ref_path: &std::path::Path,
     resolve_base: &std::path::Path,
-    module_root_canonical: &std::path::Path,
+    module_dir: &std::path::Path,
 ) -> std::path::PathBuf {
-    // upstream: `util1.c:1242` tests `*p == '/'` on the peer-supplied byte
-    // string, not a platform notion of absoluteness. `Path::is_absolute()` is
-    // FALSE on Windows for `/etc/foo` (no drive prefix), which would route a
-    // peer-sent absolute value down the relative arm and skip the re-root
-    // entirely. `has_root()` is true for a leading separator on both platforms
-    // and additionally true for a drive-absolute Windows path.
-    let tail = if ref_path.has_root() {
-        ref_path.to_path_buf()
-    } else {
-        destination_below_root(resolve_base, module_root_canonical).join(ref_path)
-    };
-    module_root_canonical.join(collapse_under_root(&tail))
+    let below = destination_below_root(resolve_base, module_dir);
+    let peer = wire_spelling(ref_path);
+    if peer.first() == Some(&b'/') {
+        return sanitize_operator_path(&peer, module_dir, 0);
+    }
+    let sanitized = sanitize_operator_path(&peer, module_dir, below.components().count());
+    let mut anchored = vec![b'/'];
+    anchored.extend_from_slice(&wire_spelling(&below));
+    anchored.push(b'/');
+    anchored.extend_from_slice(&wire_spelling(&sanitized));
+    sanitize_operator_path(&anchored, module_dir, 0)
 }
 
-/// Collapses a RELATIVE operator path the way `sanitize_path()` does when the
-/// value carries no leading `/`, keeping the result relative.
+/// Runs a peer-supplied operator path through upstream's
+/// `sanitize_path(NULL, path, NULL, depth, SP_DEFAULT)`, whose `NULL` rootdir
+/// is `module_dir`.
 ///
-/// upstream: `util1.c:1242-1248` prefixes the rootdir **only** inside
-/// `if (*p == '/')`. A relative value therefore keeps no prefix at all: it is
-/// merely `..`-collapsed and handed back relative, for the consumer to anchor
-/// wherever it anchors.
+/// The port is handed rootdir `/` and `module_dir` is joined on natively. On
+/// Unix that is byte-identical - `util1.c:1256` puts exactly one `/` after
+/// `module_dir` - and on Windows it keeps the platform separator, which a
+/// verbatim `\\?\` module path needs because it does not read `/` as one.
 ///
-/// The `depth` budget is upstream's, and it is a budget for *leading* `..`
-/// only (`util1.c:1281-1294`): a `..` is kept when nothing has been emitted
-/// yet and budget remains, in which case upstream advances its virtual start
-/// past the `../` so the following component is again "at the start" - which
-/// is why consecutive leading `..` each consume one unit, and why a `..` that
-/// pops the output back to empty re-enters the leading state. Any other `..`
-/// backs up over one emitted component, or is discarded when there is nothing
-/// to back up over. There is no arm that refuses.
-///
-/// Pure path arithmetic: no syscalls, so it is well defined for a directory
-/// that does not exist yet.
-fn collapse_relative_within_depth(path: &std::path::Path, depth: usize) -> std::path::PathBuf {
-    use std::path::{Component, PathBuf};
+/// upstream: `util1.c:1242` picks the rooted arm on the literal byte
+/// `*p == '/'`, not on a platform notion of absoluteness, which is why this
+/// takes the wire spelling rather than a `Path`.
+fn sanitize_operator_path(
+    peer: &[u8],
+    module_dir: &std::path::Path,
+    depth: usize,
+) -> std::path::PathBuf {
+    let sanitized = filters::sanitize_path::sanitize_path_rooted(
+        &filters::pattern_path(peer),
+        std::path::Path::new("/"),
+        depth,
+    );
+    match sanitized.strip_prefix("/") {
+        Ok(tail) => module_dir.join(tail.components().collect::<std::path::PathBuf>()),
+        Err(_) => sanitized,
+    }
+}
 
-    let mut budget = depth;
-    let mut leading_parents = 0usize;
-    let mut tail: Vec<std::ffi::OsString> = Vec::new();
-
-    for component in path.components() {
-        match component {
-            Component::Normal(name) => tail.push(name.to_os_string()),
-            // upstream: util1.c:1270-1279 drops extra slashes and `.` elements.
-            // A root or prefix cannot reach here - the caller routes absolute
-            // values to `clamp_basis_to_module` instead.
-            Component::CurDir | Component::RootDir | Component::Prefix(_) => {}
-            Component::ParentDir => {
-                if tail.is_empty() && budget > 0 {
-                    budget -= 1;
-                    leading_parents += 1;
-                } else {
-                    tail.pop();
+/// A path as the `/`-separated byte string upstream's `sanitize_path()` walks.
+///
+/// On Unix these are the path's own bytes. Elsewhere a drive or UNC prefix
+/// has no upstream meaning, so it reads as the leading `/` it stands in for:
+/// a peer cannot name a drive the module does not contain, and a `C:pdir`
+/// cannot survive as a relative value that `Path::join` would later let
+/// replace the anchor.
+fn wire_spelling(path: &std::path::Path) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        filters::path_pattern_bytes(path).into_owned()
+    }
+    #[cfg(not(unix))]
+    {
+        use std::path::Component;
+        let mut out = String::new();
+        for component in path.components() {
+            match component {
+                Component::Prefix(_) | Component::RootDir => {
+                    if out.is_empty() {
+                        out.push('/');
+                    }
+                }
+                other => {
+                    if !out.is_empty() && !out.ends_with('/') {
+                        out.push('/');
+                    }
+                    out.push_str(&other.as_os_str().to_string_lossy());
                 }
             }
         }
+        out.into_bytes()
     }
-
-    let mut out = PathBuf::new();
-    for _ in 0..leading_parents {
-        out.push("..");
-    }
-    out.extend(tail);
-    if out.as_os_str().is_empty() {
-        // upstream: util1.c:1300-1303 - "If the resulting name would be empty,
-        // change it into a `.`".
-        return PathBuf::from(".");
-    }
-    out
 }
 
 /// Sanitises a client-supplied `--partial-dir` for a daemon receiver.
@@ -626,22 +593,19 @@ fn collapse_relative_within_depth(path: &std::path::Path, depth: usize) -> std::
 /// upstream: `main.c:1256-1257` runs `partial_dir` through the very same
 /// `sanitize_path(NULL, partial_dir, NULL, curr_dir_depth, SP_DEFAULT)` call it
 /// runs over `basis_dir[]`, so the *rewrite* is identical for both. What
-/// differs is the CONSUMER, and that is why this cannot simply reuse
-/// [`clamp_basis_to_module`]:
+/// differs is the CONSUMER, and that is why this does not anchor a relative
+/// value the way [`clamp_basis_to_module`] does:
 ///
-/// - an alt-basis dir is anchored ONCE, at the destination, so pre-joining the
-///   destination onto a relative value (what `clamp_basis_to_module` does)
-///   reaches the same place upstream reaches when its consumer resolves the
-///   still-relative value against `curr_dir`;
+/// - an alt-basis dir is anchored ONCE, at the destination;
 /// - `--partial-dir` is anchored PER FILE at `dirname(fname)`
 ///   (`util1.c` `partial_dir_fname()`, mirrored by `temp_guard.rs`
 ///   `partial_dir_fname`). Pre-joining the destination would pin every entry's
 ///   staging directory at the transfer root, so a nested entry would stage at
 ///   `<module_root>/pdir` where upstream stages at `<dest>/sub/pdir`.
 ///
-/// So the two arms are kept apart: an ABSOLUTE value re-roots at the module
-/// root exactly as a basis dir does, and a RELATIVE value stays relative with
-/// only its `..` collapsed, for `partial_dir_fname` to anchor per file.
+/// So an ABSOLUTE value re-roots at `module_dir` exactly as a basis dir does,
+/// and a RELATIVE value stays relative with only its `..` collapsed, for
+/// `partial_dir_fname` to anchor per file.
 ///
 /// Keeping a relative value relative also preserves the meaning of
 /// `engine::remove_partial_dir`'s absolute-path guard, which reads the value's
@@ -649,75 +613,38 @@ fn collapse_relative_within_depth(path: &std::path::Path, depth: usize) -> std::
 fn sanitize_partial_dir(
     ref_path: &std::path::Path,
     resolve_base: &std::path::Path,
-    module_root_canonical: &std::path::Path,
+    module_dir: &std::path::Path,
 ) -> std::path::PathBuf {
-    if ref_path.has_root() {
-        // upstream: util1.c:1242-1248 - the test is `*p == '/'` on the
-        // peer-supplied bytes, so `has_root()` not `is_absolute()`: the latter
-        // is FALSE on Windows for a leading-slash path and would skip the
-        // re-root. See `clamp_basis_to_module` for the same rule. - the rootdir replaces the leading slash
-        // and `depth` is forced to 0, which is exactly the absolute arm of
-        // `clamp_basis_to_module`.
-        return clamp_basis_to_module(ref_path, resolve_base, module_root_canonical);
-    }
     // upstream: util1.c:50 + :1391 - `curr_dir_depth` is the destination's
     // depth below the module root, "only set for a sanitizing daemon", counted
     // by `count_dir_elements()`. oc has no chdir, so the destination is passed
     // explicitly and its component count is the same number.
-    let depth = destination_below_root(resolve_base, module_root_canonical)
+    let depth = destination_below_root(resolve_base, module_dir)
         .components()
         .count();
-    collapse_relative_within_depth(ref_path, depth)
+    sanitize_operator_path(&wire_spelling(ref_path), module_dir, depth)
 }
 
 /// Sanitises a client-supplied `--backup-dir` for a daemon receiver.
 ///
 /// upstream: `options.c:2417-2418` -
-/// `backup_dir = sanitize_path(NULL, backup_dir, NULL, 0, SP_DEFAULT)`. That
-/// call has two arms and only the first re-roots: `util1.c:1242-1248` prefixes
-/// the rootdir (`module_dir`, because `rootdir` is `NULL`) **only** inside
-/// `if (*p == '/')`. An ABSOLUTE value therefore becomes module-anchored, while
-/// a RELATIVE one stays relative with its `..` collapsed at depth 0
-/// (`util1.c:1281-1294`: with `depth <= 0` every `..` is dropped rather than
-/// kept at the start).
+/// `backup_dir = sanitize_path(NULL, backup_dir, NULL, 0, SP_DEFAULT)`. An
+/// ABSOLUTE value becomes rooted at `module_dir`, while a RELATIVE one stays
+/// relative with every `..` collapsed or dropped at depth 0.
 ///
-/// The relative arm is why this cannot reuse [`clamp_basis_to_module`], for the
-/// same reason [`sanitize_partial_dir`] cannot: the clamp folds the DESTINATION
-/// OPERAND into a relative value and hands back an absolute path. That reaches
-/// upstream's answer only while the operand names a directory. Upstream anchors
-/// the still-relative value at the receiver's cwd, and `get_local_name()`
-/// (`main.c:845-872`) sets that cwd to the operand's PARENT when the
-/// destination names a single file - it returns `cp + 1`, the basename, after
-/// `change_dir()` on everything before the last slash. So
-/// `--backup-dir=bak` pushed to `rsync://host/mod/payload` backs up to
-/// `<module>/bak/payload` upstream, where the clamp produced
-/// `<module>/payload/bak` and the backup `mkdir` failed `ENOTDIR` on the
-/// destination file itself.
-///
-/// oc's receiver already anchors a relative value at its `dest_dir`
-/// (`engine::compute_backup_path`, `engine::create_backup_dir_parents`), and
-/// that `dest_dir` is upstream's post-`get_local_name()` cwd - the parent for a
-/// single-file operand, the operand itself for a directory one. Leaving the
-/// value relative therefore performs the join where the transfer knows what the
-/// operand turned out to name, instead of guessing before the file list has
-/// been received.
+/// A relative value is not anchored here, for the same reason
+/// [`sanitize_partial_dir`] does not anchor one. Upstream anchors it at the
+/// receiver's cwd, and `get_local_name()` (`main.c:845-872`) sets that cwd to
+/// the operand's PARENT when the destination names a single file. oc's
+/// receiver already anchors a relative value at its `dest_dir`
+/// (`engine::compute_backup_path`, `engine::create_backup_dir_parents`), which
+/// is upstream's post-`get_local_name()` cwd, so the join happens where the
+/// transfer knows what the operand turned out to name.
 fn sanitize_backup_dir(
     ref_path: &std::path::Path,
-    resolve_base: &std::path::Path,
-    module_root_canonical: &std::path::Path,
+    module_dir: &std::path::Path,
 ) -> std::path::PathBuf {
-    if ref_path.has_root() {
-        // upstream: util1.c:1242-1248 - the test is `*p == '/'` on the
-        // peer-supplied bytes, so `has_root()` not `is_absolute()`: the latter
-        // is FALSE on Windows for a leading-slash path and would skip the
-        // re-root. The rootdir replaces the leading slash and `depth` is forced
-        // to 0, which is exactly the absolute arm of `clamp_basis_to_module`.
-        return clamp_basis_to_module(ref_path, resolve_base, module_root_canonical);
-    }
-    // upstream: options.c:2418 passes the literal depth 0, unlike the
-    // `curr_dir_depth` that main.c:1257 passes for `--partial-dir`, so no
-    // leading `..` survives here at all.
-    collapse_relative_within_depth(ref_path, 0)
+    sanitize_operator_path(&wire_spelling(ref_path), module_dir, 0)
 }
 
 /// Whether an already-clamped basis directory resolves out of the module tree
@@ -749,6 +676,14 @@ fn basis_resolves_outside_module(
 /// The receiver's destination expressed relative to the module root - upstream's
 /// `curr_dir_depth`, as a path rather than a count.
 ///
+/// A RELATIVE destination is the one `resolve_receiver_dest` joins onto a
+/// module served as `.` (entered before the privilege drop): it is already
+/// spelled below the module root, which is the working directory, so its
+/// components are the answer as they stand. It is never compared with
+/// `module_root_canonical`, an absolute path it can never be a prefix of - and
+/// canonicalizing it would only work once the destination exists, leaving a
+/// fresh `--link-dest` push with a depth of 0.
+///
 /// A destination that does not sit under the root (which `resolve_receiver_dest`
 /// does not produce) degrades to the root itself, which clamps harder rather
 /// than escaping.
@@ -756,6 +691,16 @@ fn destination_below_root(
     resolve_base: &std::path::Path,
     module_root_canonical: &std::path::Path,
 ) -> std::path::PathBuf {
+    // `has_root()`, not `is_relative()`: a `/srv/mod` spelling is relative on
+    // Windows, where it has no drive prefix.
+    if !resolve_base.has_root() {
+        // Already `..`-collapsed by `resolve_receiver_dest`; only the `.`
+        // spelling of the served root is left to drop.
+        return resolve_base
+            .components()
+            .filter(|c| matches!(c, std::path::Component::Normal(_)))
+            .collect();
+    }
     if let Ok(relative) = resolve_base.strip_prefix(module_root_canonical) {
         return relative.to_path_buf();
     }

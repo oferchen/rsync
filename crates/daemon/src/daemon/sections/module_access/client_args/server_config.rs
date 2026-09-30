@@ -143,11 +143,16 @@ fn apply_module_transfer_directives(module: &ModuleDefinition, cfg: &mut ServerC
 
 /// Builds the server configuration from client arguments.
 ///
+/// `module` is the module as the transfer is served (its path may be `.`);
+/// `module_dir` is upstream's `module_dir`, the real path that peer-supplied
+/// operator paths are sanitized against.
+///
 /// Returns the configuration on success, or sends an error and returns `None`.
 fn build_server_config(
     ctx: &mut ModuleRequestContext<'_>,
     client_args: &[String],
     module: &ModuleRuntime,
+    module_dir: &std::path::Path,
     protocol_version: Option<ProtocolVersion>,
 ) -> io::Result<Option<ServerConfig>> {
     let role = determine_server_role(client_args);
@@ -294,9 +299,17 @@ fn build_server_config(
             // learns their basis was out of tree. Dropping it silently kept the
             // same confinement but withheld the diagnostic
             // (link-dest-module-escape security pin, daemon-link-dest-escape).
-            let module_root_canonical = std::path::Path::new(&module.path)
+            // `module_dir`, not `module.path`: a module entered before its
+            // privilege drop is served as `.`, but upstream still sanitizes
+            // operator paths against the real `module_dir`
+            // (util1.c:1242-1249), and canonicalizing `.` would depend on the
+            // working directory.
+            let module_root_canonical = module_dir
                 .canonicalize()
-                .unwrap_or_else(|_| std::path::PathBuf::from(&module.path));
+                .unwrap_or_else(|_| module_dir.to_path_buf());
+            // The receiver strips this same root when it matches those paths
+            // against the module's filter (main.c:1270 `clean + module_dirlen`).
+            cfg.connection.daemon_module_dir = Some(module_root_canonical.clone());
             let resolve_base: std::path::PathBuf = if role == ServerRole::Receiver {
                 cfg.args
                     .first()
@@ -382,13 +395,10 @@ fn build_server_config(
             // failure SKIPPED the entry entirely, leaving the destination stale
             // while still exiting 0.
             if let Some(dir) = cfg.backup_dir.as_deref() {
-                let sanitized = sanitize_backup_dir(
-                    std::path::Path::new(dir),
-                    &resolve_base,
-                    &module_root_canonical,
-                );
-                // Lossless: `dir` is a String, and the sanitize only joins and
-                // drops whole components, so every retained byte stays UTF-8.
+                let sanitized =
+                    sanitize_backup_dir(std::path::Path::new(dir), &module_root_canonical);
+                // Lossless: `dir` and the module path are UTF-8 here, and the
+                // sanitize only joins and drops whole components.
                 cfg.backup_dir = Some(sanitized.to_string_lossy().into_owned());
             }
             // upstream: main.c:1251-1258 - the server receiver runs the very

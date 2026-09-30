@@ -309,34 +309,33 @@ mod daemon_module_suffix_tests {
 
 #[cfg(test)]
 mod daemon_clean_fname_collapse_tests {
-    use super::collapse_under_root;
-    use std::path::{Path, PathBuf};
+    use super::clamp_basis_to_module;
+    use std::path::Path;
     use test_support::COLLAPSE_CASES;
 
     /// Every upstream `clean_fname(name, CFN_COLLAPSE_DOT_DOT_DIRS)` case must
-    /// collapse identically here.
+    /// collapse identically when a peer's absolute alt-basis dir is re-rooted.
     ///
-    /// `collapse_under_root` folds a client-supplied `--link-dest` /
-    /// `--copy-dest` / `--compare-dest` basis into a module-relative tail. A
-    /// `..` that fails to consume the component before it would leave a path
-    /// that still *looks* module-relative while resolving elsewhere - exactly
-    /// the shape of upstream's off-by-one, which left the collapse dead for
-    /// every multi-component and absolute path.
+    /// `clamp_basis_to_module` folds a client-supplied `--link-dest` /
+    /// `--copy-dest` / `--compare-dest` basis into the module. A `..` that
+    /// fails to consume the component before it would leave a path that still
+    /// *looks* module-relative while resolving elsewhere - exactly the shape of
+    /// upstream's off-by-one, which left the collapse dead for every
+    /// multi-component and absolute path.
     ///
     /// The table is shared (`test_support::COLLAPSE_CASES`) so a new edge case
     /// is one row and reaches every oc-rsync copy of this rule at once.
     // upstream: util1.c clean_fname() CFN_COLLAPSE_DOT_DOT_DIRS; t_clean_fname.c
     #[test]
     fn upstream_collapse_cases_consume_the_preceding_component() {
+        let module_dir = Path::new("/srv/mod");
         for (input, expected) in COLLAPSE_CASES {
-            // The shared table spells its expectations for a resolver that
-            // keeps a root or a bare `.`; this one emits a module-relative
-            // tail, so strip the leading `/` and read an empty tail as `.`.
             let want = expected.strip_prefix('/').unwrap_or(expected);
-            let want = if want == "." { "" } else { want };
+            // One leading `/`: a doubled one is a UNC prefix on Windows.
+            let rooted = format!("/{}", input.trim_start_matches('/'));
             assert_eq!(
-                collapse_under_root(Path::new(input)),
-                PathBuf::from(want),
+                clamp_basis_to_module(Path::new(&rooted), module_dir, module_dir),
+                module_dir.join(want),
                 "clean_fname collapse case {input:?}"
             );
         }
@@ -344,33 +343,52 @@ mod daemon_clean_fname_collapse_tests {
 
     /// A `..` with nothing left to pop is DISCARDED, not preserved.
     ///
-    /// That is upstream's rule, not a shortcut: a daemon runs
-    /// `sanitize_path()` at depth 0 (`options.c:2414`, gated on
-    /// `sanitize_paths` which `clientserver.c:1068` sets for every daemon
-    /// connection), so `util1.c:1280`'s `if (depth <= 0 || sanp != start)` arm
-    /// always wins and there is no arm that refuses. Discarding is what makes
-    /// the output closed under the module root by construction, which is what
-    /// lets `clamp_basis_to_module` join it onto the root with no separate
-    /// containment check - and it is why a client's `--link-dest=../sibling`
+    /// That is upstream's rule, not a shortcut: an absolute value is sanitized
+    /// at depth 0 (`util1.c:1242-1249` forces it), so `util1.c:1280`'s
+    /// `if (depth <= 0 || sanp != start)` arm always wins and there is no arm
+    /// that refuses. Discarding is what keeps the output under `module_dir` by
+    /// construction - and it is why a client's `--link-dest=/../sibling`
     /// becomes an in-module `sibling` that then draws upstream's
     /// `arg does not exist` warning instead of being dropped in silence.
     // upstream: util1.c:1280-1288 sanitize_path(), depth 0
     #[test]
     fn unpoppable_leading_dot_dot_is_discarded_at_the_root() {
-        assert_eq!(
-            collapse_under_root(Path::new("../outside")),
-            PathBuf::from("outside")
-        );
-        assert_eq!(
-            collapse_under_root(Path::new("mod/../../outside")),
-            PathBuf::from("outside")
-        );
-        // Every level of an all-`..` climb is consumed, leaving the root
-        // itself rather than any ancestor of it.
-        assert_eq!(
-            collapse_under_root(Path::new("../../..")),
-            PathBuf::from("")
-        );
+        let module_dir = Path::new("/srv/mod");
+        for (given, want) in [
+            ("/../outside", "/srv/mod/outside"),
+            ("/mod/../../outside", "/srv/mod/outside"),
+            // A relative value at the module root has a depth budget of 0.
+            ("../outside", "/srv/mod/outside"),
+            // Every level of an all-`..` climb is consumed, leaving the root
+            // itself rather than any ancestor of it.
+            ("/../../..", "/srv/mod"),
+        ] {
+            assert_eq!(
+                clamp_basis_to_module(Path::new(given), module_dir, module_dir),
+                Path::new(want),
+                "{given:?}"
+            );
+        }
+    }
+
+    /// A module entered before its privilege drop is served as `.`, so the
+    /// receiver's destination arrives spelled below the working directory
+    /// (`./bak/00/`). Its depth is still upstream's `curr_dir_depth`, and the
+    /// basis is still rooted at the real `module_dir`: `--link-dest=../01`
+    /// reaches the in-module sibling. Comparing the relative spelling with
+    /// `module_dir` instead found no common prefix, spent a depth of 0 and
+    /// rewrote the basis to `<module>/01` - the `link-dest-pathroot` failure.
+    // upstream: main.c:1254 sanitize_path(NULL, dir, NULL, curr_dir_depth, ..)
+    #[test]
+    fn a_served_relative_destination_keeps_its_depth_budget() {
+        for module_dir in ["/", "/srv/mod"] {
+            let module_dir = Path::new(module_dir);
+            assert_eq!(
+                clamp_basis_to_module(Path::new("../01"), Path::new("./bak/00/"), module_dir),
+                module_dir.join("bak/01"),
+                "module_dir {module_dir:?}"
+            );
+        }
     }
 }
 
@@ -437,8 +455,14 @@ mod daemon_partial_dir_arg_tests {
 
 #[cfg(test)]
 mod daemon_partial_dir_sanitize_tests {
-    use super::{clamp_basis_to_module, collapse_relative_within_depth, sanitize_partial_dir};
+    use super::{clamp_basis_to_module, sanitize_partial_dir};
     use std::path::{Path, PathBuf};
+
+    /// A relative value through the `sanitize_path()` port; the rootdir only
+    /// applies to a leading `/`, so it is unused here.
+    fn relative(given: &Path, depth: usize) -> PathBuf {
+        filters::sanitize_path::sanitize_path_rooted(given, Path::new("/srv/mod"), depth)
+    }
 
     /// upstream: `util1.c:1281-1294` `sanitize_path()` - the `..` arms.
     ///
@@ -459,7 +483,7 @@ mod daemon_partial_dir_sanitize_tests {
             ("a/../../pdir", "pdir"),
         ] {
             assert_eq!(
-                collapse_relative_within_depth(Path::new(given), 0),
+                relative(Path::new(given), 0),
                 PathBuf::from(want),
                 "depth 0: {given:?}"
             );
@@ -467,36 +491,36 @@ mod daemon_partial_dir_sanitize_tests {
 
         // depth 1 - exactly one LEADING `..` survives.
         assert_eq!(
-            collapse_relative_within_depth(Path::new("../pdir"), 1),
+            relative(Path::new("../pdir"), 1),
             PathBuf::from("../pdir")
         );
         // The second one exhausts the budget and is discarded.
         assert_eq!(
-            collapse_relative_within_depth(Path::new("../../pdir"), 1),
+            relative(Path::new("../../pdir"), 1),
             PathBuf::from("../pdir")
         );
         // A `..` AFTER a real component pops instead of being kept, even with
         // budget remaining - upstream's `sanp != start` half of the guard.
         assert_eq!(
-            collapse_relative_within_depth(Path::new("a/../pdir"), 1),
+            relative(Path::new("a/../pdir"), 1),
             PathBuf::from("pdir")
         );
         // ...but once that pop empties the output, the leading state returns
         // and the budget applies again.
         assert_eq!(
-            collapse_relative_within_depth(Path::new("a/../../pdir"), 1),
+            relative(Path::new("a/../../pdir"), 1),
             PathBuf::from("../pdir")
         );
 
         // depth 2 - consecutive leading `..` each consume one unit.
         assert_eq!(
-            collapse_relative_within_depth(Path::new("../../pdir"), 2),
+            relative(Path::new("../../pdir"), 2),
             PathBuf::from("../../pdir")
         );
 
         // upstream: util1.c:1300-1303 - an empty result becomes ".".
         assert_eq!(
-            collapse_relative_within_depth(Path::new("a/.."), 0),
+            relative(Path::new("a/.."), 0),
             PathBuf::from(".")
         );
     }
