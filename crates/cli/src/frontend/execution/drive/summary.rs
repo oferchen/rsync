@@ -18,9 +18,9 @@ use crate::frontend::escape::EscapeStyle;
 use crate::frontend::{
     out_format::{OutFormat, OutFormatContext},
     progress::{
-        DeltaTransmissionState, DeltaTransmissionSummary, LiveProgress, NameOutputLevel,
-        PendingDiagnostics, ProgressMode, ProgressOutputConfig, StderrMode, emit_transfer_summary,
-        partition_by_summary_stream, render_diagnostic_events,
+        DeltaTransmissionState, DeltaTransmissionSummary, FlistBanner, LiveProgress,
+        NameOutputLevel, PendingDiagnostics, ProgressMode, ProgressOutputConfig, StderrMode,
+        emit_transfer_summary, partition_by_summary_stream, render_diagnostic_events,
     },
 };
 
@@ -153,8 +153,30 @@ where
     // rendering it here again would both duplicate it and print it dead last.
     // Only a local copy - whose per-file rows are all rendered post-hoc from
     // the collected events - still gets the banner from this deferred path.
-    let emit_flist_banner =
-        config.recursive() && info_gte(InfoFlag::Flist, 1) && !config.is_pull() && !is_sender;
+    //
+    // upstream: flist.c:170 - the sibling non-incremental banner is selected by
+    // `show_filelist_progress = INFO_GTE(FLIST, 1) && xfer_dirs && !am_server
+    // && !inc_recurse`, and flist.c:2521-2524 makes the two mutually exclusive.
+    // `xfer_dirs` is `recurse || dirs || list_only` (options.c:2317-2320); the
+    // `!inc_recurse` term already rules out the `recurse` disjunct here.
+    // upstream: flist.c:175 - `start_filelist_progress()` returns early under
+    // `quiet`, which `info_gte` does not model, so it needs its own term.
+    let flist_banner = if config.recursive() {
+        if info_gte(InfoFlag::Flist, 1) && verbosity > 0 && !config.is_pull() && !is_sender {
+            FlistBanner::Incremental
+        } else {
+            FlistBanner::None
+        }
+    } else if (config.dirs() || config.list_only())
+        && info_gte(InfoFlag::Flist, 1)
+        && !config.quiet()
+        && !config.is_pull()
+        && !is_sender
+    {
+        FlistBanner::Building
+    } else {
+        FlistBanner::None
+    };
     // A pure-local copy (no remote operand): `is_local_sender()` reports false
     // for the local `local_server` case and `is_pull()` is false, so their
     // conjunction uniquely identifies the in-process local-copy path whose
@@ -267,7 +289,7 @@ where
                     name_overridden,
                     human_readable_mode,
                     suppress_updated_only_totals,
-                    emit_flist_banner,
+                    flist_banner,
                     delta_notice,
                     show_copy_method,
                     show_atimes,
@@ -441,7 +463,10 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         name_overridden,
         human_readable_mode,
         false,
-        false,
+        // Both client banners are stdout-only (upstream FCLIENT/FINFO); the
+        // log file's own "building file list" line (flist.c:2520, FLOG) is
+        // replayed from the FLOG queue above.
+        FlistBanner::None,
         // The delta-transmission notice and match_report `total:` line are
         // stdout-only diagnostics (upstream FINFO); the log file is fed from the
         // FLOG queue above, so suppress them here.

@@ -1843,3 +1843,192 @@ fn quiet_suppresses_info_regardless_of_verbose_order() {
          quiet assertions above vacuous"
     );
 }
+
+/// Builds `<tmp>/from/{a.txt,sub/f.txt}` plus an empty `<tmp>/to`, and returns
+/// `(tmp, "<from>/", "<to>")` ready to hand to [`run_with_args`].
+///
+/// Shared by the file-list-banner cells below so each one differs only in the
+/// flags under test.
+fn banner_fixture() -> (tempfile::TempDir, OsString, OsString) {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+    std::fs::create_dir_all(from.join("sub")).expect("mkdir from/sub");
+    std::fs::write(from.join("a.txt"), b"alpha").expect("write a.txt");
+    std::fs::write(from.join("sub").join("f.txt"), b"foxtrot").expect("write sub/f.txt");
+    std::fs::create_dir_all(&to).expect("mkdir to");
+
+    let mut from_slash = from.into_os_string();
+    from_slash.push("/");
+    (tmp, from_slash, to.into_os_string())
+}
+
+/// Runs the front-end with `flags` against [`banner_fixture`] and returns the
+/// decoded stdout, asserting a clean exit and an empty stderr.
+///
+/// Asserting stderr is empty is what pins the banner to the *stdout* stream:
+/// upstream writes both halves on `FCLIENT`/`FINFO`, which are client-stdout
+/// codes, so a producer wired to an error code would surface here rather than
+/// silently satisfying a substring check.
+fn banner_stdout(flags: &[&str]) -> String {
+    let (_tmp, from, to) = banner_fixture();
+    let mut argv = vec![OsString::from(RSYNC)];
+    argv.extend(flags.iter().map(OsString::from));
+    argv.push(from);
+    argv.push(to);
+
+    let (code, stdout, stderr) = run_with_args(argv);
+    assert_eq!(code, 0, "{flags:?} must exit 0");
+    assert!(
+        stderr.is_empty(),
+        "{flags:?} must print nothing on stderr, got: {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
+    String::from_utf8(stdout).expect("stdout is valid UTF-8")
+}
+
+/// Pins the FIRST of upstream's two banner writes: `start_filelist_progress()`
+/// emits `"%s ... "` on `FCLIENT` with no trailing newline (flist.c:177), so a
+/// non-recursive `-dv` run opens with that exact prefix.
+///
+/// Kept separate from [`dirs_verbose_banner_terminates_with_done`] on purpose:
+/// each test fails for exactly one of the two writes, so dropping either half
+/// is caught on its own rather than by a single conflated assertion.
+#[test]
+fn dirs_verbose_banner_starts_with_flist_progress_prefix() {
+    let rendered = banner_stdout(&["-dv"]);
+    assert!(
+        rendered.starts_with("building file list ... "),
+        "stdout must open with the flist.c:177 FCLIENT prefix, got: {rendered:?}"
+    );
+}
+
+/// Pins the SECOND banner write: `finish_filelist_progress()` emits `"done\n"`
+/// on `FINFO` (flist.c:206) once the list is complete, terminating the line the
+/// first write left open.
+#[test]
+fn dirs_verbose_banner_terminates_with_done() {
+    let rendered = banner_stdout(&["-dv"]);
+    let first = rendered.lines().next().unwrap_or_default();
+    assert!(
+        first.ends_with("done"),
+        "the banner line must be terminated by the flist.c:206 FINFO write, got: {rendered:?}"
+    );
+}
+
+/// The two writes concatenate into one line, emitted exactly once and ahead of
+/// the per-file names - upstream: flist.c:2521-2522, which runs at the top of
+/// `send_file_list()` before any entry is listed.
+#[test]
+fn dirs_verbose_prints_building_banner_once_and_first() {
+    let rendered = banner_stdout(&["-dv"]);
+    let lines: Vec<&str> = rendered.lines().collect();
+
+    assert_eq!(
+        lines.first().copied(),
+        Some("building file list ... done"),
+        "got: {rendered:?}"
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.starts_with("building file list"))
+            .count(),
+        1,
+        "the banner must be emitted exactly once, got: {rendered:?}"
+    );
+    assert!(
+        !rendered.contains("sending incremental file list"),
+        "the incremental banner is the mutually exclusive `else if` arm \
+         (flist.c:2523-2524) and must not also appear, got: {rendered:?}"
+    );
+}
+
+/// `--list-only` resolves `xfer_dirs` to 1 without enabling `inc_recurse`
+/// (options.c:2317-2320), so it selects the same non-incremental banner. This
+/// is the cell a fix placed at the incremental banner's own emission site would
+/// miss entirely, because the listing renderer returns before reaching it.
+#[test]
+fn list_only_verbose_prints_building_banner_before_the_listing() {
+    let (_tmp, from, _to) = banner_fixture();
+    let (code, stdout, stderr) = run_with_args([OsString::from(RSYNC), OsString::from("-v"), from]);
+
+    assert_eq!(code, 0);
+    assert!(
+        stderr.is_empty(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
+
+    let rendered = String::from_utf8(stdout).expect("stdout is valid UTF-8");
+    let lines: Vec<&str> = rendered.lines().collect();
+    assert_eq!(
+        lines.first().copied(),
+        Some("building file list ... done"),
+        "got: {rendered:?}"
+    );
+    assert!(
+        lines.iter().skip(1).any(|line| line.ends_with(" a.txt")),
+        "the banner must precede the listing rows, got: {rendered:?}"
+    );
+}
+
+/// Recursion keeps the *incremental* banner: `inc_recurse` clears
+/// `show_filelist_progress` (flist.c:170), routing `send_file_list()` to the
+/// `else if` arm at flist.c:2523-2524.
+///
+/// This is the cell that catches an unconditional or wrongly-negated banner: a
+/// fix that ignores `!inc_recurse` prints the `building` text here, or prints
+/// both banners.
+#[test]
+fn recursive_verbose_keeps_incremental_banner() {
+    let rendered = banner_stdout(&["-rv"]);
+    let lines: Vec<&str> = rendered.lines().collect();
+
+    assert_eq!(
+        lines.first().copied(),
+        Some("sending incremental file list"),
+        "got: {rendered:?}"
+    );
+    assert!(
+        !rendered.contains("building file list"),
+        "the non-incremental banner must not appear under -r, got: {rendered:?}"
+    );
+}
+
+/// Without `-v` the `INFO_GTE(FLIST, 1)` term of flist.c:170 is false, so no
+/// banner is printed - and nothing else is either.
+#[test]
+fn dirs_without_verbose_prints_no_banner() {
+    let rendered = banner_stdout(&["-d"]);
+    assert!(rendered.is_empty(), "got: {rendered:?}");
+}
+
+/// `--info=flist0` clears the FLIST category while leaving verbosity at 1,
+/// proving the gate is the info category (flist.c:170) rather than raw `-v`.
+#[test]
+fn dirs_verbose_info_flist0_suppresses_banner() {
+    let rendered = banner_stdout(&["-dv", "--info=flist0"]);
+    assert!(
+        !rendered.contains("building file list"),
+        "got: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("a.txt"),
+        "only the banner is suppressed; the name list still prints, got: {rendered:?}"
+    );
+}
+
+/// `start_filelist_progress()` returns early under `quiet` (flist.c:175) - a
+/// term the info-level gate does not model, so it needs its own check now that
+/// `-q` and `-v` are independent.
+#[test]
+fn dirs_quiet_verbose_suppresses_banner() {
+    let rendered = banner_stdout(&["-d", "-q", "-v"]);
+    assert!(
+        !rendered.contains("building file list"),
+        "got: {rendered:?}"
+    );
+}

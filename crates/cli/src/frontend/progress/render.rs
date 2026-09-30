@@ -55,6 +55,62 @@ use super::mode::{NameOutputLevel, ProgressMode};
 use crate::{OutFormat, OutFormatContext, emit_out_format};
 use logging::{InfoFlag, info_gte};
 
+/// Which file-list banner the sender prints before the per-file name list.
+///
+/// upstream: flist.c:2521-2524 - `send_file_list()` picks exactly one of the
+/// two client-facing banners:
+///
+/// ```c
+/// if (show_filelist_progress)
+///         start_filelist_progress("building file list");
+/// else if (inc_recurse && INFO_GTE(FLIST, 1) && !am_server)
+///         rprintf(FCLIENT, "sending incremental file list\n");
+/// ```
+///
+/// with `show_filelist_progress = INFO_GTE(FLIST, 1) && xfer_dirs && !am_server
+/// && !inc_recurse` (flist.c:170). Modelling the choice as one enum keeps the
+/// two banners mutually exclusive by construction, as upstream's `if`/`else if`
+/// makes them.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub(crate) enum FlistBanner {
+    /// No banner: the gate is off (quiet, `--info=flist0`, a server role, or
+    /// neither recursion nor `xfer_dirs`).
+    #[default]
+    None,
+    /// `building file list ... done` - the non-incremental banner.
+    /// upstream: flist.c:177 + flist.c:206.
+    Building,
+    /// `sending incremental file list` - upstream: flist.c:2524.
+    Incremental,
+}
+
+impl FlistBanner {
+    /// Writes the banner this variant selects.
+    ///
+    /// upstream splits the `Building` banner across two writes on two log
+    /// codes: `start_filelist_progress()` emits `"%s ... "` on `FCLIENT` with
+    /// no trailing newline (flist.c:177) and, once the list is complete,
+    /// `finish_filelist_progress()` emits `"done\n"` on `FINFO` (flist.c:206).
+    /// Both halves land on the client's stdout, so the concatenation is
+    /// byte-identical to upstream's stream.
+    fn emit(self, writer: &mut dyn Write) -> io::Result<()> {
+        match self {
+            Self::None => Ok(()),
+            Self::Building => {
+                // upstream: flist.c:177 - rprintf(FCLIENT, "%s ... ", kind),
+                // no newline; `output_needs_newline` is set instead.
+                write!(writer, "building file list ... ")?;
+                // upstream: flist.c:206 - rprintf(FINFO, "done\n") from
+                // finish_filelist_progress(), called at flist.c:2797 (sender)
+                // and flist.c:3023 (receiver).
+                writeln!(writer, "done")
+            }
+            // upstream: flist.c:2524.
+            Self::Incremental => writeln!(writer, "sending incremental file list"),
+        }
+    }
+}
+
 /// Which `delta-transmission %s` notice the generator would print.
 ///
 /// upstream: generator.c:2291-2294 - the generator emits this line once at
@@ -117,7 +173,7 @@ pub(crate) fn emit_transfer_summary(
     name_overridden: bool,
     human_readable_mode: HumanReadableMode,
     suppress_updated_only_totals: bool,
-    emit_flist_banner: bool,
+    flist_banner: FlistBanner,
     delta_notice: DeltaTransmissionSummary,
     show_copy_method: bool,
     show_atimes: bool,
@@ -133,6 +189,13 @@ pub(crate) fn emit_transfer_summary(
 ) -> io::Result<()> {
     let events = summary.events();
     let stats_on = stats_level > 0;
+
+    // upstream: flist.c:2520-2524 - both banners are written at the *start* of
+    // `send_file_list()`, before any entry is listed, so this has to precede the
+    // `--list-only` branch below. `--list-only` resolves `xfer_dirs` to 1
+    // (options.c:2320) without turning on `inc_recurse`, so it is one of the
+    // cells that selects the `building file list ... done` banner.
+    flist_banner.emit(writer)?;
 
     if list_only {
         let mut wrote_listing = false;
@@ -179,17 +242,6 @@ pub(crate) fn emit_transfer_summary(
         }
 
         return Ok(());
-    }
-
-    // upstream: flist.c:2524 - rprintf(FCLIENT, "sending incremental file list\n")
-    // is gated on inc_recurse && INFO_GTE(FLIST, 1) && !am_server. This banner is
-    // stdout-only. Upstream's parallel `rprintf(FLOG, "building file list\n")`
-    // (flist.c:2248) targets the log file, which a plain client without
-    // --log-file discards, so it never reaches stdout. Local-copy mode is treated
-    // as inc_recurse-equivalent because the source enumeration is interleaved with
-    // per-file dispatch.
-    if emit_flist_banner && verbosity > 0 {
-        writeln!(writer, "sending incremental file list")?;
     }
 
     // upstream: main.c:787-808 - when the receiver pre-flight-mkdirs the
@@ -1583,7 +1635,7 @@ mod tests {
             false, // name_overridden
             HumanReadableMode::Grouped,
             false,                               // suppress_updated_only_totals
-            false,                               // emit_flist_banner
+            FlistBanner::None,                   // flist_banner
             DeltaTransmissionSummary::default(), // delta_notice
             false,                               // show_copy_method
             false,                               // show_atimes

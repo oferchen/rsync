@@ -10,6 +10,7 @@ use super::{
     NameOutputLevel, OutFormatContext, ProgressSetting, emit_transfer_summary, parse_out_format,
 };
 use crate::frontend::escape::EscapeStyle;
+use crate::frontend::progress::FlistBanner;
 use core::client::{
     ClientConfig, ClientEntryKind, ClientEvent, ClientEventKind, ClientSummary, HumanReadableMode,
     run_client,
@@ -72,7 +73,7 @@ fn render_stats_at_level(
         false,
         human_readable,
         false,
-        false,                               // emit_flist_banner
+        FlistBanner::None,                   // flist_banner
         DeltaTransmissionSummary::default(), // delta_notice
         false,                               // show_copy_method
         false,                               // show_atimes
@@ -102,7 +103,7 @@ fn render_verbose(summary: &ClientSummary, verbosity: u8) -> String {
         false,
         HumanReadableMode::Grouped,
         false,
-        true,                                // emit_flist_banner
+        FlistBanner::Incremental,            // flist_banner
         DeltaTransmissionSummary::default(), // delta_notice
         false,                               // show_copy_method
         false,                               // show_atimes
@@ -148,7 +149,7 @@ fn info_name_only_suppresses_stats_footer() {
         false,
         HumanReadableMode::Grouped,
         false,
-        false,                               // emit_flist_banner
+        FlistBanner::None,                   // flist_banner
         DeltaTransmissionSummary::default(), // delta_notice
         false,                               // show_copy_method
         false,                               // show_atimes
@@ -547,7 +548,7 @@ fn parity_totals_only_without_stats_flag() {
         false,
         HumanReadableMode::Grouped,
         false,
-        true,                                // emit_flist_banner
+        FlistBanner::Incremental,            // flist_banner
         DeltaTransmissionSummary::default(), // delta_notice
         false,                               // show_copy_method
         false,                               // show_atimes
@@ -829,7 +830,7 @@ fn parity_verbose_v2_emits_bare_name_per_upstream() {
         false,
         HumanReadableMode::Grouped,
         false,
-        true,                                // emit_flist_banner
+        FlistBanner::Incremental,            // flist_banner
         DeltaTransmissionSummary::default(), // delta_notice
         false,                               // show_copy_method
         false,                               // show_atimes

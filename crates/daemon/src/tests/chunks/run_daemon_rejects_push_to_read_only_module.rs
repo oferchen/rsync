@@ -69,7 +69,7 @@ fn run_daemon_rejects_push_to_read_only_module() {
     // client has already switched to multiplexed input. The daemon must first
     // finish the post-OK protocol setup (compat-flags varint + 4-byte checksum
     // seed) and then deliver the error inside a `MSG_ERROR_XFER` frame, exactly
-    // like upstream `do_server_recv()` (main.c:1166-1169) does after
+    // like upstream `do_server_recv()` (main.c:1183-1187) does after
     // `io_start_multiplex_out()`. A raw `@ERROR: ...\n` line here would be
     // decoded as a 4-byte frame header and desync the stream (the regression
     // upstream reports as `invalid multi-message 102 (code 12)`).
@@ -84,7 +84,7 @@ fn run_daemon_rejects_push_to_read_only_module() {
 /// rejection arrives as a framed `MSG_ERROR_XFER` (text `ERROR: module is read
 /// only`) followed by `MSG_ERROR_EXIT` carrying `RERR_SYNTAX` (exit 1).
 ///
-/// upstream: main.c:1166-1169 - `rprintf(FERROR, "ERROR: module is read
+/// upstream: main.c:1183-1187 - `rprintf(FERROR, "ERROR: module is read
 /// only\n")` + `exit_cleanup(RERR_SYNTAX)`; io.c encodes the FERROR message as
 /// a `MSG_ERROR_XFER` frame and the exit as `MSG_ERROR_EXIT`.
 fn assert_read_only_multiplexed_rejection(reader: &mut BufReader<TcpStream>) {

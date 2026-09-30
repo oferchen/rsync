@@ -11,9 +11,14 @@ use std::fmt;
 
 /// Lifecycle state of a daemon connection.
 ///
-/// Connections progress forward through the states in order. Every state
-/// can transition to [`Closing`](Self::Closing), and `Closing` is terminal
-/// - no further transitions are permitted.
+/// The lifecycle has two kinds of edge, and they are separate operations:
+///
+/// - **Progression** - [`transition`](Self::transition) moves the handshake
+///   forward and is order-checked, so an out-of-order phase is rejected.
+///   [`Closing`](Self::Closing) is never a progression target.
+/// - **Teardown** - [`close`](Self::close) ends the session. It is reachable
+///   from every state, so it is total: it returns the new state directly and
+///   there is no error for a caller to discard.
 ///
 /// # States
 ///
@@ -26,7 +31,8 @@ use std::fmt;
 ///   response.
 /// - **Transferring** - Authentication passed (or was not required) and
 ///   the transfer engine is running.
-/// - **Closing** - The session is ending. Terminal state.
+/// - **Closing** - The session is ending. Terminal state, reached only
+///   through [`close`](Self::close).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ConnectionState {
     /// Server sent `@RSYNCD: <ver>.<sub> <digests>\n`, awaiting client version.
@@ -66,32 +72,52 @@ impl fmt::Display for InvalidTransition {
 impl Error for InvalidTransition {}
 
 impl ConnectionState {
-    /// Returns `true` if this is a terminal state with no outgoing transitions.
+    /// Returns `true` if the session has ended and no further progression or
+    /// teardown edge changes the state.
     #[must_use]
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Closing)
     }
 
-    /// Returns all states reachable from the current state.
+    /// Returns the states this one can *progress* to.
     ///
-    /// The returned slice is static and ordered by the natural progression
-    /// of the protocol. `Closing` always appears last when present.
+    /// The returned slice is static and ordered by the natural progression of
+    /// the protocol. `Closing` is not a progression target - teardown is
+    /// always available and is expressed by [`close`](Self::close) instead.
     #[must_use]
     pub const fn valid_transitions(self) -> &'static [ConnectionState] {
         match self {
-            Self::Greeting => &[Self::ModuleSelect, Self::Closing],
-            Self::ModuleSelect => &[Self::Authenticating, Self::Transferring, Self::Closing],
-            Self::Authenticating => &[Self::Transferring, Self::Closing],
-            Self::Transferring => &[Self::Closing],
-            Self::Closing => &[],
+            Self::Greeting => &[Self::ModuleSelect],
+            Self::ModuleSelect => &[Self::Authenticating, Self::Transferring],
+            Self::Authenticating => &[Self::Transferring],
+            Self::Transferring | Self::Closing => &[],
         }
     }
 
-    /// Attempts to transition to `next`.
+    /// Ends the session, returning [`Closing`](Self::Closing).
+    ///
+    /// A connection can be torn down at any point in the handshake, so this
+    /// edge is total from every state and has no failure case. Keeping it out
+    /// of [`transition`](Self::transition) is what makes every remaining
+    /// `transition` call site a genuine, checkable ordering constraint rather
+    /// than a `Result` that can never be `Err`.
+    ///
+    /// Closing an already-closing connection is a no-op, matching upstream:
+    /// `_exit_cleanup()` (cleanup.c:103) is deliberately re-entrant, stepping
+    /// through `switch_step` and preserving the first exit code when a cleanup
+    /// action calls back into it.
+    #[must_use]
+    pub const fn close(self) -> ConnectionState {
+        Self::Closing
+    }
+
+    /// Attempts to progress to `next`.
     ///
     /// Returns `Ok(next)` when the transition is valid, or
     /// `Err(InvalidTransition)` when it is not. A transition is valid if
     /// `next` appears in [`valid_transitions`](Self::valid_transitions).
+    /// Use [`close`](Self::close) for teardown; `Closing` is always rejected
+    /// here.
     ///
     /// # Examples
     ///
@@ -101,6 +127,7 @@ impl ConnectionState {
     /// let state = ConnectionState::Greeting;
     /// assert!(state.transition(ConnectionState::ModuleSelect).is_ok());
     /// assert!(state.transition(ConnectionState::Transferring).is_err());
+    /// assert!(state.transition(ConnectionState::Closing).is_err());
     /// ```
     pub const fn transition(
         self,
@@ -135,12 +162,6 @@ mod tests {
     }
 
     #[test]
-    fn greeting_to_closing() {
-        let result = ConnectionState::Greeting.transition(ConnectionState::Closing);
-        assert_eq!(result, Ok(ConnectionState::Closing));
-    }
-
-    #[test]
     fn module_select_to_authenticating() {
         let result = ConnectionState::ModuleSelect.transition(ConnectionState::Authenticating);
         assert_eq!(result, Ok(ConnectionState::Authenticating));
@@ -153,27 +174,9 @@ mod tests {
     }
 
     #[test]
-    fn module_select_to_closing() {
-        let result = ConnectionState::ModuleSelect.transition(ConnectionState::Closing);
-        assert_eq!(result, Ok(ConnectionState::Closing));
-    }
-
-    #[test]
     fn authenticating_to_transferring() {
         let result = ConnectionState::Authenticating.transition(ConnectionState::Transferring);
         assert_eq!(result, Ok(ConnectionState::Transferring));
-    }
-
-    #[test]
-    fn authenticating_to_closing() {
-        let result = ConnectionState::Authenticating.transition(ConnectionState::Closing);
-        assert_eq!(result, Ok(ConnectionState::Closing));
-    }
-
-    #[test]
-    fn transferring_to_closing() {
-        let result = ConnectionState::Transferring.transition(ConnectionState::Closing);
-        assert_eq!(result, Ok(ConnectionState::Closing));
     }
 
     #[test]
@@ -278,10 +281,49 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// Teardown is not a progression, so `Closing` is never a `transition`
+    /// target. Every close goes through `close()`, which cannot fail - there
+    /// is no `Result` at a close site for a caller to discard.
     #[test]
-    fn closing_to_closing() {
-        let result = ConnectionState::Closing.transition(ConnectionState::Closing);
-        assert!(result.is_err());
+    fn transition_never_targets_closing() {
+        for from in [
+            ConnectionState::Greeting,
+            ConnectionState::ModuleSelect,
+            ConnectionState::Authenticating,
+            ConnectionState::Transferring,
+            ConnectionState::Closing,
+        ] {
+            assert_eq!(
+                from.transition(ConnectionState::Closing),
+                Err(InvalidTransition {
+                    from,
+                    to: ConnectionState::Closing,
+                }),
+                "transition({from:?} -> Closing) must be rejected"
+            );
+            assert!(
+                !from.valid_transitions().contains(&ConnectionState::Closing),
+                "{from:?} must not list Closing as a progression target"
+            );
+        }
+    }
+
+    /// The close edge is total: reachable from every state, including
+    /// `Closing` itself. upstream: cleanup.c:103 `_exit_cleanup()` is
+    /// re-entrant, so a redundant close is a no-op rather than an error.
+    #[test]
+    fn close_is_total_from_every_state() {
+        for from in [
+            ConnectionState::Greeting,
+            ConnectionState::ModuleSelect,
+            ConnectionState::Authenticating,
+            ConnectionState::Transferring,
+            ConnectionState::Closing,
+        ] {
+            let closed = from.close();
+            assert_eq!(closed, ConnectionState::Closing, "close({from:?})");
+            assert!(closed.is_terminal(), "close({from:?}) must be terminal");
+        }
     }
 
     #[test]
@@ -290,7 +332,7 @@ mod tests {
         let state = state.transition(ConnectionState::ModuleSelect).unwrap();
         let state = state.transition(ConnectionState::Authenticating).unwrap();
         let state = state.transition(ConnectionState::Transferring).unwrap();
-        let state = state.transition(ConnectionState::Closing).unwrap();
+        let state = state.close();
         assert!(state.is_terminal());
     }
 
@@ -299,29 +341,21 @@ mod tests {
         let state = ConnectionState::Greeting;
         let state = state.transition(ConnectionState::ModuleSelect).unwrap();
         let state = state.transition(ConnectionState::Transferring).unwrap();
-        let state = state.transition(ConnectionState::Closing).unwrap();
+        let state = state.close();
         assert!(state.is_terminal());
     }
 
     #[test]
     fn early_close_from_greeting() {
-        let state = ConnectionState::Greeting;
-        let state = state.transition(ConnectionState::Closing).unwrap();
+        let state = ConnectionState::Greeting.close();
         assert!(state.is_terminal());
         assert!(state.transition(ConnectionState::Greeting).is_err());
     }
 
     #[test]
     fn early_close_from_module_select() {
-        let state = ConnectionState::ModuleSelect;
-        let state = state.transition(ConnectionState::Closing).unwrap();
+        let state = ConnectionState::ModuleSelect.close();
         assert!(state.is_terminal());
-    }
-
-    #[test]
-    fn double_close_is_invalid() {
-        let state = ConnectionState::Closing;
-        assert!(state.transition(ConnectionState::Closing).is_err());
     }
 
     #[test]
@@ -342,10 +376,7 @@ mod tests {
     #[test]
     fn valid_transitions_greeting() {
         let valid = ConnectionState::Greeting.valid_transitions();
-        assert_eq!(
-            valid,
-            &[ConnectionState::ModuleSelect, ConnectionState::Closing]
-        );
+        assert_eq!(valid, &[ConnectionState::ModuleSelect]);
     }
 
     #[test]
@@ -356,7 +387,6 @@ mod tests {
             &[
                 ConnectionState::Authenticating,
                 ConnectionState::Transferring,
-                ConnectionState::Closing,
             ]
         );
     }
@@ -364,16 +394,13 @@ mod tests {
     #[test]
     fn valid_transitions_authenticating() {
         let valid = ConnectionState::Authenticating.valid_transitions();
-        assert_eq!(
-            valid,
-            &[ConnectionState::Transferring, ConnectionState::Closing]
-        );
+        assert_eq!(valid, &[ConnectionState::Transferring]);
     }
 
     #[test]
     fn valid_transitions_transferring() {
         let valid = ConnectionState::Transferring.valid_transitions();
-        assert_eq!(valid, &[ConnectionState::Closing]);
+        assert!(valid.is_empty());
     }
 
     #[test]
@@ -499,29 +526,27 @@ mod tests {
         ];
         assert_eq!(all_phases.len(), 5, "FSM must cover all 5 lifecycle phases");
 
-        // Every non-terminal phase has at least one valid forward transition.
+        // Progression stops at Transferring: the handshake has no phase after
+        // it, and teardown is a separate, total edge.
         for &phase in &all_phases {
-            if phase.is_terminal() {
-                assert!(
-                    phase.valid_transitions().is_empty(),
-                    "terminal state must have no outgoing transitions"
-                );
-            } else {
-                assert!(
-                    !phase.valid_transitions().is_empty(),
-                    "{phase:?} must have at least one forward transition"
-                );
-            }
+            let progresses = !matches!(
+                phase,
+                ConnectionState::Transferring | ConnectionState::Closing
+            );
+            assert_eq!(
+                !phase.valid_transitions().is_empty(),
+                progresses,
+                "{phase:?} progression targets"
+            );
         }
 
-        // Every non-terminal phase can reach Closing (error/abort path).
+        // Every phase can reach Closing (error/abort path), and the edge is
+        // total, so it is `close()` rather than a checked `transition`.
         for &phase in &all_phases {
-            if !phase.is_terminal() {
-                assert!(
-                    phase.transition(ConnectionState::Closing).is_ok(),
-                    "{phase:?} must be able to transition to Closing"
-                );
-            }
+            assert!(
+                phase.close().is_terminal(),
+                "{phase:?} must be able to close"
+            );
         }
     }
 
@@ -538,16 +563,13 @@ mod tests {
             Closing,
         ];
 
-        // Expected valid transitions encoded as (from, to) pairs.
+        // Expected valid progressions encoded as (from, to) pairs. Closing is
+        // absent by construction: teardown is `close()`, not a progression.
         let valid_pairs: &[(ConnectionState, ConnectionState)] = &[
             (Greeting, ModuleSelect),
-            (Greeting, Closing),
             (ModuleSelect, Authenticating),
             (ModuleSelect, Transferring),
-            (ModuleSelect, Closing),
             (Authenticating, Transferring),
-            (Authenticating, Closing),
-            (Transferring, Closing),
         ];
 
         for &from in &all {

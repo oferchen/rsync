@@ -102,14 +102,18 @@ pub(crate) const FEATURE_UNAVAILABLE_EXIT_CODE: i32 = 1;
 ///
 /// upstream: errcode.h:25 - `#define RERR_SYNTAX 1`. The daemon's read-only
 /// push and write-only pull rejections call `exit_cleanup(RERR_SYNTAX)`
-/// (main.c:934, main.c:1167).
+/// (main.c:951 in `do_server_sender()`, main.c:1185 in `do_server_recv()`).
 pub(crate) const RERR_SYNTAX_EXIT_CODE: i32 = 1;
 /// Exit code for a refused option or a failed `pre-xfer exec` script,
 /// mirroring upstream `RERR_UNSUPPORTED`.
 ///
-/// upstream: errcode.h:28 - `#define RERR_UNSUPPORTED 4`. clientserver.c:1183
-/// calls `exit_cleanup(RERR_UNSUPPORTED)` when `parse_arguments()` rejects a
-/// refused option, or when the `pre-xfer exec` script exits non-zero.
+/// upstream: errcode.h:28 - `#define RERR_UNSUPPORTED 4`
+///
+/// A refused option and a failed `pre-xfer exec` script share one exit path:
+/// upstream: clientserver.c:1254 - `if (!ret || err_msg) {` opens the single
+/// post-`@RSYNCD: OK` fatal branch, and
+/// upstream: clientserver.c:1267 - `exit_cleanup(RERR_UNSUPPORTED);` ends it.
+/// That is the code the peer observes for both.
 pub(crate) const RERR_UNSUPPORTED_EXIT_CODE: i32 = 4;
 /// Exit code for a generic module-session abort (chroot/setuid/setgid syscall
 /// failure, name-converter or early-exec spawn failure, and similar setup
@@ -231,14 +235,14 @@ pub(crate) const INVALID_UID_PAYLOAD: &str = "@ERROR: invalid uid {uid}";
 pub(crate) const INVALID_GID_PAYLOAD: &str = "@ERROR: invalid gid {gid}";
 /// Error payload returned when a module is read-only and the client pushes.
 ///
-/// upstream: main.c:1167 `do_server_recv()` - `rprintf(FERROR, "ERROR:
+/// upstream: main.c:1184 `do_server_recv()` - `rprintf(FERROR, "ERROR:
 /// module is read only\n")`. This fires after `setup_protocol()` and
 /// `io_start_multiplex_out()`, so the text is a plain `FERROR` message (no
 /// `@ERROR:` greeting prefix) delivered inside a `MSG_ERROR_XFER` frame.
 pub(crate) const MODULE_READ_ONLY_PAYLOAD: &str = "ERROR: module is read only";
 /// Error payload returned when a module is write-only and the client pulls.
 ///
-/// upstream: main.c:935 `do_server_sender()` - `rprintf(FERROR, "ERROR:
+/// upstream: main.c:950 `do_server_sender()` - `rprintf(FERROR, "ERROR:
 /// module is write only\n")`, delivered post-multiplex like the read-only
 /// rejection above.
 pub(crate) const MODULE_WRITE_ONLY_PAYLOAD: &str = "ERROR: module is write only";

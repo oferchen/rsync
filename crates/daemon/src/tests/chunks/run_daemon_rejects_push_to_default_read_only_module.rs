@@ -70,7 +70,7 @@ fn run_daemon_rejects_push_to_default_read_only_module() {
     // #227: the default `read only = true` push rejection is post-`@RSYNCD:
     // OK`, so it must be framed as MSG_ERROR_XFER + MSG_ERROR_EXIT rather than
     // written as a raw line. Shared decoder mirrors upstream
-    // `do_server_recv()` (main.c:1166-1169).
+    // `do_server_recv()` (main.c:1183-1187).
     assert_read_only_multiplexed_rejection(&mut reader);
 
     drop(reader);

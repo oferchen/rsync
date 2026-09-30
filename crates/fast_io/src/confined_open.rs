@@ -280,13 +280,14 @@ mod imp {
             // Open the module root as the anchoring dirfd. The root is an
             // absolute, operator-trusted path, so a plain open (following any
             // symlinks in the root itself) matches upstream's
-            // `openat(AT_FDCWD, basedir, O_RDONLY | O_DIRECTORY)`.
+            // `openat(AT_FDCWD, basedir, O_RDONLY | O_DIRECTORY)`. Routed
+            // through `open_trusted_dir` rather than opened here so this arm
+            // gets the same `dup(module_dirfd)` shortcut the walk arm below
+            // gets: re-opening the absolute root after a daemon's privilege
+            // drop `EACCES`es on an unsearchable ancestor.
+            // upstream: `syscall.c:85-90` `open_anchor_dirfd()`.
             use std::os::fd::AsFd;
-            use std::os::unix::fs::OpenOptionsExt;
-            let root_dir = std::fs::OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)
-                .open(root)?;
+            let root_dir = crate::secure_dir::open_trusted_dir(root)?;
             if let Some(file) = linux::openat2_confined(root_dir.as_fd(), trimmed, leaf, noatime)? {
                 return Ok(file);
             }

@@ -84,7 +84,7 @@ fn daemon_error_payloads_match_upstream_wording() {
         "@ERROR: invalid gid {gid}",
     );
 
-    // upstream: main.c:1167 / main.c:935 - the read-only push and write-only
+    // upstream: main.c:1184 / main.c:950 - the read-only push and write-only
     // pull rejections fire post-multiplex via `rprintf(FERROR, "ERROR: module
     // is ...\n")`, so the payload carries a plain `ERROR:` prefix (no
     // `@ERROR:` greeting form) and travels inside a `MSG_ERROR_XFER` frame.

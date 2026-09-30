@@ -239,6 +239,23 @@ pub(crate) fn single_session_exit(
     }
 }
 
+/// Takes the FSM's teardown edge as the session handler returns, forwarding
+/// `exit_code` unchanged.
+///
+/// The edge is total, since a connection can be torn down from any lifecycle
+/// state, so there is no error to propagate and none for a caller to discard.
+/// Nothing reads the state once the handler returns, so what is worth
+/// recording is the invariant rather than the value: a handler must not reach
+/// a second teardown after already closing.
+fn end_session(state: ConnectionState, exit_code: Option<ExitCode>) -> Option<ExitCode> {
+    debug_assert!(
+        !state.is_terminal(),
+        "daemon session torn down twice, from {state:?}"
+    );
+    let _closed: ConnectionState = state.close();
+    exit_code
+}
+
 /// Runs the legacy `@RSYNCD:` session protocol for a single connection.
 ///
 /// Sends the greeting with the protocol version and supported digest list,
@@ -328,11 +345,19 @@ fn handle_legacy_session(
             write_limited(reader.get_mut(), &mut limiter, b"\n")?;
             reader.get_mut().flush()?;
             // FSM: -> Closing after the fatal @ERROR refusal.
-            let _ = conn_state.transition(ConnectionState::Closing);
-            return Ok(None);
+            return Ok(end_session(conn_state, None));
         }
         match parse_legacy_daemon_message(&line) {
-            Ok(LegacyDaemonMessage::Version(version)) => {
+            // upstream: clientserver.c:1534-1538 start_daemon() - the version
+            // line is read exactly once, by exchange_protocols(); the very next
+            // read_line_old() is the request line whatever it contains. A
+            // second `@RSYNCD:` banner is therefore a module name, not a
+            // re-greeting, and falls through to the unknown-module refusal.
+            // Taking the Greeting -> ModuleSelect edge again instead would fail
+            // the FSM's ordering check, and a session error is fatal to the
+            // whole listener (workers.rs join_worker), so a peer could end the
+            // daemon with two greeting lines.
+            Ok(LegacyDaemonMessage::Version(version)) if negotiated_protocol.is_none() => {
                 // upstream: clientserver.c:199-203 exchange_protocols() -
                 // `daemon_auth_choices = strchr(buf + 9, ' ')` keeps the client's
                 // digest name list for negotiate_daemon_auth(). The Version
@@ -358,6 +383,8 @@ fn handle_legacy_session(
                     .map_err(transition_error)?;
                 continue;
             }
+            // A banner arriving after the version exchange is the request line.
+            Ok(LegacyDaemonMessage::Version(_)) => {}
             Ok(LegacyDaemonMessage::Other(payload)) => {
                 if let Some(option) = parse_daemon_option(payload) {
                     refused_options.push(option.to_owned());
@@ -366,8 +393,7 @@ fn handle_legacy_session(
             }
             Ok(LegacyDaemonMessage::Exit) => {
                 // FSM: -> Closing on client-initiated exit.
-                let _ = conn_state.transition(ConnectionState::Closing);
-                return Ok(None);
+                return Ok(end_session(conn_state, None));
             }
             Ok(
                 LegacyDaemonMessage::Ok
@@ -411,10 +437,6 @@ fn handle_legacy_session(
             );
         }
         respond_with_module_list(reader.get_mut(), &mut limiter, modules, messages)?;
-        // FSM: -> Closing after sending the module list and EXIT.
-        _ = conn_state
-            .transition(ConnectionState::Closing)
-            .map_err(transition_error)?;
     } else if request.starts_with('#') {
         // upstream: clientserver.c:1427-1431 - `if (*line == '#') { io_printf(
         // f_out, "@ERROR: Unknown command '%s'\n", line); return -1; }`. A
@@ -426,10 +448,6 @@ fn handle_legacy_session(
         // treats `@ERROR` as fatal and closes without reading further.
         let error = AtError::UnknownCommand(sanitize_module_identifier(&request).into_owned());
         send_error(reader.get_mut(), &mut limiter, &error)?;
-        // FSM: -> Closing after rejecting the unknown command.
-        _ = conn_state
-            .transition(ConnectionState::Closing)
-            .map_err(transition_error)?;
     } else {
         respond_with_module_request(
             &mut reader,
@@ -450,7 +468,10 @@ fn handle_legacy_session(
         )?;
     }
 
-    Ok(session_exit_code)
+    // FSM: -> Closing. Every branch above has finished with the client: the
+    // module list was sent, the unknown command was refused, or the module
+    // request ran to completion.
+    Ok(end_session(conn_state, session_exit_code))
 }
 
 /// Checks whether `line` is an `#early_input=<len>` command and, if so, reads
@@ -757,7 +778,7 @@ mod session_runtime_tests {
     #[test]
     fn fsm_module_select_to_closing_on_list() {
         let state = ConnectionState::ModuleSelect;
-        let state = state.transition(ConnectionState::Closing).unwrap();
+        let state = state.close();
         assert!(state.is_terminal());
     }
 
@@ -766,7 +787,7 @@ mod session_runtime_tests {
         let mut state = ConnectionState::Greeting;
         state = state.transition(ConnectionState::ModuleSelect).unwrap();
         state = state.transition(ConnectionState::Transferring).unwrap();
-        state = state.transition(ConnectionState::Closing).unwrap();
+        state = state.close();
         assert!(state.is_terminal());
     }
 
@@ -776,7 +797,7 @@ mod session_runtime_tests {
         state = state.transition(ConnectionState::ModuleSelect).unwrap();
         state = state.transition(ConnectionState::Authenticating).unwrap();
         state = state.transition(ConnectionState::Transferring).unwrap();
-        state = state.transition(ConnectionState::Closing).unwrap();
+        state = state.close();
         assert!(state.is_terminal());
     }
 
@@ -784,7 +805,7 @@ mod session_runtime_tests {
     fn fsm_early_close_from_module_select() {
         let mut state = ConnectionState::Greeting;
         state = state.transition(ConnectionState::ModuleSelect).unwrap();
-        state = state.transition(ConnectionState::Closing).unwrap();
+        state = state.close();
         assert!(state.is_terminal());
     }
 
@@ -793,7 +814,7 @@ mod session_runtime_tests {
         let mut state = ConnectionState::Greeting;
         state = state.transition(ConnectionState::ModuleSelect).unwrap();
         state = state.transition(ConnectionState::Authenticating).unwrap();
-        state = state.transition(ConnectionState::Closing).unwrap();
+        state = state.close();
         assert!(state.is_terminal());
     }
 
@@ -813,11 +834,27 @@ mod session_runtime_tests {
         assert!(result.is_err());
     }
 
+    /// Teardown is not a progression, so the handler cannot reach `Closing`
+    /// through `transition` at all - `end_session` owns the edge.
     #[test]
-    fn fsm_no_double_close() {
-        let state = ConnectionState::Closing;
-        let result = state.transition(ConnectionState::Closing);
-        assert!(result.is_err());
+    fn fsm_closing_is_not_a_transition_target() {
+        let state = ConnectionState::ModuleSelect;
+        assert!(state.transition(ConnectionState::Closing).is_err());
+    }
+
+    /// `end_session` forwards the session exit code untouched: the teardown
+    /// edge must not swallow the code the caller has to surface as the process
+    /// exit status in the stdio and inetd modes.
+    #[test]
+    fn end_session_forwards_exit_code() {
+        assert_eq!(end_session(ConnectionState::ModuleSelect, None), None);
+        assert_eq!(
+            end_session(
+                ConnectionState::Authenticating,
+                Some(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE)
+            ),
+            Some(UNSUPPORTED_AUTH_DIGEST_EXIT_CODE)
+        );
     }
 
     #[test]
