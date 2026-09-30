@@ -79,6 +79,8 @@ COLOR_IO_URING = "#3fb950"
 COLOR_SSH_UPSTREAM = "#6e7681"
 COLOR_SSH_SUBPROCESS = "#56d4dd"
 COLOR_SSH_RUSSH = "#ffa657"
+COLOR_QUIC_AES = "#3fb950"
+COLOR_QUIC_CHACHA20 = "#d2a8ff"
 COLOR_TITLE = "#e6edf3"
 COLOR_SUBTITLE = "#8b949e"
 COLOR_MODE_HEADER = "#e6edf3"
@@ -98,6 +100,7 @@ MODE_ORDER = [
     "local", "ssh_pull", "ssh_push", "daemon_pull", "daemon_push",
     "compression", "delta", "large_file", "many_small", "sparse",
     "memory", "checksum_openssl", "io_uring", "ssh_transport",
+    "quic_transport",
 ]
 MODE_LABELS = {
     "local": "Local Copy",
@@ -116,6 +119,7 @@ MODE_LABELS = {
     "ssh_transport": (
         "SSH Transport: upstream vs oc-rsync subprocess vs oc-rsync russh"
     ),
+    "quic_transport": "Daemon Transport: TCP vs QUIC",
 }
 MODE_CLI_HINTS = {
     "local": "rsync -av src/ dst/",
@@ -134,6 +138,10 @@ MODE_CLI_HINTS = {
     "ssh_transport": (
         "upstream ssh vs oc-rsync host:path (subprocess) "
         "vs oc-rsync ssh://host/path (russh)"
+    ),
+    "quic_transport": (
+        "rsync:// (TCP) vs quic:// --quic-cipher aes|chacha20; "
+        "upstream has no QUIC"
     ),
 }
 
@@ -168,12 +176,23 @@ MODE_UNITS = {
     "checksum_openssl": MetricUnit.DURATION,
     "io_uring": MetricUnit.DURATION,
     "ssh_transport": MetricUnit.DURATION,
+    "quic_transport": MetricUnit.DURATION,
 }
 
 # Modes where bars represent alternative labels instead of upstream vs oc-rsync
 OPENSSL_MODES = {"checksum_openssl"}
 IO_URING_MODES = {"io_uring"}
 SSH_TRANSPORT_MODES = {"ssh_transport"}
+QUIC_TRANSPORT_MODES = {"quic_transport"}
+
+# Bars of one daemon-transport row, top to bottom. Upstream rsync has no QUIC,
+# so its TCP daemon is a reference bar, not a QUIC competitor.
+QUIC_TRANSPORT_SERIES = (
+    ("upstream_tcp", COLOR_SSH_UPSTREAM, "upstream rsync (TCP daemon)"),
+    ("oc_tcp", COLOR_OC_RSYNC, "oc-rsync (TCP daemon)"),
+    ("oc_quic_aes", COLOR_QUIC_AES, "oc-rsync (QUIC, AES-GCM)"),
+    ("oc_quic_chacha20", COLOR_QUIC_CHACHA20, "oc-rsync (QUIC, ChaCha20)"),
+)
 
 CLI_HINT_HEIGHT = 16
 
@@ -303,6 +322,12 @@ def row_series(mode: str, t: dict, labels: list[str]) -> list[tuple]:
     io_uring, SSH transport) have no baseline dimension: their bars are the
     variants. Only the upstream-comparison modes fan out over baselines.
     """
+    if mode in QUIC_TRANSPORT_MODES:
+        return [
+            (t["bars"][key], color, label)
+            for key, color, label in QUIC_TRANSPORT_SERIES
+            if key in t["bars"]
+        ]
     if _is_three_way_ssh(mode, t):
         return [
             (t["upstream_ssh"], COLOR_SSH_UPSTREAM, "upstream (ssh subprocess)"),
@@ -375,6 +400,8 @@ def row_annotations(
     mode: str, t: dict, labels: list[str], unit: MetricUnit, values: list[float]
 ) -> tuple[tuple[str, float], ...]:
     """`(prefix, ratio)` annotations rendered to the right of one row."""
+    if mode in QUIC_TRANSPORT_MODES:
+        return tuple(t["annotations"])
     if _is_three_way_ssh(mode, t):
         return (
             ("oc/up", t.get("ratio_sub_vs_upstream", 0.0)),
@@ -726,6 +753,7 @@ class ChartBuilder:
         has_ssh_transport: bool = False,
         has_ssh_3way: bool = False,
         baselines: tuple[str, ...] = ("3.4.4",),
+        has_quic: bool = False,
     ) -> None:
         cx = CHART_WIDTH / 2
         self._parts.append(f'<g transform="translate({cx - 160}, {y:.0f})">')
@@ -831,6 +859,21 @@ class ChartBuilder:
                     f'<text x="186" y="{ry + 10}" font-size="11" '
                     f'fill="{COLOR_LABEL}">SSH russh (embedded)</text>'
                 )
+        if has_quic:
+            # Two swatches per legend row, matching the rows above.
+            for i, (_, color, label) in enumerate(QUIC_TRANSPORT_SERIES):
+                if i % 2 == 0:
+                    row += 1
+                ry = row * 18
+                x = 0 if i % 2 == 0 else 210
+                self._parts.append(
+                    f'<rect x="{x}" y="{ry}" width="12" height="12" rx="2" '
+                    f'fill="{color}"/>'
+                )
+                self._parts.append(
+                    f'<text x="{x + 16}" y="{ry + 10}" font-size="11" '
+                    f'fill="{COLOR_LABEL}">{escape(label)}</text>'
+                )
         self._parts.append("</g>")
 
     def render(self) -> str:
@@ -895,11 +938,58 @@ class ChartBuilder:
 # ---------------------------------------------------------------------------
 
 
+def _ratio(num: float, den: float) -> float:
+    return num / den if den > 0 else 0.0
+
+
+def transport_rows(transport: dict) -> list[dict]:
+    """Chart rows for the daemon-transport benchmark.
+
+    One row per dataset, direction and scenario, in the default incremental
+    recursion mode; the report carries the full matrix. Each bar is the
+    cell's median wall time. The annotations state the two comparisons the
+    rows exist for: QUIC (AES) against oc-rsync's own TCP daemon, which
+    isolates the transport, and oc-rsync TCP against upstream TCP.
+    """
+    datasets = transport.get("datasets") or {}
+    grouped: dict[tuple, dict[str, dict]] = {}
+    for cell in transport.get("cells") or []:
+        if cell.get("inc_mode") != "default" or cell.get("failures"):
+            continue
+        key = (cell["dataset"], cell["direction"], cell["scenario"])
+        grouped.setdefault(key, {})[cell["transport"]] = {
+            "mean": cell["wall_median"]
+        }
+    rows = []
+    for (dataset, direction, scenario), bars in grouped.items():
+        label = (datasets.get(dataset) or {}).get("label", dataset)
+        oc_tcp = bars.get("oc_tcp", {}).get("mean", 0.0)
+        annotations = []
+        if "oc_quic_aes" in bars:
+            annotations.append(
+                ("quic/tcp", _ratio(bars["oc_quic_aes"]["mean"], oc_tcp))
+            )
+        if "upstream_tcp" in bars:
+            annotations.append(
+                ("oc/up", _ratio(oc_tcp, bars["upstream_tcp"]["mean"]))
+            )
+        rows.append({
+            "mode": "quic_transport",
+            "name": f"{label} {direction} {scenario}",
+            "bars": bars,
+            "annotations": annotations,
+        })
+    return rows
+
+
 def generate_chart(data: dict) -> str:
     """Generate complete SVG string from benchmark data."""
     tests_by_mode: dict[str, list[dict]] = {}
     for t in data["tests"]:
         tests_by_mode.setdefault(t["mode"], []).append(t)
+    if data.get("transport"):
+        tests_by_mode["quic_transport"] = transport_rows(data["transport"])
+    has_quic = bool(tests_by_mode.get("quic_transport"))
 
     has_openssl = any(m in OPENSSL_MODES for m in tests_by_mode)
     has_io_uring = any(m in IO_URING_MODES for m in tests_by_mode)
@@ -914,6 +1004,7 @@ def generate_chart(data: dict) -> str:
     extra_legend_rows = (
         int(has_openssl) + int(has_io_uring) + int(has_ssh_transport)
         + int(has_ssh_3way) + max(len(labels) - 1, 0)
+        + 2 * int(has_quic)
     )
     extra_legend = extra_legend_rows * 18
     chart_height = layout.chart_height + extra_legend
@@ -948,6 +1039,7 @@ def generate_chart(data: dict) -> str:
         has_ssh_transport,
         has_ssh_3way,
         tuple(labels),
+        has_quic,
     )
 
     return builder.render()
@@ -967,10 +1059,17 @@ def main() -> None:
         default="docs/assets/benchmark.svg",
         help="Output SVG file path (default: docs/assets/benchmark.svg)",
     )
+    parser.add_argument(
+        "--transport",
+        help="Daemon transport results from benchmark_transport.py (optional)",
+    )
     args = parser.parse_args()
 
     with open(args.input) as f:
         data = json.load(f)
+    if args.transport:
+        with open(args.transport) as f:
+            data["transport"] = json.load(f)["transport"]
 
     svg = generate_chart(data)
 

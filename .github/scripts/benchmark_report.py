@@ -10,6 +10,7 @@ answers and publishing only one of them hides the other.
 """
 
 import json
+import os
 import sys
 
 # Both scripts live in .github/scripts and are invoked as
@@ -279,6 +280,140 @@ def row_runs(t, primary):
     return "-"
 
 
+TRANSPORT_FILE = "benchmark_transport.json"
+
+TRANSPORT_LABELS = {
+    "upstream_tcp": "upstream rsync {up} TCP",
+    "oc_tcp": "oc-rsync TCP",
+    "oc_quic_aes": "oc-rsync QUIC aes",
+    "oc_quic_chacha20": "oc-rsync QUIC chacha20",
+    "oc_quic_aes_cubic": "oc-rsync QUIC aes cubic",
+    "oc_quic_aes_newreno": "oc-rsync QUIC aes newreno",
+}
+
+
+def transport_label(key, upstream_label):
+    return TRANSPORT_LABELS.get(key, key).format(up=upstream_label)
+
+
+def negotiated_cell(cell, cells):
+    """State the incremental-recursion mode the daemon actually negotiated.
+
+    A TCP cell's answer is read off the wire. A QUIC stream is encrypted, so
+    its cell says so and names the oc-rsync TCP cell with the same inputs:
+    the daemon protocol inside the QUIC stream is byte-identical, but that
+    is an inference, and the table must not print it as a measurement.
+    """
+    probe = cell.get("inc_recurse") or {}
+    negotiated = probe.get("negotiated")
+    if negotiated is not None:
+        return "yes" if negotiated else "no"
+    twin = next(
+        (
+            c for c in cells
+            if c["transport"] == "oc_tcp"
+            and all(
+                c[k] == cell[k]
+                for k in ("dataset", "direction", "scenario", "inc_mode")
+            )
+        ),
+        None,
+    )
+    twin_value = ((twin or {}).get("inc_recurse") or {}).get("negotiated")
+    if twin_value is None:
+        return "not observable (TLS)"
+    return f"not observable (TLS); TCP twin {'yes' if twin_value else 'no'}"
+
+
+def fmt_kib(kib):
+    return fmt_bytes(kib * 1024) if kib else "-"
+
+
+TRANSPORT_HEADERS = [
+    "Direction", "Scenario", "Inc-recurse requested", "Inc-recurse negotiated",
+    "Transport", "Runs", "Wall min (s)", "Wall median (s)", "Corpus MiB/s",
+    "Client user (s)", "Client sys (s)", "Server user (s)", "Server sys (s)",
+    "Client peak RSS", "Server peak RSS", "Protocol bytes sent",
+    "Protocol bytes received",
+]
+
+
+def transport_row(c, cells, up):
+    """One table row per cell, one value per column."""
+    name = transport_label(c["transport"], up)
+    if c.get("failures"):
+        name += f" **(failed {c['failures']}/{c['runs']})**"
+    return [
+        c["direction"], c["scenario"], c["inc_mode"],
+        negotiated_cell(c, cells), name, str(c["runs"]),
+        f"{c['wall_min']:.3f}", f"{c['wall_median']:.3f}",
+        f"{c['corpus_mibps']:.1f}",
+        f"{c['client_user']:.3f}", f"{c['client_sys']:.3f}",
+        f"{c['server_user']:.3f}", f"{c['server_sys']:.3f}",
+        fmt_kib(c.get("client_rss_kb")), fmt_kib(c.get("server_rss_kb")),
+        str(c.get("protocol_sent", "-")),
+        str(c.get("protocol_received", "-")),
+    ]
+
+
+def transport_section(transport):
+    """Render the daemon-transport benchmark (TCP vs QUIC) as markdown."""
+    up = (transport.get("upstream") or {}).get("label", "?")
+    cert = transport.get("certificate") or {}
+    print("### Daemon Transport: TCP vs QUIC\n")
+    print(
+        f"Loopback daemon transfers with `{transport.get('client_flags', '-a')}`. "
+        f"Upstream rsync has no QUIC transport: the upstream rsync {up} TCP "
+        "daemon and the oc-rsync TCP daemon are reference rows, not QUIC "
+        "contestants. Both oc-rsync rows use the same `quic`-feature build, "
+        "so TCP against QUIC isolates the transport. The QUIC daemon presents "
+        f"a {cert.get('key_algorithm', '?')} certificate "
+        f"({cert.get('signature_algorithm', '?')}) generated for this run; "
+        "`--quic-cc` defaults to BBR.\n"
+    )
+    cells = transport.get("cells") or []
+    for key, meta in (transport.get("datasets") or {}).items():
+        rows = [c for c in cells if c["dataset"] == key]
+        if not rows:
+            continue
+        print(f"#### {meta['label']} ({meta['files']} files)\n")
+        print("| " + " | ".join(TRANSPORT_HEADERS) + " |")
+        print("|" + "|".join("------" for _ in TRANSPORT_HEADERS) + "|")
+        for c in rows:
+            print("| " + " | ".join(transport_row(c, cells, up)) + " |")
+        print()
+
+    handshakes = transport.get("handshake") or []
+    if handshakes:
+        print("#### Per-connection cost (module listing)\n")
+        print(
+            "| Transport | Runs | Wall median (ms) | Client CPU (ms) "
+            "| Server CPU per connection (ms) |"
+        )
+        print("|------|------|------|------|------|")
+        for h in handshakes:
+            print(
+                f"| {transport_label(h['transport'], up)} | {h['runs']} "
+                f"| {h['wall_median_ms']:.2f} | {h['client_cpu_ms']:.2f} "
+                f"| {h['server_cpu_ms']:.2f} |"
+            )
+        print()
+
+    elapsed = transport.get("elapsed_s")
+    print(
+        "_Wall figures span every timed run (no warm-up discard); client CPU is "
+        "the per-run median, server CPU the per-run mean of the daemon and the "
+        "sessions it reaped, server peak RSS the maximum over the daemon and "
+        "those sessions, including oc-rsync's long-lived QUIC listener child. "
+        "Protocol bytes are the client's own `sent`/`received` count: rsync "
+        "protocol payload, excluding TCP, TLS and QUIC packet overhead. The "
+        "negotiated inc-recurse column is read from the daemon's compat flags "
+        "on the wire, which a QUIC stream encrypts."
+        + (f" The transport run took {elapsed:.0f}s." if elapsed else "")
+        + "_\n"
+    )
+
+
 def comparison_table(tests, labels, *, with_rss):
     """Render one upstream-comparison table across every baseline."""
     primary = labels[0]
@@ -456,6 +591,11 @@ def main():
                 )
 
         print()
+
+    # Daemon transport (TCP vs QUIC) from benchmark_transport.py, when run.
+    if os.path.exists(TRANSPORT_FILE):
+        with open(TRANSPORT_FILE) as f:
+            transport_section(json.load(f)["transport"])
 
     # Extra benchmark modes (compression, delta, large file, many small, sparse)
     for mode, label in EXTRA_MODES.items():
