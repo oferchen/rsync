@@ -253,20 +253,29 @@ impl ClientConfig {
     /// level 1 - but the gate is a plain non-zero test, which is exactly what
     /// `recursive()` already answers once the CLI has folded those rules in.
     ///
-    /// Upstream's remaining clause (`!am_sender` with `--delete-before`,
-    /// `--delete-after`, `--delay-updates` or `--prune-empty-dirs`) needs no
-    /// mirror here: oc-rsync never advertises `'i'` from a receiving client at
-    /// all, which is a strict superset of that condition. Both callers apply
-    /// that role restriction on top of this value.
+    /// A receiving client (`am_sender == false`) additionally refuses it under
+    /// an explicit `--delete-before` or `--delete-after`, `--delay-updates` or
+    /// `--prune-empty-dirs`, all of which need the complete file list up front.
+    /// A bare `--delete` is not refused: upstream resolves it to
+    /// `delete_during` only after `'i'` has been decided.
     ///
     /// # Upstream Reference
     ///
     /// - `compat.c:172 set_allow_inc_recurse()` - `!recurse || use_qsort`.
+    /// - `compat.c:174-177` - the receiver clause.
+    /// - `compat.c:683-688` - the later `delete_mode` -> `delete_during` default.
     /// - `options.c:2735` - the call site inside `server_options()`.
     /// - `options.c:3049 maybe_add_e_option()` - `if (allow_inc_recurse)`.
     #[must_use]
-    pub const fn allow_inc_recurse(&self) -> bool {
-        self.inc_recursive_send && self.recursive && !self.qsort
+    pub const fn allow_inc_recurse(&self, am_sender: bool) -> bool {
+        if !(self.inc_recursive_send && self.recursive && !self.qsort) {
+            return false;
+        }
+        am_sender
+            || !(self.delete_before()
+                || self.delete_after()
+                || self.delay_updates
+                || self.prune_empty_dirs)
     }
 }
 
@@ -373,29 +382,59 @@ mod tests {
     fn allow_inc_recurse_requires_recursion() {
         // upstream: compat.c:172 - `if (!recurse || use_qsort)
         // allow_inc_recurse = 0;`. `--inc-recursive` does not survive it.
-        assert!(!default_config().allow_inc_recurse());
+        assert!(!default_config().allow_inc_recurse(true));
         assert!(
             !ClientConfig::builder()
                 .recursive(false)
                 .inc_recursive_send(true)
                 .build()
-                .allow_inc_recurse()
+                .allow_inc_recurse(true)
         );
         assert!(
             !ClientConfig::builder()
                 .recursive(false)
                 .dirs(true)
                 .build()
-                .allow_inc_recurse()
+                .allow_inc_recurse(true)
         );
         assert!(
             ClientConfig::builder()
                 .recursive(true)
                 .build()
-                .allow_inc_recurse()
+                .allow_inc_recurse(true)
         );
     }
 
+    #[test]
+    fn allow_inc_recurse_receiver_refuses_options_needing_the_whole_flist() {
+        // upstream: compat.c:174-177 - a receiver clears allow_inc_recurse for
+        // --delete-before/--delete-after/--delay-updates/--prune-empty-dirs,
+        // because each needs the complete file list before acting on it. A
+        // plain --delete resolves to delete_during only later (compat.c:683),
+        // after 'i' is decided, so it must not suppress incremental recursion.
+        let base = || ClientConfig::builder().recursive(true);
+        let cases: [(&str, ClientConfig, bool); 7] = [
+            ("no options", base().build(), true),
+            ("--delete", base().delete(true).build(), true),
+            ("--delete-delay", base().delete_delay(true).build(), true),
+            ("--delete-before", base().delete_before(true).build(), false),
+            ("--delete-after", base().delete_after(true).build(), false),
+            ("--delay-updates", base().delay_updates(true).build(), false),
+            (
+                "--prune-empty-dirs",
+                base().prune_empty_dirs(true).build(),
+                false,
+            ),
+        ];
+        for (name, config, receiver_allows) in cases {
+            assert_eq!(
+                config.allow_inc_recurse(false),
+                receiver_allows,
+                "receiver with {name}"
+            );
+            assert!(config.allow_inc_recurse(true), "sender with {name}");
+        }
+    }
     #[test]
     fn allow_inc_recurse_is_cleared_by_qsort_and_no_inc_recursive() {
         assert!(
@@ -403,14 +442,14 @@ mod tests {
                 .recursive(true)
                 .qsort(true)
                 .build()
-                .allow_inc_recurse()
+                .allow_inc_recurse(true)
         );
         assert!(
             !ClientConfig::builder()
                 .recursive(true)
                 .inc_recursive_send(false)
                 .build()
-                .allow_inc_recurse()
+                .allow_inc_recurse(true)
         );
     }
 }
