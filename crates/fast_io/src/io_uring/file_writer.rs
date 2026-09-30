@@ -7,11 +7,13 @@
 //! contention the shared-ring layout imposed on rayon-parallel writers (IUR-2
 //! design doc section 1.1).
 //!
-//! Per-ring kernel state - fixed-file registration and registered buffers -
-//! is tied to a specific ring fd and does not survive the move to a
-//! thread-shared ring. Both are recorded as unavailable on every writer
-//! constructed through this module; IUR-3.e re-introduces them on the
-//! per-thread topology via the bgid-lease primitive.
+//! Registered buffers live on the per-thread ring too: one
+//! [`RegisteredBufferGroup`](super::registered_buffers::RegisteredBufferGroup)
+//! per thread, shared by every writer and reader on it. A batch large enough
+//! to use the ring stages its chunks in those buffers and submits
+//! `IORING_OP_WRITE_FIXED`; when registration is disabled or the kernel
+//! rejected it, the same batch uses plain `IORING_OP_WRITE`. Fixed-file
+//! registration stays off on the thread-shared ring.
 
 use std::fs::File;
 use std::io::{self, Seek, SeekFrom, Write};
@@ -20,10 +22,12 @@ use std::path::Path;
 
 use io_uring::opcode;
 
-use super::batching::{NO_FIXED_FD, maybe_fixed_file, sqe_fd, submit_write_batch};
+use super::batching::{
+    NO_FIXED_FD, batch_bypasses_ring, maybe_fixed_file, sqe_fd, submit_write_batch,
+};
 use super::config::IoUringConfig;
-use super::per_thread_ring::with_ring;
-use super::registered_buffers::RegisteredBufferStatus;
+use super::per_thread_ring::{FixedBuffers, with_ring, with_ring_and_buffers};
+use super::registered_buffers::{RegisteredBufferStatus, checkout_all, submit_write_fixed_batch};
 use crate::traits::FileWriter;
 
 /// A file writer using io_uring for async I/O.
@@ -37,9 +41,10 @@ use crate::traits::FileWriter;
 /// `batching::MIN_RING_BATCH_CHUNKS`.
 ///
 /// Submissions are issued against the calling thread's per-thread ring (see
-/// [`super::per_thread_ring`]). Fixed-file registration and registered-buffer
-/// fast paths are disabled on this writer until IUR-3.e wires the per-thread
-/// bgid lease; flushes always use the regular `IORING_OP_WRITE` opcode.
+/// [`super::per_thread_ring`]). Ring batches use `IORING_OP_WRITE_FIXED`
+/// through the thread's registered buffers when
+/// [`IoUringConfig::register_buffers`] is set and the kernel accepted the
+/// registration, and plain `IORING_OP_WRITE` otherwise.
 pub struct IoUringWriter {
     file: File,
     bytes_written: u64,
@@ -47,6 +52,7 @@ pub struct IoUringWriter {
     buffer_pos: usize,
     buffer_size: usize,
     sq_entries: u32,
+    fixed: FixedBuffers,
 }
 
 impl IoUringWriter {
@@ -69,45 +75,28 @@ impl IoUringWriter {
 
     /// Wraps an existing file handle for writing with the per-thread ring.
     ///
-    /// Used by [`super::writer_from_file`] which previously built a ring
-    /// per call so it could fall back to standard I/O without consuming the
-    /// `File`. With the per-thread topology the writer no longer owns the
-    /// ring; this constructor is kept for API parity but is now a thin
-    /// wrapper over [`Self::new_from_file`] that ignores the
-    /// `register_buffers` / `registered_buffer_count` knobs (IUR-3.e
-    /// re-introduces buffer registration on the per-thread ring).
-    pub(super) fn with_ring(
-        file: File,
-        buffer_capacity: usize,
-        sq_entries: u32,
-        _fixed_fd_slot: i32,
-        _register_buffers: bool,
-        _registered_buffer_count: usize,
-    ) -> Self {
-        Self::new_with_capacity(file, buffer_capacity, sq_entries)
+    /// Used by [`super::writer_from_file`], which probes the per-thread ring
+    /// first so it can fall back to standard I/O without consuming the
+    /// `File`. `buffer_capacity` sizes the writer's staging buffer; the SQ
+    /// depth and the fixed-buffer knobs come from `config`.
+    pub(super) fn with_ring(file: File, buffer_capacity: usize, config: &IoUringConfig) -> Self {
+        Self::new_with_capacity(file, buffer_capacity, config)
     }
 
-    /// Returns the count of currently-registered fixed buffers, or `None` if
-    /// buffer registration is not active on this writer.
-    ///
-    /// Always returns `None` on the per-thread topology: the per-thread ring
-    /// is shared across every writer on the same thread, so per-writer
-    /// buffer registration cannot be expressed safely. IUR-3.e re-introduces
-    /// shared per-thread buffer registration via the bgid lease; call
-    /// [`registered_buffer_status`](Self::registered_buffer_status) to tell
-    /// the post-migration state apart from a kernel-side rejection.
+    /// Returns the number of fixed buffers registered on the per-thread ring
+    /// this writer submits to, or `None` if registration is not active.
     #[must_use]
     pub fn registered_buffer_count(&self) -> Option<usize> {
-        None
+        self.fixed.count()
     }
 
-    /// Returns the provenance of fixed-buffer registration on this writer.
-    ///
-    /// Always returns [`RegisteredBufferStatus::Disabled`] on the per-thread
-    /// topology; see [`Self::registered_buffer_count`].
+    /// Returns the provenance of fixed-buffer registration on this writer:
+    /// `Enabled` when ring batches use `IORING_OP_WRITE_FIXED`, `Disabled`
+    /// when the config opted out, `RegistrationFailed` when the kernel
+    /// rejected the registration and batches fell back to `IORING_OP_WRITE`.
     #[must_use]
     pub fn registered_buffer_status(&self) -> &RegisteredBufferStatus {
-        &RegisteredBufferStatus::Disabled
+        self.fixed.status()
     }
 
     /// Creates a file with preallocated space.
@@ -171,20 +160,7 @@ impl IoUringWriter {
     /// Submits up to `sq_entries` writes per `submit_and_wait` call on the
     /// per-thread ring.
     pub fn write_all_batched(&mut self, data: &[u8], offset: u64) -> io::Result<()> {
-        let buffer_size = self.buffer_size;
-        let sq_entries = self.sq_entries as usize;
-
-        let written = with_ring(|ring| {
-            submit_write_batch(
-                ring,
-                &self.file,
-                data,
-                offset,
-                buffer_size,
-                sq_entries,
-                NO_FIXED_FD,
-            )
-        })?;
+        let written = self.submit_batch(data, offset)?;
         if written != data.len() {
             return Err(io::Error::new(
                 io::ErrorKind::WriteZero,
@@ -200,50 +176,68 @@ impl IoUringWriter {
         // io_uring unavailability synchronously, matching the old behaviour
         // where `config.build_ring()?` surfaced setup errors here.
         with_ring(|_| Ok(()))?;
-        Ok(Self::new_with_capacity(
-            file,
-            config.buffer_size,
-            config.sq_entries,
-        ))
+        Ok(Self::new_with_capacity(file, config.buffer_size, config))
     }
 
-    /// Constructs the writer state from a file, buffer capacity, and SQ depth.
-    fn new_with_capacity(file: File, buffer_capacity: usize, sq_entries: u32) -> Self {
+    /// Constructs the writer state and registers the calling thread's fixed
+    /// buffers when `config` asks for them.
+    fn new_with_capacity(file: File, buffer_capacity: usize, config: &IoUringConfig) -> Self {
         Self {
             file,
             bytes_written: 0,
             buffer: vec![0u8; buffer_capacity],
             buffer_pos: 0,
             buffer_size: buffer_capacity,
-            sq_entries,
+            sq_entries: config.sq_entries,
+            fixed: FixedBuffers::register(
+                config.register_buffers,
+                config.buffer_size,
+                config.registered_buffer_count,
+            ),
         }
+    }
+
+    /// Writes all of `data` at `offset` on the per-thread ring.
+    ///
+    /// A batch that fills at least `MIN_RING_BATCH_CHUNKS` registered
+    /// buffers goes out as `IORING_OP_WRITE_FIXED`; everything else takes
+    /// [`submit_write_batch`], which also owns the small-batch `pwrite(2)`
+    /// bypass.
+    fn submit_batch(&self, data: &[u8], offset: u64) -> io::Result<usize> {
+        let buffer_size = self.buffer_size;
+        let sq_entries = self.sq_entries as usize;
+        with_ring_and_buffers(self.fixed.request(), |ring, group| {
+            if let Some(group) =
+                group.filter(|g| !batch_bypasses_ring(data.len(), g.buffer_size(), g.count()))
+            {
+                let (_slots, infos) = checkout_all(group);
+                if !infos.is_empty() {
+                    let fd = sqe_fd(self.file.as_raw_fd(), NO_FIXED_FD);
+                    return submit_write_fixed_batch(ring, fd, data, offset, &infos, NO_FIXED_FD);
+                }
+            }
+            submit_write_batch(
+                ring,
+                &self.file,
+                data,
+                offset,
+                buffer_size,
+                sq_entries,
+                NO_FIXED_FD,
+            )
+        })
     }
 
     /// Flushes the internal buffer to disk using batched writes.
     ///
-    /// Submits the buffered region as a batch of `IORING_OP_WRITE` SQEs on
-    /// the per-thread ring.
+    /// Submits the buffered region through [`Self::submit_batch`].
     fn flush_buffer(&mut self) -> io::Result<()> {
         if self.buffer_pos == 0 {
             return Ok(());
         }
 
         let len = self.buffer_pos;
-        let offset = self.bytes_written;
-        let buffer_size = self.buffer_size;
-        let sq_entries = self.sq_entries as usize;
-
-        let written = with_ring(|ring| {
-            submit_write_batch(
-                ring,
-                &self.file,
-                &self.buffer[..len],
-                offset,
-                buffer_size,
-                sq_entries,
-                NO_FIXED_FD,
-            )
-        })?;
+        let written = self.submit_batch(&self.buffer[..len], self.bytes_written)?;
         self.bytes_written += written as u64;
         self.buffer_pos = 0;
         Ok(())
@@ -356,93 +350,134 @@ impl Drop for IoUringWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io_uring::per_thread_ring::{expect_fixed_buffers, thread_buffer_stats};
+    use crate::io_uring::registered_buffers::MAX_REGISTERED_BUFFERS;
     use tempfile::tempdir;
 
-    /// Builds a writer for testing via the per-thread ring. Returns `None`
-    /// when the kernel rejects `io_uring_setup(2)` (e.g., container,
-    /// seccomp, or non-5.6+ kernel) so the test skips cleanly.
-    fn make_writer(
-        register_buffers: bool,
-        registered_buffer_count: usize,
-    ) -> Option<IoUringWriter> {
-        let dir = tempdir().ok()?;
-        let file = File::create(dir.path().join("out.bin")).ok()?;
-        // Probe the per-thread ring; on hosts without io_uring we skip the
-        // test rather than constructing a writer that would later fail.
-        with_ring(|_| Ok(())).ok()?;
-        // Keep `dir` alive for the duration of the writer by leaking it; the
-        // OS reclaims the temp file at process exit. Tests are short-lived
-        // and this avoids ordering the drop with the writer.
-        std::mem::forget(dir);
-        Some(IoUringWriter::with_ring(
-            file,
-            4096,
-            4,
-            -1,
-            register_buffers,
-            registered_buffer_count,
-        ))
+    /// Several MiB plus a ragged tail: enough 64 KiB chunks to clear the
+    /// ring-batch threshold, ending in a partial registered buffer.
+    fn payload() -> Vec<u8> {
+        (0..(4u32 << 20) + 4099)
+            .map(|i| (i.wrapping_mul(31) % 251) as u8)
+            .collect()
     }
 
+    /// The receiver's writer constructor (`writer_from_file`, used by
+    /// `transfer_ops/response.rs`) must actually register buffers and route
+    /// ring batches through `WRITE_FIXED`. Registered buffers were silently
+    /// dead in production once already; this pins the wiring, not a helper.
     #[test]
-    fn registered_buffers_always_disabled_on_per_thread_ring() {
-        let writer = match make_writer(false, 8) {
-            Some(w) => w,
-            None => return,
+    fn production_writer_writes_through_registered_buffers() {
+        if with_ring(|_| Ok(())).is_err() {
+            eprintln!("skipping registered-buffer writer test: io_uring unavailable");
+            return;
+        }
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("fixed.bin");
+        let file = File::create(&path).expect("create");
+        let writer =
+            crate::io_uring::writer_from_file(file, 256 * 1024, crate::IoUringPolicy::Auto)
+                .expect("writer_from_file");
+        let crate::io_uring::IoUringOrStdWriter::IoUring(mut writer) = writer else {
+            panic!("Auto policy on an io_uring host must build the io_uring writer");
         };
+        if !expect_fixed_buffers(writer.registered_buffer_status(), "writer_from_file") {
+            return;
+        }
         assert_eq!(
             writer.registered_buffer_count(),
-            None,
-            "per-thread ring writers do not own per-writer registered buffers"
+            Some(IoUringConfig::default().registered_buffer_count)
         );
-        assert_eq!(
-            writer.registered_buffer_status(),
-            &RegisteredBufferStatus::Disabled,
-            "status must report Disabled on the per-thread topology until IUR-3.e wires bgid lease"
+
+        let before = thread_buffer_stats()
+            .expect("group registered")
+            .total_acquires;
+        let data = payload();
+        writer.write_all(&data).expect("write");
+        writer.flush().expect("flush");
+        drop(writer);
+        let after = thread_buffer_stats()
+            .expect("group registered")
+            .total_acquires;
+
+        assert!(
+            after > before,
+            "a multi-MiB batch must check out registered buffers for WRITE_FIXED"
         );
+        assert_eq!(std::fs::read(&path).expect("read back"), data);
     }
 
+    /// A kernel that rejects registration (ENOMEM under `RLIMIT_MEMLOCK`,
+    /// EPERM under seccomp) must cost nothing but speed: the writer reports
+    /// the failure, never registers a group, and lands the same bytes via
+    /// plain `WRITE`. The oversized count forces the rejection on any host.
     #[test]
-    fn registered_buffer_count_ignored_on_per_thread_ring() {
-        // Passing a high count must not crash and must not surface as
-        // RegistrationFailed: the per-thread topology simply ignores the
-        // per-writer registration knobs.
-        let writer = match make_writer(
-            true,
-            super::super::registered_buffers::MAX_REGISTERED_BUFFERS + 1,
-        ) {
-            Some(w) => w,
-            None => return,
-        };
-        assert_eq!(writer.registered_buffer_count(), None);
-        assert_eq!(
-            writer.registered_buffer_status(),
-            &RegisteredBufferStatus::Disabled,
-            "per-thread topology never reports RegistrationFailed for per-writer requests"
-        );
+    fn rejected_registration_falls_back_with_identical_bytes() {
+        if with_ring(|_| Ok(())).is_err() {
+            eprintln!("skipping registration-fallback writer test: io_uring unavailable");
+            return;
+        }
+        // A fresh thread owns a fresh per-thread ring, so no earlier
+        // successful registration can mask the forced failure.
+        std::thread::spawn(|| {
+            let dir = tempdir().expect("tempdir");
+            let path = dir.path().join("fallback.bin");
+            let config = IoUringConfig {
+                registered_buffer_count: MAX_REGISTERED_BUFFERS + 1,
+                ..IoUringConfig::default()
+            };
+            let mut writer = IoUringWriter::create(&path, &config).expect("create");
+            assert!(
+                matches!(
+                    writer.registered_buffer_status(),
+                    RegisteredBufferStatus::RegistrationFailed { .. }
+                ),
+                "status must surface the rejection, got {:?}",
+                writer.registered_buffer_status()
+            );
+            assert_eq!(writer.registered_buffer_count(), None);
+
+            let data = payload();
+            writer
+                .write_all(&data)
+                .expect("write must not fail on fallback");
+            writer.flush().expect("flush");
+            drop(writer);
+
+            assert!(
+                thread_buffer_stats().is_none(),
+                "a rejected registration must leave no group behind"
+            );
+            assert_eq!(std::fs::read(&path).expect("read back"), data);
+        })
+        .join()
+        .expect("fallback thread");
     }
 
+    /// `register_buffers = false` must keep the kernel out of it entirely.
     #[test]
-    fn with_ring_returns_writer_when_io_uring_available() {
-        let writer = match make_writer(true, 16) {
-            Some(w) => w,
-            None => return,
-        };
-        // The writer is usable; bytes_written starts at zero.
-        assert_eq!(writer.bytes_written, 0);
-    }
-
-    #[test]
-    fn default_config_constructs_writer() {
-        // `IoUringConfig::default()` sets `registered_buffer_count = 8`.
-        // The per-thread topology ignores it; the writer must still
-        // construct and report Disabled.
-        let config = IoUringConfig::default();
-        let writer = match make_writer(config.register_buffers, config.registered_buffer_count) {
-            Some(w) => w,
-            None => return,
-        };
-        assert_eq!(writer.registered_buffer_count(), None);
+    fn disabled_by_config_registers_nothing() {
+        if with_ring(|_| Ok(())).is_err() {
+            eprintln!("skipping disabled-registration writer test: io_uring unavailable");
+            return;
+        }
+        std::thread::spawn(|| {
+            let dir = tempdir().expect("tempdir");
+            let config = IoUringConfig {
+                register_buffers: false,
+                ..IoUringConfig::default()
+            };
+            let writer =
+                IoUringWriter::create(dir.path().join("off.bin"), &config).expect("create");
+            assert_eq!(
+                writer.registered_buffer_status(),
+                &RegisteredBufferStatus::Disabled
+            );
+            assert_eq!(writer.registered_buffer_count(), None);
+            assert!(thread_buffer_stats().is_none());
+        })
+        .join()
+        .expect("disabled thread");
     }
 
     /// A relative seek must advance from the logical write position. The
@@ -457,7 +492,12 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("hole.bin");
         let file = File::create(&path).expect("create");
-        let mut writer = IoUringWriter::with_ring(file, 4096, 4, -1, false, 0);
+        let config = IoUringConfig {
+            sq_entries: 4,
+            register_buffers: false,
+            ..IoUringConfig::default()
+        };
+        let mut writer = IoUringWriter::with_ring(file, 4096, &config);
 
         writer.write_all(b"abc").expect("write head");
         assert_eq!(writer.seek(SeekFrom::Current(2)).expect("seek"), 5);

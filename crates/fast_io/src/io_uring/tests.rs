@@ -1737,7 +1737,12 @@ fn both_write_routes_produce_identical_bytes_at_the_same_offsets() {
         let offset = 8192u64;
 
         let file = File::create(&path).expect("create");
-        let mut writer = IoUringWriter::with_ring(file, chunk, 64, -1, false, 0);
+        let config = IoUringConfig {
+            sq_entries: 64,
+            register_buffers: false,
+            ..IoUringConfig::default()
+        };
+        let mut writer = IoUringWriter::with_ring(file, chunk, &config);
         writer
             .write_all_batched(&payload, offset)
             .expect("batched write");

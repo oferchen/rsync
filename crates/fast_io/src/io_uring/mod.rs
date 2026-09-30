@@ -278,10 +278,7 @@ pub fn writer_from_file_with_depth(
                         return Ok(IoUringOrStdWriter::IoUring(IoUringWriter::with_ring(
                             file,
                             buffer_capacity,
-                            config.sq_entries,
-                            batching::NO_FIXED_FD,
-                            config.register_buffers,
-                            config.registered_buffer_count,
+                            &config,
                         )));
                     }
                     Err(e) => {
@@ -310,10 +307,7 @@ pub fn writer_from_file_with_depth(
             Ok(IoUringOrStdWriter::IoUring(IoUringWriter::with_ring(
                 file,
                 buffer_capacity,
-                config.sq_entries,
-                batching::NO_FIXED_FD,
-                config.register_buffers,
-                config.registered_buffer_count,
+                &config,
             )))
         }
         crate::IoUringPolicy::Disabled => Ok(IoUringOrStdWriter::Std(

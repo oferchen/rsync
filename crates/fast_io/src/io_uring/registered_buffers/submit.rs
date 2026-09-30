@@ -153,14 +153,17 @@ pub fn submit_read_fixed_batch(
 
 /// Submits a batch of `WriteFixed` SQEs writing from registered buffers.
 ///
-/// Writes `data` to the file starting at `base_offset`, copying chunks into
-/// registered buffers and submitting `WriteFixed` SQEs. Returns the total
-/// bytes written.
+/// Writes `data` to the file starting at `base_offset`, staging each
+/// chunk in a registered buffer and submitting one `WriteFixed` SQE per
+/// slot per round. A short write resubmits the unwritten tail of that
+/// chunk from inside the same registered buffer, so every byte lands at
+/// its own offset. Returns the total bytes written (always `data.len()`
+/// on success).
 ///
-/// Gated to `#[cfg(test)]`: the per-thread-ring migration removed the
-/// production caller; the function is preserved for the existing batch
-/// tests until IUR-3.e reintroduces a bgid-lease-aware replacement.
-#[cfg(test)]
+/// # Errors
+///
+/// Propagates a negative CQE result as the matching `io::Error`, and
+/// reports `WriteZero` when the kernel accepts no bytes.
 pub(in crate::io_uring) fn submit_write_fixed_batch(
     ring: &mut RawIoUring,
     fd: io_uring::types::Fd,
@@ -179,69 +182,78 @@ pub(in crate::io_uring) fn submit_write_fixed_batch(
     let total = data.len();
     let mut total_written = 0usize;
     let chunk_size = slots[0].buffer_size;
+    // Per-slot (chunk_start_in_data, chunk_len, bytes_written_so_far).
+    let mut chunks: Vec<(usize, usize, usize)> = Vec::with_capacity(slots.len());
 
     while total_written < total {
         let remaining = total - total_written;
         let n_sqes = remaining.div_ceil(chunk_size).min(slots.len());
-        let mut submitted = 0u32;
-
+        chunks.clear();
         for (i, slot) in slots.iter().enumerate().take(n_sqes) {
-            let src_start = total_written + i * chunk_size;
-            let want = chunk_size.min(total - src_start);
-            let file_offset = base_offset + src_start as u64;
-
-            // Copy data into registered buffer.
-            // Safety: registered buffer at slot is valid and large enough.
+            let start = total_written + i * chunk_size;
+            let len = chunk_size.min(total - start);
+            // SAFETY: the registered buffer behind `slot.ptr` holds
+            // `buffer_size >= len` bytes and is exclusively checked out by
+            // the caller; `data[start..start + len]` is in bounds.
             unsafe {
-                ptr::copy_nonoverlapping(data[src_start..].as_ptr(), slot.ptr, want);
+                ptr::copy_nonoverlapping(data[start..].as_ptr(), slot.ptr, len);
             }
-
-            let entry = WriteFixed::new(fd, slot.ptr, want as u32, slot.buf_index)
-                .offset(file_offset)
-                .build()
-                .user_data(i as u64);
-            let entry = maybe_fixed_file(entry, fixed_fd_slot);
-
-            // Safety: the registered buffer contains valid data and is pinned
-            // for the duration of this submit_and_wait cycle.
-            unsafe {
-                ring.submission()
-                    .push(&entry)
-                    .map_err(|_| io::Error::other("submission queue full"))?;
-            }
-            submitted += 1;
+            chunks.push((start, len, 0));
         }
 
-        if submitted == 0 {
-            break;
+        loop {
+            let mut submitted = 0u32;
+            for (i, &(start, len, done)) in chunks.iter().enumerate() {
+                if done >= len {
+                    continue;
+                }
+                let slot = &slots[i];
+                // SAFETY: `done < len <= buffer_size`, so the pointer stays
+                // inside the registered buffer the kernel validates against.
+                let src = unsafe { slot.ptr.add(done) };
+                let entry = WriteFixed::new(fd, src, (len - done) as u32, slot.buf_index)
+                    .offset(base_offset + (start + done) as u64)
+                    .build()
+                    .user_data(i as u64);
+                let entry = maybe_fixed_file(entry, fixed_fd_slot);
+
+                // SAFETY: the registered buffer holds the staged bytes and
+                // stays pinned until `submit_and_wait` below returns.
+                unsafe {
+                    ring.submission()
+                        .push(&entry)
+                        .map_err(|_| io::Error::other("submission queue full"))?;
+                }
+                submitted += 1;
+            }
+
+            if submitted == 0 {
+                break;
+            }
+
+            ring.submit_and_wait(submitted as usize)?;
+
+            for _ in 0..submitted {
+                let cqe = ring
+                    .completion()
+                    .next()
+                    .ok_or_else(|| io::Error::other("missing CQE"))?;
+
+                let result = cqe.result();
+                if result < 0 {
+                    return Err(io::Error::from_raw_os_error(-result));
+                }
+                if result == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "write_fixed returned 0 bytes",
+                    ));
+                }
+                chunks[cqe.user_data() as usize].2 += result as usize;
+            }
         }
 
-        ring.submit_and_wait(submitted as usize)?;
-
-        let mut batch_written = 0usize;
-        let mut completed = 0u32;
-        while completed < submitted {
-            let cqe = ring
-                .completion()
-                .next()
-                .ok_or_else(|| io::Error::other("missing CQE"))?;
-
-            let result = cqe.result();
-            if result < 0 {
-                return Err(io::Error::from_raw_os_error(-result));
-            }
-            if result == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::WriteZero,
-                    "write_fixed returned 0 bytes",
-                ));
-            }
-
-            batch_written += result as usize;
-            completed += 1;
-        }
-
-        total_written += batch_written;
+        total_written += chunks.iter().map(|&(_, len, _)| len).sum::<usize>();
     }
 
     Ok(total_written)

@@ -7,12 +7,13 @@
 //! contention the shared-ring layout imposed on rayon-parallel readers (IUR-2
 //! design doc section 1.1).
 //!
-//! Per-ring kernel state - fixed-file registration and registered buffers -
-//! is tied to a specific ring fd and does not survive the move to a
-//! thread-shared ring. Both are recorded as unavailable on every reader
-//! constructed through this module; IUR-3.e re-introduces them on the
-//! per-thread topology via the bgid-lease primitive. Until then the batched
-//! read path uses plain `IORING_OP_READ` SQEs.
+//! Registered buffers live on the per-thread ring too: one
+//! [`RegisteredBufferGroup`](super::registered_buffers::RegisteredBufferGroup)
+//! per thread, shared by every reader and writer on it. Reads go out as
+//! `IORING_OP_READ_FIXED` into those buffers and are copied to the caller;
+//! when registration is disabled or the kernel rejected it, reads use plain
+//! `IORING_OP_READ` straight into the caller's buffer. Fixed-file
+//! registration stays off on the thread-shared ring.
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -23,8 +24,8 @@ use io_uring::opcode;
 
 use super::batching::{NO_FIXED_FD, maybe_fixed_file, sqe_fd};
 use super::config::IoUringConfig;
-use super::per_thread_ring::with_ring;
-use super::registered_buffers::RegisteredBufferStatus;
+use super::per_thread_ring::{FixedBuffers, with_ring, with_ring_and_buffers};
+use super::registered_buffers::{RegisteredBufferStatus, checkout_all, submit_read_fixed_batch};
 use crate::traits::FileReader;
 
 /// A file reader using io_uring for async I/O.
@@ -34,15 +35,17 @@ use crate::traits::FileReader;
 /// `submit_and_wait` call, dramatically reducing syscall count for large files.
 ///
 /// Submissions are issued against the calling thread's per-thread ring (see
-/// [`super::per_thread_ring`]). Fixed-file registration and registered-buffer
-/// fast paths are disabled on this reader until IUR-3.e wires the per-thread
-/// bgid lease; batched reads always use the regular `IORING_OP_READ` opcode.
+/// [`super::per_thread_ring`]). Reads use `IORING_OP_READ_FIXED` through the
+/// thread's registered buffers when [`IoUringConfig::register_buffers`] is
+/// set and the kernel accepted the registration, and plain `IORING_OP_READ`
+/// otherwise.
 pub struct IoUringReader {
     file: File,
     size: u64,
     position: u64,
     buffer_size: usize,
     sq_entries: u32,
+    fixed: FixedBuffers,
 }
 
 impl IoUringReader {
@@ -50,10 +53,9 @@ impl IoUringReader {
     ///
     /// Submissions route through the calling thread's per-thread ring (see
     /// [`super::per_thread_ring`]); the reader no longer owns a `RawIoUring`
-    /// instance. The fixed-file and registered-buffer knobs on `config` are
-    /// honoured for sizing only - per-writer/reader registration is disabled
-    /// on the per-thread topology and IUR-3.e re-introduces it via the
-    /// bgid-lease primitive.
+    /// instance. `config.register_buffers` registers the thread's fixed
+    /// buffers on first use; a rejected registration falls back to plain
+    /// reads and is reported by [`Self::registered_buffer_status`].
     ///
     /// # Errors
     ///
@@ -73,30 +75,47 @@ impl IoUringReader {
             position: 0,
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
+            fixed: FixedBuffers::register(
+                config.register_buffers,
+                config.buffer_size,
+                config.registered_buffer_count,
+            ),
         })
     }
 
-    /// Returns the count of currently-registered fixed buffers, or `None` if
-    /// buffer registration is not active on this reader.
-    ///
-    /// Always returns `None` on the per-thread topology: the per-thread ring
-    /// is shared across every reader on the same thread, so per-reader
-    /// buffer registration cannot be expressed safely. IUR-3.e re-introduces
-    /// shared per-thread buffer registration via the bgid lease; call
-    /// [`registered_buffer_status`](Self::registered_buffer_status) to tell
-    /// the post-migration state apart from a kernel-side rejection.
+    /// Returns the number of fixed buffers registered on the per-thread ring
+    /// this reader submits to, or `None` if registration is not active.
     #[must_use]
     pub fn registered_buffer_count(&self) -> Option<usize> {
-        None
+        self.fixed.count()
     }
 
-    /// Returns the provenance of fixed-buffer registration on this reader.
-    ///
-    /// Always returns [`RegisteredBufferStatus::Disabled`] on the per-thread
-    /// topology; see [`Self::registered_buffer_count`].
+    /// Returns the provenance of fixed-buffer registration on this reader:
+    /// `Enabled` when reads use `IORING_OP_READ_FIXED`, `Disabled` when the
+    /// config opted out, `RegistrationFailed` when the kernel rejected the
+    /// registration and reads fell back to `IORING_OP_READ`.
     #[must_use]
     pub fn registered_buffer_status(&self) -> &RegisteredBufferStatus {
-        &RegisteredBufferStatus::Disabled
+        self.fixed.status()
+    }
+
+    /// Reads into `out` at `offset` through the thread's registered buffers.
+    ///
+    /// Returns `None` without submitting anything when no fixed-buffer group
+    /// is active, so the caller takes the plain `IORING_OP_READ` path. A
+    /// short count means EOF was reached.
+    fn read_fixed(&self, offset: u64, out: &mut [u8]) -> io::Result<Option<usize>> {
+        let fd = sqe_fd(self.file.as_raw_fd(), NO_FIXED_FD);
+        with_ring_and_buffers(self.fixed.request(), |ring, group| {
+            let Some(group) = group else {
+                return Ok(None);
+            };
+            let (_slots, infos) = checkout_all(group);
+            if infos.is_empty() {
+                return Ok(None);
+            }
+            submit_read_fixed_batch(ring, fd, out, offset, &infos, NO_FIXED_FD).map(Some)
+        })
     }
 
     /// Reads data at the specified offset without advancing the position.
@@ -112,6 +131,10 @@ impl IoUringReader {
         let to_read = buf.len().min((self.size - offset) as usize);
         if to_read == 0 {
             return Ok(0);
+        }
+
+        if let Some(n) = self.read_fixed(offset, &mut buf[..to_read])? {
+            return Ok(n);
         }
 
         let raw_fd = self.file.as_raw_fd();
@@ -154,9 +177,9 @@ impl IoUringReader {
     /// Divides the file into `buffer_size` chunks and submits up to
     /// `sq_entries` reads per `submit_and_wait` call against the per-thread
     /// ring. For a 1 MB file with 64 KB buffers and 64 SQ entries this
-    /// completes in a single syscall instead of 16. Always uses plain
-    /// `IORING_OP_READ`; the `READ_FIXED` fast path returns with IUR-3.e via
-    /// the per-thread bgid lease.
+    /// completes in a single syscall instead of 16. With registered buffers
+    /// active the file is read through them with `IORING_OP_READ_FIXED`
+    /// instead, one SQE per registered buffer per round.
     pub fn read_all_batched(&mut self) -> io::Result<Vec<u8>> {
         let size = self.size as usize;
         if size == 0 {
@@ -164,6 +187,11 @@ impl IoUringReader {
         }
 
         let mut output = vec![0u8; size];
+
+        if let Some(n) = self.read_fixed(0, &mut output)? {
+            output.truncate(n);
+            return Ok(output);
+        }
 
         let chunk_size = self.buffer_size;
         let max_batch = self.sq_entries as usize;
@@ -301,60 +329,115 @@ impl FileReader for IoUringReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io_uring::per_thread_ring::{expect_fixed_buffers, thread_buffer_stats};
+    use crate::io_uring::registered_buffers::MAX_REGISTERED_BUFFERS;
     use tempfile::tempdir;
 
-    /// Builds a reader for testing via the per-thread ring. Returns `None`
-    /// when the kernel rejects `io_uring_setup(2)` (e.g., container,
-    /// seccomp, or non-5.6+ kernel) so the test skips cleanly.
-    fn make_reader() -> Option<IoUringReader> {
-        let dir = tempdir().ok()?;
-        let path = dir.path().join("in.bin");
-        std::fs::write(&path, b"hello").ok()?;
-        // Probe the per-thread ring; on hosts without io_uring we skip the
-        // test rather than constructing a reader that would later fail.
-        with_ring(|_| Ok(())).ok()?;
-        // Keep `dir` alive for the duration of the reader by leaking it; the
-        // OS reclaims the temp file at process exit. Tests are short-lived
-        // and this avoids ordering the drop with the reader.
-        let reader = IoUringReader::open(&path, &IoUringConfig::default()).ok()?;
-        std::mem::forget(dir);
-        Some(reader)
+    /// Several MiB plus a ragged tail, so reads span many registered
+    /// buffers and end in a partial one.
+    fn payload() -> Vec<u8> {
+        (0..(4u32 << 20) + 4099)
+            .map(|i| (i.wrapping_mul(37) % 253) as u8)
+            .collect()
     }
 
+    /// The generator's reader constructor (`reader_from_path`, used by
+    /// `generator/context.rs`) must register buffers and serve both the
+    /// streaming `Read` path and `read_all` through `READ_FIXED`.
     #[test]
-    fn registered_buffers_always_disabled_on_per_thread_ring() {
-        let reader = match make_reader() {
-            Some(r) => r,
-            None => return,
+    fn production_reader_reads_through_registered_buffers() {
+        if with_ring(|_| Ok(())).is_err() {
+            eprintln!("skipping registered-buffer reader test: io_uring unavailable");
+            return;
+        }
+
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("in.bin");
+        let data = payload();
+        std::fs::write(&path, &data).expect("write fixture");
+
+        let reader = crate::io_uring::reader_from_path(&path, crate::IoUringPolicy::Auto)
+            .expect("reader_from_path");
+        let crate::io_uring::IoUringOrStdReader::IoUring(mut reader) = reader else {
+            panic!("Auto policy on an io_uring host must build the io_uring reader");
         };
+        if !expect_fixed_buffers(reader.registered_buffer_status(), "reader_from_path") {
+            return;
+        }
         assert_eq!(
             reader.registered_buffer_count(),
-            None,
-            "per-thread ring readers do not own per-reader registered buffers"
+            Some(IoUringConfig::default().registered_buffer_count)
         );
-        assert_eq!(
-            reader.registered_buffer_status(),
-            &RegisteredBufferStatus::Disabled,
-            "status must report Disabled on the per-thread topology until IUR-3.e wires bgid lease"
-        );
+
+        let before = thread_buffer_stats()
+            .expect("group registered")
+            .total_acquires;
+        let mut streamed = Vec::new();
+        reader.read_to_end(&mut streamed).expect("stream");
+        let mid = thread_buffer_stats()
+            .expect("group registered")
+            .total_acquires;
+        let whole = reader.read_all().expect("read_all");
+        let after = thread_buffer_stats()
+            .expect("group registered")
+            .total_acquires;
+
+        assert!(mid > before, "streaming reads must use READ_FIXED");
+        assert!(after > mid, "read_all must use READ_FIXED");
+        assert_eq!(streamed, data);
+        assert_eq!(whole, data);
+    }
+
+    /// A rejected registration must fall back to plain `READ` and return the
+    /// same bytes. The oversized count forces the rejection on any host.
+    #[test]
+    fn rejected_registration_falls_back_with_identical_bytes() {
+        if with_ring(|_| Ok(())).is_err() {
+            eprintln!("skipping registration-fallback reader test: io_uring unavailable");
+            return;
+        }
+        // A fresh thread owns a fresh per-thread ring, so no earlier
+        // successful registration can mask the forced failure.
+        std::thread::spawn(|| {
+            let dir = tempdir().expect("tempdir");
+            let path = dir.path().join("in.bin");
+            let data = payload();
+            std::fs::write(&path, &data).expect("write fixture");
+            let config = IoUringConfig {
+                registered_buffer_count: MAX_REGISTERED_BUFFERS + 1,
+                ..IoUringConfig::default()
+            };
+            let mut reader = IoUringReader::open(&path, &config).expect("open");
+            assert!(
+                matches!(
+                    reader.registered_buffer_status(),
+                    RegisteredBufferStatus::RegistrationFailed { .. }
+                ),
+                "status must surface the rejection, got {:?}",
+                reader.registered_buffer_status()
+            );
+            assert_eq!(reader.registered_buffer_count(), None);
+
+            let mut streamed = Vec::new();
+            reader.read_to_end(&mut streamed).expect("stream");
+            assert_eq!(streamed, data);
+            assert_eq!(reader.read_all().expect("read_all"), data);
+            assert!(thread_buffer_stats().is_none());
+        })
+        .join()
+        .expect("fallback thread");
     }
 
     #[test]
-    fn open_returns_reader_when_io_uring_available() {
-        let reader = match make_reader() {
-            Some(r) => r,
-            None => return,
-        };
+    fn open_reports_size_and_zero_position() {
+        if with_ring(|_| Ok(())).is_err() {
+            return;
+        }
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("in.bin");
+        std::fs::write(&path, b"hello").expect("write fixture");
+        let reader = IoUringReader::open(&path, &IoUringConfig::default()).expect("open");
         assert_eq!(reader.size(), 5);
         assert_eq!(reader.position(), 0);
-    }
-
-    #[test]
-    fn default_config_constructs_reader() {
-        let reader = match make_reader() {
-            Some(r) => r,
-            None => return,
-        };
-        assert_eq!(reader.registered_buffer_count(), None);
     }
 }

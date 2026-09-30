@@ -68,6 +68,7 @@ use std::io;
 use io_uring::IoUring;
 
 use super::config::IoUringConfig;
+use super::registered_buffers::{RegisteredBufferGroup, RegisteredBufferStatus};
 
 /// Default submission queue depth for per-thread rings.
 ///
@@ -77,12 +78,23 @@ use super::config::IoUringConfig;
 pub const DEFAULT_RING_DEPTH: u32 = crate::io_uring_depth::DEFAULT_IO_URING_DEPTH;
 
 /// Newtype wrapping the underlying [`io_uring::IoUring`] for the
-/// per-thread topology.
+/// per-thread topology, plus the thread's fixed-buffer group.
 ///
 /// See module documentation for lifecycle, contention model, and
 /// cleanup semantics.
 pub struct PerThreadRing {
+    // Declared before `buffers` so the ring fd closes (releasing the kernel's
+    // page pinning) before the group frees the user-side memory. See the
+    // `registered_buffers` module docs, "Drop ordering and the ring fd".
     ring: IoUring,
+    /// Fixed-buffer group registered with `ring`, shared by every reader and
+    /// writer on this thread.
+    buffers: Option<RegisteredBufferGroup>,
+    /// Outcome of the single registration attempt; `None` until a caller
+    /// asks. A failure is sticky so a rejected `IORING_REGISTER_BUFFERS`
+    /// (ENOMEM under `RLIMIT_MEMLOCK`, EPERM under seccomp) is not retried
+    /// per file.
+    buffer_status: Option<RegisteredBufferStatus>,
 }
 
 impl PerThreadRing {
@@ -95,12 +107,34 @@ impl PerThreadRing {
         let ring = config
             .build_ring()
             .map_err(|e| io::Error::other(format!("per-thread io_uring init failed: {e}")))?;
-        Ok(Self { ring })
+        Ok(Self {
+            ring,
+            buffers: None,
+            buffer_status: None,
+        })
     }
 
-    /// Returns a mutable reference to the underlying ring.
-    fn ring_mut(&mut self) -> &mut IoUring {
-        &mut self.ring
+    /// Registers the fixed-buffer group on the first request and returns the
+    /// cached outcome on every later one.
+    ///
+    /// The first request fixes the group geometry for the life of the
+    /// thread; later requests reuse it whatever `buffer_size` and `count`
+    /// they ask for.
+    fn ensure_buffers(&mut self, buffer_size: usize, count: usize) -> &RegisteredBufferStatus {
+        self.buffer_status.get_or_insert_with(|| {
+            let (group, status) =
+                RegisteredBufferGroup::try_new_with_status(&self.ring, buffer_size, count, true);
+            if let RegisteredBufferStatus::RegistrationFailed { reason } = &status {
+                logging::debug_log!(
+                    Io,
+                    1,
+                    "io_uring buffer registration failed, using plain READ/WRITE: {}",
+                    reason
+                );
+            }
+            self.buffers = group;
+            status
+        })
     }
 }
 
@@ -136,6 +170,151 @@ pub fn with_ring<F, R>(f: F) -> io::Result<R>
 where
     F: FnOnce(&mut IoUring) -> io::Result<R>,
 {
+    with_thread_ring(|t| f(&mut t.ring))
+}
+
+/// Runs `f` against the calling thread's ring and its fixed-buffer group.
+///
+/// With `fixed = Some((buffer_size, count))` the thread's
+/// [`RegisteredBufferGroup`] is registered on first use (see
+/// [`PerThreadRing`] for the sticky-failure rule). `f` receives `None` for
+/// the group when `fixed` is `None` or registration was rejected; callers
+/// then submit plain `READ`/`WRITE` SQEs.
+///
+/// # Errors
+///
+/// Same as [`with_ring`]. A rejected registration is never an error.
+pub(crate) fn with_ring_and_buffers<F, R>(fixed: Option<(usize, usize)>, f: F) -> io::Result<R>
+where
+    F: FnOnce(&mut IoUring, Option<&RegisteredBufferGroup>) -> io::Result<R>,
+{
+    with_thread_ring(|t| {
+        let Some((buffer_size, count)) = fixed else {
+            return f(&mut t.ring, None);
+        };
+        t.ensure_buffers(buffer_size, count);
+        f(&mut t.ring, t.buffers.as_ref())
+    })
+}
+
+/// Fixed-buffer state a reader or writer captures at construction.
+///
+/// Registration happens on the constructing thread's ring. The request is
+/// kept only when that registration succeeded, so a disabled or rejected
+/// registration never costs a lookup on the I/O path.
+#[derive(Debug)]
+pub(crate) struct FixedBuffers {
+    request: Option<(usize, usize)>,
+    status: RegisteredBufferStatus,
+    count: Option<usize>,
+}
+
+impl FixedBuffers {
+    /// Registers `count` buffers of `buffer_size` bytes on the calling
+    /// thread's ring when `enabled`, recording the outcome.
+    ///
+    /// Never fails: a ring or registration error becomes
+    /// [`RegisteredBufferStatus::RegistrationFailed`] and the owner submits
+    /// plain `READ`/`WRITE` SQEs.
+    pub(crate) fn register(enabled: bool, buffer_size: usize, count: usize) -> Self {
+        if !enabled {
+            return Self {
+                request: None,
+                status: RegisteredBufferStatus::Disabled,
+                count: None,
+            };
+        }
+        let outcome = with_thread_ring(|t| {
+            let status = t.ensure_buffers(buffer_size, count).clone();
+            Ok((status, t.buffers.as_ref().map(RegisteredBufferGroup::count)))
+        });
+        let (status, registered) = outcome.unwrap_or_else(|e| {
+            (
+                RegisteredBufferStatus::RegistrationFailed {
+                    reason: e.to_string(),
+                },
+                None,
+            )
+        });
+        Self {
+            request: status.is_enabled().then_some((buffer_size, count)),
+            status,
+            count: registered,
+        }
+    }
+
+    /// Geometry to pass to [`with_ring_and_buffers`]; `None` unless
+    /// registration succeeded.
+    pub(crate) fn request(&self) -> Option<(usize, usize)> {
+        self.request
+    }
+
+    /// Provenance of fixed-buffer registration for this owner.
+    pub(crate) fn status(&self) -> &RegisteredBufferStatus {
+        &self.status
+    }
+
+    /// Number of registered buffers, or `None` when registration is off.
+    pub(crate) fn count(&self) -> Option<usize> {
+        self.count
+    }
+}
+
+/// Returns the acquire/miss counters of the calling thread's fixed-buffer
+/// group, or `None` when no group is registered on this thread.
+#[cfg(test)]
+pub(crate) fn thread_buffer_stats() -> Option<super::registered_buffers::RegisteredBufferStats> {
+    THREAD_RING.with(|cell| {
+        cell.try_borrow()
+            .ok()?
+            .as_ref()?
+            .buffers
+            .as_ref()
+            .map(RegisteredBufferGroup::stats)
+    })
+}
+
+/// Test helper: decides whether a production owner's fixed-buffer status
+/// lets the test go on to assert the `READ_FIXED`/`WRITE_FIXED` data path.
+///
+/// Returns `true` for `Enabled`. For `RegistrationFailed` it re-registers the
+/// same geometry on a fresh private ring: if the host refuses that too
+/// (`RLIMIT_MEMLOCK` is a per-uid budget shared with every concurrent test
+/// process) it logs the skip and returns `false`; if the host accepts it the
+/// production path is broken and the helper panics. `Disabled` always panics:
+/// that is the unwired state this helper exists to catch.
+#[cfg(test)]
+pub(crate) fn expect_fixed_buffers(status: &RegisteredBufferStatus, owner: &str) -> bool {
+    let reason = match status {
+        RegisteredBufferStatus::Enabled => return true,
+        RegisteredBufferStatus::Disabled => {
+            panic!("{owner}: default config must register fixed buffers, got Disabled")
+        }
+        RegisteredBufferStatus::RegistrationFailed { reason } => reason,
+    };
+    let config = IoUringConfig::default();
+    let host = config.build_ring().and_then(|ring| {
+        RegisteredBufferGroup::new(&ring, config.buffer_size, config.registered_buffer_count)
+            .map(drop)
+    });
+    match host {
+        Err(e) => {
+            eprintln!(
+                "skipping {owner} fixed-buffer assertions: host refuses \
+                 IORING_REGISTER_BUFFERS ({e}); production saw: {reason}"
+            );
+            false
+        }
+        Ok(()) => panic!("{owner}: registration failed ({reason}) although this host accepts it"),
+    }
+}
+
+/// Borrows the calling thread's [`PerThreadRing`], constructing it on first
+/// use. Shared body of [`with_ring`] and [`with_ring_and_buffers`].
+fn with_thread_ring<F, R>(f: F) -> io::Result<R>
+where
+    F: FnOnce(&mut PerThreadRing) -> io::Result<R>,
+{
     THREAD_RING.with(|cell| {
         let mut guard = cell.try_borrow_mut().map_err(|_| {
             io::Error::new(
@@ -147,11 +326,10 @@ where
         if guard.is_none() {
             *guard = Some(PerThreadRing::new()?);
         }
-        let ring = guard
+        let thread_ring = guard
             .as_mut()
-            .expect("per-thread ring populated for the duration of this borrow")
-            .ring_mut();
-        f(ring)
+            .expect("per-thread ring populated for the duration of this borrow");
+        f(thread_ring)
     })
 }
 

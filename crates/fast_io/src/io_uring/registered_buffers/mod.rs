@@ -100,5 +100,30 @@ pub(crate) fn page_size() -> usize {
 
 pub use registry::{RegisteredBufferGroup, RegisteredBufferSlot};
 pub use stats::{RegisteredBufferStats, RegisteredBufferStatus};
+pub(super) use submit::submit_write_fixed_batch;
 #[doc(hidden)]
 pub use submit::{RegisteredBufferSlotInfo, submit_read_fixed_batch};
+
+/// Checks out every free slot of `group` for one batched submission.
+///
+/// Returns the slot handles alongside the [`RegisteredBufferSlotInfo`] views
+/// the batch helpers consume. The handles return their slots on drop, so
+/// they must outlive every SQE built from the infos.
+pub(super) fn checkout_all(
+    group: &RegisteredBufferGroup,
+) -> (Vec<RegisteredBufferSlot<'_>>, Vec<RegisteredBufferSlotInfo>) {
+    // Bounded by `available()` so the loop never ends on a failed checkout,
+    // which would count as a miss in the telemetry the sizer reads.
+    let mut slots: Vec<RegisteredBufferSlot<'_>> = (0..group.available())
+        .filter_map(|_| group.checkout())
+        .collect();
+    let infos = slots
+        .iter_mut()
+        .map(|s| RegisteredBufferSlotInfo {
+            ptr: s.as_mut_ptr(),
+            buf_index: s.buf_index(),
+            buffer_size: s.buffer_size(),
+        })
+        .collect();
+    (slots, infos)
+}
