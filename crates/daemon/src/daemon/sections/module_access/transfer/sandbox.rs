@@ -205,10 +205,8 @@ fn apply_privilege_restrictions_with_upstream_errors(
     // no-op Windows arm returning `Ok(())` would report a pin that never
     // happened - the opposite of what the warning below exists to say.
     #[cfg(unix)]
-    let served_root = match fast_io::confinement::pin_session_root_fd(module_root) {
-        Ok(()) if !chroot_applied => enter_pinned_module_root(module, module_root, log_sink),
-        Ok(()) => None,
-        Err(err) => {
+    let served_root = if chroot_applied {
+        if let Err(err) = fast_io::confinement::pin_session_root_fd(module_root) {
             // Upstream leaves `module_dirfd` at -1 and carries on with the
             // absolute path (`clientserver.c:1063-1066` has no error arm), so a
             // failed pin is not fatal here either - it only means the lookups
@@ -220,8 +218,34 @@ fn apply_privilege_restrictions_with_upstream_errors(
             );
             let message = rsync_warning!(text).with_role(Role::Daemon);
             log_message(log_sink, &message);
-            None
         }
+        None
+    } else {
+        // An unchrooted module is entered through the ownership walk, the arm
+        // upstream's `change_dir()` takes for `am_daemon && !am_chrooted`
+        // (util1.c:1351-1360): the operator's own symlinks are followed, any
+        // other uid's is refused. A refusal is upstream's `path_failure()` -
+        // the module is not served at all - never a fall back to the absolute
+        // path, which would reach the module through the very link the walk
+        // refused. upstream: clientserver.c:1059-1060, :688-695
+        let entered = fast_io::confinement::pin_session_root_fd(module_root)
+            .and_then(|()| enter_pinned_module_root(module_root));
+        if let Err(err) = entered {
+            let flog = format!("chdir {} failed: {err}", module_root.display());
+            log_message(log_sink, &rsync_error!(1, flog).with_role(Role::Daemon));
+            send_error(ctx.reader.get_mut(), ctx.limiter, &AtError::ChdirFailed)?;
+            let host_owned = ctx.host_display().to_owned();
+            run_post_xfer_finalizer(
+                ctx,
+                module,
+                &host_owned,
+                auth_user,
+                client_args,
+                MODULE_ABORT_EXIT_CODE,
+            );
+            return Ok(None);
+        }
+        Some(PathBuf::from("."))
     };
     #[cfg(not(unix))]
     let served_root = None;
@@ -260,8 +284,8 @@ fn apply_privilege_restrictions_with_upstream_errors(
     }))
 }
 
-/// Enters the pinned module root as the working directory and returns the
-/// root the transfer is then served from: `.`, the working directory.
+/// Enters the pinned module root as the working directory, from which the
+/// transfer is then served as `.`.
 ///
 /// Used for a module that is not chrooted. The transfer names the module `.`
 /// from here on, so no lookup re-traverses the module's ancestors after the
@@ -275,32 +299,17 @@ fn apply_privilege_restrictions_with_upstream_errors(
 /// the spelling upstream's messages use there (`"/sub" (in m)`), so it keeps
 /// that name.
 ///
-/// Returns `None`, leaving the transfer on the absolute module path it used
-/// before, when the pinned descriptor cannot be entered.
+/// A failure is upstream's failed `change_dir()`, which the caller refuses the
+/// module over.
 ///
 /// upstream: clientserver.c:1059-1065 `change_dir(module_chdir)` and
 /// `module_dirfd = open(".")`, above the setgid/setuid at :1098/:1123.
 #[cfg(unix)]
-fn enter_pinned_module_root(
-    module: &ModuleRuntime,
-    module_root: &Path,
-    log_sink: &SharedLogSink,
-) -> Option<PathBuf> {
+fn enter_pinned_module_root(module_root: &Path) -> io::Result<()> {
     use std::os::fd::AsFd;
-    let entered = fast_io::confinement::pinned_root_fd_for(module_root)
+    fast_io::confinement::pinned_root_fd_for(module_root)
         .ok_or_else(|| io::Error::other("the module root is not pinned"))
-        .and_then(|fd| platform::privilege::enter_directory(fd.as_fd()));
-    match entered {
-        Ok(()) => Some(PathBuf::from(".")),
-        Err(err) => {
-            let text = format!(
-                "module '{}': could not enter the pinned module root: {err}; lookups fall back to the absolute module path",
-                module.name,
-            );
-            log_message(log_sink, &rsync_warning!(text).with_role(Role::Daemon));
-            None
-        }
-    }
+        .and_then(|fd| platform::privilege::enter_directory(fd.as_fd()))
 }
 
 /// Result of applying a module's chroot and privilege restrictions.

@@ -80,12 +80,17 @@ struct Cleanup {
     prefix: Vec<&'static str>,
     pid_file: PathBuf,
     module: PathBuf,
+    /// The `sudo` (or direct) daemon process, reaped once the kill lands.
+    daemon: Option<std::process::Child>,
 }
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
         if let Ok(pid) = fs::read_to_string(&self.pid_file) {
             let _ = root_cmd(&self.prefix, "kill").arg(pid.trim()).status();
+        }
+        if let Some(mut daemon) = self.daemon.take() {
+            let _ = daemon.wait();
         }
         let owner = format!("{}:{}", nix_like_id("-u"), nix_like_id("-g"));
         let _ = root_cmd(&self.prefix, "chown")
@@ -119,6 +124,9 @@ enum Cell {
     /// `-a --delete --backup --backup-dir --temp-dir` into a populated module,
     /// so the delete, backup and temp-file lookups all run after the drop.
     DeleteBackupTempDir,
+    /// A plain push naming a missing ABSOLUTE `--link-dest`, whose warning
+    /// shows the root the daemon re-rooted it at.
+    AbsoluteLinkDest,
 }
 
 fn run_cell(cell: Cell) {
@@ -152,6 +160,22 @@ fn run_cell(cell: Cell) {
         "chown",
         &["-R", "nobody:", module.to_str().expect("utf-8 path")],
     );
+    // The configured spelling. The link-dest cell reaches the module through
+    // the operator's own (root-owned) symlink, which upstream follows
+    // (`open_no_attacker_symlinks`, util1.c:1351-1360) but never resolves in
+    // `module_dir`, so the real `module_dir` differs from the resolved
+    // working directory the transfer is served from.
+    let module_path = if matches!(cell, Cell::AbsoluteLinkDest) {
+        let link = root.join("modlink");
+        run_as_root(
+            &prefix,
+            "ln",
+            &["-s", "mod", link.to_str().expect("utf-8 path")],
+        );
+        link
+    } else {
+        module.clone()
+    };
 
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .and_then(|l| l.local_addr())
@@ -165,17 +189,18 @@ fn run_cell(cell: Cell) {
         format!(
             "use chroot = no\npid file = {}\n[m]\n\tpath = {}\n\tread only = no\n",
             pid_file.display(),
-            module.display()
+            module_path.display()
         ),
     )
     .expect("write config");
-    let _cleanup = Cleanup {
+    let mut cleanup = Cleanup {
         prefix: prefix.clone(),
         pid_file: pid_file.clone(),
         module: module.clone(),
+        daemon: None,
     };
     let binary = oc_binary();
-    let _daemon = root_cmd(&prefix, binary.to_str().expect("utf-8 path"))
+    let daemon = root_cmd(&prefix, binary.to_str().expect("utf-8 path"))
         .arg("--daemon")
         .arg("--no-detach")
         .arg(format!("--port={port}"))
@@ -184,6 +209,7 @@ fn run_cell(cell: Cell) {
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn root daemon");
+    cleanup.daemon = Some(daemon);
     assert!(
         wait_for_port(port),
         "the root daemon never listened on {port}"
@@ -201,6 +227,9 @@ fn run_cell(cell: Cell) {
             "--exclude=/tmpd",
         ]);
     }
+    if matches!(cell, Cell::AbsoluteLinkDest) {
+        push.arg("--link-dest=/missing");
+    }
     let out = push
         .arg(format!("{}/", src.display()))
         .arg(format!("rsync://127.0.0.1:{port}/m/"))
@@ -213,6 +242,22 @@ fn run_cell(cell: Cell) {
         "{cell:?}: upstream enters the module before the privilege drop, so a \
          0700 parent must not stop the push\nstderr:\n{stderr}"
     );
+    if matches!(cell, Cell::AbsoluteLinkDest) {
+        // upstream: util1.c:1242-1249 re-roots the value at `module_dir`, the
+        // configured path that entering the module leaves unchanged, and
+        // main.c:914 warns with it. Neither the served `.` nor the working
+        // directory it resolves to is the root an operator path is sanitized
+        // against.
+        let want = format!(
+            "--link-dest arg does not exist: {}/missing",
+            module_path.display()
+        );
+        assert!(
+            stderr.contains(&want),
+            "the absolute --link-dest must be re-rooted at the real module dir\n\
+             want: {want}\nstderr:\n{stderr}"
+        );
+    }
     // Reading back needs root too: the module lies under the test user's
     // 0700 dir, which is fine, but assert on stat only.
     let want = fs::metadata(&src).expect("stat src").mtime();
@@ -262,4 +307,93 @@ fn root_daemon_serves_a_module_under_a_parent_nobody_cannot_search() {
 #[test]
 fn delete_backup_and_temp_dir_work_under_a_parent_nobody_cannot_search() {
     run_cell(Cell::DeleteBackupTempDir);
+}
+
+#[test]
+fn an_absolute_link_dest_is_re_rooted_at_the_real_module_dir() {
+    run_cell(Cell::AbsoluteLinkDest);
+}
+
+/// The other half of upstream's module entry: a symlink in the module path
+/// owned by neither root nor the daemon is refused, and the module is not
+/// served at all (`@ERROR: chdir failed`). Falling back to the absolute path
+/// instead reached the module through the very link the walk refused.
+///
+/// upstream: util1.c:1351-1360 (`open_no_attacker_symlinks_dirfd`),
+/// clientserver.c:1059-1060 `path_failure()`
+#[test]
+fn a_module_path_through_another_uids_symlink_is_refused() {
+    let Some(prefix) = as_root() else {
+        eprintln!("skip: needs root or passwordless sudo to run a root daemon");
+        return;
+    };
+    if running_as_root() {
+        eprintln!("skip: the symlink must belong to a uid other than root");
+        return;
+    }
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = fs::canonicalize(temp.path()).expect("canonicalize tempdir");
+    let src = root.join("src");
+    fs::create_dir(&src).expect("create src");
+    fs::write(src.join("f"), b"payload\n").expect("write src file");
+    let module = root.join("mod");
+    fs::create_dir(&module).expect("create module");
+    fs::set_permissions(&module, fs::Permissions::from_mode(0o777)).expect("chmod module");
+    // Owned by the test user: an "attacker" uid as far as the daemon goes.
+    let link = root.join("modlink");
+    std::os::unix::fs::symlink("mod", &link).expect("link module");
+
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .expect("free port")
+        .port();
+    let pid_file = std::env::temp_dir().join(format!("oc-attacker-link-{port}.pid"));
+    let conf = std::env::temp_dir().join(format!("oc-attacker-link-{port}.conf"));
+    fs::write(
+        &conf,
+        format!(
+            "use chroot = no\npid file = {}\n[m]\n\tpath = {}\n\tread only = no\n",
+            pid_file.display(),
+            link.display()
+        ),
+    )
+    .expect("write config");
+    let mut cleanup = Cleanup {
+        prefix: prefix.clone(),
+        pid_file,
+        module: module.clone(),
+        daemon: None,
+    };
+    let binary = oc_binary();
+    let daemon = root_cmd(&prefix, binary.to_str().expect("utf-8 path"))
+        .arg("--daemon")
+        .arg("--no-detach")
+        .arg(format!("--port={port}"))
+        .arg(format!("--config={}", conf.display()))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn root daemon");
+    cleanup.daemon = Some(daemon);
+    assert!(
+        wait_for_port(port),
+        "the root daemon never listened on {port}"
+    );
+
+    let out = Command::new(&binary)
+        .args(["-a", "--timeout=20"])
+        .arg(format!("{}/", src.display()))
+        .arg(format!("rsync://127.0.0.1:{port}/m/"))
+        .output()
+        .expect("run push");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("@ERROR: chdir failed"),
+        "a module reached through another uid's symlink must be refused\nstderr:\n{stderr}"
+    );
+    assert!(
+        !module.join("f").exists(),
+        "nothing may land through the refused link"
+    );
+    let _ = fs::remove_file(&conf);
 }
