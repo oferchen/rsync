@@ -471,7 +471,11 @@ impl ReceiverContext {
             )));
         }
 
-        if self.io_error_blocks_deletion(stats.io_error) {
+        // The I/O-error guard withholds decisions, not replays: upstream tests
+        // it in delete_in_dir() (generator.c:304-311), where a delay victim is
+        // recorded, while do_delayed_deletions() (generator.c:265-278) unlinks
+        // every record unconditionally.
+        if scans_whole_list && self.io_error_blocks_deletion(stats.io_error) {
             return Ok(());
         }
 

@@ -459,3 +459,52 @@ fn per_directory_delete_needs_a_during_walk_mode() {
         assert!(exists(dest, "a/x"), "{name}: nothing is deleted");
     }
 }
+
+/// A general I/O error that arrives mid-walk withholds only the decisions made
+/// after it. `--delete-during` has already unlinked the extras of the
+/// directories walked first; `--delete-delay` has only recorded them, and its
+/// late execution must still unlink them - it is not a second decision point.
+/// Both modes end with the same tree: `x` and `a/x` gone, `b/x` and `c/x`
+/// kept. Gating the delay execution on the error leaves the recorded victims
+/// behind, diverging from upstream.
+///
+/// upstream: generator.c:304-311 gates delete_in_dir(), which is where
+/// generator.c:351-353 remember_delete() records a delay victim;
+/// generator.c:265-278 do_delayed_deletions() replays every record with no
+/// io_error test.
+#[test]
+fn io_error_mid_walk_keeps_delay_victims_recorded_before_it() {
+    for delay in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path();
+        populate(dest);
+        let mut ctx = receiver(config(dest, |c| c.deletion.late_delete = delay));
+        ctx.flist_eof = true;
+        let mut stats = TransferStats::default();
+
+        for segment in 0..4 {
+            if segment == 2 {
+                stats.io_error |= IOERR_GENERAL;
+                assert_eq!(
+                    exists(dest, "a/x"),
+                    delay,
+                    "at the error, only during has unlinked a/x (delay={delay})"
+                );
+            }
+            delete_segment(&mut ctx, segment, dest, &mut stats).unwrap();
+        }
+        ctx.run_receiver_delete_pass(
+            DeletePassPhase::Late,
+            dest,
+            #[cfg(unix)]
+            None,
+            &mut TestDeletionWriter,
+            &mut stats,
+        )
+        .unwrap();
+
+        for (rel, kept) in [("x", false), ("a/x", false), ("b/x", true), ("c/x", true)] {
+            assert_eq!(exists(dest, rel), kept, "{rel} (delay={delay})");
+        }
+    }
+}
