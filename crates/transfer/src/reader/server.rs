@@ -329,6 +329,46 @@ impl<R: Read> ServerReader<R> {
     }
 }
 
+impl<R: Read> ServerReader<R> {
+    /// Returns a view that reads the stream without multiplex demultiplexing.
+    ///
+    /// Below protocol 31 a pulling client forwards its `--files-from` names
+    /// raw even though its output is otherwise multiplexed, so the sender
+    /// must read them unframed and resume demultiplexing afterwards. A plain
+    /// reader is returned as-is. Compression is only activated after the
+    /// file list, so a compressed reader here is a caller error.
+    ///
+    /// upstream: 3.5.1 flist.c:2792-2798 send_file_list() switches the input
+    /// to `MPLX_TO_BUFFERED` for `protocol_version < 31` and re-enables
+    /// multiplexing at flist.c:3013-3014; 3.0.9 reads the names with a raw
+    /// `read(fd, &ch, 1)` in io.c:797 read_line(), past the multiplexed input
+    /// that main.c:978 start_server() enabled.
+    pub fn unframed(&mut self) -> UnframedReader<'_, R> {
+        UnframedReader { inner: self }
+    }
+}
+
+/// Borrowed view of a [`ServerReader`] that bypasses multiplex framing.
+///
+/// Created by [`ServerReader::unframed`]; dropping it resumes normal
+/// demultiplexed reads on the underlying reader.
+pub struct UnframedReader<'a, R: Read> {
+    inner: &'a mut ServerReader<R>,
+}
+
+impl<R: Read> Read for UnframedReader<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match &mut self.inner.inner {
+            ServerReaderInner::Plain(r) => r.read(buf),
+            ServerReaderInner::Multiplex(r) => r.read_unframed(buf),
+            ServerReaderInner::Compressed(_) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "unframed read is not possible once compression is active",
+            )),
+        }
+    }
+}
+
 impl<R: Read> super::BufferedInputHint for ServerReader<R> {
     /// Only the multiplex reader tracks a demuxed frame buffer whose remaining
     /// bytes guarantee a non-blocking next read. Plain and compressed modes have

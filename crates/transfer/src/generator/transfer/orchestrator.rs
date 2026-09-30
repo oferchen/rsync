@@ -205,8 +205,14 @@ impl GeneratorContext {
         // `receiver/transfer/setup/context.rs`.
         self.announce_incremental_flist()?;
 
-        // upstream: flist.c:2476-2503 - resolve --files-from paths if configured
-        let files_from_entries = self.resolve_files_from_paths(paths, &mut reader)?;
+        // upstream: flist.c:2476-2503 - resolve --files-from paths if configured.
+        // Below protocol 31 the client forwards the names un-multiplexed, so
+        // they are read past the demultiplexer (flist.c:2792-2798).
+        let files_from_entries = if self.protocol.forwards_files_from_unmultiplexed() {
+            self.resolve_files_from_paths(paths, &mut reader.unframed())?
+        } else {
+            self.resolve_files_from_paths(paths, &mut reader)?
+        };
 
         // FSM: filter exchange complete. Advance to FileListTransfer.
         self.pipeline

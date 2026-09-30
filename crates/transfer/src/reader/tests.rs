@@ -1393,3 +1393,31 @@ fn server_reader_block_stats_defaults_to_zero() {
     let mut reader = ServerReader::new_plain(Cursor::new(Vec::new()));
     assert_eq!(reader.touched_blocks_4k(), 0);
 }
+
+/// Below protocol 31 the forwarded `--files-from` names sit raw between
+/// multiplexed frames. The unframed view must first hand out payload left
+/// over from the current frame, then read the raw bytes without treating
+/// them as a frame header, and dropping the view must resume demultiplexing
+/// exactly at the next frame. upstream: flist.c:2792-2798 / 3013-3014.
+#[test]
+fn server_reader_unframed_view_reads_raw_bytes_between_frames() {
+    let mut stream = Vec::new();
+    protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"ab").unwrap();
+    stream.extend_from_slice(b"a.txt\0\0");
+    protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"ndx").unwrap();
+    let mut reader = ServerReader::new_plain(Cursor::new(stream))
+        .activate_multiplex()
+        .unwrap();
+
+    let mut first = [0u8; 1];
+    reader.read_exact(&mut first).unwrap();
+    assert_eq!(&first, b"a");
+
+    let mut unframed = [0u8; 8];
+    reader.unframed().read_exact(&mut unframed).unwrap();
+    assert_eq!(&unframed, b"ba.txt\0\0");
+
+    let mut after = [0u8; 3];
+    reader.read_exact(&mut after).unwrap();
+    assert_eq!(&after, b"ndx");
+}

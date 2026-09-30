@@ -205,6 +205,8 @@ impl ProtocolVersion {
     /// - `io.c:1248` `start_filesfrom_forwarding` -
     ///   `if (protocol_version < 31 && OUT_MULTIPLEXED)` switches the output to
     ///   `MPLX_TO_BUFFERED` before forwarding.
+    /// - `flist.c:2792-2798` `send_file_list` - the sender mirrors it by
+    ///   reading the names with its input switched to `MPLX_TO_BUFFERED`.
     #[must_use]
     pub const fn forwards_files_from_unmultiplexed(self) -> bool {
         self.as_u8() < 31
