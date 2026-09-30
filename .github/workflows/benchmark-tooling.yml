@@ -20,9 +20,11 @@ on:
       - '.github/scripts/benchmark_chart.py'
       - '.github/scripts/benchmark_env.py'
       - '.github/scripts/benchmark_report.py'
+      - '.github/scripts/benchmark_transport.py'
       - 'tools/ci/tests/test_benchmark_chart.py'
       - 'tools/ci/tests/test_benchmark_harness.py'
       - 'tools/ci/tests/test_benchmark_report.py'
+      - 'tools/ci/tests/test_benchmark_transport.py'
       - '.github/workflows/benchmark-tooling.yml'
   push:
     branches:
@@ -32,9 +34,11 @@ on:
       - '.github/scripts/benchmark_chart.py'
       - '.github/scripts/benchmark_env.py'
       - '.github/scripts/benchmark_report.py'
+      - '.github/scripts/benchmark_transport.py'
       - 'tools/ci/tests/test_benchmark_chart.py'
       - 'tools/ci/tests/test_benchmark_harness.py'
       - 'tools/ci/tests/test_benchmark_report.py'
+      - 'tools/ci/tests/test_benchmark_transport.py'
       - '.github/workflows/benchmark-tooling.yml'
 
 permissions:
@@ -60,6 +64,7 @@ jobs:
           python3 tools/ci/tests/test_benchmark_harness.py
           python3 tools/ci/tests/test_benchmark_chart.py
           python3 tools/ci/tests/test_benchmark_report.py
+          python3 tools/ci/tests/test_benchmark_transport.py
 
       # The self-test above exercises the SEND_ZC probe but asserts it "either
       # way", so it is silent about what this runner actually offers. Record
