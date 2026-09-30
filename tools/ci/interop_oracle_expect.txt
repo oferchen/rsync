@@ -6,7 +6,6 @@
 # the fix that makes a cell match upstream deletes its row in the same change.
 # An unlisted failure fails the run. Regenerate only from a measured run.
 acls-protocol-29/3.5.1/rsh/push/oc-client task-2521 no client-side -A below protocol 30 refusal (exit 12 vs 2)
-append-longer-dest/3.5.1/rsh/push/oc-server task-1498 --append rewrites a destination longer than the source
 batch-local/3.1.3/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
 batch-local/3.4.4/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
 batch-local/3.5.0/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
