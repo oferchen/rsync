@@ -516,3 +516,38 @@ fn execute_max_size_with_filter_rules() {
         "large.txt should be excluded by size"
     );
 }
+
+/// upstream: generator.c:2109-2125 recv_generator() - `--max-size` is tested
+/// only after the `ftype != FT_REG` branch has returned, so it gates regular
+/// files alone. A symlink whose target is longer than the limit is still
+/// created, while a regular file over the limit is skipped.
+#[cfg(unix)]
+#[test]
+fn execute_max_size_does_not_affect_symlinks() {
+    let ctx = test_helpers::setup_copy_test();
+    test_helpers::create_test_tree(&ctx.source, &[("big.txt", Some(&[b'x'; 64][..]))]);
+    let long_target = "t".repeat(64);
+    std::os::unix::fs::symlink(&long_target, ctx.source.join("link")).expect("create symlink");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .max_file_size(Some(10))
+        .links(true);
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let target_root = ctx.dest.join("source");
+    assert!(
+        fs::symlink_metadata(target_root.join("big.txt")).is_err(),
+        "a regular file over --max-size is skipped"
+    );
+    assert_eq!(
+        fs::read_link(target_root.join("link")).expect("symlink is created"),
+        Path::new(&long_target),
+        "a symlink is never size-gated"
+    );
+}

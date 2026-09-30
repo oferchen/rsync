@@ -2862,6 +2862,41 @@ mod skip_notice_tests {
         assert!(run(cfg(), 0, files(), dest).is_empty());
     }
 
+    /// upstream: generator.c:2109-2133 recv_generator() - the max/min-size
+    /// tests run only after the `ftype != FT_REG` branch has returned, so they
+    /// gate regular files alone. A directory, symlink or FIFO whose length is
+    /// outside the window is still created and never draws a size notice; a
+    /// regular file outside it is skipped.
+    #[test]
+    fn size_bounds_gate_only_regular_files() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let files = || {
+            let mut long_link =
+                FileEntry::new_symlink("long_link".into(), 0o777, "t".repeat(200).into());
+            long_link.set_size(200);
+            vec![
+                FileEntry::new_directory("dir".into(), 0o755),
+                FileEntry::new_fifo("fifo".into(), 0o644),
+                long_link,
+                FileEntry::new_symlink("short_link".into(), 0o777, "t".into()),
+                FileEntry::new_file("big".into(), 200, 0o644),
+                FileEntry::new_file("small".into(), 5, 0o644),
+            ]
+        };
+        let mut config = server_config();
+        config.file_selection.max_file_size = Some(100);
+        config.file_selection.min_file_size = Some(10);
+
+        assert_eq!(
+            run(config, 1, files(), dest),
+            vec![
+                "big is over max-size\n".to_owned(),
+                "small is under min-size\n".to_owned(),
+            ]
+        );
+    }
+
     /// #44 - upstream: generator.c:1380-1395. With `--existing`, a regular file
     /// absent at the destination is never created; upstream prints `not
     /// creating new file "%s"` (literal quotes) at `INFO_GTE(SKIP, 1)`, silent
