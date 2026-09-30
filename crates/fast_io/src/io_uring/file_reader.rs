@@ -25,7 +25,9 @@ use io_uring::opcode;
 use super::batching::{NO_FIXED_FD, maybe_fixed_file, sqe_fd};
 use super::config::IoUringConfig;
 use super::per_thread_ring::{FixedBuffers, with_ring, with_ring_and_buffers};
-use super::registered_buffers::{RegisteredBufferStatus, checkout_all, submit_read_fixed_batch};
+use super::registered_buffers::{
+    FixedReadLease, RegisteredBufferStatus, checkout_all, read_fixed_lease, submit_read_fixed_batch,
+};
 use crate::traits::FileReader;
 
 /// A file reader using io_uring for async I/O.
@@ -116,6 +118,34 @@ impl IoUringReader {
             }
             submit_read_fixed_batch(ring, fd, out, offset, &infos, NO_FIXED_FD).map(Some)
         })
+    }
+
+    /// Reads up to `max_len` bytes at the current position into the thread's
+    /// registered buffers and lends them to the caller without a copy.
+    ///
+    /// Returns `None` when registered buffers are not active or every slot is
+    /// already leased; the caller then uses [`Read`]. Advances the position
+    /// by the leased length, so an empty lease means EOF. One lease covers at
+    /// most `registered_buffer_count * buffer_size` bytes.
+    ///
+    /// # Errors
+    ///
+    /// Propagates ring and `READ_FIXED` completion errors.
+    pub fn read_lease(&mut self, max_len: usize) -> io::Result<Option<FixedReadLease>> {
+        let offset = self.position;
+        let len =
+            max_len.min(usize::try_from(self.size.saturating_sub(offset)).unwrap_or(usize::MAX));
+        let fd = sqe_fd(self.file.as_raw_fd(), NO_FIXED_FD);
+        let lease = with_ring_and_buffers(self.fixed.request(), |ring, group| match group {
+            Some(group) if group.available() > 0 => {
+                read_fixed_lease(ring, group, fd, offset, len).map(Some)
+            }
+            _ => Ok(None),
+        })?;
+        if let Some(lease) = &lease {
+            self.position += lease.len() as u64;
+        }
+        Ok(lease)
     }
 
     /// Reads data at the specified offset without advancing the position.
@@ -427,6 +457,64 @@ mod tests {
         })
         .join()
         .expect("fallback thread");
+    }
+
+    /// A lease must hand back exactly the file's bytes, straight from the
+    /// registered buffers, and return its slots on drop: the loop takes a
+    /// fresh lease per step, so a leaked slot would exhaust the group.
+    #[test]
+    fn read_lease_lends_file_bytes_and_returns_slots() {
+        if with_ring(|_| Ok(())).is_err() {
+            eprintln!("skipping read lease test: io_uring unavailable");
+            return;
+        }
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("in.bin");
+        let data = payload();
+        std::fs::write(&path, &data).expect("write fixture");
+        let config = IoUringConfig {
+            register_buffers: true,
+            ..IoUringConfig::default()
+        };
+        let mut reader = IoUringReader::open(&path, &config).expect("open");
+        if !expect_fixed_buffers(reader.registered_buffer_status(), "read_lease") {
+            return;
+        }
+
+        let before = thread_buffer_stats()
+            .expect("group registered")
+            .total_acquires;
+        let mut got: Vec<u8> = Vec::with_capacity(data.len());
+        loop {
+            let lease = reader
+                .read_lease(256 * 1024)
+                .expect("lease")
+                .expect("slots must be back in the group after each drop");
+            if lease.is_empty() {
+                break;
+            }
+            got.extend(lease.chunks().flatten().copied());
+        }
+        let stats = thread_buffer_stats().expect("group registered");
+
+        assert_eq!(got, data);
+        assert_eq!(reader.position(), data.len() as u64);
+        assert!(stats.total_acquires > before, "leases must use READ_FIXED");
+        assert_eq!(stats.total_misses, 0, "no lease may find the group drained");
+    }
+
+    /// Without registered buffers there is nothing to lend.
+    #[test]
+    fn read_lease_is_none_without_registered_buffers() {
+        if with_ring(|_| Ok(())).is_err() {
+            return;
+        }
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("in.bin");
+        std::fs::write(&path, b"hello").expect("write fixture");
+        let mut reader = IoUringReader::open(&path, &IoUringConfig::default()).expect("open");
+        assert!(reader.read_lease(4096).expect("lease").is_none());
+        assert_eq!(reader.position(), 0);
     }
 
     #[test]

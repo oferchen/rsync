@@ -64,6 +64,7 @@
 
 use std::cell::RefCell;
 use std::io;
+use std::rc::Rc;
 
 use io_uring::IoUring;
 
@@ -88,8 +89,9 @@ pub struct PerThreadRing {
     // `registered_buffers` module docs, "Drop ordering and the ring fd".
     ring: IoUring,
     /// Fixed-buffer group registered with `ring`, shared by every reader and
-    /// writer on this thread.
-    buffers: Option<RegisteredBufferGroup>,
+    /// writer on this thread. `Rc` so a zero-copy read lease can keep the
+    /// slot memory alive after the ring borrow ends.
+    buffers: Option<Rc<RegisteredBufferGroup>>,
     /// Outcome of the single registration attempt; `None` until a caller
     /// asks. A failure is sticky so a rejected `IORING_REGISTER_BUFFERS`
     /// (ENOMEM under `RLIMIT_MEMLOCK`, EPERM under seccomp) is not retried
@@ -132,7 +134,7 @@ impl PerThreadRing {
                     reason
                 );
             }
-            self.buffers = group;
+            self.buffers = group.map(Rc::new);
             status
         })
     }
@@ -186,7 +188,7 @@ where
 /// Same as [`with_ring`]. A rejected registration is never an error.
 pub(crate) fn with_ring_and_buffers<F, R>(fixed: Option<(usize, usize)>, f: F) -> io::Result<R>
 where
-    F: FnOnce(&mut IoUring, Option<&RegisteredBufferGroup>) -> io::Result<R>,
+    F: FnOnce(&mut IoUring, Option<&Rc<RegisteredBufferGroup>>) -> io::Result<R>,
 {
     with_thread_ring(|t| {
         let Some((buffer_size, count)) = fixed else {
@@ -226,7 +228,7 @@ impl FixedBuffers {
         }
         let outcome = with_thread_ring(|t| {
             let status = t.ensure_buffers(buffer_size, count).clone();
-            Ok((status, t.buffers.as_ref().map(RegisteredBufferGroup::count)))
+            Ok((status, t.buffers.as_ref().map(|g| g.count())))
         });
         let (status, registered) = outcome.unwrap_or_else(|e| {
             (
@@ -270,7 +272,7 @@ pub(crate) fn thread_buffer_stats() -> Option<super::registered_buffers::Registe
             .as_ref()?
             .buffers
             .as_ref()
-            .map(RegisteredBufferGroup::stats)
+            .map(|g| g.stats())
     })
 }
 

@@ -161,7 +161,8 @@ pub use file_writer::IoUringWriter;
 pub use linked_chain::{CqeResult, LinkedChain, read_then_write};
 pub use per_thread_ring::{DEFAULT_RING_DEPTH as PER_THREAD_RING_DEPTH, PerThreadRing};
 pub use registered_buffers::{
-    RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats, RegisteredBufferStatus,
+    FixedReadLease, RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats,
+    RegisteredBufferStatus,
 };
 #[cfg(feature = "iouring-send-zc")]
 pub use send_zc::{SEND_ZC_DISPATCH_MIN_BYTES, ZeroCopySender};

@@ -377,8 +377,18 @@ impl RegisteredBufferGroup {
         }
     }
 
+    /// Checks out a free slot and hands back its bare index, detached from
+    /// the RAII [`RegisteredBufferSlot`]. The caller owns the slot until it
+    /// passes the index to [`return_slot`](Self::return_slot).
+    pub(super) fn checkout_detached(&self) -> Option<u16> {
+        let slot = self.checkout()?;
+        let index = slot.index;
+        std::mem::forget(slot);
+        Some(index)
+    }
+
     /// Returns a buffer slot to the free pool.
-    fn return_slot(&self, index: u16) {
+    pub(super) fn return_slot(&self, index: u16) {
         let word_idx = index as usize / 64;
         let bit = index as usize % 64;
         let mask = 1u64 << bit;

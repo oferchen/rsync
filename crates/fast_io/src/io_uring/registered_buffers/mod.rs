@@ -74,6 +74,7 @@
 //! - `submit` - `ReadFixed`/`WriteFixed` batch submission helpers and the
 //!   [`RegisteredBufferSlotInfo`] passed between callers and helpers.
 
+mod lease;
 mod registry;
 mod stats;
 mod submit;
@@ -98,6 +99,8 @@ pub(crate) fn page_size() -> usize {
     }
 }
 
+pub use lease::FixedReadLease;
+pub(super) use lease::read_fixed_lease;
 pub use registry::{RegisteredBufferGroup, RegisteredBufferSlot};
 pub use stats::{RegisteredBufferStats, RegisteredBufferStatus};
 pub(super) use submit::submit_write_fixed_batch;
