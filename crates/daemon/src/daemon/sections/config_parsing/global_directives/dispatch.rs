@@ -94,15 +94,23 @@ fn apply_global_directive(
             // `open_no_attacker_symlinks()`. The daemon is typically root here,
             // so a symlink planted at any component of an operator-named motd
             // path would otherwise splice an arbitrary file into the greeting.
-            let contents =
-                crate::daemon::operator_file::read_to_string(&motd_path).map_err(|error| {
-                    let motd_display = motd_path.display();
-                    config_parse_error(
-                        path,
-                        line_number,
-                        format!("failed to read motd file '{motd_display}': {error}"),
-                    )
-                })?;
+            // An unreadable motd is NOT fatal. upstream opens the file per
+            // connection and keeps the failure local to the greeting
+            // (clientserver.c:188-197):
+            //
+            //     int motd_fd = open_no_attacker_symlinks(motd, O_RDONLY, 0);
+            //     FILE *f = motd_fd >= 0 ? fdopen(motd_fd, "r") : NULL;
+            //     while (f && !feof(f)) { ... }
+            //
+            // `f` is NULL for every failure mode - a refused symlink, ENOENT,
+            // EACCES alike - so the read loop is skipped and the connection
+            // proceeds with no motd content. The daemon never declines to
+            // start over it. Propagating the error here instead killed the
+            // daemon during config parse, before `listen()`, which is what
+            // the 3.5.0 `daemon-config-symlink` cell observes as
+            // `rsyncd exited before listening`.
+            let contents = crate::daemon::operator_file::read_to_string(&motd_path)
+                .unwrap_or_default();
 
             // upstream: loadparm.c `motd_file` is a P_STRING slot written with
             // string_set(), so a second `motd file` directive replaces the

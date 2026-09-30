@@ -329,8 +329,7 @@ fn negative_max_connections_still_opens_the_lock_file_first() {
     // back to `remove_file`.
     let dir = tempfile::tempdir().expect("tempdir");
     let lock_path = dir.path().join("module.lock");
-    let limiter =
-        std::sync::Arc::new(ConnectionLimiter::open(lock_path.clone()).expect("lock file"));
+    let limiter = std::sync::Arc::new(ConnectionLimiter::open(lock_path.clone()));
     std::fs::remove_file(&lock_path).expect("remove lock file");
     std::fs::create_dir(&lock_path).expect("obstruct the lock path with a directory");
 
@@ -586,9 +585,7 @@ fn build_module_runtimes_with_lock_file_shares_the_daemon_wide_limiter() {
 #[test]
 fn build_module_runtimes_honours_per_module_lock_file() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let global = std::sync::Arc::new(
-        ConnectionLimiter::open(dir.path().join("global.lock")).expect("global lock"),
-    );
+    let global = std::sync::Arc::new(ConnectionLimiter::open(dir.path().join("global.lock")));
     let own = dir.path().join("own.lock");
 
     let shared_def = ModuleDefinition {

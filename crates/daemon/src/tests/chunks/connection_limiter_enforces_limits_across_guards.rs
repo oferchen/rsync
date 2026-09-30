@@ -9,7 +9,7 @@
 fn connection_limiter_enforces_limits_across_guards() {
     let temp = tempdir().expect("lock dir");
     let lock_path = temp.path().join("daemon.lock");
-    let limiter = Arc::new(ConnectionLimiter::open(lock_path).expect("open lock file"));
+    let limiter = Arc::new(ConnectionLimiter::open(lock_path));
     let limit = NonZeroU32::new(2).expect("non-zero");
 
     let first = limiter
