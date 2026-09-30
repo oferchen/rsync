@@ -34,6 +34,8 @@ pub(crate) struct RuntimeOptions {
     port_overridden: bool,
     log_file: Option<PathBuf>,
     log_file_from_config: bool,
+    /// `--log-file-format`, overriding every module's `log format`.
+    log_file_format: Option<String>,
     /// Daemon-wide `timeout`, read as the GLOBAL value rather than a module
     /// default.
     ///
@@ -179,6 +181,7 @@ impl Default for RuntimeOptions {
             bind_address_overridden: false,
             port_overridden: false,
             log_file: None,
+            log_file_format: None,
             log_file_from_config: false,
             daemon_timeout: None,
             global_refuse_options: None,

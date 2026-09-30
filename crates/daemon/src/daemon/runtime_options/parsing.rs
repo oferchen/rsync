@@ -102,6 +102,11 @@ impl RuntimeOptions {
                 options.force_address_family(AddressFamily::Ipv6)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--tcp-fastopen")? {
                 options.set_tcp_fastopen(parse_tcp_fastopen_mode(&value, brand)?);
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file-format")?
+            {
+                // upstream: options.c:885 - a repeated option simply
+                // overwrites `logfile_format`, so the last value wins.
+                options.log_file_format = Some(value.to_string_lossy().into_owned());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file")? {
                 options.set_log_file(PathBuf::from(value))?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--lock-file")? {
@@ -137,6 +142,12 @@ impl RuntimeOptions {
                 options.modules.push(module);
             } else {
                 return Err(unsupported_option(argument.clone(), brand));
+            }
+        }
+
+        if let Some(format) = &options.log_file_format {
+            for module in &mut options.modules {
+                module.apply_log_file_format(format);
             }
         }
 

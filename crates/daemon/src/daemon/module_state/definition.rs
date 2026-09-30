@@ -388,6 +388,18 @@ impl ModuleDefinition {
         }
     }
 
+    /// Applies the daemon's `--log-file-format` to this module.
+    ///
+    /// upstream: options.c:885 stores the command-line value in the
+    /// `logfile_format` global, and clientserver.c:823 falls back to the
+    /// module's `log format` only while that global is still NULL - so the
+    /// command-line format replaces the module's and logs per file even when
+    /// the module leaves `transfer logging` off.
+    pub(in crate::daemon) fn apply_log_file_format(&mut self, format: &str) {
+        self.transfer_logging = true;
+        self.log_format = Some(format.to_owned());
+    }
+
     /// Returns whether symlink munging is effective for this module.
     ///
     /// An explicit `munge symlinks` directive always wins. When unset (auto),

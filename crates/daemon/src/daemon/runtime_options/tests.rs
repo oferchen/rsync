@@ -972,4 +972,75 @@ mod runtime_options_tests {
         assert_eq!(options.port, DEFAULT_PORT);
         assert!(options.rsync_port.is_none());
     }
+
+    fn parse_with_module_config(extra: &[&str], module_body: &str) -> RuntimeOptions {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[share]\npath = /srv/share\n{module_body}").expect("write config");
+        let mut args = vec![
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        args.extend(extra.iter().map(OsString::from));
+        RuntimeOptions::parse(&args).expect("parse")
+    }
+
+    /// upstream: options.c:885 accepts `--log-file-format` on the daemon
+    /// command line and stores it in the `logfile_format` global. Both the
+    /// `=VALUE` and the separate-argument spellings must reach it.
+    #[test]
+    fn parse_log_file_format_option_in_both_spellings() {
+        for extra in [
+            &["--log-file-format=%i %n%L"][..],
+            &["--log-file-format", "%i %n%L"][..],
+        ] {
+            let options = parse_with_module_config(extra, "");
+            let module = &options.modules()[0];
+            assert!(
+                module.transfer_logging,
+                "{extra:?} must enable transfer logging"
+            );
+            assert_eq!(module.log_format.as_deref(), Some("%i %n%L"));
+        }
+    }
+
+    /// upstream: clientserver.c:823 only falls back to the module's `log
+    /// format` when `logfile_format` is still NULL, so the command-line value
+    /// wins over the module's own format and logs even when the module leaves
+    /// `transfer logging` off. rsyncd.conf(5): the option "also enables
+    /// transfer logging".
+    #[test]
+    fn log_file_format_overrides_module_format_and_enables_logging() {
+        let options = parse_with_module_config(
+            &["--log-file-format=%o %f"],
+            "transfer logging = no\nlog format = %f %l\n",
+        );
+        let module = &options.modules()[0];
+        assert!(module.transfer_logging);
+        assert_eq!(module.log_format.as_deref(), Some("%o %f"));
+    }
+
+    /// The override is applied after every `--config` has been read, so it
+    /// wins even when it precedes `--config` on the command line.
+    #[test]
+    fn log_file_format_before_config_still_overrides() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[share]\npath = /srv/share\nlog format = %f\n").expect("write");
+        let args = vec![
+            OsString::from("--log-file-format=%n"),
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.modules()[0].log_format.as_deref(), Some("%n"));
+    }
+
+    /// Without the option, the module's own `transfer logging` and `log
+    /// format` settings stand unchanged.
+    #[test]
+    fn modules_keep_their_logging_settings_without_log_file_format() {
+        let options = parse_with_module_config(&[], "log format = %f\n");
+        let module = &options.modules()[0];
+        assert!(!module.transfer_logging);
+        assert_eq!(module.log_format.as_deref(), Some("%f"));
+    }
 }

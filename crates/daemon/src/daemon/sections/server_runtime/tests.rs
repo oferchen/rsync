@@ -458,7 +458,15 @@ fn reload_config_with_no_config_path_is_noop() {
     let mut motd: Arc<Vec<String>> = Arc::new(Vec::new());
     let notifier = systemd::ServiceNotifier::new();
 
-    reload_daemon_config(None, &limiter, &mut modules, &mut motd, None, &notifier);
+    reload_daemon_config(
+        None,
+        &limiter,
+        &mut modules,
+        &mut motd,
+        None,
+        &notifier,
+        None,
+    );
 
     assert!(modules.is_empty());
     assert!(motd.is_empty());
@@ -487,6 +495,7 @@ fn reload_config_with_missing_file_keeps_old_config() {
         &mut motd,
         None,
         &notifier,
+        None,
     );
 
     assert_eq!(modules.len(), 1);
@@ -526,6 +535,7 @@ fn reload_config_replaces_modules_and_motd() {
         &mut motd,
         None,
         &notifier,
+        None,
     );
 
     assert_eq!(modules.len(), 1);
@@ -558,6 +568,7 @@ fn reload_config_existing_connections_keep_old_config() {
         &mut motd,
         None,
         &notifier,
+        None,
     );
     assert_eq!(modules.len(), 1);
     assert_eq!(modules[0].definition.name, "original");
@@ -576,6 +587,7 @@ fn reload_config_existing_connections_keep_old_config() {
         &mut motd,
         None,
         &notifier,
+        None,
     );
 
     assert_eq!(modules.len(), 1);
@@ -611,6 +623,7 @@ fn reload_config_with_invalid_syntax_keeps_old_config() {
         &mut motd,
         None,
         &notifier,
+        None,
     );
     assert_eq!(modules.len(), 1);
     assert_eq!(modules[0].definition.name, "valid");
@@ -627,6 +640,7 @@ fn reload_config_with_invalid_syntax_keeps_old_config() {
         &mut motd,
         None,
         &notifier,
+        None,
     );
 
     assert_eq!(modules.len(), 1);
@@ -1091,6 +1105,7 @@ fn test_accept_loop_state<'a>(
         max_sessions: None,
         max_connections,
         config_path,
+        log_file_format: None,
         connection_limiter: limiter,
         modules: Arc::new(Vec::new()),
         motd_lines: Arc::new(Vec::new()),
@@ -2759,4 +2774,44 @@ fn quic_session_reaches_rsyncd_greeting_parity_with_tcp() {
         quic_greeting, tcp_greeting,
         "the QUIC greeting must match the TCP greeting byte-for-byte (transport-agnostic session core)",
     );
+}
+
+/// A SIGHUP re-reads only the config file, but `--log-file-format` came from
+/// the command line and must survive the reload.
+///
+/// upstream: the forked daemon keeps `logfile_format` (options.c:885) across
+/// config re-reads, and clientserver.c:823 consults it before the module's
+/// `log format` for every new session.
+#[cfg(unix)]
+#[test]
+fn reload_config_reapplies_the_log_file_format_override() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().unwrap();
+    let conf_path = dir.path().join("rsyncd.conf");
+    {
+        let mut f = fs::File::create(&conf_path).unwrap();
+        writeln!(f, "[alpha]").unwrap();
+        writeln!(f, "path = /alpha").unwrap();
+        writeln!(f, "log format = %f").unwrap();
+    }
+
+    let limiter: Option<Arc<ConnectionLimiter>> = None;
+    let mut modules: Arc<Vec<ModuleRuntime>> = Arc::new(Vec::new());
+    let mut motd: Arc<Vec<String>> = Arc::new(Vec::new());
+    let notifier = systemd::ServiceNotifier::new();
+
+    reload_daemon_config(
+        Some(&conf_path),
+        &limiter,
+        &mut modules,
+        &mut motd,
+        None,
+        &notifier,
+        Some("%i %n"),
+    );
+
+    let definition = &modules[0].definition;
+    assert!(definition.transfer_logging);
+    assert_eq!(definition.log_format.as_deref(), Some("%i %n"));
 }

@@ -439,14 +439,15 @@ fn execute_transfer(
     // module's `log format`; `%i` renders on the daemon path whenever the format
     // carries it, since `logfile_format_has_i` is set from the module format
     // independently of the client's `-i`.
-    let mut daemon_log_writer = ctx.log_sink.filter(|_| module.transfer_logging).map(|log| {
+    let transfer_format = transfer_log_format(module);
+    let mut daemon_log_writer = ctx.log_sink.zip(transfer_format).map(|(log, fmt)| {
         let operation = match role {
             ServerRole::Generator => TransferOperation::Send,
             ServerRole::Receiver => TransferOperation::Recv,
         };
         DaemonFileLogWriter {
             log,
-            fmt: effective_log_format(module).to_string(),
+            fmt: fmt.to_string(),
             operation,
             hostname: ctx.host_display().to_string(),
             remote_addr: ctx.peer_ip.to_string(),

@@ -4,6 +4,9 @@
 /// so that subsequent connections use the new configuration. Existing
 /// connections retain the old config via their `Arc` clones.
 ///
+/// `log_file_format` is the daemon's `--log-file-format`: a command-line value
+/// the config file cannot carry, so it is re-applied to every reloaded module.
+///
 /// On failure (missing file, parse error), the error is logged and the daemon
 /// continues with the previous configuration - matching upstream rsync
 /// behaviour where a bad config reload is non-fatal.
@@ -16,6 +19,7 @@ fn reload_daemon_config(
     motd_lines: &mut Arc<Vec<String>>,
     log_sink: Option<&SharedLogSink>,
     notifier: &systemd::ServiceNotifier,
+    log_file_format: Option<&str>,
 ) {
     if let Some(log) = log_sink {
         let message =
@@ -50,8 +54,15 @@ fn reload_daemon_config(
         }
     };
 
+    let mut definitions = parsed.modules;
+    if let Some(format) = log_file_format {
+        for definition in &mut definitions {
+            definition.apply_log_file_format(format);
+        }
+    }
+
     let new_modules: Vec<ModuleRuntime> = match build_module_runtimes(
-        parsed.modules,
+        definitions,
         connection_limiter,
     ) {
         Ok(runtimes) => runtimes,
