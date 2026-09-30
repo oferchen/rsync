@@ -46,22 +46,30 @@ fast_io = { path = "../fast_io", default-features = false }
 logging = { path = "../logging" }
 
 # *-asm crates require NASM on Windows and fail under MSVC; enable asm only on unix.
-# On unix, the `asm` feature on sha1/sha2 enables sha2-asm which provides assembly
-# fallbacks; the pure-Rust backend already auto-detects SHA-NI (x86_64) and
-# crypto extensions (aarch64) via `cpufeatures` regardless of this feature.
+# The `asm` feature matters beyond the assembly fallback: sha1/sha2 0.10 compile
+# their aarch64 hardware backends (ARMv8 SHA1/SHA2/SHA512 via `cpufeatures`)
+# only when `asm` is on (sha2 src/sha256.rs, sha1 src/compress.rs). On x86_64
+# the SHA-NI backend is compiled either way; `asm` only swaps the fallback.
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 md-5 = { workspace = true, features = ["std", "asm"] }
 sha1 = { version = "0.10", default-features = false, features = ["std", "asm"] }
 sha2 = { version = "0.10", default-features = false, features = ["std", "asm"] }
 
-# The *-asm backends miscompute digests on macOS aarch64 (Apple Silicon,
-# macOS 26): sha1-asm returns the wrong SHA1 of empty input. Per the note
-# above, the pure-Rust RustCrypto backend already auto-detects SHA-NI (x86_64)
-# and crypto extensions (aarch64) via `cpufeatures`, so dropping `asm` on macOS
-# keeps hardware acceleration while restoring correct digests.
+# sha1-asm 0.5.3 miscomputes on macOS aarch64 (Apple Silicon, macOS 26): it
+# returns the wrong SHA1 of empty input (#6076), so md-5 and sha1 stay on the
+# portable backend on macOS. SHA-1 therefore runs in software on Apple Silicon.
+# sha2 does not call sha1-asm: with `asm` on aarch64 it uses its own inline
+# ARMv8 SHA2/SHA3 intrinsics, which is the only way to reach hardware SHA-256
+# and SHA-512 there. Intel Macs reach SHA-NI without `asm`, so the sha2-asm
+# fallback is not pulled in on x86_64.
 [target.'cfg(target_os = "macos")'.dependencies]
 md-5 = { workspace = true, features = ["std"] }
 sha1 = { version = "0.10", default-features = false, features = ["std"] }
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+sha2 = { version = "0.10", default-features = false, features = ["std", "asm"] }
+
+[target.'cfg(all(target_os = "macos", not(target_arch = "aarch64")))'.dependencies]
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
 
 [target.'cfg(not(unix))'.dependencies]
