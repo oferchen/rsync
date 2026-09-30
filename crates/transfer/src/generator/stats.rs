@@ -265,4 +265,23 @@ mod tests {
         // device contribute 0.
         assert_eq!(s.total_size, 16);
     }
+
+    /// The sender must NOT count a `--delete-missing-args` mode-0 placeholder
+    /// as a special. upstream: flist.c:745 tests `IS_SPECIAL(mode)`, which is
+    /// false for mode 0, so the entry falls into the `reg` remainder. Measured
+    /// against rsync 3.5.1: a push or local copy of an existing `a` plus a
+    /// missing `nope` reports `Number of files: 2 (reg: 2)`; only the receiver
+    /// (a pull) reports `special: 1`.
+    #[test]
+    fn flist_send_stats_leaves_mode_zero_placeholder_uncounted() {
+        let mut s = FlistSendStats::default();
+        let mut placeholder = FileEntry::new_file(PathBuf::from("nope"), 0, 0);
+        placeholder.set_mode(0);
+        s.record(&placeholder);
+
+        assert_eq!(
+            (s.num_dirs, s.num_symlinks, s.num_devices, s.num_specials),
+            (0, 0, 0, 0)
+        );
+    }
 }

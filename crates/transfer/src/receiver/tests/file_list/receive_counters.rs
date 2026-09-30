@@ -258,3 +258,33 @@ fn counters_match_list_walk_without_inc_recurse() {
     assert_eq!(ctx.file_type_counts(), counts);
     assert_eq!(ctx.total_source_size(), total);
 }
+
+/// A `--delete-missing-args` mode-0 placeholder counts as a special.
+///
+/// WHY: upstream's receiver tallies with a final `else stats.num_specials++`
+/// (flist.c:3248-3249), so the mode-0 entry lands in `special`, not in the
+/// `reg` remainder. Measured against rsync 3.5.1: pulling an existing `a` plus
+/// a missing `nope` with `--delete-missing-args --stats` reports
+/// `Number of files: 2 (reg: 1, special: 1)`.
+#[test]
+fn missing_args_placeholder_counts_as_special() {
+    let handshake = test_handshake();
+    let protocol = handshake.protocol;
+    let mut config = test_config();
+    // upstream: flist.c:1197-1200 - a mode-0 entry is legal only under
+    // `--delete-missing-args`.
+    config.file_selection.delete_missing_args = true;
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    let mut placeholder = file("nope", 0);
+    placeholder.set_mode(0);
+    let mut wire = Vec::new();
+    write_entries(
+        &mut wire,
+        &mut writer(protocol),
+        &[file("a", 3), placeholder],
+    );
+    assert_eq!(ctx.receive_file_list(&mut Cursor::new(wire)).unwrap(), 2);
+
+    assert_eq!(ctx.file_type_counts(), (0, 0, 0, 1));
+    assert_eq!(ctx.total_source_size(), 3);
+}

@@ -2957,6 +2957,24 @@ fn update_stats_saturates_on_symlink_target_overflow() {
     assert_eq!(reader.stats().total_size, u64::MAX);
 }
 
+// upstream: flist.c:3248-3249 - the receiver's final `else` counts the mode-0
+// `--delete-missing-args` placeholder as a special, so `--stats` on a pull
+// prints it under `special`, not in the `reg` remainder.
+#[test]
+fn update_stats_counts_mode_zero_placeholder_as_special() {
+    use crate::flist::entry::FileEntry;
+    use std::path::PathBuf;
+
+    let mut reader = FileListReader::new(test_protocol());
+    let mut placeholder = FileEntry::new_file(PathBuf::from("nope"), 0, 0);
+    placeholder.set_mode(0);
+
+    reader.update_stats(&placeholder);
+
+    assert_eq!(reader.stats().num_specials, 1);
+    assert_eq!(reader.stats().num_files, 0);
+}
+
 // Parity with upstream rsync 3.4.2 "removal of multiple leading slashes"
 // fix (commit d4c4f67, NEWS.md:71). The upstream fix lives in `support/rrsync`;
 // here we pin the equivalent oc-rsync site (`clean_and_validate_name`) so any

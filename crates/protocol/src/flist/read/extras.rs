@@ -312,7 +312,9 @@ impl FileListReader {
             }
         } else if entry.is_device() {
             self.stats.num_devices += 1;
-        } else if entry.is_special() {
+        } else {
+            // upstream: flist.c:3248-3249 - the receiver's final `else` also
+            // counts the mode-0 `--delete-missing-args` placeholder.
             self.stats.num_specials += 1;
         }
     }
