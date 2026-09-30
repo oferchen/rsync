@@ -1225,6 +1225,10 @@ symlink_target_escapes() {
 
 comp_run_scenario() {
   local label=$1 client=$2 flags=$3 sdir=$4 url=$5 ddir=$6 log=$7 vtype=$8
+  # push (default): the client sends $sdir to $url, a module whose path is
+  # $ddir. pull: the client fetches $url, a module whose path is $sdir, into
+  # $ddir. Preparation and verification are identical either way.
+  local direction=${9:-push}
 
   # Clean hidden files/dirs left by previous scenarios (e.g. .backups/ from
   # backup-dir). Bash glob * does not match dotfiles, so explicit cleanup.
@@ -1451,7 +1455,10 @@ comp_run_scenario() {
   # upstream: rsync -avR /abs/src/ dst/ preserves the full absolute path,
   # but rsync -avR . dst/ (from within src/) preserves only relative paths.
   local rc=0
-  if [[ "$resolved_flags" == *"R"* ]]; then
+  if [[ "$direction" == "pull" ]]; then
+    timeout "$hard_timeout" $client $resolved_flags --timeout=10 \
+        "$url" "${ddir}/" >"$transfer_log.out" 2>"$transfer_log.err" || rc=$?
+  elif [[ "$resolved_flags" == *"R"* ]]; then
     local abs_client
     abs_client=$(command -v "$client" 2>/dev/null || echo "$client")
     [[ "$abs_client" != /* ]] && abs_client="$(cd "$(dirname "$client")" && pwd)/$(basename "$client")"
@@ -12068,6 +12075,670 @@ run_comprehensive_interop_case() {
   return "$unexpected"
 }
 
+# ============================================================================
+# QUIC transport cells: oc-rsync client -> oc-rsync daemon (oc extension)
+#
+# QUIC is an oc-only transport behind the `quic` cargo feature. Default and
+# release builds do not carry it, so these cells run a separate
+# `--features quic` binary (ensure_quic_binary). Upstream rsync has no QUIC
+# transport, so there are no upstream<->oc QUIC cells: every cell here is an
+# oc client talking to an oc daemon.
+#
+# Each daemon binds its QUIC listener on a UDP port that differs from its TCP
+# port, and every client dials that UDP port. A client that silently fell back
+# to TCP would reach nothing there and fail, so a PASS proves the bytes rode
+# QUIC.
+#
+# Every TLS authentication mode the transport supports gets a positive cell
+# (push and pull, content verified) and the negative cells that mode must
+# refuse. A negative cell passes only when the client exits non-zero, names
+# the failure, and no file reached the destination. The modes, as the code
+# implements them:
+#   - accept-new default: no --quic-ca. A chain that verifies against the
+#     platform roots wins, otherwise the certificate is pinned on first use
+#     in $XDG_CONFIG_HOME/oc-rsync/quic_known_hosts and must match after that
+#     (rsync_io/src/quic/trust.rs AcceptNewVerifier/TofuVerifier).
+#   - --quic-ca <pem>: a chain that verifies against the bundle, hostname
+#     included, is trusted without pinning. It is layered over accept-new,
+#     not in place of it (trust.rs resolve()).
+#   - mutual TLS: daemon `quic client ca file`, client --quic-cert/--quic-key
+#     (rsync_io/src/quic/mod.rs QuicServerSetup::build, WebPkiClientVerifier).
+#   - `auth users` / `secrets file` inside the tunnel, unchanged from TCP.
+#   - daemon identity: `quic cert file` + `quic key file`, no ephemeral
+#     fallback (daemon runtime_options/quic_identity.rs).
+#
+# Every positive cell runs once per --quic-cipher family (aes, chacha20) and
+# once per incremental-recursion mode (default, --no-inc-recursive), in both
+# directions. The client runs with --debug=connect,proto2 and each cell checks
+# what the session actually negotiated: the 1-RTT cipher suite
+# ("quic: negotiated cipher suite ...") must be of the requested family, and
+# the compat flags ("(Client) compat flags ...: inc_recurse=N") must carry the
+# mode's expected CF_INC_RECURSE. No cell requests a suite the daemon refuses:
+# the daemon offers every ring TLS 1.3 suite and has no directive to narrow
+# them, and each --quic-cipher family also offers the AES-128-GCM suite QUIC
+# requires for Initial packets, so no configuration reaches that refusal.
+#
+# Certificates and keys are minted per run with the openssl CLI into the run's
+# temp dir and deleted with it. No key material is committed.
+#
+# Linux only: this harness runs on the Ubuntu interop job, and the fixture
+# (GNU stat, /dev/tcp probes, the forked QUIC front of the unix daemon) was
+# verified there. macOS runs the portable smoke harness instead, which has no
+# daemon cells.
+# ============================================================================
+
+oc_quic_binary="${workspace_root}/target/interop/oc-rsync-quic"
+
+# Builds the --features quic client/daemon every run. A dev-profile build: the
+# cells need the QUIC code paths, not the size-optimized dist link, and cargo
+# reuses the dependency artifacts the earlier `-p bin` debug build left. It is
+# rebuilt rather than reused because target/interop is cached across runs and
+# a restored binary would test an older tree.
+ensure_quic_binary() {
+  cargo build --locked -p bin --bin oc-rsync --features quic
+  mkdir -p "$(dirname "$oc_quic_binary")"
+  cp "${workspace_root}/target/debug/oc-rsync" "$oc_quic_binary"
+}
+
+# Writes an openssl request config: subject CN $2, extensions section `ext`
+# holding the remaining arguments one per line.
+quic_write_cnf() {
+  local path=$1 cn=$2
+  shift 2
+  {
+    printf '[req]\ndistinguished_name = dn\nprompt = no\n[dn]\nCN = %s\n[ext]\n' "$cn"
+    printf '%s\n' "$@"
+  } >"$path"
+}
+
+# Mints a self-signed CA: $1/$2.key and $1/$2.pem.
+quic_mint_ca() {
+  local dir=$1 name=$2
+  quic_write_cnf "${dir}/${name}.cnf" "oc-rsync interop ${name}" \
+    "basicConstraints = critical,CA:TRUE" \
+    "keyUsage = critical,keyCertSign,cRLSign" \
+    "subjectKeyIdentifier = hash"
+  openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
+    -out "${dir}/${name}.key" 2>/dev/null || return 1
+  openssl req -x509 -new -config "${dir}/${name}.cnf" -extensions ext \
+    -key "${dir}/${name}.key" -sha256 -days 2 -out "${dir}/${name}.pem" 2>/dev/null
+}
+
+# Mints a leaf signed by CA $3: $1/$2.key and $1/$2.pem, extended key usage $4,
+# subjectAltName $5. With $6/$7 (YYYYMMDDHHMMSSZ) the validity window is set
+# explicitly through `openssl ca`, which is how the expired leaf is made;
+# `openssl x509 -req` cannot backdate on the OpenSSL 3.0 the runners ship.
+quic_mint_leaf() {
+  local dir=$1 name=$2 ca=$3 eku=$4 san=$5 start=${6:-} end=${7:-}
+  quic_write_cnf "${dir}/${name}.cnf" "oc-rsync interop ${name}" \
+    "basicConstraints = critical,CA:FALSE" \
+    "keyUsage = critical,digitalSignature" \
+    "extendedKeyUsage = ${eku}" \
+    "subjectAltName = ${san}" \
+    "subjectKeyIdentifier = hash" \
+    "authorityKeyIdentifier = keyid"
+  openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
+    -out "${dir}/${name}.key" 2>/dev/null || return 1
+  openssl req -new -config "${dir}/${name}.cnf" -key "${dir}/${name}.key" \
+    -out "${dir}/${name}.csr" 2>/dev/null || return 1
+  if [[ -z "$start" ]]; then
+    openssl x509 -req -in "${dir}/${name}.csr" -CA "${dir}/${ca}.pem" \
+      -CAkey "${dir}/${ca}.key" -set_serial "0x$(openssl rand -hex 8)" -sha256 -days 2 \
+      -extfile "${dir}/${name}.cnf" -extensions ext -out "${dir}/${name}.pem" 2>/dev/null
+    return
+  fi
+  local cadir="${dir}/${name}.ca"
+  mkdir -p "${cadir}/new"
+  : >"${cadir}/index.txt"
+  openssl rand -hex 8 >"${cadir}/serial"
+  cat >"${cadir}/ca.cnf" <<CNF
+[ca]
+default_ca = ca_default
+[ca_default]
+database = ${cadir}/index.txt
+new_certs_dir = ${cadir}/new
+serial = ${cadir}/serial
+default_md = sha256
+policy = policy_any
+unique_subject = no
+[policy_any]
+commonName = supplied
+CNF
+  openssl ca -batch -notext -config "${cadir}/ca.cnf" -cert "${dir}/${ca}.pem" \
+    -keyfile "${dir}/${ca}.key" -in "${dir}/${name}.csr" -startdate "$start" \
+    -enddate "$end" -extfile "${dir}/${name}.cnf" -extensions ext \
+    -out "${dir}/${name}.pem" 2>/dev/null
+}
+
+# The `SHA256:<unpadded base64>` token quic_known_hosts stores for a PEM
+# certificate: a digest of the whole DER certificate (trust.rs Fingerprint).
+quic_fingerprint() {
+  printf 'SHA256:%s' "$(openssl x509 -in "$1" -outform DER | openssl dgst -sha256 -binary \
+    | base64 | tr -d '=\n')"
+}
+
+# Mints every certificate the cells use into $1.
+quic_mint_pki() {
+  local dir=$1
+  local good_san="IP:127.0.0.1,DNS:localhost"
+  quic_mint_ca "$dir" ca &&
+    quic_mint_ca "$dir" rogue-ca &&
+    quic_mint_leaf "$dir" server ca serverAuth "$good_san" &&
+    quic_mint_leaf "$dir" server-wrong-san ca serverAuth "DNS:wrong-host.invalid" &&
+    quic_mint_leaf "$dir" server-expired ca serverAuth "$good_san" \
+      20200101000000Z 20200201000000Z &&
+    quic_mint_leaf "$dir" server-rogue rogue-ca serverAuth "$good_san" &&
+    quic_mint_leaf "$dir" client ca clientAuth "DNS:interop-client" &&
+    quic_mint_leaf "$dir" client-rogue rogue-ca clientAuth "DNS:interop-client"
+}
+
+# Allocates a UDP port nothing is bound to, on UDP or TCP. The TCP check keeps
+# the QUIC port unreachable over TCP, which is what makes a silent TCP
+# fallback fail instead of pass.
+quic_allocate_udp_port() {
+  python3 - <<'PY'
+import socket
+while True:
+    u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    u.bind(("127.0.0.1", 0))
+    port = u.getsockname()[1]
+    t = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        t.bind(("127.0.0.1", port))
+    except OSError:
+        continue
+    finally:
+        t.close()
+        u.close()
+    print(port)
+    break
+PY
+}
+
+# Writes a QUIC daemon config. Modules: `interop` (writable push target),
+# `src` and `big` (read-only pull sources), `secure` (writable) and
+# `secure-src` (read-only), both behind `auth users`.
+write_quic_daemon_conf() {
+  local path=$1 pid_file=$2 port=$3 quic_port=$4 dest=$5 src=$6 big=$7 secure=$8
+  local secrets=$9 cert=${10} key=${11} client_ca=${12:-}
+  {
+    printf 'pid file = %s\nport = %s\nuse chroot = false\nmunge symlinks = false\n' \
+      "$pid_file" "$port"
+    [[ -n "$cert" ]] && printf 'quic cert file = %s\n' "$cert"
+    [[ -n "$key" ]] && printf 'quic key file = %s\n' "$key"
+    printf 'quic port = %s\n' "$quic_port"
+    [[ -n "$client_ca" ]] && printf 'quic client ca file = %s\n' "$client_ca"
+    printf '\n[interop]\npath = %s\nread only = false\nnumeric ids = yes\n' "$dest"
+    printf '\n[src]\npath = %s\nread only = true\nnumeric ids = yes\n' "$src"
+    printf '\n[big]\npath = %s\nread only = true\nnumeric ids = yes\n' "$big"
+    printf '\n[secure]\npath = %s\nread only = false\nnumeric ids = yes\n' "$secure"
+    printf 'auth users = quicuser\nsecrets file = %s\n' "$secrets"
+    printf '\n[secure-src]\npath = %s\nread only = true\nnumeric ids = yes\n' "$src"
+    printf 'auth users = quicuser\nsecrets file = %s\n' "$secrets"
+  } >"$path"
+}
+
+# Writes a client wrapper: the quic binary with a private XDG_CONFIG_HOME (so
+# quic_known_hosts never touches the runner's home and never leaks between
+# modes) plus the mode's flags. comp_run_scenario takes the wrapper as its
+# client, so the scenario flags stay exactly those of the TCP cells. A
+# QUIC_PASSWORD set for the call becomes the wrapper's RSYNC_PASSWORD. At run
+# time the wrapper adds --quic-cipher from QUIC_CELL_CIPHER when that is set,
+# and always asks for the connect/proto diagnostics quic_check_session reads.
+quic_write_client() {
+  local path=$1 xdg=$2 password=${QUIC_PASSWORD:-}
+  shift 2
+  mkdir -p "$xdg"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'export XDG_CONFIG_HOME=%q\n' "$xdg"
+    [[ -n "$password" ]] && printf 'export RSYNC_PASSWORD=%q\n' "$password"
+    printf 'exec %q' "$oc_quic_binary"
+    [[ $# -gt 0 ]] && printf ' %q' "$@"
+    # shellcheck disable=SC2016 # expanded by the wrapper, not here
+    printf ' ${QUIC_CELL_CIPHER:+--quic-cipher "$QUIC_CELL_CIPHER"} --debug=connect,proto2 "$@"\n'
+  } >"$path"
+  chmod 755 "$path"
+}
+
+# The --quic-cipher families and incremental-recursion modes every positive
+# cell runs in.
+quic_ciphers=(aes chacha20)
+quic_inc_modes=(default no-inc-recursive)
+
+# CF_INC_RECURSE the default mode negotiates between two oc peers: none today,
+# in either direction. An oc client advertises 'i' only when it sends
+# (daemon_transfer/orchestration/arguments.rs), and an oc daemon receiving a
+# push does not grant it. Measured identically over TCP, so it is not a QUIC
+# property. Set this to 1 in the change that makes oc negotiate incremental
+# recursion with itself; --no-inc-recursive must negotiate 0 regardless.
+quic_default_inc_recurse=0
+
+# Checks the session a client reported in $1.out/$1.err (see
+# quic_write_client): the negotiated suite must belong to cipher family $2,
+# and CF_INC_RECURSE must match incremental-recursion mode $3.
+quic_check_session() {
+  local out=$1 cipher=$2 inc=$3
+  local want_suite want_inc suite seen_inc
+  case "$cipher" in
+    aes) want_suite='TLS13_AES_(128|256)_GCM_SHA(256|384)' ;;
+    chacha20) want_suite='TLS13_CHACHA20_POLY1305_SHA256' ;;
+    *) echo "    unknown cipher family ${cipher}"; return 1 ;;
+  esac
+  want_inc=$quic_default_inc_recurse
+  [[ "$inc" == no-inc-recursive ]] && want_inc=0
+  suite=$(cat "${out}.out" "${out}.err" 2>/dev/null \
+    | sed -n 's/.*quic: negotiated cipher suite \([A-Z0-9_]*\).*/\1/p' | head -n1)
+  seen_inc=$(cat "${out}.out" "${out}.err" 2>/dev/null \
+    | sed -n 's/.*(Client) compat flags 0x[0-9a-f]*: inc_recurse=\([01]\).*/\1/p' | head -n1)
+  if ! [[ "$suite" =~ ^(${want_suite})$ ]]; then
+    echo "    cipher: requested ${cipher}, negotiated ${suite:-<not reported>}"
+    return 1
+  fi
+  if [[ "$seen_inc" != "$want_inc" ]]; then
+    echo "    inc_recurse: ${inc} expects ${want_inc}, negotiated ${seen_inc:-<not reported>}"
+    return 1
+  fi
+  echo "    negotiated ${suite}, inc_recurse=${seen_inc}"
+}
+
+# Builds a tree big enough for incremental recursion to split the file list
+# into many sub-lists: 8 top-level directories of 3 subdirectories, each
+# holding 150 files (3,600 files in 33 directories).
+quic_make_big_tree() {
+  local dir=$1 top sub n
+  for top in 1 2 3 4 5 6 7 8; do
+    for sub in a b c; do
+      mkdir -p "${dir}/d${top}/${sub}"
+      for n in $(seq 1 150); do
+        printf '%s/%s/%s\n' "$top" "$sub" "$n" >"${dir}/d${top}/${sub}/f${n}"
+      done
+    done
+  done
+}
+
+# Records one cell outcome in the counters of run_quic_interop_tests.
+quic_record() {
+  local name=$1 ok=$2
+  quic_total=$((quic_total + 1))
+  if [[ "$ok" == 0 ]]; then
+    echo "    PASS"
+    quic_passed=$((quic_passed + 1))
+  elif is_known_failure "quic" "$name" ""; then
+    echo "    SKIP (known limitation)"
+    quic_known=$((quic_known + 1))
+  else
+    echo "    UNEXPECTED FAIL: quic:${name}"
+    quic_unexpected=$((quic_unexpected + 1))
+  fi
+}
+
+# Runs one transfer scenario over QUIC in every cipher family and
+# incremental-recursion mode, both directions: a push of $src to $push_url (a
+# module whose path is $push_dest) and a pull of $pull_url (a module whose
+# path is $src) into $pull_dest. Content is verified by comp_run_scenario, the
+# negotiated session by quic_check_session.
+quic_scenario_both() {
+  local mode=$1 client=$2 spec=$3 push_url=$4 push_dest=$5 pull_url=$6 src=$7
+  local pull_dest=$8 log=$9
+  local name flags vtype cipher inc cell_flags direction url dest rc
+  IFS='|' read -r name flags vtype <<<"$spec"
+  for cipher in "${quic_ciphers[@]}"; do
+    for inc in "${quic_inc_modes[@]}"; do
+      cell_flags=$flags
+      [[ "$inc" == no-inc-recursive ]] && cell_flags+=" --no-inc-recursive"
+      for direction in push pull; do
+        url=$push_url dest=$push_dest
+        [[ "$direction" == pull ]] && url=$pull_url dest=$pull_dest
+        echo "  [oc→oc quic ${mode}] ${name} ${direction} ${cipher} ${inc}"
+        rc=0
+        export QUIC_CELL_CIPHER=$cipher
+        comp_run_scenario "$name" "$client" "$cell_flags" "$src" "$url" "$dest" "$log" \
+          "$vtype" "$direction" || rc=$?
+        unset QUIC_CELL_CIPHER
+        if [[ $rc -eq 0 ]] && ! quic_check_session "${log}.transfer" "$cipher" "$inc"; then
+          rc=1
+        fi
+        quic_record "${mode}/${name}/${direction}/${cipher}/${inc}" "$rc"
+      done
+    done
+  done
+}
+
+# Transfers the big tree $src (served as $pull_url) in every cipher family and
+# incremental-recursion mode, both directions, and requires a byte-identical
+# copy each time: every file, every directory, every byte (diff -r).
+quic_big_tree_cells() {
+  local mode=$1 client=$2 push_url=$3 push_dest=$4 pull_url=$5 src=$6 pull_dest=$7
+  local log=$8
+  local cipher inc direction dest rc out
+  local -a inc_flag
+  out="${log}.big"
+  for cipher in "${quic_ciphers[@]}"; do
+    for inc in "${quic_inc_modes[@]}"; do
+      inc_flag=()
+      [[ "$inc" == no-inc-recursive ]] && inc_flag=(--no-inc-recursive)
+      for direction in push pull; do
+        dest=$push_dest
+        [[ "$direction" == pull ]] && dest=$pull_dest
+        rm -rf "${dest:?}"/* 2>/dev/null || true
+        echo "  [oc→oc quic ${mode}] big-tree ${direction} ${cipher} ${inc}"
+        rc=0
+        if [[ "$direction" == push ]]; then
+          QUIC_CELL_CIPHER=$cipher timeout 180 "$client" -a ${inc_flag[@]+"${inc_flag[@]}"} \
+            --timeout=30 "${src}/" "$push_url" >"${out}.out" 2>"${out}.err" || rc=$?
+        else
+          QUIC_CELL_CIPHER=$cipher timeout 180 "$client" -a ${inc_flag[@]+"${inc_flag[@]}"} \
+            --timeout=30 "$pull_url" "${dest}/" >"${out}.out" 2>"${out}.err" || rc=$?
+        fi
+        if [[ $rc -ne 0 ]]; then
+          echo "    FAIL (transfer error, exit=${rc}): $(head -3 "${out}.err")"
+        elif ! diff -r "$src" "$dest" >"${out}.diff" 2>&1; then
+          echo "    tree differs: $(head -3 "${out}.diff")"
+          rc=1
+        elif ! quic_check_session "$out" "$cipher" "$inc"; then
+          rc=1
+        fi
+        quic_record "${mode}/big-tree/${direction}/${cipher}/${inc}" "$rc"
+      done
+    done
+  done
+}
+
+# A negative cell: the transfer must fail, stderr must match $6 (an extended
+# regex naming the refusal), and nothing may reach the destination. A refused
+# push leaves the daemon's module empty; a refused pull leaves the local
+# destination empty. Transferred data is reported as a security failure.
+quic_expect_refusal() {
+  local name=$1 client=$2 direction=$3 url=$4 dest=$5 pattern=$6 src=$7 log=$8
+  local out="${log}.${name//\//_}"
+  rm -rf "${dest:?}"/* "${dest:?}"/.[!.]* 2>/dev/null || true
+  mkdir -p "$dest"
+  echo "  [oc→oc quic refuse] ${name} ${direction}"
+  local rc=0
+  if [[ "$direction" == push ]]; then
+    timeout 60 "$client" -a --timeout=10 "${src}/" "$url" >"${out}.out" 2>"${out}.err" || rc=$?
+  else
+    timeout 60 "$client" -a --timeout=10 "$url" "${dest}/" >"${out}.out" 2>"${out}.err" || rc=$?
+  fi
+  local landed
+  landed=$(find "$dest" -mindepth 1 | head -3 | tr '\n' ' ')
+  local ok=0
+  if [[ $rc -eq 0 || -n "$landed" ]]; then
+    # Printed as a workflow warning too, so a cell carried as a known failure
+    # still shows on the run summary instead of only in the log.
+    echo "    SECURITY: ${name} ${direction} was accepted (exit=${rc}), data landed: ${landed:-none}"
+    echo "::warning title=QUIC negative cell accepted::${name} ${direction}: a session the client must refuse transferred data"
+    ok=1
+  elif ! grep -Eq -- "$pattern" "${out}.err"; then
+    echo "    refused (exit=${rc}) but stderr does not match /${pattern}/:"
+    sed 's/^/      /' "${out}.err" | head -5
+    ok=1
+  else
+    echo "    refused, exit=${rc}: $(grep -E -m1 -- "$pattern" "${out}.err")"
+  fi
+  quic_record "${name}/${direction}" "$ok"
+}
+
+run_quic_interop_tests() {
+  local quic_total=0 quic_passed=0 quic_known=0 quic_unexpected=0
+
+  if [[ "$(uname -s)" != Linux ]]; then
+    echo "  QUIC cells not run: validated on Linux only (see section header)"
+    return 0
+  fi
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "  FAIL: openssl CLI is required to mint the QUIC test certificates" >&2
+    return 1
+  fi
+  # A binary without the feature rejects every QUIC flag as a usage error;
+  # catching it here names the cause instead of failing every cell.
+  if ! "$oc_quic_binary" --quic --version >/dev/null 2>&1; then
+    echo "  FAIL: ${oc_quic_binary} lacks QUIC support (built without --features quic?)" >&2
+    return 1
+  fi
+
+  local q="${workdir}/quic"
+  local pki="${q}/pki"
+  mkdir -p "$pki"
+  if ! quic_mint_pki "$pki"; then
+    echo "  FAIL: could not mint the QUIC test certificates" >&2
+    return 1
+  fi
+
+  local src="${q}/source" dest="${q}/dest" secure="${q}/secure" big="${q}/big"
+  local pull_dest="${q}/pull-dest" neg_dest="${q}/neg-dest"
+  rm -rf "$src"
+  cp -a "$comp_src" "$src"
+  quic_make_big_tree "$big"
+  mkdir -p "$dest" "$secure" "$pull_dest" "$neg_dest"
+  local secrets="${q}/secrets"
+  printf 'quicuser:quicpass\n' >"$secrets"
+  chmod 600 "$secrets"
+
+  # start_oc_daemon launches $oc_binary; point it at the QUIC build for the
+  # daemons of this section only.
+  local oc_binary="$oc_quic_binary"
+  local port qport url log conf pidf
+  local c="${q}/clients"
+  mkdir -p "$c"
+
+  # ---- daemon: CA-signed server certificate, no client authentication ----
+  port=$(allocate_ephemeral_port)
+  qport=$(quic_allocate_udp_port)
+  url="quic://127.0.0.1:${qport}"
+  log="${q}/main.log" conf="${q}/main.conf" pidf="${q}/main.pid"
+  write_quic_daemon_conf "$conf" "$pidf" "$port" "$qport" "$dest" "$src" "$big" \
+    "$secure" "$secrets" "${pki}/server.pem" "${pki}/server.key"
+  if ! start_oc_daemon_with_retry "$conf" "$log" "" "$pidf" "$port"; then
+    echo "  FAIL: QUIC daemon did not start"
+    cat "$log" 2>/dev/null | tail -20
+    return 1
+  fi
+
+  # Mode --quic-ca: the scenario set of the TCP cells rides this mode.
+  quic_write_client "${c}/ca" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem"
+  local spec
+  for spec in \
+      "archive|-av|basic" \
+      "delete|-av --delete|delete" \
+      "compress|-avz|compress" \
+      "checksum|-avc|checksum-content" \
+      "delta|-av --no-whole-file -I|delta" \
+      "permissions|-rlpv|perms" \
+      "symlinks|-rlptv|symlinks" \
+      "hardlinks|-avH|hardlinks"; do
+    quic_scenario_both "quic-ca" "${c}/ca" "$spec" "${url}/interop" "$dest" "${url}/src/" \
+      "$src" "$pull_dest" "$log"
+  done
+  # The chain verified against --quic-ca, so accept-new never pinned it.
+  echo "  [oc→oc quic quic-ca] CA-verified session pins nothing"
+  if [[ -e "${q}/xdg-ca/oc-rsync/quic_known_hosts" ]]; then
+    echo "    known_hosts was written, so the CA layer did not verify the chain:"
+    sed 's/^/      /' "${q}/xdg-ca/oc-rsync/quic_known_hosts"
+    quic_record "quic-ca/no-pin" 1
+  else
+    quic_record "quic-ca/no-pin" 0
+  fi
+
+  # Transport selection by the --quic modifier on an rsync:// target instead of
+  # a quic:// URL. The port in the URL is the UDP port, so TCP reaches nothing.
+  quic_write_client "${c}/modifier" "${q}/xdg-ca" --quic --quic-ca "${pki}/ca.pem"
+  quic_scenario_both "quic-modifier" "${c}/modifier" "archive|-av|basic" \
+    "rsync://127.0.0.1:${qport}/interop" "$dest" "rsync://127.0.0.1:${qport}/src/" \
+    "$src" "$pull_dest" "$log"
+
+  # Incremental recursion needs a file list big enough to split into many
+  # sub-lists; the comprehensive source is a dozen files.
+  quic_big_tree_cells "quic-ca" "${c}/ca" "${url}/interop" "$dest" "${url}/big/" "$big" \
+    "$pull_dest" "$log"
+
+  # A cipher family the client does not know is refused before any dial.
+  quic_write_client "${c}/cipher-unknown" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem" \
+    --quic-cipher des
+  quic_expect_refusal "cipher/unknown-family" "${c}/cipher-unknown" push "${url}/interop" \
+    "$dest" "unrecognized QUIC cipher|invalid value" "$src" "$log"
+
+  # Mode accept-new (no --quic-ca): the first contact pins the daemon's exact
+  # certificate, later contacts must present it again.
+  quic_write_client "${c}/tofu" "${q}/xdg-tofu"
+  quic_scenario_both "accept-new" "${c}/tofu" "archive|-av|basic" "${url}/interop" "$dest" \
+    "${url}/src/" "$src" "$pull_dest" "$log"
+  echo "  [oc→oc quic accept-new] pin names the daemon certificate"
+  local want got
+  want="127.0.0.1:${qport} $(quic_fingerprint "${pki}/server.pem")"
+  got=$(cat "${q}/xdg-tofu/oc-rsync/quic_known_hosts" 2>/dev/null || true)
+  if [[ "$got" == "$want" ]]; then
+    quic_record "accept-new/pin" 0
+  else
+    echo "    want: ${want}"
+    echo "    got:  ${got:-<no known_hosts>}"
+    quic_record "accept-new/pin" 1
+  fi
+  # A pin for another certificate at this authority must refuse the session.
+  mkdir -p "${q}/xdg-mismatch/oc-rsync"
+  printf '127.0.0.1:%s %s\n' "$qport" "$(quic_fingerprint "${pki}/server-rogue.pem")" \
+    >"${q}/xdg-mismatch/oc-rsync/quic_known_hosts"
+  quic_write_client "${c}/mismatch" "${q}/xdg-mismatch"
+  quic_expect_refusal "accept-new/changed-key" "${c}/mismatch" push "${url}/interop" \
+    "$dest" "host key mismatch" "$src" "$log"
+  quic_expect_refusal "accept-new/changed-key" "${c}/mismatch" pull "${url}/src/" \
+    "$neg_dest" "host key mismatch" "$src" "$log"
+
+  # --quic-ca naming a CA that did not sign the daemon certificate.
+  quic_write_client "${c}/rogue-ca" "${q}/xdg-rogue-ca" --quic-ca "${pki}/rogue-ca.pem"
+  quic_expect_refusal "quic-ca/untrusted-ca" "${c}/rogue-ca" push "${url}/interop" \
+    "$dest" "QUIC connection to .* failed" "$src" "$log"
+  rm -rf "${q}/xdg-rogue-ca"
+  quic_expect_refusal "quic-ca/untrusted-ca" "${c}/rogue-ca" pull "${url}/src/" \
+    "$neg_dest" "QUIC connection to .* failed" "$src" "$log"
+
+  # Mode auth users over QUIC: the daemon's own authentication, in the tunnel.
+  QUIC_PASSWORD=quicpass quic_write_client "${c}/auth" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem"
+  QUIC_PASSWORD=wrongpass quic_write_client "${c}/auth-wrong" "${q}/xdg-ca" \
+    --quic-ca "${pki}/ca.pem"
+  quic_scenario_both "auth-users" "${c}/auth" "archive|-av|basic" \
+    "quic://quicuser@127.0.0.1:${qport}/secure" "$secure" \
+    "quic://quicuser@127.0.0.1:${qport}/secure-src/" "$src" "$pull_dest" "$log"
+  quic_expect_refusal "auth-users/wrong-password" "${c}/auth-wrong" push \
+    "quic://quicuser@127.0.0.1:${qport}/secure" "$secure" "auth failed" "$src" "$log"
+  quic_expect_refusal "auth-users/wrong-password" "${c}/auth-wrong" pull \
+    "quic://quicuser@127.0.0.1:${qport}/secure-src/" "$neg_dest" "auth failed" "$src" "$log"
+
+  stop_oc_daemon
+
+  # ---- daemons whose certificate the client must reject ----
+  local variant
+  for variant in wrong-san expired; do
+    port=$(allocate_ephemeral_port)
+    qport=$(quic_allocate_udp_port)
+    url="quic://127.0.0.1:${qport}"
+    log="${q}/${variant}.log" conf="${q}/${variant}.conf" pidf="${q}/${variant}.pid"
+    write_quic_daemon_conf "$conf" "$pidf" "$port" "$qport" "$dest" "$src" "$big" \
+      "$secure" "$secrets" "${pki}/server-${variant}.pem" "${pki}/server-${variant}.key"
+    if ! start_oc_daemon_with_retry "$conf" "$log" "" "$pidf" "$port"; then
+      quic_record "quic-ca/${variant}/daemon-start" 1
+      continue
+    fi
+    quic_write_client "${c}/${variant}" "${q}/xdg-${variant}-push" --quic-ca "${pki}/ca.pem"
+    quic_expect_refusal "quic-ca/${variant}" "${c}/${variant}" push "${url}/interop" \
+      "$dest" "QUIC connection to .* failed" "$src" "$log"
+    quic_write_client "${c}/${variant}" "${q}/xdg-${variant}-pull" --quic-ca "${pki}/ca.pem"
+    quic_expect_refusal "quic-ca/${variant}" "${c}/${variant}" pull "${url}/src/" \
+      "$neg_dest" "QUIC connection to .* failed" "$src" "$log"
+    stop_oc_daemon
+  done
+
+  # ---- daemon requiring a client certificate (mutual TLS) ----
+  port=$(allocate_ephemeral_port)
+  qport=$(quic_allocate_udp_port)
+  url="quic://127.0.0.1:${qport}"
+  log="${q}/mtls.log" conf="${q}/mtls.conf" pidf="${q}/mtls.pid"
+  write_quic_daemon_conf "$conf" "$pidf" "$port" "$qport" "$dest" "$src" "$big" \
+    "$secure" "$secrets" "${pki}/server.pem" "${pki}/server.key" "${pki}/ca.pem"
+  if start_oc_daemon_with_retry "$conf" "$log" "" "$pidf" "$port"; then
+    quic_write_client "${c}/mtls" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem" \
+      --quic-cert "${pki}/client.pem" --quic-key "${pki}/client.key"
+    quic_scenario_both "mtls" "${c}/mtls" "archive|-av|basic" "${url}/interop" "$dest" \
+      "${url}/src/" "$src" "$pull_dest" "$log"
+    quic_write_client "${c}/mtls-none" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem"
+    quic_write_client "${c}/mtls-rogue" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem" \
+      --quic-cert "${pki}/client-rogue.pem" --quic-key "${pki}/client-rogue.key"
+    quic_write_client "${c}/mtls-keymismatch" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem" \
+      --quic-cert "${pki}/client.pem" --quic-key "${pki}/client-rogue.key"
+    quic_write_client "${c}/mtls-nokey" "${q}/xdg-ca" --quic-ca "${pki}/ca.pem" \
+      --quic-cert "${pki}/client.pem"
+    local neg dir
+    for neg in none rogue keymismatch nokey; do
+      local pattern="QUIC connection to .* failed"
+      [[ "$neg" == nokey ]] && pattern="--quic-cert requires --quic-key"
+      for dir in push pull; do
+        if [[ "$dir" == push ]]; then
+          quic_expect_refusal "mtls/client-cert-${neg}" "${c}/mtls-${neg}" push \
+            "${url}/interop" "$dest" "$pattern" "$src" "$log"
+        else
+          quic_expect_refusal "mtls/client-cert-${neg}" "${c}/mtls-${neg}" pull \
+            "${url}/src/" "$neg_dest" "$pattern" "$src" "$log"
+        fi
+      done
+    done
+    stop_oc_daemon
+  else
+    quic_record "mtls/daemon-start" 1
+  fi
+
+  # ---- daemon identity misconfiguration ----
+  # A QUIC listener with no certificate has no ephemeral fallback: the daemon
+  # must refuse to start at all.
+  port=$(allocate_ephemeral_port)
+  qport=$(quic_allocate_udp_port)
+  conf="${q}/nocert.conf" log="${q}/nocert.log"
+  write_quic_daemon_conf "$conf" "${q}/nocert.pid" "$port" "$qport" "$dest" "$src" \
+    "$big" "$secure" "$secrets" "" ""
+  echo "  [oc quic daemon] no certificate configured refuses to start"
+  local rc=0
+  OC_RSYNC_DAEMON_FALLBACK=0 timeout 20 "$oc_quic_binary" --daemon --no-detach \
+    --config "$conf" --port "$port" --log-file "$log" </dev/null \
+    >"${q}/nocert.out" 2>&1 || rc=$?
+  if [[ $rc -ne 0 && $rc -ne 124 ]] && grep -q "no certificate configured" "${q}/nocert.out" "$log" 2>/dev/null; then
+    echo "    refused, exit=${rc}"
+    quic_record "daemon/no-cert" 0
+  else
+    echo "    exit=${rc} (124 = still running after 20s): $(head -3 "${q}/nocert.out")"
+    quic_record "daemon/no-cert" 1
+  fi
+
+  # A key that does not match the certificate: the QUIC front cannot load its
+  # identity, and a client must be refused rather than served. The daemon
+  # keeps serving TCP (quic_listener.rs start_quic_front), so the refusal the
+  # client sees is a handshake timeout; the daemon log must name the cause.
+  port=$(allocate_ephemeral_port)
+  qport=$(quic_allocate_udp_port)
+  url="quic://127.0.0.1:${qport}"
+  log="${q}/badkey.log" conf="${q}/badkey.conf" pidf="${q}/badkey.pid"
+  write_quic_daemon_conf "$conf" "$pidf" "$port" "$qport" "$dest" "$src" "$big" \
+    "$secure" "$secrets" "${pki}/server.pem" "${pki}/client.key"
+  if start_oc_daemon_with_retry "$conf" "$log" "" "$pidf" "$port"; then
+    quic_write_client "${c}/badkey" "${q}/xdg-badkey" --quic-ca "${pki}/ca.pem"
+    quic_expect_refusal "daemon/key-mismatch" "${c}/badkey" push "${url}/interop" \
+      "$dest" "QUIC connection to .* failed" "$src" "$log"
+    echo "  [oc quic daemon] key-mismatch is logged"
+    if grep -q "failed to load the QUIC server identity" "$log"; then
+      quic_record "daemon/key-mismatch-logged" 0
+    else
+      tail -5 "$log" | sed 's/^/      /'
+      quic_record "daemon/key-mismatch-logged" 1
+    fi
+    stop_oc_daemon
+  else
+    echo "  [oc quic daemon] key-mismatch daemon refused to start"
+    quic_record "daemon/key-mismatch" 0
+  fi
+
+  echo "  === QUIC: ${quic_passed}/${quic_total} passed, ${quic_known} known, ${quic_unexpected} unexpected ==="
+  return "$quic_unexpected"
+}
+
 # ------------------ main ------------------
 
 # Parse command line arguments
@@ -12181,8 +12852,10 @@ if [[ "$build_only" == "true" ]]; then
   exit 0
 fi
 
-# For full interop tests, build oc-rsync
+# For full interop tests, build oc-rsync, and the --features quic variant the
+# QUIC cells need
 ensure_workspace_binaries
+ensure_quic_binary
 
 oc_client="${target_dir}/oc-rsync"
 oc_binary="${target_dir}/oc-rsync"
@@ -12392,6 +13065,12 @@ else
   echo "Skipping standalone tests (no upstream binary available)"
 fi
 
+echo ""
+echo "=== QUIC cells (oc-rsync client -> oc-rsync daemon) ==="
+if ! run_quic_interop_tests; then
+  failed+=("quic")
+fi
+
 # Oracle cells: each transfer is compared with the upstream->upstream run of
 # the same release on exit code, tree, itemize and core stats, not only on the
 # tree. Known divergences are listed with their owner task in
@@ -12418,4 +13097,4 @@ if (( ${#failed[@]} > 0 )); then
 fi
 
 echo ""
-echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-32 + standalone + oracle)."
+echo "All interoperability checks succeeded (basic + comprehensive + protocols 28-32 + standalone + quic + oracle)."

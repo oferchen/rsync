@@ -463,7 +463,14 @@ fn open_quic_daemon_stream(
         // is sent on it). Pairs with the daemon's
         // `QuicAcceptor::from_socket_server_first`.
         match connector.connect_server_first(candidate, server_name) {
-            Ok(stream) => return Ok(DaemonStream::quic(stream)),
+            Ok(stream) => {
+                // Names the 1-RTT suite so `--quic-cipher` can be checked
+                // against what the handshake actually chose.
+                if let Some(suite) = stream.negotiated_cipher_suite() {
+                    logging::debug_log!(Connect, 1, "quic: negotiated cipher suite {suite:?}");
+                }
+                return Ok(DaemonStream::quic(stream));
+            }
             Err(error) => last_error = Some(error),
         }
     }

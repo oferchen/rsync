@@ -155,6 +155,9 @@ struct State {
     /// client's address; the daemon uses it as the session peer for logging
     /// and `hosts allow`/`hosts deny` evaluation.
     peer: Option<SocketAddr>,
+    /// TLS 1.3 suite the connection negotiated, recorded by a client driver
+    /// once the stream exists (see `cipher::keyed_suite`). `None` on a server.
+    negotiated_suite: Option<rustls::CipherSuite>,
     /// Ordered stream data awaiting facade reads.
     recv: VecDeque<Bytes>,
     recv_len: usize,
@@ -928,6 +931,13 @@ impl QuicStream {
         self.io.shared.lock().peer
     }
 
+    /// The TLS 1.3 cipher suite this connection negotiated, on a stream a
+    /// [`QuicConnector`] dialled. `None` on a server-side stream, which does
+    /// not observe its suite.
+    pub fn negotiated_cipher_suite(&self) -> Option<rustls::CipherSuite> {
+        self.io.shared.lock().negotiated_suite
+    }
+
     /// Wraps this stream's write half in the shared bandwidth-pacing decorator
     /// so `--bwlimit` throttles QUIC egress exactly as it throttles the TCP/SSH
     /// sender socket.
@@ -1295,13 +1305,15 @@ mod tests {
     /// Drives one `ping`/`pong` round trip against `acceptor` with a client
     /// pinned to `cert` and its cipher family fixed to `cipher`. The acceptor
     /// offers the full ring suite list, so a completed handshake proves the
-    /// client's restricted offer interoperates - and, because a TLS 1.3 server
-    /// can only select from the suites the client offered, the negotiated AEAD
-    /// is necessarily the forced family.
+    /// client's restricted offer interoperates, and the stream must report
+    /// `expected` as the negotiated suite: the report is what the
+    /// `--debug=connect` diagnostic and the interop cells check `--quic-cipher`
+    /// against, so a probe that named the Initial suite would pass them falsely.
     fn round_trip_cipher(
         acceptor: QuicAcceptor,
         cert: CertificateDer<'static>,
         cipher: QuicCipher,
+        expected: rustls::CipherSuite,
     ) {
         let addr = acceptor.local_addr().expect("local addr");
         let server = thread::spawn(move || {
@@ -1321,6 +1333,7 @@ mod tests {
         )
         .expect("build connector");
         let mut stream = connector.connect(addr, "localhost").expect("connect");
+        assert_eq!(stream.negotiated_cipher_suite(), Some(expected));
         stream.write_all(b"ping").expect("write");
         stream.finish().expect("finish");
         let mut reply = [0u8; 4];
@@ -1340,7 +1353,12 @@ mod tests {
         let acceptor =
             QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind acceptor");
         let cert = acceptor.certificate().clone().into_owned();
-        round_trip_cipher(acceptor, cert, QuicCipher::ChaCha20);
+        round_trip_cipher(
+            acceptor,
+            cert,
+            QuicCipher::ChaCha20,
+            rustls::CipherSuite::TLS13_CHACHA20_POLY1305_SHA256,
+        );
     }
 
     /// A client forced to AES-GCM (`--quic-cipher=aes`) completes a real QUIC
@@ -1352,7 +1370,12 @@ mod tests {
         let acceptor =
             QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind acceptor");
         let cert = acceptor.certificate().clone().into_owned();
-        round_trip_cipher(acceptor, cert, QuicCipher::Aes);
+        round_trip_cipher(
+            acceptor,
+            cert,
+            QuicCipher::Aes,
+            rustls::CipherSuite::TLS13_AES_256_GCM_SHA384,
+        );
     }
 
     /// `from_socket` with an ephemeral identity binds a caller-owned UDP socket

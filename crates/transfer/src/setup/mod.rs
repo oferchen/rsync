@@ -148,6 +148,19 @@ pub fn setup_protocol_with<'a>(
             // before negotiate_the_strings(), so nothing more is exchanged.
             refuse_incompatible_inc_recurse(config.options_allow_inc_recurse, compat_flags, false)?;
 
+            // Names the negotiated incremental-recursion mode, which upstream
+            // sets silently (compat.c:757 `inc_recurse = compat_flags &
+            // CF_INC_RECURSE`). Diagnostic only; the interop harness reads it to
+            // verify the mode of each transfer instead of assuming it.
+            logging::debug_log!(
+                Proto,
+                2,
+                "({}) compat flags {:#x}: inc_recurse={}",
+                if config.is_server { "Server" } else { "Client" },
+                compat_flags.bits(),
+                u8::from(compat_flags.contains(CompatibilityFlags::INC_RECURSE))
+            );
+
             // Determine whether capability negotiation should happen.
             // upstream compat.c:740-742 - do_negotiated_strings requires CF_VARINT_FLIST_FLAGS.
             let do_negotiation = should_negotiate(
