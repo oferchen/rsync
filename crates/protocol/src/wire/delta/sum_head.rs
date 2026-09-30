@@ -25,13 +25,30 @@ use thiserror::Error;
 
 use crate::protocol_violation::protocol_violation;
 
-/// Largest block length any protocol era may advertise, in bytes.
+/// Largest block length a protocol >= 30 peer may advertise, in bytes.
 ///
-/// upstream: `rsync.h` `MAX_BLOCK_SIZE ((int32)1 << 29)`. Used as the
-/// permissive ceiling so a header accepted by either protocol era decodes
-/// here; the narrower protocol-30 ceiling is a sizing choice made by the
-/// generator, not a decoding rule.
-pub const MAX_BLOCK_SIZE: u32 = 1 << 29;
+/// upstream: `rsync.h:161` `MAX_BLOCK_SIZE ((int32)1 << 17)`.
+pub const MAX_BLOCK_SIZE: u32 = 1 << 17;
+
+/// Largest block length a protocol < 30 peer may advertise, in bytes.
+///
+/// upstream: `rsync.h:164` `OLD_MAX_BLOCK_SIZE ((int32)1 << 29)`. This is the
+/// ceiling [`SumHead::decode`] applies when the protocol is not known.
+pub const OLD_MAX_BLOCK_SIZE: u32 = 1 << 29;
+
+/// The block-length ceiling `read_sum_head()` enforces at `protocol_version`.
+///
+/// upstream: `io.c:2235` - `max_blength = protocol_version < 30 ?
+/// OLD_MAX_BLOCK_SIZE : MAX_BLOCK_SIZE`.
+#[inline]
+#[must_use]
+pub const fn max_block_length(protocol_version: u8) -> u32 {
+    if protocol_version < 30 {
+        OLD_MAX_BLOCK_SIZE
+    } else {
+        MAX_BLOCK_SIZE
+    }
+}
 
 /// Largest strong-sum width a `sum_head` may advertise, in bytes.
 ///
@@ -68,10 +85,11 @@ pub enum SumHeadError {
         count: i32,
     },
 
-    /// The block length is negative or past [`MAX_BLOCK_SIZE`].
+    /// The block length is negative or past the protocol's ceiling
+    /// ([`max_block_length`]).
     ///
     /// upstream: `io.c:2257-2261` - `Invalid block length %ld`.
-    #[error("invalid block length {blength}")]
+    #[error("Invalid block length {blength}")]
     InvalidBlockLength {
         /// The rejected block length.
         blength: i32,
@@ -178,18 +196,19 @@ impl SumHead {
             s2length,
             remainder,
         };
-        match head.check() {
+        match head.check(OLD_MAX_BLOCK_SIZE) {
             Ok(()) => Ok(head),
             Err(error) => Err(error),
         }
     }
 
-    /// Applies upstream's `read_sum_head()` field checks.
+    /// Applies upstream's `read_sum_head()` field checks, bounding `blength`
+    /// by `max_blength`.
     ///
     /// The fields size downstream allocations (`Vec::with_capacity(count)`,
     /// `vec![0u8; s2length]`), so an unbounded header from an authenticated
     /// but untrusted peer is a memory-exhaustion vector.
-    const fn check(self) -> Result<(), SumHeadError> {
+    const fn check(self, max_blength: u32) -> Result<(), SumHeadError> {
         // upstream: io.c:2067 - the field is signed on the wire, so a negative
         // count arrives here as a u32 above `i32::MAX` and is rejected.
         //
@@ -205,7 +224,7 @@ impl SumHead {
         // RANGE check only; upstream words the zero case separately below and
         // reaches it only once the range check has passed, so the two must
         // stay ordered and must not be folded into one condition.
-        if self.blength > MAX_BLOCK_SIZE {
+        if self.blength > max_blength {
             return Err(SumHeadError::InvalidBlockLength {
                 blength: self.blength as i32,
             });
@@ -383,11 +402,36 @@ impl SumHead {
 
     /// Decodes a head from its 16 wire bytes, rejecting impossible geometry.
     ///
+    /// The protocol is not known here, so `blength` is bounded by the widest
+    /// ceiling any era allows ([`OLD_MAX_BLOCK_SIZE`]). A reader that knows the
+    /// negotiated protocol uses [`Self::decode_for_protocol`].
+    ///
     /// # Errors
     ///
     /// Returns the [`SumHeadError`] variant for whichever field upstream's
     /// `read_sum_head()` would reject.
     pub const fn decode(bytes: [u8; Self::WIRE_LEN]) -> Result<Self, SumHeadError> {
+        Self::decode_bounded(bytes, OLD_MAX_BLOCK_SIZE)
+    }
+
+    /// Decodes a head exactly as upstream's `read_sum_head()` does at
+    /// `protocol_version`, bounding `blength` by [`max_block_length`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`SumHeadError`] variant for whichever field upstream's
+    /// `read_sum_head()` would reject, in upstream's check order.
+    pub const fn decode_for_protocol(
+        bytes: [u8; Self::WIRE_LEN],
+        protocol_version: u8,
+    ) -> Result<Self, SumHeadError> {
+        Self::decode_bounded(bytes, max_block_length(protocol_version))
+    }
+
+    const fn decode_bounded(
+        bytes: [u8; Self::WIRE_LEN],
+        max_blength: u32,
+    ) -> Result<Self, SumHeadError> {
         // Fields are signed on the wire (write_int/read_int). A negative value
         // becomes a huge u32 and is caught by the ceilings in `check`.
         let head = Self {
@@ -396,7 +440,7 @@ impl SumHead {
             s2length: u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
             remainder: u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
         };
-        match head.check() {
+        match head.check(max_blength) {
             Ok(()) => Ok(head),
             Err(error) => Err(error),
         }
@@ -544,12 +588,36 @@ mod tests {
     /// message.
     #[test]
     fn the_range_check_keeps_its_own_distinct_wording() {
-        let err = SumHead::with_blocks(1, MAX_BLOCK_SIZE + 1, 2, 0)
+        let err = SumHead::with_blocks(1, OLD_MAX_BLOCK_SIZE + 1, 2, 0)
             .expect_err("an over-range blength must be refused");
         assert_eq!(
             err.to_string(),
-            format!("invalid block length {}", (MAX_BLOCK_SIZE + 1) as i32),
+            format!("Invalid block length {}", (OLD_MAX_BLOCK_SIZE + 1) as i32),
         );
+    }
+
+    /// upstream: io.c:2235 - the block-length ceiling depends on the protocol:
+    /// `OLD_MAX_BLOCK_SIZE` (1 << 29) below 30, `MAX_BLOCK_SIZE` (1 << 17) from
+    /// 30 on. Both ceilings are inclusive. Checking one side of the split
+    /// alone would pass a decoder that ignored the protocol version.
+    #[test]
+    fn decode_for_protocol_applies_the_era_ceiling() {
+        let head_with = |blength: u32| {
+            let mut bytes = SumHead::with_blocks(1, 700, 2, 0).unwrap().encode();
+            bytes[4..8].copy_from_slice(&blength.to_le_bytes());
+            bytes
+        };
+        let over = head_with(MAX_BLOCK_SIZE + 1);
+        assert_eq!(
+            SumHead::decode_for_protocol(over, 30),
+            Err(SumHeadError::InvalidBlockLength {
+                blength: (MAX_BLOCK_SIZE + 1) as i32,
+            })
+        );
+        assert!(SumHead::decode_for_protocol(over, 29).is_ok());
+        assert!(SumHead::decode_for_protocol(head_with(MAX_BLOCK_SIZE), 32).is_ok());
+        assert!(SumHead::decode_for_protocol(head_with(OLD_MAX_BLOCK_SIZE), 29).is_ok());
+        assert!(SumHead::decode_for_protocol(head_with(OLD_MAX_BLOCK_SIZE + 1), 29).is_err());
     }
 
     /// Negative fields arrive as huge unsigned values and must be rejected by
@@ -578,9 +646,9 @@ mod tests {
     #[test]
     fn out_of_range_fields_are_rejected() {
         assert_eq!(
-            SumHead::with_blocks(1, MAX_BLOCK_SIZE + 1, 2, 0),
+            SumHead::with_blocks(1, OLD_MAX_BLOCK_SIZE + 1, 2, 0),
             Err(SumHeadError::InvalidBlockLength {
-                blength: (MAX_BLOCK_SIZE + 1) as i32,
+                blength: (OLD_MAX_BLOCK_SIZE + 1) as i32,
             })
         );
         assert_eq!(

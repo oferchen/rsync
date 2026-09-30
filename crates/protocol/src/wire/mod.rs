@@ -39,6 +39,7 @@ pub use self::delta::{
     DeltaOp,
     MAX_BLOCK_SIZE,
     MAX_STRONG_SUM_LEN,
+    OLD_MAX_BLOCK_SIZE,
     // Block geometry shared by a delta body and the head that describes it
     SumHead,
     SumHeadError,
