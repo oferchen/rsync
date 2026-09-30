@@ -116,13 +116,40 @@ fn run_side(config: ServerConfig, stream: UnixStream) -> std::io::Result<ServerS
 ///
 /// Panics if either side fails or the watchdog expires.
 fn forced_inc_recurse_pull(src: &Path, dst: &Path, opts: &str) -> TransferStats {
-    // Sender: `--server --sender -{opts}e.iLsfxCIvu . src/`. The `i` letter is what
-    // an upstream client sends to request INC_RECURSE (options.c:3045).
+    forced_inc_recurse_pull_with(src, dst, opts, |_, _| {})
+}
+
+/// [`forced_inc_recurse_pull`] with a hook that adjusts the sender and
+/// receiver configs after parsing, for the client-only flags (`--list-only`,
+/// `--only-write-batch`) that core sets on the receiver config directly.
+fn forced_inc_recurse_pull_with(
+    src: &Path,
+    dst: &Path,
+    opts: &str,
+    configure: impl FnOnce(&mut ServerConfig, &mut ServerConfig),
+) -> TransferStats {
+    // The `i` letter is what an upstream client sends to request INC_RECURSE
+    // (options.c:3045).
+    loopback_pull(src, dst, opts, "iLsfxCIvu", configure)
+}
+
+/// Pulls `src/` into `dst` over a socket pair, advertising the capability
+/// letters `sender_caps` to the sender, and returns the receiver's stats.
+///
+/// Panics if either side fails or the watchdog expires.
+fn loopback_pull(
+    src: &Path,
+    dst: &Path,
+    opts: &str,
+    sender_caps: &str,
+    configure: impl FnOnce(&mut ServerConfig, &mut ServerConfig),
+) -> TransferStats {
+    // Sender: `--server --sender -{opts}e.{sender_caps} . src/`.
     let mut src_arg = src.to_path_buf().into_os_string();
     src_arg.push("/");
-    let sender_cfg = ServerConfig::from_flag_string_and_args(
+    let mut sender_cfg = ServerConfig::from_flag_string_and_args(
         ServerRole::Generator,
-        format!("-{opts}e.iLsfxCIvu"),
+        format!("-{opts}e.{sender_caps}"),
         vec![src_arg],
     )
     .expect("sender config");
@@ -135,6 +162,7 @@ fn forced_inc_recurse_pull(src: &Path, dst: &Path, opts: &str) -> TransferStats 
     )
     .expect("receiver config");
     receiver_cfg.connection.client_mode = true;
+    configure(&mut sender_cfg, &mut receiver_cfg);
 
     let (sender_sock, receiver_sock) = UnixStream::pair().expect("socket pair");
     let kill_sender = sender_sock.try_clone().expect("clone sender socket");
@@ -298,5 +326,284 @@ fn inc_recurse_receiver_loopback_links_hard_links_across_segments() {
     assert_eq!(
         stats.files_transferred, unique_files,
         "each hard-link group's data must be transferred exactly once"
+    );
+}
+
+/// Directories of the wide tree the non-transfer modes pull: several modest
+/// ones plus one that alone exceeds `MAX_FILECNT_LOOKAHEAD` (10,000), so its
+/// single sub-list overruns the sender's window by itself.
+const WIDE_SMALL_DIRS: usize = 3;
+const WIDE_SMALL_FILES: usize = 1_000;
+const WIDE_BIG_FILES: usize = 10_500;
+
+/// Builds the wide tree and returns its regular-file count.
+fn build_wide_tree(src: &Path) -> usize {
+    let mut files = 0;
+    let mut fill = |dir: &Path, count: usize| {
+        fs::create_dir_all(dir).expect("create dir");
+        for idx in 0..count {
+            fs::write(dir.join(format!("f{idx:05}")), format!("{idx}\n")).expect("write file");
+            files += 1;
+        }
+    };
+    for dir in 0..WIDE_SMALL_DIRS {
+        fill(&src.join(format!("small{dir}")), WIDE_SMALL_FILES);
+    }
+    fill(&src.join("big"), WIDE_BIG_FILES);
+    files
+}
+
+/// Asserts the receiver ran the lazy per-segment walk: a mid-walk release is
+/// the only thing that reopens the sender's window, so a zero count means the
+/// eager drain ran (and could only have finished below the window).
+fn assert_streamed(stats: &TransferStats) {
+    assert!(
+        stats.segments_released_mid_walk > 0,
+        "no sub-list segment was released mid-walk: the non-transfer mode did \
+         not run through the lazy INC_RECURSE consumer"
+    );
+}
+
+/// `--list-only` over a forced-INC_RECURSE pull of more than
+/// `MAX_FILECNT_LOOKAHEAD` entries must finish and list every entry once.
+///
+/// upstream: generator.c:1638-1644 - `list_only` renders each entry inside
+/// recv_generator(), and generate_files() still calls
+/// check_for_finished_files() after every entry (generator.c:2820), so each
+/// finished sub-list is released with an NDX_DONE during the walk. An eager
+/// drain of the whole list first never frees the sender's window and both ends
+/// block (io.c:753-774).
+#[test]
+fn inc_recurse_list_only_streams_past_lookahead_window() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    fs::create_dir_all(&dst).expect("create dst");
+    build_wide_tree(&src);
+
+    let stats = forced_inc_recurse_pull_with(&src, &dst, "r", |sender, receiver| {
+        sender.flags.list_only = true;
+        receiver.flags.list_only = true;
+    });
+
+    assert_streamed(&stats);
+    let mut listed: Vec<PathBuf> = stats
+        .list_only_entries
+        .iter()
+        .map(|e| e.path.clone())
+        .filter(|p| p.as_os_str() != ".")
+        .collect();
+    let listed_len = listed.len();
+    listed.sort();
+    listed.dedup();
+    assert_eq!(listed.len(), listed_len, "an entry was listed twice");
+    assert_eq!(
+        listed,
+        list_tree(&src),
+        "listing must cover every source entry"
+    );
+    assert!(
+        list_tree(&dst).is_empty(),
+        "--list-only must not write the destination"
+    );
+}
+
+/// `--dry-run` over a forced-INC_RECURSE pull of more than
+/// `MAX_FILECNT_LOOKAHEAD` entries must finish, request every file once, and
+/// leave the destination untouched.
+///
+/// upstream: generator.c:1858-1959 - the `!do_xfers` request is NDX + iflags;
+/// check_for_finished_files() (generator.c:2620-2714) still releases each
+/// finished sub-list mid-walk, and the sender's echo stream may carry the next
+/// sub-list ahead of a file echo (rsync.c:322-431 read_ndx_and_attrs).
+#[test]
+fn inc_recurse_dry_run_streams_past_lookahead_window() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    fs::create_dir_all(&dst).expect("create dst");
+    let files = build_wide_tree(&src);
+
+    let stats = forced_inc_recurse_pull(&src, &dst, "rtn");
+
+    assert_streamed(&stats);
+    assert_eq!(
+        stats.files_transferred, files,
+        "a dry run must count every regular file the real run would move"
+    );
+    assert!(
+        list_tree(&dst).is_empty(),
+        "--dry-run must not write the destination"
+    );
+}
+
+/// `--only-write-batch` over a forced-INC_RECURSE pull of more than
+/// `MAX_FILECNT_LOOKAHEAD` entries must finish, drain every delta, and leave
+/// the destination untouched.
+///
+/// upstream: main.c:1866 forces `dry_run` with `do_xfers` still set, so the
+/// generator sends real sum heads and a pull receiver drains each delta with
+/// discard_receive_data() (receiver.c:827-833); the per-sub-list NDX_DONE
+/// release is the same check_for_finished_files() walk.
+#[test]
+fn inc_recurse_only_write_batch_streams_past_lookahead_window() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    fs::create_dir_all(&dst).expect("create dst");
+    build_wide_tree(&src);
+
+    let stats = forced_inc_recurse_pull_with(&src, &dst, "rt", |_, receiver| {
+        receiver.flags.only_write_batch = true;
+        receiver.flags.dry_run = true;
+    });
+
+    assert_streamed(&stats);
+    assert!(
+        list_tree(&dst).is_empty(),
+        "--only-write-batch must not write the destination"
+    );
+}
+
+/// A real transfer of a tree holding one directory larger than
+/// `MAX_FILECNT_LOOKAHEAD` must finish and reproduce every file.
+///
+/// The directory's sub-list alone fills the sender's window, so the sender
+/// queues nothing behind it until the receiver releases the list ahead of it.
+/// upstream: generator.c:2803-2841 walks `cur_flist` on its own `used` count and
+/// only waits for the next list after finishing it; a receiver that waits for
+/// the next sub-list before walking the big one never sends that release.
+#[test]
+fn inc_recurse_transfer_streams_directory_larger_than_lookahead_window() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    fs::create_dir_all(&dst).expect("create dst");
+    let files = build_wide_tree(&src);
+
+    let stats = forced_inc_recurse_pull(&src, &dst, "rt");
+
+    assert_streamed(&stats);
+    assert_eq!(
+        stats.files_transferred, files,
+        "every file must be transferred"
+    );
+    assert_eq!(
+        list_tree(&src),
+        list_tree(&dst),
+        "destination tree shape differs"
+    );
+}
+
+/// Builds a small tree whose sub-lists all fit in the sender's window: nested
+/// and empty directories, a symlink, and files at several depths.
+fn build_small_tree(src: &Path) {
+    for dir in ["a/b/c", "d", "empty"] {
+        fs::create_dir_all(src.join(dir)).expect("create dir");
+    }
+    for idx in 0..12 {
+        fs::write(src.join(format!("a/f{idx:02}")), file_content(0, idx)).expect("write file");
+        fs::write(src.join(format!("d/g{idx:02}")), file_content(1, idx)).expect("write file");
+    }
+    fs::write(src.join("a/b/c/deep"), b"deep\n").expect("write deep");
+    fs::write(src.join("top"), b"top\n").expect("write top");
+    std::os::unix::fs::symlink("top", src.join("link")).expect("symlink");
+}
+
+/// Pulls `src` twice in one non-transfer mode - once with INC_RECURSE forced
+/// (per-segment walk) and once without (the whole list received up front) -
+/// into fresh destinations, and returns both receiver stats.
+fn pull_both_ways(
+    src: &Path,
+    opts: &str,
+    configure: impl Fn(&mut ServerConfig, &mut ServerConfig),
+) -> (TransferStats, TransferStats) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let (inc_dst, flat_dst) = (tmp.path().join("inc"), tmp.path().join("flat"));
+    fs::create_dir_all(&inc_dst).expect("create dst");
+    fs::create_dir_all(&flat_dst).expect("create dst");
+    let streamed = loopback_pull(src, &inc_dst, opts, "iLsfxCIvu", &configure);
+    let whole = loopback_pull(src, &flat_dst, opts, "LsfxCIvu", &configure);
+    assert!(
+        list_tree(&inc_dst).is_empty() && list_tree(&flat_dst).is_empty(),
+        "a non-transfer mode must not write the destination"
+    );
+    (streamed, whole)
+}
+
+/// `--list-only` rendered segment by segment lists the same entries, in the
+/// same order and with the same attributes, as the whole-list rendering.
+///
+/// upstream: generator.c:1638-1644 lists each entry as recv_generator() reaches
+/// it, and generate_files() reaches them in file-list order one sub-list at a
+/// time (generator.c:2803-2842); the listing upstream 3.5.1 prints for an
+/// incremental pull is the same sorted-tree order as a non-incremental one.
+#[test]
+fn inc_recurse_list_only_matches_whole_list_listing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    build_small_tree(&src);
+
+    let (streamed, whole) = pull_both_ways(&src, "rl", |sender, receiver| {
+        sender.flags.list_only = true;
+        receiver.flags.list_only = true;
+    });
+
+    let render = |stats: &TransferStats| -> Vec<String> {
+        stats
+            .list_only_entries
+            .iter()
+            .map(|e| {
+                format!(
+                    "{:o} {} {} {} {:?}",
+                    e.mode,
+                    e.size,
+                    e.mtime,
+                    e.path.display(),
+                    e.symlink_target
+                )
+            })
+            .collect()
+    };
+    assert!(
+        streamed.segments_released_mid_walk > 0,
+        "the INC_RECURSE pull must take the per-segment walk"
+    );
+    assert_eq!(
+        render(&streamed),
+        render(&whole),
+        "per-segment listing must equal the whole-list listing"
+    );
+}
+
+/// `--dry-run` tallied segment by segment reports what the whole-list dry run
+/// reports: the same files requested, bytes, and created entries.
+///
+/// upstream: receiver.c:797-800 counts each `!do_xfers` request and
+/// receiver.c:748-762 each ITEM_IS_NEW, whichever sub-list the entry is in.
+#[test]
+fn inc_recurse_dry_run_matches_whole_list_tallies() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    build_small_tree(&src);
+
+    let (streamed, whole) = pull_both_ways(&src, "rltn", |_, _| {});
+
+    assert!(
+        streamed.segments_released_mid_walk > 0,
+        "the INC_RECURSE pull must take the per-segment walk"
+    );
+    let tallies = |stats: &TransferStats| {
+        (
+            stats.files_transferred,
+            stats.transferred_file_size,
+            stats.directories_created,
+            format!("{:?}", stats.created_stats),
+        )
+    };
+    assert_eq!(tallies(&streamed), tallies(&whole));
+    assert_eq!(
+        streamed.files_transferred, 26,
+        "every regular file is requested"
     );
 }
