@@ -726,7 +726,7 @@ fn is_permission_error(err: &io::Error) -> bool {
 /// verbatim, with no parenthesised number to invent.
 ///
 /// upstream: `rsync-3.5.0/log.c` `rsyserr()` - `"%s: %s (%d)"`.
-fn upstream_errno_text(error: &io::Error) -> String {
+pub(crate) fn upstream_errno_text(error: &io::Error) -> String {
     let display = error.to_string();
     // A tagged failure is an `io::Error::new(kind, payload)`, i.e. the `Custom`
     // variant, whose `raw_os_error()` is `None` even though the payload wraps a
