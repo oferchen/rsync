@@ -153,69 +153,76 @@ fn prepend_components(pending: &mut Vec<OsString>, path: &Path) {
     *pending = head;
 }
 
-/// The absolute path the walk has actually resolved so far, for the
-/// confinement refusal.
+/// The absolute path the walk has actually resolved so far.
 ///
 /// Ownership alone cannot bound a peer-driven path: a trusted-owned symlink is
 /// FOLLOWED by design (`syscall.c:499`), so it can redirect the resolved target
 /// out of the tree. Tracking where the walk has really arrived is what lets the
 /// leaf be judged against the confinement root.
 ///
-/// [`Disabled`](AbsPathTracker::Disabled) is not an optimisation but the
-/// contract: an [`Ancillary`](crate::confinement::PathKind::Ancillary) open, or
-/// a session with no root, has nothing to be outside of, and upstream's own
-/// check returns 0 for both (`syscall.c:266`, `syscall.c:290`).
+/// The path is tracked whenever the walk is ANCHORED - it started at `/`,
+/// followed an absolute target, or was seeded from the cwd because the session
+/// has a root - since it also tells the walk when it is standing in a
+/// `/dev/fd`-style directory. A relative walk in a session with no root is
+/// unanchored: its components cannot be placed, so a spoofed `dev/fd/N` under
+/// the cwd is never mistaken for the kernel's.
 ///
-/// upstream: `rsync-3.5.1/syscall.c:324` `abspath_step()` and the `abspath`
-/// state it advances (`syscall.c:384-408`).
-enum AbsPathTracker {
-    Disabled,
-    /// Location known but not judged: an unconfined walk that started at, or
-    /// restarted from, `/`. Upstream's `is_anchored` without a root to test.
-    Anchored {
-        abspath: PathBuf,
-    },
-    Tracking {
-        abspath: PathBuf,
-    },
+/// Only a [`Confined`](crate::confinement::PathKind::Confined) walk in a
+/// session with a root is JUDGED; an [`Ancillary`](crate::confinement::PathKind::Ancillary)
+/// open has nothing to be outside of (`syscall.c:266`, `syscall.c:290`).
+///
+/// upstream: `rsync-3.5.1/syscall.c:394-418` - the `abspath` seed and
+/// `is_anchored`, advanced by `abspath_step()`.
+struct AbsPathTracker {
+    /// The resolved absolute path, or `None` while the walk is unanchored.
+    abspath: Option<PathBuf>,
+    /// Whether the resolved path is judged against the confinement root.
+    judged: bool,
+    /// Whether the walk is still inside an fd-pin prefix it was handed, where
+    /// the confinement judgement is suspended.
+    ///
+    /// upstream: `rsync-3.5.1/syscall.c:420-421` `pin_transit`.
+    pin_transit: bool,
 }
 
 impl AbsPathTracker {
     /// Seed the tracker for a walk of `path`.
     ///
-    /// An absolute path starts at `/`. A relative one starts where the walk
-    /// itself does, which is the process's physical working directory - read,
-    /// not assumed. Upstream shortcuts the daemon arm to `module_dir` because
-    /// it knows a daemon's cwd IS the module root (`syscall.c:388-390`);
-    /// reading the real cwd agrees with that whenever the assumption holds and
-    /// is right when it does not, which is why it is used for both arms. It is
-    /// the PHYSICAL cwd, as upstream's own comment requires: a lexical name
-    /// would sit at a different depth after descending a trusted symlink, and a
-    /// `..` that really escapes would look like it landed inside.
+    /// An absolute path starts at `/`. A relative one in a session with a root
+    /// starts where the walk itself does: the held base when one is given,
+    /// else the process's physical working directory - read, not assumed.
+    /// Upstream shortcuts the daemon arm to `module_dir` because it knows a
+    /// daemon's cwd IS the module root; reading the real cwd agrees with that
+    /// whenever the assumption holds. It is the PHYSICAL cwd, as upstream's own
+    /// comment requires: a lexical name would sit at a different depth after
+    /// descending a trusted symlink, and a `..` that really escapes would look
+    /// like it landed inside.
+    ///
+    /// An fd pin (`/dev/fd/N`, `/proc/self/fd/N`) is spelled outside any
+    /// `--confine-root` by construction, so the walk is let through that prefix
+    /// unjudged; following the pin restarts at its absolute target and every
+    /// component of THAT is judged again.
     fn start(
         path: &Path,
         kind: crate::confinement::PathKind,
         base: Option<&WalkBase<'_>>,
     ) -> io::Result<Self> {
-        if kind != crate::confinement::PathKind::Confined
-            || crate::confinement::session_confinement_root().is_none()
-        {
-            return Ok(if path.is_absolute() {
-                Self::Anchored {
-                    abspath: PathBuf::from("/"),
-                }
-            } else {
-                Self::Disabled
-            });
-        }
+        let rooted = crate::confinement::session_confinement_root().is_some();
         let abspath = if path.is_absolute() {
-            PathBuf::from("/")
+            Some(PathBuf::from("/"))
+        } else if !rooted {
+            None
         } else if let Some(base) = base {
-            base.physical.to_path_buf()
+            Some(base.physical.to_path_buf())
         } else {
-            std::env::current_dir()?
+            Some(std::env::current_dir()?)
         };
-        Ok(Self::Tracking { abspath })
+        Ok(Self {
+            abspath,
+            judged: rooted && kind == crate::confinement::PathKind::Confined,
+            pin_transit: crate::confinement::session_local_confine_root().is_some()
+                && fd_pin_tail(path).is_some(),
+        })
     }
 
     /// Advance by one resolved component, normalising `.` and `..` exactly as
@@ -223,7 +230,7 @@ impl AbsPathTracker {
     ///
     /// upstream: `rsync-3.5.1/syscall.c:324` `abspath_step()`.
     fn step(&mut self, name: &OsStr) {
-        let (Self::Anchored { abspath } | Self::Tracking { abspath }) = self else {
+        let Some(abspath) = self.abspath.as_mut() else {
             return;
         };
         if name == OsStr::new(".") {
@@ -237,43 +244,22 @@ impl AbsPathTracker {
         abspath.push(name);
     }
 
-    /// A followed absolute symlink target restarts resolution at `/`.
+    /// A followed absolute symlink target restarts resolution at `/`; the
+    /// fd-pin exemption survives only while the rebuilt path is still a pin.
     ///
-    /// upstream: `rsync-3.5.1/syscall.c:577`.
-    fn restart_at_root(&mut self) {
-        match self {
-            Self::Tracking { abspath } => *abspath = PathBuf::from("/"),
-            Self::Anchored { .. } | Self::Disabled => {
-                *self = Self::Anchored {
-                    abspath: PathBuf::from("/"),
-                };
-            }
-        }
+    /// upstream: `rsync-3.5.1/syscall.c:574-582`.
+    fn restart_at_root(&mut self, rebuilt: &Path) {
+        self.abspath = Some(PathBuf::from("/"));
+        self.pin_transit = self.pin_transit && fd_pin_tail(rebuilt).is_some();
     }
 
-    /// Is `name`, reached from the current location, one of the procfs/devfs
-    /// entry symlinks that lead into an fd pin?
-    ///
-    /// Inside a user namespace `/proc/self`, `/dev/fd` and `/dev/std*` report
-    /// the overflow uid, so the ownership test would refuse the very spelling
-    /// rrsync rewrites option paths to (`/proc/self/fd/N`). Only these exact
-    /// components of an anchored walk are exempt; the magic link past them is
-    /// still owner-checked and the walk restarts at its real target.
-    ///
-    /// upstream: `rsync-3.5.1/syscall.c:489-498` `namespace_pin`.
-    fn at_namespace_pin(&self, name: &OsStr) -> bool {
-        let (Self::Anchored { abspath } | Self::Tracking { abspath }) = self else {
-            return false;
-        };
-        let name = name.as_encoded_bytes();
-        if abspath == Path::new("/proc") {
-            return name == b"self";
-        }
-        abspath == Path::new("/dev") && matches!(name, b"fd" | b"stdin" | b"stdout" | b"stderr")
+    /// The anchored absolute path, whether or not it is judged.
+    fn anchored(&self) -> Option<&Path> {
+        self.abspath.as_deref()
     }
 
-    /// The absolute path the walk has resolved, or `None` when the tracker is
-    /// disabled.
+    /// The absolute path the walk has resolved, or `None` when it is not
+    /// judged.
     ///
     /// The parent-walk entry point needs the value and not just the verdict:
     /// upstream judges `<resolved parent>/<leaf>`, not the parent alone, so a
@@ -284,10 +270,7 @@ impl AbsPathTracker {
     /// out-parameter, which is what `owner_walk_parent()` builds `leafabs`
     /// from.
     fn resolved(&self) -> Option<&Path> {
-        match self {
-            Self::Disabled | Self::Anchored { .. } => None,
-            Self::Tracking { abspath } => Some(abspath),
-        }
+        self.abspath.as_deref().filter(|_| self.judged)
     }
 
     /// Refuse with `ELOOP` when the resolved path has left the confinement
@@ -298,9 +281,13 @@ impl AbsPathTracker {
     /// refusal.
     ///
     /// upstream: `rsync-3.5.1/syscall.c:476` (a created leaf), `:598` (leaf),
-    /// `:650` (a walk that resolved entirely to a directory).
+    /// `:622` (interior), `:650` (a walk that resolved entirely to a directory),
+    /// each skipped while `pin_transit` holds.
     fn refuse_if_outside(&self, arrival: crate::confinement::Arrival) -> io::Result<()> {
-        let Self::Tracking { abspath } = self else {
+        if !self.judged || self.pin_transit {
+            return Ok(());
+        }
+        let Some(abspath) = self.abspath.as_deref() else {
             return Ok(());
         };
         if crate::confinement::outside_session_root(
@@ -311,6 +298,72 @@ impl AbsPathTracker {
             return Err(io::Error::from_raw_os_error(libc::ELOOP));
         }
         Ok(())
+    }
+}
+
+/// Split a recognised fd-pin prefix off `path`, returning the tail - empty for
+/// the pin directory itself, otherwise starting with `/`. `None` when `path` is
+/// not in an fd-pin namespace.
+///
+/// `/dev/stdin`, `/dev/stdout` and `/dev/stderr` map to the tails `/0`, `/1`
+/// and `/2`; any other `/dev/` path is not a pin.
+///
+/// upstream: `rsync-3.5.1/syscall.c:176-219` `fd_pin_tail()`.
+fn fd_pin_tail(path: &Path) -> Option<&[u8]> {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let p = path.as_os_str().as_bytes();
+    if let Some(s) = p.strip_prefix(b"/dev/") {
+        if let Some(t) = s.strip_prefix(b"fd") {
+            return (t.is_empty() || t[0] == b'/').then_some(t);
+        }
+        return match s {
+            b"stdin" => Some(b"/0"),
+            b"stdout" => Some(b"/1"),
+            b"stderr" => Some(b"/2"),
+            _ => None,
+        };
+    }
+    let s = p.strip_prefix(b"/proc/")?;
+    let s = if s.starts_with(b"self/") {
+        &s[4..]
+    } else {
+        let digits = s.iter().take_while(|b| b.is_ascii_digit()).count();
+        if digits == 0 || s.get(digits) != Some(&b'/') {
+            return None;
+        }
+        &s[digits..]
+    };
+    let t = s.strip_prefix(b"/fd")?;
+    (t.is_empty() || t[0] == b'/').then_some(t)
+}
+
+/// Whether a readlink target names an anonymous kernel object rather than a
+/// path: what `/proc/self/fd/N` reads as for a pipe, socket or anon inode.
+///
+/// upstream: `rsync-3.5.1/syscall.c:522-524`.
+fn is_kernel_object_target(target: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let t = target.as_os_str().as_bytes();
+    t.starts_with(b"pipe:[") || t.starts_with(b"socket:[") || t.starts_with(b"anon_inode:")
+}
+
+/// Whether a symlink met at `name` under `abspath` is one of the kernel's own
+/// `/proc/self` or `/dev/{fd,stdin,stdout,stderr}` links.
+///
+/// In a user namespace those links can report the overflow uid, which is
+/// neither root nor the euid, so the ownership test would refuse the very
+/// pins a namespaced run hands rsync.
+///
+/// upstream: `rsync-3.5.1/syscall.c:489-495` `namespace_pin`.
+fn is_namespace_pin(abspath: Option<&Path>, name: &OsStr) -> bool {
+    match abspath {
+        Some(abs) if abs == Path::new("/proc") => name == OsStr::new("self"),
+        Some(abs) if abs == Path::new("/dev") => ["fd", "stdin", "stdout", "stderr"]
+            .iter()
+            .any(|pin| name == OsStr::new(pin)),
+        _ => false,
     }
 }
 
@@ -362,6 +415,18 @@ pub(crate) fn traversal_dir_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC
 }
 
+/// [`traversal_dir_flags`] as the raw `open(2)` flag word, for the resolvers
+/// that issue the call through `libc` rather than `rustix`.
+///
+/// A directory fd held only for traversal, `fchdir()` or as `*at()` authority
+/// needs search permission, not read: on Linux it is `O_PATH`, so a mode 0111
+/// parent or a 0333 destination can still be walked and written beneath.
+///
+/// upstream: `rsync-3.5.1/syscall.c:83-92` `directory_traverse_flags()`.
+pub(crate) fn traversal_dir_raw_flags() -> libc::c_int {
+    traversal_dir_flags().bits() as libc::c_int
+}
+
 /// Whether the walk's anchor must be reopened before it is handed back.
 ///
 /// True exactly where [`traversal_dir_flags`] returns an `O_PATH` descriptor,
@@ -385,6 +450,41 @@ fn open_start_dir(absolute: bool, flags: OFlags) -> io::Result<OwnedFd> {
         flags,
         Mode::empty(),
     )
+}
+
+/// Open an fd-directory entry that names a kernel object.
+///
+/// The entry is reopened without `O_NOFOLLOW` so the kernel applies the
+/// caller's flags to the object itself; a descriptor that turned out to be a
+/// regular file or directory - the entry was swapped for a filesystem object
+/// between the readlink and the open - is refused. Under a `--confine-root` the
+/// object is refused outright: an anonymous object cannot be shown to live
+/// beneath the root.
+///
+/// upstream: `rsync-3.5.1/syscall.c:525-550`.
+fn open_kernel_object(
+    dirfd: BorrowedFd<'_>,
+    name: &OsStr,
+    is_last: bool,
+    flags: OFlags,
+    mode: Mode,
+) -> io::Result<OwnedFd> {
+    if !is_last {
+        return Err(io::Error::from_raw_os_error(libc::ENOTDIR));
+    }
+    if crate::confinement::session_local_confine_root().is_some() {
+        return Err(io::Error::from_raw_os_error(libc::ENOENT));
+    }
+    let file = std::fs::File::from(walk_openat(
+        dirfd,
+        name,
+        (flags - OFlags::NOFOLLOW) | OFlags::CLOEXEC,
+        mode,
+    )?);
+    match file.metadata() {
+        Ok(meta) if !meta.is_file() && !meta.is_dir() => Ok(OwnedFd::from(file)),
+        _ => Err(io::Error::from_raw_os_error(libc::ELOOP)),
+    }
 }
 
 /// Open the walk's final component with the caller's flags.
@@ -555,9 +655,8 @@ pub(crate) fn owner_walk_open_tracked(
             // upstream: syscall.c:499 - an other-uid symlink is the attacker's
             // and is refused; uid 0 or our own euid is the operator's own
             // layout and is followed. This arm is reached for the leaf too.
-            // upstream: syscall.c:489-498 exempts only the userns-overflow
-            // entry links of an fd pin (`/proc/self`, `/dev/fd`, `/dev/std*`).
-            if !tracker.at_namespace_pin(&name) && !symlink_owner_is_trusted(stat.uid()) {
+            if !symlink_owner_is_trusted(stat.uid()) && !is_namespace_pin(tracker.anchored(), &name)
+            {
                 return Err(io::Error::from_raw_os_error(libc::ELOOP));
             }
             if hops == 0 {
@@ -566,10 +665,26 @@ pub(crate) fn owner_walk_open_tracked(
             hops -= 1;
 
             let target = at_syscalls::readlinkat(dirfd.as_fd(), name.as_os_str())?;
+            // upstream: rsync-3.5.1/syscall.c:519-551 - standing in an fd
+            // directory, a link to a pipe, socket or anon inode names a kernel
+            // object, not a path to splice. Process substitution hands rsync
+            // exactly these (`--log-file=>(...)` is `/dev/fd/63`).
+            if tracker
+                .anchored()
+                .is_some_and(|abs| fd_pin_tail(abs) == Some(&b""[..]))
+                && is_kernel_object_target(&target)
+            {
+                return open_kernel_object(dirfd.as_fd(), &name, is_last, flags, mode);
+            }
             if target.is_absolute() {
                 // upstream: syscall.c:577 "followed an absolute target: restart from /".
                 dirfd = open_start_dir(true, traverse)?;
-                tracker.restart_at_root();
+                prepend_components(&mut pending, &target);
+                let rebuilt: PathBuf = std::iter::once(OsStr::new("/"))
+                    .chain(pending.iter().map(OsString::as_os_str))
+                    .collect();
+                tracker.restart_at_root(&rebuilt);
+                continue;
             }
             prepend_components(&mut pending, &target);
             continue;
@@ -584,7 +699,12 @@ pub(crate) fn owner_walk_open_tracked(
             *resolved = tracker.resolved().map(Path::to_path_buf);
             return open_final(dirfd.as_fd(), name.as_os_str(), flags, mode);
         }
+        // upstream: rsync-3.5.1/syscall.c:617-622 - an interior component is
+        // judged too, with `final` clear: an absolute walk passes through the
+        // root's own ancestors on the way down, but a path that has DIVERGED
+        // is refused before the walk descends any further.
         tracker.step(&name);
+        tracker.refuse_if_outside(crate::confinement::Arrival::Descending)?;
 
         // upstream: syscall.c:612 - an interior component that is not a
         // directory is ENOTDIR, not a silent stop.
@@ -681,9 +801,11 @@ pub fn owner_trusted_parent_kind(
     };
     let parent = path.parent().unwrap_or_else(|| Path::new(""));
     let mut parent_abs = None;
+    // upstream: rsync-3.5.1/syscall.c:714,723 - the parent is opened with
+    // `directory_traverse_flags()`: it is `*at()` authority only.
     let dirfd = owner_walk_open_tracked(
         parent,
-        OFlags::RDONLY | OFlags::DIRECTORY,
+        traversal_dir_flags(),
         Mode::empty(),
         kind,
         None,
@@ -1132,8 +1254,10 @@ fn operator_open_kind(
 
 /// Open an operator-supplied DIRECTORY through the ownership walk.
 ///
-/// This is upstream's `open_no_attacker_symlinks(dir, O_RDONLY | O_DIRECTORY,
-/// 0)`, and its one load-bearing caller is `change_dir()`: a non-chrooted
+/// This is upstream's `open_no_attacker_symlinks_dirfd(dir)`: the directory is
+/// opened for traversal only (`O_PATH` on Linux), so a searchable but
+/// unreadable directory resolves. Its one load-bearing caller is
+/// `change_dir()`: a non-chrooted
 /// daemon enters its module root through this walk rather than a plain
 /// `chdir`, so a symlink an attacker planted at any component of the
 /// configured `path =` is refused while the operator's own
@@ -1143,7 +1267,7 @@ fn operator_open_kind(
 ///
 /// # Upstream Reference
 ///
-/// - `rsync-3.5.1/syscall.c:677` `open_no_attacker_symlinks()`
+/// - `rsync-3.5.1/syscall.c:683-686` `open_no_attacker_symlinks_dirfd()`
 /// - `rsync-3.5.1/util1.c:1351-1360` `change_dir()` - the `am_daemon &&
 ///   !am_chrooted` arm, which opens the module root this way and `fchdir`s to
 ///   the result.
@@ -1155,7 +1279,7 @@ fn operator_open_kind(
 pub fn operator_open_dir(path: &Path) -> io::Result<OwnedFd> {
     owner_walk_open(
         path,
-        OFlags::RDONLY | OFlags::DIRECTORY,
+        traversal_dir_flags(),
         Mode::empty(),
         crate::confinement::PathKind::Ancillary,
     )
@@ -1591,7 +1715,7 @@ mod tests {
             for component in super::walk_components(path) {
                 tracker.step(&component);
             }
-            tracker.at_namespace_pin(OsStr::new(name))
+            super::is_namespace_pin(tracker.anchored(), OsStr::new(name))
         };
         assert!(exempt("/proc", "self"));
         for name in ["fd", "stdin", "stdout", "stderr"] {
@@ -1934,7 +2058,7 @@ mod tests {
     /// consult it.
     ///
     /// So the invariant is pinned here with NO root installed, where the
-    /// tracker is `Disabled` and the confinement check is inert: each of the
+    /// tracker judges nothing and the confinement check is inert: each of the
     /// remaining checks must still fire, from the same place, for the same
     /// reason.
     #[test]
@@ -2455,5 +2579,108 @@ mod tests {
             cells.len(),
             failures.join("\n")
         );
+    }
+}
+
+/// Kernel pseudo-paths: `/dev/fd/N` naming a pipe, as shell process
+/// substitution produces.
+#[cfg(test)]
+mod pseudo_path_tests {
+    use super::fd_pin_tail;
+    use std::path::Path;
+    #[cfg(target_os = "linux")]
+    use {
+        super::{operator_open_append, operator_open_read},
+        crate::confinement::{LocalInsecureLinks, install_local_session},
+        std::io::{Read as _, Write as _},
+        std::path::PathBuf,
+    };
+
+    /// The recognised pin spellings, and the look-alikes that are not pins.
+    ///
+    /// upstream: `rsync-3.5.1/syscall.c:176-219` `fd_pin_tail()`.
+    #[test]
+    fn fd_pin_tail_recognises_exactly_the_pin_namespaces() {
+        let cases: [(&str, Option<&[u8]>); 12] = [
+            ("/dev/fd", Some(b"")),
+            ("/dev/fd/63", Some(b"/63")),
+            ("/dev/stdin", Some(b"/0")),
+            ("/dev/stdout", Some(b"/1")),
+            ("/dev/stderr", Some(b"/2")),
+            ("/proc/self/fd", Some(b"")),
+            ("/proc/self/fd/7", Some(b"/7")),
+            ("/proc/1234/fd/7", Some(b"/7")),
+            ("/dev/fdx", None),
+            ("/dev/stdinx", None),
+            ("/proc/abc/fd/7", None),
+            ("dev/fd/99", None),
+        ];
+        for (path, tail) in cases {
+            assert_eq!(fd_pin_tail(Path::new(path)), tail, "{path}");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn fd_path(fd: &impl std::os::fd::AsRawFd) -> PathBuf {
+        PathBuf::from(format!("/dev/fd/{}", fd.as_raw_fd()))
+    }
+
+    /// `--files-from=<(...)` / `--read-batch=<(...)`: `/dev/fd/N` names the
+    /// read end of a pipe, and the walk reads from the pipe instead of
+    /// splicing `pipe:[ino]` in as a path component (which reads ENOENT).
+    ///
+    /// upstream: `rsync-3.5.1/syscall.c:519-551`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_dev_fd_pipe_is_opened_as_the_pipe() {
+        let (reader, mut writer) = std::io::pipe().expect("pipe");
+        writer.write_all(b"from the pipe\n").expect("write");
+        drop(writer);
+
+        let mut opened = operator_open_read(&fd_path(&reader)).expect("open the pipe pin");
+        let mut body = String::new();
+        opened.read_to_string(&mut body).expect("read");
+        assert_eq!(body, "from the pipe\n");
+    }
+
+    /// `--log-file=>(...)`: the write end, opened for append.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_dev_fd_pipe_is_opened_for_append() {
+        let (mut reader, writer) = std::io::pipe().expect("pipe");
+        let mut log = operator_open_append(&fd_path(&writer), 0o644).expect("open the log pin");
+        drop(writer);
+        log.write_all(b"logged\n").expect("write");
+        drop(log);
+
+        let mut body = String::new();
+        reader.read_to_string(&mut body).expect("read");
+        assert_eq!(body, "logged\n");
+    }
+
+    /// A component past the kernel object is not a path: `/dev/fd/N/x` is
+    /// `ENOTDIR`, never descriptor `N`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_component_past_a_pipe_is_not_a_directory() {
+        let (reader, _writer) = std::io::pipe().expect("pipe");
+        let error = operator_open_read(&fd_path(&reader).join("trailing"))
+            .expect_err("a trailing component must not open the pipe");
+        assert_eq!(error.raw_os_error(), Some(libc::ENOTDIR));
+    }
+
+    /// Under `--confine-root` an anonymous kernel object cannot be shown to
+    /// live beneath the root, so it is refused as absent.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_confined_session_refuses_a_pipe_pin() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        install_local_session(
+            LocalInsecureLinks::default(),
+            Some(temp.path().to_path_buf()),
+        );
+        let (reader, _writer) = std::io::pipe().expect("pipe");
+        let error = operator_open_read(&fd_path(&reader)).expect_err("refused under a root");
+        assert_eq!(error.raw_os_error(), Some(libc::ENOENT));
     }
 }
