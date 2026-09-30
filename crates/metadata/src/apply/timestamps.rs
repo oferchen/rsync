@@ -383,45 +383,52 @@ pub(super) fn apply_atime_only_from_metadata_with_fd(
     Ok(())
 }
 
+/// Returns the sender's atime when the atime leg of `set_file_attrs()` must
+/// write it, `None` to leave the destination's atime alone (UTIME_OMIT).
+///
+/// Without a cached stat there is nothing to compare, so the atime is written.
+/// upstream: rsync.c:741 - `flags & ATTRS_ACCURATE_TIME ||
+/// !same_time(sxp->st.st_atime, 0, file_atime, 0)`; the nanoseconds never
+/// figure, and the written value has `ST_ATIME_NSEC = 0` (rsync.c:744).
+fn entry_atime_to_set(
+    entry: &protocol::flist::FileEntry,
+    cached_meta: Option<&fs::Metadata>,
+    accurate: bool,
+) -> Option<FileTime> {
+    let current_secs = cached_meta.map(|meta| FileTime::from_last_access_time(meta).unix_seconds());
+    (accurate || current_secs != Some(entry.atime()))
+        .then(|| FileTime::from_unix_time(entry.atime(), 0))
+}
+
 /// Applies mtime (and atime when `--atimes`) from a protocol `FileEntry`.
 ///
-/// When `--atimes` is not active, both atime and mtime are set to the entry's
-/// mtime value. Skips the syscall when both timestamps already match
-/// `cached_meta`.
+/// Skips the syscall when neither timestamp needs writing. `accurate` is
+/// upstream's `ATTRS_ACCURATE_TIME`: it forces the atime stamp even when
+/// `cached_meta` already matched.
 /// upstream: rsync.c:597 - `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
 pub(super) fn apply_timestamps_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
     cached_meta: Option<&fs::Metadata>,
+    accurate: bool,
     parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
     let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
 
-    // upstream: rsync.c:588-589 - the access time is written only under
+    // upstream: rsync.c:731 - the access time is written only under
     // `--atimes`/`-U` and never for directories (`!atimes_ndx || S_ISDIR`
     // sets ATTRS_SKIP_ATIME); otherwise it is left unchanged (UTIME_OMIT)
     // rather than being clobbered with the mtime value.
-    let atime = if options.atimes() && !entry.file_type().is_dir() && entry.atime() != 0 {
-        Some(FileTime::from_unix_time(entry.atime(), 0))
+    let atime = if options.atimes() && !entry.file_type().is_dir() {
+        entry_atime_to_set(entry, cached_meta, accurate)
     } else {
         None
     };
 
     // upstream: rsync.c:set_file_attrs() - skips utimensat when timestamps match
-    let needs_utime = match cached_meta {
-        Some(meta) => {
-            let current_mtime = FileTime::from_last_modification_time(meta);
-            if current_mtime != mtime {
-                true
-            } else if let Some(atime) = atime {
-                FileTime::from_last_access_time(meta) != atime
-            } else {
-                false
-            }
-        }
-        None => true,
-    };
+    let needs_utime = atime.is_some()
+        || cached_meta.is_none_or(|meta| FileTime::from_last_modification_time(meta) != mtime);
 
     if needs_utime {
         set_entry_times(
@@ -501,26 +508,15 @@ pub(super) fn apply_symlink_timestamps_from_entry(
     // upstream: rsync.c:588-589 - a symlink is never a directory, so its atime
     // is written only under `--atimes`/`-U`; otherwise it is left unchanged
     // (UTIME_OMIT) rather than being clobbered with the mtime value.
-    let atime = if options.atimes() && entry.atime() != 0 {
-        Some(FileTime::from_unix_time(entry.atime(), 0))
+    let atime = if options.atimes() {
+        entry_atime_to_set(entry, cached_meta, false)
     } else {
         None
     };
 
     // upstream: rsync.c:set_file_attrs() - skips utimensat when timestamps match
-    let needs_utime = match cached_meta {
-        Some(meta) => {
-            let current_mtime = FileTime::from_last_modification_time(meta);
-            if current_mtime != mtime {
-                true
-            } else if let Some(atime) = atime {
-                FileTime::from_last_access_time(meta) != atime
-            } else {
-                false
-            }
-        }
-        None => true,
-    };
+    let needs_utime = atime.is_some()
+        || cached_meta.is_none_or(|meta| FileTime::from_last_modification_time(meta) != mtime);
 
     if needs_utime {
         // upstream: rsync.c:set_times() uses lutimes/utimensat(AT_SYMLINK_NOFOLLOW)
@@ -552,24 +548,16 @@ pub(super) fn apply_atime_only_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     cached_meta: Option<&fs::Metadata>,
+    accurate: bool,
     parent_walk: super::ParentWalk<'_>,
     parent_dirfd: super::ParentDirFd<'_>,
 ) -> Result<(), MetadataError> {
-    let atime = if entry.atime() != 0 {
-        FileTime::from_unix_time(entry.atime(), 0)
-    } else {
+    // upstream: rsync.c:731 - `S_ISDIR` sets ATTRS_SKIP_ATIME.
+    if entry.file_type().is_dir() {
         return Ok(());
-    };
+    }
 
-    let needs_update = match cached_meta {
-        Some(meta) => {
-            let current_atime = FileTime::from_last_access_time(meta);
-            current_atime != atime
-        }
-        None => true,
-    };
-
-    if needs_update {
+    if let Some(atime) = entry_atime_to_set(entry, cached_meta, accurate) {
         let mtime = match cached_meta {
             Some(meta) => FileTime::from_last_modification_time(meta),
             None => {

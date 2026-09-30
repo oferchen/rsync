@@ -2268,6 +2268,54 @@ mod alt_dest_match_level_tests {
         );
     }
 
+    /// `-U --link-dest` on a basis that differs from the source only in atime
+    /// must still hard-link. upstream: generator.c:474-512 unchanged_attrs()
+    /// compares mtime, perms, ownership, ACLs and xattrs but never atime, so the
+    /// basis reaches match_level 3 (generator.c:1096). Treating atime as an
+    /// attribute demotes it to level 2 and copies, wasting the space
+    /// `--link-dest` exists to save.
+    #[test]
+    fn link_dest_atime_only_difference_still_hard_links() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ref_dir = tmp.path().join("link");
+        let dest_dir = tmp.path().join("dest");
+        fs::create_dir_all(&ref_dir).expect("mk ref");
+        fs::create_dir_all(&dest_dir).expect("mk dest");
+
+        let ref_path = write_basis(&ref_dir, "payload.bin", b"atime", 0o644, MTIME);
+        filetime::set_file_atime(&ref_path, FileTime::from_unix_time(MTIME - 100, 0))
+            .expect("set basis atime");
+        let mut entry = source_entry("payload.bin", 5, 0o644, MTIME);
+        entry.set_atime(MTIME);
+
+        let refs = [ReferenceDirectory::new(
+            ReferenceDirectoryKind::Link,
+            ref_dir.clone(),
+        )];
+        let opts = MetadataOptions::default().preserve_atimes(true);
+        let handled = try_reference_dest(
+            &entry,
+            &dest_dir,
+            &refs,
+            false,
+            false,
+            None,
+            ModifyWindow::from_secs(0),
+            &opts,
+            &mut Vec::new(),
+            None,
+            None,
+            BasisTrust::LocalReceiver,
+        );
+
+        assert!(handled, "identical basis must be handled locally");
+        assert_eq!(
+            ino(&dest_dir.join("payload.bin")),
+            ino(&ref_path),
+            "an atime-only difference must not demote the basis below level 3"
+        );
+    }
+
     /// (c) `--compare-dest` at match_level 2 (content matches, perms differ) must
     /// COPY the basis into the destination so the file is PRESENT there with the
     /// source's attributes. Skipping (as a naive "any match" would) leaves the
