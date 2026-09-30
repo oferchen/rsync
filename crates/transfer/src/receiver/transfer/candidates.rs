@@ -1401,13 +1401,17 @@ impl ReceiverContext {
         // already match. Skip entirely when no preservation flags are active.
         // On a no-change scan this eliminates ownership mapping, permission
         // comparison, and timestamp construction for every file.
+        //
+        // upstream: generator.c:1646 + 2246 - under --checksum the call carries
+        // ATTRS_ACCURATE_TIME, so rsync.c:489 same_mtime() compares nanoseconds
+        // exactly and ignores modify_window; a negative window is that test.
+        let mtime_window = if self.config.flags.checksum {
+            metadata::ModifyWindow::from_secs(-1)
+        } else {
+            self.config.file_selection.modify_window
+        };
         let attrs_updated = needs_metadata_apply
-            && !metadata_unchanged(
-                entry,
-                metadata_opts,
-                stat_meta,
-                self.config.file_selection.modify_window,
-            );
+            && !metadata_unchanged(entry, metadata_opts, stat_meta, mtime_window);
         if attrs_updated
             && let Err(e) = apply_metadata_with_cached_stat(
                 file_path,
@@ -1703,6 +1707,78 @@ mod itemize_order_tests {
             }),
             1,
             "-r with a differing mtime (same size) must transfer"
+        );
+    }
+
+    /// upstream: generator.c:1646 + 2246 - under `--checksum` the up-to-date
+    /// path calls `set_file_attrs()` with `ATTRS_ACCURATE_TIME`, so
+    /// rsync.c:489 `same_mtime()` compares the nanoseconds exactly instead of
+    /// through the whole-second `modify_window` test.
+    ///
+    /// Why it matters: below protocol 31 the file list carries no nanoseconds,
+    /// so a content-identical `.123456789` destination differs from the
+    /// sender's whole-second mtime only below the second. Upstream 3.2.7+
+    /// stamps it to `.000000000`; a whole-second fast path leaves it alone and
+    /// the two receivers disagree on the resulting tree. Without `-c` the
+    /// window test still governs, so the destination must stay untouched.
+    #[cfg(unix)]
+    #[test]
+    fn checksum_match_sets_mtime_with_nanosecond_accuracy() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+        let path = dest.join("identical");
+        let content = b"same\n";
+
+        let mut hasher =
+            crate::delta_apply::ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5);
+        hasher.update(content);
+        let mut digest = [0u8; crate::delta_apply::ChecksumVerifier::MAX_DIGEST_LEN];
+        let len = hasher.finalize_into(&mut digest);
+
+        let mut entry = FileEntry::new_file("identical".into(), content.len() as u64, 0o644);
+        entry.set_mtime(1_700_000_000, 0);
+        entry.set_checksum(digest[..len].to_vec());
+
+        let hs = handshake();
+        let dest_nsec_after = |checksum: bool| -> i64 {
+            std::fs::write(&path, content).unwrap();
+            let t = filetime::FileTime::from_unix_time(1_700_000_000, 123_456_789);
+            filetime::set_file_times(&path, t, t).unwrap();
+            let mut config = itemize_client_config();
+            config.flags.times = true;
+            config.flags.checksum = checksum;
+            let mut ctx = ReceiverContext::new_for_test(&hs, config);
+            ctx.file_list = vec![entry.clone()];
+            let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+            let mut metadata_errors = Vec::new();
+            let mut stats = TransferStats::default();
+            let files = ctx.build_files_to_transfer(
+                &mut writer,
+                dest,
+                #[cfg(unix)]
+                None,
+                &metadata::MetadataOptions::default(),
+                None,
+                &mut metadata_errors,
+                &mut stats,
+                None,
+                None,
+            );
+            assert!(files.is_empty(), "an identical file must not transfer");
+            std::fs::metadata(&path).unwrap().mtime_nsec()
+        };
+
+        assert_eq!(
+            dest_nsec_after(true),
+            0,
+            "-c must stamp the sender's exact mtime on an identical file"
+        );
+        assert_eq!(
+            dest_nsec_after(false),
+            123_456_789,
+            "without -c the whole-second window leaves the mtime untouched"
         );
     }
 
