@@ -74,8 +74,11 @@ impl ReceiverContext {
         // stream), consume it lazily one segment at a time instead of draining
         // it up front. The eager drain below deadlocks against the sender's
         // MAX_FILECNT_LOOKAHEAD window on trees larger than the window because it
-        // never emits an NDX_DONE mid-walk to free it. Gated to real transfers
-        // with no delete pass (delete stays on the batch path until A5a-4). On
+        // never emits an NDX_DONE mid-walk to free it. Every mode streams,
+        // including the non-transfer ones (list-only, dry-run,
+        // --only-write-batch), because upstream's generator walk and its
+        // mid-walk release are mode-independent; only a delete pass stays on the
+        // batch path until A5a-4. On
         // the live path INC_RECURSE is not negotiated, so `flist_eof` is already
         // set here, this dispatch never fires, and the batch body below runs
         // unchanged - byte-for-byte.
@@ -139,7 +142,7 @@ impl ReceiverContext {
             Vec::new()
         };
 
-        // A dry run reports its directories from the shared `plan_dry_run` pass
+        // A dry run reports its directories from the shared `plan_dry_run_in_range` pass
         // below, exactly like `run_pipelined`. Running this walk too would
         // record every directory row and created-dir tally twice; it creates
         // nothing under `skip_dest_writes()` anyway (#6947). `--list-only` does
@@ -486,6 +489,7 @@ impl ReceiverContext {
         // matching upstream's single-pass emission ordering.
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
+        self.order_list_only_entries(&mut stats);
 
         self.finalize_transfer(reader, writer)?;
 
@@ -508,7 +512,7 @@ impl ReceiverContext {
     /// sub-list stream LAZILY, one segment at a time (RS-3b), instead of draining
     /// it up front.
     ///
-    /// All four must hold:
+    /// All three must hold:
     /// - INC_RECURSE negotiated (a sub-list stream exists at all);
     /// - `!flist_eof` at entry - the terminator has not arrived, so this is a
     ///   genuine multi-segment stream. On the live path INC_RECURSE is not
@@ -516,55 +520,41 @@ impl ReceiverContext {
     ///   this is always false and the batch body runs unchanged;
     /// - no delete pass - the per-directory delete split is A5a-4; until then
     ///   `--delete*` stays on the batch path, whose whole-list keep-set needs
-    ///   `first_segment_idx == 0` (`delete_pass_flist_complete`);
-    /// - a real transfer - the non-transfer modes (list-only, dry-run,
-    ///   `--only-write-batch`) keep the eager drain (their reply reads are not
-    ///   marker-aware yet, task #47).
+    ///   `first_segment_idx == 0` (`delete_pass_flist_complete`).
+    ///
+    /// The drive mode is deliberately not a condition. Upstream's
+    /// generate_files() walks one sub-list at a time and releases each finished
+    /// one through check_for_finished_files() whatever the mode
+    /// (generator.c:2803-2842); `--list-only` only changes what
+    /// recv_generator() does per entry (generator.c:1638-1644) and `!do_xfers`
+    /// only the request shape. A non-transfer mode left on the eager drain
+    /// deadlocks past `MAX_FILECNT_LOOKAHEAD` exactly as a transfer did.
     fn should_stream_incremental(&self) -> bool {
         self.compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE))
             && !self.flist_eof
             && !self.config.flags.delete
-            && matches!(self.select_mode(), ReceiverMode::Transfer)
     }
 
-    /// Determines the flat-index range `[start, end)` of the segment beginning
-    /// at flat index `seg_start`, pulling the NEXT sub-list segment (or the
-    /// `NDX_FLIST_EOF` terminator) if needed so the end is known.
+    /// The flat-index end of segment `segment_idx`, which must already be
+    /// recorded in `ndx_segments`.
     ///
     /// A sub-list is read whole to its own end-of-flist terminator by
-    /// `receive_one_extra_segment`, so a segment's end is `ndx_segments[k+1].0`
-    /// once the next boundary is recorded, or `file_list.len()` once `flist_eof`
-    /// is set. Pulling the next segment here is what keeps the sender producing
-    /// (it stays roughly one segment ahead); the mid-walk `NDX_DONE` below frees
-    /// its window so this never blocks on a parked sender past the lookahead.
-    ///
-    /// # Upstream Reference
-    ///
-    /// - `generator.c:2360-2368` - `wait_for_receiver()` pulls the next list when
-    ///   `!cur_flist->next && !flist_eof`.
-    fn segment_end_pulling_next<R: Read>(
-        &mut self,
-        segment_idx: usize,
-        reader: &mut crate::reader::ServerReader<R>,
-        ndx_read_codec: &mut NdxCodecEnum,
-    ) -> io::Result<usize> {
-        loop {
-            if segment_idx + 1 < self.ndx_segments.len() {
-                return Ok(self.ndx_segments[segment_idx + 1].0);
-            }
-            if self.flist_eof {
-                return Ok(self.file_list.len());
-            }
-            // Learn this segment's end by pulling the next boundary/EOF. The
-            // probe index is one past the current end, so `ensure_flat_idx`
-            // reads exactly the next frame (a segment or the terminator). The
-            // single connection-wide inbound codec is threaded here (not a
-            // separate flist codec): a mid-walk sub-list pull and the transfer
-            // echoes share one read_ndx diff-state, matching upstream io.c.
-            let probe = self.file_list.len();
-            self.ensure_flat_idx(probe, reader, ndx_read_codec)?;
-        }
+    /// `receive_one_extra_segment`, so the newest recorded segment is complete
+    /// and ends at `file_list.len()`; an older one ends where its successor
+    /// starts. Nothing is read from the wire: upstream's generator walks
+    /// `cur_flist` on its own `used` count and only waits for the next list
+    /// after finishing it (`wait_for_receiver()` at generator.c:2836-2841,
+    /// under `!cur_flist->next && !flist_eof`). Waiting for the next list
+    /// *before* walking the current one deadlocks as soon as the sub-lists the
+    /// sender has queued reach `MAX_FILECNT_LOOKAHEAD` - for example one
+    /// directory of more than 10,000 entries - because the sender only frees
+    /// its window on an NDX_DONE this walk has not yet sent (io.c:853-860,
+    /// sender.c:529-538).
+    fn segment_end(&self, segment_idx: usize) -> usize {
+        self.ndx_segments
+            .get(segment_idx + 1)
+            .map_or(self.file_list.len(), |next| next.0)
     }
 
     /// Lazy per-segment consumption of an INC_RECURSE sub-list stream (RS-3b).
@@ -649,6 +639,11 @@ impl ReceiverContext {
         // gates the mid-walk NDX_DONE (upstream frees `first_flist` only once
         // `cur_flist` has advanced past it).
         let mut segment_idx = 0usize;
+        let mode = self.select_mode();
+        // Same gate as the batch driver: a dry run (and --only-write-batch,
+        // which implies it) reports directories from its plan pass, so walking
+        // them here too would record every directory row twice (#6947).
+        let walk_dirs = !self.config.flags.dry_run;
         loop {
             // Make sure segment `segment_idx` exists (pull the next frame while
             // the table has not reached it and the stream has not ended).
@@ -662,8 +657,7 @@ impl ReceiverContext {
                 break;
             }
             let seg_start = self.ndx_segments[segment_idx].0;
-            let seg_end =
-                self.segment_end_pulling_next(segment_idx, reader, &mut ndx_read_codec)?;
+            let seg_end = self.segment_end(segment_idx);
             if seg_start >= seg_end {
                 // An empty segment (e.g. a sub-list of only tombstones): nothing
                 // to create or transfer, but it still counts toward the
@@ -704,7 +698,7 @@ impl ReceiverContext {
             // :2260 itemize new / existing directory.
             for flist_idx in range.clone() {
                 let file_entry = &self.file_list[flist_idx];
-                if !file_entry.is_dir() {
+                if !walk_dirs || !file_entry.is_dir() {
                     continue;
                 }
                 let result = self.create_directory_incremental(
@@ -750,44 +744,67 @@ impl ReceiverContext {
                 setup.acl_cache.as_deref(),
                 setup.acl_id_map.as_deref(),
             );
-            let total_files = files_to_transfer.len();
-            // Progress accounting: `files_transferred` is the running total from
-            // prior segments (the offset so `files_done` keeps climbing across
-            // segments), and `flist_eof` reports whether the sub-list stream has
-            // ended (false while more segments may still arrive - upstream's
-            // `ir-chk` phase).
-            let files_done_offset = files_transferred;
-            let flist_complete = self.flist_eof;
-            let (
-                seg_transferred,
-                seg_size,
-                seg_bytes,
-                seg_literal,
-                seg_matched,
-                seg_redo,
-                seg_delayed,
-            ) = self.run_pipeline_loop_decoupled(
-                reader,
-                writer,
-                pipeline_config.clone(),
-                &setup,
-                files_to_transfer,
-                &mut metadata_errors,
-                false,
-                total_files,
-                files_done_offset,
-                flist_complete,
-                &mut progress,
-                &mut ndx_write_codec,
-                &mut ndx_read_codec,
-            )?;
-            files_transferred += seg_transferred;
-            transferred_file_size += seg_size;
-            bytes_received += seg_bytes;
-            literal_data += seg_literal;
-            matched_data += seg_matched;
-            all_redo_indices.extend(seg_redo);
-            all_delayed_updates.extend(seg_delayed);
+            match mode {
+                ReceiverMode::NonTransfer(non_transfer) => {
+                    // upstream: generator.c:1638-1644 / :1858-1959 - the
+                    // per-entry work of a non-transfer mode, run over this
+                    // sub-list only; the echo reads absorb any sub-list the
+                    // sender interleaves ahead of them.
+                    let (seg_transferred, seg_size) = self.run_non_transfer_segment(
+                        non_transfer,
+                        range.clone(),
+                        reader,
+                        writer,
+                        &setup,
+                        &files_to_transfer,
+                        &mut stats,
+                        &mut ndx_write_codec,
+                        &mut ndx_read_codec,
+                    )?;
+                    files_transferred += seg_transferred;
+                    transferred_file_size += seg_size;
+                }
+                ReceiverMode::Transfer => {
+                    let total_files = files_to_transfer.len();
+                    // Progress accounting: `files_transferred` is the running total from
+                    // prior segments (the offset so `files_done` keeps climbing across
+                    // segments), and `flist_eof` reports whether the sub-list stream has
+                    // ended (false while more segments may still arrive - upstream's
+                    // `ir-chk` phase).
+                    let files_done_offset = files_transferred;
+                    let flist_complete = self.flist_eof;
+                    let (
+                        seg_transferred,
+                        seg_size,
+                        seg_bytes,
+                        seg_literal,
+                        seg_matched,
+                        seg_redo,
+                        seg_delayed,
+                    ) = self.run_pipeline_loop_decoupled(
+                        reader,
+                        writer,
+                        pipeline_config.clone(),
+                        &setup,
+                        files_to_transfer,
+                        &mut metadata_errors,
+                        false,
+                        total_files,
+                        files_done_offset,
+                        flist_complete,
+                        &mut progress,
+                        &mut ndx_write_codec,
+                        &mut ndx_read_codec,
+                    )?;
+                    files_transferred += seg_transferred;
+                    transferred_file_size += seg_size;
+                    bytes_received += seg_bytes;
+                    literal_data += seg_literal;
+                    matched_data += seg_matched;
+                    all_redo_indices.extend(seg_redo);
+                    all_delayed_updates.extend(seg_delayed);
+                }
+            }
 
             // The segment is now fully drained (no in-progress files). Release
             // the OLDEST not-yet-released segment strictly older than the one
@@ -937,6 +954,7 @@ impl ReceiverContext {
 
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
+        self.order_list_only_entries(&mut stats);
 
         self.finalize_transfer(reader, writer)?;
 

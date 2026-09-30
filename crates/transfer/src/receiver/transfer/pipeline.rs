@@ -16,7 +16,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use logging::{debug_log, info_log};
-use protocol::codec::{MonotonicNdxWriter, NdxCodec, NdxCodecEnum, create_ndx_codec};
+use protocol::codec::{MonotonicNdxWriter, NdxCodec, NdxCodecEnum};
 use protocol::flist::FileEntry;
 
 use crate::delta_apply::ChecksumVerifier;
@@ -1181,10 +1181,12 @@ impl ReceiverContext {
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     >(
-        &self,
+        &mut self,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
-        plan: &[super::candidates::DryRunItem<'_>],
+        plan: &[super::candidates::DryRunItem],
+        ndx_write_codec: &mut MonotonicNdxWriter,
+        ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<(usize, u64)> {
         if plan.is_empty() {
             writer.flush()?;
@@ -1193,8 +1195,6 @@ impl ReceiverContext {
 
         let mut transfer_items = 0usize;
         let mut transferred_size = 0u64;
-        let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
-        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
         let write_iflags = self.protocol.supports_iflags();
         let preserve_xattrs = self.config.flags.xattrs;
         let want_xattr_optim = self.protocol.as_u8() >= 31
@@ -1205,14 +1205,14 @@ impl ReceiverContext {
         // upstream: io.c perform_io() flushes output via select() while waiting
         // for input. We flush once before blocking on each response read, but
         // only when needed (the multiplex dirty-flag skips redundant syscalls).
-        for &(file_idx, file_entry, item_iflags) in plan {
+        for &(file_idx, item_iflags) in plan {
             let needs_transfer = item_iflags & crate::generator::ItemFlags::ITEM_TRANSFER != 0;
             if needs_transfer {
                 // upstream: receiver.c:799-800 - xferred_files and
                 // total_transferred_size are summed before the `!do_xfers`
                 // continue, so a dry run reports what the real run would move.
                 transfer_items += 1;
-                transferred_size += file_entry.size();
+                transferred_size += self.file_list[file_idx].size();
             }
 
             // upstream: generator.c:590,607-610 - below protocol 29 itemize()
@@ -1245,13 +1245,7 @@ impl ReceiverContext {
             writer.flush()?;
 
             // upstream: sender.c:469-486 - sender echoes write_ndx_and_attrs back
-            let (_echoed_ndx, _sender_attrs) =
-                crate::receiver::wire::SenderAttrs::read_with_codec_xattr(
-                    reader,
-                    &mut ndx_read_codec,
-                    preserve_xattrs,
-                    want_xattr_optim,
-                )?;
+            self.read_non_transfer_echo(reader, ndx_read_codec, preserve_xattrs, want_xattr_optim)?;
 
             // upstream: rsync.c:672-676 set_file_attrs emits the bare-name
             // notice AFTER the transfer decision is known. In dry-run the
@@ -1267,12 +1261,48 @@ impl ReceiverContext {
                 && self.config.connection.client_mode
                 && !self.should_emit_itemize()
             {
-                info_log!(Name, 1, "{}", file_entry.path().display());
+                info_log!(Name, 1, "{}", self.file_list[file_idx].path().display());
             }
         }
 
         writer.flush()?;
         Ok((transfer_items, transferred_size))
+    }
+
+    /// Reads the sender's `write_ndx_and_attrs()` echo of one non-transfer-mode
+    /// request (`--dry-run`, `--only-write-batch`).
+    ///
+    /// Marker-aware, with this receiver as the sink: once INC_RECURSE sub-lists
+    /// are consumed lazily, the sender may put the next sub-list
+    /// (`NDX_FLIST_OFFSET` + entries) ahead of the echo, and that segment is
+    /// appended to the file list here instead of being misread as the echo's
+    /// NDX. Without INC_RECURSE no marker is ever sent, so the bytes consumed
+    /// are exactly the plain NDX + attrs read.
+    ///
+    /// upstream: rsync.c:322-431 - `read_ndx_and_attrs()`.
+    fn read_non_transfer_echo<R: Read>(
+        &mut self,
+        reader: &mut crate::reader::ServerReader<R>,
+        ndx_read_codec: &mut NdxCodecEnum,
+        preserve_xattrs: bool,
+        want_xattr_optim: bool,
+    ) -> io::Result<()> {
+        match crate::receiver::ndx_stream::read_ndx_and_attrs(
+            reader,
+            ndx_read_codec,
+            self,
+            preserve_xattrs,
+            want_xattr_optim,
+        )? {
+            Some(_) => Ok(()),
+            // upstream: rsync.c:334-335 - NDX_DONE ends the phase; an echo still
+            // outstanding means the sender dropped it.
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "sender ended the phase (NDX_DONE) while a non-transfer echo was \
+                 still outstanding - protocol violation",
+            )),
+        }
     }
 
     /// Receiver loop for `--only-write-batch=X` (upstream `write_batch < 0`).
@@ -1314,19 +1344,18 @@ impl ReceiverContext {
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     >(
-        &self,
+        &mut self,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
         files_to_transfer: &[(usize, PathBuf, u32)],
         setup: &PipelineSetup,
+        ndx_write_codec: &mut MonotonicNdxWriter,
+        ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<()> {
         if files_to_transfer.is_empty() {
             writer.flush()?;
             return Ok(());
         }
-
-        let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
-        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
         let preserve_xattrs = self.config.flags.xattrs;
         let want_xattr_optim = self.protocol.as_u8() >= 31
@@ -1410,7 +1439,7 @@ impl ReceiverContext {
             // upstream: generator.c:1939 write_ndx + write_sum_head(f_out, s).
             let _pending = send_file_request(
                 writer,
-                &mut ndx_write_codec,
+                &mut *ndx_write_codec,
                 self.flat_to_wire_ndx(file_idx),
                 file_path.clone(),
                 basis.signature,
@@ -1428,13 +1457,7 @@ impl ReceiverContext {
             writer.flush()?;
 
             // upstream: sender.c:469-486 - write_ndx_and_attrs(f_out, ...) echo.
-            let (_echoed_ndx, _sender_attrs) =
-                crate::receiver::wire::SenderAttrs::read_with_codec_xattr(
-                    reader,
-                    &mut ndx_read_codec,
-                    preserve_xattrs,
-                    want_xattr_optim,
-                )?;
+            self.read_non_transfer_echo(reader, ndx_read_codec, preserve_xattrs, want_xattr_optim)?;
 
             if let Some(token_reader) = token_reader.as_mut() {
                 // upstream: sender.c:444 write_sum_head(f_xfer, s) - on a pull
@@ -1457,7 +1480,7 @@ impl ReceiverContext {
                 && self.config.connection.client_mode
                 && !self.should_emit_itemize()
             {
-                info_log!(Name, 1, "{}", file_entry.path().display());
+                info_log!(Name, 1, "{}", self.file_list[file_idx].path().display());
             }
         }
 

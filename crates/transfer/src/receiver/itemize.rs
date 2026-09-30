@@ -666,18 +666,77 @@ impl ReceiverContext {
         })
     }
 
-    /// Drains every buffered `--out-format` event row in ascending flist-index
-    /// order (the same order [`Self::flush_itemize_rows`] uses for strings).
+    /// Drains every buffered `--out-format` event row in generator walk order
+    /// (the same order [`Self::flush_itemize_rows`] uses for strings).
     /// Called once by the client driver after the transfer, which hands each row
     /// to the `ItemizeCallback` so the CLI renders the user's template. Also
     /// drained by the `--read-batch` replay dispatch (`core::client::run::batch`)
     /// after `run_local_replay`, which is why this is crate-public rather than
     /// receiver-private.
     pub fn drain_event_rows(&self) -> Vec<crate::progress::OwnedItemizeRow> {
-        std::mem::take(&mut *self.event_rows.borrow_mut())
-            .into_values()
+        let rows = std::mem::take(&mut *self.event_rows.borrow_mut());
+        self.in_generator_walk_order(rows.into_iter())
             .flatten()
             .collect()
+    }
+
+    /// Maps each directory that heads an INC_RECURSE sub-list, by flat index,
+    /// to the flat start of that sub-list. Empty without INC_RECURSE, where the
+    /// single list has no heads and flat order is walk order.
+    ///
+    /// upstream: generator.c:2780-2788 - generate_files() runs recv_generator()
+    /// for a sub-list's parent directory (`ndx = cur_flist->ndx_start - 1`)
+    /// immediately before that sub-list's own entries. The same directory met
+    /// inside its parent's list is `is_dir < 0` (generator.c:1631-1633): it is
+    /// neither listed (generator.c:1638-1644) nor itemized there, only created
+    /// if missing (generator.c:1818-1832).
+    pub(in crate::receiver) fn sub_list_heads(&self) -> std::collections::HashMap<usize, usize> {
+        use super::file_list::DirSlot;
+        if self.ndx_segments.len() < 2 {
+            return std::collections::HashMap::new();
+        }
+        let starts: std::collections::HashMap<&std::path::Path, usize> = self
+            .segment_parent_dir_ndx
+            .iter()
+            .zip(&self.ndx_segments)
+            .filter_map(
+                |(parent, &(start, _))| match self.dir_flist.resolve((*parent)?)? {
+                    DirSlot::Active { name, .. } => Some((name.as_path(), start)),
+                    DirSlot::Cleared => None,
+                },
+            )
+            .collect();
+        self.file_list
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.is_dir())
+            .filter_map(|(idx, entry)| {
+                starts
+                    .get(entry.path().as_path())
+                    .map(|&start| (idx, start))
+            })
+            .collect()
+    }
+
+    /// Reorders `(flat index, item)` pairs, given in flat order, into the order
+    /// upstream's generator reaches them: a directory heading a sub-list moves to
+    /// just before that sub-list's first entry (see [`Self::sub_list_heads`]).
+    /// Without INC_RECURSE the input order is returned unchanged.
+    pub(in crate::receiver) fn in_generator_walk_order<T>(
+        &self,
+        items: impl Iterator<Item = (usize, T)>,
+    ) -> impl Iterator<Item = T> {
+        let heads = self.sub_list_heads();
+        let mut keyed: Vec<((usize, bool), T)> = items
+            .map(|(idx, item)| {
+                let key = heads.get(&idx).map_or((idx, true), |&start| (start, false));
+                (key, item)
+            })
+            .collect();
+        if !heads.is_empty() {
+            keyed.sort_by_key(|&(key, _)| key);
+        }
+        keyed.into_iter().map(|(_, item)| item)
     }
 
     /// Emits itemize output for a file entry to the client-visible sink.
@@ -1105,12 +1164,14 @@ impl ReceiverContext {
         std::mem::take(&mut *self.daemon_log_rows.borrow_mut())
     }
 
-    /// Drains every buffered itemize row in ascending flist-index order,
-    /// routing each through the client sink.
+    /// Drains every buffered itemize row in generator walk order, routing each
+    /// through the client sink.
     ///
-    /// Mirrors upstream's single flist-index-order walk in `generate_files`
-    /// (`generator.c:2329-2344`), where each entry is itemized as it is reached
-    /// so a directory row immediately precedes its children. Because only
+    /// Mirrors upstream's walk in `generate_files` (`generator.c:2780-2820`),
+    /// where each entry is itemized as it is reached so a directory row
+    /// immediately precedes its children: ascending flist index, except that
+    /// under INC_RECURSE a directory is reached at the head of its own sub-list
+    /// ([`Self::in_generator_walk_order`]). Because only
     /// client-mode rows are ever recorded (see [`Self::record_itemize`]),
     /// [`Self::emit_info_line`] writes them to the client's stdout. Called once
     /// by the driver just before finalization.
@@ -1119,7 +1180,7 @@ impl ReceiverContext {
         writer: &mut W,
     ) -> std::io::Result<()> {
         let rows = std::mem::take(&mut *self.itemize_rows.borrow_mut());
-        for (_idx, lines) in rows {
+        for lines in self.in_generator_walk_order(rows.into_iter()) {
             for line in lines {
                 self.emit_info_line(writer, &line)?;
             }
