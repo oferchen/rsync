@@ -9,6 +9,7 @@
 //! receiver can treat both wire variants uniformly.
 
 use std::collections::HashMap;
+use std::io;
 
 use protocol::flist::FileEntry;
 
@@ -33,15 +34,21 @@ use protocol::flist::FileEntry;
 /// `hlink_first()` to decide leader vs follower (transfer, quick-check, hardlink
 /// creation).
 ///
+/// `inc_recurse_ndx_start` is the segment's NDX start under INC_RECURSE and
+/// `None` otherwise. A gnum first seen in this segment that lies below it has
+/// no leader in any list, so the call fails with a `RERR_PROTOCOL` error.
+///
 /// # Upstream Reference
 ///
 /// - `hlink.c:match_gnums()` - post-sort leader/follower assignment with
 ///   `prior_hlinks` hashtable for cross-segment state
+/// - `hlink.c:125-137` - the gnum-before-`ndx_start` `RERR_PROTOCOL` abort
 /// - `hlink.c:idev_find()` - two-level (dev, ino) hashtable lookup
 pub(in crate::receiver) fn match_hard_links(
     entries: &mut [FileEntry],
     prior_hlinks: &mut HashMap<u32, bool>,
-) {
+    inc_recurse_ndx_start: Option<i32>,
+) -> io::Result<()> {
     // Collect the first sorted position for each hardlink group within this segment.
     // Key: hardlink_idx (gnum), Value: index into entries slice.
     let mut first_in_group: HashMap<u32, usize> = HashMap::new();
@@ -61,6 +68,17 @@ pub(in crate::receiver) fn match_hard_links(
             let seen_before = prior_hlinks.contains_key(&gnum);
 
             if is_first_in_segment && !seen_before {
+                // upstream: hlink.c:125-137 match_gnums() - an unrecorded gnum
+                // before this sub-list's start was never declared a leader.
+                if let Some(ndx_start) = inc_recurse_ndx_start
+                    && i64::from(gnum) < i64::from(ndx_start)
+                {
+                    return Err(protocol::protocol_violation(format!(
+                        "hard-link gnum {gnum} precedes flist start {ndx_start} {}{}",
+                        crate::role_trailer::error_location!(),
+                        crate::role_trailer::receiver()
+                    )));
+                }
                 // First occurrence of this gnum across all segments - this is the leader.
                 entry.set_hlink_first(true);
                 prior_hlinks.insert(gnum, true);
@@ -73,6 +91,7 @@ pub(in crate::receiver) fn match_hard_links(
             }
         }
     }
+    Ok(())
 }
 
 /// Normalizes protocol 28-29 hardlink entries to use `hardlink_idx` and
@@ -160,7 +179,7 @@ mod tests {
 
         let mut entries = vec![dir_a, leader, dir_b, follower];
         let mut prior_hlinks = HashMap::new();
-        match_hard_links(&mut entries, &mut prior_hlinks);
+        match_hard_links(&mut entries, &mut prior_hlinks, None).unwrap();
 
         // Directory entries remain unaffected
         assert!(!entries[0].hlink_first());
@@ -200,7 +219,7 @@ mod tests {
 
         let mut entries = vec![dir_d, la, fa, dir_e, lb, fb];
         let mut prior_hlinks = HashMap::new();
-        match_hard_links(&mut entries, &mut prior_hlinks);
+        match_hard_links(&mut entries, &mut prior_hlinks, None).unwrap();
 
         // Group 1: position 1 is leader, position 2 is follower
         assert!(entries[1].hlink_first());
@@ -211,6 +230,68 @@ mod tests {
         assert!(!entries[5].hlink_first());
     }
 
+    fn hlinked_file(name: &str, gnum: u32) -> FileEntry {
+        let mut entry = FileEntry::new_file(name.into(), 64, 0o644);
+        entry.set_hardlink_idx(gnum);
+        entry
+    }
+    fn is_protocol_violation(err: &io::Error) -> bool {
+        err.get_ref()
+            .is_some_and(|e| e.is::<protocol::ProtocolViolation>())
+    }
+    /// A sub-list follower whose gnum points before the segment start, with no
+    /// leader recorded by an earlier segment, references an entry the sender
+    /// never declared `XMIT_HLINK_FIRST`.
+    ///
+    /// WHY: upstream `hlink.c:125-137 match_gnums()` aborts with
+    /// `RERR_PROTOCOL`; promoting the entry to leader instead would make the
+    /// receiver trust a hostile back-reference and link against nothing.
+    #[test]
+    fn inc_recurse_gnum_before_segment_start_without_leader_is_refused() {
+        let mut entries = vec![hlinked_file("d/b.txt", 2)];
+        let mut prior_hlinks = HashMap::new();
+        let err = match_hard_links(&mut entries, &mut prior_hlinks, Some(5))
+            .expect_err("unrecorded back-reference must abort");
+        assert!(
+            is_protocol_violation(&err),
+            "must map to RERR_PROTOCOL: {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("hard-link gnum 2 precedes flist start 5"),
+            "unexpected message: {err}"
+        );
+    }
+    /// The same back-reference is legitimate once an earlier segment recorded
+    /// the leader: the entry stays a follower.
+    #[test]
+    fn inc_recurse_gnum_before_segment_start_with_prior_leader_is_accepted() {
+        let mut prior_hlinks = HashMap::new();
+        let mut first = vec![hlinked_file("a.txt", 0)];
+        match_hard_links(&mut first, &mut prior_hlinks, Some(0)).unwrap();
+        assert!(first[0].hlink_first());
+        let mut second = vec![hlinked_file("d/b.txt", 0)];
+        match_hard_links(&mut second, &mut prior_hlinks, Some(3)).unwrap();
+        assert!(!second[0].hlink_first());
+    }
+    /// A leader whose gnum is inside the current segment is never refused.
+    #[test]
+    fn inc_recurse_gnum_within_segment_becomes_leader() {
+        let mut entries = vec![hlinked_file("d/a.txt", 5), hlinked_file("d/b.txt", 5)];
+        let mut prior_hlinks = HashMap::new();
+        match_hard_links(&mut entries, &mut prior_hlinks, Some(5)).unwrap();
+        assert!(entries[0].hlink_first());
+        assert!(!entries[1].hlink_first());
+    }
+    /// Upstream only runs the check under `inc_recurse`; a single flat list has
+    /// no earlier segment to refer back to.
+    #[test]
+    fn gnum_start_check_is_inert_without_inc_recurse() {
+        let mut entries = vec![hlinked_file("b.txt", 2)];
+        let mut prior_hlinks = HashMap::new();
+        match_hard_links(&mut entries, &mut prior_hlinks, None).unwrap();
+        assert!(entries[0].hlink_first());
+    }
     /// Verifies `normalize_pre30_hardlinks` assigns synthetic hardlink_idx and
     /// hlink_first from (dev, ino) pairs for a simple two-file group.
     #[test]
@@ -351,7 +432,7 @@ mod tests {
 
         let mut entries = vec![entry_a, entry_z];
         let mut prior_hlinks = HashMap::new();
-        match_hard_links(&mut entries, &mut prior_hlinks);
+        match_hard_links(&mut entries, &mut prior_hlinks, None).unwrap();
 
         // After match_hard_links, sorted position 0 becomes the new leader
         assert!(
@@ -381,7 +462,7 @@ mod tests {
 
         let mut seg1 = vec![leader];
         let mut prior_hlinks = HashMap::new();
-        match_hard_links(&mut seg1, &mut prior_hlinks);
+        match_hard_links(&mut seg1, &mut prior_hlinks, Some(42)).unwrap();
 
         // Leader in segment 1 should be marked as leader
         assert!(
@@ -396,7 +477,7 @@ mod tests {
         follower.set_hardlink_idx(42);
 
         let mut seg2 = vec![follower];
-        match_hard_links(&mut seg2, &mut prior_hlinks);
+        match_hard_links(&mut seg2, &mut prior_hlinks, Some(44)).unwrap();
 
         // Follower in segment 2 must NOT be promoted to leader - its leader is
         // in segment 1.
@@ -421,7 +502,7 @@ mod tests {
         c.set_hardlink_idx(20);
 
         let mut seg1 = vec![a, b, c];
-        match_hard_links(&mut seg1, &mut prior_hlinks);
+        match_hard_links(&mut seg1, &mut prior_hlinks, Some(10)).unwrap();
 
         assert!(seg1[0].hlink_first(), "gnum 10 leader in seg1");
         assert!(!seg1[1].hlink_first(), "gnum 10 follower in seg1");
@@ -436,7 +517,7 @@ mod tests {
         f.set_hardlink_idx(30);
 
         let mut seg2 = vec![d, e, f];
-        match_hard_links(&mut seg2, &mut prior_hlinks);
+        match_hard_links(&mut seg2, &mut prior_hlinks, Some(25)).unwrap();
 
         assert!(!seg2[0].hlink_first(), "gnum 10 cross-segment follower");
         assert!(!seg2[1].hlink_first(), "gnum 20 cross-segment follower");

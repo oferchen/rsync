@@ -209,7 +209,7 @@ impl<R: Read> IncrementalFileListReceiver<R> {
             sort_file_list(&mut entries, self.use_qsort, false);
         }
         let mut prior_hlinks = HashMap::new();
-        match_hard_links(&mut entries, &mut prior_hlinks);
+        match_hard_links(&mut entries, &mut prior_hlinks, None)?;
 
         Ok(entries)
     }
