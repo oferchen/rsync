@@ -227,8 +227,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // use of this -eFLAGS opt". At protocol 28/29 the compact flag string
         // must end at the transfer letters (`-r`, not `-re.iLsfxCIvu`).
         if self.requested_protocol().as_u8() >= 30 {
-            let advertise_inc_recurse =
-                self.config.allow_inc_recurse() && self.role != RemoteRole::Receiver;
+            let am_sender = self.role != RemoteRole::Receiver;
+            let advertise_inc_recurse = self.config.allow_inc_recurse(am_sender) && am_sender;
             flags.push_str(&build_capability_string_suffix(advertise_inc_recurse));
         }
         // upstream: options.c:2740 - `if (x > 1) args[ac++] = argstr;`. A bare
