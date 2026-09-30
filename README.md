@@ -20,7 +20,7 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 
 **Release:** 0.6.4 (2026-07-18). Changes merged since then are listed under *Unreleased* in the [CHANGELOG](./CHANGELOG.md). All transfer modes (local, SSH, daemon), the delta algorithm, metadata preservation and compression are implemented; the table below lists the gaps.
 
-**Upstream reference.** Behaviour, source citations and the testsuite gate all track rsync 3.5.1 (`upstream_version` in `Cargo.toml`). 3.5.1 raised the protocol to 33. oc-rsync speaks 33, including `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003). It negotiates down to 28 for older peers and caps a newer peer at 33 instead of refusing it (#7916). The new options and daemon directives from 3.5.0 are implemented (listed below). The per-CVE audit is in [`SECURITY.md`](./SECURITY.md).
+**Upstream reference.** Behaviour, source citations and the testsuite gate all track rsync 3.5.1 (`upstream_version` in `Cargo.toml`). 3.5.1 raised the protocol to 33. oc-rsync speaks 33, including `MSG_BLOCK_STATS` and the `--stats` touched-blocks line (#8003). It negotiates down to 28 for older peers and caps a newer peer at 33 instead of refusing it (#7916). The options and daemon directives added in 3.5.0 are implemented (see *Path confinement* below). The per-CVE audit is in [`SECURITY.md`](./SECURITY.md).
 
 | Component | Status |
 |-----------|--------|
@@ -287,7 +287,7 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 
 | Protocol | Upstream versions | oc-rsync status | Coverage |
 |----------|-------------------|-----------------|----------|
-| 33 | 3.5.1 | Full support (default) | Unit and golden-byte tests; the 3.5.1 testsuite legs |
+| 33 | 3.5.1 | Full support (default) | Unit tests, interop matrix against 3.5.1, and the 3.5.1 testsuite legs |
 | 32 | 3.4.x, 3.5.0 | Full support | Interop matrix against 3.4.4 and 3.5.0 |
 | 31 | 3.1.x - 3.3.x | Full support | Interop matrix against 3.1.3 |
 | 30 | 3.0.x | Full support | Interop matrix against 3.0.9 |
@@ -295,7 +295,7 @@ oc-rsync warns when it sees `-C` or `-o Compression=yes` in the SSH argv, and (w
 | 28 | 2.6.0 - 2.6.3 | Wire-level support | Golden-byte tests in `crates/protocol/tests/` |
 | <= 27 | <= 2.5.x | Not supported | |
 
-oc-rsync advertises protocol 33 and uses the lower of its own and the peer's version, so a 3.5.0 or 3.4.x peer runs at 32. A 3.5.1 peer runs at 33, but 3.5.1 is not yet in the interop matrix below. Per-version behaviour is implemented as `protocol_version` gates in the wire codecs, for example [`zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs).
+oc-rsync advertises protocol 33 and uses the lower of its own and the peer's version, so a 3.5.0 or 3.4.x peer runs at 32. A 3.5.1 peer runs at 33. Per-version behaviour is implemented as `protocol_version` gates in the wire codecs, for example [`zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs).
 
 Interop scenarios run in CI against the upstream releases listed in [`tools/ci/run_interop.sh`](./tools/ci/run_interop.sh): `versions=` for the scenario matrix, `extra_build_versions=` for build-only peers, and `extended_matrix_versions=` for the extended matrix. Push and pull are both covered, across transfer modes, deletion, compression, metadata, reference dirs, file selection, batch round trip, path handling, device nodes and daemon auth. See the [interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for detail.
 
@@ -305,7 +305,7 @@ Interop scenarios run in CI against the upstream releases listed in [`tools/ci/r
 |---|---|---|
 | Linux x86_64 / aarch64 | **Tier 1** | io_uring, `splice`, `vmsplice`, Landlock. Required CI runs the full nextest workspace. A seccomp syscall allowlist for daemon workers is available with `--features daemon-seccomp`; it is off in default builds and in released binaries. |
 | macOS x86_64 / aarch64 | **Tier 1** | `clonefile`, `fcopyfile`, full metadata, ACL and xattr support including AppleDouble (`._foo`) resource forks. Required CI runs a crate-scoped subset (core, engine, cli, metadata, apple-fs, fast_io). |
-| Windows x86_64 | **Tier 2** | IOCP file and socket I/O, `CopyFileExW`, ReFS reflink, NTFS DACLs (partial), xattrs via NTFS Alternate Data Streams. No POSIX device nodes or FIFOs. Required CI tests the core, engine and cli crates. |
+| Windows x86_64 | **Tier 2** | IOCP file and socket I/O, `CopyFileExW`, ReFS reflink, NTFS DACLs (partial), xattrs via NTFS Alternate Data Streams. No POSIX device nodes or FIFOs. Required CI tests the core, engine, cli, metadata, fast_io and transfer crates. |
 
 Tier definitions and criteria: [Platform support tiers](docs/design/platform-tiers.md). Windows detail: [Windows support matrix](docs/user/windows-support-matrix.md) and the [Windows Tier 2 stub inventory](docs/audits/win-tier2-stub-inventory.md).
 
@@ -432,7 +432,7 @@ GNU GPL v3.0 or later. See [`LICENSE`](./LICENSE).
 
 Inspired by [`rsync`](https://rsync.samba.org/) by Andrew Tridgell and the Samba team.
 
-Internal matching-engine optimisations adapted from [`zsync`](http://zsync.moria.org.uk/) by Colin Phipps (in-memory only; wire format stays pure rsync).
+Internal matching-engine optimisations adapted from [`zsync`](http://zsync.moria.org.uk/) by Colin Phipps. They change only in-memory lookups, so the default wire format stays pure rsync.
 
 Thanks to **Pieter** for his heroic patience in enduring months of my rsync commentary.
 Thanks to **Elad** for his endless patience hearing rsync protocol commentary as I'm introduced to it.
