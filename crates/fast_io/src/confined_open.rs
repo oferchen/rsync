@@ -115,6 +115,106 @@ pub fn open_source_confined(
     imp::open_source_confined(root, relative, leaf, noatime)
 }
 
+/// A module root the sender opens a whole file list beneath.
+///
+/// [`open_source_confined`] re-opens the root and re-resolves every parent
+/// directory for each file. This opens the root once and holds the directory
+/// the current run of files lives in, so a file costs one `openat` of its
+/// leaf - upstream's sender does the same through its held-dirfd stack.
+///
+/// The held directory is resolved with the same confinement the per-file
+/// open applies (in-tree directory symlinks followed, escapes refused), and
+/// the leaf is opened `O_NOFOLLOW` against it. Only
+/// [`LeafPolicy::Nofollow`] is served from the held directory; a
+/// symlink-following leaf, and any failure on the held path, go through
+/// [`open_source_confined`], whose outcome is the one reported.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.1/sender.c:209-252` `sender_open_confined()` -
+///   `held_dir_path_fd(anchor, dir)` then `openat(dfd, bname, flags |
+///   O_NOFOLLOW)`, falling back to the full walk when the cache declines.
+/// - `rsync-3.5.1/syscall.c:3744-3816` `dpc_dir_fd()`.
+#[derive(Debug)]
+pub struct ConfinedSourceRoot {
+    root: std::path::PathBuf,
+    #[cfg(unix)]
+    anchor: std::sync::OnceLock<std::os::fd::OwnedFd>,
+    #[cfg(unix)]
+    held: crate::held_dir::HeldDir,
+}
+
+impl ConfinedSourceRoot {
+    /// A root to open sources beneath; nothing is opened until the first
+    /// [`open`](Self::open).
+    #[must_use]
+    pub fn new(root: std::path::PathBuf) -> Self {
+        Self {
+            root,
+            #[cfg(unix)]
+            anchor: std::sync::OnceLock::new(),
+            #[cfg(unix)]
+            held: crate::held_dir::HeldDir::new(),
+        }
+    }
+
+    /// The module root as the operator spelled it.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Opens `relative` for reading, confined beneath the root; the contract
+    /// and errors are [`open_source_confined`]'s.
+    ///
+    /// # Errors
+    ///
+    /// As [`open_source_confined`].
+    pub fn open(&self, relative: &Path, leaf: LeafPolicy, noatime: bool) -> io::Result<File> {
+        validate_relative(relative)?;
+        #[cfg(unix)]
+        if leaf == LeafPolicy::Nofollow
+            && let Some(file) = self.open_held(relative, noatime)
+        {
+            return Ok(file);
+        }
+        imp::open_source_confined(&self.root, relative, leaf, noatime)
+    }
+
+    /// The held-directory fast path; `None` sends the caller to the full open.
+    #[cfg(unix)]
+    fn open_held(&self, relative: &Path, noatime: bool) -> Option<File> {
+        use std::os::fd::AsFd;
+
+        let (_, dir, leaf) = imp::split_leaf(relative).ok()?;
+        let anchor = match self.anchor.get() {
+            Some(fd) => fd,
+            None => {
+                let opened = crate::secure_dir::open_trusted_dir(&self.root).ok()?;
+                self.anchor.get_or_init(|| opened)
+            }
+        };
+        let opened = if dir.as_os_str().is_empty() {
+            imp::open_leaf(anchor.as_fd(), leaf, noatime)
+        } else {
+            let parent = self
+                .held
+                .get_or_open(dir, || {
+                    crate::dir_sandbox::walk_beneath(anchor.as_fd(), dir)
+                })
+                .ok()?;
+            imp::open_leaf(parent.as_fd(), leaf, noatime)
+        };
+        match opened {
+            Ok(file) => Some(file),
+            Err(_) => {
+                self.held.invalidate();
+                None
+            }
+        }
+    }
+}
+
 /// Open `leaf` beneath an already-resolved `parent` for reading, `O_NOFOLLOW`,
 /// honouring `--open-noatime`.
 #[cfg(unix)]
@@ -427,7 +527,7 @@ mod imp {
     /// - `rsync-3.5.1/syscall.c:3143-3147` `secure_walk_at()`'s slash trim
     /// - `rsync-3.5.1/syscall.c:3166-3177` a final `.` / `..` -> `EISDIR`
     /// - `rsync-3.5.1/syscall.c:3223-3233` no component at all -> `EISDIR`
-    fn split_leaf(relative: &Path) -> io::Result<(&Path, &Path, &OsStr)> {
+    pub(super) fn split_leaf(relative: &Path) -> io::Result<(&Path, &Path, &OsStr)> {
         let bytes = relative.as_os_str().as_bytes();
         let end = bytes.iter().rposition(|byte| *byte != b'/');
         let bytes = match end {
@@ -846,6 +946,73 @@ mod tests {
             err.raw_os_error(),
             Some(libc::ELOOP),
             "expected ELOOP for an exhausted hop budget, got: {err}"
+        );
+    }
+
+    #[test]
+    fn held_root_reads_a_run_of_files_and_refuses_the_escape() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
+        let root = base.join("module");
+        std::fs::create_dir_all(root.join("d")).expect("mkdir d");
+        std::fs::write(root.join("d/one"), b"one").expect("one");
+        std::fs::write(root.join("d/two"), b"two").expect("two");
+        let outside = base.join("outside");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        std::fs::write(outside.join("secret"), b"do-not-leak").expect("secret");
+        symlink(&outside, root.join("escape")).expect("symlink escape");
+
+        let held = ConfinedSourceRoot::new(root);
+        for (name, body) in [("d/one", "one"), ("d/two", "two")] {
+            let file = held
+                .open(Path::new(name), LeafPolicy::Nofollow, false)
+                .expect("in-module file");
+            assert_eq!(read_to_string(file), body);
+        }
+        let err = held
+            .open(Path::new("escape/secret"), LeafPolicy::Nofollow, false)
+            .expect_err("escape must be refused");
+        let code = err.raw_os_error();
+        assert!(
+            code == Some(libc::EXDEV) || code == Some(libc::ELOOP),
+            "expected EXDEV or ELOOP for an escape, got: {err}"
+        );
+    }
+
+    /// upstream: `rsync-3.5.1/syscall.c:3713-3716` - a held directory swapped
+    /// for a symlink resolves to the inode the fd holds. A file the held inode
+    /// lacks falls back to the full confined walk, which refuses the escape;
+    /// either way the outside file is never read.
+    #[test]
+    fn held_root_never_reads_through_a_directory_swapped_after_caching() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base = std::fs::canonicalize(tmp.path()).expect("canonicalize");
+        let root = base.join("module");
+        std::fs::create_dir_all(root.join("d")).expect("mkdir d");
+        std::fs::write(root.join("d/one"), b"one").expect("one");
+        std::fs::write(root.join("d/kept"), b"kept").expect("kept");
+        let outside = base.join("outside");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        std::fs::write(outside.join("kept"), b"do-not-leak").expect("decoy");
+        std::fs::write(outside.join("secret"), b"do-not-leak").expect("secret");
+
+        let held = ConfinedSourceRoot::new(root.clone());
+        held.open(Path::new("d/one"), LeafPolicy::Nofollow, false)
+            .expect("holds d");
+        std::fs::rename(root.join("d"), root.join("d.aside")).expect("move d aside");
+        symlink(&outside, root.join("d")).expect("plant symlink");
+
+        let kept = held
+            .open(Path::new("d/kept"), LeafPolicy::Nofollow, false)
+            .expect("served from the held inode");
+        assert_eq!(read_to_string(kept), "kept");
+        let err = held
+            .open(Path::new("d/secret"), LeafPolicy::Nofollow, false)
+            .expect_err("the fallback walk must refuse the swapped-in escape");
+        let code = err.raw_os_error();
+        assert!(
+            code == Some(libc::EXDEV) || code == Some(libc::ELOOP),
+            "expected EXDEV or ELOOP for an escape, got: {err}"
         );
     }
 

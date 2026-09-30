@@ -10,7 +10,7 @@
 use std::ffi::{CString, OsStr};
 use std::fs::File;
 use std::io;
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
@@ -123,6 +123,20 @@ pub fn openat_via_sandbox_or_fallback(
         && let Some(leaf) = single_component_leaf(dest_dir, relative_path, link_path)
     {
         return openat(sandbox.current_dirfd(), leaf, flags, mode);
+    }
+    // A nested path in a directory the sandbox already holds opens against
+    // that descriptor instead of walking the whole path again. The leaf gets
+    // `O_NOFOLLOW` as the confined arm below gives it; any failure goes to
+    // that arm, whose verdict is the one reported.
+    // upstream: rsync-3.5.1/syscall.c:3858 held_dfd_for() + do_mkstemp_atfd().
+    if let Some(sandbox) = sandbox
+        && let Some((dirfd, leaf)) =
+            super::nested::held_leaf(sandbox, dest_dir, relative_path, link_path)
+    {
+        match openat(dirfd.as_fd(), leaf, flags | libc::O_NOFOLLOW, mode) {
+            Ok(file) => return Ok(file),
+            Err(_) => sandbox.release_held_parent(),
+        }
     }
     crate::ConfinedFallback::confined().open_at(link_path, flags, mode)
 }

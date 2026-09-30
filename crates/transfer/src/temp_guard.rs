@@ -390,25 +390,28 @@ fn try_create_new(
 ) -> io::Result<fs::File> {
     #[cfg(unix)]
     {
+        // A temp beneath the destination root - directly in it, or in a
+        // nested directory (the in-place temp of every file below the top
+        // level) - goes through the sandbox: the root's own descriptor, or the
+        // held descriptor of the directory the current run of files lives in.
+        // The helper falls back to the confined walk below for anything the
+        // sandbox cannot anchor.
         if let (Some(sandbox), Some(dest_dir)) = (sandbox, dest_dir)
-            && let Some(leaf_name) = concrete_path.file_name()
+            && let Ok(relative) = concrete_path.strip_prefix(dest_dir)
+            && relative.file_name().is_some()
         {
-            let parent = concrete_path.parent().unwrap_or(Path::new(""));
-            if parent == dest_dir {
-                let relative = Path::new(leaf_name);
-                // Mirror the fallback's `OpenOptions::new().write(true).create_new(true)`
-                // exactly: `O_WRONLY | O_CREAT | O_EXCL`, plus `O_NOFOLLOW` so a
-                // pre-planted symlink at the leaf path cannot redirect the create.
-                let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW;
-                return fast_io::openat_via_sandbox_or_fallback(
-                    Some(sandbox.as_ref()),
-                    dest_dir,
-                    relative,
-                    concrete_path,
-                    flags,
-                    0o600,
-                );
-            }
+            // Mirror the fallback's `OpenOptions::new().write(true).create_new(true)`
+            // exactly: `O_WRONLY | O_CREAT | O_EXCL`, plus `O_NOFOLLOW` so a
+            // pre-planted symlink at the leaf path cannot redirect the create.
+            let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW;
+            return fast_io::openat_via_sandbox_or_fallback(
+                Some(sandbox.as_ref()),
+                dest_dir,
+                relative,
+                concrete_path,
+                flags,
+                0o600,
+            );
         }
     }
     // Every other shape - no sandbox, no `dest_dir`, no file name, or a temp

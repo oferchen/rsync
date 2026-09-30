@@ -71,6 +71,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use dashmap::DashMap;
 
+use crate::held_dir::HeldDir;
 use crate::linux_capabilities::openat2_supported;
 use crate::secure_dir::secure_open_dir;
 
@@ -124,6 +125,9 @@ pub struct DirSandbox {
     /// sized by the number of CLI operands (typically <= 4) and is never
     /// pruned during a session.
     secondaries: DashMap<PathBuf, Arc<OwnedFd>>,
+    /// The nested parent directory the current run of entries lives in; see
+    /// [`held_parent`](Self::held_parent).
+    held: HeldDir,
 }
 
 /// One frame of the in-tree descent stack.
@@ -217,6 +221,7 @@ impl DirSandbox {
             root: Arc::new(fd),
             stack: Vec::new(),
             secondaries: DashMap::new(),
+            held: HeldDir::new(),
         })
     }
 
@@ -240,6 +245,7 @@ impl DirSandbox {
             root: Arc::new(fd),
             stack: Vec::new(),
             secondaries: DashMap::new(),
+            held: HeldDir::new(),
         })
     }
 
@@ -411,6 +417,51 @@ impl DirSandbox {
     /// [`unlinkat`] for the notable error cases.
     pub fn unlinkat_at(&self, leaf: &OsStr, flags: UnlinkFlags) -> io::Result<()> {
         unlinkat(self.current_dirfd(), leaf, flags)
+    }
+
+    /// The directory `relative` names beneath the root, as a held descriptor
+    /// reused across consecutive calls for the same directory.
+    ///
+    /// Resolved with [`open_dir_beneath_nofollow`]: every symlink and every
+    /// `..` below the root is refused. That is the strictest policy any
+    /// per-entry resolver in this crate applies, so a directory it reaches is
+    /// the one the ownership walk, `RESOLVE_BENEATH` and the confined walk
+    /// would each reach too - using it can only ever agree with them. Where
+    /// it refuses (an in-tree directory symlink, say) this returns `None` and
+    /// the caller keeps its own resolver, with that resolver's verdict.
+    ///
+    /// `None` also when frames are pushed (the held path is root-relative) or
+    /// `relative` has a component that is not a plain name. An empty
+    /// `relative` is the root itself and never touches the cache.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.1/syscall.c:3858-3871` `held_dfd_for()` - the receiver's
+    ///   per-entry parent comes from the held-dirfd cache.
+    /// - `rsync-3.5.1/syscall.c:3744-3816` `dpc_dir_fd()`.
+    #[must_use]
+    pub fn held_parent(&self, relative: &Path) -> Option<Arc<OwnedFd>> {
+        if !self.stack.is_empty()
+            || !relative
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return None;
+        }
+        if relative.as_os_str().is_empty() {
+            return Some(Arc::clone(&self.root));
+        }
+        self.held
+            .get_or_open(relative, || {
+                open_dir_beneath_nofollow(self.root.as_fd(), relative)
+            })
+            .ok()
+    }
+
+    /// Drop the held parent after an operation through it failed, so the
+    /// caller's uncached retry and the next lookup resolve afresh.
+    pub fn release_held_parent(&self) {
+        self.held.invalidate();
     }
 }
 
@@ -990,6 +1041,7 @@ impl DirSandbox {
             root: Arc::new(walk.into_leaf()),
             stack: Vec::new(),
             secondaries: DashMap::new(),
+            held: HeldDir::new(),
         })
     }
 
@@ -1036,7 +1088,7 @@ impl DirSandbox {
 ///
 /// - `syscall.c:3107-3115` `ds_walk_path()`
 #[cfg(unix)]
-fn walk_beneath(anchor: BorrowedFd<'_>, relative: &Path) -> io::Result<OwnedFd> {
+pub(crate) fn walk_beneath(anchor: BorrowedFd<'_>, relative: &Path) -> io::Result<OwnedFd> {
     let exclude = NoExclude;
     let mut walk = ConfinedWalk {
         anchor: anchor.try_clone_to_owned()?,

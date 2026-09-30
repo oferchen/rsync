@@ -2395,3 +2395,159 @@ mod no_sandbox_tail {
         assert!(inside.exists(), "and the source must be left alone");
     }
 }
+
+/// The held parent directory the receiver reuses across a run of files.
+///
+/// upstream: `rsync-3.5.1/syscall.c:3713-3716` - a held ancestor "raced/
+/// replaced ... resolves to the original inode the fd holds -- the held-dirfd
+/// race-safety property". A symlink swapped in for a directory AFTER it was
+/// resolved must therefore never be followed: operations keep landing in the
+/// original inode.
+mod held_parent {
+    use super::*;
+    use std::path::PathBuf;
+
+    const CREATE: i32 = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW;
+
+    /// `root/a/b` plus an `outside` directory beside the root.
+    fn tree() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let (keep, base) = canonical_tempdir();
+        let root = base.join("root");
+        std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
+        let outside = base.join("outside");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        (keep, root, outside)
+    }
+
+    fn create(sandbox: &DirSandbox, root: &Path, relative: &str) -> std::io::Result<std::fs::File> {
+        openat_via_sandbox_or_fallback(
+            Some(sandbox),
+            root,
+            Path::new(relative),
+            &root.join(relative),
+            CREATE,
+            0o600,
+        )
+    }
+
+    fn commit(
+        sandbox: Option<&DirSandbox>,
+        root: &Path,
+        from: &str,
+        to: &str,
+    ) -> std::io::Result<()> {
+        renameat_via_sandbox_or_fallback(
+            sandbox,
+            root,
+            Path::new(from),
+            &root.join(from),
+            root,
+            Path::new(to),
+            &root.join(to),
+            true,
+        )
+    }
+
+    /// Consecutive files in one directory reuse one descriptor: the whole
+    /// point of the cache. Asserted on descriptor identity, so a cache that
+    /// silently re-resolved per call would fail here.
+    #[test]
+    fn a_run_of_files_in_one_directory_shares_one_held_descriptor() {
+        let (_keep, root, _outside) = tree();
+        let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+        let first = sandbox.held_parent(Path::new("a/b")).expect("held");
+        let again = sandbox.held_parent(Path::new("a/b")).expect("held again");
+        assert!(std::sync::Arc::ptr_eq(&first, &again));
+        let other = sandbox.held_parent(Path::new("a")).expect("held a");
+        assert!(!std::sync::Arc::ptr_eq(&first, &other));
+    }
+
+    /// The cache itself never resolves through a symlink, in-tree or not, so
+    /// it can never admit what a stricter per-operation resolver refuses; the
+    /// caller keeps its own resolver there.
+    #[test]
+    fn a_symlinked_directory_is_never_held() {
+        let (_keep, root, outside) = tree();
+        symlink(&outside, root.join("esc")).expect("escaping symlink");
+        symlink("a", root.join("inside")).expect("in-tree symlink");
+        let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+        assert!(sandbox.held_parent(Path::new("esc")).is_none());
+        assert!(sandbox.held_parent(Path::new("inside/b")).is_none());
+        assert!(sandbox.held_parent(Path::new("a/../a")).is_none());
+    }
+
+    /// The swap race on the temp create: `a/b` is held, then renamed away and
+    /// replaced by a symlink to `outside`. The next temp in `a/b` must land in
+    /// the original directory, never through the planted symlink.
+    #[test]
+    fn a_symlink_swapped_in_after_caching_is_not_followed_by_the_create() {
+        let (_keep, root, outside) = tree();
+        let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+        create(&sandbox, &root, "a/b/.t1").expect("first temp holds a/b");
+
+        std::fs::rename(root.join("a/b"), root.join("a/b.aside")).expect("move a/b aside");
+        symlink(&outside, root.join("a/b")).expect("plant symlink");
+
+        create(&sandbox, &root, "a/b/.t2").expect("second temp");
+        assert!(
+            !outside.join(".t2").exists(),
+            "the create must not follow the swapped-in symlink out of the tree"
+        );
+        assert!(
+            root.join("a/b.aside/.t2").exists(),
+            "it lands in the held inode"
+        );
+    }
+
+    /// The same race on the commit rename: both sides resolve through the held
+    /// descriptor, so the committed file stays in the original directory.
+    #[test]
+    fn a_symlink_swapped_in_after_caching_is_not_followed_by_the_rename() {
+        let (_keep, root, outside) = tree();
+        let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+        create(&sandbox, &root, "a/b/.t1").expect("temp holds a/b");
+
+        std::fs::rename(root.join("a/b"), root.join("a/b.aside")).expect("move a/b aside");
+        symlink(&outside, root.join("a/b")).expect("plant symlink");
+
+        commit(Some(&sandbox), &root, "a/b/.t1", "a/b/final").expect("commit rename");
+        assert!(
+            !outside.join("final").exists(),
+            "nothing may land outside the root"
+        );
+        assert!(root.join("a/b.aside/final").exists());
+    }
+
+    /// A directory that was never held is resolved fresh, and a planted escape
+    /// is refused exactly as before the cache existed.
+    #[test]
+    fn a_symlink_planted_before_caching_is_refused_by_the_rename() {
+        let (_keep, root, outside) = tree();
+        std::fs::write(root.join("a/b/.t1"), b"x").expect("temp");
+        std::fs::rename(root.join("a/b"), root.join("a/b.aside")).expect("move a/b aside");
+        symlink(&outside, root.join("a/b")).expect("plant symlink");
+        std::fs::write(outside.join(".t1"), b"attacker").expect("decoy");
+
+        let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+        commit(Some(&sandbox), &root, "a/b/.t1", "a/b/final")
+            .expect_err("an escaping parent must refuse the rename");
+        assert!(!outside.join("final").exists());
+        assert!(outside.join(".t1").exists());
+    }
+
+    /// A held directory that vanished is not a verdict: the failed create
+    /// releases it and the uncached resolver reports the outcome, here the
+    /// recreated directory.
+    #[test]
+    fn a_held_directory_that_was_replaced_is_resolved_again_after_a_failure() {
+        let (_keep, root, _outside) = tree();
+        let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+        create(&sandbox, &root, "a/b/.t1").expect("temp holds a/b");
+        std::fs::remove_file(root.join("a/b/.t1")).expect("rm temp");
+        std::fs::remove_dir(root.join("a/b")).expect("rmdir a/b");
+        std::fs::create_dir(root.join("a/b")).expect("recreate a/b");
+
+        create(&sandbox, &root, "a/b/.t2").expect("create in the recreated dir");
+        assert!(root.join("a/b/.t2").exists());
+    }
+}

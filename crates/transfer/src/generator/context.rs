@@ -264,6 +264,11 @@ pub struct GeneratorContext {
     /// so they flush in the order upstream logs them. Each row is
     /// `(transfer-relative name, file length, rendered %i string)`.
     pub(crate) daemon_log_rows: std::cell::RefCell<crate::progress::DaemonLogRows>,
+    /// The confinement root every source open of this transfer shares, built
+    /// on first use from [`Self::confine_root`]; `Some(None)` when the
+    /// transfer is not confined. Sharing it is what lets the root be opened
+    /// once and the current directory be held across files.
+    pub(crate) confined_source_root: std::sync::OnceLock<Option<Arc<fast_io::ConfinedSourceRoot>>>,
 }
 
 /// Handle on the `--write-batch` file, held by a client sender so it can write
@@ -394,6 +399,7 @@ impl GeneratorContext {
             daemon_log_active: false,
             daemon_logfile_format_has_i: false,
             daemon_log_rows: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            confined_source_root: std::sync::OnceLock::new(),
         }
     }
 
@@ -841,11 +847,14 @@ impl GeneratorContext {
     /// - `sender.c:360-384` - `secure_relative_open` vs `do_open_checklinks`
     pub(crate) fn source_open(&self) -> open_source::SourceOpen {
         let follow_symlinks = self.config.flags.copy_links || self.config.flags.copy_unsafe_links;
-        open_source::SourceOpen::new(
-            self.confine_root(),
-            follow_symlinks,
-            self.config.write.open_noatime,
-        )
+        let root = self
+            .confined_source_root
+            .get_or_init(|| {
+                self.confine_root()
+                    .map(|root| Arc::new(fast_io::ConfinedSourceRoot::new(root)))
+            })
+            .clone();
+        open_source::SourceOpen::new(root, follow_symlinks, self.config.write.open_noatime)
     }
 
     /// The absolute directory every source-side path resolution is confined

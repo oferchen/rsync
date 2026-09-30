@@ -23,7 +23,8 @@
 
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::Arc;
 
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
@@ -43,8 +44,11 @@ pub(crate) struct SourceOpen {
     /// `Some(module_root)` for a non-chroot daemon sender: opens are
     /// confined beneath this absolute root. Unused on non-Unix (the daemon
     /// is Unix-only), hence the `dead_code` allowance there.
+    ///
+    /// Shared across every open of one transfer, so the root is opened once
+    /// and the directory of the current run of files is held.
     #[cfg_attr(not(unix), allow(dead_code))]
-    confine_root: Option<PathBuf>,
+    confine_root: Option<Arc<fast_io::ConfinedSourceRoot>>,
     /// Whether to follow a symlinked leaf (`--copy-links` /
     /// `--copy-unsafe-links`). When false, the leaf is opened `O_NOFOLLOW`.
     follow_symlinks: bool,
@@ -54,7 +58,11 @@ pub(crate) struct SourceOpen {
 
 impl SourceOpen {
     /// Builds a policy from its three inputs.
-    pub(crate) fn new(confine_root: Option<PathBuf>, follow_symlinks: bool, noatime: bool) -> Self {
+    pub(crate) fn new(
+        confine_root: Option<Arc<fast_io::ConfinedSourceRoot>>,
+        follow_symlinks: bool,
+        noatime: bool,
+    ) -> Self {
         Self {
             confine_root,
             follow_symlinks,
@@ -74,7 +82,7 @@ impl SourceOpen {
             // beneath the module root. oc keeps absolute source paths, so the
             // module-relative component is the source path with the module
             // root stripped.
-            if let Ok(relative) = path.strip_prefix(root) {
+            if let Ok(relative) = path.strip_prefix(root.root()) {
                 // A symlink-following mode is an operator instruction, so it
                 // survives confinement rather than being downgraded to the
                 // O_NOFOLLOW leaf. upstream: sender.c:681-683.
@@ -83,7 +91,7 @@ impl SourceOpen {
                 } else {
                     fast_io::LeafPolicy::Nofollow
                 };
-                return fast_io::open_source_confined(root, relative, leaf, self.noatime);
+                return root.open(relative, leaf, self.noatime);
             }
             // A source path that is not beneath the module root should never
             // happen for a legitimate daemon transfer; fail safe by falling
@@ -324,7 +332,11 @@ mod tests {
         std::fs::write(outside.join("secret"), b"do-not-leak").unwrap();
         symlink(&outside, root.join("escape")).unwrap();
 
-        let policy = SourceOpen::new(Some(root.clone()), false, false);
+        let policy = SourceOpen::new(
+            Some(Arc::new(fast_io::ConfinedSourceRoot::new(root.clone()))),
+            false,
+            false,
+        );
         // The sender passes the reconstructed absolute source path; the policy
         // strips the module root and opens the remainder confined.
         let err = policy
@@ -358,14 +370,26 @@ mod tests {
         let leaf = root.path().join("leaf");
 
         // Default: the leaf symlink is refused even though it is in-module.
-        let strict = SourceOpen::new(Some(root.path().to_path_buf()), false, false);
+        let strict = SourceOpen::new(
+            Some(Arc::new(fast_io::ConfinedSourceRoot::new(
+                root.path().to_path_buf(),
+            ))),
+            false,
+            false,
+        );
         let err = strict
             .open(&leaf)
             .expect_err("the default confined policy must refuse a leaf symlink");
         assert_eq!(err.raw_os_error(), Some(libc::ELOOP));
 
         // --copy-links: the same leaf resolves, still confined.
-        let following = SourceOpen::new(Some(root.path().to_path_buf()), true, false);
+        let following = SourceOpen::new(
+            Some(Arc::new(fast_io::ConfinedSourceRoot::new(
+                root.path().to_path_buf(),
+            ))),
+            true,
+            false,
+        );
         let mut file = following
             .open(&leaf)
             .expect("copy-links must still follow an in-module leaf");
@@ -384,7 +408,13 @@ mod tests {
         std::fs::create_dir(root.path().join("sub")).unwrap();
         std::fs::write(root.path().join("sub/data"), b"in-module").unwrap();
 
-        let policy = SourceOpen::new(Some(root.path().to_path_buf()), false, false);
+        let policy = SourceOpen::new(
+            Some(Arc::new(fast_io::ConfinedSourceRoot::new(
+                root.path().to_path_buf(),
+            ))),
+            false,
+            false,
+        );
         let mut file = policy
             .open(&root.path().join("sub/data"))
             .expect("in-module source must open");
