@@ -254,8 +254,7 @@ impl ReceiverContext {
         let mut daemon_filters = self.daemon_filter_gate(dest_dir);
         let dir_entries: Vec<(usize, PathBuf, PathBuf)> = self
             .file_list
-            .iter()
-            .enumerate()
+            .iter_indexed()
             .filter(|(_, e)| e.is_dir())
             .filter(|(_, e)| {
                 if let Some(filters) = daemon_filters.as_mut() {
@@ -1268,7 +1267,8 @@ impl ReceiverContext {
 
         // Iterate in reverse so deepest directories are touched first.
         // upstream: generator.c:2581 - for (i = dir_flist->used - 1; i >= 0; i--)
-        for entry in self.file_list.iter().rev() {
+        let released = self.released_dirs.iter().map(|(_, e)| e);
+        for entry in released.chain(self.file_list.iter()).rev() {
             // upstream: generator.c:2138-2144 - poke a keepalive once the I/O
             // lull has elapsed so a remote sender does not time out while this
             // final metadata pass walks a large directory tree. A strict no-op
@@ -1430,7 +1430,7 @@ mod touch_up_dirs_tests {
 
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![FileEntry::new_directory("missing".into(), 0o755)];
+        ctx.file_list = vec![FileEntry::new_directory("missing".into(), 0o755)].into();
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -1497,7 +1497,7 @@ mod touch_up_dirs_tests {
 
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, config_with_times(false));
-        ctx.file_list = vec![FileEntry::new_directory("d".into(), 0o755)];
+        ctx.file_list = vec![FileEntry::new_directory("d".into(), 0o755)].into();
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -1566,7 +1566,7 @@ mod touch_up_dirs_tests {
 
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, config_with_times(false));
-        ctx.file_list = vec![FileEntry::new_directory("afile/sub".into(), 0o755)];
+        ctx.file_list = vec![FileEntry::new_directory("afile/sub".into(), 0o755)].into();
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -1633,7 +1633,7 @@ mod touch_up_dirs_tests {
         // bumps the root's on-disk mtime mid-pass.
         let mut root_entry = FileEntry::new_directory(".".into(), 0o755);
         root_entry.set_mtime(root_secs, 0);
-        ctx.file_list = vec![root_entry, FileEntry::new_directory("sub".into(), 0o755)];
+        ctx.file_list = vec![root_entry, FileEntry::new_directory("sub".into(), 0o755)].into();
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -1691,7 +1691,7 @@ mod touch_up_dirs_tests {
         let hs = handshake();
         let config = config_with_times(true);
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![entry];
+        ctx.file_list = vec![entry].into();
 
         ctx.touch_up_dirs(
             dir.path(),
@@ -1732,7 +1732,7 @@ mod touch_up_dirs_tests {
         let mut config = config_with_times(true);
         config.flags.omit_dir_times = true;
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![entry];
+        ctx.file_list = vec![entry].into();
 
         ctx.touch_up_dirs(
             dir.path(),
@@ -1790,7 +1790,7 @@ mod touch_up_dirs_tests {
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         // Read-only directory mode: r-xr-xr-x, no user write bit.
-        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o555)];
+        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o555)].into();
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -1854,7 +1854,7 @@ mod touch_up_dirs_tests {
 
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o500)];
+        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o500)].into();
 
         let opts = metadata::MetadataOptions::new()
             .preserve_permissions(false)
@@ -1911,7 +1911,7 @@ mod touch_up_dirs_tests {
 
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, config_with_times(false));
-        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o644)];
+        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o644)].into();
 
         let opts = metadata::MetadataOptions::new()
             .preserve_permissions(false)
@@ -1966,7 +1966,7 @@ mod touch_up_dirs_tests {
         let mut ctx = ReceiverContext::new_for_test(&hs, config_with_times(false));
         // The sender's mode differs on purpose: the exists arm must keep the
         // destination's own 0o555, not adopt the sender's 0o755.
-        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o755)];
+        ctx.file_list = vec![FileEntry::new_directory("sub".into(), 0o755)].into();
 
         let opts = metadata::MetadataOptions::new()
             .preserve_permissions(false)
@@ -2016,7 +2016,7 @@ mod touch_up_dirs_tests {
         let hs = handshake();
         let config = config_with_times(false);
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![entry];
+        ctx.file_list = vec![entry].into();
 
         ctx.touch_up_dirs(
             dir.path(),
@@ -2055,7 +2055,7 @@ mod touch_up_dirs_tests {
         let config = config_with_times(true);
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         // Parent comes first in file list (natural order).
-        ctx.file_list = vec![parent_entry, child_entry];
+        ctx.file_list = vec![parent_entry, child_entry].into();
 
         ctx.touch_up_dirs(
             dir.path(),
@@ -2089,7 +2089,7 @@ mod touch_up_dirs_tests {
         let hs = handshake();
         let config = config_with_times(true);
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![entry];
+        ctx.file_list = vec![entry].into();
 
         ctx.touch_up_dirs(
             dir.path(),
@@ -2118,7 +2118,7 @@ mod touch_up_dirs_tests {
         let hs = handshake();
         let config = config_with_times(true);
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![file_entry];
+        ctx.file_list = vec![file_entry].into();
 
         ctx.touch_up_dirs(
             dir.path(),

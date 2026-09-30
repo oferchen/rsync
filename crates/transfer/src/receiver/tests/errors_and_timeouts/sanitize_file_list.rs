@@ -25,7 +25,7 @@ fn receiver_with_trust(entries: Vec<FileEntry>, trust_sender: bool) -> ReceiverC
         ..Default::default()
     };
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = entries;
+    ctx.file_list = entries.into();
     ctx
 }
 
@@ -47,7 +47,7 @@ fn receiver_with_trust_and_relative(
         ..Default::default()
     };
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = entries;
+    ctx.file_list = entries.into();
     ctx
 }
 
@@ -135,7 +135,7 @@ fn all_unsafe_entries_removed() {
     let mut ctx = receiver_with_trust(entries, false);
     let removed = ctx.sanitize_file_list();
     assert_eq!(removed, 3);
-    assert!(ctx.file_list.is_empty());
+    assert!(ctx.file_list().is_empty());
 }
 
 #[test]

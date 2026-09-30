@@ -502,7 +502,8 @@ fn daemon_rules_refuse_non_utf8_names() {
         FileEntry::new_directory("okdir".into(), 0o755),
         FileEntry::new_file(named(b"secret\xef"), 4, 0o644),
         FileEntry::new_file("ok".into(), 4, 0o644),
-    ];
+    ]
+    .into();
 
     let mut writer: Vec<u8> = Vec::new();
     ctx.create_directories(

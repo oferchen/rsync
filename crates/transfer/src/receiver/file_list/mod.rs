@@ -19,6 +19,8 @@
 //! - `hardlinks` - post-sort hardlink leader/follower assignment for
 //!   protocol 30+ and pre-30 normalization from (dev, ino) pairs.
 //! - `incremental` - the streaming [`IncrementalFileListReceiver`] type.
+//! - `window` - [`FileListWindow`], the absolute-indexed list that can
+//!   release finished segments.
 
 mod dir_flist;
 mod filter_recheck;
@@ -29,7 +31,9 @@ mod on_demand;
 mod prune;
 mod receive;
 mod sanitize;
+mod window;
 
 pub(in crate::receiver) use dir_flist::DirFlist;
 pub(in crate::receiver) use dir_flist::DirSlot;
 pub use incremental::IncrementalFileListReceiver;
+pub(in crate::receiver) use window::FileListWindow;

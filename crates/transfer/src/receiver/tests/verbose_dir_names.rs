@@ -30,7 +30,7 @@ fn ctx_with(entries: Vec<FileEntry>, times: bool) -> ReceiverContext {
         ..Default::default()
     };
     let mut c = ReceiverContext::new_for_test(&handshake, config);
-    c.file_list = entries;
+    c.file_list = entries.into();
     c.config.connection.client_mode = true;
     c
 }
