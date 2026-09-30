@@ -115,10 +115,10 @@ pub(in crate::receiver) fn normalize_pre30_hardlinks(entries: &mut [FileEntry]) 
     // Group entries by (dev, ino) pairs. Key: (dev, ino), Value: list of indices.
     let mut groups: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
 
+    // upstream: flist.c:1560-1582 - every XMIT_HLINKED entry gets a gnum,
+    // whatever its type; the sender flags any non-directory with st_nlink > 1
+    // (flist.c:1853-1856), so FIFOs, devices and symlinks group too.
     for (i, entry) in entries.iter().enumerate() {
-        if !entry.is_file() {
-            continue;
-        }
         let dev = match entry.hardlink_dev() {
             Some(d) => d,
             None => continue,
@@ -371,7 +371,7 @@ mod tests {
         assert_ne!(idx_a, idx_b);
     }
 
-    /// Verifies `normalize_pre30_hardlinks` skips directories (only files are hardlinked).
+    /// Verifies `normalize_pre30_hardlinks` skips directories (they carry no dev/ino).
     #[test]
     fn normalize_pre30_skips_directories() {
         let dir = FileEntry::new_directory("dir".into(), 0o755);
@@ -393,6 +393,50 @@ mod tests {
         assert_eq!(entries[1].hardlink_idx(), entries[2].hardlink_idx());
         assert!(entries[1].hlink_first());
         assert!(!entries[2].hlink_first());
+    }
+
+    /// upstream: flist.c:1853-1856 - at protocol 28-29 the sender sends a
+    /// (dev, ino) pair for every non-directory with `st_nlink > 1`, and
+    /// flist.c:1560-1582 gives each one a gnum whatever its type.
+    ///
+    /// Why it matters: a hard-linked FIFO, device, or symlink group left
+    /// ungrouped is materialised as independent nodes, so an `-aH` pull at
+    /// `--protocol=29` splits a set of hard-linked FIFOs that upstream keeps
+    /// as one inode.
+    #[test]
+    fn normalize_pre30_groups_non_regular_entries() {
+        let fifo = |name: &str| {
+            let mut entry = FileEntry::new_fifo(name.into(), 0o644);
+            entry.set_hardlink_dev(3);
+            entry.set_hardlink_ino(77);
+            entry
+        };
+        let link = |name: &str| {
+            let mut entry = FileEntry::new_symlink(name.into(), 0o777, "target".into());
+            entry.set_hardlink_dev(3);
+            entry.set_hardlink_ino(88);
+            entry
+        };
+
+        let mut entries = vec![fifo("fifo"), fifo("fifo-hl"), link("l1"), link("l2")];
+        normalize_pre30_hardlinks(&mut entries);
+
+        for (leader, follower) in [(0, 1), (2, 3)] {
+            let name = entries[leader].name().to_owned();
+            assert!(
+                entries[leader].hardlink_idx().is_some(),
+                "{name} must be grouped"
+            );
+            assert_eq!(
+                entries[leader].hardlink_idx(),
+                entries[follower].hardlink_idx(),
+                "{name} and its link must share one group"
+            );
+            assert!(entries[leader].hlink_first(), "{name} leads its group");
+            assert!(entries[follower].hlinked());
+            assert!(!entries[follower].hlink_first());
+        }
+        assert_ne!(entries[0].hardlink_idx(), entries[2].hardlink_idx());
     }
 
     /// Verifies `normalize_pre30_hardlinks` skips entries without dev/ino.
