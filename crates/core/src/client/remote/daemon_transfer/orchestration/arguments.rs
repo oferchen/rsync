@@ -358,8 +358,8 @@ pub(super) fn build_full_daemon_args(
         // skips `receive_extra_file_lists`, and the leftover 0xFF marker
         // trips `read_varint` overflow on the next decode.
         // upstream: io.c:1854 read_varint - rejects encodings with extra > 4.
-        let we_are_receiver = is_sender;
-        let advertise_inc_recurse = config.allow_inc_recurse() && !we_are_receiver;
+        let am_sender = !is_sender;
+        let advertise_inc_recurse = config.allow_inc_recurse(am_sender) && am_sender;
         let capability_suffix = build_capability_string_suffix(advertise_inc_recurse);
         flag_string.push_str(&capability_suffix);
     }
