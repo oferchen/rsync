@@ -626,6 +626,7 @@ def binary_for(transport, args):
 
 
 def run_cell(ds, transport, direction, scenario, inc_mode, ctx, args):
+    started = time.monotonic()
     binary = binary_for(transport, args)
     workdir = ctx["daemon_dir"]
     fresh_dir(workdir)
@@ -655,7 +656,9 @@ def run_cell(ds, transport, direction, scenario, inc_mode, ctx, args):
                 make_stale(ds, ctx["dst"])
             # Write back the previous run's and the fixture's dirty pages
             # outside the timed window, so one run does not pay for another.
-            os.sync()
+            # `sync -f` (syncfs) scopes it to the scratch filesystem: a global
+            # sync would wait on every other writer on the host.
+            subprocess.run(["sync", "-f", ctx["dst"]], check=True)
             runs.append(timed_run(cmd, ctx["env"], ctx["timeout"]))
         user1, sys1 = daemon.cpu()
     finally:
@@ -670,6 +673,9 @@ def run_cell(ds, transport, direction, scenario, inc_mode, ctx, args):
         "inc_recurse": probe,
     }
     cell.update(summarize(runs, server, ds.total_bytes))
+    # Everything the cell cost, fixtures and daemon lifecycle included: the
+    # figure the CI wall-clock budget is made of.
+    cell["cell_elapsed_s"] = round(time.monotonic() - started, 1)
     pinned = any("pinning new host key" in r["stderr"] for r in runs)
     if transport.quic:
         cell["tofu_pin_notice"] = pinned
