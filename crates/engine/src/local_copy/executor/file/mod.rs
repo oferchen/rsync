@@ -33,6 +33,6 @@ pub(crate) use paths::partial_destination_path;
 #[cfg(test)]
 pub(crate) use paths::temp_name_with_suffix;
 #[cfg(test)]
-pub(crate) use preallocate::maybe_preallocate_destination;
+pub(crate) use preallocate::{Reservation, maybe_preallocate_destination};
 pub use sparse::{SparseDetectStrategy, SparseDetector, SparseReader, SparseRegion};
-pub(crate) use sparse::{SparseWriteState, write_sparse_chunk};
+pub(crate) use sparse::{SparseWriteState, skip_matched_sparse, write_sparse_chunk};

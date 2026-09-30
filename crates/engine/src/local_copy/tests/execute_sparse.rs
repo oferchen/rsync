@@ -63,20 +63,27 @@ fn execute_with_sparse_enabled_creates_holes() {
     );
 }
 
-/// `--preallocate --sparse` leaves the destination fully DENSE, not sparse.
+/// `--preallocate --sparse` must end up SPARSE, not dense.
 ///
-/// Upstream `do_fallocate()` reserves the whole extent with `FALLOC_FL_KEEP_SIZE`
-/// and returns 0, so `preallocated_len == 0`. In `write_sparse()` the
-/// `sparse_past_write >= preallocated_len` test is then always true, so the zero
-/// run is seeked over (`do_lseek`) rather than punched (`do_punch_hole`); seeking
-/// does not free the blocks the reservation already allocated, so preallocation
-/// defeats sparseness. Verified against rsync 3.4.4 (ext4): `--preallocate
-/// --sparse` yields `st_blocks*512 == st_size` (dense).
-// upstream: fileio.c:92 write_sparse() `if (sparse_past_write >= preallocated_len)`
-// upstream: syscall.c:1555 do_fallocate() returns 0 for the KEEP_SIZE (opts != 0) path
+/// This inverts what oc asserted while it mirrored rsync 3.4.4, where
+/// `do_fallocate()` reserved the extent with `FALLOC_FL_KEEP_SIZE` and returned
+/// 0: `preallocated_len == 0` made `sparse_past_write >= preallocated_len`
+/// always true, the zero run was seeked over rather than punched, and seeking
+/// does not free blocks the reservation already allocated - so preallocation
+/// defeated sparseness. 3.5.0 fixed that, and says so in its own source: "a
+/// stray 0 here, from 2019's switch to KEEP_SIZE, is why --preallocate --sparse
+/// stopped producing sparse files".
+///
+/// The rule it restores has two halves, and only both together make the file
+/// sparse: `KEEP_SIZE` is selected **only when no holes will be punched**
+/// (otherwise the reserved blocks sit beyond EOF where a punch cannot reach
+/// them), and `do_fallocate()` reports the reserved length instead of 0.
+// upstream: syscall.c:2597 do_fallocate() - `(inplace || preallocate_files)
+// && sparse_files <= 0 ? DO_FALLOC_OPTIONS : 0`
+// upstream: fileio.c:84 flush_sparse_hole() - `sparse_past_write >= preallocated_len`
 #[cfg(target_os = "linux")]
 #[test]
-fn execute_preallocate_sparse_stays_dense() {
+fn execute_preallocate_sparse_punches_the_reserved_extent() {
     use std::os::unix::fs::MetadataExt;
 
     let temp = tempdir().expect("tempdir");
@@ -107,9 +114,10 @@ fn execute_preallocate_sparse_stays_dense() {
     let meta = fs::metadata(&dest).expect("dest metadata");
     assert_eq!(meta.len(), apparent, "content length preserved");
     assert!(
-        meta.blocks() * 512 >= apparent,
-        "preallocated extent must stay dense: the zero run is seeked over, not \
-         punched, so the reserved blocks remain allocated (allocated {}, size {})",
+        meta.blocks() * 512 < apparent,
+        "the preallocated extent's zero run must be punched into a hole, not \
+         seeked over - seeking leaves the reserved blocks allocated (allocated \
+         {}, size {})",
         meta.blocks() * 512,
         apparent,
     );

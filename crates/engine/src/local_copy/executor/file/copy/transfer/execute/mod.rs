@@ -43,7 +43,7 @@ use super::super::super::append::{AppendMode, determine_append_mode};
 use super::super::super::comparison::build_delta_signature;
 use super::super::super::compute_backup_path;
 use super::super::super::guard::remove_incomplete_destination;
-use super::super::super::preallocate::maybe_preallocate_destination;
+use super::super::super::preallocate::{Reservation, maybe_preallocate_destination};
 use super::finalize::finalize_guard_and_metadata;
 use super::open::open_source_file;
 use super::write_strategy::{open_destination_writer, select_write_strategy};
@@ -535,24 +535,27 @@ pub(in crate::local_copy) fn execute_transfer_once(
     let preallocate_target = guard
         .as_ref()
         .map_or(destination, |existing_guard| existing_guard.staging_path());
-    // upstream: receiver.c:319 - preallocated_len records how much of the file
+    // upstream: receiver.c:479 - preallocated_len records how much of the file
     // has reserved blocks so a later sparse zero run inside that extent is
     // punched into a hole rather than seeked over (which would leave the
-    // preallocated blocks allocated).
+    // preallocated blocks allocated). Under --sparse the reservation must span
+    // the file's size for the punch to reach it, so the sparse setting selects
+    // the reservation upstream makes.
+    // upstream: syscall.c:2597 - `sparse_files <= 0` selects FALLOC_FL_KEEP_SIZE.
     let mut preallocated_len = maybe_preallocate_destination(
         &mut writer,
         preallocate_target,
         file_size,
         append_offset,
-        context.preallocate_enabled(),
+        context
+            .preallocate_enabled()
+            .then(|| Reservation::for_sparse(use_sparse_writes)),
     )?;
-    // upstream: receiver.c:490-500 - the inplace branch (`preallocated_len = size_r`)
-    // is an `else if` reached only when the preallocate branch (receiver.c:320) did
-    // NOT run. That branch runs for `--preallocate` whenever the file grows
-    // (`total_size > size_r`), leaving preallocated_len at do_fallocate()'s 0 so the
-    // reserved tail is seeked, not punched - don't overwrite it. Otherwise the
-    // existing destination extent is already allocated, so an interior zero run must
-    // be punched.
+    // upstream: receiver.c:482-492 - the inplace branch (`preallocated_len = size_r`)
+    // is an `else if` reached only when the preallocate branch (receiver.c:475) did
+    // NOT run. A non-zero reservation above IS that branch having run, so leave it
+    // alone. Otherwise the existing destination extent is already allocated and an
+    // interior zero run must be punched.
     //
     // The `!whole_file_enabled` guard keeps this to the delta case. A whole-file
     // inplace copy is upstream's `sparse_files > 0 && whole_file` leg: it starts
@@ -562,15 +565,11 @@ pub(in crate::local_copy) fn execute_transfer_once(
     // the inplace destination with `O_TRUNC` whenever there is no delta basis
     // (`should_truncate = delta_signature.is_none()`, which is exactly the
     // whole-file case), so preallocated_len must stay 0 here.
-    // upstream: receiver.c:receive_data - `if (sparse_files > 0 && whole_file &&
+    // upstream: receiver.c:485-486 - `if (sparse_files > 0 && whole_file &&
     // fd >= 0 && do_ftruncate(fd, 0) == 0) preallocated_len = 0;`
     if preallocated_len == 0 && inplace_enabled && !whole_file_enabled {
         if let Some(existing) = existing_metadata {
-            let size_r = existing.len();
-            let preallocate_branch_ran = context.preallocate_enabled() && file_size > size_r;
-            if !preallocate_branch_ran {
-                preallocated_len = size_r;
-            }
+            preallocated_len = existing.len();
         }
     }
 

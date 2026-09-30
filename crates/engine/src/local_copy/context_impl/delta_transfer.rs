@@ -45,6 +45,35 @@ fn batch_sum_head(
         .map_err(|error| reject(error.to_string()))
 }
 
+/// Consumes an in-place matched block that already sits at its destination
+/// offset, advancing the writer past it.
+///
+/// Without `--sparse` there is nothing to do here: the caller advances
+/// `output_position` and the next literal write seeks to it, which is upstream's
+/// `flush_write_file` + `do_lseek` arm. With `--sparse` the block must still go
+/// through the sparse processor so an interior zero run inside an
+/// otherwise-matching block is punched into a hole instead of being seeked over
+/// with the rest of the block - that is precisely what `--inplace --sparse`
+/// relies on to keep a hole-y basis file sparse.
+// upstream: fileio.c:251-267 skip_matched() - `if (sparse_files > 0)
+// write_file(fd, 1 /*use_seek*/, offset, buf, len)`, else flush + lseek.
+fn consume_matched_in_place(
+    writer: &mut fs::File,
+    sparse_state: &mut SparseWriteState,
+    sparse: bool,
+    matched_bytes: &[u8],
+    destination: &Path,
+) -> Result<(), LocalCopyError> {
+    if !sparse {
+        return Ok(());
+    }
+    // The writer already sits at this block's offset (the sparse processor is
+    // what advances it), so no seek is needed - and seeking here would strand a
+    // pending zero run carried over from the previous block.
+    skip_matched_sparse(writer, sparse_state, matched_bytes, destination)?;
+    Ok(())
+}
+
 impl<'a> CopyContext<'a> {
     /// Copies `source`'s content to `writer` by matching blocks against
     /// `index` and writing literal bytes for the unmatched runs in between.
@@ -235,6 +264,13 @@ impl<'a> CopyContext<'a> {
                 // writer keeps stale basis bytes at the new position and the
                 // final ftruncate clips the file off at the wrong length.
                 if inplace_mode && basis_offset == output_position {
+                    consume_matched_in_place(
+                        writer,
+                        &mut sparse_state,
+                        sparse,
+                        &scratch[..block_len],
+                        destination,
+                    )?;
                     output_position = output_position.saturating_add(block_len as u64);
                 } else if inplace_mode {
                     // Inplace + basis == destination: reading basis at a
@@ -422,6 +458,13 @@ impl<'a> CopyContext<'a> {
             let basis_offset = matched.offset();
 
             if inplace_mode && basis_offset == output_position {
+                consume_matched_in_place(
+                    writer,
+                    &mut sparse_state,
+                    sparse,
+                    &scratch[..block_len],
+                    destination,
+                )?;
                 output_position = output_position.saturating_add(block_len as u64);
             } else if inplace_mode {
                 writer.seek(SeekFrom::Start(output_position)).map_err(|error| {

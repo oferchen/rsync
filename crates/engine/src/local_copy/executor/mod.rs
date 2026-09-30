@@ -23,7 +23,7 @@ pub(crate) use directory::{
 pub(crate) use file::take_fsync_call_count;
 pub(crate) use file::{
     CopyComparison, SparseWriteState, copy_entry_to_backup, copy_file, create_backup_parents,
-    should_skip_copy, system_time_within_window, write_sparse_chunk,
+    should_skip_copy, skip_matched_sparse, system_time_within_window, write_sparse_chunk,
 };
 pub use file::{
     DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetectStrategy, SparseDetector,
@@ -34,7 +34,7 @@ pub use file::{
 };
 #[cfg(test)]
 pub(crate) use file::{
-    files_checksum_match, maybe_preallocate_destination, partial_destination_path,
+    Reservation, files_checksum_match, maybe_preallocate_destination, partial_destination_path,
     temp_name_with_suffix,
 };
 pub(crate) use iconv::{
