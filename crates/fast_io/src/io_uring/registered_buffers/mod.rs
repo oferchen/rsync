@@ -71,13 +71,18 @@
 //! - `registry` - the [`RegisteredBufferGroup`] coordinator, slot allocator,
 //!   and [`RegisteredBufferSlot`] handle.
 //! - `stats` - re-exports the telemetry types from `io_uring_common`.
+//! - `watermark` - resizing a group's registered table to a new slot count.
+//! - `arena` - one registered region carved per read into `READ_FIXED`
+//!   sub-ranges.
 //! - `submit` - `ReadFixed`/`WriteFixed` batch submission helpers and the
 //!   [`RegisteredBufferSlotInfo`] passed between callers and helpers.
 
+mod arena;
 mod lease;
 mod registry;
 mod stats;
 mod submit;
+mod watermark;
 
 #[cfg(test)]
 mod tests;
@@ -99,6 +104,7 @@ pub(crate) fn page_size() -> usize {
     }
 }
 
+pub use arena::{ArenaFile, ArenaRing, ArenaStats};
 pub use lease::FixedReadLease;
 pub(super) use lease::read_fixed_lease;
 pub use registry::{RegisteredBufferGroup, RegisteredBufferSlot};

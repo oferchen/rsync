@@ -90,11 +90,17 @@ pub(in crate::io_uring) fn read_fixed_lease(
 
     let want = |i: usize| chunk_size.min(len - i * chunk_size);
     let mut eof = vec![false; lease.chunks.len()];
+    // A pool larger than the submission queue is read in SQ-sized rounds;
+    // chunks left out of one round are still short and join the next.
+    let sq_capacity = ring.params().sq_entries() as usize;
     loop {
         let mut submitted = 0usize;
         for (i, &(index, done)) in lease.chunks.iter().enumerate() {
             if eof[i] || done >= want(i) {
                 continue;
+            }
+            if submitted == sq_capacity {
+                break;
             }
             // SAFETY: `done < want(i) <= buffer_size`, so the target stays
             // inside the registered buffer the kernel validates against.

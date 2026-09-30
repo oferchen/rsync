@@ -262,6 +262,85 @@ impl FixedBuffers {
     }
 }
 
+/// Registers the calling thread's fixed-buffer group as a sparse table of
+/// `capacity` slots with `count` filled, so [`resize_thread_buffers`] can
+/// later change only the slots that differ.
+///
+/// Must run before any reader or writer registers the thread's buffers;
+/// those then reuse this group.
+///
+/// # Errors
+///
+/// `AlreadyExists` when the thread already attempted registration, or the
+/// error of [`RegisteredBufferGroup::new_sparse`].
+pub fn init_thread_sparse_buffers(
+    buffer_size: usize,
+    capacity: usize,
+    count: usize,
+) -> io::Result<()> {
+    with_thread_ring(|t| {
+        if t.buffer_status.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "thread buffers already registered",
+            ));
+        }
+        let group = RegisteredBufferGroup::new_sparse(&t.ring, buffer_size, capacity, count)?;
+        t.buffers = Some(Rc::new(group));
+        t.buffer_status = Some(RegisteredBufferStatus::Enabled);
+        Ok(())
+    })
+}
+
+/// Resizes the calling thread's fixed-buffer group to `count` slots.
+///
+/// # Errors
+///
+/// `NotFound` without a registered group, `WouldBlock` while a read lease
+/// still holds the group, or the error of [`RegisteredBufferGroup::resize`].
+pub fn resize_thread_buffers(count: usize) -> io::Result<()> {
+    with_thread_ring(|t| {
+        let group = t
+            .buffers
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no thread buffers"))?;
+        Rc::get_mut(group)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::WouldBlock, "a read lease holds the group")
+            })?
+            .resize(&t.ring, count)
+    })
+}
+
+/// Snapshot of the calling thread's fixed-buffer group.
+#[derive(Clone, Copy, Debug)]
+pub struct ThreadBufferSnapshot {
+    /// Registered slots.
+    pub count: usize,
+    /// Bytes per slot.
+    pub buffer_size: usize,
+    /// `io_uring_register(2)` calls issued by the group.
+    pub register_calls: u64,
+    /// Acquire and miss counters; successful acquires are `READ_FIXED` slots.
+    pub stats: super::registered_buffers::RegisteredBufferStats,
+}
+
+/// Returns a [`ThreadBufferSnapshot`], or `None` when no group is
+/// registered on this thread.
+#[must_use]
+pub fn thread_buffer_snapshot() -> Option<ThreadBufferSnapshot> {
+    THREAD_RING.with(|cell| {
+        let borrow = cell.try_borrow().ok()?;
+        let group = borrow.as_ref()?.buffers.as_ref()?;
+        Some(ThreadBufferSnapshot {
+            count: group.count(),
+            buffer_size: group.buffer_size(),
+            register_calls: group.register_calls(),
+            stats: group.stats(),
+        })
+    })
+}
+
 /// Returns the acquire/miss counters of the calling thread's fixed-buffer
 /// group, or `None` when no group is registered on this thread.
 #[cfg(test)]

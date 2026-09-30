@@ -6,6 +6,7 @@
 //! - [`submit`] - `ReadFixed`/`WriteFixed` batch submission helpers.
 //! - [`stats`] - acquire / miss telemetry counters and snapshots.
 //! - [`status`] - [`RegisteredBufferStatus`] reporting for `try_new_with_status`.
+//! - [`watermark`] - watermark resizing and the registered arena.
 //! - [`drop_contract`] - Drop semantics and constrained-environment coverage
 //!   for the fixed-buffer invariants audit (PR #4022, task #2118).
 
@@ -18,6 +19,7 @@ mod registry;
 mod stats;
 mod status;
 mod submit;
+mod watermark;
 
 /// Constructs a [`RawIoUring`] with the given queue depth, returning
 /// `None` when io_uring is not available in the current environment

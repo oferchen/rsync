@@ -41,19 +41,24 @@ pub struct RegisteredBufferGroup {
     /// Raw pointers to page-aligned buffer memory.
     pub(super) buffers: Vec<*mut u8>,
     /// Layout used for each buffer allocation (for deallocation).
-    layout: Layout,
+    pub(super) layout: Layout,
     /// Size of each individual buffer in bytes.
     pub(super) buffer_size: usize,
     /// Number of buffers in the group.
-    count: usize,
+    pub(super) count: usize,
     /// Atomic bitset tracking which buffer indices are free (1 = free, 0 = in use).
     /// Supports up to 64 buffers per word. Multiple words for larger counts.
-    free_bitset: Vec<AtomicU64>,
+    pub(super) free_bitset: Vec<AtomicU64>,
+    /// Kernel table size when registered sparse (see `new_sparse`), which
+    /// lets `resize` touch only the changed slots; `None` for a dense table.
+    pub(super) sparse_capacity: Option<usize>,
+    /// `io_uring_register(2)` calls this group has issued, for telemetry.
+    pub(super) register_calls: u64,
     /// Total number of `checkout` calls (whether they succeeded or not).
-    total_acquires: AtomicU64,
+    pub(super) total_acquires: AtomicU64,
     /// Number of `checkout` calls that returned `None` because every slot
     /// was in use - a forced fallback to non-registered I/O.
-    total_misses: AtomicU64,
+    pub(super) total_misses: AtomicU64,
 }
 
 // SAFETY: The raw pointers point to memory exclusively owned by this struct.
@@ -230,31 +235,14 @@ impl RegisteredBufferGroup {
             ));
         }
 
-        // Initialize free bitset - all slots start as free (bit = 1).
-        let words = count.div_ceil(64);
-        let mut free_bitset = Vec::with_capacity(words);
-        for i in 0..words {
-            let bits_in_word = if i < words - 1 {
-                64
-            } else {
-                let remainder = count % 64;
-                if remainder == 0 { 64 } else { remainder }
-            };
-            // Set `bits_in_word` lower bits to 1.
-            let mask = if bits_in_word == 64 {
-                u64::MAX
-            } else {
-                (1u64 << bits_in_word) - 1
-            };
-            free_bitset.push(AtomicU64::new(mask));
-        }
-
         Ok(Self {
             buffers,
             layout,
             buffer_size: aligned_size,
             count,
-            free_bitset,
+            free_bitset: full_bitset(count),
+            sparse_capacity: None,
+            register_calls: 1,
             total_acquires: AtomicU64::new(0),
             total_misses: AtomicU64::new(0),
         })
@@ -403,6 +391,20 @@ impl RegisteredBufferGroup {
     pub fn unregister(&self, ring: &RawIoUring) -> io::Result<()> {
         ring.submitter().unregister_buffers()
     }
+}
+
+/// Builds a free bitset with the low `count` bits set: every slot free.
+pub(super) fn full_bitset(count: usize) -> Vec<AtomicU64> {
+    (0..count.div_ceil(64))
+        .map(|word| {
+            let bits = (count - word * 64).min(64);
+            AtomicU64::new(if bits == 64 {
+                u64::MAX
+            } else {
+                (1u64 << bits) - 1
+            })
+        })
+        .collect()
 }
 
 impl Drop for RegisteredBufferGroup {
