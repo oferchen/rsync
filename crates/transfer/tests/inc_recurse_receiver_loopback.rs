@@ -607,3 +607,230 @@ fn inc_recurse_dry_run_matches_whole_list_tallies() {
         "every regular file is requested"
     );
 }
+
+/// Sets `--delete` on both ends of a loopback pull, plus whatever `extra`
+/// adds to the receiver (a server sender gets `--delete` in its arguments too).
+fn with_delete(extra: impl Fn(&mut ServerConfig)) -> impl Fn(&mut ServerConfig, &mut ServerConfig) {
+    move |sender, receiver| {
+        sender.flags.delete = true;
+        receiver.flags.delete = true;
+        extra(receiver);
+    }
+}
+
+/// Writes `content` to `path` with the mtime of `like`, so a `-t` quick check
+/// (same size and mtime) leaves the destination file alone.
+fn write_matching(path: &Path, content: &[u8], like: &Path) {
+    fs::write(path, content).expect("write dest file");
+    let mtime = fs::metadata(like)
+        .expect("stat src")
+        .modified()
+        .expect("mtime");
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .expect("open dest file")
+        .set_modified(mtime)
+        .expect("set mtime");
+}
+
+/// Builds `src/{a/keep, b/wanted}` and a destination holding one extraneous
+/// file per directory plus an up-to-date copy of `b/wanted`. Returns the
+/// destination inode of `b/wanted`.
+///
+/// Three sub-lists arrive: `.` (listing `a` and `b`), then `a`, then `b`. When
+/// the root is walked only the first has been read, so a keep-set wider than
+/// one sub-list sees `b` with no children and condemns `b/wanted`.
+fn build_bait_tree(src: &Path, dst: &Path) -> u64 {
+    for dir in ["a", "b"] {
+        fs::create_dir_all(src.join(dir)).expect("create src dir");
+        fs::create_dir_all(dst.join(dir)).expect("create dst dir");
+    }
+    fs::write(src.join("a/keep"), b"keep").expect("write keep");
+    fs::write(src.join("b/wanted"), b"wanted, not yet received").expect("write wanted");
+    write_matching(
+        &dst.join("b/wanted"),
+        b"wanted, not yet received",
+        &src.join("b/wanted"),
+    );
+    for extra in ["extra_root", "a/extra_a", "b/extra_b"] {
+        fs::write(dst.join(extra), b"extraneous").expect("write extra");
+    }
+    fs::metadata(dst.join("b/wanted"))
+        .expect("stat wanted")
+        .ino()
+}
+
+/// The data-loss guard for per-directory delete under INC_RECURSE: a
+/// `--delete-during` pull deletes every extraneous entry, and an up-to-date
+/// destination file whose sub-list has not arrived when the walk starts is
+/// never touched - not deleted and re-sent, but the same inode.
+///
+/// upstream: generator.c:2780-2798 deletes in each sub-list's parent as that
+/// sub-list becomes `cur_flist`, and generator.c:347 probes only that list, so
+/// a name is judged only once its directory's complete list is in hand.
+#[test]
+fn inc_recurse_delete_during_spares_a_wanted_file_of_a_later_segment() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    let wanted_ino = build_bait_tree(&src, &dst);
+
+    let stats = forced_inc_recurse_pull_with(&src, &dst, "rt", with_delete(|_| {}));
+
+    assert_streamed(&stats);
+    for extra in ["extra_root", "a/extra_a", "b/extra_b"] {
+        assert!(
+            fs::symlink_metadata(dst.join(extra)).is_err(),
+            "extraneous {extra} must be deleted"
+        );
+    }
+    assert_eq!(
+        fs::metadata(dst.join("b/wanted"))
+            .expect("b/wanted survives")
+            .ino(),
+        wanted_ino,
+        "b/wanted was deleted and re-sent: a keep-set wider than its own \
+         sub-list judged it before its sub-list arrived"
+    );
+    assert_eq!(
+        stats.delete_stats.files, 3,
+        "exactly the three extraneous files are deleted, counted across \
+         segments into one NDX_DEL_STATS tally"
+    );
+    assert_eq!(list_tree(&src), list_tree(&dst), "destination tree differs");
+}
+
+/// `--delete-delay` decides per sub-list but unlinks after the walk; the end
+/// state and the tally match `--delete-during`.
+///
+/// upstream: generator.c:352-353 remember_delete() inside the per-sub-list
+/// delete_in_dir(), generator.c:2899-2900 do_delayed_deletions() after it.
+#[test]
+fn inc_recurse_delete_delay_matches_delete_during() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    let wanted_ino = build_bait_tree(&src, &dst);
+
+    let stats = forced_inc_recurse_pull_with(
+        &src,
+        &dst,
+        "rt",
+        with_delete(|receiver| receiver.deletion.late_delete = true),
+    );
+
+    assert_streamed(&stats);
+    assert_eq!(list_tree(&src), list_tree(&dst), "destination tree differs");
+    assert_eq!(
+        fs::metadata(dst.join("b/wanted"))
+            .expect("b/wanted survives")
+            .ino(),
+        wanted_ino,
+        "b/wanted must never be condemned"
+    );
+    assert_eq!(stats.delete_stats.files, 3);
+}
+
+/// An empty source directory still gets its (empty) sub-list, and walking it
+/// deletes every destination entry inside.
+///
+/// upstream: generator.c:2780 runs delete_in_dir() for every sub-list with a
+/// parent, whatever its length.
+#[test]
+fn inc_recurse_delete_empties_a_directory_whose_sub_list_is_empty() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    fs::create_dir_all(src.join("empty")).expect("create src dir");
+    fs::create_dir_all(src.join("full")).expect("create src dir");
+    fs::write(src.join("full/f"), b"f").expect("write f");
+    fs::create_dir_all(dst.join("empty/stale_dir")).expect("create dst dir");
+    fs::write(dst.join("empty/stale"), b"stale").expect("write stale");
+
+    let stats = forced_inc_recurse_pull_with(&src, &dst, "rt", with_delete(|_| {}));
+
+    assert_eq!(list_tree(&src), list_tree(&dst), "destination tree differs");
+    assert_eq!(
+        (stats.delete_stats.files, stats.delete_stats.dirs),
+        (1, 1),
+        "the stale file and directory are both deleted"
+    );
+}
+
+/// A source directory the sender cannot read is a general I/O error, and no
+/// directory walked once the receiver knows of it deletes anything, because
+/// the source listing may be incomplete. The oc sender scans the whole tree
+/// before its first list, so the error is known before any directory is
+/// walked and every extraneous entry survives.
+///
+/// upstream: generator.c:304-311 tests the global `io_error` as each
+/// delete_in_dir() starts, and flist.c:2967 folds each list's trailer into it
+/// as the list is read.
+#[test]
+fn inc_recurse_delete_skips_every_directory_after_a_source_io_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    for dir in ["a", "b/locked", "c"] {
+        fs::create_dir_all(src.join(dir)).expect("create src dir");
+        fs::create_dir_all(dst.join(dir)).expect("create dst dir");
+    }
+    for dir in ["a", "c"] {
+        fs::write(src.join(dir).join("k"), b"k").expect("write k");
+        fs::write(dst.join(dir).join("x"), b"x").expect("write x");
+    }
+    let locked = src.join("b/locked");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("chmod");
+    if fs::read_dir(&locked).is_ok() {
+        // A privileged user reads it anyway; there is no error to observe.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("chmod");
+        return;
+    }
+
+    let stats = forced_inc_recurse_pull_with(&src, &dst, "rt", with_delete(|_| {}));
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("chmod");
+
+    assert_ne!(
+        stats.io_error & 1,
+        0,
+        "the unreadable directory is an I/O error"
+    );
+    for dir in ["a", "c"] {
+        assert!(
+            dst.join(dir).join("x").exists(),
+            "{dir}/x must survive: the error is known before {dir} is walked"
+        );
+    }
+}
+
+/// A `--delete` pull deletes the same entries and reports the same tally
+/// whether or not INC_RECURSE splits the list.
+#[test]
+fn inc_recurse_delete_matches_whole_list_delete() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    build_small_tree(&src);
+    let dsts = [tmp.path().join("inc"), tmp.path().join("flat")];
+    for dst in &dsts {
+        fs::create_dir_all(dst.join("a/b/stale_dir")).expect("create dst dirs");
+        for extra in ["x_root", "a/x_a", "a/b/c/x_deep", "empty/x_empty"] {
+            fs::create_dir_all(dst.join(extra).parent().expect("parent"))
+                .expect("create dst parent");
+            fs::write(dst.join(extra), b"x").expect("write extra");
+        }
+    }
+
+    let streamed = loopback_pull(&src, &dsts[0], "rlt", "iLsfxCIvu", with_delete(|_| {}));
+    let whole = loopback_pull(&src, &dsts[1], "rlt", "LsfxCIvu", with_delete(|_| {}));
+
+    assert_streamed(&streamed);
+    assert_eq!(list_tree(&dsts[0]), list_tree(&src));
+    assert_eq!(list_tree(&dsts[1]), list_tree(&src));
+    assert_eq!(
+        format!("{:?}", streamed.delete_stats),
+        format!("{:?}", whole.delete_stats)
+    );
+}

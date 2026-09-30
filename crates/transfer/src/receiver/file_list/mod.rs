@@ -33,3 +33,4 @@ mod sanitize;
 pub(in crate::receiver) use dir_flist::DirFlist;
 pub(in crate::receiver) use dir_flist::DirSlot;
 pub use incremental::IncrementalFileListReceiver;
+pub(in crate::receiver) use receive::strip_leading_slashes;

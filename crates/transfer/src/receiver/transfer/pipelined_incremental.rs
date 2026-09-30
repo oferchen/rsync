@@ -77,9 +77,8 @@ impl ReceiverContext {
         // never emits an NDX_DONE mid-walk to free it. Every mode streams,
         // including the non-transfer ones (list-only, dry-run,
         // --only-write-batch), because upstream's generator walk and its
-        // mid-walk release are mode-independent; only a delete pass stays on the
-        // batch path until A5a-4. On
-        // the live path INC_RECURSE is not negotiated, so `flist_eof` is already
+        // mid-walk release are mode-independent. A delete mode streams too and
+        // deletes per directory as each segment is walked. On the live path INC_RECURSE is not negotiated, so `flist_eof` is already
         // set here, this dispatch never fires, and the batch body below runs
         // unchanged - byte-for-byte.
         if self.should_stream_incremental() {
@@ -512,15 +511,18 @@ impl ReceiverContext {
     /// sub-list stream LAZILY, one segment at a time (RS-3b), instead of draining
     /// it up front.
     ///
-    /// All three must hold:
+    /// Both must hold:
     /// - INC_RECURSE negotiated (a sub-list stream exists at all);
     /// - `!flist_eof` at entry - the terminator has not arrived, so this is a
     ///   genuine multi-segment stream. On the live path INC_RECURSE is not
     ///   negotiated and `flist_eof` is set once the single list is received, so
-    ///   this is always false and the batch body runs unchanged;
-    /// - no delete pass - the per-directory delete split is A5a-4; until then
-    ///   `--delete*` stays on the batch path, whose whole-list keep-set needs
-    ///   `first_segment_idx == 0` (`delete_pass_flist_complete`).
+    ///   this is always false and the batch body runs unchanged.
+    ///
+    /// A delete mode streams too: each segment deletes in its own parent
+    /// directory as it is walked (`delete_in_segment`), the way upstream's
+    /// `delete_in_dir()` runs per sub-list. The only modes that need the whole
+    /// list, `--delete-before` and `--delete-after`, never reach an INC_RECURSE
+    /// receiver (compat.c:172-177, compat.c:780-785).
     ///
     /// The drive mode is deliberately not a condition. Upstream's
     /// generate_files() walks one sub-list at a time and releases each finished
@@ -533,7 +535,6 @@ impl ReceiverContext {
         self.compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE))
             && !self.flist_eof
-            && !self.config.flags.delete
     }
 
     /// The flat-index end of segment `segment_idx`, which must already be
@@ -551,7 +552,7 @@ impl ReceiverContext {
     /// directory of more than 10,000 entries - because the sender only frees
     /// its window on an NDX_DONE this walk has not yet sent (io.c:853-860,
     /// sender.c:529-538).
-    fn segment_end(&self, segment_idx: usize) -> usize {
+    pub(in crate::receiver) fn segment_end(&self, segment_idx: usize) -> usize {
         self.ndx_segments
             .get(segment_idx + 1)
             .map_or(self.file_list.len(), |next| next.0)
@@ -658,6 +659,24 @@ impl ReceiverContext {
             }
             let seg_start = self.ndx_segments[segment_idx].0;
             let seg_end = self.segment_end(segment_idx);
+
+            // upstream: generator.c:2780-2798 - delete in this sub-list's parent
+            // before walking it, empty sub-lists included (every destination
+            // entry of an empty source directory is extraneous). The io_error
+            // guard inside must see every file-list trailer and MSG_IO_ERROR
+            // read so far, as upstream's global does.
+            stats.io_error |=
+                self.flist_reader_io_error() | self.flist_io_error | reader.take_io_error();
+            self.delete_in_segment(
+                segment_idx,
+                &setup.dest_dir,
+                #[cfg(unix)]
+                setup.sandbox.as_ref(),
+                &failed_dirs,
+                writer,
+                &mut stats,
+            )?;
+
             if seg_start >= seg_end {
                 // An empty segment (e.g. a sub-list of only tombstones): nothing
                 // to create or transfer, but it still counts toward the
@@ -923,6 +942,22 @@ impl ReceiverContext {
         self.finalize_delayed_updates_and_hardlinks(&setup.dest_dir, &all_delayed_updates, writer)?;
 
         stats.io_error |= reader.take_io_error();
+
+        // upstream: generator.c:2899-2909 - the delayed deletions, then one
+        // --max-delete report for every per-directory delete of the walk, both
+        // before touch_up_dirs.
+        if self.delete_pass_is_late() {
+            self.run_receiver_delete_pass(
+                super::DeletePassPhase::Late,
+                &setup.dest_dir,
+                #[cfg(unix)]
+                setup.sandbox.as_ref(),
+                writer,
+                &mut stats,
+            )?;
+        }
+        stats.io_error |= self.finish_delete_limit(self.skipped_deletes);
+        stats.delete_limit_exceeded = self.skipped_deletes > 0;
 
         // upstream: generator.c:2093-2146 - touch_up_dirs re-applies directory
         // mtimes after file writes clobber them.
