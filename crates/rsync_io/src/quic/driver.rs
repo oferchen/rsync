@@ -319,6 +319,11 @@ impl Driver {
                         let mut st = c.shared.lock();
                         st.stream_ready = true;
                         st.peer = Some(peer);
+                        // A client endpoint's driver runs one connection, so
+                        // the suite it last keyed is the negotiated one.
+                        if self.role == Role::Client {
+                            st.negotiated_suite = super::cipher::keyed_suite();
+                        }
                         c.shared.cond.notify_all();
                     }
                     if self.role == Role::Server {
