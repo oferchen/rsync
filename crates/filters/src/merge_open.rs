@@ -9,29 +9,58 @@
 //!
 //! Upstream opens these through the same component walk it uses for every other
 //! operator-named auxiliary file: follow a symlink only when it is owned by
-//! uid 0 or our effective uid, refuse any other-uid one.
+//! uid 0 or our effective uid, refuse any other-uid one. For a merge file it
+//! additionally arms the confinement-root refusal, because the merge pattern is
+//! peer-supplied and ownership cannot bound where it points.
 //!
 //! # Upstream Reference
 //!
 //! - `rsync-3.5.0/exclude.c:1464` - `parse_filter_file()` opens the merge file.
 //! - `rsync-3.5.0/exclude.c:811-814` - `push_local_filters()` calls it per
 //!   scanned directory.
+//! - `rsync-3.5.0/exclude.c:1680-1684` - the `operator_path_resolve = 1` that
+//!   wraps that open.
 //! - `rsync-3.5.0/syscall.c:538` - `open_no_attacker_symlinks()`; the trust
 //!   rule is at `syscall.c:406`.
 
 use std::io;
 use std::path::Path;
 
-/// Read a per-directory merge file, refusing an attacker-owned symlink.
+/// Read a per-directory merge file, refusing an attacker-owned symlink and any
+/// path that resolves outside the session's confinement root.
 ///
 /// The platform seam lives here rather than at each call site. On non-Unix
 /// targets the ownership walk has no meaning - there is no `st_uid` to trust -
 /// and this degrades to a plain read, matching how the rest of the tree gates
 /// `fast_io`'s operator-path helpers.
+///
+/// # Why the confinement and not the ownership walk alone
+///
+/// The merge PATTERN travels over the protocol as a filter rule, not in the
+/// argv an `rrsync` wrapper validates, so the peer chooses it: `:-s
+/// ../outside-secret` names a file beside the restricted directory. Ownership
+/// cannot judge that - the escape needs no symlink at all, and where one is
+/// used a non-chrooted daemon writes `--backup-dir` entries as root, so a raced
+/// link is root-owned and the walk trusts it by design. An exclude-only merge
+/// then turns every line of the file into a pattern, so nothing fails to parse
+/// and the file's contents come back to the peer as absences from the file
+/// list. Judging where the open LANDS is what closes that.
+///
+/// The daemon's own `filter` / `include from` / `exclude from` parameters are
+/// deliberately not read through here: they are operator-configured and
+/// legitimately live outside the module.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/exclude.c:1668-1684` - `parse_filter_file()` wraps its
+///   `open_no_attacker_symlinks()` in `operator_path_resolve = 1`, scoped by
+///   `if (!daemon_config_filter_file)`.
+/// - `rsync-3.5.0/syscall.c:186-240` - `abspath_outside_confinement()`, the
+///   refusal that flag arms.
 pub(crate) fn read_to_string(path: &Path) -> io::Result<String> {
     #[cfg(unix)]
     {
-        fast_io::operator_read_to_string(path)
+        fast_io::operator_read_to_string_confined(path)
     }
     #[cfg(not(unix))]
     {

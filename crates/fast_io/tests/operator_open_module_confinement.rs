@@ -276,6 +276,7 @@ fn without_a_confinement_root_a_confined_open_still_follows() {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     fast_io::confinement::install_local_session(
         fast_io::confinement::LocalInsecureLinks::from_local_flag(false),
+        None,
     );
     let file = fast_io::operator_open_read_confined(&planted)
         .expect("no root means nothing is outside it");

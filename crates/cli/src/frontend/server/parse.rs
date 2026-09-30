@@ -14,6 +14,17 @@ use super::flags::{
 /// paths, and `main.c` `do_server_sender()` / `do_server_recv()` take `argv[0]`
 /// as the directory to change into, so it is consumed there and never appears
 /// as a transferred operand.
+///
+/// ⚠ Exactly ONE slot is the placeholder, and it is the FIRST one. Upstream
+/// consumes `argv[0]` positionally - `dir = argv[0]; argc--; argv++;` - without
+/// looking at what it holds, so every later operand is a real path even when it
+/// is spelled `.`. `rsync -r host:. dest/` sends `. .`, where the second `.` is
+/// the transfer SOURCE; a push to `host:.` sends the same pair with the second
+/// `.` as the DESTINATION. Dropping every `.` leaves the server with no
+/// operand: MEASURED as an empty file list and a silent rc=0 no-op.
+///
+/// upstream: `main.c:966-975` `do_server_sender()` - `dir = argv[0];` then
+/// `argc--; argv++;`; `main.c:1192-1194` `do_server_recv()` - the same pair.
 const CWD_PLACEHOLDER: &str = ".";
 
 /// Parses the flag string and positional arguments from server-mode argument list.
@@ -46,6 +57,10 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
     let mut flag_string = String::new();
     let mut positional_args = Vec::new();
     let mut found_flags = false;
+    // The chdir slot is a single argv position, not a value to filter for. Once
+    // it has been spent, a later `.` is an ordinary operand. See
+    // [`CWD_PLACEHOLDER`].
+    let mut cwd_placeholder_spent = false;
 
     let mut idx = 0;
     while idx < args.len() {
@@ -96,7 +111,8 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
         }
 
         // upstream uses "." as a placeholder separator between flags and paths
-        if found_flags && arg_str == CWD_PLACEHOLDER {
+        if found_flags && !cwd_placeholder_spent && arg_str == CWD_PLACEHOLDER {
+            cwd_placeholder_spent = true;
             idx += 1;
             continue;
         }
@@ -109,15 +125,17 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
 
     // Everything after the marker is a path, whatever it looks like - that is
     // the property `support/rrsync:558` relies on. The `.` placeholder is
-    // filtered by the same rule the loop above applies, because rrsync emits it
+    // consumed by the same rule the loop above applies, because rrsync emits it
     // AFTER the marker (`support/rrsync:655`) where upstream's own
-    // `server_options()` emits it before.
-    positional_args.extend(
-        operands
-            .iter()
-            .filter(|operand| operand.as_os_str() != OsStr::new(CWD_PLACEHOLDER))
-            .cloned(),
-    );
+    // `server_options()` emits it before - and by the same ONE-slot rule, so
+    // rrsync's `-- . .` keeps its second `.` as the transfer operand.
+    for operand in operands {
+        if !cwd_placeholder_spent && operand.as_os_str() == OsStr::new(CWD_PLACEHOLDER) {
+            cwd_placeholder_spent = true;
+            continue;
+        }
+        positional_args.push(operand.clone());
+    }
 
     (flag_string, positional_args)
 }

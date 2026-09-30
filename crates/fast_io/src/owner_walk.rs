@@ -1110,6 +1110,37 @@ pub fn operator_read_to_string(path: &Path) -> io::Result<String> {
     Ok(contents)
 }
 
+/// Read a filter/merge file through the ownership walk, additionally bound to
+/// the session's confinement root.
+///
+/// The confined counterpart of [`operator_read_to_string`], standing to it as
+/// [`operator_open_read_confined`] stands to [`operator_open_read`]. A merge
+/// file is named by the PEER - a dir-merge rule travels over the protocol, not
+/// in the argv an `rrsync` wrapper validates - and its bytes become filter
+/// rules, so reading one from outside the root both reshapes the transfer and
+/// discloses the file's contents back to the peer.
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.0/exclude.c:1680-1684` - `parse_filter_file()` sets
+///   `operator_path_resolve = 1` around `open_no_attacker_symlinks()`,
+///   exempting only the daemon's own config-supplied filter parameters.
+///
+/// # Errors
+///
+/// - `ELOOP` when a component is an untrusted-owner symlink, or when the
+///   resolved path lands outside the confinement root.
+/// - Otherwise as [`operator_read_to_string`], including `InvalidData` when the
+///   file is not valid UTF-8.
+pub fn operator_read_to_string_confined(path: &Path) -> io::Result<String> {
+    use std::io::Read as _;
+
+    let mut file = operator_open_read_confined(path)?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    Ok(contents)
+}
+
 /// `lstat`s an operator-supplied path with its parent resolved by the ownership
 /// walk, so a foreign-owned symlink among the parent components cannot redirect
 /// the stat.
