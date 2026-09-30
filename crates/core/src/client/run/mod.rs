@@ -454,20 +454,22 @@ fn run_client_internal(
     // (before any mode preservation could repair it) while an unreadable but
     // searchable one passes, so probe traversability by stat'ing `<dest>/.`
     // rather than reading the directory. Other errors (e.g. NotFound for a
-    // destination this run will create) proceed normally.
-    use std::fs;
-    let dest_to_check = if plan.destination().is_dir() {
-        plan.destination()
-    } else if let Some(parent) = plan.destination().parent() {
-        parent
-    } else {
-        plan.destination()
-    };
+    // destination this run will create) proceed normally. Under `list_only`
+    // main.c:725 returns before the chdir, so no destination is probed.
+    if !config.list_only() {
+        let dest_to_check = if plan.destination().is_dir() {
+            plan.destination()
+        } else if let Some(parent) = plan.destination().parent() {
+            parent
+        } else {
+            plan.destination()
+        };
 
-    if let Err(error) = fs::metadata(dest_to_check.join("."))
-        && error.kind() == std::io::ErrorKind::PermissionDenied
-    {
-        return Err(super::error::destination_access_error(dest_to_check, error));
+        if let Err(error) = std::fs::metadata(dest_to_check.join("."))
+            && error.kind() == std::io::ErrorKind::PermissionDenied
+        {
+            return Err(super::error::destination_access_error(dest_to_check, error));
+        }
     }
 
     // upstream: main.c:1259 / main.c:1442 call `check_alt_basis_dirs()` once the

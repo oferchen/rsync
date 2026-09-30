@@ -1,4 +1,30 @@
 impl<'a> CopyContext<'a> {
+    /// Records one `--list-only` row for a source entry.
+    ///
+    /// upstream: generator.c:1638-1643 recv_generator() - under `list_only` the
+    /// generator prints the entry with `list_file_entry()` and returns before
+    /// any destination lookup, and main.c:725 `get_local_name()` returns NULL,
+    /// so no destination state may shape the listing. `action` names the
+    /// entry's kind; the record carries no creation flag, keeping the
+    /// `--stats` created counts at zero.
+    pub(super) fn record_listed_entry(
+        &mut self,
+        path: PathBuf,
+        action: LocalCopyAction,
+        metadata: &fs::Metadata,
+        symlink_target: Option<PathBuf>,
+    ) {
+        let snapshot = LocalCopyMetadata::from_metadata(metadata, symlink_target);
+        self.record(LocalCopyRecord::new(
+            path,
+            action,
+            0,
+            Some(snapshot.len()),
+            Duration::default(),
+            Some(snapshot),
+        ));
+    }
+
     /// Records a skip event for a non-regular file (e.g. socket, unknown type).
     ///
     /// Emits an `--info=NONREG` notice mirroring upstream rsync 3.4.1
