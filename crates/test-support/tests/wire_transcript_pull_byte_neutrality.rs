@@ -283,3 +283,118 @@ fn pull_receiver_outbound_stream_is_substantive_and_scales_with_entries() {
         multi.client_to_server.len()
     );
 }
+
+/// Staging flag that lets a pulling client advertise INC_RECURSE (`'i'`).
+const PULL_INC_RECURSE_ENV: &str = "OC_RSYNC_PULL_INC_RECURSE";
+
+/// Like [`capture`], but writes into `dest_root/dest` so a cell can check the
+/// transferred tree afterwards.
+fn capture_into(
+    src: &Path,
+    dest_root: &Path,
+    label: &str,
+    configure: impl FnOnce(&mut Command),
+) -> WireTranscript {
+    let dest = dest_root.join("dest");
+    fs::create_dir(&dest).expect("mkdir dest");
+    let recorder = TranscriptRecorder::new(dest_root);
+    let binary = test_support::oc_rsync_bin();
+    let capture_rsh = Path::new(env!("CARGO_BIN_EXE_capture-rsh"));
+    let mut cmd = recorder.command(&binary, &binary, capture_rsh);
+    cmd.arg("-rlt")
+        .arg(format!("transcripthost:{}/", src.display()))
+        .arg(&dest);
+    configure(&mut cmd);
+    let output = cmd.output().expect("run oc-rsync client");
+    assert!(
+        output.status.success(),
+        "transfer failed ({label}): {}\nstderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut transcript = recorder.finish().expect("read captures");
+    transcript
+        .mask_pull_flist_times()
+        .expect("mask pull flist times");
+    transcript
+}
+
+/// Every entry under `root`, relative, with a regular file's content or a
+/// symlink's target (empty for a directory), sorted.
+fn tree_listing(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).expect("read_dir") {
+            let path = entry.expect("dir entry").path();
+            let rel = path.strip_prefix(root).expect("under root").to_path_buf();
+            let meta = fs::symlink_metadata(&path).expect("lstat");
+            if meta.file_type().is_symlink() {
+                let target = fs::read_link(&path).expect("readlink");
+                out.push((rel, target.into_os_string().into_encoded_bytes()));
+            } else if meta.is_dir() {
+                out.push((rel, Vec::new()));
+                stack.push(path);
+            } else {
+                out.push((rel, fs::read(&path).expect("read file")));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Cell 4 (IRP-03/04): the staging flag engages INC_RECURSE on a pull, and the
+/// incremental receiver still reproduces the source tree.
+///
+/// With the flag set the client advertises `'i'`, the oc server sender answers
+/// with `CF_INC_RECURSE` and ships the tree as per-directory sub-lists, so the
+/// server->client stream must differ from the flag-off run. A flag that
+/// silently failed to engage would leave it byte-identical and fail here.
+#[test]
+fn pull_inc_recurse_flag_engages_and_transfers_the_tree() {
+    let src = tempfile::tempdir().expect("src");
+    build_fixture(src.path(), false);
+
+    let off_dir = tempfile::tempdir().expect("off dest");
+    let off = capture_into(src.path(), off_dir.path(), "flag off", |_| {});
+    let on_dir = tempfile::tempdir().expect("on dest");
+    let on = capture_into(src.path(), on_dir.path(), "flag on", |cmd| {
+        cmd.env(PULL_INC_RECURSE_ENV, "1");
+    });
+
+    assert!(
+        off.server_to_client != on.server_to_client,
+        "{PULL_INC_RECURSE_ENV}=1 must switch the pull to INC_RECURSE sub-lists"
+    );
+    let expected = tree_listing(src.path());
+    assert_eq!(tree_listing(&off_dir.path().join("dest")), expected);
+    assert_eq!(
+        tree_listing(&on_dir.path().join("dest")),
+        expected,
+        "the incremental receiver must reproduce the source tree"
+    );
+}
+
+/// Cell 5 (IRP-03/04): options that must keep the whole-list pull leave the
+/// wire byte-identical to the flag-off run even with the flag set.
+///
+/// `--no-inc-recursive` is the user's explicit opt-out, and every delete mode
+/// keeps `'i'` withheld until the per-directory delete lands - a whole-list
+/// sweep over a partially received list would unlink not-yet-received files.
+#[test]
+fn pull_inc_recurse_flag_is_inert_under_no_inc_recursive_and_delete() {
+    let src = tempfile::tempdir().expect("src");
+    build_fixture(src.path(), false);
+    for extra in ["--no-inc-recursive", "--delete", "--delete-delay"] {
+        let off_dir = tempfile::tempdir().expect("off dest");
+        let off = capture_into(src.path(), off_dir.path(), extra, |cmd| {
+            cmd.arg(extra);
+        });
+        let on_dir = tempfile::tempdir().expect("on dest");
+        let on = capture_into(src.path(), on_dir.path(), extra, |cmd| {
+            cmd.arg(extra).env(PULL_INC_RECURSE_ENV, "1");
+        });
+        assert_transcripts_eq(&off, &on, &format!("{extra} with the flag set"));
+    }
+}
