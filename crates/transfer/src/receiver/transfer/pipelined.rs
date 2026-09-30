@@ -212,6 +212,7 @@ impl ReceiverContext {
         // non-transfer mode, so this driver and run_pipelined_incremental cannot
         // drift again. The match is exhaustive by design: a new ReceiverMode
         // variant is a compile error in every driver that does not handle it.
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
         match self.select_mode() {
             ReceiverMode::NonTransfer(non_transfer) => {
                 (files_transferred, transferred_file_size) = self.run_non_transfer_mode(
@@ -238,7 +239,6 @@ impl ReceiverContext {
                 // and the redo pass. Fresh per-pass codecs would reset the diff
                 // base and desync the daemon-sender's NDX decode on the redo.
                 let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
-                let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
                 (
                     files_transferred,
                     transferred_file_size,
@@ -398,7 +398,7 @@ impl ReceiverContext {
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
 
-        self.finalize_transfer(reader, writer)?;
+        self.finalize_transfer(reader, writer, &mut ndx_read_codec)?;
 
         // upstream: io.c:1573 - io_error |= val on MSG_IO_ERROR from the sender.
         // The sender emits MSG_IO_ERROR (sender.c:486-487) for source files that

@@ -24,6 +24,7 @@ use std::ffi::OsString;
 use std::io::{self, Cursor, Write};
 
 use protocol::ProtocolVersion;
+use protocol::codec::create_ndx_codec;
 
 use super::super::super::ReceiverContext;
 use crate::config::ServerConfig;
@@ -153,7 +154,7 @@ fn finalize_transfer_proto28_flushes_after_goodbye() {
     let mut reader = Cursor::new(proto28_sender_bytes());
     let mut writer = FlushTrackingWriter::default();
 
-    ctx.finalize_transfer(&mut reader, &mut writer)
+    ctx.finalize_transfer(&mut reader, &mut writer, &mut create_ndx_codec(28))
         .expect("finalize_transfer completes");
 
     // 2 NDX_DONEs from `exchange_phase_done` + 1 NDX_DONE from
@@ -205,7 +206,7 @@ fn finalize_transfer_tolerates_broken_pipe_on_tail_flush() {
     let mut reader = Cursor::new(proto28_sender_bytes());
     let mut writer = TailFlushFailingWriter::new(3, io::ErrorKind::BrokenPipe);
 
-    ctx.finalize_transfer(&mut reader, &mut writer)
+    ctx.finalize_transfer(&mut reader, &mut writer, &mut create_ndx_codec(28))
         .expect("BrokenPipe on tail flush is tolerated");
     assert_eq!(
         writer.flushes, 4,
@@ -227,7 +228,7 @@ fn finalize_transfer_surfaces_non_close_errors_on_tail_flush() {
     let mut writer = TailFlushFailingWriter::new(3, io::ErrorKind::Other);
 
     let err = ctx
-        .finalize_transfer(&mut reader, &mut writer)
+        .finalize_transfer(&mut reader, &mut writer, &mut create_ndx_codec(28))
         .expect_err("non-close tail flush failure surfaces");
     assert_eq!(
         err.kind(),
@@ -237,5 +238,58 @@ fn finalize_transfer_surfaces_non_close_errors_on_tail_flush() {
     assert!(
         !crate::is_early_close_error(&err),
         "tail-flush error must NOT be classified as early close: {err:?}",
+    );
+}
+
+/// upstream: io.c read_ndx() keeps one connection-wide `prev_positive`, so the
+/// hardlink-follower echo drained at the first phase boundary decodes against
+/// the index the transfer loop read last.
+///
+/// Why it matters: pushing a FIFO and its hard link from rsync 3.5.1 to an oc
+/// server makes the sender echo index 2 twice in a row, and the second echo is
+/// wire-encoded as diff 0 (`0xFE 0x00 0x00`). A finalization that decodes it
+/// with a fresh codec adds that diff to -1, reads 0xFFFFFFFF, and aborts with
+/// "Invalid file index: 4294967295".
+#[test]
+fn finalize_transfer_decodes_follower_echo_against_the_transfer_loop_state() {
+    use crate::generator::ItemFlags;
+    use protocol::codec::NdxCodec;
+
+    let mut ctx = receiver_server_mode(30);
+    ctx.advance_pipeline_to_delta_transfer_for_test();
+    ctx.hardlink_follower_echoes.set(1);
+
+    // The sender's echoes of index 1 and 2, read by the transfer loop.
+    let mut sender = create_ndx_codec(30);
+    let mut loop_bytes = Vec::new();
+    sender.write_ndx(&mut loop_bytes, 1).unwrap();
+    sender.write_ndx(&mut loop_bytes, 2).unwrap();
+    let mut loop_codec = create_ndx_codec(30);
+    let mut loop_reader = Cursor::new(loop_bytes);
+    assert_eq!(loop_codec.read_ndx(&mut loop_reader).unwrap(), 1);
+    assert_eq!(loop_codec.read_ndx(&mut loop_reader).unwrap(), 2);
+
+    // Then the follower echo for index 2 again, and the three NDX_DONEs.
+    let mut wire = Vec::new();
+    sender.write_ndx(&mut wire, 2).unwrap();
+    let iflags = (ItemFlags::ITEM_LOCAL_CHANGE
+        | ItemFlags::ITEM_XNAME_FOLLOWS
+        | ItemFlags::ITEM_IS_NEW) as u16;
+    wire.extend_from_slice(&iflags.to_le_bytes());
+    wire.push(4);
+    wire.extend_from_slice(b"fifo");
+    for _ in 0..3 {
+        sender.write_ndx_done(&mut wire).unwrap();
+    }
+    let total = wire.len();
+
+    let mut reader = Cursor::new(wire);
+    let mut writer = FlushTrackingWriter::default();
+    ctx.finalize_transfer(&mut reader, &mut writer, &mut loop_codec)
+        .expect("the follower echo must decode against the transfer-loop NDX state");
+    assert_eq!(
+        reader.position() as usize,
+        total,
+        "every sender byte is consumed"
     );
 }

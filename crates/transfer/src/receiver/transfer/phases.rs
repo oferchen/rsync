@@ -325,6 +325,12 @@ impl ReceiverContext {
     /// Exchanges phase transitions, receives stats, and handles goodbye handshake.
     ///
     /// This is the common finalization sequence shared by all transfer modes.
+    ///
+    /// `ndx_read_codec` must be the codec that decoded the transfer loop's
+    /// sender replies. upstream: io.c read_ndx() keeps one connection-wide
+    /// `prev_positive`, and the hardlink-follower echoes drained at the first
+    /// phase boundary are diff-encoded against it - a fresh codec decodes a
+    /// repeated index (diff 0) as 0xFFFFFFFF and aborts the transfer.
     pub(in crate::receiver) fn finalize_transfer<
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
@@ -332,6 +338,7 @@ impl ReceiverContext {
         &mut self,
         reader: &mut R,
         writer: &mut W,
+        ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<()> {
         // FSM: delta transfer complete. Advance to Finalization.
         self.pipeline
@@ -339,9 +346,8 @@ impl ReceiverContext {
             .map_err(crate::fsm_error)?;
 
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
-        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
-        self.exchange_phase_done(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
+        self.exchange_phase_done(reader, writer, &mut ndx_write_codec, ndx_read_codec)?;
 
         if self.config.connection.client_mode {
             // upstream: main.c:365-372 - the client receiver reads the sender's
@@ -352,7 +358,7 @@ impl ReceiverContext {
             self.sender_stats = Some(self.receive_stats(reader)?);
         }
 
-        self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
+        self.handle_goodbye(reader, writer, &mut ndx_write_codec, ndx_read_codec)?;
 
         // upstream: main.c:1098 do_recv() child path and main.c:1153/1141
         // do_recv() parent path both call io_flush(FULL_FLUSH) immediately

@@ -568,7 +568,7 @@ impl ReceiverContext {
         // directory mtimes after file writes clobber them.
         self.touch_up_dirs(&dest_dir, writer);
 
-        self.finalize_transfer(reader, writer)?;
+        self.finalize_transfer(reader, writer, &mut ndx_read_codec)?;
 
         // upstream: io.c:1573 - io_error |= val on MSG_IO_ERROR from the sender.
         // The sender emits MSG_IO_ERROR (sender.c:486-487) for source files that
