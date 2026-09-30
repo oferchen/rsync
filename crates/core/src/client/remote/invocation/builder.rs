@@ -211,15 +211,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // only the first short-flag argument as the compact flag string.
         // upstream: compat.c:162-181 set_allow_inc_recurse(),
         // options.c:3046 maybe_add_e_option() - `allow_inc_recurse` resolves
-        // the option state (`ClientConfig::allow_inc_recurse`, which folds in
-        // upstream's `!recurse || use_qsort` gate); the local restriction on
-        // top is that 'i' is only advertised when this side honors INC_RECURSE
-        // on its receive path. The local Receiver role strips CF_INC_RECURSE
-        // from compat_flags after reading (compat.c:723) but
-        // receive_extra_file_lists then skips the NDX_FLIST_EOF the remote
-        // still emits, leaving its trailing bytes to trip read_varint overflow
-        // on the next decode.
-        // upstream: io.c:1854 read_varint - rejects encodings with extra > 4.
+        // the option state; a pull advertises 'i' only under the
+        // OC_RSYNC_PULL_INC_RECURSE staging flag (see `pull_inc_recurse`).
         //
         // upstream: options.c:3035-3038 maybe_add_e_option() - the whole `e.xxx`
         // suffix is emitted ONLY when the pre-negotiated `protocol_version` is
@@ -228,7 +221,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // must end at the transfer letters (`-r`, not `-re.iLsfxCIvu`).
         if self.requested_protocol().as_u8() >= 30 {
             let am_sender = self.role != RemoteRole::Receiver;
-            let advertise_inc_recurse = self.config.allow_inc_recurse(am_sender) && am_sender;
+            let advertise_inc_recurse =
+                crate::client::remote::pull_inc_recurse::advertise_inc_recurse(
+                    self.config,
+                    am_sender,
+                );
             flags.push_str(&build_capability_string_suffix(advertise_inc_recurse));
         }
         // upstream: options.c:2740 - `if (x > 1) args[ac++] = argstr;`. A bare

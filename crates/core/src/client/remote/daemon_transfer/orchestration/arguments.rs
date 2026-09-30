@@ -347,19 +347,12 @@ pub(super) fn build_full_daemon_args(
     if protocol.as_u8() >= 30 {
         // upstream: compat.c:162-181 set_allow_inc_recurse() and
         // options.c:3046 maybe_add_e_option() - `allow_inc_recurse` resolves
-        // the option state (`ClientConfig::allow_inc_recurse`, which folds in
-        // upstream's `!recurse || use_qsort` gate); the local restriction on
-        // top is that 'i' is only advertised when this side actually honors
-        // INC_RECURSE on its receive path.
-        // For daemon pull (`is_sender=true` means daemon is sender; we are
-        // receiver) the receiver clears CF_INC_RECURSE in compat.rs after
-        // reading it. If we still advertise 'i' the daemon writes the file
-        // list in INC_RECURSE format (trailing NDX_FLIST_EOF), the receiver
-        // skips `receive_extra_file_lists`, and the leftover 0xFF marker
-        // trips `read_varint` overflow on the next decode.
-        // upstream: io.c:1854 read_varint - rejects encodings with extra > 4.
+        // the option state; a pull (`is_sender` = the daemon sends) advertises
+        // 'i' only under the OC_RSYNC_PULL_INC_RECURSE staging flag (see
+        // `pull_inc_recurse`).
         let am_sender = !is_sender;
-        let advertise_inc_recurse = config.allow_inc_recurse(am_sender) && am_sender;
+        let advertise_inc_recurse =
+            crate::client::remote::pull_inc_recurse::advertise_inc_recurse(config, am_sender);
         let capability_suffix = build_capability_string_suffix(advertise_inc_recurse);
         flag_string.push_str(&capability_suffix);
     }
