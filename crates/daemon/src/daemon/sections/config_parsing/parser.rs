@@ -311,7 +311,7 @@ struct CapturedModuleDefaults {
     incoming_chmod: Option<String>,
     outgoing_chmod: Option<String>,
     refuse_options: Option<Vec<String>>,
-    use_chroot: Option<bool>,
+    use_chroot: Option<Option<bool>>,
     module_defaults: GlobalModuleDefaults,
 }
 

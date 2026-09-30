@@ -55,7 +55,8 @@ struct GlobalParseState {
     global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)>,
     global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)>,
-    global_use_chroot: Option<(bool, ConfigDirectiveOrigin)>,
+    /// `None` inside is the BOOL3 Unset.
+    global_use_chroot: Option<(Option<bool>, ConfigDirectiveOrigin)>,
     syslog_facility: Option<(String, ConfigDirectiveOrigin)>,
     syslog_tag: Option<(String, ConfigDirectiveOrigin)>,
     bind_address: Option<(IpAddr, ConfigDirectiveOrigin)>,
