@@ -741,6 +741,81 @@ mod tests {
         writer.write_end(wire, None).unwrap();
     }
 
+    /// Receiver with INC_RECURSE and `-H`, so sub-list hard-link fields decode.
+    fn inc_recurse_hardlink_receiver() -> ReceiverContext {
+        let mut handshake = test_handshake();
+        handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+        let mut config = test_config();
+        config.flags.hard_links = true;
+        ReceiverContext::new_for_test(&handshake, config)
+    }
+    /// Frames one sub-list per `(dir_ndx, ndx_start, entries)` with a
+    /// hard-link-preserving writer whose `first_ndx` tracks each segment, so a
+    /// follower pointing before its segment is sent unabbreviated as upstream
+    /// `send_file_entry()` would.
+    fn encode_hardlink_segments(segments: &[(i32, i32, Vec<FileEntry>)]) -> Vec<u8> {
+        let protocol = ProtocolVersion::try_from(PROTOCOL).unwrap();
+        let mut writer = FileListWriter::new(protocol).with_preserve_hard_links(true);
+        let mut ndx_codec = create_ndx_codec(PROTOCOL);
+        let mut wire = Vec::new();
+        for (dir_ndx, ndx_start, entries) in segments {
+            writer.set_first_ndx(*ndx_start);
+            append_segment(&mut wire, &mut writer, &mut ndx_codec, *dir_ndx, entries);
+        }
+        ndx_codec.write_ndx(&mut wire, NDX_FLIST_EOF).unwrap();
+        wire
+    }
+    fn hlinked(name: &str, gnum: u32) -> FileEntry {
+        let mut entry = FileEntry::new_file(PathBuf::from(name), 8, 0o100644);
+        entry.set_hardlink_idx(gnum);
+        entry
+    }
+    /// A sub-list follower whose gnum precedes the sub-list's NDX start, with no
+    /// leader in any earlier list, is refused with `RERR_PROTOCOL`.
+    ///
+    /// WHY: upstream `hlink.c:125-137 match_gnums()` aborts on it; accepting it
+    /// would let a hostile sender promote an undeclared back-reference to a
+    /// group leader. With an empty initial list the first sub-list starts at
+    /// NDX 2 (`flist.c:3209` - `prev->ndx_start + prev->used + 1`).
+    #[test]
+    fn sublist_hardlink_gnum_before_flist_start_is_refused() {
+        let wire = encode_hardlink_segments(&[(0, 2, vec![hlinked("dir0/b.txt", 0)])]);
+        let mut ctx = inc_recurse_hardlink_receiver();
+        ctx.dir_flist = DirFlist::with_active(["dir0"]);
+        let err = ctx
+            .receive_extra_file_lists(&mut Cursor::new(wire))
+            .expect_err("undeclared back-reference must abort");
+        assert!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<protocol::ProtocolViolation>())
+                .is_some(),
+            "must map to RERR_PROTOCOL, got {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("hard-link gnum 0 precedes flist start 2"),
+            "unexpected message: {err}"
+        );
+    }
+    /// Control: the same follower is accepted when an earlier sub-list sent its
+    /// leader, and it stays a follower of that leader's gnum.
+    #[test]
+    fn sublist_hardlink_follower_of_earlier_sublist_leader_is_accepted() {
+        let wire = encode_hardlink_segments(&[
+            (0, 2, vec![hlinked("dir0/a.txt", u32::MAX)]),
+            (1, 4, vec![hlinked("dir1/b.txt", 2)]),
+        ]);
+        let mut ctx = inc_recurse_hardlink_receiver();
+        ctx.dir_flist = DirFlist::with_active(["dir0", "dir1"]);
+        ctx.receive_extra_file_lists(&mut Cursor::new(wire))
+            .expect("back-reference to a recorded leader is legitimate");
+        let list = ctx.file_list();
+        assert_eq!(list.len(), 2);
+        assert!(list[0].hlink_first());
+        assert_eq!(list[0].hardlink_idx(), Some(2));
+        assert!(!list[1].hlink_first());
+        assert_eq!(list[1].hardlink_idx(), Some(2));
+    }
     /// A `dir_ndx` equal to, past, or absurdly beyond `dir_flist.used()` is
     /// untrusted wire data that references a directory the receiver never saw.
     ///
