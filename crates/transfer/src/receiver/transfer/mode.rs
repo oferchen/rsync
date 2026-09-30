@@ -16,12 +16,13 @@
 //! compile until its single shared body exists.
 
 use std::io::{self, Read, Write};
+use std::ops::Range;
 use std::path::PathBuf;
+
+use protocol::codec::{MonotonicNdxWriter, NdxCodecEnum, create_ndx_codec};
 
 use crate::receiver::stats::TransferStats;
 use crate::receiver::{PipelineSetup, ReceiverContext};
-
-use super::candidates::new_dir_count;
 
 /// A receiver mode that moves no file data.
 ///
@@ -76,11 +77,16 @@ impl ReceiverContext {
         }
     }
 
-    /// Drives one non-transfer mode to completion.
+    /// Drives one non-transfer mode to completion over the whole file list.
     ///
     /// Returns `(files_transferred, transferred_file_size)` - the tallies
     /// upstream still reports for a run that moves no data (`receiver.c:797-800`
     /// bumps `stats.xferred_files` before the `if (!do_xfers)` continue).
+    ///
+    /// The batch drivers call this once with the list fully received; the
+    /// INC_RECURSE streaming driver calls
+    /// [`run_non_transfer_segment`](Self::run_non_transfer_segment) per
+    /// sub-list instead.
     ///
     /// # Upstream Reference
     ///
@@ -91,7 +97,7 @@ impl ReceiverContext {
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     >(
-        &self,
+        &mut self,
         mode: NonTransferMode,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
@@ -99,9 +105,67 @@ impl ReceiverContext {
         files_to_transfer: &[(usize, PathBuf, u32)],
         stats: &mut TransferStats,
     ) -> io::Result<(usize, u64)> {
+        let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
+        let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
+        self.run_non_transfer_segment(
+            mode,
+            0..self.file_list.len(),
+            reader,
+            writer,
+            setup,
+            files_to_transfer,
+            stats,
+            &mut ndx_write_codec,
+            &mut ndx_read_codec,
+        )
+    }
+
+    /// Puts a `--list-only` listing, collected in flat-index order from index 0,
+    /// into the order upstream's generator lists it.
+    ///
+    /// upstream: generator.c:1638-1644 - `list_file_entry()` runs as
+    /// recv_generator() reaches each entry, so under INC_RECURSE a directory is
+    /// listed at the head of its own sub-list, not inside its parent's.
+    pub(in crate::receiver) fn order_list_only_entries(&self, stats: &mut TransferStats) {
+        let entries = std::mem::take(&mut stats.list_only_entries);
+        stats.list_only_entries = self
+            .in_generator_walk_order(entries.into_iter().enumerate())
+            .collect();
+    }
+
+    /// Drives one non-transfer mode over the flat-index range `range`.
+    ///
+    /// `files_to_transfer` must be the candidate list built for the same range.
+    /// The NDX codec pair is the connection-wide read/write state (io.c keeps a
+    /// single `prev_positive`/`prev_negative` per direction), so the streaming
+    /// driver threads one pair through every segment. Running the ranges of a
+    /// list in order produces the same rows, tallies, and request bytes as one
+    /// whole-list call; the tallies are accumulated into `stats`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2803-2820` - generate_files() runs recv_generator() over
+    ///   one sub-list at a time, whatever the mode.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::receiver) fn run_non_transfer_segment<
+        R: Read,
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    >(
+        &mut self,
+        mode: NonTransferMode,
+        range: Range<usize>,
+        reader: &mut crate::reader::ServerReader<R>,
+        writer: &mut W,
+        setup: &PipelineSetup,
+        files_to_transfer: &[(usize, PathBuf, u32)],
+        stats: &mut TransferStats,
+        ndx_write_codec: &mut MonotonicNdxWriter,
+        ndx_read_codec: &mut NdxCodecEnum,
+    ) -> io::Result<(usize, u64)> {
         match mode {
             NonTransferMode::ListOnly => {
-                stats.list_only_entries = self.collect_list_only_entries();
+                let entries = self.collect_list_only_entries_in_range(range);
+                stats.list_only_entries.extend(entries);
                 writer.flush()?;
                 Ok((0, 0))
             }
@@ -112,9 +176,16 @@ impl ReceiverContext {
                 // batch fd (sender.c:220) - while a pull receiver drains the
                 // remote sender's delta via discard_receive_data()
                 // (receiver.c:829-830).
-                let plan = self.plan_dry_run(&setup.dest_dir, files_to_transfer);
-                stats.directories_created = new_dir_count(&plan);
-                self.run_only_write_batch_loop(reader, writer, files_to_transfer, setup)?;
+                let plan = self.plan_dry_run_in_range(range, &setup.dest_dir, files_to_transfer);
+                stats.directories_created += self.new_dir_count(&plan);
+                self.run_only_write_batch_loop(
+                    reader,
+                    writer,
+                    files_to_transfer,
+                    setup,
+                    ndx_write_codec,
+                    ndx_read_codec,
+                )?;
                 Ok((0, 0))
             }
             NonTransferMode::DryRun => {
@@ -122,11 +193,11 @@ impl ReceiverContext {
                 // receiver tallies every ITEM_IS_NEW even under --dry-run (only
                 // the data transfer and the filesystem mutation are skipped).
                 // The directory, symlink, and candidate passes early-return
-                // under skip_dest_writes(), so plan_dry_run is the one place the
+                // under skip_dest_writes(), so plan_dry_run_in_range is the one place the
                 // rows and created-file counts are produced.
-                let plan = self.plan_dry_run(&setup.dest_dir, files_to_transfer);
-                stats.directories_created = new_dir_count(&plan);
-                self.run_dry_run_loop(reader, writer, &plan)
+                let plan = self.plan_dry_run_in_range(range, &setup.dest_dir, files_to_transfer);
+                stats.directories_created += self.new_dir_count(&plan);
+                self.run_dry_run_loop(reader, writer, &plan, ndx_write_codec, ndx_read_codec)
             }
         }
     }

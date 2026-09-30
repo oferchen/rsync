@@ -158,3 +158,53 @@ fn sub_list_slot_takes_the_post_downgrade_content_flag() {
         "a list rooted at `a`, not `.`, has no parent"
     );
 }
+
+/// Names the flat entries of `ctx` in the order the generator walk reaches
+/// them.
+fn walk_order(ctx: &ReceiverContext) -> Vec<String> {
+    let names: Vec<String> = ctx
+        .file_list
+        .iter()
+        .map(|e| e.path().display().to_string())
+        .collect();
+    ctx.in_generator_walk_order(names.into_iter().enumerate())
+        .collect()
+}
+
+/// A directory is reached at the head of its own sub-list, not where it sits
+/// in its parent's list, and sub-lists are walked in arrival order.
+///
+/// upstream: generator.c:2780-2788 runs recv_generator() for a sub-list's
+/// parent (`ndx_start - 1`) before the sub-list's entries; the directory's own
+/// slot in its parent's list is `is_dir < 0` (generator.c:1631-1633) and is
+/// neither listed nor itemized (generator.c:1638-1644).
+#[test]
+fn generator_walk_order_moves_each_directory_to_its_sub_list_head() {
+    let mut ctx = inc_recurse_receiver(test_config());
+    receive_initial(&mut ctx, &[dir("."), file("a.txt"), dir("d"), dir("e")]);
+    receive_sub_list(&mut ctx, 2, &[file("e/y.txt")]);
+    receive_sub_list(&mut ctx, 1, &[file("d/x.txt")]);
+
+    assert_eq!(
+        walk_order(&ctx),
+        [".", "a.txt", "e", "e/y.txt", "d", "d/x.txt"],
+        "flat order is . a.txt d e e/y.txt d/x.txt; each dir moves to its sub-list"
+    );
+}
+
+/// Without INC_RECURSE the single list is walked in flat order unchanged.
+#[test]
+fn generator_walk_order_is_flat_order_for_a_single_list() {
+    let mut ctx = ReceiverContext::new_for_test(&test_handshake(), test_config());
+    receive_initial(
+        &mut ctx,
+        &[dir("."), dir("d"), file("d/x.txt"), file("z.txt")],
+    );
+
+    let flat: Vec<String> = ctx
+        .file_list
+        .iter()
+        .map(|e| e.path().display().to_string())
+        .collect();
+    assert_eq!(walk_order(&ctx), flat);
+}

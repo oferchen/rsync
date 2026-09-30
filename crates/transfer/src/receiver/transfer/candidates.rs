@@ -29,19 +29,18 @@ use crate::receiver::quick_check::{
 use crate::receiver::stats::{ListOnlyEntry, TransferStats};
 use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
 
-/// One entry as a `--dry-run` reports it: its flist index, the file-list entry,
-/// and the itemize flags a real run would have carried for it.
+/// One entry as a `--dry-run` reports it: its flist index and the itemize flags
+/// a real run would have carried for it.
+///
+/// The entry is addressed by index, not borrowed: under INC_RECURSE the echo
+/// read that follows each request may append a sub-list segment to the file
+/// list (`rsync.c:322-431` `read_ndx_and_attrs`), so a plan must not pin it.
 ///
 /// upstream: `generator.c:581-600` - `itemize()` writes `write_ndx(ndx)` plus
 /// the `iflags` shortint for every entry whose flags are significant, so a
 /// dry-run plan is exactly "the entries upstream would put on the wire".
-pub(in crate::receiver) type DryRunItem<'a> = (usize, &'a FileEntry, u32);
+pub(in crate::receiver) type DryRunItem = (usize, u32);
 
-/// Counts the directories a `--dry-run` plan would create, for the summary's
-/// `directories_created` field.
-///
-/// upstream: `receiver.c:752-754` - `stats.created_dirs++` under
-/// `iflags & ITEM_IS_NEW`, which runs whether or not the mkdir happened.
 /// The itemize seed for a regular file the generator is about to request.
 ///
 /// upstream: `generator.c:1940-1942`
@@ -121,14 +120,6 @@ fn dest_blocks_regular_file(meta: &fs::Metadata, _write_devices: bool) -> bool {
     !meta.file_type().is_file()
 }
 
-pub(in crate::receiver) fn new_dir_count(plan: &[DryRunItem<'_>]) -> u64 {
-    plan.iter()
-        .filter(|(_, entry, iflags)| {
-            entry.is_dir() && iflags & crate::generator::ItemFlags::ITEM_IS_NEW != 0
-        })
-        .count() as u64
-}
-
 impl ReceiverContext {
     /// Snapshots every active file-list entry for `--list-only` rendering.
     ///
@@ -142,7 +133,18 @@ impl ReceiverContext {
     ///
     /// - `generator.c:1249` - `list_file_entry()` renders one line per entry
     pub(in crate::receiver) fn collect_list_only_entries(&self) -> Vec<ListOnlyEntry> {
-        self.file_list
+        self.collect_list_only_entries_in_range(0..self.file_list.len())
+    }
+
+    /// [`collect_list_only_entries`](Self::collect_list_only_entries)
+    /// restricted to the flat-index range `range`, for the per-segment
+    /// INC_RECURSE walk. Concatenating the ranges in order yields exactly the
+    /// whole-list snapshot.
+    pub(in crate::receiver) fn collect_list_only_entries_in_range(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> Vec<ListOnlyEntry> {
+        self.file_list[range]
             .iter()
             .map(|entry| {
                 let is_symlink = entry.is_symlink();
@@ -661,6 +663,11 @@ impl ReceiverContext {
     /// followers are reported but never requested - the candidate pass excludes
     /// them because upstream services them through `finish_hard_link()`.
     ///
+    /// The plan covers the flat-index range `range` - the whole list on the
+    /// batch drivers, one sub-list on the INC_RECURSE streaming walk.
+    /// `candidates` must come from the same range; every returned index stays a
+    /// global flat index.
+    ///
     /// # Upstream Reference
     ///
     /// - `generator.c:1480-1483` - directory `itemize()` (runs under dry-run).
@@ -671,11 +678,12 @@ impl ReceiverContext {
     ///   whose flags are significant, transfer or not.
     /// - `receiver.c:748-762` / `sender.c:296-310` - `ITEM_IS_NEW` bumps
     ///   `stats.created_files` plus the per-type counter.
-    pub(in crate::receiver) fn plan_dry_run(
+    pub(in crate::receiver) fn plan_dry_run_in_range(
         &self,
+        range: std::ops::Range<usize>,
         dest_dir: &Path,
         candidates: &[(usize, PathBuf, u32)],
-    ) -> Vec<DryRunItem<'_>> {
+    ) -> Vec<DryRunItem> {
         // upstream: generator.c:642 - the quick-check mtime gate keys on
         // ignore_times alone; -t/--times only governs whether mtime is applied.
         let ignore_times = self.config.flags.ignore_times;
@@ -688,7 +696,11 @@ impl ReceiverContext {
         };
         let requestable: HashSet<usize> = candidates.iter().map(|&(idx, ..)| idx).collect();
         let mut plan = Vec::with_capacity(candidates.len());
-        for (idx, entry) in self.file_list.iter().enumerate() {
+        for (idx, entry) in self.file_list[range.clone()]
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (range.start + i, e))
+        {
             let is_candidate = !entry.is_file() || requestable.contains(&idx);
             if !is_candidate && !is_hardlink_follower(entry) {
                 continue;
@@ -713,10 +725,24 @@ impl ReceiverContext {
                 self.record_created(entry.mode());
             }
             if is_candidate && iflags.has_significant_flags() {
-                plan.push((idx, entry, raw));
+                plan.push((idx, raw));
             }
         }
         plan
+    }
+
+    /// Counts the directories a `--dry-run` plan would create, for the
+    /// summary's `directories_created` field.
+    ///
+    /// upstream: `receiver.c:752-754` - `stats.created_dirs++` under
+    /// `iflags & ITEM_IS_NEW`, which runs whether or not the mkdir happened.
+    pub(in crate::receiver) fn new_dir_count(&self, plan: &[DryRunItem]) -> u64 {
+        plan.iter()
+            .filter(|&&(idx, iflags)| {
+                self.file_list[idx].is_dir()
+                    && iflags & crate::generator::ItemFlags::ITEM_IS_NEW != 0
+            })
+            .count() as u64
     }
 
     /// Computes the itemize flags a single entry would carry on a `--dry-run`
@@ -2379,19 +2405,14 @@ mod itemize_order_tests {
             None,
             None,
         );
-        let plan = ctx.plan_dry_run(dest, &candidates);
+        let plan = ctx.plan_dry_run_in_range(0..ctx.file_list.len(), dest, &candidates);
         let rows = ctx
             .itemize_rows
             .borrow()
             .iter()
             .map(|(idx, lines)| (*idx, lines[0].clone()))
             .collect();
-        (
-            plan.into_iter()
-                .map(|(idx, _, iflags)| (idx, iflags))
-                .collect(),
-            rows,
-        )
+        (plan, rows)
     }
 
     /// A `--dry-run` receive must itemize every changing file-list entry, count
@@ -3125,7 +3146,7 @@ mod uptodate_notice_tests {
 /// the option, so without -H the follower has no hardlink effect and must
 /// transfer normally. Pre-fix the decoded bit survived without -H,
 /// `is_hardlink_follower` (quick_check.rs) matched, and the receiver silently
-/// dropped the file from the transfer set at exit 0 while `plan_dry_run` still
+/// dropped the file from the transfer set at exit 0 while `plan_dry_run_in_range` still
 /// itemized it as created - so `--dry-run` and the real run disagreed about
 /// the same wire stream.
 #[cfg(test)]
@@ -3265,7 +3286,7 @@ mod hlink_wire_flag_tests {
         // one file the real run requests is the one the dry run plans and
         // counts as created.
         let created_before = ctx.created_stats.get().files;
-        let plan = ctx.plan_dry_run(dest, &files);
+        let plan = ctx.plan_dry_run_in_range(0..ctx.file_list.len(), dest, &files);
         assert_eq!(plan.len(), 1, "dry-run plan must contain the same file");
         assert_eq!(
             plan[0].0, files[0].0,

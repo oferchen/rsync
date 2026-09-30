@@ -31,6 +31,5 @@ mod receive;
 mod sanitize;
 
 pub(in crate::receiver) use dir_flist::DirFlist;
-#[cfg(test)]
 pub(in crate::receiver) use dir_flist::DirSlot;
 pub use incremental::IncrementalFileListReceiver;
