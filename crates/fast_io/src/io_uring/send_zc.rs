@@ -12,10 +12,18 @@
 //!    `result()` is unused.
 //!
 //! The buffer passed to a SEND_ZC submission must remain valid and unmodified
-//! until the notification CQE arrives. This module enforces that contract by
-//! blocking on both CQEs before returning. Callers therefore see SEND_ZC as
-//! a synchronous primitive even though the kernel performs the page release
-//! asynchronously.
+//! until the notification CQE arrives. [`try_send_zc`] discharges that
+//! contract the blunt way: it blocks on both CQEs, so callers see SEND_ZC as
+//! a synchronous primitive that may be handed a borrowed slice.
+//!
+//! That is correct but slow. The kernel releases the pages only once the peer
+//! has consumed the data, so waiting for the notification couples the
+//! sender's rate to the receiver's drain rate and keeps exactly one send in
+//! flight. [`super::send_zc_pipeline::SendZcPipeline`] is the throughput
+//! path: it waits only for the transfer CQE and keeps a pool of owned buffers
+//! alive until their notifications land. Use [`try_send_zc`] when the payload
+//! is a caller-owned slice that must be released on return; use the pipeline
+//! when the payload can be moved into a buffer the sender owns.
 //!
 //! See `docs/design/iouring-send-zc.md` for the full design.
 //!
@@ -47,10 +55,10 @@ use super::config::IoUringConfig;
 use super::registered_buffers::RegisteredBufferGroup;
 
 /// CQE flag set on the transfer CQE; signals a notification CQE will follow.
-const IORING_CQE_F_MORE: u32 = 1 << 1;
+pub(super) const IORING_CQE_F_MORE: u32 = 1 << 1;
 
 /// CQE flag set on the notification CQE.
-const IORING_CQE_F_NOTIF: u32 = 1 << 3;
+pub(super) const IORING_CQE_F_NOTIF: u32 = 1 << 3;
 
 /// Sentinel `user_data` mask used to keep the SEND_ZC submission from
 /// colliding with other CQEs draining on the same ring.
