@@ -17,6 +17,19 @@ use super::super::error::ClientError;
 use crate::client::DirMergeEnforcedKind;
 use crate::server::ServerConfig;
 
+/// Most 'v' letters the compact server flag string carries.
+///
+/// upstream: options.c:2798-2802 - `for (i = 0; i < verbose && i < 9; i++)
+/// argstr[x++] = 'v';`
+const MAX_SERVER_VERBOSE_LETTERS: u8 = 9;
+
+/// Appends one 'v' per verbosity level, capped as upstream `server_options()`
+/// caps it.
+pub(crate) fn push_verbose_letters(flags: &mut String, verbosity: u8) {
+    let count = verbosity.min(MAX_SERVER_VERBOSE_LETTERS);
+    flags.extend(std::iter::repeat_n('v', usize::from(count)));
+}
+
 /// Builds the compact server flag string from client configuration.
 ///
 /// Constructs a single-character flag string (e.g., `-logDtpr`) encoding the
@@ -25,16 +38,12 @@ use crate::server::ServerConfig;
 pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     let mut flags = String::from("-");
 
-    // upstream: options.c:2634-2635 - `for (i = 0; i < verbose; i++)
-    // argstr[x++] = 'v';` packs one 'v' per verbosity level, first after the
-    // leading '-'. server_options() sends the count to the remote so its
-    // generator/receiver emits matching verbose diagnostics; the daemon wire
-    // path (build_full_daemon_args) carries this string verbatim. The
-    // in-process half re-parses the same string (from_flag_string_and_args)
+    // First after the leading '-'. server_options() sends the count to the
+    // remote so its generator/receiver emits matching verbose diagnostics; the
+    // daemon wire path (build_full_daemon_args) carries this string verbatim.
+    // The in-process half re-parses the same string (from_flag_string_and_args)
     // and honours the 'v' count too, redundantly with apply_common_server_flags.
-    for _ in 0..config.verbosity() {
-        flags.push('v');
-    }
+    push_verbose_letters(&mut flags, config.verbosity());
 
     // upstream: options.c:2655-2656 - `if (quiet && msgs2stderr) 'q'`. The
     // default `msgs2stderr` is 2 (nonzero), so plain `-q` packs 'q';
@@ -826,6 +835,26 @@ mod tests {
             3,
             "exactly one 'v' per level: {flags}"
         );
+    }
+
+    /// upstream: options.c:2801 - `i < verbose && i < 9` caps the packed 'v's
+    /// at nine. The daemon path sends this string verbatim, so an uncapped
+    /// count diverges from upstream's server argv past `-v` x 9.
+    #[test]
+    fn server_flag_string_caps_v_at_nine() {
+        for (verbosity, expected) in [(9u8, 9usize), (10, 9), (255, 9)] {
+            let config = ClientConfig::builder().verbosity(verbosity).build();
+            let flags = build_server_flag_string(&config);
+            assert!(
+                flags.starts_with(&format!("-{}", "v".repeat(expected))),
+                "verbosity {verbosity}: {flags}"
+            );
+            assert_eq!(
+                flags.matches('v').count(),
+                expected,
+                "verbosity {verbosity}: {flags}"
+            );
+        }
     }
 
     #[test]
