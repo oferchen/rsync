@@ -27,8 +27,9 @@
 //!   onto the wire itself, coupling the transcript to per-run tempdir names.
 //! - `OC_CONSECUTIVE_MATCH` removed: an opt-in oc extension that changes the
 //!   advertised `-e` capability letters and the signature layout.
-//! - `OC_RSYNC_LAZY_FLIST` removed: the staging flag this harness gates; a
-//!   cell that wants an arm set re-sets it after `command()`.
+//! - `OC_RSYNC_LAZY_FLIST` and `OC_RSYNC_PULL_INC_RECURSE` removed: staging
+//!   flags this harness gates; a cell that wants an arm set re-sets it after
+//!   `command()`.
 //!
 //! Fixture-side variance (file mtimes in the flist, quick-check outcomes)
 //! is the caller's to pin: backdate every fixture entry to a fixed mtime.
@@ -279,7 +280,8 @@ impl TranscriptRecorder {
             .env_remove("RSYNC_RSH")
             .env_remove("RSYNC_PROTECT_ARGS")
             .env_remove("OC_CONSECUTIVE_MATCH")
-            .env_remove("OC_RSYNC_LAZY_FLIST");
+            .env_remove("OC_RSYNC_LAZY_FLIST")
+            .env_remove("OC_RSYNC_PULL_INC_RECURSE");
         cmd
     }
 
