@@ -806,6 +806,36 @@ fn inc_recurse_delete_skips_every_directory_after_a_source_io_error() {
     }
 }
 
+/// A `--delete` pull of more than `MAX_FILECNT_LOOKAHEAD` entries streams:
+/// the batch driver it used to fall back to drains every sub-list before the
+/// walk and deadlocks against the sender's window. Every directory's
+/// extraneous entry is deleted and every source file arrives.
+///
+/// upstream: generator.c:2780-2798 deletes per sub-list inside the same walk
+/// that releases each finished list (generator.c:2820).
+#[test]
+fn inc_recurse_delete_streams_past_lookahead_window() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    let files = build_wide_tree(&src);
+    let dirs: Vec<PathBuf> = list_tree(&src)
+        .into_iter()
+        .filter(|rel| src.join(rel).is_dir())
+        .collect();
+    for dir in &dirs {
+        fs::create_dir_all(dst.join(dir)).expect("create dst dir");
+        fs::write(dst.join(dir).join("zz_extra"), b"x").expect("write extra");
+    }
+
+    let stats = forced_inc_recurse_pull_with(&src, &dst, "rt", with_delete(|_| {}));
+
+    assert_streamed(&stats);
+    assert_eq!(stats.files_transferred, files);
+    assert_eq!(stats.delete_stats.files as usize, dirs.len());
+    assert_eq!(list_tree(&src), list_tree(&dst), "destination tree differs");
+}
+
 /// A `--delete` pull deletes the same entries and reports the same tally
 /// whether or not INC_RECURSE splits the list.
 #[test]
