@@ -37,7 +37,8 @@
 //! | 1 (`-v`) | `COPY,DEL,FLIST,MISC,NAME,STATS,SYMSAFE` | (none) |
 //! | 2 (`-vv`) | `BACKUP,MISC2,MOUNT,NAME2,REMOVE,SKIP` | `BIND,CMD,CONNECT,DEL,DELTASUM,DUP,FILTER,FLIST,ICONV` |
 //! | 3 (`-vvv`) | (same as 2) | `ACL,BACKUP,CONNECT2,DELTASUM2,DEL2,EXIT,FILTER2,FLIST2,FUZZY,GENR,OWN,RECV,SEND,TIME` |
-//! | 4+ | (same as 2) | `CMD2,DELTASUM3-4,DEL3,EXIT2,FLIST3-4,FUZZY2,HASH,HLINK,ICONV2,OWN2,PROTO,TIME2,CHDIR` |
+//! | 4 (`-vvvv`) | (same as 2) | `CMD2,DELTASUM3,DEL3,EXIT2,FLIST3,ICONV2,OWN2,PROTO,TIME2` |
+//! | 5+ | (same as 2) | `CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK` |
 //!
 //! # Error formatting
 //!
@@ -95,7 +96,7 @@ mod tracing_bridge;
 #[cfg(feature = "tracing")]
 mod tracing_macros;
 
-pub use config::VerbosityConfig;
+pub use config::{MAX_VERBOSITY, VerbosityConfig};
 pub use errno_text::upstream_errno_text;
 pub use error_format::{
     file_basename, format_rsync_error, format_rsync_warning, strip_repo_prefix,

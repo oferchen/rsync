@@ -13,12 +13,6 @@ fn determine_server_role(client_args: &[String]) -> ServerRole {
     }
 }
 
-/// Largest verbosity level the `info_verbosity[]` / `debug_verbosity[]` tables
-/// describe. upstream: options.c:247 `#define MAX_VERBOSITY ((int)(sizeof
-/// debug_verbosity / sizeof debug_verbosity[0]) - 1)`, whose table
-/// (options.c:238-245) runs 0..=5.
-const MAX_VERBOSITY: u8 = 5;
-
 /// Caps the client's requested verbosity at the module's `max verbosity`,
 /// yielding the effective per-connection output level.
 ///
@@ -32,7 +26,7 @@ const MAX_VERBOSITY: u8 = 5;
 /// leaves `verbose` and the parsed argv untouched. A `level` above
 /// `MAX_VERBOSITY` returns early (options.c:542-543), applying no limit at all.
 fn limit_output_verbosity(requested: u8, max_verbosity: i32) -> u8 {
-    if max_verbosity > i32::from(MAX_VERBOSITY) {
+    if max_verbosity > i32::from(logging::MAX_VERBOSITY) {
         return requested;
     }
     let max = u8::try_from(max_verbosity).unwrap_or(0);
