@@ -123,6 +123,7 @@
 //! plan.execute().expect("copy succeeds");
 //! ```
 
+pub mod append_gate;
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub mod async_io;

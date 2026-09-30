@@ -15,6 +15,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use engine::append_gate::append_skips;
 use logging::{debug_gte, debug_log, info_log};
 use metadata::{MetadataOptions, apply_metadata_with_cached_stat, metadata_unchanged};
 use protocol::flist::FileEntry;
@@ -264,6 +265,7 @@ impl ReceiverContext {
         let min_size = self.config.file_selection.min_file_size;
         let max_size = self.config.file_selection.max_file_size;
         let has_size_bounds = min_size.is_some() || max_size.is_some();
+        let append = self.config.flags.append;
         let has_failed_dirs = failed_dirs.is_some();
         let verbose_client = self.config.flags.verbose && self.config.connection.client_mode;
 
@@ -343,6 +345,7 @@ impl ReceiverContext {
                     !has_size_bounds
                         || !self.emit_size_bound_skip(writer, entry, min_size, max_size)
                 })
+                .filter(|(_, entry)| !append || !self.dry_run_append_skips(dest_dir, entry))
                 .map(|(idx, entry)| {
                     (
                         idx,
@@ -510,6 +513,13 @@ impl ReceiverContext {
                         has_xattrs,
                         needs_metadata_apply,
                     );
+                    continue;
+                }
+                // upstream: generator.c:2261 - after a failed quick check,
+                // `--append` leaves a regular destination that is already at
+                // least as long as the source untouched: no data request and
+                // no attribute update.
+                if append && meta.is_file() && append_skips(meta.len(), entry.size()) {
                     continue;
                 }
             } else {
@@ -1298,6 +1308,36 @@ impl ReceiverContext {
             return true;
         }
         false
+    }
+
+    /// Reports whether a `--dry-run` receive skips `entry` at the `--append`
+    /// size gate.
+    ///
+    /// upstream: generator.c:2261 - the gate runs after a failed quick check
+    /// and before the `do_xfers` split, so a dry run plans exactly the files the
+    /// real run requests. An up-to-date file stays a candidate so `-ii` still
+    /// itemizes it as unchanged.
+    fn dry_run_append_skips(&self, dest_dir: &Path, entry: &FileEntry) -> bool {
+        let dest_path = dest_dir.join(entry.path());
+        let Ok(meta) = fs::metadata(&dest_path) else {
+            return false;
+        };
+        let always_checksum = self
+            .config
+            .flags
+            .checksum
+            .then(|| self.get_checksum_algorithm());
+        meta.is_file()
+            && append_skips(meta.len(), entry.size())
+            && !quick_check_matches(
+                entry,
+                &dest_path,
+                &meta,
+                self.config.flags.ignore_times,
+                self.config.file_selection.size_only,
+                always_checksum,
+                self.config.file_selection.modify_window,
+            )
     }
 
     /// Computes the parenthesised reason suffix for the `--ignore-existing`
@@ -3408,5 +3448,108 @@ mod hlink_wire_flag_tests {
             files.len() as u64,
             "dry-run creation tally must match the requested transfer count"
         );
+    }
+}
+
+#[cfg(test)]
+mod append_gate_tests {
+    use std::ffi::OsString;
+    use std::path::Path;
+
+    use metadata::MetadataOptions;
+    use protocol::ProtocolVersion;
+    use protocol::flist::FileEntry;
+
+    use crate::config::ServerConfig;
+    use crate::flags::ParsedServerFlags;
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::ReceiverContext;
+    use crate::receiver::stats::TransferStats;
+    use crate::role::ServerRole;
+
+    /// Names the files the generator requests from the sender under `--append`.
+    fn requested(dest: &Path, dry_run: bool) -> Vec<String> {
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let handshake = HandshakeResult {
+            protocol,
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol,
+            flag_string: "-r".to_owned(),
+            flags: ParsedServerFlags {
+                recursive: true,
+                append: true,
+                dry_run,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+        let file = |name: &str, len: u64| {
+            let mut entry = FileEntry::new_file(name.into(), len, 0o100644);
+            entry.set_mtime(1_000_000_000, 0);
+            entry
+        };
+        ctx.file_list = vec![file("equal", 4), file("longer", 2), file("shorter", 4)];
+
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        let mut metadata_errors = Vec::new();
+        let mut stats = TransferStats::default();
+        ctx.build_files_to_transfer(
+            &mut writer,
+            dest,
+            #[cfg(unix)]
+            None,
+            &MetadataOptions::default(),
+            None,
+            &mut metadata_errors,
+            &mut stats,
+            None,
+            None,
+        )
+        .iter()
+        .map(|(idx, _, _)| ctx.file_list[*idx].name().to_owned())
+        .collect()
+    }
+
+    /// Seeds destinations equal to, longer than and shorter than their
+    /// sources. The source mtime differs from the destinations', so every file
+    /// fails the quick check and reaches the append gate.
+    fn seed_destinations(dest: &Path) {
+        std::fs::write(dest.join("equal"), b"1234").unwrap();
+        std::fs::write(dest.join("longer"), b"12345678").unwrap();
+        std::fs::write(dest.join("shorter"), b"12").unwrap();
+    }
+
+    /// upstream: generator.c:2261 - `--append` only ever adds bytes past the
+    /// destination's end, so a destination already as long as the source (or
+    /// longer) has nothing to receive and is skipped. Requesting it instead
+    /// rewrites the file from the sender's data and truncates a longer
+    /// destination.
+    #[test]
+    fn append_requests_only_destinations_shorter_than_source() {
+        let dir = test_support::create_tempdir();
+        seed_destinations(dir.path());
+
+        assert_eq!(requested(dir.path(), false), vec!["shorter".to_owned()]);
+    }
+
+    /// upstream: generator.c:2261 runs before the `do_xfers` split, so a dry
+    /// run must plan exactly the files the real run would request.
+    #[test]
+    fn append_dry_run_plans_only_destinations_shorter_than_source() {
+        let dir = test_support::create_tempdir();
+        seed_destinations(dir.path());
+
+        assert_eq!(requested(dir.path(), true), vec!["shorter".to_owned()]);
     }
 }
