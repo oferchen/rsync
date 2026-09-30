@@ -49,7 +49,7 @@ for detail.
 - Validate and quote the `RSYNC_CONNECT_PROG` `%H` substitution (#7430)
 - Close two injections in the generated batch replay script (#7445)
 - Honour the leading-comma form in `auth users` and `gid` (CVE-2026-70463, #7345)
-- A peer can no longer override module settings with an `@RSYNCD: OPTION` line (#7754)
+- A peer can no longer override module settings with an `@RSYNCD: OPTION` line; one sent before the module name is answered as an unknown module, as upstream does (#7754, #8002)
 - Fork one process per connection so chroot and per-module state cannot leak between sessions (#7719, #7718, #7711)
 - Enforce `max connections` on every entry point and across forked sessions (#7440, #7917)
 - Close three `refuse options` bypasses, and refuse `--remove-source-files` under `refuse options = delete` (#7262, #7448, #7427)
@@ -59,6 +59,7 @@ for detail.
 - Confine an absolute alternate-basis destination to the module root (#7725, #7724)
 - Refuse control bytes in a name-converter request (#7346)
 - Apply the module `exclude` to the destination and alt-basis arguments, and clamp an alt-dest basis into the module (#7450, #7455, #7467)
+- Match module `exclude` and `filter` rules on raw name bytes, so a non-UTF-8 pushed name no longer bypasses them (#8035)
 - Gate the secrets-file mode check on `strict modes` (#7468)
 - Treat a backslash in a requested path as a filename byte, and keep wildmatch escapes in the glob expander (#7409, #7788)
 - Bound the client argument vector and stop logging it verbatim (#7633)
@@ -82,6 +83,7 @@ for detail.
 - Stop a sender widening the receiver's `--delete` scope through an implied parent (#7446)
 - Bound merge-file nesting by depth (#7432)
 - Refuse an `ITEM_TRANSFER` request for a non-regular file (#7744)
+- Refuse a hard-link group number that points before the current file-list segment, as upstream `match_gnums()` does (#8039)
 - Refuse a peer's unrequested INC_RECURSE under `--delete-before`, `--delete-after`, `--delay-updates` or `-m`, as upstream does (#7975)
 - Refuse over-long proxy CONNECT requests and headers (#7650)
 - Escape control characters in log-file output and before terminal writes (#7296, #7357, #7933)
@@ -117,8 +119,9 @@ for detail.
 - The upstream reference is rsync 3.5.1, reached through 3.5.0 (#7305, #7321, #7331, #7607, #7994); `--version` reports it
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down instead of refused (#7916)
 - Every pull request is gated on upstream's 3.5.1 test suite, on Linux and macOS, over a pipe and a TCP daemon, as root and non-root (#7387, #7339, #7405, #7408, #7392, #7391, #7996, #8019)
-- The 3.5.0 test suite is retired; its test names are a subset of 3.5.1's. 3.5.0 stays in the interop matrix
+- The 3.5.0 test suite is retired; its test names are a subset of 3.5.1's. 3.5.0 stays in the interop matrix (#8030)
 - rsync 3.5.0 joins the interop matrix as a gating peer (#7290, #7337)
+- rsync 3.5.1 joins the interop matrix, with an upstream-baseline oracle in the harness (#8033)
 - Release benchmarks compare against both 3.4.4 and 3.5.0 and report peak RSS for every mode (#7595)
 - `daemon-seccomp` is reachable from the `oc-rsync` binary; it stays opt-in (#7589)
 - io_uring `Auto` can reach `SEND_ZC` in builds with `iouring-send-zc` (#7593)
@@ -135,6 +138,7 @@ for detail.
 - Diagnostics are routed by log code rather than always to stdout (#7242, #7042)
 - The INC_RECURSE receiver is selected at runtime from the negotiated flags, and the sender sizes its lookahead window (#7965, #7968, #7539)
 - Follow rsync 3.5.1 option and startup rules: `--contimeout` needs a daemon connection and bounds a daemon-over-`--rsh` handshake, which now also accepts `rsync://` operands; the daemon enters inetd mode only for an `AF_INET`/`AF_INET6` stream on stdin (#8011)
+- The client no longer sends `@RSYNCD: OPTION` lines, and `--dparam` without `--daemon` is refused with upstream's message (#8002)
 
 ### Performance
 
@@ -164,6 +168,8 @@ for detail.
 - Keep `--partial` from committing a matched-only temp (#7261)
 - Carry hard links through `--write-batch` and `--read-batch`, in upstream's member order (#7596, #7928, #7959)
 - Skip the delayed rename when the backup fails (#7531)
+- A root network receiver keeps non-`user.*` xattrs such as `security.*` and `trusted.*` (#8004)
+- Non-UTF-8 names stay byte-exact on the network receiver (#8034)
 
 **Upstream testsuite divergences**
 - Backup error naming, directory crtimes, macOS set-group-ID, the sender scan anchor, trailing `/.` handling, cleared `dir_flist` slots and upstream error wording (#7635, #7641, #7642, #7646, #7647, #7652, #7654, #7655, #7656, #7658)
@@ -175,6 +181,8 @@ for detail.
 - A block match with no basis file exits 2, and a daemon stream closed mid-transfer exits 12, with upstream's messages (#8016)
 - `--stop-at` and `--stop-after` are no longer forwarded to the server (#8001)
 - `--stats` file list times reach upstream clients (#7986)
+- Cap the `v` letters in the server flag string at nine, as upstream `server_options()` does (#8037)
+- A server sender frames the `-vv` match totals line to the client as `MSG_INFO` (#7923)
 - Honour `-B` / `--block-size` on every wire transport (#7301)
 - Send the server exit code via `MSG_ERROR_EXIT` and honour the peer's (#7609, #6935)
 - Surface `MSG_NO_SEND`, and tolerate an out-of-order decline (#7371, #7869)
@@ -200,11 +208,13 @@ for detail.
 - Apply `--chmod` on the sender for pushes (#6807)
 - Honour `-O`, `-J` and `-C` in the server argument decoder (#7183, #7195)
 - Honour `--modify-window` in the `--update` skip (#7112)
+- A remote push names each entry once, lists its directories, and reports module-relative `created directory` lines and per-file progress sizes like upstream (#8008)
+- A remote-shell server sender honours `--copy-unsafe-links` (#8032)
 
 **Daemon**
 - Resolve module identity before `chroot`, so chrooted modules no longer fail with `invalid uid nobody` (#7585)
 - Honour a client's `--timeout`, `--partial-dir`, `--backup-dir`, `--max-size` and `--min-size` (#7584, #7498, #7501, #7577, #7449)
-- `rsyncd.conf` parser parity: section names, repeated directives, `%ENV%` expansion, and upstream's copy-at-creation model for module defaults, `&merge` and `&include` (#6924, #6930, #6933, #7088, #7519, #8000)
+- `rsyncd.conf` parser parity: section names, repeated directives, `%ENV%` expansion, and upstream's copy-at-creation model for module defaults, `&merge` and `&include` (#6924, #6930, #6933, #7088, #7519, #8000, #8013)
 - Exit 4 on a refused option (#7563, #7587)
 - Linger before closing a refused connection (#7457)
 - Match upstream log lines for connections, auth, requests and per-file transfers (#7060, #7697, #7936, #7395)
@@ -221,6 +231,7 @@ for detail.
 - Frame a post-OK argument rejection as a multiplex error, and route `--early-input` to the early-exec hook (#7466, #7471)
 - Honour the server options the daemon parser dropped, including `--only-write-batch` (#7532, #7559)
 - Mirror upstream `daemon_usage` in `--daemon --help` (#7444)
+- A daemon sender falls back to the confined walk when `openat2` returns `EAGAIN`, instead of failing an open on a busy host (#8029)
 
 **Filters**
 - Match patterns as bytes end to end (#7918)
@@ -232,6 +243,7 @@ for detail.
 - Evaluate deletion as one first-match-wins pass, and protect backup-suffix files (#6896, #7107)
 - Stop trimming whitespace off filter-file rules (#7699, #7705)
 - Match non-wild patterns literally (#7171)
+- Word filter-rule parse errors as upstream does (#7938)
 - Accept the `x` modifier where upstream does, send a clear rule as one byte, and collapse `..` in merge-file names (#7288, #7372, #7373, #7374, #7376)
 - Bracket case folding, clear-list token boundaries, bracket-slash rules and sided merge files match upstream (#7292, #7298, #7383, #7830)
 - Perishable rules below protocol 30, `--delete-excluded` in the server parse, and an unsided clear on the receiver (#7381, #7382, #7811)
@@ -248,12 +260,13 @@ for detail.
 - Copy a backup across filesystems when rename fails (#6831)
 - Copy across filesystems when a `--temp-dir` commit rename hits `EXDEV`, and admit `--temp-dir` to a `--server` receiver's Landlock allowlist (#7995)
 - Reuse a matching FIFO, socket or device node in place and itemize a metadata-only change as `.S` / `.D` (#7966)
-- Report failed special, symlink and hard-link creation, and generator-side attribute failures, with upstream's text and exit 23 (#7991, #7999)
+- Report failed special, symlink and hard-link creation, and generator-side attribute failures, with upstream's text and exit 23 (#7991, #7999, #8007)
 - Gate the delete pass on a complete file list and on sender I/O errors (#7828, #7082)
 - `--dry-run` no longer creates destination directories (#6947)
 - Drive `--read-batch` through the real receiver, honouring `--delete`, `-b` and itemize; refuse a non-regular batch path (#7838, #7897, #7515)
 - Local `--write-batch` encodes the flist the reader decodes (#7355)
-- `--write-batch` records itemize flags for created and metadata-changed non-regular entries, so an upstream `--read-batch` replays them (#7957, #7970)
+- A local `--write-batch` below protocol 31 ends at the stats trailer, so upstream `--read-batch` accepts it (#8036)
+- `--write-batch` records itemize flags for created and metadata-changed non-regular entries, so an upstream `--read-batch` replays them (#7929, #7957, #7970)
 - Quote the injected `--filter` value in the batch replay script like upstream `write_arg()` (#7972)
 - Resolve a relative `--temp-dir` against the destination (#7397)
 - Keep an absolute `--partial-dir` through the delayed sweep, clear a non-directory at its name, reuse its leaf as a basis, and stage a resume in place (#7499, #7500, #7556, #7557, #7599, #7868)
@@ -269,6 +282,8 @@ for detail.
 - TCP Fast Open no longer defeats the multi-address connect fallback (#7447)
 - Warn on file-descriptor exhaustion from the confined walk, and name a failed `link_stat` operand by its absolute path (#7534, #7733)
 - The io_uring data-write mover is gated on whole-file and reports short reads (#7749)
+- Under `-L`, a symlink loop or unreadable referent is reported per entry instead of aborting the transfer (#8042)
+- Operator paths under `/proc/self/fd` and `/dev/fd` resolve inside a user namespace, as upstream's walk allows (#8026)
 
 **Permissions and metadata**
 - `--chmod` without `--perms`, symlink modes and directory modes follow upstream `dest_mode()` (#7748, #7755, #7760, #7766, #7773, #7774)
@@ -278,6 +293,7 @@ for detail.
 - Follow operator symlinks above the destination root (#7462, #7981)
 - An installed name converter replaces the host database (#7360)
 - Store the fake-super access ACL in upstream's condensed form (#7502)
+- Record the `dest_mode()` mode, not the raw source mode, in the fake-super `%stat` xattr without `-p` (#7937)
 
 **CLI and output**
 - Honour `--` in server argv, and mirror upstream option parsing for `-M`, repeated options and popt arity (#7402, #7413, #7835, #7846, #7154, #7160)
@@ -296,6 +312,9 @@ for detail.
 - Server argument decoding: `--log-file`, `--drop-D`, `--backup-dir` and `--temp-dir` (#7507, #7508, #7511)
 - List a remote source under `--list-only` (#7509)
 - Carry `--checksum-seed` as a signed int (#7561, #7606)
+- `--list-only` no longer consults the destination (#8040)
+- Count `--delete-missing-args` entries in `--stats` as upstream does (#8043)
+- Show changed directories in local `-v` and `--out-format` output (#7946)
 
 **Embedded SSH**
 - `Host` pattern matching, `IdentitiesOnly`, `IdentityAgent`, tilde expansion, tokenising and first-obtained-wins precedence match OpenSSH (#7803, #7791, #7205, #7792, #7814, #7836, #7856)
@@ -313,14 +332,16 @@ for detail.
 ### Internal
 
 - CI: macOS testsuite legs (#7638), old-rsync oracles (#7636, #7855), a skip oracle on a full-run leg (#7837), `quic` build coverage (#7902), and one publisher per required check (#7438)
-- CI: per-leg testsuite results and badges (#8019); pinned and cached upstream tarballs (#7993); distinct daemon ports for parallel interop workers (#8006); Windows long-path and case-insensitive legs on pull requests (#7967, #7969)
+- CI: per-leg testsuite results and badges (#8019); pinned and cached upstream tarballs (#7993); distinct daemon ports for parallel interop workers (#8006); Windows long-path and case-insensitive legs on pull requests (#7967, #7969); a canonical testsuite scratch path, re-baselined 3.5.1 manifests and a longer musl timeout (#8024, #8017, #8023, #8045)
 - Tests pinning confinement, INC_RECURSE ordering, daemon session handling, SIMD over-reads, PULL wire transcripts and batch hard-link replay (#7953, #7956, #7971, #7976, #7985, #7989, #7990)
+- Groundwork for incremental recursion on pulls, not yet negotiated live: upstream's receiver clause in the inc-recurse decision, and a streaming walk for non-transfer modes that stays inside the sender's lookahead window (#8038, #8041)
+- `platform::fd_pass`, a descriptor-plus-metadata channel over an `AF_UNIX` socketpair (#8027)
 - Upstream citations retargeted at 3.5.0 and then 3.5.1, and a stricter citation gate (#7286, #7308, #7315, #7318, #7994)
 - `#![deny(unsafe_code)]` on the crates that lacked it (#7781), plus blocking gates for zero-caller public functions, placeholders and rustdoc links (#7767, #7770, #7776)
 - Refactors with no behaviour change, including one owner for the SIMD batch cap, the matcher's dead search paths, the daemon session-worker seam and the receiver's flist index cursor (#7715, #7716, #7762, #7787, #7790, #7794, #7798, #7954, #7955, #7962, #7978, #7980)
 - Throughput-governor telemetry and control loop, off by default (#7137, #7142, #7147, #7148, #7150)
-- Documentation: README, SECURITY and CHANGELOG refreshed against master, testsuite badges labelled per leg, and the INC_RECURSE receiver plan (#7960, #7963, #7998, #8018)
-- Dependency, action and toolchain updates (#7911, #7912)
+- Documentation: README, SECURITY and CHANGELOG refreshed against master, testsuite badges labelled per leg, and the INC_RECURSE receiver plan (#7960, #7963, #7998, #8018, #8020, #8031)
+- Dependency, action and toolchain updates, including the pinned toolchain moving to 1.89.0 (#7911, #7912, #7919, #8021, #8022)
 
 ## [0.6.4] - 2026-07-18
 
