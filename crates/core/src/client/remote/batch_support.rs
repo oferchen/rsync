@@ -161,4 +161,36 @@ mod tests {
             );
         }
     }
+
+    /// upstream: io.c:2754 `start_write_batch()` stamps `protocol_version`
+    /// after compat.c:608-609 lowered it to the peer's. A remote batch must
+    /// therefore carry the negotiated protocol, not this build's newest: a
+    /// 3.4.x or 3.5.0 reader refuses a newer header (compat.c:611-613).
+    #[test]
+    fn remote_batch_header_records_the_negotiated_protocol() {
+        const SEED: i32 = 0x1234_5678;
+        let newest = i32::from(protocol::ProtocolVersion::NEWEST.as_u8());
+        for negotiated in 28..=newest {
+            let temp = tempfile::TempDir::new().unwrap();
+            let path = temp.path().join("negotiated.batch");
+            let batch_cfg = engine::batch::BatchConfig::new(
+                engine::batch::BatchMode::Write,
+                path.to_string_lossy().to_string(),
+                newest,
+            );
+            let writer = Arc::new(Mutex::new(BatchWriter::new(batch_cfg).unwrap()));
+            let ctx = build_batch_context(&ClientConfig::builder().build(), writer.clone());
+            let compat = (negotiated >= 30).then_some(protocol::CompatibilityFlags::EMPTY);
+            (build_batch_recording(&ctx, false).on_setup_complete)(negotiated, compat, SEED)
+                .unwrap();
+            writer.lock().unwrap().flush().unwrap();
+
+            let bytes = std::fs::read(&path).unwrap();
+            let word = |at: usize| i32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+            assert_eq!(word(4), negotiated, "header protocol at {negotiated}");
+            // upstream: io.c:2755-2756 writes the compat varint only at >= 30.
+            let seed_at = if negotiated >= 30 { 9 } else { 8 };
+            assert_eq!(word(seed_at), SEED, "seed offset at {negotiated}");
+        }
+    }
 }

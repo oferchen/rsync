@@ -149,8 +149,8 @@ pub(crate) fn write_batch_header(
 /// ensuring the replay applies identical filters.
 ///
 /// `write_trailer` says whether this call owns the batch trailer - the five
-/// varlong30 stats of upstream `main.c:374-383` plus the goodbye `NDX_DONE`.
-/// Only the local-copy path does, because it has no protocol stream to record
+/// varlong30 stats of upstream `main.c:374-383` plus, at protocol >= 31, the
+/// goodbye `NDX_DONE`. Only the local-copy path does, because it has no protocol stream to record
 /// from. Every remote transfer produces the trailer inside the transfer layer,
 /// where upstream produces it too:
 ///
@@ -203,16 +203,14 @@ pub(crate) fn finalize_batch(
                 ));
             }
 
-            // upstream: main.c:920 - write_ndx(f_out, NDX_DONE) inside
-            // read_final_goodbye() is the last thing a sender records, after
-            // the stats. For protocol >= 30, NDX_DONE = 0x00 (single byte);
-            // for protocol < 30 it is 0xFFFFFFFF (4 bytes).
-            let goodbye_bytes: &[u8] = if proto >= 30 {
-                &[0x00]
-            } else {
-                &[0xFF, 0xFF, 0xFF, 0xFF]
-            };
-            if let Err(e) = writer.write_data(goodbye_bytes) {
+            // upstream: main.c:933-935 read_final_goodbye() - the sender
+            // echoes the goodbye NDX_DONE (a single 0x00 byte) only at
+            // protocol >= 31. An older batch ends at the stats, and a 3.x
+            // reader at 30 rejects the extra byte ("Invalid packet at end of
+            // run", main.c:1127-1130).
+            if proto >= 31
+                && let Err(e) = writer.write_data(&[0x00])
+            {
                 let msg = format!("failed to write batch goodbye NDX_DONE: {e}");
                 return Err(ClientError::new(
                     1,
