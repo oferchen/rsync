@@ -20,6 +20,12 @@ that need a live run to confirm are marked **unverified**.
 
 ## 1. Summary
 
+> **Owner decision, 2026-09-30.** Trust-on-first-use is removed entirely and
+> the default is no trust. A QUIC client with no `--quic-ca` refuses the
+> connection; `--quic-ca` is strict (chain, SAN, validity) and never falls
+> back. The `quic_known_hosts` store goes with it. This adopts D1, makes D2
+> moot, and keeps D3 (`--quic-known-key`) as a later PR. See section 7.1.
+
 - **Critical defect (confirmed by PR #8060 interop cells).** `--quic-ca` does
   not make CA verification mandatory. A chain that fails verification against
   the supplied CA - untrusted issuer, wrong SAN, expired - falls through to
@@ -269,7 +275,7 @@ needed.
 | `--quic-ca FILE` | `ca` | Chain verifies to FILE | chain, SAN (DNS or IP), validity period | never |
 | `--quic-known-key FP` (repeatable) | `pin` | Leaf fingerprint equals one of the FPs | fingerprint only; handshake signature | never |
 | `--quic-ca FILE --quic-known-key FP` | `ca+pin` | Both of the above | all of the above | never |
-| none | `tofu` (accept-new) | See below | See below | yes |
+| none | refused (owner decision 2026-09-30, replaces `tofu`) | never | - | - |
 
 Rules:
 
@@ -438,6 +444,23 @@ These change user-visible behaviour or reverse the task 134 design.
 | D10 | Retry policy | (a) always Retry; (b) Retry only when the backlog is over half full | **(a)**. One code path, no tuning knob; the extra round trip is negligible for rsync sessions |
 | D11 | Connection migration | (a) off; (b) on (today, by library default) | **(a)**. Matches the policy's deferral and TCP semantics |
 | D12 | Reconcile the policy note | (a) update `quic-transport-policy.md` to the shipped model; (b) leave it as a historical record | **(a)**. The note is cited as the authority by code comments and by `known_failures.conf`, so it must be accurate |
+
+### 7.1 Recorded decisions (2026-09-30)
+
+- **TOFU removed, default no trust.** The owner chose neither D2 option: the
+  accept-new default, the system-roots layer and the `quic_known_hosts` store
+  are deleted. With no trust flag the client refuses before sending a packet
+  (exit 5, message names `--quic-ca`).
+- **D1 adopted.** `--quic-ca` is strict and is the only trust source; a chain,
+  SAN or validity failure is fatal (exit 5) and names the rustls reason. This
+  replaces PR 1 of section 6.
+- **D2 moot.** There is no default mode to harden, so G2 closes by removal and
+  PR 5 (the `@ca` marker) is dropped. Section 5.1's `tofu` row and its rules
+  no longer apply.
+- **D3 stays a later PR.** `--quic-known-key` (PR 4) is still wanted, as an
+  explicit alternative to `--quic-ca`; the `SHA256:` cert-DER token of D3 (a)
+  remains the format. It no longer shares code with a TOFU verifier.
+- The remaining decisions (D4 to D12) are approved as recommended.
 
 ## 8. Unverified items
 
