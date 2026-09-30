@@ -1596,6 +1596,14 @@ pub(super) fn delete_missing_source_entry(
         PathBuf::from(Path::new(name))
     };
 
+    // upstream: flist.c:2951-2955 - the sender still lists the missing operand
+    // as a mode-0 entry, and its `IS_SPECIAL` test (flist.c:745) is false for
+    // mode 0, so a local copy counts it in the `reg` remainder of "Number of
+    // files". Only a receiver's final `else` (flist.c:3248-3249) makes it a
+    // special, and in a local copy the client is the sender.
+    context.record_file_list_entry(non_empty_path(relative.as_path()));
+    context.summary_mut().record_regular_file_total();
+
     let target = if destination_behaves_like_directory || multiple_sources {
         destination_path.join(&relative)
     } else {

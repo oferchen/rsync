@@ -54,13 +54,17 @@ impl ReceiverContext {
     ///   file or symlink to `stats.total_size`.
     pub(in crate::receiver) fn count_received_entry(&mut self, entry: &protocol::flist::FileEntry) {
         let (dirs, symlinks, devices, specials) = &mut self.received_type_counts;
+        // upstream: flist.c:3236-3249 - the final `else` counts every other
+        // mode as special, including the mode-0 placeholder a
+        // `--delete-missing-args` sender emits. The sender tallies with an
+        // explicit IS_SPECIAL (flist.c:745), so only the receiver counts it.
         if entry.is_dir() {
             *dirs += 1;
         } else if entry.is_symlink() {
             *symlinks += 1;
         } else if entry.is_device() {
             *devices += 1;
-        } else if entry.is_special() {
+        } else if !entry.is_file() {
             *specials += 1;
         }
         if matches!(

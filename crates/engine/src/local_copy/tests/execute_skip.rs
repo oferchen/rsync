@@ -1936,6 +1936,41 @@ fn execute_with_delete_missing_args_removes_destination_entries() {
     assert!(!destination.exists());
 }
 
+/// A `--delete-missing-args` operand is a file-list entry counted as `reg`.
+///
+/// WHY: the upstream sender lists the missing operand as a mode-0 entry
+/// (flist.c:2951-2955) and its `IS_SPECIAL` tally (flist.c:745) skips mode 0,
+/// so `--stats` counts it in the `reg` remainder. Measured against rsync 3.5.1:
+/// a local copy of an existing `a` plus a missing `nope` reports
+/// `Number of files: 2 (reg: 2)`; dropping the entry prints `1 (reg: 1)`.
+#[test]
+fn execute_with_delete_missing_args_counts_missing_operand_as_regular() {
+    let temp = create_tempdir();
+    let present = temp.path().join("a");
+    fs::write(&present, b"hi\n").expect("write source");
+    let missing = temp.path().join("nope");
+    let destination_root = temp.path().join("dest");
+    fs::create_dir_all(&destination_root).expect("create destination root");
+
+    let operands = vec![
+        present.into_os_string(),
+        missing.into_os_string(),
+        destination_root.into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().delete_missing_args(true),
+        )
+        .expect("copy succeeds");
+
+    assert_eq!(summary.regular_files_total(), 2);
+    assert_eq!(summary.fifos_total(), 0);
+    assert_eq!(summary.devices_total(), 0);
+}
+
 #[test]
 fn execute_dry_run_reports_skipped_files_as_matched() {
     let temp = create_tempdir();
