@@ -43,6 +43,13 @@ class Cell:
     # Batch cells write a batch with the client while pushing, then replay it
     # with the upstream release under test.
     batch_reader: bool = False
+    # Protocol both ends must negotiate, checked on the baseline too; 0 = unchecked.
+    expect_proto: int = 0
+    # Touched-blocks stats value both runs must print ("absent" = no line); "" = unchecked.
+    expect_touched: str = ""
+    # Incremental recursion requested: "on" (the default) or "off"
+    # (--no-inc-recursive); "" = unchecked. See expected_inc().
+    inc: str = ""
 
     @property
     def cell_id(self) -> str:
@@ -128,6 +135,89 @@ def _targeted(have: set[str]) -> list[Cell]:
     return cells
 
 
+# --- protocol 33 ----------------------------------------------------------
+#
+# rsync 3.5.1 bumped PROTOCOL_VERSION to 33 (rsync.h:114) for one feature: the
+# receiver counts the 4 KiB logical blocks it writes (fileio.c:218
+# track_block_touches), sends the count in MSG_BLOCK_STATS (main.c:1113), the
+# server generator relays it to a client sender (io.c:1721-1731), and --stats
+# prints it only at protocol >= 33 (main.c:446). Each case mirrors a scenario
+# of upstream's testsuite/write-touched-blocks_test.py and pins its value.
+
+DELTA_INPLACE = ("-a", "--inplace", "-I", "--no-whole-file")
+TOUCHED_CASES = (
+    ("touched-contiguous", "tb-contiguous", DELTA_INPLACE, "1"),
+    ("touched-scattered", "tb-scattered", DELTA_INPLACE, "10"),
+    ("touched-identical", "tb-identical", DELTA_INPLACE, "0"),
+    ("touched-full", "tb-full", DELTA_INPLACE, "1,024"),
+    ("touched-sparse", "tb-sparse", ("-a", "--sparse"), "2"),
+    ("touched-multi-file", "tb-multi", ("-a", "--inplace"), "2"),
+    # Several directories, so INC_RECURSE sends several sub-lists. The block
+    # size divides 4 KiB, so each one-byte edit rewrites exactly one block.
+    ("touched-tree", "tb-tree", DELTA_INPLACE + ("--block-size=1024",), "32"),
+)
+SHAPES = tuple((t, d, r) for t in ("rsh", "daemon") for d in ("push", "pull")
+               for r in ("oc-client", "oc-server"))
+INC_MODES = (("on", "", ()), ("off", "-no-inc", ("--no-inc-recursive",)))
+
+
+def expected_inc(cell: Cell, candidate: bool) -> bool:
+    """Whether INC_RECURSE is negotiated on the wire for a cell's baseline or candidate run.
+
+    Upstream negotiates it whenever the client did not turn it off (compat.c:
+    set_allow_inc_recurse, compat.c:724 on the server). oc never negotiates
+    it when oc is the receiver: an oc client does not put 'i' in its -e
+    string on a pull, and an oc server receiver does not set CF_INC_RECURSE on
+    a push, so those candidates run without it whatever was requested. The
+    cell pins that, so the day oc starts negotiating it the cell fails and
+    this line is deleted with the change.
+    """
+    oc_receives = cell.role == ("oc-client" if cell.direction == "pull" else "oc-server")
+    return cell.inc == "on" and not (candidate and oc_receives)
+
+
+def _proto33(have: set[str]) -> list[Cell]:
+    """Protocol-33 cells: negotiation and the touched-blocks count, in every shape.
+
+    3.5.1 must negotiate 33 and print the count upstream prints. A 3.5.0 peer
+    and a 3.5.1 peer held to --protocol=32 are the controls: 32 on the wire,
+    and no stats line. The --protocol=32 is given to whichever client runs,
+    so in the oc-client cells it is oc that asks for 32. Every cell runs with
+    incremental recursion negotiated and with --no-inc-recursive, and checks
+    which one the wire carried.
+    """
+    cells = []
+    for inc, suffix, inc_opts in INC_MODES:
+        def add(case: str, version: str, fixture: str, opts: tuple[str, ...], proto: int,
+                touched: str, shapes=SHAPES, **kw) -> None:
+            if version in have:
+                cells.extend(Cell(case=case + suffix, version=version, transport=t,
+                                  direction=d, role=r, fixture=fixture, opts=opts + inc_opts,
+                                  expect_proto=proto, expect_touched=touched, inc=inc, **kw)
+                             for t, d, r in shapes)
+
+        for case, fx, opts, touched in TOUCHED_CASES:
+            add(case, "3.5.1", fx, opts, 33, touched)
+        add("touched-protocol-32", "3.5.1", "tb-scattered", DELTA_INPLACE + ("--protocol=32",),
+            32, "absent")
+        # -M--protocol=32 holds the oc server itself to 32, which the server
+        # must parse (options.c popt table) rather than take for a path. Not
+        # over a daemon: its greeting has fixed the protocol before the args.
+        add("touched-protocol-32-remote", "3.5.1", "tb-scattered",
+            DELTA_INPLACE + ("-M--protocol=32",), 32, "absent",
+            shapes=[s for s in SHAPES if s[0] == "rsh" and s[2] == "oc-server"])
+        add("touched-scattered", "3.5.0", "tb-scattered", DELTA_INPLACE, 32, "absent")
+        # A batch header records the writer's negotiated protocol (io.c:2754)
+        # and the replay adopts it (compat.c:602-615): oc writes and upstream
+        # replays, and the reverse.
+        batch_shapes = [("rsh", "push", r) for r in ("oc-client", "oc-server")]
+        add("touched-batch", "3.5.1", "tb-scattered", DELTA_INPLACE, 33, "10",
+            shapes=batch_shapes, batch_reader=True)
+        add("touched-batch", "3.5.0", "tb-scattered", DELTA_INPLACE, 32, "absent",
+            shapes=batch_shapes, batch_reader=True)
+    return cells
+
+
 def _core_opts(opts: tuple[str, ...], version: str, direction: str, role: str) -> tuple[str, ...]:
     """Core options, minus incremental recursion where task-2520 makes the output racy.
 
@@ -156,6 +246,7 @@ def catalogue(have: set[str]) -> list[Cell]:
         for r in ("oc-client", "oc-server")
     ]
     cells += _targeted(have)
+    cells += _proto33(have)
     ids = [c.cell_id for c in cells]
     assert len(ids) == len(set(ids)), "duplicate cell ids"
     return cells
@@ -274,7 +365,60 @@ def build_fixtures(root: Path) -> None:
     os.link(ff / "src/pipe", ff / "src/pipe2")
     fx["fifo"] = ff
 
+    fx.update(_touched_fixtures(root))
+
     for path in fx.values():
         _stamp(path / "src", SRC_MTIME)
         if (path / "pre").is_dir():
             _stamp(path / "pre", PRE_MTIME)
+
+
+def _touched_fixtures(root: Path) -> dict[str, Path]:
+    """Fixtures of upstream's write-touched-blocks test: a 4 MiB basis and one edit each."""
+    mib4 = 4 * 1024 * 1024
+    base = _blob(20, mib4)
+    fx = {}
+
+    def delta(name: str, data: bytes) -> None:
+        _write(root / name / "src/base.bin", data)
+        _write(root / name / "pre/base.bin", base)
+        fx[name] = root / name
+
+    contiguous = bytearray(base)
+    contiguous[:3000] = bytes(3000)
+    delta("tb-contiguous", bytes(contiguous))
+    scattered = bytearray(base)
+    for i in range(1, 11):
+        scattered[i * 4096] ^= 0xFF
+    delta("tb-scattered", bytes(scattered))
+    delta("tb-identical", base)
+    delta("tb-full", _blob(21, mib4))
+
+    # One data block, a 4 MiB hole, one data block: only the two data blocks
+    # are written (fileio.c:169-180 skip the hole with a seek).
+    sp = root / "tb-sparse/src/sparse.bin"
+    sp.parent.mkdir(parents=True)
+    with open(sp, "wb") as f:
+        f.write(_blob(22, 4096))
+        f.seek(mib4, os.SEEK_CUR)
+        f.write(_blob(23, 4096))
+    fx["tb-sparse"] = root / "tb-sparse"
+
+    # Two one-block files: a tracker not reset per file would count 1.
+    _write(root / "tb-multi/src/fileA.bin", _blob(24, 4096))
+    _write(root / "tb-multi/src/fileB.bin", _blob(25, 4096))
+    fx["tb-multi"] = root / "tb-multi"
+
+    # 8 directories of two levels: 16 files with one edited block each and 8
+    # new two-block files, 16 + 16 = 32 blocks.
+    for d in range(8):
+        for sub in (f"d{d}", f"d{d}/sub"):
+            n = d * 2 + sub.count("/")
+            old = _blob(30 + n, 64 * 1024)
+            new = bytearray(old)
+            new[(d + 1) * 4096] ^= 0xFF
+            _write(root / f"tb-tree/pre/{sub}/f.bin", old)
+            _write(root / f"tb-tree/src/{sub}/f.bin", bytes(new))
+        _write(root / f"tb-tree/src/d{d}/new.bin", _blob(60 + d, 8192))
+    fx["tb-tree"] = root / "tb-tree"
+    return fx

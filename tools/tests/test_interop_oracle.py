@@ -220,6 +220,121 @@ class FixtureTest(unittest.TestCase):
                     self.assertLess(rec["mtime"], oracle.WALL_CLOCK_NS)
 
 
+class Protocol33Test(unittest.TestCase):
+    """Protocol 33 differs from 32 only by the touched-blocks count, so the
+    cells must see both the negotiated protocol and that stats line, and must
+    fail when either is missing rather than skip the comparison."""
+
+    TOUCHED = "Number of 4 KiB logical blocks touched: 1,024\n"
+
+    def test_touched_line_is_read_verbatim_and_its_absence_is_none(self):
+        self.assertEqual(oracle.parse_touched("Literal data: 5 bytes\n" + self.TOUCHED), "1,024")
+        self.assertIsNone(oracle.parse_touched("Literal data: 5 bytes\n"))
+
+    def test_negotiated_protocol_is_taken_from_the_named_side_only(self):
+        # In an oc-client cell only the upstream server's line is evidence.
+        text = ("(Server) Protocol versions: remote=33, negotiated=33\n"
+                "(Client) Protocol versions: remote=33, negotiated=32\n")
+        self.assertEqual(oracle.parse_negotiated(text, "Server"), [33])
+        self.assertEqual(oracle.parse_negotiated(text, "Client"), [32])
+
+    def test_greeting_major_ignores_the_digest_list(self):
+        self.assertEqual(oracle.greeting_protocol(b"@RSYNCD: 33.0 sha512 md5"), 33)
+        self.assertIsNone(oracle.greeting_protocol(b"@ERROR: denied"))
+
+    def test_varint_matches_upstream_write_varint(self):
+        # upstream io.c write_varint(0x1ff) emits 0x81 0xff; small values are one byte.
+        self.assertEqual(oracle.read_varint(b"\x05"), 5)
+        self.assertEqual(oracle.read_varint(b"\x81\xff"), 0x1FF)
+        self.assertIsNone(oracle.read_varint(b"\x81"))
+
+    def test_rsh_handshake_takes_the_lower_protocol_and_the_inc_recurse_bit(self):
+        c2s = (33).to_bytes(4, "little")
+        s2c = (33).to_bytes(4, "little") + b"\x81\xff"
+        self.assertEqual(oracle.decode_handshake(c2s, s2c), (33, True))
+        s2c = (32).to_bytes(4, "little") + b"\x81\xfe"
+        self.assertEqual(oracle.decode_handshake(c2s, s2c), (32, False))
+        # Nothing recorded is no observation, never a default.
+        self.assertEqual(oracle.decode_handshake(b"", b""), (None, None))
+
+    def test_daemon_handshake_reads_flags_after_the_ok_line(self):
+        c2s = b"@RSYNCD: 32.0 md5\nm\n"
+        s2c = b"@RSYNCD: 33.0 sha512 md5\n@RSYNCD: OK\n\x05"
+        self.assertEqual(oracle.decode_handshake(c2s, s2c), (32, True))
+
+    def test_oc_receivers_are_pinned_to_no_inc_recurse(self):
+        def cell(direction, role, inc="on"):
+            return cells.Cell(case="c", version="3.5.1", transport="rsh", direction=direction,
+                              role=role, fixture="f", opts=(), inc=inc)
+        for d, r in (("pull", "oc-client"), ("push", "oc-server")):
+            self.assertFalse(cells.expected_inc(cell(d, r), candidate=True))
+            self.assertTrue(cells.expected_inc(cell(d, r), candidate=False))
+        for d, r in (("push", "oc-client"), ("pull", "oc-server")):
+            self.assertTrue(cells.expected_inc(cell(d, r), candidate=True))
+        self.assertFalse(cells.expected_inc(cell("push", "oc-client", "off"), candidate=False))
+
+    def test_a_missing_touched_line_is_a_divergence(self):
+        # compare() skips stats a side lacks; the proto-33 line must not be.
+        base, got = outcome(), outcome()
+        base.touched = "10"
+        self.assertIn("touched", oracle.compare(base, got, False, True))
+
+    def test_expectations_hold_the_baseline_too(self):
+        cell = cells.Cell(case="c", version="3.5.1", transport="rsh", direction="push",
+                          role="oc-client", fixture="f", opts=(), expect_proto=33,
+                          expect_touched="10")
+        good = outcome()
+        good.touched, good.proto = "10", [33]
+        self.assertEqual(oracle.check_expectations(cell, good, good), {})
+        drifted = outcome()
+        drifted.touched, drifted.proto = "11", [33]
+        self.assertEqual(set(oracle.check_expectations(cell, drifted, good)),
+                         {"baseline-touched"})
+        # No observation at all is a failure, not a pass.
+        self.assertEqual(set(oracle.check_expectations(cell, good, outcome())),
+                         {"candidate-protocol", "candidate-touched"})
+
+    def test_absent_means_no_line(self):
+        cell = cells.Cell(case="c", version="3.5.0", transport="rsh", direction="push",
+                          role="oc-client", fixture="f", opts=(), expect_proto=32,
+                          expect_touched="absent")
+        o = outcome()
+        o.proto = [32]
+        self.assertEqual(oracle.check_expectations(cell, o, o), {})
+        o.touched = "0"
+        self.assertIn("candidate-touched", oracle.check_expectations(cell, o, o))
+
+    def test_every_touched_case_runs_in_all_eight_shapes_and_both_inc_modes(self):
+        cat = cells.catalogue({"3.5.0", "3.5.1"})
+        for case, _, _, touched in cells.TOUCHED_CASES:
+            for inc, suffix in (("on", ""), ("off", "-no-inc")):
+                mine = [c for c in cat if c.case == case + suffix and c.version == "3.5.1"]
+                self.assertEqual(len({(c.transport, c.direction, c.role) for c in mine}), 8,
+                                 case + suffix)
+                self.assertTrue(all(c.expect_proto == 33 and c.expect_touched == touched
+                                    and c.inc == inc
+                                    and ("--no-inc-recursive" in c.opts) == (inc == "off")
+                                    for c in mine))
+        controls = [c for c in cat if c.expect_proto == 32]
+        self.assertTrue(controls)
+        self.assertTrue(all(c.expect_touched == "absent" for c in controls))
+        self.assertIn("touched-batch/3.5.1/rsh/push/oc-server", {c.cell_id for c in cat})
+
+
+@unittest.skipUnless(sys.platform.startswith("linux"), "sparse fixture sizes are ext4/xfs specific")
+class TouchedFixtureTest(unittest.TestCase):
+    def test_edits_touch_the_blocks_upstream_expects(self):
+        with tempfile.TemporaryDirectory() as a:
+            fx = cells._touched_fixtures(Path(a))
+            pre = (fx["tb-scattered"] / "pre/base.bin").read_bytes()
+            src = (fx["tb-scattered"] / "src/base.bin").read_bytes()
+            diff = {i // 4096 for i in range(len(src)) if src[i] != pre[i]}
+            self.assertEqual(diff, set(range(1, 11)))
+            self.assertEqual((fx["tb-identical"] / "src/base.bin").read_bytes(), pre)
+            sparse = fx["tb-sparse"] / "src/sparse.bin"
+            self.assertEqual(sparse.stat().st_size, 4 * 1024 * 1024 + 8192)
+
+
 class RunInteropWiringTest(unittest.TestCase):
     SCRIPT = (REPO / "tools" / "ci" / "run_interop.sh").read_text()
 
