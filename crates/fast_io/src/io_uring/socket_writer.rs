@@ -17,7 +17,7 @@
 //! notification is what makes it fast or slow:
 //!
 //! - [`IoUringSocketWriter::flush_buffer`] sends from the writer's own buffer,
-//!   so it hands that buffer to [`send_zc_pipeline::SendZcPipeline`], which
+//!   so it hands that buffer to `send_zc_pipeline::SendZcPipeline`, which
 //!   waits only for the transfer CQE and lets the page-release notification
 //!   land later. This is the path the bulk of a transfer takes.
 //! - [`IoUringSocketWriter::write`] with an oversized caller slice sends
@@ -305,7 +305,7 @@ impl Drop for IoUringSocketWriter {
     ///
     /// The drain is unconditional: `send_zc_pipeline` is dropped as part of
     /// dropping `self` whatever happens here - including if `flush_buffer`
-    /// fails or panics - and [`SendZcPipeline::drop`] blocks until no buffer
+    /// fails or panics - and `SendZcPipeline::drop` blocks until no buffer
     /// is pinned, leaking the ones it cannot account for rather than freeing
     /// memory the kernel may still be reading. Calling `drain` explicitly
     /// first only makes the ordering visible at this level; it is not what
