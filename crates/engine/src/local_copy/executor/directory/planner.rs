@@ -9,12 +9,15 @@ use std::ffi::OsStr;
 #[cfg(test)]
 use std::ffi::OsString;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::local_copy::{
     CopyContext, DeleteTiming, LocalCopyArgumentError, LocalCopyError, delete_extraneous_entries,
-    follow_symlink_metadata,
+    follow_symlink_metadata, upstream_io_error,
 };
+
+use super::super::create_failure::full_fname;
 
 use super::super::{
     emit_cannot_convert_filename, name_is_convertible, non_empty_path, symlink_target_is_safe,
@@ -179,6 +182,35 @@ fn decide_entry_action(
     ))
 }
 
+/// Drops a `--copy-links` entry whose referent cannot be stat'ed.
+///
+/// upstream: flist.c:1658-1697 make_file() - a failed `readlink_stat()` is
+/// silent for an excluded name; otherwise ENOENT reports `symlink has no
+/// referent` and any other errno (ELOOP for a symlink cycle) reports
+/// `readlink_stat(...) failed`. Either way `io_error |= IOERR_GENERAL`, the
+/// entry is omitted, and the walk continues. The kernel's own ELOOP is the
+/// only loop bound: upstream has no cycle detector, and neither does this.
+fn drop_unfollowable_symlink(
+    context: &mut CopyContext,
+    path: &Path,
+    relative: &Path,
+    error: &io::Error,
+) {
+    if !context.allows(relative, false) || !context.allows(relative, true) {
+        return;
+    }
+    if error.kind() == io::ErrorKind::NotFound {
+        eprintln!("symlink has no referent: {}", full_fname(path));
+    } else {
+        eprintln!(
+            "rsync: [sender] readlink_stat({}) failed: {}",
+            full_fname(path),
+            upstream_io_error(error)
+        );
+    }
+    context.record_flist_io_error();
+}
+
 /// Plans actions for all entries in a directory.
 ///
 /// Iterates over pre-sorted directory entries, applies filter rules,
@@ -224,11 +256,12 @@ pub(crate) fn plan_directory_entries<'a>(
 
         let mut metadata_override = None;
         let mut effective_type = entry_type;
+        let mut unfollowable = None;
 
         if entry_type.is_symlink()
             && (context.copy_links_enabled() || context.copy_dirlinks_enabled())
         {
-            match follow_symlink_metadata(entry.path.as_path()) {
+            match fs::metadata(entry.path.as_path()) {
                 Ok(target_metadata) => {
                     let target_type = target_metadata.file_type();
                     if context.copy_links_enabled()
@@ -240,7 +273,7 @@ pub(crate) fn plan_directory_entries<'a>(
                 }
                 Err(error) => {
                     if context.copy_links_enabled() {
-                        return Err(error);
+                        unfollowable = Some(error);
                     }
                 }
             }
@@ -261,7 +294,14 @@ pub(crate) fn plan_directory_entries<'a>(
         // the entry never enters the plan (no copy, no keep-name, no ndx).
         if !name_is_convertible(file_name.as_os_str(), context.options().iconv()) {
             emit_cannot_convert_filename(relative_path.as_os_str());
-            context.record_iconv_conversion_error();
+            context.record_flist_io_error();
+            if let Some(buf) = &mut relative_buf {
+                buf.pop();
+            }
+            continue;
+        }
+        if let Some(error) = &unfollowable {
+            drop_unfollowable_symlink(context, &entry.path, &relative_path, error);
             if let Some(buf) = &mut relative_buf {
                 buf.pop();
             }
@@ -635,6 +675,7 @@ fn plan_directory_entries_with_prefetch<'a>(
 
         let mut metadata_override = None;
         let mut effective_type = entry_type;
+        let mut unfollowable = None;
 
         if entry_type.is_symlink()
             && (context.copy_links_enabled() || context.copy_dirlinks_enabled())
@@ -650,12 +691,7 @@ fn plan_directory_entries_with_prefetch<'a>(
                         metadata_override = Some(target_metadata.clone());
                     }
                 }
-                Err(_) if context.copy_links_enabled() => {
-                    // Re-fetch to get the actual error for reporting
-                    return Err(follow_symlink_metadata(entry.path.as_path()).expect_err(
-                        "metadata re-fetch of a just-failed symlink path fails again",
-                    ));
-                }
+                Err(error) if context.copy_links_enabled() => unfollowable = Some(error),
                 Err(_) => {}
             }
         }
@@ -675,7 +711,14 @@ fn plan_directory_entries_with_prefetch<'a>(
         // the entry never enters the plan (no copy, no keep-name, no ndx).
         if !name_is_convertible(file_name.as_os_str(), context.options().iconv()) {
             emit_cannot_convert_filename(relative_path.as_os_str());
-            context.record_iconv_conversion_error();
+            context.record_flist_io_error();
+            if let Some(buf) = &mut relative_buf {
+                buf.pop();
+            }
+            continue;
+        }
+        if let Some(error) = &unfollowable {
+            drop_unfollowable_symlink(context, &entry.path, &relative_path, error);
             if let Some(buf) = &mut relative_buf {
                 buf.pop();
             }
