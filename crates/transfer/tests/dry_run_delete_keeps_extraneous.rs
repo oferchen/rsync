@@ -22,12 +22,15 @@ use test_support::{
     LSH_STUB_BIN, LshRunnerStub, OcRsyncCliRunner, create_tempdir, require_binaries,
 };
 
-const MODES: [&str; 5] = [
-    "delete",
-    "delete-during",
-    "delete-delay",
-    "delete-before",
-    "delete-after",
+/// Each delete mode, plus a `--max-delete` cap, which routes the deletions
+/// through the serial executor instead of the parallel one.
+const MODES: [&[&str]; 6] = [
+    &["--delete"],
+    &["--delete-during"],
+    &["--delete-delay"],
+    &["--delete-before"],
+    &["--delete-after"],
+    &["--delete", "--max-delete=5"],
 ];
 
 /// Builds `root/src/d/keep` and a destination that also holds an extraneous
@@ -41,7 +44,7 @@ fn fixture(root: &Path) {
     fs::write(root.join("dst/d/gone_dir/child"), b"stale\n").expect("write child");
 }
 
-fn run(root: &Path, mode: &str, push: bool, dry_run: bool) -> test_support::CliOutput {
+fn run(root: &Path, mode: &[&str], push: bool, dry_run: bool) -> test_support::CliOutput {
     let stub = LshRunnerStub::locate().expect("lsh-stub located");
     let src = format!("{}/", root.join("src").display());
     let dst = format!("{}/", root.join("dst").display());
@@ -52,7 +55,7 @@ fn run(root: &Path, mode: &str, push: bool, dry_run: bool) -> test_support::CliO
     };
     let mut runner = OcRsyncCliRunner::new()
         .arg("-rv")
-        .arg(format!("--{mode}"))
+        .args(mode)
         .arg(format!("--rsh={}", stub.path().display()))
         .arg(format!(
             "--rsync-path={}",
@@ -78,11 +81,11 @@ fn check(push: bool) {
         ] {
             assert!(
                 tmp.path().join("dst").join(victim).exists(),
-                "--dry-run --{mode} push={push} removed {victim}"
+                "--dry-run {mode:?} push={push} removed {victim}"
             );
             assert!(
                 stdout.contains(line),
-                "--dry-run --{mode} push={push} must still report `{line}`: {stdout}"
+                "--dry-run {mode:?} push={push} must still report `{line}`: {stdout}"
             );
         }
 
@@ -92,7 +95,7 @@ fn check(push: bool) {
         for victim in ["d/extra", "d/gone_dir"] {
             assert!(
                 !tmp.path().join("dst").join(victim).exists(),
-                "--{mode} push={push} kept {victim}: the fixture does not discriminate"
+                "{mode:?} push={push} kept {victim}: the fixture does not discriminate"
             );
         }
     }
