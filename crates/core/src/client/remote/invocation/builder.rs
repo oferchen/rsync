@@ -1003,10 +1003,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // upstream rsync exactly. Letters are appended in upstream's source
         // order, NOT alphabetical or grouped-by-concern order.
 
-        // upstream: options.c:2634-2635 - one 'v' per verbosity level, first.
-        for _ in 0..self.config.verbosity() {
-            flags.push('v');
-        }
+        // upstream: options.c:2801 - one 'v' per verbosity level, first.
+        flags::push_verbose_letters(&mut flags, self.config.verbosity());
         // upstream: options.c:2655-2656 - `if (quiet && msgs2stderr) 'q'`. The
         // default `msgs2stderr` is 2 (nonzero), so plain `-q` packs 'q';
         // `--no-msgs2stderr` (msgs2stderr == 0) suppresses it. Modelled as
