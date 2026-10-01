@@ -79,7 +79,7 @@ impl SourceOpen {
     pub(crate) fn prefetch_open(&self) -> (fast_io::PrefetchOpen<'_>, bool) {
         let open = match self.confine_root.as_deref() {
             Some(root) => fast_io::PrefetchOpen::Confined {
-                root,
+                root: root.root(),
                 leaf: if self.follow_symlinks {
                     fast_io::confined_open::LeafPolicy::FollowConfined
                 } else {
