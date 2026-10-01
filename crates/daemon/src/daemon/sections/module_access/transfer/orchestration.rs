@@ -502,7 +502,6 @@ fn process_approved_module(
         client_args: &client_args,
     };
 
-
     // upstream: clientserver.c:1178-1181 - the pre-xfer hook is handed the
     // request and argv as soon as read_args() has them, and its verdict is
     // taken before any other use of the argv. Its failure shares the single
