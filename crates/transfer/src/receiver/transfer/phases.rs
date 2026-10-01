@@ -57,21 +57,12 @@ impl ReceiverContext {
             // `num_segments`, unchanged. On every non-streaming transfer the
             // counter is 0 and this loop is byte-identical to before.
             let to_emit = num_segments.saturating_sub(self.segments_released_mid_walk);
+            // The segments' heap is reclaimed by `finalize_transfer_with` once
+            // the late delete pass and directory touch-up have run.
             for _ in 0..to_emit {
-                // upstream: receiver.c:699 - flist_free(first_flist)
-                // Reclaim heap data from the oldest completed segment
-                // to reduce RSS before sending the per-segment NDX_DONE.
-                self.reclaim_oldest_segment();
                 ndx_write_codec.write_ndx_done(&mut *writer)?;
                 writer.flush()?;
                 self.read_expected_ndx_done(ndx_read_codec, reader, "segment completion")?;
-            }
-            // Free the heap of any segments whose NDX_DONE was already sent
-            // mid-walk (their reclaim was deferred here, since RS-3b keeps the
-            // deferred end-of-walk metadata passes reading the whole list). This
-            // is a no-op when nothing was released mid-walk.
-            while self.first_segment_idx + 1 < self.ndx_segments.len() {
-                self.reclaim_oldest_segment();
             }
 
             // upstream: generator.c:2848-2850 - phase++ then "generate_files phase=%d"
@@ -340,6 +331,31 @@ impl ReceiverContext {
         writer: &mut W,
         ndx_read_codec: &mut NdxCodecEnum,
     ) -> io::Result<()> {
+        self.finalize_transfer_with(reader, writer, ndx_read_codec, |_, _, _| Ok(()))
+    }
+
+    /// [`finalize_transfer`](Self::finalize_transfer) that runs `after_phases`
+    /// once the sender's final `NDX_DONE` (and, on a client pull, its stats)
+    /// has been read, before any segment is reclaimed and before the goodbye.
+    ///
+    /// The late delete pass belongs there. The sender writes `MSG_IO_ERROR`
+    /// only after its send loop, just before that final `NDX_DONE`
+    /// (sender.c:811-820), and upstream's generator deletes only after the
+    /// receiver has read it: generator.c:2891-2900 waits for the receiver's
+    /// third `MSG_DONE`, sent by main.c:1111 after `recv_files()` returns and
+    /// `handle_stats()` has run. The deletions' `NDX_DEL_STATS` then leads the
+    /// goodbye (generator.c:2910-2915).
+    pub(in crate::receiver) fn finalize_transfer_with<
+        R: Read,
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+        F: FnOnce(&mut Self, &mut R, &mut W) -> io::Result<()>,
+    >(
+        &mut self,
+        reader: &mut R,
+        writer: &mut W,
+        ndx_read_codec: &mut NdxCodecEnum,
+        after_phases: F,
+    ) -> io::Result<()> {
         // FSM: delta transfer complete. Advance to Finalization.
         self.pipeline
             .advance_to(TransferPhase::Finalization)
@@ -356,6 +372,15 @@ impl ReceiverContext {
             // instead of discarding, so the figures match the sender exactly rather
             // than diverging by this trailer and the goodbye bytes that follow.
             self.sender_stats = Some(self.receive_stats(reader)?);
+        }
+
+        after_phases(self, reader, writer)?;
+
+        // upstream: receiver.c:699 - flist_free() of each completed segment.
+        // Deferred past `after_phases`, whose directory touch-up still reads
+        // the entries' names.
+        while self.first_segment_idx + 1 < self.ndx_segments.len() {
+            self.reclaim_oldest_segment();
         }
 
         self.handle_goodbye(reader, writer, &mut ndx_write_codec, ndx_read_codec)?;

@@ -413,35 +413,6 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.finalize_delayed_updates_and_hardlinks(&setup.dest_dir, &all_delayed_updates, writer)?;
 
-        // upstream: io.c:1740-1750 - see the matching drain in `pipelined.rs`.
-        // The sender's MSG_IO_ERROR arrives before the phase-1 NDX_DONE
-        // (sender.c:811-820), so folding it in here is what lets the late sweep
-        // honour `delete_in_dir`'s IOERR_GENERAL guard (generator.c:304-311)
-        // instead of deleting entries upstream preserves.
-        stats.io_error |= reader.take_io_error();
-
-        // upstream: generator.c:2425-2428 - --delete-after / --delete-delay run
-        // the sweep only after every file (including each destination
-        // `.rsync-filter` and any --delay-updates staged file committed just
-        // above) has landed, so per-directory merge protect rules are honoured
-        // at delete time. Runs before touch_up_dirs so deletion-induced parent
-        // mtime changes are re-tidied (upstream touch_up_dirs at generator.c:2449
-        // follows the late delete pass).
-        if self.delete_pass_is_late() {
-            self.run_receiver_delete_pass(
-                super::DeletePassPhase::Late,
-                &setup.dest_dir,
-                #[cfg(unix)]
-                setup.sandbox.as_ref(),
-                writer,
-                &mut stats,
-            )?;
-        }
-
-        // upstream: generator.c:2093-2146 - touch_up_dirs() re-applies
-        // directory mtimes after file writes clobber them.
-        self.touch_up_dirs(&setup.dest_dir, writer);
-
         stats.files_transferred = files_transferred;
         stats.transferred_file_size = transferred_file_size;
         stats.bytes_received = bytes_received;
@@ -458,9 +429,10 @@ impl ReceiverContext {
         stats.num_symlinks = num_symlinks;
         stats.num_devices = num_devices;
         stats.num_specials = num_specials;
-        if !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0 {
-            stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
-        }
+        // Folded in after the late delete pass, which never consulted these
+        // local failures.
+        let local_failure =
+            !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0;
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
         // upstream: main.c:816-818 - the pre-flight mkdir of the destination
@@ -478,9 +450,6 @@ impl ReceiverContext {
         // the client reconstructs the "Number of created files" breakdown.
         // upstream: receiver.c:749-762 - stats.created_* accumulated locally.
         stats.created_stats = self.created_stats.get();
-        // Rejoin the make-room deletions with the sweep's tally; upstream counts
-        // both into the same `stats.deleted_*` globals (delete.c:241-256).
-        stats.delete_stats = self.effective_del_stats();
 
         // Flush any trailing buffered `-v` directory names (those with no
         // transferred child to release them mid-loop), then drain the deferred
@@ -490,7 +459,27 @@ impl ReceiverContext {
         self.flush_itemize_rows(writer)?;
         self.order_list_only_entries(&mut stats);
 
-        self.finalize_transfer(reader, writer, &mut ndx_read_codec)?;
+        self.finalize_transfer_with(
+            reader,
+            writer,
+            &mut ndx_read_codec,
+            |ctx, reader, writer| {
+                ctx.run_late_delete_and_touch_up(
+                    reader.take_io_error(),
+                    &setup.dest_dir,
+                    #[cfg(unix)]
+                    setup.sandbox.as_ref(),
+                    writer,
+                    &mut stats,
+                )
+            },
+        )?;
+        if local_failure {
+            stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
+        }
+        // Rejoin the make-room deletions with the sweep's tally; upstream counts
+        // both into the same `stats.deleted_*` globals (delete.c:241-256).
+        stats.delete_stats = self.effective_del_stats();
 
         // upstream: io.c:1573 - io_error |= val on MSG_IO_ERROR from the sender.
         // The sender emits MSG_IO_ERROR (sender.c:486-487) for source files that
@@ -941,28 +930,6 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.finalize_delayed_updates_and_hardlinks(&setup.dest_dir, &all_delayed_updates, writer)?;
 
-        stats.io_error |= reader.take_io_error();
-
-        // upstream: generator.c:2899-2909 - the delayed deletions, then one
-        // --max-delete report for every per-directory delete of the walk, both
-        // before touch_up_dirs.
-        if self.delete_pass_is_late() {
-            self.run_receiver_delete_pass(
-                super::DeletePassPhase::Late,
-                &setup.dest_dir,
-                #[cfg(unix)]
-                setup.sandbox.as_ref(),
-                writer,
-                &mut stats,
-            )?;
-        }
-        stats.io_error |= self.finish_delete_limit(self.skipped_deletes);
-        stats.delete_limit_exceeded = self.skipped_deletes > 0;
-
-        // upstream: generator.c:2093-2146 - touch_up_dirs re-applies directory
-        // mtimes after file writes clobber them.
-        self.touch_up_dirs(&setup.dest_dir, writer);
-
         stats.files_transferred = files_transferred;
         stats.transferred_file_size = transferred_file_size;
         stats.bytes_received = bytes_received;
@@ -975,9 +942,10 @@ impl ReceiverContext {
         stats.num_symlinks = num_symlinks;
         stats.num_devices = num_devices;
         stats.num_specials = num_specials;
-        if !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0 {
-            stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
-        }
+        // Folded in after the late delete pass, which never consulted these
+        // local failures.
+        let local_failure =
+            !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0;
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
         stats.segments_released_mid_walk = self.segments_released_mid_walk;
@@ -985,13 +953,35 @@ impl ReceiverContext {
             self.record_created(protocol::flist::FileType::Directory.to_mode_bits());
         }
         stats.created_stats = self.created_stats.get();
-        stats.delete_stats = self.effective_del_stats();
 
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
         self.order_list_only_entries(&mut stats);
 
-        self.finalize_transfer(reader, writer, &mut ndx_read_codec)?;
+        // upstream: generator.c:2899-2909 - the delayed deletions, then one
+        // --max-delete report for every per-directory delete of the walk.
+        self.finalize_transfer_with(
+            reader,
+            writer,
+            &mut ndx_read_codec,
+            |ctx, reader, writer| {
+                ctx.run_late_delete_and_touch_up(
+                    reader.take_io_error(),
+                    &setup.dest_dir,
+                    #[cfg(unix)]
+                    setup.sandbox.as_ref(),
+                    writer,
+                    &mut stats,
+                )?;
+                stats.io_error |= ctx.finish_delete_limit(ctx.skipped_deletes);
+                stats.delete_limit_exceeded = ctx.skipped_deletes > 0;
+                Ok(())
+            },
+        )?;
+        if local_failure {
+            stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
+        }
+        stats.delete_stats = self.effective_del_stats();
 
         stats.io_error |= reader.take_io_error();
         stats.got_xfer_error = reader.xfer_error_count() > 0 || self.got_xfer_error.get();
