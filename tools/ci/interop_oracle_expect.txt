@@ -22,7 +22,6 @@ delete/3.5.0/daemon/pull/oc-server task-2521 server sender never echoes NDX_DEL_
 delete/3.5.0/rsh/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
 delete/3.5.1/daemon/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
 delete/3.5.1/rsh/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
-hardlinked-fifo/3.5.1/rsh/push/oc-server task-2525 hard-linked FIFO arrives as two FIFOs
 hardlinks/2.6.9/daemon/pull/oc-client task-2597 hard-link leader choice differs, so itemize names the other file
 hardlinks/2.6.9/daemon/push/oc-server task-2597 hard-link leader choice differs, so itemize names the other file
 hardlinks/2.6.9/rsh/pull/oc-client task-2597 hard-link leader choice differs, so itemize names the other file

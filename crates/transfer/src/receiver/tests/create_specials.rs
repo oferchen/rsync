@@ -201,3 +201,61 @@ fn receiver_skips_fifo_without_specials_flag() {
         "without --specials the receiver must not materialise the FIFO",
     );
 }
+
+/// upstream: generator.c:1943-1945 - a hard-link follower goes through
+/// `hard_link_check()` before the `FT_SPECIAL` branch is reached, so it is
+/// linked to its leader and never `mknod`ed on its own.
+///
+/// Why it matters: creating the follower as a standalone FIFO first makes
+/// `-aH -i` print an extra `cS+++++++++` row and `--stats` count one more
+/// created special than upstream, even though the hard-link pass later
+/// replaces the node with a link to the leader.
+#[test]
+fn receiver_links_hardlinked_fifo_follower_instead_of_creating_it() {
+    use std::os::unix::fs::MetadataExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dest = tmp.path();
+
+    let mut config = special_receiver_config();
+    config.flags.hard_links = true;
+
+    let mut leader = FileEntry::new_fifo("fifo".into(), 0o644);
+    leader.set_hlinked(true);
+    leader.set_hlink_first(true);
+    leader.set_hardlink_idx(0);
+    let mut follower = FileEntry::new_fifo("fifo-hl".into(), 0o644);
+    follower.set_hlinked(true);
+    follower.set_hardlink_idx(0);
+
+    let handshake = test_handshake();
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    ctx.file_list = vec![leader, follower];
+
+    let mut writer = CapturingMsgInfoWriter;
+    ctx.create_specials(dest, None, &mut writer)
+        .expect("create_specials must succeed");
+
+    assert!(
+        std::fs::symlink_metadata(dest.join("fifo")).is_ok(),
+        "the leader FIFO must be created"
+    );
+    assert!(
+        std::fs::symlink_metadata(dest.join("fifo-hl")).is_err(),
+        "the follower must be left for the hard-link pass, not mknod'ed"
+    );
+    assert_eq!(
+        ctx.created_stats.get().specials,
+        1,
+        "only the leader counts as a created special"
+    );
+
+    ctx.create_hardlinks(dest, None, &mut writer)
+        .expect("create_hardlinks must succeed");
+    let ino = |name: &str| std::fs::symlink_metadata(dest.join(name)).unwrap().ino();
+    assert_eq!(
+        ino("fifo"),
+        ino("fifo-hl"),
+        "the follower links to the leader"
+    );
+}
