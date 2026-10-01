@@ -490,10 +490,7 @@ mod daemon_partial_dir_sanitize_tests {
         }
 
         // depth 1 - exactly one LEADING `..` survives.
-        assert_eq!(
-            relative(Path::new("../pdir"), 1),
-            PathBuf::from("../pdir")
-        );
+        assert_eq!(relative(Path::new("../pdir"), 1), PathBuf::from("../pdir"));
         // The second one exhausts the budget and is discarded.
         assert_eq!(
             relative(Path::new("../../pdir"), 1),
@@ -501,10 +498,7 @@ mod daemon_partial_dir_sanitize_tests {
         );
         // A `..` AFTER a real component pops instead of being kept, even with
         // budget remaining - upstream's `sanp != start` half of the guard.
-        assert_eq!(
-            relative(Path::new("a/../pdir"), 1),
-            PathBuf::from("pdir")
-        );
+        assert_eq!(relative(Path::new("a/../pdir"), 1), PathBuf::from("pdir"));
         // ...but once that pop empties the output, the leading state returns
         // and the budget applies again.
         assert_eq!(
@@ -519,10 +513,7 @@ mod daemon_partial_dir_sanitize_tests {
         );
 
         // upstream: util1.c:1300-1303 - an empty result becomes ".".
-        assert_eq!(
-            relative(Path::new("a/.."), 0),
-            PathBuf::from(".")
-        );
+        assert_eq!(relative(Path::new("a/.."), 0), PathBuf::from("."));
     }
 
     /// THE DEFECT THIS FIXES: a relative `--partial-dir` must stay RELATIVE.
