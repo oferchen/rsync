@@ -18,8 +18,11 @@ use super::StrongDigest;
 ///    `sha2` accelerated backend requires.
 /// 2. **aarch64 ARMv8 cryptography extension** - `sha256h` / `sha256h2` /
 ///    `sha256su0` / `sha256su1` when `is_aarch64_feature_detected!("sha2")`.
-/// 3. **Hand-tuned assembly fallback** - `sha2-asm` on Unix targets, used on
-///    hosts without SHA-NI but where assembly compilation succeeds.
+///    `sha2` 0.10 compiles this backend only with its `asm` feature, which
+///    `crates/checksums/Cargo.toml` enables on every Unix aarch64 target
+///    (including macOS) but not on Windows.
+/// 3. **Hand-tuned assembly fallback** - `sha2-asm` on non-macOS Unix x86_64,
+///    used on hosts without SHA-NI.
 /// 4. **Pure-Rust scalar fallback** - portable software implementation used on
 ///    Windows (where `sha2-asm` requires NASM) and on architectures without
 ///    hardware acceleration.
@@ -122,12 +125,15 @@ impl StrongDigest for Sha256 {
 /// - **x86_64**: returns `true` if the CPU advertises Intel SHA Extensions
 ///   (`sha`) together with the `sse2`, `ssse3`, and `sse4.1` baseline that
 ///   `sha2` requires for its accelerated backend.
-/// - **aarch64**: returns `true` if the CPU advertises the ARMv8 `sha2`
+/// - **aarch64 Unix**: returns `true` if the CPU advertises the ARMv8 `sha2`
 ///   crypto extension.
+/// - **aarch64 Windows**: always returns `false` - `sha2` is built without its
+///   `asm` feature there, so its ARMv8 backend is not compiled in.
 /// - **Other architectures**: always returns `false`.
 ///
-/// The result reflects the actual capability of the host CPU, regardless of
-/// any compile-time target features. Use this to verify that a deployment
+/// The result reports the backend this binary actually runs: the host CPU
+/// capability combined with whether the `sha2` build contains a backend that
+/// uses it. Use this to verify that a deployment
 /// is benefiting from hardware acceleration or to select instrumentation in
 /// benchmarks.
 ///
@@ -147,11 +153,12 @@ pub fn sha256_hardware_acceleration_available() -> bool {
             && std::arch::is_x86_feature_detected!("ssse3")
             && std::arch::is_x86_feature_detected!("sse4.1")
     }
-    #[cfg(target_arch = "aarch64")]
+    // Must match the `asm` gating of sha2 in crates/checksums/Cargo.toml.
+    #[cfg(all(target_arch = "aarch64", unix))]
     {
         std::arch::is_aarch64_feature_detected!("sha2")
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(not(any(target_arch = "x86_64", all(target_arch = "aarch64", unix))))]
     {
         false
     }
@@ -231,6 +238,55 @@ mod tests {
                 "ARMv8 sha2 extension must be present whenever hardware acceleration is reported on aarch64"
             );
         }
+    }
+
+    /// Guards the macOS regression where `sha2` was built without `asm`, so
+    /// Apple Silicon hashed SHA-256 in software while this predicate still
+    /// reported hardware. On macOS aarch64 SHA-1 is deliberately software
+    /// (sha1-asm miscomputes there), which makes it a same-host yardstick:
+    /// ARMv8 SHA-256 runs several times faster than software SHA-1, while
+    /// software SHA-256 runs slower than software SHA-1. Interleaved
+    /// best-of-N timing keeps host load from biasing one side.
+    #[test]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    fn reported_hardware_matches_the_backend_actually_running() {
+        use digest::Digest as _;
+        use std::time::Instant;
+
+        if !sha256_hardware_acceleration_available() {
+            return;
+        }
+        let data = vec![0x5a_u8; 1 << 20];
+        let time = |f: &dyn Fn()| {
+            let start = Instant::now();
+            for _ in 0..8 {
+                f();
+            }
+            start.elapsed()
+        };
+        let (mut best_sha256, mut best_sha1) = (std::time::Duration::MAX, std::time::Duration::MAX);
+        for _ in 0..7 {
+            best_sha256 = best_sha256.min(time(&|| {
+                std::hint::black_box(sha2::Sha256::digest(&data));
+            }));
+            best_sha1 = best_sha1.min(time(&|| {
+                std::hint::black_box(sha1::Sha1::digest(&data));
+            }));
+        }
+        assert!(
+            best_sha256 * 3 < best_sha1 * 2,
+            "SHA-256 reported as hardware-accelerated but ran no faster than software SHA-1 \
+             ({best_sha256:?} vs {best_sha1:?}); is sha2 built without `asm` on macOS aarch64?"
+        );
+    }
+
+    #[test]
+    #[cfg(all(target_arch = "aarch64", not(unix)))]
+    fn windows_aarch64_reports_no_hardware_backend() {
+        assert!(
+            !sha256_hardware_acceleration_available(),
+            "sha2 is built without asm on Windows, so no ARMv8 backend is compiled in"
+        );
     }
 
     #[test]
