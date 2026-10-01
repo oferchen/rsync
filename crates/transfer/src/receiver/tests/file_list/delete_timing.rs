@@ -391,6 +391,68 @@ fn delete_pass_skipped_when_sender_flist_had_io_error() {
     );
 }
 
+/// A general I/O error raised during the transfer, after `--delete-delay` has
+/// decided its victims at the early site, must not cancel their late unlink:
+/// the error withholds decisions, and delay's late site only replays one
+/// already made. `--delete-after`, which decides at the late site, is the
+/// control - the same error there must keep the extraneous file.
+///
+/// upstream: generator.c:304-311 gates delete_in_dir() (reached by
+/// `do_delete_pass()` for after, and by the walk for delay's
+/// remember_delete() at generator.c:351-353); generator.c:265-278
+/// do_delayed_deletions() has no io_error test.
+#[test]
+fn io_error_after_delay_decision_still_unlinks_recorded_victims() {
+    use super::super::super::stats::TransferStats;
+    use super::super::super::transfer::DeletePassPhase;
+    use crate::generator::io_error_flags::IOERR_GENERAL;
+
+    let handshake = test_handshake();
+    for delete_after in [false, true] {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dest = tmp.path();
+        std::fs::write(dest.join("stale.txt"), b"extraneous").unwrap();
+        let mut config = test_config();
+        config.flags.delete = true;
+        config.deletion.late_delete = true;
+        config.deletion.delete_after = delete_after;
+        config.args = vec![OsString::from(dest.to_str().unwrap())];
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+        ctx.file_list
+            .push(FileEntry::new_directory(".".into(), 0o755));
+        let mut stats = TransferStats::default();
+        let mut writer = TestDeletionWriter;
+
+        // Each site runs only for the modes the driver dispatches to it.
+        let sites = [
+            (DeletePassPhase::Early, ctx.delete_pass_is_early()),
+            (DeletePassPhase::Late, ctx.delete_pass_is_late()),
+        ];
+        for (phase, runs) in sites {
+            if phase == DeletePassPhase::Late {
+                stats.io_error |= IOERR_GENERAL;
+            }
+            if !runs {
+                continue;
+            }
+            ctx.run_receiver_delete_pass(
+                phase,
+                dest,
+                #[cfg(unix)]
+                None,
+                &mut writer,
+                &mut stats,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            dest.join("stale.txt").exists(),
+            delete_after,
+            "delete_after={delete_after}: delay unlinks its recorded victim, after keeps it"
+        );
+    }
+}
+
 /// TIMING CONTRAST: the very same sweep, run while the destination
 /// `.rsync-filter` is NOT yet present (the state at an early, pre-transfer
 /// sweep), deletes the `.bak` files - there is no on-disk merge file to load,
