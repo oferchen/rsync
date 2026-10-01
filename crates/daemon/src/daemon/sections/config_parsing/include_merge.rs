@@ -13,7 +13,7 @@
 /// upstream: params.c:parse_directives - `&include` maps to
 /// include_config(val, 1) and `&merge` to include_config(val, 0).
 fn apply_include_directive(
-    parse: &mut ConfigParse,
+    parse: &mut ConfigParse<'_>,
     directive: &str,
     value: &str,
     path: &Path,
@@ -97,7 +97,7 @@ fn apply_include_directive(
 /// Parses a single included config file into `parse`, naming the directive
 /// site in any error.
 fn include_config_file(
-    parse: &mut ConfigParse,
+    parse: &mut ConfigParse<'_>,
     directive: &str,
     include_path: &Path,
     path: &Path,

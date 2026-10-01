@@ -20,12 +20,12 @@ struct AcceptLoopState<'a> {
     config_path: &'a Option<PathBuf>,
     /// `--log-file-format`, re-applied to the modules on every SIGHUP reload.
     log_file_format: Option<String>,
+    dparams: &'a [String],
     connection_limiter: &'a Option<Arc<ConnectionLimiter>>,
     modules: Arc<Vec<ModuleRuntime>>,
     motd_lines: Arc<Vec<String>>,
     log_sink: &'a Option<SharedLogSink>,
     notifier: &'a systemd::ServiceNotifier,
-    client_socket_options: Arc<Vec<SocketOption>>,
     bandwidth_limit: Option<NonZeroU64>,
     reverse_lookup: bool,
     proxy_policy: ProxyProtocolPolicy,
@@ -92,6 +92,7 @@ fn check_signals_and_maintain(state: &mut AcceptLoopState<'_>) -> Option<bool> {
     {
         reload_daemon_config(
             state.config_path.as_deref(),
+            state.dparams,
             state.connection_limiter,
             &mut state.modules,
             &mut state.motd_lines,
@@ -231,7 +232,7 @@ fn spawn_connection_worker(
         Arc::clone(&state.modules),
         Arc::clone(&state.motd_lines),
         state.log_sink.as_ref().map(Arc::clone),
-        Arc::clone(&state.client_socket_options),
+        Arc::from(""),
         state.bandwidth_limit,
         state.reverse_lookup,
         state.proxy_policy.clone(),
@@ -350,22 +351,19 @@ fn report_fork_failure(error: &io::Error, peer: SocketAddr, log_sink: Option<&Sh
     }
 }
 
-/// Applies socket options to an accepted stream and logs any failure.
-fn apply_client_options(
-    stream: &DaemonStream,
-    client_socket_options: &[SocketOption],
-    log_sink: Option<&SharedLogSink>,
-) {
-    // upstream: clientserver.c - set_socket_options() is called
-    // on the accepted client fd before the session handler runs.
-    // Skipped for stdio streams which have no underlying TCP socket.
-    // upstream: socket.c:738-741 - each option that fails to apply warns and
-    // the loop continues; a single failure never rejects the connection.
-    if !client_socket_options.is_empty() {
-        let Some(tcp) = stream.tcp_stream() else {
-            return;
-        };
-        apply_socket_options_to_stream(tcp, client_socket_options, log_sink);
+/// Applies socket options to a stream the async accept path accepted.
+///
+/// The async listener is bound by tokio, so the options cannot reach it
+/// before bind(2) as socket.c:606-610 does for the sync listener; they are
+/// applied to each accepted connection instead. Skipped for stdio streams,
+/// which have no socket.
+#[cfg_attr(not(feature = "async-daemon"), allow(dead_code))]
+fn apply_client_options(stream: &DaemonStream, options: &str, log_sink: Option<&SharedLogSink>) {
+    if options.is_empty() {
+        return;
+    }
+    if let Some(tcp) = stream.tcp_stream() {
+        apply_daemon_socket_options(&socket2::SockRef::from(tcp), options, log_sink);
     }
 }
 
@@ -402,20 +400,14 @@ fn handle_accepted_connection(
     state: &mut AcceptLoopState<'_>,
 ) -> bool {
     apply_accepted_stream_tcp_notsent_lowat(&tcp_stream);
-    // upstream: clientserver.c:1396 - the daemon unconditionally enables
-    // SO_KEEPALIVE on the accepted client socket, independent of the per-module
-    // `socket options` config applied below.
+    // upstream: clientserver.c:1529 - the daemon enables SO_KEEPALIVE on the
+    // accepted client socket; the configured socket options went to the
+    // listener before bind(2).
     enable_accepted_stream_keepalive(&tcp_stream, state.log_sink.as_ref());
 
     let Some(stream) = wrap_accepted_stream(tcp_stream, state) else {
         return false;
     };
-
-    apply_client_options(
-        &stream,
-        &state.client_socket_options,
-        state.log_sink.as_ref(),
-    );
 
     admit_connection(stream, raw_peer_addr, state)
 }
