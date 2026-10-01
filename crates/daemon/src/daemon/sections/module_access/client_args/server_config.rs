@@ -417,13 +417,24 @@ fn build_server_config(
                 ));
             }
 
-            // upstream: loadparm.c - `temp dir` module parameter provides a
-            // default temp directory. The client's --temp-dir takes precedence
-            // if already set from apply_long_form_args.
+            // upstream: clientserver.c:1137-1144 sets `tmpdir` from the
+            // module's `temp dir` before parse_arguments() reads the client's
+            // argv, so a client --temp-dir replaces it. Either value then goes
+            // through the same `sanitize_path(NULL, tmpdir, NULL, 0,
+            // SP_DEFAULT)` as --backup-dir (options.c:2415-2416): an absolute
+            // value is re-rooted at the module, a relative one stays relative
+            // for the receiver to anchor at its destination.
             if cfg.temp_dir.is_none()
                 && let Some(ref dir) = module.temp_dir
             {
                 cfg.temp_dir = Some(std::path::PathBuf::from(dir));
+            }
+            if let Some(dir) = cfg.temp_dir.take() {
+                cfg.temp_dir = Some(sanitize_backup_dir(
+                    &dir,
+                    &resolve_base,
+                    &module_root_canonical,
+                ));
             }
 
             // upstream: loadparm.c - `dont compress` parameter specifies suffixes
