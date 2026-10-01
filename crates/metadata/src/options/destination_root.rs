@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 #[cfg(unix)]
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// The destination operand the operator named, shared by every metadata apply
 /// of one transfer.
@@ -28,6 +28,10 @@ pub struct DestinationRoot {
     module_root: Option<PathBuf>,
     #[cfg(unix)]
     anchor: OnceLock<OwnedFd>,
+    /// The directory below the root the current run of entries lives in,
+    /// held so consecutive applies in it do not re-resolve it.
+    #[cfg(unix)]
+    held: fast_io::HeldDir,
 }
 
 impl DestinationRoot {
@@ -40,6 +44,8 @@ impl DestinationRoot {
             module_root: None,
             #[cfg(unix)]
             anchor: OnceLock::new(),
+            #[cfg(unix)]
+            held: fast_io::HeldDir::new(),
         }
     }
 
@@ -79,6 +85,22 @@ impl DestinationRoot {
         }
         let opened = self.open_dir(&self.path)?;
         Ok(self.anchor.get_or_init(|| opened).as_fd())
+    }
+
+    /// The directory `tail` names below the root, refusing every symlink and
+    /// `..` in `tail`, held across consecutive calls for the same `tail`.
+    ///
+    /// The resolver is [`fast_io::open_dir_beneath_nofollow`] on the pinned
+    /// root, exactly what each apply ran before; holding the result only
+    /// stops a run of files in one directory from resolving it once per
+    /// attribute per file. A directory swapped for a symlink after it was
+    /// resolved keeps resolving to the held inode, as upstream's held dirfd
+    /// does. upstream: syscall.c:3703-3720, dpc_dir_fd().
+    #[cfg(unix)]
+    pub(crate) fn held_dir_beneath(&self, tail: &Path) -> std::io::Result<Arc<OwnedFd>> {
+        let anchor = self.anchor()?;
+        self.held
+            .get_or_open(tail, || fast_io::open_dir_beneath_nofollow(anchor, tail))
     }
 
     /// Opens `dir`, the root or a single-file root's parent, the way upstream

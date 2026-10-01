@@ -118,6 +118,10 @@ pub mod dir_sandbox;
 pub mod files_from_walk;
 /// Active-allocator heap counters for the `--info=stats3` diagnostic block.
 pub mod heap_stats;
+/// Unix-only: one-slot held directory descriptor reused across a run of
+/// per-entry `*at` operations, mirroring upstream `dpc_dir_fd()`.
+#[cfg(unix)]
+pub mod held_dir;
 /// The receiver's in-place output open: upstream's three-arm chain
 /// (`receiver.c:1212-1241`) with the path resolution injected.
 pub mod inplace_open;
@@ -401,6 +405,7 @@ pub use gcd::{GcdQueue, GcdReader, GcdWriter};
 
 #[cfg(unix)]
 pub use confined_fallback::{ConfinedFallback, FallbackArm};
+pub use confined_open::ConfinedSourceRoot;
 #[cfg(unix)]
 pub use confined_open::{
     DestLeafKind, LeafPolicy, open_source_confined, pin_dest_leaf_confined, read_link_confined,
@@ -425,6 +430,8 @@ pub use dir_sandbox::{
 };
 #[cfg(unix)]
 pub use files_from_walk::FilesFromBase;
+#[cfg(unix)]
+pub use held_dir::HeldDir;
 pub use inplace_open::{InplaceResolution, open_inplace_output};
 pub use kernel_version::{
     IO_URING_MIN_KERNEL, IoUringRequirement, KernelVersion, LinkatRequirement, PbufRingRequirement,

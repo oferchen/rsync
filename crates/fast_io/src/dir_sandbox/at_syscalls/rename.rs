@@ -180,6 +180,29 @@ pub fn renameat_via_sandbox_or_fallback(
         let dirfd = sandbox.current_dirfd();
         return renameat(dirfd, old_leaf, dirfd, new_leaf, replace);
     }
+    // Both sides in directories the sandbox holds (the commit rename's temp
+    // and final name share one): rename between the held descriptors rather
+    // than re-walking each side from the root. A failure releases the held
+    // parent and takes the per-side confined walk below, whose verdict stands.
+    // upstream: rsync-3.5.1/syscall.c:3858 held_dfd_for() - the receiver's
+    // commit rename runs against the held directory fd.
+    if let Some(sandbox) = sandbox
+        && let Some((old_dirfd, old_leaf)) =
+            super::nested::held_leaf(sandbox, old_dest_dir, old_relative_path, old_link_path)
+        && let Some((new_dirfd, new_leaf)) =
+            super::nested::held_leaf(sandbox, new_dest_dir, new_relative_path, new_link_path)
+    {
+        match renameat(
+            old_dirfd.as_fd(),
+            old_leaf,
+            new_dirfd.as_fd(),
+            new_leaf,
+            replace,
+        ) {
+            Ok(()) => return Ok(()),
+            Err(_) => sandbox.release_held_parent(),
+        }
+    }
     // Nested paths: resolve each side independently. An endpoint under the root
     // is anchored by the per-component confined walk; an absolute one outside it
     // (an operator-supplied `--temp-dir`/`--partial-dir`) by the ownership walk.
