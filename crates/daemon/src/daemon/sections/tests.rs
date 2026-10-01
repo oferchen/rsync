@@ -1468,3 +1468,102 @@ fn no_timeout_on_either_side_leaves_the_socket_untimed() {
         None
     );
 }
+
+/// Runs `refused_client_arg` for a module whose only rules are `rules`.
+fn refusal_for(rules: &[&str], args: &[&str]) -> Option<String> {
+    let module = module_with_refuse(rules.iter().map(|rule| (*rule).to_owned()).collect());
+    let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+    refused_client_arg(&module, &args)
+}
+
+/// `--append` and `--write-devices` turn on `inplace`, so they fall under its
+/// refusal and the error names the refused row.
+///
+/// upstream: options.c:2551-2567 `create_refuse_error(refused_inplace)`.
+#[test]
+fn refused_inplace_covers_append_and_write_devices() {
+    for implied in ["--append", "--append-verify"] {
+        assert_eq!(
+            refusal_for(&["inplace"], &["--server", implied, ".", "m/"]),
+            Some("--inplace".to_owned()),
+            "{implied} must be refused under `refuse options = inplace`"
+        );
+    }
+    assert_eq!(
+        refusal_for(
+            &["inplace", "!write-devices"],
+            &["--server", "--write-devices", ".", "m/"]
+        ),
+        Some("--inplace".to_owned())
+    );
+    assert_eq!(
+        refusal_for(&["inplace"], &["--server", "-logDtpr", ".", "m/"]),
+        None
+    );
+}
+
+/// `--inplace` counts as `--partial` for refusal purposes, and so does a
+/// `--partial-dir` that cleans to nothing.
+///
+/// upstream: options.c:2584-2588 and :2601-2610 `create_refuse_error(refused_partial)`.
+#[test]
+fn refused_partial_covers_inplace_and_an_empty_partial_dir() {
+    assert_eq!(
+        refusal_for(&["partial"], &["--server", "--inplace", ".", "m/"]),
+        Some("--partial".to_owned())
+    );
+    assert_eq!(
+        refusal_for(&["partial"], &["--server", "--partial-dir=./", ".", "m/"]),
+        Some("--partial".to_owned())
+    );
+}
+
+/// `-P` sets both `keep_partial` and `do_progress`, so refusing `progress`
+/// refuses it.
+///
+/// upstream: options.c:1729-1732.
+#[test]
+fn refused_progress_covers_the_p_bundle_letter() {
+    assert_eq!(
+        refusal_for(&["progress"], &["--server", "-logDtprP", ".", "m/"]),
+        Some("--progress".to_owned())
+    );
+    assert_eq!(
+        refusal_for(&["progress"], &["--server", "-logDtpr", ".", "m/"]),
+        None
+    );
+}
+
+/// A bare `--delete` must choose a timing; with both refused it is refused as
+/// `--delete-before`, and with one refused it is still accepted.
+///
+/// upstream: options.c:2340-2353.
+#[test]
+fn bare_delete_is_refused_only_when_both_timings_are() {
+    let args = ["--server", "-r", "--delete", ".", "m/"];
+    assert_eq!(
+        refusal_for(&["delete-before", "delete-during"], &args),
+        Some("--delete-before".to_owned())
+    );
+    assert_eq!(refusal_for(&["delete-before"], &args), None);
+    assert_eq!(refusal_for(&["delete-during"], &args), None);
+    assert_eq!(
+        refusal_for(
+            &["delete-before", "delete-during"],
+            &["--server", "-r", "--delete", "--delete-after", ".", "m/"]
+        ),
+        None,
+        "a named timing needs no choice"
+    );
+}
+
+/// Refusing `no-iconv` demands that the client send `--iconv`.
+///
+/// upstream: options.c:2202-2205.
+#[test]
+fn refused_no_iconv_requires_an_iconv_argument() {
+    assert_eq!(
+        refusal_for(&["no-iconv"], &["--server", "-r", ".", "m/"]),
+        Some("--no-iconv".to_owned())
+    );
+}

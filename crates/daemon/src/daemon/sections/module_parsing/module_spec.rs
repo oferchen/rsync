@@ -1,9 +1,8 @@
 // CLI/inline module definition and daemon-parameter parsing.
 //
-// Parses `NAME=PATH` module specifications (with inline `;`-delimited options),
-// applies client-sent `--dparam` overrides to a `ModuleDefinition`, and parses
-// the daemon's scalar CLI argument values (port, bind address, session limits,
-// TCP fast-open mode, bwlimit). Mirrors upstream `loadparm.c` /
+// Parses `NAME=PATH` module specifications (with inline `;`-delimited options)
+// and the daemon's scalar CLI argument values (port, bind address, session
+// limits, TCP fast-open mode, bwlimit). Mirrors upstream `loadparm.c` /
 // `clientserver.c` per-module config handling.
 
 /// Extracts the client's forwarded `--timeout=N` from the transfer argv.

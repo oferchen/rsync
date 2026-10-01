@@ -75,8 +75,14 @@ fn log_module_lock_error(
 /// peer's text and the log's text independently, and they drifted - the peer
 /// saw upstream's wording while the log carried an oc-invented
 /// `refusing option '...' for module '...'` line that no upstream site emits.
+///
+/// upstream: options.c:1415-1429 `create_refuse_error()` appends ` (-X)` when
+/// the refused row has a short name, e.g. `--compress (-z)`.
 pub(crate) fn refused_option_message(refused: &str) -> String {
-    format!("The server is configured to refuse {refused}")
+    match refused.strip_prefix("--").and_then(refused_short_letter) {
+        Some(letter) => format!("The server is configured to refuse {refused} (-{letter})"),
+        None => format!("The server is configured to refuse {refused}"),
+    }
 }
 
 /// Logs a refused option in upstream's words.

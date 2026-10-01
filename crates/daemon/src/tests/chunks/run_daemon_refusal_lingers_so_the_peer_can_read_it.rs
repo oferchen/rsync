@@ -136,7 +136,7 @@ fn run_daemon_refusal_lingers_so_the_peer_can_read_it() {
         .expect("MSG_ERROR_XFER payload must survive the daemon's close");
     let err_text = String::from_utf8(err_body).expect("UTF-8 error payload");
     assert!(
-        err_text.starts_with("@ERROR: The server is configured to refuse"),
+        err_text.starts_with("rsync: The server is configured to refuse"),
         "error payload must name the refusal: {err_text:?}",
     );
 

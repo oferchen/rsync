@@ -100,7 +100,8 @@ fn run_daemon_logs_a_refused_option_in_upstream_words() {
     assert!(
         log_contents
             .lines()
-            .any(|entry| entry.ends_with("rsync: The server is configured to refuse --compress")),
+            .any(|entry| entry
+                .ends_with("rsync: The server is configured to refuse --compress (-z)")),
         "the log must carry upstream's refusal verbatim: {log_contents:?}"
     );
     // The peer and the log must not drift apart again: upstream has one
