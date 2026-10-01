@@ -440,11 +440,7 @@ fn build_server_config(
                 cfg.temp_dir = Some(std::path::PathBuf::from(dir));
             }
             if let Some(dir) = cfg.temp_dir.take() {
-                cfg.temp_dir = Some(sanitize_backup_dir(
-                    &dir,
-                    &resolve_base,
-                    &module_root_canonical,
-                ));
+                cfg.temp_dir = Some(sanitize_backup_dir(&dir, &module_root_canonical));
             }
 
             // upstream: loadparm.c - `dont compress` parameter specifies suffixes
