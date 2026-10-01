@@ -55,6 +55,12 @@ STAT_KEYS = (
     "Matched data",
 )
 STAT_NUM_RE = re.compile(r"^\s*([\d,]+)")
+# upstream: main.c:446 prints this line only when protocol_version >= 33, so
+# its presence is compared too, not only its count.
+TOUCHED_KEY = "Number of 4 KiB logical blocks touched"
+# upstream: compat.c:618 under --debug=proto.
+PROTO_RE = re.compile(r"^\((Client|Server)\) Protocol versions: remote=\d+, negotiated=(\d+)",
+                      re.M)
 
 RSH_STANDIN = """#!/bin/sh
 # Local stand-in for ssh: drop the host argument and run the command, as ssh does.
@@ -167,6 +173,71 @@ def parse_output(stdout: str) -> tuple[list[str], dict[str, int]]:
     return sorted(items), stats
 
 
+def parse_touched(stdout: str) -> str | None:
+    """The value of the protocol-33 touched-blocks stats line, or None when absent."""
+    for line in stdout.splitlines():
+        if line.startswith(TOUCHED_KEY + ":"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+def parse_negotiated(text: str, side: str) -> list[int]:
+    """Negotiated protocols that `side` ("Client" or "Server") reported under --debug=proto."""
+    return [int(m.group(2)) for m in PROTO_RE.finditer(text) if m.group(1) == side]
+
+
+def greeting_protocol(line: bytes) -> int | None:
+    """The major protocol of an `@RSYNCD: 33.0` daemon greeting line."""
+    m = re.match(rb"@RSYNCD: (\d+)", line)
+    return int(m.group(1)) if m else None
+
+
+def read_varint(buf: bytes) -> int | None:
+    """Decodes upstream's write_varint(): leading 1-bits of the first byte count the extra bytes.
+
+    upstream: io.c read_varint() and int_byte_extra[].
+    """
+    if not buf:
+        return None
+    ch = buf[0]
+    extra = 0
+    while extra < 6 and ch & (0x80 >> extra):
+        extra += 1
+    if len(buf) < 1 + extra:
+        return None
+    if not extra:
+        return ch
+    high = ch & ((1 << (8 - extra)) - 1)
+    return int.from_bytes(buf[1:1 + extra] + bytes([high]), "little")
+
+
+def decode_handshake(c2s: bytes, s2c: bytes) -> tuple[int | None, bool | None]:
+    """The negotiated protocol and INC_RECURSE state read from the first bytes of a session.
+
+    Both ends announce a protocol and run the lower one: over a remote shell
+    as a 4-byte little-endian int (compat.c:602-609), over a daemon socket as
+    the `@RSYNCD:` greeting (clientserver.c exchange_protocols). From 30 on
+    the server then sends compat_flags as a varint, and the client adopts its
+    CF_INC_RECURSE bit (compat.c:724, compat.c:757); a daemon sends them after
+    `@RSYNCD: OK`.
+    """
+    if s2c.startswith(b"@RSYNCD:"):
+        c = greeting_protocol(c2s.split(b"\n", 1)[0])
+        s = greeting_protocol(s2c.split(b"\n", 1)[0])
+        ok = s2c.find(b"@RSYNCD: OK\n")
+        rest = s2c[ok + len(b"@RSYNCD: OK\n"):] if ok >= 0 else b""
+    else:
+        if len(c2s) < 4 or len(s2c) < 4:
+            return None, None
+        c, s = int.from_bytes(c2s[:4], "little"), int.from_bytes(s2c[:4], "little")
+        rest = s2c[4:]
+    if c is None or s is None:
+        return None, None
+    proto = min(c, s)
+    flags = read_varint(rest) if proto >= 30 else 0
+    return proto, None if flags is None else bool(flags & 1)
+
+
 def normalize_items(items: list[str], legacy: bool) -> list[str]:
     """Reduces itemize lines to update type, file type and name for pre-3.1 peers.
 
@@ -262,7 +333,120 @@ class Daemon:
         self.stop()
 
 
+# Bytes recorded from the start of each direction: enough for the greetings
+# or protocol ints and the compat_flags varint after them.
+HEAD_BYTES = 256
+
+
+class DaemonTap:
+    """Relays one client connection to a daemon, recording the first bytes each way.
+
+    A daemon's server never shows its --debug=proto output to the client, so
+    the handshake is read off the wire, which works for either role.
+    """
+
+    def __init__(self, target: int, timeout: float):
+        self.target = target
+        self.head = {"c2s": b"", "s2c": b""}
+        self.sock = socket.socket()
+        self.port = free_port()
+        self.sock.bind(("127.0.0.1", self.port))
+        self.sock.listen(1)
+        self.sock.settimeout(timeout)
+        self.thread = threading.Thread(target=self._relay, daemon=True)
+        self.thread.start()
+
+    def _relay(self) -> None:
+        try:
+            conn, _ = self.sock.accept()
+            up = socket.create_connection(("127.0.0.1", self.target), timeout=10)
+        except OSError:
+            return
+        conn.settimeout(None)
+        up.settimeout(None)
+        pumps = [threading.Thread(target=self._pump, args=(conn, up, "c2s"), daemon=True),
+                 threading.Thread(target=self._pump, args=(up, conn, "s2c"), daemon=True)]
+        for p in pumps:
+            p.start()
+        for p in pumps:
+            p.join()
+        conn.close()
+        up.close()
+
+    def _pump(self, src: socket.socket, dst: socket.socket, way: str) -> None:
+        try:
+            while data := src.recv(65536):
+                if len(self.head[way]) < HEAD_BYTES:
+                    self.head[way] += data[:HEAD_BYTES - len(self.head[way])]
+                dst.sendall(data)
+            dst.shutdown(socket.SHUT_WR)
+        except OSError:
+            for s in (src, dst):
+                try:
+                    s.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+    def handshake(self) -> tuple[int | None, bool | None]:
+        self.sock.close()
+        self.thread.join(timeout=10)
+        return decode_handshake(self.head["c2s"], self.head["s2c"])
+
+
+# The ssh stand-in for handshake cells: the same command, relayed through
+# pipes so the first bytes each way land in $ORACLE_WIRE.{c2s,s2c}.
+RSH_TAP = """#!/usr/bin/env python3
+import os, select, subprocess, sys, threading
+args = sys.argv[1:]
+if args[:1] == ["-l"]:
+    args = args[2:]
+log = os.environ["ORACLE_WIRE"]
+to_rd, to_wr = os.pipe()
+from_rd, from_wr = os.pipe()
+p = subprocess.Popen(["sh", "-c", " ".join(args[1:])], stdin=to_rd, stdout=from_wr)
+os.close(to_rd)
+os.close(from_wr)
+
+
+# The client may have made the pipe ends it shares with us non-blocking.
+def pump(src, dst, way):
+    head = b""
+    while True:
+        try:
+            data = os.read(src, 65536)
+        except BlockingIOError:
+            select.select([src], [], [])
+            continue
+        if not data:
+            break
+        if len(head) < %d:
+            head += data[:%d - len(head)]
+            with open(log + "." + way, "wb") as f:
+                f.write(head)
+        view = memoryview(data)
+        while view:
+            try:
+                view = view[os.write(dst, view):]
+            except BlockingIOError:
+                select.select([], [dst], [])
+    os.close(dst)
+
+
+threading.Thread(target=pump, args=(0, to_wr, "c2s"), daemon=True).start()
+pump(from_rd, 1, "s2c")
+sys.exit(p.wait())
+""" % (HEAD_BYTES, HEAD_BYTES)
+
+
+def rsh_handshake(wire: Path) -> tuple[int | None, bool | None]:
+    def head(way: str) -> bytes:
+        f = wire.with_name(f"{wire.name}.{way}")
+        return f.read_bytes() if f.exists() else b""
+    return decode_handshake(head("c2s"), head("s2c"))
+
+
 # --- execution ------------------------------------------------------------
+
 
 @dataclass
 class Outcome:
@@ -272,6 +456,10 @@ class Outcome:
     tree: dict
     stderr: str
     cmd: str
+    touched: str | None = None
+    # Handshake cells only: the negotiated protocol(s) seen and the INC_RECURSE state.
+    proto: list[int] = field(default_factory=list)
+    inc: bool | None = None
 
 
 @dataclass
@@ -296,15 +484,23 @@ def execute(cell: "cells_mod.Cell", client: str, server: str, workdir: Path,
         (workdir / "dst").mkdir()
     args = [client, *cell.opts, "-i", "--stats"]
     args += [a.replace("@FIX@", str(fx)) for a in cell.extra_args]
+    wire = workdir / "wire"
+    env = None
+    if cell.expect_proto:
+        rsh = str(Path(rsh).with_name("rsh-tap"))
+        env = dict(os.environ, ORACLE_WIRE=str(wire))
     if cell.batch_reader:
-        return _execute_batch(cell, client, server, workdir, rsh, args)
+        return _execute_batch(cell, client, server, workdir, rsh, args, env)
+    proto, inc = None, None
     if cell.transport == "rsh":
         args += ["-e", rsh, f"--rsync-path={server}"]
         if cell.direction == "push":
             args += [f"{workdir}/src/", f"localhost:{workdir}/dst/"]
         else:
             args += [f"localhost:{workdir}/src/", f"{workdir}/dst/"]
-        rc, out, err = run(args, cell.timeout)
+        rc, out, err = run(args, cell.timeout, env)
+        if cell.expect_proto:
+            proto, inc = rsh_handshake(wire)
     else:
         modroot = workdir / ("dst" if cell.direction == "push" else "src")
         conf = workdir / "d.conf"
@@ -312,19 +508,23 @@ def execute(cell: "cells_mod.Cell", client: str, server: str, workdir: Path,
                         f"[m]\n  path = {modroot}\n  read only = false\n{cell.module_extra}")
         try:
             with Daemon(server, conf, workdir / "d.log") as d:
-                url = f"rsync://127.0.0.1:{d.port}/m/"
+                tap = DaemonTap(d.port, cell.timeout) if cell.expect_proto else None
+                url = f"rsync://127.0.0.1:{tap.port if tap else d.port}/m/"
                 if cell.direction == "push":
                     args += [f"{workdir}/src/", url]
                 else:
                     args += [url, f"{workdir}/dst/"]
                 rc, out, err = run(args, cell.timeout)
+                if tap:
+                    proto, inc = tap.handshake()
         except RuntimeError as e:
             rc, out, err = "DAEMON_START_FAIL", "", str(e)
     items, stats = parse_output(out)
-    return Outcome(rc, items, stats, snapshot(workdir / "dst"), err[-2000:], " ".join(args))
+    return Outcome(rc, items, stats, snapshot(workdir / "dst"), err[-2000:], " ".join(args),
+                   parse_touched(out), [] if proto is None else [proto], inc)
 
 
-def _execute_batch(cell, writer, reader, workdir, rsh, args) -> Outcome:
+def _execute_batch(cell, writer, reader, workdir, rsh, args, env) -> Outcome:
     """Writes a batch with `writer` (pushing to `reader`, or locally), then replays it with `reader`."""
     batch = workdir / "b"
     subprocess.run(["cp", "-a", str(workdir / "dst"), str(workdir / "sink")], check=True)
@@ -334,14 +534,23 @@ def _execute_batch(cell, writer, reader, workdir, rsh, args) -> Outcome:
                   f"localhost:{workdir}/sink/"]
     else:
         write += [f"{workdir}/src/", f"{workdir}/sink/"]
-    rc_w, _, err_w = run(write, cell.timeout)
+    rc_w, _, err_w = run(write, cell.timeout, env)
     if rc_w != 0:
         return Outcome(f"write:{rc_w}", [], {}, snapshot(workdir / "dst"), err_w[-2000:],
                        " ".join(write))
     read = [reader, *cell.opts, "-i", "--stats", f"--read-batch={batch}", f"{workdir}/dst/"]
+    if cell.expect_proto:
+        read += ["--debug=proto"]
     rc, out, err = run(read, cell.timeout)
     items, stats = parse_output(out)
-    return Outcome(rc, items, stats, snapshot(workdir / "dst"), err[-2000:], " ".join(read))
+    proto, inc = rsh_handshake(workdir / "wire") if cell.expect_proto else (None, None)
+    protos = [] if proto is None else [proto]
+    if cell.expect_proto and cell.role == "oc-client":
+        # An upstream reader reports the protocol it took from the header
+        # of the batch oc wrote (compat.c:611-618).
+        protos += parse_negotiated(out + err, "Client")
+    return Outcome(rc, items, stats, snapshot(workdir / "dst"), err[-2000:], " ".join(read),
+                   parse_touched(out), protos, inc)
 
 
 def compare(base: Outcome, got: Outcome, legacy_items: bool, ignore_owner: bool) -> dict:
@@ -360,6 +569,30 @@ def compare(base: Outcome, got: Outcome, legacy_items: bool, ignore_owner: bool)
           if k in got.stats and got.stats[k] != v}
     if sd:
         probs["stats"] = sd
+    if got.touched != base.touched:
+        probs["touched"] = f"{base.touched} -> {got.touched}"
+    return probs
+
+
+def check_expectations(cell, base: Outcome, got: Outcome) -> dict:
+    """Checks a cell's absolute protocol, touched-blocks and INC_RECURSE expectations.
+
+    The baseline comparison alone would pass if upstream and oc drifted the
+    same way, or if a fixture stopped exercising the feature. Holding the
+    baseline to the same constants proves the fixture still discriminates.
+    """
+    probs: dict = {}
+    for tag, o in (("baseline", base), ("candidate", got)):
+        if cell.expect_proto and (not o.proto or set(o.proto) != {cell.expect_proto}):
+            probs[f"{tag}-protocol"] = f"want {cell.expect_proto}, saw {o.proto}"
+        if cell.expect_touched:
+            want = None if cell.expect_touched == "absent" else cell.expect_touched
+            if o.touched != want:
+                probs[f"{tag}-touched"] = f"want {want}, saw {o.touched}"
+        if cell.inc:
+            want_inc = cells_mod.expected_inc(cell, candidate=tag == "candidate")
+            if o.inc != want_inc:
+                probs[f"{tag}-inc-recurse"] = f"want {want_inc}, saw {o.inc}"
     return probs
 
 
@@ -372,6 +605,7 @@ def run_cell(cell, oc: str, upstream: dict[str, str], scratch: Path, fixtures: P
     got = execute(cell, client, server, scratch / cell.slug / "cand", fixtures, rsh)
     legacy = cell.role == "oc-client" and cells_mod.version_tuple(cell.baseline_client) < (3, 1)
     probs = compare(base, got, legacy, ignore_owner=os.geteuid() != 0)
+    probs.update(check_expectations(cell, base, got))
     if got.rc == "TIMEOUT":
         probs["timeout"] = cell.timeout
     return Result(cell.cell_id, probs, got, base)
@@ -447,6 +681,9 @@ def main(argv: list[str] | None = None) -> int:
         rsh = scratch / "rsh"
         rsh.write_text(RSH_STANDIN)
         rsh.chmod(0o755)
+        tap = scratch / "rsh-tap"
+        tap.write_text(RSH_TAP)
+        tap.chmod(0o755)
         t0 = time.monotonic()
         with ThreadPoolExecutor(a.jobs) as ex:
             results = list(ex.map(
