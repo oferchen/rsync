@@ -266,20 +266,23 @@ _ports = itertools.count()
 _ports_lock = threading.Lock()
 
 
-def free_port() -> int:
-    """A loopback port no other cell of this run will use, and free right now."""
+def bind_free_port(sock: socket.socket) -> int:
+    """Binds `sock` to a loopback port no other cell of this run will use."""
     while True:
         with _ports_lock:
             n = next(_ports)
         if n >= 1000:
             raise RuntimeError("daemon port range exhausted")
         port = _PORT_BASE + n
-        with socket.socket() as s:
-            try:
-                s.bind(("127.0.0.1", port))
-            except OSError:
-                continue
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            continue
         return port
+def free_port() -> int:
+    """A loopback port no other cell of this run will use, and free right now."""
+    with socket.socket() as s:
+        return bind_free_port(s)
 
 
 def run(cmd: list[str], timeout: float, env: dict | None = None) -> tuple[object, str, str]:
@@ -348,9 +351,10 @@ class DaemonTap:
     def __init__(self, target: int, timeout: float):
         self.target = target
         self.head = {"c2s": b"", "s2c": b""}
+        # Bound in the allocation loop itself: probing a port and binding it
+        # later lets another socket take it in between (EADDRINUSE).
         self.sock = socket.socket()
-        self.port = free_port()
-        self.sock.bind(("127.0.0.1", self.port))
+        self.port = bind_free_port(self.sock)
         self.sock.listen(1)
         self.sock.settimeout(timeout)
         self.thread = threading.Thread(target=self._relay, daemon=True)
