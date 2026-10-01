@@ -99,58 +99,11 @@ fn handle_session(
     // The per-module `timeout` directive still governs the data phase via
     // apply_module_timeout once the module is known.
 
-    // upstream: clientserver.c:1443-1446 - `if (lp_proxy_protocol())` reads the
-    // header before any rsync protocol data, but ONLY after the peer clears the
-    // trusted-proxy gate:
-    //
-    //     if (lp_proxy_protocol()) {
-    //             if (!proxy_peer_allowed(f_in) || !read_proxy_protocol_header(f_in))
-    //                     return -1;
-    //     }
-    //
-    // The gate is the security property, not a nicety. A PROXY header names
-    // the address the daemon then treats as the peer - it feeds `hosts allow`
-    // / `hosts deny`, `%h`, and every log line - so believing one from an
-    // arbitrary direct connection lets that connection choose its own source
-    // address. Upstream fail-closes: an unset trusted-proxy list rejects
-    // everyone (access.c:313-314).
     let mut stream = stream;
-    let peer_addr = match proxy_policy.decide(peer_addr.ip()) {
-        ProxyHeaderDecision::NotRequired => peer_addr,
-        ProxyHeaderDecision::Untrusted => {
-            // upstream: clientserver.c:1394 - `rprintf(FLOG, "proxy protocol
-            // rejected from untrusted peer %s (%s)\n", host, addr)`. The
-            // wording is upstream's verbatim; the 3.5.0
-            // `proxy-protocol-trusted-peer` cell greps the daemon log for it.
-            if let Some(log) = log_sink.as_ref() {
-                // upstream: clientserver.c:1390 - `host` starts as the
-                // UNDETERMINED sentinel, and with forward DNS off
-                // (access.c:315) nothing ever replaces it, so the rejection
-                // line names UNDETERMINED regardless of `reverse lookup` -
-                // no lookup has run this early in the connection.
-                let host = module_state::UNDETERMINED_HOSTNAME;
-                let text = format!(
-                    "proxy protocol rejected from untrusted peer {host} ({})",
-                    peer_addr.ip()
-                );
-                let message = rsync_warning!(text).with_role(Role::Daemon);
-                log_message(log, &message);
-            }
-            return Ok(());
-        }
-        ProxyHeaderDecision::Trusted => match parse_proxy_header(&mut stream) {
-            Ok(Some(proxied_addr)) => proxied_addr,
-            Ok(None) => peer_addr,
-            Err(error) => {
-                if let Some(log) = log_sink.as_ref() {
-                    let text =
-                        format!("failed to read PROXY protocol header from {peer_addr}: {error}");
-                    let message = rsync_warning!(text).with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-                return Err(error);
-            }
-        },
+    let Some(peer_addr) =
+        admit_proxy_protocol_peer(&mut stream, peer_addr, &proxy_policy, log_sink.as_ref())?
+    else {
+        return Ok(());
     };
 
     // upstream: clientname.c `client_name` forward-confirms the reverse-DNS
@@ -191,6 +144,71 @@ fn handle_session(
             )
             .map(|_| ())
         }
+    }
+}
+
+/// Applies the `proxy protocol` gate and reads the PROXY header when trusted.
+///
+/// Returns the address the session treats as its peer - the proxied client
+/// for a trusted proxy, the socket peer when the directive is off - or `None`
+/// when the direct peer is not a trusted proxy and the connection must close
+/// with nothing sent.
+///
+/// upstream: clientserver.c:1443-1446 - `start_daemon()` runs this for every
+/// daemon session, the inetd one included, before any rsync protocol data:
+///
+///     if (lp_proxy_protocol()) {
+///             if (!proxy_peer_allowed(f_in) || !read_proxy_protocol_header(f_in))
+///                     return -1;
+///     }
+///
+/// The gate is the security property, not a nicety. A PROXY header names the
+/// address the daemon then treats as the peer - it feeds `hosts allow` /
+/// `hosts deny`, `%h`, and every log line - so believing one from an arbitrary
+/// direct connection lets that connection choose its own source address.
+/// Upstream fail-closes: an unset trusted-proxy list rejects everyone
+/// (access.c:313-314).
+fn admit_proxy_protocol_peer(
+    stream: &mut DaemonStream,
+    peer_addr: SocketAddr,
+    proxy_policy: &ProxyProtocolPolicy,
+    log_sink: Option<&SharedLogSink>,
+) -> io::Result<Option<SocketAddr>> {
+    match proxy_policy.decide(peer_addr.ip()) {
+        ProxyHeaderDecision::NotRequired => Ok(Some(peer_addr)),
+        ProxyHeaderDecision::Untrusted => {
+            // upstream: clientserver.c:1394 - a plain FLOG line, `rprintf(FLOG,
+            // "proxy protocol rejected from untrusted peer %s (%s)\n", host,
+            // addr)`. The 3.5.0 `proxy-protocol-trusted-peer` cell greps the
+            // daemon log for it.
+            if let Some(log) = log_sink {
+                // upstream: clientserver.c:1390 - `host` starts as the
+                // UNDETERMINED sentinel, and with forward DNS off
+                // (access.c:315) nothing ever replaces it, so the rejection
+                // line names UNDETERMINED regardless of `reverse lookup` - no
+                // lookup has run this early in the connection.
+                let host = module_state::UNDETERMINED_HOSTNAME;
+                let text = format!(
+                    "proxy protocol rejected from untrusted peer {host} ({})",
+                    peer_addr.ip()
+                );
+                log_message(log, &rsync_info!(text).with_role(Role::Daemon));
+            }
+            Ok(None)
+        }
+        ProxyHeaderDecision::Trusted => match parse_proxy_header(stream) {
+            Ok(Some(proxied_addr)) => Ok(Some(proxied_addr)),
+            Ok(None) => Ok(Some(peer_addr)),
+            Err(error) => {
+                if let Some(log) = log_sink {
+                    let text =
+                        format!("failed to read PROXY protocol header from {peer_addr}: {error}");
+                    let message = rsync_warning!(text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                Err(error)
+            }
+        },
     }
 }
 
