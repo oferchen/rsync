@@ -160,16 +160,22 @@ fn send_error(
 /// `read_a_msg()` as a multiplex frame header and surface as
 /// "unexpected tag 77" (the byte 'T' from "The server is configured ..."
 /// minus `MPLEX_BASE = 7`).
+///
+/// A multi-line `payload` goes out one line per frame, as upstream's
+/// `rwrite()` loop does (clientserver.c:1257-1263): a client prints a control
+/// byte inside one message escaped, so a newline must end a frame.
 fn send_multiplexed_error_and_exit(
     stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
     payload: &str,
     exit_code: i32,
 ) -> io::Result<()> {
-    let mut frame_bytes = payload.as_bytes().to_vec();
-    frame_bytes.push(b'\n');
     let mut buffer = Vec::new();
-    MessageFrame::new(MessageCode::ErrorXfer, frame_bytes)?.encode_into_writer(&mut buffer)?;
+    for line in payload.split('\n') {
+        let mut frame_bytes = line.as_bytes().to_vec();
+        frame_bytes.push(b'\n');
+        MessageFrame::new(MessageCode::ErrorXfer, frame_bytes)?.encode_into_writer(&mut buffer)?;
+    }
     // upstream: io.c:1078 send_msg_int() - little-endian 4-byte exit code.
     MessageFrame::new(MessageCode::ErrorExit, exit_code.to_le_bytes().to_vec())?
         .encode_into_writer(&mut buffer)?;

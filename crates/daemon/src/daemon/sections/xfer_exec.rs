@@ -173,87 +173,71 @@ fn run_early_exec(
     }
 }
 
-/// Result of a successful pre-xfer exec invocation.
+/// Most bytes of a pre-exec hook's stdout that upstream keeps.
 ///
-/// Carries captured stdout from the script so the caller can relay it to the
-/// client as an informational message before the transfer begins.
-///
-/// upstream: clientserver.c:pre_exec() - stdout from the script is sent to the
-/// client via `rprintf(FINFO, ...)`.
-#[derive(Debug)]
-struct PreXferOutput {
-    /// Captured stdout from the pre-xfer exec script, trimmed of trailing
-    /// whitespace. Empty when the script produced no output.
-    stdout: String,
-}
-
-/// Error from a failed pre-xfer exec invocation.
-///
-/// Carries both the error message (for the `@ERROR` response) and any captured
-/// stdout (to relay to the client before the error).
-#[derive(Debug)]
-struct PreXferError {
-    /// Human-readable error description including exit code and module name.
-    message: String,
-    /// Captured stdout from the script, trimmed. Sent to the client before the
-    /// `@ERROR` line, matching upstream behaviour.
-    stdout: String,
-}
+/// upstream: clientserver.c:639-641 - `finish_pre_exec()` reads into a
+/// `BIGPATHBUFLEN` buffer, keeping `sizeof buf - 1` bytes for the terminator,
+/// and then closes the pipe.
+const PRE_EXEC_OUTPUT_LIMIT: u64 = 5120 - 1;
 
 /// Runs the pre-xfer exec command for a daemon module.
 ///
-/// The command is executed via `sh -c` (Unix) or `cmd /C` (Windows) with
-/// upstream-compatible environment variables. If the command exits non-zero,
-/// returns an error indicating the transfer should be denied.
+/// Returns `None` when the hook exits 0, otherwise the failure text upstream
+/// reports to the client.
 ///
-/// Stdout from the script is captured and returned in both the success and
-/// error paths. The caller is responsible for sending it to the client as an
-/// info message (on success) or before the `@ERROR` response (on failure).
+/// The hook's stdout is read but, as upstream says, "only displayed to the
+/// user if the script also returns an error status"; its stderr is inherited
+/// from the daemon and never reaches the client. It gets no stdin:
+/// `--early-input` belongs to the early exec hook alone (clientserver.c:630-631
+/// writes it only for `exec_type == 1`).
 ///
-/// The hook gets no stdin. `--early-input` belongs to the *early* exec hook
-/// only: upstream writes those bytes under `exec_type == 1`
-/// (clientserver.c:630-631) and the pre-xfer args go out as `exec_type == 0`
-/// (clientserver.c:1181), by which point `early_input` has already been freed
-/// (clientserver.c:1035-1038).
-///
-/// Upstream: `clientserver.c:1013-1022` / `clientserver.c:610-633` - `pre_exec()`
-/// runs the command and captures stdout for the client.
-fn run_pre_xfer_exec(
-    command: &str,
-    ctx: &XferExecContext<'_>,
-) -> io::Result<Result<PreXferOutput, PreXferError>> {
+/// upstream: clientserver.c:544-607 start_pre_exec(), :637-673 finish_pre_exec()
+fn run_pre_xfer_exec(command: &str, ctx: &XferExecContext<'_>) -> io::Result<Option<String>> {
     let mut cmd = build_pre_xfer_command(command, ctx);
-
     cmd.stdin(Stdio::null());
-    // upstream: clientserver.c:pre_exec() - stdout is captured and relayed to
-    // the client as an informational message.
     cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
 
-    let output = cmd.output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-    if output.status.success() {
-        Ok(Ok(PreXferOutput { stdout }))
-    } else {
-        let code = output.status.code().unwrap_or(-1);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr_trimmed = stderr.trim();
-
-        let message = if stderr_trimmed.is_empty() {
-            format!(
-                "pre-xfer exec returned {code} for module '{}'",
-                ctx.module_name
-            )
-        } else {
-            format!(
-                "pre-xfer exec returned {code} for module '{}': {stderr_trimmed}",
-                ctx.module_name
-            )
-        };
-
-        Ok(Err(PreXferError { message, stdout }))
+    let mut child = cmd.spawn()?;
+    let mut output = Vec::new();
+    if let Some(stdout) = child.stdout.take() {
+        // upstream: clientserver.c:651 - "Just ignore the read error for now".
+        // Dropping the reader closes the pipe once the limit is reached.
+        let _ = stdout.take(PRE_EXEC_OUTPUT_LIMIT).read_to_end(&mut output);
     }
+    let status = child.wait()?;
+
+    Ok((!status.success()).then(|| pre_exec_failure_text("pre-xfer exec", status, &output)))
+}
+
+/// Formats a failed pre-exec hook the way upstream reports it.
+///
+/// The hook's stdout is truncated at its first NUL (upstream keeps it in a C
+/// string) and each CR of a CRLF pair is dropped. The status is the raw wait
+/// status, so `exit 3` reports `768`.
+///
+/// upstream: clientserver.c:650-671 finish_pre_exec() -
+/// `"%s returned failure (%d)%s%s%s\n%s"`.
+fn pre_exec_failure_text(desc: &str, status: std::process::ExitStatus, output: &[u8]) -> String {
+    let end = output.iter().position(|&b| b == 0).unwrap_or(output.len());
+    let text = String::from_utf8_lossy(&output[..end]).replace("\r\n", "\n");
+    let separator = if text.is_empty() { "" } else { ":" };
+    format!(
+        "{desc} returned failure ({}){separator}\n{text}",
+        raw_wait_status(status)
+    )
+}
+
+/// Returns the platform's raw wait status for `status`.
+#[cfg(unix)]
+fn raw_wait_status(status: std::process::ExitStatus) -> i32 {
+    use std::os::unix::process::ExitStatusExt;
+    status.into_raw()
+}
+
+/// Returns the platform's raw wait status for `status`.
+#[cfg(not(unix))]
+fn raw_wait_status(status: std::process::ExitStatus) -> i32 {
+    status.code().unwrap_or(-1)
 }
 
 /// Runs the post-xfer exec command for a daemon module.
@@ -472,29 +456,34 @@ mod xfer_exec_tests {
     fn run_pre_xfer_exec_succeeds_on_zero_exit() {
         let ctx = test_context();
         let result = run_pre_xfer_exec("true", &ctx).expect("command should run");
-        assert!(result.is_ok());
+        assert_eq!(result, None);
     }
 
+    /// upstream: clientserver.c:650-656 reports the RAW wait status, so a hook
+    /// that exits 1 reads `(256)`, and names no module.
     #[cfg(unix)]
     #[test]
     fn run_pre_xfer_exec_fails_on_nonzero_exit() {
         let ctx = test_context();
         let result = run_pre_xfer_exec("false", &ctx).expect("command should run");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.message.contains("pre-xfer exec returned"));
-        assert!(err.message.contains("testmod"));
+        assert_eq!(
+            result.as_deref(),
+            Some("pre-xfer exec returned failure (256)\n")
+        );
     }
 
+    /// The hook's stderr is inherited, never relayed: upstream only redirects
+    /// stdout into the pipe (clientserver.c:583-586).
     #[cfg(unix)]
     #[test]
-    fn run_pre_xfer_exec_captures_stderr() {
+    fn run_pre_xfer_exec_does_not_report_stderr() {
         let ctx = test_context();
         let result =
             run_pre_xfer_exec("echo 'custom error' >&2; exit 1", &ctx).expect("command should run");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.message.contains("custom error"));
+        assert_eq!(
+            result.as_deref(),
+            Some("pre-xfer exec returned failure (256)\n")
+        );
     }
 
     #[cfg(unix)]
@@ -506,7 +495,7 @@ mod xfer_exec_tests {
             &ctx,
         )
         .expect("command should run");
-        assert!(result.is_ok(), "env vars should be set correctly");
+        assert_eq!(result, None, "env vars should be set correctly");
     }
 
     #[cfg(unix)]
@@ -573,7 +562,7 @@ mod xfer_exec_tests {
         // sh -c with a non-existent command will still run (sh exists), so
         // the command itself returns non-zero rather than an I/O error.
         let result = run_pre_xfer_exec("/nonexistent/binary/path", &ctx).expect("sh -c should run");
-        assert!(result.is_err());
+        assert!(result.is_some());
     }
 
     /// `--early-input` reaches the EARLY-exec hook's stdin. These three cells
@@ -631,7 +620,7 @@ mod xfer_exec_tests {
         let out_path = dir.path().join("pre_xfer_stdin.txt");
         let cmd = format!("cat > '{}'", out_path.display());
         let result = run_pre_xfer_exec(&cmd, &ctx).expect("command should run");
-        assert!(result.is_ok(), "script should exit 0 on an empty stdin");
+        assert_eq!(result, None, "script should exit 0 on an empty stdin");
         let captured = std::fs::read(&out_path).expect("output file should exist");
         assert!(
             captured.is_empty(),
@@ -728,46 +717,57 @@ mod xfer_exec_tests {
         assert!(find_env("RSYNC_ARG0").is_none());
     }
 
+    /// upstream: clientserver.c:642-643 - the hook's stdout "is only
+    /// displayed to the user if the script also returns an error status".
     #[cfg(unix)]
     #[test]
-    fn run_pre_xfer_exec_captures_stdout_on_success() {
+    fn run_pre_xfer_exec_discards_stdout_on_success() {
         let ctx = test_context();
         let result =
             run_pre_xfer_exec("echo 'hello from script'", &ctx).expect("command should run");
-        let output = result.expect("should succeed");
-        assert_eq!(output.stdout, "hello from script");
+        assert_eq!(result, None);
     }
 
     #[cfg(unix)]
     #[test]
-    fn run_pre_xfer_exec_captures_stdout_on_failure() {
+    fn run_pre_xfer_exec_reports_stdout_on_failure() {
         let ctx = test_context();
         let result =
             run_pre_xfer_exec("echo 'pre-xfer info'; exit 1", &ctx).expect("command should run");
-        let err = result.unwrap_err();
-        assert_eq!(err.stdout, "pre-xfer info");
-        assert!(err.message.contains("pre-xfer exec returned"));
+        assert_eq!(
+            result.as_deref(),
+            Some("pre-xfer exec returned failure (256):\npre-xfer info\n")
+        );
     }
 
+    /// upstream: clientserver.c:655-664 folds each CRLF to LF and keeps a lone
+    /// CR; the text after the status line is the hook's output verbatim.
     #[cfg(unix)]
     #[test]
-    fn run_pre_xfer_exec_empty_stdout_on_success() {
+    fn run_pre_xfer_exec_folds_crlf_in_reported_output() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("true", &ctx).expect("command should run");
-        let output = result.expect("should succeed");
-        assert!(output.stdout.is_empty());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn run_pre_xfer_exec_multiline_stdout() {
-        let ctx = test_context();
-        let result = run_pre_xfer_exec("echo 'line1'; echo 'line2'; echo 'line3'", &ctx)
+        let result = run_pre_xfer_exec("printf 'line1\\r\\nline2\\rX\\n'; exit 3", &ctx)
             .expect("command should run");
-        let output = result.expect("should succeed");
-        assert!(output.stdout.contains("line1"));
-        assert!(output.stdout.contains("line2"));
-        assert!(output.stdout.contains("line3"));
+        assert_eq!(
+            result.as_deref(),
+            Some("pre-xfer exec returned failure (768):\nline1\nline2\rX\n")
+        );
+    }
+
+    /// upstream: clientserver.c:639-641 keeps at most `BIGPATHBUFLEN - 1`
+    /// bytes of the hook's output.
+    #[cfg(unix)]
+    #[test]
+    fn run_pre_xfer_exec_caps_reported_output() {
+        let ctx = test_context();
+        let result = run_pre_xfer_exec("head -c 6000 /dev/zero | tr '\\0' a; exit 1", &ctx)
+            .expect("command should run")
+            .expect("hook failed");
+        let body = result
+            .strip_prefix("pre-xfer exec returned failure (256):\n")
+            .expect("status line");
+        assert_eq!(body.len() as u64, PRE_EXEC_OUTPUT_LIMIT);
+        assert!(body.bytes().all(|b| b == b'a'));
     }
 
     #[cfg(unix)]
@@ -788,7 +788,7 @@ mod xfer_exec_tests {
             &ctx,
         )
         .expect("command should run");
-        assert!(result.is_ok(), "RSYNC_ARG env vars should be set correctly");
+        assert_eq!(result, None, "RSYNC_ARG env vars should be set correctly");
     }
 
     /// Pins the pre- vs post-xfer environment split. upstream sets
