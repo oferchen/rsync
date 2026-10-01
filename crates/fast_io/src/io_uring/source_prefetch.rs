@@ -36,7 +36,9 @@ const CHAIN_LEN: usize = 3;
 const TAG: u64 = 0x5052_4546_0000_0000;
 const TAG_MASK: u64 = 0xFFFF_FFFF_0000_0000;
 
-const STATX_MASK: u32 = libc::STATX_TYPE | libc::STATX_SIZE;
+const STATX_MASK: u32 = rustix::fs::StatxFlags::TYPE
+    .union(rustix::fs::StatxFlags::SIZE)
+    .bits();
 
 /// Per-file state; every pointer handed to the kernel points into one of these.
 struct Slot {
