@@ -18,3 +18,5 @@ include!("config_parsing/module_directives.rs");
 include!("config_parsing/parser.rs");
 
 include!("config_parsing/tests.rs");
+
+include!("config_parsing/corpus_tests.rs");

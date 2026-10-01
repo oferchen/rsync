@@ -62,6 +62,8 @@ impl RuntimeOptions {
                 iter.next();
             } else if argument.as_encoded_bytes().starts_with(b"-M") {
                 // `-Mname=value`, also collected by `collect_dparams`.
+            } else if let Some(value) = take_option_value(argument, &mut iter, "--sockopts")? {
+                options.sockopts = Some(value.to_string_lossy().into_owned());
             } else if let Some(value) = take_option_value(argument, &mut iter, "--port")? {
                 options.port = parse_port(&value)?;
                 // upstream: clientserver.c:1573 - `--port 0` is treated as

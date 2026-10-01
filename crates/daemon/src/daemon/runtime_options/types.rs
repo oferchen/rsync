@@ -129,6 +129,10 @@ pub(crate) struct RuntimeOptions {
     /// `SO_SNDBUF=65536`) applied to the daemon listener socket.
     socket_options: Option<String>,
     socket_options_from_config: bool,
+    /// `--sockopts`, which replaces the config's `socket options` entirely.
+    ///
+    /// upstream: options.c:887 in `long_daemon_options`.
+    sockopts: Option<String>,
     /// TCP Fast Open mode applied to the daemon listener and accepted
     /// client sockets. Defaults to [`TcpFastOpenMode::Auto`] which enables
     /// TFO on platforms that support it and silently skips elsewhere.
@@ -221,6 +225,7 @@ impl Default for RuntimeOptions {
             rsync_port: None,
             socket_options: None,
             socket_options_from_config: false,
+            sockopts: None,
             tcp_fastopen: TcpFastOpenMode::Auto,
             proxy_protocol: false,
             proxy_protocol_hosts: Vec::new(),
