@@ -408,6 +408,112 @@ fn process_approved_module(
     // timeout"). Before this point only the module value is known.
     let io_timeout = apply_effective_io_timeout(ctx.reader.get_mut(), module, &client_args)?;
 
+    // Extract host name before building structs that borrow ctx, so the
+    // borrow is released before the FSM transition mutates ctx.conn_state.
+    let host_name_owned = ctx.host_display().to_owned();
+
+    let xfer_ctx = XferExecContext {
+        module_name: &module.name,
+        module_path: &module.path,
+        host_addr: ctx.peer_ip,
+        host_name: &host_name_owned,
+        user_name: auth_user.as_deref(),
+        request: ctx.request,
+        client_args: &client_args,
+    };
+
+    // Build the expansion context for a shell-executed hook command.
+    //
+    // upstream: loadparm.c:237 expand_vars() resolves `%NAME%` references by
+    // getenv; clientserver.c:757/770/771/815/920 set RSYNC_MODULE_NAME,
+    // RSYNC_HOST_NAME, RSYNC_HOST_ADDR, RSYNC_USER_NAME and RSYNC_MODULE_PATH
+    // on the daemon process ahead of the hook retrieval at :959, so those are
+    // the names a template can resolve. `%RSYNC_USER_NAME%` must therefore see
+    // the authenticated user, not an empty string.
+    //
+    // ⚠ The single-character escapes this context also feeds (%P/%m/%u/%a/%h/%p)
+    // are an oc extension: upstream expands only the delimited `%NAME%` form.
+    let addr_str_exec = ctx.peer_ip.to_string();
+    let path_str_exec = module.path.display().to_string();
+    let exec_path_ctx = PathExpansionContext {
+        module_path: &path_str_exec,
+        module_name: &module.name,
+        username: auth_user.as_deref().unwrap_or(""),
+        remote_addr: &addr_str_exec,
+        hostname: &host_name_owned,
+        pid: std::process::id(),
+    };
+
+    // upstream: clientserver.c:1178-1181 - the pre-xfer hook is handed the
+    // request and argv as soon as read_args() has them, and its verdict is
+    // taken before any other use of the argv. Its failure shares the single
+    // post-OK fatal exit with a refused option (:1229-1267), and wins over it:
+    // `err_msg` is printed in preference to option_error(). So the hook runs
+    // here, ahead of the refuse-options and read-only/write-only checks.
+    if let Some(command) = module
+        .pre_xfer_exec
+        .as_deref()
+        .filter(|_| xfer_exec_enabled())
+    {
+        let expanded_command = match expand_exec_command(command, &exec_path_ctx) {
+            Ok(expanded) => expanded,
+            Err(refusal) => {
+                refuse_shell_hook(ctx, &refusal)?;
+                run_post_xfer_finalizer(
+                    ctx,
+                    module,
+                    &host_name_owned,
+                    auth_user.as_deref(),
+                    &client_args,
+                    RERR_UNSUPPORTED_EXIT_CODE,
+                );
+                return Ok(());
+            }
+        };
+        let failure = match run_pre_xfer_exec(&expanded_command, &xfer_ctx) {
+            Ok(failure) => failure,
+            // upstream: clientserver.c:1017-1020 - a hook that cannot be started
+            // is logged with its errno and reported by this fixed text.
+            Err(io_err) => {
+                if let Some(log) = ctx.log_sink {
+                    let text = format!("pre-xfer exec preparation failed: {io_err}");
+                    let message = rsync_error!(1, text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                Some("pre-xfer exec preparation failed".to_owned())
+            }
+        };
+        if let Some(text) = failure {
+            // upstream: clientserver.c:1229-1267 - finish the protocol setup so
+            // the error can travel multiplexed, send the text as FERROR, and
+            // exit RERR_UNSUPPORTED. Nothing is written raw after `@RSYNCD: OK`.
+            let payload = text.strip_suffix('\n').unwrap_or(&text);
+            // upstream: a daemon's rwrite() also logs every FERROR line
+            // (log.c:311-330) before sending it.
+            if let Some(log) = ctx.log_sink {
+                for line in payload.lines() {
+                    log_message(log, &rsync_info!(line.to_owned()).with_role(Role::Daemon));
+                }
+            }
+            finalize_post_ok_protocol_for_error(ctx, negotiated_protocol, &client_args)?;
+            send_multiplexed_error_and_exit(
+                ctx.reader.get_mut(),
+                ctx.limiter,
+                payload,
+                RERR_UNSUPPORTED_EXIT_CODE,
+            )?;
+            run_post_xfer_finalizer(
+                ctx,
+                module,
+                &host_name_owned,
+                auth_user.as_deref(),
+                &client_args,
+                RERR_UNSUPPORTED_EXIT_CODE,
+            );
+            return Ok(());
+        }
+    }
+
     // upstream: clientserver.c:rsync_module() -> parse_arguments() applies the
     // module's `refuse options` list against the actual client argv after the
     // post-OK `read_args()` round-trip; this is the only refusal point.
@@ -724,131 +830,6 @@ fn process_approved_module(
                 return Ok(());
             }
         };
-
-    // Extract host name before building structs that borrow ctx, so the
-    // borrow is released before the FSM transition mutates ctx.conn_state.
-    let host_name_owned = ctx.host_display().to_owned();
-
-    let xfer_ctx = XferExecContext {
-        module_name: &module.name,
-        module_path: &module.path,
-        host_addr: ctx.peer_ip,
-        host_name: &host_name_owned,
-        user_name: auth_user.as_deref(),
-        request: ctx.request,
-        client_args: &client_args,
-    };
-
-    // Build the expansion context for a shell-executed hook command.
-    //
-    // upstream: loadparm.c:237 expand_vars() resolves `%NAME%` references by
-    // getenv; clientserver.c:757/770/771/815/920 set RSYNC_MODULE_NAME,
-    // RSYNC_HOST_NAME, RSYNC_HOST_ADDR, RSYNC_USER_NAME and RSYNC_MODULE_PATH
-    // on the daemon process ahead of the hook retrieval at :959, so those are
-    // the names a template can resolve. `%RSYNC_USER_NAME%` must therefore see
-    // the authenticated user, not an empty string.
-    //
-    // ⚠ The single-character escapes this context also feeds (%P/%m/%u/%a/%h/%p)
-    // are an oc extension: upstream expands only the delimited `%NAME%` form.
-    let addr_str_exec = ctx.peer_ip.to_string();
-    let path_str_exec = module.path.display().to_string();
-    let exec_path_ctx = PathExpansionContext {
-        module_path: &path_str_exec,
-        module_name: &module.name,
-        username: auth_user.as_deref().unwrap_or(""),
-        remote_addr: &addr_str_exec,
-        hostname: &host_name_owned,
-        pid: std::process::id(),
-    };
-
-    // upstream: clientserver.c - pre_exec() runs before the transfer starts.
-    // Stdout from the script is sent to the client as an info message. It gets
-    // no stdin: `--early-input` belongs to the early-exec hook alone.
-    if let Some(command) = module
-        .pre_xfer_exec
-        .as_deref()
-        .filter(|_| xfer_exec_enabled())
-    {
-        let expanded_command = match expand_exec_command(command, &exec_path_ctx) {
-            Ok(expanded) => expanded,
-            Err(refusal) => {
-                refuse_shell_hook(ctx, &refusal)?;
-                run_post_xfer_finalizer(
-                    ctx,
-                    module,
-                    &host_name_owned,
-                    auth_user.as_deref(),
-                    &client_args,
-                    RERR_UNSUPPORTED_EXIT_CODE,
-                );
-                return Ok(());
-            }
-        };
-        match run_pre_xfer_exec(&expanded_command, &xfer_ctx) {
-            Ok(Ok(output)) => {
-                // upstream: clientserver.c:pre_exec() - stdout from the script is
-                // sent to the client as an info message before the transfer.
-                if !output.stdout.is_empty() {
-                    write_limited(ctx.reader.get_mut(), ctx.limiter, output.stdout.as_bytes())?;
-                    write_limited(ctx.reader.get_mut(), ctx.limiter, b"\n")?;
-                }
-                if let Some(log) = ctx.log_sink {
-                    let text = format!("pre-xfer exec succeeded for module '{}'", ctx.request);
-                    let message = rsync_info!(text).with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-            }
-            Ok(Err(err)) => {
-                // upstream: clientserver.c - stdout from the script is sent to the
-                // client before the @ERROR line.
-                if !err.stdout.is_empty() {
-                    write_limited(ctx.reader.get_mut(), ctx.limiter, err.stdout.as_bytes())?;
-                    write_limited(ctx.reader.get_mut(), ctx.limiter, b"\n")?;
-                }
-                let error = AtError::message(err.message.clone());
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                if let Some(log) = ctx.log_sink {
-                    let message = rsync_error!(1, err.message).with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-                // upstream: clientserver.c:1098-1100/1171 - finish_pre_exec()
-                // is checked after the post-xfer-exec fork point; a non-zero
-                // pre-xfer exec script exits via exit_cleanup(RERR_UNSUPPORTED).
-                run_post_xfer_finalizer(
-                    ctx,
-                    module,
-                    &host_name_owned,
-                    auth_user.as_deref(),
-                    &client_args,
-                    RERR_UNSUPPORTED_EXIT_CODE,
-                );
-                return Ok(());
-            }
-            Err(io_err) => {
-                let error_msg = format!(
-                    "failed to run pre-xfer exec command for module '{}': {io_err}",
-                    ctx.request
-                );
-                let error = AtError::message(error_msg.clone());
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                if let Some(log) = ctx.log_sink {
-                    let message = rsync_error!(1, error_msg).with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-                // upstream: clientserver.c:955-961 - start_pre_exec()
-                // preparation failure returns -1 from the child directly.
-                run_post_xfer_finalizer(
-                    ctx,
-                    module,
-                    &host_name_owned,
-                    auth_user.as_deref(),
-                    &client_args,
-                    MODULE_ABORT_EXIT_CODE,
-                );
-                return Ok(());
-            }
-        }
-    }
 
     // upstream: clientserver.c:1207-1220 - the per-request line, emitted once
     // the argv is parsed, the refusals have been applied and the pre-xfer hook
