@@ -291,6 +291,11 @@ fn parse_config_file(
             }
             let value = raw_value.trim();
 
+            if !is_daemon_parameter(&key) {
+                report_unknown_parameter(raw_key);
+                continue;
+            }
+
             if let Some(index) = parse.current {
                 apply_module_directive(
                     &mut parse.sections[index].builder,
@@ -310,6 +315,21 @@ fn parse_config_file(
 
     stack.pop();
     result
+}
+
+/// Reports a parameter name that is not a daemon parameter; the line is
+/// ignored.
+///
+/// upstream: loadparm.c:map_parameter() logs `Unknown Parameter encountered:
+/// "<name>"` (silently for a name starting with `-`), and do_parameter() then
+/// logs `IGNORING unknown parameter "<name>"` and carries on. The name is the
+/// one params.c scanned: trimmed, with each whitespace run made one space.
+fn report_unknown_parameter(raw_name: &str) {
+    let name = collapse_section_name(raw_name);
+    if !name.starts_with('-') {
+        eprintln!("Unknown Parameter encountered: \"{name}\"");
+    }
+    eprintln!("IGNORING unknown parameter \"{name}\"");
 }
 
 /// Reports a config line that has no '=' and is therefore skipped.

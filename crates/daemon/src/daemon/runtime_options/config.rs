@@ -84,13 +84,6 @@ impl RuntimeOptions {
             self.quic_port = Some(port);
         }
 
-        if let Some((components, _origin)) = parsed.global_bandwidth_limit
-            && !self.bandwidth_limit_configured
-        {
-            self.bandwidth_limit = components.rate();
-            self.bandwidth_limit_configured = true;
-        }
-
         if let Some((secrets, origin)) = parsed.global_secrets_file {
             self.set_global_secrets_file(secrets, &origin)?;
         }
@@ -131,12 +124,6 @@ impl RuntimeOptions {
 
         if let Some((backlog, origin)) = startup.listen_backlog {
             self.set_listen_backlog_from_config(backlog, &origin)?;
-        }
-
-        // Config-only option (no CLI flag); duplicate detection already happened
-        // during directive parsing, so a direct assignment is sufficient.
-        if let Some((threads, _origin)) = startup.acceptor_threads {
-            self.acceptor_threads = Some(threads);
         }
 
         // upstream: clientserver.c - config `port` overrides the default

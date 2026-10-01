@@ -36,33 +36,6 @@ fn runtime_bwlimit_error(value: &str) -> DaemonError {
     ))
 }
 
-fn parse_config_bwlimit(
-    value: &str,
-    path: &Path,
-    line: usize,
-) -> Result<BandwidthLimitComponents, DaemonError> {
-    match parse_bandwidth_limit(value) {
-        Ok(components) => Ok(components),
-        Err(error) => Err(config_bwlimit_error(path, line, value, error)),
-    }
-}
-
-fn config_bwlimit_error(
-    path: &Path,
-    line: usize,
-    value: &str,
-    error: BandwidthParseError,
-) -> DaemonError {
-    let detail = match error {
-        BandwidthParseError::Invalid => format!("invalid 'bwlimit' value '{value}'"),
-        BandwidthParseError::TooSmall => {
-            format!("'bwlimit' value '{value}' is too small (min: 512 or 0 for unlimited)")
-        }
-        BandwidthParseError::TooLarge => format!("'bwlimit' value '{value}' is too large"),
-    };
-    config_parse_error(path, line, detail)
-}
-
 /// upstream: options.c:1570-1574 and the `daemon_error:` hint at
 /// options.c:1594-1596 - `rsync: <option>: unknown option (in daemon mode)`.
 fn unsupported_option(option: OsString, brand: Brand) -> DaemonError {
