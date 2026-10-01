@@ -88,6 +88,13 @@ pub fn process_file_response<R: Read>(
                 format!("sender declined NDX {ndx} (MSG_NO_SEND)"),
             ));
         }
+        // This single-request path has no phase loop to hand the boundary to.
+        super::HeaderOutcome::PhaseEnd => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "sender ended the phase (NDX_DONE) while a response was still outstanding",
+            ));
+        }
     };
     let file_path = header.file_path;
     let basis_path = header.basis_path;

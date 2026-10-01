@@ -432,6 +432,14 @@ pub struct ReceiverContext {
     /// before [`Self::read_expected_ndx_done`] expects the sender's NDX_DONE.
     /// `Cell` because the emit site runs behind a `&self` pipeline closure.
     pub(in crate::receiver) hardlink_follower_echoes: std::cell::Cell<usize>,
+    /// Sender `NDX_DONE`s already consumed by a response read, each the
+    /// sender's phase boundary arriving while a request was unanswered.
+    ///
+    /// Upstream counts phases purely from the sender's `NDX_DONE`s
+    /// (receiver.c:852-876), so each one counts against the next
+    /// [`Self::read_expected_ndx_done`] instead of being read again. `Cell`
+    /// for the same `&self` reason as `hardlink_follower_echoes`.
+    pub(in crate::receiver) early_sender_ndx_dones: std::cell::Cell<usize>,
     /// Metadata-only itemize records a server-mode receiver must forward over
     /// the wire, as `(flist index, wire iflags)` in flist order.
     ///
@@ -658,6 +666,7 @@ impl ReceiverContext {
             names_to_stderr: false,
             progress_active: false,
             hardlink_follower_echoes: std::cell::Cell::new(0),
+            early_sender_ndx_dones: std::cell::Cell::new(0),
             server_no_transfer_itemize: RefCell::new(Vec::new()),
             daemon_log_active: false,
             daemon_logfile_format_has_i: false,

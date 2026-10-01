@@ -157,6 +157,14 @@ impl ReceiverContext {
         Ok(false)
     }
 
+    /// Records that a response read consumed the sender's phase-boundary
+    /// `NDX_DONE`, so the next [`Self::read_expected_ndx_done`] counts it
+    /// instead of reading another.
+    pub(in crate::receiver) fn note_early_sender_ndx_done(&self) {
+        self.early_sender_ndx_dones
+            .set(self.early_sender_ndx_dones.get() + 1);
+    }
+
     /// Reads an NDX and validates it is NDX_DONE (-1).
     ///
     /// Routed through the shared marker-aware reader
@@ -170,6 +178,11 @@ impl ReceiverContext {
         reader: &mut R,
         context: &str,
     ) -> io::Result<()> {
+        let early = self.early_sender_ndx_dones.get();
+        if early > 0 {
+            self.early_sender_ndx_dones.set(early - 1);
+            return Ok(());
+        }
         let mut sink = self.no_lazy_flist_sink();
         if self.drain_hardlink_follower_echoes(ndx_read_codec, reader, &mut sink)? {
             return Ok(());

@@ -71,6 +71,8 @@ pub enum ResponseProgress {
         /// The declined file's wire NDX, from the `MSG_NO_SEND` payload.
         ndx: i32,
     },
+    /// The sender ended the phase (`NDX_DONE`) instead of answering.
+    PhaseEnd,
 }
 
 /// Processes a file transfer response, streaming chunks to the disk thread.
@@ -126,6 +128,7 @@ pub fn process_file_response_streaming<R: Read>(
         super::HeaderOutcome::Declined { pending, ndx } => {
             return Ok(ResponseProgress::Declined { pending, ndx });
         }
+        super::HeaderOutcome::PhaseEnd => return Ok(ResponseProgress::PhaseEnd),
     };
 
     // upstream: receiver.c:927-928 - updating_basis_or_equiv is set when the
