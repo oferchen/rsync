@@ -327,24 +327,16 @@ fn apply_global_directive(
         // NOBODY_USER`) even when the operator set a global `uid = 0`.
         "uid" if value.is_empty() => state.module_defaults.uid = None,
         "uid" => {
-            let uid = parse_uid_setting(value).ok_or_else(|| {
-                config_parse_error(path, line_number, format!("invalid uid '{value}'"))
-            })?;
-            state.module_defaults.uid = Some(uid);
+            state.module_defaults.uid =
+                Some(parse_uid_setting(value).ok_or_else(|| value.to_owned()));
         }
         // upstream: daemon-parm.txt `Locals:` `gid` is P_LOCAL - the global
         // value is the default `lp_gid(module_id)` every module inherits
         // (clientserver.c:790), distinct from the P_GLOBAL `daemon gid` drop.
         "gid" if value.is_empty() => state.module_defaults.gid = None,
         "gid" => {
-            let gid = parse_gid_setting(value).map_err(|reason| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid gid '{value}': {reason}"),
-                )
-            })?;
-            state.module_defaults.gid = Some(gid);
+            state.module_defaults.gid =
+                Some(parse_gid_setting(value).map_err(|_| rejected_gid_token(value)));
         }
         // upstream: daemon-parm.txt `Globals:` `daemon_uid`/`daemon_gid` are
         // P_GLOBAL. `daemon uid` sets the process-wide uid the listener drops
@@ -430,7 +422,7 @@ fn apply_global_directive(
             // the list with `if (!list || !*list) return 0;`, so an empty
             // value is legal config that trusts nobody - which the empty
             // pattern set expresses, since nothing matches against it.
-            let patterns = parse_host_list(value, path, line_number, "proxy protocol hosts")?;
+            let patterns = parse_host_list(value);
 
             store_global_directive(
                 &mut state.proxy_protocol_hosts,
@@ -518,11 +510,11 @@ fn apply_global_directive(
             }
         }
         "hostsallow" => {
-            let patterns = parse_host_list(value, path, line_number, "hosts allow")?;
+            let patterns = parse_host_list(value);
             state.module_defaults.hosts_allow = Some(patterns);
         }
         "hostsdeny" => {
-            let patterns = parse_host_list(value, path, line_number, "hosts deny")?;
+            let patterns = parse_host_list(value);
             state.module_defaults.hosts_deny = Some(patterns);
         }
         // `timeout` feeds TWO consumers, for the same reason `log file` does.
@@ -713,10 +705,12 @@ fn apply_global_directive(
         "authdigest" => {
             state.module_defaults.auth_digest = normalize_auth_digest(value);
         }
-        // `path` only makes sense per-module - silently accepted, not inherited.
+        // upstream: `path` is P_LOCAL, so a global value is the path every
+        // later module copies unless it sets its own (loadparm.c:394-398).
+        "path" => state.module_defaults.path = Some(PathBuf::from(strip_trailing_slashes(value))),
         // upstream: loadparm.c:add_a_section - a global `name` is copied into
         // each new section and then overwritten by the section's own name.
-        "path" | "name" => {}
+        "name" => {}
         _ => {
             eprintln!(
                 "warning: unknown global directive '{}' in '{}' line {} [daemon={}]",

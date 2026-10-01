@@ -62,16 +62,13 @@ impl ModuleDefinitionBuilder {
         default_use_chroot: Option<bool>,
         defaults: &GlobalModuleDefaults,
     ) -> Result<ModuleDefinition, DaemonError> {
-        let path = self.path.ok_or_else(|| {
-            config_parse_error(
-                config_path,
-                self.declaration_line,
-                format!(
-                    "module '{}' is missing required 'path' directive",
-                    self.name
-                ),
-            )
-        })?;
+        // upstream: a module with no path still loads; rsync_module() refuses
+        // it with `@ERROR: no path setting.` when a client selects it
+        // (clientserver.c:877-881). The empty path carries that state.
+        let path = self
+            .path
+            .or_else(|| defaults.path.clone())
+            .unwrap_or_default();
 
         let use_chroot = self.use_chroot.or(default_use_chroot).unwrap_or(true);
         // upstream: clientserver.c:883 - `use_chroot < 0` means unset. Track
@@ -102,7 +99,7 @@ impl ModuleDefinitionBuilder {
         // and clientserver.c serves from it both with and without chroot (the
         // chroot("/") is a no-op). See the upstream daemon-path-root-read
         // scenario.
-        let path = if module_path_is_absolute(&path) {
+        let path = if path.as_os_str().is_empty() || module_path_is_absolute(&path) {
             path
         } else {
             let current_dir = std::env::current_dir().map_err(|err| {
@@ -189,6 +186,16 @@ impl ModuleDefinitionBuilder {
             .or_else(|| defaults.hosts_deny.clone())
             .unwrap_or_default();
 
+        // upstream: clientserver.c:833-870 resolves `uid` before `gid`, so a
+        // `uid` that does not resolve is the one reported.
+        let uid = self.uid.or_else(|| defaults.uid.clone());
+        let gid = self.gid.or_else(|| defaults.gid.clone());
+        let unresolved_id = match (&uid, &gid) {
+            (Some(Err(name)), _) => Some(UnresolvedId::Uid(name.clone())),
+            (_, Some(Err(token))) => Some(UnresolvedId::Gid(token.clone())),
+            _ => None,
+        };
+
         Ok(ModuleDefinition {
             name: self.name,
             path,
@@ -209,8 +216,9 @@ impl ModuleDefinitionBuilder {
             // upstream: clientserver.c:781,790 read the per-module `lp_uid`/
             // `lp_gid`, which inherit the global-section default when the module
             // sets no explicit value (daemon-parm.txt marks both P_LOCAL).
-            uid: self.uid.or(defaults.uid),
-            gid: self.gid.or_else(|| defaults.gid.clone()),
+            uid: uid.and_then(Result::ok),
+            gid: gid.and_then(Result::ok),
+            unresolved_id,
             timeout: self.timeout.or(defaults.timeout).unwrap_or(None),
             listable: self.listable.or(defaults.listable).unwrap_or(true),
             use_chroot,
