@@ -371,6 +371,12 @@ pub(crate) enum HeaderOutcome {
         pending: crate::pipeline::PendingTransfer,
         ndx: i32,
     },
+    /// The sender sent `NDX_DONE` where a response was awaited: its next phase
+    /// boundary, which ends the pass whatever is still outstanding.
+    ///
+    /// upstream: receiver.c:852-876 - `recv_files()` reads `NDX_DONE` as a
+    /// phase advance and tracks no outstanding requests.
+    PhaseEnd,
 }
 
 /// Reads and validates the echoed NDX and sum_head from the sender response.
@@ -415,20 +421,10 @@ fn read_response_header<R: Read>(
     );
     let (echoed_ndx, sender_attrs) = match read {
         Ok(Some(pair)) => pair,
-        Ok(None) => {
-            // upstream: rsync.c:334-335 - `NDX_DONE` ends the phase. Reaching it
-            // with a transfer still outstanding means the sender dropped a file
-            // without the receiver retiring it (e.g. an unconsumed `MSG_NO_SEND`,
-            // io.c:1665 -> got_flist_entry_status(), io.c:1107). Fail loudly here
-            // rather than reading attributes that were never sent.
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "sender ended the phase (NDX_DONE) while the response for NDX \
-                     {expected_ndx} was still outstanding - protocol violation"
-                ),
-            ));
-        }
+        // upstream: rsync.c:334-335 - `NDX_DONE` ends the phase before any
+        // attribute byte is read, and receiver.c:852-876 takes it as the
+        // sender's phase boundary even with a request unanswered.
+        Ok(None) => return Ok(HeaderOutcome::PhaseEnd),
         Err(err) => {
             // upstream: io.c:1847-1856 -> got_flist_entry_status(FES_NO_SEND, ndx)
             // retires the declined entry by index. The sender emits MSG_NO_SEND
@@ -972,6 +968,10 @@ mod tests {
             HeaderOutcome::Declined { ndx, .. } => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("sender declined NDX {ndx}"),
+            )),
+            HeaderOutcome::PhaseEnd => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "sender ended the phase",
             )),
         }
     }
