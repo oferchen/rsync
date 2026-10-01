@@ -9,10 +9,8 @@
 //!
 //! The oc-rsync daemon binds its listeners with `SO_REUSEADDR` only (matching
 //! upstream `socket.c:455`), so such a collision is a **clean `EADDRINUSE` bind
-//! failure** - never a silent co-bind. (Only the opt-in `acceptor threads > 1`
-//! multi-acceptor daemon sets `SO_REUSEPORT`, for its own replica sockets.) No
-//! two daemons ever share a port and no cross-connection load-balancing is
-//! possible.
+//! failure** - never a silent co-bind. No two daemons ever share a port and no
+//! cross-connection load-balancing is possible.
 //!
 //! Losing that race does **not** necessarily stop the daemon, though. On its
 //! default bind it opens one socket per address family and, mirroring upstream

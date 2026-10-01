@@ -1118,7 +1118,6 @@ fn bind_listeners_per_family_falls_back_when_first_family_unreachable() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
         "",
         None,
     )
@@ -1155,7 +1154,6 @@ fn bind_listeners_per_family_applies_socket_options_before_listen() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
         socket_options,
         None,
     )
@@ -1172,59 +1170,14 @@ fn bind_listeners_per_family_applies_socket_options_before_listen() {
     );
 }
 
-#[test]
-fn bind_listeners_per_family_replicates_acceptor_threads() {
-    // acceptor_threads = N must bind N listener sockets for a reachable
-    // family. With port 0 each replica gets its own ephemeral port, which
-    // deterministically exercises the replication loop on every platform
-    // regardless of SO_REUSEPORT same-port semantics (the load-balancing
-    // benefit of binding to a fixed shared port is a kernel feature covered
-    // by the per-socket set_reuse_port call, not this counting test).
-    let reachable = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
-    let bind_addresses = vec![reachable];
-
-    let (listeners, bound_addresses) = bind_listeners_per_family(
-        &bind_addresses,
-        0,
-        DEFAULT_LISTEN_BACKLOG,
-        TcpFastOpenMode::Off,
-        3,
-        "",
-        None,
-    )
-    .expect("the reachable family must bind all replicas");
-
-    assert_eq!(
-        listeners.len(),
-        3,
-        "acceptor_threads=3 must bind three listener replicas"
-    );
-    assert_eq!(bound_addresses.len(), 3);
-    for addr in &bound_addresses {
-        assert_eq!(addr.ip(), reachable, "every replica binds the same family");
-        assert!(
-            addr.port() != 0,
-            "each replica must get a real ephemeral port"
-        );
-    }
-}
-
-#[test]
-fn default_acceptor_threads_is_one() {
-    // Absent an `acceptor threads` directive the daemon binds a single
-    // listener per family, preserving the historical pre-NACC-2 behaviour.
-    assert_eq!(RuntimeOptions::default().acceptor_threads(), 1);
-}
-
 // Unix-only: asserts POSIX SO_REUSEADDR semantics (a second bind on an active
 // listener is refused). Windows SO_REUSEADDR instead permits re-binding, so this
 // exact-refusal invariant is a Unix property.
 #[cfg(unix)]
 #[test]
 fn default_single_listener_refuses_a_second_bind_on_the_same_port() {
-    // upstream: socket.c:455 - open_socket_in() sets SO_REUSEADDR only. The
-    // default single-listener daemon (acceptor_threads == 1) must therefore NOT
-    // set SO_REUSEPORT, so a second bind on the same in-use port is refused with
+    // upstream: socket.c:455 - open_socket_in() sets SO_REUSEADDR only, never
+    // SO_REUSEPORT, so a second bind on the same in-use port is refused with
     // EADDRINUSE rather than co-binding. This is what makes concurrent daemon
     // tests safe from cross-connection load-balancing.
     let reachable = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
@@ -1236,7 +1189,6 @@ fn default_single_listener_refuses_a_second_bind_on_the_same_port() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
         "",
         None,
     )
@@ -1245,70 +1197,19 @@ fn default_single_listener_refuses_a_second_bind_on_the_same_port() {
     let port = first_addrs[0].port();
     assert!(port != 0);
 
-    // A second default (replicas == 1) bind on that same, in-use port must be
-    // refused - no SO_REUSEPORT co-bind.
+    // A second bind on that same, in-use port must be refused - no
+    // SO_REUSEPORT co-bind.
     let second = bind_listeners_per_family(
         &[reachable],
         port,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
         "",
         None,
     );
     assert!(
         second.is_err(),
         "a second default-daemon bind on an in-use port must fail (SO_REUSEADDR only), got Ok"
-    );
-}
-
-// Unix-only: SO_REUSEPORT (the fixed-port co-bind mechanism) is a POSIX socket
-// option; socket2's setter is Unix-only and the daemon only sets it under
-// `#[cfg(unix)]`.
-#[cfg(unix)]
-#[test]
-fn multi_acceptor_replicas_co_bind_the_same_fixed_port() {
-    // The opt-in multi-acceptor daemon (acceptor_threads > 1) still sets
-    // SO_REUSEPORT on its replica sockets, so multiple listeners share ONE fixed
-    // port and the kernel load-balances accepts across them. Binding replicas on
-    // a fixed port (rather than port 0, which hands each replica a distinct
-    // ephemeral port) is what actually exercises the shared-port co-bind.
-    let reachable = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
-
-    // Reserve a currently-free fixed port. A concurrent test could steal it in
-    // the window between reserve and bind, so retry until a clean attempt binds
-    // both replicas (or the budget is exhausted).
-    for _ in 0..32 {
-        let port = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-            .and_then(|l| l.local_addr())
-            .map(|a| a.port())
-            .expect("reserve free port");
-
-        match bind_listeners_per_family(
-            &[reachable],
-            port,
-            DEFAULT_LISTEN_BACKLOG,
-            TcpFastOpenMode::Off,
-            2,
-            "",
-            None,
-        ) {
-            Ok((listeners, addrs)) if listeners.len() == 2 => {
-                assert!(
-                    addrs.iter().all(|a| a.port() == port),
-                    "both replicas must co-bind the same fixed port {port}, got {addrs:?}"
-                );
-                return;
-            }
-            // A regression that dropped SO_REUSEPORT would bind only the first
-            // replica (the second EADDRINUSEs), returning a single listener.
-            // Retry: this attempt lost the reserve race or the port was busy.
-            _ => continue,
-        }
-    }
-    panic!(
-        "acceptor_threads=2 must co-bind two replica listeners on one fixed port \
-         (SO_REUSEPORT); none of the attempts bound both replicas"
     );
 }
 
@@ -1331,7 +1232,6 @@ fn bind_listeners_per_family_fails_only_when_all_families_unreachable() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
         "",
         None,
     )
@@ -1375,7 +1275,6 @@ fn bind_listeners_per_family_falls_back_from_ipv6_to_ipv4() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
         "",
         None,
     )
@@ -1417,7 +1316,6 @@ fn bind_listeners_per_family_single_family_propagates_error() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
         "",
         None,
     )
