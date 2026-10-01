@@ -37,9 +37,9 @@ last_wins_setters! {
     set_hosts_deny => hosts_deny: Vec<HostPattern>,
     set_read_only => read_only: bool,
     set_write_only => write_only: bool,
-    set_numeric_ids => numeric_ids: bool,
+    set_numeric_ids => numeric_ids: Option<bool>,
     set_listable => listable: bool,
-    set_use_chroot => use_chroot: bool,
+    set_use_chroot => use_chroot: Option<bool>,
     set_uid => uid: Result<u32, String>,
     set_gid => gid: Result<GidSetting, String>,
     set_timeout => timeout: Option<NonZeroU64>,
@@ -65,7 +65,7 @@ last_wins_setters! {
     set_strict_modes => strict_modes: bool,
     set_exclude_from => exclude_from: PathBuf,
     set_include_from => include_from: PathBuf,
-    set_open_noatime => open_noatime: bool,
+    set_open_noatime => open_noatime: Option<bool>,
     set_log_file => log_file: PathBuf,
     /// Sets the per-module `reverse lookup` override.
     ///

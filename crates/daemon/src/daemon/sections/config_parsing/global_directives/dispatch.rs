@@ -267,9 +267,7 @@ fn apply_global_directive(
         // upstream: loadparm.c - use chroot is valid in the global section as a
         // default that applies to all modules which do not override it explicitly.
         "usechroot" => {
-            let Some(parsed) =
-                apply_boolean_directive(value, true, "use chroot", path, line_number)
-            else {
+            let Some(parsed) = apply_bool3_directive(value, "use chroot", path, line_number) else {
                 return Ok(());
             };
 
@@ -567,16 +565,13 @@ fn apply_global_directive(
             }
         }
         "mungesymlinks" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "munge symlinks", path, line_number)
+            if let Some(parsed) = apply_bool3_directive(value, "munge symlinks", path, line_number)
             {
-                state.module_defaults.munge_symlinks = Some(Some(parsed));
+                state.module_defaults.munge_symlinks = Some(parsed);
             }
         }
         "numericids" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "numeric ids", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "numeric ids", path, line_number) {
                 state.module_defaults.numeric_ids = Some(parsed);
             }
         }
@@ -635,9 +630,7 @@ fn apply_global_directive(
             }
         }
         "opennoatime" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "open noatime", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "open noatime", path, line_number) {
                 state.module_defaults.open_noatime = Some(parsed);
             }
         }

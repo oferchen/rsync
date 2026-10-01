@@ -1140,4 +1140,30 @@ mod runtime_options_tests {
         );
         assert_eq!(error.exit_code(), 1);
     }
+
+    #[test]
+    fn sockopts_replaces_the_config_socket_options() {
+        // upstream: socket.c:606-610 - a given --sockopts is used instead of
+        // `socket options`, even when it is empty.
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("rsyncd.conf");
+        fs::write(&path, "socket options = SO_KEEPALIVE\n").expect("write config");
+
+        for (flag, expected) in [
+            ("--sockopts=SO_SNDBUF=65536", Some("SO_SNDBUF=65536")),
+            ("--sockopts=", Some("")),
+        ] {
+            let options = RuntimeOptions::parse(&[
+                OsString::from("--config"),
+                path.clone().into_os_string(),
+                OsString::from(flag),
+            ])
+            .expect("parse");
+            assert_eq!(options.socket_options(), expected, "{flag}");
+        }
+
+        let options = RuntimeOptions::parse(&[OsString::from("--config"), path.into_os_string()])
+            .expect("parse");
+        assert_eq!(options.socket_options(), Some("SO_KEEPALIVE"));
+    }
 }

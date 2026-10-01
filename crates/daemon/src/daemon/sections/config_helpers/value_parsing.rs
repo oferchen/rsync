@@ -245,6 +245,24 @@ pub(crate) fn parse_boolean_directive(value: &str) -> Option<bool> {
 /// ignores its failure return, so a badly formed boolean only warns
 /// (loadparm.c:372) and the directive's previous default is retained rather
 /// than aborting the load.
+pub(crate) fn apply_bool3_directive(
+    value: &str,
+    directive: &str,
+    path: &Path,
+    line_number: usize,
+) -> Option<Option<bool>> {
+    // upstream: loadparm.c set_boolean(pb, value, True) - `unset`/`-1` stores
+    // Unset, which a section keeps rather than inheriting a copied value.
+    match classify_boolean_directive(value, true) {
+        BooleanDirective::Unset => Some(None),
+        _ => apply_boolean_directive(value, true, directive, path, line_number).map(Some),
+    }
+}
+
+/// Applies a boolean directive value, warning on a malformed one.
+///
+/// See [`apply_bool3_directive`] for the P_BOOL3 parameters, whose `unset`
+/// is a value of its own.
 pub(crate) fn apply_boolean_directive(
     value: &str,
     allow_unset: bool,
