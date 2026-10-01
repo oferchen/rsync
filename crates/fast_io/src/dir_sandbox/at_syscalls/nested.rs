@@ -186,6 +186,28 @@ pub(super) fn anchor_parent<'a>(
     }
 }
 
+/// The sandbox's held parent descriptor and the leaf name for
+/// `relative_path`, when `full_path` is `dest_dir.join(relative_path)`.
+///
+/// `None` whenever [`DirSandbox::held_parent`](crate::dir_sandbox::DirSandbox::held_parent)
+/// declines - notably a symlink anywhere below the root - so the caller runs
+/// its own resolver unchanged. A caller whose operation fails through the held
+/// descriptor releases it and retries on that resolver, which then reports the
+/// authoritative outcome.
+pub(super) fn held_leaf<'a>(
+    sandbox: &crate::dir_sandbox::DirSandbox,
+    dest_dir: &Path,
+    relative_path: &'a Path,
+    full_path: &Path,
+) -> Option<(std::sync::Arc<OwnedFd>, &'a OsStr)> {
+    let leaf = relative_path.file_name()?;
+    if dest_dir.join(relative_path) != full_path {
+        return None;
+    }
+    let parent = relative_path.parent().unwrap_or_else(|| Path::new(""));
+    sandbox.held_parent(parent).map(|dirfd| (dirfd, leaf))
+}
+
 /// Returns `true` when `anchor_parent` resolves a multi-component path's
 /// parent beneath the sandbox root on this host, and `false` when it degrades
 /// to the caller's path-based fallback.

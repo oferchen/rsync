@@ -102,22 +102,24 @@ impl<'a> ParentWalk<'a> {
 pub(crate) fn confined_parent(
     destination: &Path,
     root: Option<&crate::DestinationRoot>,
-) -> std::io::Result<Option<std::os::fd::OwnedFd>> {
+) -> std::io::Result<Option<std::sync::Arc<std::os::fd::OwnedFd>>> {
+    use std::sync::Arc;
+
     let Some(parent) = destination.parent().filter(|p| !p.as_os_str().is_empty()) else {
         return Ok(None);
     };
     if let Some(root) = root {
         if let Ok(tail) = parent.strip_prefix(root.path()) {
-            return fast_io::open_dir_beneath_nofollow(root.anchor()?, tail).map(Some);
+            return root.held_dir_beneath(tail).map(Some);
         }
         if destination
             .strip_prefix(root.path())
             .is_ok_and(|tail| tail.as_os_str().is_empty())
         {
-            return root.open_dir(parent).map(Some);
+            return root.open_dir(parent).map(|fd| Some(Arc::new(fd)));
         }
     }
-    fast_io::secure_open_dir(parent).map(Some)
+    fast_io::secure_open_dir(parent).map(|fd| Some(Arc::new(fd)))
 }
 
 /// Runs a metadata op anchored on `destination`'s parent dirfd.
@@ -162,7 +164,7 @@ pub(crate) fn at_confined_parent(
         Some(parent) => Some(parent),
         None => {
             owned = confined_parent(destination, root)?;
-            owned.as_ref().map(AsFd::as_fd)
+            owned.as_deref().map(AsFd::as_fd)
         }
     };
     match (parent, destination.file_name()) {
@@ -988,7 +990,8 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     // - the walk itself fails - then each applier re-walks and reports the
     //   failure exactly as before (unchanged error attribution).
     #[cfg(unix)]
-    let parent_dir_owned: Option<std::os::fd::OwnedFd> = match options.parent_walk() {
+    let parent_dir_owned: Option<std::sync::Arc<std::os::fd::OwnedFd>> = match options.parent_walk()
+    {
         ParentWalk::Follow => None,
         ParentWalk::Confined(root) => confined_parent(destination, root).ok().flatten(),
     };
