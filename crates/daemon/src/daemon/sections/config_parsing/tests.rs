@@ -3360,6 +3360,7 @@ mod config_parsing_tests {
             "listen backlog",
             "port",
             "proxy protocol",
+            "proxy protocol hosts",
         ] {
             assert!(
                 is_global_only_directive(&normalize_param_name(global)),
