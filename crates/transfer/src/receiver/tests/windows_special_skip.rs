@@ -70,7 +70,8 @@ fn windows_receiver_skips_specials_without_error() {
     ctx.file_list = vec![
         FileEntry::new_fifo("pipe".into(), 0o640),
         FileEntry::new_char_device("nulllike".into(), 0o600, 1, 3),
-    ];
+    ]
+    .into();
 
     let mut writer = CapturingMsgInfoWriter;
     // The non-Unix `create_specials` takes `(dest, writer)`: no sandbox on

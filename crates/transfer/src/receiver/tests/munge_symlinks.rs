@@ -90,7 +90,8 @@ fn receiver_prepends_munge_prefix_to_on_disk_symlink() {
         "escape".into(),
         0o777,
         "/etc/passwd".into(),
-    )];
+    )]
+    .into();
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_symlinks(dest, None, &mut writer)
@@ -157,7 +158,8 @@ fn create_symlinks_surfaces_non_eacces_error() {
         "blocked/link".into(),
         0o777,
         "/etc/passwd".into(),
-    )];
+    )]
+    .into();
 
     let mut writer = CapturingMsgInfoWriter;
     let err = ctx
@@ -229,7 +231,7 @@ fn receiver_preserves_symlink_mtime_on_creation() {
     const SOURCE_MTIME_SECS: i64 = 7_200;
     let mut entry = FileEntry::new_symlink("nolf-symlink".into(), 0o777, "nolf".into());
     entry.set_mtime(SOURCE_MTIME_SECS, 0);
-    ctx.file_list = vec![entry];
+    ctx.file_list = vec![entry].into();
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_symlinks(dest, None, &mut writer)
@@ -260,7 +262,8 @@ fn receiver_writes_unmunged_target_when_disabled() {
         "escape".into(),
         0o777,
         "/etc/passwd".into(),
-    )];
+    )]
+    .into();
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_symlinks(dest, None, &mut writer)
@@ -300,7 +303,8 @@ fn munging_receiver_with_safe_links_skips_even_a_safe_relative_target() {
         "rel_link".into(),
         0o777,
         "real_file.txt".into(),
-    )];
+    )]
+    .into();
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_symlinks(dest, None, &mut writer)
@@ -329,7 +333,8 @@ fn munging_receiver_without_safe_links_still_creates_the_munged_link() {
         "rel_link".into(),
         0o777,
         "real_file.txt".into(),
-    )];
+    )]
+    .into();
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_symlinks(dest, None, &mut writer)
@@ -360,7 +365,8 @@ fn plain_receiver_with_safe_links_creates_a_safe_relative_target() {
         "rel_link".into(),
         0o777,
         "real_file.txt".into(),
-    )];
+    )]
+    .into();
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_symlinks(dest, None, &mut writer)
