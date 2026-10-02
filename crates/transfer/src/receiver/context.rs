@@ -522,6 +522,12 @@ pub struct ReceiverContext {
     /// upstream: generator.c:304-311 - `delete_in_dir()` returns early (printing
     /// once) whenever `io_error & IOERR_GENERAL && !ignore_errors`.
     pub(in crate::receiver) io_error_delete_warning_emitted: bool,
+    /// Deletions `--max-delete` refused across every per-directory delete of an
+    /// INC_RECURSE walk, reported once after the walk by `finish_delete_limit`.
+    ///
+    /// upstream: delete.c:35 `skipped_deletes` - one run-wide counter, bumped at
+    /// delete.c:217-218 and reported at generator.c:2904-2909.
+    pub(in crate::receiver) skipped_deletes: u64,
     /// True when this receiver is applying a recorded batch (`--read-batch`)
     /// rather than talking to a live peer. Mirrors upstream's `read_batch`
     /// global as seen by the receiving client: the batch file is fed straight
@@ -684,6 +690,7 @@ impl ReceiverContext {
             got_xfer_error: std::cell::Cell::new(false),
             delayed_delete_victims: Vec::new(),
             io_error_delete_warning_emitted: false,
+            skipped_deletes: 0,
             // upstream: read_batch defaults off; the network path never sets it.
             local_replay: false,
             session_token_reader: None,
