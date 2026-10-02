@@ -92,6 +92,7 @@ mod open_source;
 mod pending_removal;
 mod protocol_io;
 mod segments;
+mod source_prefetch;
 mod stats;
 #[cfg(test)]
 mod tests;

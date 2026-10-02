@@ -83,6 +83,9 @@ impl FlistSendStats {
 /// - `sender.c:send_files()` - produces these statistics during the main loop
 #[derive(Debug, Clone)]
 pub(crate) struct TransferLoopResult {
+    /// Whole-file sends whose source came from an io_uring read-ahead batch.
+    #[cfg(test)]
+    pub(crate) prefetched_files: usize,
     /// Number of files actually transferred.
     pub(crate) files_transferred: usize,
     /// Summed length of every transferred file (upstream: `total_transferred_size`).

@@ -407,6 +407,16 @@ impl<R> MultiplexReader<R> {
         !self.frames.in_progress() && self.pos < self.buffer.len()
     }
 
+    /// The deliverable payload [`Self::has_buffered_payload`] guards: the rest
+    /// of the current `MSG_DATA` frame, or nothing while a frame is mid-decode.
+    pub(super) fn buffered_payload(&self) -> &[u8] {
+        if self.has_buffered_payload() {
+            &self.buffer[self.pos..]
+        } else {
+            &[]
+        }
+    }
+
     /// Enables client-side rendering of received `MSG_DELETED` frames.
     ///
     /// Called only on the client-sender reader (a push, where the remote

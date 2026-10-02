@@ -172,6 +172,8 @@ pub mod same_fs;
 /// path TOCTOU naturally (see the SEC-1.l audit).
 #[cfg(unix)]
 pub mod secure_dir;
+/// Batched read-ahead of small sender source files (io_uring on Linux).
+pub mod source_prefetch;
 /// Cross-platform temporary file strategy abstraction.
 pub mod temp_file_strategy;
 /// Core traits for file I/O abstraction.
@@ -640,6 +642,7 @@ pub use policy::{
     choose_basis_read_backend, choose_basis_read_backend_with_threshold,
     mmap_to_sqpoll_threshold_bytes, send_zc_policy_permits,
 };
+pub use source_prefetch::{PREFETCH_MAX_FILE_LEN, PrefetchOpen, PrefetchRequest, prefetch_sources};
 pub use sqpoll_basis::{
     MAX_WIRED_WINDOW_BYTES, MlockError, WiredBasisWindow, mlock_attempts, mlock_downgrades,
 };

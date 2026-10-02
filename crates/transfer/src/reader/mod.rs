@@ -37,4 +37,12 @@ pub(crate) trait BufferedInputHint {
     fn has_buffered_input(&self) -> bool {
         false
     }
+
+    /// The demuxed bytes the next reads will return without touching the
+    /// socket, for a caller that wants to look ahead at requests already
+    /// received. Peeking never consumes them. Empty when nothing is buffered
+    /// or the reader keeps no peekable buffer.
+    fn buffered_input(&self) -> &[u8] {
+        &[]
+    }
 }

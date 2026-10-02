@@ -380,6 +380,13 @@ impl<R: Read> super::BufferedInputHint for ServerReader<R> {
             ServerReaderInner::Plain(_) | ServerReaderInner::Compressed(_) => false,
         }
     }
+
+    fn buffered_input(&self) -> &[u8] {
+        match &self.inner {
+            ServerReaderInner::Multiplex(mux) => mux.buffered_payload(),
+            ServerReaderInner::Plain(_) | ServerReaderInner::Compressed(_) => &[],
+        }
+    }
 }
 
 impl<R: Read> Read for ServerReader<R> {

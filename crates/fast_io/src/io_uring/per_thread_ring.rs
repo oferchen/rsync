@@ -155,6 +155,21 @@ where
     })
 }
 
+/// Drops the calling thread's ring so the next [`with_ring`] builds a fresh one.
+///
+/// For callers that hit an unrecoverable `io_uring_enter(2)` failure with SQEs
+/// still queued: dropping the ring discards those SQEs instead of letting the
+/// next user of this thread's ring submit them on its behalf. The caller must
+/// keep alive (leak) every buffer an in-flight SQE references, because the
+/// kernel tears the ring down asynchronously.
+pub(crate) fn discard_thread_ring() {
+    THREAD_RING.with(|cell| {
+        if let Ok(mut guard) = cell.try_borrow_mut() {
+            guard.take();
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
