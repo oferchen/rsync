@@ -522,13 +522,18 @@ pub(crate) fn windows_readonly_differs(entry_permissions: u32, current_readonly:
 /// Mirrors upstream `generator.c:468 unchanged_attrs()` - a pure in-memory
 /// comparison that avoids the function-call overhead of the full
 /// [`apply_metadata_with_cached_stat`] path. Returns `true` when every
-/// preserved attribute (permissions, ownership, timestamps) matches the
+/// preserved attribute (permissions, ownership, mtime) matches the
 /// cached stat, so the caller can skip the metadata-application chain
 /// entirely on the no-change quick-check path.
 ///
+/// Access time is deliberately not compared: `unchanged_attrs()` never looks
+/// at it, so an atime-only difference keeps a `--link-dest` basis at
+/// match_level 3. The up-to-date apply path pairs this with
+/// [`atime_needs_set`], the atime leg of `set_file_attrs()`.
+///
 /// # Upstream Reference
 ///
-/// - `generator.c:468-509` - `unchanged_attrs()` checks `perms_differ`,
+/// - `generator.c:474-512` - `unchanged_attrs()` checks `perms_differ`,
 ///   `ownership_differs`, `any_time_differs`, `acls_differ`, `xattrs_differ`
 /// - `generator.c:1822-1827` - quick-check match calls `set_file_attrs` only
 ///   when `unchanged_attrs` would fail (implicit - upstream always calls
@@ -599,14 +604,6 @@ pub fn metadata_unchanged(
         {
             return false;
         }
-
-        // upstream: rsync.c unchanged_attrs - atime comparison uses seconds only
-        if options.atimes()
-            && entry.atime() != 0
-            && (cached_meta.atime() != entry.atime() || cached_meta.atime_nsec() != 0)
-        {
-            return false;
-        }
     }
 
     #[cfg(not(unix))]
@@ -634,14 +631,6 @@ pub fn metadata_unchanged(
                 entry.mtime(),
                 entry.mtime_nsec(),
             ) {
-                return false;
-            }
-        }
-
-        if options.atimes() && entry.atime() != 0 {
-            let current_atime = filetime::FileTime::from_last_access_time(cached_meta);
-            let entry_atime = filetime::FileTime::from_unix_time(entry.atime(), 0);
-            if current_atime != entry_atime {
                 return false;
             }
         }
@@ -687,6 +676,43 @@ pub fn metadata_unchanged(
     }
 
     true
+}
+
+/// Returns `true` when `set_file_attrs()` would write the sender's access time
+/// onto an existing destination.
+///
+/// This is the atime leg of upstream `set_file_attrs()`, which
+/// [`metadata_unchanged`] (the `unchanged_attrs()` mirror) deliberately lacks.
+/// The atime is skipped without `--atimes`, for directories, and under
+/// `ATTRS_SKIP_ATIME`. Otherwise `ATTRS_ACCURATE_TIME` forces the stamp - a
+/// `-c` match passes it because the checksum read may have moved the atime
+/// since `cached_meta` was taken - and the plain compare is
+/// `same_time(st_atime, 0, file_atime, 0)`: whole seconds, honouring a
+/// positive `modify_window`.
+///
+/// # Upstream Reference
+///
+/// - `rsync.c:727-732` - `ATTRS_SKIP_ATIME` when `!atimes_ndx || S_ISDIR`
+/// - `rsync.c:738-748` - `flags & ATTRS_ACCURATE_TIME || !same_time(...)`
+/// - `generator.c:1646`, `2246` - a `-c` match passes `ATTRS_ACCURATE_TIME`
+#[inline]
+pub fn atime_needs_set(
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+    cached_meta: &fs::Metadata,
+    modify_window: ModifyWindow,
+    flags: AttrsFlags,
+) -> bool {
+    options.atimes()
+        && !flags.skip_atime()
+        && !entry.is_dir()
+        && (flags.accurate_time()
+            || !modify_window.same_time(
+                filetime::FileTime::from_last_access_time(cached_meta).unix_seconds(),
+                0,
+                entry.atime(),
+                0,
+            ))
 }
 
 /// Applies metadata from `metadata` to the destination symbolic link without
@@ -1025,13 +1051,22 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
     // a read-only target mode from blocking the utimes call that would otherwise
     // follow it.
 
+    // upstream: rsync.c:727-729 - set_file_attrs() itself adds
+    // ATTRS_SKIP_MTIME without --times; the atime leg below still runs.
+    let attrs_flags = if options.times() {
+        attrs_flags
+    } else {
+        attrs_flags | AttrsFlags::SKIP_MTIME
+    };
+
     // upstream: rsync.c:597 - `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
-    if options.times() && !attrs_flags.skip_mtime() {
+    if !attrs_flags.skip_mtime() {
         timestamps::apply_timestamps_from_entry(
             destination,
             entry,
             options,
             cached_meta.as_ref(),
+            attrs_flags.accurate_time(),
             parent_dirfd,
         )?;
     }
@@ -1043,6 +1078,7 @@ pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
             destination,
             entry,
             cached_meta.as_ref(),
+            attrs_flags.accurate_time(),
             options.parent_walk(),
             parent_dirfd,
         )?;
