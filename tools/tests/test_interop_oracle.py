@@ -12,6 +12,7 @@ from hiding behind a stale row.
 from __future__ import annotations
 
 import os
+import socket
 import sys
 import tempfile
 import unittest
@@ -111,6 +112,15 @@ class FreePortTest(unittest.TestCase):
         ports = [oracle.free_port() for _ in range(20)]
         self.assertEqual(len(set(ports)), len(ports))
         self.assertTrue(all(p < 32768 for p in ports), ports)
+    def test_bind_free_port_skips_a_port_taken_since_allocation(self):
+        # The tap binds its own socket in the allocation loop, so a port taken
+        # by another socket is skipped instead of failing the cell.
+        with socket.socket() as squatter, socket.socket() as tap:
+            taken = oracle.free_port()
+            squatter.bind(("127.0.0.1", taken + 1))
+            port = oracle.bind_free_port(tap)
+            self.assertNotEqual(port, taken + 1)
+            self.assertEqual(tap.getsockname()[1], port)
 
 
 class ExpectationTest(unittest.TestCase):
