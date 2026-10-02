@@ -24,7 +24,7 @@ use crate::shared::ChecksumFactory;
 use crate::transfer_state::TransferPipeline;
 
 use super::basis::BasisFileConfig;
-use super::file_list::DirFlist;
+use super::file_list::{DirFlist, FileListWindow};
 use super::{
     DaemonFilterGate, NDX_CONVERT_CALLS, NDX_CONVERT_CMPS, ParallelThresholds,
     compile_daemon_filter_set, compile_daemon_merge_configs, partition_point_depth,
@@ -43,8 +43,9 @@ pub struct ReceiverContext {
     pub(in crate::receiver) protocol: ProtocolVersion,
     /// Server configuration.
     pub(in crate::receiver) config: ServerConfig,
-    /// List of files to receive.
-    pub(in crate::receiver) file_list: Vec<FileEntry>,
+    /// List of files to receive, addressed by absolute flat index. The
+    /// streaming INC_RECURSE receiver releases finished segments from its front.
+    pub(in crate::receiver) file_list: FileListWindow,
     /// Negotiated checksum and compression algorithms from Protocol 30+ capability negotiation.
     /// None for protocols < 30 or when negotiation was skipped.
     pub(in crate::receiver) negotiated_algorithms: Option<NegotiationResult>,
@@ -94,9 +95,17 @@ pub struct ReceiverContext {
     /// (`exchange_phase_done`) emits `ndx_segments.len() - segments_released_mid_walk`
     /// so the total per-segment `NDX_DONE` count on the wire is unchanged; it is
     /// 0 on every non-streaming transfer (the live/batch path), which keeps that
-    /// finalize byte-identical. Only the mid-walk EMISSION moves; the heap
-    /// reclaim stays at finalize until RS-3c.
+    /// finalize byte-identical.
     pub(in crate::receiver) segments_released_mid_walk: usize,
+    /// Directory entries of segments released from `file_list` mid-walk, with
+    /// their flat indices, oldest first.
+    ///
+    /// Upstream keeps every directory in `dir_flist` after the sub-list that
+    /// carried it is freed, because the end-of-walk directory passes still
+    /// need them (`touch_up_dirs()`, generator.c:2565-2611). This is the same
+    /// O(directories) retention for the entries the streaming receiver
+    /// releases; it stays empty on every transfer that releases nothing.
+    pub(in crate::receiver) released_dirs: Vec<(usize, FileEntry)>,
     /// Distinct 4 KiB logical blocks written across every received file,
     /// including the phase-2 redo. A server receiver reports it to the client
     /// in `MSG_BLOCK_STATS` at protocol 33+.
@@ -631,7 +640,7 @@ impl ReceiverContext {
         Self {
             protocol: handshake.protocol,
             config,
-            file_list: Vec::new(),
+            file_list: FileListWindow::default(),
             negotiated_algorithms: handshake.negotiated_algorithms,
             compat_flags: handshake.compat_flags,
             checksum_seed: handshake.checksum_seed,
@@ -640,6 +649,7 @@ impl ReceiverContext {
             first_segment_idx: 0,
             segments_released_mid_walk: 0,
             touched_blocks_4k: 0,
+            released_dirs: Vec::new(),
             dir_flist: DirFlist::default(),
             served_dir_flists: HashSet::new(),
             flist_reader_cache: None,
@@ -802,7 +812,7 @@ impl ReceiverContext {
     /// they can, without widening the field itself.
     #[cfg(test)]
     pub(crate) fn set_file_list_for_test(&mut self, entries: Vec<FileEntry>) {
-        self.file_list = entries;
+        self.file_list = entries.into();
     }
 
     /// Advances the pipeline FSM to `DeltaTransfer` for tests that need to
@@ -1001,10 +1011,14 @@ impl ReceiverContext {
         self.compat_flags
     }
 
-    /// Returns the received file list.
+    /// Returns the resident part of the received file list.
+    ///
+    /// Every entry is resident unless the streaming INC_RECURSE receiver has
+    /// released finished segments, in which case the slice starts at the
+    /// oldest live entry.
     #[must_use]
     pub fn file_list(&self) -> &[FileEntry] {
-        &self.file_list
+        self.file_list.live()
     }
 
     /// Creates a configured `FileListReader` matching the current protocol and flags.
@@ -1338,9 +1352,64 @@ impl ReceiverContext {
             first
         );
 
-        for entry in &mut self.file_list[start..end] {
-            entry.reclaim_heap_data();
+        // A segment the streaming receiver already released holds nothing.
+        let lo = start.max(self.file_list.live_start());
+        if lo < end {
+            for entry in &mut self.file_list[lo..end] {
+                entry.reclaim_heap_data();
+            }
         }
         self.first_segment_idx += 1;
+    }
+
+    /// Whether the streaming receiver may drop a finished segment's entries
+    /// once the sender has been told to free it.
+    ///
+    /// Hard links are the exception: follower resolution and the
+    /// follower-itemize pass still walk earlier entries by index after the
+    /// walk, so under `--hard-links` segments stay resident until finalize.
+    pub(in crate::receiver) const fn releases_segments_locally(&self) -> bool {
+        !self.config.flags.hard_links
+    }
+
+    /// Drops the entries of segment `segment_idx` - the oldest resident one -
+    /// keeping its directories for the end-of-walk directory passes.
+    ///
+    /// Called right after the per-segment `NDX_DONE` that frees the same list
+    /// on the sender, so both sides release in lockstep.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2700-2711` - `check_for_finished_files()` writes
+    ///   `NDX_DONE`, then `flist_free(first_flist)`.
+    pub(in crate::receiver) fn release_segment_locally(&mut self, segment_idx: usize) {
+        if !self.releases_segments_locally() || segment_idx + 1 >= self.ndx_segments.len() {
+            return;
+        }
+        let end = self.ndx_segments[segment_idx + 1].0;
+        let start = self.ndx_segments[segment_idx]
+            .0
+            .max(self.file_list.live_start());
+        if start < end {
+            let dirs = self.file_list[start..end]
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| e.is_dir())
+                .map(|(i, e)| (start + i, e.clone()));
+            self.released_dirs.extend(dirs);
+        }
+        self.file_list.release_before(end);
+        self.first_segment_idx = self.first_segment_idx.max(segment_idx + 1);
+    }
+
+    /// Every directory entry of the list with its flat index, released ones
+    /// included, in flat order.
+    pub(in crate::receiver) fn dir_entries_indexed(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = (usize, &FileEntry)> {
+        self.released_dirs
+            .iter()
+            .map(|(i, e)| (*i, e))
+            .chain(self.file_list.iter_indexed().filter(|(_, e)| e.is_dir()))
     }
 }

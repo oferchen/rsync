@@ -86,7 +86,7 @@ impl DirFlist {
         self.slots.len()
     }
 
-    /// Phase 1 - snapshot the directories of `file_list[from..]` **before** the
+    /// Phase 1 - snapshot the directories of a just-read `segment` **before** the
     /// sort/clean pass, in the sorted order upstream numbers them.
     ///
     /// This must run before the clean: afterwards a tombstoned directory has a
@@ -99,11 +99,8 @@ impl DirFlist {
     /// - `flist.c:3236-3242` - the read-loop append.
     /// - `flist.c:3292` - `fsort(dir_flist->sorted + dstart, ...)` orders just
     ///   the newly appended range.
-    pub(in crate::receiver) fn record_pre_clean(
-        file_list: &[FileEntry],
-        from: usize,
-    ) -> PendingDirs {
-        let mut dirs: Vec<&FileEntry> = file_list[from..].iter().filter(|e| e.is_dir()).collect();
+    pub(in crate::receiver) fn record_pre_clean(segment: &[FileEntry]) -> PendingDirs {
+        let mut dirs: Vec<&FileEntry> = segment.iter().filter(|e| e.is_dir()).collect();
         dirs.sort_by(|a, b| compare_file_entries(a, b));
         PendingDirs {
             names: dirs.into_iter().map(|e| e.path().clone()).collect(),

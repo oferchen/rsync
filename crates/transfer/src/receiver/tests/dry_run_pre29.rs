@@ -63,7 +63,8 @@ fn drive_dry_run(protocol: u8, echo: Vec<u8>) -> std::io::Result<Vec<u8>> {
         FileEntry::new_directory(".".into(), 0o755),
         FileEntry::new_directory("newdir".into(), 0o755),
         FileEntry::new_file("f".into(), 4, 0o644),
-    ];
+    ]
+    .into();
 
     let setup = PipelineSetup {
         dest_dir: dest.path().to_path_buf(),

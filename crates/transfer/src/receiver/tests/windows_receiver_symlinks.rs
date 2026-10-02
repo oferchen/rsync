@@ -86,7 +86,8 @@ fn windows_receiver_symlink_materializes_directory() {
         "link".into(),
         0o777,
         target_dir.clone(),
-    )];
+    )]
+    .into();
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_symlinks(dest, &mut writer)
@@ -128,7 +129,8 @@ fn windows_receiver_symlink_skips_file_on_privilege_refusal() {
         "flink".into(),
         0o777,
         target_file.clone(),
-    )];
+    )]
+    .into();
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_symlinks(dest, &mut writer)

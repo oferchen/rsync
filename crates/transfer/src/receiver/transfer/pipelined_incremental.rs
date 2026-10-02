@@ -148,7 +148,7 @@ impl ReceiverContext {
         // nothing under `skip_dest_writes()` anyway (#6947). `--list-only` does
         // not set `dry_run`, so its walk is untouched.
         let walk_dirs = !self.config.flags.dry_run;
-        for (flist_idx, file_entry) in self.file_list.iter().enumerate() {
+        for (flist_idx, file_entry) in self.file_list.iter_indexed() {
             if walk_dirs && file_entry.is_dir() {
                 let result = self.create_directory_incremental(
                     &setup.dest_dir,
@@ -569,13 +569,13 @@ impl ReceiverContext {
     /// replies, so the sender may stay ahead by its lookahead window without
     /// desyncing this driver.
     ///
-    /// Whole-list post-passes (relative parents, symlinks, specials,
-    /// missing-args, redo, delayed-updates, touch-up) run once at the end over
-    /// the fully materialized list, exactly as the batch driver does. Heap
-    /// reclaim of retired segments is left to `exchange_phase_done` (as today);
-    /// moving it mid-walk - the O(window) RSS win - is RS-3c, because it requires
-    /// making those post-passes per-segment so they no longer read the freed
-    /// entries.
+    /// The per-entry post-passes (relative parents, symlinks, specials,
+    /// missing-args) run per segment, and a segment released on the wire is
+    /// dropped from the local list too (`release_segment_locally`), so resident
+    /// file-list memory is bounded by the sender's lookahead window rather than
+    /// the tree size. The redo pass, delayed updates and directory touch-up run
+    /// once at the end: a redo pins its segment (R17) and the touch-up reads the
+    /// retained directory entries.
     #[allow(clippy::too_many_lines)]
     fn run_pipelined_incremental_streaming<
         R: Read,
@@ -806,6 +806,12 @@ impl ReceiverContext {
                 }
             }
 
+            // The per-entry passes upstream's recv_generator() runs inline
+            // (missing args generator.c:1749-1755, symlinks :1948-2002,
+            // devices and specials :2031-2060), over this segment only so its
+            // entries can be released once the sender frees the list.
+            self.run_segment_post_passes(range.clone(), &setup, writer)?;
+
             // The segment is now fully drained (no in-progress files). Release
             // the OLDEST not-yet-released segment strictly older than the one
             // just finished (upstream frees `first_flist` only while
@@ -836,29 +842,6 @@ impl ReceiverContext {
                 info_log!(Name, 1, "{name}");
             }
         }
-
-        // Whole-list post-passes over the now fully materialized list, in the
-        // same order and form as the batch driver. Safe because RS-3b does not
-        // reclaim segment heap mid-walk (see the method doc); every entry's path
-        // is still resident here.
-        self.ensure_relative_parents(
-            &setup.dest_dir,
-            #[cfg(unix)]
-            setup.sandbox.as_deref(),
-        );
-        #[cfg(unix)]
-        self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
-        #[cfg(not(unix))]
-        self.create_symlinks(&setup.dest_dir, writer)?;
-        #[cfg(unix)]
-        self.create_specials(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
-        #[cfg(not(unix))]
-        self.create_specials(&setup.dest_dir, writer)?;
-        self.process_missing_args_sentinels(
-            &setup.dest_dir,
-            #[cfg(unix)]
-            setup.sandbox.as_deref(),
-        )?;
 
         // Phase 2: redo pass for files that failed checksum verification,
         // deferred until every segment is materialized so a redo index resolves
@@ -1041,7 +1024,43 @@ impl ReceiverContext {
         }
 
         self.segments_released_mid_walk += 1;
+        self.release_segment_locally(rel);
         Ok(())
+    }
+
+    /// Runs the per-entry passes the batch driver runs over the whole list -
+    /// relative parents, symlinks, devices and specials, `--delete-missing-args`
+    /// sentinels - over one segment's flat range. Ranges that tile the list
+    /// produce the same effects as the whole-list calls.
+    fn run_segment_post_passes<W: Write + crate::writer::MsgInfoSender + ?Sized>(
+        &mut self,
+        range: std::ops::Range<usize>,
+        setup: &PipelineSetup,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        self.ensure_relative_parents_in_range(
+            range.clone(),
+            &setup.dest_dir,
+            #[cfg(unix)]
+            setup.sandbox.as_deref(),
+        );
+        #[cfg(unix)]
+        {
+            let sandbox = setup.sandbox.as_deref();
+            self.create_symlinks_in_range(range.clone(), &setup.dest_dir, sandbox, writer)?;
+            self.create_specials_in_range(range.clone(), &setup.dest_dir, sandbox, writer)?;
+        }
+        #[cfg(not(unix))]
+        {
+            self.create_symlinks_in_range(range.clone(), &setup.dest_dir, writer)?;
+            self.create_specials_in_range(range.clone(), &setup.dest_dir, writer)?;
+        }
+        self.process_missing_args_sentinels_in_range(
+            range,
+            &setup.dest_dir,
+            #[cfg(unix)]
+            setup.sandbox.as_deref(),
+        )
     }
 }
 
@@ -1124,7 +1143,8 @@ mod itemize_order_tests {
             FileEntry::new_file("a/f1".into(), 5, 0o644), // idx 1
             FileEntry::new_directory("b".into(), 0o755),  // idx 2
             FileEntry::new_file("b/f2".into(), 5, 0o644), // idx 3
-        ];
+        ]
+        .into();
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -1237,7 +1257,8 @@ mod itemize_order_tests {
         ctx.file_list = vec![
             FileEntry::new_directory("newdir".into(), 0o755),
             FileEntry::new_file("newdir/f1".into(), 5, 0o644),
-        ];
+        ]
+        .into();
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -1422,6 +1443,107 @@ mod itemize_order_tests {
             "single-segment: finalize must emit exactly the segment count of \
              per-segment NDX_DONEs"
         );
+    }
+
+    /// IRP-07: a segment the sender is told to free is dropped from the local
+    /// list too, so resident file-list memory tracks the lookahead window, not
+    /// the tree size - while its directories survive for the end-of-walk
+    /// touch-up (upstream keeps them in `dir_flist`, generator.c:2700-2711).
+    /// Under `--hard-links` nothing is dropped: follower resolution still walks
+    /// earlier entries after the walk. Deleting the local release keeps every
+    /// entry resident and reddens the first arm; releasing under `-H` reddens
+    /// the second.
+    #[test]
+    fn mid_walk_release_drops_finished_segments_locally_but_not_under_hard_links() {
+        use std::io::Cursor;
+
+        use protocol::CompatibilityFlags;
+        use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
+
+        const PROTO: u8 = 32;
+        const PER: usize = 3;
+        const SEGMENTS: usize = 4;
+
+        let run = |hard_links: bool| -> ReceiverContext {
+            let mut hs = handshake();
+            hs.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+            let config = ServerConfig {
+                role: ServerRole::Receiver,
+                protocol: ProtocolVersion::try_from(PROTO).unwrap(),
+                flags: ParsedServerFlags {
+                    recursive: true,
+                    hard_links,
+                    ..ParsedServerFlags::default()
+                },
+                args: vec![OsString::from(".")],
+                ..Default::default()
+            };
+            let mut ctx = ReceiverContext::new_for_test(&hs, config);
+            // Flat index 1 (segment 0) is a directory; the rest are files.
+            ctx.file_list = (0..SEGMENTS * PER)
+                .map(|i| {
+                    if i == 1 {
+                        FileEntry::new_directory("d1".into(), 0o755)
+                    } else {
+                        FileEntry::new_file(format!("f{i}").into(), 1, 0o100644)
+                    }
+                })
+                .collect();
+            ctx.ndx_segments = (0..SEGMENTS)
+                .map(|k| (k * PER, (k * (PER + 1)) as i32 + 1))
+                .collect();
+            ctx.flist_eof = true;
+
+            let mut echo_buf = Vec::new();
+            let mut enc = create_ndx_codec(PROTO);
+            for _ in 0..SEGMENTS + 2 {
+                enc.write_ndx_done(&mut echo_buf).unwrap();
+            }
+            let mut reader = Cursor::new(echo_buf);
+            let mut sink: Vec<u8> = Vec::new();
+            let mut mid_write = MonotonicNdxWriter::new(PROTO);
+            let mut mid_read = create_ndx_codec(PROTO);
+            for cur in 1..SEGMENTS {
+                ctx.release_completed_segment_if_older(
+                    cur,
+                    &[],
+                    &mut reader,
+                    &mut mid_write,
+                    &mut mid_read,
+                    &mut sink,
+                )
+                .expect("mid-walk release");
+            }
+            // The finalize handshake must cope with the released prefix.
+            let mut fin_write = create_ndx_codec(PROTO);
+            let mut fin_read = create_ndx_codec(PROTO);
+            ctx.exchange_phase_done(&mut reader, &mut sink, &mut fin_write, &mut fin_read)
+                .expect("finalize handshake over a released prefix");
+            ctx
+        };
+
+        let released = run(false);
+        assert_eq!(
+            released.file_list.live_start(),
+            (SEGMENTS - 1) * PER,
+            "every segment but the last is dropped locally"
+        );
+        assert!(released.file_list.get(0).is_none());
+        assert_eq!(released.file_list().len(), PER);
+        assert_eq!(
+            released.file_list.len(),
+            SEGMENTS * PER,
+            "indices stay absolute"
+        );
+        let dirs: Vec<(usize, String)> = released
+            .dir_entries_indexed()
+            .map(|(i, e)| (i, e.path().display().to_string()))
+            .collect();
+        assert_eq!(dirs, vec![(1, "d1".to_owned())], "the directory survives");
+
+        let pinned = run(true);
+        assert_eq!(pinned.file_list.live_start(), 0, "-H keeps every entry");
+        assert_eq!(pinned.segments_released_mid_walk, SEGMENTS - 1);
     }
 
     /// RS-3b R17 redo-pin: a segment whose flat range holds a file awaiting the

@@ -326,7 +326,7 @@ fn create_hardlinks_skipped_when_disabled() {
         ..Default::default()
     };
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = entries;
+    ctx.file_list = entries.into();
 
     let mut writer = TestDeletionWriter;
     call_create_hardlinks(&mut ctx, dest, &mut writer);
@@ -363,7 +363,7 @@ fn create_hardlinks_skipped_in_dry_run() {
         ..Default::default()
     };
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = entries;
+    ctx.file_list = entries.into();
 
     let mut writer = TestDeletionWriter;
     call_create_hardlinks(&mut ctx, dest, &mut writer);
@@ -504,7 +504,8 @@ fn create_hardlinks_tracker_preserves_state_across_calls() {
     ctx.file_list = vec![
         make_hlink_leader("leader.txt", 10, 50),
         make_hlink_follower("follower.txt", 10, 50),
-    ];
+    ]
+    .into();
     call_create_hardlinks(&mut ctx, dest, &mut writer);
 
     assert!(dest.join("follower.txt").exists());
@@ -745,7 +746,7 @@ fn pull_receiver_with_hardlinks(entries: Vec<FileEntry>) -> ReceiverContext {
         ..Default::default()
     };
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = entries;
+    ctx.file_list = entries.into();
     ctx
 }
 

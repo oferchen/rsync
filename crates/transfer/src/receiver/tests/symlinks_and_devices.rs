@@ -556,7 +556,8 @@ fn receiver_backs_up_existing_symlink_before_replacing() {
         "mylink".into(),
         0o777,
         "new-target".into(),
-    )];
+    )]
+    .into();
 
     let mut writer = MockMsgInfoWriter::new();
     ctx.create_symlinks(dest, None, &mut writer)
@@ -588,7 +589,7 @@ fn repointed_symlink_ctx(file_list: Vec<FileEntry>) -> ReceiverContext {
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
     ctx.defer_itemize = true;
-    ctx.file_list = file_list;
+    ctx.file_list = file_list.into();
     ctx
 }
 
@@ -775,7 +776,7 @@ fn symlink_mode_follows_the_perms_flag_not_the_options_default() {
         let mut ctx = ReceiverContext::new_for_test(&handshake, config);
         // The sender's real lstat bits are what upstream puts on the wire.
         let entry = FileEntry::new_symlink("mylink".into(), src_mode, "new-target".into());
-        ctx.file_list = vec![entry];
+        ctx.file_list = vec![entry].into();
 
         let mut writer = MockMsgInfoWriter::new();
         ctx.create_symlinks(dest, None, &mut writer)

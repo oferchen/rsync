@@ -128,7 +128,8 @@ fn create_one_symlink_at(
         entry_path.into(),
         0o777,
         target.into(),
-    )];
+    )]
+    .into();
 
     let mut writer = NullMsgInfoWriter;
     ctx.create_symlinks(&dest, None, &mut writer)
@@ -256,7 +257,7 @@ fn a_non_utf8_target_is_sanitized_byte_exactly() {
 
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, daemon_receiver_without_munging());
-    ctx.file_list = vec![FileEntry::new_symlink("escape".into(), 0o777, target)];
+    ctx.file_list = vec![FileEntry::new_symlink("escape".into(), 0o777, target)].into();
 
     let mut writer = NullMsgInfoWriter;
     ctx.create_symlinks(&dest, None, &mut writer)

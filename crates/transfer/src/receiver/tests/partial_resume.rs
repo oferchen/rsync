@@ -193,7 +193,7 @@ mod relative_parents {
             ..Default::default()
         };
         let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-        ctx.file_list = entries;
+        ctx.file_list = entries.into();
         ctx
     }
 
@@ -207,7 +207,7 @@ mod relative_parents {
             ..Default::default()
         };
         let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-        ctx.file_list = entries;
+        ctx.file_list = entries.into();
         ctx
     }
 
@@ -356,7 +356,8 @@ mod relative_parents {
             "deep/nested/file.txt".into(),
             100,
             0o644,
-        )];
+        )]
+        .into();
 
         ctx.ensure_relative_parents(
             dest,

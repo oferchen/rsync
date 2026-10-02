@@ -1618,7 +1618,7 @@ mod itemize_order_tests {
             config.flags.times = true;
             config.flags.perms = true;
             let mut ctx = ReceiverContext::new_for_test(&hs, config);
-            ctx.file_list = vec![entry.clone()];
+            ctx.file_list = vec![entry.clone()].into();
             let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
             let mut metadata_errors = Vec::new();
             let mut stats = TransferStats::default();
@@ -1690,7 +1690,7 @@ mod itemize_order_tests {
             config.file_selection.size_only = false;
             mutate(&path, &mut config);
             let mut ctx = ReceiverContext::new_for_test(&hs, config);
-            ctx.file_list = vec![entry.clone()];
+            ctx.file_list = vec![entry.clone()].into();
             let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
             let mut metadata_errors = Vec::new();
             let mut stats = TransferStats::default();
@@ -2428,7 +2428,8 @@ mod itemize_order_tests {
             FileEntry::new_file("a/f1".into(), 5, 0o644), // idx 1
             FileEntry::new_directory("b".into(), 0o755),  // idx 2
             FileEntry::new_file("b/f2".into(), 5, 0o644), // idx 3
-        ];
+        ]
+        .into();
 
         let opts = metadata::MetadataOptions::default();
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
@@ -2564,7 +2565,8 @@ mod itemize_order_tests {
             FileEntry::new_directory("d".into(), 0o755),  // idx 0
             FileEntry::new_file("d/f1".into(), 5, 0o644), // idx 1
             FileEntry::new_symlink("d/lnk".into(), 0o777, "target".into()), // idx 2
-        ];
+        ]
+        .into();
 
         // Read-only pass against an empty destination: every entry is new.
         let (plan, rows) = dry_run_pass(&ctx, dest);
@@ -2649,7 +2651,7 @@ mod itemize_order_tests {
         config.flags.dry_run = true;
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
         ctx.defer_itemize = true;
-        ctx.file_list = vec![FileEntry::new_file("f".into(), 1, 0o644)];
+        ctx.file_list = vec![FileEntry::new_file("f".into(), 1, 0o644)].into();
 
         let (plan, rows) = dry_run_pass(&ctx, dest);
 
@@ -2683,7 +2685,8 @@ mod itemize_order_tests {
         ctx.file_list = vec![
             FileEntry::new_directory("d".into(), 0o755),
             FileEntry::new_file("d/f1".into(), 5, 0o644),
-        ];
+        ]
+        .into();
 
         let (plan, rows) = dry_run_pass(&ctx, dest);
 
@@ -2727,7 +2730,7 @@ mod itemize_order_tests {
             let old_meta = std::fs::symlink_metadata(dest.join("lnk")).expect("lstat");
             entry.set_mtime(old_meta.mtime(), 0);
         }
-        ctx.file_list = vec![entry];
+        ctx.file_list = vec![entry].into();
 
         let (plan, rows) = dry_run_pass(&ctx, dest);
 
@@ -2844,7 +2847,7 @@ mod skip_notice_tests {
 
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = files;
+        ctx.file_list = files.into();
 
         let mut writer = CaptureWriter::default();
         let opts = MetadataOptions::default();
@@ -3164,7 +3167,7 @@ mod uptodate_notice_tests {
 
         let hs = handshake();
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = files;
+        ctx.file_list = files.into();
 
         let mut writer = CaptureWriter::default();
         let opts = MetadataOptions::default();
@@ -3405,7 +3408,7 @@ mod hlink_wire_flag_tests {
             ..Default::default()
         };
         let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-        ctx.file_list = vec![hostile];
+        ctx.file_list = vec![hostile].into();
 
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
         let mut metadata_errors = Vec::new();

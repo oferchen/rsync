@@ -57,7 +57,7 @@ impl ReceiverContext {
     ///
     /// - `flist.c:1274-1277` `recv_file_entry()`
     pub(in crate::receiver) fn recheck_received_filter(&self) -> io::Result<()> {
-        self.recheck_received_filter_entries(&self.file_list)
+        self.recheck_received_filter_entries(self.file_list.live())
     }
 
     /// Range-scoped variant of
@@ -176,7 +176,7 @@ impl ReceiverContext {
     /// - `exclude.c:379` `add_implied_include()` - rule construction.
     /// - `options.c:2519-2522` - `trust_sender_args` disables the mechanism.
     pub(in crate::receiver) fn recheck_received_implied_includes(&self) -> io::Result<()> {
-        self.recheck_received_implied_includes_entries(&self.file_list)
+        self.recheck_received_implied_includes_entries(self.file_list.live())
     }
 
     /// Range-scoped variant of

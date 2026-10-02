@@ -156,7 +156,8 @@ fn touch_up_dirs_keepalive_gated_on_timeout() {
     ctx.file_list = vec![
         FileEntry::new_directory("a".into(), 0o755),
         FileEntry::new_directory("b".into(), 0o755),
-    ];
+    ]
+    .into();
 
     let (mut writer, sink) = mux_writer(Some(Duration::ZERO));
     ctx.touch_up_dirs(dir.path(), &mut writer);
@@ -184,7 +185,8 @@ fn build_files_to_transfer_keepalive_gated_on_timeout() {
     ctx.file_list = vec![
         FileEntry::new_file("f1".into(), 4, 0o644),
         FileEntry::new_file("f2".into(), 4, 0o644),
-    ];
+    ]
+    .into();
 
     let (mut writer, sink) = mux_writer(Some(Duration::ZERO));
     let mut errors = Vec::new();

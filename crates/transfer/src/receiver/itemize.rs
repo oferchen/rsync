@@ -710,10 +710,7 @@ impl ReceiverContext {
                 },
             )
             .collect();
-        self.file_list
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| entry.is_dir())
+        self.dir_entries_indexed()
             .filter_map(|(idx, entry)| {
                 starts
                     .get(entry.path().as_path())
@@ -896,7 +893,7 @@ impl ReceiverContext {
         }
 
         let mut emitted = 0usize;
-        for (flat_idx, entry) in self.file_list.iter().enumerate() {
+        for (flat_idx, entry) in self.file_list.iter_indexed() {
             if !entry.hlinked() || entry.hlink_first() {
                 continue;
             }

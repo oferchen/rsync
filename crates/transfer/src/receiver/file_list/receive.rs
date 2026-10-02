@@ -91,7 +91,7 @@ impl ReceiverContext {
         // so a snapshot taken afterwards could not tell it from a tombstoned
         // regular file - see `DirFlist`.
         let pending_dirs =
-            inc_recurse.then(|| DirFlist::record_pre_clean(&self.file_list, seg_start));
+            inc_recurse.then(|| DirFlist::record_pre_clean(&self.file_list[seg_start..]));
 
         // Without INC_RECURSE the whole list arrives in this single call, so the
         // file list is complete. With INC_RECURSE the sender streams per-directory
@@ -132,7 +132,7 @@ impl ReceiverContext {
         if self.config.flags.hard_links {
             let &(_flat_start, ndx_start) =
                 self.ndx_segments.last().expect("initial segment exists");
-            for (i, entry) in self.file_list.iter_mut().enumerate() {
+            for (i, entry) in self.file_list.whole_mut().iter_mut().enumerate() {
                 if entry.hlink_first() {
                     entry.set_hardlink_idx((ndx_start + i as i32) as u32);
                 }
@@ -175,13 +175,13 @@ impl ReceiverContext {
         // sides".
         let pre29 = self.protocol.as_u8() < 29;
         if !self.iconv_reorder_suppressed() {
-            let list = std::mem::take(&mut self.file_list);
+            let list = std::mem::take(self.file_list.whole_mut());
             // am_sender=false: the receiver always runs the duplicate-clean,
             // tombstoning dropped duplicates in place so NDX stays aligned with
             // the sender's full un-deduped array (flist.c:3274,3332).
             let (cleaned, _clean) =
                 sort_and_clean_file_list(list, self.config.qsort, pre29, false, inc_recurse);
-            self.file_list = cleaned;
+            *self.file_list.whole_mut() = cleaned;
         }
 
         // upstream: flist.c:3292 orders the appended dir_flist range, and the
@@ -197,7 +197,7 @@ impl ReceiverContext {
         // match_hard_links() in recv_file_list(). Only the receiver runs this
         // pass (am_sender is false); the sender ships every directory.
         if self.config.flags.prune_empty_dirs {
-            prune_empty_dirs_pass(&mut self.file_list, &self.filter_chain);
+            prune_empty_dirs_pass(self.file_list.whole_mut(), &self.filter_chain);
         }
 
         if inc_recurse {
@@ -217,7 +217,7 @@ impl ReceiverContext {
         );
 
         match_hard_links(
-            &mut self.file_list,
+            self.file_list.whole_mut(),
             &mut self.prior_hlinks,
             inc_recurse.then_some(initial_ndx_start),
         )?;
@@ -228,7 +228,7 @@ impl ReceiverContext {
         // no-op for pre-30 entries that lack hardlink_idx).
         // upstream: hlink.c:init_hard_links() builds the idev table from dev/ino
         if self.protocol.as_u8() < 30 && self.config.flags.hard_links {
-            normalize_pre30_hardlinks(&mut self.file_list);
+            normalize_pre30_hardlinks(self.file_list.whole_mut());
         }
 
         // upstream: flist.c:recv_file_entry() uses static variables that persist
@@ -377,7 +377,7 @@ impl ReceiverContext {
         // upstream: flist.c:3236-3242 - snapshot this sub-list's directories at
         // the read loop, before the per-segment sort/clean below tombstones any
         // duplicate. See `DirFlist` for why the snapshot cannot wait.
-        let pending_dirs = DirFlist::record_pre_clean(&self.file_list, flat_start);
+        let pending_dirs = DirFlist::record_pre_clean(&self.file_list[flat_start..]);
 
         // upstream: flist.c:2924-2935 - every entry in a sub-list must live under
         // the directory named by its header `dir_ndx`; a mismatch is an attempt
