@@ -126,6 +126,8 @@ pub mod shared_ring;
 mod socket_factory;
 mod socket_reader;
 mod socket_writer;
+/// Batched open + statx + read of small sender sources (`crate::source_prefetch`).
+pub(crate) mod source_prefetch;
 /// io_uring `IORING_OP_STATX` opcode wrapper and batch submission.
 pub mod statx;
 

@@ -22,6 +22,7 @@ use super::super::delta::{
 use super::super::item_flags::ItemFlags;
 use super::super::protocol_io::NdxAttrs;
 use super::super::segments::{MAX_FILECNT_LOOKAHEAD, MIN_FILECNT_LOOKAHEAD};
+use super::super::source_prefetch::{RequestShape, SourcePrefetcher, prefetched_reader};
 use super::super::{
     GeneratorContext, SegmentScheduler, SenderFstatError, TransferLoopResult, flush_with_count,
     is_early_close_error,
@@ -602,6 +603,24 @@ impl GeneratorContext {
         // upstream: sender.c - dry-run skips data transfer; daemon may close early
         let tolerant = self.config.flags.dry_run;
 
+        // Read-ahead of whole-file requests already buffered on the wire: their
+        // sources are opened and read in io_uring batches (see
+        // `source_prefetch`). Off wherever this loop would not read a whole
+        // source per request (dry run, append) and below protocol 30, whose
+        // keep-alive frame the look-ahead does not decode.
+        let mut prefetcher = SourcePrefetcher::new(
+            self.protocol.as_u8() >= 30
+                && !self.config.flags.dry_run
+                && !self.config.flags.append
+                && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
+                && fast_io::is_io_uring_available(),
+        );
+        let request_shape = RequestShape {
+            protocol: self.protocol.as_u8(),
+            xfer_sum_len: self.get_checksum_algorithm().digest_len() as u32,
+            xattrs: self.config.flags.xattrs,
+        };
+
         loop {
             // upstream: io.c:768 - the sender's I/O loop acts on
             // got_kill_signal only at a frame boundary. Checking before the
@@ -736,6 +755,7 @@ impl GeneratorContext {
                         // upstream: sender.c:259-264 - phase transition.
                         // Increment phase first, break without echo if past max_phase.
                         phase += 1;
+                        prefetcher.clear();
                         if phase > max_phase {
                             break;
                         }
@@ -1324,9 +1344,26 @@ impl GeneratorContext {
                 // Use unbuffered reader: stream_whole_file_transfer manages its
                 // own 256 KB staging buffer with read_exact, so a BufReader would
                 // only add an extra memcpy per byte through its internal buffer.
-                let (source, src_fd, file_size): (Box<dyn Read>, Option<_>, u64) = match self
-                    .open_source_unbuffered(&source_path, file_size)
-                {
+                let prefetched = if phase == 0 {
+                    prefetcher.take_or_batch(
+                        self,
+                        ndx,
+                        file_size,
+                        reader.buffered_input(),
+                        &ndx_read_codec,
+                        request_shape,
+                        if inc_recurse { flist_done_remaining } else { 0 },
+                    )
+                } else {
+                    None
+                };
+                let opened = match prefetched {
+                    // Read ahead as a regular file of exactly the flist length,
+                    // which is what the fstat below would have reported.
+                    Some(data) => Ok((prefetched_reader(data), None, file_size)),
+                    None => self.open_source_unbuffered(&source_path, file_size),
+                };
+                let (source, src_fd, file_size): (Box<dyn Read>, Option<_>, u64) = match opened {
                     Ok(triple) => triple,
                     // upstream: sender.c:408-410 - a device source without
                     // --copy-devices aborts with exit_cleanup(RERR_PROTOCOL).
@@ -1564,7 +1601,16 @@ impl GeneratorContext {
             return Err(e);
         }
 
+        debug_log!(
+            Io,
+            1,
+            "io_uring read-ahead served {} whole-file sources from {} batches",
+            prefetcher.served(),
+            prefetcher.batches()
+        );
         Ok(TransferLoopResult {
+            #[cfg(test)]
+            prefetched_files: prefetcher.served(),
             files_transferred,
             transferred_file_size,
             bytes_sent,
@@ -3566,5 +3612,197 @@ mod sum_head_block_length_tests {
         let (_dir, mut ctx) = generator_at(29);
         drive_multiplexed(&mut ctx, request_with_blength(29, MAX_BLOCK_SIZE + 1))
             .expect("protocol 29 allows blocks up to OLD_MAX_BLOCK_SIZE");
+    }
+}
+
+#[cfg(test)]
+mod io_uring_read_ahead_tests {
+    //! The sender's whole-file read path must route through the io_uring
+    //! read-ahead whenever io_uring is available and several requests are
+    //! already buffered - that batching is the only way the network sender
+    //! cuts its per-file open/fstat/read/close syscalls. When io_uring is
+    //! unavailable or disabled, the same requests must produce the identical
+    //! wire stream through the ordinary per-file open.
+
+    use std::cell::RefCell;
+    use std::ffi::OsString;
+    use std::io::{self, Cursor, Read, Write};
+    use std::path::{Path, PathBuf};
+    use std::rc::Rc;
+
+    use protocol::ProtocolVersion;
+    use protocol::codec::{MonotonicNdxWriter, NdxCodec};
+
+    use crate::config::ServerConfig;
+    use crate::generator::GeneratorContext;
+    use crate::handshake::HandshakeResult;
+    use crate::reader::BufferedInputHint;
+    use crate::receiver::SumHead;
+    use crate::role::ServerRole;
+    use crate::writer::ServerWriter;
+
+    const ITEM_TRANSFER_LE: [u8; 2] = [0x00, 0x80];
+
+    /// A peer whose whole request stream already sits in one demuxed frame.
+    struct BufferedFrame {
+        cur: Cursor<Vec<u8>>,
+    }
+
+    impl Read for BufferedFrame {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.cur.read(buf)
+        }
+    }
+
+    impl BufferedInputHint for BufferedFrame {
+        fn has_buffered_input(&self) -> bool {
+            !self.buffered_input().is_empty()
+        }
+
+        fn buffered_input(&self) -> &[u8] {
+            &self.cur.get_ref()[self.cur.position() as usize..]
+        }
+    }
+
+    struct SharedSink(Rc<RefCell<Vec<u8>>>);
+
+    impl Write for SharedSink {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.borrow_mut().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn generator(paths: &[PathBuf], policy: fast_io::IoUringPolicy) -> GeneratorContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: paths.iter().map(OsString::from).collect(),
+            ..Default::default()
+        };
+        config.write.io_uring_policy = policy;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        ctx.build_file_list(paths).expect("build file list");
+        ctx
+    }
+
+    fn whole_file_requests(files: usize) -> Vec<u8> {
+        let mut ndx = MonotonicNdxWriter::new(32);
+        let mut wire = Vec::new();
+        for i in 0..files {
+            ndx.write_ndx(&mut wire, i as i32).unwrap();
+            wire.extend_from_slice(&ITEM_TRANSFER_LE);
+            SumHead::empty().write(&mut wire).unwrap();
+        }
+        for _ in 0..3 {
+            ndx.write_ndx_done(&mut wire).unwrap();
+        }
+        wire
+    }
+
+    /// Runs `ctx` over one buffered whole-file request per listed file and
+    /// returns (wire output, files served from read-ahead).
+    fn send(mut ctx: GeneratorContext, files: usize) -> (Vec<u8>, usize) {
+        let out = Rc::new(RefCell::new(Vec::new()));
+        let mut reader = BufferedFrame {
+            cur: Cursor::new(whole_file_requests(files)),
+        };
+        let mut writer = ServerWriter::new_plain(SharedSink(Rc::clone(&out)));
+        let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
+        let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
+        let result = ctx
+            .run_transfer_loop(&mut reader, &mut writer, &mut progress, &mut itemize)
+            .expect("sender loop completes");
+        assert_eq!(result.files_transferred, files);
+        drop(writer);
+        let bytes = out.borrow().clone();
+        (bytes, result.prefetched_files)
+    }
+
+    fn sources(dir: &Path, count: usize) -> Vec<PathBuf> {
+        (0..count)
+            .map(|i| {
+                let path = dir.join(format!("f{i:03}.dat"));
+                std::fs::write(&path, format!("payload-{i}-").repeat(i + 1)).expect("write");
+                path
+            })
+            .collect()
+    }
+
+    #[test]
+    fn buffered_whole_file_requests_are_read_through_io_uring() {
+        const FILES: usize = 40;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = sources(dir.path(), FILES);
+
+        let (batched, served) = send(generator(&paths, fast_io::IoUringPolicy::Auto), FILES);
+        let (plain, plain_served) =
+            send(generator(&paths, fast_io::IoUringPolicy::Disabled), FILES);
+
+        assert_eq!(batched, plain, "read-ahead must not change a wire byte");
+        assert_eq!(plain_served, 0, "--no-io-uring keeps the per-file open");
+        if fast_io::is_io_uring_available() {
+            assert_eq!(
+                served, FILES,
+                "every buffered whole-file source must come from an io_uring batch"
+            );
+        } else {
+            assert_eq!(
+                served, 0,
+                "without io_uring every source is opened per file"
+            );
+        }
+    }
+
+    /// A source whose size changed after the file list was built is declined
+    /// by the batch and re-read through the ordinary open, which sends the
+    /// fstat'd length exactly as upstream does.
+    #[test]
+    fn a_resized_source_falls_back_to_the_ordinary_open() {
+        const FILES: usize = 8;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = sources(dir.path(), FILES);
+        // Both lists are scanned before the rewrite, so they record the same
+        // stale length for file 3 and only the open path differs.
+        let batched_ctx = generator(&paths, fast_io::IoUringPolicy::Auto);
+        let plain_ctx = generator(&paths, fast_io::IoUringPolicy::Disabled);
+        std::fs::write(
+            &paths[3],
+            b"grown after the scan: now much longer than the recorded flist length",
+        )
+        .expect("rewrite");
+
+        let (batched, served) = send(batched_ctx, FILES);
+        let (plain, _) = send(plain_ctx, FILES);
+
+        assert_eq!(batched, plain);
+        if fast_io::is_io_uring_available() {
+            assert_eq!(served, FILES - 1, "only the resized file misses the batch");
+        }
+    }
+
+    /// One buffered request is sent through the ordinary open: a batch of one
+    /// swaps each syscall for a ring round trip and saves nothing.
+    #[test]
+    fn a_lone_request_is_not_batched() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = sources(dir.path(), 1);
+        let (_, served) = send(generator(&paths, fast_io::IoUringPolicy::Auto), 1);
+        assert_eq!(served, 0);
     }
 }

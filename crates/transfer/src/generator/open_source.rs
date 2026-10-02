@@ -70,6 +70,29 @@ impl SourceOpen {
         }
     }
 
+    /// This policy as a batched-open description plus the `O_NOATIME` flag, so
+    /// a read-ahead batch resolves exactly the file [`Self::open`] would.
+    ///
+    /// The confined arm maps to the `openat2` resolution
+    /// `fast_io::open_source_confined` tries first; its portable-walk fallback
+    /// stays with [`Self::open`], which a read-ahead miss always reaches.
+    pub(crate) fn prefetch_open(&self) -> (fast_io::PrefetchOpen<'_>, bool) {
+        let open = match self.confine_root.as_deref() {
+            Some(root) => fast_io::PrefetchOpen::Confined {
+                root: root.root(),
+                leaf: if self.follow_symlinks {
+                    fast_io::confined_open::LeafPolicy::FollowConfined
+                } else {
+                    fast_io::confined_open::LeafPolicy::Nofollow
+                },
+            },
+            None => fast_io::PrefetchOpen::Path {
+                nofollow: !self.follow_symlinks,
+            },
+        };
+        (open, self.noatime)
+    }
+
     /// Opens `path` under this policy.
     ///
     /// upstream: `rsync-3.5.1/sender.c:679-683` - the confined pair
