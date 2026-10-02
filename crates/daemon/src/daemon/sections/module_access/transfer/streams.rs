@@ -363,9 +363,8 @@ fn run_daemon_transfer(
 /// This is the daemon's own `log_item(FLOG)` write (upstream `log.c:866-874`),
 /// invoked once per processed entry by the transfer engine after the transfer,
 /// in flist-index order. The `%i` string is pre-rendered with the correct
-/// direction glyph by the sending/receiving context; here it only fills the
-/// per-file `%f`/`%l`/`%i` fields of the module format alongside the constant
-/// connection fields.
+/// direction glyph by the sending/receiving context; here the row's per-file
+/// fields fill the module format alongside the constant connection fields.
 struct DaemonFileLogWriter<'a> {
     log: &'a SharedLogSink,
     fmt: String,
@@ -379,11 +378,33 @@ struct DaemonFileLogWriter<'a> {
 }
 
 impl DaemonFileLog for DaemonFileLogWriter<'_> {
-    fn on_entry(&mut self, name: &std::path::Path, size: u64, itemize: &str) {
+    fn on_entry(&mut self, row: &DaemonLogRow) {
         // upstream: log.c:664 `%t` renders timestring(time(NULL)) at the moment
         // the line is written; per-file lines flush right after the transfer.
         let timestamp = logging_sink::logfile::format_log_timestamp(SystemTime::now());
-        let filename = name.to_string_lossy();
+        let filename = row.name.to_string_lossy();
+        let file_type = row.mode & 0o170_000;
+        // upstream: log.c `case 'n'` appends `/` to a directory's name.
+        let name = if file_type == 0o040_000 {
+            format!("{filename}/")
+        } else {
+            filename.to_string()
+        };
+        // upstream: log.c `case 'L'` - the `hlink` argument wins; otherwise a
+        // symlink shows its stored target.
+        let hardlink = row.hardlink_target.as_deref().map(String::from_utf8_lossy);
+        let symlink = row
+            .symlink_target
+            .as_deref()
+            .filter(|_| file_type == 0o120_000)
+            .map(std::path::Path::to_string_lossy);
+        let link = match (&hardlink, &symlink) {
+            (Some(target), _) => Some((" => ", target.as_ref())),
+            (None, Some(target)) => Some((" -> ", target.as_ref())),
+            (None, None) => None,
+        };
+        let mtime = format_log_mtime(row.mtime);
+        let permissions = permission_bits(row.mode);
         let log_ctx = LogFormatContext {
             operation: self.operation,
             hostname: &self.hostname,
@@ -391,16 +412,22 @@ impl DaemonFileLog for DaemonFileLogWriter<'_> {
             module_name: &self.module_name,
             username: &self.username,
             filename: &filename,
-            file_length: size,
+            file_length: row.size,
             pid: self.pid,
             module_path: &self.module_path,
             timestamp: &timestamp,
             // upstream renders %b/%c from per-file byte counters; oc's per-entry
-            // FLOG row carries name/length/%i only, so byte-count escapes render
-            // as 0 for now. The default and %i-bearing formats do not use them.
+            // FLOG row does not carry them yet, so byte-count escapes render
+            // as 0. The default and %i-bearing formats do not use them.
             bytes_transferred: 0,
             bytes_checksumed: 0,
-            itemize_string: itemize,
+            itemize_string: &row.itemize,
+            name: &name,
+            link,
+            uid: row.uid,
+            gid: row.gid,
+            mtime: &mtime,
+            permissions: &permissions,
         };
         log_transfer(&self.fmt, &log_ctx, self.log);
     }

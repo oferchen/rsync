@@ -107,6 +107,57 @@ impl ReceiverContext {
         )
     }
 
+    /// The entry's symlink target as upstream stores it in the file list.
+    ///
+    /// Decode-time target transforms, which every consumer (the --safe-links
+    /// evaluation, the quick-check comparison, the create syscall and the
+    /// daemon transfer log's `%L`) reads because upstream rewrites the target
+    /// while decoding the file list and everything downstream reads the
+    /// stored `F_SYMLINK(file)`:
+    ///
+    /// - upstream: flist.c:1295,1521-1524 - a receiver running with
+    ///   `munge_symlinks` (a daemon module with `munge symlinks = yes`, or
+    ///   --munge-links) prepends `/rsyncd-munged/` (rsync.h:36) so the on-disk
+    ///   link cannot resolve outside the module root when followed.
+    /// - upstream: flist.c:1553 - `if (sanitize_paths && !munge_symlinks &&
+    ///   *bp) sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`.
+    ///   `sanitize_paths` is live only in the daemon server process
+    ///   (clientserver.c:1067-1068; a non-chroot module records its full path
+    ///   length as `module_dirlen`), never in the client end of a daemon
+    ///   connection, so the client of a pull stores the wire target verbatim.
+    ///   Measured against rsync 3.5.0: a pull client keeps
+    ///   `abs_link -> /etc/hostname` byte-for-byte.
+    #[cfg(unix)]
+    pub(in crate::receiver) fn stored_symlink_target<'e>(
+        &self,
+        entry: &'e protocol::flist::FileEntry,
+    ) -> Option<std::borrow::Cow<'e, Path>> {
+        let wire_target = entry.link_target()?;
+        Some(if self.config.munge_symlinks {
+            std::borrow::Cow::Owned(apply_symlink_munge_prefix(wire_target))
+        } else if self.config.connection.is_daemon_connection
+            && !self.config.connection.client_mode
+            && !wire_target.as_os_str().is_empty()
+        {
+            std::borrow::Cow::Owned(sanitize_received_symlink_target(wire_target, entry.path()))
+        } else {
+            std::borrow::Cow::Borrowed(wire_target.as_path())
+        })
+    }
+
+    /// The entry's symlink target as stored in the file list. The munge and
+    /// sanitize transforms are byte-level unix rewrites, so other platforms
+    /// store the wire target verbatim.
+    #[cfg(not(unix))]
+    pub(in crate::receiver) fn stored_symlink_target<'e>(
+        &self,
+        entry: &'e protocol::flist::FileEntry,
+    ) -> Option<std::borrow::Cow<'e, Path>> {
+        entry
+            .link_target()
+            .map(|target| std::borrow::Cow::Borrowed(target.as_path()))
+    }
+
     /// [`create_symlinks`](Self::create_symlinks) restricted to the flat-index
     /// range `[range.start, range.end)`. Upstream creates each symlink inline
     /// as `recv_generator()` reaches it (generator.c:1948-2002), so a
@@ -132,45 +183,11 @@ impl ReceiverContext {
                 continue;
             }
 
-            let wire_target = match entry.link_target() {
-                Some(t) => t,
-                None => continue,
-            };
-
             let relative_path = entry.path();
-
-            // Decode-time target transforms, applied before every consumer
-            // below (the --safe-links evaluation, the quick-check comparison,
-            // and the create syscall) because upstream rewrites the target
-            // while decoding the file list and everything downstream reads the
-            // stored `F_SYMLINK(file)`:
-            //
-            // - upstream: flist.c:1295,1521-1524 - a receiver running with
-            //   `munge_symlinks` (a daemon module with `munge symlinks = yes`,
-            //   or --munge-links) prepends `/rsyncd-munged/` (rsync.h:36) so
-            //   the on-disk link cannot resolve outside the module root when
-            //   followed.
-            // - upstream: flist.c:1553 - `if (sanitize_paths && !munge_symlinks
-            //   && *bp) sanitize_path(bp, bp, "", lastdir_depth, SP_DEFAULT)`.
-            //   `sanitize_paths` is live only in the daemon server process
-            //   (clientserver.c:1067-1068; a non-chroot module records its full
-            //   path length as `module_dirlen`), never in the client end of a
-            //   daemon connection, so the client of a pull stores the wire
-            //   target verbatim. Measured against rsync 3.5.0: a pull client
-            //   keeps `abs_link -> /etc/hostname` byte-for-byte.
-            let transformed: PathBuf;
-            let target: &Path = if self.config.munge_symlinks {
-                transformed = apply_symlink_munge_prefix(wire_target);
-                &transformed
-            } else if self.config.connection.is_daemon_connection
-                && !self.config.connection.client_mode
-                && !wire_target.as_os_str().is_empty()
-            {
-                transformed = sanitize_received_symlink_target(wire_target, relative_path);
-                &transformed
-            } else {
-                wire_target
+            let Some(target) = self.stored_symlink_target(entry) else {
+                continue;
             };
+            let target: &Path = &target;
 
             // upstream: generator.c:1951 - `if (safe_symlinks && unsafe_symlink(sl, fname))`
             // skips unsafe symlinks when --safe-links is set. The check stays
