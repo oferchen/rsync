@@ -77,7 +77,15 @@ fn emit_delete_notification<W: crate::writer::MsgInfoSender + ?Sized>(
         } else {
             format!("*deleting   {}\n", rel.display())
         };
-        let _ = writer.send_msg_info(line.as_bytes());
+        // upstream: log.c:rwrite() - only a server frames FCLIENT text as
+        // MSG_INFO; a client receiver (pull) writes it to its own stdout. Its
+        // writer leads to the remote sender, which never reads MSG_INFO.
+        if server_mode {
+            let _ = writer.send_msg_info(line.as_bytes());
+        } else {
+            use std::io::Write as _;
+            let _ = std::io::stdout().write_all(line.as_bytes());
+        }
     } else if is_dir {
         info_log!(Del, 1, "deleting {}/", rel.display());
     } else {
@@ -1966,9 +1974,10 @@ mod emit_notification_tests {
         let _ = drain_events();
 
         let mut w = RecordingWriter::default();
-        // Client receiver, itemize active: file has no slash, dir has one.
-        emit_delete_notification(&mut w, Path::new("stale.txt"), false, false, 32, true);
-        emit_delete_notification(&mut w, Path::new("stale_dir"), true, false, 32, true);
+        // A pre-29 server frames the row as MSG_INFO, so the writer observes
+        // it: file has no slash, dir has one.
+        emit_delete_notification(&mut w, Path::new("stale.txt"), false, true, 28, true);
+        emit_delete_notification(&mut w, Path::new("stale_dir"), true, true, 28, true);
 
         assert_eq!(
             w.info,
@@ -1995,10 +2004,10 @@ mod emit_notification_tests {
         let _ = drain_events();
 
         let mut w = RecordingWriter::default();
-        // Client receiver, itemize active, at -v (Del level 1): the plain line
+        // Pre-29 server, itemize active, at -v (Del level 1): the plain line
         // would fire if not suppressed by the itemize branch.
-        emit_delete_notification(&mut w, Path::new("stale.txt"), false, false, 32, true);
-        emit_delete_notification(&mut w, Path::new("stale_dir"), true, false, 32, true);
+        emit_delete_notification(&mut w, Path::new("stale.txt"), false, true, 28, true);
+        emit_delete_notification(&mut w, Path::new("stale_dir"), true, true, 28, true);
 
         assert_eq!(
             w.info,
