@@ -42,6 +42,26 @@
 set -uo pipefail
 
 readonly IGNORED_SUMMARY='Some index files failed to download. They have been ignored, or old ones used instead.'
+readonly GLOBAL_ARCHIVE='http://archive.ubuntu.com/ubuntu/'
+readonly APT_ETC="${APT_ETC:-/etc/apt}"
+
+# The runner image points its Ubuntu sources at a geographic mirror
+# (azure.archive.ubuntu.com, directly or via mirror+file:apt-mirrors.txt).
+# On 2026-09-30 that mirror stalled three PR jobs in this step until the 45
+# minute job timeout (#8073, #8074, #8078). Use the global archive instead.
+use_global_archive() {
+    local files=()
+    local f
+    for f in "$APT_ETC/sources.list" "$APT_ETC"/sources.list.d/*.list "$APT_ETC"/sources.list.d/*.sources; do
+        [ -f "$f" ] && files+=("$f")
+    done
+    [ "${#files[@]}" -eq 0 ] && return 0
+    sudo perl -pi -e \
+        's#mirror\+file:\S*apt-mirrors\.txt#'"$GLOBAL_ARCHIVE"'#g; s#https?://[a-z0-9-]+\.archive\.ubuntu\.com/ubuntu/?#'"$GLOBAL_ARCHIVE"'#g' \
+        "${files[@]}"
+}
+
+use_global_archive || { printf '::error::could not rewrite the APT sources to %s\n' "$GLOBAL_ARCHIVE"; exit 1; }
 
 output=$(sudo apt-get update 2>&1) && status=0 || status=$?
 printf '%s\n' "$output"
