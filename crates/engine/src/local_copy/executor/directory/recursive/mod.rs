@@ -19,6 +19,7 @@ use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use super::super::create_failure::full_fname;
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
     CopyContext, CreatedEntryKind, DeleteTiming, LocalCopyAction, LocalCopyChangeSet,
@@ -249,8 +250,7 @@ fn copy_directory_recursive_inner(
         Ok(entries) => entries,
         Err(error) => {
             if error.is_vanished_error() {
-                // full_fname() wraps the path in double quotes (util1.c:1325).
-                eprintln!("directory has vanished: \"{}\"", source.display());
+                eprintln!("directory has vanished: {}", full_fname(source));
             } else {
                 let detail = match error.kind() {
                     crate::local_copy::LocalCopyErrorKind::Io { source, .. } => {
@@ -258,9 +258,12 @@ fn copy_directory_recursive_inner(
                     }
                     _ => error.to_string(),
                 };
+                // upstream: flist.c send_directory() - `opendir %s failed`
+                // names the directory through full_fname(), so a relative
+                // operand is reported prefixed by the working directory.
                 eprintln!(
-                    "rsync: [sender] opendir \"{}\" failed: {detail}",
-                    source.display()
+                    "rsync: [sender] opendir {} failed: {detail}",
+                    full_fname(source)
                 );
             }
             context.record_io_error();
