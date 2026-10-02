@@ -434,17 +434,33 @@ impl ReceiverContext {
     /// own `dir = clean + module_dirlen` (main.c:1270), expressed against an
     /// owned path.
     ///
+    /// The clean is upstream's own `sanitize_path(clean, dir, "/", 0,
+    /// SP_DEFAULT)` (main.c:1266, options.c:2429), so `.` is dropped and every
+    /// `..` collapses or is discarded at depth 0 - a relative `../excluded`
+    /// is matched as `excluded`, never as a name that climbs out of the rule's
+    /// reach.
+    ///
+    /// Two roots are stripped because a module served as `.` spells its
+    /// paths two ways: option values the daemon re-rooted at the real
+    /// `module_dir`, and operands joined onto the served root. A relative
+    /// operand is already module-relative once cleaned.
+    ///
     /// A path that does not lie under the module root is left as-is rather than
     /// guessed at: the confinement resolver refuses that shape before any data
     /// lands, so there is no path here that needs a fabricated name.
     fn daemon_filter_name(&self, path: &Path) -> PathBuf {
-        let cleaned = filters::collapse_dot_dot_dirs(path);
-        match self.config.connection.daemon_module_root.as_deref() {
-            Some(root) => cleaned
-                .strip_prefix(root)
-                .map_or(cleaned.clone(), Path::to_path_buf),
-            None => cleaned,
-        }
+        let cleaned = filters::sanitize_path::sanitize_path_rooted(path, Path::new("/"), 0);
+        let connection = &self.config.connection;
+        [
+            connection.daemon_module_dir.as_deref(),
+            connection.daemon_module_root.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|root| cleaned.strip_prefix(root).ok())
+        .unwrap_or(&cleaned)
+        .components()
+        .collect()
     }
 
     /// Refuses the session when the daemon module's filter list excludes one of

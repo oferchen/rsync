@@ -55,6 +55,19 @@ pub fn apply_chroot(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Makes the directory behind `dir` the process working directory.
+///
+/// The daemon enters its pinned module root this way before the privilege
+/// drop, so every later lookup resolves relative to it and never re-walks the
+/// module's ancestors as the unprivileged identity.
+///
+/// upstream: clientserver.c:1059 `change_dir(module_chdir, CD_NORMAL)`, which
+/// runs above the `setgid()`/`setuid()` at clientserver.c:1098/1123.
+#[cfg(unix)]
+pub fn enter_directory(dir: std::os::fd::BorrowedFd<'_>) -> io::Result<()> {
+    nix::unistd::fchdir(dir).map_err(nix_to_io)
+}
+
 /// No-op chroot on non-Unix platforms.
 ///
 /// Windows does not support chroot. Logs a warning via stderr so daemon

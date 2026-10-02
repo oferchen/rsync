@@ -93,6 +93,60 @@ pub fn sanitize_path_bytes_default(path: &[u8], depth: usize) -> Vec<u8> {
     sanitize_path_bytes(path, i32::try_from(depth).unwrap_or(i32::MAX), false)
 }
 
+/// Byte-exact `sanitize_path(NULL, path, rootdir, depth, SP_DEFAULT)`: the
+/// copying form, in which `rootdir` replaces a leading `/`.
+///
+/// An absolute `path` is re-rooted at `rootdir` with its depth budget forced
+/// to 0, so no `..` climbs above `rootdir`. A relative `path` ignores
+/// `rootdir` and keeps up to `depth` leading `..`. A daemon passes its
+/// `module_dir` - the module's real path, never the spelling it serves the
+/// transfer under - as upstream's `rootdir == NULL` default does.
+///
+/// A `rootdir` of `/` adds no second separator, and a rooted result is never
+/// empty, so it never degrades to `.`.
+///
+/// # Upstream Reference
+///
+/// - `util1.c:1242-1263` - the `dest != p` arm: `if (*p == '/') { if
+///   (!rootdir) rootdir = module_dir; ... depth = 0; p++; }`
+/// - `options.c:2417` - `--backup-dir`, depth 0
+/// - `main.c:1254-1257` - basis dirs and `--partial-dir`, `curr_dir_depth`
+#[must_use]
+pub fn sanitize_path_rooted_bytes(path: &[u8], rootdir: &[u8], depth: usize) -> Vec<u8> {
+    if path.first() != Some(&b'/') {
+        return sanitize_path_bytes(path, i32::try_from(depth).unwrap_or(i32::MAX), false);
+    }
+    let mut prefix = Vec::with_capacity(rootdir.len() + path.len() + 1);
+    prefix.extend_from_slice(rootdir);
+    // upstream: util1.c:1256 - "a rootdir of len 1 is "/", so this avoids a
+    // 2nd slash".
+    if rootdir.len() > 1 {
+        prefix.push(b'/');
+    }
+    sanitize_path_into(prefix, path, 0, false)
+}
+
+/// [`Path`] form of [`sanitize_path_rooted_bytes`].
+///
+/// Converts at the edge through [`crate::byte_path`], so a non-UTF-8 name
+/// keeps its bytes on Unix.
+///
+/// [`Path`]: std::path::Path
+#[must_use]
+pub fn sanitize_path_rooted(
+    path: &std::path::Path,
+    rootdir: &std::path::Path,
+    depth: usize,
+) -> std::path::PathBuf {
+    use crate::byte_path::{path_pattern_bytes, pattern_path};
+    let out = sanitize_path_rooted_bytes(
+        &path_pattern_bytes(path),
+        &path_pattern_bytes(rootdir),
+        depth,
+    );
+    pattern_path(&out).into_owned()
+}
+
 /// Core sanitization with configurable depth budget and dot-dir handling.
 ///
 /// - `depth`: number of leading `..` segments allowed (0 for daemon mode)
@@ -120,7 +174,23 @@ fn sanitize_path_with_depth(path: &str, depth: i32, keep_dot_dirs: bool) -> Stri
 /// # Upstream Reference
 ///
 /// - `util1.c:1235-1308`
-fn sanitize_path_bytes(bytes: &[u8], mut depth: i32, keep_dot_dirs: bool) -> Vec<u8> {
+fn sanitize_path_bytes(bytes: &[u8], depth: i32, keep_dot_dirs: bool) -> Vec<u8> {
+    sanitize_path_into(Vec::with_capacity(bytes.len()), bytes, depth, keep_dot_dirs)
+}
+
+/// Sanitizes `bytes` onto `result`, whose existing contents are the rootdir
+/// prefix: upstream's `start = sanp = dest + rlen`, below which no `..` backs
+/// up. An empty prefix is the rootless form.
+///
+/// # Upstream Reference
+///
+/// - `util1.c:1264-1308`
+fn sanitize_path_into(
+    mut result: Vec<u8>,
+    bytes: &[u8],
+    mut depth: i32,
+    keep_dot_dirs: bool,
+) -> Vec<u8> {
     let mut p = 0usize;
 
     // upstream: util1.c:1148 - strip leading slash (absolute -> relative)
@@ -138,9 +208,9 @@ fn sanitize_path_bytes(bytes: &[u8], mut depth: i32, keep_dot_dirs: bool) -> Vec
         }
     }
 
-    let mut result = Vec::with_capacity(bytes.len());
-    // Segments before `start` are committed leading `..` within the depth budget.
-    let mut start = 0usize;
+    // Bytes before `start` are the rootdir prefix or committed leading `..`
+    // within the depth budget.
+    let mut start = result.len();
 
     while p < bytes.len() {
         if bytes[p] == b'/' {
@@ -544,6 +614,69 @@ mod tests {
         assert_eq!(
             sanitize_path_keep_dot_dirs_bytes(b"\xffa/b/../\xfec"),
             b"\xffa/\xfec".to_vec()
+        );
+    }
+
+    /// upstream: util1.c:1242-1263 - an absolute value is re-rooted at the
+    /// rootdir with its depth forced to 0, so a `..` climb can reach neither
+    /// above the rootdir nor into the rootdir's own spelling. This is the
+    /// arm a daemon's `--backup-dir`, `--partial-dir` and alt-basis dirs take
+    /// (options.c:2417, main.c:1254-1257), and the rootdir is `module_dir`.
+    #[test]
+    fn rooted_absolute_value_re_roots_at_the_rootdir_with_depth_zero() {
+        for (path, root, depth, want) in [
+            ("/x/y", "/srv/mod", 3, "/srv/mod/x/y"),
+            ("/../../etc", "/srv/mod", 5, "/srv/mod/etc"),
+            (
+                "/a/src/sub/../../../secret/",
+                "/srv/mod",
+                9,
+                "/srv/mod/secret/",
+            ),
+            ("/a/src/sub/../../../secret/", "/", 0, "/secret/"),
+            ("//a/./b//c", "/srv/mod", 0, "/srv/mod/a/b/c"),
+            ("/", "/srv/mod", 0, "/srv/mod/"),
+            ("/", "/", 0, "/"),
+            ("/..", "/", 0, "/"),
+        ] {
+            assert_eq!(
+                sanitize_path_rooted_bytes(path.as_bytes(), root.as_bytes(), depth),
+                want.as_bytes(),
+                "sanitize_path({path:?}, rootdir {root:?}, depth {depth})"
+            );
+        }
+    }
+
+    /// upstream: util1.c:1242 - the rootdir applies only inside
+    /// `if (*p == '/')`, so a relative value is sanitized exactly as the
+    /// rootless form is, keeping up to `depth` leading `..`.
+    #[test]
+    fn rooted_relative_value_ignores_the_rootdir_and_keeps_its_depth() {
+        for (path, depth, want) in [
+            ("../01", 1, "../01"),
+            ("../01", 0, "01"),
+            ("../../01", 1, "../01"),
+            ("a/../../b", 1, "../b"),
+            ("./sub/../pdir", 0, "pdir"),
+            ("a/..", 0, "."),
+        ] {
+            assert_eq!(
+                sanitize_path_rooted_bytes(path.as_bytes(), b"/srv/mod", depth),
+                want.as_bytes(),
+                "sanitize_path({path:?}, depth {depth})"
+            );
+        }
+    }
+
+    #[test]
+    fn rooted_path_form_matches_the_byte_form() {
+        assert_eq!(
+            sanitize_path_rooted(
+                std::path::Path::new("/a/../b/"),
+                std::path::Path::new("/srv/mod"),
+                0
+            ),
+            std::path::PathBuf::from("/srv/mod/b/")
         );
     }
 

@@ -212,6 +212,22 @@ pub struct ConnectionConfig {
     /// - `clientserver.c:993` - `change_dir(module_chdir, CD_NORMAL)`
     /// - `util1.c:1382` - `p1 = curr_dir + module_dirlen`
     pub daemon_module_root: Option<PathBuf>,
+    /// Upstream's `module_dir`: the root the daemon re-rooted the peer's
+    /// absolute `--backup-dir`, `--partial-dir` and alt-basis dirs at.
+    ///
+    /// It differs from [`daemon_module_root`](Self::daemon_module_root) when
+    /// the daemon entered the module before its privilege drop and serves the
+    /// transfer as `.`: upstream's `chdir()` leaves `module_dir` the real path,
+    /// so those option values still carry it, and matching them against the
+    /// module's filter must strip it. `None` outside a daemon server process.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `util1.c:1242-1249` - `sanitize_path()` roots a leading `/` at
+    ///   `module_dir`
+    /// - `main.c:1266-1270`, `options.c:2429-2440` - the filter check strips
+    ///   `module_dirlen`
+    pub daemon_module_dir: Option<PathBuf>,
     /// The served module's `insecure links` setting, carried per connection.
     ///
     /// This is the daemon arm of upstream's `symlink_optout_allowed()`:

@@ -1985,6 +1985,7 @@ mod module_access_tests {
             let outcome = PrivilegeOutcome {
                 chroot_applied: true,
                 inner_module_path: inner.clone(),
+                served_root: None,
             };
             assert_ne!(
                 landlock_root(&module, &outcome),
@@ -2016,6 +2017,7 @@ mod module_access_tests {
         let outcome = PrivilegeOutcome {
             chroot_applied: true,
             inner_module_path: Some(PathBuf::from("/")),
+            served_root: None,
         };
         assert_eq!(
             landlock_root(&module, &outcome),
@@ -2039,6 +2041,7 @@ mod module_access_tests {
         let outcome = PrivilegeOutcome {
             chroot_applied: true,
             inner_module_path: Some(PathBuf::from("/inner")),
+            served_root: None,
         };
         assert_eq!(
             landlock_root(&module, &outcome),

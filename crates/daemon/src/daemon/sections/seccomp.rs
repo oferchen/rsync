@@ -265,6 +265,12 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
         libc::SYS_sysinfo,
         libc::SYS_fchdir,
         libc::SYS_chdir,
+        // The worker's working directory is the module root (it enters it
+        // before the privilege drop, as upstream does), and the confined
+        // ownership walk reads it to track where a relative name resolves
+        // (`owner_walk`, upstream syscall.c:388-390 `module_dir`). Reading the
+        // cwd grants no reach: it names a directory the process is already in.
+        libc::SYS_getcwd,
         libc::SYS_futex,
         libc::SYS_clock_gettime,
         libc::SYS_clock_nanosleep,
@@ -333,6 +339,13 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
     // this libc happens to spell it.
     #[cfg(target_arch = "x86_64")]
     s.push(libc::SYS_mkdir);
+    // And `rename()` into the legacy `rename` syscall rather than `renameat`:
+    // `--backup-dir` moves the replaced or deleted file through `std::fs`.
+    // MEASURED on x86_64: `rename("./stale", "./bak/stale") = -1 EPERM` with
+    // `renameat`/`renameat2` admitted. Like `mkdir`, it is `renameat` with
+    // `AT_FDCWD` for both names, so it grants no additional reach.
+    #[cfg(target_arch = "x86_64")]
+    s.push(libc::SYS_rename);
 
     // glibc 2.35+ initialises restartable sequences per thread. `SYS_rseq`
     // is missing from older libc bindings; fall back to the documented
@@ -489,6 +502,23 @@ mod seccomp_tests {
             list.binary_search(&libc::SYS_mkdir).is_ok(),
             "legacy mkdir missing: glibc on x86_64 lowers mkdir() to it, so the \
              receiver cannot create its own destination root",
+        );
+    }
+
+    /// `--backup-dir` renames through `std::fs::rename`, which glibc lowers
+    /// to the legacy `rename` syscall on x86_64, and the confined walk of a
+    /// module-relative name reads the working directory.
+    #[test]
+    fn allowlist_admits_backup_rename_and_cwd_reads() {
+        let list = worker_seccomp_allowlist();
+        assert!(
+            list.binary_search(&libc::SYS_getcwd).is_ok(),
+            "getcwd missing: a module-relative name cannot be walked",
+        );
+        #[cfg(target_arch = "x86_64")]
+        assert!(
+            list.binary_search(&libc::SYS_rename).is_ok(),
+            "legacy rename missing: --backup-dir cannot move a replaced file",
         );
     }
 
