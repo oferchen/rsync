@@ -70,6 +70,18 @@ struct LogFormatContext<'a> {
     bytes_checksumed: u64,
     /// Itemize-changes string for the file (`%i`).
     itemize_string: &'a str,
+    /// Name with a trailing `/` for a directory (`%n`).
+    name: &'a str,
+    /// `%L` connector (` -> ` or ` => `) and target, or `None` for no link.
+    link: Option<(&'static str, &'a str)>,
+    /// Owner uid, 0 when uids are not preserved (`%U`).
+    uid: u32,
+    /// Group gid, or `None` to render `DEFAULT` (`%G`).
+    gid: Option<u32>,
+    /// Modification time as `timestring()` with `-` for the space (`%M`).
+    mtime: &'a str,
+    /// Nine-character permission string without the type char (`%B`).
+    permissions: &'a str,
 }
 
 /// Upper bound on the modifier run scanned before an escape letter.
@@ -343,12 +355,78 @@ fn expand_log_format(format: &str, ctx: &LogFormatContext<'_>) -> String {
             // upstream renders `%p` with a plain `%d` (log.c:617), so the pid is
             // width/alignment-formatted but never unit-humanized.
             'p' => pad_field(&mut result, &ctx.pid.to_string(), &spec),
+            'n' => pad_field(&mut result, ctx.name, &spec),
+            'L' => push_link(&mut result, ctx.link, &spec),
+            // upstream: log.c `case 'U'`/`case 'G'` format with `%u`, so width
+            // applies and humanizing does not.
+            'U' => pad_field(&mut result, &ctx.uid.to_string(), &spec),
+            'G' => match ctx.gid {
+                Some(gid) => pad_field(&mut result, &gid.to_string(), &spec),
+                None => pad_field(&mut result, "DEFAULT", &spec),
+            },
+            'M' => pad_field(&mut result, ctx.mtime, &spec),
+            'B' => pad_field(&mut result, ctx.permissions, &spec),
             '%' => result.push('%'),
             _ => result.push_str(&raw),
         }
     }
 
     result
+}
+
+/// Appends the `%L` expansion.
+///
+/// upstream: log.c `case 'L'` - the ` => ` or ` -> ` connector is emitted
+/// verbatim and only the target takes the width. Without a link the escape
+/// is empty unless a modifier is present, in which case four spaces precede
+/// the formatted empty string so the column lines up with linked rows.
+fn push_link(out: &mut String, link: Option<(&str, &str)>, spec: &LogFmtSpec) {
+    match link {
+        Some((connector, target)) => {
+            out.push_str(connector);
+            pad_field(out, target, spec);
+        }
+        None if spec.width.is_some() || spec.left_align => {
+            out.push_str("    ");
+            pad_field(out, "", spec);
+        }
+        None => {}
+    }
+}
+
+/// Renders the nine permission characters of `mode`.
+///
+/// upstream: lib/permstring.c `permstring()`, whose leading type character
+/// log.c `case 'B'` skips.
+fn permission_bits(mode: u32) -> String {
+    const RWX: &[u8; 9] = b"rwxrwxrwx";
+    let mut perms = [b'-'; 9];
+    for (i, slot) in perms.iter_mut().enumerate() {
+        if mode & (0o400 >> i) != 0 {
+            *slot = RWX[i];
+        }
+    }
+    if mode & 0o4000 != 0 {
+        perms[2] = if mode & 0o100 != 0 { b's' } else { b'S' };
+    }
+    if mode & 0o2000 != 0 {
+        perms[5] = if mode & 0o010 != 0 { b's' } else { b'S' };
+    }
+    if mode & 0o1000 != 0 {
+        perms[8] = if mode & 0o001 != 0 { b't' } else { b'T' };
+    }
+    String::from_utf8_lossy(&perms).into_owned()
+}
+
+/// Renders an mtime the way log.c `case 'M'` does: `timestring()` with its
+/// space turned into `-`.
+fn format_log_mtime(mtime: i64) -> String {
+    let instant = if mtime >= 0 {
+        SystemTime::UNIX_EPOCH + Duration::from_secs(mtime.unsigned_abs())
+    } else {
+        SystemTime::UNIX_EPOCH - Duration::from_secs(mtime.unsigned_abs())
+    };
+    logging_sink::logfile::format_log_timestamp(instant).replace(' ', "-")
 }
 
 /// Expands the transfer log format and writes the result to the log sink.
@@ -434,6 +512,12 @@ mod log_format_tests {
             bytes_transferred: 524288,
             bytes_checksumed: 1048576,
             itemize_string: ">f+++++++++",
+            name: "docs/report.pdf",
+            link: None,
+            uid: 1000,
+            gid: Some(1000),
+            mtime: "2026/02/21-14:30:00",
+            permissions: "rw-r--r--",
         }
     }
 
@@ -822,5 +906,71 @@ mod log_format_tests {
     fn humanize_units_below_base_is_none() {
         assert_eq!(humanize_units(999, 1000), None);
         assert_eq!(humanize_units(1023, 1024), None);
+    }
+
+    #[test]
+    fn entry_escapes_render_name_owner_group_mtime_and_perms() {
+        let ctx = sample_context();
+        assert_eq!(
+            expand_log_format("%n|%U|%G|%M|%B", &ctx),
+            "docs/report.pdf|1000|1000|2026/02/21-14:30:00|rw-r--r--"
+        );
+    }
+
+    #[test]
+    fn group_without_gid_renders_default() {
+        // upstream: log.c `case 'G'` - "DEFAULT" under !gid_ndx or FLAG_SKIP_GROUP.
+        let ctx = LogFormatContext {
+            gid: None,
+            ..sample_context()
+        };
+        assert_eq!(
+            expand_log_format("[%G] [%9G]", &ctx),
+            "[DEFAULT] [  DEFAULT]"
+        );
+    }
+
+    #[test]
+    fn link_escape_renders_connector_then_padded_target() {
+        let ctx = LogFormatContext {
+            link: Some((" -> ", "target")),
+            ..sample_context()
+        };
+        assert_eq!(expand_log_format("[%L]", &ctx), "[ -> target]");
+        assert_eq!(expand_log_format("[%-8L]", &ctx), "[ -> target  ]");
+        let ctx = LogFormatContext {
+            link: Some((" => ", "leader")),
+            ..sample_context()
+        };
+        assert_eq!(expand_log_format("[%L]", &ctx), "[ => leader]");
+    }
+
+    #[test]
+    fn link_escape_without_link_is_empty_unless_modified() {
+        // upstream: log.c `case 'L'` - bare `%L` breaks with "", a modifier
+        // pads four spaces plus the formatted empty string.
+        let ctx = sample_context();
+        assert_eq!(expand_log_format("[%L]", &ctx), "[]");
+        assert_eq!(expand_log_format("[%3L]", &ctx), "[       ]");
+        assert_eq!(expand_log_format("[%-L]", &ctx), "[    ]");
+    }
+
+    #[test]
+    fn permission_bits_match_upstream_permstring() {
+        assert_eq!(permission_bits(0o100_644), "rw-r--r--");
+        assert_eq!(permission_bits(0o040_755), "rwxr-xr-x");
+        assert_eq!(permission_bits(0o104_755), "rwsr-xr-x");
+        assert_eq!(permission_bits(0o104_644), "rwSr--r--");
+        assert_eq!(permission_bits(0o102_750), "rwxr-s---");
+        assert_eq!(permission_bits(0o101_777), "rwxrwxrwt");
+        assert_eq!(permission_bits(0o101_776), "rwxrwxrwT");
+    }
+
+    #[test]
+    fn log_mtime_replaces_the_space_with_a_dash() {
+        let rendered = format_log_mtime(1_000_000_000);
+        assert_eq!(rendered.len(), 19, "{rendered}");
+        assert_eq!(&rendered[10..11], "-", "{rendered}");
+        assert!(!rendered.contains(' '), "{rendered}");
     }
 }

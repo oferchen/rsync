@@ -85,9 +85,9 @@ impl<F: FnMut(&str)> ItemizeCallback for F {
 /// A daemon serving a module with `transfer logging = yes` writes one log-file
 /// line per processed file, exactly as upstream does via `log_item(FLOG, ...)`.
 /// This sink is invoked once per entry after the transfer completes, in
-/// flist-index order, with the entry's transfer-relative name, file length, and
-/// pre-rendered 11-character `%i` itemize string. The daemon-side implementation
-/// plugs those into the module's `log format` and writes the result to the log.
+/// flist-index order, with a [`DaemonLogRow`] carrying the per-file fields the
+/// module's `log format` can reference. The daemon-side implementation plugs
+/// those into the format and writes the result to the log.
 ///
 /// This is the daemon's OWN log-file write and is distinct from the client-side
 /// itemize forwarding driven by [`ItemizeCallback`]: upstream reaches it through
@@ -102,15 +102,70 @@ impl<F: FnMut(&str)> ItemizeCallback for F {
 /// - `receiver.c:1290` / `sender.c:462` - the per-transfer `log_item()`
 pub trait DaemonFileLog {
     /// Renders and writes one daemon-log line for a processed entry.
-    fn on_entry(&mut self, name: &std::path::Path, size: u64, itemize: &str);
+    fn on_entry(&mut self, row: &DaemonLogRow);
 }
 
-/// Collected per-file daemon-log rows keyed by flist index, each row carrying
-/// the entry's `(transfer-relative name, file length, rendered %i string)`.
+/// The per-file fields one daemon transfer-log line renders.
+///
+/// upstream: log.c `log_formatted()` reads each of these from the entry's
+/// `struct file_struct` (plus the `hlink` argument of `log_item()`), so the
+/// row snapshots them when the entry is logged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DaemonLogRow {
+    /// Transfer-relative name (`%f`, and `%n` before its directory slash).
+    pub name: std::path::PathBuf,
+    /// File length (`%l`).
+    pub size: u64,
+    /// Rendered 11-character itemize string (`%i`).
+    pub itemize: String,
+    /// Full `st_mode`, type bits included (`%n` slash, `%B`, `%L`).
+    pub mode: u32,
+    /// Modification time in seconds since the epoch (`%M`).
+    pub mtime: i64,
+    /// Owner uid, or 0 when the entry carries none (`%U`; entries carry ids
+    /// only under `-o`, upstream's `uid_ndx`).
+    pub uid: u32,
+    /// Group gid, or `None` when the entry carries none (no `-g`, upstream's
+    /// `gid_ndx`) or the receiver cannot set the group (`FLAG_SKIP_GROUP`);
+    /// `%G` then renders `DEFAULT`.
+    pub gid: Option<u32>,
+    /// Symlink target as stored in the file list (`%L` ` -> ` form).
+    pub symlink_target: Option<std::path::PathBuf>,
+    /// Hard-link leader name passed as `log_item()`'s `hlink` (`%L` ` => `).
+    pub hardlink_target: Option<Vec<u8>>,
+}
+
+impl DaemonLogRow {
+    /// Snapshots `entry` for one log line. The caller resolves the
+    /// role-dependent fields: the gid after the receiver's `FLAG_SKIP_GROUP`
+    /// gate, and the symlink target in its stored (munged/sanitized) form.
+    pub(crate) fn new(
+        entry: &protocol::flist::FileEntry,
+        itemize: String,
+        gid: Option<u32>,
+        symlink_target: Option<std::path::PathBuf>,
+        xname: Option<&[u8]>,
+    ) -> Self {
+        Self {
+            name: entry.path().to_path_buf(),
+            size: entry.size(),
+            itemize,
+            mode: entry.mode(),
+            mtime: entry.mtime(),
+            // upstream: log.c `case 'U'` - `uid_ndx ? F_OWNER(file) : 0`.
+            uid: entry.uid().unwrap_or(0),
+            gid,
+            symlink_target,
+            hardlink_target: xname.filter(|name| !name.is_empty()).map(<[u8]>::to_vec),
+        }
+    }
+}
+
+/// Collected per-file daemon-log rows keyed by flist index.
 ///
 /// Keyed by index so a drain flushes in the order upstream logs the entries; a
 /// `Vec` per index tolerates a phase-2 redo re-recording the same entry.
-pub type DaemonLogRows = std::collections::BTreeMap<usize, Vec<(std::path::PathBuf, u64, String)>>;
+pub type DaemonLogRows = std::collections::BTreeMap<usize, Vec<DaemonLogRow>>;
 
 /// Structured per-file data for one client-visible itemize/name emission.
 ///

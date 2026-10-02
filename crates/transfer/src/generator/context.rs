@@ -447,11 +447,20 @@ impl GeneratorContext {
         let entry = &self.file_list[ndx];
         let ctx = self.itemize_context();
         let itemize = itemize::format_iflags(iflags, entry, true, &ctx);
+        // upstream: log.c `case 'G'` - the sender never sets FLAG_SKIP_GROUP,
+        // so the entry's gid (present only under -g) is logged as is.
+        let row = crate::progress::DaemonLogRow::new(
+            entry,
+            itemize,
+            entry.gid(),
+            entry.link_target().cloned(),
+            xname,
+        );
         self.daemon_log_rows
             .borrow_mut()
             .entry(ndx)
             .or_default()
-            .push((entry.path().to_path_buf(), entry.size(), itemize));
+            .push(row);
     }
 
     /// Drains the collected per-file daemon-log rows in ascending flist-index

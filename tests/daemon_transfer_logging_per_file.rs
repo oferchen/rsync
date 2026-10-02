@@ -338,3 +338,271 @@ fn push_logs_the_authenticated_user_for_percent_u() {
         "expected `recv [alice] file1.dat`, got:\n{text}"
     );
 }
+
+/// Renders the nine permission characters `ls -l` shows after the type char.
+fn perm_string(mode: u32) -> String {
+    let rwx = b"rwxrwxrwx";
+    (0..9)
+        .map(|i| {
+            if mode & (0o400 >> i) != 0 {
+                rwx[i] as char
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+/// `%n %L %U %G %M %B` render the entry's name, link, owner, group, mtime and
+/// permissions instead of being printed literally.
+///
+/// upstream: log.c `log_formatted()` - `%n` appends `/` to a directory,
+/// `%L` is ` -> target` for a symlink (the target as stored after the
+/// daemon's symlink munging), `%U`/`%G` are the preserved ids, `%M` is
+/// `timestring(modtime)` with its space turned into `-`, and `%B` is the
+/// permission string without its type character.
+#[test]
+fn push_logs_name_link_owner_group_mtime_and_perms() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+
+    let Some(port) = free_port() else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path();
+    let module_dir = root.join("mod");
+    let src = root.join("src");
+    fs::create_dir_all(&module_dir).expect("module dir");
+    fs::create_dir_all(src.join("d")).expect("src dir");
+    fs::write(src.join("d/f"), b"0123456789").expect("src file");
+    symlink("d/f", src.join("lnk")).expect("symlink");
+    fs::set_permissions(src.join("d/f"), fs::Permissions::from_mode(0o640)).expect("chmod f");
+    fs::set_permissions(src.join("d"), fs::Permissions::from_mode(0o750)).expect("chmod d");
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).expect("chmod src");
+    // 2001-09-09 01:46:40 UTC; the daemon runs with TZ=UTC so `%M` is fixed.
+    let stamp = FileTime::from_unix_time(1_000_000_000, 0);
+    filetime::set_symlink_file_times(src.join("lnk"), stamp, stamp).expect("stamp lnk");
+    for path in [src.join("d/f"), src.join("d"), src.clone()] {
+        set_file_mtime(&path, stamp).expect("stamp");
+    }
+    set_file_mtime(&module_dir, FileTime::from_unix_time(900_000_000, 0)).expect("backdate mod");
+
+    let meta = fs::metadata(src.join("d/f")).expect("stat f");
+    let (uid, gid) = (meta.uid(), meta.gid());
+    let lnk_perms = perm_string(fs::symlink_metadata(src.join("lnk")).expect("lstat").mode());
+
+    let log = root.join("daemon.log");
+    let conf = format!(
+        "port = {port}\n\
+         use chroot = no\n\
+         log file = {log}\n\
+         reverse lookup = no\n\
+         \n\
+         [m]\n\
+         \tpath = {module}\n\
+         \tread only = no\n\
+         \ttransfer logging = yes\n\
+         \tlog format = %o|%n|%L|%U|%G|%M|%B|%i\n",
+        log = log.display(),
+        module = module_dir.display(),
+    );
+    fs::write(root.join("rsyncd.conf"), conf).expect("config");
+    let oc = oc_binary();
+    let daemon = ReapOnDrop::new(
+        Command::new(&oc)
+            .env("TZ", "UTC")
+            .arg("--daemon")
+            .arg("--no-detach")
+            .arg(format!("--config={}", root.join("rsyncd.conf").display()))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn daemon"),
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline && std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let status = Command::new(&oc)
+        .args([
+            "-rlptgo",
+            &format!("{}/", src.display()),
+            &format!("rsync://127.0.0.1:{port}/m/"),
+        ])
+        .status()
+        .expect("run push client");
+    wait_for_lines(&log, "recv|", 4);
+    drop(daemon);
+    assert!(status.success(), "push failed");
+
+    let text = fs::read_to_string(&log).expect("read log");
+    let lines = transfer_lines(&text, "recv|");
+    // Upstream oracle (rsync 3.5.1 daemon, `use chroot = no`, which turns on
+    // `munge symlinks`, so the stored target carries `/rsyncd-munged/`).
+    let m = "2001/09/09-01:46:40";
+    for want in [
+        format!("recv|./||{uid}|{gid}|{m}|rwxr-xr-x|.d..t......"),
+        format!("recv|d/||{uid}|{gid}|{m}|rwxr-x---|cd+++++++++"),
+        format!("recv|d/f||{uid}|{gid}|{m}|rw-r-----|>f+++++++++"),
+        format!("recv|lnk| -> /rsyncd-munged/d/f|{uid}|{gid}|{m}|{lnk_perms}|cL+++++++++"),
+    ] {
+        assert!(
+            lines.iter().any(|l| l == &want),
+            "expected `{want}`, got:\n{text}"
+        );
+    }
+}
+
+/// Without `-o`/`-g` upstream has no `uid_ndx`/`gid_ndx`, so `%U` renders 0
+/// and `%G` renders `DEFAULT` (log.c `case 'U'` / `case 'G'`). A pull
+/// exercises this: the daemon sender scans real ids from disk and must still
+/// drop them, whereas a push never puts them on the wire.
+#[test]
+fn pull_without_owner_or_group_logs_zero_uid_and_default_gid() {
+    let Some(port) = free_port() else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path();
+    let module_dir = root.join("mod");
+    let dest = root.join("dest");
+    fs::create_dir_all(&module_dir).expect("module dir");
+    fs::create_dir_all(&dest).expect("dest dir");
+    fs::write(module_dir.join("file1.dat"), vec![b'y'; 100]).expect("module file");
+
+    let log = root.join("daemon.log");
+    let conf = format!(
+        "port = {port}\n\
+         use chroot = no\n\
+         log file = {log}\n\
+         reverse lookup = no\n\
+         \n\
+         [m]\n\
+         \tpath = {module}\n\
+         \tread only = no\n\
+         \ttransfer logging = yes\n\
+         \tlog format = %o|%f|%U|%G\n",
+        log = log.display(),
+        module = module_dir.display(),
+    );
+    fs::write(root.join("rsyncd.conf"), conf).expect("config");
+    let oc = oc_binary();
+    let daemon = spawn_daemon(&oc, &root.join("rsyncd.conf"), port);
+
+    let status = Command::new(&oc)
+        .args([
+            "-rt",
+            &format!("rsync://127.0.0.1:{port}/m/"),
+            &format!("{}/", dest.display()),
+        ])
+        .status()
+        .expect("run pull client");
+    wait_for_lines(&log, "send|", 1);
+    drop(daemon);
+    assert!(status.success(), "pull failed");
+
+    let text = fs::read_to_string(&log).expect("read log");
+    assert!(
+        transfer_lines(&text, "send|")
+            .iter()
+            .any(|l| l == "send|file1.dat|0|DEFAULT"),
+        "expected `send|file1.dat|0|DEFAULT`, got:\n{text}"
+    );
+}
+
+/// A non-root daemon receiver that cannot set an entry's group logs
+/// `DEFAULT` for `%G`, because uidlist.c:284 marks the entry
+/// `FLAG_SKIP_GROUP` and log.c `case 'G'` tests that flag.
+///
+/// Skip condition (the test passes with a printed reason): running as root,
+/// or no readable system file belongs to a group this process is not in.
+#[test]
+fn push_of_foreign_group_file_logs_default_gid() {
+    use std::os::unix::fs::MetadataExt;
+
+    let Some(port) = free_port() else {
+        println!("SKIP: no loopback port available");
+        return;
+    };
+    let groups = Command::new("id")
+        .arg("-G")
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .unwrap_or_default();
+    let my_groups: Vec<u32> = groups
+        .split_whitespace()
+        .filter_map(|g| g.parse().ok())
+        .collect();
+    let uid = Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .and_then(|s| s.trim().parse::<u32>().ok());
+    if my_groups.is_empty() || uid == Some(0) {
+        println!("SKIP: running as root or group list unavailable");
+        return;
+    }
+    let foreign = ["/etc/hosts", "/etc/passwd", "/bin/sh", "/usr/bin/env"]
+        .iter()
+        .filter_map(|p| fs::canonicalize(p).ok())
+        .find(|p| {
+            fs::metadata(p).is_ok_and(|m| m.is_file() && !my_groups.contains(&m.gid()))
+                && fs::File::open(p).is_ok()
+        });
+    let Some(foreign) = foreign else {
+        println!("SKIP: no readable file owned by a group outside {my_groups:?}");
+        return;
+    };
+    let base = foreign
+        .file_name()
+        .expect("file name")
+        .to_string_lossy()
+        .into_owned();
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path();
+    let module_dir = root.join("mod");
+    fs::create_dir_all(&module_dir).expect("module dir");
+    let log = root.join("daemon.log");
+    let conf = format!(
+        "port = {port}\n\
+         use chroot = no\n\
+         log file = {log}\n\
+         reverse lookup = no\n\
+         \n\
+         [m]\n\
+         \tpath = {module}\n\
+         \tread only = no\n\
+         \ttransfer logging = yes\n\
+         \tlog format = %o|%f|%G\n",
+        log = log.display(),
+        module = module_dir.display(),
+    );
+    fs::write(root.join("rsyncd.conf"), conf).expect("config");
+    let oc = oc_binary();
+    let daemon = spawn_daemon(&oc, &root.join("rsyncd.conf"), port);
+
+    let status = Command::new(&oc)
+        .args([
+            "-tg",
+            &foreign.display().to_string(),
+            &format!("rsync://127.0.0.1:{port}/m/"),
+        ])
+        .status()
+        .expect("run push client");
+    wait_for_lines(&log, "recv|", 1);
+    drop(daemon);
+    assert!(status.success(), "push of {} failed", foreign.display());
+
+    let text = fs::read_to_string(&log).expect("read log");
+    let want = format!("recv|{base}|DEFAULT");
+    assert!(
+        transfer_lines(&text, "recv|").iter().any(|l| l == &want),
+        "expected `{want}`, got:\n{text}"
+    );
+}

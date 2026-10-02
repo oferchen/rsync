@@ -1152,11 +1152,21 @@ impl ReceiverContext {
         };
         let ctx = self.itemize_context();
         let itemize = crate::generator::itemize::format_iflags(&effective, entry, false, &ctx);
+        // upstream: log.c `case 'G'` renders "DEFAULT" under `!gid_ndx` or
+        // `FLAG_SKIP_GROUP`, which uidlist.c:284 sets on a receiver that cannot
+        // set the group.
+        let gid = entry
+            .gid()
+            .filter(|gid| ::metadata::group_is_settable(*gid));
+        let symlink_target = self
+            .stored_symlink_target(entry)
+            .map(std::borrow::Cow::into_owned);
+        let row = crate::progress::DaemonLogRow::new(entry, itemize, gid, symlink_target, xname);
         self.daemon_log_rows
             .borrow_mut()
             .entry(flist_idx)
             .or_default()
-            .push((entry.path().to_path_buf(), entry.size(), itemize));
+            .push(row);
     }
 
     /// Drains the collected per-file daemon-log rows in ascending flist-index
