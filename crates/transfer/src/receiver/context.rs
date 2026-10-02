@@ -532,6 +532,15 @@ pub struct ReceiverContext {
     /// network transfer, so the wire path is byte-identical; set only by
     /// [`run_local_replay`](Self::run_local_replay).
     pub(in crate::receiver) local_replay: bool,
+    /// The session's delta-token decoder, created by the first transfer pass
+    /// and handed to every later one.
+    ///
+    /// The sender keeps one compressor for the whole run and only flushes it
+    /// between files, so its zstd stream spans every file list and the phase-2
+    /// redo. A pass that built its own decoder would read the continuation of
+    /// that stream without a frame header. upstream: token.c:837-866
+    /// recv_zstd_token() creates `zstd_dctx` once (`decomp_init_done`).
+    pub(in crate::receiver) session_token_reader: Option<crate::token_reader::TokenReader>,
     /// Directories raised to owner-`rwx` for the transfer whose strict
     /// `dest_mode()` result must be reinstated by `touch_up_dirs`, as
     /// `(path, strict permission bits)`.
@@ -677,6 +686,7 @@ impl ReceiverContext {
             io_error_delete_warning_emitted: false,
             // upstream: read_batch defaults off; the network path never sets it.
             local_replay: false,
+            session_token_reader: None,
             #[cfg(unix)]
             dir_perm_restores: std::sync::Mutex::new(Vec::new()),
         }

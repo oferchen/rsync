@@ -329,6 +329,51 @@ fn inc_recurse_receiver_loopback_links_hard_links_across_segments() {
     );
 }
 
+/// A compressed pull decodes every sub-list's file data with the one zstd
+/// stream the sender keeps open for the whole session.
+///
+/// The sender's compressor is created once and only flushed between files, so
+/// the data of the second sub-list continues the frame the first one opened.
+/// A decoder created afresh for a later sub-list sees that continuation
+/// without a frame header and fails with `Unknown frame descriptor`.
+///
+/// upstream: token.c:837-866 recv_zstd_token() creates `zstd_dctx` once
+/// (`decomp_init_done`) and never resets it between files or file lists.
+#[cfg(feature = "zstd")]
+#[test]
+fn inc_recurse_zstd_pull_decodes_every_segment_with_one_stream() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    fs::create_dir_all(&dst).expect("create dst");
+    for dir in 0..DIRS {
+        let d = src.join(format!("dir{dir}"));
+        fs::create_dir_all(&d).expect("create dir");
+        for idx in 0..5 {
+            fs::write(d.join(format!("f{idx:05}")), file_content(dir, idx + 1))
+                .expect("write file");
+        }
+    }
+
+    // `z` with the `v` capability on both sides negotiates the first shared
+    // entry of "zstd lz4 zlibx zlib" (compat.c:538 negotiate_the_strings()),
+    // which is zstd.
+    let stats = forced_inc_recurse_pull(&src, &dst, "rtz");
+
+    assert_eq!(stats.files_transferred, DIRS * 5);
+    for rel in list_tree(&src) {
+        let s = src.join(&rel);
+        if s.is_file() {
+            assert_eq!(
+                fs::read(&s).expect("read src"),
+                fs::read(dst.join(&rel)).expect("read dst"),
+                "content mismatch for {}",
+                rel.display()
+            );
+        }
+    }
+}
+
 /// Directories of the wide tree the non-transfer modes pull: several modest
 /// ones plus one that alone exceeds `MAX_FILECNT_LOOKAHEAD` (10,000), so its
 /// single sub-list overruns the sender's window by itself.
