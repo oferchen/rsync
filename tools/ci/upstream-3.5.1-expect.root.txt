@@ -344,7 +344,7 @@ symlink-exclude-meta pass
 symlink-exclude-xattr pass
 symlink-ignore pass
 symlink-mknod-fakesuper-symlink-race pass
-symlink-race-dest fail  # missing 'refusing to follow a symlink owned by an untrusted user' diagnostic - owner: task 1574 (U351)
+symlink-race-dest pass
 symlink-race-relative-dest pass
 symlink-race-source pass
 temp-dir pass

@@ -307,6 +307,13 @@ mod permission_denied {
     /// checks, not read - so the transfer must proceed and land the files.
     /// A probe that read the directory instead of traversing it would fail
     /// this cell with a spurious exit 3.
+    ///
+    /// Linux only: the walk opens the destination `O_PATH`, which needs search
+    /// permission alone. Platforms without `O_PATH` open it `O_RDONLY`, exactly
+    /// as upstream does, and refuse - see the companion below.
+    ///
+    /// upstream: syscall.c:83-92 `directory_traverse_flags()`.
+    #[cfg(target_os = "linux")]
     #[test]
     fn unreadable_but_searchable_destination_root_still_transfers() {
         run_with_timeout(LOCAL_TIMEOUT, || {
@@ -343,6 +350,44 @@ mod permission_denied {
         });
     }
 
+    /// Without `O_PATH` the destination walk opens the root `O_RDONLY`, so an
+    /// unreadable-but-searchable (0o333) destination fails file selection with
+    /// exit 3 - measured identical against upstream 3.5.1 on macOS
+    /// (`change_dir#1 ... Permission denied (13)`, code 3).
+    ///
+    /// upstream: syscall.c:83-92 `directory_traverse_flags()` (no `O_PATH`
+    /// branch), main.c:778-781 `change_dir#1` -> RERR_FILESELECT.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn unreadable_destination_root_fails_selection_without_o_path() {
+        run_with_timeout(LOCAL_TIMEOUT, || {
+            if nix_is_root() {
+                return;
+            }
+            let temp = tempdir().expect("tempdir");
+            let source_root = temp.path().join("source");
+            let dest_root = temp.path().join("dest");
+            fs::create_dir_all(&source_root).expect("create source root");
+            fs::create_dir_all(&dest_root).expect("create dest root");
+            touch(&source_root.join("f1.txt"), b"one");
+            fs::set_permissions(&dest_root, fs::Permissions::from_mode(0o333))
+                .expect("chmod dest root");
+            let mut source_arg = source_root.into_os_string();
+            source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+            let config = ClientConfig::builder()
+                .transfer_args([source_arg, dest_root.clone().into_os_string()])
+                .build();
+            let result = run_client(config);
+            let _ = fs::set_permissions(&dest_root, fs::Permissions::from_mode(0o755));
+            let error = result.expect_err("an unreadable destination must fail without O_PATH");
+            assert_eq!(
+                error.exit_code(),
+                3,
+                "exit code should be 3 (RERR_FILESELECT)"
+            );
+            assert!(!dest_root.join("f1.txt").exists(), "nothing may transfer");
+        });
+    }
     /// `geteuid() == 0` probe for the fixtures above, without adding a nix
     /// dependency to the test crate.
     fn nix_is_root() -> bool {
