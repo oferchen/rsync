@@ -51,6 +51,10 @@ struct ModuleRequestContext<'a> {
     /// modes (stdio, inetd), where the process *is* the connection, surface it as
     /// the process exit status.
     session_exit_code: &'a mut Option<ExitCode>,
+    /// The expanded `post-xfer exec` command, set once the module reaches
+    /// upstream's post-xfer fork point (clientserver.c:967). Every later abort
+    /// runs it; an abort before that point does not.
+    post_xfer_command: Option<String>,
     /// Typed FSM state tracking the connection lifecycle phase.
     ///
     /// Every phase transition goes through `ConnectionState::transition()`,
@@ -730,6 +734,7 @@ fn respond_with_module_request(
         early_input_data,
         client_digests,
         session_exit_code,
+        post_xfer_command: None,
         conn_state,
     };
 

@@ -120,6 +120,7 @@ for detail.
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down instead of refused (#7916)
 - Every pull request is gated on upstream's 3.5.1 test suite, on Linux and macOS, over a pipe and a TCP daemon, as root and non-root (#7387, #7339, #7405, #7408, #7392, #7391, #7996, #8019)
 - The 3.5.0 test suite is retired; its test names are a subset of 3.5.1's. 3.5.0 stays in the interop matrix (#8030)
+- Daemon `%` expansion matches upstream's `expand_vars()`: only `%NAME%` references expand, and the oc-only tokens are removed. Replace `%MODULE%`/`%m` with `%RSYNC_MODULE_NAME%`, `%ADDR%`/`%a` with `%RSYNC_HOST_ADDR%`, `%DIFFHOST%`/`%h` with `%RSYNC_HOST_NAME%`, `%P` with `%RSYNC_MODULE_PATH%` and `%u` with `%RSYNC_USER_NAME%`; `%p` has no hook-template equivalent (use `$RSYNC_PID` in the hook's shell), and `%%` is no longer an escape
 - rsync 3.5.0 joins the interop matrix as a gating peer (#7290, #7337)
 - rsync 3.5.1 joins the interop matrix, with an upstream-baseline oracle in the harness (#8033)
 - Release benchmarks compare against both 3.4.4 and 3.5.0 and report peak RSS for every mode (#7595)

@@ -1,226 +1,83 @@
-/// Context for expanding `%`-delimited variables in daemon config strings.
+/// The `RSYNC_*` connection variables a daemon parameter can reference.
 ///
-/// Upstream: `loadparm.c:lp_string()` performs `%`-variable substitution at
-/// parameter retrieval time, using connection-specific values such as the
-/// client address, hostname, module name, and module path.
-struct VarExpansionContext<'a> {
-    /// Module name from the daemon config.
-    module_name: &'a str,
-    /// Filesystem path of the module root.
-    module_path: &'a str,
-    /// Peer IP address string.
-    client_addr: &'a str,
-    /// Resolved peer hostname, or falls back to `client_addr` when unavailable.
-    client_host: &'a str,
+/// Upstream sets these on the daemon process as the session reaches each one
+/// (clientserver.c:757 `RSYNC_MODULE_NAME`, :770-771 `RSYNC_HOST_NAME` and
+/// `RSYNC_HOST_ADDR`, :815 `RSYNC_USER_NAME`, :920 `RSYNC_MODULE_PATH`), and
+/// every string parameter is expanded through `getenv` when it is first read.
+/// oc does not modify its own environment, so it carries the values here; a
+/// field left `None` is one upstream has not set yet at that parameter's read
+/// point, and the name then falls back to the real environment exactly as
+/// upstream's `getenv` would.
+#[derive(Clone, Copy, Default)]
+struct HookVariables<'a> {
+    /// `RSYNC_MODULE_NAME`.
+    module_name: Option<&'a str>,
+    /// `RSYNC_MODULE_PATH`.
+    module_path: Option<&'a str>,
+    /// `RSYNC_HOST_NAME`.
+    host_name: Option<&'a str>,
+    /// `RSYNC_HOST_ADDR`.
+    host_addr: Option<&'a str>,
+    /// `RSYNC_USER_NAME`; empty for an anonymous module.
+    user_name: Option<&'a str>,
 }
 
-/// Expands `%`-delimited variables in a daemon config string value.
+/// Expands `%NAME%` references in a daemon parameter that is not a shell hook.
 ///
-/// Upstream rsync's `loadparm.c:lp_string()` substitutes `%VARIABLE%` tokens
-/// when retrieving string parameters at connection time. The supported variables
-/// are:
-///
-/// - `%DIFFHOST%` - the client's hostname (reverse DNS), falls back to address
-/// - `%MODULE%` - the module name
-/// - `%RSYNC_MODULE_NAME%` - same as `%MODULE%`
-/// - `%RSYNC_MODULE_PATH%` - the module's configured path
-/// - `%ADDR%` - the client's IP address
-/// - Any other all-uppercase `%NAME%` token is looked up in the process
-///   environment (upstream `loadparm.c:expand_vars` calls `getenv`); a set
-///   variable is substituted, an unset one is left as-is
-/// - Any remaining `%FOO%` token is left as-is
-///
-/// upstream: `loadparm.c:expand_vars()` (loadparm.c:249-313) starts a
-/// reference only at a `%` followed by an uppercase letter, and calls `getenv()`
-/// on the name up to the next `%`. A name that does not resolve is copied
-/// through one byte at a time, so its closing `%` may start the next reference.
-/// Every other `%` - including `%%` - is kept as written.
-fn expand_config_vars(template: &str, ctx: &VarExpansionContext<'_>) -> String {
-    let mut result = String::with_capacity(template.len());
-    let mut rest = template;
-
-    while let Some(pct_pos) = rest.find('%') {
-        result.push_str(&rest[..pct_pos]);
-        let after = &rest[pct_pos + 1..];
-
-        if after.starts_with(|c: char| c.is_ascii_uppercase())
-            && let Some(end) = after.find('%')
-        {
-            let name = &after[..end];
-            let value = resolve_variable(name, ctx)
-                .map(str::to_owned)
-                .or_else(|| env_expansion(name));
-            if let Some(value) = value {
-                result.push_str(&value);
-                rest = &after[end + 1..];
-                continue;
-            }
-        }
-
-        result.push('%');
-        rest = after;
-    }
-
-    result.push_str(rest);
-    result
-}
-
-/// Maps a variable name to its substitution value.
-///
-/// Returns `None` for names that are not built-in connection variables; the
-/// caller then falls back to an environment lookup (`env_expansion`) and, only
-/// if that also misses, preserves the original `%NAME%` token verbatim.
-fn resolve_variable<'a>(name: &str, ctx: &VarExpansionContext<'a>) -> Option<&'a str> {
-    match name {
-        "DIFFHOST" => Some(ctx.client_host),
-        "MODULE" | "RSYNC_MODULE_NAME" => Some(ctx.module_name),
-        "RSYNC_MODULE_PATH" => Some(ctx.module_path),
-        "ADDR" => Some(ctx.client_addr),
-        _ => None,
+/// upstream: `loadparm.c:237-325` `expand_vars(str, shell_escape=0)` - values
+/// are substituted verbatim, and there are no built-in names, no single-letter
+/// escapes and no `%%` escape.
+fn expand_config_vars(template: &str, vars: &HookVariables<'_>) -> String {
+    match expand_vars(template, vars, false) {
+        Ok(expanded) => expanded,
+        Err(_) => unreachable!("only a shell-hook expansion refuses a value"),
     }
 }
 
-/// Looks up an all-uppercase `%NAME%` token in the process environment.
+/// Expands the module's path-type parameters the way upstream reads them.
 ///
-/// Returns the environment value when `name` is a non-empty run of
-/// `[A-Z0-9_]` and the variable is set, otherwise `None` so the caller leaves
-/// the literal `%NAME%` token unchanged.
+/// `secrets file` is read by `auth_server()` (clientserver.c:809), before
+/// `RSYNC_USER_NAME` is set, so it is expanded without it; `path` is read at
+/// :877, after it; the rest are read once `RSYNC_MODULE_PATH` is set at :920.
+/// Called before authentication with `user_name` unset, which expands only
+/// `secrets file`, and again after it to expand the rest.
 ///
-/// upstream: `loadparm.c:expand_vars` (~185) calls `getenv()` on every
-/// `%UPPERCASE...%` token that is not a built-in name; an unset variable leaves
-/// the raw token in place.
-fn env_expansion(name: &str) -> Option<String> {
-    if name.is_empty()
-        || !name
-            .bytes()
-            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
-    {
-        return None;
-    }
-    std::env::var(name).ok()
-}
-
-/// Applies `%`-variable expansion to all path-type fields of a module definition.
-///
-/// Called after module selection when a client connects, before the module path
-/// is validated or used for chroot. Expands variables in: `path`, `temp_dir`,
-/// `log_file`, `secrets_file`, `exclude_from`, `include_from`.
-///
-/// upstream: `loadparm.c` - string parameters are expanded via `lp_string()`
-/// which calls `alloc_sub_advanced()` for each access.
-fn expand_module_vars(module: &mut ModuleDefinition, client_addr: &str, client_host: &str) {
-    let ctx = VarExpansionContext {
-        module_name: &module.name.clone(),
-        module_path: &module.path.display().to_string(),
-        client_addr,
-        client_host,
+/// upstream: `loadparm.c:333` `RETURN_EXPANDED` expands each string parameter
+/// on its first read.
+fn expand_module_vars(module: &mut ModuleDefinition, vars: &HookVariables<'_>) {
+    let expand_path = |path: &Path, vars: &HookVariables<'_>| {
+        PathBuf::from(expand_config_vars(&path.display().to_string(), vars))
     };
-
-    module.path = PathBuf::from(expand_config_vars(&module.path.display().to_string(), &ctx));
-
-    if let Some(ref dir) = module.temp_dir {
-        module.temp_dir = Some(expand_config_vars(dir, &ctx));
-    }
-
-    if let Some(ref path) = module.log_file {
-        module.log_file = Some(PathBuf::from(expand_config_vars(
-            &path.display().to_string(),
-            &ctx,
-        )));
-    }
-
-    if let Some(ref path) = module.secrets_file {
-        module.secrets_file = Some(PathBuf::from(expand_config_vars(
-            &path.display().to_string(),
-            &ctx,
-        )));
-    }
-
-    if let Some(ref path) = module.exclude_from {
-        module.exclude_from = Some(PathBuf::from(expand_config_vars(
-            &path.display().to_string(),
-            &ctx,
-        )));
-    }
-
-    if let Some(ref path) = module.include_from {
-        module.include_from = Some(PathBuf::from(expand_config_vars(
-            &path.display().to_string(),
-            &ctx,
-        )));
-    }
-}
-
-/// Context for expanding single-character `%` variables in daemon paths.
-///
-/// Upstream rsync expands `%`-escapes in certain config string values at
-/// runtime - for example `log file`, `early_exec`, `pre-xfer exec`, and
-/// `post-xfer exec`. The supported escapes mirror a subset of the log format
-/// variables but apply to path/command strings rather than per-file log lines.
-///
-/// upstream: `log.c:lp_do_log_file()` and `clientserver.c` expand `%P`, `%m`,
-/// `%u`, and `%%` in path contexts.
-struct PathExpansionContext<'a> {
-    /// Filesystem path of the module root (`%P`).
-    module_path: &'a str,
-    /// Module name from the daemon config (`%m`).
-    module_name: &'a str,
-    /// Authenticated username, or empty if anonymous (`%u`).
-    username: &'a str,
-    /// Peer IP address string (`%a`).
-    remote_addr: &'a str,
-    /// Resolved peer hostname (`%h`).
-    hostname: &'a str,
-    /// Daemon process ID (`%p`).
-    pid: u32,
-}
-
-/// Expands single-character `%` escapes in a daemon path or exec command string.
-///
-/// Processes `%X` escape sequences by substituting the corresponding field from
-/// `ctx`. Supports the path-relevant subset of log format escapes:
-///
-/// - `%P` - module path
-/// - `%m` - module name
-/// - `%u` - authenticated username
-/// - `%a` - remote IP address
-/// - `%h` - remote hostname
-/// - `%p` - daemon process ID
-/// - `%%` - literal `%`
-///
-/// Unknown escapes are passed through verbatim, matching upstream behaviour.
-///
-/// upstream: `log.c` and `clientserver.c` - path strings are expanded at
-/// connection time using the active module and session context.
-fn expand_daemon_path(template: &str, ctx: &PathExpansionContext<'_>) -> String {
-    let mut result = String::with_capacity(template.len());
-    let mut chars = template.chars();
-
-    while let Some(ch) = chars.next() {
-        if ch != '%' {
-            result.push(ch);
-            continue;
+    if vars.user_name.is_none() {
+        if let Some(path) = module.secrets_file.as_deref() {
+            module.secrets_file = Some(expand_path(path, vars));
         }
-
-        match chars.next() {
-            Some('P') => result.push_str(ctx.module_path),
-            Some('m') => result.push_str(ctx.module_name),
-            Some('u') => result.push_str(ctx.username),
-            Some('a') => result.push_str(ctx.remote_addr),
-            Some('h') => result.push_str(ctx.hostname),
-            Some('p') => push_u32(&mut result, ctx.pid),
-            Some('%') => result.push('%'),
-            Some(other) => {
-                result.push('%');
-                result.push(other);
-            }
-            None => {
-                result.push('%');
-            }
-        }
+        return;
     }
 
-    result
+    let path_vars = HookVariables {
+        module_path: None,
+        ..*vars
+    };
+    module.path = expand_path(&module.path, &path_vars);
+
+    let module_path = module.path.display().to_string();
+    let later_vars = HookVariables {
+        module_path: Some(&module_path),
+        ..*vars
+    };
+    if let Some(dir) = module.temp_dir.as_deref() {
+        module.temp_dir = Some(expand_config_vars(dir, &later_vars));
+    }
+    if let Some(path) = module.log_file.as_deref() {
+        module.log_file = Some(expand_path(path, &later_vars));
+    }
+    if let Some(path) = module.exclude_from.as_deref() {
+        module.exclude_from = Some(expand_path(path, &later_vars));
+    }
+    if let Some(path) = module.include_from.as_deref() {
+        module.include_from = Some(expand_path(path, &later_vars));
+    }
 }
 
 /// The shell quoting context a substituted value lands in.
@@ -347,7 +204,7 @@ fn shell_escape_value(value: &str, context: ShellQuoteContext) -> String {
 /// `exit_cleanup(RERR_UNSUPPORTED)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ShellHookRefusal {
-    /// The token as written in the template, e.g. `%RSYNC_USER_NAME%` or `%u`.
+    /// The token as written in the template, e.g. `%RSYNC_USER_NAME%`.
     token: String,
 }
 
@@ -363,51 +220,35 @@ impl ShellHookRefusal {
     }
 }
 
-/// Splits a leading `NAME%` off `rest` when it is a well-formed variable name.
+/// Splits a leading `NAME%` off `rest` when it is a variable reference.
 ///
-/// Requires the upstream shape - an uppercase first letter (`isUpper(f+1)`)
-/// followed by `[A-Z0-9_]` and a closing `%`. The well-formedness check is what
-/// keeps oc's single-character escapes working: `%P/%m` yields the candidate
-/// name `P/`, which is rejected here and falls through to the `%P` reading,
-/// while `%PATH%` is a real variable reference and is read as one.
-///
-/// upstream: `loadparm.c:250-252`.
+/// upstream: loadparm.c:250-252 - a reference is `%`, an uppercase letter,
+/// then anything up to the next `%`; the whole name is handed to `getenv`.
 fn delimited_variable(rest: &str) -> Option<(&str, &str)> {
-    let end = rest.find('%')?;
-    let name = &rest[..end];
-    let mut bytes = name.bytes();
-
-    if !bytes.next()?.is_ascii_uppercase() {
+    if !rest.as_bytes().first()?.is_ascii_uppercase() {
         return None;
     }
-    if !bytes.all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_') {
-        return None;
-    }
-
-    Some((name, &rest[end + 1..]))
+    let end = rest[1..].find('%')? + 1;
+    Some((&rest[..end], &rest[end + 1..]))
 }
 
-/// Resolves a delimited `%NAME%` reference for a shell-executed hook.
+/// Resolves a `%NAME%` reference.
 ///
-/// The connection variables are read from `ctx` rather than the process
-/// environment: upstream sets them on the daemon process before retrieving the
-/// hook directive (`clientserver.c:757/770/771/815/920`, all ahead of the
-/// retrieval at `:959`), whereas oc sets them on the hook child instead. Any
-/// other name falls back to the real environment, matching upstream's `getenv`.
-///
-/// `RSYNC_REQUEST` and `RSYNC_ARG<n>` are deliberately absent: upstream sets
-/// those inside the forked pre-exec child (`clientserver.c:568`), after the
-/// directive has already been expanded, so they are not references a template
-/// can resolve on either implementation.
-fn resolve_hook_variable(name: &str, ctx: &PathExpansionContext<'_>) -> Option<String> {
-    match name {
-        "RSYNC_MODULE_NAME" => Some(ctx.module_name.to_string()),
-        "RSYNC_MODULE_PATH" => Some(ctx.module_path.to_string()),
-        "RSYNC_HOST_NAME" => Some(ctx.hostname.to_string()),
-        "RSYNC_HOST_ADDR" => Some(ctx.remote_addr.to_string()),
-        "RSYNC_USER_NAME" => Some(ctx.username.to_string()),
-        _ => env_expansion(name),
-    }
+/// A connection variable that has been set comes from `vars`; anything else is
+/// a plain `getenv`, as upstream. `RSYNC_PID`, `RSYNC_REQUEST` and `RSYNC_ARG#`
+/// are therefore left verbatim in the hook directives on both implementations:
+/// upstream sets them only after the directives were read (clientserver.c:962,
+/// :568).
+fn resolve_hook_variable(name: &str, vars: &HookVariables<'_>) -> Option<String> {
+    let set = match name {
+        "RSYNC_MODULE_NAME" => vars.module_name,
+        "RSYNC_MODULE_PATH" => vars.module_path,
+        "RSYNC_HOST_NAME" => vars.host_name,
+        "RSYNC_HOST_ADDR" => vars.host_addr,
+        "RSYNC_USER_NAME" => vars.user_name,
+        _ => None,
+    };
+    set.map(str::to_owned).or_else(|| std::env::var(name).ok())
 }
 
 /// Substitutes one resolved value, refusing or escaping it when peer-influenced.
@@ -435,72 +276,54 @@ fn substitute_hook_value(
 
 /// Expands a shell-executed hook command template.
 ///
-/// Handles upstream's `%NAME%` environment references and oc's single-character
-/// escapes in ONE walk, so a substituted value is never rescanned by the other
-/// form. Delimited names win, because that is the only form upstream has.
-///
-/// Values that reach a shell-executed hook are escaped for the quoting context
-/// they land in, and refused outright when they carry a character a shell could
-/// act on.
-///
 /// upstream: `loadparm.c:237-325` `expand_vars(str, shell_escape=1)`, reached
 /// via `FN_LOCAL_STRING_SHELL` for `early exec`, `name converter`,
 /// `post-xfer exec` and `pre-xfer exec` (`daemon-parm.h:349/363/365/366`).
 fn expand_exec_command(
     command: &str,
-    ctx: &PathExpansionContext<'_>,
+    vars: &HookVariables<'_>,
 ) -> Result<String, ShellHookRefusal> {
-    let mut out = String::with_capacity(command.len());
+    expand_vars(command, vars, true)
+}
+
+/// Upstream's `expand_vars()`.
+///
+/// Only a `%NAME%` reference is expanded - a `%`, an uppercase letter, then
+/// anything up to the next `%` - and only when the name resolves. Every other
+/// `%` is literal, so `date +%m` and `100%%` pass through unchanged. With
+/// `shell` set, a value under an `RSYNC_` name is escaped for the quoting
+/// context it lands in, and refused outright when it carries a character a
+/// shell could act on.
+///
+/// upstream: `loadparm.c:237-325`.
+fn expand_vars(
+    template: &str,
+    vars: &HookVariables<'_>,
+    shell: bool,
+) -> Result<String, ShellHookRefusal> {
+    let mut out = String::with_capacity(template.len());
     let mut scanner = ShellQuoteScanner::default();
-    let mut rest = command;
+    let mut rest = template;
 
     while let Some(pos) = rest.find('%') {
         push_literal(&mut out, &mut scanner, &rest[..pos]);
         rest = &rest[pos + 1..];
 
-        if let Some(tail) = rest.strip_prefix('%') {
-            push_literal(&mut out, &mut scanner, "%%");
-            rest = tail;
-            continue;
-        }
-
-        if let Some((name, tail)) = delimited_variable(rest) {
-            match resolve_hook_variable(name, ctx) {
-                Some(value) => {
-                    let token = format!("%{name}%");
-                    let peer_influenced = name.starts_with("RSYNC_");
-                    out.push_str(&substitute_hook_value(
-                        &token,
-                        peer_influenced,
-                        &value,
-                        scanner.context(),
-                    )?);
-                }
-                // upstream leaves an unresolved reference verbatim; it must not
-                // then be re-read as a single-character escape.
-                None => push_literal(&mut out, &mut scanner, &format!("%{name}%")),
+        let resolved = delimited_variable(rest)
+            .and_then(|(name, tail)| Some((name, tail, resolve_hook_variable(name, vars)?)));
+        match resolved {
+            Some((name, tail, value)) => {
+                out.push_str(&substitute_hook_value(
+                    &format!("%{name}%"),
+                    shell && name.starts_with("RSYNC_"),
+                    &value,
+                    scanner.context(),
+                )?);
+                rest = tail;
             }
-            rest = tail;
-            continue;
-        }
-
-        let mut chars = rest.chars();
-        match chars.next() {
-            Some(escape) => {
-                match single_char_escape(escape, ctx) {
-                    Some((value, peer_influenced)) => {
-                        let token = format!("%{escape}");
-                        out.push_str(&substitute_hook_value(
-                            &token,
-                            peer_influenced,
-                            &value,
-                            scanner.context(),
-                        )?);
-                    }
-                    None => push_literal(&mut out, &mut scanner, &format!("%{escape}")),
-                }
-                rest = chars.as_str();
-            }
+            // upstream: loadparm.c:311-312 - an unresolved `%` is copied and the
+            // scan resumes at the very next byte, so `%%RSYNC_X%` still
+            // expands the reference after the first `%`.
             None => push_literal(&mut out, &mut scanner, "%"),
         }
     }
@@ -517,671 +340,272 @@ fn push_literal(out: &mut String, scanner: &mut ShellQuoteScanner, text: &str) {
     out.push_str(text);
 }
 
-/// Resolves one oc single-character escape, reporting whether the value is
-/// peer-influenced.
-///
-/// ⚠ These escapes are an oc extension: upstream expands only `%NAME%` in
-/// config values (`loadparm.c:250`, gated on `isUpper(f+1)` plus a closing
-/// `%`), so `%m` stays literal there. `%u`, `%h` and `%a` carry values the peer
-/// influences, so they take the same refusal as a `%RSYNC_*%` reference; the
-/// rest are operator- or daemon-derived and substitute verbatim.
-fn single_char_escape(escape: char, ctx: &PathExpansionContext<'_>) -> Option<(String, bool)> {
-    match escape {
-        'P' => Some((ctx.module_path.to_string(), false)),
-        'm' => Some((ctx.module_name.to_string(), false)),
-        'p' => Some((ctx.pid.to_string(), false)),
-        'u' => Some((ctx.username.to_string(), true)),
-        'a' => Some((ctx.remote_addr.to_string(), true)),
-        'h' => Some((ctx.hostname.to_string(), true)),
-        _ => None,
-    }
-}
-
-/// Applies single-character `%`-escape expansion to a log file path.
-///
-/// Expands `%P`, `%m`, `%u`, `%a`, `%h`, `%p`, and `%%` in the log file path
-/// using the provided path expansion context. Called when opening a per-module
-/// log file at connection time.
-///
-/// upstream: `log.c:lp_do_log_file()` - the log file path is expanded at
-/// connection time using the current module and session context.
-#[allow(dead_code)] // Wired when per-module log files are opened at connection time
-fn expand_log_file_path(path: &str, ctx: &PathExpansionContext<'_>) -> PathBuf {
-    PathBuf::from(expand_daemon_path(path, ctx))
-}
-
 #[cfg(test)]
 mod variable_expansion_tests {
     use super::*;
 
-    fn sample_ctx<'a>() -> VarExpansionContext<'a> {
-        VarExpansionContext {
-            module_name: "backup",
-            module_path: "/srv/backup",
-            client_addr: "192.168.1.100",
-            client_host: "client.example.com",
+    fn sample_hook_vars<'a>() -> HookVariables<'a> {
+        HookVariables {
+            module_path: Some("/srv/backup"),
+            module_name: Some("backup"),
+            user_name: Some("alice"),
+            host_addr: Some("192.168.1.100"),
+            host_name: Some("client.example.com"),
+        }
+    }
+
+    /// The only `%` forms upstream expands are `%NAME%` references; the old oc
+    /// built-ins `%MODULE%`, `%ADDR%` and `%DIFFHOST%` are plain names that
+    /// `getenv` does not find. Measured on 3.5.1: `path = .../%MODULE%` serves
+    /// the directory literally named `%MODULE%`.
+    #[test]
+    fn config_vars_have_no_built_in_names() {
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _module = crate::test_env::EnvGuard::remove("MODULE");
+        let _addr = crate::test_env::EnvGuard::remove("ADDR");
+        let _host = crate::test_env::EnvGuard::remove("DIFFHOST");
+        let vars = sample_hook_vars();
+        assert_eq!(
+            expand_config_vars("/srv/%MODULE%/%ADDR%/%DIFFHOST%", &vars),
+            "/srv/%MODULE%/%ADDR%/%DIFFHOST%"
+        );
+    }
+
+    #[test]
+    fn config_vars_expand_rsync_names_verbatim() {
+        let vars = HookVariables {
+            user_name: Some("a b"),
+            ..sample_hook_vars()
+        };
+        // Not a shell hook: a value is substituted as-is, never escaped or
+        // refused. upstream: loadparm.c:266 gates both on `shell_escape`.
+        assert_eq!(
+            expand_config_vars("/home/%RSYNC_USER_NAME%/%RSYNC_MODULE_NAME%", &vars),
+            "/home/a b/backup"
+        );
+    }
+
+    #[test]
+    fn config_vars_keep_every_other_percent() {
+        let vars = sample_hook_vars();
+        for literal in ["100%%", "/p/%%/d", "%m %P %u", "/trailing%", "%lower%"] {
+            assert_eq!(expand_config_vars(literal, &vars), literal);
         }
     }
 
     #[test]
-    fn expand_diffhost() {
-        let ctx = sample_ctx();
-        assert_eq!(
-            expand_config_vars("/data/%DIFFHOST%/files", &ctx),
-            "/data/client.example.com/files"
-        );
-    }
-
-    #[test]
-    fn expand_module() {
-        let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("/srv/%MODULE%", &ctx), "/srv/backup");
-    }
-
-    #[test]
-    fn expand_rsync_module_name() {
-        let ctx = sample_ctx();
-        assert_eq!(
-            expand_config_vars("/srv/%RSYNC_MODULE_NAME%/data", &ctx),
-            "/srv/backup/data"
-        );
-    }
-
-    #[test]
-    fn expand_rsync_module_path() {
-        let ctx = sample_ctx();
-        assert_eq!(
-            expand_config_vars("%RSYNC_MODULE_PATH%/sub", &ctx),
-            "/srv/backup/sub"
-        );
-    }
-
-    #[test]
-    fn expand_addr() {
-        let ctx = sample_ctx();
-        assert_eq!(
-            expand_config_vars("/logs/%ADDR%.log", &ctx),
-            "/logs/192.168.1.100.log"
-        );
-    }
-
-    #[test]
-    fn expand_keeps_double_percent_verbatim() {
-        // upstream: loadparm.c:expand_vars has no `%%` escape - a '%' not
-        // followed by an uppercase letter is copied as-is. `path = /srv/100%%`
-        // serves the directory literally named `100%%`, not `100%`.
-        let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("100%%", &ctx), "100%%");
-        assert_eq!(expand_config_vars("a%%b%%c", &ctx), "a%%b%%c");
-    }
-
-    #[test]
-    fn expand_unresolved_name_lets_its_closing_percent_start_a_reference() {
-        // upstream: loadparm.c:expand_vars copies an unresolved `%NAME` one
-        // byte at a time, so the '%' that closed it is scanned again and can
-        // open the next reference.
+    fn config_vars_fall_back_to_the_environment() {
         let _lock = crate::test_env::ENV_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _guard = crate::test_env::EnvGuard::remove("OC_RSYNC_TEST_EXPAND_UNSET");
-        let ctx = sample_ctx();
+        let _set = crate::test_env::EnvGuard::set(
+            "OC_RSYNC_TEST_EXPAND_SET",
+            std::ffi::OsStr::new("value"),
+        );
+        let vars = sample_hook_vars();
         assert_eq!(
-            expand_config_vars("%OC_RSYNC_TEST_EXPAND_UNSET%RSYNC_MODULE_NAME%", &ctx),
-            "%OC_RSYNC_TEST_EXPAND_UNSETbackup"
+            expand_config_vars("/x/%OC_RSYNC_TEST_EXPAND_SET%", &vars),
+            "/x/value"
         );
     }
 
+    /// upstream: loadparm.c:250-312 - an unresolved `%FOO%` copies only its
+    /// first `%` and resumes at the next byte, so the `%` that closed `FOO` can
+    /// open the next reference.
     #[test]
-    fn expand_unset_env_variable_preserved() {
-        // upstream: loadparm.c:expand_vars - an all-uppercase token that is not
-        // a built-in name and is unset in the environment leaves the literal
-        // `%TOKEN%` in place (getenv returns NULL, so the raw chars pass
-        // through). WHY: a config author's `%FOO%` must not silently vanish when
-        // FOO is undefined.
+    fn config_vars_resume_after_an_unresolved_name() {
         let _lock = crate::test_env::ENV_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _guard = crate::test_env::EnvGuard::remove("OC_RSYNC_TEST_EXPAND_UNSET");
-        let ctx = sample_ctx();
+        let _unset = crate::test_env::EnvGuard::remove("OC_RSYNC_TEST_FOO");
+        let _set = crate::test_env::EnvGuard::set("OC_RSYNC_TEST_BAR", std::ffi::OsStr::new("x"));
+        let vars = sample_hook_vars();
         assert_eq!(
-            expand_config_vars("/data/%OC_RSYNC_TEST_EXPAND_UNSET%/files", &ctx),
-            "/data/%OC_RSYNC_TEST_EXPAND_UNSET%/files"
+            expand_config_vars("%OC_RSYNC_TEST_FOO%OC_RSYNC_TEST_BAR%", &vars),
+            "%OC_RSYNC_TEST_FOOx"
         );
     }
 
-    #[test]
-    fn expand_env_variable_from_process_environment() {
-        // upstream: loadparm.c:expand_vars (~185) calls getenv() on any
-        // %UPPERCASE% token that is not a built-in name and substitutes the
-        // value when set. WHY: rsyncd.conf paths like `path = %HOME%/rsync` must
-        // resolve against the daemon's environment exactly as upstream does.
-        let _lock = crate::test_env::ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let _guard = crate::test_env::EnvGuard::set(
-            "OC_RSYNC_TEST_EXPAND_VAR",
-            std::ffi::OsStr::new("/srv/env"),
-        );
-        let ctx = sample_ctx();
-        assert_eq!(
-            expand_config_vars("%OC_RSYNC_TEST_EXPAND_VAR%/rsync", &ctx),
-            "/srv/env/rsync"
-        );
-    }
-
-    #[test]
-    fn expand_lowercase_token_not_env_expanded() {
-        // A non-uppercase token is not an environment variable name and is left
-        // literal even if a same-named var were set, matching upstream's
-        // isUpper() gate in expand_vars.
-        let ctx = sample_ctx();
-        assert_eq!(
-            expand_config_vars("/data/%path%/files", &ctx),
-            "/data/%path%/files"
-        );
-    }
-
-    #[test]
-    fn expand_empty_string() {
-        let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("", &ctx), "");
-    }
-
-    #[test]
-    fn expand_no_variables() {
-        let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("/plain/path", &ctx), "/plain/path");
-    }
-
-    #[test]
-    fn expand_trailing_percent_no_close() {
-        let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("/path/%MODULE", &ctx), "/path/%MODULE");
-    }
-
-    #[test]
-    fn expand_empty_variable_name() {
-        let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("/path/%%/dir", &ctx), "/path/%%/dir");
-    }
-
-    #[test]
-    fn expand_multiple_variables() {
-        let ctx = sample_ctx();
-        assert_eq!(
-            expand_config_vars("/data/%MODULE%/%ADDR%/files", &ctx),
-            "/data/backup/192.168.1.100/files"
-        );
-    }
-
-    #[test]
-    fn expand_adjacent_variables() {
-        let ctx = sample_ctx();
-        assert_eq!(
-            expand_config_vars("%MODULE%%ADDR%", &ctx),
-            "backup192.168.1.100"
-        );
-    }
-
-    #[test]
-    fn expand_all_variables_combined() {
-        let ctx = sample_ctx();
-        let input = "%DIFFHOST%-%MODULE%-%RSYNC_MODULE_NAME%-%RSYNC_MODULE_PATH%-%ADDR%";
-        let expected = "client.example.com-backup-backup-/srv/backup-192.168.1.100";
-        assert_eq!(expand_config_vars(input, &ctx), expected);
-    }
-
-    #[test]
-    fn expand_variable_at_start() {
-        let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("%MODULE%/data", &ctx), "backup/data");
-    }
-
-    #[test]
-    fn expand_variable_at_end() {
-        let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("/data/%MODULE%", &ctx), "/data/backup");
-    }
-
-    #[test]
-    fn expand_only_variable() {
-        let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("%MODULE%", &ctx), "backup");
-    }
-
-    #[test]
-    fn expand_percent_before_variable() {
-        let ctx = sample_ctx();
-        assert_eq!(expand_config_vars("100%% %MODULE%", &ctx), "100%% backup");
-    }
-
-    #[test]
-    fn resolve_diffhost() {
-        let ctx = sample_ctx();
-        assert_eq!(
-            resolve_variable("DIFFHOST", &ctx),
-            Some("client.example.com")
-        );
-    }
-
-    #[test]
-    fn resolve_module() {
-        let ctx = sample_ctx();
-        assert_eq!(resolve_variable("MODULE", &ctx), Some("backup"));
-    }
-
-    #[test]
-    fn resolve_rsync_module_name() {
-        let ctx = sample_ctx();
-        assert_eq!(resolve_variable("RSYNC_MODULE_NAME", &ctx), Some("backup"));
-    }
-
-    #[test]
-    fn resolve_rsync_module_path() {
-        let ctx = sample_ctx();
-        assert_eq!(
-            resolve_variable("RSYNC_MODULE_PATH", &ctx),
-            Some("/srv/backup")
-        );
-    }
-
-    #[test]
-    fn resolve_addr() {
-        let ctx = sample_ctx();
-        assert_eq!(resolve_variable("ADDR", &ctx), Some("192.168.1.100"));
-    }
-
-    #[test]
-    fn resolve_unknown() {
-        let ctx = sample_ctx();
-        assert_eq!(resolve_variable("NOPE", &ctx), None);
-    }
-
-    #[test]
-    fn expand_module_vars_expands_path() {
-        let mut module = ModuleDefinition {
-            name: "photos".to_owned(),
-            path: PathBuf::from("/data/%MODULE%"),
+    fn module_with(path: &str) -> ModuleDefinition {
+        ModuleDefinition {
+            name: "backup".to_owned(),
+            path: PathBuf::from(path),
+            temp_dir: Some("%RSYNC_MODULE_PATH%/tmp".to_owned()),
+            secrets_file: Some(PathBuf::from(
+                "/etc/%RSYNC_HOST_ADDR%-%RSYNC_USER_NAME%.secrets",
+            )),
+            include_from: Some(PathBuf::from("%RSYNC_MODULE_PATH%/inc")),
             ..Default::default()
-        };
-        expand_module_vars(&mut module, "10.0.0.1", "host.local");
-        assert_eq!(module.path, PathBuf::from("/data/photos"));
-    }
-
-    #[test]
-    fn expand_module_vars_expands_temp_dir() {
-        let mut module = ModuleDefinition {
-            name: "docs".to_owned(),
-            path: PathBuf::from("/srv/docs"),
-            temp_dir: Some("/tmp/%MODULE%".to_owned()),
-            ..Default::default()
-        };
-        expand_module_vars(&mut module, "10.0.0.1", "host.local");
-        assert_eq!(module.temp_dir.as_deref(), Some("/tmp/docs"));
-    }
-
-    #[test]
-    fn expand_module_vars_expands_log_file() {
-        let mut module = ModuleDefinition {
-            name: "logs".to_owned(),
-            path: PathBuf::from("/srv/logs"),
-            log_file: Some(PathBuf::from("/var/log/%MODULE%.log")),
-            ..Default::default()
-        };
-        expand_module_vars(&mut module, "10.0.0.1", "host.local");
-        assert_eq!(module.log_file, Some(PathBuf::from("/var/log/logs.log")));
-    }
-
-    #[test]
-    fn expand_module_vars_expands_secrets_file() {
-        let mut module = ModuleDefinition {
-            name: "secure".to_owned(),
-            path: PathBuf::from("/srv/secure"),
-            secrets_file: Some(PathBuf::from("/etc/%MODULE%.secrets")),
-            ..Default::default()
-        };
-        expand_module_vars(&mut module, "10.0.0.1", "host.local");
-        assert_eq!(
-            module.secrets_file,
-            Some(PathBuf::from("/etc/secure.secrets"))
-        );
-    }
-
-    #[test]
-    fn expand_module_vars_expands_exclude_from() {
-        let mut module = ModuleDefinition {
-            name: "data".to_owned(),
-            path: PathBuf::from("/srv/data"),
-            exclude_from: Some(PathBuf::from("/etc/%MODULE%.exclude")),
-            ..Default::default()
-        };
-        expand_module_vars(&mut module, "10.0.0.1", "host.local");
-        assert_eq!(
-            module.exclude_from,
-            Some(PathBuf::from("/etc/data.exclude"))
-        );
-    }
-
-    #[test]
-    fn expand_module_vars_expands_include_from() {
-        let mut module = ModuleDefinition {
-            name: "data".to_owned(),
-            path: PathBuf::from("/srv/data"),
-            include_from: Some(PathBuf::from("/etc/%MODULE%.include")),
-            ..Default::default()
-        };
-        expand_module_vars(&mut module, "10.0.0.1", "host.local");
-        assert_eq!(
-            module.include_from,
-            Some(PathBuf::from("/etc/data.include"))
-        );
-    }
-
-    #[test]
-    fn expand_module_vars_leaves_none_fields_unchanged() {
-        let mut module = ModuleDefinition {
-            name: "plain".to_owned(),
-            path: PathBuf::from("/srv/plain"),
-            ..Default::default()
-        };
-        expand_module_vars(&mut module, "10.0.0.1", "host.local");
-        assert_eq!(module.path, PathBuf::from("/srv/plain"));
-        assert!(module.temp_dir.is_none());
-        assert!(module.log_file.is_none());
-        assert!(module.secrets_file.is_none());
-        assert!(module.exclude_from.is_none());
-        assert!(module.include_from.is_none());
-    }
-
-    #[test]
-    fn expand_module_vars_with_addr_in_path() {
-        let mut module = ModuleDefinition {
-            name: "perhost".to_owned(),
-            path: PathBuf::from("/data/%ADDR%/%MODULE%"),
-            ..Default::default()
-        };
-        expand_module_vars(&mut module, "192.168.1.50", "client.lan");
-        assert_eq!(module.path, PathBuf::from("/data/192.168.1.50/perhost"));
-    }
-
-    #[test]
-    fn expand_module_vars_with_diffhost_in_path() {
-        let mut module = ModuleDefinition {
-            name: "perhost".to_owned(),
-            path: PathBuf::from("/backup/%DIFFHOST%"),
-            ..Default::default()
-        };
-        expand_module_vars(&mut module, "10.0.0.1", "laptop.home");
-        assert_eq!(module.path, PathBuf::from("/backup/laptop.home"));
-    }
-
-    #[test]
-    fn expand_module_vars_multiple_fields() {
-        let mut module = ModuleDefinition {
-            name: "multi".to_owned(),
-            path: PathBuf::from("/data/%MODULE%"),
-            temp_dir: Some("/tmp/%MODULE%".to_owned()),
-            log_file: Some(PathBuf::from("/var/log/%MODULE%.log")),
-            secrets_file: Some(PathBuf::from("/etc/%MODULE%.secrets")),
-            exclude_from: Some(PathBuf::from("/etc/%MODULE%.exclude")),
-            include_from: Some(PathBuf::from("/etc/%MODULE%.include")),
-            ..Default::default()
-        };
-        expand_module_vars(&mut module, "10.0.0.1", "host.local");
-        assert_eq!(module.path, PathBuf::from("/data/multi"));
-        assert_eq!(module.temp_dir.as_deref(), Some("/tmp/multi"));
-        assert_eq!(module.log_file, Some(PathBuf::from("/var/log/multi.log")));
-        assert_eq!(
-            module.secrets_file,
-            Some(PathBuf::from("/etc/multi.secrets"))
-        );
-        assert_eq!(
-            module.exclude_from,
-            Some(PathBuf::from("/etc/multi.exclude"))
-        );
-        assert_eq!(
-            module.include_from,
-            Some(PathBuf::from("/etc/multi.include"))
-        );
-    }
-
-    fn sample_path_ctx<'a>() -> PathExpansionContext<'a> {
-        PathExpansionContext {
-            module_path: "/srv/backup",
-            module_name: "backup",
-            username: "alice",
-            remote_addr: "192.168.1.100",
-            hostname: "client.example.com",
-            pid: 42,
         }
     }
 
+    /// Each parameter sees only the variables upstream has set when it reads
+    /// it: `secrets file` (clientserver.c:809) precedes `RSYNC_USER_NAME`
+    /// (:815), `path` (:877) precedes `RSYNC_MODULE_PATH` (:920), and the rest
+    /// follow both.
     #[test]
-    fn daemon_path_expand_module_path() {
-        let ctx = sample_path_ctx();
-        assert_eq!(expand_daemon_path("%P/logs", &ctx), "/srv/backup/logs");
-    }
+    fn module_vars_follow_upstream_set_env_order() {
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _user = crate::test_env::EnvGuard::remove("RSYNC_USER_NAME");
+        let _path = crate::test_env::EnvGuard::remove("RSYNC_MODULE_PATH");
+        let mut module = module_with("/srv/%RSYNC_USER_NAME%/%RSYNC_MODULE_PATH%");
 
-    #[test]
-    fn daemon_path_expand_module_name() {
-        let ctx = sample_path_ctx();
-        assert_eq!(
-            expand_daemon_path("/var/log/%m.log", &ctx),
-            "/var/log/backup.log"
-        );
-    }
-
-    #[test]
-    fn daemon_path_expand_username() {
-        let ctx = sample_path_ctx();
-        assert_eq!(
-            expand_daemon_path("/home/%u/sync", &ctx),
-            "/home/alice/sync"
-        );
-    }
-
-    #[test]
-    fn daemon_path_expand_remote_addr() {
-        let ctx = sample_path_ctx();
-        assert_eq!(
-            expand_daemon_path("/logs/%a.log", &ctx),
-            "/logs/192.168.1.100.log"
-        );
-    }
-
-    #[test]
-    fn daemon_path_expand_hostname() {
-        let ctx = sample_path_ctx();
-        assert_eq!(
-            expand_daemon_path("/logs/%h/data", &ctx),
-            "/logs/client.example.com/data"
-        );
-    }
-
-    #[test]
-    fn daemon_path_expand_pid() {
-        let ctx = sample_path_ctx();
-        assert_eq!(
-            expand_daemon_path("/var/run/rsync.%p.lock", &ctx),
-            "/var/run/rsync.42.lock"
-        );
-    }
-
-    #[test]
-    fn daemon_path_expand_literal_percent() {
-        let ctx = sample_path_ctx();
-        assert_eq!(expand_daemon_path("100%%", &ctx), "100%");
-    }
-
-    #[test]
-    fn daemon_path_expand_unknown_escape_passthrough() {
-        let ctx = sample_path_ctx();
-        assert_eq!(expand_daemon_path("/path/%Z/data", &ctx), "/path/%Z/data");
-    }
-
-    #[test]
-    fn daemon_path_expand_trailing_percent() {
-        let ctx = sample_path_ctx();
-        assert_eq!(expand_daemon_path("/path%", &ctx), "/path%");
-    }
-
-    #[test]
-    fn daemon_path_expand_empty_string() {
-        let ctx = sample_path_ctx();
-        assert_eq!(expand_daemon_path("", &ctx), "");
-    }
-
-    #[test]
-    fn daemon_path_expand_no_escapes() {
-        let ctx = sample_path_ctx();
-        assert_eq!(expand_daemon_path("/plain/path", &ctx), "/plain/path");
-    }
-
-    #[test]
-    fn daemon_path_expand_multiple_escapes() {
-        let ctx = sample_path_ctx();
-        assert_eq!(
-            expand_daemon_path("/var/log/%m/%h.log", &ctx),
-            "/var/log/backup/client.example.com.log"
-        );
-    }
-
-    #[test]
-    fn daemon_path_expand_adjacent_escapes() {
-        let ctx = sample_path_ctx();
-        assert_eq!(expand_daemon_path("%m%P", &ctx), "backup/srv/backup");
-    }
-
-    #[test]
-    fn daemon_path_expand_empty_username() {
-        let ctx = PathExpansionContext {
-            username: "",
-            ..sample_path_ctx()
+        let pre_auth = HookVariables {
+            user_name: None,
+            module_path: None,
+            ..sample_hook_vars()
         };
-        assert_eq!(expand_daemon_path("/home/%u/data", &ctx), "/home//data");
-    }
-
-    #[test]
-    fn daemon_path_expand_all_escapes() {
-        let ctx = sample_path_ctx();
-        let result = expand_daemon_path("%P-%m-%u-%a-%h-%p", &ctx);
+        expand_module_vars(&mut module, &pre_auth);
         assert_eq!(
-            result,
-            "/srv/backup-backup-alice-192.168.1.100-client.example.com-42"
+            module.secrets_file,
+            Some(PathBuf::from(
+                "/etc/192.168.1.100-%RSYNC_USER_NAME%.secrets"
+            ))
+        );
+        assert_eq!(
+            module.path,
+            PathBuf::from("/srv/%RSYNC_USER_NAME%/%RSYNC_MODULE_PATH%"),
+            "nothing but the secrets file is read before auth"
+        );
+
+        expand_module_vars(&mut module, &sample_hook_vars());
+        assert_eq!(module.path, PathBuf::from("/srv/alice/%RSYNC_MODULE_PATH%"));
+        assert_eq!(
+            module.temp_dir.as_deref(),
+            Some("/srv/alice/%RSYNC_MODULE_PATH%/tmp")
+        );
+        assert_eq!(
+            module.include_from,
+            Some(PathBuf::from("/srv/alice/%RSYNC_MODULE_PATH%/inc"))
         );
     }
 
-    fn expanded(command: &str, ctx: &PathExpansionContext<'_>) -> String {
-        expand_exec_command(command, ctx).expect("template must expand")
+    fn expanded(command: &str, vars: &HookVariables<'_>) -> String {
+        expand_exec_command(command, vars).expect("template must expand")
+    }
+
+    /// upstream: loadparm.c:250 expands only `%NAME%` with an uppercase first
+    /// letter. Measured on 3.5.1: `pre-xfer exec = echo "%m %P %u %a %h %p"`
+    /// runs with every token literal.
+    #[test]
+    fn exec_command_leaves_single_character_escapes_literal() {
+        let vars = sample_hook_vars();
+        assert_eq!(
+            expanded("date +%m %P %u %a %h %p", &vars),
+            "date +%m %P %u %a %h %p"
+        );
     }
 
     #[test]
-    fn exec_command_keeps_operator_supplied_values_verbatim() {
-        let ctx = sample_path_ctx();
-        assert_eq!(expanded("echo %m", &ctx), "echo backup");
-    }
-
-    #[test]
-    fn exec_command_escapes_peer_influenced_values() {
-        let ctx = sample_path_ctx();
+    fn exec_command_escapes_rsync_values() {
+        let vars = sample_hook_vars();
         assert_eq!(
             expanded(
-                "/usr/local/bin/notify --module=%m --user=%u --host=%h",
-                &ctx
+                "notify --module=%RSYNC_MODULE_NAME% --user=%RSYNC_USER_NAME% --host=%RSYNC_HOST_NAME%",
+                &vars
             ),
-            "/usr/local/bin/notify --module=backup --user='alice' --host='client.example.com'"
+            "notify --module='backup' --user='alice' --host='client.example.com'"
         );
     }
 
+    /// upstream sets RSYNC_PID (clientserver.c:962) and RSYNC_REQUEST
+    /// (clientserver.c:568) only after the directives were expanded, so the
+    /// references stay literal. Measured on 3.5.1.
     #[test]
-    fn exec_command_resolves_delimited_connection_variables() {
-        let ctx = sample_path_ctx();
+    fn exec_command_leaves_later_set_variables_verbatim() {
+        let vars = sample_hook_vars();
         assert_eq!(
-            expanded("notify %RSYNC_MODULE_NAME% %RSYNC_USER_NAME%", &ctx),
-            "notify 'backup' 'alice'"
+            expanded("echo %RSYNC_PID% %RSYNC_REQUEST%", &vars),
+            "echo %RSYNC_PID% %RSYNC_REQUEST%"
         );
     }
 
     #[test]
     fn exec_command_leaves_unresolved_reference_verbatim() {
-        let ctx = sample_path_ctx();
+        let vars = sample_hook_vars();
         assert_eq!(
-            expanded("echo %OC_RSYNC_ABSENT_VARIABLE%", &ctx),
+            expanded("echo %OC_RSYNC_ABSENT_VARIABLE%", &vars),
             "echo %OC_RSYNC_ABSENT_VARIABLE%"
         );
     }
 
+    /// upstream: loadparm.c:250-252 takes everything after the uppercase first
+    /// letter up to the next `%` as the name, and a `%` that starts no
+    /// reference is literal with the scan resuming at the next byte.
+    #[test]
+    fn exec_command_reads_names_the_way_upstream_does() {
+        let vars = sample_hook_vars();
+        assert_eq!(
+            expanded("x %%RSYNC_MODULE_NAME% %a%RSYNC_MODULE_NAME%", &vars),
+            "x %'backup' %a'backup'"
+        );
+        assert_eq!(expanded("%Oc-Absent Name%", &vars), "%Oc-Absent Name%");
+    }
+
     #[test]
     fn exec_command_does_not_reread_a_substituted_value() {
-        let ctx = PathExpansionContext {
-            module_name: "%u",
-            ..sample_path_ctx()
+        let vars = HookVariables {
+            module_name: Some("%RSYNC_USER_NAME%"),
+            ..sample_hook_vars()
         };
-        assert_eq!(expanded("echo %m", &ctx), "echo %u");
+        assert_eq!(
+            expanded("echo %RSYNC_MODULE_NAME%", &vars),
+            "echo '%RSYNC_USER_NAME%'"
+        );
     }
 
     #[test]
     fn exec_command_omits_the_wrap_inside_a_single_quoted_run() {
-        let ctx = sample_path_ctx();
-        assert_eq!(expanded("echo '%u'", &ctx), "echo 'alice'");
+        let vars = sample_hook_vars();
+        assert_eq!(expanded("echo '%RSYNC_USER_NAME%'", &vars), "echo 'alice'");
     }
 
     #[test]
     fn exec_command_refuses_before_the_double_quote_escape_can_apply() {
-        let ctx = PathExpansionContext {
-            username: "a$b",
-            ..sample_path_ctx()
+        let vars = HookVariables {
+            user_name: Some("a$b"),
+            ..sample_hook_vars()
         };
         // Every character the double-quoted arm backslash-escapes (`\ " ` $`)
         // is also in the refusal set, so a peer value never reaches that arm.
         // The arm is kept because upstream keeps it: `expand_vars_shell_escape`
         // is written for any value, not just the ones that survive
         // `shell_unsafe_value`. upstream: `loadparm.c:197-235`.
-        assert!(expand_exec_command("echo \"%u\"", &ctx).is_err());
+        assert!(expand_exec_command("echo \"%RSYNC_USER_NAME%\"", &vars).is_err());
     }
 
     #[test]
     fn exec_command_tracks_quote_context_across_a_closed_run() {
-        let ctx = sample_path_ctx();
-        assert_eq!(expanded("echo 'x' %u", &ctx), "echo 'x' 'alice'");
+        let vars = sample_hook_vars();
+        assert_eq!(
+            expanded("echo 'x' %RSYNC_USER_NAME%", &vars),
+            "echo 'x' 'alice'"
+        );
     }
 
     #[test]
     fn exec_command_treats_a_literal_quote_inside_double_quotes_as_text() {
-        let ctx = sample_path_ctx();
+        let vars = sample_hook_vars();
         // The `'` inside `"..."` must not open a single-quoted run, or the
         // value after it would be escaped for the wrong context.
         // upstream: `loadparm.c:300-305`.
-        assert_eq!(expanded("echo \"it's\" %u", &ctx), "echo \"it's\" 'alice'");
-    }
-
-    #[test]
-    fn exec_command_keeps_a_doubled_percent_literal() {
-        let ctx = sample_path_ctx();
-        assert_eq!(expanded("fmt %%m %m", &ctx), "fmt %%m backup");
-    }
-
-    #[test]
-    fn exec_command_refuses_a_peer_value_holding_a_metacharacter() {
-        let ctx = PathExpansionContext {
-            username: "alice; rm -rf /",
-            ..sample_path_ctx()
-        };
-        let refusal = expand_exec_command("notify --user=%u", &ctx)
-            .expect_err("a shell metacharacter must fail closed");
         assert_eq!(
-            refusal.log_line(),
-            "refusing to run shell hook: %u holds a shell metacharacter"
+            expanded("echo \"it's\" %RSYNC_USER_NAME%", &vars),
+            "echo \"it's\" 'alice'"
         );
     }
 
     #[test]
     fn exec_command_refusal_names_the_delimited_token() {
-        let ctx = PathExpansionContext {
-            hostname: "a`id`b",
-            ..sample_path_ctx()
+        let vars = HookVariables {
+            host_name: Some("a`id`b"),
+            ..sample_hook_vars()
         };
-        let refusal = expand_exec_command("notify %RSYNC_HOST_NAME%", &ctx)
+        let refusal = expand_exec_command("notify %RSYNC_HOST_NAME%", &vars)
             .expect_err("a shell metacharacter must fail closed");
         assert_eq!(
             refusal.log_line(),
@@ -1195,52 +619,27 @@ mod variable_expansion_tests {
             "a'b", "a\"b", "a`b", "a$b", "a\\b", "a;b", "a&b", "a|b", "a<b", "a>b", "a(b", "a)b",
             "a*b", "a?b", "a[b", "a]b", "a#b", "a b", "a!b", "a~b", "a{b", "a}b", "a\nb", "a\x7fb",
         ] {
-            let ctx = PathExpansionContext {
-                username: probe,
-                ..sample_path_ctx()
+            let vars = HookVariables {
+                user_name: Some(probe),
+                ..sample_hook_vars()
             };
             assert!(
-                expand_exec_command("notify %u", &ctx).is_err(),
+                expand_exec_command("notify %RSYNC_USER_NAME%", &vars).is_err(),
                 "{probe:?} must be refused"
             );
         }
     }
 
+    /// upstream: loadparm.c:266 - the check is keyed on the `RSYNC_` name, so
+    /// even the operator's own module path is refused when it holds a space.
+    /// Measured on 3.5.1: `path = /srv/mod x` with a hook naming
+    /// `%RSYNC_MODULE_PATH%` drops the connection before `@RSYNCD: OK`.
     #[test]
-    fn exec_command_allows_an_operator_value_holding_a_metacharacter() {
-        let ctx = PathExpansionContext {
-            module_path: "/srv/my backups",
-            ..sample_path_ctx()
+    fn exec_command_refuses_a_module_path_holding_a_metacharacter() {
+        let vars = HookVariables {
+            module_path: Some("/srv/my backups"),
+            ..sample_hook_vars()
         };
-        // Only `RSYNC_`-named values are checked upstream, so an
-        // operator-configured path stays verbatim. upstream: `loadparm.c:266`.
-        assert_eq!(expanded("du %P", &ctx), "du /srv/my backups");
-    }
-
-    #[test]
-    fn log_file_path_expands_module_name() {
-        let ctx = sample_path_ctx();
-        assert_eq!(
-            expand_log_file_path("/var/log/rsync/%m.log", &ctx),
-            PathBuf::from("/var/log/rsync/backup.log")
-        );
-    }
-
-    #[test]
-    fn log_file_path_expands_module_path() {
-        let ctx = sample_path_ctx();
-        assert_eq!(
-            expand_log_file_path("%P/rsync.log", &ctx),
-            PathBuf::from("/srv/backup/rsync.log")
-        );
-    }
-
-    #[test]
-    fn log_file_path_no_escapes() {
-        let ctx = sample_path_ctx();
-        assert_eq!(
-            expand_log_file_path("/var/log/rsync.log", &ctx),
-            PathBuf::from("/var/log/rsync.log")
-        );
+        assert!(expand_exec_command("du %RSYNC_MODULE_PATH%", &vars).is_err());
     }
 }
