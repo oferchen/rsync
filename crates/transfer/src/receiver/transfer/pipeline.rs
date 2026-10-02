@@ -507,8 +507,9 @@ impl ReceiverContext {
 
         // upstream: token.c uses a single compression context across all files.
         // For zstd the DCtx must persist across file boundaries (continuous
-        // stream), so the reader is built once and reused for the session.
-        let mut token_reader = request_config.create_token_reader()?;
+        // stream), so every pass - each INC_RECURSE segment and the redo -
+        // reuses the session's reader.
+        let mut token_reader = self.take_session_token_reader(&request_config)?;
 
         // Stage 0: the in-flight window OWNS its FileEntry (cloned at push,
         // bounded to the pipeline window = O(window)), so the loop no longer
@@ -1120,8 +1121,21 @@ impl ReceiverContext {
 
         // Graceful shutdown regardless of success or failure.
         let _ = pipelined_receiver.shutdown();
+        self.session_token_reader = Some(token_reader);
 
         result
+    }
+
+    /// Takes the session's token decoder, building it on first use. The caller
+    /// hands it back through `session_token_reader` when its pass ends.
+    fn take_session_token_reader(
+        &mut self,
+        request_config: &RequestConfig,
+    ) -> io::Result<crate::token_reader::TokenReader> {
+        match self.session_token_reader.take() {
+            Some(reader) => Ok(reader),
+            None => request_config.create_token_reader(),
+        }
     }
 
     /// Writes one metadata-only itemize record (`NDX + iflags`, nothing else)
@@ -1397,7 +1411,7 @@ impl ReceiverContext {
         // session (the zstd DCtx must survive file boundaries), so build the
         // reader once and `reset()` it per file.
         let mut token_reader = if discard_sender_data {
-            Some(request_config.create_token_reader()?)
+            Some(self.take_session_token_reader(&request_config)?)
         } else {
             None
         };
@@ -1489,6 +1503,9 @@ impl ReceiverContext {
             }
         }
 
+        if token_reader.is_some() {
+            self.session_token_reader = token_reader;
+        }
         writer.flush()?;
         Ok(())
     }
