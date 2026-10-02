@@ -230,8 +230,8 @@ pub(crate) struct MultiplexReader<R> {
     /// / role invariant (upstream `goto invalid_msg`, fatal `RERR_STREAMIO`).
     io_timeout_invalid: bool,
     /// Set once a fixed-size control message (`MSG_IO_ERROR`, `MSG_REDO`,
-    /// `MSG_NO_SEND`, `MSG_SUCCESS`, `MSG_NOOP`) arrived with a payload whose
-    /// size does not match upstream's expectation. Upstream treats this as fatal
+    /// `MSG_NO_SEND`, `MSG_SUCCESS`, `MSG_NOOP`, `MSG_ERROR_EXIT`) arrived with a
+    /// payload whose size does not match upstream's expectation. Upstream treats this as fatal
     /// (`goto invalid_msg` -> `exit_cleanup(RERR_STREAMIO)`); oc surfaces it via
     /// [`MultiplexReader::check_control_msg`]. upstream: io.c:read_a_msg invalid_msg.
     invalid_control_msg: bool,
@@ -884,19 +884,17 @@ impl<R> MultiplexReader<R> {
                 sink.error(&out);
             }
             protocol::MessageCode::ErrorExit => {
-                // upstream: io.c:1710-1760 - MSG_ERROR_EXIT carries a 4-byte
-                // exit code. Upon receipt, upstream calls _exit_cleanup(val)
-                // which is NORETURN. We propagate it as an io::Error so the
-                // transfer loop can abort cleanly.
-                let exit_code = if self.buffer.len() == 4 {
-                    i32::from_le_bytes([
-                        self.buffer[0],
-                        self.buffer[1],
-                        self.buffer[2],
-                        self.buffer[3],
-                    ])
-                } else {
-                    0
+                // upstream: io.c:1892-1930 - MSG_ERROR_EXIT carries a 4-byte
+                // exit code, or none for exit code 0; any other length is
+                // `goto invalid_msg`. Upon receipt, upstream calls
+                // _exit_cleanup(val) which is NORETURN. We propagate it as an
+                // io::Error so the transfer loop can abort cleanly.
+                if !self.require_payload_len(&[0, 4]) {
+                    return false;
+                }
+                let exit_code = match *self.buffer.as_slice() {
+                    [a, b, c, d] => i32::from_le_bytes([a, b, c, d]),
+                    _ => 0,
                 };
                 self.error_exit_code = Some(exit_code);
             }
@@ -1772,5 +1770,62 @@ mod noop_length_tests {
     #[test]
     fn empty_noop_is_absorbed() {
         assert_eq!(read_after_noop(&[]).expect("empty MSG_NOOP is legal"), b"x");
+    }
+}
+/// `MSG_ERROR_EXIT` payload-length validation.
+///
+/// upstream: io.c:1892-1898 `read_a_msg()` - the payload is a 4-byte exit
+/// code or empty (exit code 0); any other length is `goto invalid_msg`, which
+/// prints `invalid multi-message %d:%lu` and exits `RERR_STREAMIO`. Reading a
+/// malformed frame as "exit 0" would let a peer end the session as if it had
+/// succeeded and hide the stream corruption behind a clean status.
+#[cfg(test)]
+mod error_exit_length_tests {
+    use super::*;
+
+    /// A peer `MSG_ERROR_EXIT` frame carrying `payload`, then one data byte.
+    fn wire(payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        protocol::send_msg(&mut out, protocol::MessageCode::ErrorExit, payload).unwrap();
+        protocol::send_msg(&mut out, protocol::MessageCode::Data, b"x").unwrap();
+        out
+    }
+
+    fn read_err(payload: &[u8]) -> io::Error {
+        let mut reader = MultiplexReader::new(io::Cursor::new(wire(payload)));
+        let mut buf = [0u8; 8];
+        reader
+            .read(&mut buf)
+            .expect_err("MSG_ERROR_EXIT must end the read")
+    }
+
+    fn remote_exit_code(err: &io::Error) -> Option<i32> {
+        err.get_ref()
+            .and_then(|e| e.downcast_ref::<RemoteExitError>())
+            .map(|e| e.code)
+    }
+
+    #[test]
+    fn wrong_length_payload_is_an_invalid_message_not_exit_zero() {
+        for len in [1usize, 2, 3, 5, 8] {
+            let err = read_err(&vec![0u8; len]);
+            assert_eq!(
+                err.kind(),
+                io::ErrorKind::InvalidData,
+                "a {len}-byte MSG_ERROR_EXIT is a stream error, got {err}"
+            );
+            assert_eq!(
+                remote_exit_code(&err),
+                None,
+                "a {len}-byte MSG_ERROR_EXIT must not be honoured as an exit code"
+            );
+        }
+    }
+
+    /// NON-VACUITY: both legal lengths still carry the peer's exit request.
+    #[test]
+    fn four_byte_and_empty_payloads_remain_exit_requests() {
+        assert_eq!(remote_exit_code(&read_err(&12i32.to_le_bytes())), Some(12));
+        assert_eq!(remote_exit_code(&read_err(&[])), Some(0));
     }
 }
