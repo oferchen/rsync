@@ -40,14 +40,17 @@ use test_support::deadline::{Deadlined, run_deadlined};
 /// upstream, so only a hang can reach it.
 const BUDGET: Duration = Duration::from_secs(120);
 
-/// Upstream's `strerror (errno)` rendering of ELOOP on this platform.
-fn eloop_text() -> String {
-    let error = io::Error::from_raw_os_error(libc::ELOOP);
+/// Upstream's `strerror (errno)` rendering of `errno` on this platform.
+fn errno_text(errno: i32) -> String {
+    let error = io::Error::from_raw_os_error(errno);
     let full = error.to_string();
     let strerror = full
-        .strip_suffix(&format!(" (os error {})", libc::ELOOP))
+        .strip_suffix(&format!(" (os error {errno})"))
         .unwrap_or(&full);
-    format!("{strerror} ({})", libc::ELOOP)
+    format!("{strerror} ({errno})")
+}
+fn eloop_text() -> String {
+    errno_text(libc::ELOOP)
 }
 
 struct Run {
@@ -126,4 +129,34 @@ fn ancestor_loop_unrolls_until_the_kernel_reports_eloop() {
         b"n\n"
     );
     assert!(cwd.join("out/sub/up/sub/up/normal.txt").is_file());
+}
+/// An unreadable directory reached through a relative operand is reported by
+/// its full path, as the ancestor loop's `opendir` failure is.
+///
+/// upstream: flist.c send_directory() - `rsyserr(FERROR_XFER, errno,
+/// "opendir %s failed", full_fname(fbuf))`; util1.c full_fname() prefixes a
+/// relative name with the working directory.
+#[test]
+fn opendir_failure_names_the_directory_by_full_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let cwd = temp.path().canonicalize().expect("canonical tempdir");
+    let locked = cwd.join("od/locked");
+    fs::create_dir_all(&locked).expect("create od/locked");
+    fs::write(cwd.join("od/normal.txt"), b"n\n").expect("write normal");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).expect("chmod 000");
+    if fs::read_dir(&locked).is_ok() {
+        // Root reads a mode-000 directory, so there is no opendir failure.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("restore");
+        return;
+    }
+    let run = copy_links(&cwd, "od/");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).expect("restore");
+    assert_eq!(run.code, 23, "stderr: {}", run.stderr);
+    let expected = format!(
+        "rsync: [sender] opendir \"{}/od/locked\" failed: {}",
+        cwd.display(),
+        errno_text(libc::EACCES)
+    );
+    assert_eq!(error_lines(&run.stderr), [expected.as_str()]);
 }
