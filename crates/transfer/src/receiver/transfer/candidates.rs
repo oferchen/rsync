@@ -1906,7 +1906,7 @@ mod itemize_order_tests {
         config.flags.atimes = true;
         config.flags.checksum = checksum;
         let mut ctx = ReceiverContext::new_for_test(&hs, config);
-        ctx.file_list = vec![entry];
+        ctx.file_list = vec![entry].into();
         let opts = metadata::MetadataOptions::new()
             .preserve_permissions(false)
             .preserve_times(times)
