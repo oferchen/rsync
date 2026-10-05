@@ -1845,7 +1845,9 @@ mod itemize_order_tests {
 
     /// Sender atime used by the `-U` fast-path tests. Older than the mtime so
     /// a relatime-style mount bumps it on the next read.
+    #[cfg(unix)]
     const SENDER_ATIME: i64 = 1_600_000_000;
+    #[cfg(unix)]
     const IDENTICAL_MTIME: i64 = 1_700_000_000;
 
     /// Returns `true` when the tempdir honours an explicit atime and a plain
