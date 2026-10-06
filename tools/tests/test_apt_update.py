@@ -11,8 +11,10 @@ republishes its Release mid-fetch on a given run is not something the run
 controls, so a green workflow proves the script is wired, never that it
 classifies correctly. These tests are the only thing that does.
 
-`sudo` is stubbed on PATH with a canned transcript, so the tests install
-nothing, need no root, and run identically on a developer machine and a runner.
+`sudo` is stubbed on PATH: `sudo apt-get` replays a canned transcript and any
+other command runs unprivileged against a temporary APT_ETC, so the tests
+install nothing, need no root, and run identically on a developer machine and a
+runner.
 """
 
 from __future__ import annotations
@@ -81,6 +83,8 @@ class AptUpdateTests(unittest.TestCase):
         self.tmp = Path(self._tempdir.name)
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
+        self.apt_etc = self.tmp / "etc-apt"
+        (self.apt_etc / "sources.list.d").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self._tempdir.cleanup()
@@ -91,6 +95,7 @@ class AptUpdateTests(unittest.TestCase):
         stub = self.bin / "sudo"
         stub.write_text(
             "#!/bin/sh\n"
+            'if [ "$1" != apt-get ]; then exec "$@"; fi\n'
             f'cat "{canned}"\n'
             f"exit {exit_code}\n"
         )
@@ -99,6 +104,7 @@ class AptUpdateTests(unittest.TestCase):
     def _run(self) -> subprocess.CompletedProcess[str]:
         env = dict(os.environ)
         env["PATH"] = f"{self.bin}{os.pathsep}{env['PATH']}"
+        env["APT_ETC"] = str(self.apt_etc)
         return subprocess.run(
             ["bash", str(SCRIPT)],
             capture_output=True,
@@ -169,6 +175,62 @@ class AptUpdateTests(unittest.TestCase):
         self.assertIn("Hash Sum mismatch", result.stdout)
         self.assertIn("Fetched 9436 kB", result.stdout)
 
+
+    # Runner image sources, as shipped on ubuntu-24.04 (deb822 via the mirror
+    # list) and on older images (one-line, geographic host named directly).
+    def _write_source(self, name: str, text: str) -> Path:
+        path = self.apt_etc / "sources.list.d" / name
+        path.write_text(text)
+        return path
+
+    def test_mirror_list_source_is_pointed_at_the_global_archive(self) -> None:
+        source = self._write_source(
+            "ubuntu.sources",
+            "Types: deb\n"
+            "URIs: mirror+file:/etc/apt/apt-mirrors.txt\n"
+            "Suites: noble noble-updates noble-backports\n",
+        )
+        self._stub_sudo(CLEAN, 0)
+
+        result = self._run()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("URIs: http://archive.ubuntu.com/ubuntu/\n", source.read_text())
+        self.assertNotIn("apt-mirrors", source.read_text())
+
+    def test_geographic_mirror_host_is_pointed_at_the_global_archive(self) -> None:
+        listed = self.apt_etc / "sources.list"
+        listed.write_text(
+            "deb http://azure.archive.ubuntu.com/ubuntu/ jammy main\n"
+            "deb https://us.archive.ubuntu.com/ubuntu jammy-updates main\n"
+        )
+        self._stub_sudo(CLEAN, 0)
+
+        result = self._run()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            listed.read_text(),
+            "deb http://archive.ubuntu.com/ubuntu/ jammy main\n"
+            "deb http://archive.ubuntu.com/ubuntu/ jammy-updates main\n",
+        )
+
+    def test_global_and_third_party_sources_are_left_alone(self) -> None:
+        # Only a geographic Ubuntu mirror is rewritten; the global archive,
+        # the security archive and unrelated repositories keep their URIs.
+        text = (
+            "deb http://archive.ubuntu.com/ubuntu/ noble main\n"
+            "deb http://security.ubuntu.com/ubuntu noble-security main\n"
+            "deb http://ports.ubuntu.com/ubuntu-ports noble main\n"
+            "deb https://dl.google.com/linux/chrome/deb/ stable main\n"
+        )
+        source = self._write_source("mixed.list", text)
+        self._stub_sudo(CLEAN, 0)
+
+        result = self._run()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(source.read_text(), text)
 
 if __name__ == "__main__":
     unittest.main()
