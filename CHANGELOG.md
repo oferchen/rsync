@@ -40,6 +40,8 @@ for detail.
 - Open sender source files confined and `O_NOFOLLOW`, with a device guard (#7092); the macOS `clonefile` fast path inherits the confined open (#7653)
 - Honour `--insecure-links` inside the walk, at the destination sandbox and at the DOTDIR follow (#7459, #7695, #7734)
 - Let the walk run under Landlock and seccomp, falling back to confined wrappers (#7541, #7545, #7548)
+- Never follow a leaf symlink on the `--partial-dir` basis and staging opens (#8072)
+- Refuse an untrusted destination symlink with upstream's diagnostic (CVE-2026-53796, #8071)
 
 **Daemon**
 - `proxy protocol hosts` gates who may send a PROXY header and fails closed when unset (CVE-2026-53791, #7648)
@@ -67,6 +69,9 @@ for detail.
 - Reject a pre-existing munged-symlink directory in the module root (#7080)
 - Warn when a Windows privilege drop is a no-op (#7165)
 - Bound the handshake with upstream's absolute deadline, and end a silent transfer at the reconciled `io_timeout` (#7688, #7689)
+- Apply the `proxy protocol hosts` gate to inetd sessions too (#8077)
+- Resolve a module `temp dir` inside the module, as upstream does (#8078)
+- Refuse the option combinations that upstream's `refuse options` patterns cover (#8074)
 
 **Peer-supplied input**
 - Bound the equal-weak-checksum chain in the matcher (CVE-2026-70453, #7293, #7878)
@@ -89,12 +94,16 @@ for detail.
 - Escape control characters in log-file output and before terminal writes (#7296, #7357, #7933)
 - Redact peer rule text in filter diagnostics (#7384, #7662)
 - Drop to the `--copy-as` user permanently (#7073)
+- Reject a `MSG_ERROR_EXIT` payload of 1-3 or 5+ bytes and a `MSG_NOOP` frame with a payload (#8057, #8056)
+- Cap a sender `sum_head` block length at `MAX_BLOCK_SIZE` (#8046)
 
 ### Added
 
 - Protocol 33 from rsync 3.5.1: `MSG_BLOCK_STATS` and the `--stats` line `Number of 4 KiB logical blocks touched`; newer peers clamp to 33, 3.5.0 and older negotiate down (#8003)
 - `--confine-root`, `--insecure-links` / `--no-insecure-links` and `--drop-D` / `--no-drop-D` from rsync 3.5.0 (#7396, #7299)
 - Daemon directives `auth digest` (#7350), `insecure links` (#7484) and `proxy protocol hosts` (see Security)
+- The daemon accepts `--log-file-format`, as upstream does (#8047)
+- `OC_RSYNC_PULL_INC_RECURSE=1` lets a pulling client advertise incremental recursion, except when a delete pass would run; off by default (#8062)
 - QUIC transport behind the `quic` feature (off by default): `quic://` and `--quic`, daemon listener, TOFU and private-CA trust, mutual TLS, `--quic-cipher`, BBR/Cubic congestion control and `--bwlimit` pacing (#7103, #7104, #7108, #7109, #7113, #7135, #7136, #7141, #7143, #7151, #7859, #7866, #7898, #7903, #7906, #7910)
 - Embedded `ssh_config` reader: `Match`, `Include`, `ProxyCommand` / `ProxyJump`, host-key and authentication families, token expansion, and OpenSSH precedence (#7829, #7849, #7863, #7865, #7880, #7896, #7909, #7913, #7915, #7922)
 - `StrictHostKeyChecking accept-new` works as documented (#7783)
@@ -120,7 +129,7 @@ for detail.
 - A peer that advertises a newer protocol than oc-rsync's is negotiated down instead of refused (#7916)
 - Every pull request is gated on upstream's 3.5.1 test suite, on Linux and macOS, over a pipe and a TCP daemon, as root and non-root (#7387, #7339, #7405, #7408, #7392, #7391, #7996, #8019)
 - The 3.5.0 test suite is retired; its test names are a subset of 3.5.1's. 3.5.0 stays in the interop matrix (#8030)
-- Daemon `%` expansion matches upstream's `expand_vars()`: only `%NAME%` references expand, and the oc-only tokens are removed. Replace `%MODULE%`/`%m` with `%RSYNC_MODULE_NAME%`, `%ADDR%`/`%a` with `%RSYNC_HOST_ADDR%`, `%DIFFHOST%`/`%h` with `%RSYNC_HOST_NAME%`, `%P` with `%RSYNC_MODULE_PATH%` and `%u` with `%RSYNC_USER_NAME%`; `%p` has no hook-template equivalent (use `$RSYNC_PID` in the hook's shell), and `%%` is no longer an escape
+- Daemon `%` expansion matches upstream's `expand_vars()`: only `%NAME%` references expand, and the oc-only tokens are removed. Replace `%MODULE%`/`%m` with `%RSYNC_MODULE_NAME%`, `%ADDR%`/`%a` with `%RSYNC_HOST_ADDR%`, `%DIFFHOST%`/`%h` with `%RSYNC_HOST_NAME%`, `%P` with `%RSYNC_MODULE_PATH%` and `%u` with `%RSYNC_USER_NAME%`; `%p` has no hook-template equivalent (use `$RSYNC_PID` in the hook's shell), and `%%` is no longer an escape (#8080)
 - rsync 3.5.0 joins the interop matrix as a gating peer (#7290, #7337)
 - rsync 3.5.1 joins the interop matrix, with an upstream-baseline oracle in the harness (#8033)
 - Release benchmarks compare against both 3.4.4 and 3.5.0 and report peak RSS for every mode (#7595)
@@ -155,6 +164,10 @@ for detail.
 - O(1) xattr wire-cache lookup (#6826)
 - Count file types and sizes as the list arrives (#7977)
 - `--inplace --backup` uses the pre-image as the delta basis (#7752)
+- Release finished INC_RECURSE segments on pulls (#8063)
+- Batch sender whole-file source reads through io_uring (#8065)
+- Hold the per-file parent dirfd on the receiver and sender (#8067)
+- SHA-256 and SHA-512 use the ARMv8 hardware path on macOS aarch64 again (#8064)
 
 ### Fixed
 
@@ -201,6 +214,10 @@ for detail.
 - Treat a trailing `..` operand as a DOTDIR, keep the `--relative` pivot on module operands, and keep the leading slash for a module rooted at `/` (#7707, #7709, #7714, #7728)
 - Frame server `-vv` notices as `MSG_INFO` (#7780)
 - End a filter-file record at a carriage return, and word the file-name overflow refusal as upstream does (#7708, #7712, #7713)
+- A sender `NDX_DONE` ends the phase as upstream `recv_files()` does, instead of an exit 23 (#8075)
+- Read protocol 30 `--files-from` names unframed on the sender (#8048)
+- Decode hard-link follower echoes with the transfer loop's NDX state, and group hard-linked non-regular files below protocol 30 (#8050, #8052)
+- Keep one zstd decoder across INC_RECURSE sub-lists (#8094)
 
 **Remote pulls and pushes**
 - Apply receiver options on remote pulls: `--link-dest`, `--backup-dir`, `--chmod`, `--ignore-existing`, `--temp-dir`, `--omit-dir-times`, `-J`, `-E`, `--mkpath` (#6792, #6794, #6798, #6799, #6805, #6810, #6811, #6820)
@@ -233,6 +250,10 @@ for detail.
 - Honour the server options the daemon parser dropped, including `--only-write-batch` (#7532, #7559)
 - Mirror upstream `daemon_usage` in `--daemon --help` (#7444)
 - A daemon sender falls back to the confined walk when `openat2` returns `EAGAIN`, instead of failing an open on a busy host (#8029)
+- Enter the module root before dropping privileges, so a module below a directory the daemon user cannot search is served (#8079)
+- Check module settings when a client selects the module, as upstream does, instead of refusing them at startup (#8082)
+- Report a failed `pre-xfer exec`, and `--early-input` and argument read errors, as upstream does (#8073, #8076)
+- Render `%u`, `%n`, `%L`, `%U`, `%G`, `%M` and `%B` in per-file transfer log lines (#8058, #8059)
 
 **Filters**
 - Match patterns as bytes end to end (#7918)
@@ -285,6 +306,13 @@ for detail.
 - The io_uring data-write mover is gated on whole-file and reports short reads (#7749)
 - Under `-L`, a symlink loop or unreadable referent is reported per entry instead of aborting the transfer (#8042)
 - Operator paths under `/proc/self/fd` and `/dev/fd` resolve inside a user namespace, as upstream's walk allows (#8026)
+- Paths through a search-only directory resolve: traversal-only directory descriptors are held open (#8070)
+- Link a hard-linked special-file follower instead of creating a new node (#8051)
+- Compare mtime nanoseconds exactly after a `-c` match (#8053)
+- Skip `--append` files the destination already covers (#8055)
+- Mirror upstream atime handling for an up-to-date file (#8089)
+- `--dry-run` deletes nothing on the receiver, and an itemized pull deletion prints locally (#8095, #8099)
+- Name an unreadable local-copy directory by its full path (#8098)
 
 **Permissions and metadata**
 - `--chmod` without `--perms`, symlink modes and directory modes follow upstream `dest_mode()` (#7748, #7755, #7760, #7766, #7773, #7774)
@@ -334,16 +362,17 @@ for detail.
 ### Internal
 
 - CI: macOS testsuite legs (#7638), old-rsync oracles (#7636, #7855), a skip oracle on a full-run leg (#7837), `quic` build coverage (#7902), and one publisher per required check (#7438)
-- CI: per-leg testsuite results and badges (#8019); pinned and cached upstream tarballs (#7993); distinct daemon ports for parallel interop workers (#8006); Windows long-path and case-insensitive legs on pull requests (#7967, #7969); a canonical testsuite scratch path, re-baselined 3.5.1 manifests and a longer musl timeout (#8024, #8017, #8023, #8045)
+- CI: per-leg testsuite results and badges (#8019); pinned and cached upstream tarballs (#7993); distinct daemon ports for parallel interop workers (#8006); Windows long-path and case-insensitive legs on pull requests (#7967, #7969); a canonical testsuite scratch path, re-baselined 3.5.1 manifests and a longer musl timeout (#8024, #8017, #8023, #8045, #8096, #8102); QUIC interop cells, a QUIC-vs-TCP daemon benchmark and protocol 33 in the interop oracle (#8060, #8061, #8068)
 - Tests pinning confinement, INC_RECURSE ordering, daemon session handling, SIMD over-reads, PULL wire transcripts and batch hard-link replay (#7953, #7956, #7971, #7976, #7985, #7989, #7990)
-- Groundwork for incremental recursion on pulls, not yet negotiated live: upstream's receiver clause in the inc-recurse decision, and a streaming walk for non-transfer modes that stays inside the sender's lookahead window (#8038, #8041)
+- Groundwork for incremental recursion on pulls, not negotiated by default: upstream's receiver clause in the inc-recurse decision, and a streaming walk for non-transfer modes that stays inside the sender's lookahead window (#8038, #8041)
 - `platform::fd_pass`, a descriptor-plus-metadata channel over an `AF_UNIX` socketpair (#8027)
+- Lazy file-list production staged behind `OC_RSYNC_LAZY_FLIST`, off by default (#7925, #7943, #7944, #7947, #7949)
 - Upstream citations retargeted at 3.5.0 and then 3.5.1, and a stricter citation gate (#7286, #7308, #7315, #7318, #7994)
-- `#![deny(unsafe_code)]` on the crates that lacked it (#7781), plus blocking gates for zero-caller public functions, placeholders and rustdoc links (#7767, #7770, #7776)
-- Refactors with no behaviour change, including one owner for the SIMD batch cap, the matcher's dead search paths, the daemon session-worker seam and the receiver's flist index cursor (#7715, #7716, #7762, #7787, #7790, #7794, #7798, #7954, #7955, #7962, #7978, #7980)
+- `#![deny(unsafe_code)]` on the crates that lacked it (#7781), plus blocking gates for zero-caller public functions, placeholders, rustdoc links, SAFETY comments and direct FFI dependencies (#7767, #7770, #7776, #7932, #7940)
+- Refactors with no behaviour change, including one owner for the SIMD batch cap, the matcher's dead search paths, the daemon session-worker seam, the receiver's flist index cursor and the `-v` level tables (#8044, #7715, #7716, #7762, #7787, #7790, #7794, #7798, #7954, #7955, #7962, #7978, #7980)
 - Throughput-governor telemetry and control loop, off by default (#7137, #7142, #7147, #7148, #7150)
-- Documentation: README, SECURITY and CHANGELOG refreshed against master, testsuite badges labelled per leg, and the INC_RECURSE receiver plan (#7960, #7963, #7998, #8018, #8020, #8031)
-- Dependency, action and toolchain updates, including the pinned toolchain moving to 1.89.0 (#7911, #7912, #7919, #8021, #8022)
+- Documentation: README, SECURITY and CHANGELOG refreshed against master, testsuite badges labelled per leg, the INC_RECURSE receiver plan, and a security review of the QUIC transport (#7960, #7963, #7998, #8018, #8020, #8031, #8049, #8066)
+- Dependency, action and toolchain updates, including the pinned toolchain moving to 1.89.0 (#7911, #7912, #7919, #8021, #8022, #8100, #8101)
 
 ## [0.6.4] - 2026-07-18
 
