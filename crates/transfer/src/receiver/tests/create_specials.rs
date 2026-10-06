@@ -230,7 +230,7 @@ fn receiver_links_hardlinked_fifo_follower_instead_of_creating_it() {
 
     let handshake = test_handshake();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
-    ctx.file_list = vec![leader, follower];
+    ctx.file_list = vec![leader, follower].into();
 
     let mut writer = CapturingMsgInfoWriter;
     ctx.create_specials(dest, None, &mut writer)

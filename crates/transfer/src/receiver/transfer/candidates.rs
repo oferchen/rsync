@@ -1790,7 +1790,7 @@ mod itemize_order_tests {
             config.flags.times = true;
             config.flags.checksum = checksum;
             let mut ctx = ReceiverContext::new_for_test(&hs, config);
-            ctx.file_list = vec![entry.clone()];
+            ctx.file_list = vec![entry.clone()].into();
             let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
             let mut metadata_errors = Vec::new();
             let mut stats = TransferStats::default();
@@ -3502,7 +3502,7 @@ mod append_gate_tests {
             entry.set_mtime(1_000_000_000, 0);
             entry
         };
-        ctx.file_list = vec![file("equal", 4), file("longer", 2), file("shorter", 4)];
+        ctx.file_list = vec![file("equal", 4), file("longer", 2), file("shorter", 4)].into();
 
         let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
         let mut metadata_errors = Vec::new();
