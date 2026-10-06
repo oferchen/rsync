@@ -93,11 +93,16 @@ pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<
         ..
     } = options;
 
-    let log_sink = if let Some(path) = log_file {
-        Some(open_log_sink(&path, Brand::Oc)?)
-    } else {
-        None
+    let (log_sink, log_fallback) = match log_file {
+        Some(path) => match open_daemon_log_sink(&path, Brand::Oc) {
+            Ok(sink) => (Some(sink), None),
+            Err(fallback) => (None, Some(fallback)),
+        },
+        None => (None, None),
     };
+    if let Some(fallback) = &log_fallback {
+        fallback.report();
+    }
 
     let (modules, _connection_limiter) = build_module_runtimes_with_lock_file(modules, lock_file)?;
 
