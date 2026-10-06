@@ -16,8 +16,7 @@
 use std::fs::File;
 use std::io;
 use std::path::{Component, Path, PathBuf};
-#[cfg(unix)]
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// One recorded root: its cleaned absolute path and the identity it had when
 /// the file list was built.
@@ -28,6 +27,12 @@ struct SourceRoot {
     ino: u64,
 }
 
+#[derive(Debug, Default)]
+struct Inner {
+    roots: Vec<SourceRoot>,
+    held: Option<(usize, Arc<File>)>,
+}
+
 /// The explicit source roots of one transfer.
 ///
 /// Built while the file list is scanned and consulted for every content open.
@@ -35,9 +40,18 @@ struct SourceRoot {
 /// the descriptor limit (`flist.c:308-309`).
 #[derive(Debug, Default)]
 pub struct SourceRoots {
-    roots: Vec<SourceRoot>,
-    #[cfg(unix)]
-    held: Mutex<Option<(usize, Arc<File>)>>,
+    inner: Mutex<Inner>,
+}
+
+/// The validated root a source path resolves beneath.
+#[derive(Debug)]
+pub struct HeldRoot {
+    /// The root directory, checked against its recorded identity.
+    pub anchor: Arc<File>,
+    /// The root's cleaned absolute path.
+    pub root: PathBuf,
+    /// The source path relative to [`root`](Self::root).
+    pub relative: PathBuf,
 }
 
 impl SourceRoots {
@@ -45,12 +59,6 @@ impl SourceRoots {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Whether no root has been recorded.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.roots.is_empty()
     }
 
     /// Records the root an operand contributes.
@@ -69,7 +77,7 @@ impl SourceRoots {
     ///
     /// - `rsync-3.5.1/flist.c:284-306` `remember_sender_source_arg()`
     pub fn remember_operand(
-        &mut self,
+        &self,
         path: &Path,
         is_dir: bool,
         dev: u64,
@@ -91,40 +99,74 @@ impl SourceRoots {
 
     /// upstream: `flist.c:262-282` `remember_sender_source_root()` - the first
     /// identity recorded for a path wins.
-    fn remember_root(&mut self, path: PathBuf, dev: u64, ino: u64) {
-        if self.roots.iter().any(|root| root.path == path) {
+    fn remember_root(&self, path: PathBuf, dev: u64, ino: u64) {
+        let mut inner = self.lock();
+        if inner.roots.iter().any(|root| root.path == path) {
             return;
         }
-        self.roots.push(SourceRoot { path, dev, ino });
+        inner.roots.push(SourceRoot { path, dev, ino });
+    }
+
+    /// The validated root `path` lies beneath: the longest recorded root
+    /// containing it.
+    ///
+    /// `None` means no root contains `path`. `Some(Err(ELOOP))` reports a
+    /// root whose identity changed since it was recorded.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.1/flist.c:345-375` `open_sender_source_path()`'s root
+    ///   match and `sender_source_root_fd_for()`
+    #[must_use]
+    pub fn held_root(&self, path: &Path) -> Option<io::Result<HeldRoot>> {
+        let full = match full_path(path) {
+            Ok(full) => full,
+            Err(error) => return Some(Err(error)),
+        };
+        let mut inner = self.lock();
+        let (index, root) = inner
+            .roots
+            .iter()
+            .enumerate()
+            .filter(|(_, root)| full.starts_with(&root.path))
+            .max_by_key(|(_, root)| root.path.as_os_str().len())?;
+        let root_path = root.path.clone();
+        let relative = full
+            .strip_prefix(&root_path)
+            .unwrap_or(Path::new(""))
+            .to_path_buf();
+        Some(anchor(&mut inner, index).map(|anchor| HeldRoot {
+            anchor,
+            root: root_path,
+            relative,
+        }))
     }
 
     /// Opens `path` for reading beneath the longest recorded root containing
     /// it, with the leaf `O_NOFOLLOW`.
     ///
     /// `None` means no root contains `path`, and the caller keeps its own
-    /// open. `Some(Err(ELOOP))` reports a root whose identity changed since
-    /// it was recorded; a parent swapped for a symlink that leaves the root is
-    /// refused by the walk beneath it.
+    /// open. A root whose identity changed is refused with `ELOOP`; a parent
+    /// swapped for a symlink that leaves the root is refused by the walk
+    /// beneath it.
     ///
     /// Non-Unix targets have no `*at` resolver and report no match.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync-3.5.1/flist.c:376-379` `secure_relative_open_at(rootfd, rel, ...)`
     #[must_use]
     pub fn open(&self, path: &Path, noatime: bool) -> Option<io::Result<File>> {
         #[cfg(unix)]
         {
-            let full = match full_path(path) {
-                Ok(full) => full,
-                Err(error) => return Some(Err(error)),
-            };
-            let (index, root) = self
-                .roots
-                .iter()
-                .enumerate()
-                .filter(|(_, root)| full.starts_with(&root.path))
-                .max_by_key(|(_, root)| root.path.as_os_str().len())?;
-            let relative = full.strip_prefix(&root.path).unwrap_or(Path::new(""));
-            Some(self.anchor(index).and_then(|anchor| {
-                use std::os::fd::AsFd;
-                crate::confined_open::open_source_beneath(anchor.as_fd(), relative, noatime)
+            use std::os::fd::AsFd;
+            let held = self.held_root(path)?;
+            Some(held.and_then(|held| {
+                crate::confined_open::open_source_beneath(
+                    held.anchor.as_fd(),
+                    &held.relative,
+                    noatime,
+                )
             }))
         }
         #[cfg(not(unix))]
@@ -134,33 +176,41 @@ impl SourceRoots {
         }
     }
 
-    /// The held descriptor for root `index`, reopened and re-checked when a
-    /// different root was held.
-    ///
-    /// upstream: `flist.c:311-338` `sender_source_root_fd_for()`
-    #[cfg(unix)]
-    fn anchor(&self, index: usize) -> io::Result<Arc<File>> {
-        use std::os::unix::fs::MetadataExt;
-        let mut held = self
-            .held
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((owner, fd)) = held.as_ref()
-            && *owner == index
-        {
-            return Ok(Arc::clone(fd));
-        }
-        *held = None;
-        let root = &self.roots[index];
-        let dir = File::from(crate::secure_dir::open_trusted_dir(&root.path)?);
-        let meta = dir.metadata()?;
-        if meta.dev() != root.dev || meta.ino() != root.ino {
-            return Err(io::Error::from_raw_os_error(libc::ELOOP));
-        }
-        let dir = Arc::new(dir);
-        *held = Some((index, Arc::clone(&dir)));
-        Ok(dir)
+    fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+/// The held descriptor for root `index`, reopened and re-checked when a
+/// different root was held.
+///
+/// upstream: `flist.c:311-338` `sender_source_root_fd_for()`
+#[cfg(unix)]
+fn anchor(inner: &mut Inner, index: usize) -> io::Result<Arc<File>> {
+    use std::os::unix::fs::MetadataExt;
+    if let Some((owner, fd)) = inner.held.as_ref()
+        && *owner == index
+    {
+        return Ok(Arc::clone(fd));
+    }
+    inner.held = None;
+    let root = &inner.roots[index];
+    let dir = File::from(crate::secure_dir::open_trusted_dir(&root.path)?);
+    let meta = dir.metadata()?;
+    if meta.dev() != root.dev || meta.ino() != root.ino {
+        return Err(io::Error::from_raw_os_error(libc::ELOOP));
+    }
+    let dir = Arc::new(dir);
+    inner.held = Some((index, Arc::clone(&dir)));
+    Ok(dir)
+}
+
+#[cfg(not(unix))]
+fn anchor(_inner: &mut Inner, _index: usize) -> io::Result<Arc<File>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "held source roots are Unix-only",
+    ))
 }
 
 /// The identity of `path` when it names a directory, following symlinks.
@@ -185,7 +235,11 @@ fn directory_identity(_path: &Path) -> Option<(u64, u64)> {
 ///
 /// upstream: `flist.c:243-257` `sender_source_full_path()` - `pathjoin(curr_dir,
 /// path)` then `clean_fname(CFN_COLLAPSE_DOT_DOT_DIRS | CFN_DROP_TRAILING_DOT_DIR)`
-fn full_path(path: &Path) -> io::Result<PathBuf> {
+///
+/// # Errors
+///
+/// Fails when the current directory cannot be read to make `path` absolute.
+pub fn full_path(path: &Path) -> io::Result<PathBuf> {
     let absolute = std::path::absolute(path)?;
     let mut full = PathBuf::new();
     for component in absolute.components() {
