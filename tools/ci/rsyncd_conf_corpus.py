@@ -17,7 +17,9 @@ Subcommands:
       /corpus/<test> and duplicates are dropped.
 
   regen CORPUS_DIR LPDUMP
-      Rewrite every `upstream.dump` by running LPDUMP, a program linked
+      Rewrite every `upstream.dump`, and `upstream-startup.dump` (the
+      globals a listening daemon reads at startup, `lpdump -g`), by running
+      LPDUMP, a program linked
       against an upstream rsync build that calls lp_load() and prints every
       global and module parameter through its lp_*() accessor. Build it with
       tools/ci/lpdump_gen.py (see that file). It runs in the entry directory
@@ -91,6 +93,9 @@ def regen(corpus_dir, lpdump):
         (entry / 'upstream.dump').write_text(run.stdout, errors='surrogateescape')
         if run.returncode != 0:
             print(f'{entry.name}: lp_load failed', file=sys.stderr)
+        run = subprocess.run([lpdump, '-g', 'rsyncd.conf'], cwd=entry, env=env,
+                             capture_output=True, text=True, errors='surrogateescape')
+        (entry / 'upstream-startup.dump').write_text(run.stdout, errors='surrogateescape')
 
 
 def main(argv):

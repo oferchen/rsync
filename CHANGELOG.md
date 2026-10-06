@@ -326,6 +326,7 @@ for detail.
 
 ### Removed
 
+- rsyncd.conf parameters upstream rsync does not have, which a config now gets upstream's unknown-parameter handling for (logged and ignored): `bwlimit` (use the daemon's `--bwlimit`), `motd` (use `motd file`), `acceptor threads`, `rsync port` (use `port`), and `incoming-chmod` / `outgoing-chmod` (use `incoming chmod` / `outgoing chmod`)
 - The dead `--compress-level` help entry (#6778)
 - The unused `OC_RSYNC_FALLBACK` hint (#7030)
 - The non-upstream per-directory filter alias (#6846)
