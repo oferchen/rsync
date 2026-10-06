@@ -136,6 +136,7 @@ mod reader;
 pub mod receiver;
 pub mod role;
 pub(crate) mod role_trailer;
+mod server_recv_inc_recurse;
 /// Re-export of the shared traversal clamp, which now lives in `filters`
 /// alongside `clean_fname` so the CLI and the daemon can reach the same rule.
 /// Kept as a path here because this crate's own call sites (and the daemon's)
@@ -650,8 +651,14 @@ fn requires_multiplex_output(
 /// upstream: compat.c:161-179 set_allow_inc_recurse,
 /// rsync.h:151-152 (`MIN_FILECNT_LOOKAHEAD` / `MAX_FILECNT_LOOKAHEAD`),
 /// sender.c:516,550 (send loop tops the window up to the minimum).
+///
+/// The test-only `OC_RSYNC_TEST_SERVER_RECV_INC_RECURSE` switch lifts the
+/// role restriction so the server receiver's incremental path can be driven
+/// end to end before this gate opens (see `server_recv_inc_recurse`).
 pub(crate) fn compute_allow_inc_recurse(config: &ServerConfig) -> bool {
-    config.allows_inc_recurse() && config.role == ServerRole::Generator
+    config.allows_inc_recurse()
+        && (config.role == ServerRole::Generator
+            || server_recv_inc_recurse::server_recv_inc_recurse_enabled())
 }
 
 /// Builds the sender-side bandwidth limiter for this server transfer.
