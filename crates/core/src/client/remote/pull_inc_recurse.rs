@@ -8,11 +8,11 @@
 //! consumption: when it is set, a pulling client advertises `'i'` under
 //! upstream's own conditions.
 //!
-//! One oc-only restriction remains while the flag is staged: `'i'` stays
-//! withheld whenever a delete pass would run. The receiver's per-directory
-//! delete over a partially received list is not built yet, and a whole-list
-//! sweep over an incomplete list would classify every not-yet-received entry
-//! as extraneous.
+//! Delete modes follow upstream too: plain `--delete`, `--delete-during`,
+//! `--delete-delay` and `--delete-excluded` pull incrementally, because the
+//! receiver deletes in each directory as that directory's sub-list is walked.
+//! `--delete-before` and `--delete-after` need the whole list and withhold
+//! `'i'` through upstream's own gate.
 //!
 //! Default OFF keeps the pull wire byte-identical to earlier releases.
 //!
@@ -61,7 +61,7 @@ fn advertise_inc_recurse_with(config: &ClientConfig, am_sender: bool, pull_opt_i
     if !config.allow_inc_recurse(am_sender) {
         return false;
     }
-    am_sender || (pull_opt_in && !(config.delete() || config.delete_excluded()))
+    am_sender || pull_opt_in
 }
 
 #[cfg(test)]
@@ -118,19 +118,39 @@ mod tests {
     }
 
     #[test]
-    fn pull_opt_in_withholds_i_whenever_a_delete_pass_would_run() {
-        // A delete sweep over a partially received list would unlink every
-        // entry not yet received, so no delete mode may pull incrementally
-        // until the per-directory delete lands.
+    fn pull_opt_in_advertises_i_for_the_per_directory_delete_modes() {
+        // upstream: compat.c:172-177 - only --delete-before and --delete-after
+        // clear allow_inc_recurse on a receiver. Plain --delete (delete_during
+        // at protocol 30+), --delete-during, --delete-delay and
+        // --delete-excluded delete per directory as each sub-list is walked.
         let base = || ClientConfig::builder().recursive(true);
-        let cases: [(&str, ClientConfig); 5] = [
+        let cases: [(&str, ClientConfig); 4] = [
             ("--delete", base().delete(true).build()),
             ("--delete-during", base().delete_during().build()),
             ("--delete-delay", base().delete_delay(true).build()),
-            ("--delete-before", base().delete_before(true).build()),
-            ("--delete-after", base().delete_after(true).build()),
+            ("--delete-excluded", base().delete_excluded(true).build()),
         ];
         for (name, config) in cases {
+            assert!(
+                advertise_inc_recurse_with(&config, false, true),
+                "{name} must advertise 'i' on an opted-in pull"
+            );
+            assert!(
+                !advertise_inc_recurse_with(&config, false, false),
+                "{name} without the opt-in keeps the historical wire"
+            );
+        }
+    }
+
+    #[test]
+    fn pull_opt_in_withholds_i_for_the_whole_list_delete_modes() {
+        // upstream: compat.c:174-176 - a receiver with --delete-before or
+        // --delete-after needs the complete list up front.
+        let base = || ClientConfig::builder().recursive(true);
+        for (name, config) in [
+            ("--delete-before", base().delete_before(true).build()),
+            ("--delete-after", base().delete_after(true).build()),
+        ] {
             assert!(
                 !advertise_inc_recurse_with(&config, false, true),
                 "{name} must withhold 'i' on a pull"
@@ -140,10 +160,5 @@ mod tests {
                 "{name} on a push is the remote receiver's decision"
             );
         }
-        let excluded = ClientConfig::builder()
-            .recursive(true)
-            .delete_excluded(true)
-            .build();
-        assert!(!advertise_inc_recurse_with(&excluded, false, true));
     }
 }

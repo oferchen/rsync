@@ -296,7 +296,8 @@ fn capture_into(
     configure: impl FnOnce(&mut Command),
 ) -> WireTranscript {
     let dest = dest_root.join("dest");
-    fs::create_dir(&dest).expect("mkdir dest");
+    // A cell may have seeded the destination already.
+    fs::create_dir_all(&dest).expect("mkdir dest");
     let recorder = TranscriptRecorder::new(dest_root);
     let binary = test_support::oc_rsync_bin();
     let capture_rsh = Path::new(env!("CARGO_BIN_EXE_capture-rsh"));
@@ -379,14 +380,14 @@ fn pull_inc_recurse_flag_engages_and_transfers_the_tree() {
 /// Cell 5 (IRP-03/04): options that must keep the whole-list pull leave the
 /// wire byte-identical to the flag-off run even with the flag set.
 ///
-/// `--no-inc-recursive` is the user's explicit opt-out, and every delete mode
-/// keeps `'i'` withheld until the per-directory delete lands - a whole-list
-/// sweep over a partially received list would unlink not-yet-received files.
+/// `--no-inc-recursive` is the user's explicit opt-out, and `--delete-before`
+/// / `--delete-after` need the complete list up front, so upstream's own gate
+/// withholds `'i'` for them (compat.c:172-177).
 #[test]
-fn pull_inc_recurse_flag_is_inert_under_no_inc_recursive_and_delete() {
+fn pull_inc_recurse_flag_is_inert_under_no_inc_recursive_and_whole_list_deletes() {
     let src = tempfile::tempdir().expect("src");
     build_fixture(src.path(), false);
-    for extra in ["--no-inc-recursive", "--delete", "--delete-delay"] {
+    for extra in ["--no-inc-recursive", "--delete-before", "--delete-after"] {
         let off_dir = tempfile::tempdir().expect("off dest");
         let off = capture_into(src.path(), off_dir.path(), extra, |cmd| {
             cmd.arg(extra);
@@ -396,5 +397,51 @@ fn pull_inc_recurse_flag_is_inert_under_no_inc_recursive_and_delete() {
             cmd.arg(extra).env(PULL_INC_RECURSE_ENV, "1");
         });
         assert_transcripts_eq(&off, &on, &format!("{extra} with the flag set"));
+    }
+}
+
+/// Cell 6 (IRP-08): the per-directory delete modes pull incrementally under
+/// the flag and still delete exactly the extraneous entries.
+///
+/// upstream: generator.c:2780-2798 deletes in each sub-list's parent as the
+/// sub-list is walked, so a `--delete` pull keeps INC_RECURSE.
+#[test]
+fn pull_inc_recurse_flag_engages_under_per_directory_deletes() {
+    let src = tempfile::tempdir().expect("src");
+    build_fixture(src.path(), false);
+    let seed = |dest_root: &Path| {
+        let dest = dest_root.join("dest");
+        fs::create_dir_all(dest.join("deep/d0/stale_dir")).expect("mkdir stale");
+        fs::create_dir_all(dest.join("sub")).expect("mkdir sub");
+        for extra in ["x_root", "sub/x_sub", "deep/d0/x_deep"] {
+            fs::write(dest.join(extra), b"extraneous").expect("write extra");
+        }
+    };
+    let expected = tree_listing(src.path());
+    for extra in ["--delete", "--delete-during", "--delete-delay"] {
+        let off_dir = tempfile::tempdir().expect("off dest");
+        seed(off_dir.path());
+        let off = capture_into(src.path(), off_dir.path(), extra, |cmd| {
+            cmd.arg(extra);
+        });
+        let on_dir = tempfile::tempdir().expect("on dest");
+        seed(on_dir.path());
+        let on = capture_into(src.path(), on_dir.path(), extra, |cmd| {
+            cmd.arg(extra).env(PULL_INC_RECURSE_ENV, "1");
+        });
+        assert!(
+            off.server_to_client != on.server_to_client,
+            "{extra}: {PULL_INC_RECURSE_ENV}=1 must switch the pull to INC_RECURSE sub-lists"
+        );
+        assert_eq!(
+            tree_listing(&off_dir.path().join("dest")),
+            expected,
+            "{extra} flag off"
+        );
+        assert_eq!(
+            tree_listing(&on_dir.path().join("dest")),
+            expected,
+            "{extra}: the incremental pull must delete exactly the extraneous entries"
+        );
     }
 }
