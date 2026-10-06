@@ -722,3 +722,40 @@ mod daemon_max_alloc_arg_tests {
         assert_eq!(rejection(&["--delete"]), None);
     }
 }
+
+/// A client-requested server-local `--files-from` list resolves inside the
+/// module, whatever its spelling.
+///
+/// upstream: `options.c:2641-2642` sanitizes the value and the open runs with
+/// the module root as cwd (`clientserver.c:1059`).
+#[cfg(test)]
+mod daemon_files_from_sanitize_tests {
+    use super::sanitize_files_from;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_relative_files_from_resolves_below_the_module_root() {
+        let module_root = Path::new("/srv/mod");
+        assert_eq!(
+            sanitize_files_from(Path::new("lists/list"), module_root),
+            PathBuf::from("/srv/mod/lists/list"),
+            "upstream opens a relative list against the module cwd, not the daemon's"
+        );
+        assert_eq!(
+            sanitize_files_from(Path::new("../../etc/passwd"), module_root),
+            PathBuf::from("/srv/mod/etc/passwd"),
+            "a climbing value collapses at depth 0 instead of leaving the module"
+        );
+    }
+
+    #[test]
+    fn an_absolute_files_from_re_roots_at_the_module() {
+        let module_root = Path::new("/srv/mod");
+        let got = sanitize_files_from(Path::new("/etc/passwd"), module_root);
+        assert!(
+            got.starts_with(module_root),
+            "an absolute list must not name the daemon's filesystem root, got {got:?}"
+        );
+        assert_eq!(got, PathBuf::from("/srv/mod/etc/passwd"));
+    }
+}

@@ -442,6 +442,17 @@ fn build_server_config(
             if let Some(dir) = cfg.temp_dir.take() {
                 cfg.temp_dir = Some(sanitize_backup_dir(&dir, &module_root_canonical));
             }
+            // upstream: options.c:2641-2642 - a server-local `--files-from`
+            // goes through the same `sanitize_path(NULL, files_from, NULL, 0,
+            // SP_DEFAULT)` and is then opened relative to the module root the
+            // daemon `chdir()`ed into (clientserver.c:1059). `-` is the socket.
+            if let Some(path) = cfg.file_selection.files_from_path.as_deref()
+                && path != "-"
+            {
+                let anchored =
+                    sanitize_files_from(std::path::Path::new(path), &module_root_canonical);
+                cfg.file_selection.files_from_path = Some(anchored.to_string_lossy().into_owned());
+            }
 
             // upstream: loadparm.c - `dont compress` parameter specifies suffixes
             // that should skip per-file compression during transfer. However,
