@@ -14,7 +14,7 @@ use protocol::codec::{MonotonicNdxWriter, NdxCodecEnum, create_ndx_codec};
 
 use crate::pipeline::PipelineConfig;
 use crate::receiver::PipelineSetup;
-use crate::receiver::ndx_stream::{NdxFrame, read_marker_aware_ndx};
+use crate::receiver::ndx_stream::{NdxFrame, read_marker_aware_ndx, read_ndx_and_attrs};
 use crate::receiver::stats::TransferStats;
 use crate::receiver::{REDO_CHECKSUM_LENGTH, ReceiverContext};
 
@@ -583,6 +583,7 @@ impl ReceiverContext {
         file_count: usize,
     ) -> io::Result<TransferStats> {
         let _t = PhaseTimer::new("receiver-transfer-incremental-streaming");
+        self.itemize_followers_per_segment = true;
 
         let mut stats = TransferStats {
             files_listed: file_count,
@@ -817,6 +818,14 @@ impl ReceiverContext {
                     matched_data += seg_matched;
                     all_redo_indices.extend(seg_redo);
                     all_delayed_updates.extend(seg_delayed);
+                    self.itemize_segment_hardlink_followers(
+                        range.clone(),
+                        &setup,
+                        reader,
+                        writer,
+                        &mut ndx_write_codec,
+                        &mut ndx_read_codec,
+                    )?;
                 }
             }
 
@@ -1056,6 +1065,57 @@ impl ReceiverContext {
 
         self.segments_released_mid_walk += 1;
         self.release_segment_locally(rel);
+        Ok(())
+    }
+
+    /// Itemizes this sub-list's new hard-link followers to a pushing client, then
+    /// reads the sender's echo of each before the walk goes on.
+    ///
+    /// The echoes share the ordered stream with everything the walk reads next -
+    /// the per-sub-list `NDX_DONE` echo and the next sub-list's transfer replies -
+    /// so they are consumed here, where they arrive. The read absorbs any
+    /// sub-list the sender queues ahead of an echo (the receiver is the sink).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `hlink.c:300-490` - `hard_link_check()` / `finish_hard_link()` itemize
+    ///   a follower once its leader is done, while the generator walks the
+    ///   follower's sub-list.
+    /// - `sender.c:584-602` - the sender echoes every non-transfer item.
+    /// - `receiver.c:918-931` - `recv_files()` consumes each echo inline.
+    fn itemize_segment_hardlink_followers<R: Read, W: Write + ?Sized>(
+        &mut self,
+        range: std::ops::Range<usize>,
+        setup: &PipelineSetup,
+        reader: &mut R,
+        writer: &mut W,
+        ndx_write_codec: &mut MonotonicNdxWriter,
+        ndx_read_codec: &mut NdxCodecEnum,
+    ) -> io::Result<()> {
+        #[cfg(unix)]
+        self.emit_server_hardlink_follower_itemize(
+            writer,
+            ndx_write_codec.inner_mut(),
+            range,
+            &setup.dest_dir,
+            setup.sandbox.as_deref(),
+        )?;
+        #[cfg(not(unix))]
+        self.emit_server_hardlink_follower_itemize(
+            writer,
+            ndx_write_codec.inner_mut(),
+            range,
+            &setup.dest_dir,
+        )?;
+        for _ in 0..self.hardlink_follower_echoes.take() {
+            if read_ndx_and_attrs(reader, ndx_read_codec, self, false, false)?.is_none() {
+                return Err(protocol::protocol_violation(format!(
+                    "expected the echo of a hard-link follower row, got NDX_DONE {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                )));
+            }
+        }
         Ok(())
     }
 
