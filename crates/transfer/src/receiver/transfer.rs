@@ -508,6 +508,11 @@ impl ReceiverContext {
                 }
             }
             DeletePassPhase::Late => {
+                // upstream: generator.c:2899-2902 - the late sweep follows the
+                // generate loop, so its deletion rows print after every name
+                // and itemize row; release the deferred client rows first.
+                self.flush_names_all()?;
+                self.flush_itemize_rows(writer)?;
                 if self.config.deletion.delete_after {
                     self.run_immediate_delete_pass(
                         dest_dir,
