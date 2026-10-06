@@ -134,7 +134,7 @@ for detail.
 - rsync 3.5.0 joins the interop matrix as a gating peer (#7290, #7337)
 - rsync 3.5.1 joins the interop matrix, with an upstream-baseline oracle in the harness (#8033)
 - Release benchmarks compare against both 3.4.4 and 3.5.0 and report peak RSS for every mode (#7595)
-- Release benchmarks compare against rsync 3.5.1 and 3.4.4 (#PR)
+- Release benchmarks compare against rsync 3.5.1 and 3.4.4 (#8106)
 - `daemon-seccomp` is reachable from the `oc-rsync` binary; it stays opt-in (#7589)
 - io_uring `Auto` can reach `SEND_ZC` in builds with `iouring-send-zc` (#7593)
 - `--safe-links` is evaluated on the receiver only, as upstream does (#7763, #7777)
