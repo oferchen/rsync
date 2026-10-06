@@ -145,3 +145,41 @@ fn copy_links_keeps_following_symlinks() {
     // do_open_checklinks(), the unconfined open.
     assert_eq!(read_through_sender(&ctx, &path).expect("followed"), SECRET);
 }
+/// A read-ahead window that opens with a path no root covers still batches
+/// the rest: the uncovered file through the leaf-only open, the covered ones
+/// beneath their held root, so a parent swapped after the scan is not
+/// followed even though the uncovered request came first.
+#[test]
+fn a_mixed_read_ahead_window_batches_each_path_the_way_the_open_would() {
+    let (_tmp, base) = tree();
+    std::fs::write(base.join("loose"), "loose").expect("write loose");
+    std::fs::write(base.join("src/g"), "gee").expect("write g");
+    let mut root = base.join("src").into_os_string();
+    root.push("/");
+    let mut ctx = GeneratorContext::new_for_test(&handshake(), config(false));
+    ctx.build_file_list(&[base.join("loose"), PathBuf::from(root)])
+        .expect("file list");
+    let paths = [
+        listed(&ctx, "loose"),
+        listed(&ctx, "sub/f"),
+        listed(&ctx, "g"),
+    ];
+    swap_sub_for_escaping_symlink(&base);
+    // Same length as the in-tree file, so only the open decides the outcome.
+    std::fs::write(base.join("outside/sub/f"), "INSIDE").expect("write bait");
+    let requests: Vec<_> = paths
+        .iter()
+        .zip([5, 6, 3])
+        .map(|(path, len)| fast_io::PrefetchRequest { path, len })
+        .collect();
+    let read = ctx.source_open().prefetch(&requests);
+    let expected: [Option<&[u8]>; 3] = if fast_io::is_io_uring_available() {
+        [Some(b"loose"), None, Some(b"gee")]
+    } else {
+        [None, None, None]
+    };
+    assert_eq!(
+        read.iter().map(Option::as_deref).collect::<Vec<_>>(),
+        expected
+    );
+}

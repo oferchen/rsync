@@ -104,16 +104,18 @@ impl SourceOpen {
     /// Reads `requests` ahead in one batch under this policy, index-aligned
     /// with `requests`; `None` leaves an entry to [`Self::open`].
     ///
-    /// With pinned source roots only the requests beneath the root of the
-    /// first one are batched, anchored at its held descriptor, so a batched
-    /// read never resolves a path the synchronous open would refuse.
+    /// With pinned source roots each request resolves exactly as
+    /// [`Self::open`] would: beneath the held descriptor of its root, or with
+    /// the leaf-only open when no root covers it, so a batched read never
+    /// resolves a path the synchronous open would refuse.
     pub(crate) fn prefetch(
         &self,
         requests: &[fast_io::PrefetchRequest<'_>],
     ) -> Vec<Option<Vec<u8>>> {
         #[cfg(unix)]
         if let Some(roots) = self.pinned_roots.as_deref() {
-            return prefetch_beneath_root(roots, self.noatime, requests);
+            let (uncovered, noatime) = self.prefetch_open();
+            return prefetch_beneath_roots(roots, uncovered, noatime, requests);
         }
         let (open, noatime) = self.prefetch_open();
         fast_io::prefetch_sources(open, noatime, requests)
@@ -167,45 +169,74 @@ impl SourceOpen {
     }
 }
 
-/// Batches the requests that resolve beneath the same pinned root as the
-/// first one; every other entry is left to the synchronous open.
+/// Batches `requests` under the pinned source roots: one batch per held root,
+/// anchored at its descriptor, and one leaf-only batch for the paths no root
+/// covers. A root that fails its identity check is left to the synchronous
+/// open, which reports it.
+///
+/// upstream: `sender.c:694-704` - beneath the longest matching root, else
+/// `sender_open_confined(NULL, fname)`.
 #[cfg(unix)]
-fn prefetch_beneath_root(
+fn prefetch_beneath_roots(
     roots: &fast_io::SourceRoots,
+    uncovered: fast_io::PrefetchOpen<'_>,
     noatime: bool,
     requests: &[fast_io::PrefetchRequest<'_>],
 ) -> Vec<Option<Vec<u8>>> {
     use std::os::fd::AsFd;
     let mut out = vec![None; requests.len()];
-    let Some(Some(Ok(held))) = requests.first().map(|first| roots.held_root(first.path)) else {
-        return out;
-    };
-    let mut slots = Vec::new();
-    let mut paths = Vec::new();
+    let mut plain = Vec::new();
+    let mut groups: Vec<(
+        fast_io::source_roots::HeldRoot,
+        Vec<(usize, std::path::PathBuf)>,
+    )> = Vec::new();
     for (slot, request) in requests.iter().enumerate() {
-        if let Some(Ok(entry)) = roots.held_root(request.path)
-            && entry.root == held.root
-        {
-            slots.push((slot, request.len));
-            paths.push(held.root.join(entry.relative));
+        match roots.held_root(request.path) {
+            None => plain.push(slot),
+            Some(Err(_)) => {}
+            Some(Ok(held)) => {
+                let path = held.root.join(&held.relative);
+                match groups.iter_mut().find(|(group, _)| group.root == held.root) {
+                    Some((_, members)) => members.push((slot, path)),
+                    None => groups.push((held, vec![(slot, path)])),
+                }
+            }
         }
     }
-    let batch: Vec<fast_io::PrefetchRequest<'_>> = slots
-        .iter()
-        .zip(&paths)
-        .map(|(&(_, len), path)| fast_io::PrefetchRequest { path, len })
-        .collect();
-    let open = fast_io::PrefetchOpen::Anchored {
-        anchor: held.anchor.as_fd(),
-        root: &held.root,
-    };
-    for ((slot, _), data) in slots
-        .iter()
-        .zip(fast_io::prefetch_sources(open, noatime, &batch))
-    {
-        out[*slot] = data;
+    let plain_batch: Vec<_> = plain.iter().map(|&slot| requests[slot]).collect();
+    scatter(
+        &mut out,
+        &plain,
+        fast_io::prefetch_sources(uncovered, noatime, &plain_batch),
+    );
+    for (held, members) in &groups {
+        let slots: Vec<usize> = members.iter().map(|&(slot, _)| slot).collect();
+        let batch: Vec<_> = members
+            .iter()
+            .map(|(slot, path)| fast_io::PrefetchRequest {
+                path,
+                len: requests[*slot].len,
+            })
+            .collect();
+        let open = fast_io::PrefetchOpen::Anchored {
+            anchor: held.anchor.as_fd(),
+            root: &held.root,
+        };
+        scatter(
+            &mut out,
+            &slots,
+            fast_io::prefetch_sources(open, noatime, &batch),
+        );
     }
     out
+}
+
+/// Writes each batched result back to its slot in the caller's request order.
+#[cfg(unix)]
+fn scatter(out: &mut [Option<Vec<u8>>], slots: &[usize], data: Vec<Option<Vec<u8>>>) {
+    for (&slot, data) in slots.iter().zip(data) {
+        out[slot] = data;
+    }
 }
 
 /// Opens a source file for reading following symlinks, honouring
