@@ -26,7 +26,7 @@ struct GlobalModuleDefaults {
     write_only: Option<bool>,
     listable: Option<bool>,
     munge_symlinks: Option<Option<bool>>,
-    numeric_ids: Option<bool>,
+    numeric_ids: Option<Option<bool>>,
     fake_super: Option<bool>,
     insecure_links: Option<bool>,
     max_connections: Option<MaxConnections>,
@@ -37,7 +37,7 @@ struct GlobalModuleDefaults {
     reverse_lookup: Option<bool>,
     syslog_tag: Option<String>,
     syslog_facility: Option<String>,
-    open_noatime: Option<bool>,
+    open_noatime: Option<Option<bool>>,
     exclude_from: Option<PathBuf>,
     include_from: Option<PathBuf>,
     comment: Option<String>,
@@ -46,14 +46,15 @@ struct GlobalModuleDefaults {
     post_xfer_exec: Option<String>,
     name_converter: Option<String>,
     temp_dir: Option<String>,
+    path: Option<PathBuf>,
     charset: Option<String>,
     // upstream: daemon-parm.txt `Locals:` - `uid`/`gid` are P_LOCAL. A value in
     // the global section is the default `lp_uid(i)`/`lp_gid(i)` every module
     // inherits (clientserver.c:781,790 read the per-module value). These are
     // distinct from the P_GLOBAL `daemon uid`/`daemon gid` process-wide drop
     // (clientserver.c:1363,1376 `lp_daemon_gid`/`lp_daemon_uid`).
-    uid: Option<u32>,
-    gid: Option<GidSetting>,
+    uid: Option<Result<u32, String>>,
+    gid: Option<Result<GidSetting, String>>,
     // upstream: daemon-parm.h:262 marks `auth users` P_LOCAL, so a global-section
     // `auth users` becomes every module's default via loadparm.c
     // init_section()/copy_section(). authenticate.c:228 auth_server() then reads
@@ -105,6 +106,7 @@ impl GlobalModuleDefaults {
             post_xfer_exec: copied_or_latest(&snapshot.post_xfer_exec, &latest.post_xfer_exec),
             name_converter: copied_or_latest(&snapshot.name_converter, &latest.name_converter),
             temp_dir: copied_or_latest(&snapshot.temp_dir, &latest.temp_dir),
+            path: copied_or_latest(&snapshot.path, &latest.path),
             charset: copied_or_latest(&snapshot.charset, &latest.charset),
             uid: copied_or_latest(&snapshot.uid, &latest.uid),
             gid: copied_or_latest(&snapshot.gid, &latest.gid),

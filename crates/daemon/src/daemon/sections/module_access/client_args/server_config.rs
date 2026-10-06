@@ -156,6 +156,7 @@ fn build_server_config(
     protocol_version: Option<ProtocolVersion>,
 ) -> io::Result<Option<ServerConfig>> {
     let role = determine_server_role(client_args);
+    let chmod_sender = role == ServerRole::Generator;
 
     let flag_string = client_args
         .iter()
@@ -507,22 +508,19 @@ fn build_server_config(
             // is demoted to --super on the wire and never reaches us.
             cfg.fake_super = module.fake_super;
 
-            // upstream: clientserver.c:rsync_module() - the `incoming chmod`
-            // and `outgoing chmod` directives feed `parse_chmod(...)` and the
-            // parsed clauses arm `daemon_chmod_modes`, applied at flist build
-            // time (sender) and at file finalize time (receiver). We delay
-            // parsing to module-use rather than module-load so the operator
-            // sees the @ERROR live; an invalid spec aborts the session with
-            // the same exit semantics as a bad client option.
-            match parse_daemon_chmod_specs(module) {
-                Ok((incoming, outgoing)) => {
-                    cfg.daemon_incoming_chmod = incoming;
-                    cfg.daemon_outgoing_chmod = outgoing;
-                }
-                Err(err) => {
-                    let error = AtError::message(err.to_string());
-                    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                    return Ok(None);
+            // upstream: clientserver.c:1294-1302 - `daemon_chmod_modes` is armed
+            // from the one directive for this session's direction, applied at
+            // flist build time (sender) or file finalize time (receiver). A
+            // spec that does not parse is logged and the session continues
+            // without a daemon chmod.
+            match daemon_chmod_for_session(module, chmod_sender) {
+                Ok(parsed) if chmod_sender => cfg.daemon_outgoing_chmod = parsed,
+                Ok(parsed) => cfg.daemon_incoming_chmod = parsed,
+                Err(text) => {
+                    if let Some(log) = ctx.log_sink {
+                        let message = rsync_warning!(text).with_role(Role::Daemon);
+                        log_message(log, &message);
+                    }
                 }
             }
 

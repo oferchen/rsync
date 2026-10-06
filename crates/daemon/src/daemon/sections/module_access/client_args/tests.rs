@@ -1,6 +1,32 @@
 #[cfg(test)]
 mod daemon_chmod_spec_tests {
-    use super::parse_one_chmod_spec;
+    use super::{ModuleDefinition, ModuleRuntime, daemon_chmod_for_session, parse_one_chmod_spec};
+
+    fn chmod_module(incoming: Option<&str>, outgoing: Option<&str>) -> ModuleRuntime {
+        ModuleRuntime::from(ModuleDefinition {
+            incoming_chmod: incoming.map(str::to_owned),
+            outgoing_chmod: outgoing.map(str::to_owned),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn a_bad_spec_for_the_other_direction_is_never_parsed() {
+        // upstream: clientserver.c:1294-1297 reads only the directive for the
+        // session's direction, so a bad `incoming chmod` cannot break a pull.
+        let module = chmod_module(Some("bogus"), Some("F600"));
+        let parsed = daemon_chmod_for_session(&module, true).expect("outgoing parses");
+        assert!(parsed.is_some());
+    }
+
+    #[test]
+    fn a_bad_spec_for_this_direction_is_reported_with_upstreams_log_text() {
+        // upstream: clientserver.c:1298-1301 logs the spec and still calls
+        // start_server(); the caller serves the session without a chmod.
+        let module = chmod_module(Some("bogus"), None);
+        let text = daemon_chmod_for_session(&module, false).expect_err("bad incoming spec");
+        assert_eq!(text, "Invalid \"incoming chmod\" directive: bogus");
+    }
 
     #[test]
     fn parse_one_chmod_spec_returns_none_for_unset_directive() {

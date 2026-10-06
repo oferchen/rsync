@@ -62,3 +62,4 @@ pub(super) use errors::map_daemon_handshake_error;
 pub(super) use parsing::parse_host_port;
 #[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use socket_options::apply_socket_options;
+pub use socket_options::apply_socket_options_reporting;

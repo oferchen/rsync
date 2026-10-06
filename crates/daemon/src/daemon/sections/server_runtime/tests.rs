@@ -460,6 +460,7 @@ fn reload_config_with_no_config_path_is_noop() {
 
     reload_daemon_config(
         None,
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -490,6 +491,7 @@ fn reload_config_with_missing_file_keeps_old_config() {
     let missing = PathBuf::from("/nonexistent/rsyncd.conf");
     reload_daemon_config(
         Some(&missing),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -530,6 +532,7 @@ fn reload_config_replaces_modules_and_motd() {
 
     reload_daemon_config(
         Some(&conf_path),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -563,6 +566,7 @@ fn reload_config_existing_connections_keep_old_config() {
 
     reload_daemon_config(
         Some(&conf_path),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -582,6 +586,7 @@ fn reload_config_existing_connections_keep_old_config() {
     }
     reload_daemon_config(
         Some(&conf_path),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -618,6 +623,7 @@ fn reload_config_with_invalid_syntax_keeps_old_config() {
 
     reload_daemon_config(
         Some(&conf_path),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -635,6 +641,7 @@ fn reload_config_with_invalid_syntax_keeps_old_config() {
 
     reload_daemon_config(
         Some(&conf_path),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
@@ -663,199 +670,6 @@ fn reload_config_sighup_flag_triggers_reload() {
     assert!(!flags.reload_config.swap(false, Ordering::Relaxed));
 }
 
-#[test]
-fn parse_socket_options_tcp_nodelay() {
-    let opts = parse_socket_options("TCP_NODELAY", None).expect("parse succeeds");
-    assert_eq!(opts.len(), 1);
-    assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
-}
-
-#[test]
-fn parse_socket_options_so_keepalive() {
-    let opts = parse_socket_options("SO_KEEPALIVE", None).expect("parse succeeds");
-    assert_eq!(opts.len(), 1);
-    assert_eq!(opts[0], SocketOption::SoKeepAlive(true));
-}
-
-#[test]
-fn parse_socket_options_buffer_sizes() {
-    let opts =
-        parse_socket_options("SO_SNDBUF=65536, SO_RCVBUF=32768", None).expect("parse succeeds");
-    assert_eq!(opts.len(), 2);
-    assert_eq!(opts[0], SocketOption::SoSndBuf(65536));
-    assert_eq!(opts[1], SocketOption::SoRcvBuf(32768));
-}
-
-#[test]
-fn parse_socket_options_multiple_mixed() {
-    let opts = parse_socket_options("TCP_NODELAY, SO_KEEPALIVE, SO_SNDBUF=65536", None)
-        .expect("parse succeeds");
-    assert_eq!(opts.len(), 3);
-    assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
-    assert_eq!(opts[1], SocketOption::SoKeepAlive(true));
-    assert_eq!(opts[2], SocketOption::SoSndBuf(65536));
-}
-
-#[test]
-fn parse_socket_options_bool_explicit_values() {
-    let opts = parse_socket_options("TCP_NODELAY=1, SO_KEEPALIVE=0", None).expect("parse succeeds");
-    assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
-    assert_eq!(opts[1], SocketOption::SoKeepAlive(false));
-}
-
-#[test]
-fn parse_socket_options_bool_text_values() {
-    let opts =
-        parse_socket_options("TCP_NODELAY=true, SO_KEEPALIVE=false", None).expect("parse succeeds");
-    assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
-    assert_eq!(opts[1], SocketOption::SoKeepAlive(false));
-}
-
-#[test]
-fn parse_socket_options_empty_string() {
-    let opts = parse_socket_options("", None).expect("parse succeeds");
-    assert!(opts.is_empty());
-}
-
-/// upstream: socket.c:712-715 - an unknown option name warns (`Unknown socket
-/// option %s`) and `continue`s; `set_socket_options()` is `void`, so the daemon
-/// must not treat a bogus `socket options =` entry as a fatal config error. A
-/// following valid entry in the same string must still parse, proving the loop
-/// skipped only the unknown token.
-#[test]
-fn parse_socket_options_unknown_option_warns_and_continues() {
-    let opts = parse_socket_options("UNKNOWN_OPT, TCP_NODELAY", None)
-        .expect("unknown option must not be fatal");
-    assert_eq!(opts, vec![SocketOption::TcpNoDelay(true)]);
-}
-
-/// The unknown-option warning is delivered through the daemon log sink at
-/// warning level with upstream's exact text, and the daemon keeps running.
-#[test]
-fn parse_socket_options_unknown_option_logs_warning() {
-    let log_dir = tempfile::tempdir().expect("log dir");
-    let log_path = log_dir.path().join("daemon.log");
-    let log_sink: Option<SharedLogSink> =
-        Some(open_log_sink(&log_path, Brand::Oc).expect("open log"));
-
-    let opts = parse_socket_options("SO_BOGUS", log_sink.as_ref()).expect("not fatal");
-    assert!(opts.is_empty());
-
-    drop(log_sink);
-    let contents = std::fs::read_to_string(&log_path).expect("read log");
-    assert!(
-        log_body(&contents).starts_with("oc-rsync warning:"),
-        "expected warning level, got: {contents}"
-    );
-    assert!(
-        contents.contains("Unknown socket option SO_BOGUS"),
-        "missing upstream unknown-option text: {contents}"
-    );
-}
-
-/// upstream: socket.c:725-735 - an `OPT_ON` preset given a value logs `syntax
-/// error -- %s does not take a value` at warning level but still yields the
-/// preset, so the daemon keeps the option instead of aborting.
-#[cfg(not(target_family = "windows"))]
-#[test]
-fn parse_socket_options_opt_on_value_warns_and_applies() {
-    let log_dir = tempfile::tempdir().expect("log dir");
-    let log_path = log_dir.path().join("daemon.log");
-    let log_sink: Option<SharedLogSink> =
-        Some(open_log_sink(&log_path, Brand::Oc).expect("open log"));
-
-    let opts = parse_socket_options("IPTOS_LOWDELAY=5", log_sink.as_ref()).expect("not fatal");
-    assert_eq!(opts, vec![SocketOption::IpTos(0x10)]);
-
-    drop(log_sink);
-    let contents = std::fs::read_to_string(&log_path).expect("read log");
-    assert!(
-        log_body(&contents).starts_with("oc-rsync warning:"),
-        "expected warning level, got: {contents}"
-    );
-    assert!(
-        contents.contains("syntax error -- IPTOS_LOWDELAY does not take a value"),
-        "missing upstream OPT_ON value warning: {contents}"
-    );
-}
-
-#[test]
-fn parse_socket_options_sndbuf_missing_value_rejected() {
-    let err = parse_socket_options("SO_SNDBUF", None).expect_err("should fail");
-    assert!(err.contains("requires a numeric value"), "{err}");
-}
-
-#[test]
-fn parse_socket_options_sndbuf_invalid_value_rejected() {
-    let err = parse_socket_options("SO_SNDBUF=abc", None).expect_err("should fail");
-    assert!(err.contains("invalid numeric value"), "{err}");
-}
-
-#[test]
-fn parse_socket_options_case_insensitive() {
-    let opts = parse_socket_options("tcp_nodelay, so_keepalive", None).expect("parse succeeds");
-    assert_eq!(opts.len(), 2);
-    assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
-    assert_eq!(opts[1], SocketOption::SoKeepAlive(true));
-}
-
-#[test]
-fn parse_socket_options_trailing_comma_ignored() {
-    let opts = parse_socket_options("TCP_NODELAY,", None).expect("parse succeeds");
-    assert_eq!(opts.len(), 1);
-    assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
-}
-
-#[test]
-fn parse_socket_options_whitespace_around_values() {
-    let opts =
-        parse_socket_options("  TCP_NODELAY , SO_SNDBUF = 4096  ", None).expect("parse succeeds");
-    assert_eq!(opts.len(), 2);
-    assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
-    assert_eq!(opts[1], SocketOption::SoSndBuf(4096));
-}
-
-#[test]
-fn apply_listener_socket_options_nodelay_keepalive() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let opts = vec![
-        SocketOption::TcpNoDelay(true),
-        SocketOption::SoKeepAlive(true),
-    ];
-    apply_socket_options_to_listener(&listener, &opts, None);
-
-    let sock = socket2::SockRef::from(&listener);
-    assert!(sock.tcp_nodelay().expect("query nodelay"));
-    assert!(sock.keepalive().expect("query keepalive"));
-}
-
-#[test]
-fn apply_listener_socket_options_buffer_sizes() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let opts = vec![SocketOption::SoSndBuf(32768), SocketOption::SoRcvBuf(32768)];
-    apply_socket_options_to_listener(&listener, &opts, None);
-
-    let sock = socket2::SockRef::from(&listener);
-    assert!(sock.send_buffer_size().expect("query sndbuf") >= 32768);
-    assert!(sock.recv_buffer_size().expect("query rcvbuf") >= 32768);
-}
-
-#[test]
-fn apply_stream_socket_options_nodelay_keepalive() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("local addr");
-    let stream = TcpStream::connect(addr).expect("connect");
-    let opts = vec![
-        SocketOption::TcpNoDelay(true),
-        SocketOption::SoKeepAlive(true),
-    ];
-    apply_socket_options_to_stream(&stream, &opts, None);
-
-    let sock = socket2::SockRef::from(&stream);
-    assert!(sock.tcp_nodelay().expect("query nodelay"));
-    assert!(sock.keepalive().expect("query keepalive"));
-}
-
 /// upstream: clientserver.c:1396 - `start_daemon()` unconditionally enables
 /// SO_KEEPALIVE on the freshly accepted client socket, independent of any
 /// `socket options` config. This matters because idle daemon connections that
@@ -865,6 +679,44 @@ fn apply_stream_socket_options_nodelay_keepalive() {
 /// the accept engines feed) and assert keepalive is on with an empty option
 /// set - proving the enablement is unconditional and not a side effect of
 /// parsing a `SO_KEEPALIVE` directive.
+/// The daemon's socket options follow upstream's set_socket_options(): exact
+/// option names, `IP_TOS` is not one of them, a value on an `OPT_ON` option
+/// is reported, and nothing is fatal - the valid option still reaches the
+/// socket.
+///
+/// upstream: socket.c:807-895 - the `socket_options[]` table and its
+/// `strcmp()` lookup, "Unknown socket option %s" and "syntax error -- %s
+/// does not take a value".
+#[cfg(unix)]
+#[test]
+fn daemon_socket_options_follow_upstream_names_and_warnings() {
+    let log_dir = tempfile::tempdir().expect("log dir");
+    let log_path = log_dir.path().join("daemon.log");
+    let log_sink: Option<SharedLogSink> =
+        Some(open_log_sink(&log_path, Brand::Oc).expect("open log"));
+    let socket =
+        socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).expect("socket");
+
+    apply_daemon_socket_options(
+        &socket,
+        "tcp_nodelay IP_TOS=16,IPTOS_LOWDELAY=5\tSO_SNDBUF=65536",
+        log_sink.as_ref(),
+    );
+
+    assert!(socket.send_buffer_size().expect("query send buffer") >= 65536);
+    drop(log_sink);
+    let contents = std::fs::read_to_string(&log_path).expect("read log");
+    for expected in [
+        "Unknown socket option tcp_nodelay",
+        "Unknown socket option IP_TOS",
+        "syntax error -- IPTOS_LOWDELAY does not take a value",
+    ] {
+        assert!(
+            contents.contains(expected),
+            "missing {expected:?} in: {contents}"
+        );
+    }
+}
 #[test]
 fn enable_accepted_stream_keepalive_is_unconditional() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -887,197 +739,6 @@ fn enable_accepted_stream_keepalive_is_unconditional() {
             .expect("query keepalive"),
         "SO_KEEPALIVE must be enabled unconditionally on the accepted socket",
     );
-}
-
-#[test]
-fn apply_stream_socket_options_buffer_sizes() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("local addr");
-    let stream = TcpStream::connect(addr).expect("connect");
-    let opts = vec![SocketOption::SoSndBuf(32768), SocketOption::SoRcvBuf(32768)];
-    apply_socket_options_to_stream(&stream, &opts, None);
-
-    let sock = socket2::SockRef::from(&stream);
-    assert!(sock.send_buffer_size().expect("query sndbuf") >= 32768);
-    assert!(sock.recv_buffer_size().expect("query rcvbuf") >= 32768);
-}
-
-#[test]
-fn parse_socket_options_ip_tos_hex() {
-    let opts = parse_socket_options("IP_TOS=0x10", None).expect("parse succeeds");
-    assert_eq!(opts.len(), 1);
-    assert_eq!(opts[0], SocketOption::IpTos(0x10));
-}
-
-#[test]
-fn parse_socket_options_ip_tos_decimal() {
-    let opts = parse_socket_options("IP_TOS=16", None).expect("parse succeeds");
-    assert_eq!(opts.len(), 1);
-    assert_eq!(opts[0], SocketOption::IpTos(16));
-}
-
-#[test]
-fn parse_socket_options_ip_tos_requires_value() {
-    let err = parse_socket_options("IP_TOS", None).expect_err("should fail");
-    assert!(err.contains("requires a numeric value"), "{err}");
-}
-
-#[test]
-fn parse_socket_options_combined_with_ip_tos() {
-    let opts = parse_socket_options("TCP_NODELAY, IP_TOS=0x08, SO_SNDBUF=65536", None)
-        .expect("parse succeeds");
-    assert_eq!(opts.len(), 3);
-    assert_eq!(opts[0], SocketOption::TcpNoDelay(true));
-    assert_eq!(opts[1], SocketOption::IpTos(0x08));
-    assert_eq!(opts[2], SocketOption::SoSndBuf(65536));
-}
-
-#[test]
-fn apply_stream_socket_options_empty_is_noop() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("local addr");
-    let stream = TcpStream::connect(addr).expect("connect");
-    apply_socket_options_to_stream(&stream, &[], None);
-}
-
-/// upstream: socket.c:738-741 - `set_socket_options()` responds to a failed
-/// `setsockopt(2)` with `rsyserr(FERROR, errno, "failed to set socket option
-/// %s")` and then `continue`s the loop; one failed option must never abort the
-/// connection or skip the remaining options. Applying `IP_TOS` to an AF_UNIX
-/// socket has no IP address family and is guaranteed to fail, so it stands in
-/// for any unsettable option. We feed it ahead of a settable `SO_RCVBUF` and
-/// assert: (1) exactly one per-option warning is logged, naming the failed
-/// `IP_TOS`; (2) the later `SO_RCVBUF` produced no warning, proving the loop
-/// continued and applied it; and (3) apply returns normally (no abort).
-#[cfg(unix)]
-#[test]
-fn apply_socket_options_warns_and_continues_on_per_option_failure() {
-    use std::os::unix::net::UnixStream;
-
-    let (sock_a, _sock_b) = UnixStream::pair().expect("unix socketpair");
-
-    let log_dir = tempfile::tempdir().expect("log dir");
-    let log_path = log_dir.path().join("daemon.log");
-    let log_sink: Option<SharedLogSink> =
-        Some(open_log_sink(&log_path, Brand::Oc).expect("open log"));
-
-    // IP_TOS fails on AF_UNIX; SO_RCVBUF that follows must still be applied.
-    let opts = vec![SocketOption::IpTos(0x10), SocketOption::SoRcvBuf(8192)];
-    apply_socket_options_impl(socket2::SockRef::from(&sock_a), &opts, log_sink.as_ref());
-
-    drop(log_sink);
-    let contents = std::fs::read_to_string(&log_path).expect("read log");
-    assert!(
-        log_body(&contents).starts_with("oc-rsync warning:"),
-        "expected warning level, got: {contents}"
-    );
-    assert!(
-        contents.contains("failed to set socket option IP_TOS"),
-        "missing per-option failure warning for IP_TOS: {contents}"
-    );
-    // SO_RCVBUF was reached and succeeded, so it emits no warning: the loop
-    // continued past the failed option instead of aborting.
-    assert!(
-        !contents.contains("failed to set socket option SO_RCVBUF"),
-        "SO_RCVBUF should have applied without a warning: {contents}"
-    );
-    assert_eq!(
-        contents.matches("failed to set socket option").count(),
-        1,
-        "expected exactly one per-option failure warning: {contents}"
-    );
-}
-
-/// A daemon `socket options =` config written for upstream rsync must parse
-/// every entry in upstream's `socket_options[]` table (socket.c) - silently
-/// dropping an option would make a config that is portable under upstream
-/// behave differently here. This locks in the five entries previously missing
-/// from the daemon table (`SO_BROADCAST`, `SO_SNDLOWAT`, `SO_RCVLOWAT`,
-/// `SO_SNDTIMEO`, `SO_RCVTIMEO`) plus the `IPTOS_*` `OPT_ON` symbolic presets,
-/// each resolving to the correct level/optname/value semantics.
-#[test]
-fn parse_socket_options_accepts_all_upstream_options() {
-    use SocketOption::{SoBroadcast, SoKeepAlive, SoRcvBuf, SoSndBuf, TcpNoDelay};
-
-    // Available across every daemon target platform.
-    assert_eq!(
-        parse_socket_options("SO_KEEPALIVE", None).expect("parse"),
-        vec![SoKeepAlive(true)]
-    );
-    assert_eq!(
-        parse_socket_options("TCP_NODELAY", None).expect("parse"),
-        vec![TcpNoDelay(true)]
-    );
-    assert_eq!(
-        parse_socket_options("SO_BROADCAST", None).expect("parse"),
-        vec![SoBroadcast(true)]
-    );
-    assert_eq!(
-        parse_socket_options("SO_SNDBUF=65536, SO_RCVBUF=32768", None).expect("parse"),
-        vec![SoSndBuf(65536), SoRcvBuf(32768)]
-    );
-
-    // upstream: IPTOS_LOWDELAY / IPTOS_THROUGHPUT are OPT_ON presets that map
-    // to a fixed IP_TOS byte.
-    #[cfg(not(target_family = "windows"))]
-    {
-        assert_eq!(
-            parse_socket_options("IPTOS_LOWDELAY", None).expect("parse"),
-            vec![SocketOption::IpTos(0x10)]
-        );
-        assert_eq!(
-            parse_socket_options("IPTOS_THROUGHPUT", None).expect("parse"),
-            vec![SocketOption::IpTos(0x08)]
-        );
-        // upstream: socket.c:725-735 - an OPT_ON preset given a value warns but
-        // still applies its fixed byte; it is not a fatal error.
-        assert_eq!(
-            parse_socket_options("IPTOS_LOWDELAY=5", None).expect("value warns, still applies"),
-            vec![SocketOption::IpTos(0x10)]
-        );
-    }
-
-    // SO_SNDTIMEO / SO_RCVTIMEO are written as a plain int on all Unix targets.
-    #[cfg(unix)]
-    {
-        assert_eq!(
-            parse_socket_options("SO_SNDTIMEO=30", None).expect("parse"),
-            vec![SocketOption::SoSndTimeo(30)]
-        );
-        assert_eq!(
-            parse_socket_options("SO_RCVTIMEO=30", None).expect("parse"),
-            vec![SocketOption::SoRcvTimeo(30)]
-        );
-    }
-
-    // SO_SNDLOWAT / SO_RCVLOWAT exist only where libc defines them (not Linux).
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-    {
-        assert_eq!(
-            parse_socket_options("SO_SNDLOWAT=1", None).expect("parse"),
-            vec![SocketOption::SoSndLoWat(1)]
-        );
-        assert_eq!(
-            parse_socket_options("SO_RCVLOWAT=1", None).expect("parse"),
-            vec![SocketOption::SoRcvLoWat(1)]
-        );
-    }
-}
-
-/// `SO_BROADCAST` exercises the apply path end to end on Unix, where the kernel
-/// accepts the option on any socket type at `setsockopt` time. Windows validates
-/// that `SO_BROADCAST` is only meaningful for datagram sockets and rejects it on
-/// a stream socket with `WSAENOPROTOOPT`, so on Windows it joins the LOWAT/TIMEO
-/// entries that mirror upstream's best-effort `setsockopt` (rejectable by the
-/// platform at runtime) and are covered at the parse layer only.
-#[cfg(unix)]
-#[test]
-fn apply_socket_options_broadcast_sets_flag() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    apply_socket_options_to_listener(&listener, &[SocketOption::SoBroadcast(true)], None);
-
-    let sock = socket2::SockRef::from(&listener);
-    assert!(sock.broadcast().expect("query broadcast"));
 }
 
 /// Builds an [`AcceptLoopState`] suitable for unit tests that exercise
@@ -1106,12 +767,12 @@ fn test_accept_loop_state<'a>(
         max_connections,
         config_path,
         log_file_format: None,
+        dparams: &[],
         connection_limiter: limiter,
         modules: Arc::new(Vec::new()),
         motd_lines: Arc::new(Vec::new()),
         log_sink,
         notifier,
-        client_socket_options: Arc::new(Vec::new()),
         bandwidth_limit: None,
         reverse_lookup: false,
         proxy_policy: ProxyProtocolPolicy::Disabled,
@@ -1457,8 +1118,7 @@ fn bind_listeners_per_family_falls_back_when_first_family_unreachable() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
-        &[],
+        "",
         None,
     )
     .expect("at least one family must bind");
@@ -1487,15 +1147,14 @@ fn bind_listeners_per_family_applies_socket_options_before_listen() {
     // This proves the option reaches the listener through
     // `bind_listeners_per_family` itself, exercising the pre-bind apply path.
     let loopback = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
-    let socket_options = vec![SocketOption::SoSndBuf(131_072)];
+    let socket_options = "SO_SNDBUF=131072";
 
     let (listeners, _bound_addresses) = bind_listeners_per_family(
         &[loopback],
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
-        &socket_options,
+        socket_options,
         None,
     )
     .expect("loopback bind must succeed");
@@ -1511,59 +1170,14 @@ fn bind_listeners_per_family_applies_socket_options_before_listen() {
     );
 }
 
-#[test]
-fn bind_listeners_per_family_replicates_acceptor_threads() {
-    // acceptor_threads = N must bind N listener sockets for a reachable
-    // family. With port 0 each replica gets its own ephemeral port, which
-    // deterministically exercises the replication loop on every platform
-    // regardless of SO_REUSEPORT same-port semantics (the load-balancing
-    // benefit of binding to a fixed shared port is a kernel feature covered
-    // by the per-socket set_reuse_port call, not this counting test).
-    let reachable = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
-    let bind_addresses = vec![reachable];
-
-    let (listeners, bound_addresses) = bind_listeners_per_family(
-        &bind_addresses,
-        0,
-        DEFAULT_LISTEN_BACKLOG,
-        TcpFastOpenMode::Off,
-        3,
-        &[],
-        None,
-    )
-    .expect("the reachable family must bind all replicas");
-
-    assert_eq!(
-        listeners.len(),
-        3,
-        "acceptor_threads=3 must bind three listener replicas"
-    );
-    assert_eq!(bound_addresses.len(), 3);
-    for addr in &bound_addresses {
-        assert_eq!(addr.ip(), reachable, "every replica binds the same family");
-        assert!(
-            addr.port() != 0,
-            "each replica must get a real ephemeral port"
-        );
-    }
-}
-
-#[test]
-fn default_acceptor_threads_is_one() {
-    // Absent an `acceptor threads` directive the daemon binds a single
-    // listener per family, preserving the historical pre-NACC-2 behaviour.
-    assert_eq!(RuntimeOptions::default().acceptor_threads(), 1);
-}
-
 // Unix-only: asserts POSIX SO_REUSEADDR semantics (a second bind on an active
 // listener is refused). Windows SO_REUSEADDR instead permits re-binding, so this
 // exact-refusal invariant is a Unix property.
 #[cfg(unix)]
 #[test]
 fn default_single_listener_refuses_a_second_bind_on_the_same_port() {
-    // upstream: socket.c:455 - open_socket_in() sets SO_REUSEADDR only. The
-    // default single-listener daemon (acceptor_threads == 1) must therefore NOT
-    // set SO_REUSEPORT, so a second bind on the same in-use port is refused with
+    // upstream: socket.c:455 - open_socket_in() sets SO_REUSEADDR only, never
+    // SO_REUSEPORT, so a second bind on the same in-use port is refused with
     // EADDRINUSE rather than co-binding. This is what makes concurrent daemon
     // tests safe from cross-connection load-balancing.
     let reachable = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
@@ -1575,8 +1189,7 @@ fn default_single_listener_refuses_a_second_bind_on_the_same_port() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
-        &[],
+        "",
         None,
     )
     .expect("first default bind must succeed");
@@ -1584,70 +1197,19 @@ fn default_single_listener_refuses_a_second_bind_on_the_same_port() {
     let port = first_addrs[0].port();
     assert!(port != 0);
 
-    // A second default (replicas == 1) bind on that same, in-use port must be
-    // refused - no SO_REUSEPORT co-bind.
+    // A second bind on that same, in-use port must be refused - no
+    // SO_REUSEPORT co-bind.
     let second = bind_listeners_per_family(
         &[reachable],
         port,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
-        &[],
+        "",
         None,
     );
     assert!(
         second.is_err(),
         "a second default-daemon bind on an in-use port must fail (SO_REUSEADDR only), got Ok"
-    );
-}
-
-// Unix-only: SO_REUSEPORT (the fixed-port co-bind mechanism) is a POSIX socket
-// option; socket2's setter is Unix-only and the daemon only sets it under
-// `#[cfg(unix)]`.
-#[cfg(unix)]
-#[test]
-fn multi_acceptor_replicas_co_bind_the_same_fixed_port() {
-    // The opt-in multi-acceptor daemon (acceptor_threads > 1) still sets
-    // SO_REUSEPORT on its replica sockets, so multiple listeners share ONE fixed
-    // port and the kernel load-balances accepts across them. Binding replicas on
-    // a fixed port (rather than port 0, which hands each replica a distinct
-    // ephemeral port) is what actually exercises the shared-port co-bind.
-    let reachable = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
-
-    // Reserve a currently-free fixed port. A concurrent test could steal it in
-    // the window between reserve and bind, so retry until a clean attempt binds
-    // both replicas (or the budget is exhausted).
-    for _ in 0..32 {
-        let port = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
-            .and_then(|l| l.local_addr())
-            .map(|a| a.port())
-            .expect("reserve free port");
-
-        match bind_listeners_per_family(
-            &[reachable],
-            port,
-            DEFAULT_LISTEN_BACKLOG,
-            TcpFastOpenMode::Off,
-            2,
-            &[],
-            None,
-        ) {
-            Ok((listeners, addrs)) if listeners.len() == 2 => {
-                assert!(
-                    addrs.iter().all(|a| a.port() == port),
-                    "both replicas must co-bind the same fixed port {port}, got {addrs:?}"
-                );
-                return;
-            }
-            // A regression that dropped SO_REUSEPORT would bind only the first
-            // replica (the second EADDRINUSEs), returning a single listener.
-            // Retry: this attempt lost the reserve race or the port was busy.
-            _ => continue,
-        }
-    }
-    panic!(
-        "acceptor_threads=2 must co-bind two replica listeners on one fixed port \
-         (SO_REUSEPORT); none of the attempts bound both replicas"
     );
 }
 
@@ -1670,8 +1232,7 @@ fn bind_listeners_per_family_fails_only_when_all_families_unreachable() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
-        &[],
+        "",
         None,
     )
     .expect_err("no family should bind");
@@ -1714,8 +1275,7 @@ fn bind_listeners_per_family_falls_back_from_ipv6_to_ipv4() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
-        &[],
+        "",
         None,
     )
     .expect("IPv4 fallback must bind when IPv6 is unreachable");
@@ -1756,8 +1316,7 @@ fn bind_listeners_per_family_single_family_propagates_error() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
-        1,
-        &[],
+        "",
         None,
     )
     .expect_err("the single configured address must fail to bind");
@@ -2590,7 +2149,7 @@ fn quic_parity_context() -> ConnectionContext {
         Arc::new(Vec::new()),
         Arc::new(Vec::new()),
         None,
-        Arc::new(Vec::new()),
+        Arc::from(""),
         None,
         false,
         ProxyProtocolPolicy::Disabled,
@@ -2803,6 +2362,7 @@ fn reload_config_reapplies_the_log_file_format_override() {
 
     reload_daemon_config(
         Some(&conf_path),
+        &[],
         &limiter,
         &mut modules,
         &mut motd,
