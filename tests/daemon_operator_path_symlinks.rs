@@ -5,7 +5,8 @@
 //! which follows a symlink only when it is owned by uid 0 or the caller's euid:
 //!
 //! - `params.c:586` - `--config`
-//! - `log.c:169` - daemon `log file`
+//! - `log.c:169` - daemon `log file`, which then falls back to syslog
+//!   (log.c:175-182)
 //! - `batch.c:267` - `--read-batch`
 //! - `clientserver.c:188` - `motd file`, which the oc-only `--motd-file` /
 //!   `--motd` flags name as well
@@ -16,9 +17,9 @@
 //! is replaced by a regular file instead of being written through.
 //!
 //! The upstream 3.5.1 control on these fixtures refuses `--config` ("Failed to
-//! parse config file"), leaves the `log file` victim untouched, replaces the
-//! PID-file symlink with a regular file holding the PID, and refuses
-//! `--read-batch` with exit 11.
+//! parse config file"), leaves the `log file` victim untouched and keeps
+//! serving with syslog, replaces the PID-file symlink with a regular file
+//! holding the PID, and refuses `--read-batch` with exit 11.
 //!
 //! WHY THESE NEED ROOT. The plant has to be owned by a uid that is neither 0
 //! nor the caller, and only root can `lchown` a symlink to another uid. For a
@@ -168,9 +169,16 @@ fn config_through_untrusted_symlink_is_refused() {
     );
 }
 
-/// The daemon `log file` never writes through a foreign-owned symlink.
+/// A `log file` behind a foreign-owned symlink is refused, never written
+/// through, and the daemon falls back to syslog and keeps serving.
+///
+/// upstream: log.c:169 refuses the symlink through
+/// `open_no_attacker_symlinks()`; log.c:175-182 then switches to syslog, logs
+/// the failure and `Ignoring "log file" setting.`, and the daemon carries on.
+/// The upstream 3.5.1 control on this fixture serves the transfer, leaves the
+/// victim untouched, and writes both lines to syslog.
 #[test]
-fn log_file_through_untrusted_symlink_is_not_written() {
+fn log_file_through_untrusted_symlink_falls_back_to_syslog() {
     let Some(owner) = attacker_uid() else { return };
     let Some(port) = free_port() else { return };
     let root = tempfile::tempdir().expect("temp dir");
@@ -178,22 +186,98 @@ fn log_file_through_untrusted_symlink_is_not_written() {
     fs::write(&victim, VICTIM).expect("victim");
     let link = root.path().join("plant.log");
     plant(&link, &victim, owner);
-    let conf = write_config(root.path(), port, &format!("log file = {}", link.display()));
+    let tag = format!("oclogfallback{port}");
+    let conf = write_config(
+        root.path(),
+        port,
+        &format!("log file = {}\nsyslog tag = {tag}", link.display()),
+    );
+    fs::write(root.path().join("mod").join("served"), b"payload\n").expect("module file");
+    let since = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
 
-    if let Daemon::Listening(_daemon) =
-        start_daemon(port, &[format!("--config={}", conf.display())])
-    {
-        list_modules(port);
-    }
+    let Daemon::Listening(daemon) = start_daemon(port, &[format!("--config={}", conf.display())])
+    else {
+        panic!("a refused log file must not stop the daemon (log.c:175-182)");
+    };
+    let dest = root.path().join("pulled");
+    let status = Command::new(oc_binary())
+        .arg("-a")
+        .arg(format!("rsync://127.0.0.1:{port}/m/"))
+        .arg(&dest)
+        .status()
+        .expect("run client");
+    drop(daemon);
+
+    assert!(status.success(), "the daemon must still serve: {status}");
+    assert!(
+        dest.join("served").exists(),
+        "the pull must deliver the module file"
+    );
     assert_eq!(
         fs::read_to_string(&victim).expect("victim"),
         VICTIM,
         "log.c:169 must not append through a symlink owned by uid {owner}"
     );
+    assert!(
+        fs::symlink_metadata(&link)
+            .expect("plant")
+            .file_type()
+            .is_symlink(),
+        "the planted symlink is left alone"
+    );
+    assert_refusal_in_syslog(&tag, since, &link);
+}
 
-    // Non-vacuity: a plain path does receive the daemon's log lines, so the
-    // victim staying clean is the refusal and not a daemon that never logs.
+/// Checks that the refusal reached syslog, where the daemon now logs.
+///
+/// journald is the only reader of syslog a test can query; without it the
+/// check is reported and skipped, and the unit test
+/// `log_file_open_failure_falls_back_to_syslog` still pins the exact lines.
+fn assert_refusal_in_syslog(tag: &str, since: u64, link: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let Ok(out) = Command::new("journalctl")
+            .args(["-o", "cat", "-t", tag])
+            .arg(format!("--since=@{since}"))
+            .output()
+        else {
+            println!("SKIP syslog check: journalctl is not available");
+            return;
+        };
+        if !out.status.success() {
+            println!("SKIP syslog check: journal is not readable");
+            return;
+        }
+        let journal = String::from_utf8_lossy(&out.stdout);
+        let refused = format!("failed to open log-file {}", link.display());
+        if let (Some(failure), Some(ignoring)) = (
+            journal.find(&refused),
+            journal.find("Ignoring \"log file\" setting."),
+        ) {
+            assert!(
+                failure < ignoring,
+                "upstream logs the failure first: {journal:?}"
+            );
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "syslog never received the refusal under tag {tag}: {journal:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Non-vacuity for the fallback: a plain `log file` path does receive the
+/// daemon's log lines, so the symlink case falls back because of the plant.
+#[test]
+fn plain_log_file_is_written() {
+    let Some(_owner) = attacker_uid() else { return };
     let Some(port) = free_port() else { return };
+    let root = tempfile::tempdir().expect("temp dir");
     let log = root.path().join("daemon.log");
     let conf = write_config(root.path(), port, &format!("log file = {}", log.display()));
     let Daemon::Listening(daemon) = start_daemon(port, &[format!("--config={}", conf.display())])
