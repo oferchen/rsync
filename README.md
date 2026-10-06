@@ -31,7 +31,7 @@ The binary is named **`oc-rsync`**, so it installs alongside the system `rsync` 
 | **Deletion** | `--delete` (before/during/after/delay), `--delete-excluded` |
 | **Compression** | zlib, zstd, lz4 with level control and negotiation |
 | **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
-| **Incremental recursion** | Advertised when oc-rsync sends. An oc-rsync client that receives (a pull) does not advertise it yet, so pulls use a full up-front file list |
+| **Incremental recursion** | Advertised when oc-rsync sends. An oc-rsync client that receives (a pull) does not advertise it by default, so pulls use a full up-front file list. `OC_RSYNC_PULL_INC_RECURSE=1` opts a pull in, except when a delete pass would run (#8062) |
 | **Batch** | `--write-batch` / `--read-batch` round trip |
 | **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
 | **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
@@ -50,14 +50,14 @@ Outcomes, counted from each leg's committed manifest:
 
 | leg | pass | fail | skip |
 |---|---:|---:|---:|
-| Linux, non-root, pipe | 269 | 5 | 86 |
-| Linux, root, pipe | 296 | 7 | 57 |
-| Linux, non-root, tcp | 121 | 6 | 34 |
-| Linux, root, tcp | 139 | 6 | 16 |
-| macOS, non-root, pipe | 247 | 1 | 112 |
-| macOS, root, pipe | 273 | 3 | 84 |
-| macOS, non-root, tcp | 119 | 5 | 37 |
-| macOS, root, tcp | 135 | 5 | 21 |
+| Linux, non-root, pipe | 274 | 0 | 86 |
+| Linux, root, pipe | 302 | 1 | 57 |
+| Linux, non-root, tcp | 123 | 4 | 34 |
+| Linux, root, tcp | 140 | 5 | 16 |
+| macOS, non-root, pipe | 248 | 0 | 112 |
+| macOS, root, pipe | 276 | 0 | 84 |
+| macOS, non-root, tcp | 120 | 4 | 37 |
+| macOS, root, tcp | 136 | 4 | 21 |
 
 Re-derive any cell, and list a release's failing tests (the outcome is the second field; a `fail` row carries its cause and owner in a trailing comment):
 
@@ -67,7 +67,7 @@ awk '!/^#/ && NF {c[$2]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' 
 awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.1-expect.*.txt | sort -u
 ```
 
-**Eleven distinct 3.5.1 tests** carry a `fail` row, and every one names its cause and owning task. Four are the `proto-*` cluster, which fails on every tcp leg. `strict-basis` fails on all eight legs. None fails only on macOS. The rest are 3.5.1 behaviour oc-rsync does not match yet, such as the `/dev/fd/N` cells and the untrusted-symlink refusal. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
+**Five distinct 3.5.1 tests** carry a `fail` row, and every one names its cause and owning task. Four are the `proto-*` cluster, which fails on every tcp leg because an oc-rsync pull does not negotiate incremental recursion yet. The fifth, `pseudo-paths-daemon`, fails on the two Linux root legs: a `/dev/fd/N` pipe given as the daemon's `--log-file` does not open. None fails only on macOS, and three of the four pipe legs have no failure. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
 
 ---
 
@@ -330,7 +330,7 @@ Legend: ✓ supported, ⚠ partial, ✗ not implemented.
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
 
-Each tagged release runs [`.github/workflows/benchmark.yml`](./.github/workflows/benchmark.yml) against upstream rsync 3.5.0 and 3.4.4 across local, SSH and daemon modes. It reports elapsed time (median, with run-to-run spread), peak RSS and corpus rate. Results are attached to the [GitHub release](https://github.com/oferchen/rsync/releases/latest) as `benchmark.png`, `benchmark_report.md` and `benchmark_results.json`.
+Each tagged release runs [`.github/workflows/benchmark.yml`](./.github/workflows/benchmark.yml) against upstream rsync 3.5.0 and 3.4.4 across local, SSH and daemon modes. It has not moved to 3.5.1 yet. It reports elapsed time (median, with run-to-run spread), peak RSS and corpus rate. Results are attached to the [GitHub release](https://github.com/oferchen/rsync/releases/latest) as `benchmark.png`, `benchmark_report.md` and `benchmark_results.json`.
 
 Releases up to and including v0.6.4 predate this harness: their report compares against 3.4.4 only, without peak RSS, corpus rate or spread. The chart above comes from the latest release, so read that release's `benchmark_report.md` for what it measured.
 
@@ -358,14 +358,14 @@ cargo nextest run --workspace --all-features
 
 ## Security
 
-Every crate sets `#![deny(unsafe_code)]` at its root. Production `#[allow(unsafe_code)]` sites exist only in crates that wrap platform FFI or SIMD intrinsics: `fast_io`, `metadata`, `checksums`, `platform`, `engine`, `protocol` (one site) and `windows-gnu-eh`. Other crates allow unsafe only in tests.
+Every crate sets `#![deny(unsafe_code)]` at its root. Production `#[allow(unsafe_code)]` sites exist only in crates that wrap platform FFI or SIMD intrinsics: `fast_io`, `metadata`, `checksums`, `platform`, `engine`, `protocol` (one site) and `windows-gnu-eh`. The `oc-rsync` binary has one more: the `#[unsafe(no_mangle)]` static that sets jemalloc's decay options. Other crates allow unsafe only in tests.
 
 Upstream CVE status, in short:
 
 - **2024 batch** (CVE-2024-12084 to CVE-2024-12088, CVE-2024-12747): not vulnerable or mitigated.
 - **rsync 3.4.3 batch** (CVE-2026-29518, 43617, 43618, 43619, 43620, 45232): fixed or not vulnerable. Receiver filesystem calls go through `*at` syscalls anchored on a directory fd, with a Landlock layer for the daemon on Linux.
-- **rsync 3.5.0 batch** (33 CVEs): 24 fixed, 5 not applicable, 4 unverified, 0 open. Each has a row in [`SECURITY.md`](./SECURITY.md), with the evidence and the command that recounts them.
-- **rsync 3.5.1** names no CVE. Of its nine security-relevant fixes, five are mirrored, two are open (the `/dev/fd/N` paths and partial-directory validation) and two do not apply.
+- **rsync 3.5.0 batch** (33 CVEs): 25 fixed, 5 not applicable, 3 unverified, 0 open. Each has a row in [`SECURITY.md`](./SECURITY.md), with the evidence and the command that recounts them.
+- **rsync 3.5.1** names no CVE. Of its nine security-relevant fixes, six are mirrored, one is open (a `/dev/fd/N` pipe as the daemon `--log-file`) and two do not apply.
 
 See [`SECURITY.md`](./SECURITY.md) for the per-CVE detail and how to report a vulnerability.
 
