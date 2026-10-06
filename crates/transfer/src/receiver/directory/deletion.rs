@@ -458,7 +458,12 @@ impl ReceiverContext {
         let metadata_opts = self.build_metadata_options();
         for entry in victims {
             let path = dest_dir.join(&entry.rel);
-            let result = if entry.is_dir {
+            // upstream: syscall.c:779-781 do_unlink() and syscall.c:1529-1531
+            // do_rmdir() return 0 under dry_run, so delete_item() logs and
+            // counts the victim without removing it.
+            let result = if self.config.flags.dry_run {
+                Ok(())
+            } else if entry.is_dir {
                 // upstream: delete.c:delete_item() -> delete_dir_contents() for a
                 // directory victim; recursive removal mirrors the immediate pass.
                 #[cfg(unix)]
@@ -858,6 +863,9 @@ impl ReceiverContext {
         // --backup) before it is unlinked. The workers hold no `self`, so carry
         // the backup settings as owned values the `move` closure can consult.
         let backup_enabled = self.config.flags.backup;
+        // upstream: syscall.c:779-781 / :1529-1531 - under dry_run the unlink
+        // and rmdir are no-ops, but the victim is still logged and counted.
+        let dry_run = self.config.flags.dry_run;
         let backup_dir_owned: Option<PathBuf> =
             self.config.backup_dir.as_deref().map(PathBuf::from);
         let backup_suffix: String = self.config.effective_backup_suffix().to_owned();
@@ -1081,7 +1089,7 @@ impl ReceiverContext {
                         // the victim via remember_delete() and defers the unlink;
                         // in collect_only mode the worker only records the entry so
                         // the physical removal runs later in do_delayed_deletions().
-                        let result = if collect_only {
+                        let result = if collect_only || dry_run {
                             Ok(())
                         } else if is_dir {
                             // SEC-1.q2 audit row #6
@@ -1303,6 +1311,7 @@ impl ReceiverContext {
             backup_dir: self.config.backup_dir.as_deref().map(PathBuf::from),
             backup_suffix: self.config.effective_backup_suffix().to_owned(),
             metadata_opts: self.build_metadata_options(),
+            dry_run: self.config.flags.dry_run,
             writer,
         };
 
@@ -1512,6 +1521,7 @@ impl ReceiverContext {
             backup_dir: self.config.backup_dir.as_deref().map(PathBuf::from),
             backup_suffix: self.config.effective_backup_suffix().to_owned(),
             metadata_opts: self.build_metadata_options(),
+            dry_run: self.config.flags.dry_run,
             writer,
         };
         let emptied = state.remove_dir_contents(relative, path)?;
@@ -1571,6 +1581,8 @@ struct CappedDeleteState<'w, W: ?Sized> {
     /// Metadata policy applied to `--backup-dir` parent directories created for
     /// a victim (upstream `copy_valid_path` -> `set_file_attrs`).
     metadata_opts: MetadataOptions,
+    /// `--dry-run`: report and count each victim without removing it.
+    dry_run: bool,
     writer: &'w mut W,
 }
 
@@ -1772,6 +1784,11 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
     /// A file victim is first backed up when `--backup` is set (upstream
     /// delete.c:165-174); directories are never backed up here.
     fn raw_unlink(&self, rel: &Path, path: &Path, is_dir: bool) -> io::Result<()> {
+        // upstream: syscall.c:779-781 do_unlink() and syscall.c:1529-1531
+        // do_rmdir() return 0 without touching the filesystem under dry_run.
+        if self.dry_run {
+            return Ok(());
+        }
         #[cfg(unix)]
         {
             if is_dir {

@@ -202,8 +202,8 @@ pub use pipeline::{
     PipelineConfig, PipelineState,
 };
 pub use progress::{
-    DaemonFileLog, ItemizeCallback, ItemizeRow, OwnedItemizeRow, TransferProgressCallback,
-    TransferProgressEvent,
+    DaemonFileLog, DaemonLogRow, ItemizeCallback, ItemizeRow, OwnedItemizeRow,
+    TransferProgressCallback, TransferProgressEvent,
 };
 pub use transfer_state::{InvalidTransition, TransferPhase, TransferPipeline};
 
@@ -1302,8 +1302,8 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 // flist-index order, which is the order upstream logs them.
                 if let Some(dl) = daemon_log {
                     for (_idx, rows) in ctx.drain_daemon_log_rows() {
-                        for (name, size, itemize) in rows {
-                            dl.sink.on_entry(&name, size, &itemize);
+                        for row in rows {
+                            dl.sink.on_entry(&row);
                         }
                     }
                 }
@@ -1339,8 +1339,8 @@ pub fn run_server_with_handshake_adopting<W: Write>(
                 // (sender.c:585 maybe_log_item / sender.c:462 log_item).
                 if let Some(dl) = daemon_log {
                     for (_idx, rows) in ctx.drain_daemon_log_rows() {
-                        for (name, size, itemize) in rows {
-                            dl.sink.on_entry(&name, size, &itemize);
+                        for row in rows {
+                            dl.sink.on_entry(&row);
                         }
                     }
                 }
