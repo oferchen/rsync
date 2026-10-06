@@ -4597,9 +4597,12 @@ mod files_from {
         let list_file = temp_dir.path().join("list.txt");
         std::fs::write(&list_file, "a.txt\nb.txt\nc.txt\n").unwrap();
 
-        let result =
-            super::super::filters::read_files_from_local_path(&list_file.to_string_lossy(), false)
-                .unwrap();
+        let result = super::super::filters::read_files_from_local_path(
+            &list_file.to_string_lossy(),
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(
             result,
             vec![b"a.txt".to_vec(), b"b.txt".to_vec(), b"c.txt".to_vec()]
@@ -4612,9 +4615,12 @@ mod files_from {
         let list_file = temp_dir.path().join("list0.txt");
         std::fs::write(&list_file, b"x.txt\0y.txt\0\0").unwrap();
 
-        let result =
-            super::super::filters::read_files_from_local_path(&list_file.to_string_lossy(), true)
-                .unwrap();
+        let result = super::super::filters::read_files_from_local_path(
+            &list_file.to_string_lossy(),
+            true,
+            false,
+        )
+        .unwrap();
         assert_eq!(result, vec![b"x.txt".to_vec(), b"y.txt".to_vec()]);
     }
 
@@ -4627,9 +4633,12 @@ mod files_from {
         let list_file = temp_dir.path().join("list0.txt");
         std::fs::write(&list_file, b"#comment\0x.txt\0;skip\0y.txt\0\0").unwrap();
 
-        let result =
-            super::super::filters::read_files_from_local_path(&list_file.to_string_lossy(), true)
-                .unwrap();
+        let result = super::super::filters::read_files_from_local_path(
+            &list_file.to_string_lossy(),
+            true,
+            false,
+        )
+        .unwrap();
         assert_eq!(result, vec![b"x.txt".to_vec(), b"y.txt".to_vec()]);
     }
 
@@ -4639,9 +4648,12 @@ mod files_from {
         let list_file = temp_dir.path().join("list.txt");
         std::fs::write(&list_file, "# header\n\nfile.txt\n; skip\n\nother.txt\n").unwrap();
 
-        let result =
-            super::super::filters::read_files_from_local_path(&list_file.to_string_lossy(), false)
-                .unwrap();
+        let result = super::super::filters::read_files_from_local_path(
+            &list_file.to_string_lossy(),
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(result, vec![b"file.txt".to_vec(), b"other.txt".to_vec()]);
     }
 }
