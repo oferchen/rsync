@@ -16,7 +16,7 @@
 //!    "remote lacks ACL support" signal.
 //!
 //! oc-rsync mirrors layer (1) verbatim in
-//! `transfer::setup::restrictions::apply_protocol_restrictions` and
+//! `transfer::setup::refuse_unsupported_options` and
 //! covers layer (2) in `ParsedServerFlags::clear_unsupported_features`
 //! plus the warning emission in `transfer::lib`. These tests exercise
 //! the cross-layer behaviour end-to-end so that future refactors do
@@ -33,7 +33,7 @@
 
 use protocol::ProtocolVersion;
 use transfer::flags::ParsedServerFlags;
-use transfer::setup::{ProtocolRestrictionFlags, apply_protocol_restrictions};
+use transfer::setup::{ProtocolRestrictionFlags, refuse_unsupported_options};
 
 /// Compact flag string from a modern (protocol 30+) peer that was built
 /// WITHOUT `--enable-acl-support`. Note the absence of `A` and `X`.
@@ -102,7 +102,7 @@ fn protocol_30_plus_does_not_reject_acls_at_restriction_layer() {
             ..Default::default()
         };
         let proto = ProtocolVersion::try_from(version).unwrap();
-        let result = apply_protocol_restrictions(proto, &flags);
+        let result = refuse_unsupported_options(proto, &flags);
         assert!(
             result.is_ok(),
             "protocol {version} must not reject --acls at the restriction layer; \
@@ -129,12 +129,8 @@ fn end_to_end_remote_without_acl_support_at_protocol_32() {
         preserve_acls: true,
         ..Default::default()
     };
-    let adjustments = apply_protocol_restrictions(proto, &restriction_flags)
+    refuse_unsupported_options(proto, &restriction_flags)
         .expect("protocol 32 with --acls must pass the restriction layer");
-    // The restriction layer should make no append-mode or delete-phase
-    // adjustments for this scenario.
-    assert_eq!(adjustments.append_mode, None);
-    assert_eq!(adjustments.delete_before, None);
 
     // Step 2: parse the server flag string the remote sent. A modern peer
     // built without SUPPORT_ACLS will NOT include 'A' in the flag string.
@@ -181,7 +177,7 @@ fn end_to_end_protocol_below_30_rejects_acls_with_upstream_message() {
             preserve_acls: true,
             ..Default::default()
         };
-        let err = apply_protocol_restrictions(proto, &flags)
+        let err = refuse_unsupported_options(proto, &flags)
             .expect_err("protocol < 30 with --acls must be rejected");
         let message = err.to_string();
         let expected = format!("--acls requires protocol 30 or higher (negotiated {version}).");
@@ -208,7 +204,7 @@ fn local_server_bypasses_acl_protocol_gate() {
             ..Default::default()
         };
         assert!(
-            apply_protocol_restrictions(proto, &flags).is_ok(),
+            refuse_unsupported_options(proto, &flags).is_ok(),
             "local_server at protocol {version} must bypass the ACL gate",
         );
     }
@@ -226,7 +222,7 @@ fn protocol_gate_fires_before_wire_negotiation_at_old_protocol() {
         preserve_acls: true,
         ..Default::default()
     };
-    let err = apply_protocol_restrictions(proto, &restriction_flags)
+    let err = refuse_unsupported_options(proto, &restriction_flags)
         .expect_err("protocol 29 must reject --acls regardless of peer flag string");
     assert!(
         err.to_string().contains("--acls requires protocol 30"),
