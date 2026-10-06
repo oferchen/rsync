@@ -471,7 +471,11 @@ impl ReceiverContext {
             )));
         }
 
-        if self.io_error_blocks_deletion(stats.io_error) {
+        // The I/O-error guard withholds decisions, not replays: upstream tests
+        // it in delete_in_dir() (generator.c:304-311), where a delay victim is
+        // recorded, while do_delayed_deletions() (generator.c:265-278) unlinks
+        // every record unconditionally.
+        if scans_whole_list && self.io_error_blocks_deletion(stats.io_error) {
             return Ok(());
         }
 
@@ -532,6 +536,46 @@ impl ReceiverContext {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Runs the late delete site and the directory touch-up that follows it.
+    ///
+    /// Must run after the sender's final `NDX_DONE` has been read (see
+    /// `finalize_transfer_with`): `sender_io_error` carries the sender's
+    /// `MSG_IO_ERROR` bits, which it writes just before that `NDX_DONE`
+    /// (sender.c:811-820) and which the receiver folds into `io_error`
+    /// (io.c:1740-1747) before the generator's late sweep consults
+    /// `delete_in_dir()`'s guard (generator.c:304-311).
+    ///
+    /// The sweep runs only after every file (including each destination
+    /// `.rsync-filter` and any `--delay-updates` staged file) has landed, so
+    /// per-directory merge protect rules apply at delete time
+    /// (generator.c:2899-2902). `touch_up_dirs` follows so parent mtimes the
+    /// deletions changed are re-applied (generator.c:2922-2924).
+    pub(in crate::receiver) fn run_late_delete_and_touch_up<W>(
+        &mut self,
+        sender_io_error: i32,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
+        writer: &mut W,
+        stats: &mut TransferStats,
+    ) -> io::Result<()>
+    where
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    {
+        stats.io_error |= sender_io_error;
+        if self.delete_pass_is_late() {
+            self.run_receiver_delete_pass(
+                DeletePassPhase::Late,
+                dest_dir,
+                #[cfg(unix)]
+                sandbox,
+                writer,
+                stats,
+            )?;
+        }
+        self.touch_up_dirs(dest_dir, writer);
         Ok(())
     }
 
