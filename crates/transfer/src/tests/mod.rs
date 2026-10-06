@@ -8,4 +8,5 @@ mod error_exit_gate;
 mod filter_list_gate;
 mod multiplex_protocol_version;
 mod negotiated_algorithms;
+mod protocol_restrictions_wiring;
 mod transfer_pipeline_wiring;

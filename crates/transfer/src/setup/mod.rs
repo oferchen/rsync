@@ -34,6 +34,7 @@ pub use negotiator::{
 };
 pub use restrictions::{
     ProtocolRestrictionFlags, RestrictionAdjustments, apply_protocol_restrictions,
+    refuse_unsupported_options,
 };
 pub use types::{ProtocolSetupConfig, SetupResult};
 

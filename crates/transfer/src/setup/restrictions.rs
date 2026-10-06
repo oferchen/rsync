@@ -68,9 +68,7 @@ pub struct RestrictionAdjustments {
 ///
 /// # Errors
 ///
-/// Returns `io::Error` with `InvalidInput` kind and a user-facing message
-/// matching upstream rsync's error format when an incompatible feature is
-/// detected.
+/// The refusals of [`refuse_unsupported_options`].
 ///
 /// # Upstream Reference
 ///
@@ -82,86 +80,68 @@ pub fn apply_protocol_restrictions(
     protocol: ProtocolVersion,
     flags: &ProtocolRestrictionFlags,
 ) -> Result<RestrictionAdjustments, io::Error> {
+    refuse_unsupported_options(protocol, flags)?;
     let version: u32 = protocol.into();
     let mut adjustments = RestrictionAdjustments::default();
 
-    // upstream compat.c:652-668 - protocol < 30 restrictions
-    if version < 30 {
-        // upstream compat.c:653-654 - append_mode 1 -> 2
-        if flags.append_mode == 1 {
-            adjustments.append_mode = Some(2);
-        }
-
-        // upstream compat.c:655-661 - ACLs require protocol 30+
-        if flags.preserve_acls && !flags.local_server {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!("--acls requires protocol 30 or higher (negotiated {version})."),
-            ));
-        }
-
-        // upstream compat.c:662-668 - xattrs require protocol 30+
-        if flags.preserve_xattrs && !flags.local_server {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!("--xattrs requires protocol 30 or higher (negotiated {version})."),
-            ));
-        }
+    // upstream compat.c:653-654 - append_mode 1 -> 2
+    if version < 30 && flags.append_mode == 1 {
+        adjustments.append_mode = Some(2);
     }
 
     // upstream compat.c:671-676 - default delete phase selection
     if flags.delete_mode && !flags.delete_before && !flags.delete_during && !flags.delete_after {
-        if version < 30 {
-            adjustments.delete_before = Some(true);
-        } else {
-            adjustments.delete_before = Some(false);
-        }
-    }
-
-    // upstream compat.c:678-709 - protocol < 29 restrictions
-    if version < 29 {
-        // upstream compat.c:679-685 - fuzzy requires 29+
-        if flags.fuzzy_basis {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!("--fuzzy requires protocol 29 or higher (negotiated {version})."),
-            ));
-        }
-
-        // upstream compat.c:687-693 - basis_dir + inplace requires 29+
-        if flags.basis_dir_count > 0 && flags.inplace {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!(
-                    "--compare-dest/--copy-dest/--link-dest with --inplace requires \
-                     protocol 29 or higher (negotiated {version})."
-                ),
-            ));
-        }
-
-        // upstream compat.c:695-701 - multiple basis dirs require 29+
-        if flags.basis_dir_count > 1 {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!(
-                    "Using more than one --compare-dest/--copy-dest/--link-dest option \
-                     requires protocol 29 or higher (negotiated {version})."
-                ),
-            ));
-        }
-
-        // upstream compat.c:703-709 - prune-empty-dirs requires 29+
-        if flags.prune_empty_dirs {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!(
-                    "--prune-empty-dirs requires protocol 29 or higher (negotiated {version})."
-                ),
-            ));
-        }
+        adjustments.delete_before = Some(version < 30);
     }
 
     Ok(adjustments)
+}
+
+/// Refuses options the negotiated protocol cannot carry.
+///
+/// Every peer runs these checks in `setup_protocol()` before any further
+/// exchange, so each side refuses on its own instead of failing mid-transfer.
+///
+/// # Errors
+///
+/// A [`protocol::ProtocolViolation`]-tagged error carrying upstream's exact
+/// text, so the exit-code mapper yields `RERR_PROTOCOL` (2).
+///
+/// # Upstream Reference
+///
+/// - `compat.c:663-676` - `--acls` / `--xattrs` require protocol 30
+///   unless `local_server`
+/// - `compat.c:684-713` - `--fuzzy`, a basis dir with `--inplace`, several
+///   basis dirs and `--prune-empty-dirs` require protocol 29
+pub fn refuse_unsupported_options(
+    protocol: ProtocolVersion,
+    flags: &ProtocolRestrictionFlags,
+) -> io::Result<()> {
+    let version: u32 = protocol.into();
+    let refusal = if version < 30 && flags.preserve_acls && !flags.local_server {
+        format!("--acls requires protocol 30 or higher (negotiated {version}).")
+    } else if version < 30 && flags.preserve_xattrs && !flags.local_server {
+        format!("--xattrs requires protocol 30 or higher (negotiated {version}).")
+    } else if version >= 29 {
+        return Ok(());
+    } else if flags.fuzzy_basis {
+        format!("--fuzzy requires protocol 29 or higher (negotiated {version}).")
+    } else if flags.basis_dir_count > 0 && flags.inplace {
+        format!(
+            "--compare-dest/--copy-dest/--link-dest with --inplace requires \
+             protocol 29 or higher (negotiated {version})."
+        )
+    } else if flags.basis_dir_count > 1 {
+        format!(
+            "Using more than one --compare-dest/--copy-dest/--link-dest option \
+             requires protocol 29 or higher (negotiated {version})."
+        )
+    } else if flags.prune_empty_dirs {
+        format!("--prune-empty-dirs requires protocol 29 or higher (negotiated {version}).")
+    } else {
+        return Ok(());
+    };
+    Err(protocol::protocol_violation(refusal))
 }
 
 #[cfg(test)]

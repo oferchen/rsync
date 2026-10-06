@@ -509,6 +509,13 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // directory in the file list at all. Carry the resolved value directly.
     server_config.flags.dirs = config.dirs();
     server_config.write.inplace = config.inplace();
+    // upstream: compat.c:684-713 - setup_protocol() refuses --fuzzy, basis
+    // dirs and --prune-empty-dirs below protocol 29 on every peer, the sender
+    // included, from globals both sides parsed. The compact flag string omits
+    // these on a push, so carry them onto both roles for that refusal.
+    server_config.flags.fuzzy_level = config.fuzzy_level();
+    server_config.flags.prune_empty_dirs = config.prune_empty_dirs();
+    server_config.reference_directories = config.reference_directories().to_vec();
     // upstream: receiver.c:984 - append mode implies inplace; the sum_head
     // block-skip (generator.c:786) and flength derivation (sender.c:90) on both
     // the local sender (push) and receiver (pull) roles gate on these flags, so
@@ -1086,6 +1093,27 @@ mod tests {
         let mut plain = ServerConfig::default();
         apply_common_server_flags(&ClientConfig::default(), &mut plain);
         assert!(!plain.flags.force, "default must be false");
+    }
+
+    /// A push sender's config is parsed from a flag string that omits `-m`,
+    /// `-y` and the basis dirs, yet upstream's sender still refuses them below
+    /// protocol 29 (compat.c:684-713). Without them here the oc client pushed
+    /// on and died mid-stream with RERR_STREAMIO instead of RERR_PROTOCOL.
+    #[test]
+    fn apply_common_server_flags_carries_protocol_gated_options_to_a_sender() {
+        let config = ClientConfig::builder()
+            .prune_empty_dirs(true)
+            .fuzzy_level(1)
+            .compare_destination("basis")
+            .build();
+        let mut sender = ServerConfig {
+            role: crate::server::ServerRole::Generator,
+            ..ServerConfig::default()
+        };
+        apply_common_server_flags(&config, &mut sender);
+        assert!(sender.flags.prune_empty_dirs);
+        assert_eq!(sender.flags.fuzzy_level, 1);
+        assert_eq!(sender.reference_directories.len(), 1);
     }
 
     #[test]
