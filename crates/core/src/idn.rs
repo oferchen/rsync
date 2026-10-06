@@ -6,7 +6,7 @@
 //! for a daemon-over-rsh connection (main.c:527-536 `do_cmd()`), and every
 //! `hosts allow`/`hosts deny` token before it is matched (access.c:48-54
 //! `match_hostname()`). All three call the one helper, util1.c:951-1022
-//! `idn_to_ascii()`, and so do oc's sites through [`host_to_ascii`].
+//! `idn_to_ascii()`, and so do oc's sites through [`host_to_ascii`](crate::idn::host_to_ascii).
 //!
 //! Upstream links libidn2 for this and compiles it out under `--disable-idn`
 //! (configure.ac:637-655). oc uses the pure-Rust `idna` crate behind the `idn`
