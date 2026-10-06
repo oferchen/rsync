@@ -68,6 +68,13 @@ impl TransportFault {
         }
     }
 
+    /// Adds `note` to the message, keeping the classification.
+    pub(super) fn append(&mut self, note: &str) {
+        self.message.push_str(" (");
+        self.message.push_str(note);
+        self.message.push(')');
+    }
+
     /// Rebuilds the classified [`std::io::Error`] for the facade to return.
     ///
     /// Protocol violations are emitted through [`protocol::protocol_violation()`]
@@ -213,6 +220,23 @@ mod tests {
         assert_eq!(quic.kind(), tcp.kind());
         assert_eq!(quic.kind(), io::ErrorKind::TimedOut);
         assert!(!is_protocol(&quic));
+    }
+
+    /// A stall note must reach the user without changing the exit-code
+    /// classification: a timeout stays `TimedOut` (exit 30).
+    #[test]
+    fn appended_note_keeps_the_timeout_kind() {
+        let mut fault = connection_fault(&ConnectionError::TimedOut);
+        fault.append("2 UDP send error(s), last: Permission denied (os error 13)");
+        let err = fault.to_io_error();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert!(!is_protocol(&err));
+        let text = err.to_string();
+        assert!(text.starts_with("timed out"), "{text}");
+        assert!(
+            text.ends_with("(2 UDP send error(s), last: Permission denied (os error 13))"),
+            "{text}"
+        );
     }
 
     /// WHY: a peer reset (connection or stream) is a socket-level loss and must
