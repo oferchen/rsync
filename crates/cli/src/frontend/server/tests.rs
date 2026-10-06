@@ -7,8 +7,8 @@ use super::daemon::{
 };
 use super::flags::{detect_secluded_args_flag, is_known_server_long_flag, parse_server_long_flags};
 use super::parse::{
-    parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_size_limit,
-    parse_server_stop_after, parse_server_stop_at,
+    parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_protocol,
+    parse_server_size_limit, parse_server_stop_after, parse_server_stop_at,
 };
 
 #[test]
@@ -3192,4 +3192,73 @@ fn parsed_timeout_flag_feeds_the_server_io_timeout() {
         Some(45),
         "the parsed --timeout value must reach the server's io_timeout"
     );
+}
+
+// upstream: options.c:860 - `--protocol` is a server-table popt option, and
+// server_options() appends `-M` remote options before the `.` placeholder. If
+// the token were taken for an operand it would become the destination root.
+#[test]
+fn protocol_option_is_a_flag_not_an_operand() {
+    let args: Vec<OsString> = [
+        "--server",
+        "-logDtpre.iLsfxCIvu",
+        "--protocol=29",
+        ".",
+        "dst/",
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect();
+
+    let (_, operands) = parse_server_flag_string_and_args(&args);
+    assert_eq!(operands, vec![OsString::from("dst/")]);
+    assert_eq!(
+        parse_server_long_flags(&args).protocol.as_deref(),
+        Some("29")
+    );
+}
+
+#[test]
+fn protocol_option_after_end_of_options_is_an_operand() {
+    let args: Vec<OsString> = ["--server", "-r", "--", ".", "--protocol=29"]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+
+    let (_, operands) = parse_server_flag_string_and_args(&args);
+    assert_eq!(operands, vec![OsString::from("--protocol=29")]);
+    assert_eq!(parse_server_long_flags(&args).protocol, None);
+}
+
+// upstream: popt.c:1081-1096 + 1149-1152 - strtoll(val, &end, 0) then the int
+// range check. Each accepted spelling below is one popt accepts.
+#[test]
+fn parse_server_protocol_mirrors_popt_int() {
+    for (text, expected) in [
+        ("29", 29),
+        ("+29", 29),
+        (" 29", 29),
+        ("0x1d", 29),
+        ("035", 29),
+        ("0", 0),
+        ("", 0),
+        ("-5", -5),
+        ("2147483647", i32::MAX),
+    ] {
+        assert_eq!(parse_server_protocol(text), Ok(expected), "{text:?}");
+    }
+    for text in ["abc", "29x", "29 ", "0x", "08", "+", " ", "--1"] {
+        assert_eq!(
+            parse_server_protocol(text),
+            Err("invalid numeric value"),
+            "{text:?}"
+        );
+    }
+    for text in ["2147483648", "-2147483649", "99999999999999999999"] {
+        assert_eq!(
+            parse_server_protocol(text),
+            Err("number too large or too small"),
+            "{text:?}"
+        );
+    }
 }

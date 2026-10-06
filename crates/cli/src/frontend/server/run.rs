@@ -11,8 +11,8 @@ use logging_sink::MessageSink;
 
 use super::flags::{detect_secluded_args_flag, parse_server_long_flags};
 use super::parse::{
-    parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_size_limit,
-    parse_server_stop_after, parse_server_stop_at,
+    parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_protocol,
+    parse_server_size_limit, parse_server_stop_after, parse_server_stop_at,
 };
 
 /// Resolves the Landlock allowlist root for a receiver's destination operand.
@@ -906,6 +906,22 @@ fn apply_value_flags<Err: Write>(
             Ok(seed) => config.checksum_seed = Some(seed),
             Err(msg) => {
                 write_server_error(stderr, brand, msg);
+                return Err(1);
+            }
+        }
+    }
+
+    // upstream: options.c:2050-2054 - a bad popt value is reported as
+    // "on remote machine: <option>: <popt error>" and exits RERR_SYNTAX.
+    if let Some(value) = &long_flags.protocol {
+        match parse_server_protocol(value) {
+            Ok(version) => config.protocol_arg = Some(version),
+            Err(reason) => {
+                write_server_error(
+                    stderr,
+                    brand,
+                    format!("on remote machine: --protocol={value}: {reason}"),
+                );
                 return Err(1);
             }
         }

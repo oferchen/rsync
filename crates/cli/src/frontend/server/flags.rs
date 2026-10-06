@@ -117,6 +117,8 @@ pub(super) struct ServerLongFlags {
     pub(super) drop_devices: Option<bool>,
     pub(super) qsort: bool,
     pub(super) checksum_seed: Option<String>,
+    /// `--protocol=N` (options.c:860), raw text parsed later as a popt int.
+    pub(super) protocol: Option<String>,
     pub(super) checksum_choice: Option<String>,
     pub(super) min_size: Option<String>,
     pub(super) max_size: Option<String>,
@@ -532,6 +534,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         specials: None,
         qsort: false,
         checksum_seed: None,
+        protocol: None,
         checksum_choice: None,
         min_size: None,
         max_size: None,
@@ -918,6 +921,8 @@ fn apply_two_arg_long_flag(flag: &str, value: &str, flags: &mut ServerLongFlags)
 fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
     if let Some(value) = s.strip_prefix("--checksum-seed=") {
         flags.checksum_seed = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--protocol=") {
+        flags.protocol = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--checksum-choice=") {
         flags.checksum_choice = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--modify-window=") {
@@ -1118,6 +1123,10 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg == "--new-compress"
         || arg == "--old-compress"
         || arg.starts_with("--checksum-seed=")
+        // upstream: options.c:860 - `--protocol` is an ordinary POPT_ARG_INT
+        // on the server table. server_options() never forwards it, so it
+        // arrives only via `-M--protocol=N` or an rsync-path wrapper.
+        || arg.starts_with("--protocol=")
         || arg.starts_with("--checksum-choice=")
         || arg.starts_with("--compress-choice=")
         || arg.starts_with("--compress-level=")
