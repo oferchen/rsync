@@ -364,7 +364,7 @@ Upstream CVE status, in short:
 
 - **2024 batch** (CVE-2024-12084 to CVE-2024-12088, CVE-2024-12747): not vulnerable or mitigated.
 - **rsync 3.4.3 batch** (CVE-2026-29518, 43617, 43618, 43619, 43620, 45232): fixed or not vulnerable. Receiver filesystem calls go through `*at` syscalls anchored on a directory fd, with a Landlock layer for the daemon on Linux.
-- **rsync 3.5.0 batch** (33 CVEs): 25 fixed, 5 not applicable, 3 unverified, 0 open. Each has a row in [`SECURITY.md`](./SECURITY.md), with the evidence and the command that recounts them.
+- **rsync 3.5.0 batch** (33 CVEs): 26 fixed, 5 not applicable, 2 unverified, 0 open. Each has a row in [`SECURITY.md`](./SECURITY.md), with the evidence and the command that recounts them.
 - **rsync 3.5.1** names no CVE. Of its nine security-relevant fixes, six are mirrored, one is open (a `/dev/fd/N` pipe as the daemon `--log-file`) and two do not apply.
 
 See [`SECURITY.md`](./SECURITY.md) for the per-CVE detail and how to report a vulnerability.
