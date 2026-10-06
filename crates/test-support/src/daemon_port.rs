@@ -37,6 +37,15 @@ use std::time::{Duration, Instant};
 /// treating the attempt as failed and retrying with a new port.
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Exit status of a daemon that could not bind any listener.
+///
+/// upstream: socket.c `open_socket_in()` failure ends in
+/// `exit_cleanup(RERR_SOCKETIO)`; oc maps the bind failure to the same code
+/// (`daemon/sections/module_parsing/errors.rs` `bind_error`). Before the daemon
+/// is ready no session exists, so this code at that point can only be a bind
+/// failure.
+pub const BIND_FAILURE_EXIT_CODE: i32 = 10;
+
 /// Upper bound on port-allocation retries, so a persistently failing daemon
 /// (bad config, unbindable address) surfaces an error instead of looping.
 const MAX_ATTEMPTS: u32 = 32;
@@ -59,6 +68,12 @@ fn candidate_port() -> Option<u16> {
 /// `oc-rsync --daemon --port <port> ...`) and return its [`Child`]. The helper
 /// allocates candidate ports and retries until the spawned process is confirmed
 /// listening on its port, or the attempt budget is exhausted.
+///
+/// Only a lost bind race is retried: a daemon that exits with
+/// [`BIND_FAILURE_EXIT_CODE`] before it is ready, or one that stays alive
+/// without ever serving the IPv4 loopback (it lost only that family). Any other
+/// early exit - a bad config, an unknown option - is returned on the first
+/// attempt, because a fresh port cannot fix it.
 ///
 /// The caller owns the returned [`Child`] and is responsible for reaping it
 /// (typically via a guard whose `Drop` kills and waits).
@@ -85,11 +100,17 @@ where
                 break;
             }
             match child.try_wait() {
+                Ok(Some(status)) if status.code() == Some(BIND_FAILURE_EXIT_CODE) => {
+                    last_err = Some(io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        format!("daemon lost the bind race for port {port} ({status})"),
+                    ));
+                    break;
+                }
                 Ok(Some(status)) => {
-                    last_err = Some(io::Error::other(format!(
+                    return Err(io::Error::other(format!(
                         "daemon exited before binding port {port} ({status})"
                     )));
-                    break;
                 }
                 Ok(None) => {}
                 Err(e) => return Err(e),
