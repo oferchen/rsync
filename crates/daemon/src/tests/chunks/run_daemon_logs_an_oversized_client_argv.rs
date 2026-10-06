@@ -1,10 +1,12 @@
-/// The daemon-argument ceiling must be recorded, not only sent to the peer.
+/// The daemon-argument ceiling is recorded in the log and never sent.
 ///
-/// upstream: `io.c:1502-1505` - `read_args()` cuts the peer off at
-/// `MAX_DAEMON_ARGS` with `rprintf(FERROR, "too many daemon arguments\n")`, and
-/// a daemon's `FERROR` reaches the log file. oc answered the peer and logged
-/// nothing, so the guard fired invisibly: an operator saw a connection cut with
-/// no recorded reason.
+/// upstream: `io.c:1503-1505` - `read_args()` cuts the peer off at
+/// `MAX_DAEMON_ARGS` with `rprintf(FERROR, "too many daemon arguments\n")`.
+/// `am_server` is not yet set while the daemon reads the argv
+/// (clientserver.c:1154 vs :1197), so that FERROR goes to the log only
+/// (log.c:331). Measured on 3.5.1: the peer reads EOF after `@RSYNCD: OK`. It
+/// has switched to multiplexed input by then, so a raw line would only desync
+/// it.
 ///
 /// The client sends exactly the number of arguments that trips the ceiling, so
 /// the daemon consumes every byte written here and neither side is left
@@ -72,11 +74,12 @@ fn run_daemon_logs_an_oversized_client_argv() {
     stream.write_all(&argv).expect("send oversized argv");
     stream.flush().expect("flush oversized argv");
 
-    line.clear();
-    reader.read_line(&mut line).expect("argument refusal");
+    let mut rest = Vec::new();
+    let _ = reader.read_to_end(&mut rest);
     assert!(
-        line.contains("too many daemon arguments"),
-        "the peer must be told upstream's reason: {line:?}"
+        rest.is_empty(),
+        "nothing may follow @RSYNCD: OK, got {:?}",
+        String::from_utf8_lossy(&rest)
     );
 
     drop(reader);

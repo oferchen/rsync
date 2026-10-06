@@ -202,6 +202,36 @@ fn has_secluded_args_flag(args: &[String]) -> bool {
     })
 }
 
+/// Ends the session after a failed argv read, telling only the daemon log.
+///
+/// upstream: the argv is read before `am_server` is set (clientserver.c:1154
+/// vs :1197), so `read_args()`'s FERROR diagnostics are logged and never sent
+/// (log.c:331), and the child exits: `RERR_TIMEOUT` for an elapsed handshake
+/// deadline (io.c:160-163), `RERR_PROTOCOL` for `too many daemon arguments`
+/// (io.c:1504-1505). Nothing may be written raw here anyway: the peer has
+/// switched to multiplexed input at `@RSYNCD: OK`. Measured on 3.5.1: an
+/// oversized argv gets no reply at all.
+fn abandon_client_args(
+    ctx: &mut ModuleRequestContext<'_>,
+    error: &io::Error,
+    deadline: &HandshakeDeadline,
+) -> Option<Vec<String>> {
+    let timed_out = deadline.expired();
+    if let Some(log) = ctx.log_sink {
+        if timed_out {
+            let message =
+                rsync_error!(30, handshake_timeout_message("rsyncd")).with_role(Role::Daemon);
+            log_message(log, &message);
+        } else {
+            log_client_args_failure(log, error);
+        }
+    }
+    if timed_out {
+        *ctx.session_exit_code = Some(ExitCode::Timeout);
+    }
+    None
+}
+
 /// Reads and logs client arguments, handling the two-phase secluded-args
 /// protocol when the client sends `--protect-args` / `-s`.
 ///
@@ -209,8 +239,8 @@ fn has_secluded_args_flag(args: &[String]) -> bool {
 /// If phase-1 args contain `-s`, proceed to phase 2.
 /// Phase 2: read the full argument list via `recv_secluded_args()`.
 ///
-/// Returns the effective client arguments on success, or sends an error
-/// and returns `None`.
+/// Returns the effective client arguments on success, or `None` once a failed
+/// read has been logged.
 ///
 /// # Upstream Reference
 ///
@@ -243,19 +273,7 @@ fn read_and_log_client_args(
         negotiated_protocol,
     ) {
         Ok(args) => args,
-        Err(err) => {
-            // upstream: io.c:1503-1504 - `read_args()` reports its own refusal
-            // (`too many daemon arguments`) at FERROR, which for a daemon lands
-            // in the log file. Telling only the peer leaves the operator with a
-            // connection that was cut for no recorded reason, so the log gets
-            // the same failure the peer does.
-            if let Some(log) = ctx.log_sink {
-                log_client_args_failure(log, &err);
-            }
-            let error = AtError::message(format!("failed to read client arguments: {err}"));
-            send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-            return Ok(None);
-        }
+        Err(err) => return Ok(abandon_client_args(ctx, &err, &deadline)),
     };
 
     // Detect secluded-args flag in phase-1 args.
@@ -296,11 +314,7 @@ fn read_and_log_client_args(
             Some(protocol::secluded_args::MAX_DAEMON_ARGS),
         ) {
             Ok(full_args) => merge_secluded_args(phase1_args, full_args),
-            Err(err) => {
-                let error = AtError::message(format!("failed to read secluded args: {err}"));
-                send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
-                return Ok(None);
-            }
+            Err(err) => return Ok(abandon_client_args(ctx, &err, &deadline)),
         }
     } else {
         // upstream: clientserver.c:1073 - first `read_args()` call passes
