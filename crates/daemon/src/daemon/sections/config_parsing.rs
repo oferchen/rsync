@@ -7,6 +7,8 @@
 
 include!("config_parsing/types.rs");
 
+include!("config_parsing/parameter_names.rs");
+
 include!("config_parsing/global_directives.rs");
 
 include!("config_parsing/include_merge.rs");
@@ -16,3 +18,5 @@ include!("config_parsing/module_directives.rs");
 include!("config_parsing/parser.rs");
 
 include!("config_parsing/tests.rs");
+
+include!("config_parsing/corpus_tests.rs");

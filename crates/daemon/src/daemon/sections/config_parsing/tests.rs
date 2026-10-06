@@ -2,6 +2,7 @@
 mod config_parsing_tests {
     use super::*;
     use std::io::Write;
+    use std::num::NonZeroU32;
     use tempfile::{NamedTempFile, TempDir};
 
     fn write_config(content: &str) -> NamedTempFile {
@@ -284,13 +285,6 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_global_bwlimit() {
-        let file = write_config("bwlimit = 1000\n");
-        let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert!(result.global_bandwidth_limit.is_some());
-    }
-
-    #[test]
     fn parse_global_incoming_chmod() {
         let file = write_config("incoming chmod = u+rwx,g+rx\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
@@ -304,13 +298,6 @@ mod config_parsing_tests {
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (value, _) = result.global_outgoing_chmod.unwrap();
         assert_eq!(value, "a+r");
-    }
-
-    #[test]
-    fn parse_inline_motd() {
-        let file = write_config("motd = Welcome to rsync\n");
-        let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.motd_lines, vec!["Welcome to rsync"]);
     }
 
     #[test]
@@ -701,9 +688,12 @@ mod config_parsing_tests {
         // across two lines, the `World` fragment on its own is not a valid
         // `key = value` line, so a config that failed to join would error;
         // proving the join is what makes this parse succeed as one directive.
-        let file = write_config("motd = Hello \\\nWorld\n");
+        let file = write_config("pid file = /run/Hello \\\nWorld\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.motd_lines, vec!["Hello World"]);
+        assert_eq!(
+            result.pid_file.map(|(path, _)| path),
+            Some(PathBuf::from("/run/Hello World"))
+        );
     }
 
     #[test]
@@ -711,11 +701,14 @@ mod config_parsing_tests {
         // upstream: params.c:Parse() - comment lines are consumed by
         // EatComment(), which never scans for the continuation character, so a
         // trailing backslash on a comment must not swallow the following
-        // directive. Were it wrongly continued, the `motd` line would be eaten
-        // and `motd_lines` would be empty.
-        let file = write_config("# a trailing backslash comment \\\nmotd = Real\n");
+        // directive. Were it wrongly continued, the `pid file` line would be
+        // eaten and no pid file would be set.
+        let file = write_config("# a trailing backslash comment \\\npid file = /run/real.pid\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.motd_lines, vec!["Real"]);
+        assert_eq!(
+            result.pid_file.map(|(path, _)| path),
+            Some(PathBuf::from("/run/real.pid"))
+        );
     }
 
     #[test]
@@ -791,13 +784,13 @@ mod config_parsing_tests {
         // `]push`/`]pop`, restoring the parent's global `Vars` afterwards, so a
         // global directive set only inside the included file must not surface in
         // the parent configuration.
-        let included = write_config("bwlimit = 2000\n");
+        let included = write_config("port = 2000\n");
         let main_config = format!("&include {}\n", included.path().display());
         let main_file = write_config(&main_config);
 
         let result = parse_config_modules(main_file.path()).expect("parse succeeds");
         assert!(
-            result.global_bandwidth_limit.is_none(),
+            result.rsync_port.is_none(),
             "&include must not leak the included file's globals into the parent",
         );
     }
@@ -807,13 +800,13 @@ mod config_parsing_tests {
         // upstream: params.c:include_config() - `&merge` shares the current
         // scope (no `]push`/`]pop`), so a global directive set inside the merged
         // file does take effect in the parent configuration.
-        let included = write_config("bwlimit = 2000\n");
+        let included = write_config("port = 2000\n");
         let main_config = format!("&merge {}\n", included.path().display());
         let main_file = write_config(&main_config);
 
         let result = parse_config_modules(main_file.path()).expect("parse succeeds");
         assert!(
-            result.global_bandwidth_limit.is_some(),
+            result.rsync_port.is_some(),
             "&merge must merge the included file's globals into the parent",
         );
     }
@@ -849,13 +842,6 @@ mod config_parsing_tests {
         let file = write_config("include = \n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.modules.is_empty());
-    }
-
-    #[test]
-    fn parse_empty_bwlimit_errors() {
-        let file = write_config("bwlimit = \n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("must not be empty"));
     }
 
     /// upstream: loadparm.c:379-470 do_parameter() assigns the parameter slot
@@ -1637,20 +1623,6 @@ mod config_parsing_tests {
 
         // Overrider has its own refuse options
         assert_eq!(result.modules[1].refuse_options, vec!["hardlinks"]);
-    }
-
-    #[test]
-    fn global_bwlimit_stored_in_result() {
-        let config = format!(
-            "bwlimit = 1000\n\
-             [mod]\npath = {}\n",
-            abs("/tmp"),
-        );
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path()).expect("parse succeeds");
-
-        assert!(result.global_bandwidth_limit.is_some());
-        assert_eq!(result.modules.len(), 1);
     }
 
     #[test]
@@ -2845,18 +2817,6 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_global_rsync_port_alias() {
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!("rsync port = 8730\n[mod]\npath = {}\n", path.display());
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path()).unwrap();
-        assert_eq!(result.rsync_port.unwrap().0, 8730);
-    }
-
-    #[test]
     fn parse_global_rsync_port_default() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
@@ -2895,70 +2855,6 @@ mod config_parsing_tests {
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert_eq!(result.rsync_port.map(|(port, _)| port), Some(9999));
-    }
-
-    #[test]
-    fn parse_global_acceptor_threads() {
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!("acceptor threads = 4\n[mod]\npath = {}\n", path.display());
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path()).unwrap();
-        assert_eq!(result.acceptor_threads.unwrap().0.get(), 4);
-    }
-
-    #[test]
-    fn parse_global_acceptor_threads_default_is_none() {
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!("[mod]\npath = {}\n", path.display());
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path()).unwrap();
-        assert!(result.acceptor_threads.is_none());
-    }
-
-    #[test]
-    fn parse_global_acceptor_threads_invalid() {
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!("acceptor threads = abc\n[mod]\npath = {}\n", path.display());
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_global_acceptor_threads_zero_rejected() {
-        // Zero replicas would bind no listeners; the directive must reject it.
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!("acceptor threads = 0\n[mod]\npath = {}\n", path.display());
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_global_acceptor_threads_duplicate_last_wins() {
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!(
-            "acceptor threads = 2\nacceptor threads = 4\n[mod]\npath = {}\n",
-            path.display()
-        );
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.acceptor_threads.map(|(n, _)| n.get()), Some(4));
     }
 
     #[test]

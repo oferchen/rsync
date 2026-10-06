@@ -17,7 +17,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
-use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex, OnceLock,
@@ -40,9 +40,7 @@ use core::{
         DaemonAuthDigest, daemon_auth_digest_by_name, negotiate_server_daemon_digest,
         supported_daemon_digest_list, verify_daemon_auth_response,
     },
-    bandwidth::{
-        BandwidthLimitComponents, BandwidthLimiter, BandwidthParseError, parse_bandwidth_limit,
-    },
+    bandwidth::{BandwidthLimitComponents, BandwidthLimiter, parse_bandwidth_limit},
     branding::{self, Brand, manifest},
     exit_code::ExitCode,
     message::{Message, Role},
@@ -643,22 +641,7 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         ));
     }
 
-    let client_socket_options: Arc<Vec<SocketOption>> =
-        if let Some(ref opts_str) = socket_options_str {
-            let parsed = parse_socket_options(opts_str, log_sink.as_ref()).map_err(|msg| {
-                DaemonError::new(
-                    FEATURE_UNAVAILABLE_EXIT_CODE,
-                    rsync_error!(
-                        FEATURE_UNAVAILABLE_EXIT_CODE,
-                        format!("invalid socket options: {msg}")
-                    )
-                    .with_role(Role::Daemon),
-                )
-            })?;
-            Arc::new(parsed)
-        } else {
-            Arc::new(Vec::new())
-        };
+    let client_socket_options: Arc<str> = Arc::from(socket_options_str.unwrap_or_default());
 
     // The async accept path carries the same trust gate as the sync one: a
     // PROXY header is read only from a listed trusted proxy, and an enabled

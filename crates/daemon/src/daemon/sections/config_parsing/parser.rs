@@ -53,11 +53,70 @@ fn collapse_section_name(name: &str) -> String {
 }
 
 /// Parses the `rsyncd.conf` at `path` into module definitions and global settings.
+#[cfg(test)]
 pub(crate) fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, DaemonError> {
+    parse_config_modules_with_dparams(path, &[])
+}
+
+/// Parses the `rsyncd.conf` at `path`, applying the daemon's `--dparam`
+/// overrides (`name=value`) where upstream applies them.
+///
+/// upstream: loadparm.c:618-621 do_section() runs set_dparams(0) when the
+/// first module section opens from the global section, so every module copies
+/// the overrides and later lines can still change them. A config with no such
+/// section gets them from clientserver.c:1765-1766 daemon_main(), after the
+/// global section has been read.
+pub(crate) fn parse_config_modules_with_dparams(
+    path: &Path,
+    dparams: &[String],
+) -> Result<ParsedConfigModules, DaemonError> {
+    parse_config(path, dparams, false)
+}
+
+/// Parses only the global parameters a listening daemon reads at startup.
+///
+/// upstream: clientserver.c:1762 daemon_main() calls load_config(1), which is
+/// lp_load() without a section function: params.c Parse() stops at the first
+/// `[`, whether it is in this file or in one an `&include` or `&merge` pulls
+/// in, and an `&include` then has no `]push`/`]pop` around it
+/// (params.c:include_config tests `the_sfunc`). So `port`, `address`,
+/// `pid file`, `socket options` and `listen backlog` set only after the first
+/// module header are not seen at startup. The `--dparam` overrides follow at
+/// clientserver.c:1766.
+pub(crate) fn parse_config_globals_only(
+    path: &Path,
+    dparams: &[String],
+) -> Result<ParsedConfigModules, DaemonError> {
+    parse_config(path, dparams, true)
+}
+
+fn parse_config(
+    path: &Path,
+    dparams: &[String],
+    globals_only: bool,
+) -> Result<ParsedConfigModules, DaemonError> {
     let mut stack = Vec::new();
-    let mut parse = ConfigParse::new();
+    let mut parse = ConfigParse::new(dparams);
+    parse.globals_only = globals_only;
     parse_config_file(path, &mut stack, &mut parse)?;
+    if !parse.dparams_applied {
+        apply_dparams(&mut parse.vars, dparams)?;
+    }
     parse.vars.into_result(parse.sections)
+}
+
+/// Applies `--dparam` overrides as global-section parameters.
+///
+/// upstream: loadparm.c:667-688 set_dparams() - the value starts after the
+/// `=` and any leading whitespace, and do_parameter() stores it.
+fn apply_dparams(vars: &mut GlobalParseState, dparams: &[String]) -> Result<(), DaemonError> {
+    let origin = Path::new("--dparam");
+    for dparam in dparams {
+        let (name, value) = dparam.split_once('=').unwrap_or((dparam, ""));
+        let key = normalize_param_name(name);
+        apply_global_directive(vars, &key, value.trim_start(), origin, 0, origin)?;
+    }
+    Ok(())
 }
 
 /// The whole-parse state upstream keeps in loadparm.c's file-scope globals.
@@ -67,21 +126,35 @@ pub(crate) fn parse_config_modules(path: &Path) -> Result<ParsedConfigModules, D
 /// `bInGlobalSection`/`iSectionIndex` cursor are shared by every file the parse
 /// reads. `&merge` keeps writing into all three; `&include` saves and restores
 /// only `Vars` around the included file (params.c:include_config).
-struct ConfigParse {
+struct ConfigParse<'a> {
     /// upstream `Vars`: the values a section copies when it is created.
     vars: GlobalParseState,
     /// upstream `section_list`: every module section read so far.
     sections: Vec<PendingModule>,
     /// The section parameters are written to; `None` is `bInGlobalSection`.
     current: Option<usize>,
+    /// The daemon's `--dparam` overrides, applied when the first module
+    /// section opens.
+    dparams: &'a [String],
+    /// Whether the overrides have been applied.
+    dparams_applied: bool,
+    /// Parse without a section function, as upstream's load_config(1) does.
+    globals_only: bool,
+    /// Set when a globals-only parse reaches a section header; the whole
+    /// parse ends there (upstream: params.c Parse() returns 2).
+    stopped: bool,
 }
 
-impl ConfigParse {
-    fn new() -> Self {
+impl<'a> ConfigParse<'a> {
+    fn new(dparams: &'a [String]) -> Self {
         Self {
             vars: GlobalParseState::new(),
             sections: Vec::new(),
             current: None,
+            dparams,
+            dparams_applied: false,
+            globals_only: false,
+            stopped: false,
         }
     }
 }
@@ -95,7 +168,7 @@ impl ConfigParse {
 fn parse_config_file(
     path: &Path,
     stack: &mut Vec<PathBuf>,
-    parse: &mut ConfigParse,
+    parse: &mut ConfigParse<'_>,
 ) -> Result<(), DaemonError> {
     let canonical = path
         .canonicalize()
@@ -127,6 +200,10 @@ fn parse_config_file(
             }
 
             if line.starts_with('[') {
+                if parse.globals_only {
+                    parse.stopped = true;
+                    break;
+                }
                 let end = line.find(']').ok_or_else(|| {
                     config_parse_error(path, line_number, "unterminated module header")
                 })?;
@@ -156,6 +233,13 @@ fn parse_config_file(
                 parse.current = if normalize_param_name(name) == "global" {
                     None
                 } else {
+                    // upstream: loadparm.c:618-621 - the global section ends at
+                    // the first module header, and the `--dparam` overrides are
+                    // applied there, before that section copies `Vars`.
+                    if parse.current.is_none() && parse.sections.is_empty() {
+                        apply_dparams(&mut parse.vars, parse.dparams)?;
+                        parse.dparams_applied = true;
+                    }
                     Some(open_module_section(parse, name, line_number, path))
                 };
                 continue;
@@ -184,6 +268,9 @@ fn parse_config_file(
                     ));
                 }
                 apply_include_directive(parse, &key, value, path, line_number, &canonical, stack)?;
+                if parse.stopped {
+                    break;
+                }
                 continue;
             }
 
@@ -204,6 +291,11 @@ fn parse_config_file(
             }
             let value = raw_value.trim();
 
+            if !is_daemon_parameter(&key) {
+                report_unknown_parameter(raw_key);
+                continue;
+            }
+
             if let Some(index) = parse.current {
                 apply_module_directive(
                     &mut parse.sections[index].builder,
@@ -223,6 +315,21 @@ fn parse_config_file(
 
     stack.pop();
     result
+}
+
+/// Reports a parameter name that is not a daemon parameter; the line is
+/// ignored.
+///
+/// upstream: loadparm.c:map_parameter() logs `Unknown Parameter encountered:
+/// "<name>"` (silently for a name starting with `-`), and do_parameter() then
+/// logs `IGNORING unknown parameter "<name>"` and carries on. The name is the
+/// one params.c scanned: trimmed, with each whitespace run made one space.
+fn report_unknown_parameter(raw_name: &str) {
+    let name = collapse_section_name(raw_name);
+    if !name.starts_with('-') {
+        eprintln!("Unknown Parameter encountered: \"{name}\"");
+    }
+    eprintln!("IGNORING unknown parameter \"{name}\"");
 }
 
 /// Reports a config line that has no '=' and is therefore skipped.
@@ -264,7 +371,7 @@ struct CapturedModuleDefaults {
     incoming_chmod: Option<String>,
     outgoing_chmod: Option<String>,
     refuse_options: Option<Vec<String>>,
-    use_chroot: Option<bool>,
+    use_chroot: Option<Option<bool>>,
     module_defaults: GlobalModuleDefaults,
 }
 
@@ -290,7 +397,7 @@ impl CapturedModuleDefaults {
 /// whitespace- and case-insensitive `strwiEQ`, and a match is returned as-is,
 /// so a repeated header re-opens that section instead of adding a second one.
 fn open_module_section(
-    parse: &mut ConfigParse,
+    parse: &mut ConfigParse<'_>,
     name: &str,
     line_number: usize,
     config_path: &Path,

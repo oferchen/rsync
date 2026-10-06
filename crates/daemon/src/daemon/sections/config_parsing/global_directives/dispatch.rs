@@ -98,17 +98,6 @@ fn apply_global_directive(
                 .map(|raw_line| raw_line.trim_end_matches('\r').to_owned())
                 .collect();
         }
-        "motd" => {
-            // `motd` has NO upstream counterpart - daemon-parm.txt declares only
-            // `motd_file`, so loadparm.c's last-wins rule says nothing about how
-            // an inline value composes with a file. Appending is this
-            // implementation's established behaviour and is left untouched here;
-            // only the upstream-backed `motd file` slot gained last-wins
-            // semantics.
-            state
-                .motd_lines
-                .push(value.trim_end_matches(['\r', '\n']).to_owned());
-        }
         "pidfile" if value.is_empty() => state.pid_file = None,
         "pidfile" => {
             let resolved = daemon_parameter_path(value.trim());
@@ -128,23 +117,6 @@ fn apply_global_directive(
             // daemon template read as `lp_reverse_lookup(-1)`.
             state.module_defaults.reverse_lookup = Some(parsed);
         }
-        "bwlimit" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "'bwlimit' directive must not be empty",
-                ));
-            }
-
-            let components = parse_config_bwlimit(value, path, line_number)?;
-            store_global_directive(
-                &mut state.global_bwlimit,
-                components,
-                canonical,
-                line_number,
-            );
-        }
         "secretsfile" if value.is_empty() => state.global_secrets_file = None,
         // upstream: authenticate.c:143-160 check_secret() opens the value as
         // given when a client authenticates, so a missing or unusable file
@@ -157,10 +129,8 @@ fn apply_global_directive(
                 line_number,
             );
         }
-        "incomingchmod" | "incoming-chmod" if value.is_empty() => {
-            state.global_incoming_chmod = None
-        }
-        "incomingchmod" | "incoming-chmod" => {
+        "incomingchmod" if value.is_empty() => state.global_incoming_chmod = None,
+        "incomingchmod" => {
             store_global_directive(
                 &mut state.global_incoming_chmod,
                 value.to_owned(),
@@ -168,10 +138,8 @@ fn apply_global_directive(
                 line_number,
             );
         }
-        "outgoingchmod" | "outgoing-chmod" if value.is_empty() => {
-            state.global_outgoing_chmod = None
-        }
-        "outgoingchmod" | "outgoing-chmod" => {
+        "outgoingchmod" if value.is_empty() => state.global_outgoing_chmod = None,
+        "outgoingchmod" => {
             store_global_directive(
                 &mut state.global_outgoing_chmod,
                 value.to_owned(),
@@ -267,9 +235,7 @@ fn apply_global_directive(
         // upstream: loadparm.c - use chroot is valid in the global section as a
         // default that applies to all modules which do not override it explicitly.
         "usechroot" => {
-            let Some(parsed) =
-                apply_boolean_directive(value, true, "use chroot", path, line_number)
-            else {
+            let Some(parsed) = apply_bool3_directive(value, "use chroot", path, line_number) else {
                 return Ok(());
             };
 
@@ -368,30 +334,9 @@ fn apply_global_directive(
 
             store_global_directive(&mut state.listen_backlog, parsed, canonical, line_number);
         }
-        // oc-rsync extension - number of SO_REUSEPORT listener replicas to bind
-        // per address family (default 1). Has no upstream equivalent; changes
-        // only kernel socket behaviour, never the wire.
-        "acceptorthreads" => {
-            let parsed: u32 = value.parse().map_err(|_| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid integer value '{value}' for 'acceptor threads'"),
-                )
-            })?;
-            let threads = NonZeroU32::new(parsed).ok_or_else(|| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    "'acceptor threads' must be at least 1".to_string(),
-                )
-            })?;
-
-            store_global_directive(&mut state.acceptor_threads, threads, canonical, line_number);
-        }
         // upstream: daemon-parm.txt - port INTEGER, P_GLOBAL, default 0.
         // Controls the TCP port the daemon listens on.
-        "port" | "rsyncport" => {
+        "port" => {
             let parsed = parse_atoi(value).clamp(0, i32::from(u16::MAX)) as u16;
 
             store_global_directive(&mut state.rsync_port, parsed, canonical, line_number);
@@ -567,16 +512,13 @@ fn apply_global_directive(
             }
         }
         "mungesymlinks" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "munge symlinks", path, line_number)
+            if let Some(parsed) = apply_bool3_directive(value, "munge symlinks", path, line_number)
             {
-                state.module_defaults.munge_symlinks = Some(Some(parsed));
+                state.module_defaults.munge_symlinks = Some(parsed);
             }
         }
         "numericids" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "numeric ids", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "numeric ids", path, line_number) {
                 state.module_defaults.numeric_ids = Some(parsed);
             }
         }
@@ -635,9 +577,7 @@ fn apply_global_directive(
             }
         }
         "opennoatime" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "open noatime", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "open noatime", path, line_number) {
                 state.module_defaults.open_noatime = Some(parsed);
             }
         }
@@ -711,15 +651,9 @@ fn apply_global_directive(
         // upstream: loadparm.c:add_a_section - a global `name` is copied into
         // each new section and then overwritten by the section's own name.
         "name" => {}
-        _ => {
-            eprintln!(
-                "warning: unknown global directive '{}' in '{}' line {} [daemon={}]",
-                key,
-                path.display(),
-                line_number,
-                env!("CARGO_PKG_VERSION"),
-            );
-        }
+        // Every other name is not a daemon parameter; the parser reported
+        // and skipped it before dispatching (`report_unknown_parameter`).
+        _ => {}
     }
     Ok(())
 }

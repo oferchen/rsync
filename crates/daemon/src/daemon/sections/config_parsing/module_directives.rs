@@ -121,16 +121,12 @@ fn apply_module_directive(
             }
         }
         "usechroot" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "use chroot", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "use chroot", path, line_number) {
                 builder.set_use_chroot(parsed);
             }
         }
         "numericids" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "numeric ids", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "numeric ids", path, line_number) {
                 builder.set_numeric_ids(parsed);
             }
         }
@@ -154,10 +150,9 @@ fn apply_module_directive(
             }
         }
         "mungesymlinks" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "munge symlinks", path, line_number)
+            if let Some(parsed) = apply_bool3_directive(value, "munge symlinks", path, line_number)
             {
-                builder.set_munge_symlinks(Some(parsed));
+                builder.set_munge_symlinks(parsed);
             }
         }
         // upstream: clientserver.c:833 - an empty `uid` means the default
@@ -185,10 +180,10 @@ fn apply_module_directive(
             })?;
             builder.set_max_connections(max);
         }
-        "incomingchmod" | "incoming-chmod" => {
+        "incomingchmod" => {
             builder.set_incoming_chmod((!value.is_empty()).then(|| value.to_owned()));
         }
-        "outgoingchmod" | "outgoing-chmod" => {
+        "outgoingchmod" => {
             builder.set_outgoing_chmod((!value.is_empty()).then(|| value.to_owned()));
         }
         "maxverbosity" => {
@@ -297,9 +292,7 @@ fn apply_module_directive(
             }
         }
         "opennoatime" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "open noatime", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "open noatime", path, line_number) {
                 builder.set_open_noatime(parsed);
             }
         }
@@ -401,15 +394,9 @@ fn apply_module_directive(
             // found in module section!").
             eprintln!("Global parameter {key} found in module section!");
         }
-        _ => {
-            eprintln!(
-                "warning: unknown per-module directive '{}' in '{}' line {} [daemon={}]",
-                key,
-                path.display(),
-                line_number,
-                env!("CARGO_PKG_VERSION"),
-            );
-        }
+        // Every other name is not a daemon parameter; the parser reported
+        // and skipped it before dispatching (`report_unknown_parameter`).
+        _ => {}
     }
     Ok(())
 }
