@@ -144,7 +144,7 @@ where
 {
     // Route through the session-level driver facade
     // (`core::session::run_server_stdio`), which runs the threaded server body.
-    use core::server::{ServerConfig, ServerRole};
+    use core::server::{ServerConfig, ServerRole, ServerStats};
     use core::session::run_server_stdio;
 
     let program_brand =
@@ -771,7 +771,15 @@ where
     // (transfer::announce_error_exit); this is the process status the remote
     // shell reports on top of it.
     match run_server_stdio(config, &mut stdin, stdout, None) {
-        Ok(_stats) => 0,
+        // upstream: cleanup.c:210-218 - a clean finish still exits with the
+        // code the accumulated io_error bits select (23/24/25).
+        Ok(stats) => {
+            let (io_error, got_xfer_error) = match stats {
+                ServerStats::Receiver(s) => (s.io_error, s.got_xfer_error),
+                ServerStats::Generator(s) => (s.io_error, s.got_xfer_error),
+            };
+            core::exit_code::io_error_exit_code(io_error, got_xfer_error).unwrap_or(0)
+        }
         Err(e) => {
             let exit_code = core::exit_code::ExitCode::from_io_error(&e);
             write_server_error_with_code(
