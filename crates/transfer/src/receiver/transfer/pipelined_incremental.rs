@@ -742,6 +742,16 @@ impl ReceiverContext {
                 }
             }
 
+            // The per-entry passes upstream's recv_generator() runs inline
+            // (missing args generator.c:1749-1755, symlinks :1948-2002,
+            // devices and specials :2031-2060), over this segment only so its
+            // entries can be released once the sender frees the list. They run
+            // before the segment's transfer requests, as in the batch driver: a
+            // server receiver's itemize rows for these entries ride the
+            // segment's own request stream (generator.c:582-593), so a row
+            // recorded after it would go out with a later segment, after its
+            // own sub-list was freed.
+            self.run_segment_post_passes(range.clone(), &setup, writer)?;
             // Build and transfer this segment's candidate files. The threaded
             // codec pair keeps the request-stream NDX diff-state connection-wide
             // across every segment. A segment that interleaves during these
@@ -828,12 +838,6 @@ impl ReceiverContext {
                     )?;
                 }
             }
-
-            // The per-entry passes upstream's recv_generator() runs inline
-            // (missing args generator.c:1749-1755, symlinks :1948-2002,
-            // devices and specials :2031-2060), over this segment only so its
-            // entries can be released once the sender frees the list.
-            self.run_segment_post_passes(range.clone(), &setup, writer)?;
 
             // The segment is now fully drained (no in-progress files). Release
             // the OLDEST not-yet-released segment strictly older than the one
