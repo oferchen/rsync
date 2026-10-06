@@ -61,6 +61,7 @@ impl<'a> CopyContext<'a> {
             )),
             destination_root,
             source_anchor: None,
+            source_roots: fast_io::SourceRoots::new(),
             #[cfg(unix)]
             files_from_base: None,
             safety_depth_offset: 0,
@@ -272,7 +273,29 @@ impl<'a> CopyContext<'a> {
     /// upstream: `rsync-3.5.0/sender.c` - the sender's content opens are
     /// confined beneath the transfer root, which is per source argument.
     pub(in crate::local_copy) fn set_source_anchor(&mut self, anchor: Option<PathBuf>) {
+        #[cfg(unix)]
+        if let Some(root) = anchor.as_deref()
+            && let Ok(metadata) = fs::metadata(root)
+            && metadata.is_dir()
+        {
+            use std::os::unix::fs::MetadataExt;
+            // An anchor that cannot be held keeps the unpinned confined open.
+            let _ = self
+                .source_roots
+                .remember_operand(root, true, metadata.dev(), metadata.ino());
+        }
         self.source_anchor = anchor;
+    }
+    /// Opens `path` beneath the pinned anchor that holds it, or `None` when no
+    /// recorded anchor prefixes it.
+    ///
+    /// upstream: `rsync-3.5.1/sender.c:694-704` - a root whose identity
+    /// changed since the scan is refused with `ELOOP`.
+    pub(in crate::local_copy) fn open_beneath_pinned_anchor(
+        &self,
+        path: &Path,
+    ) -> Option<io::Result<fs::File>> {
+        self.source_roots.open(path, self.open_noatime_enabled())
     }
 
     /// Returns the source-tree confinement anchor for the current operand.
