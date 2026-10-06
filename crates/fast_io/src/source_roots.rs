@@ -23,13 +23,16 @@ use std::sync::{Arc, Mutex, PoisonError};
 #[derive(Debug)]
 struct SourceRoot {
     path: PathBuf,
+    #[cfg(unix)]
     dev: u64,
+    #[cfg(unix)]
     ino: u64,
 }
 
 #[derive(Debug, Default)]
 struct Inner {
     roots: Vec<SourceRoot>,
+    #[cfg(unix)]
     held: Option<(usize, Arc<File>)>,
 }
 
@@ -104,7 +107,15 @@ impl SourceRoots {
         if inner.roots.iter().any(|root| root.path == path) {
             return;
         }
-        inner.roots.push(SourceRoot { path, dev, ino });
+        #[cfg(not(unix))]
+        let _ = (dev, ino);
+        inner.roots.push(SourceRoot {
+            path,
+            #[cfg(unix)]
+            dev,
+            #[cfg(unix)]
+            ino,
+        });
     }
 
     /// The validated root `path` lies beneath: the longest recorded root
