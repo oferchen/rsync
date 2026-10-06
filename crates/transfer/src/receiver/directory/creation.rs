@@ -415,7 +415,7 @@ impl ReceiverContext {
                         Skip,
                         1,
                         "not creating new directory \"{}\"",
-                        dir_path.display()
+                        relative_path.display()
                     );
                 }
                 skipped_existing_dirs.insert(dir_path.clone());
@@ -846,7 +846,9 @@ impl ReceiverContext {
 
     /// Creates a single directory during incremental processing.
     ///
-    /// Returns `Ok(None)` on failure or skip (marks dir as failed).
+    /// Returns `Ok(None)` when the directory is not created: a failure marks it
+    /// failed, an `--existing` skip marks it missing (see
+    /// `FailedDirectories::is_missing_or_below`), which is not an error.
     /// Returns `Ok(Some((true, iflags)))` when a new directory was created.
     /// Returns `Ok(Some((false, iflags)))` when an existing directory had
     /// metadata applied. In both cases `iflags` are the raw itemize flags the
@@ -887,6 +889,11 @@ impl ReceiverContext {
             dest_dir.join(relative_path)
         };
 
+        // upstream: generator.c:1646-1656 - an entry below a directory
+        // --existing skipped returns early and silently.
+        if failed_dirs.is_missing_or_below(entry.path()) {
+            return Ok(None);
+        }
         // Check if parent is under a failed directory
         if let Some(failed_parent) = failed_dirs.failed_ancestor(entry.path()) {
             if self.config.flags.verbose && self.config.connection.client_mode {
@@ -949,8 +956,8 @@ impl ReceiverContext {
         // upstream: generator.c:1368-1383 - with --existing (ignore_non_existing),
         // a directory missing at the destination is never created; the dir is
         // marked skipped (FLAG_MISSING_DIR) so its descendants are skipped too.
-        // Marking it failed here drives the same descendant skip via the
-        // failed-ancestor check above on subsequent entries.
+        // The skip is not a failure: generator.c:1755-1761 never sets io_error,
+        // so it is recorded apart from failed directories.
         //
         // upstream: generator.c:1401 - --existing only skips a genuinely absent
         // destination; a replaced symlink existed and is not skipped.
@@ -960,10 +967,10 @@ impl ReceiverContext {
                     Skip,
                     1,
                     "not creating new directory \"{}\"",
-                    dir_path.display()
+                    relative_path.display()
                 );
             }
-            failed_dirs.mark_failed(entry.path());
+            failed_dirs.mark_missing(entry.path());
             return Ok(None);
         }
         // upstream: generator.c:1480-1483 - itemize() runs before set_file_attrs

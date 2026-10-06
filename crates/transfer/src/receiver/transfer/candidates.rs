@@ -278,6 +278,10 @@ impl ReceiverContext {
             .map(|(i, e)| (range.start + i, e))
             .filter(|(_, e)| e.is_file())
             .filter(|(_, e)| !is_hardlink_follower(e))
+            // upstream: generator.c:1646-1656 - a file below a directory
+            // --existing skipped returns early and silently, before the daemon
+            // filter check; it is neither refused nor counted.
+            .filter(|(_, e)| !failed_dirs.is_some_and(|fd| fd.is_missing_or_below(e.path())))
             .filter(|(_, e)| {
                 // upstream: generator.c:1273-1287 - check_filter(&daemon_filter_list, ...)
                 // rejects daemon-excluded files before accepting transfer data.
