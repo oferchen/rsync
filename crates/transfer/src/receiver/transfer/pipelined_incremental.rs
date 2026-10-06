@@ -182,6 +182,9 @@ impl ReceiverContext {
                         let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, file_entry);
                         self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                     }
+                    // upstream: generator.c:1755-1761 - an --existing skip
+                    // is not an error.
+                    None if failed_dirs.is_missing_or_below(file_entry.path()) => {}
                     None => {
                         stats.directories_failed += 1;
                     }
@@ -729,6 +732,9 @@ impl ReceiverContext {
                         let _ = self.emit_or_record_itemize(writer, flist_idx, &iflags, file_entry);
                         self.record_server_no_transfer_itemize(flist_idx, iflags.raw());
                     }
+                    // upstream: generator.c:1755-1761 - an --existing skip
+                    // is not an error.
+                    None if failed_dirs.is_missing_or_below(file_entry.path()) => {}
                     None => {
                         stats.directories_failed += 1;
                     }

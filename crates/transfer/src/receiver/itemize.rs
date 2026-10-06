@@ -255,7 +255,11 @@ impl ReceiverContext {
                     Ok(_) => true,
                     // Absent pre-transfer: the dir will be created (named), or
                     // this is a list-only/dry-run with no destination tree.
-                    Err(_) => true,
+                    // upstream: generator.c:1755-1761 - --existing skips an
+                    // absent dir before set_file_attrs(), so it is never named.
+                    Err(_) => {
+                        !self.config.file_selection.existing_only || self.config.flags.list_only
+                    }
                 };
                 emit.then(|| (idx, format!("{}/", rel.display())))
             })
