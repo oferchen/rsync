@@ -327,3 +327,29 @@ Each deferred, with the one thing that would reopen it:
    surface is CLI flags, not the shell-script env-var interface `rsync-ssl`
    inherited from wrapping openssl/stunnel. The *concepts* map 1:1; the delivery
    mechanism matches oc-rsync's own conventions rather than the wrapper's.
+
+## 8. Daemon process model
+
+QUIC carries the unmodified daemon protocol (Section 0), so a QUIC session must
+get the same process isolation as a TCP one. Upstream forks one child per
+accepted connection (socket.c `start_accept_loop()`); the child alone applies
+`use chroot` and the `uid`/`gid` drop.
+
+The daemon parent therefore never runs a QUIC session. It binds UDP while
+privileged, then forks a QUIC front process before any thread exists. The
+front drops to `nobody`, dies with the parent, sets `no_new_privs` and applies
+a deny-all Landlock ruleset (Linux), and only then starts the QUIC driver
+threads. For each stream it relays bytes over a socket pair and passes the
+other end to the parent with the peer and local addresses
+(`platform::fd_pass`). The parent polls that channel as one more listener and
+admits each stream through the TCP path: host checks, `max connections`, and a
+forked per-session child.
+
+Invariant: the daemon parent never calls `chroot`, `setuid`, `setgid` or
+`setgroups`, and is single-threaded whenever it forks. The confinement step
+refuses with `@ERROR: session is not isolated from the daemon` if it ever runs
+in the parent's pid. The async accept loop (`OC_RSYNC_ASYNC_DAEMON`) serves
+sessions in-process, so it refuses to start as root.
+
+Residual risk: one front process holds the TLS state and plaintext of every
+QUIC connection; see `quic-security-model.md` (G16).
