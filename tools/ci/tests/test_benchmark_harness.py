@@ -64,7 +64,7 @@ Built in Rust 2024 for aarch64-linux
 
 OC_VV = '{"program": "oc-rsync", "version": "0.6.4", "protocol": "32.0"}'
 
-UPSTREAM_BANNER = "rsync  version 3.5.0  protocol version 32\n"
+UPSTREAM_BANNER = "rsync  version 3.5.1  protocol version 33\n"
 
 
 def fake_binary(tmp: Path, name: str, banner: str, vv: str | None) -> str:
@@ -128,7 +128,7 @@ class OcRsyncVersionLabel(unittest.TestCase):
         up = fake_binary(
             Path(self.tmp.name), "rsync", UPSTREAM_BANNER, None
         )
-        self.assertEqual(bench.binary_version(up), "3.5.0")
+        self.assertEqual(bench.binary_version(up), "3.5.1")
 
 
 class BaselineParsing(unittest.TestCase):
@@ -147,7 +147,7 @@ class BaselineParsing(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             up = fake_binary(Path(tmp), "rsync", UPSTREAM_BANNER, None)
             baselines = bench.parse_baselines(up)
-        self.assertEqual([b.label for b in baselines], ["3.5.0"])
+        self.assertEqual([b.label for b in baselines], ["3.5.1"])
 
     def test_a_bare_command_name_resolves_through_path(self):
         """`UPSTREAM_RSYNC=rsync` means the system rsync, not ./rsync."""
