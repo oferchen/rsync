@@ -99,10 +99,20 @@ fn server_refuses_an_unknown_remote_long_option_without_writing_anything() {
     let output = push(&fixture, &["-M--bogus-opt"], "host:dst/");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    assert_ne!(output.status.code(), Some(0), "{stderr}");
+    assert_eq!(output.status.code(), Some(12), "{stderr}");
+    // upstream: options.c:2053 prefixes the popt text with `on remote
+    // machine: ` when am_server, then main.c:1913 exits RERR_SYNTAX.
+    let mut lines = stderr.lines();
+    assert_eq!(
+        lines.next(),
+        Some("oc-rsync: on remote machine: --bogus-opt: unknown option"),
+        "{stderr}"
+    );
     assert!(
-        stderr.contains("--bogus-opt: unknown option"),
-        "the server's refusal must reach the client: {stderr}"
+        lines.next().is_some_and(|line| line
+            .starts_with("oc-rsync error: syntax or usage error (code 1) at ")
+            && line.contains(" [server=")),
+        "{stderr}"
     );
     assert!(
         entries(&fixture.server_cwd).is_empty(),

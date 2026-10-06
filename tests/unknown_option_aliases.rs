@@ -90,6 +90,75 @@ fn client_rejects_option_spellings_upstream_does_not_have() {
     }
 }
 
+/// A local transfer hands its `-M` values to the server child it forks, so an
+/// unknown one is refused there, not by the client.
+///
+/// upstream: pipe.c:143-148 - the local child runs `parse_arguments()` on
+/// `remote_options[]` with am_server set, so popt's text carries the
+/// `on remote machine: ` prefix (options.c:2053) and the child exits
+/// RERR_SYNTAX as the receiver. The parent then reads EOF on the pipe and
+/// exits RERR_STREAMIO from whine_about_eof() (io.c:303).
+#[test]
+fn local_transfer_refuses_an_unknown_remote_option_in_the_child() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src = temp.path().join("src");
+    fs::create_dir_all(&src).expect("create src");
+    fs::write(src.join("f"), b"x").expect("write file");
+    let dest = temp.path().join("dest");
+    let src_arg = format!("{}/", src.display());
+    let dest_arg = dest.display().to_string();
+
+    for option in ["--bogus", "--no-fake-super"] {
+        let remote = format!("-M{option}");
+        let output = run(&["-a", &remote, &src_arg, &dest_arg]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(12), "{option}: {stderr}");
+        let lines: Vec<&str> = stderr.lines().collect();
+        assert_eq!(lines.len(), 4, "{stderr}");
+        assert_eq!(
+            lines[0],
+            format!("oc-rsync: on remote machine: {option}: unknown option"),
+            "{stderr}"
+        );
+        assert!(
+            lines[1].starts_with("oc-rsync error: syntax or usage error (code 1) at ")
+                && lines[1].contains(" [receiver="),
+            "{stderr}"
+        );
+        assert_eq!(
+            lines[2], "oc-rsync: connection unexpectedly closed (0 bytes received so far) [sender]",
+            "{stderr}"
+        );
+        assert!(
+            lines[3]
+                .starts_with("oc-rsync error: error in rsync protocol data stream (code 12) at ")
+                && lines[3].contains(" [sender="),
+            "{stderr}"
+        );
+        assert!(!dest.exists(), "{option}: nothing may be transferred");
+    }
+}
+
+/// The client parses its own argv before any child sees the `-M` values, so
+/// an unknown option given both ways is still the client's refusal.
+#[test]
+fn a_direct_unknown_option_is_refused_by_the_client_before_the_child() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src = temp.path().join("src");
+    fs::create_dir_all(&src).expect("create src");
+    let src_arg = format!("{}/", src.display());
+    let dest_arg = temp.path().join("dest").display().to_string();
+
+    let output = run(&["-a", "--bogus", "-M--bogus", &src_arg, &dest_arg]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert_eq!(
+        stderr.lines().next(),
+        Some("oc-rsync: --bogus: unknown option"),
+        "{stderr}"
+    );
+}
+
 /// `-M--no-fake-super` reaches the server argv after the flag string. The
 /// server must refuse it rather than take it for the destination, which would
 /// create `--no-fake-super/` in its cwd and report success.
@@ -119,7 +188,7 @@ fn server_refuses_remote_no_fake_super_without_writing_anything() {
 
     assert_ne!(output.status.code(), Some(0), "{stderr}");
     assert!(
-        stderr.contains("--no-fake-super: unknown option"),
+        stderr.contains("on remote machine: --no-fake-super: unknown option"),
         "the server's refusal must reach the client: {stderr}"
     );
     assert!(

@@ -31,7 +31,10 @@ pub(crate) use flags::{
     parse_info_flags_server,
 };
 pub(crate) use module_list::render_module_list;
-pub(crate) use operands::{extract_operands, parse_bind_address_argument};
+pub(crate) use operands::{
+    STREAM_IO_ERROR, SYNTAX_ERROR, UnsupportedOption, exit_trailer, extract_operands,
+    parse_bind_address_argument,
+};
 pub(crate) use options::{
     ProtocolArg, empty_size_means_zero, legacy_remote_rejection, parse_block_size_argument,
     parse_checksum_seed_argument, parse_max_alloc_argument, parse_max_delete_argument,

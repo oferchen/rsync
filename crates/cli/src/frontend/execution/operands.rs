@@ -16,6 +16,10 @@ use core::{
 /// The `syntax or usage error` trailer (upstream: errcode.h RERR_SYNTAX).
 pub(crate) const SYNTAX_ERROR: ExitCodeMessage = exit_template(1);
 
+/// The `error in rsync protocol data stream` trailer (upstream: errcode.h
+/// RERR_STREAMIO).
+pub(crate) const STREAM_IO_ERROR: ExitCodeMessage = exit_template(12);
+
 /// Resolves an exit-code template at compile time, so a code missing from the
 /// table fails the build instead of panicking at runtime.
 const fn exit_template(code: i32) -> ExitCodeMessage {
@@ -58,6 +62,22 @@ impl UnsupportedOption {
             "{program}: {}: unknown option",
             self.option.to_string_lossy()
         )
+    }
+
+    /// Renders the refusal line a server prints for the offending token.
+    ///
+    /// upstream: options.c:2053 prefixes popt's text with `on remote machine: `
+    /// when `am_server`, which covers a local transfer's forked child too.
+    pub(crate) fn remote_refusal_line(&self, program: &str) -> String {
+        format!(
+            "{program}: on remote machine: {}: unknown option",
+            self.option.to_string_lossy()
+        )
+    }
+
+    /// Returns the offending token.
+    pub(crate) fn into_option(self) -> OsString {
+        self.option
     }
 
     /// Renders the exit trailer that follows the refusal line.
@@ -295,6 +315,10 @@ mod tests {
         assert_eq!(message.text(), "syntax or usage error");
         assert_eq!(message.role(), Some(Role::Client));
         assert!(message.source().is_some(), "the trailer must cite its site");
+        assert_eq!(
+            unsupported.remote_refusal_line("rsync"),
+            "rsync: on remote machine: --unknown-opt: unknown option"
+        );
     }
 
     #[test]
