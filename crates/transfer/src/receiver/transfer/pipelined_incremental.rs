@@ -77,9 +77,8 @@ impl ReceiverContext {
         // never emits an NDX_DONE mid-walk to free it. Every mode streams,
         // including the non-transfer ones (list-only, dry-run,
         // --only-write-batch), because upstream's generator walk and its
-        // mid-walk release are mode-independent; only a delete pass stays on the
-        // batch path until A5a-4. On
-        // the live path INC_RECURSE is not negotiated, so `flist_eof` is already
+        // mid-walk release are mode-independent. A delete mode streams too and
+        // deletes per directory as each segment is walked. On the live path INC_RECURSE is not negotiated, so `flist_eof` is already
         // set here, this dispatch never fires, and the batch body below runs
         // unchanged - byte-for-byte.
         if self.should_stream_incremental() {
@@ -414,35 +413,6 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.finalize_delayed_updates_and_hardlinks(&setup.dest_dir, &all_delayed_updates, writer)?;
 
-        // upstream: io.c:1740-1750 - see the matching drain in `pipelined.rs`.
-        // The sender's MSG_IO_ERROR arrives before the phase-1 NDX_DONE
-        // (sender.c:811-820), so folding it in here is what lets the late sweep
-        // honour `delete_in_dir`'s IOERR_GENERAL guard (generator.c:304-311)
-        // instead of deleting entries upstream preserves.
-        stats.io_error |= reader.take_io_error();
-
-        // upstream: generator.c:2425-2428 - --delete-after / --delete-delay run
-        // the sweep only after every file (including each destination
-        // `.rsync-filter` and any --delay-updates staged file committed just
-        // above) has landed, so per-directory merge protect rules are honoured
-        // at delete time. Runs before touch_up_dirs so deletion-induced parent
-        // mtime changes are re-tidied (upstream touch_up_dirs at generator.c:2449
-        // follows the late delete pass).
-        if self.delete_pass_is_late() {
-            self.run_receiver_delete_pass(
-                super::DeletePassPhase::Late,
-                &setup.dest_dir,
-                #[cfg(unix)]
-                setup.sandbox.as_ref(),
-                writer,
-                &mut stats,
-            )?;
-        }
-
-        // upstream: generator.c:2093-2146 - touch_up_dirs() re-applies
-        // directory mtimes after file writes clobber them.
-        self.touch_up_dirs(&setup.dest_dir, writer);
-
         stats.files_transferred = files_transferred;
         stats.transferred_file_size = transferred_file_size;
         stats.bytes_received = bytes_received;
@@ -459,9 +429,10 @@ impl ReceiverContext {
         stats.num_symlinks = num_symlinks;
         stats.num_devices = num_devices;
         stats.num_specials = num_specials;
-        if !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0 {
-            stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
-        }
+        // Folded in after the late delete pass, which never consulted these
+        // local failures.
+        let local_failure =
+            !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0;
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
         // upstream: main.c:816-818 - the pre-flight mkdir of the destination
@@ -479,9 +450,6 @@ impl ReceiverContext {
         // the client reconstructs the "Number of created files" breakdown.
         // upstream: receiver.c:749-762 - stats.created_* accumulated locally.
         stats.created_stats = self.created_stats.get();
-        // Rejoin the make-room deletions with the sweep's tally; upstream counts
-        // both into the same `stats.deleted_*` globals (delete.c:241-256).
-        stats.delete_stats = self.effective_del_stats();
 
         // Flush any trailing buffered `-v` directory names (those with no
         // transferred child to release them mid-loop), then drain the deferred
@@ -491,7 +459,27 @@ impl ReceiverContext {
         self.flush_itemize_rows(writer)?;
         self.order_list_only_entries(&mut stats);
 
-        self.finalize_transfer(reader, writer, &mut ndx_read_codec)?;
+        self.finalize_transfer_with(
+            reader,
+            writer,
+            &mut ndx_read_codec,
+            |ctx, reader, writer| {
+                ctx.run_late_delete_and_touch_up(
+                    reader.take_io_error(),
+                    &setup.dest_dir,
+                    #[cfg(unix)]
+                    setup.sandbox.as_ref(),
+                    writer,
+                    &mut stats,
+                )
+            },
+        )?;
+        if local_failure {
+            stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
+        }
+        // Rejoin the make-room deletions with the sweep's tally; upstream counts
+        // both into the same `stats.deleted_*` globals (delete.c:241-256).
+        stats.delete_stats = self.effective_del_stats();
 
         // upstream: io.c:1573 - io_error |= val on MSG_IO_ERROR from the sender.
         // The sender emits MSG_IO_ERROR (sender.c:486-487) for source files that
@@ -512,15 +500,18 @@ impl ReceiverContext {
     /// sub-list stream LAZILY, one segment at a time (RS-3b), instead of draining
     /// it up front.
     ///
-    /// All three must hold:
+    /// Both must hold:
     /// - INC_RECURSE negotiated (a sub-list stream exists at all);
     /// - `!flist_eof` at entry - the terminator has not arrived, so this is a
     ///   genuine multi-segment stream. On the live path INC_RECURSE is not
     ///   negotiated and `flist_eof` is set once the single list is received, so
-    ///   this is always false and the batch body runs unchanged;
-    /// - no delete pass - the per-directory delete split is A5a-4; until then
-    ///   `--delete*` stays on the batch path, whose whole-list keep-set needs
-    ///   `first_segment_idx == 0` (`delete_pass_flist_complete`).
+    ///   this is always false and the batch body runs unchanged.
+    ///
+    /// A delete mode streams too: each segment deletes in its own parent
+    /// directory as it is walked (`delete_in_segment`), the way upstream's
+    /// `delete_in_dir()` runs per sub-list. The only modes that need the whole
+    /// list, `--delete-before` and `--delete-after`, never reach an INC_RECURSE
+    /// receiver (compat.c:172-177, compat.c:780-785).
     ///
     /// The drive mode is deliberately not a condition. Upstream's
     /// generate_files() walks one sub-list at a time and releases each finished
@@ -533,7 +524,6 @@ impl ReceiverContext {
         self.compat_flags
             .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE))
             && !self.flist_eof
-            && !self.config.flags.delete
     }
 
     /// The flat-index end of segment `segment_idx`, which must already be
@@ -551,7 +541,7 @@ impl ReceiverContext {
     /// directory of more than 10,000 entries - because the sender only frees
     /// its window on an NDX_DONE this walk has not yet sent (io.c:853-860,
     /// sender.c:529-538).
-    fn segment_end(&self, segment_idx: usize) -> usize {
+    pub(in crate::receiver) fn segment_end(&self, segment_idx: usize) -> usize {
         self.ndx_segments
             .get(segment_idx + 1)
             .map_or(self.file_list.len(), |next| next.0)
@@ -658,6 +648,24 @@ impl ReceiverContext {
             }
             let seg_start = self.ndx_segments[segment_idx].0;
             let seg_end = self.segment_end(segment_idx);
+
+            // upstream: generator.c:2780-2798 - delete in this sub-list's parent
+            // before walking it, empty sub-lists included (every destination
+            // entry of an empty source directory is extraneous). The io_error
+            // guard inside must see every file-list trailer and MSG_IO_ERROR
+            // read so far, as upstream's global does.
+            stats.io_error |=
+                self.flist_reader_io_error() | self.flist_io_error | reader.take_io_error();
+            self.delete_in_segment(
+                segment_idx,
+                &setup.dest_dir,
+                #[cfg(unix)]
+                setup.sandbox.as_ref(),
+                &failed_dirs,
+                writer,
+                &mut stats,
+            )?;
+
             if seg_start >= seg_end {
                 // An empty segment (e.g. a sub-list of only tombstones): nothing
                 // to create or transfer, but it still counts toward the
@@ -905,12 +913,6 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.finalize_delayed_updates_and_hardlinks(&setup.dest_dir, &all_delayed_updates, writer)?;
 
-        stats.io_error |= reader.take_io_error();
-
-        // upstream: generator.c:2093-2146 - touch_up_dirs re-applies directory
-        // mtimes after file writes clobber them.
-        self.touch_up_dirs(&setup.dest_dir, writer);
-
         stats.files_transferred = files_transferred;
         stats.transferred_file_size = transferred_file_size;
         stats.bytes_received = bytes_received;
@@ -923,9 +925,10 @@ impl ReceiverContext {
         stats.num_symlinks = num_symlinks;
         stats.num_devices = num_devices;
         stats.num_specials = num_specials;
-        if !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0 {
-            stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
-        }
+        // Folded in after the late delete pass, which never consulted these
+        // local failures.
+        let local_failure =
+            !metadata_errors.is_empty() || stats.directories_failed > 0 || stats.files_skipped > 0;
         stats.metadata_errors = metadata_errors;
         stats.redo_count = redo_count;
         stats.segments_released_mid_walk = self.segments_released_mid_walk;
@@ -933,13 +936,35 @@ impl ReceiverContext {
             self.record_created(protocol::flist::FileType::Directory.to_mode_bits());
         }
         stats.created_stats = self.created_stats.get();
-        stats.delete_stats = self.effective_del_stats();
 
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
         self.order_list_only_entries(&mut stats);
 
-        self.finalize_transfer(reader, writer, &mut ndx_read_codec)?;
+        // upstream: generator.c:2899-2909 - the delayed deletions, then one
+        // --max-delete report for every per-directory delete of the walk.
+        self.finalize_transfer_with(
+            reader,
+            writer,
+            &mut ndx_read_codec,
+            |ctx, reader, writer| {
+                ctx.run_late_delete_and_touch_up(
+                    reader.take_io_error(),
+                    &setup.dest_dir,
+                    #[cfg(unix)]
+                    setup.sandbox.as_ref(),
+                    writer,
+                    &mut stats,
+                )?;
+                stats.io_error |= ctx.finish_delete_limit(ctx.skipped_deletes);
+                stats.delete_limit_exceeded = ctx.skipped_deletes > 0;
+                Ok(())
+            },
+        )?;
+        if local_failure {
+            stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
+        }
+        stats.delete_stats = self.effective_del_stats();
 
         stats.io_error |= reader.take_io_error();
         stats.got_xfer_error = reader.xfer_error_count() > 0 || self.got_xfer_error.get();

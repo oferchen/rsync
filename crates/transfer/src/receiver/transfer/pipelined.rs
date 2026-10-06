@@ -351,46 +351,6 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.finalize_delayed_updates_and_hardlinks(&setup.dest_dir, &all_delayed_updates, writer)?;
 
-        // upstream: io.c:1740-1750 - the receiver ORs each MSG_IO_ERROR into the
-        // global `io_error` and forwards it to the generator, so by the time the
-        // generator runs its late sweep the bits are already visible to
-        // `delete_in_dir`'s guard (generator.c:304-311). oc has no generator
-        // peer - the receive path is unified - so the equivalent is to drain the
-        // reader's accumulator here, BEFORE the sweep consults `stats.io_error`.
-        //
-        // The sender emits MSG_IO_ERROR immediately before the phase-1 NDX_DONE
-        // (sender.c:811-820), which the pipeline loop above must consume to
-        // return, so the bits are already accumulated by this point. Draining
-        // only after `finalize_transfer` (below) would let --delete-after remove
-        // destination entries that upstream preserves.
-        //
-        // `take_io_error` is destructive, and both drains OR into the same field,
-        // so the later one still folds in anything that arrives during the
-        // goodbye handshake without double-counting these bits.
-        stats.io_error |= reader.take_io_error();
-
-        // upstream: generator.c:2425-2428 - --delete-after / --delete-delay run
-        // the sweep only after every file (including each destination
-        // `.rsync-filter` and any --delay-updates staged file committed just
-        // above) has landed, so per-directory merge protect rules are honoured
-        // at delete time. Runs before touch_up_dirs so deletion-induced parent
-        // mtime changes are re-tidied (upstream touch_up_dirs at generator.c:2449
-        // follows the late delete pass).
-        if self.delete_pass_is_late() {
-            self.run_receiver_delete_pass(
-                super::DeletePassPhase::Late,
-                &setup.dest_dir,
-                #[cfg(unix)]
-                setup.sandbox.as_ref(),
-                writer,
-                &mut stats,
-            )?;
-        }
-
-        // upstream: generator.c:2093-2146 - touch_up_dirs() re-applies
-        // directory mtimes after file writes clobber them.
-        self.touch_up_dirs(&setup.dest_dir, writer);
-
         // Flush any trailing buffered `-v` directory names (those with no
         // transferred child to release them mid-loop), then drain the deferred
         // itemize rows in flist-index order before the goodbye handshake,
@@ -398,7 +358,21 @@ impl ReceiverContext {
         self.flush_names_all()?;
         self.flush_itemize_rows(writer)?;
 
-        self.finalize_transfer(reader, writer, &mut ndx_read_codec)?;
+        self.finalize_transfer_with(
+            reader,
+            writer,
+            &mut ndx_read_codec,
+            |ctx, reader, writer| {
+                ctx.run_late_delete_and_touch_up(
+                    reader.take_io_error(),
+                    &setup.dest_dir,
+                    #[cfg(unix)]
+                    setup.sandbox.as_ref(),
+                    writer,
+                    &mut stats,
+                )
+            },
+        )?;
 
         // upstream: io.c:1573 - io_error |= val on MSG_IO_ERROR from the sender.
         // The sender emits MSG_IO_ERROR (sender.c:486-487) for source files that
