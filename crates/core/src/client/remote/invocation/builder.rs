@@ -481,31 +481,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
-        // upstream: options.c - compress_level sent to server when
-        // explicitly set.
-        if let Some(level) = self.config.compression_level() {
-            let numeric = compression_level_to_numeric(level);
-            args.push(OsString::from(format!("--compress-level={numeric}")));
-        }
-
-        // upstream: options.c:2828-2833 - compress choice forwarding.
-        // Only sent when the user explicitly specified --compress-choice,
-        // --new-compress, or --old-compress. The wire format depends on the
-        // algorithm: zlibx uses --new-compress, explicit zlib uses
-        // --old-compress, and other algorithms use --compress-choice=ALGO.
-        if self.config.explicit_compress_choice() {
-            let algo = self.config.compression_algorithm();
-            let name = algo.name();
-            match name {
-                // upstream: compat.c:100 - "zlibx" is the new-compress alias
-                "zlibx" => args.push(OsString::from("--new-compress")),
-                // upstream: options.c:2830 - explicit zlib sent as --old-compress
-                "zlib" => args.push(OsString::from("--old-compress")),
-                // upstream: options.c:2832-2833 - other algorithms
-                _ => args.push(OsString::from(format!("--compress-choice={name}"))),
-            }
-        }
-
+        let compress_request = self.config.compress_request();
+        args.extend(
+            compress_request
+                .level_arg()
+                .into_iter()
+                .chain(compress_request.choice_arg())
+                .map(OsString::from),
+        );
         // upstream: options.c - checksum_choice forwarded as
         // --checksum-choice=ALGO when not auto.
         let checksum_choice = self.config.checksum_choice();
@@ -1170,22 +1153,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.sparse() {
             flags.push('S');
         }
-        // upstream: options.c:2732-2733 - the compact 'z' is packed only when
-        // `do_compression == CPRES_ZLIB`. Plain `-z` defaults to zlib, but an
-        // explicit `--compress-choice` of zlibx/zstd/lz4 is forwarded via the
-        // long-form `--new-compress`/`--compress-choice` above and must NOT also
-        // pack 'z' (upstream sends `-logDtpre...`, not `-logDtprze...`).
-        // `CompressionAlgorithm` folds zlibx onto Zlib, so the enum's name()
-        // returns "zlib" for zlibx; use the raw `compress_choice_name` to
-        // distinguish it (upstream sends zlibx via --new-compress, no 'z').
-        if self.config.compress()
-            && (!self.config.explicit_compress_choice()
-                || self
-                    .config
-                    .compress_choice_name()
-                    .unwrap_or_else(|| self.config.compression_algorithm().name())
-                    == "zlib")
-        {
+        if self.config.compress_request().packs_z() {
             flags.push('z');
         }
         // upstream: options.c has NO compact 'P' letter for --partial. keep_partial
@@ -1338,21 +1306,4 @@ fn escape_shell_str(arg: &str, escape_leading_tilde: bool) -> String {
     }
 
     out
-}
-
-/// Converts a `CompressionLevel` into its numeric representation for the wire.
-///
-/// upstream: options.c:2932-2933 - `--compress-level=%d` forwards the signed
-/// `do_compression_level`, so a negative zstd "fast" level reaches the server
-/// verbatim rather than being collapsed into an unsigned range.
-pub(super) fn compression_level_to_numeric(level: compress::zlib::CompressionLevel) -> i32 {
-    use compress::zlib::CompressionLevel;
-    match level {
-        CompressionLevel::None => 0,
-        CompressionLevel::Fast => 1,
-        CompressionLevel::Default => 6,
-        CompressionLevel::Best => 9,
-        CompressionLevel::Precise(n) => i32::from(n.get()),
-        CompressionLevel::PreciseSigned(v) => v,
-    }
 }

@@ -1058,13 +1058,32 @@ where
     };
 
     let compress_level = matches.remove_one::<OsString>("compress-level");
-    let compress_choice = matches.remove_one::<OsString>("compress-choice");
+    // upstream: options.c:1740-1752 - `--old-compress`, `--new-compress` and
+    // `--compress-choice` each overwrite `compress_choice` in command-line
+    // order, and `--no-compress` clears it.
+    // Flag defaults carry an index too, so only command-line occurrences count.
+    let last_index = |id: &str| {
+        (matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine))
+            .then(|| matches.indices_of(id).and_then(Iterator::last))
+            .flatten()
+    };
+    let cleared_at = last_index("no-compress");
+    let old_at = last_index("old-compress");
+    let new_at = last_index("new-compress");
+    let choice_at = last_index("compress-choice");
+    let compress_choice = [
+        (old_at, Some(OsString::from("zlib"))),
+        (new_at, Some(OsString::from("zlibx"))),
+        (choice_at, matches.remove_one::<OsString>("compress-choice")),
+    ]
+    .into_iter()
+    .filter_map(|(index, choice)| Some((index?, choice?)))
+    .max_by_key(|(index, _)| *index)
+    .filter(|(index, _)| cleared_at.is_none_or(|cleared| cleared < *index))
+    .map(|(_, choice)| choice)
+    // upstream: options.c:2131 - a repeated `-z` alone selects zlibx.
+    .or_else(|| (compress_count > 1).then(|| OsString::from("zlibx")));
     let compress_threads = matches.remove_one::<OsString>("compress-threads");
-    let old_compress = matches.get_flag("old-compress");
-    // upstream: options.c:2008 - if (!compress_choice && do_compression > 1)
-    //   compress_choice = "zlibx"; -zz selects new-style compression.
-    let new_compress = matches.get_flag("new-compress")
-        || (compress_count >= 2 && compress_choice.is_none() && !old_compress);
     let skip_compress = matches.remove_one::<OsString>("skip-compress");
     let no_bwlimit = matches.get_flag("no-bwlimit");
     let bwlimit = if no_bwlimit {
@@ -1370,8 +1389,7 @@ where
         compress_level,
         compress_choice,
         compress_threads,
-        old_compress,
-        new_compress,
+        compress_count,
         skip_compress,
         open_noatime,
         no_open_noatime,

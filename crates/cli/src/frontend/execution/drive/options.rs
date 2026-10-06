@@ -7,16 +7,18 @@ use std::num::{NonZeroU8, NonZeroU32};
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
 use core::client::{
-    BandwidthLimit, CompressionSetting, SkipCompressList, parse_skip_compress_list,
-    skip_compress_from_env,
+    BandwidthLimit, CompressRequest, CompressionSetting, SkipCompressList,
+    parse_skip_compress_list, skip_compress_from_env,
 };
+use core::message::Role;
+use core::rsync_error;
 use logging_sink::MessageSink;
 
 use super::super::{
     empty_size_means_zero, parse_bandwidth_limit, parse_block_size_argument, parse_compress_choice,
-    parse_compress_level, parse_compress_threads, parse_debug_flags, parse_info_flags,
-    parse_max_alloc_argument, parse_max_delete_argument, parse_modify_window_argument,
-    parse_size_limit_argument,
+    parse_compress_level, parse_compress_level_value, parse_compress_threads, parse_debug_flags,
+    parse_info_flags, parse_max_alloc_argument, parse_max_delete_argument,
+    parse_modify_window_argument, parse_size_limit_argument,
 };
 use super::messages::fail_with_message;
 use crate::frontend::{
@@ -45,7 +47,7 @@ pub(crate) struct SettingsInputs<'a> {
     pub(crate) max_alloc: &'a Option<OsString>,
     pub(crate) modify_window: &'a Option<OsString>,
     pub(crate) compress_flag: bool,
-    pub(crate) no_compress: bool,
+    pub(crate) compress_count: u8,
     pub(crate) compress_level: &'a Option<OsString>,
     pub(crate) compress_choice: &'a Option<OsString>,
     pub(crate) compress_threads: &'a Option<OsString>,
@@ -85,6 +87,7 @@ pub(crate) struct DerivedSettings {
     /// Raw `--compress-choice` name preserved for the `--debug=NSTR` summary
     /// (e.g. `"zlibx"`, which the algorithm enum folds onto `Zlib`).
     pub(crate) compress_choice_name: Option<String>,
+    pub(crate) compress_request: CompressRequest,
     pub(crate) compression_threads: Option<NonZeroU8>,
     pub(crate) log_file_path: Option<OsString>,
     pub(crate) log_file_template: Option<OutFormat>,
@@ -428,6 +431,7 @@ struct CompressionResult {
     /// `Zlib`, so this retains the exact token upstream prints
     /// (`compat.c:206-219`).
     compress_choice_name: Option<String>,
+    compress_request: CompressRequest,
     compression_threads: Option<NonZeroU8>,
 }
 
@@ -435,7 +439,7 @@ struct CompressionResult {
 fn parse_compression_settings<Err>(
     stderr: &mut MessageSink<Err>,
     compress_flag: bool,
-    no_compress: bool,
+    compress_count: u8,
     compress_level: &Option<OsString>,
     compress_choice: &Option<OsString>,
     compress_threads: &Option<OsString>,
@@ -479,9 +483,7 @@ where
                 // compress_choice; retain the trimmed/lowercased token so
                 // `zlibx` survives (it folds onto `Zlib` in the enum).
                 compress_choice_name = Some(choice.to_string_lossy().trim().to_ascii_lowercase());
-                if !no_compress {
-                    compress = true;
-                }
+                compress = true;
             }
             Err(message) => return Err(fail_with_message(message, stderr)),
         }
@@ -508,10 +510,8 @@ where
                 compress = false;
             }
             CompressLevelArg::Level(level) => {
-                if !no_compress {
-                    compress = true;
-                    compression_level_override = Some(*level);
-                }
+                compress = true;
+                compression_level_override = Some(*level);
             }
         }
     }
@@ -537,6 +537,29 @@ where
         }
     };
 
+    let raw_level = match compress_level {
+        Some(value) => match parse_compress_level_value(value.as_os_str()) {
+            Ok(level) => Some(level),
+            Err(message) => return Err(fail_with_message(message, stderr)),
+        },
+        None => None,
+    };
+    let request_choice = compress_choice
+        .as_ref()
+        .map(|choice| choice.to_string_lossy().trim().to_owned())
+        .filter(|choice| !choice.eq_ignore_ascii_case("auto"));
+    let Some(compress_request) =
+        CompressRequest::resolve(compress_count > 0, request_choice.as_deref(), raw_level)
+    else {
+        // upstream: compat.c:189 - the codec lookup's own refusal text.
+        let message = rsync_error!(
+            4,
+            "unknown compress name: {}",
+            request_choice.unwrap_or_default()
+        )
+        .with_role(Role::Client);
+        return Err(fail_with_message(message, stderr));
+    };
     let compression_setting = match compress_level_setting {
         Some(CompressLevelArg::Disable) => CompressionSetting::disabled(),
         Some(CompressLevelArg::Level(level)) => CompressionSetting::level(level),
@@ -551,6 +574,7 @@ where
         compression_setting,
         compression_algorithm,
         compress_choice_name,
+        compress_request,
         compression_threads,
     })
 }
@@ -673,7 +697,7 @@ where
     let compression = match parse_compression_settings(
         stderr,
         inputs.compress_flag,
-        inputs.no_compress,
+        inputs.compress_count,
         inputs.compress_level,
         inputs.compress_choice,
         inputs.compress_threads,
@@ -711,6 +735,7 @@ where
         compression_setting: compression.compression_setting,
         compression_algorithm: compression.compression_algorithm,
         compress_choice_name: compression.compress_choice_name,
+        compress_request: compression.compress_request,
         compression_threads: compression.compression_threads,
         log_file_path: log.log_file_path,
         log_file_template: log.log_file_template,
@@ -723,7 +748,7 @@ mod compression_defer_tests {
 
     fn parse(
         compress_flag: bool,
-        no_compress: bool,
+        compress_count: u8,
         level: Option<&str>,
         choice: Option<&str>,
     ) -> CompressionResult {
@@ -731,7 +756,7 @@ mod compression_defer_tests {
         parse_compression_settings(
             &mut stderr,
             compress_flag,
-            no_compress,
+            compress_count,
             &level.map(OsString::from),
             &choice.map(OsString::from),
             &None,
@@ -751,7 +776,7 @@ mod compression_defer_tests {
     /// resolution.
     #[test]
     fn level_zero_without_choice_defers_instead_of_disabling() {
-        let result = parse(false, false, Some("0"), None);
+        let result = parse(false, 0, Some("0"), None);
         assert!(
             result.compress,
             "level 0 without a codec must keep compression on until negotiation"
@@ -779,7 +804,7 @@ mod compression_defer_tests {
     #[cfg(feature = "zstd")]
     #[test]
     fn explicit_zstd_level_zero_resolves_to_default() {
-        let result = parse(false, false, Some("0"), Some("zstd"));
+        let result = parse(false, 0, Some("0"), Some("zstd"));
         assert!(result.compress);
         assert_eq!(
             result.compression_algorithm,
@@ -796,7 +821,7 @@ mod compression_defer_tests {
     /// explicit-codec path is unchanged. upstream: token.c:66.
     #[test]
     fn explicit_zlib_level_zero_disables() {
-        let result = parse(true, false, Some("0"), Some("zlib"));
+        let result = parse(true, 1, Some("0"), Some("zlib"));
         assert!(!result.compress);
         assert!(result.compression_setting.is_disabled());
     }
