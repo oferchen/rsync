@@ -2083,6 +2083,47 @@ fn recursive_verbose_keeps_incremental_banner() {
     );
 }
 
+/// Recursion alone does not select the incremental banner: `inc_recurse` is
+/// the negotiated CF_INC_RECURSE bit (compat.c:757), which a local copy's
+/// receiving half grants only at protocol >= 30 (compat.c:721-723) and when
+/// set_allow_inc_recurse() leaves it allowed (compat.c:172-179). Every cell
+/// here clears it, so `send_file_list()` takes the `show_filelist_progress`
+/// arm (flist.c:2761-2762) instead.
+#[test]
+fn recursive_verbose_without_inc_recurse_prints_building_banner() {
+    for extra in [
+        "--no-inc-recursive",
+        "--qsort",
+        "--delete-before",
+        "--delete-after",
+        "--delay-updates",
+        "--prune-empty-dirs",
+        "--protocol=29",
+    ] {
+        let rendered = banner_stdout(&["-rv", extra]);
+        assert_eq!(
+            rendered.lines().next(),
+            Some("building file list ... done"),
+            "-rv {extra} got: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains("incremental file list"),
+            "-rv {extra} must not print the incremental banner, got: {rendered:?}"
+        );
+    }
+}
+/// A bare `--delete` does not clear INC_RECURSE: upstream resolves it to
+/// `delete_during` only after the capability is decided (compat.c:683-688), so
+/// the incremental banner stays.
+#[test]
+fn recursive_verbose_delete_keeps_incremental_banner() {
+    let rendered = banner_stdout(&["-rv", "--delete"]);
+    assert_eq!(
+        rendered.lines().next(),
+        Some("sending incremental file list"),
+        "got: {rendered:?}"
+    );
+}
 /// Without `-v` the `INFO_GTE(FLIST, 1)` term of flist.c:172 is false, so no
 /// banner is printed - and nothing else is either.
 #[test]
