@@ -411,7 +411,8 @@ impl GeneratorContext {
             // applies - read it as-is, mirroring upstream's omission of
             // RL_CONVERT for the local-file fd.
             let from0 = self.config.file_selection.from0;
-            read_files_from_local_path(&files_from_path, from0)?
+            let am_daemon = self.config.connection.served_module_root().is_some();
+            read_files_from_local_path(&files_from_path, from0, am_daemon)?
         };
 
         // upstream: flist.c:2476-2503 - chdir to argv[0] then read relative
@@ -851,12 +852,24 @@ fn append_cvsignore_tokens(rules: &mut Vec<FilterRule>, source: &str, perishable
 /// When the server's `--files-from` points to a file (not stdin/`-`), this
 /// opens and reads the file using the standard line-based or NUL-based format.
 ///
+/// The open goes through the ownership walk, refusing a component symlink
+/// owned by neither root nor our euid. A daemon reads this path on a CLIENT's
+/// request (`--files-from=:LIST`), so it is additionally confined to the module
+/// root: a trusted-owned symlink (e.g. a root-owned backup entry) must not
+/// redirect the list to a file outside the module, whose contents would come
+/// back to the client in per-name error messages.
+///
 /// # Upstream Reference
 ///
-/// - `main.c:688-692` - `open(files_from, O_RDONLY)` for local file
+/// - `options.c:2661-2665` - `operator_path_resolve = am_daemon ? 1 : 0;`
+///   around `open_no_attacker_symlinks(files_from, O_RDONLY|O_BINARY, 0)`
 /// - `flist.c:2537` - `read_line(filesfrom_fd, ...)` reads lines
-pub(super) fn read_files_from_local_path(path: &str, from0: bool) -> io::Result<Vec<Vec<u8>>> {
-    let file = std::fs::File::open(path)?;
+pub(super) fn read_files_from_local_path(
+    path: &str,
+    from0: bool,
+    am_daemon: bool,
+) -> io::Result<Vec<Vec<u8>>> {
+    let file = open_files_from(Path::new(path), am_daemon)?;
     let mut reader = io::BufReader::new(file);
 
     if from0 {
@@ -899,6 +912,27 @@ pub(super) fn read_files_from_local_path(path: &str, from0: bool) -> io::Result<
             filenames.push(line.clone());
         }
         Ok(filenames)
+    }
+}
+
+/// Opens a server-side `--files-from` list through the ownership walk,
+/// confined to the module root when serving a daemon module.
+///
+/// On non-Unix targets there is no `st_uid` to trust, so this degrades to a
+/// plain open, matching `cli::frontend::operator_file`.
+fn open_files_from(path: &Path, am_daemon: bool) -> io::Result<fs::File> {
+    #[cfg(unix)]
+    {
+        if am_daemon {
+            fast_io::operator_open_read_confined(path)
+        } else {
+            fast_io::operator_open_read(path)
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = am_daemon;
+        fs::File::open(path)
     }
 }
 

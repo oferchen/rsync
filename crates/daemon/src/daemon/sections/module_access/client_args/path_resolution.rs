@@ -647,6 +647,20 @@ fn sanitize_backup_dir(
     sanitize_operator_path(&wire_spelling(ref_path), module_dir, 0)
 }
 
+/// Anchors a client-requested server-local `--files-from` list at the module.
+///
+/// upstream: `options.c:2641-2642` sanitizes the value like `--backup-dir`, so
+/// an ABSOLUTE value re-roots at `module_dir`. Unlike `--backup-dir`, the list
+/// is opened while parsing arguments, when the cwd is still the module root
+/// (`clientserver.c:1059`), so a RELATIVE value resolves below the module. oc
+/// never `chdir()`s into the module, so that join happens here.
+fn sanitize_files_from(
+    ref_path: &std::path::Path,
+    module_dir: &std::path::Path,
+) -> std::path::PathBuf {
+    module_dir.join(sanitize_backup_dir(ref_path, module_dir))
+}
+
 /// Whether an already-clamped basis directory resolves out of the module tree
 /// through a symlink.
 ///
