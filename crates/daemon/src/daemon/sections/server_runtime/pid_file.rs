@@ -60,8 +60,7 @@ fn open_pid_file(path: &Path) -> io::Result<fs::File> {
         .open(path)?;
     let opened = file.metadata()?;
     let named = fs::symlink_metadata(path)?;
-    if !opened.file_type().is_file() || opened.dev() != named.dev() || opened.ino() != named.ino()
-    {
+    if !opened.file_type().is_file() || opened.dev() != named.dev() || opened.ino() != named.ino() {
         return Err(io::Error::other(
             "the pid file was replaced while it was being opened",
         ));
