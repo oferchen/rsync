@@ -790,6 +790,18 @@ impl GeneratorContext {
                             "received NDX_DEL_STATS: {} deletions",
                             stats.total()
                         );
+                        // upstream: rsync.c:339-341 - a server sender echoes the
+                        // counters so the client's receiver can report them.
+                        if !self.config.connection.client_mode
+                            && let Err(e) = ndx_write_codec
+                                .write_ndx(&mut *writer, NDX_DEL_STATS)
+                                .and_then(|()| stats.write_to(&mut *writer))
+                        {
+                            if tolerant && is_early_close_error(&e) {
+                                break;
+                            }
+                            return Err(e);
+                        }
                         continue;
                     }
                     // upstream: rsync.c:343-353 - `if (!inc_recurse || am_sender)`
@@ -2651,6 +2663,65 @@ mod phase2_guard_tests {
         ndx.write_ndx_done(&mut wire).expect("write done");
 
         drive(&mut ctx, wire).expect("NDX_DEL_STATS is handled above the gate");
+    }
+
+    /// Runs the sender loop over one NDX_DEL_STATS frame and the two phase
+    /// NDX_DONEs, returning the frame bytes and everything the sender wrote.
+    fn del_stats_round_trip(client_mode: bool) -> (Vec<u8>, Vec<u8>) {
+        let (_dir, mut ctx) = generator_with_one_file();
+        ctx.config.connection.client_mode = client_mode;
+        let mut frame = Vec::new();
+        MonotonicNdxWriter::new(32)
+            .write_ndx(&mut frame, protocol::codec::NDX_DEL_STATS)
+            .expect("write del stats marker");
+        protocol::DeleteStats {
+            files: 2,
+            dirs: 1,
+            symlinks: 0,
+            devices: 0,
+            specials: 0,
+        }
+        .write_to(&mut frame)
+        .expect("write del stats");
+        let mut wire = frame.clone();
+        let mut ndx = MonotonicNdxWriter::new(32);
+        ndx.write_ndx_done(&mut wire).expect("write done");
+        ndx.write_ndx_done(&mut wire).expect("write done");
+        let mut out = Vec::new();
+        let mut writer = ServerWriter::new_plain(&mut out);
+        let mut progress: Option<&mut dyn crate::TransferProgressCallback> = None;
+        let mut itemize: Option<&mut dyn crate::ItemizeCallback> = None;
+        ctx.run_transfer_loop(
+            &mut Cursor::new(wire),
+            &mut writer,
+            &mut progress,
+            &mut itemize,
+        )
+        .expect("NDX_DEL_STATS is handled above the gate");
+        drop(writer);
+        (frame, out)
+    }
+
+    /// upstream: rsync.c:339-341 - `if (am_sender && am_server)
+    /// write_del_stats(f_out)`. In a pull the client's generator does the
+    /// deleting and its counters reach the client's receiver only through
+    /// this echo, so without it the client reports "Number of deleted files:
+    /// 0" however many it removed.
+    #[test]
+    fn server_sender_echoes_del_stats_back_to_the_client() {
+        let (frame, out) = del_stats_round_trip(false);
+        assert!(
+            out.starts_with(&frame),
+            "the echo must be the first thing written: {out:?}"
+        );
+    }
+
+    /// The echo is the server's alone: a client sender (push) is talking to
+    /// a receiver that already owns the counters.
+    #[test]
+    fn client_sender_does_not_echo_del_stats() {
+        let (frame, out) = del_stats_round_trip(true);
+        assert!(!out.starts_with(&frame), "unexpected echo: {out:?}");
     }
 
     #[test]

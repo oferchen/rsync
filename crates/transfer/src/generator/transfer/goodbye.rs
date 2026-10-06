@@ -90,6 +90,10 @@ impl FlistMarkerSink for GoodbyeNdxSink<'_> {
         // upstream: main.c:238-247 read_del_stats() adds to the global
         // counters, with no debug line of its own.
         self.0.accumulate_delete_stats(stats);
+        // upstream: rsync.c:339-341 - a server sender owes the peer an echo.
+        if !self.0.config.connection.client_mode {
+            self.0.del_stats_echo = Some(*stats);
+        }
         Ok(())
     }
 
@@ -263,6 +267,10 @@ impl GeneratorContext {
             // Writes during goodbye may fail when the daemon has already closed
             // the connection (common in dry-run mode).
             let write_result = (|| -> io::Result<()> {
+                if let Some(stats) = self.del_stats_echo.take() {
+                    ndx_write_codec.write_ndx(writer, NDX_DEL_STATS)?;
+                    stats.write_to(writer)?;
+                }
                 if self.should_send_del_stats() {
                     ndx_write_codec.write_ndx(writer, NDX_DEL_STATS)?;
                     self.delete_stats.write_to(writer)?;

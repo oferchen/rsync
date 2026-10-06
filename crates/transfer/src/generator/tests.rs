@@ -2903,7 +2903,7 @@ fn to_exit_code_no_errors_returns_zero() {
 /// upstream: main.c:906-937 `read_final_goodbye()`
 mod legacy_goodbye_tests {
     use super::*;
-    use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
+    use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
 
     /// NDX_DONE as 4-byte little-endian (-1 = 0xFFFFFFFF), used by the legacy
     /// codec for protocol < 30.
@@ -3037,6 +3037,59 @@ mod legacy_goodbye_tests {
     // surfaced as a silent close at byte ~2241725. Mirroring
     // `main.c:906-937 read_final_goodbye()` requires the flush to happen
     // before close on every protocol-31+ goodbye.
+    /// A late NDX_DEL_STATS (--delete-after) arrives inside the goodbye; a
+    /// server sender owes the client its echo ahead of the goodbye NDX_DONE.
+    ///
+    /// upstream: rsync.c:339-341 via main.c:917 read_final_goodbye().
+    fn goodbye_del_stats_round_trip(client_mode: bool) -> (Vec<u8>, Vec<u8>) {
+        let handshake = test_handshake_with_protocol(31);
+        let mut config = test_config();
+        config.protocol = ProtocolVersion::try_from(31u8).unwrap();
+        config.connection.client_mode = client_mode;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        let mut frame = Vec::new();
+        MonotonicNdxWriter::new(31)
+            .write_ndx(&mut frame, protocol::codec::NDX_DEL_STATS)
+            .expect("write del stats marker");
+        protocol::DeleteStats {
+            files: 3,
+            dirs: 0,
+            symlinks: 1,
+            devices: 0,
+            specials: 0,
+        }
+        .write_to(&mut frame)
+        .expect("write del stats");
+        let receiver_input = [
+            frame.as_slice(),
+            NDX_DONE_MODERN.as_slice(),
+            NDX_DONE_MODERN.as_slice(),
+        ]
+        .concat();
+        let mut reader = Cursor::new(receiver_input);
+        let mut output = Vec::new();
+        let mut ndx_read = create_ndx_codec(31);
+        let mut ndx_write = MonotonicNdxWriter::new(31);
+        ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write)
+            .expect("goodbye completes");
+        (frame, output)
+    }
+
+    #[test]
+    fn handle_goodbye_server_echoes_late_del_stats_before_ndx_done() {
+        let (frame, output) = goodbye_del_stats_round_trip(false);
+        assert_eq!(
+            output,
+            [frame.as_slice(), NDX_DONE_MODERN.as_slice()].concat()
+        );
+    }
+
+    #[test]
+    fn handle_goodbye_client_does_not_echo_del_stats() {
+        let (_frame, output) = goodbye_del_stats_round_trip(true);
+        assert_eq!(output, NDX_DONE_MODERN);
+    }
+
     #[test]
     fn handle_goodbye_proto31_flushes_ndx_done_before_close() {
         let handshake = test_handshake_with_protocol(31);
