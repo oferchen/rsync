@@ -573,6 +573,23 @@ mod config_helpers_tests {
         assert!(!negated.matches("host7.example.com"));
     }
 
+    /// WHY: upstream `strlower()` folds ASCII only (util1.c:926-933): a
+    /// `hosts allow` list may hold UTF-8, and folding its bytes through a
+    /// locale (or Unicode case mapping) would rewrite the name the operator
+    /// wrote. Non-ASCII letters must survive the parse unchanged and must not
+    /// match their lower-case forms, on either the token or the peer side.
+    #[test]
+    fn hostname_pattern_folds_ascii_only() {
+        let pattern = HostnamePattern::parse("\u{10c}ESKO.Example").unwrap();
+        assert!(pattern.matches("\u{10c}esko.example"));
+        assert!(pattern.matches("\u{10c}ESKO.EXAMPLE"));
+        assert!(!pattern.matches("\u{10d}esko.example"));
+
+        let lower = HostnamePattern::parse("\u{e4}*.example").unwrap();
+        assert!(lower.matches("\u{e4}x.example"));
+        assert!(!lower.matches("\u{c4}x.example"));
+    }
+
     /// WHY: the config token is lower-cased at parse (mirroring upstream's
     /// `strlower(list2)`, access.c:268) and the resolved peer name is
     /// lower-cased at lookup, so an operator's capitalisation must not change
