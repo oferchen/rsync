@@ -43,16 +43,28 @@ pub(super) fn split_at_end_of_options(args: &[OsString]) -> (&[OsString], &[OsSt
     }
 }
 
-/// Returns the first option token the server must refuse as unknown.
+/// Returns the first long option the server must refuse as unknown.
 ///
-/// upstream: options.c:670-672 defines `super`, `no-super` and `fake-super`
-/// but no `no-fake-super`, so popt rejects `--no-fake-super` wherever it sits
-/// in the server argv (`-M--no-fake-super` included) and the server exits
-/// RERR_SYNTAX before touching the destination. Only tokens before the `--`
-/// marker are options.
+/// upstream: the server parses its argv with the same popt table as the client
+/// (options.c:1497), so popt rejects a long option it does not know wherever
+/// it sits (`-M--bogus-opt`, an `--rsync-path` wrapper) and the server exits
+/// RERR_SYNTAX before touching the destination. Taking it for a path instead
+/// would create it under the server's cwd. A real path never looks like an
+/// option here: `safe_arg()` sends a filename that starts with `-` as `./-...`
+/// (options.c:2709). Only tokens before the `--` marker are options, and the
+/// value slot of a two-argument long option is not one.
 pub(super) fn refused_server_option(args: &[OsString]) -> Option<&OsString> {
     let (args, _operands) = split_at_end_of_options(args);
-    args.iter().find(|arg| arg.as_os_str() == "--no-fake-super")
+    let mut tokens = args.iter();
+    while let Some(arg) = tokens.next() {
+        let text = arg.to_string_lossy();
+        if is_two_arg_server_long_flag(&text) {
+            tokens.next();
+        } else if text.starts_with("--") && !is_known_server_long_flag(&text) {
+            return Some(arg);
+        }
+    }
+    None
 }
 
 /// Detects whether secluded-args mode is requested in the server arguments.
