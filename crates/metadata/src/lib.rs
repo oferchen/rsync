@@ -305,7 +305,7 @@ pub use apply::{
     apply_metadata_with_pre_transfer_stat, apply_symlink_metadata,
     apply_symlink_metadata_from_entry, apply_symlink_metadata_from_entry_with_pre_transfer,
     apply_symlink_metadata_with_options, apply_symlink_metadata_with_options_and_pre_transfer,
-    metadata_unchanged,
+    atime_needs_set, metadata_unchanged,
 };
 
 pub use chmod::{ChmodError, ChmodModifiers, directory_transfer_mode, transfer_root_self_locks};

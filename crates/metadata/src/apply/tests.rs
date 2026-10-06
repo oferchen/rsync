@@ -2474,6 +2474,240 @@ fn metadata_unchanged_returns_true_when_group_override_matches() {
     );
 }
 
+/// `metadata_unchanged` mirrors upstream `unchanged_attrs()`
+/// (generator.c:474-512), which never compares atime. A differing atime must
+/// not demote a `--link-dest` basis or turn an `--ignore-existing` notice into
+/// "(attr change)".
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_ignores_atime() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("atime-only.txt");
+    fs::write(&dest, b"data").expect("write dest");
+    let mtime = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_times(
+        &dest,
+        FileTime::from_unix_time(1_600_000_000, 500_000_000),
+        mtime,
+    )
+    .expect("set dest times");
+    let meta = fs::metadata(&dest).expect("metadata");
+
+    let mut entry = FileEntry::new_file("atime-only.txt".into(), 4, meta.mode() & 0o7777);
+    entry.set_mtime(1_700_000_000, 0);
+    entry.set_atime(1_650_000_000);
+    let opts = MetadataOptions::new()
+        .preserve_times(true)
+        .preserve_atimes(true);
+
+    assert!(
+        metadata_unchanged(&entry, &opts, &meta, crate::ModifyWindow::ZERO),
+        "an atime-only difference is not an unchanged_attrs difference"
+    );
+}
+
+/// Builds a file entry and a destination whose atime is `dest_atime`, with
+/// matching whole-second mtimes, returning `(tempdir, dest, entry, stat)`.
+#[cfg(unix)]
+fn atime_fixture(
+    dest_atime: FileTime,
+    entry_atime: i64,
+) -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    protocol::flist::FileEntry,
+    fs::Metadata,
+) {
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("atime.txt");
+    fs::write(&dest, b"data").expect("write dest");
+    set_file_times(
+        &dest,
+        dest_atime,
+        FileTime::from_unix_time(1_700_000_000, 0),
+    )
+    .expect("set dest times");
+    let meta = fs::metadata(&dest).expect("metadata");
+    let mut entry =
+        protocol::flist::FileEntry::new_file("atime.txt".into(), 4, meta.mode() & 0o7777);
+    entry.set_mtime(1_700_000_000, 0);
+    entry.set_atime(entry_atime);
+    (temp, dest, entry, meta)
+}
+
+#[cfg(unix)]
+fn atime_of(path: &Path) -> (i64, i64) {
+    let meta = fs::metadata(path).expect("metadata");
+    (meta.atime(), meta.atime_nsec())
+}
+
+/// upstream: rsync.c:740-741 - the atime leg of set_file_attrs() compares
+/// `same_time(st_atime, 0, file_atime, 0)`: whole seconds, window-aware, with
+/// ATTRS_ACCURATE_TIME forcing the stamp and directories always skipped.
+#[cfg(unix)]
+#[test]
+fn atime_needs_set_mirrors_set_file_attrs_atime_leg() {
+    let opts = MetadataOptions::new().preserve_atimes(true);
+    let accurate = AttrsFlags::ACCURATE_TIME;
+    let none = AttrsFlags::empty();
+    let w0 = crate::ModifyWindow::ZERO;
+
+    let (_t, _d, entry, meta) =
+        atime_fixture(FileTime::from_unix_time(1_650_000_000, 7), 1_650_000_000);
+    assert!(
+        !atime_needs_set(&entry, &opts, &meta, w0, none),
+        "sub-second only: equal"
+    );
+    assert!(
+        atime_needs_set(&entry, &opts, &meta, w0, accurate),
+        "ACCURATE_TIME forces"
+    );
+    assert!(
+        !atime_needs_set(&entry, &MetadataOptions::new(), &meta, w0, accurate),
+        "no --atimes, no atime"
+    );
+    assert!(
+        !atime_needs_set(&entry, &opts, &meta, w0, accurate | AttrsFlags::SKIP_ATIME),
+        "SKIP_ATIME wins"
+    );
+
+    let (_t, _d, entry, meta) =
+        atime_fixture(FileTime::from_unix_time(1_649_999_999, 0), 1_650_000_000);
+    assert!(
+        atime_needs_set(&entry, &opts, &meta, w0, none),
+        "whole seconds differ"
+    );
+    assert!(
+        !atime_needs_set(
+            &entry,
+            &opts,
+            &meta,
+            crate::ModifyWindow::from_secs(2),
+            none
+        ),
+        "a positive --modify-window tolerates the drift"
+    );
+
+    let temp = tempdir().expect("tempdir");
+    let dir_meta = fs::metadata(temp.path()).expect("dir metadata");
+    let mut dir_entry = protocol::flist::FileEntry::new_directory("d".into(), 0o755);
+    dir_entry.set_atime(1);
+    assert!(
+        !atime_needs_set(&dir_entry, &opts, &dir_meta, w0, accurate),
+        "a directory is never atime-stamped (rsync.c:731 S_ISDIR)"
+    );
+}
+
+/// upstream: generator.c:2246 passes ATTRS_ACCURATE_TIME on a -c match, so
+/// rsync.c:741 re-stamps atime even when the stat taken before the checksum
+/// read already matched. The read itself may have bumped atime since, so the
+/// apply must not trust that stale stat to skip the utimes.
+#[cfg(unix)]
+#[test]
+fn accurate_time_restamps_atime_despite_a_matching_stale_stat() {
+    let (_t, dest, entry, stale) =
+        atime_fixture(FileTime::from_unix_time(1_650_000_000, 0), 1_650_000_000);
+    // The "checksum read" moved atime after the stat was taken.
+    filetime::set_file_atime(&dest, FileTime::from_unix_time(1_690_000_000, 0))
+        .expect("bump atime");
+
+    let opts = MetadataOptions::new()
+        .preserve_times(true)
+        .preserve_atimes(true);
+    apply_metadata_with_attrs_flags(&dest, &entry, &opts, Some(stale), AttrsFlags::ACCURATE_TIME)
+        .expect("apply");
+    assert_eq!(atime_of(&dest), (1_650_000_000, 0));
+}
+
+/// upstream: rsync.c:727-729 sets only ATTRS_SKIP_MTIME without --times; the
+/// atime leg (rsync.c:738-748) still runs, and set_times() writes the
+/// destination's own mtime back unchanged.
+#[cfg(unix)]
+#[test]
+fn skip_mtime_accurate_time_restamps_atime_and_keeps_mtime() {
+    let (_t, dest, entry, stale) =
+        atime_fixture(FileTime::from_unix_time(1_650_000_000, 0), 1_650_000_000);
+    filetime::set_file_times(
+        &dest,
+        FileTime::from_unix_time(1_690_000_000, 0),
+        FileTime::from_unix_time(1_700_000_000, 0),
+    )
+    .expect("bump atime");
+
+    let opts = MetadataOptions::new().preserve_atimes(true);
+    apply_metadata_with_attrs_flags(
+        &dest,
+        &entry,
+        &opts,
+        Some(stale),
+        AttrsFlags::SKIP_MTIME | AttrsFlags::ACCURATE_TIME,
+    )
+    .expect("apply");
+    assert_eq!(atime_of(&dest), (1_650_000_000, 0));
+    assert_eq!(fs::metadata(&dest).expect("meta").mtime(), 1_700_000_000);
+}
+
+/// Without ATTRS_ACCURATE_TIME a sub-second-only atime difference is equal
+/// under rsync.c:741 `same_time(st_atime, 0, file_atime, 0)`, so the apply must
+/// leave it alone rather than re-stamp nanoseconds away.
+#[cfg(unix)]
+#[test]
+fn subsecond_atime_difference_is_not_restamped() {
+    let (_t, dest, entry, stat) = atime_fixture(
+        FileTime::from_unix_time(1_650_000_000, 500_000_000),
+        1_650_000_000,
+    );
+    let opts = MetadataOptions::new()
+        .preserve_times(true)
+        .preserve_atimes(true);
+    apply_metadata_with_attrs_flags(&dest, &entry, &opts, Some(stat), AttrsFlags::empty())
+        .expect("apply");
+    assert_eq!(atime_of(&dest), (1_650_000_000, 500_000_000));
+}
+
+/// An atime of 0 (the epoch) is a real value on the wire, not "absent":
+/// upstream skips the atime only for directories (rsync.c:731), so a file whose
+/// sender atime is 0 gets it.
+#[cfg(unix)]
+#[test]
+fn epoch_atime_is_stamped() {
+    let (_t, dest, entry, stat) = atime_fixture(FileTime::from_unix_time(1_650_000_000, 0), 0);
+    let opts = MetadataOptions::new()
+        .preserve_times(true)
+        .preserve_atimes(true);
+    apply_metadata_with_attrs_flags(&dest, &entry, &opts, Some(stat), AttrsFlags::empty())
+        .expect("apply");
+    assert_eq!(atime_of(&dest), (0, 0));
+}
+
+/// A directory entry is never atime-stamped, even under ATTRS_ACCURATE_TIME
+/// and even if its entry somehow carries an atime (rsync.c:731).
+#[cfg(unix)]
+#[test]
+fn directory_atime_is_never_stamped() {
+    let temp = tempdir().expect("tempdir");
+    let dir = temp.path().join("d");
+    fs::create_dir(&dir).expect("mkdir");
+    let original = FileTime::from_unix_time(1_650_000_000, 250_000_000);
+    set_file_times(&dir, original, FileTime::from_unix_time(1_700_000_000, 0)).expect("times");
+    let mut entry = protocol::flist::FileEntry::new_directory("d".into(), 0o755);
+    entry.set_mtime(1_700_000_000, 0);
+    entry.set_atime(1_600_000_000);
+
+    let opts = MetadataOptions::new()
+        .preserve_times(true)
+        .preserve_atimes(true);
+    for flags in [
+        AttrsFlags::ACCURATE_TIME,
+        AttrsFlags::SKIP_MTIME | AttrsFlags::ACCURATE_TIME,
+    ] {
+        apply_metadata_with_attrs_flags(&dir, &entry, &opts, None, flags).expect("apply");
+        assert_eq!(atime_of(&dir), (1_650_000_000, 250_000_000), "{flags:?}");
+    }
+}
+
 /// UTS-16.b: applying permissions through a destination path whose parent
 /// component is a symlink to an outside directory must NOT chmod the
 /// outside target. Upstream `syscall.c:do_chmod_at()` (rsync 3.4.3+)

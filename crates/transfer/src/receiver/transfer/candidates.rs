@@ -17,7 +17,10 @@ use std::path::{Path, PathBuf};
 
 use engine::append_gate::append_skips;
 use logging::{debug_gte, debug_log, info_log};
-use metadata::{MetadataOptions, apply_metadata_with_cached_stat, metadata_unchanged};
+use metadata::{
+    AttrsFlags, MetadataOptions, apply_metadata_with_attrs_flags, atime_needs_set,
+    metadata_unchanged,
+};
 use protocol::flist::FileEntry;
 
 use crate::receiver::directory::FailedDirectories;
@@ -1450,14 +1453,32 @@ impl ReceiverContext {
         } else {
             self.config.file_selection.modify_window
         };
+        let attrs_flags = if self.config.flags.checksum {
+            AttrsFlags::ACCURATE_TIME
+        } else {
+            AttrsFlags::empty()
+        };
+        // unchanged_attrs() never compares atime, so the atime leg of
+        // set_file_attrs() (rsync.c:738-748) is checked on its own. Its
+        // same_time() uses the plain --modify-window, not the -c exact window;
+        // under -c ATTRS_ACCURATE_TIME forces the stamp anyway, restoring an
+        // atime the checksum read may have moved.
         let attrs_updated = needs_metadata_apply
-            && !metadata_unchanged(entry, metadata_opts, stat_meta, mtime_window);
+            && (!metadata_unchanged(entry, metadata_opts, stat_meta, mtime_window)
+                || atime_needs_set(
+                    entry,
+                    metadata_opts,
+                    stat_meta,
+                    self.config.file_selection.modify_window,
+                    attrs_flags,
+                ));
         if attrs_updated
-            && let Err(e) = apply_metadata_with_cached_stat(
+            && let Err(e) = apply_metadata_with_attrs_flags(
                 file_path,
                 entry,
                 metadata_opts,
                 Some(stat_meta.clone()),
+                attrs_flags,
             )
         {
             // upstream: generator.c:1827 set_file_attrs() on a quick-check
@@ -1820,6 +1841,159 @@ mod itemize_order_tests {
             123_456_789,
             "without -c the whole-second window leaves the mtime untouched"
         );
+    }
+
+    /// Sender atime used by the `-U` fast-path tests. Older than the mtime so
+    /// a relatime-style mount bumps it on the next read.
+    #[cfg(unix)]
+    const SENDER_ATIME: i64 = 1_600_000_000;
+    #[cfg(unix)]
+    const IDENTICAL_MTIME: i64 = 1_700_000_000;
+
+    /// Returns `true` when the tempdir honours an explicit atime and a plain
+    /// read then moves it - the conditions under which the `-c` checksum read
+    /// can clobber a preserved atime.
+    #[cfg(unix)]
+    fn tempdir_read_bumps_atime(dir: &std::path::Path) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        let probe = dir.join("atime-probe");
+        std::fs::write(&probe, b"probe").unwrap();
+        let old = filetime::FileTime::from_unix_time(SENDER_ATIME, 0);
+        let mtime = filetime::FileTime::from_unix_time(IDENTICAL_MTIME, 0);
+        filetime::set_file_times(&probe, old, mtime).unwrap();
+        let set_ok = std::fs::metadata(&probe).unwrap().atime() == SENDER_ATIME;
+        let _ = std::fs::read(&probe).unwrap();
+        let bumped = std::fs::metadata(&probe).unwrap().atime() != SENDER_ATIME;
+        std::fs::remove_file(&probe).unwrap();
+        set_ok && bumped
+    }
+
+    /// Runs one content-identical file through the receiver's up-to-date fast
+    /// path with `-U` and returns the destination's resulting atime as
+    /// `(secs, nsec)`. `dest_atime` seeds the destination; `times` selects
+    /// `-t`; `checksum` selects `-c`.
+    #[cfg(unix)]
+    fn fast_path_atime(
+        dest_atime: (i64, u32),
+        entry_atime: i64,
+        times: bool,
+        checksum: bool,
+    ) -> (i64, i64) {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = test_support::create_tempdir();
+        let path = dir.path().join("identical");
+        let content = b"same\n";
+        std::fs::write(&path, content).unwrap();
+        filetime::set_file_times(
+            &path,
+            filetime::FileTime::from_unix_time(dest_atime.0, dest_atime.1),
+            filetime::FileTime::from_unix_time(IDENTICAL_MTIME, 0),
+        )
+        .unwrap();
+
+        let mut hasher =
+            crate::delta_apply::ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5);
+        hasher.update(content);
+        let mut digest = [0u8; crate::delta_apply::ChecksumVerifier::MAX_DIGEST_LEN];
+        let len = hasher.finalize_into(&mut digest);
+        let mut entry = FileEntry::new_file("identical".into(), content.len() as u64, 0o644);
+        entry.set_mtime(IDENTICAL_MTIME, 0);
+        entry.set_atime(entry_atime);
+        entry.set_checksum(digest[..len].to_vec());
+
+        let hs = handshake();
+        let mut config = itemize_client_config();
+        config.flags.times = times;
+        config.flags.atimes = true;
+        config.flags.checksum = checksum;
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.file_list = vec![entry].into();
+        let opts = metadata::MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_times(times)
+            .preserve_atimes(true);
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        let files = ctx.build_files_to_transfer(
+            &mut writer,
+            dir.path(),
+            None,
+            &opts,
+            None,
+            &mut Vec::new(),
+            &mut TransferStats::default(),
+            None,
+            None,
+        );
+        assert!(files.is_empty(), "an identical file must not transfer");
+        let meta = std::fs::metadata(&path).unwrap();
+        (meta.atime(), meta.atime_nsec())
+    }
+
+    /// upstream: generator.c:1646 + 2246 - a `-c` match calls set_file_attrs()
+    /// with ATTRS_ACCURATE_TIME, so rsync.c:741 re-stamps the sender's atime
+    /// even when the pre-checksum stat already matched. The checksum read of
+    /// the destination moves its atime; without the forced stamp `-cU` leaves
+    /// the preserved atime clobbered by oc's own read.
+    #[cfg(unix)]
+    #[test]
+    fn checksum_match_restamps_atime_moved_by_the_checksum_read() {
+        let probe_dir = test_support::create_tempdir();
+        if !tempdir_read_bumps_atime(probe_dir.path()) {
+            eprintln!("skipping: this filesystem does not move atime on read");
+            return;
+        }
+        for times in [true, false] {
+            assert_eq!(
+                fast_path_atime((SENDER_ATIME, 0), SENDER_ATIME, times, true),
+                (SENDER_ATIME, 0),
+                "-cU (times={times}) must restore the sender's atime after the read"
+            );
+        }
+    }
+
+    /// upstream: rsync.c:741-745 - under ATTRS_ACCURATE_TIME the atime is set
+    /// to the sender's whole second with nanoseconds 0, whether the difference
+    /// was sub-second or whole seconds, and whether or not `-t` is active
+    /// (rsync.c:727-729 skips only the mtime without `-t`).
+    #[cfg(unix)]
+    #[test]
+    fn checksum_match_restamps_atime_to_whole_seconds() {
+        for times in [true, false] {
+            for dest in [(SENDER_ATIME, 500_000_000), (SENDER_ATIME - 100, 0)] {
+                assert_eq!(
+                    fast_path_atime(dest, SENDER_ATIME, times, true),
+                    (SENDER_ATIME, 0),
+                    "-cU times={times} dest={dest:?}"
+                );
+            }
+        }
+    }
+
+    /// upstream: rsync.c:727-729 - without `-t` only ATTRS_SKIP_MTIME is set;
+    /// `-U` still stamps an atime that differs by whole seconds.
+    #[cfg(unix)]
+    #[test]
+    fn atime_is_stamped_without_times() {
+        assert_eq!(
+            fast_path_atime((SENDER_ATIME - 100, 0), SENDER_ATIME, false, false),
+            (SENDER_ATIME, 0)
+        );
+    }
+
+    /// upstream: rsync.c:741 - without `-c` the atime compare is
+    /// `same_time(st_atime, 0, file_atime, 0)`, whole seconds only, so a
+    /// sub-second-only difference is left exactly as it is.
+    #[cfg(unix)]
+    #[test]
+    fn subsecond_atime_difference_is_left_untouched_without_checksum() {
+        for times in [true, false] {
+            assert_eq!(
+                fast_path_atime((SENDER_ATIME, 500_000_000), SENDER_ATIME, times, false),
+                (SENDER_ATIME, 500_000_000),
+                "-U times={times}"
+            );
+        }
     }
 
     /// upstream: generator.c:587-589 - `iflags &= 0xffff` puts the full low
