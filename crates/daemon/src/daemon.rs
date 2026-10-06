@@ -78,7 +78,6 @@ use handshake_deadline::{
 mod help;
 pub(crate) mod operator_file;
 pub(crate) mod peer_address;
-pub(crate) mod tracing_stream;
 
 pub(crate) use self::at_error::AtError;
 
