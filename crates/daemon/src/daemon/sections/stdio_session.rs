@@ -25,8 +25,12 @@
 /// Returns a `DaemonError` if config loading fails or the session handler
 /// encounters an I/O error.
 pub fn run_stdio_session(arguments: &[OsString], is_rsh_daemon: bool) -> Result<(), DaemonError> {
+    // upstream: a remote-shell daemon is started as `rsync --server --daemon`
+    // with the client's `-M--dparam=...` in its argv, and start_daemon()'s
+    // lp_load() applies those overrides like a listening daemon does.
     let mut options = RuntimeOptions {
         brand: Brand::Oc,
+        dparams: collect_dparams(arguments, Brand::Oc)?,
         ..Default::default()
     };
     let mut seen_modules = HashSet::new();

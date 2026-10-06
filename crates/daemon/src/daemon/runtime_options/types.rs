@@ -100,24 +100,7 @@ pub(crate) struct RuntimeOptions {
     daemon_gid: Option<u32>,
     listen_backlog: Option<u32>,
     listen_backlog_from_config: bool,
-    /// Number of SO_REUSEPORT listener replicas to bind per address family.
-    ///
-    /// When set above 1, the daemon binds N kernel-load-balanced listener
-    /// sockets per family instead of one, on platforms that support
-    /// SO_REUSEPORT. `None` preserves the single-listener default.
-    ///
-    /// The replicas do **not** buy CPU parallelism: every listener fd is polled
-    /// from the one accept thread (`PollAcceptEngine`), so the kernel chooses
-    /// which socket receives a connection but a single thread accepts them all.
-    /// The engine is single-threaded on purpose - `platform::session_fork` may
-    /// only be called from a single-threaded accept path - so this directive
-    /// spreads accept queues, not work.
-    ///
-    /// This is an oc-rsync perf extension with no upstream equivalent
-    /// (upstream forks one child per accepted connection from a single
-    /// listener); it changes only kernel socket behaviour, never the wire.
-    acceptor_threads: Option<NonZeroU32>,
-    /// TCP port from the `port` / `rsync port` global config parameter.
+    /// TCP port from the `port` global config parameter.
     ///
     /// upstream: daemon-parm.txt - `port` INTEGER, P_GLOBAL, default 0.
     /// When set, overrides the default listening port unless CLI `--port` was given.
@@ -129,6 +112,10 @@ pub(crate) struct RuntimeOptions {
     /// `SO_SNDBUF=65536`) applied to the daemon listener socket.
     socket_options: Option<String>,
     socket_options_from_config: bool,
+    /// `--sockopts`, which replaces the config's `socket options` entirely.
+    ///
+    /// upstream: options.c:887 in `long_daemon_options`.
+    sockopts: Option<String>,
     /// TCP Fast Open mode applied to the daemon listener and accepted
     /// client sockets. Defaults to [`TcpFastOpenMode::Auto`] which enables
     /// TFO on platforms that support it and silently skips elsewhere.
@@ -156,6 +143,11 @@ pub(crate) struct RuntimeOptions {
     /// new connections pick up module definition changes without a restart.
     /// `None` when no config file was loaded (all modules from CLI flags).
     config_path: Option<PathBuf>,
+    /// `--dparam`/`-M` overrides (`name=value`), applied to every config file
+    /// this daemon parses, including a SIGHUP reload.
+    ///
+    /// upstream: options.c:1556-1566 collects them into `dparam_list`.
+    dparams: Vec<String>,
     /// CLI verbosity counter incremented per `-v` / `--verbose` flag.
     ///
     /// upstream: options.c:877 - `{"verbose", 'v', POPT_ARG_NONE, 0, 'v', 0, 0}`
@@ -212,16 +204,17 @@ impl Default for RuntimeOptions {
             daemon_gid: None,
             listen_backlog: None,
             listen_backlog_from_config: false,
-            acceptor_threads: None,
             rsync_port: None,
             socket_options: None,
             socket_options_from_config: false,
+            sockopts: None,
             tcp_fastopen: TcpFastOpenMode::Auto,
             proxy_protocol: false,
             proxy_protocol_hosts: Vec::new(),
             daemon_chroot: None,
             detach: cfg!(unix),
             config_path: None,
+            dparams: Vec::new(),
             verbosity: 0,
         }
     }

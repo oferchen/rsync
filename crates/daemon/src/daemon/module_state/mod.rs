@@ -26,7 +26,7 @@ pub(crate) use auth::{
     AuthMatch, AuthUser, SystemGroupMembership, UserAccessLevel, authorize_auth_user,
 };
 pub(crate) use connection_limiter::{ConnectionLimiter, ConnectionLockGuard};
-pub(crate) use definition::{GidSetting, ModuleDefinition};
+pub(crate) use definition::{GidSetting, ModuleDefinition, UnresolvedId};
 pub(crate) use hostname::PeerHost;
 pub(crate) use hostname::module_peer_hostname;
 pub(in crate::daemon) use hostname::{

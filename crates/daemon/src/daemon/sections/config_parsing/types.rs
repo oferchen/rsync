@@ -47,7 +47,6 @@ pub(crate) struct ParsedConfigModules {
     /// to 873 at parse time, mirroring the TCP `port = 0` handling.
     #[cfg(feature = "quic")]
     quic_port: Option<(u16, ConfigDirectiveOrigin)>,
-    global_bandwidth_limit: Option<(BandwidthLimitComponents, ConfigDirectiveOrigin)>,
     global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)>,
     global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)>,
@@ -72,9 +71,6 @@ pub(crate) struct ParsedConfigModules {
     /// value is a groupname string or numeric gid resolved at runtime.
     daemon_gid: Option<(String, ConfigDirectiveOrigin)>,
     listen_backlog: Option<(u32, ConfigDirectiveOrigin)>,
-    /// Number of SO_REUSEPORT listener replicas per family from the
-    /// `acceptor threads` directive (oc-rsync extension, default 1).
-    acceptor_threads: Option<(NonZeroU32, ConfigDirectiveOrigin)>,
     /// Global socket options from the `socket options` directive.
     ///
     /// upstream: daemon-parm.txt - `socket options` STRING. Comma-separated list

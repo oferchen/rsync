@@ -117,8 +117,8 @@ pub use self::error::{
 };
 pub use self::module_list::{
     DaemonAddress, ModuleList, ModuleListEntry, ModuleListOptions, ModuleListRequest, Transport,
-    run_module_list, run_module_list_with_options, run_module_list_with_password,
-    run_module_list_with_password_and_options,
+    apply_socket_options_reporting, run_module_list, run_module_list_with_options,
+    run_module_list_with_password, run_module_list_with_password_and_options,
 };
 pub use self::outcome::ClientOutcome;
 pub use self::progress::{ClientProgressObserver, ClientProgressUpdate};

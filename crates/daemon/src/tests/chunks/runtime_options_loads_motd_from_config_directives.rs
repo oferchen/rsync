@@ -1,3 +1,5 @@
+/// Only `motd file` feeds the greeting: `motd` is not an rsyncd.conf
+/// parameter upstream (daemon-parm.txt), so it is reported and ignored.
 #[test]
 fn runtime_options_loads_motd_from_config_directives() {
     let dir = tempdir().expect("motd dir");
@@ -20,11 +22,7 @@ fn runtime_options_loads_motd_from_config_directives() {
     ])
     .expect("parse config with motd directives");
 
-    let expected = vec![
-        String::from("First line"),
-        String::from("Second line"),
-        String::from("Inline note"),
-    ];
+    let expected = vec![String::from("First line"), String::from("Second line")];
 
     assert_eq!(options.motd_lines(), expected.as_slice());
 }

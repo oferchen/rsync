@@ -79,6 +79,7 @@ parallel-receive-delta = ["core/parallel-receive-delta"]
 bandwidth = { path = "../bandwidth" }
 clap = { workspace = true }
 core = { path = "../core", default-features = false }
+daemon = { path = "../daemon" }
 engine = { path = "../engine", default-features = false }
 filters = { path = "../filters" }
 logging = { path = "../logging", features = ["tracing"] }
@@ -97,7 +98,6 @@ tracing-subscriber = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 uzers = "0.12"
 xattr = { workspace = true }
-daemon = { path = "../daemon" }
 
 # fast_io's `landlock` feature carries the rust-landlock dispatch used by
 # the `--server` receiver sandbox in `frontend/server/run.rs`. Linux gets the

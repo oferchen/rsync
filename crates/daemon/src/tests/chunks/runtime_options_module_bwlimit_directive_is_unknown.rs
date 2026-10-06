@@ -20,7 +20,6 @@ fn runtime_options_module_bwlimit_directive_is_unknown() {
     assert_eq!(modules.len(), 1);
     assert_eq!(modules[0].name, "docs");
     // No module carries its own bwlimit cap, and the daemon-wide limit (only
-    // ever set by the `--bwlimit` CLI flag or a global `bwlimit` directive) is
-    // untouched by a stray module-section directive.
+    // ever set by the `--bwlimit` CLI flag) is untouched.
     assert!(options.bandwidth_limit().is_none());
 }

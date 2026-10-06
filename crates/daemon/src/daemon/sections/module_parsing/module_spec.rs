@@ -195,6 +195,7 @@ fn parse_module_definition(
         numeric_ids: None,
         uid: None,
         gid: None,
+        unresolved_id: None,
         timeout: None,
         listable: true,
         use_chroot: true,
@@ -382,7 +383,6 @@ fn apply_inline_module_options(
     options: &str,
     module: &mut ModuleDefinition,
 ) -> Result<(), DaemonError> {
-    let path = Path::new("--module");
     let mut seen = HashSet::new();
 
     for option in split_inline_options(options) {
@@ -429,11 +429,11 @@ fn apply_inline_module_options(
                 module.use_chroot_explicit = true;
             }
             "hosts allow" | "hosts-allow" => {
-                let patterns = parse_host_list(value, path, 0, "hosts allow")?;
+                let patterns = parse_host_list(value);
                 module.hosts_allow = patterns;
             }
             "hosts deny" | "hosts-deny" => {
-                let patterns = parse_host_list(value, path, 0, "hosts deny")?;
+                let patterns = parse_host_list(value);
                 module.hosts_deny = patterns;
             }
             "auth users" | "auth-users" => {

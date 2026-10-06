@@ -126,6 +126,39 @@ impl<'m> HookDirectives<'m> {
     }
 }
 
+/// Refuses a module whose `uid`/`gid` did not resolve or that has no `path`.
+///
+/// upstream: rsync_module() checks these after authentication and before the
+/// post-xfer exec fork, in this order: `@ERROR: invalid uid`/`invalid gid`
+/// (clientserver.c:833-870), then `@ERROR: no path setting.` (:877-881).
+/// Returns `false` after sending the reply; no hook runs.
+fn module_settings_usable(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleDefinition,
+) -> io::Result<bool> {
+    let (flog, error) = if let Some(unresolved) = &module.unresolved_id {
+        let failure = match unresolved {
+            UnresolvedId::Uid(name) => DropResolutionError::InvalidUid(name.clone()),
+            UnresolvedId::Gid(token) => DropResolutionError::InvalidGid(token.clone()),
+        };
+        failure.upstream_reply()
+    } else if module.path.as_os_str().is_empty() {
+        (
+            format!("No path specified for module {}", module.name),
+            AtError::message("no path setting."),
+        )
+    } else {
+        return Ok(true);
+    };
+
+    if let Some(log) = ctx.log_sink {
+        let message = rsync_error!(1, flog).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+    send_error(ctx.reader.get_mut(), ctx.limiter, &error)?;
+    Ok(false)
+}
+
 /// Processes an approved module request.
 ///
 /// Handles the full transfer flow: connection acquisition, authentication,
@@ -199,6 +232,12 @@ fn process_approved_module(
         ModuleRuntime::from(definition)
     };
     let module = &authed_module;
+
+    // upstream: clientserver.c:833-881 - uid/gid and path are checked after
+    // authentication and before the daemon filter parse (:930).
+    if !module_settings_usable(ctx, module)? {
+        return Ok(());
+    }
 
     // upstream: clientserver.c:930-951 - the five daemon filter parameters
     // (`filter`, `include from`, `include`, `exclude from`, `exclude`) are

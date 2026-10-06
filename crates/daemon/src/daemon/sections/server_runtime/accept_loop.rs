@@ -33,7 +33,6 @@ fn serve_connections(
     let version = manifest.rust_version();
     let detach = options.detach();
     let listen_backlog = options.listen_backlog();
-    let acceptor_threads = options.acceptor_threads();
     let socket_options_str = options.socket_options().map(str::to_string);
     let tcp_fastopen_mode = options.tcp_fastopen();
 
@@ -77,6 +76,7 @@ fn serve_connections(
         bind_address_overridden,
         config_path,
         log_file_format,
+        dparams,
         syslog_facility,
         syslog_tag,
         daemon_uid,
@@ -168,25 +168,11 @@ fn serve_connections(
         read_address_family_env_override(),
     );
 
-    // upstream: socket.c:set_socket_options() - the `socket options =` /
-    // `--sockopts` string is parsed once up front so it can be applied to
-    // each listener socket before bind(2) (socket.c:457-460 - after
-    // SO_REUSEADDR, before bind), and later to each accepted client
-    // connection before the session handler runs.
-    let parsed_socket_options: Vec<SocketOption> = if let Some(ref opts_str) = socket_options_str {
-        parse_socket_options(opts_str, log_sink.as_ref()).map_err(|msg| {
-            DaemonError::new(
-                FEATURE_UNAVAILABLE_EXIT_CODE,
-                rsync_error!(
-                    FEATURE_UNAVAILABLE_EXIT_CODE,
-                    format!("invalid socket options: {msg}")
-                )
-                .with_role(Role::Daemon),
-            )
-        })?
-    } else {
-        Vec::new()
-    };
+    // upstream: socket.c:606-610 - `--sockopts` when given, else the config's
+    // `socket options`, is applied to each listener socket after SO_REUSEADDR
+    // and before bind(2). An accepted connection gets only SO_KEEPALIVE
+    // (clientserver.c:1529).
+    let socket_options = socket_options_str.unwrap_or_default();
 
     // When a pre-bound listener is injected (test infrastructure), use it
     // directly - skipping the bind step eliminates the TOCTOU race between
@@ -204,7 +190,11 @@ fn serve_connections(
         // sockopts can only be applied post-hoc here. This path is
         // test-infrastructure-only; the real startup path below applies
         // sockopts pre-bind.
-        apply_socket_options_to_listener(&listener, &parsed_socket_options, log_sink.as_ref());
+        apply_daemon_socket_options(
+            &socket2::SockRef::from(&listener),
+            &socket_options,
+            log_sink.as_ref(),
+        );
         bound_addresses = vec![local_addr];
         listeners = vec![listener];
     } else {
@@ -223,8 +213,7 @@ fn serve_connections(
             port,
             backlog,
             tcp_fastopen_mode,
-            acceptor_threads,
-            &parsed_socket_options,
+            &socket_options,
             log_sink.as_ref(),
         ) {
             Ok((bound_listeners, bound_local_addrs)) => {
@@ -283,11 +272,6 @@ fn serve_connections(
     if tcp_fastopen_mode.is_strict() && !fast_io::tcp_fastopen_listener_supported() {
         warn_tcp_fastopen_unsupported(log_sink.as_ref());
     }
-
-    // Retained for each accepted client connection - upstream: clientserver.c
-    // applies set_socket_options() to the accepted fd before the session
-    // handler runs, independent of the listener-side application above.
-    let client_socket_options: Arc<Vec<SocketOption>> = Arc::new(parsed_socket_options);
 
     // Detach from terminal if --detach is active (Unix default).
     // Must happen after binding so startup errors reach stderr, and before
@@ -416,12 +400,12 @@ fn serve_connections(
         max_connections: max_connections.map(NonZeroUsize::get),
         config_path: &config_path,
         log_file_format,
+        dparams: &dparams,
         connection_limiter: &connection_limiter,
         modules,
         motd_lines,
         log_sink: &log_sink,
         notifier: &notifier,
-        client_socket_options,
         bandwidth_limit,
         reverse_lookup,
         proxy_policy,

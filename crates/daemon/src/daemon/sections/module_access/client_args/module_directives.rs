@@ -68,27 +68,32 @@ fn resolve_module_charset_converter(charset: Option<&str>) -> Option<FilenameCon
         .ok()
 }
 
-/// Parses the module's `incoming chmod` / `outgoing chmod` directives into the
-/// typed [`metadata::ChmodModifiers`] used by the receiver and sender code
-/// paths. Returns a human-readable error message when a spec is malformed so
-/// the caller can wrap it in an `@ERROR` reply.
+/// Parses the daemon chmod directive for the direction this session uses.
+///
+/// Returns the upstream log line when the spec does not parse; the caller logs
+/// it and serves the session with no daemon chmod.
 ///
 /// # Upstream Reference
 ///
 /// - `options.c:parse_chmod()` - canonical chmod-spec grammar
-/// - `clientserver.c:rsync_module()` - daemon-side arming of `daemon_chmod_modes`
-fn parse_daemon_chmod_specs(
+/// - `clientserver.c:1294-1302` - the sender reads only `outgoing chmod`, the
+///   receiver only `incoming chmod`; a bad spec logs `Invalid "<dir>ing chmod"
+///   directive: <spec>` and `start_server()` still runs
+fn daemon_chmod_for_session(
     module: &ModuleRuntime,
-) -> Result<
-    (
-        Option<metadata::ChmodModifiers>,
-        Option<metadata::ChmodModifiers>,
-    ),
-    String,
-> {
-    let incoming = parse_one_chmod_spec("incoming chmod", module.incoming_chmod.as_deref())?;
-    let outgoing = parse_one_chmod_spec("outgoing chmod", module.outgoing_chmod.as_deref())?;
-    Ok((incoming, outgoing))
+    sender: bool,
+) -> Result<Option<metadata::ChmodModifiers>, String> {
+    let (directive, spec) = if sender {
+        ("outgoing chmod", module.outgoing_chmod.as_deref())
+    } else {
+        ("incoming chmod", module.incoming_chmod.as_deref())
+    };
+    parse_one_chmod_spec(directive, spec).map_err(|_| {
+        format!(
+            "Invalid \"{directive}\" directive: {}",
+            spec.unwrap_or_default()
+        )
+    })
 }
 
 fn parse_one_chmod_spec(

@@ -27,6 +27,22 @@ pub(crate) enum GidSetting {
     },
 }
 
+/// A `uid` or `gid` value that did not resolve when the config was loaded.
+///
+/// upstream: loadparm.c stores the value verbatim and rsync_module()
+/// resolves it only when a client selects the module (clientserver.c:833-870),
+/// so the failure refuses that one module with `@ERROR: invalid uid` /
+/// `@ERROR: invalid gid` instead of stopping the daemon. For `gid` the value is
+/// the first token add_a_group() rejects - a name that does not resolve, or a
+/// `*` that is not the first entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum UnresolvedId {
+    /// The module's `uid` value.
+    Uid(String),
+    /// The rejected `gid` token.
+    Gid(String),
+}
+
 /// Configuration for a single rsync module.
 ///
 /// A module represents a named filesystem path that can be accessed via rsync daemon.
@@ -68,6 +84,8 @@ pub(crate) struct ModuleDefinition {
     pub(crate) numeric_ids: Option<bool>,
     pub(crate) uid: Option<u32>,
     pub(crate) gid: Option<GidSetting>,
+    /// A `uid`/`gid` that failed to resolve at load; refused when selected.
+    pub(crate) unresolved_id: Option<UnresolvedId>,
     pub(crate) timeout: Option<NonZeroU64>,
     pub(crate) listable: bool,
     pub(crate) use_chroot: bool,

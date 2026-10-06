@@ -2,6 +2,7 @@
 mod config_helpers_tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use std::num::NonZeroU32;
 
     /// Helper to extract usernames from AuthUser list for test comparisons.
     fn usernames(users: &[AuthUser]) -> Vec<&str> {

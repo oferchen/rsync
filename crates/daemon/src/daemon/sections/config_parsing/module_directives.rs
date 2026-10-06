@@ -57,16 +57,9 @@ fn apply_module_directive(
         // overwrites the section's own name, which is what lp_number() looks a
         // module up by and what the listing prints (clientserver.c:1381).
         "name" => builder.name = value.to_owned(),
-        "path" => {
-            if value.is_empty() {
-                return Err(config_parse_error(
-                    path,
-                    line_number,
-                    "module path directive must not be empty",
-                ));
-            }
-            builder.set_path(PathBuf::from(strip_trailing_slashes(value)));
-        }
+        // upstream: an empty P_PATH stores "", which rsync_module() refuses
+        // when the module is selected (clientserver.c:877-881).
+        "path" => builder.set_path(PathBuf::from(strip_trailing_slashes(value))),
         "comment" => {
             let comment = if value.is_empty() {
                 None
@@ -76,11 +69,11 @@ fn apply_module_directive(
             builder.set_comment(comment);
         }
         "hostsallow" => {
-            let patterns = parse_host_list(value, path, line_number, "hosts allow")?;
+            let patterns = parse_host_list(value);
             builder.set_hosts_allow(patterns);
         }
         "hostsdeny" => {
-            let patterns = parse_host_list(value, path, line_number, "hosts deny")?;
+            let patterns = parse_host_list(value);
             builder.set_hosts_deny(patterns);
         }
         "authusers" => {
@@ -128,16 +121,12 @@ fn apply_module_directive(
             }
         }
         "usechroot" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "use chroot", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "use chroot", path, line_number) {
                 builder.set_use_chroot(parsed);
             }
         }
         "numericids" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "numeric ids", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "numeric ids", path, line_number) {
                 builder.set_numeric_ids(parsed);
             }
         }
@@ -161,32 +150,20 @@ fn apply_module_directive(
             }
         }
         "mungesymlinks" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "munge symlinks", path, line_number)
+            if let Some(parsed) = apply_bool3_directive(value, "munge symlinks", path, line_number)
             {
-                builder.set_munge_symlinks(Some(parsed));
+                builder.set_munge_symlinks(parsed);
             }
         }
         // upstream: clientserver.c:833 - an empty `uid` means the default
         // (`*lp_uid(i) ? ... : am_root ? NOBODY_USER : NULL`).
         "uid" if value.is_empty() => builder.uid = None,
         "gid" if value.is_empty() => builder.gid = None,
-        "uid" => {
-            let uid = parse_uid_setting(value).ok_or_else(|| {
-                config_parse_error(path, line_number, format!("invalid uid '{value}'"))
-            })?;
-            builder.set_uid(uid);
-        }
-        "gid" => {
-            let gid = parse_gid_setting(value).map_err(|reason| {
-                config_parse_error(
-                    path,
-                    line_number,
-                    format!("invalid gid '{value}': {reason}"),
-                )
-            })?;
-            builder.set_gid(gid);
-        }
+        // upstream: clientserver.c:833-870 resolves the names when a client
+        // selects the module, so a value that does not resolve now is kept
+        // and refuses only that module.
+        "uid" => builder.set_uid(parse_uid_setting(value).ok_or_else(|| value.to_owned())),
+        "gid" => builder.set_gid(parse_gid_setting(value).map_err(|_| rejected_gid_token(value))),
         "timeout" => {
             let timeout = parse_timeout_seconds(value).ok_or_else(|| {
                 config_parse_error(path, line_number, format!("invalid timeout '{value}'"))
@@ -203,10 +180,10 @@ fn apply_module_directive(
             })?;
             builder.set_max_connections(max);
         }
-        "incomingchmod" | "incoming-chmod" => {
+        "incomingchmod" => {
             builder.set_incoming_chmod((!value.is_empty()).then(|| value.to_owned()));
         }
-        "outgoingchmod" | "outgoing-chmod" => {
+        "outgoingchmod" => {
             builder.set_outgoing_chmod((!value.is_empty()).then(|| value.to_owned()));
         }
         "maxverbosity" => {
@@ -315,9 +292,7 @@ fn apply_module_directive(
             }
         }
         "opennoatime" => {
-            if let Some(parsed) =
-                apply_boolean_directive(value, true, "open noatime", path, line_number)
-            {
+            if let Some(parsed) = apply_bool3_directive(value, "open noatime", path, line_number) {
                 builder.set_open_noatime(parsed);
             }
         }
@@ -419,15 +394,9 @@ fn apply_module_directive(
             // found in module section!").
             eprintln!("Global parameter {key} found in module section!");
         }
-        _ => {
-            eprintln!(
-                "warning: unknown per-module directive '{}' in '{}' line {} [daemon={}]",
-                key,
-                path.display(),
-                line_number,
-                env!("CARGO_PKG_VERSION"),
-            );
-        }
+        // Every other name is not a daemon parameter; the parser reported
+        // and skipped it before dispatching (`report_unknown_parameter`).
+        _ => {}
     }
     Ok(())
 }

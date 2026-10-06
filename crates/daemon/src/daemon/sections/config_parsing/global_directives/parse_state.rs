@@ -51,18 +51,17 @@ struct GlobalParseState {
     /// coerced to 873 at parse time, mirroring the TCP `port = 0` handling.
     #[cfg(feature = "quic")]
     quic_port: Option<(u16, ConfigDirectiveOrigin)>,
-    global_bwlimit: Option<(BandwidthLimitComponents, ConfigDirectiveOrigin)>,
     global_secrets_file: Option<(PathBuf, ConfigDirectiveOrigin)>,
     global_incoming_chmod: Option<(String, ConfigDirectiveOrigin)>,
     global_outgoing_chmod: Option<(String, ConfigDirectiveOrigin)>,
-    global_use_chroot: Option<(bool, ConfigDirectiveOrigin)>,
+    /// `None` inside is the BOOL3 Unset.
+    global_use_chroot: Option<(Option<bool>, ConfigDirectiveOrigin)>,
     syslog_facility: Option<(String, ConfigDirectiveOrigin)>,
     syslog_tag: Option<(String, ConfigDirectiveOrigin)>,
     bind_address: Option<(IpAddr, ConfigDirectiveOrigin)>,
     daemon_uid: Option<(String, ConfigDirectiveOrigin)>,
     daemon_gid: Option<(String, ConfigDirectiveOrigin)>,
     listen_backlog: Option<(u32, ConfigDirectiveOrigin)>,
-    acceptor_threads: Option<(NonZeroU32, ConfigDirectiveOrigin)>,
     socket_options: Option<(String, ConfigDirectiveOrigin)>,
     proxy_protocol: Option<(bool, ConfigDirectiveOrigin)>,
     proxy_protocol_hosts: Option<(Vec<HostPattern>, ConfigDirectiveOrigin)>,
@@ -93,7 +92,6 @@ impl GlobalParseState {
             quic_key_file: None,
             #[cfg(feature = "quic")]
             quic_port: None,
-            global_bwlimit: None,
             global_secrets_file: None,
             global_incoming_chmod: None,
             global_outgoing_chmod: None,
@@ -104,7 +102,6 @@ impl GlobalParseState {
             daemon_uid: None,
             daemon_gid: None,
             listen_backlog: None,
-            acceptor_threads: None,
             socket_options: None,
             proxy_protocol: None,
             proxy_protocol_hosts: None,
@@ -162,7 +159,6 @@ impl GlobalParseState {
             quic_key_file: self.quic_key_file,
             #[cfg(feature = "quic")]
             quic_port: self.quic_port,
-            global_bandwidth_limit: self.global_bwlimit,
             global_secrets_file: self.global_secrets_file,
             global_incoming_chmod: self.global_incoming_chmod,
             global_outgoing_chmod: self.global_outgoing_chmod,
@@ -172,7 +168,6 @@ impl GlobalParseState {
             daemon_uid: self.daemon_uid,
             daemon_gid: self.daemon_gid,
             listen_backlog: self.listen_backlog,
-            acceptor_threads: self.acceptor_threads,
             socket_options: self.socket_options,
             proxy_protocol: self.proxy_protocol,
             proxy_protocol_hosts: self.proxy_protocol_hosts,

@@ -245,6 +245,24 @@ pub(crate) fn parse_boolean_directive(value: &str) -> Option<bool> {
 /// ignores its failure return, so a badly formed boolean only warns
 /// (loadparm.c:372) and the directive's previous default is retained rather
 /// than aborting the load.
+pub(crate) fn apply_bool3_directive(
+    value: &str,
+    directive: &str,
+    path: &Path,
+    line_number: usize,
+) -> Option<Option<bool>> {
+    // upstream: loadparm.c set_boolean(pb, value, True) - `unset`/`-1` stores
+    // Unset, which a section keeps rather than inheriting a copied value.
+    match classify_boolean_directive(value, true) {
+        BooleanDirective::Unset => Some(None),
+        _ => apply_boolean_directive(value, true, directive, path, line_number).map(Some),
+    }
+}
+
+/// Applies a boolean directive value, warning on a malformed one.
+///
+/// See [`apply_bool3_directive`] for the P_BOOL3 parameters, whose `unset`
+/// is a value of its own.
 pub(crate) fn apply_boolean_directive(
     value: &str,
     allow_unset: bool,
@@ -393,6 +411,27 @@ pub(crate) fn parse_gid_setting(value: &str) -> Result<GidSetting, String> {
     } else {
         Ok(GidSetting::List(extra))
     }
+}
+
+/// Returns the `gid` token upstream's rsync_module() refuses first.
+///
+/// upstream: clientserver.c:844-870 walks the list with conf_strtok(); a `*`
+/// is honoured only as the first entry, and every other token goes through
+/// add_a_group(), which replies `@ERROR: invalid gid <token>` for the first
+/// one group_to_gid() cannot resolve (a later `*` included). Only called for a
+/// value `parse_gid_setting` rejected.
+fn rejected_gid_token(value: &str) -> String {
+    conf_split(value)
+        .into_iter()
+        .enumerate()
+        .find(|(index, token)| {
+            if *token == "*" {
+                *index > 0
+            } else {
+                parse_gid_token(token).is_err()
+            }
+        })
+        .map_or_else(|| value.to_owned(), |(_, token)| token.to_owned())
 }
 
 /// Parses a single gid token, accepting either a numeric id or a group name.

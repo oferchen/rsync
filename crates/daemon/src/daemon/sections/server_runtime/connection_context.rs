@@ -17,10 +17,10 @@ struct ConnectionContext {
     motd_lines: Arc<Vec<String>>,
     log_sink: Option<SharedLogSink>,
     // Read only by the async accept path's `serve_one_connection`; the sync
-    // accept loop applies client socket options in `handle_accepted_connection`
-    // before wrapping the stream, so this field is unused in default builds.
+    // accept loop applies socket options to its listeners before bind(2), so
+    // this field is unused in default builds.
     #[cfg_attr(not(feature = "async-daemon"), allow(dead_code))]
-    client_socket_options: Arc<Vec<SocketOption>>,
+    client_socket_options: Arc<str>,
     bandwidth_limit: Option<NonZeroU64>,
     reverse_lookup: bool,
     proxy_policy: ProxyProtocolPolicy,
@@ -40,7 +40,7 @@ impl ConnectionContext {
         modules: Arc<Vec<ModuleRuntime>>,
         motd_lines: Arc<Vec<String>>,
         log_sink: Option<SharedLogSink>,
-        client_socket_options: Arc<Vec<SocketOption>>,
+        client_socket_options: Arc<str>,
         bandwidth_limit: Option<NonZeroU64>,
         reverse_lookup: bool,
         proxy_policy: ProxyProtocolPolicy,
@@ -122,9 +122,8 @@ impl ConnectionContext {
         raw_peer_addr: SocketAddr,
     ) -> io::Result<()> {
         apply_accepted_stream_tcp_notsent_lowat(&tcp_stream);
-        // upstream: clientserver.c:1396 - daemon unconditionally enables
-        // SO_KEEPALIVE on the accepted client socket, independent of the
-        // per-module `socket options` config applied below.
+        // upstream: clientserver.c:1529 - the daemon enables SO_KEEPALIVE on
+        // the accepted client socket.
         enable_accepted_stream_keepalive(&tcp_stream, self.log_sink.as_ref());
         let stream = DaemonStream::plain(tcp_stream);
         apply_client_options(&stream, &self.client_socket_options, self.log_sink.as_ref());
