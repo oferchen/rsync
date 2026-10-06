@@ -79,9 +79,10 @@ impl InplaceResolution {
                     .custom_flags(libc::O_NOFOLLOW)
                     .open(path)
             }
-            // `operator_open_read` is `O_RDONLY` with `O_NOFOLLOW` on the leaf,
-            // so it is the walked form of exactly the same open.
-            Self::OperatorWalk => crate::owner_walk::operator_open_read(path),
+            // upstream: rsync-3.5.1/receiver.c:218-243 `open_readonly_inplace()`
+            // - the walked parent and an `O_NOFOLLOW` leaf, the walked form of
+            // exactly the same open.
+            Self::OperatorWalk => crate::owner_walk::operator_open_basis_read(path),
         }
     }
 
