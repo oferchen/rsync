@@ -195,7 +195,10 @@ impl GeneratorContext {
         // why `build_file_list_with_base` passes `true` instead of this.
         let xfer_dirs =
             self.config.flags.recursive || self.config.flags.dirs || self.config.flags.list_only;
-        self.try_walk_source_entry_dedup(base, path, None, xfer_dirs, is_dotdir)
+        // upstream: flist.c:2967 - only a non-daemon sender reading explicit
+        // operands (never a --files-from list, `use_ff_fd`) pins source roots.
+        let remember_root = !self.config.connection.is_daemon_connection;
+        self.try_walk_source_entry_dedup(base, path, None, xfer_dirs, is_dotdir, remember_root)
     }
 
     /// Upstream's `xfer_dirs` gate on a top-level directory argument.
@@ -260,6 +263,9 @@ impl GeneratorContext {
     /// loop. All other callers (single-source `build_file_list`) pass `None`
     /// and retain the original walk-everything behaviour.
     ///
+    /// `remember_root` pins the operand's source root for the content open;
+    /// it is false for a `--files-from` entry and for a daemon sender.
+    ///
     /// # Upstream Reference
     ///
     /// - `flist.c:1251` - `check_filter(&implied_filter_list, ...)` rejects
@@ -273,6 +279,7 @@ impl GeneratorContext {
         emitted_dirs: Option<&HashSet<PathBuf>>,
         xfer_dirs: bool,
         is_dotdir: bool,
+        remember_root: bool,
     ) -> io::Result<bool> {
         // Record the transfer root so per-directory merge files re-anchor their
         // leading-`/` rules to the merge file's own directory (upstream
@@ -295,6 +302,20 @@ impl GeneratorContext {
                     self.report_skipped_directory_arg(base, path);
                     return Ok(false);
                 }
+                // upstream: flist.c:2967-2969 - the operand's root is pinned by
+                // identity: a directory is its own root, and under --relative
+                // any other operand pins its parent.
+                #[cfg(unix)]
+                if remember_root && (metadata.is_dir() || self.config.flags.relative) {
+                    self.source_roots.remember_operand(
+                        path,
+                        metadata.is_dir(),
+                        metadata.dev(),
+                        metadata.ino(),
+                    )?;
+                }
+                #[cfg(not(unix))]
+                let _ = remember_root;
                 // If a prior pass already emitted this directory (e.g. the
                 // implied-parent loop in build_file_list_with_base), skip the
                 // top-level walk so we do not produce a duplicate file-list

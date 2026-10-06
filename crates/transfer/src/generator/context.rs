@@ -269,6 +269,11 @@ pub struct GeneratorContext {
     /// transfer is not confined. Sharing it is what lets the root be opened
     /// once and the current directory be held across files.
     pub(crate) confined_source_root: std::sync::OnceLock<Option<Arc<fast_io::ConfinedSourceRoot>>>,
+    /// The explicit source roots a non-daemon sender pinned by identity while
+    /// building the file list; content opens resolve beneath them.
+    ///
+    /// upstream: `flist.c:240-242` `sender_source_roots`
+    pub(crate) source_roots: Arc<fast_io::SourceRoots>,
 }
 
 /// Handle on the `--write-batch` file, held by a client sender so it can write
@@ -400,6 +405,7 @@ impl GeneratorContext {
             daemon_logfile_format_has_i: false,
             daemon_log_rows: std::cell::RefCell::new(std::collections::BTreeMap::new()),
             confined_source_root: std::sync::OnceLock::new(),
+            source_roots: Arc::new(fast_io::SourceRoots::new()),
         }
     }
 
@@ -863,7 +869,16 @@ impl GeneratorContext {
                     .map(|root| Arc::new(fast_io::ConfinedSourceRoot::new(root)))
             })
             .clone();
-        open_source::SourceOpen::new(root, follow_symlinks, self.config.write.open_noatime)
+        // upstream: sender.c:686-694 - the pinned-root open applies only when
+        // no symlink-following mode is set; those keep do_open_checklinks().
+        let pinned_roots = (root.is_none() && !follow_symlinks && !self.config.flags.copy_dirlinks)
+            .then(|| Arc::clone(&self.source_roots));
+        open_source::SourceOpen::new(
+            root,
+            pinned_roots,
+            follow_symlinks,
+            self.config.write.open_noatime,
+        )
     }
 
     /// The absolute directory every source-side path resolution is confined

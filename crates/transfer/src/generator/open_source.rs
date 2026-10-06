@@ -49,6 +49,12 @@ pub(crate) struct SourceOpen {
     /// and the directory of the current run of files is held.
     #[cfg_attr(not(unix), allow(dead_code))]
     confine_root: Option<Arc<fast_io::ConfinedSourceRoot>>,
+    /// The explicit source roots of a non-daemon sender, when no
+    /// symlink-following mode is set: a file beneath one is opened beneath the
+    /// held root rather than by its full path.
+    ///
+    /// upstream: `sender.c:694` `open_sender_source_path()`
+    pinned_roots: Option<Arc<fast_io::SourceRoots>>,
     /// Whether to follow a symlinked leaf (`--copy-links` /
     /// `--copy-unsafe-links`). When false, the leaf is opened `O_NOFOLLOW`.
     follow_symlinks: bool,
@@ -60,11 +66,13 @@ impl SourceOpen {
     /// Builds a policy from its three inputs.
     pub(crate) fn new(
         confine_root: Option<Arc<fast_io::ConfinedSourceRoot>>,
+        pinned_roots: Option<Arc<fast_io::SourceRoots>>,
         follow_symlinks: bool,
         noatime: bool,
     ) -> Self {
         Self {
             confine_root,
+            pinned_roots,
             follow_symlinks,
             noatime,
         }
@@ -91,6 +99,24 @@ impl SourceOpen {
             },
         };
         (open, self.noatime)
+    }
+
+    /// Reads `requests` ahead in one batch under this policy, index-aligned
+    /// with `requests`; `None` leaves an entry to [`Self::open`].
+    ///
+    /// With pinned source roots only the requests beneath the root of the
+    /// first one are batched, anchored at its held descriptor, so a batched
+    /// read never resolves a path the synchronous open would refuse.
+    pub(crate) fn prefetch(
+        &self,
+        requests: &[fast_io::PrefetchRequest<'_>],
+    ) -> Vec<Option<Vec<u8>>> {
+        #[cfg(unix)]
+        if let Some(roots) = self.pinned_roots.as_deref() {
+            return prefetch_beneath_root(roots, self.noatime, requests);
+        }
+        let (open, noatime) = self.prefetch_open();
+        fast_io::prefetch_sources(open, noatime, requests)
     }
 
     /// Opens `path` under this policy.
@@ -120,6 +146,15 @@ impl SourceOpen {
             // happen for a legitimate daemon transfer; fail safe by falling
             // through to the O_NOFOLLOW open rather than following symlinks.
         }
+        // upstream: sender.c:694-704 - a path beneath a pinned source root is
+        // opened beneath it; any other path falls through to the leaf-only
+        // open, which is sender_open_confined(NULL, fname) against the cwd
+        // upstream has already entered.
+        if let Some(roots) = self.pinned_roots.as_deref()
+            && let Some(opened) = roots.open(path, self.noatime)
+        {
+            return opened;
+        }
 
         if self.follow_symlinks {
             // upstream: sender.c:do_open_checklinks - copy_links /
@@ -130,6 +165,47 @@ impl SourceOpen {
             open_source_nofollow(path, self.noatime)
         }
     }
+}
+
+/// Batches the requests that resolve beneath the same pinned root as the
+/// first one; every other entry is left to the synchronous open.
+#[cfg(unix)]
+fn prefetch_beneath_root(
+    roots: &fast_io::SourceRoots,
+    noatime: bool,
+    requests: &[fast_io::PrefetchRequest<'_>],
+) -> Vec<Option<Vec<u8>>> {
+    use std::os::fd::AsFd;
+    let mut out = vec![None; requests.len()];
+    let Some(Some(Ok(held))) = requests.first().map(|first| roots.held_root(first.path)) else {
+        return out;
+    };
+    let mut slots = Vec::new();
+    let mut paths = Vec::new();
+    for (slot, request) in requests.iter().enumerate() {
+        if let Some(Ok(entry)) = roots.held_root(request.path)
+            && entry.root == held.root
+        {
+            slots.push((slot, request.len));
+            paths.push(held.root.join(entry.relative));
+        }
+    }
+    let batch: Vec<fast_io::PrefetchRequest<'_>> = slots
+        .iter()
+        .zip(&paths)
+        .map(|(&(_, len), path)| fast_io::PrefetchRequest { path, len })
+        .collect();
+    let open = fast_io::PrefetchOpen::Anchored {
+        anchor: held.anchor.as_fd(),
+        root: &held.root,
+    };
+    for ((slot, _), data) in slots
+        .iter()
+        .zip(fast_io::prefetch_sources(open, noatime, &batch))
+    {
+        out[*slot] = data;
+    }
+    out
 }
 
 /// Opens a source file for reading following symlinks, honouring
@@ -307,7 +383,7 @@ mod tests {
         let leaf = dir.path().join("leaf");
         symlink(&secret, &leaf).unwrap();
 
-        let policy = SourceOpen::new(None, false, false);
+        let policy = SourceOpen::new(None, None, false, false);
         let err = policy
             .open(&leaf)
             .expect_err("O_NOFOLLOW must refuse a symlinked leaf");
@@ -329,7 +405,7 @@ mod tests {
         let leaf = dir.path().join("leaf");
         symlink(&target, &leaf).unwrap();
 
-        let policy = SourceOpen::new(None, true, false);
+        let policy = SourceOpen::new(None, None, true, false);
         let mut file = policy.open(&leaf).expect("copy-links follows the leaf");
         let mut buf = String::new();
         file.read_to_string(&mut buf).unwrap();
@@ -357,6 +433,7 @@ mod tests {
 
         let policy = SourceOpen::new(
             Some(Arc::new(fast_io::ConfinedSourceRoot::new(root.clone()))),
+            None,
             false,
             false,
         );
@@ -397,6 +474,7 @@ mod tests {
             Some(Arc::new(fast_io::ConfinedSourceRoot::new(
                 root.path().to_path_buf(),
             ))),
+            None,
             false,
             false,
         );
@@ -410,6 +488,7 @@ mod tests {
             Some(Arc::new(fast_io::ConfinedSourceRoot::new(
                 root.path().to_path_buf(),
             ))),
+            None,
             true,
             false,
         );
@@ -435,6 +514,7 @@ mod tests {
             Some(Arc::new(fast_io::ConfinedSourceRoot::new(
                 root.path().to_path_buf(),
             ))),
+            None,
             false,
             false,
         );
