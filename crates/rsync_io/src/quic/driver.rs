@@ -8,17 +8,19 @@
 //! bidirectional stream exists.
 
 use std::io;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use bytes::{Bytes, BytesMut};
 use quinn_proto::{
-    Connection, ConnectionHandle, DatagramEvent, Dir, Endpoint, Event, FinishError, ReadError,
-    ReadableError, StreamEvent, StreamId, VarInt, WriteError,
+    Connection, ConnectionError, ConnectionHandle, DatagramEvent, Dir, EcnCodepoint, Endpoint,
+    EndpointConfig, Event, FinishError, ReadError, ReadableError, ServerConfig, StreamEvent,
+    StreamId, Transmit, VarInt, WriteError,
 };
 
-use super::{DATAGRAM_BUF, Hub, MAX_SLEEP, RECV_HIGH_WATER, Shared, Terminal, error, loopback_of};
+use super::udp::{self, UdpIo, Waker};
+use super::{DATAGRAM_BUF, Hub, MAX_SLEEP, RECV_HIGH_WATER, Shared, Terminal, error};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Role {
@@ -33,6 +35,18 @@ pub(super) enum Role {
 /// a TCP listener's `listen(2)` backlog, so a peer flooding handshakes cannot
 /// grow the endpoint's state without bound.
 const ACCEPT_BACKLOG: usize = 128;
+
+/// Datagrams handled per wake-up before the driver services timers and facade
+/// writes again, so a firehose peer cannot starve them.
+const BURST_MAX: usize = 256;
+
+/// One received datagram, copied out of the receive batch.
+struct Incoming {
+    from: SocketAddr,
+    local_ip: Option<IpAddr>,
+    ecn: Option<EcnCodepoint>,
+    data: BytesMut,
+}
 
 /// Per-connection driver bookkeeping.
 struct ConnDriver {
@@ -74,11 +88,10 @@ impl ConnDriver {
 
 /// The I/O thread: owns the UDP socket and the quinn-proto state machines.
 struct Driver {
-    socket: UdpSocket,
+    udp: UdpIo,
     endpoint: Endpoint,
     conns: Vec<ConnDriver>,
     hub: Arc<Hub>,
-    wake_addr: SocketAddr,
     role: Role,
     /// Whether this endpoint OPENS each connection's single bidirectional
     /// stream (speaks first) rather than accepting a peer-opened one. Both
@@ -88,10 +101,11 @@ struct Driver {
     opens_stream: bool,
     /// Scratch buffer `poll_transmit`/`Endpoint::handle` write packets into.
     buf: Vec<u8>,
-    /// Scratch buffer for incoming datagrams.
-    recv_buf: Vec<u8>,
-    /// Last read timeout applied to the socket, to skip redundant setsockopt.
-    current_timeout: Option<Duration>,
+    /// Datagrams of the current receive batch, reused across batches.
+    inbox: Vec<Incoming>,
+    /// Lowest GSO segment limit seen so far, published to the hub so a
+    /// facade thread can trace a runtime fallback.
+    gso_segments: usize,
 }
 
 impl Driver {
@@ -124,22 +138,17 @@ impl Driver {
             if !self.enter_sleep() {
                 continue;
             }
-            let received = self.recv(deadline);
+            // One sleep bounded by the earliest quinn timer and MAX_SLEEP,
+            // then whatever else is queued, as one batch.
+            let wait = deadline.map_or(MAX_SLEEP, |d| {
+                MAX_SLEEP.min(d.saturating_duration_since(Instant::now()))
+            });
+            let received = self.receive(wait);
             self.hub.lock().sleeping = false;
-            match received? {
-                Some((len, from)) => {
-                    let now = Instant::now();
-                    if from != self.wake_addr {
-                        self.handle_datagram(now, from, len)?;
-                    }
-                    self.recv_burst(now)?;
-                }
-                None => {
-                    let now = Instant::now();
-                    if deadline.is_some_and(|d| d <= now) {
-                        self.fire_timeouts(now);
-                    }
-                }
+            received?;
+            let now = Instant::now();
+            if deadline.is_some_and(|d| d <= now) {
+                self.fire_timeouts(now);
             }
         }
     }
@@ -289,7 +298,16 @@ impl Driver {
                     Event::ConnectionLost { reason } => {
                         let mut st = c.shared.lock();
                         if st.terminal.is_none() {
-                            st.terminal = Some(Terminal::from_loss(&reason));
+                            let mut terminal = Terminal::from_loss(&reason);
+                            // An idle timeout after refused sends names the
+                            // send errno, the likeliest cause of the silence.
+                            if let (ConnectionError::TimedOut, Terminal::Error(fault)) =
+                                (&reason, &mut terminal)
+                                && let Some(note) = self.hub.send_errors().stall_note()
+                            {
+                                fault.append(&note);
+                            }
+                            st.terminal = Some(terminal);
                         }
                         c.shared.cond.notify_all();
                     }
@@ -409,104 +427,69 @@ impl Driver {
     /// Sends every packet each connection wants on the wire right now.
     fn flush_transmits(&mut self, now: Instant) -> io::Result<bool> {
         let mut progress = false;
+        // quinn-udp drops to one segment when the kernel rejects a GSO send,
+        // and its own log of that is compiled out.
+        let gso = self.udp.gso_segments();
+        if gso < self.gso_segments {
+            self.gso_segments = gso;
+            self.hub
+                .gso_segments
+                .store(gso, std::sync::atomic::Ordering::Relaxed);
+        }
+        // Several datagrams per transmit: a GSO train leaves in one sendmsg.
+        let max_datagrams = self.udp.max_transmit_segments();
         for c in &mut self.conns {
             loop {
                 self.buf.clear();
-                // max_datagrams = 1: no GSO with a std UdpSocket.
-                let Some(t) = c.conn.poll_transmit(now, 1, &mut self.buf) else {
+                let Some(t) = c.conn.poll_transmit(now, max_datagrams, &mut self.buf) else {
                     break;
                 };
                 progress = true;
-                match self.socket.send_to(&self.buf[..t.size], t.destination) {
-                    Ok(_) => {}
-                    // ICMP-derived errors surface here on some platforms when
-                    // the peer is gone; QUIC's own loss handling covers the
-                    // drop.
-                    Err(e)
-                        if matches!(
-                            e.kind(),
-                            io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionReset
-                        ) => {}
-                    Err(e) => return Err(e),
+                #[cfg(test)]
+                if t.segment_size.is_some() {
+                    self.hub
+                        .gso_trains
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
+                transmit(&self.udp, &self.hub, &t, &self.buf[..t.size])?;
             }
         }
         Ok(progress)
     }
 
-    /// One blocking receive, bounded by the earliest quinn timer deadline and
-    /// [`MAX_SLEEP`]. Returns `None` on timeout.
-    fn recv(&mut self, deadline: Option<Instant>) -> io::Result<Option<(usize, SocketAddr)>> {
-        let now = Instant::now();
-        let mut wait = MAX_SLEEP;
-        if let Some(d) = deadline {
-            wait = wait.min(d.saturating_duration_since(now));
-        }
-        // Quantize to whole milliseconds (never rounding up past the
-        // deadline) so bulk transfers do not re-issue setsockopt every
-        // datagram; sleeping too short is always safe.
-        let ms = u64::try_from(wait.as_millis()).unwrap_or(u64::MAX);
-        let ms = if ms >= 20 { ms - ms % 20 } else { ms.max(1) };
-        let wait = Duration::from_millis(ms);
-        if self.current_timeout != Some(wait) {
-            self.socket.set_read_timeout(Some(wait))?;
-            self.current_timeout = Some(wait);
-        }
-        match self.socket.recv_from(&mut self.recv_buf) {
-            Ok((len, from)) => Ok(Some((len, from))),
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    io::ErrorKind::WouldBlock
-                        | io::ErrorKind::TimedOut
-                        | io::ErrorKind::Interrupted
-                        | io::ErrorKind::ConnectionReset
-                ) =>
+    /// Sleeps up to `wait` (or until woken) for datagrams, then keeps
+    /// draining the socket without blocking, up to [`BURST_MAX`] datagrams.
+    /// Feeding a burst to the state machines as a batch gives one pump pass
+    /// and one coalesced set of ACKs per burst instead of per datagram.
+    fn receive(&mut self, wait: std::time::Duration) -> io::Result<()> {
+        let mut timeout = Some(wait);
+        let mut inbox = std::mem::take(&mut self.inbox);
+        let mut handled = 0;
+        let result = loop {
+            if handled >= BURST_MAX {
+                break Ok(());
+            }
+            match self.udp.recv(timeout.take()) {
+                Ok(batch) if batch.is_empty() => break Ok(()),
+                Ok(batch) => inbox.extend(batch.datagrams().map(|(meta, data)| Incoming {
+                    from: meta.addr,
+                    local_ip: meta.dst_ip,
+                    ecn: udp::ecn_of(meta),
+                    data: BytesMut::from(data),
+                })),
+                Err(err) => break Err(err),
+            }
+            handled += inbox.len();
+            let now = Instant::now();
+            if let Err(err) = inbox
+                .drain(..)
+                .try_for_each(|incoming| self.handle_datagram(now, incoming))
             {
-                Ok(None)
+                break Err(err);
             }
-            Err(e) => Err(e),
-        }
-    }
-
-    /// After a blocking receive delivered one datagram, drains whatever else
-    /// is already queued on the socket without blocking, so a burst is fed to
-    /// the state machines as a batch: one pump pass (and one coalesced set of
-    /// ACKs) per burst instead of per datagram.
-    fn recv_burst(&mut self, now: Instant) -> io::Result<()> {
-        // Bounded so a firehose peer cannot starve timers and facade writes.
-        const BURST_MAX: usize = 256;
-        self.socket.set_nonblocking(true)?;
-        let mut result = Ok(());
-        for _ in 0..BURST_MAX {
-            match self.socket.recv_from(&mut self.recv_buf) {
-                Ok((len, from)) => {
-                    if from != self.wake_addr
-                        && let Err(err) = self.handle_datagram(now, from, len)
-                    {
-                        result = Err(err);
-                        break;
-                    }
-                }
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        io::ErrorKind::WouldBlock
-                            | io::ErrorKind::Interrupted
-                            | io::ErrorKind::ConnectionReset
-                    ) =>
-                {
-                    break;
-                }
-                Err(e) => {
-                    result = Err(e);
-                    break;
-                }
-            }
-        }
-        // Restore blocking mode; SO_RCVTIMEO is untouched by this flag, so
-        // the cached timeout stays valid.
-        self.socket.set_nonblocking(false)?;
+        };
+        inbox.clear();
+        self.inbox = inbox;
         result
     }
 
@@ -521,13 +504,16 @@ impl Driver {
     }
 
     /// Feeds one datagram to the endpoint and dispatches the outcome.
-    fn handle_datagram(&mut self, now: Instant, from: SocketAddr, len: usize) -> io::Result<()> {
-        let data = BytesMut::from(&self.recv_buf[..len]);
+    fn handle_datagram(&mut self, now: Instant, incoming: Incoming) -> io::Result<()> {
         self.buf.clear();
-        match self
-            .endpoint
-            .handle(now, from, None, None, data, &mut self.buf)
-        {
+        match self.endpoint.handle(
+            now,
+            incoming.from,
+            incoming.local_ip,
+            incoming.ecn,
+            incoming.data,
+            &mut self.buf,
+        ) {
             Some(DatagramEvent::ConnectionEvent(ch, event)) => {
                 if let Some(c) = self.conns.iter_mut().find(|c| c.handle == ch) {
                     c.conn.handle_event(event);
@@ -546,22 +532,73 @@ impl Driver {
                         }
                         Err(err) => {
                             if let Some(t) = err.response {
-                                let _ = self.socket.send_to(&self.buf[..t.size], t.destination);
+                                transmit(&self.udp, &self.hub, &t, &self.buf[..t.size])?;
                             }
                         }
                     }
                 } else {
                     let t = self.endpoint.refuse(incoming, &mut self.buf);
-                    let _ = self.socket.send_to(&self.buf[..t.size], t.destination);
+                    transmit(&self.udp, &self.hub, &t, &self.buf[..t.size])?;
                 }
             }
             Some(DatagramEvent::Response(t)) => {
-                let _ = self.socket.send_to(&self.buf[..t.size], t.destination);
+                transmit(&self.udp, &self.hub, &t, &self.buf[..t.size])?;
             }
             None => {}
         }
         Ok(())
     }
+}
+
+/// Sends one transmit. A transmit the kernel refuses is recorded on the hub
+/// and left to QUIC loss recovery, as `quinn-udp`'s own `send` would; only a
+/// failure of the socket wait itself ends the driver.
+fn transmit(udp: &UdpIo, hub: &Hub, t: &Transmit, contents: &[u8]) -> io::Result<()> {
+    if let udp::Sent::Dropped(e) = udp.send(t, contents)? {
+        hub.send_errors().record(&e);
+    }
+    Ok(())
+}
+
+/// Takes over `socket` and builds the quinn-proto endpoint on it.
+///
+/// Path-MTU discovery is enabled exactly when the socket sets the
+/// don't-fragment bit: an unprotected probe could otherwise be fragmented in
+/// flight and falsely validate a size the path cannot carry unfragmented.
+pub(super) fn bind_endpoint(
+    socket: UdpSocket,
+    server_config: Option<Arc<ServerConfig>>,
+) -> io::Result<(Endpoint, UdpIo, Waker)> {
+    let config = Arc::new(EndpointConfig::default());
+    let max_udp_payload = usize::try_from(config.get_max_udp_payload_size())
+        .unwrap_or(DATAGRAM_BUF)
+        .min(DATAGRAM_BUF);
+    #[cfg(not(test))]
+    let (udp, waker) = UdpIo::new(socket, max_udp_payload)?;
+    #[cfg(test)]
+    let (udp, waker) = if SINGLE_DATAGRAM.get() {
+        UdpIo::single_datagram(socket, max_udp_payload)?
+    } else {
+        UdpIo::new(socket, max_udp_payload)?
+    };
+    logging::debug_log!(
+        Connect,
+        1,
+        "quic udp offload: gso={} gro={} batch={} may_fragment={}",
+        udp.gso_segments(),
+        udp.gro_segments(),
+        udp::RECV_BATCH,
+        udp.may_fragment()
+    );
+    let endpoint = Endpoint::new(config, server_config, !udp.may_fragment(), None);
+    Ok((endpoint, udp, waker))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Endpoints bound on this thread never build GSO trains; see
+    /// [`UdpIo::single_datagram`].
+    pub(super) static SINGLE_DATAGRAM: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Spawns the driver thread and builds the shared endpoint handle.
@@ -570,40 +607,60 @@ impl Driver {
 /// state its stream will use; a server endpoint passes `None` and accepts its
 /// connections as they arrive.
 pub(super) fn spawn_io(
-    socket: UdpSocket,
-    endpoint: Endpoint,
+    (endpoint, udp, waker): (Endpoint, UdpIo, Waker),
     role: Role,
     opens_stream: bool,
     conn: Option<(ConnectionHandle, Connection, Arc<Shared>)>,
 ) -> io::Result<Arc<Hub>> {
-    let local = socket.local_addr()?;
-    let wake = UdpSocket::bind(SocketAddr::new(loopback_of(local.ip()), 0))?;
-    let wake_addr = wake.local_addr()?;
-    let target = if local.ip().is_unspecified() {
-        SocketAddr::new(loopback_of(local.ip()), local.port())
-    } else {
-        local
-    };
-    wake.connect(target)?;
-    let hub = Arc::new(Hub::new(wake, role));
+    let gso_segments = udp.gso_segments();
+    let hub = Arc::new(Hub::new(waker, role, gso_segments));
     let driver = Driver {
-        socket,
+        udp,
         endpoint,
         conns: conn
             .map(|(handle, c, shared)| ConnDriver::new(handle, c, shared))
             .into_iter()
             .collect(),
         hub: Arc::clone(&hub),
-        wake_addr,
         role,
         opens_stream,
         buf: Vec::with_capacity(DATAGRAM_BUF),
-        recv_buf: vec![0; DATAGRAM_BUF],
-        current_timeout: None,
+        inbox: Vec::new(),
+        gso_segments,
     };
     let handle = std::thread::Builder::new()
         .name("quic-io".to_owned())
         .spawn(move || driver.run())?;
     hub.set_thread(handle);
     Ok(hub)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    /// A send the kernel refuses (broadcast without `SO_BROADCAST`) must not
+    /// end the driver. It is counted on the hub, its errno is traced once
+    /// however often it recurs, and a later idle timeout can name it.
+    #[test]
+    fn refused_transmit_is_recorded_not_fatal() {
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind");
+        let (udp, waker) = UdpIo::new(socket, 1472).expect("udp");
+        let hub = Hub::new(waker, Role::Client, udp.gso_segments());
+        let payload = [0u8; 32];
+        let t = Transmit {
+            destination: SocketAddr::from((Ipv4Addr::BROADCAST, 9)),
+            ecn: None,
+            size: payload.len(),
+            segment_size: None,
+            src_ip: None,
+        };
+        transmit(&udp, &hub, &t, &payload).expect("first refused send is not fatal");
+        transmit(&udp, &hub, &t, &payload).expect("second refused send is not fatal");
+        let mut errors = hub.send_errors();
+        assert_eq!(errors.untraced().count(), 1);
+        let note = errors.stall_note().expect("refusals recorded");
+        assert!(note.starts_with("2 UDP send error(s), last: "), "{note}");
+    }
 }

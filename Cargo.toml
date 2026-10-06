@@ -294,6 +294,11 @@ russh = { version = "0.63.1", default-features = false, features = ["flate2", "r
 # platform certificate verifier out of the dependency graph; `ring` 0.17 is
 # already pinned via russh.
 quinn-proto = { version = "0.11.16", default-features = false, features = ["rustls-ring"] }
+# Datagram I/O for the QUIC driver: UDP GSO/GRO, recvmmsg batching, ECN and
+# the don't-fragment bit that path-MTU discovery needs. A safe wrapper crate
+# (the unsafe-code policy's first rung); runtime-independent, no tokio.
+# default-features off drops its tracing/log hooks.
+quinn-udp = { version = "0.5.16", default-features = false }
 # Byte buffers for the quinn-proto datagram interface (already in the tree
 # as quinn-proto's own buffer type).
 bytes = "1.12"
