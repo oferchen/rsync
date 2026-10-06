@@ -320,6 +320,13 @@ impl HostnamePattern {
             return Err("host pattern must be non-empty".to_owned());
         }
 
+        // upstream: access.c:48-54 - a peer name arrives from DNS as ASCII,
+        // so an IDN token is folded to its A-label form before it is matched
+        // or forward-resolved. A token that cannot be folded stays as typed
+        // and so matches nothing rather than too much.
+        let trimmed = core::idn::host_to_ascii(trimmed);
+        let trimmed = trimmed.as_ref();
+
         // upstream: access.c:262 `strlower(list2)` lowercases the whole host
         // list before tokenizing; the token is used verbatim (dots retained)
         // for the forward `gethostbyname` lookup at access.c:68.
