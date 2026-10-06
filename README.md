@@ -1,5 +1,5 @@
 [![RepoGrade](https://www.repo-grade.com/api/badge/oferchen/rsync)](https://www.repo-grade.com/report/oferchen/rsync)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/oferchen/rsync)
+[![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-blue)](https://deepwiki.com/oferchen/rsync)
 
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg?branch=master&event=push)](https://github.com/oferchen/rsync/actions/workflows/ci.yml?query=branch%3Amaster)
 [![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml)
