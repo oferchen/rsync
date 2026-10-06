@@ -24,12 +24,14 @@
 //! guarded struct expresses all of that directly where channels would still
 //! need a mutex beside them.
 //!
-//! Because the I/O thread blocks in `recv_from` (with a timeout derived from
-//! the quinn timer), the facade wakes it by sending a one-byte datagram from a
-//! dedicated loopback "waker" socket to the endpoint's own port - the UDP
-//! analogue of the self-pipe trick. Datagrams from the waker's address are
-//! discarded before they reach the QUIC state machine. A 100 ms sleep cap
-//! bounds the impact of a hypothetically lost wake datagram.
+//! The I/O thread sleeps waiting for datagrams (bounded by the quinn timer),
+//! so the facade wakes it through a dedicated wake channel - a Unix stream
+//! pair polled beside the socket, or on Windows a one-byte loopback datagram
+//! to the endpoint's own port that is discarded before the QUIC state
+//! machine. A 100 ms sleep cap bounds the impact of a hypothetically lost
+//! wake. Socket I/O goes through `quinn-udp` (see the `udp` module): GSO
+//! trains, batched and GRO-coalesced receives, ECN, and the don't-fragment
+//! bit that lets path-MTU discovery grow packets past 1200 bytes.
 //!
 //! # Teardown
 //!
@@ -53,11 +55,13 @@ mod driver;
 mod error;
 mod trust;
 mod tuning;
+mod udp;
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -66,14 +70,14 @@ pub use bandwidth::{BandwidthLimiter, ThrottlingWriter};
 
 use bytes::Bytes;
 use quinn_proto::crypto::rustls::{QuicClientConfig, QuicServerConfig};
-use quinn_proto::{ClientConfig, Endpoint, EndpointConfig, ServerConfig};
+use quinn_proto::{ClientConfig, ServerConfig};
 pub use rustls::RootCertStore;
 pub use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 pub use cipher::QuicCipher;
 use cipher::client_provider;
-use driver::{Role, spawn_io};
+use driver::{Role, bind_endpoint, spawn_io};
 use tuning::build_transport_config;
 pub use tuning::{CongestionAlgorithm, QuicTransportTuning};
 
@@ -109,13 +113,6 @@ fn io_err(err: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> io::Error
 
 fn ring_provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
-}
-
-fn loopback_of(ip: IpAddr) -> IpAddr {
-    match ip {
-        IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::LOCALHOST),
-        IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::LOCALHOST),
-    }
 }
 
 /// How the connection ended, recorded once by the driver.
@@ -217,7 +214,7 @@ impl Shared {
 struct HubState {
     /// Facade work is queued for the driver.
     pending: bool,
-    /// Driver is blocked in `recv_from` and needs a wake datagram.
+    /// Driver is asleep waiting for datagrams and needs a wake.
     sleeping: bool,
     /// Server connections whose stream is ready, awaiting
     /// [`QuicAcceptor::accept`].
@@ -237,24 +234,44 @@ struct HubState {
 struct Hub {
     state: Mutex<HubState>,
     cond: Condvar,
-    wake: UdpSocket,
+    wake: udp::Waker,
     thread: Mutex<Option<JoinHandle<()>>>,
     role: Role,
+    /// The socket's GSO segment limit as the driver last saw it.
+    gso_segments: AtomicUsize,
+    /// The limit a facade last traced; see [`Io::trace_udp_events`].
+    gso_traced: AtomicUsize,
+    /// Transmits the kernel refused; see [`udp::SendErrors`].
+    send_errors: Mutex<udp::SendErrors>,
+    /// Transmits the driver sent as multi-datagram GSO trains.
+    #[cfg(test)]
+    gso_trains: AtomicUsize,
 }
 
 impl Hub {
-    fn new(wake: UdpSocket, role: Role) -> Self {
+    fn new(wake: udp::Waker, role: Role, gso_segments: usize) -> Self {
         Self {
             state: Mutex::new(HubState::default()),
             cond: Condvar::new(),
             wake,
             thread: Mutex::new(None),
             role,
+            gso_segments: AtomicUsize::new(gso_segments),
+            gso_traced: AtomicUsize::new(gso_segments),
+            send_errors: Mutex::new(udp::SendErrors::default()),
+            #[cfg(test)]
+            gso_trains: AtomicUsize::new(0),
         }
     }
 
     fn lock(&self) -> MutexGuard<'_, HubState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn send_errors(&self) -> MutexGuard<'_, udp::SendErrors> {
+        self.send_errors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     fn set_thread(&self, handle: JoinHandle<()>) {
@@ -266,7 +283,7 @@ impl Hub {
         let mut hub = self.lock();
         hub.pending = true;
         if hub.sleeping {
-            let _ = self.wake.send(&[0]);
+            self.wake.wake();
         }
     }
 
@@ -296,6 +313,25 @@ impl Io {
         self.hub.signal();
     }
 
+    /// Traces what the driver observed on its socket: a GSO fallback, and
+    /// each send errno the first time it occurs. Debug events raised on the
+    /// driver thread never reach the output, so the facade thread reports
+    /// them the next time it writes or lets the connection go.
+    fn trace_udp_events(&self) {
+        let now = self.hub.gso_segments.load(Ordering::Relaxed);
+        let before = self.hub.gso_traced.swap(now, Ordering::Relaxed);
+        if now < before {
+            logging::debug_log!(
+                Connect,
+                1,
+                "quic udp offload: GSO fell back from {before} to {now} segments per send"
+            );
+        }
+        for error in self.hub.send_errors().untraced() {
+            logging::debug_log!(Connect, 1, "quic udp send failed: {error}; treated as loss");
+        }
+    }
+
     /// Joins the driver thread once the connection has drained, when the
     /// driver exists only for this connection (a client endpoint). A server
     /// endpoint's driver outlives each connection and keeps serving the rest.
@@ -308,6 +344,7 @@ impl Io {
 
 impl Drop for Io {
     fn drop(&mut self) {
+        self.trace_udp_events();
         let mut st = self.shared.lock();
         st.shutdown = true;
         self.signal();
@@ -593,15 +630,8 @@ impl QuicAcceptor {
     /// sandboxes itself, and only then calls this.
     pub fn from_setup(socket: UdpSocket, setup: &QuicServerSetup) -> io::Result<Self> {
         let local = socket.local_addr()?;
-        // allow_mtud = false: a std UdpSocket cannot set the don't-fragment
-        // bit, so MTU discovery probes could be silently fragmented.
-        let endpoint = Endpoint::new(
-            Arc::new(EndpointConfig::default()),
-            Some(Arc::clone(&setup.config)),
-            false,
-            None,
-        );
-        let hub = spawn_io(socket, endpoint, Role::Server, setup.opens_stream, None)?;
+        let bound = bind_endpoint(socket, Some(Arc::clone(&setup.config)))?;
+        let hub = spawn_io(bound, Role::Server, setup.opens_stream, None)?;
         Ok(Self {
             hub,
             certificate: setup.certificate.clone(),
@@ -840,15 +870,14 @@ impl QuicConnector {
             SocketAddr::V6(_) => IpAddr::V6(Ipv6Addr::UNSPECIFIED),
         };
         let socket = UdpSocket::bind(SocketAddr::new(bind_ip, 0))?;
-        let mut endpoint = Endpoint::new(Arc::new(EndpointConfig::default()), None, false, None);
+        let (mut endpoint, udp, waker) = bind_endpoint(socket, None)?;
         let (handle, conn) = endpoint
             .connect(Instant::now(), self.config.clone(), addr, server_name)
             .map_err(|e| error::connect_fault(&e))?;
         let shared = Arc::new(Shared::new());
         shared.lock().accepted = true;
         let hub = spawn_io(
-            socket,
-            endpoint,
+            (endpoint, udp, waker),
             Role::Client,
             opens_stream,
             Some((handle, conn, Arc::clone(&shared))),
@@ -1044,6 +1073,7 @@ impl Write for QuicStream {
         if buf.is_empty() {
             return Ok(0);
         }
+        self.io.trace_udp_events();
         let shared = &self.io.shared;
         let mut st = shared.lock();
         loop {
@@ -1341,6 +1371,60 @@ mod tests {
         assert_eq!(&reply, b"pong");
         stream.close();
         server.join().expect("server thread");
+    }
+
+    /// A bulk upload leaves the client as multi-datagram trains exactly when
+    /// the socket reports segmentation offload (Linux GSO, Windows USO): one
+    /// send per train instead of one per packet is the syscall saving this
+    /// driver exists for. Where the socket reports one segment, no train may
+    /// be built, since the platform could not split it.
+    #[test]
+    fn bulk_upload_uses_trains_exactly_when_the_socket_offers_them() {
+        let trains = bulk_upload();
+        let probe = UdpSocket::bind("127.0.0.1:0").expect("bind probe");
+        let (probe, _waker) = udp::UdpIo::new(probe, DATAGRAM_BUF).expect("probe");
+        if probe.max_transmit_segments() > 1 {
+            assert!(trains > 0, "no transmit carried more than one datagram");
+        } else {
+            assert_eq!(trains, 0, "a train was built on a one-segment socket");
+        }
+    }
+
+    /// The one-datagram-per-send driver path, which macOS, Windows without
+    /// USO and the BSDs always take, must move a bulk upload intact. Forcing
+    /// it here lets Linux CI cover that path too.
+    #[test]
+    fn bulk_upload_round_trips_one_datagram_per_send() {
+        driver::SINGLE_DATAGRAM.set(true);
+        let trains = bulk_upload();
+        driver::SINGLE_DATAGRAM.set(false);
+        assert_eq!(trains, 0, "a train was built on a one-segment socket");
+    }
+
+    /// Uploads 4 MiB through a loopback connection, checks it arrived
+    /// intact, and returns how many transmits left as GSO trains.
+    fn bulk_upload() -> usize {
+        const LEN: usize = 4 << 20;
+        let acceptor =
+            QuicAcceptor::bind("127.0.0.1:0".parse().expect("addr")).expect("bind acceptor");
+        let cert = acceptor.certificate().clone().into_owned();
+        let addr = acceptor.local_addr().expect("local addr");
+        let server = thread::spawn(move || {
+            let mut stream = acceptor.accept().expect("accept");
+            let mut got = Vec::new();
+            stream.read_to_end(&mut got).expect("read");
+            assert_eq!(got.len(), LEN);
+            assert!(got.iter().enumerate().all(|(i, &b)| b == (i % 251) as u8));
+        });
+        let connector = QuicConnector::new(&cert).expect("connector");
+        let mut stream = connector.connect(addr, "localhost").expect("connect");
+        let payload: Vec<u8> = (0..LEN).map(|i| (i % 251) as u8).collect();
+        stream.write_all(&payload).expect("write");
+        stream.finish().expect("finish");
+        server.join().expect("server thread");
+        let trains = stream.io.hub.gso_trains.load(Ordering::Relaxed);
+        stream.close();
+        trains
     }
 
     /// A client forced to ChaCha20-Poly1305 (`--quic-cipher=chacha20`) completes
