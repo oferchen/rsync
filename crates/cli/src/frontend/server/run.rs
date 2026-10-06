@@ -9,7 +9,7 @@ use core::message::Role;
 use core::rsync_error;
 use logging_sink::MessageSink;
 
-use super::flags::{detect_secluded_args_flag, parse_server_long_flags};
+use super::flags::{detect_secluded_args_flag, parse_server_long_flags, refused_server_option};
 use super::parse::{
     parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_protocol,
     parse_server_size_limit, parse_server_stop_after, parse_server_stop_at,
@@ -218,6 +218,16 @@ where
         &args[1..]
     };
 
+    // upstream: popt reports "<opt>: unknown option" and main.c exits
+    // RERR_SYNTAX before any transfer state exists.
+    if let Some(option) = refused_server_option(effective_slice) {
+        write_server_error(
+            stderr,
+            program_brand,
+            format!("{}: unknown option", option.to_string_lossy()),
+        );
+        return 1;
+    }
     let long_flags = parse_server_long_flags(effective_slice);
 
     let (flag_string, positional_args) = parse_server_flag_string_and_args(effective_slice);
@@ -871,7 +881,7 @@ fn collect_keep_dirlink_targets(root: &std::path::Path, out: &mut Vec<std::path:
     }
 }
 
-/// Applies `--fake-super` / `--no-fake-super` to the server config.
+/// Applies `--fake-super` to the server config.
 ///
 /// upstream: options.c:672 `{"fake-super", 0, POPT_ARG_VAL, &am_root, -1, 0,
 /// 0}` - the option sets `am_root = -1` on whichever side was given it and is

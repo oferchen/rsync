@@ -5,7 +5,10 @@ use super::daemon::{
     daemon_mode_arguments, server_daemon_arguments, server_daemon_mode_requested,
     server_mode_requested,
 };
-use super::flags::{detect_secluded_args_flag, is_known_server_long_flag, parse_server_long_flags};
+use super::flags::{
+    detect_secluded_args_flag, is_known_server_long_flag, parse_server_long_flags,
+    refused_server_option,
+};
 use super::parse::{
     parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_protocol,
     parse_server_size_limit, parse_server_stop_after, parse_server_stop_at,
@@ -3128,17 +3131,6 @@ fn fake_super_reaches_the_server_config() {
     assert_eq!(flags.fake_super, None);
     super::run::apply_fake_super(&mut untouched, flags.fake_super);
     assert!(untouched.fake_super);
-
-    // Explicit negation clears it (oc's own `--no-fake-super`, reachable as
-    // `-M--no-fake-super`; upstream's table has `no-super` but no
-    // `no-fake-super`).
-    let flags = parse_server_long_flags(&[
-        OsString::from("--no-fake-super"),
-        OsString::from("--server"),
-    ]);
-    assert_eq!(flags.fake_super, Some(false));
-    super::run::apply_fake_super(&mut untouched, flags.fake_super);
-    assert!(!untouched.fake_super);
 }
 
 /// The allow-list and the value capture are two different functions; a flag
@@ -3146,7 +3138,30 @@ fn fake_super_reaches_the_server_config() {
 #[test]
 fn fake_super_is_a_known_server_long_flag() {
     assert!(is_known_server_long_flag("--fake-super"));
-    assert!(is_known_server_long_flag("--no-fake-super"));
+}
+
+/// upstream: options.c:670-672 has no `no-fake-super` entry, so popt refuses
+/// it anywhere in the server argv; a path after `--` is never an option.
+#[test]
+fn no_fake_super_is_refused_as_an_unknown_server_option() {
+    let args = [
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxC"),
+        OsString::from("--no-fake-super"),
+        OsString::from("."),
+        OsString::from("dst/"),
+    ];
+    let refused = refused_server_option(&args);
+    assert_eq!(refused, Some(&OsString::from("--no-fake-super")));
+    assert!(!is_known_server_long_flag("--no-fake-super"));
+
+    let args = [
+        OsString::from("--server"),
+        OsString::from("-logDtpre.iLsfxC"),
+        OsString::from("--"),
+        OsString::from("--no-fake-super"),
+    ];
+    assert_eq!(refused_server_option(&args), None);
 }
 
 /// The client's forwarded `--timeout=N` becomes this server process's

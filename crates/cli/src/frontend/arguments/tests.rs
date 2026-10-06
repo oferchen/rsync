@@ -3102,10 +3102,14 @@ mod backup_tests {
         assert!(!parsed.backup);
     }
 
+    /// upstream: options.c has no `no-b` entry, only `no-backup`. The parser
+    /// leaves an unknown option among the operands for `extract_operands` to
+    /// refuse, so `-b` must survive.
     #[test]
-    fn no_b_alias() {
+    fn no_b_is_not_an_alias() {
         let parsed = parse_test_args(["-b", "--no-b", "src/", "dst/"]).expect("parse");
-        assert!(!parsed.backup);
+        assert!(parsed.backup);
+        assert!(parsed.remainder.contains(&OsString::from("--no-b")));
     }
 }
 
@@ -3140,10 +3144,18 @@ mod alias_tests {
         assert_eq!(parsed.delete_mode, DeleteMode::During);
     }
 
+    /// upstream: options.c spells the option `temp-dir` only. The parser
+    /// leaves the unknown spelling among the operands for `extract_operands`
+    /// to refuse.
     #[test]
-    fn tmp_dir_alias() {
+    fn tmp_dir_is_not_an_alias() {
         let parsed = parse_test_args(["--tmp-dir=/tmp/test", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.temp_dir, Some(std::path::PathBuf::from("/tmp/test")));
+        assert_eq!(parsed.temp_dir, None);
+        assert!(
+            parsed
+                .remainder
+                .contains(&OsString::from("--tmp-dir=/tmp/test"))
+        );
     }
 
     #[test]

@@ -713,7 +713,7 @@ where
         None
     };
     let super_mode = tri_state_flag_positive_first(&matches, "super", "no-super");
-    let fake_super = tri_state_flag_positive_first(&matches, "fake-super", "no-fake-super");
+    let fake_super = matches.get_flag("fake-super").then_some(true);
     let times = archive_aware_flag(&matches, "times", "no-times", archive_index, true);
     let omit_dir_times =
         tri_state_flag_positive_first(&matches, "omit-dir-times", "no-omit-dir-times");
