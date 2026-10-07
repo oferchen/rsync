@@ -182,6 +182,10 @@ pub struct GeneratorContext {
     /// Accumulated deletion statistics received via NDX_DEL_STATS messages.
     /// (upstream: main.c:238-247 `read_del_stats()`)
     pub(crate) delete_stats: DeleteStats,
+    /// Counters from an `NDX_DEL_STATS` read during the goodbye, owed back to
+    /// the client by a server sender before its goodbye `NDX_DONE`
+    /// (upstream: rsync.c:339-341).
+    pub(crate) del_stats_echo: Option<DeleteStats>,
     /// Per-type file-list tallies and `total_size`, accumulated as each entry
     /// is written to the wire (upstream: `send_file_entry()`, flist.c:646-663,
     /// 690-691). Feeds the `--stats` "Number of files" breakdown and the real
@@ -388,6 +392,7 @@ impl GeneratorContext {
             #[cfg(test)]
             lazy_flist_override: None,
             delete_stats: DeleteStats::new(),
+            del_stats_echo: None,
             flist_send_stats: super::FlistSendStats::default(),
             parallel_thresholds: crate::parallel_io::ParallelThresholds::default(),
             curr_dir: None,

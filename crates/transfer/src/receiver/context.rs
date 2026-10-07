@@ -309,15 +309,16 @@ pub struct ReceiverContext {
     /// Deletion stats produced by the receiver's pre-transfer `--delete` sweep.
     ///
     /// Populated by `delete_extraneous_files` from both `run_pipelined` and
-    /// `run_pipelined_incremental`, then consumed by `handle_goodbye` to
-    /// emit `NDX_DEL_STATS` during the goodbye phase. Mirrors upstream's
+    /// `run_pipelined_incremental`, then consumed by `exchange_phase_done` to
+    /// emit `NDX_DEL_STATS` at the phase boundary. Mirrors upstream's
     /// daemon-recv fork where the generator (which performs the delete pass)
     /// is also the side that emits `write_del_stats(f_out)`.
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:2393-2398` - early `write_del_stats` when `delete_mode || force_delete || read_batch`
-    /// - `main.c:225-238` - `write_del_stats()` wire format
+    /// - `generator.c:2867-2871` - early `write_del_stats` when `delete_mode || force_delete || read_batch`
+    /// - `generator.c:2911-2915` - late `write_del_stats` for delete-delay / delete-after
+    /// - `main.c:229-242` - `write_del_stats()` wire format
     pub(in crate::receiver) pending_del_stats: DeleteStats,
     /// Deletions performed to make room for a replacement entry, rather than by
     /// the `--delete` sweep.

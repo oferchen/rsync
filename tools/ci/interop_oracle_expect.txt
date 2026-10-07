@@ -10,15 +10,7 @@ batch-local/3.1.3/local/push/oc-client task-2523 oc local batch replays with dif
 batch-local/3.4.4/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
 batch-local/3.5.0/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
 batch-local/3.5.1/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
-delete/3.1.3/daemon/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
 delete/3.1.3/daemon/push/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
-delete/3.1.3/rsh/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
-delete/3.4.4/daemon/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
-delete/3.4.4/rsh/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
-delete/3.5.0/daemon/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
-delete/3.5.0/rsh/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
-delete/3.5.1/daemon/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
-delete/3.5.1/rsh/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
 hardlinks/2.6.9/daemon/pull/oc-client task-2597 hard-link leader choice differs, so itemize names the other file
 hardlinks/2.6.9/daemon/push/oc-server task-2597 hard-link leader choice differs, so itemize names the other file
 hardlinks/2.6.9/rsh/pull/oc-client task-2597 hard-link leader choice differs, so itemize names the other file

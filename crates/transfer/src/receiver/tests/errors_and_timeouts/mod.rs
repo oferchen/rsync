@@ -7,6 +7,8 @@
 //! the 650-line cap:
 //!
 //! - [`legacy_goodbye_tests`] - protocol 28/29 NDX_DONE goodbye exchange.
+//! - [`del_stats_order_tests`] - where `NDX_DEL_STATS` sits among the
+//!   phase `NDX_DONE`s.
 //! - [`goodbye_partial_cutoff`] - EDG-GOODBYE.4 receiver-side EOF /
 //!   garbage / hung-sender handling for the goodbye phase.
 //! - [`goodbye_timeout_tests`] - EDG-GOODBYE.4 receiver-side timeout +
@@ -25,6 +27,7 @@
 //!   from `daemon_filter_rules`.
 
 mod daemon_filter_tests;
+mod del_stats_order_tests;
 mod finalize_flush_tests;
 mod goodbye_partial_cutoff;
 mod goodbye_timeout_tests;
