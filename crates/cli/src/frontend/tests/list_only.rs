@@ -1606,3 +1606,50 @@ fn list_only_renders_atime_and_crtime_columns() {
         "directory crtime column must be shown: {dir_line:?}"
     );
 }
+/// upstream: log.c:344-345 - every listing row and stats line is an FINFO
+/// write, and rwrite() drops FINFO under `--quiet`, so `-q --list-only` is
+/// silent on stdout even when `--stats` asks for the summary.
+#[test]
+fn quiet_list_only_prints_nothing() {
+    use std::fs;
+    use tempfile::tempdir;
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::write(source_dir.join("file.txt"), b"contents").expect("write source file");
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-q"),
+        OsString::from("--list-only"),
+        OsString::from("--stats"),
+        source_dir.into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
+    assert!(
+        stdout.is_empty(),
+        "-q --list-only must print nothing, got: {:?}",
+        String::from_utf8_lossy(&stdout)
+    );
+}
+/// `--quiet` silences only FINFO: a missing source is still reported on
+/// stderr with the partial-transfer exit code (upstream: log.c:338-342).
+#[test]
+fn quiet_list_only_still_reports_errors() {
+    use tempfile::tempdir;
+    let tmp = tempdir().expect("tempdir");
+    let missing = tmp.path().join("missing");
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-q"),
+        OsString::from("--list-only"),
+        missing.into_os_string(),
+    ]);
+    assert_eq!(code, 23);
+    assert!(stdout.is_empty(), "{}", String::from_utf8_lossy(&stdout));
+    assert!(
+        String::from_utf8_lossy(&stderr).contains("missing"),
+        "error must still name the missing source: {}",
+        String::from_utf8_lossy(&stderr)
+    );
+}

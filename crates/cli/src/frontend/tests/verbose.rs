@@ -1093,6 +1093,37 @@ fn quiet_flag_produces_no_output() {
     assert_eq!(std::fs::read(destination).expect("read"), b"quiet mode");
 }
 
+/// upstream: log.c:344-345 - the `--stats` summary and the `-i` itemize rows
+/// are FINFO/FCLIENT writes, which rwrite() drops under `--quiet`.
+#[test]
+fn quiet_suppresses_stats_and_itemize_output() {
+    use tempfile::tempdir;
+    let tmp = tempdir().expect("tempdir");
+    let source = tmp.path().join("src");
+    let destination = tmp.path().join("dst");
+    std::fs::create_dir(&source).expect("create src");
+    std::fs::write(source.join("f.txt"), b"quiet stats").expect("write source");
+    let mut source_arg = source.into_os_string();
+    source_arg.push("/");
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-rqi"),
+        OsString::from("--stats"),
+        source_arg,
+        destination.clone().into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
+    assert!(
+        stdout.is_empty(),
+        "-q must silence --stats and -i, got: {:?}",
+        String::from_utf8_lossy(&stdout)
+    );
+    assert_eq!(
+        std::fs::read(destination.join("f.txt")).expect("read"),
+        b"quiet stats"
+    );
+}
 /// Verifies that higher verbosity levels never drop output.
 ///
 /// Level 0 emits nothing per upstream; Level 1 begins per-file `%n%L`
