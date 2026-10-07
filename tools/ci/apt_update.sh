@@ -42,26 +42,29 @@
 set -uo pipefail
 
 readonly IGNORED_SUMMARY='Some index files failed to download. They have been ignored, or old ones used instead.'
-readonly GLOBAL_ARCHIVE='http://archive.ubuntu.com/ubuntu/'
 readonly APT_ETC="${APT_ETC:-/etc/apt}"
+readonly MIRROR_TIMEOUT_SECONDS=30
 
-# The runner image points its Ubuntu sources at a geographic mirror
-# (azure.archive.ubuntu.com, directly or via mirror+file:apt-mirrors.txt).
-# On 2026-09-30 that mirror stalled three PR jobs in this step until the 45
-# minute job timeout (#8073, #8074, #8078). Use the global archive instead.
-use_global_archive() {
-    local files=()
-    local f
-    for f in "$APT_ETC/sources.list" "$APT_ETC"/sources.list.d/*.list "$APT_ETC"/sources.list.d/*.sources; do
-        [ -f "$f" ] && files+=("$f")
-    done
-    [ "${#files[@]}" -eq 0 ] && return 0
-    sudo perl -pi -e \
-        's#mirror\+file:\S*apt-mirrors\.txt#'"$GLOBAL_ARCHIVE"'#g; s#https?://[a-z0-9-]+\.archive\.ubuntu\.com/ubuntu/?#'"$GLOBAL_ARCHIVE"'#g' \
-        "${files[@]}"
+# The runner image lists its Ubuntu sources as mirror+file:apt-mirrors.txt: the
+# Azure geographic mirror first, then https://archive.ubuntu.com. apt moves to
+# the next mirror when one fails, so neither host is a single point of failure.
+# Pinning every source to one archive host removed that failover, and on
+# 2026-10-06/07 port 80 of archive.ubuntu.com refused connections often enough
+# to fail 134 CI jobs while jobs on the image's own list fell through to the
+# https archive and passed. The sources are therefore left as shipped.
+#
+# What the failover cannot catch is a mirror that accepts the connection and
+# then stops sending: on 2026-09-30 the Azure mirror stalled three PR jobs in
+# this step until the 45 minute job timeout (#8073, #8074, #8078). apt's own
+# per-connection timeout turns that stall into a failure of that mirror, which
+# the mirror list then routes around. It bounds a wait; it adds no retry.
+bound_mirror_waits() {
+    printf 'Acquire::http::Timeout "%s";\nAcquire::https::Timeout "%s";\n' \
+        "$MIRROR_TIMEOUT_SECONDS" "$MIRROR_TIMEOUT_SECONDS" \
+        | sudo tee "$APT_ETC/apt.conf.d/99-ci-mirror-timeout" >/dev/null
 }
 
-use_global_archive || { printf '::error::could not rewrite the APT sources to %s\n' "$GLOBAL_ARCHIVE"; exit 1; }
+bound_mirror_waits || { printf '::error::could not write the APT mirror timeout to %s\n' "$APT_ETC/apt.conf.d"; exit 1; }
 
 output=$(sudo apt-get update 2>&1) && status=0 || status=$?
 printf '%s\n' "$output"
