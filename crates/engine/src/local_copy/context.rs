@@ -181,6 +181,12 @@ pub(crate) struct CopyContext<'a> {
     /// through the confined held-ancestor-dirfd stack anchored at the transfer
     /// root, so a parent component flipped to a symlink is refused.
     source_anchor: Option<PathBuf>,
+    /// Every anchor walked so far, held by the directory identity it had
+    /// when its operand was reached.
+    ///
+    /// upstream: `rsync-3.5.1/flist.c:2967-2969` remembers each source root
+    /// by dev/ino, and `sender.c:694-704` refuses a root that changed since.
+    source_roots: fast_io::SourceRoots,
     /// The held `--files-from` base the current operand's entries resolve
     /// beneath through the ownership walk; `None` whenever
     /// `filesfrom_owner_walk_active()` does not hold.

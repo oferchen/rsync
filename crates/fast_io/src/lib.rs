@@ -174,6 +174,9 @@ pub mod same_fs;
 pub mod secure_dir;
 /// Batched read-ahead of small sender source files (io_uring on Linux).
 pub mod source_prefetch;
+/// Explicit source roots a non-daemon sender holds by identity, mirroring
+/// upstream `open_sender_source_path()` (`flist.c:345`).
+pub mod source_roots;
 /// Cross-platform temporary file strategy abstraction.
 pub mod temp_file_strategy;
 /// Core traits for file I/O abstraction.
@@ -458,6 +461,7 @@ pub use owner_walk::{
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 #[cfg(unix)]
 pub use secure_dir::{open_trusted_dir, secure_open_dir};
+pub use source_roots::SourceRoots;
 // Non-unix `send_file_to_fd_with_policy` stub silently routes bytes to
 // `io::sink` (data-loss footgun for any future caller). Gate the public
 // re-export on unix; the stub stays available in-crate for symbol parity.

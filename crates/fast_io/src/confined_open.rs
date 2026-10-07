@@ -331,6 +331,23 @@ pub fn read_link_confined(root: &Path, relative: &Path) -> io::Result<std::path:
     imp::read_link_confined(root, relative)
 }
 
+/// Opens `relative` for reading beneath the open directory `anchor`, with
+/// the leaf `O_NOFOLLOW`; the refusals are [`open_source_confined`]'s under
+/// [`LeafPolicy::Nofollow`].
+///
+/// # Upstream Reference
+///
+/// - `rsync-3.5.1/syscall.c:3431-3434` `secure_relative_open_at()`
+#[cfg(unix)]
+pub(crate) fn open_source_beneath(
+    anchor: std::os::fd::BorrowedFd<'_>,
+    relative: &Path,
+    noatime: bool,
+) -> io::Result<File> {
+    validate_relative(relative)?;
+    imp::open_source_beneath(anchor, relative, noatime)
+}
+
 /// Validates and slash-trims `relative` exactly as [`open_source_confined`]
 /// does before its `openat2` arm, returning the path that arm hands the kernel.
 ///
@@ -455,6 +472,34 @@ mod imp {
         let (_, dir, leaf) = split_leaf(relative)?;
         let parent = resolve_parent(root, dir)?;
         readlinkat(parent.root_dirfd(), leaf)
+    }
+
+    /// Open `relative` for reading beneath an already-open `anchor`, with the
+    /// leaf `O_NOFOLLOW`.
+    ///
+    /// The fd-anchored twin of the [`LeafPolicy::Nofollow`] arm of
+    /// [`open_source_confined`]: `openat2` where the kernel has it, otherwise
+    /// the shared walk beneath `anchor`. Nothing here re-resolves the anchor's
+    /// own path, which is what lets a caller pin it by identity first.
+    pub(super) fn open_source_beneath(
+        anchor: std::os::fd::BorrowedFd<'_>,
+        relative: &Path,
+        noatime: bool,
+    ) -> io::Result<File> {
+        let (trimmed, dir, leaf) = split_leaf(relative)?;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if let Some(file) = linux::openat2_confined(anchor, trimmed, LeafPolicy::Nofollow, noatime)?
+        {
+            return Ok(file);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let _ = trimmed;
+        if dir.as_os_str().is_empty() {
+            return open_leaf(anchor, leaf, noatime);
+        }
+        use std::os::fd::AsFd;
+        let parent = crate::dir_sandbox::walk_beneath(anchor, dir)?;
+        open_leaf(parent.as_fd(), leaf, noatime)
     }
 
     /// Resolve `relative`'s parent through the shared confined resolver, then

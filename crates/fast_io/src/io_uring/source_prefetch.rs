@@ -129,6 +129,13 @@ impl Batch {
                 let anchor = crate::secure_dir::open_trusted_dir(root).ok()?;
                 (Some(anchor), true, Some(root))
             }
+            PrefetchOpen::Anchored { anchor, root } => {
+                if !crate::linux_capabilities::openat2_supported() {
+                    return None;
+                }
+                flags |= libc::O_NOFOLLOW;
+                (Some(anchor.try_clone_to_owned().ok()?), true, Some(root))
+            }
         };
         let slots = requests
             .iter()

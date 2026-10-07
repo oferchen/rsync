@@ -2598,7 +2598,7 @@ fn write_delta_with_compression_zlib_dict_sync() {
         Some(&mut encoder),
         true,
         source_file.path(),
-        &crate::generator::open_source::SourceOpen::new(None, false, false),
+        &crate::generator::open_source::SourceOpen::new(None, None, false, false),
     )
     .unwrap();
 
@@ -2675,7 +2675,7 @@ fn write_delta_with_compression_zlibx_no_dict_sync() {
         Some(&mut encoder),
         false,
         source_file.path(),
-        &crate::generator::open_source::SourceOpen::new(None, false, false),
+        &crate::generator::open_source::SourceOpen::new(None, None, false, false),
     )
     .unwrap();
 
@@ -2719,7 +2719,7 @@ fn write_delta_with_compression_plain_fallback() {
         None,
         false,
         Path::new("/nonexistent/path"),
-        &crate::generator::open_source::SourceOpen::new(None, false, false),
+        &crate::generator::open_source::SourceOpen::new(None, None, false, false),
     )
     .unwrap();
 
