@@ -306,7 +306,15 @@ where
                     msgs_to_stderr,
                 );
             }
+            // upstream: log.c:344-345 - rwrite() returns without writing any
+            // FINFO line under --quiet (FCLIENT is rewritten to FINFO first), so
+            // the listing, names, itemize rows and stats never reach the client.
+            // Only the diagnostics interleaved on this stream survive.
+            let quiet = logging::finfo_suppressed();
             if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
+                if quiet {
+                    return pending.finish(writer);
+                }
                 emit_transfer_summary(
                     &summary,
                     verbosity,

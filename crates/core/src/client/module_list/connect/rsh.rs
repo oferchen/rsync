@@ -23,6 +23,7 @@ use super::{DaemonStream, DaemonStreamReader};
 use crate::client::AddressMode;
 use crate::client::IPC_EXIT_CODE;
 use crate::client::error::{ClientError, invalid_argument_error};
+use crate::idn;
 
 /// Parameters for spawning a daemon-connection-over-remote-shell stream.
 pub(crate) struct RshDaemonSpawn<'a> {
@@ -151,7 +152,10 @@ fn build_rsh_command_argv(spec: &RshDaemonSpawn<'_>) -> (OsString, Vec<OsString>
 
     // The login was already rendered above as `-l user`; the operand here is
     // always the bare host (upstream do_cmd() never composes `user@host`).
-    args.push(OsString::from(spec.host));
+    // upstream: main.c:527-536 - a daemon-over-rsh host is the client's to
+    // resolve, so the helper gets its A-label form. A plain `host:path`
+    // transfer never reaches this builder and keeps the name for ssh_config.
+    args.push(OsString::from(idn::host_to_ascii(spec.host).as_ref()));
 
     // upstream: main.c:616-626 - the remote command is
     // `rsync_path --server --daemon .` with no server_options().
@@ -543,6 +547,36 @@ mod tests {
         assert!(
             !rendered.contains(&"backup".to_owned()),
             "the parsed user@host login must be suppressed: {rendered:?}"
+        );
+    }
+
+    /// upstream: main.c:527-536 - a daemon-over-rsh host is the client's to
+    /// resolve, so the helper receives its A-label form (UTS `idn` captures
+    /// the helper's host argument and expects `xn--iku-eqab.example`).
+    #[test]
+    fn idn_host_reaches_the_shell_as_its_a_label() {
+        let shell_args = vec![OsString::from("rsh")];
+        let host = "\u{10c}i\u{10d}ku.example";
+        let spec = RshDaemonSpawn {
+            shell_args: &shell_args,
+            host,
+            username: None,
+            port: 873,
+            rsync_path: None,
+            bind_address: None,
+            jump_hosts: None,
+            connect_timeout: None,
+            address_mode: AddressMode::Default,
+        };
+        let (_, args) = build_rsh_command_argv(&spec);
+        let expected = if idn::SUPPORTED {
+            "xn--iku-eqab.example"
+        } else {
+            host
+        };
+        assert!(
+            args.iter().any(|a| a == expected),
+            "host operand must be {expected:?}: {args:?}"
         );
     }
 }

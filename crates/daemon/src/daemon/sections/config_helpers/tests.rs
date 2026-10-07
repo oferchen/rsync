@@ -493,6 +493,42 @@ mod config_helpers_tests {
         assert!(matches!(pattern, HostPattern::Hostname(_)));
     }
 
+    // WHY: upstream access.c:48-54 folds an IDN `hosts allow`/`hosts deny`
+    // token to its A-label form before matching, because the peer's name
+    // arrives from DNS as ASCII. Without the fold a Unicode entry can never
+    // name its host; without the feature the token is kept as typed.
+    #[test]
+    fn host_pattern_folds_an_idn_token_to_its_a_label() {
+        let addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let fullwidth = HostPattern::parse("\u{ff2c}\u{ff4f}\u{ff23}\u{ff41}\u{ff4c}").unwrap();
+        assert_eq!(fullwidth.matches(addr, "local"), core::idn::SUPPORTED);
+        let u_label = HostPattern::parse("\u{10c}i\u{10d}ku.example").unwrap();
+        assert_eq!(
+            u_label.matches(addr, "xn--iku-eqab.example"),
+            core::idn::SUPPORTED
+        );
+    }
+
+    // WHY: the IDNA mapping folds U+FF0A onto `*` and U+FF0F onto `/`. A
+    // token that gained wildcard or mask syntax its author never typed would
+    // widen the rule, so such a token is kept as typed and matches nothing
+    // (UTS daemon-access-idn: wide-star, wide-star-dom, wide-mask, bad-idn).
+    #[test]
+    fn host_pattern_idn_fold_never_widens_a_token() {
+        let addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        for token in [
+            "\u{ff0a}",
+            "\u{ff0a}.example",
+            "127.0.0.0\u{ff0f}8",
+            "\u{200b}.example",
+        ] {
+            let pattern = HostPattern::parse(token).unwrap();
+            for host in ["localhost", "a.example", "127.0.0.0"] {
+                assert!(!pattern.matches(addr, host), "{token:?} matched {host}");
+            }
+        }
+    }
+
     #[test]
     fn host_pattern_parse_invalid_prefix() {
         let result = HostPattern::parse("192.168.1.1/abc");
@@ -579,12 +615,20 @@ mod config_helpers_tests {
     /// locale (or Unicode case mapping) would rewrite the name the operator
     /// wrote. Non-ASCII letters must survive the parse unchanged and must not
     /// match their lower-case forms, on either the token or the peer side.
+    /// With IDN support the plain token is first folded to its A-label
+    /// (access.c:48-54), so only the wildcard token, which the fold keeps as
+    /// typed, still reaches the ASCII-only comparison.
     #[test]
     fn hostname_pattern_folds_ascii_only() {
         let pattern = HostnamePattern::parse("\u{10c}ESKO.Example").unwrap();
-        assert!(pattern.matches("\u{10c}esko.example"));
-        assert!(pattern.matches("\u{10c}ESKO.EXAMPLE"));
-        assert!(!pattern.matches("\u{10d}esko.example"));
+        if core::idn::SUPPORTED {
+            assert!(pattern.matches("xn--esko-fua.example"));
+            assert!(!pattern.matches("\u{10c}esko.example"));
+        } else {
+            assert!(pattern.matches("\u{10c}esko.example"));
+            assert!(pattern.matches("\u{10c}ESKO.EXAMPLE"));
+            assert!(!pattern.matches("\u{10d}esko.example"));
+        }
 
         let lower = HostnamePattern::parse("\u{e4}*.example").unwrap();
         assert!(lower.matches("\u{e4}x.example"));
