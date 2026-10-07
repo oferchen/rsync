@@ -426,9 +426,23 @@ pub(super) fn apply_timestamps_from_entry(
         None
     };
 
-    // upstream: rsync.c:set_file_attrs() - skips utimensat when timestamps match
+    // upstream: rsync.c:489-503 same_mtime() - ATTRS_ACCURATE_TIME demands an
+    // exact match; otherwise same_time() honours --modify-window, so a
+    // destination already within the window is never re-stamped.
     let needs_utime = atime.is_some()
-        || cached_meta.is_none_or(|meta| FileTime::from_last_modification_time(meta) != mtime);
+        || cached_meta.is_none_or(|meta| {
+            let current = FileTime::from_last_modification_time(meta);
+            if accurate {
+                current != mtime
+            } else {
+                !options.modify_window().same_time(
+                    current.unix_seconds(),
+                    current.nanoseconds(),
+                    entry.mtime(),
+                    entry.mtime_nsec(),
+                )
+            }
+        });
 
     if needs_utime {
         set_entry_times(

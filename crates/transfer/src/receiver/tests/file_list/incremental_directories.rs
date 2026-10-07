@@ -234,7 +234,7 @@ mod create_directory_incremental_tests {
 
     /// Regression (exclude-lsh / upstream generator.c:1368-1383): with
     /// `--existing` (`ignore_non_existing`), a directory that is missing at
-    /// the destination must NOT be created, and it must be marked failed so
+    /// the destination must NOT be created, and it must be marked missing so
     /// its descendants are skipped too. Before the fix, the remote-pull
     /// receiver created every directory from the file list unconditionally,
     /// so `--existing --include='*/' --exclude='*'` re-materialised empty
@@ -271,9 +271,49 @@ mod create_directory_incremental_tests {
             !dest.join("missing").exists(),
             "--existing must not create a missing directory on a remote pull"
         );
-        // The skipped dir is marked failed so descendants are skipped via the
-        // failed-ancestor check (mirrors upstream FLAG_MISSING_DIR).
-        assert_eq!(failed.count(), 1);
+        // Marked missing (upstream FLAG_MISSING_DIR), not failed.
+        assert!(failed.is_missing_or_below("missing"));
+        assert_eq!(failed.count(), 0);
+    }
+    /// An `--existing` skip is not an error, and neither is the skip of its
+    /// subtree. upstream: generator.c:1755-1761 sets `skip_dir` without
+    /// touching `io_error`, and generator.c:1646-1656 drops every entry below
+    /// it silently. A receiver that recorded the skip as a failed mkdir made
+    /// the incremental driver count each descendant in `directories_failed`,
+    /// so an INC_RECURSE pull exited 23 where upstream exits 0.
+    #[test]
+    fn existing_only_skip_of_missing_subtree_is_not_a_failure() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
+        let opts = metadata::MetadataOptions::default();
+        let mut failed = FailedDirectories::new();
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.file_selection.existing_only = true;
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
+        for name in ["new", "new/keep", "new/keep/deeper"] {
+            let entry = FileEntry::new_directory(name.into(), 0o755);
+            let result = ctx
+                .create_directory_incremental(
+                    dest,
+                    &entry,
+                    &opts,
+                    &mut failed,
+                    None,
+                    None,
+                    #[cfg(unix)]
+                    None,
+                )
+                .expect("create_directory_incremental succeeds");
+            assert_eq!(result, None, "{name} is skipped");
+            assert!(failed.is_missing_or_below(name), "{name} is missing");
+            assert!(
+                failed.failed_ancestor(name).is_none(),
+                "{name} must not be recorded as failed"
+            );
+        }
+        assert_eq!(failed.count(), 0);
+        assert!(!dest.join("new").exists());
     }
 
     /// With `--existing`, a directory that already exists at the destination

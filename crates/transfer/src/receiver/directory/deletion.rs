@@ -376,11 +376,54 @@ fn make_entry(path: &Path, is_dir: bool) -> FileEntry {
     }
 }
 
+/// The part of the destination one delete scan covers.
+#[derive(Debug, Clone)]
+pub(in crate::receiver) enum DeleteScope<'a> {
+    /// Every content directory of the whole `file_list`, each checked against
+    /// its children anywhere in the list.
+    ///
+    /// upstream: generator.c:364-397 `do_delete_pass()`.
+    WholeList,
+    /// One destination directory, checked against the names of
+    /// `file_list[range]` - the directory's complete INC_RECURSE sub-list.
+    ///
+    /// upstream: generator.c:2780-2798 runs `delete_in_dir()` for the sub-list's
+    /// parent as the sub-list becomes `cur_flist`, and generator.c:347
+    /// `flist_find_ignore_dirness(cur_flist, fp)` scopes the keep-set probe to
+    /// that one list.
+    Dir {
+        /// Destination-relative directory (`.` for the transfer root).
+        dir: &'a Path,
+        /// Flat `file_list` range of the directory's sub-list.
+        range: std::ops::Range<usize>,
+    },
+}
+
+/// Keep-sets keyed by destination directory, and the sorted directories to
+/// scan.
+type ScanSet = (
+    std::collections::HashMap<PathBuf, std::collections::HashSet<std::ffi::OsString>>,
+    Vec<PathBuf>,
+);
+
+/// The directory an entry is listed under: its parent, or `.` for a
+/// top-level name.
+fn parent_dir(relative: &Path) -> PathBuf {
+    relative
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+}
+
 impl ReceiverContext {
     /// Deletes extraneous destination entries immediately: scan, unlink, and emit
     /// the `deleting`/`*deleting` lines in one pass. Used by `--delete-before`,
     /// `--delete-during`, and `--delete-after` (and a capped/`--one-file-system`
     /// `--delete-delay`, which cannot defer through the serial executor).
+    ///
+    /// A whole-list sweep is the only deletion of its run, so it settles the
+    /// `--max-delete` outcome itself through
+    /// [`finish_delete_limit`](Self::finish_delete_limit).
     ///
     /// Returns `(stats, limit_exceeded, io_error_bits)`.
     pub(in crate::receiver) fn delete_extraneous_files<W: crate::writer::MsgInfoSender + ?Sized>(
@@ -389,14 +432,39 @@ impl ReceiverContext {
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
         writer: &mut W,
     ) -> io::Result<(DeleteStats, bool, i32)> {
-        let (stats, limit_exceeded, io_bits, _victims) = self.run_delete_scan(
+        let (stats, skipped, io_bits, _victims) = self.run_delete_scan(
             dest_dir,
             #[cfg(unix)]
             sandbox,
             writer,
             false,
+            &DeleteScope::WholeList,
+            0,
         )?;
-        Ok((stats, limit_exceeded, io_bits))
+        Ok((
+            stats,
+            skipped > 0,
+            io_bits | self.finish_delete_limit(skipped),
+        ))
+    }
+
+    /// Reports the deletions `--max-delete` refused, once, after the last
+    /// deletion of the run, and returns the `io_error` bits that report sets.
+    ///
+    /// upstream: generator.c:2904-2909 - one `FWARNING` for the run's total
+    /// `skipped_deletes`, then `io_error |= IOERR_DEL_LIMIT` so the run exits
+    /// `RERR_DEL_LIMIT` (25). Nonreg renders at the default verbosity
+    /// (info_verbosity[0]), the same channel the sibling delete notices use.
+    pub(in crate::receiver) fn finish_delete_limit(&self, skipped: u64) -> i32 {
+        if skipped == 0 {
+            return 0;
+        }
+        info_log!(
+            Nonreg,
+            1,
+            "Deletions stopped due to --max-delete limit ({skipped} skipped)"
+        );
+        crate::generator::io_error_flags::IOERR_DEL_LIMIT
     }
 
     /// Decides the `--delete-delay` victim set during the transfer walk WITHOUT
@@ -419,12 +487,14 @@ impl ReceiverContext {
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
         writer: &mut W,
     ) -> io::Result<(Vec<DeletedEntry>, i32)> {
-        let (_stats, _limit, io_bits, victims) = self.run_delete_scan(
+        let (_stats, _skipped, io_bits, victims) = self.run_delete_scan(
             dest_dir,
             #[cfg(unix)]
             sandbox,
             writer,
             true,
+            &DeleteScope::WholeList,
+            0,
         )?;
         Ok((victims, io_bits))
     }
@@ -579,7 +649,17 @@ impl ReceiverContext {
     /// unlink and no emission, returning the ordered victim list for a deferred
     /// `--delete-delay` execution (upstream `remember_delete()`).
     ///
-    /// Returns `(stats, limit_exceeded, io_error_bits, ordered_victims)`.
+    /// `scope` selects the directories scanned and their keep-sets (see
+    /// [`DeleteScope`]). `budget_used` is the number of deletions the run has
+    /// already made, so a `--max-delete` cap spans every scan of the run the
+    /// way upstream's single `stats.deleted_files` counter does
+    /// (`delete.c:217`).
+    ///
+    /// Returns `(stats, skipped, io_error_bits, ordered_victims)`, where
+    /// `skipped` counts the deletions the cap refused (upstream
+    /// `skipped_deletes`). Nothing is reported for them here: the caller
+    /// settles the run's total once through
+    /// [`finish_delete_limit`](Self::finish_delete_limit).
     ///
     /// # Upstream Reference
     ///
@@ -587,15 +667,15 @@ impl ReceiverContext {
     /// - `generator.c:do_delete_pass()` - full tree walk deletion sweep
     /// - `main.c:1385` - `deletion_count >= max_delete` check
     /// - `exclude.c:check_filter()` - is_excluded() before deletion
-    fn run_delete_scan<W: crate::writer::MsgInfoSender + ?Sized>(
+    pub(in crate::receiver) fn run_delete_scan<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
         writer: &mut W,
         collect_only: bool,
-    ) -> io::Result<(DeleteStats, bool, i32, Vec<DeletedEntry>)> {
-        use std::collections::{HashMap, HashSet};
-        use std::path::PathBuf;
+        scope: &DeleteScope<'_>,
+        budget_used: u64,
+    ) -> io::Result<(DeleteStats, u64, i32, Vec<DeletedEntry>)> {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -657,114 +737,10 @@ impl ReceiverContext {
         // parents-with-a-visible-child and the flat global chain decides.
         let needs_perdir_merge = deletion_chain.has_per_dir_merge();
 
-        // Build directory -> children map from the file list.
-        // Use owned OsString keys so the map can be shared across threads.
-        // On macOS, normalize filenames to NFC so that NFD names from read_dir
-        // match NFC names from the sender's file list.
-        let mut dir_children: HashMap<PathBuf, HashSet<std::ffi::OsString>> = HashMap::new();
-
-        // upstream: generator.c:do_delete_pass() (376), recv_generator (1534),
-        // and the inc-recurse delete-during loop (2317) all call delete_in_dir()
-        // for a flist directory ONLY when it carries FLAG_CONTENT_DIR - a
-        // directory the sender actually recursed into. A non-content dir gets
-        // change_local_filter_dir() instead and is never scanned for deletion.
-        // The transfer root "." is a content dir for a recursive transfer but
-        // not for --files-from, where the root is sent as an implied dir
-        // (flist.c:2659 send_file_name(".", ... & ~FLAG_CONTENT_DIR), decoded as
-        // content_dir() == false). Likewise every implied parent dir created
-        // under --files-from / --relative clears FLAG_CONTENT_DIR
-        // (flist.c:2174). Only content dirs are scan targets; scanning an
-        // implied dir would delete a stale destination file inside it that
-        // upstream preserves (DATA-LOSS).
-        //
-        // `content_dirs` records exactly which file-list directories carry the
-        // flag, so `dirs_to_scan` can be filtered to them below. The keep-set
-        // map (`dir_children`) is still built for every parent - it only decides
-        // which children survive a scan, not whether the parent is scanned.
-        let mut root_is_content_dir = false;
-        let mut content_dirs: HashSet<PathBuf> = HashSet::new();
-
-        for entry in &self.file_list {
-            let relative = entry.path();
-            if relative.as_os_str() == "." {
-                if entry.is_dir() && entry.content_dir() {
-                    root_is_content_dir = true;
-                }
-                continue;
-            }
-            let parent = relative.parent().map_or_else(
-                || Path::new(".").to_path_buf(),
-                |p| {
-                    if p.as_os_str().is_empty() {
-                        Path::new(".").to_path_buf()
-                    } else {
-                        p.to_path_buf()
-                    }
-                },
-            );
-            if let Some(name) = relative.file_name() {
-                dir_children
-                    .entry(parent)
-                    .or_default()
-                    .insert(normalize_filename_for_compare(name));
-            }
-
-            // upstream: generator.c:delete_in_dir() runs for EVERY content
-            // directory in the file list, regardless of whether any of that
-            // directory's source children are visible in the flist. A content
-            // directory whose source children are all filter-hidden (e.g.
-            // `--filter='hide,! */'`) must still be scanned so its extraneous
-            // destination entries are removed; keying the scan set solely off
-            // parents-with-a-visible-child leaves those entries undeleted.
-            // Register every content directory as its own scan target with a
-            // (possibly empty) keep-set. An implied (non-content) directory is
-            // NOT a scan target - upstream skips its delete_in_dir() entirely -
-            // so it is deliberately excluded here and filtered out of
-            // `dirs_to_scan` below. Protection of entries that must survive a
-            // scanned dir is the responsibility of the per-candidate
-            // `allows_deletion` check below - which consults the per-directory
-            // merge chain when one is reloaded for the directory, and otherwise
-            // the flat global chain (complete when no per-dir merges exist) -
-            // not of pruning the scan set.
-            if entry.is_dir() && entry.content_dir() {
-                dir_children.entry(relative.to_path_buf()).or_default();
-                content_dirs.insert(relative.to_path_buf());
-            }
-        }
-
-        // upstream: generator.c:do_delete_pass() runs delete_in_dir(".") only
-        // when the received root carries FLAG_CONTENT_DIR. For a recursive
-        // transfer the root is a content dir even when every source entry is
-        // filter-excluded (e.g. `--exclude='*' --delete-excluded`, whose file
-        // list contains only "."), so top-level extraneous entries are still
-        // removed. For --files-from the root is an implied (non-content) dir, so
-        // its stale top-level destination entries are preserved. Register "."
-        // with a (possibly empty) keep-set only in the content-dir case.
-        if root_is_content_dir {
-            dir_children.entry(PathBuf::from(".")).or_default();
-            content_dirs.insert(PathBuf::from("."));
-        }
-
-        // Sort the scan set so directory processing is deterministic across
-        // process runs. `HashMap::keys()` yields hash-randomized order, which
-        // would make the emitted `deleting`/`*deleting` stream vary run to run.
-        // The final emission order is re-derived from the deleted set in
-        // `order_deletions_upstream`; sorting here keeps the scan/unlink work
-        // itself reproducible without serializing it.
-        // Restrict the scan set to content directories. The keep-set map keys
-        // also include implied parent directories inferred from a visible
-        // child (e.g. `subdir` for a `--files-from` entry `subdir/file`), which
-        // upstream never scans for deletion (FLAG_CONTENT_DIR is clear). Scanning
-        // one would delete a stale destination file inside the implied dir that
-        // upstream preserves (DATA-LOSS). Filtering by `content_dirs` keeps the
-        // scan targets exactly the directories whose received entry carries
-        // FLAG_CONTENT_DIR, matching the generator.c:376/1534/2317 gate.
-        let mut dirs_to_scan: Vec<PathBuf> = dir_children
-            .keys()
-            .filter(|dir| content_dirs.contains(*dir))
-            .cloned()
-            .collect();
-        dirs_to_scan.sort_unstable();
+        let (dir_children, dirs_to_scan) = match scope {
+            DeleteScope::WholeList => self.whole_list_scan_set(),
+            DeleteScope::Dir { dir, range } => self.segment_scan_set(dir, range.clone()),
+        };
         logging::debug_log!(
             Del,
             2,
@@ -805,7 +781,7 @@ impl ReceiverContext {
                 !collect_only,
                 "delayed collection never uses the serial executor"
             );
-            let (stats, limit_exceeded, io_bits) = self.delete_extraneous_files_capped(
+            let (stats, skipped, io_bits) = self.delete_extraneous_files_capped(
                 dest_dir,
                 &dir_children,
                 &dirs_to_scan,
@@ -815,10 +791,11 @@ impl ReceiverContext {
                 sandbox,
                 writer,
                 limit,
+                budget_used,
                 #[cfg(unix)]
                 boundary_dev,
             )?;
-            return Ok((stats, limit_exceeded, io_bits, Vec::new()));
+            return Ok((stats, skipped, io_bits, Vec::new()));
         }
 
         // Atomic counter for max_delete enforcement across parallel workers.
@@ -1252,15 +1229,138 @@ impl ReceiverContext {
             }
         }
 
-        // Limit is exceeded when we had candidates beyond the allowed count.
-        let total_deletions = u64::from(combined.files)
-            + u64::from(combined.dirs)
-            + u64::from(combined.symlinks)
-            + u64::from(combined.devices)
-            + u64::from(combined.specials);
-        let limit_exceeded = max_delete.is_some_and(|limit| total_deletions >= limit);
+        // Only the serial executor above enforces a cap, so nothing is skipped
+        // on this path.
+        Ok((combined, 0, io_err_bits, all_deleted))
+    }
 
-        Ok((combined, limit_exceeded, io_err_bits, all_deleted))
+    /// Scan set of a whole-list sweep: every content directory in `file_list`,
+    /// each keyed to the names listed under it anywhere in the list.
+    fn whole_list_scan_set(&self) -> ScanSet {
+        use std::collections::{HashMap, HashSet};
+        use std::ffi::OsString;
+
+        // Build directory -> children map from the file list.
+        // Use owned OsString keys so the map can be shared across threads.
+        // On macOS, normalize filenames to NFC so that NFD names from read_dir
+        // match NFC names from the sender's file list.
+        let mut dir_children: HashMap<PathBuf, HashSet<OsString>> = HashMap::new();
+
+        // upstream: generator.c:do_delete_pass() (376), recv_generator (1534),
+        // and the inc-recurse delete-during loop (2317) all call delete_in_dir()
+        // for a flist directory ONLY when it carries FLAG_CONTENT_DIR - a
+        // directory the sender actually recursed into. A non-content dir gets
+        // change_local_filter_dir() instead and is never scanned for deletion.
+        // The transfer root "." is a content dir for a recursive transfer but
+        // not for --files-from, where the root is sent as an implied dir
+        // (flist.c:2659 send_file_name(".", ... & ~FLAG_CONTENT_DIR), decoded as
+        // content_dir() == false). Likewise every implied parent dir created
+        // under --files-from / --relative clears FLAG_CONTENT_DIR
+        // (flist.c:2174). Only content dirs are scan targets; scanning an
+        // implied dir would delete a stale destination file inside it that
+        // upstream preserves (DATA-LOSS).
+        //
+        // `content_dirs` records exactly which file-list directories carry the
+        // flag, so `dirs_to_scan` can be filtered to them below. The keep-set
+        // map (`dir_children`) is still built for every parent - it only decides
+        // which children survive a scan, not whether the parent is scanned.
+        let mut root_is_content_dir = false;
+        let mut content_dirs: HashSet<PathBuf> = HashSet::new();
+
+        for entry in &self.file_list {
+            let relative = entry.path();
+            if relative.as_os_str() == "." {
+                if entry.is_dir() && entry.content_dir() {
+                    root_is_content_dir = true;
+                }
+                continue;
+            }
+            let parent = parent_dir(relative);
+            if let Some(name) = relative.file_name() {
+                dir_children
+                    .entry(parent)
+                    .or_default()
+                    .insert(normalize_filename_for_compare(name));
+            }
+
+            // upstream: generator.c:delete_in_dir() runs for EVERY content
+            // directory in the file list, regardless of whether any of that
+            // directory's source children are visible in the flist. A content
+            // directory whose source children are all filter-hidden (e.g.
+            // `--filter='hide,! */'`) must still be scanned so its extraneous
+            // destination entries are removed; keying the scan set solely off
+            // parents-with-a-visible-child leaves those entries undeleted.
+            // Register every content directory as its own scan target with a
+            // (possibly empty) keep-set. An implied (non-content) directory is
+            // NOT a scan target - upstream skips its delete_in_dir() entirely -
+            // so it is deliberately excluded here and filtered out of
+            // `dirs_to_scan` below. Protection of entries that must survive a
+            // scanned dir is the responsibility of the per-candidate
+            // `allows_deletion` check below - which consults the per-directory
+            // merge chain when one is reloaded for the directory, and otherwise
+            // the flat global chain (complete when no per-dir merges exist) -
+            // not of pruning the scan set.
+            if entry.is_dir() && entry.content_dir() {
+                dir_children.entry(relative.to_path_buf()).or_default();
+                content_dirs.insert(relative.to_path_buf());
+            }
+        }
+
+        // upstream: generator.c:do_delete_pass() runs delete_in_dir(".") only
+        // when the received root carries FLAG_CONTENT_DIR. For a recursive
+        // transfer the root is a content dir even when every source entry is
+        // filter-excluded (e.g. `--exclude='*' --delete-excluded`, whose file
+        // list contains only "."), so top-level extraneous entries are still
+        // removed. For --files-from the root is an implied (non-content) dir, so
+        // its stale top-level destination entries are preserved. Register "."
+        // with a (possibly empty) keep-set only in the content-dir case.
+        if root_is_content_dir {
+            dir_children.entry(PathBuf::from(".")).or_default();
+            content_dirs.insert(PathBuf::from("."));
+        }
+
+        // Sort the scan set so directory processing is deterministic across
+        // process runs. `HashMap::keys()` yields hash-randomized order, which
+        // would make the emitted `deleting`/`*deleting` stream vary run to run.
+        // The final emission order is re-derived from the deleted set in
+        // `order_deletions_upstream`; sorting here keeps the scan/unlink work
+        // itself reproducible without serializing it.
+        // Restrict the scan set to content directories. The keep-set map keys
+        // also include implied parent directories inferred from a visible
+        // child (e.g. `subdir` for a `--files-from` entry `subdir/file`), which
+        // upstream never scans for deletion (FLAG_CONTENT_DIR is clear). Scanning
+        // one would delete a stale destination file inside the implied dir that
+        // upstream preserves (DATA-LOSS). Filtering by `content_dirs` keeps the
+        // scan targets exactly the directories whose received entry carries
+        // FLAG_CONTENT_DIR, matching the generator.c:376/1534/2317 gate.
+        let mut dirs_to_scan: Vec<PathBuf> = dir_children
+            .keys()
+            .filter(|dir| content_dirs.contains(*dir))
+            .cloned()
+            .collect();
+        dirs_to_scan.sort_unstable();
+        (dir_children, dirs_to_scan)
+    }
+
+    /// Scan set of one INC_RECURSE sub-list: the single directory `dir`, keyed
+    /// to the names `file_list[range]` lists under it.
+    ///
+    /// The caller has already applied upstream's `FLAG_CONTENT_DIR` gate to
+    /// `dir` (generator.c:2792), so it is scanned unconditionally. Only
+    /// entries whose parent is `dir` join the keep-set because upstream's
+    /// probe compares full names (generator.c:347 `flist_find_ignore_dirness`
+    /// -> `f_name_cmp`), so a same-named entry of another directory never
+    /// protects a victim here.
+    fn segment_scan_set(&self, dir: &Path, range: std::ops::Range<usize>) -> ScanSet {
+        let keep = self.file_list[range]
+            .iter()
+            .map(FileEntry::path)
+            .filter(|relative| relative.as_os_str() != "." && parent_dir(relative) == dir)
+            .filter_map(|relative| relative.file_name())
+            .map(normalize_filename_for_compare)
+            .collect();
+        let dir = dir.to_path_buf();
+        (std::iter::once((dir.clone(), keep)).collect(), vec![dir])
     }
 
     /// Serial, leaf-granular deletion path used when `--max-delete` is set.
@@ -1291,8 +1391,9 @@ impl ReceiverContext {
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
         writer: &mut W,
         limit: u64,
+        budget_used: u64,
         #[cfg(unix)] boundary_dev: Option<u64>,
-    ) -> io::Result<(DeleteStats, bool, i32)> {
+    ) -> io::Result<(DeleteStats, u64, i32)> {
         let mut state = CappedDeleteState {
             dest_dir,
             #[cfg(unix)]
@@ -1300,7 +1401,7 @@ impl ReceiverContext {
             #[cfg(unix)]
             boundary_dev,
             limit,
-            deleted: 0,
+            deleted: budget_used,
             skipped: 0,
             combined: DeleteStats::new(),
             io_err_bits: 0,
@@ -1415,22 +1516,10 @@ impl ReceiverContext {
         let CappedDeleteState {
             combined,
             skipped,
-            mut io_err_bits,
+            io_err_bits,
             ..
         } = state;
-        if skipped > 0 {
-            // upstream: generator.c:2430-2434 - one warning after the pass, then
-            // `io_error |= IOERR_DEL_LIMIT` so the run exits RERR_DEL_LIMIT (25).
-            // Nonreg renders at the default verbosity (info_verbosity[0]), the
-            // same channel the sibling delete notices use.
-            info_log!(
-                Nonreg,
-                1,
-                "Deletions stopped due to --max-delete limit ({skipped} skipped)"
-            );
-            io_err_bits |= crate::generator::io_error_flags::IOERR_DEL_LIMIT;
-        }
-        Ok((combined, skipped > 0, io_err_bits))
+        Ok((combined, skipped, io_err_bits))
     }
 
     /// The receiver's complete deletion tally: the `--delete` sweep plus the
