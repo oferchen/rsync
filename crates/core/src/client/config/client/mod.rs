@@ -10,9 +10,9 @@ use engine::SkipCompressList;
 
 use super::builder::ClientConfigBuilder;
 use super::{
-    AddressMode, BandwidthLimit, BindAddress, CompressionSetting, DeleteMode, FilesFromSource,
-    FilterRuleSpec, IconvSetting, ReferenceDirectory, StrongChecksumChoice, TcpFastOpenMode,
-    TransferTimeout,
+    AddressMode, BandwidthLimit, BindAddress, CompressRequest, CompressionSetting, DeleteMode,
+    FilesFromSource, FilterRuleSpec, IconvSetting, ReferenceDirectory, StrongChecksumChoice,
+    TcpFastOpenMode, TransferTimeout,
 };
 
 /// Configuration describing the requested client operation.
@@ -148,6 +148,9 @@ pub struct ClientConfig {
     /// it. `None` means the algorithm was the negotiated/default choice, in
     /// which case the summary derives the name from the algorithm.
     pub(super) compress_choice_name: Option<String>,
+    /// Upstream's option-parse compression state, set by the CLI. `None`
+    /// derives it from the fields above (programmatic configurations).
+    pub(super) compress_request: Option<CompressRequest>,
     pub(super) compression_level: Option<CompressionLevel>,
     pub(super) compression_setting: CompressionSetting,
     /// Worker thread count requested via `--compress-threads=N` (zstd's
@@ -434,6 +437,7 @@ impl Default for ClientConfig {
             compression_algorithm: CompressionAlgorithm::default_algorithm(),
             explicit_compress_choice: false,
             compress_choice_name: None,
+            compress_request: None,
             compression_level: None,
             compression_setting: CompressionSetting::default(),
             compression_threads: None,
