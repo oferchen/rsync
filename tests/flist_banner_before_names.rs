@@ -23,7 +23,7 @@
 //! push the per-file rows stream to stdout live during the transfer, which
 //! printed every name BEFORE the banner. The fix emits the banner at
 //! file-list-send time from the client-side sender
-//! (`generator/transfer/orchestrator.rs::announce_incremental_flist`), the
+//! (`generator/transfer/orchestrator.rs::flist_banner`), the
 //! send-side twin of the receiver's early `receiving incremental file list`
 //! banner.
 //!
@@ -45,7 +45,13 @@ use std::time::{Duration, Instant};
 
 const RUN_TIMEOUT: Duration = Duration::from_secs(120);
 const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(30);
-const BANNER: &str = "sending incremental file list";
+/// The banner a local copy prints: its receiving half grants INC_RECURSE.
+const INCREMENTAL_BANNER: &str = "sending incremental file list";
+/// The banner an oc-to-oc ssh or daemon push prints: oc's server receiver does
+/// not grant CF_INC_RECURSE (`compute_allow_inc_recurse` requires the sender
+/// role), so the client takes the `show_filelist_progress` arm
+/// (flist.c:2761-2762) exactly as an upstream client pushing into oc does.
+const PROGRESS_BANNER: &str = "building file list ... done";
 
 /// Locates the binary under test.
 ///
@@ -138,7 +144,7 @@ fn setup() -> (tempfile::TempDir, PathBuf) {
 /// Asserts the upstream stdout contract for a recursive verbose push: the
 /// banner is the FIRST line, printed exactly once, and the per-file rows
 /// follow it.
-fn assert_banner_first(output: &Output, label: &str) {
+fn assert_banner_first(output: &Output, banner: &str, label: &str) {
     assert!(
         output.status.success(),
         "{label}: transfer failed: {:?}\nstdout:\n{}\nstderr:\n{}",
@@ -150,12 +156,12 @@ fn assert_banner_first(output: &Output, label: &str) {
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(
         lines.first().copied(),
-        Some(BANNER),
-        "{label}: banner must be the first stdout line (upstream flist.c:2484-2488 \
+        Some(banner),
+        "{label}: banner must be the first stdout line (upstream flist.c:2761-2764 \
          prints it before the walk emits any per-file row)\nstdout:\n{stdout}",
     );
     assert_eq!(
-        lines.iter().filter(|line| **line == BANNER).count(),
+        lines.iter().filter(|line| **line == banner).count(),
         1,
         "{label}: banner must print exactly once\nstdout:\n{stdout}",
     );
@@ -293,14 +299,22 @@ fn run_daemon_push(daemon: &Daemon, src: &Path, dry_run: bool) -> Output {
 fn local_verbose_banner_precedes_names() {
     let (temp, src) = setup();
     let dest = temp.path().join("dest");
-    assert_banner_first(&run_local(&src, &dest, false), "local -v");
+    assert_banner_first(
+        &run_local(&src, &dest, false),
+        INCREMENTAL_BANNER,
+        "local -v",
+    );
 }
 
 #[test]
 fn local_dry_run_verbose_banner_precedes_names() {
     let (temp, src) = setup();
     let dest = temp.path().join("dest");
-    assert_banner_first(&run_local(&src, &dest, true), "local -nv");
+    assert_banner_first(
+        &run_local(&src, &dest, true),
+        INCREMENTAL_BANNER,
+        "local -nv",
+    );
 }
 
 #[test]
@@ -309,7 +323,11 @@ fn ssh_push_verbose_banner_precedes_names() {
     let shim = write_rsh_shim(temp.path());
     let dest = temp.path().join("dest");
     fs::create_dir_all(&dest).unwrap();
-    assert_banner_first(&run_ssh_push(&shim, &src, &dest, false), "ssh push -v");
+    assert_banner_first(
+        &run_ssh_push(&shim, &src, &dest, false),
+        PROGRESS_BANNER,
+        "ssh push -v",
+    );
 }
 
 #[test]
@@ -318,7 +336,11 @@ fn ssh_push_dry_run_verbose_banner_precedes_names() {
     let shim = write_rsh_shim(temp.path());
     let dest = temp.path().join("dest");
     fs::create_dir_all(&dest).unwrap();
-    assert_banner_first(&run_ssh_push(&shim, &src, &dest, true), "ssh push -nv");
+    assert_banner_first(
+        &run_ssh_push(&shim, &src, &dest, true),
+        PROGRESS_BANNER,
+        "ssh push -nv",
+    );
 }
 
 #[test]
@@ -327,7 +349,11 @@ fn daemon_push_verbose_banner_precedes_names() {
     let module_root = temp.path().join("mod");
     fs::create_dir_all(&module_root).unwrap();
     let daemon = Daemon::spawn(temp.path(), &module_root);
-    assert_banner_first(&run_daemon_push(&daemon, &src, false), "daemon push -v");
+    assert_banner_first(
+        &run_daemon_push(&daemon, &src, false),
+        PROGRESS_BANNER,
+        "daemon push -v",
+    );
 }
 
 #[test]
@@ -336,5 +362,9 @@ fn daemon_push_dry_run_verbose_banner_precedes_names() {
     let module_root = temp.path().join("mod");
     fs::create_dir_all(&module_root).unwrap();
     let daemon = Daemon::spawn(temp.path(), &module_root);
-    assert_banner_first(&run_daemon_push(&daemon, &src, true), "daemon push -nv");
+    assert_banner_first(
+        &run_daemon_push(&daemon, &src, true),
+        PROGRESS_BANNER,
+        "daemon push -nv",
+    );
 }

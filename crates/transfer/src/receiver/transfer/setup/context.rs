@@ -12,10 +12,12 @@ use std::sync::Arc;
 
 use logging::debug_log;
 use metadata::{ChmodModifiers, MetadataOptions};
+use protocol::CompatibilityFlags;
 use protocol::filters::{FilterRuleWireFormat, read_filter_list};
 
 use filters::FilterChain;
 
+use crate::flist_banner::{FlistBanner, FlistSide, with_client_stream};
 use crate::receiver::{
     PHASE1_CHECKSUM_LENGTH, PipelineSetup, ReceiverContext, dest_arg_has_trailing_slash,
     ensure_dest_root_exists,
@@ -158,24 +160,20 @@ impl ReceiverContext {
         // are decoupled (no select() loop fanning across them).
         self.forward_files_from_to_sender(writer)?;
 
-        // upstream: flist.c:2879-2882 recv_file_list() - the first list arrival
-        // prints `receiving incremental file list` on the client's own output.
-        // Write it DIRECTLY to the client stream here instead of through the
-        // deferred `info_log!` event buffer: that buffer is only drained by the
-        // CLI's post-run flush_diagnostics, after the per-file names, itemize
-        // rows, and the summary stats have already gone straight to stdout, so a
+        // upstream: flist.c:3119-3122 recv_file_list() - the first list arrival
+        // prints the file-list banner on the client's own output. Write it
+        // DIRECTLY to the client stream here instead of through the deferred
+        // `info_log!` event buffer: that buffer is only drained by the CLI's
+        // post-run flush_diagnostics, after the per-file names, itemize rows,
+        // and the summary stats have already gone straight to stdout, so a
         // buffered banner printed dead last. The per-file names take this same
         // direct stdout path (itemize.rs `emit_name_line`), so matching it keeps
         // the banner ahead of them.
-        if self.should_announce_incremental_flist() {
-            use std::io::Write as _;
-            let banner: &[u8] = b"receiving incremental file list\n";
-            if self.config.flags.msgs_to_stderr {
-                std::io::stderr().write_all(banner)?;
-            } else {
-                std::io::stdout().write_all(banner)?;
-            }
-        }
+        let flist_banner = self.flist_banner();
+        let msgs_to_stderr = self.config.flags.msgs_to_stderr;
+        with_client_stream(msgs_to_stderr, |out| {
+            flist_banner.start(FlistSide::Receiver, out)
+        })?;
 
         // INC_RECURSE sub-list segments are no longer drained here. The whole
         // list arrives in `receive_file_list` for the non-INC_RECURSE case (it
@@ -184,6 +182,11 @@ impl ReceiverContext {
         // `ensure_all_segments_loaded`), mirroring upstream's generator which
         // fetches sub-lists on demand rather than up front (generator.c:2299).
         let file_count = self.receive_file_list(&mut reader)?;
+        // upstream: flist.c:3254-3255 - finish_filelist_progress() once the
+        // whole list has arrived.
+        with_client_stream(msgs_to_stderr, |out| {
+            flist_banner.finish(FlistSide::Receiver, file_count, out)
+        })?;
 
         let (file_count, setup) = self.build_pipeline_setup(file_count)?;
 
@@ -319,21 +322,19 @@ impl ReceiverContext {
         self.emit_info_line(writer, &format!("created directory {trimmed}\n"))
     }
 
-    /// Whether this receiver prints the `receiving incremental file list` banner
-    /// on its own client-visible output.
-    ///
-    /// Mirrors upstream `flist.c:2846-2847`: the banner fires only for a
-    /// client-side receiver (`!am_server` -> `client_mode`), under incremental
-    /// recursion - which upstream disables when `!recurse` (compat.c:172-173), so a
-    /// non-recursive single-file `-v` prints nothing - and when the FLIST info
-    /// category is at level >= 1, so `--info=flist0` suppresses it even at `-v`.
-    /// This is the receive-side twin of the sender's `sending incremental file
-    /// list` gate (`recursive() && INFO_GTE(FLIST, 1)`) in
-    /// `cli::frontend::execution::drive::summary`.
-    pub(in crate::receiver) fn should_announce_incremental_flist(&self) -> bool {
-        self.config.connection.client_mode
-            && self.config.flags.recursive
-            && logging::info_gte(logging::InfoFlag::Flist, 1)
+    /// The file-list banner this receiver prints on its own client-visible
+    /// output: upstream's choice in `recv_file_list()` (flist.c:3119-3122)
+    /// between `receiving file list ... done` and `receiving incremental file
+    /// list`, keyed on the negotiated `CF_INC_RECURSE` bit rather than on
+    /// `--recursive`.
+    pub(in crate::receiver) fn flist_banner(&self) -> FlistBanner {
+        let flags = &self.config.flags;
+        FlistBanner::select(
+            self.config.connection.client_mode,
+            self.compat_flags
+                .is_some_and(|f| f.contains(CompatibilityFlags::INC_RECURSE)),
+            flags.recursive || flags.dirs || flags.list_only,
+        )
     }
 
     /// Builds the [`PipelineSetup`] from the received file list.

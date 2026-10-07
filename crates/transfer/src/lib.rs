@@ -128,6 +128,7 @@ pub mod delta_config;
 pub mod delta_transfer;
 pub mod error;
 pub mod flags;
+mod flist_banner;
 pub(crate) mod full_fname;
 pub mod generator;
 pub mod handshake;
