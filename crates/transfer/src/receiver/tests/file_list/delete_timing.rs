@@ -313,6 +313,8 @@ fn delete_pass_skipped_when_sender_flist_had_io_error() {
         config.deletion.delete_after = false;
         config.deletion.late_delete = false;
         config.args = vec![OsString::from(dest.to_str().unwrap())];
+        // A client prints the notice locally; a server frames it as MSG_INFO.
+        config.connection.client_mode = true;
         config
     };
 

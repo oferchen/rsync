@@ -62,3 +62,57 @@ fn itemized_delete_pull_from_an_oc_sender_completes_and_prints_locally() {
         assert!(root.join("dst/d/keep").exists(), "{mode}: keep arrives");
     }
 }
+
+/// The pulling client prints its rows in generator order: a sweep that runs
+/// before the generate loop (`--delete-before`, `--delete-during` without
+/// INC_RECURSE) itemizes the deletion first, while the late sweep of
+/// `--delete-after` and `--delete-delay` follows every transfer row
+/// (upstream: generator.c:2899-2902). Verified against rsync 3.5.1 on the same
+/// fixture for all four modes.
+#[test]
+fn itemized_delete_pull_rows_follow_the_generator_order() {
+    require_binaries!("oc-rsync", LSH_STUB_BIN);
+    const DELETED: &str = "*deleting   d/extra\n";
+    const SENT: &str = ">f+++++++++ d/keep\n";
+    for (mode, deletion_first) in [
+        ("--delete-before", true),
+        ("--delete-during", true),
+        ("--delete-after", false),
+        ("--delete-delay", false),
+    ] {
+        let tmp = create_tempdir();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("src/d")).expect("mkdir src");
+        fs::create_dir_all(root.join("dst/d")).expect("mkdir dst");
+        fs::write(root.join("src/d/keep"), b"keep\n").expect("write keep");
+        fs::write(root.join("dst/d/extra"), b"stale\n").expect("write extra");
+
+        let stub = LshRunnerStub::locate().expect("lsh-stub located");
+        let out = OcRsyncCliRunner::new()
+            .arg("-ri")
+            .arg(mode)
+            .arg(format!("--rsh={}", stub.path().display()))
+            .arg(format!(
+                "--rsync-path={}",
+                test_support::oc_rsync_bin().display()
+            ))
+            .arg(format!("localhost:{}/", root.join("src").display()))
+            .arg(format!("{}/", root.join("dst").display()))
+            .timeout(Duration::from_secs(20))
+            .run()
+            .unwrap_or_else(|e| panic!("{mode}: pull did not finish: {e}"));
+        out.assert_exit(0);
+        let stdout = out.stdout_str();
+        let deleted = stdout
+            .find(DELETED)
+            .unwrap_or_else(|| panic!("{mode}: no deletion row: {stdout}"));
+        let sent = stdout
+            .find(SENT)
+            .unwrap_or_else(|| panic!("{mode}: no transfer row: {stdout}"));
+        assert_eq!(
+            deleted < sent,
+            deletion_first,
+            "{mode}: rows out of generator order: {stdout}"
+        );
+    }
+}
