@@ -85,6 +85,7 @@ class AptUpdateTests(unittest.TestCase):
         self.bin.mkdir()
         self.apt_etc = self.tmp / "etc-apt"
         (self.apt_etc / "sources.list.d").mkdir(parents=True)
+        (self.apt_etc / "apt.conf.d").mkdir()
 
     def tearDown(self) -> None:
         self._tempdir.cleanup()
@@ -183,54 +184,64 @@ class AptUpdateTests(unittest.TestCase):
         path.write_text(text)
         return path
 
-    def test_mirror_list_source_is_pointed_at_the_global_archive(self) -> None:
-        source = self._write_source(
-            "ubuntu.sources",
+    def test_mirror_list_source_keeps_its_failover(self) -> None:
+        # The mirror list is what lets apt fall through from a failing mirror
+        # to the next one; collapsing it onto one host made that host a single
+        # point of failure for every apt step in CI.
+        text = (
             "Types: deb\n"
             "URIs: mirror+file:/etc/apt/apt-mirrors.txt\n"
-            "Suites: noble noble-updates noble-backports\n",
+            "Suites: noble noble-updates noble-backports\n"
         )
-        self._stub_sudo(CLEAN, 0)
-
-        result = self._run()
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("URIs: http://archive.ubuntu.com/ubuntu/\n", source.read_text())
-        self.assertNotIn("apt-mirrors", source.read_text())
-
-    def test_geographic_mirror_host_is_pointed_at_the_global_archive(self) -> None:
-        listed = self.apt_etc / "sources.list"
-        listed.write_text(
-            "deb http://azure.archive.ubuntu.com/ubuntu/ jammy main\n"
-            "deb https://us.archive.ubuntu.com/ubuntu jammy-updates main\n"
-        )
-        self._stub_sudo(CLEAN, 0)
-
-        result = self._run()
-
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(
-            listed.read_text(),
-            "deb http://archive.ubuntu.com/ubuntu/ jammy main\n"
-            "deb http://archive.ubuntu.com/ubuntu/ jammy-updates main\n",
-        )
-
-    def test_global_and_third_party_sources_are_left_alone(self) -> None:
-        # Only a geographic Ubuntu mirror is rewritten; the global archive,
-        # the security archive and unrelated repositories keep their URIs.
-        text = (
-            "deb http://archive.ubuntu.com/ubuntu/ noble main\n"
-            "deb http://security.ubuntu.com/ubuntu noble-security main\n"
-            "deb http://ports.ubuntu.com/ubuntu-ports noble main\n"
-            "deb https://dl.google.com/linux/chrome/deb/ stable main\n"
-        )
-        source = self._write_source("mixed.list", text)
+        source = self._write_source("ubuntu.sources", text)
         self._stub_sudo(CLEAN, 0)
 
         result = self._run()
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(source.read_text(), text)
+
+    def test_geographic_mirror_host_is_left_alone(self) -> None:
+        listed = self.apt_etc / "sources.list"
+        text = (
+            "deb http://azure.archive.ubuntu.com/ubuntu/ jammy main\n"
+            "deb https://dl.google.com/linux/chrome/deb/ stable main\n"
+        )
+        listed.write_text(text)
+        self._stub_sudo(CLEAN, 0)
+
+        result = self._run()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(listed.read_text(), text)
+
+    def test_every_mirror_wait_is_bounded(self) -> None:
+        # A mirror that accepts the connection and then stalls must fail that
+        # mirror instead of holding the job until its 45 minute timeout. Both
+        # schemes need the bound: the image lists an http and an https mirror.
+        self._stub_sudo(CLEAN, 0)
+
+        result = self._run()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        conf = (self.apt_etc / "apt.conf.d" / "99-ci-mirror-timeout").read_text()
+        self.assertEqual(
+            conf,
+            'Acquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n',
+        )
+
+    def test_unwritable_timeout_fails_before_apt_runs(self) -> None:
+        # Running apt-get update without the bound would silently reopen the
+        # unbounded stall, so a failed write must stop the step.
+        (self.apt_etc / "apt.conf.d").rmdir()
+        self._stub_sudo(CLEAN, 0)
+
+        result = self._run()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("could not write the APT mirror timeout", result.stdout)
+        self.assertNotIn("Fetched 126 kB", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
