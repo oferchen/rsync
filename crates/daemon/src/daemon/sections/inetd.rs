@@ -70,11 +70,16 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
         ..
     } = options;
 
-    let log_sink = if let Some(path) = log_file {
-        Some(open_log_sink(&path, brand)?)
-    } else {
-        None
+    let (log_sink, log_fallback) = match log_file {
+        Some(path) => match open_daemon_log_sink(&path, brand) {
+            Ok(sink) => (Some(sink), None),
+            Err(fallback) => (None, Some(fallback)),
+        },
+        None => (None, None),
     };
+    if let Some(fallback) = &log_fallback {
+        fallback.report();
+    }
 
     // Inetd path serves one session in this process and exits, but the
     // hardening is still cheap insurance: PR_SET_NO_NEW_PRIVS prevents
