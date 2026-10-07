@@ -50,6 +50,19 @@ pub enum PrefetchOpen<'a> {
         /// Final-component rule.
         leaf: LeafPolicy,
     },
+    /// `openat2(anchor, relative, RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)`
+    /// with the leaf `O_NOFOLLOW`, anchored at an already-validated root
+    /// descriptor instead of re-opening `root` by path.
+    ///
+    /// The batched form of [`crate::SourceRoots::open`]: `root` is only
+    /// stripped from each request path, never resolved.
+    #[cfg(unix)]
+    Anchored {
+        /// The held root directory.
+        anchor: std::os::fd::BorrowedFd<'a>,
+        /// The root's cleaned absolute path.
+        root: &'a Path,
+    },
 }
 
 /// One source to prefetch: its full path and the length the file list recorded.

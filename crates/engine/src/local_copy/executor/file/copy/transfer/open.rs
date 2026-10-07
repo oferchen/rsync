@@ -71,6 +71,13 @@ impl CopyContext<'_> {
             apply_macos_read_hint(&file);
             return Ok(file);
         }
+        if !self.follow_source_symlinks()
+            && let Some(opened) = self.open_beneath_pinned_anchor(path)
+        {
+            let file = opened?;
+            apply_macos_read_hint(&file);
+            return Ok(file);
+        }
         open_source_file(
             path,
             self.open_noatime_enabled(),
@@ -328,6 +335,76 @@ mod tests {
         let _ = error;
     }
 
+    /// Builds `base/src/f` and `base/outside/f`, and a context whose anchor
+    /// `src` is recorded by identity.
+    #[cfg(unix)]
+    fn pinned_anchor_fixture(base: &Path) -> (CopyContext<'static>, std::path::PathBuf) {
+        use crate::local_copy::{LocalCopyExecution, LocalCopyOptions};
+        let root = base.join("src");
+        let outside = base.join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(root.join("f"), b"in-tree").unwrap();
+        std::fs::write(outside.join("f"), b"do-not-leak").unwrap();
+        let mut context = CopyContext::new(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default(),
+            None,
+            base.join("dst"),
+        );
+        context.set_source_anchor(Some(root.clone()));
+        (context, root)
+    }
+    /// Swaps `root` for a symlink to the sibling `outside` directory.
+    #[cfg(unix)]
+    fn swap_root_for_outside_link(base: &Path, root: &Path) {
+        std::fs::rename(root, base.join("moved")).unwrap();
+        std::os::unix::fs::symlink(base.join("outside"), root).unwrap();
+    }
+    /// An operand anchor replaced after it was recorded must be refused with
+    /// `ELOOP`, not followed to wherever the replacement points.
+    ///
+    /// WHY: confinement beneath a root that is re-opened by path only moves
+    /// the race up one level - swap the root itself and every confined open
+    /// lands outside it. upstream: `rsync-3.5.1/flist.c:2967-2969` records each
+    /// source root by dev/ino and `sender.c:694-704` refuses a mismatch.
+    #[cfg(unix)]
+    #[test]
+    fn a_replaced_anchor_is_refused_with_eloop() {
+        let base = tempfile::tempdir().unwrap();
+        let (context, root) = pinned_anchor_fixture(base.path());
+        swap_root_for_outside_link(base.path(), &root);
+        let error = context
+            .open_source_content(&root.join("f"))
+            .expect_err("a replaced anchor must be refused");
+        assert_eq!(error.raw_os_error(), Some(libc::ELOOP));
+    }
+    /// Once held, the anchor keeps naming the directory it was recorded as, so
+    /// a later swap cannot redirect reads outside the tree.
+    ///
+    /// upstream: `rsync-3.5.1/flist.c:345-385` keeps one held root fd and
+    /// reuses it for every open beneath that root.
+    #[cfg(unix)]
+    #[test]
+    fn a_held_anchor_survives_a_later_swap() {
+        let base = tempfile::tempdir().unwrap();
+        let (context, root) = pinned_anchor_fixture(base.path());
+        let mut first = Vec::new();
+        context
+            .open_source_content(&root.join("f"))
+            .expect("an unchanged anchor opens")
+            .read_to_end(&mut first)
+            .unwrap();
+        assert_eq!(first, b"in-tree");
+        swap_root_for_outside_link(base.path(), &root);
+        let mut second = Vec::new();
+        context
+            .open_source_content(&root.join("f"))
+            .expect("the held anchor still opens")
+            .read_to_end(&mut second)
+            .unwrap();
+        assert_eq!(second, b"in-tree");
+    }
     /// A symlink-following mode keeps the legacy unconfined open, so the same
     /// out-of-tree target IS read.
     ///

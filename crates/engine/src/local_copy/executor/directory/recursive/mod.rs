@@ -16,7 +16,7 @@ mod entry;
 use std::cell::Cell;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::super::create_failure::full_fname;
@@ -222,6 +222,14 @@ fn copy_directory_recursive_inner(
     };
 
     let list_start = Instant::now();
+    // upstream: flist.c:2265-2266 - the operand's directory is opened through
+    // `open_sender_source_path()`, whose held root is re-checked against the
+    // identity recorded at flist.c:302-305. A root whose identity changed -
+    // e.g. `dir/symlink/..`, which flist.c:2869 `clean_fname()` collapses to a
+    // different directory than the one stat'd - fails the scan with ELOOP
+    // (flist.c:325-329), reported through the `opendir` arm below.
+    let pinned_root_error = context.pinned_anchor_error(source);
+    let scans_operand_root = relative.is_none() && context.source_anchor() == Some(source);
     let (readdir_buf, scan_root) = context.readdir_buf_with_confined_anchor();
     // Seeded here rather than at the entry loop so a failed enumeration can
     // carry its error to the same end-of-frame re-raise the per-entry failures
@@ -246,7 +254,11 @@ fn copy_directory_recursive_inner(
     // directory's own permissions/ACLs unapplied and a stale destination ACL
     // entry unrevoked. Continue with no children; the tail re-raises.
     let mut enumeration_failed = false;
-    let mut entries = match read_directory_entries_sorted_reuse(source, readdir_buf, scan_root) {
+    let scan = match pinned_root_error {
+        Some(error) => Err(LocalCopyError::io("open directory", source, error)),
+        None => read_directory_entries_sorted_reuse(source, readdir_buf, scan_root),
+    };
+    let mut entries = match scan {
         Ok(entries) => entries,
         Err(error) => {
             if error.is_vanished_error() {
@@ -261,10 +273,12 @@ fn copy_directory_recursive_inner(
                 // upstream: flist.c send_directory() - `opendir %s failed`
                 // names the directory through full_fname(), so a relative
                 // operand is reported prefixed by the working directory.
-                eprintln!(
-                    "rsync: [sender] opendir {} failed: {detail}",
+                let name = if scans_operand_root {
+                    operand_root_fname(source)
+                } else {
                     full_fname(source)
-                );
+                };
+                eprintln!("rsync: [sender] opendir {name} failed: {detail}");
             }
             context.record_io_error();
             first_entry_io_error = Some(error);
@@ -770,6 +784,27 @@ fn copy_directory_recursive_inner(
     }
 
     Ok(true)
+}
+
+/// Names a contents-copy operand's root the way upstream's `opendir` failure
+/// does: the lexically cleaned directory with `/.` appended.
+///
+/// upstream: flist.c:2835-2842 appends `/.` to the operand, flist.c:2869
+/// `clean_fname()` collapses `..` lexically, and flist.c:2374 reports the
+/// buffer through `full_fname()`.
+fn operand_root_fname(path: &Path) -> String {
+    let mut cleaned = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir if cleaned.file_name().is_some() => {
+                cleaned.pop();
+            }
+            other => cleaned.push(other),
+        }
+    }
+    let quoted = full_fname(&cleaned);
+    format!("{}/.\"", &quoted[..quoted.len() - 1])
 }
 
 #[cfg(test)]

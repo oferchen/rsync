@@ -472,6 +472,7 @@ impl GeneratorContext {
                 Some(&scoped),
                 true,
                 operand_has_dotdir_marker(&entry.path),
+                false,
             )? {
                 continue;
             }

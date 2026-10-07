@@ -182,9 +182,7 @@ impl SourcePrefetcher {
             .zip(&paths)
             .map(|(&(_, len), path)| fast_io::PrefetchRequest { path, len })
             .collect();
-        let source_open = ctx.source_open();
-        let (open, noatime) = source_open.prefetch_open();
-        let contents = fast_io::prefetch_sources(open, noatime, &requests);
+        let contents = ctx.source_open().prefetch(&requests);
         self.batches += 1;
         let mut current = None;
         for (&(n, _), data) in batch.iter().zip(contents) {
