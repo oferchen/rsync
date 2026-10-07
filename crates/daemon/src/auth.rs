@@ -61,11 +61,10 @@
 //! use daemon::auth::{ChallengeGenerator, SecretsFile, verify_client_response};
 //! use protocol::AdvertisedDigests;
 //! use std::net::IpAddr;
-//! use std::path::Path;
 //!
 //! # fn example() -> std::io::Result<()> {
-//! // Load secrets file
-//! let secrets = SecretsFile::from_file(Path::new("/etc/rsyncd.secrets"))?;
+//! // Parse the module's secrets file contents
+//! let secrets = SecretsFile::parse("alice:secret123\n")?;
 //!
 //! // Pin one digest for the whole exchange, from the client's greeting list.
 //! let digest = negotiate_server_daemon_digest(AdvertisedDigests::Present("sha512 md5"), 31)
@@ -136,7 +135,6 @@ pub use core::auth::{
 };
 
 use std::collections::HashMap;
-use std::fs;
 use std::io;
 use std::net::IpAddr;
 use std::path::Path;
@@ -231,7 +229,7 @@ impl ChallengeGenerator {
 /// # Security
 ///
 /// On Unix systems, the secrets file must not be other-accessible (mode `& 06`);
-/// group access such as mode 0640 is allowed. Enforced by [`SecretsFile::from_file`].
+/// group access such as mode 0640 is allowed. Enforced by [`SecretsFile::check_permissions`].
 #[derive(Debug, Clone)]
 pub struct SecretsFile {
     entries: HashMap<String, String>,
@@ -294,44 +292,6 @@ impl SecretsFile {
         Ok(Self { entries })
     }
 
-    /// Loads a secrets file from disk and verifies permissions.
-    ///
-    /// # Security
-    ///
-    /// On Unix systems, this function rejects a secrets file that is
-    /// accessible to others (mode `& 06`). Group access is permitted, so
-    /// mode 0640 is accepted. This prevents password disclosure to
-    /// unprivileged users while matching upstream rsync semantics.
-    ///
-    /// On Windows, permission checks are skipped (matching upstream rsync).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The file cannot be read
-    /// - The file has incorrect permissions (Unix only)
-    /// - The file contains invalid entries
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use daemon::auth::SecretsFile;
-    /// use std::path::Path;
-    ///
-    /// # fn example() -> std::io::Result<()> {
-    /// let secrets = SecretsFile::from_file(Path::new("/etc/rsyncd.secrets"))?;
-    /// if let Some(password) = secrets.lookup("alice") {
-    ///     println!("Found password for alice");
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn from_file(path: &Path) -> io::Result<Self> {
-        Self::check_permissions(path)?;
-        let content = fs::read_to_string(path)?;
-        Self::parse(&content)
-    }
-
     /// Looks up the password for a given username.
     ///
     /// # Returns
@@ -367,7 +327,7 @@ impl SecretsFile {
     pub fn check_permissions(path: &Path) -> io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
 
-        let metadata = fs::metadata(path)?;
+        let metadata = std::fs::metadata(path)?;
         let permissions = metadata.permissions();
         let mode = permissions.mode();
 
