@@ -47,6 +47,7 @@ impl ReceiverContext {
         } else {
             1
         };
+        let del_stats_slot = self.del_stats_slot();
 
         if inc_recurse {
             let num_segments = self.ndx_segments.len();
@@ -72,7 +73,10 @@ impl ReceiverContext {
             debug_log!(Recv, 1, "recv_files phase={}", phase);
             debug_log!(Genr, 1, "generate_files phase={}", phase);
 
-            for _phase_step in 2..=max_phase {
+            for phase_step in 2..=max_phase {
+                if del_stats_slot == Some(phase_step) {
+                    self.write_del_stats(ndx_write_codec, writer)?;
+                }
                 ndx_write_codec.write_ndx_done(&mut *writer)?;
                 writer.flush()?;
                 self.read_expected_ndx_done(ndx_read_codec, reader, "phase transition")?;
@@ -84,6 +88,9 @@ impl ReceiverContext {
                 debug_log!(Genr, 1, "generate_files phase={}", phase);
             }
 
+            if del_stats_slot == Some(max_phase + 1) {
+                self.write_del_stats(ndx_write_codec, writer)?;
+            }
             ndx_write_codec.write_ndx_done(&mut *writer)?;
             writer.flush()?;
 
@@ -97,6 +104,9 @@ impl ReceiverContext {
         } else {
             let mut phase: i32 = 0;
             loop {
+                if del_stats_slot == Some(phase + 1) {
+                    self.write_del_stats(ndx_write_codec, writer)?;
+                }
                 ndx_write_codec.write_ndx_done(&mut *writer)?;
                 writer.flush()?;
                 phase += 1;
@@ -199,23 +209,56 @@ impl ReceiverContext {
         NoLazyFlist::new(StreamRole::Receiver, FlistMarkerSink::last_file_ndx(self))
     }
 
+    /// The 1-based phase `NDX_DONE` that `NDX_DEL_STATS` goes out ahead of, or
+    /// `None` when no deletion counters are sent.
+    ///
+    /// upstream: generator.c:2867-2871 sends them right after the phase-1
+    /// `NDX_DONE` when deletions finished early (`EARLY_DELETE_DONE_MSG()`),
+    /// and generator.c:2911-2915 right before the late `NDX_DONE` otherwise.
+    /// Either way they precede the `NDX_DONE` that ends the sender's phase
+    /// loop, so a server sender echoes them from `send_files()`
+    /// (rsync.c:338-341) before its stats. Only an early delete under
+    /// `--delay-updates` (`!EARLY_DELAY_DONE_MSG()`) moves them ahead of the
+    /// second `NDX_DONE` rather than the third. `read_batch`, upstream's third
+    /// term, never reaches a network receiver.
+    fn del_stats_slot(&self) -> Option<i32> {
+        if !self.protocol.supports_extended_goodbye()
+            || !(self.config.flags.delete || self.config.flags.force)
+        {
+            return None;
+        }
+        if self.config.write.delay_updates && !self.config.deletion.late_delete {
+            Some(2)
+        } else {
+            Some(3)
+        }
+    }
+
+    /// Writes `NDX_DEL_STATS` and the five deletion counters.
+    ///
+    /// Our receiver performs the delete pass inline rather than in a forked
+    /// generator, so the counters come from `self.pending_del_stats` plus the
+    /// make-room deletions (upstream: main.c:229-242 `write_del_stats()`).
+    fn write_del_stats<W: Write + ?Sized>(
+        &self,
+        ndx_write_codec: &mut NdxCodecEnum,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        ndx_write_codec.write_ndx(&mut *writer, NDX_DEL_STATS)?;
+        self.effective_del_stats().write_to(writer)
+    }
+
     /// Handles the goodbye handshake at end of transfer.
     ///
-    /// For protocol >= 31, sends `NDX_DEL_STATS` (when `--delete` ran) followed
-    /// by `NDX_DONE`. For extended goodbye (protocol >= 32), additionally reads
-    /// the echo and sends a final `NDX_DONE`.
-    ///
-    /// `NDX_DEL_STATS` emission mirrors upstream's daemon-recv parent process
-    /// (the generator running alongside the receiver child). Our receiver
-    /// performs the delete pass inline rather than forking, so it carries the
-    /// counters in `self.pending_del_stats` and emits them here to keep wire
-    /// parity with upstream.
+    /// Sends `NDX_DONE`. For extended goodbye (protocol >= 31), additionally
+    /// reads the echo and sends a final `NDX_DONE`. `NDX_DEL_STATS` is not
+    /// part of the goodbye: [`Self::exchange_phase_done`] sends it at the
+    /// phase boundary upstream's generator uses.
     ///
     /// # Upstream Reference
     ///
-    /// - `main.c:1125-1150` - daemon-recv parent process runs `generate_files`
-    /// - `generator.c:2410-2415` - early `write_del_stats(f_out)` emission
-    /// - `main.c:225-238` - `write_del_stats()` wire format
+    /// - `main.c:1171-1175` - `do_recv()` parent's final goodbye `NDX_DONE`
+    /// - `main.c:921-945` - `read_final_goodbye()`
     pub(in crate::receiver) fn handle_goodbye<
         R: Read,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
@@ -228,23 +271,6 @@ impl ReceiverContext {
     ) -> io::Result<()> {
         if !self.protocol.supports_goodbye_exchange() {
             return Ok(());
-        }
-
-        // upstream: generator.c:2393-2394 -
-        //   `if (protocol_version >= 31 && EARLY_DELETE_DONE_MSG()) {
-        //       if (delete_mode || force_delete || read_batch)
-        //           write_del_stats(f_out);
-        //   }`
-        // Runs in the daemon-recv parent's `generate_files()`. We always
-        // sweep before the transfer (EARLY case), so the early-emission gate
-        // applies whenever deletion was requested. `force_delete` is the second
-        // term and is now carried on `ParsedServerFlags`; `read_batch` is not,
-        // so it is still the one term we cannot evaluate.
-        if self.protocol.supports_extended_goodbye()
-            && (self.config.flags.delete || self.config.flags.force)
-        {
-            ndx_write_codec.write_ndx(&mut *writer, NDX_DEL_STATS)?;
-            self.effective_del_stats().write_to(&mut *writer)?;
         }
 
         ndx_write_codec.write_ndx_done(&mut *writer)?;
