@@ -411,11 +411,16 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
         ..
     } = options;
 
-    let log_sink = if let Some(path) = log_file {
-        Some(open_log_sink(&path, brand)?)
-    } else {
-        None
+    let (log_sink, log_fallback) = match log_file {
+        Some(path) => match open_daemon_log_sink(&path, brand) {
+            Ok(sink) => (Some(sink), None),
+            Err(fallback) => (None, Some(fallback)),
+        },
+        None => (None, None),
     };
+    if let Some(fallback) = &log_fallback {
+        fallback.report();
+    }
 
     // Apply Linux-only defense-in-depth startup hardenings before serving
     // the remote-shell daemon session. Mirrors the standalone and inetd
@@ -604,11 +609,16 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     #[cfg(unix)]
     mark_daemon_parent();
 
-    let log_sink = if let Some(path) = log_file {
-        Some(open_log_sink(&path, brand)?)
-    } else {
-        None
+    let (log_sink, log_fallback) = match log_file {
+        Some(path) => match open_daemon_log_sink(&path, brand) {
+            Ok(sink) => (Some(sink), None),
+            Err(fallback) => (None, Some(fallback)),
+        },
+        None => (None, None),
     };
+    if let Some(fallback) = &log_fallback {
+        fallback.report();
+    }
 
     apply_startup_hardening(log_sink.as_ref());
 

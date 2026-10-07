@@ -88,10 +88,12 @@ fn serve_connections(
         ..
     } = options;
 
-    let log_sink = if let Some(path) = log_file {
-        Some(open_log_sink(&path, Brand::Oc)?)
-    } else {
-        None
+    let (log_sink, log_fallback) = match log_file {
+        Some(path) => match open_daemon_log_sink(&path, Brand::Oc) {
+            Ok(sink) => (Some(sink), None),
+            Err(fallback) => (None, Some(fallback)),
+        },
+        None => (None, None),
     };
 
     let proxy_policy = ProxyProtocolPolicy::new(proxy_protocol, proxy_protocol_hosts);
@@ -125,6 +127,11 @@ fn serve_connections(
     // Suppress unused-variable warnings on non-Unix.
     #[cfg(not(unix))]
     let _ = (&syslog_facility, &syslog_tag);
+    // upstream: log.c:177-180 - the refusal is reported after `syslog_init()`,
+    // so it lands in syslog with every later line.
+    if let Some(fallback) = &log_fallback {
+        fallback.report();
+    }
 
     let (modules, connection_limiter) = build_module_runtimes_with_lock_file(modules, lock_file)?;
     let modules: Arc<Vec<ModuleRuntime>> = Arc::new(modules);

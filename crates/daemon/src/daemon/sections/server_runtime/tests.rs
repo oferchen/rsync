@@ -693,7 +693,7 @@ fn daemon_socket_options_follow_upstream_names_and_warnings() {
     let log_dir = tempfile::tempdir().expect("log dir");
     let log_path = log_dir.path().join("daemon.log");
     let log_sink: Option<SharedLogSink> =
-        Some(open_log_sink(&log_path, Brand::Oc).expect("open log"));
+        Some(open_daemon_log_sink(&log_path, Brand::Oc).expect("open log"));
     let socket =
         socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).expect("socket");
 
@@ -916,7 +916,7 @@ fn refuse_if_at_capacity_emits_structured_warning() {
     let log_dir = tempfile::tempdir().expect("log dir");
     let log_path = log_dir.path().join("daemon.log");
     let log_sink: Option<SharedLogSink> =
-        Some(open_log_sink(&log_path, Brand::Oc).expect("open log"));
+        Some(open_daemon_log_sink(&log_path, Brand::Oc).expect("open log"));
 
     let flags = no_op_signal_flags();
     let config_path: Option<PathBuf> = None;

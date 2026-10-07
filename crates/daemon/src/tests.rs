@@ -61,7 +61,7 @@ use crate::daemon::{
     log_module_request,
     log_unknown_module,
     module_peer_hostname,
-    open_log_sink,
+    open_daemon_log_sink,
     // From sections/config_helpers.rs
     parse_auth_user_list,
     parse_boolean_directive,
@@ -140,7 +140,7 @@ include!("tests/chunks/legacy_daemon_greeting_digest_list_is_protocol_independen
 include!("tests/chunks/legacy_daemon_greeting_has_single_newline.rs");
 include!("tests/chunks/legacy_daemon_greeting_includes_version_and_digests.rs");
 include!("tests/chunks/log_bodies_match_upstream_wording.rs");
-include!("tests/chunks/log_file_open_failure_returns_message_io.rs");
+include!("tests/chunks/log_file_open_failure_falls_back_to_syslog.rs");
 include!("tests/chunks/log_module_limit_logs_cap_reached.rs");
 include!("tests/chunks/module_definition_empty_acls_allow_all.rs");
 include!("tests/chunks/module_definition_hostname_allow_matches_exact.rs");

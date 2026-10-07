@@ -6,10 +6,8 @@
 // sanitization, human-readable bandwidth formatting, and daemon-side
 // filter rule construction from module config directives.
 
-/// Opens or creates a log file and wraps it in a shared message sink.
-///
-/// The log file is opened in append mode, creating it if it doesn't exist.
-/// Returns a thread-safe [`SharedLogSink`] for concurrent logging.
+/// Opens the daemon's `log file`, or returns the refusal to report once the
+/// daemon has fallen back to syslog.
 ///
 /// upstream: log.c:169 opens the logfile through `open_no_attacker_symlinks()`
 /// with `O_WRONLY|O_APPEND|O_CREAT, 0644`, for the reason stated at log.c:165 -
@@ -17,15 +15,73 @@
 /// attacker-writable directories, and a planted symlink would redirect the root
 /// daemon's log into a file of the attacker's choosing. The ownership walk
 /// refuses symlink components not owned by uid 0 or our euid.
-pub(crate) fn open_log_sink(path: &Path, brand: Brand) -> Result<SharedLogSink, DaemonError> {
-    let file = open_log_file(path).map_err(|error| log_file_error(path, error))?;
-    // upstream: log.c:122-132 logit() stamps `%Y/%m/%d %H:%M:%S [pid] ` on
-    // every log-file line; the wrapper applies the same shared formatter used
-    // by the client `--log-file` sink.
-    Ok(Arc::new(Mutex::new(MessageSink::with_brand(
-        logging_sink::logfile::LogFileWriter::new(file),
-        brand,
-    ))))
+///
+/// upstream: log.c:175-182 `logfile_open()` - when the open fails, upstream
+/// calls `syslog_init()`, reports the failure, clears `logfile_name` so every
+/// later line goes to syslog, and keeps serving. It never aborts the daemon
+/// over its own log file, including when the open is refused because the path
+/// runs through an untrusted symlink.
+pub(crate) fn open_daemon_log_sink(
+    path: &Path,
+    brand: Brand,
+) -> Result<SharedLogSink, LogFileFallback> {
+    open_log_file(path)
+        .map(|file| {
+            // upstream: log.c:122-132 logit() stamps `%Y/%m/%d %H:%M:%S [pid] `
+            // on every log-file line; the wrapper applies the same shared
+            // formatter used by the client `--log-file` sink.
+            Arc::new(Mutex::new(MessageSink::with_brand(
+                logging_sink::logfile::LogFileWriter::new(file),
+                brand,
+            )))
+        })
+        .map_err(|error| LogFileFallback::new(path, &error, brand))
+}
+
+/// A `log file` that could not be opened, reported the way upstream does.
+#[derive(Debug)]
+pub(crate) struct LogFileFallback {
+    failure: String,
+}
+
+impl LogFileFallback {
+    /// upstream: log.c:178-180 - `rsyserr(FERROR, errno, "failed to open
+    /// log-file %s")` followed by `rprintf(FINFO, "Ignoring \"log file\"
+    /// setting.\n")`. The `[Receiver]` tag is what `who_am_i()` yields for the
+    /// daemon process, as the upstream 3.5.1 daemon logs it.
+    fn new(path: &Path, error: &io::Error, brand: Brand) -> Self {
+        Self {
+            failure: format!(
+                "{}: [Receiver] failed to open log-file {}: {}",
+                brand.client_program_name(),
+                path.display(),
+                logging::upstream_errno_text(error)
+            ),
+        }
+    }
+
+    /// The two lines upstream logs, in order.
+    pub(crate) fn lines(&self) -> [&str; 2] {
+        [&self.failure, "Ignoring \"log file\" setting."]
+    }
+
+    /// Writes the refusal to syslog, where the daemon now logs.
+    ///
+    /// A no-op when this entry point has not opened syslog.
+    pub(crate) fn report(&self) {
+        let [failure, ignoring] = self.lines();
+        #[cfg(unix)]
+        {
+            use logging_sink::syslog::{SyslogPriority, syslog_message};
+            syslog_message(SyslogPriority::Error, failure);
+            syslog_message(SyslogPriority::Info, ignoring);
+        }
+        #[cfg(not(unix))]
+        {
+            eprintln!("{failure}");
+            eprintln!("{ignoring}");
+        }
+    }
 }
 
 /// Mode applied when the log file is created.
@@ -76,22 +132,9 @@ fn reopen_module_log_sink(
     let brand = startup_sink
         .and_then(|sink| sink.lock().ok().map(|guard| guard.brand()))
         .unwrap_or(Brand::Oc);
-    open_log_sink(path, brand).ok()
-}
-
-/// Creates a [`DaemonError`] for log file open failures.
-///
-/// upstream: log.c:163 - log-open failures produce RERR_MESSAGEIO (13).
-fn log_file_error(path: &Path, error: io::Error) -> DaemonError {
-    let code = ExitCode::MessageIo;
-    DaemonError::with_code(
-        code,
-        rsync_error!(
-            code.as_i32(),
-            format!("failed to open log file '{}': {}", path.display(), error)
-        )
-        .with_role(Role::Daemon),
-    )
+    open_daemon_log_sink(path, brand)
+        .map_err(|fallback| fallback.report())
+        .ok()
 }
 
 /// Creates a [`DaemonError`] for PID file write failures.

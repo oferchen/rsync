@@ -7,7 +7,7 @@
 fn log_bodies_match_upstream_wording() {
     let dir = tempdir().expect("log dir");
     let path = dir.path().join("daemon.log");
-    let log = open_log_sink(&path, Brand::Oc).expect("open log");
+    let log = open_daemon_log_sink(&path, Brand::Oc).expect("open log");
 
     let host = "client.example";
     let ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 17));
@@ -74,7 +74,7 @@ fn log_bodies_match_upstream_wording() {
 fn auth_users_refusals_name_the_user_and_the_rule() {
     let dir = tempdir().expect("log dir");
     let path = dir.path().join("daemon.log");
-    let log = open_log_sink(&path, Brand::Oc).expect("open log");
+    let log = open_daemon_log_sink(&path, Brand::Oc).expect("open log");
 
     let host = "client.example";
     let ip = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 17));
