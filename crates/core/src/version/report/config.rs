@@ -50,6 +50,8 @@ pub struct VersionInfoConfig {
     pub supports_stop_at: bool,
     /// Whether change-time preservation is implemented.
     pub supports_crtimes: bool,
+    /// Whether internationalized domain name hosts are converted to A-labels.
+    pub supports_idn: bool,
     /// Whether SIMD acceleration is used for the rolling checksum.
     pub supports_simd_roll: bool,
     /// Whether assembly acceleration is used for the rolling checksum.
@@ -95,6 +97,7 @@ impl VersionInfoConfig {
             supports_prealloc: true,
             supports_stop_at: true,
             supports_crtimes: cfg!(target_os = "macos"),
+            supports_idn: crate::idn::SUPPORTED,
             supports_simd_roll: false,
             supports_asm_roll: false,
             supports_openssl_crypto: false,
@@ -194,6 +197,7 @@ pub struct VersionInfoConfigBuilder {
     supports_prealloc: bool,
     supports_stop_at: bool,
     supports_crtimes: bool,
+    supports_idn: bool,
     supports_simd_roll: bool,
     supports_asm_roll: bool,
     supports_openssl_crypto: bool,
@@ -229,6 +233,7 @@ impl VersionInfoConfigBuilder {
             supports_prealloc: config.supports_prealloc,
             supports_stop_at: config.supports_stop_at,
             supports_crtimes: config.supports_crtimes,
+            supports_idn: config.supports_idn,
             supports_simd_roll: config.supports_simd_roll,
             supports_asm_roll: config.supports_asm_roll,
             supports_openssl_crypto: config.supports_openssl_crypto,
@@ -263,6 +268,7 @@ impl VersionInfoConfigBuilder {
             supports_prealloc: config.supports_prealloc,
             supports_stop_at: config.supports_stop_at,
             supports_crtimes: config.supports_crtimes,
+            supports_idn: config.supports_idn,
             supports_simd_roll: config.supports_simd_roll,
             supports_asm_roll: config.supports_asm_roll,
             supports_openssl_crypto: config.supports_openssl_crypto,
@@ -335,6 +341,17 @@ impl VersionInfoConfigBuilder {
         supports_stop_at: bool,
         /// Enables or disables change-time preservation.
         supports_crtimes: bool,
+    }
+
+    /// Enables or disables IDN host conversion, clamped to the compiled
+    /// feature set.
+    #[must_use]
+    pub const fn supports_idn(mut self, enabled: bool) -> Self {
+        self.supports_idn = enabled && crate::idn::SUPPORTED;
+        self
+    }
+
+    builder_setter! {
         /// Enables or disables SIMD-accelerated rolling checksums.
         supports_simd_roll: bool,
         /// Enables or disables assembly-accelerated rolling checksums.
@@ -377,6 +394,7 @@ impl VersionInfoConfigBuilder {
             supports_prealloc: self.supports_prealloc,
             supports_stop_at: self.supports_stop_at,
             supports_crtimes: self.supports_crtimes,
+            supports_idn: self.supports_idn,
             supports_simd_roll: self.supports_simd_roll,
             supports_asm_roll: self.supports_asm_roll,
             supports_openssl_crypto: self.supports_openssl_crypto,
@@ -704,5 +722,12 @@ mod tests {
     fn with_runtime_capabilities_detects_io_uring() {
         let config = VersionInfoConfig::with_runtime_capabilities();
         assert_eq!(config.supports_io_uring, fast_io::is_io_uring_available());
+    }
+
+    #[test]
+    fn builder_supports_idn_is_clamped_to_the_compiled_feature() {
+        let config = VersionInfoConfig::builder().supports_idn(true).build();
+        assert_eq!(config.supports_idn, crate::idn::SUPPORTED);
+        assert_eq!(VersionInfoConfig::new().supports_idn, crate::idn::SUPPORTED);
     }
 }

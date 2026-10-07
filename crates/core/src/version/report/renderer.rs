@@ -477,6 +477,8 @@ impl VersionInfoReport {
         items.push(capability_entry("prealloc", config.supports_prealloc));
         items.push(capability_entry("stop-at", config.supports_stop_at));
         items.push(capability_entry("crtimes", config.supports_crtimes));
+        // upstream: usage.c:159-162
+        items.push(capability_entry("IDN", config.supports_idn));
         items.push(InfoItem::Section("Optimizations"));
         items.push(capability_entry("SIMD-roll", config.supports_simd_roll));
         items.push(capability_entry("asm-roll", config.supports_asm_roll));
@@ -957,5 +959,58 @@ mod tests {
             InfoItem::Entry(text) => assert_eq!(text, "no test-cap"),
             _ => panic!("Expected Entry variant"),
         }
+    }
+
+    fn capability_tokens(config: VersionInfoConfig) -> Vec<String> {
+        let items = VersionInfoReport::new(config).info_items();
+        items
+            .iter()
+            .skip_while(|item| !matches!(item, InfoItem::Section("Capabilities")))
+            .skip(1)
+            .take_while(|item| !matches!(item, InfoItem::Section(_)))
+            .map(|item| match item {
+                InfoItem::Entry(text) => text.to_string(),
+                InfoItem::Section(_) => unreachable!("take_while stops at sections"),
+            })
+            .collect()
+    }
+
+    /// upstream: usage.c:154-162 - `crtimes` is followed by `IDN`, the last
+    /// Capabilities token, so `rsync -V` output lines up token for token.
+    #[test]
+    fn capabilities_end_with_crtimes_then_idn() {
+        let tokens = capability_tokens(VersionInfoConfig::new());
+        let tail: Vec<&str> = tokens[tokens.len() - 3..]
+            .iter()
+            .map(|t| t.trim_start_matches("no "))
+            .collect();
+        assert_eq!(tail, ["stop-at", "crtimes", "IDN"]);
+    }
+
+    /// The UTS cells `idn` and `daemon-access-idn` skip unless `-VV` prints
+    /// `"IDN": true`, so the token must track the compiled feature exactly:
+    /// `IDN` with it, `no IDN` (upstream's `--disable-idn` build) without.
+    #[test]
+    fn idn_token_tracks_the_compiled_feature() {
+        let tokens = capability_tokens(VersionInfoConfig::new());
+        let expected = if crate::idn::SUPPORTED {
+            "IDN"
+        } else {
+            "no IDN"
+        };
+        assert_eq!(tokens.last().map(String::as_str), Some(expected));
+
+        let json = VersionInfoReport::new(VersionInfoConfig::new()).machine_readable();
+        let expected_json = format!("\"IDN\": {}", crate::idn::SUPPORTED);
+        assert!(json.contains(&expected_json), "{json}");
+    }
+
+    #[test]
+    fn idn_token_reads_no_idn_when_disabled() {
+        let config = VersionInfoConfig::builder().supports_idn(false).build();
+        assert_eq!(
+            capability_tokens(config).last().map(String::as_str),
+            Some("no IDN")
+        );
     }
 }

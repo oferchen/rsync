@@ -25,6 +25,9 @@ pub use ::branding::branding;
 /// dispatching local, SSH, and daemon transfers through a unified
 /// configuration and error model.
 pub mod client;
+/// Internationalized domain name (IDN) host conversion (upstream
+/// util1.c `idn_to_ascii()`).
+pub mod idn;
 /// Message formatting utilities shared across workspace binaries.
 pub mod message;
 /// Remote shell command construction and SSH argument parsing.
