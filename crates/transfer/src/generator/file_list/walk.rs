@@ -855,8 +855,7 @@ impl GeneratorContext {
         let mut meta = match metadata {
             Ok(meta) => meta,
             Err(e) => {
-                self.log_stat_error(&path, &e);
-                self.record_io_error(&e);
+                self.report_child_stat_error(&path, &e);
                 return None;
             }
         };
@@ -901,21 +900,8 @@ impl GeneratorContext {
                 );
                 match fast_io::pinned_root::metadata(&path) {
                     Ok(followed) => meta = followed,
-                    // upstream: flist.c:1676-1681 - a --copy*links symlink that
-                    // points nowhere is reported as such under FERROR_XFER with
-                    // IOERR_GENERAL (exit 23), never as a vanished file (24).
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                        let text = format!(
-                            "symlink has no referent: {}\n",
-                            full_fname_path(&path, self.full_fname_paths())
-                        );
-                        self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
-                        self.add_io_error(io_error_flags::IOERR_GENERAL);
-                        return None;
-                    }
                     Err(e) => {
-                        self.log_stat_error(&path, &e);
-                        self.record_io_error(&e);
+                        self.report_child_stat_error(&path, &e);
                         return None;
                     }
                 }
@@ -923,6 +909,30 @@ impl GeneratorContext {
         }
 
         Some((path, meta))
+    }
+
+    /// Reports a failed stat of a walked entry and records its `io_error` bit.
+    ///
+    /// upstream: flist.c:1668-1681 make_file() - when a --copy*links option
+    /// dereferenced the entry, ENOENT on a path that `lstat` still shows as a
+    /// symlink is a dangling link: reported as "symlink has no referent" under
+    /// FERROR_XFER with IOERR_GENERAL (exit 23), never as a vanished file (24).
+    fn report_child_stat_error(&mut self, path: &Path, e: &io::Error) {
+        let flags = &self.config.flags;
+        if e.kind() == io::ErrorKind::NotFound
+            && (flags.copy_links || flags.copy_unsafe_links || flags.copy_dirlinks)
+            && fast_io::pinned_root::symlink_metadata(path).is_ok_and(|m| m.is_symlink())
+        {
+            let text = format!(
+                "symlink has no referent: {}\n",
+                full_fname_path(path, self.full_fname_paths())
+            );
+            self.queue_flist_diagnostic(SenderDiagnostic::ErrorXfer, text);
+            self.add_io_error(io_error_flags::IOERR_GENERAL);
+            return;
+        }
+        self.log_stat_error(path, e);
+        self.record_io_error(e);
     }
 
     /// Logs a stat failure with the appropriate upstream error format.

@@ -57,7 +57,6 @@ impl LocalCopyOptions {
     /// Selects the directory used for temporary files when staging updates.
     #[must_use]
     #[doc(alias = "--temp-dir")]
-    #[doc(alias = "--tmp-dir")]
     pub fn with_temp_directory<P: Into<PathBuf>>(mut self, directory: Option<P>) -> Self {
         self.temp_dir = directory.map(Into::into);
         self
