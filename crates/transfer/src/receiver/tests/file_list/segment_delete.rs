@@ -231,7 +231,11 @@ fn io_error_before_a_segment_stops_later_deletes() {
         let tmp = tempfile::tempdir().unwrap();
         let dest = tmp.path();
         populate(dest);
-        let mut ctx = receiver(config(dest, |c| c.deletion.ignore_errors = ignore_errors));
+        let mut ctx = receiver(config(dest, |c| {
+            // A pulling client prints the notice itself; a server forwards it.
+            c.connection.client_mode = true;
+            c.deletion.ignore_errors = ignore_errors;
+        }));
         let mut stats = TransferStats::default();
 
         for segment in 0..4 {

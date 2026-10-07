@@ -475,7 +475,7 @@ impl ReceiverContext {
         // it in delete_in_dir() (generator.c:304-311), where a delay victim is
         // recorded, while do_delayed_deletions() (generator.c:265-278) unlinks
         // every record unconditionally.
-        if scans_whole_list && self.io_error_blocks_deletion(stats.io_error) {
+        if scans_whole_list && self.io_error_blocks_deletion(stats.io_error, writer) {
             return Ok(());
         }
 
@@ -508,6 +508,11 @@ impl ReceiverContext {
                 }
             }
             DeletePassPhase::Late => {
+                // upstream: generator.c:2899-2902 - the late sweep follows the
+                // generate loop, so its deletion rows print after every name
+                // and itemize row; release the deferred client rows first.
+                self.flush_names_all()?;
+                self.flush_itemize_rows(writer)?;
                 if self.config.deletion.delete_after {
                     self.run_immediate_delete_pass(
                         dest_dir,
@@ -587,7 +592,10 @@ impl ReceiverContext {
     /// incomplete, so deleting dest files that merely never got listed would
     /// lose data. Every later deletion is skipped and the notice printed once
     /// (the static `already_warned`), unless `--ignore-errors` was given.
-    fn io_error_blocks_deletion(&mut self, io_error: i32) -> bool {
+    fn io_error_blocks_deletion<W>(&mut self, io_error: i32, writer: &mut W) -> bool
+    where
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    {
         use crate::generator::io_error_flags::IOERR_GENERAL;
 
         if io_error & IOERR_GENERAL == 0 || self.config.deletion.ignore_errors {
@@ -595,7 +603,13 @@ impl ReceiverContext {
         }
         if !self.io_error_delete_warning_emitted {
             self.io_error_delete_warning_emitted = true;
-            info_log!(Nonreg, 1, "IO error encountered -- skipping file deletion");
+            // upstream: log.c:rwrite() - a server frames the FINFO notice
+            // as MSG_INFO for the client; only a client prints it locally.
+            if self.config.connection.client_mode {
+                info_log!(Nonreg, 1, "IO error encountered -- skipping file deletion");
+            } else {
+                let _ = writer.send_msg_info(b"IO error encountered -- skipping file deletion\n");
+            }
         }
         true
     }
@@ -694,7 +708,7 @@ impl ReceiverContext {
         }
         // upstream: generator.c:301-302 - the keepalive precedes the io_error test.
         writer.maybe_send_keepalive()?;
-        if self.io_error_blocks_deletion(stats.io_error) {
+        if self.io_error_blocks_deletion(stats.io_error, writer) {
             return Ok(());
         }
 
