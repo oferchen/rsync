@@ -6,6 +6,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use protocol::ProtocolVersion;
@@ -57,8 +58,8 @@ pub(crate) fn run_pull_transfer(
     // upstream: compat.c:599 - protocol was negotiated via @RSYNCD text exchange,
     // setup_protocol() skips the binary exchange because remote_protocol != 0.
     let mut handshake = build_daemon_handshake(config, protocol);
-    let mut counted = CountingReader::new(reader, buffered.len());
     handshake.buffered = buffered;
+    let bytes_read = Arc::new(AtomicU64::new(0));
 
     let mut server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
 
@@ -111,10 +112,10 @@ pub(crate) fn run_pull_transfer(
     // after io_start_multiplex_out (main.c:1285-1286). As the client receiver we
     // adopt it and re-apply to the live socket. Build the re-apply hook from the
     // split socket halves; connect-program (pipe) transports yield None.
-    let io_timeout_reapply = build_io_timeout_reapply(counted.inner, writer);
+    let io_timeout_reapply = build_io_timeout_reapply(reader, writer);
     // Let an interrupt release a receive blocked on the wire. Held for the
     // duration of the transfer; dropping it deregisters the socket.
-    let _wake_guard = register_shutdown_wake(counted.inner);
+    let _wake_guard = register_shutdown_wake(reader);
     // A custom `--out-format` makes the receiver buffer metadata events (it
     // suppresses its own stdout); collect them for the CLI to render. Otherwise
     // the receiver prints its own default `-v`/`-i` output and no callback is
@@ -129,7 +130,7 @@ pub(crate) fn run_pull_transfer(
     let server_stats = crate::server::run_server_with_handshake_adopting(
         server_config,
         handshake,
-        &mut counted,
+        reader,
         writer,
         crate::server::ServerTransferHooks {
             progress,
@@ -139,9 +140,12 @@ pub(crate) fn run_pull_transfer(
             // The client end of a daemon transfer never writes the daemon's
             // module log; that is the remote daemon's own FLOG sink.
             daemon_log: None,
+            bytes_read: Some(Arc::clone(&bytes_read)),
         },
     )
-    .map_err(|e| map_server_transfer_error(e, Role::Receiver, counted.count))?;
+    .map_err(|e| {
+        map_server_transfer_error(e, Role::Receiver, bytes_read.load(Ordering::Relaxed))
+    })?;
     let elapsed = start.elapsed();
 
     let mut summary = convert_server_stats_to_summary(server_stats, elapsed);
@@ -180,14 +184,14 @@ pub(crate) fn run_push_transfer(
 
     // upstream: compat.c:599 - if (remote_protocol == 0) { ... }
     let mut handshake = build_daemon_handshake(config, protocol);
-    let mut counted = CountingReader::new(reader, buffered.len());
     handshake.buffered = buffered;
+    let bytes_read = Arc::new(AtomicU64::new(0));
 
     let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
     let dry_run = config.dry_run();
 
     // Let an interrupt release a send blocked on the wire (see run_pull_transfer).
-    let _wake_guard = register_shutdown_wake(counted.inner);
+    let _wake_guard = register_shutdown_wake(reader);
 
     // Push: local side is Generator (sender); batch records outgoing data (is_sender=true).
     let batch_recording = batch_ctx
@@ -224,17 +228,21 @@ pub(crate) fn run_push_transfer(
         || render_out_format;
     let mut itemize_sink = ItemizeEventSink::new(render_out_format);
 
-    let result = crate::server::run_server_with_handshake(
+    let result = crate::server::run_server_with_handshake_adopting(
         server_config,
         handshake,
-        &mut counted,
+        reader,
         writer,
-        progress,
-        batch_recording,
-        if wants_client_output {
-            Some(&mut itemize_sink as &mut dyn crate::server::ItemizeCallback)
-        } else {
-            None
+        crate::server::ServerTransferHooks {
+            progress,
+            batch: batch_recording,
+            itemize: if wants_client_output {
+                Some(&mut itemize_sink as &mut dyn crate::server::ItemizeCallback)
+            } else {
+                None
+            },
+            bytes_read: Some(Arc::clone(&bytes_read)),
+            ..Default::default()
         },
     );
 
@@ -254,34 +262,11 @@ pub(crate) fn run_push_transfer(
             // its socket early after receiving the file list.
             Ok(ClientSummary::default())
         }
-        Err(e) => Err(map_server_transfer_error(e, Role::Sender, counted.count)),
-    }
-}
-
-/// Counts the bytes a transfer reads from the daemon, for the byte count
-/// upstream's end-of-stream diagnostic reports.
-///
-/// The count starts at the bytes the greeting reader had already buffered, so
-/// it covers every protocol byte after the `@RSYNCD` exchange.
-struct CountingReader<'a> {
-    inner: &'a mut DaemonStreamReader,
-    count: u64,
-}
-
-impl<'a> CountingReader<'a> {
-    fn new(inner: &'a mut DaemonStreamReader, already_buffered: usize) -> Self {
-        Self {
-            inner,
-            count: already_buffered as u64,
-        }
-    }
-}
-
-impl std::io::Read for CountingReader<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let n = self.inner.read(buf)?;
-        self.count += n as u64;
-        Ok(n)
+        Err(e) => Err(map_server_transfer_error(
+            e,
+            Role::Sender,
+            bytes_read.load(Ordering::Relaxed),
+        )),
     }
 }
 

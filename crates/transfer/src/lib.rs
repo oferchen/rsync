@@ -758,6 +758,7 @@ pub fn run_server_with_handshake<W: Write>(
             itemize,
             io_timeout_reapply: None,
             daemon_log: None,
+            bytes_read: None,
         },
     )
 }
@@ -798,6 +799,11 @@ pub struct ServerTransferHooks<'p, 'i, 'd> {
     /// Per-entry daemon transfer-log hook. `Some` only when a daemon module has
     /// `transfer logging = yes`; drives the per-file `log_item(FLOG)` writes.
     pub daemon_log: Option<DaemonLog<'d>>,
+    /// Caller-owned counter for the raw bytes read once `setup_protocol` is
+    /// done, so the caller can name them when the transfer fails.
+    /// upstream: io.c:938 counts `stats.total_read` only through perform_io,
+    /// which setup_protocol's reads bypass (io.c:2158-2161, main.c:1307-1308).
+    pub bytes_read: Option<Arc<std::sync::atomic::AtomicU64>>,
 }
 
 /// Runs a server transfer that may adopt a daemon-advertised `MSG_IO_TIMEOUT`.
@@ -824,6 +830,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         itemize,
         io_timeout_reapply,
         daemon_log,
+        bytes_read,
     } = hooks;
     // upstream: options.c:2419 - `--append` implies `--inplace`, applied by the
     // same parse_arguments() every peer runs. This is the one path shared by
@@ -1048,7 +1055,10 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // The CountingReader wraps the raw transport (below the multiplex demuxer and
     // token decompression) so the running total reflects compressed wire bytes,
     // matching upstream's `stats.total_read` (io.c:838).
-    let counting_stdin = reader::CountingReader::new(chained_stdin);
+    let counting_stdin = match bytes_read {
+        Some(counter) => reader::CountingReader::with_counter(chained_stdin, counter),
+        None => reader::CountingReader::new(chained_stdin),
+    };
     let bytes_received_counter = counting_stdin.counter();
     let mut reader =
         reader::ServerReader::new_plain(protocol::iobuf::IoBufReader::new(counting_stdin));

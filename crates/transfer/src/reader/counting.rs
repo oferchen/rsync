@@ -34,6 +34,14 @@ impl<R> CountingReader<R> {
         }
     }
 
+    /// Creates a counting reader that publishes into a caller-owned counter.
+    ///
+    /// Lets a caller outside the transfer stack read the total even when the
+    /// transfer fails and returns no stats.
+    pub(crate) fn with_counter(inner: R, bytes_read: Arc<AtomicU64>) -> Self {
+        Self { inner, bytes_read }
+    }
+
     /// Returns a shared handle to the running byte total.
     ///
     /// The handle stays valid after this reader is moved and dropped; it holds
