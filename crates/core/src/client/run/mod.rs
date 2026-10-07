@@ -445,6 +445,28 @@ fn run_client_internal(
         return Ok(summary);
     }
 
+    // upstream: compat.c:684-713 - a local copy still runs setup_protocol() at
+    // the requested `--protocol=N`, so the protocol < 29 refusals apply;
+    // `local_server` exempts only --acls/--xattrs (compat.c:667,674).
+    if let Some(protocol) = config.protocol_version() {
+        crate::server::setup::refuse_unsupported_options(
+            protocol,
+            &crate::server::setup::ProtocolRestrictionFlags {
+                fuzzy_basis: config.fuzzy_level() > 0,
+                basis_dir_count: config.reference_directories().len(),
+                inplace: config.inplace(),
+                prune_empty_dirs: config.prune_empty_dirs(),
+                local_server: true,
+                ..Default::default()
+            },
+        )
+        .map_err(|error| {
+            super::error::invalid_argument_error_typed(
+                &error.to_string(),
+                crate::exit_code::ExitCode::Protocol,
+            )
+        })?;
+    }
     // upstream: main.c:721 `get_local_name()` returns NULL when `list_only` is
     // set, so a local listing needs no destination operand. oc-rsync's local
     // plan always requires source+destination, so for `--list-only` with a

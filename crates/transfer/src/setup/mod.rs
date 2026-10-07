@@ -32,9 +32,7 @@ pub use negotiator::{
     CapabilityNegotiator, ChecksumSeedExchanger, CompatFlagsExchanger, ProtocolNegotiator,
     RsyncNegotiator,
 };
-pub use restrictions::{
-    ProtocolRestrictionFlags, RestrictionAdjustments, apply_protocol_restrictions,
-};
+pub use restrictions::{ProtocolRestrictionFlags, refuse_unsupported_options};
 pub use types::{ProtocolSetupConfig, SetupResult};
 
 #[cfg(test)]

@@ -1715,7 +1715,7 @@ fn protocol_restriction_rejects_acls_below_protocol_30() {
         ..Default::default()
     };
     let err =
-        apply_protocol_restrictions(ProtocolVersion::try_from(29).unwrap(), &flags).unwrap_err();
+        refuse_unsupported_options(ProtocolVersion::try_from(29).unwrap(), &flags).unwrap_err();
     assert!(
         err.to_string().contains("--acls requires protocol 30"),
         "should reject ACLs below protocol 30: {err}"
@@ -1734,7 +1734,7 @@ fn protocol_restriction_rejects_xattrs_below_protocol_30() {
         ..Default::default()
     };
     let err =
-        apply_protocol_restrictions(ProtocolVersion::try_from(29).unwrap(), &flags).unwrap_err();
+        refuse_unsupported_options(ProtocolVersion::try_from(29).unwrap(), &flags).unwrap_err();
     assert!(
         err.to_string().contains("--xattrs requires protocol 30"),
         "should reject xattrs below protocol 30: {err}"
@@ -1753,7 +1753,7 @@ fn protocol_30_allows_acls_and_xattrs() {
         ..Default::default()
     };
     assert!(
-        apply_protocol_restrictions(ProtocolVersion::try_from(30).unwrap(), &flags,).is_ok(),
+        refuse_unsupported_options(ProtocolVersion::try_from(30).unwrap(), &flags,).is_ok(),
         "protocol 30 should allow both ACLs and xattrs"
     );
 }
@@ -1772,7 +1772,7 @@ fn local_server_allows_acls_and_xattrs_below_protocol_30() {
         ..Default::default()
     };
     assert!(
-        apply_protocol_restrictions(ProtocolVersion::try_from(28).unwrap(), &flags,).is_ok(),
+        refuse_unsupported_options(ProtocolVersion::try_from(28).unwrap(), &flags,).is_ok(),
         "local server should allow ACLs and xattrs regardless of protocol version"
     );
 }
