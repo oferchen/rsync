@@ -17,6 +17,7 @@ use logging::{PhaseTimer, debug_log};
 
 use super::super::GeneratorContext;
 use super::super::protocol_io::calculate_duration_ms;
+use crate::flist_banner::{FlistBanner, FlistSide, with_client_stream};
 use crate::generator::GeneratorStats;
 use crate::role_trailer::error_location;
 use crate::transfer_state::TransferPhase;
@@ -37,34 +38,18 @@ pub(crate) struct SourceRemovalDrains {
 }
 
 impl GeneratorContext {
-    /// Prints the `sending incremental file list` banner on the client's own
-    /// output at file-list-send time, ahead of any per-file rows.
-    ///
-    /// Mirrors upstream `flist.c:2484-2488`: the banner fires only for a
-    /// client-side sender (`!am_server` -> `client_mode`), under incremental
-    /// recursion - which upstream disables when `!recurse` (compat.c:172-173),
-    /// so a non-recursive single-file `-v` push prints nothing - and when the
-    /// FLIST info category is at level >= 1, so `--info=flist0` suppresses it
-    /// even at `-v`. This is the send-side twin of the receiver's `receiving
-    /// incremental file list` banner in `receiver/transfer/setup/context.rs`.
-    fn announce_incremental_flist(&self) -> io::Result<()> {
-        if !self.should_announce_incremental_flist() {
-            return Ok(());
-        }
-        let banner: &[u8] = b"sending incremental file list\n";
-        if self.config.flags.msgs_to_stderr {
-            io::stderr().write_all(banner)
-        } else {
-            io::stdout().write_all(banner)
-        }
-    }
-
-    /// Whether this sender prints the `sending incremental file list` banner
-    /// on its own client-visible output (see [`Self::announce_incremental_flist`]).
-    pub(crate) fn should_announce_incremental_flist(&self) -> bool {
-        self.config.connection.client_mode
-            && self.config.flags.recursive
-            && logging::info_gte(logging::InfoFlag::Flist, 1)
+    /// The file-list banner this sender prints on its own client-visible
+    /// output: upstream's choice in `send_file_list()` (flist.c:2761-2764)
+    /// between `building file list ... done` and `sending incremental file
+    /// list`, keyed on the negotiated `CF_INC_RECURSE` bit rather than on
+    /// `--recursive`.
+    pub(crate) fn flist_banner(&self) -> FlistBanner {
+        let flags = &self.config.flags;
+        FlistBanner::select(
+            self.config.connection.client_mode,
+            self.inc_recurse(),
+            flags.recursive || flags.dirs || flags.list_only,
+        )
     }
 
     /// Runs the goodbye handshake with the deferred `--remove-source-files`
@@ -195,15 +180,18 @@ impl GeneratorContext {
         // upstream: main.c:1294 - recv_filter_list() in server mode
         self.receive_filter_list_if_server(&mut reader)?;
 
-        // upstream: flist.c:2484-2488 send_file_list() - a client-side sender
-        // announces `sending incremental file list` at file-list-send time,
-        // before the walk produces any per-file output. Write it DIRECTLY to
-        // the client stream: the deferred `info_log!` event buffer is only
-        // drained by the CLI after the live per-file rows and the summary
-        // stats, which would print the banner dead last on every ssh/daemon
-        // push. Mirrors the receive-side banner in
-        // `receiver/transfer/setup/context.rs`.
-        self.announce_incremental_flist()?;
+        // upstream: flist.c:2761-2764 send_file_list() - a client-side sender
+        // prints its file-list banner before the walk produces any per-file
+        // output. Write it DIRECTLY to the client stream: the deferred
+        // `info_log!` event buffer is only drained by the CLI after the live
+        // per-file rows and the summary stats, which would print the banner
+        // dead last on every ssh/daemon push. Mirrors the receive-side banner
+        // in `receiver/transfer/setup/context.rs`.
+        let flist_banner = self.flist_banner();
+        let msgs_to_stderr = self.config.flags.msgs_to_stderr;
+        with_client_stream(msgs_to_stderr, |out| {
+            flist_banner.start(FlistSide::Sender, out)
+        })?;
 
         // upstream: flist.c:2476-2503 - resolve --files-from paths if configured.
         // Below protocol 31 the client forwards the names un-multiplexed, so
@@ -245,6 +233,11 @@ impl GeneratorContext {
             self.flush_flist_diagnostics(writer)?;
             self.send_file_list(writer)?
         };
+        // upstream: flist.c:3037-3038 - finish_filelist_progress() once the
+        // list (and its end marker) is on the wire.
+        with_client_stream(msgs_to_stderr, |out| {
+            flist_banner.finish(FlistSide::Sender, file_count, out)
+        })?;
 
         // upstream: acls.c:592-595 - named ACL-entry ids join the shared id-list
         // so the receiver remaps them like file owners. Runs after the file list

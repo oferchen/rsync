@@ -126,50 +126,46 @@ where
     // gid_ndx); otherwise 0 / "DEFAULT".
     let preserve_owner = config.preserve_owner();
     let preserve_group = config.preserve_group();
-    // upstream: flist.c:2764 emits "sending incremental file list" only when
-    // `inc_recurse && INFO_GTE(FLIST, 1) && !am_server`. Mirror each gate:
-    // - compat.c:172 disables inc_recurse when `!recurse`, so a single-file
-    //   `-v` transfer gets no banner (`config.recursive()`);
-    // - the FLIST info category gate lets `--info=flist0` suppress it even at
-    //   `-v` (`info_gte(Flist, 1)`);
+    // upstream: flist.c:2761-2764 picks exactly one banner in send_file_list():
+    // `show_filelist_progress` (flist.c:172: `INFO_GTE(FLIST, 1) && xfer_dirs
+    // && !am_server && !inc_recurse`) prints `building file list ... done`,
+    // otherwise `inc_recurse && INFO_GTE(FLIST, 1) && !am_server` prints
+    // `sending incremental file list`.
     // - `!am_server` means the sender prints it: the client is the sender on a
-    //   push and a local copy, and the receiver on a pull (which separately
-    //   prints "receiving incremental file list"), so suppress it on a pull
-    //   (`!config.is_pull()`) to avoid printing both banners.
+    //   push and a local copy, and the receiver on a pull (which prints its own
+    //   `receiving ...` banner), so a pull prints neither here.
+    // - `inc_recurse` is the negotiated CF_INC_RECURSE bit (compat.c:757). A
+    //   local copy's server half is the receiver, which grants it only at
+    //   protocol >= 30 (compat.c:721-723) and when set_allow_inc_recurse()
+    //   leaves `allow_inc_recurse` set (compat.c:172-179): recursion without
+    //   --qsort or --no-inc-recursive, and none of the receiver-side
+    //   --delete-before, --delete-after, --delay-updates or --prune-empty-dirs.
+    // - `xfer_dirs` is `recurse || dirs || list_only` (options.c:2326-2329).
     //
-    // A remote push prints the banner live at file-list-send time instead
-    // (generator/transfer/orchestrator.rs `announce_incremental_flist`), ahead
-    // of the per-file rows that stream straight to stdout during the transfer;
-    // rendering it here again would both duplicate it and print it dead last.
-    // Only a local copy still takes the banner from here: the post-hoc
-    // renderer writes it, or under `--progress` the live session header below.
+    // A remote push prints its banner live at file-list-send time instead
+    // (generator/transfer/orchestrator.rs), ahead of the per-file rows that
+    // stream straight to stdout; only a local copy takes the banner from here,
+    // via the post-hoc renderer or, under `--progress`, the live session header.
     //
-    // upstream: flist.c:172 - the sibling non-incremental banner is selected by
-    // `show_filelist_progress = INFO_GTE(FLIST, 1) && xfer_dirs && !am_server
-    // && !inc_recurse`, and flist.c:2761-2764 makes the two mutually exclusive.
-    // `xfer_dirs` is `recurse || dirs || list_only` (options.c:2326-2329); the
-    // `!inc_recurse` term already rules out the `recurse` disjunct here.
     // upstream: flist.c:177 - `start_filelist_progress()` returns early under
     // `quiet`, which `info_gte` does not model, so it needs its own term. The
     // incremental banner is an FCLIENT line, which rwrite() turns into FINFO
     // and drops under `quiet` (log.c:310, log.c:345). Neither banner has a
     // verbosity gate: `-P` raises FLIST to 2 without `-v` (options.c:2514).
-    let flist_banner = if config.recursive() {
-        if info_gte(InfoFlag::Flist, 1) && !config.quiet() && !config.is_pull() && !is_sender {
+    let inc_recurse = config.allow_inc_recurse(false)
+        && config
+            .protocol_version()
+            .is_none_or(|protocol| protocol.supports_inc_recurse());
+    let flist_banner =
+        if !info_gte(InfoFlag::Flist, 1) || config.quiet() || config.is_pull() || is_sender {
+            FlistBanner::None
+        } else if inc_recurse {
             FlistBanner::Incremental
+        } else if config.recursive() || config.dirs() || config.list_only() {
+            FlistBanner::Building
         } else {
             FlistBanner::None
-        }
-    } else if (config.dirs() || config.list_only())
-        && info_gte(InfoFlag::Flist, 1)
-        && !config.quiet()
-        && !config.is_pull()
-        && !is_sender
-    {
-        FlistBanner::Building
-    } else {
-        FlistBanner::None
-    };
+        };
     // A pure-local copy (no remote operand): `is_local_sender()` reports false
     // for the local `local_server` case and `is_pull()` is false, so their
     // conjunction uniquely identifies the in-process local-copy path whose
