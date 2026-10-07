@@ -191,10 +191,16 @@ impl RuntimeOptions {
         Ok(())
     }
 
+    /// Loads the `--motd-file` / `--motd` greeting.
+    ///
+    /// upstream: clientserver.c:188 reads `motd file` through
+    /// `open_no_attacker_symlinks()`; these oc-only flags name the same file
+    /// and are read by the same, typically root, daemon, so they take the
+    /// same ownership walk as the config directive.
     fn load_motd_file(&mut self, value: &OsString) -> Result<(), DaemonError> {
         let path = PathBuf::from(value.clone());
-        let contents =
-            fs::read_to_string(&path).map_err(|error| config_io_error("read", &path, error))?;
+        let contents = crate::daemon::operator_file::read_to_string(&path)
+            .map_err(|error| config_io_error("read", &path, error))?;
 
         for raw_line in contents.lines() {
             let mut line = String::new();
