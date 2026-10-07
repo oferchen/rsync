@@ -401,27 +401,13 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
-    // upstream: options.c:2828-2833 - compress choice is only forwarded when
-    // the user explicitly specified --compress-choice, --new-compress, or
-    // --old-compress.
-    if config.explicit_compress_choice() {
-        let algo = config.compression_algorithm();
-        let name = algo.name();
-        match name {
-            "zlibx" => args.push("--new-compress".to_owned()),
-            "zlib" => args.push("--old-compress".to_owned()),
-            _ => args.push(format!("--compress-choice={name}")),
-        }
-    }
-
-    // upstream: options.c:2765-2768 - --compress-level=N
-    if let Some(level) = config.compression_level() {
-        args.push(format!(
-            "--compress-level={}",
-            compression_level_numeric(level)
-        ));
-    }
-
+    let compress_request = config.compress_request();
+    args.extend(
+        compress_request
+            .level_arg()
+            .into_iter()
+            .chain(compress_request.choice_arg()),
+    );
     // upstream: options.c:2963-2967 - `asprintf(&arg, "-B%u", (int)block_size)`
     // inside `if (block_size) {`. The SHORT spelling is what upstream puts on
     // the wire, so the daemon arg vector must carry it too: a `--block-size=`
@@ -1039,22 +1025,6 @@ fn escape_daemon_arg_bytes(arg: &[u8]) -> Vec<u8> {
         out.push(b);
     }
     out
-}
-
-/// Converts a [`compress::zlib::CompressionLevel`] to its signed wire value.
-///
-/// upstream: options.c:2932-2933 - `--compress-level=%d` forwards the signed
-/// `do_compression_level`, so a negative zstd "fast" level is preserved.
-fn compression_level_numeric(level: compress::zlib::CompressionLevel) -> i32 {
-    use compress::zlib::CompressionLevel;
-    match level {
-        CompressionLevel::None => 0,
-        CompressionLevel::Fast => 1,
-        CompressionLevel::Default => 6,
-        CompressionLevel::Best => 9,
-        CompressionLevel::Precise(n) => i32::from(n.get()),
-        CompressionLevel::PreciseSigned(v) => v,
-    }
 }
 
 // upstream: clientserver.c carries the daemon operand path as raw `char*`

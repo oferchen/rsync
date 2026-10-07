@@ -102,7 +102,7 @@ mod summary;
 #[cfg(feature = "embedded-ssh")]
 pub use self::config::EmbeddedSshOptions;
 pub use self::config::{
-    AddressMode, BandwidthLimit, BindAddress, ClientConfig, ClientConfigBuilder,
+    AddressMode, BandwidthLimit, BindAddress, ClientConfig, ClientConfigBuilder, CompressRequest,
     CompressionSetting, ConfigConflict, DeleteMode, FilesFromPlan, FilesFromSource, FilterRuleKind,
     FilterRuleSpec, HumanReadableMode, HumanReadableModeParseError, IconvParseError, IconvSetting,
     ParseTcpFastOpenModeError, ReferenceDirectory, ReferenceDirectoryKind, StrongChecksumAlgorithm,

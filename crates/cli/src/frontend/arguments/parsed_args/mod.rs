@@ -421,18 +421,16 @@ pub struct ParsedArgs {
     /// `--compress-level` - compression level (0-9).
     pub compress_level: Option<OsString>,
 
-    /// `--compress-choice` - compression algorithm (e.g., `zlib`, `zstd`).
+    /// Effective `compress_choice`: the last of `--compress-choice`,
+    /// `--old-compress` (`zlib`) and `--new-compress` (`zlibx`), or `zlibx`
+    /// for a repeated `-z`; cleared by a later `--no-compress`.
     pub compress_choice: Option<OsString>,
 
     /// `--compress-threads` - zstd worker thread count (raw, validated later).
     pub compress_threads: Option<OsString>,
 
-    /// `--old-compress` - force zlib compression.
-    pub old_compress: bool,
-
-    /// `--new-compress` - force newer compression methods.
-    pub new_compress: bool,
-
+    /// Number of `-z` given after the last `--no-compress`.
+    pub compress_count: u8,
     /// `--skip-compress` - file suffixes to skip compression for.
     pub skip_compress: Option<OsString>,
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::client::config::compress_request::level_value;
 use std::num::{NonZeroU8, NonZeroU32, NonZeroUsize};
 
 impl ClientConfig {
@@ -48,6 +49,24 @@ impl ClientConfig {
     #[must_use]
     pub const fn explicit_compress_choice(&self) -> bool {
         self.explicit_compress_choice
+    }
+
+    /// Returns the compression request forwarded to the remote server.
+    ///
+    /// The CLI records it verbatim; programmatic configurations derive it
+    /// from [`Self::compress`], [`Self::compress_choice_name`] and
+    /// [`Self::compression_level`].
+    #[must_use]
+    pub fn compress_request(&self) -> CompressRequest {
+        if let Some(request) = &self.compress_request {
+            return request.clone();
+        }
+        let choice = self.explicit_compress_choice.then(|| {
+            self.compress_choice_name()
+                .unwrap_or(self.compression_algorithm.name())
+        });
+        let level = self.compression_level.map(level_value);
+        CompressRequest::resolve(self.compress, choice, level).unwrap_or_default()
     }
 
     /// Returns the compression setting that should apply when compression is enabled.

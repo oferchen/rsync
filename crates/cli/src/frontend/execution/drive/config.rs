@@ -8,7 +8,7 @@ use std::time::SystemTime;
 use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
 use compress::algorithm::CompressionAlgorithm;
 use core::client::{
-    AddressMode, BandwidthLimit, BatchConfig, ClientConfig, ClientConfigBuilder,
+    AddressMode, BandwidthLimit, BatchConfig, ClientConfig, ClientConfigBuilder, CompressRequest,
     CompressionSetting, DeleteMode, FilesFromSource, IconvSetting, SkipCompressList,
     StrongChecksumChoice, TcpFastOpenMode, TransferTimeout,
 };
@@ -93,6 +93,7 @@ pub(crate) struct ConfigInputs {
     pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
     /// Raw `--compress-choice` name preserved for the `--debug=NSTR` summary.
     pub(crate) compress_choice_name: Option<String>,
+    pub(crate) compress_request: CompressRequest,
     pub(crate) compression_threads: Option<NonZeroU8>,
     pub(crate) open_noatime: bool,
     pub(crate) owner: bool,
@@ -460,7 +461,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
     if inputs.compress_choice_name.is_some() {
         builder = builder.compress_choice_name(inputs.compress_choice_name.take());
     }
-
+    builder = builder.compress_request(inputs.compress_request.clone());
     if let Some(choice) = inputs.checksum_choice {
         builder = builder.checksum_choice(choice);
     }

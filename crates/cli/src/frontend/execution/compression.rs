@@ -96,6 +96,11 @@ fn clamp_level(codec: CompressionAlgorithm, raw: i32) -> CompressLevelArg {
     }
 }
 
+/// Parses the raw `--compress-level=N` integer that is forwarded to the server.
+pub(crate) fn parse_compress_level_value(argument: &OsStr) -> Result<i32, Message> {
+    parse_raw_level(argument).map_err(CompressionLevelParseError::into_flag_message)
+}
+
 /// Parses `--compress-level=N`, clamping it into `codec`'s range when the codec
 /// is known.
 ///
