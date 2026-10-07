@@ -1093,6 +1093,37 @@ fn quiet_flag_produces_no_output() {
     assert_eq!(std::fs::read(destination).expect("read"), b"quiet mode");
 }
 
+/// upstream: log.c:344-345 - the `--stats` summary and the `-i` itemize rows
+/// are FINFO/FCLIENT writes, which rwrite() drops under `--quiet`.
+#[test]
+fn quiet_suppresses_stats_and_itemize_output() {
+    use tempfile::tempdir;
+    let tmp = tempdir().expect("tempdir");
+    let source = tmp.path().join("src");
+    let destination = tmp.path().join("dst");
+    std::fs::create_dir(&source).expect("create src");
+    std::fs::write(source.join("f.txt"), b"quiet stats").expect("write source");
+    let mut source_arg = source.into_os_string();
+    source_arg.push("/");
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-rqi"),
+        OsString::from("--stats"),
+        source_arg,
+        destination.clone().into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty(), "{}", String::from_utf8_lossy(&stderr));
+    assert!(
+        stdout.is_empty(),
+        "-q must silence --stats and -i, got: {:?}",
+        String::from_utf8_lossy(&stdout)
+    );
+    assert_eq!(
+        std::fs::read(destination.join("f.txt")).expect("read"),
+        b"quiet stats"
+    );
+}
 /// Verifies that higher verbosity levels never drop output.
 ///
 /// Level 0 emits nothing per upstream; Level 1 begins per-file `%n%L`
@@ -2083,6 +2114,47 @@ fn recursive_verbose_keeps_incremental_banner() {
     );
 }
 
+/// Recursion alone does not select the incremental banner: `inc_recurse` is
+/// the negotiated CF_INC_RECURSE bit (compat.c:757), which a local copy's
+/// receiving half grants only at protocol >= 30 (compat.c:721-723) and when
+/// set_allow_inc_recurse() leaves it allowed (compat.c:172-179). Every cell
+/// here clears it, so `send_file_list()` takes the `show_filelist_progress`
+/// arm (flist.c:2761-2762) instead.
+#[test]
+fn recursive_verbose_without_inc_recurse_prints_building_banner() {
+    for extra in [
+        "--no-inc-recursive",
+        "--qsort",
+        "--delete-before",
+        "--delete-after",
+        "--delay-updates",
+        "--prune-empty-dirs",
+        "--protocol=29",
+    ] {
+        let rendered = banner_stdout(&["-rv", extra]);
+        assert_eq!(
+            rendered.lines().next(),
+            Some("building file list ... done"),
+            "-rv {extra} got: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains("incremental file list"),
+            "-rv {extra} must not print the incremental banner, got: {rendered:?}"
+        );
+    }
+}
+/// A bare `--delete` does not clear INC_RECURSE: upstream resolves it to
+/// `delete_during` only after the capability is decided (compat.c:683-688), so
+/// the incremental banner stays.
+#[test]
+fn recursive_verbose_delete_keeps_incremental_banner() {
+    let rendered = banner_stdout(&["-rv", "--delete"]);
+    assert_eq!(
+        rendered.lines().next(),
+        Some("sending incremental file list"),
+        "got: {rendered:?}"
+    );
+}
 /// Without `-v` the `INFO_GTE(FLIST, 1)` term of flist.c:172 is false, so no
 /// banner is printed - and nothing else is either.
 #[test]

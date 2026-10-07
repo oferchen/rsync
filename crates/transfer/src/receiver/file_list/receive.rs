@@ -650,7 +650,7 @@ impl ReceiverContext {
 /// # Upstream Reference
 ///
 /// - `flist.c:2925-2926` - `if (relative_paths && *cur_dir == '/') cur_dir++;`
-pub(super) fn strip_leading_slashes(p: &Path) -> &Path {
+pub(in crate::receiver) fn strip_leading_slashes(p: &Path) -> &Path {
     let mut s = p;
     while let Ok(rest) = s.strip_prefix("/") {
         if rest.as_os_str().is_empty() {

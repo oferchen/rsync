@@ -38,6 +38,7 @@ use crate::daemon::{
     RuntimeOptions,
     TestSecretsEnvOverride,
     UNSUPPORTED_AUTH_DIGEST_EXIT_CODE,
+    UnresolvedId,
     advertised_capability_lines,
     // From daemon.rs apply_verbosity helper
     apply_verbosity,
@@ -311,7 +312,6 @@ include!("tests/chunks/runtime_options_cli_modules_inherit_global_refuse_options
 include!("tests/chunks/runtime_options_config_lock_file_respects_cli_override.rs");
 include!("tests/chunks/runtime_options_config_pid_file_respects_cli_override.rs");
 include!("tests/chunks/runtime_options_default_enables_reverse_lookup.rs");
-include!("tests/chunks/runtime_options_global_bwlimit_respects_cli_override.rs");
 include!("tests/chunks/runtime_options_global_directives_apply_as_module_defaults.rs");
 include!("tests/chunks/runtime_options_global_include_filter_default_inherited.rs");
 include!(
@@ -328,7 +328,6 @@ include!("tests/chunks/runtime_options_load_modules_from_config_file.rs");
 include!("tests/chunks/runtime_options_loads_boolean_and_id_directives_from_config.rs");
 include!("tests/chunks/runtime_options_loads_config_from_branded_environment_variable.rs");
 include!("tests/chunks/runtime_options_loads_config_from_legacy_environment_variable.rs");
-include!("tests/chunks/runtime_options_loads_global_bwlimit_from_config.rs");
 include!("tests/chunks/runtime_options_loads_global_chmod_from_config.rs");
 include!("tests/chunks/runtime_options_defaults_lock_file_to_upstream_path.rs");
 include!("tests/chunks/runtime_options_loads_lock_file_from_config.rs");
@@ -343,7 +342,6 @@ include!("tests/chunks/runtime_options_loads_secrets_from_branded_environment_va
 include!("tests/chunks/runtime_options_loads_secrets_from_legacy_environment_variable.rs");
 include!("tests/chunks/runtime_options_loads_temp_dir_from_config.rs");
 include!("tests/chunks/runtime_options_loads_timeout_from_config.rs");
-include!("tests/chunks/runtime_options_loads_unlimited_global_bwlimit_from_config.rs");
 include!("tests/chunks/runtime_options_loads_unlimited_max_connections_from_config.rs");
 include!("tests/chunks/runtime_options_loads_use_chroot_directive_from_config.rs");
 include!("tests/chunks/runtime_options_loads_syslog_facility_from_config.rs");
@@ -361,7 +359,6 @@ include!(
 include!("tests/chunks/runtime_options_module_definition_supports_escaped_commas.rs");
 include!("tests/chunks/runtime_options_inline_module_inherits_chmod.rs");
 include!("tests/chunks/runtime_options_inline_module_overrides_chmod.rs");
-include!("tests/chunks/runtime_options_last_wins_global_bwlimit.rs");
 include!("tests/chunks/runtime_options_last_wins_global_chmod.rs");
 include!("tests/chunks/runtime_options_last_wins_global_refuse_options.rs");
 include!("tests/chunks/runtime_options_last_wins_module_refuse_options.rs");
@@ -397,15 +394,15 @@ include!("tests/chunks/runtime_options_reject_duplicate_log_file_argument.rs");
 include!("tests/chunks/runtime_options_reject_duplicate_pid_file_argument.rs");
 include!("tests/chunks/runtime_options_reject_invalid_bwlimit.rs");
 include!("tests/chunks/runtime_options_reject_whitespace_wrapped_bwlimit_argument.rs");
-include!("tests/chunks/runtime_options_rejects_config_missing_path.rs");
+include!("tests/chunks/runtime_options_loads_a_module_without_path.rs");
 include!("tests/chunks/runtime_options_rejects_duplicate_module_across_config_and_cli.rs");
 include!("tests/chunks/runtime_options_accepts_empty_refuse_options_directive.rs");
 include!("tests/chunks/runtime_options_rejects_invalid_boolean_directive.rs");
-include!("tests/chunks/runtime_options_rejects_invalid_bwlimit_in_config.rs");
+include!("tests/chunks/runtime_options_ignores_a_global_bwlimit_directive.rs");
 include!("tests/chunks/runtime_options_rejects_invalid_list_directive.rs");
 include!("tests/chunks/runtime_options_rejects_invalid_max_connections.rs");
 include!("tests/chunks/runtime_options_rejects_invalid_timeout.rs");
-include!("tests/chunks/runtime_options_rejects_invalid_uid.rs");
+include!("tests/chunks/runtime_options_defers_an_unresolvable_uid.rs");
 include!("tests/chunks/runtime_options_rejects_ipv4_ipv6_combo.rs");
 include!("tests/chunks/runtime_options_rejects_missing_secrets_from_environment.rs");
 include!("tests/chunks/runtime_options_resolves_a_relative_module_path.rs");

@@ -408,11 +408,9 @@ impl ReceiverContext {
     /// terminating `NDX_FLIST_EOF` must have been read (`flist_eof`), and in
     /// both regimes no segment may have been reclaimed
     /// (`first_segment_idx == 0`) since reclaim frees the very names the
-    /// keep-set is built from. Every live driver satisfies this today via the
-    /// up-front `ensure_all_segments_loaded` drain; the INC_RECURSE-on-pull
-    /// conversion (see `compute_allow_inc_recurse` in `lib.rs`) must either
-    /// keep it true at both delete sites or split the sweep per-segment the
-    /// way upstream's `delete_in_dir` does.
+    /// keep-set is built from. The batch drivers satisfy it by materializing
+    /// every segment first; the streaming INC_RECURSE driver never sweeps the
+    /// whole list and deletes per segment instead (`delete_in_segment`).
     pub(in crate::receiver) fn delete_pass_flist_complete(&self) -> bool {
         let inc_recurse = crate::receiver::ndx_stream::FlistMarkerSink::inc_recurse(self);
         (!inc_recurse || self.flist_eof) && self.first_segment_idx == 0
@@ -453,33 +451,31 @@ impl ReceiverContext {
     where
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     {
-        use crate::generator::io_error_flags::IOERR_GENERAL;
-
-        // The keep-set below is the whole `file_list`, so sweeping before
-        // every segment has landed would delete files a later segment still
-        // lists. Unreachable on today's eager-drain drivers (see
-        // `delete_pass_flist_complete`); the skip mirrors the soft arm
-        // upstream applies to its analogous incomplete-flist hazard
-        // (generator.c:304-311) rather than aborting the transfer.
-        if !self.delete_pass_flist_complete() {
-            debug_assert!(
-                false,
-                "delete pass invoked on an incomplete file list \
-                 (flist_eof unset or a segment reclaimed)"
-            );
-            return Ok(());
+        // Every phase but the `--delete-delay` execution builds its keep-set
+        // from the whole `file_list`, so sweeping before every segment has
+        // landed - or after one was reclaimed - would delete files a later or
+        // freed segment still lists. That is a driver bug, not a peer or
+        // filesystem condition, so it aborts the transfer rather than risking
+        // the unlink. The delay execution only replays victims decided earlier
+        // (upstream generator.c:2899-2900 `do_delayed_deletions()` reads the
+        // deldelay buffer, never the file list), so it needs no complete list.
+        let scans_whole_list = phase == DeletePassPhase::Early || self.config.deletion.delete_after;
+        if scans_whole_list && !self.delete_pass_flist_complete() {
+            return Err(io::Error::other(format!(
+                "whole-list delete pass over an incomplete file list \
+                 (flist_eof={}, first_segment_idx={}) {}{}",
+                self.flist_eof,
+                self.first_segment_idx,
+                crate::role_trailer::error_location!(),
+                crate::role_trailer::receiver()
+            )));
         }
 
-        // upstream: generator.c:304-311 delete_in_dir() - if the sender hit a
-        // general I/O error while scanning the source, its file list may be
-        // incomplete, so deleting dest files that merely never got listed would
-        // lose data. Skip the entire delete pass (both phases) and print the
-        // notice once, unless `--ignore-errors` was given.
-        if stats.io_error & IOERR_GENERAL != 0 && !self.config.deletion.ignore_errors {
-            if !self.io_error_delete_warning_emitted {
-                self.io_error_delete_warning_emitted = true;
-                info_log!(Nonreg, 1, "IO error encountered -- skipping file deletion");
-            }
+        // The I/O-error guard withholds decisions, not replays: upstream tests
+        // it in delete_in_dir() (generator.c:304-311), where a delay victim is
+        // recorded, while do_delayed_deletions() (generator.c:265-278) unlinks
+        // every record unconditionally.
+        if scans_whole_list && self.io_error_blocks_deletion(stats.io_error, writer) {
             return Ok(());
         }
 
@@ -512,6 +508,11 @@ impl ReceiverContext {
                 }
             }
             DeletePassPhase::Late => {
+                // upstream: generator.c:2899-2902 - the late sweep follows the
+                // generate loop, so its deletion rows print after every name
+                // and itemize row; release the deferred client rows first.
+                self.flush_names_all()?;
+                self.flush_itemize_rows(writer)?;
                 if self.config.deletion.delete_after {
                     self.run_immediate_delete_pass(
                         dest_dir,
@@ -540,6 +541,200 @@ impl ReceiverContext {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Runs the late delete site and the directory touch-up that follows it.
+    ///
+    /// Must run after the sender's final `NDX_DONE` has been read (see
+    /// `finalize_transfer_with`): `sender_io_error` carries the sender's
+    /// `MSG_IO_ERROR` bits, which it writes just before that `NDX_DONE`
+    /// (sender.c:811-820) and which the receiver folds into `io_error`
+    /// (io.c:1740-1747) before the generator's late sweep consults
+    /// `delete_in_dir()`'s guard (generator.c:304-311).
+    ///
+    /// The sweep runs only after every file (including each destination
+    /// `.rsync-filter` and any `--delay-updates` staged file) has landed, so
+    /// per-directory merge protect rules apply at delete time
+    /// (generator.c:2899-2902). `touch_up_dirs` follows so parent mtimes the
+    /// deletions changed are re-applied (generator.c:2922-2924).
+    pub(in crate::receiver) fn run_late_delete_and_touch_up<W>(
+        &mut self,
+        sender_io_error: i32,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
+        writer: &mut W,
+        stats: &mut TransferStats,
+    ) -> io::Result<()>
+    where
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    {
+        stats.io_error |= sender_io_error;
+        if self.delete_pass_is_late() {
+            self.run_receiver_delete_pass(
+                DeletePassPhase::Late,
+                dest_dir,
+                #[cfg(unix)]
+                sandbox,
+                writer,
+                stats,
+            )?;
+        }
+        self.touch_up_dirs(dest_dir, writer);
+        Ok(())
+    }
+
+    /// True when a general I/O error withholds deletion, printing the notice
+    /// the first time.
+    ///
+    /// upstream: generator.c:304-311 delete_in_dir() - if the sender hit a
+    /// general I/O error while scanning the source, its file list may be
+    /// incomplete, so deleting dest files that merely never got listed would
+    /// lose data. Every later deletion is skipped and the notice printed once
+    /// (the static `already_warned`), unless `--ignore-errors` was given.
+    fn io_error_blocks_deletion<W>(&mut self, io_error: i32, writer: &mut W) -> bool
+    where
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    {
+        use crate::generator::io_error_flags::IOERR_GENERAL;
+
+        if io_error & IOERR_GENERAL == 0 || self.config.deletion.ignore_errors {
+            return false;
+        }
+        if !self.io_error_delete_warning_emitted {
+            self.io_error_delete_warning_emitted = true;
+            // upstream: log.c:rwrite() - a server frames the FINFO notice
+            // as MSG_INFO for the client; only a client prints it locally.
+            if self.config.connection.client_mode {
+                info_log!(Nonreg, 1, "IO error encountered -- skipping file deletion");
+            } else {
+                let _ = writer.send_msg_info(b"IO error encountered -- skipping file deletion\n");
+            }
+        }
+        true
+    }
+
+    /// True for the delete modes that delete per directory during the walk:
+    /// `--delete-during` (plain `--delete` at protocol 30+) and
+    /// `--delete-delay`. Upstream's `delete_during` (1 or 2).
+    ///
+    /// upstream: compat.c:172-177 keeps `--delete-before` / `--delete-after`
+    /// off an INC_RECURSE receiver, so these are the only modes such a walk
+    /// sees.
+    fn deletes_during_walk(&self) -> bool {
+        self.config.flags.delete
+            && !self.config.deletion.delete_before
+            && !self.config.deletion.delete_after
+    }
+
+    /// Deletes the extraneous entries of INC_RECURSE segment `segment_idx`'s
+    /// parent directory, as that segment is about to be walked.
+    ///
+    /// The segment is the directory's complete sub-list, so the keep-set built
+    /// from it alone classifies every destination entry exactly (see
+    /// `DeleteScope::Dir`). `--delete-delay` records the victims for the late
+    /// site instead of unlinking them, unless `--max-delete` or `-x` needs the
+    /// serial executor, which unlinks inline as the whole-list pass does.
+    /// Deletions accumulate across segments into the `NDX_DEL_STATS` counters
+    /// and one `--max-delete` budget; the driver settles the budget once, after
+    /// the walk, through `finish_delete_limit`.
+    ///
+    /// `stats.io_error` must already hold every file-list and `MSG_IO_ERROR`
+    /// bit read so far, as upstream's global does when `delete_in_dir()` tests
+    /// it.
+    ///
+    /// The gates run in upstream's order: the mode (`delete_during`,
+    /// `!list_only`), a parent directory that exists (`FLAG_MISSING_DIR`), the
+    /// parent's `FLAG_CONTENT_DIR`, then inside `delete_in_dir()` the keepalive
+    /// poke and the `IOERR_GENERAL` guard.
+    ///
+    /// # Errors
+    ///
+    /// Fails without deleting anything when `segment_idx` is not a resident,
+    /// received segment: its names were never read or were already reclaimed,
+    /// so no keep-set can be built.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2780-2798` - `delete_in_dir()` for `cur_flist`'s parent.
+    /// - `generator.c:285-356` - `delete_in_dir()`.
+    pub(in crate::receiver) fn delete_in_segment<W>(
+        &mut self,
+        segment_idx: usize,
+        dest_dir: &Path,
+        #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
+        failed_dirs: &crate::receiver::directory::FailedDirectories,
+        writer: &mut W,
+        stats: &mut TransferStats,
+    ) -> io::Result<()>
+    where
+        W: Write + crate::writer::MsgInfoSender + ?Sized,
+    {
+        use crate::receiver::directory::deletion::DeleteScope;
+        use crate::receiver::file_list::DirSlot;
+
+        // upstream: generator.c:2791 `delete_during && dry_run < 2 && !list_only`.
+        if !self.deletes_during_walk() || self.config.flags.list_only {
+            return Ok(());
+        }
+        if segment_idx < self.first_segment_idx || segment_idx >= self.ndx_segments.len() {
+            return Err(io::Error::other(format!(
+                "per-directory delete for segment {segment_idx} outside the resident \
+                 segments {}..{} {}{}",
+                self.first_segment_idx,
+                self.ndx_segments.len(),
+                crate::role_trailer::error_location!(),
+                crate::role_trailer::receiver()
+            )));
+        }
+        // upstream: generator.c:2780-2781 - only a list with a parent.
+        let Some(dir_ndx) = self.segment_parent_dir_ndx[segment_idx] else {
+            return Ok(());
+        };
+        let Some(DirSlot::Active { name, content_dir }) = self.dir_flist.resolve(dir_ndx) else {
+            return Ok(());
+        };
+        let content_dir = *content_dir;
+        let dir = crate::receiver::file_list::strip_leading_slashes(name).to_path_buf();
+        // upstream: generator.c:2791 `!(fp->flags & FLAG_MISSING_DIR)` - the
+        // parent could not be created, so there is nothing to scan.
+        if failed_dirs.failed_ancestor(&dir).is_some() {
+            return Ok(());
+        }
+        // upstream: generator.c:2792-2800 - a non-content parent only gets
+        // change_local_filter_dir(); the scan reloads merge files per directory.
+        if !content_dir {
+            return Ok(());
+        }
+        // upstream: generator.c:301-302 - the keepalive precedes the io_error test.
+        writer.maybe_send_keepalive()?;
+        if self.io_error_blocks_deletion(stats.io_error, writer) {
+            return Ok(());
+        }
+
+        let scope = DeleteScope::Dir {
+            dir: &dir,
+            range: self.ndx_segments[segment_idx].0..self.segment_end(segment_idx),
+        };
+        let collect_only =
+            self.config.deletion.late_delete && !self.delete_pass_uses_serial_executor();
+        let budget_used = u64::from(self.effective_del_stats().total());
+        let (delete_stats, skipped, io_bits, victims) = self.run_delete_scan(
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+            writer,
+            collect_only,
+            &scope,
+            budget_used,
+        )?;
+        stats.io_error |= io_bits;
+        // upstream: generator.c:352-353 remember_delete() for --delete-delay.
+        self.delayed_delete_victims.extend(victims);
+        // upstream: delete.c:241-256 - one global stats.deleted_* tally feeds
+        // the single NDX_DEL_STATS frame (main.c:228-240).
+        self.pending_del_stats.merge(&delete_stats);
+        self.skipped_deletes += skipped;
         Ok(())
     }
 

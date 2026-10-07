@@ -297,6 +297,25 @@ mod failed_directories_tests {
     }
 
     #[test]
+    fn missing_directories_cover_their_subtree_but_are_not_failures() {
+        let mut dirs = FailedDirectories::new();
+        dirs.mark_missing("new");
+        assert!(dirs.is_missing_or_below("new"));
+        assert!(dirs.is_missing_or_below("new/keep/this"));
+        assert!(!dirs.is_missing_or_below("newer/file"));
+        assert!(!dirs.is_missing_or_below("foo"));
+        // A missing directory is a skip, never a failure.
+        assert!(dirs.failed_ancestor("new/keep/this").is_none());
+        assert_eq!(dirs.count(), 0);
+    }
+    #[test]
+    fn failed_directories_are_not_missing() {
+        let mut dirs = FailedDirectories::new();
+        dirs.mark_failed("foo");
+        assert!(!dirs.is_missing_or_below("foo/bar"));
+        assert!(dirs.failed_ancestor("foo/bar").is_some());
+    }
+    #[test]
     fn failed_directories_handles_a_path_without_separators() {
         let mut failed = FailedDirectories::new();
         failed.mark_failed("file");

@@ -670,6 +670,78 @@ fn client_dparam_is_refused_as_a_daemon_option() {
     );
 }
 
+/// A `--dparam` name that is not a daemon parameter is reported before the
+/// missing `--daemon`.
+///
+/// upstream: options.c:1583-1584 runs set_dparams(1) after the daemon-option
+/// re-parse and before the `!daemon_opt` check at options.c:1591. Measured on
+/// 3.5.1: `rsync --dparam=x=1 a b` exits 1 with `Unknown parameter "x"` and
+/// no usage hint.
+#[test]
+fn client_dparam_unknown_name_is_reported_before_the_missing_daemon() {
+    let err = parse_args(["oc-rsync", "--dparam=x=1", "src", "dst"])
+        .expect_err("an unknown --dparam name must be refused");
+    let text = err.to_string();
+    assert!(
+        text.contains("Unknown parameter \"x\""),
+        "unexpected refusal: {text:?}"
+    );
+    assert!(
+        !text.contains("Daemon option(s)"),
+        "unexpected refusal: {text:?}"
+    );
+}
+
+/// A daemon option in a client command line re-parses the whole argv as daemon
+/// options, so the first client-only option is what gets reported.
+///
+/// upstream: options.c:1538-1596 - measured on 3.5.1, each case exits 1:
+/// `-a --dparam=x=1 a b` and `--config=/dev/null -a a b` report `rsync: -a:
+/// unknown option (in daemon mode)`, `--dparam=x=1 --links a b` reports
+/// `--links`, `--dparam=x=1 --port=5 -v a b` gets as far as
+/// `Unknown parameter "x"`, and `--detach a b` as far as "Daemon option(s)
+/// used without --daemon.".
+#[test]
+fn client_daemon_option_reparses_argv_in_daemon_mode() {
+    for (argv, expected) in [
+        (
+            &["-a", "--dparam=x=1", "a", "b"][..],
+            "rsync: -a: unknown option (in daemon mode)",
+        ),
+        (
+            &["-av", "--dparam=x=1", "a", "b"][..],
+            "rsync: -av: unknown option (in daemon mode)",
+        ),
+        (
+            &["--dparam=x=1", "--links", "a", "b"][..],
+            "rsync: --links: unknown option (in daemon mode)",
+        ),
+        (
+            &["--config=/dev/null", "-a", "a", "b"][..],
+            "rsync: -a: unknown option (in daemon mode)",
+        ),
+        (
+            &["--dparam=x=1", "--port=5", "-v", "a", "b"][..],
+            "Unknown parameter \"x\"",
+        ),
+        (
+            &["--dparam=noeq", "-a", "a", "b"][..],
+            "--dparam value is missing an '=': noeq",
+        ),
+        (
+            &["--detach", "a", "b"][..],
+            "Daemon option(s) used without --daemon.",
+        ),
+    ] {
+        let mut args = vec!["oc-rsync"];
+        args.extend_from_slice(argv);
+        let text = parse_args(args)
+            .expect_err("a daemon option must be refused")
+            .to_string();
+        assert!(text.contains(expected), "{argv:?}: {text:?}");
+    }
+}
+
 // --- Tracked divergences (upstream-correct contract; oc not yet compliant) ---
 //
 // Each test below asserts the UPSTREAM behaviour. It is `#[ignore]`d because

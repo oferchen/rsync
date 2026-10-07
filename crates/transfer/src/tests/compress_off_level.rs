@@ -21,7 +21,6 @@ use crate::negotiated_level_disables_compression;
 #[test]
 fn zlib_level_zero_disables() {
     assert!(negotiated_level_disables_compression(
-        false,
         0,
         CompressionAlgorithm::Zlib
     ));
@@ -31,7 +30,6 @@ fn zlib_level_zero_disables() {
 #[test]
 fn zlibx_level_zero_disables() {
     assert!(negotiated_level_disables_compression(
-        false,
         0,
         CompressionAlgorithm::ZlibX
     ));
@@ -45,7 +43,6 @@ fn zlibx_level_zero_disables() {
 #[test]
 fn zstd_level_zero_stays_on() {
     assert!(!negotiated_level_disables_compression(
-        false,
         0,
         CompressionAlgorithm::Zstd
     ));
@@ -57,7 +54,6 @@ fn zstd_level_zero_stays_on() {
 #[test]
 fn lz4_level_zero_stays_on() {
     assert!(!negotiated_level_disables_compression(
-        false,
         0,
         CompressionAlgorithm::LZ4
     ));
@@ -69,7 +65,6 @@ fn lz4_level_zero_stays_on() {
 #[test]
 fn zlib_nonzero_level_stays_on() {
     assert!(!negotiated_level_disables_compression(
-        false,
         6,
         CompressionAlgorithm::Zlib
     ));
@@ -81,21 +76,7 @@ fn zlib_nonzero_level_stays_on() {
 #[test]
 fn unspecified_level_never_disables() {
     assert!(!negotiated_level_disables_compression(
-        false,
         CLVL_NOT_SPECIFIED,
-        CompressionAlgorithm::Zlib
-    ));
-}
-
-/// An explicit `--compress-choice` already resolved the level against its known
-/// codec at CLI-parse time, so the deferred resolver must leave that path
-/// untouched even for zlib level 0. upstream: the explicit codec is resolved in
-/// `parse_compress_choice` without deferral.
-#[test]
-fn explicit_choice_zlib_zero_not_redisabled_here() {
-    assert!(!negotiated_level_disables_compression(
-        true,
-        0,
         CompressionAlgorithm::Zlib
     ));
 }
@@ -104,7 +85,6 @@ fn explicit_choice_zlib_zero_not_redisabled_here() {
 #[test]
 fn negotiated_none_is_not_treated_as_a_level_disable() {
     assert!(!negotiated_level_disables_compression(
-        false,
         0,
         CompressionAlgorithm::None
     ));

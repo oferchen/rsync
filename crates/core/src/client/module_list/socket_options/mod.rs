@@ -10,6 +10,7 @@ mod lookup;
 mod types;
 
 pub(crate) use apply::apply_socket_options;
+pub use apply::apply_socket_options_reporting;
 
 #[cfg(test)]
 mod tests {

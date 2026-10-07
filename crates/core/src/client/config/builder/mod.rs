@@ -106,9 +106,9 @@ macro_rules! builder_setter {
 }
 
 use super::{
-    AddressMode, BandwidthLimit, BindAddress, ClientConfig, CompressionSetting, DeleteMode,
-    FilesFromSource, FilterRuleSpec, IconvSetting, ReferenceDirectory, ReferenceDirectoryKind,
-    StrongChecksumChoice, TcpFastOpenMode, TransferTimeout,
+    AddressMode, BandwidthLimit, BindAddress, ClientConfig, CompressRequest, CompressionSetting,
+    DeleteMode, FilesFromSource, FilterRuleSpec, IconvSetting, ReferenceDirectory,
+    ReferenceDirectoryKind, StrongChecksumChoice, TcpFastOpenMode, TransferTimeout,
 };
 use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
 use compress::algorithm::CompressionAlgorithm;
@@ -204,6 +204,7 @@ pub struct ClientConfigBuilder {
     compression_algorithm: CompressionAlgorithm,
     explicit_compress_choice: bool,
     compress_choice_name: Option<String>,
+    compress_request: Option<CompressRequest>,
     compression_level: Option<CompressionLevel>,
     compression_setting: CompressionSetting,
     compression_threads: Option<std::num::NonZeroU8>,
@@ -517,6 +518,7 @@ impl ClientConfigBuilder {
             compression_algorithm: self.compression_algorithm,
             explicit_compress_choice: self.explicit_compress_choice,
             compress_choice_name: self.compress_choice_name,
+            compress_request: self.compress_request,
             compression_level: self.compression_level,
             compression_setting: self.compression_setting,
             compression_threads: self.compression_threads,
