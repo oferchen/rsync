@@ -35,7 +35,7 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
-use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
+use engine::local_copy::{LocalCopyErrorKind, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
 use tempfile::{TempDir, tempdir};
 
 /// Plants, under `<temp>/base`:
@@ -166,27 +166,47 @@ fn parent_dir_operand_matches_the_trailing_slash_and_dot_spellings() {
     }
 }
 
-/// `..` after a symlink resolves through it, so `from/sym-to-dir/..` is
-/// `other`, NOT `from`. A fix that special-cased the operand's own lexical
-/// parent would deliver `from`'s contents here.
+/// `from/sym-to-dir/..` stats as `other` (the kernel resolves `..` from the
+/// symlink's target) but `clean_fname()` collapses it lexically to `from`.
+/// Since rsync 3.5.1 the sender pins the stat'd identity as the operand's root
+/// and opens the cleaned path beneath it, so the mismatch refuses the scan:
+/// `opendir "<base>/from/." failed: Too many levels of symbolic links (40)`,
+/// exit 23, nothing transferred. Measured against stock 3.5.1 (3.5.0 copied
+/// `other`'s contents and exited 0).
+///
+/// upstream: `rsync-3.5.1/flist.c:302-305` records the root, `flist.c:2869`
+/// cleans the operand, `flist.c:2265-2266` opens it through the held root,
+/// `flist.c:325-329` refuses the changed identity with `ELOOP`, and
+/// `flist.c:2374` reports it as a per-item `opendir` failure.
 #[test]
-fn parent_dir_operand_resolves_through_a_symlinked_component() {
+fn parent_dir_operand_through_a_symlinked_component_is_refused_with_eloop() {
     let (_temp, base, to) = fixture();
-
-    let got = run(&base.join("from/sym-to-dir/.."), &to, options());
-
+    let operands = vec![
+        OsString::from(base.join("from/sym-to-dir/..").as_os_str()),
+        OsString::from(to.as_os_str()),
+    ];
+    let plan = LocalCopyPlan::from_operands_with_relative(&operands, false).expect("plan");
+    let error = plan
+        .execute_with_report(LocalCopyExecution::Apply, options())
+        .expect_err("rsync 3.5.1 refuses a root whose identity changed");
     assert_eq!(
-        got,
-        vec![
-            "dir_target/".to_owned(),
-            "dir_target/c.txt = CCC".to_owned(),
-        ],
-        "`from/sym-to-dir/..` names `other` - the kernel resolves `..` from the \
-         symlink's TARGET, and upstream chdir()s to the operand verbatim \
-         (flist.c:2850-2861, flist.c:2917-2919)",
+        error.exit_code(),
+        23,
+        "a per-item failure is RERR_PARTIAL: {error}"
+    );
+    match error.kind() {
+        LocalCopyErrorKind::Io { action, source, .. } => {
+            assert_eq!(*action, "open directory", "{error}");
+            assert_eq!(source.raw_os_error(), Some(libc::ELOOP), "{error}");
+        }
+        other => panic!("expected the opendir ELOOP, got {other:?}"),
+    }
+    assert!(
+        snapshot(&to).is_empty(),
+        "nothing beneath the refused root may be transferred: {:?}",
+        snapshot(&to),
     );
 }
-
 /// NEGATIVE CONTROL. An ordinary directory operand is `NORMAL_NAME`
 /// (`flist.c:2845-2846`): it lands under its own name. Nothing in this cell
 /// touches the trailing-`..` rule, so it must stay green whether that rule is

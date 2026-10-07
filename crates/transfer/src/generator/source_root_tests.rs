@@ -118,8 +118,14 @@ fn a_relative_operand_root_swapped_after_the_scan_is_refused_with_eloop() {
     assert_eq!(error.raw_os_error(), Some(libc::ELOOP), "{error}");
 }
 
+/// The scan already opened the root through its held descriptor, so a root
+/// replaced afterwards is read through that descriptor: the original tree,
+/// never the replacement's target.
+///
+/// upstream: `flist.c:316-317` reuses the descriptor `flist.c:2265-2266`
+/// opened during the scan, and `sender.c:817` releases it only after sending.
 #[test]
-fn a_root_replaced_after_the_scan_is_refused_with_eloop() {
+fn a_root_replaced_after_the_scan_is_read_through_the_held_descriptor() {
     let (_tmp, base) = tree();
     let mut ctx = GeneratorContext::new_for_test(&handshake(), config(false));
     ctx.build_file_list(&[base.join("src")]).expect("file list");
@@ -127,8 +133,10 @@ fn a_root_replaced_after_the_scan_is_refused_with_eloop() {
 
     std::fs::rename(base.join("src"), base.join("src.real")).expect("move root");
     symlink(base.join("outside"), base.join("src")).expect("plant root symlink");
-    let error = read_through_sender(&ctx, &path).expect_err("replaced root must be refused");
-    assert_eq!(error.raw_os_error(), Some(libc::ELOOP), "{error}");
+    assert_eq!(
+        read_through_sender(&ctx, &path).expect("read beneath the held root"),
+        "inside"
+    );
 }
 
 #[test]

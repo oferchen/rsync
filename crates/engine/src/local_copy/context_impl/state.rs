@@ -298,6 +298,14 @@ impl<'a> CopyContext<'a> {
         self.source_roots.open(path, self.open_noatime_enabled())
     }
 
+    /// The error a scan of `path` must fail with because the pinned anchor
+    /// holding it no longer has the identity recorded for it.
+    ///
+    /// upstream: `rsync-3.5.1/flist.c:325-329` `sender_source_root_fd_for()`
+    /// refuses a changed root with `ELOOP`.
+    pub(in crate::local_copy) fn pinned_anchor_error(&self, path: &Path) -> Option<io::Error> {
+        self.source_roots.held_root(path)?.err()
+    }
     /// Returns the source-tree confinement anchor for the current operand.
     pub(in crate::local_copy) fn source_anchor(&self) -> Option<&Path> {
         self.source_anchor.as_deref()

@@ -116,3 +116,47 @@ fn rsh_sender_refuses_a_directory_swapped_after_the_scan() {
 fn rsh_sender_refuses_a_swapped_directory_without_the_kernel_sandbox() {
     pull_with_swap(true);
 }
+
+/// `from/sym-to-dir/..` stats as `other` but cleans to `from`, so the held
+/// root and the scanned directory disagree. rsync 3.5.1 refuses the scan with
+/// ELOOP and exits 23 with nothing transferred (3.5.0 sent `other`).
+/// upstream: `rsync-3.5.1/flist.c:302-305` records the root, `flist.c:2265-2266`
+/// opens the cleaned operand through it, `flist.c:325-329` refuses the changed
+/// identity and `flist.c:2374` reports the per-item `opendir` failure.
+#[test]
+fn rsh_sender_refuses_a_parent_dir_operand_through_a_symlinked_component() {
+    require_binaries!("oc-rsync", LSH_STUB_BIN);
+    let tmp = create_tempdir();
+    let base = tmp.path().join("base");
+    fs::create_dir_all(base.join("from")).expect("mkdir from");
+    fs::create_dir_all(base.join("other/dir_target")).expect("mkdir dir_target");
+    fs::write(base.join("other/dir_target/c.txt"), b"CCC").expect("write c.txt");
+    symlink("../other/dir_target", base.join("from/sym-to-dir")).expect("plant sym-to-dir");
+    let dst = tmp.path().join("dst");
+    fs::create_dir(&dst).expect("mkdir dst");
+    let stub = LshRunnerStub::locate().expect("lsh-stub located");
+    let out = OcRsyncCliRunner::new()
+        .arg("-a")
+        .arg(format!("--rsh={}", stub.path().display()))
+        .arg(format!(
+            "--rsync-path={}",
+            test_support::oc_rsync_bin().display()
+        ))
+        .arg(format!(
+            "localhost:{}",
+            base.join("from/sym-to-dir/..").display()
+        ))
+        .arg(format!("{}/", dst.display()))
+        .timeout(HANDSHAKE_TIMEOUT)
+        .run()
+        .expect("pull run");
+    assert!(
+        out.stderr_str()
+            .contains("Too many levels of symbolic links"),
+        "the scan must fail with ELOOP\nstderr:\n{}",
+        out.stderr_str()
+    );
+    out.assert_exit(23);
+    let left: Vec<_> = fs::read_dir(&dst).expect("read dst").collect();
+    assert!(left.is_empty(), "nothing may be transferred: {left:?}");
+}

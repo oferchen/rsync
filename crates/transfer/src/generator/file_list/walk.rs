@@ -160,6 +160,16 @@ impl GeneratorContext {
         if let Some(root) = self.confine_root() {
             return fast_io::pinned_root::read_dir_under(&root, path);
         }
+        // upstream: flist.c:2265-2266 - outside a daemon the scan opens through
+        // the operand's held root, so a root whose identity changed since
+        // flist.c:302-305 recorded it fails with ELOOP (flist.c:325-329). The
+        // symlink-following modes keep the plain opendir (flist.c:2355-2361).
+        let flags = &self.config.flags;
+        if !(flags.copy_links || flags.copy_unsafe_links || flags.copy_dirlinks)
+            && let Some(Err(error)) = self.source_roots.held_root(path)
+        {
+            return Err(error);
+        }
         fast_io::pinned_root::read_dir(path)
     }
 
