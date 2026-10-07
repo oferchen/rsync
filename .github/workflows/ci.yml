@@ -418,7 +418,7 @@ jobs:
           key: test
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
         with:
           tool: cargo-nextest
 
@@ -500,6 +500,11 @@ jobs:
   # packages, and no network egress are required (rustls uses the ring
   # provider). Blocking, mirroring the Windows IOCP job: the feature builds and
   # its 30 quic tests pass today, so a regression should fail the PR.
+  #
+  # This job covers Linux, where the datagram layer uses UDP GSO/GRO and
+  # batched receives. The required `windows-test` and `macos-test` jobs run the
+  # same build and rsync_io tests, covering Windows USO and the one-datagram
+  # path that macOS takes and a Linux build never compiles.
   # ===========================================================================
   linux-quic:
     name: Linux QUIC (--features quic)
@@ -535,7 +540,7 @@ jobs:
           key: linux-quic
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
         with:
           tool: cargo-nextest
 
@@ -616,6 +621,27 @@ jobs:
       - name: Test crtime + sparse + iocp read parity + symlink junction (metadata, fast_io, transfer)
         shell: bash
         run: cargo nextest run --locked -p metadata -p fast_io -p transfer
+
+      # QUIC (`--features quic`, oc-only): Windows sends USO trains with receive
+      # coalescing off and wakes its driver with a loopback datagram instead of
+      # poll(2), none of which a Linux build compiles. Same scope as
+      # `linux-quic`. The last step prints the runner's UDP offload
+      # capabilities into the job log.
+      - name: Build quic forwarding (rsync_io + cli + daemon, --features quic)
+        timeout-minutes: 20
+        run: cargo build --locked -p rsync_io -p cli -p daemon --features quic
+
+      - name: Test rsync_io (--features quic)
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          cargo nextest run --locked --profile ci -p rsync_io --features quic 2>&1 | tee nextest-quic.log
+          bash tools/ci/nextest_flaky_summary.sh nextest-quic.log
+
+      - name: Report UDP offload capabilities
+        timeout-minutes: 10
+        shell: bash
+        run: cargo nextest run --locked --profile ci -p rsync_io --features quic --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -938,7 +964,7 @@ jobs:
           shared-key: ci-macos-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
         with:
           tool: cargo-nextest
 
@@ -975,6 +1001,25 @@ jobs:
           # 662 passed, 3 failed - the whole cost of closing the hole.
           rustup run ${{ matrix.toolchain }} cargo nextest run --locked -p core -p engine -p cli -p metadata -p apple-fs -p fast_io --all-features 2>&1 | tee nextest-run.log
           bash tools/ci/nextest_flaky_summary.sh nextest-run.log
+
+      # QUIC (`--features quic`, oc-only): macOS sends and receives one datagram
+      # per call, a path a Linux build never takes. Same scope as `linux-quic`.
+      # The last step prints the runner's UDP offload capabilities into the
+      # job log.
+      - name: Build quic forwarding (rsync_io + cli + daemon, --features quic)
+        timeout-minutes: 15
+        run: rustup run ${{ matrix.toolchain }} cargo build --locked -p rsync_io -p cli -p daemon --features quic
+
+      - name: Test rsync_io (--features quic)
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          rustup run ${{ matrix.toolchain }} cargo nextest run --locked --profile ci -p rsync_io --features quic 2>&1 | tee nextest-quic.log
+          bash tools/ci/nextest_flaky_summary.sh nextest-quic.log
+
+      - name: Report UDP offload capabilities
+        timeout-minutes: 10
+        run: rustup run ${{ matrix.toolchain }} cargo nextest run --locked --profile ci -p rsync_io --features quic --no-capture -E 'test(transmit_segments_follow_the_reported_capability)'
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1050,7 +1095,7 @@ jobs:
           shared-key: ci-musl-x86_64-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
         with:
           tool: cargo-nextest
 
@@ -1166,7 +1211,7 @@ jobs:
 
       - name: Install cargo-nextest (Unix)
         if: runner.os != 'Windows'
-        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
         with:
           tool: cargo-nextest
 

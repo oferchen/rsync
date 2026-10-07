@@ -15,7 +15,8 @@ use super::arguments::ProgramName;
 pub(crate) use chown::parse_chown_argument;
 pub(crate) use compression::{
     CompressChoice, CompressLevelArg, parse_bandwidth_limit, parse_compress_choice,
-    parse_compress_level, parse_compress_level_argument, parse_compress_threads,
+    parse_compress_level, parse_compress_level_argument, parse_compress_level_value,
+    parse_compress_threads,
 };
 #[cfg(test)]
 pub(crate) use drive::CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE;

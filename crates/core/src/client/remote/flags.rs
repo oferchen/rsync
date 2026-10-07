@@ -191,22 +191,9 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.sparse() {
         flags.push('S');
     }
-    // upstream: options.c:2732 - the compact 'z' is packed only when
-    // `do_compression == CPRES_ZLIB`. Plain `-z` defaults to zlib and explicit
-    // `--compress-choice=zlib` also packs 'z', but zlibx/zstd/lz4 are forwarded
-    // via the long-form `--new-compress`/`--compress-choice` instead and must
-    // NOT also pack 'z'. `CompressionAlgorithm` folds zlibx onto Zlib, so the
-    // raw choice name (not the enum) distinguishes it.
-    if config.compress()
-        && (!config.explicit_compress_choice()
-            || config
-                .compress_choice_name()
-                .unwrap_or_else(|| config.compression_algorithm().name())
-                == "zlib")
-    {
+    if config.compress_request().packs_z() {
         flags.push('z');
     }
-
     // upstream: options.c has NO compact 'P' letter. keep_partial rides as the
     // long-form --partial (daemon: build_full_daemon_args; local ServerConfig:
     // propagated via server_config.flags.partial in the *_server_config sites).
@@ -686,12 +673,13 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // the client sent an extra vstring the peer never expected and desynced the
     // stream. Non-explicit `-z`/`-zz` leaves compress_choice None (vstring
     // negotiation), matching the daemon-push path in daemon_transfer.
-    if config.explicit_compress_choice()
-        && let Ok(algo) =
-            protocol::CompressionAlgorithm::parse(config.compression_algorithm().name())
-    {
+    let compress_request = config.compress_request();
+    if let Some(algo) = compress_request.pinned_codec() {
         server_config.connection.compress_choice = Some(algo);
     }
+    server_config.connection.compression_level = compress_request
+        .level()
+        .map(compress::zlib::CompressionLevel::from_signed);
     // upstream: options.c set_fake_super() -> am_root = -1. rsync.1: "The
     // --fake-super option only affects the side where the option is used. To
     // affect the remote side of a remote-shell connection, use the

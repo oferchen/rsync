@@ -1,6 +1,32 @@
 #[cfg(test)]
 mod daemon_chmod_spec_tests {
-    use super::parse_one_chmod_spec;
+    use super::{ModuleDefinition, ModuleRuntime, daemon_chmod_for_session, parse_one_chmod_spec};
+
+    fn chmod_module(incoming: Option<&str>, outgoing: Option<&str>) -> ModuleRuntime {
+        ModuleRuntime::from(ModuleDefinition {
+            incoming_chmod: incoming.map(str::to_owned),
+            outgoing_chmod: outgoing.map(str::to_owned),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn a_bad_spec_for_the_other_direction_is_never_parsed() {
+        // upstream: clientserver.c:1294-1297 reads only the directive for the
+        // session's direction, so a bad `incoming chmod` cannot break a pull.
+        let module = chmod_module(Some("bogus"), Some("F600"));
+        let parsed = daemon_chmod_for_session(&module, true).expect("outgoing parses");
+        assert!(parsed.is_some());
+    }
+
+    #[test]
+    fn a_bad_spec_for_this_direction_is_reported_with_upstreams_log_text() {
+        // upstream: clientserver.c:1298-1301 logs the spec and still calls
+        // start_server(); the caller serves the session without a chmod.
+        let module = chmod_module(Some("bogus"), None);
+        let text = daemon_chmod_for_session(&module, false).expect_err("bad incoming spec");
+        assert_eq!(text, "Invalid \"incoming chmod\" directive: bogus");
+    }
 
     #[test]
     fn parse_one_chmod_spec_returns_none_for_unset_directive() {
@@ -720,5 +746,42 @@ mod daemon_max_alloc_arg_tests {
         ::protocol::set_max_alloc(restore);
 
         assert_eq!(rejection(&["--delete"]), None);
+    }
+}
+
+/// A client-requested server-local `--files-from` list resolves inside the
+/// module, whatever its spelling.
+///
+/// upstream: `options.c:2641-2642` sanitizes the value and the open runs with
+/// the module root as cwd (`clientserver.c:1059`).
+#[cfg(test)]
+mod daemon_files_from_sanitize_tests {
+    use super::sanitize_files_from;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_relative_files_from_resolves_below_the_module_root() {
+        let module_root = Path::new("/srv/mod");
+        assert_eq!(
+            sanitize_files_from(Path::new("lists/list"), module_root),
+            PathBuf::from("/srv/mod/lists/list"),
+            "upstream opens a relative list against the module cwd, not the daemon's"
+        );
+        assert_eq!(
+            sanitize_files_from(Path::new("../../etc/passwd"), module_root),
+            PathBuf::from("/srv/mod/etc/passwd"),
+            "a climbing value collapses at depth 0 instead of leaving the module"
+        );
+    }
+
+    #[test]
+    fn an_absolute_files_from_re_roots_at_the_module() {
+        let module_root = Path::new("/srv/mod");
+        let got = sanitize_files_from(Path::new("/etc/passwd"), module_root);
+        assert!(
+            got.starts_with(module_root),
+            "an absolute list must not name the daemon's filesystem root, got {got:?}"
+        );
+        assert_eq!(got, PathBuf::from("/srv/mod/etc/passwd"));
     }
 }

@@ -2,6 +2,7 @@
 mod config_parsing_tests {
     use super::*;
     use std::io::Write;
+    use std::num::NonZeroU32;
     use tempfile::{NamedTempFile, TempDir};
 
     fn write_config(content: &str) -> NamedTempFile {
@@ -284,13 +285,6 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_global_bwlimit() {
-        let file = write_config("bwlimit = 1000\n");
-        let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert!(result.global_bandwidth_limit.is_some());
-    }
-
-    #[test]
     fn parse_global_incoming_chmod() {
         let file = write_config("incoming chmod = u+rwx,g+rx\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
@@ -304,13 +298,6 @@ mod config_parsing_tests {
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         let (value, _) = result.global_outgoing_chmod.unwrap();
         assert_eq!(value, "a+r");
-    }
-
-    #[test]
-    fn parse_inline_motd() {
-        let file = write_config("motd = Welcome to rsync\n");
-        let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.motd_lines, vec!["Welcome to rsync"]);
     }
 
     #[test]
@@ -701,9 +688,12 @@ mod config_parsing_tests {
         // across two lines, the `World` fragment on its own is not a valid
         // `key = value` line, so a config that failed to join would error;
         // proving the join is what makes this parse succeed as one directive.
-        let file = write_config("motd = Hello \\\nWorld\n");
+        let file = write_config("pid file = /run/Hello \\\nWorld\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.motd_lines, vec!["Hello World"]);
+        assert_eq!(
+            result.pid_file.map(|(path, _)| path),
+            Some(PathBuf::from("/run/Hello World"))
+        );
     }
 
     #[test]
@@ -711,11 +701,14 @@ mod config_parsing_tests {
         // upstream: params.c:Parse() - comment lines are consumed by
         // EatComment(), which never scans for the continuation character, so a
         // trailing backslash on a comment must not swallow the following
-        // directive. Were it wrongly continued, the `motd` line would be eaten
-        // and `motd_lines` would be empty.
-        let file = write_config("# a trailing backslash comment \\\nmotd = Real\n");
+        // directive. Were it wrongly continued, the `pid file` line would be
+        // eaten and no pid file would be set.
+        let file = write_config("# a trailing backslash comment \\\npid file = /run/real.pid\n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.motd_lines, vec!["Real"]);
+        assert_eq!(
+            result.pid_file.map(|(path, _)| path),
+            Some(PathBuf::from("/run/real.pid"))
+        );
     }
 
     #[test]
@@ -791,13 +784,13 @@ mod config_parsing_tests {
         // `]push`/`]pop`, restoring the parent's global `Vars` afterwards, so a
         // global directive set only inside the included file must not surface in
         // the parent configuration.
-        let included = write_config("bwlimit = 2000\n");
+        let included = write_config("port = 2000\n");
         let main_config = format!("&include {}\n", included.path().display());
         let main_file = write_config(&main_config);
 
         let result = parse_config_modules(main_file.path()).expect("parse succeeds");
         assert!(
-            result.global_bandwidth_limit.is_none(),
+            result.rsync_port.is_none(),
             "&include must not leak the included file's globals into the parent",
         );
     }
@@ -807,13 +800,13 @@ mod config_parsing_tests {
         // upstream: params.c:include_config() - `&merge` shares the current
         // scope (no `]push`/`]pop`), so a global directive set inside the merged
         // file does take effect in the parent configuration.
-        let included = write_config("bwlimit = 2000\n");
+        let included = write_config("port = 2000\n");
         let main_config = format!("&merge {}\n", included.path().display());
         let main_file = write_config(&main_config);
 
         let result = parse_config_modules(main_file.path()).expect("parse succeeds");
         assert!(
-            result.global_bandwidth_limit.is_some(),
+            result.rsync_port.is_some(),
             "&merge must merge the included file's globals into the parent",
         );
     }
@@ -834,10 +827,10 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_empty_path_errors() {
+    fn parse_empty_path_loads_as_no_path() {
         let file = write_config("[mod]\npath = \n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("must not be empty"));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].path.as_os_str().is_empty());
     }
 
     /// A bare global `include` is the P_LOCAL include-filter parameter, so an
@@ -849,13 +842,6 @@ mod config_parsing_tests {
         let file = write_config("include = \n");
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert!(result.modules.is_empty());
-    }
-
-    #[test]
-    fn parse_empty_bwlimit_errors() {
-        let file = write_config("bwlimit = \n");
-        let err = parse_config_modules(file.path()).expect_err("should fail");
-        assert!(err.to_string().contains("must not be empty"));
     }
 
     /// upstream: loadparm.c:379-470 do_parameter() assigns the parameter slot
@@ -1637,20 +1623,6 @@ mod config_parsing_tests {
 
         // Overrider has its own refuse options
         assert_eq!(result.modules[1].refuse_options, vec!["hardlinks"]);
-    }
-
-    #[test]
-    fn global_bwlimit_stored_in_result() {
-        let config = format!(
-            "bwlimit = 1000\n\
-             [mod]\npath = {}\n",
-            abs("/tmp"),
-        );
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path()).expect("parse succeeds");
-
-        assert!(result.global_bandwidth_limit.is_some());
-        assert_eq!(result.modules.len(), 1);
     }
 
     #[test]
@@ -2845,18 +2817,6 @@ mod config_parsing_tests {
     }
 
     #[test]
-    fn parse_global_rsync_port_alias() {
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!("rsync port = 8730\n[mod]\npath = {}\n", path.display());
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path()).unwrap();
-        assert_eq!(result.rsync_port.unwrap().0, 8730);
-    }
-
-    #[test]
     fn parse_global_rsync_port_default() {
         let dir = TempDir::new().expect("create temp dir");
         let path = dir.path().join("data");
@@ -2895,70 +2855,6 @@ mod config_parsing_tests {
         let file = write_config(&config);
         let result = parse_config_modules(file.path()).expect("parse succeeds");
         assert_eq!(result.rsync_port.map(|(port, _)| port), Some(9999));
-    }
-
-    #[test]
-    fn parse_global_acceptor_threads() {
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!("acceptor threads = 4\n[mod]\npath = {}\n", path.display());
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path()).unwrap();
-        assert_eq!(result.acceptor_threads.unwrap().0.get(), 4);
-    }
-
-    #[test]
-    fn parse_global_acceptor_threads_default_is_none() {
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!("[mod]\npath = {}\n", path.display());
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path()).unwrap();
-        assert!(result.acceptor_threads.is_none());
-    }
-
-    #[test]
-    fn parse_global_acceptor_threads_invalid() {
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!("acceptor threads = abc\n[mod]\npath = {}\n", path.display());
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_global_acceptor_threads_zero_rejected() {
-        // Zero replicas would bind no listeners; the directive must reject it.
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!("acceptor threads = 0\n[mod]\npath = {}\n", path.display());
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_global_acceptor_threads_duplicate_last_wins() {
-        let dir = TempDir::new().expect("create temp dir");
-        let path = dir.path().join("data");
-        fs::create_dir(&path).expect("create dir");
-
-        let config = format!(
-            "acceptor threads = 2\nacceptor threads = 4\n[mod]\npath = {}\n",
-            path.display()
-        );
-        let file = write_config(&config);
-        let result = parse_config_modules(file.path()).expect("parse succeeds");
-        assert_eq!(result.acceptor_threads.map(|(n, _)| n.get()), Some(4));
     }
 
     #[test]
@@ -4389,5 +4285,93 @@ mod config_parsing_tests {
             result.modules[0].lock_file.as_deref(),
             Some(Path::new("mod.lock"))
         );
+    }
+
+    #[test]
+    fn unresolvable_uid_and_gid_load_and_are_refused_per_module() {
+        // upstream: clientserver.c:833-870 resolves `uid`/`gid` when a client
+        // selects the module, so a name the host does not know yet still
+        // loads, refuses only that module, and `uid` is reported before `gid`.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\n[u]\npath = {data}\nuid = oc_no_such_user_zz\ngid = oc_no_such_group_zz\n\
+             [g]\npath = {data}\ngid = 0, oc_no_such_group_zz\n[star]\npath = {data}\ngid = 0 *\n\
+             [ok]\npath = {data}\nuid = 0\ngid = 0\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(
+            module_named(&result, "u").unresolved_id,
+            Some(UnresolvedId::Uid("oc_no_such_user_zz".to_owned()))
+        );
+        assert_eq!(
+            module_named(&result, "g").unresolved_id,
+            Some(UnresolvedId::Gid("oc_no_such_group_zz".to_owned()))
+        );
+        assert_eq!(
+            module_named(&result, "star").unresolved_id,
+            Some(UnresolvedId::Gid("*".to_owned()))
+        );
+        let ok = module_named(&result, "ok");
+        assert_eq!(ok.unresolved_id, None);
+        assert_eq!(ok.uid, Some(0));
+    }
+
+    #[test]
+    fn a_later_resolvable_uid_replaces_an_unresolvable_one() {
+        // upstream: do_parameter() overwrites the stored string, so only the
+        // last `uid` line is resolved at connect time.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\nuid = oc_no_such_user_zz\n[m]\npath = {data}\nuid = 0\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(result.modules[0].unresolved_id, None);
+        assert_eq!(result.modules[0].uid, Some(0));
+    }
+
+    #[test]
+    fn malformed_host_tokens_load_and_never_match() {
+        // upstream: access.c stores the list verbatim; a malformed mask is
+        // logged per connection and never matches, while `addr/a.b.c.d`
+        // masks are honoured.
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config(&format!(
+            "use chroot = no\n[m]\npath = {data}\nhosts allow = 10.0.0.0/99 bad/x 192.168.0.0/255.255.0.0\n"
+        ));
+
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let allow = &result.modules[0].hosts_allow;
+        assert_eq!(allow[0], HostPattern::Unmatchable("10.0.0.0/99".to_owned()));
+        assert_eq!(allow[1], HostPattern::Unmatchable("bad/x".to_owned()));
+        let peer = IpAddr::V4(Ipv4Addr::new(192, 168, 7, 9));
+        assert!(allow[2].matches(peer, "host"));
+        assert!(!allow[2].matches(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), "host"));
+        assert!(!allow[0].matches(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), "host"));
+    }
+
+    #[test]
+    fn module_without_path_loads_and_a_global_path_is_its_default() {
+        // upstream: `path` is P_LOCAL (a global value is copied into later
+        // sections) and a section with no path still loads; rsync_module()
+        // refuses it with `@ERROR: no path setting.` (clientserver.c:877-881).
+        let dir = TempDir::new().expect("create temp dir");
+        let data = section_model_data_dir(&dir);
+        let file = write_config("use chroot = no\n[nopath]\ncomment = none\n");
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert!(result.modules[0].path.as_os_str().is_empty());
+
+        // A path is a NULL-default string, so a global set after the section
+        // is still its fallback (FN_LOCAL_STRING, loadparm.c:347-348).
+        let file = write_config(&format!(
+            "use chroot = no\n[early]\n[global]\npath = {data}\n[late]\n"
+        ));
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        assert_eq!(module_named(&result, "early").path, PathBuf::from(&data));
+        assert_eq!(module_named(&result, "late").path, PathBuf::from(&data));
     }
 }

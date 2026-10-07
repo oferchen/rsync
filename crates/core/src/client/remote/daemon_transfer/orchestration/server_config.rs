@@ -248,9 +248,9 @@ fn apply_common_daemon_config(
     server_config.write.io_uring_policy = config.io_uring_policy();
     server_config.write.io_uring_depth = config.io_uring_depth();
     server_config.write.zero_copy_policy = config.zero_copy_policy();
-    // checksum_choice is set once in `apply_common_server_flags` (called above
-    // for both receiver and generator), shared with the SSH transfer paths.
-    server_config.connection.compression_level = config.compression_level();
+    // checksum_choice and compression_level are set once in
+    // `apply_common_server_flags` (called above for both receiver and
+    // generator), shared with the SSH transfer paths.
 
     // upstream: options.c:2732,2828-2833 - replicate the compress flag/option
     // split the client would emit so the daemon-push Generator actually
@@ -261,21 +261,15 @@ fn apply_common_daemon_config(
     // for explicit choices and never set flags.compress), so both `-z` and
     // `-zz` pushes to a daemon were sent uncompressed.
     if config.compress() {
-        let algo = config.compression_algorithm();
-        let is_default_zlib = !config.explicit_compress_choice()
-            && algo == compress::algorithm::CompressionAlgorithm::default_algorithm();
-        if is_default_zlib {
-            // upstream: options.c:2732 - the compact `-z` flag drives default
-            // zlib through vstring negotiation (no explicit compress_choice).
-            server_config.flags.compress = true;
-        } else if let Ok(proto_algo) = protocol::CompressionAlgorithm::parse(algo.name()) {
-            // upstream: compat.c:543,819 / options.c:2828-2833 - explicit or
-            // non-default algorithms (e.g. `-zz` -> zlibx) bypass vstring
-            // negotiation and travel as a compress_choice.
-            server_config.connection.compress_choice = Some(proto_algo);
+        match config.compress_request().pinned_codec() {
+            // upstream: compat.c:543,819 - an explicit choice (`-zz` -> zlibx
+            // included) bypasses vstring negotiation.
+            Some(algo) => server_config.connection.compress_choice = Some(algo),
+            // upstream: options.c:2898 - `-z` drives zlib through vstring
+            // negotiation (no explicit compress_choice).
+            None => server_config.flags.compress = true,
         }
     }
-
     // upstream: options.c:2765-2768 - compress_level defaults to 6 when -z is set.
     if server_config.flags.compress && server_config.connection.compression_level.is_none() {
         server_config.connection.compression_level =

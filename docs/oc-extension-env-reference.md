@@ -330,8 +330,9 @@ Staging flag for incremental recursion on pulls. Truthy values (`1`, `true`,
 upstream's own conditions (`compat.c:162-181`), so the remote sender ships the
 tree as per-directory sub-lists and the local receiver consumes them one at a
 time. Works against upstream rsync and oc-rsync servers alike. `--no-inc-recursive`
-still disables it. While staged, every delete mode keeps `i` withheld, because
-the per-directory delete over a partially received list is not built yet.
+still disables it. Delete modes follow upstream: `--delete`, `--delete-during`,
+`--delete-delay` and `--delete-excluded` delete per directory as each sub-list
+is walked, while `--delete-before` and `--delete-after` keep `i` withheld.
 Default: off - pulls run without incremental recursion, as in earlier releases.
 
 ## Negotiated oc-to-oc optimizations
@@ -379,13 +380,6 @@ expansion has no oc-only forms: like upstream, oc expands only `%NAME%`
 references through the environment and the `RSYNC_*` connection variables.
 Directives:
 
-- `bwlimit` (global) - daemon-wide bandwidth limit, same syntax as `--bwlimit`.
-- `motd` (global) - adds one inline greeting line.
-- `acceptor threads` (global) - number of `SO_REUSEPORT` listener replicas per
-  address family (default 1).
-- `rsync port` - alias of `port`. Upstream's label is `port` only.
-- `incoming-chmod` / `outgoing-chmod` - hyphenated aliases of `incoming chmod`
-  / `outgoing chmod`. Upstream folds only whitespace in parameter names.
 - `quic cert file`, `quic key file`, `quic client ca file`, `quic port`
   (global, `quic` feature) - QUIC listener identity and port.
 

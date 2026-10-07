@@ -9,10 +9,10 @@ use core::message::Role;
 use core::rsync_error;
 use logging_sink::MessageSink;
 
-use super::flags::{detect_secluded_args_flag, parse_server_long_flags};
+use super::flags::{detect_secluded_args_flag, parse_server_long_flags, refused_server_option};
 use super::parse::{
-    parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_size_limit,
-    parse_server_stop_after, parse_server_stop_at,
+    parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_protocol,
+    parse_server_size_limit, parse_server_stop_after, parse_server_stop_at,
 };
 
 /// Resolves the Landlock allowlist root for a receiver's destination operand.
@@ -144,7 +144,7 @@ where
 {
     // Route through the session-level driver facade
     // (`core::session::run_server_stdio`), which runs the threaded server body.
-    use core::server::{ServerConfig, ServerRole};
+    use core::server::{ServerConfig, ServerRole, ServerStats};
     use core::session::run_server_stdio;
 
     let program_brand =
@@ -218,6 +218,16 @@ where
         &args[1..]
     };
 
+    // upstream: popt reports "<opt>: unknown option" and main.c exits
+    // RERR_SYNTAX before any transfer state exists.
+    if let Some(option) = refused_server_option(effective_slice) {
+        write_server_error(
+            stderr,
+            program_brand,
+            format!("{}: unknown option", option.to_string_lossy()),
+        );
+        return 1;
+    }
     let long_flags = parse_server_long_flags(effective_slice);
 
     let (flag_string, positional_args) = parse_server_flag_string_and_args(effective_slice);
@@ -596,7 +606,8 @@ where
     // stream as plain tokens and eventually misaligns onto a multiplex frame
     // boundary.
     if let Some(name) = &long_flags.compress_choice {
-        match protocol::CompressionAlgorithm::parse(name) {
+        // upstream: compat.c:187 get_nni_by_name() - the lookup is case-insensitive.
+        match protocol::CompressionAlgorithm::parse(&name.to_ascii_lowercase()) {
             Ok(algo) => config.connection.compress_choice = Some(algo),
             Err(e) => {
                 write_server_error(
@@ -609,19 +620,15 @@ where
         }
     }
 
-    // upstream: options.c:2764-2768 - `--compress-level=N` forwarded by the
-    // client sets `do_compression_level` on the server so its codec compresses
-    // at the same level. The value is the numeric 0-9 that the client already
-    // clamped before forwarding.
+    // upstream: options.c:2931-2934 - the client forwards its raw, unclamped
+    // `do_compression_level`; token.c:55 init_compression_level() clamps it
+    // only once the codec is known.
     if let Some(value) = &long_flags.compression_level {
-        match value
-            .trim()
-            .parse::<u32>()
-            .map_err(|e| e.to_string())
-            .and_then(|n| {
-                compress::zlib::CompressionLevel::from_numeric(n).map_err(|e| e.to_string())
-            }) {
-            Ok(level) => config.connection.compression_level = Some(level),
+        match value.trim().parse::<i32>() {
+            Ok(level) => {
+                config.connection.compression_level =
+                    Some(compress::zlib::CompressionLevel::from_signed(level));
+            }
             Err(e) => {
                 write_server_error(
                     stderr,
@@ -771,7 +778,15 @@ where
     // (transfer::announce_error_exit); this is the process status the remote
     // shell reports on top of it.
     match run_server_stdio(config, &mut stdin, stdout, None) {
-        Ok(_stats) => 0,
+        // upstream: cleanup.c:210-218 - a clean finish still exits with the
+        // code the accumulated io_error bits select (23/24/25).
+        Ok(stats) => {
+            let (io_error, got_xfer_error) = match stats {
+                ServerStats::Receiver(s) => (s.io_error, s.got_xfer_error),
+                ServerStats::Generator(s) => (s.io_error, s.got_xfer_error),
+            };
+            core::exit_code::io_error_exit_code(io_error, got_xfer_error).unwrap_or(0)
+        }
         Err(e) => {
             let exit_code = core::exit_code::ExitCode::from_io_error(&e);
             write_server_error_with_code(
@@ -871,7 +886,7 @@ fn collect_keep_dirlink_targets(root: &std::path::Path, out: &mut Vec<std::path:
     }
 }
 
-/// Applies `--fake-super` / `--no-fake-super` to the server config.
+/// Applies `--fake-super` to the server config.
 ///
 /// upstream: options.c:672 `{"fake-super", 0, POPT_ARG_VAL, &am_root, -1, 0,
 /// 0}` - the option sets `am_root = -1` on whichever side was given it and is
@@ -906,6 +921,22 @@ fn apply_value_flags<Err: Write>(
             Ok(seed) => config.checksum_seed = Some(seed),
             Err(msg) => {
                 write_server_error(stderr, brand, msg);
+                return Err(1);
+            }
+        }
+    }
+
+    // upstream: options.c:2050-2054 - a bad popt value is reported as
+    // "on remote machine: <option>: <popt error>" and exits RERR_SYNTAX.
+    if let Some(value) = &long_flags.protocol {
+        match parse_server_protocol(value) {
+            Ok(version) => config.protocol_arg = Some(version),
+            Err(reason) => {
+                write_server_error(
+                    stderr,
+                    brand,
+                    format!("on remote machine: --protocol={value}: {reason}"),
+                );
                 return Err(1);
             }
         }

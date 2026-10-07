@@ -1,4 +1,5 @@
 use super::*;
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 fn test_config_path() -> PathBuf {
@@ -235,16 +236,16 @@ fn set_write_only_last_assignment_wins() {
 #[test]
 fn set_numeric_ids_stores_value() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_numeric_ids(true);
-    assert_eq!(builder.numeric_ids, Some(true));
+    builder.set_numeric_ids(Some(true));
+    assert_eq!(builder.numeric_ids, Some(Some(true)));
 }
 
 #[test]
 fn set_numeric_ids_last_assignment_wins() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_numeric_ids(true);
-    builder.set_numeric_ids(false);
-    assert_eq!(builder.numeric_ids, Some(false));
+    builder.set_numeric_ids(Some(true));
+    builder.set_numeric_ids(Some(false));
+    assert_eq!(builder.numeric_ids, Some(Some(false)));
 }
 
 #[test]
@@ -265,46 +266,46 @@ fn set_listable_last_assignment_wins() {
 #[test]
 fn set_use_chroot_stores_value() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_use_chroot(false);
-    assert_eq!(builder.use_chroot, Some(false));
+    builder.set_use_chroot(Some(false));
+    assert_eq!(builder.use_chroot, Some(Some(false)));
 }
 
 #[test]
 fn set_use_chroot_last_assignment_wins() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_use_chroot(true);
-    builder.set_use_chroot(false);
-    assert_eq!(builder.use_chroot, Some(false));
+    builder.set_use_chroot(Some(true));
+    builder.set_use_chroot(Some(false));
+    assert_eq!(builder.use_chroot, Some(Some(false)));
 }
 
 #[test]
 fn set_uid_stores_value() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_uid(1000);
-    assert_eq!(builder.uid, Some(1000));
+    builder.set_uid(Ok(1000));
+    assert_eq!(builder.uid, Some(Ok(1000)));
 }
 
 #[test]
 fn set_uid_last_assignment_wins() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_uid(1000);
-    builder.set_uid(2000);
-    assert_eq!(builder.uid, Some(2000));
+    builder.set_uid(Ok(1000));
+    builder.set_uid(Ok(2000));
+    assert_eq!(builder.uid, Some(Ok(2000)));
 }
 
 #[test]
 fn set_gid_stores_value() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_gid(GidSetting::List(vec![100]));
-    assert_eq!(builder.gid, Some(GidSetting::List(vec![100])));
+    builder.set_gid(Ok(GidSetting::List(vec![100])));
+    assert_eq!(builder.gid, Some(Ok(GidSetting::List(vec![100]))));
 }
 
 #[test]
 fn set_gid_last_assignment_wins() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_gid(GidSetting::List(vec![100]));
-    builder.set_gid(GidSetting::List(vec![200]));
-    assert_eq!(builder.gid, Some(GidSetting::List(vec![200])));
+    builder.set_gid(Ok(GidSetting::List(vec![100])));
+    builder.set_gid(Ok(GidSetting::List(vec![200])));
+    assert_eq!(builder.gid, Some(Ok(GidSetting::List(vec![200]))));
 }
 
 #[test]
@@ -522,23 +523,23 @@ fn set_include_from_last_assignment_wins() {
 #[test]
 fn set_open_noatime_stores_true() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_open_noatime(true);
-    assert_eq!(builder.open_noatime, Some(true));
+    builder.set_open_noatime(Some(true));
+    assert_eq!(builder.open_noatime, Some(Some(true)));
 }
 
 #[test]
 fn set_open_noatime_stores_false() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_open_noatime(false);
-    assert_eq!(builder.open_noatime, Some(false));
+    builder.set_open_noatime(Some(false));
+    assert_eq!(builder.open_noatime, Some(Some(false)));
 }
 
 #[test]
 fn set_open_noatime_last_assignment_wins() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
-    builder.set_open_noatime(true);
-    builder.set_open_noatime(false);
-    assert_eq!(builder.open_noatime, Some(false));
+    builder.set_open_noatime(Some(true));
+    builder.set_open_noatime(Some(false));
+    assert_eq!(builder.open_noatime, Some(Some(false)));
 }
 
 #[test]
@@ -558,11 +559,15 @@ fn finish_succeeds_with_minimal_config() {
 }
 
 #[test]
-fn finish_fails_without_path() {
+fn finish_keeps_a_missing_path_empty() {
+    // upstream: a section with no path loads; rsync_module() refuses it with
+    // `@ERROR: no path setting.` when selected (clientserver.c:877-881).
     let builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     let defaults = GlobalModuleDefaults::default();
-    let result = builder.finish(&test_config_path(), None, None, None, None, &defaults);
-    assert!(result.is_err());
+    let def = builder
+        .finish(&test_config_path(), None, None, None, None, &defaults)
+        .expect("a module without path loads");
+    assert!(def.path.as_os_str().is_empty());
 }
 
 /// A relative path under `use chroot` is RESOLVED against the current
@@ -592,7 +597,7 @@ fn finish_resolves_a_relative_path_with_chroot() {
 fn finish_resolves_a_relative_path_without_chroot() {
     let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     builder.set_path(PathBuf::from("relative/path"));
-    builder.set_use_chroot(false);
+    builder.set_use_chroot(Some(false));
     let defaults = GlobalModuleDefaults::default();
     let def = builder
         .finish(&test_config_path(), None, None, None, None, &defaults)
@@ -613,7 +618,7 @@ fn finish_resolves_a_relative_path_without_chroot() {
 fn finish_allows_root_path_with_chroot() {
     let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     builder.set_path(PathBuf::from("/"));
-    builder.set_use_chroot(true);
+    builder.set_use_chroot(Some(true));
     let defaults = GlobalModuleDefaults::default();
     let result = builder.finish(&test_config_path(), None, None, None, None, &defaults);
     assert!(result.is_ok());
@@ -628,7 +633,7 @@ fn finish_allows_root_path_with_chroot() {
 fn finish_allows_root_path_without_chroot() {
     let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
     builder.set_path(PathBuf::from("/"));
-    builder.set_use_chroot(false);
+    builder.set_use_chroot(Some(false));
     let defaults = GlobalModuleDefaults::default();
     let result = builder.finish(&test_config_path(), None, None, None, None, &defaults);
     assert!(result.is_ok());
@@ -731,10 +736,10 @@ fn finish_transfers_all_set_values() {
     builder.set_comment(Some("Full test".to_owned()));
     builder.set_read_only(false);
     builder.set_write_only(true);
-    builder.set_numeric_ids(true);
+    builder.set_numeric_ids(Some(true));
     builder.set_listable(false);
-    builder.set_uid(1000);
-    builder.set_gid(GidSetting::List(vec![100]));
+    builder.set_uid(Ok(1000));
+    builder.set_gid(Ok(GidSetting::List(vec![100])));
     builder.set_timeout(NonZeroU64::new(300));
     builder.set_max_connections(MaxConnections::Limited(
         NonZeroU32::new(5).expect("non-zero"),
@@ -937,7 +942,7 @@ fn finish_transfers_include_from() {
 fn finish_preserves_open_noatime_when_set() {
     let mut builder = ModuleDefinitionBuilder::new("mod".to_owned(), 1);
     builder.set_path(PathBuf::from("/data"));
-    builder.set_open_noatime(true);
+    builder.set_open_noatime(Some(true));
 
     let def = builder
         .finish(

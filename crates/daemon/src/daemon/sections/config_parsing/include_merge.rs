@@ -13,7 +13,7 @@
 /// upstream: params.c:parse_directives - `&include` maps to
 /// include_config(val, 1) and `&merge` to include_config(val, 0).
 fn apply_include_directive(
-    parse: &mut ConfigParse,
+    parse: &mut ConfigParse<'_>,
     directive: &str,
     value: &str,
     path: &Path,
@@ -32,6 +32,9 @@ fn apply_include_directive(
 
     let include_path = resolve_config_relative_path(canonical, trimmed);
     let manage_globals = directive == "&include";
+    // upstream: params.c:include_config sends `]push`/`]pop` only when there
+    // is a section function, which a globals-only load has not.
+    let push_globals = manage_globals && !parse.globals_only;
 
     // upstream: params.c:include_config - when the target is a directory, every
     // matching entry is pulled in: "*.conf" for `&include`, "*.inc" for
@@ -61,13 +64,16 @@ fn apply_include_directive(
         vec![include_path]
     };
 
-    if !manage_globals {
+    if !push_globals {
         // `&merge`: no `]push`/`]pop`. The merged file writes straight into the
         // shared `Vars`, section list and section cursor, so a `&merge` inside
         // `[mod]` keeps applying to `mod` until the merged file opens another
         // section, and every value it sets stays in force afterwards.
         for file in &files {
             include_config_file(parse, directive, file, path, line_number, stack)?;
+            if parse.stopped {
+                break;
+            }
         }
         return Ok(());
     }
@@ -97,7 +103,7 @@ fn apply_include_directive(
 /// Parses a single included config file into `parse`, naming the directive
 /// site in any error.
 fn include_config_file(
-    parse: &mut ConfigParse,
+    parse: &mut ConfigParse<'_>,
     directive: &str,
     include_path: &Path,
     path: &Path,

@@ -48,7 +48,6 @@ excludefrom-symlink
 files-from-leak
 filter-leak
 filter-merge-symlink
-idn
 inband-modname-leak
 insecure-links-admin-optout
 io-noop-flood-recursion

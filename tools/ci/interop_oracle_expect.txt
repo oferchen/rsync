@@ -9,7 +9,6 @@ batch-local/3.1.3/local/push/oc-client task-2523 oc local batch replays with dif
 batch-local/3.4.4/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
 batch-local/3.5.0/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
 batch-local/3.5.1/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
-copy-links-dangling/3.5.1/rsh/pull/oc-server task-2521 dangling -L referent exits 24 (vanished), upstream 23
 delete/3.1.3/daemon/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
 delete/3.1.3/daemon/push/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
 delete/3.1.3/rsh/pull/oc-server task-2521 server sender never echoes NDX_DEL_STATS / deleted-count parity
@@ -45,11 +44,6 @@ hardlinks/3.5.1/rsh/pull/oc-client task-2597 hard-link leader choice differs, so
 hardlinks/3.5.1/rsh/push/oc-server task-2597 hard-link leader choice differs, so itemize names the other file
 inc-recurse-dirs/3.5.1/daemon/push/oc-client task-2520 INC_RECURSE push itemizes reclaimed dirs as empty-named cf
 inc-recurse-dirs/3.5.1/rsh/push/oc-client task-2520 INC_RECURSE push itemizes reclaimed dirs as empty-named cf
-max-delete/3.5.1/rsh/push/oc-server task-2521 --max-delete limit exits 0, upstream 25
 non-utf8/3.5.1/rsh/pull/oc-client task-2522 non-UTF-8 names collapse in the flist dedup (sort.rs name())
-touched-protocol-32-remote/3.5.1/rsh/pull/oc-server task-2697 oc --server takes -M--protocol=32 for a path (exit 23)
-touched-protocol-32-remote/3.5.1/rsh/push/oc-server task-2697 oc --server takes -M--protocol=32 for a path (exit 3)
-touched-protocol-32-remote-no-inc/3.5.1/rsh/pull/oc-server task-2697 oc --server takes -M--protocol=32 for a path (exit 23)
-touched-protocol-32-remote-no-inc/3.5.1/rsh/push/oc-server task-2697 oc --server takes -M--protocol=32 for a path (exit 3)
 touched-tree/3.5.1/daemon/push/oc-client task-2520 INC_RECURSE push itemizes reclaimed dirs as empty-named cf (touched count matches)
 touched-tree/3.5.1/rsh/push/oc-client task-2520 INC_RECURSE push itemizes reclaimed dirs as empty-named cf (touched count matches)

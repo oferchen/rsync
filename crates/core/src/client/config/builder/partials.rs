@@ -33,7 +33,6 @@ impl ClientConfigBuilder {
     /// Configures the directory used for temporary files when staging updates.
     #[must_use]
     #[doc(alias = "--temp-dir")]
-    #[doc(alias = "--tmp-dir")]
     pub fn temp_directory<P: Into<PathBuf>>(mut self, directory: Option<P>) -> Self {
         self.temp_directory = directory.map(Into::into);
         self

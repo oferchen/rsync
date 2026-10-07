@@ -144,39 +144,139 @@ fn parse_quic_window(value: &std::ffi::OsStr) -> Result<u64, clap::Error> {
     })
 }
 
-/// Refuses `--dparam` in a client invocation, as upstream's option parser does.
+/// Long options upstream's `long_daemon_options[]` accepts, and whether each
+/// takes a value.
 ///
-/// upstream: options.c:867 lists `--dparam` in the client table as
-/// `OPT_DAEMON`, so naming it means "this is a daemon command line": argv is
-/// re-parsed with `long_daemon_options[]` (options.c:1538-1570), each value is
-/// checked for its `=` as it is collected, and without `--daemon` the parse
-/// ends in "Daemon option(s) used without --daemon." (options.c:1591-1596),
-/// exit `RERR_SYNTAX`. There is no client-side meaning: a daemon parameter is
-/// never sent to a remote daemon.
-fn check_daemon_params(
-    dparams: &[OsString],
-    daemon_mode: bool,
-    program_name: &str,
-) -> Result<(), clap::Error> {
-    if daemon_mode || dparams.is_empty() {
+/// upstream: options.c:873-894.
+const DAEMON_LONG_OPTIONS: &[(&str, bool)] = &[
+    ("address", true),
+    ("bwlimit", true),
+    ("config", true),
+    ("daemon", false),
+    ("dparam", true),
+    ("ipv4", false),
+    ("ipv6", false),
+    ("detach", false),
+    ("no-detach", false),
+    ("log-file", true),
+    ("log-file-format", true),
+    ("port", true),
+    ("sockopts", true),
+    ("protocol", true),
+    ("server", false),
+    ("temp-dir", true),
+    ("verbose", false),
+    ("no-verbose", false),
+    ("no-v", false),
+    ("help", false),
+];
+
+/// Client options that switch upstream's parser into daemon-option parsing.
+///
+/// upstream: options.c:864-869 - each maps to `OPT_DAEMON`.
+const DAEMON_TRIGGERS: &[&str] = &["config", "daemon", "dparam", "detach", "no-detach"];
+
+/// Refuses a client command line that names a daemon option, as upstream's
+/// option parser does.
+///
+/// upstream: options.c:1538-1596 - a daemon option in the client table
+/// (`OPT_DAEMON`) re-parses the WHOLE argv with `long_daemon_options[]`. The
+/// first option that table lacks ends the parse with `rsync: <option>:
+/// unknown option (in daemon mode)`, a `--dparam`/`-M` value without `=`
+/// with "--dparam value is missing an '='", both in argv order and followed by
+/// the usage hint. After the loop set_dparams(1) refuses a name that is not a
+/// daemon parameter (`Unknown parameter "<name>"`, no hint), and a command
+/// line without `--daemon` then ends in "Daemon option(s) used without
+/// --daemon.". Each is `RERR_SYNTAX`. A command line with `--daemon` is left to
+/// the daemon's own parser.
+fn check_daemon_option_argv(args: &[OsString], program_name: &str) -> Result<(), clap::Error> {
+    let hint = |first: String| {
+        clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            format!(
+                "{first}\n(Type \"{program_name} --daemon --help\" for assistance with daemon mode.)\n"
+            ),
+        )
+    };
+    let options = args
+        .iter()
+        .skip(1)
+        .take_while(|arg| arg.as_os_str() != "--")
+        .map(|arg| arg.to_string_lossy());
+    let triggered = options.clone().any(|arg| {
+        arg.strip_prefix("--")
+            .map(|name| name.split_once('=').map_or(name, |(n, _)| n))
+            .is_some_and(|name| DAEMON_TRIGGERS.contains(&name))
+    });
+    if !triggered || options.clone().any(|arg| arg == "--daemon") {
         return Ok(());
     }
-    let first = match dparams
+
+    let mut dparams = Vec::new();
+    let mut tokens = options;
+    while let Some(token) = tokens.next() {
+        let value = if let Some(long) = token.strip_prefix("--") {
+            let (name, inline) = match long.split_once('=') {
+                Some((name, value)) => (name, Some(value.to_owned())),
+                None => (long, None),
+            };
+            match DAEMON_LONG_OPTIONS.iter().find(|(known, _)| *known == name) {
+                Some((_, true)) => {
+                    let value = inline.or_else(|| tokens.next().map(|v| v.into_owned()));
+                    value.filter(|_| name == "dparam")
+                }
+                Some((_, false)) if inline.is_none() => None,
+                _ => {
+                    return Err(hint(format!(
+                        "rsync: {token}: unknown option (in daemon mode)"
+                    )));
+                }
+            }
+        } else if let Some(short) = token.strip_prefix('-').filter(|s| !s.is_empty()) {
+            match short.as_bytes()[0] {
+                b'M' | b'T' => {
+                    let rest = &short[1..];
+                    let value = if rest.is_empty() {
+                        tokens.next().map(|v| v.into_owned())
+                    } else {
+                        Some(rest.to_owned())
+                    };
+                    value.filter(|_| short.starts_with('M'))
+                }
+                _ if short
+                    .bytes()
+                    .all(|b| matches!(b, b'v' | b'4' | b'6' | b'h')) =>
+                {
+                    None
+                }
+                _ => {
+                    return Err(hint(format!(
+                        "rsync: {token}: unknown option (in daemon mode)"
+                    )));
+                }
+            }
+        } else {
+            continue;
+        };
+        if let Some(value) = value {
+            if !value.contains('=') {
+                return Err(hint(format!("--dparam value is missing an '=': {value}")));
+            }
+            dparams.push(value);
+        }
+    }
+
+    if let Some(name) = dparams
         .iter()
-        .find(|value| !value.as_encoded_bytes().contains(&b'='))
+        .filter_map(|value| value.split_once('=').map(|(name, _)| name))
+        .find(|name| !daemon::is_daemon_parameter(name))
     {
-        Some(value) => format!(
-            "--dparam value is missing an '=': {}",
-            value.to_string_lossy()
-        ),
-        None => "Daemon option(s) used without --daemon.".to_owned(),
-    };
-    Err(clap::Error::raw(
-        clap::error::ErrorKind::ValueValidation,
-        format!(
-            "{first}\n(Type \"{program_name} --daemon --help\" for assistance with daemon mode.)\n"
-        ),
-    ))
+        return Err(clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            format!("Unknown parameter \"{name}\"\n"),
+        ));
+    }
+    Err(hint("Daemon option(s) used without --daemon.".to_owned()))
 }
 
 /// Rejects a `-M` / `--remote-option` value that does not begin with a dash.
@@ -313,6 +413,8 @@ where
     if args.is_empty() {
         args.push(OsString::from(program_name.as_str()));
     }
+
+    check_daemon_option_argv(&args, program_name.as_str())?;
 
     let command = popt_last_wins(clap_command(program_name.as_str()));
     let args = hoist_options_before_operands(&command, args);
@@ -713,7 +815,7 @@ where
         None
     };
     let super_mode = tri_state_flag_positive_first(&matches, "super", "no-super");
-    let fake_super = tri_state_flag_positive_first(&matches, "fake-super", "no-fake-super");
+    let fake_super = matches.get_flag("fake-super").then_some(true);
     let times = archive_aware_flag(&matches, "times", "no-times", archive_index, true);
     let omit_dir_times =
         tri_state_flag_positive_first(&matches, "omit-dir-times", "no-omit-dir-times");
@@ -1058,13 +1160,32 @@ where
     };
 
     let compress_level = matches.remove_one::<OsString>("compress-level");
-    let compress_choice = matches.remove_one::<OsString>("compress-choice");
+    // upstream: options.c:1740-1752 - `--old-compress`, `--new-compress` and
+    // `--compress-choice` each overwrite `compress_choice` in command-line
+    // order, and `--no-compress` clears it.
+    // Flag defaults carry an index too, so only command-line occurrences count.
+    let last_index = |id: &str| {
+        (matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine))
+            .then(|| matches.indices_of(id).and_then(Iterator::last))
+            .flatten()
+    };
+    let cleared_at = last_index("no-compress");
+    let old_at = last_index("old-compress");
+    let new_at = last_index("new-compress");
+    let choice_at = last_index("compress-choice");
+    let compress_choice = [
+        (old_at, Some(OsString::from("zlib"))),
+        (new_at, Some(OsString::from("zlibx"))),
+        (choice_at, matches.remove_one::<OsString>("compress-choice")),
+    ]
+    .into_iter()
+    .filter_map(|(index, choice)| Some((index?, choice?)))
+    .max_by_key(|(index, _)| *index)
+    .filter(|(index, _)| cleared_at.is_none_or(|cleared| cleared < *index))
+    .map(|(_, choice)| choice)
+    // upstream: options.c:2131 - a repeated `-z` alone selects zlibx.
+    .or_else(|| (compress_count > 1).then(|| OsString::from("zlibx")));
     let compress_threads = matches.remove_one::<OsString>("compress-threads");
-    let old_compress = matches.get_flag("old-compress");
-    // upstream: options.c:2008 - if (!compress_choice && do_compression > 1)
-    //   compress_choice = "zlibx"; -zz selects new-style compression.
-    let new_compress = matches.get_flag("new-compress")
-        || (compress_count >= 2 && compress_choice.is_none() && !old_compress);
     let skip_compress = matches.remove_one::<OsString>("skip-compress");
     let no_bwlimit = matches.get_flag("no-bwlimit");
     let bwlimit = if no_bwlimit {
@@ -1190,7 +1311,6 @@ where
         .remove_many::<OsString>("dparam")
         .map(Iterator::collect)
         .unwrap_or_default();
-    check_daemon_params(&dparam, daemon_mode, program_name.as_str())?;
     let itemize_changes = itemize_changes_flag && !no_itemize_changes_flag;
     let mut no_motd = matches.get_flag("no-motd");
     if matches.get_flag("motd") {
@@ -1370,8 +1490,7 @@ where
         compress_level,
         compress_choice,
         compress_threads,
-        old_compress,
-        new_compress,
+        compress_count,
         skip_compress,
         open_noatime,
         no_open_noatime,

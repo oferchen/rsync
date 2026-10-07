@@ -2350,16 +2350,33 @@ mod compression_options {
         assert!(!parsed.compress);
     }
 
+    /// upstream: options.c:1740-1752,2131 - `--old-compress`, `--new-compress`
+    /// and `--compress-choice` overwrite one `compress_choice` in command-line
+    /// order, `--no-compress` clears it, and a repeated `-z` alone means zlibx.
+    /// The peer runs whichever codec this resolves to, so the order matters.
     #[test]
-    fn old_compress_flag() {
-        let parsed = parse_test_args(["--old-compress", "src/", "dst/"]).expect("parse");
-        assert!(parsed.old_compress);
-    }
-
-    #[test]
-    fn new_compress_flag() {
-        let parsed = parse_test_args(["--new-compress", "src/", "dst/"]).expect("parse");
-        assert!(parsed.new_compress);
+    fn compress_choice_follows_command_line_order() {
+        let cases: &[(&[&str], Option<&str>)] = &[
+            (&["--old-compress"], Some("zlib")),
+            (&["--new-compress"], Some("zlibx")),
+            (&["-zz"], Some("zlibx")),
+            (&["-zz", "--old-compress"], Some("zlib")),
+            (&["--old-compress", "--new-compress"], Some("zlibx")),
+            (&["--new-compress", "--compress-choice=zstd"], Some("zstd")),
+            (&["--compress-choice=zstd", "--old-compress"], Some("zlib")),
+            (&["--compress-choice=zstd", "--no-compress"], None),
+            (&["--no-compress", "--compress-choice=zstd"], Some("zstd")),
+            (&["-z"], None),
+        ];
+        for (options, expected) in cases {
+            let args = options.iter().copied().chain(["src/", "dst/"]);
+            let parsed = parse_test_args(args).expect("parse");
+            assert_eq!(
+                parsed.compress_choice,
+                expected.map(OsString::from),
+                "{options:?}"
+            );
+        }
     }
 
     #[test]
@@ -3102,10 +3119,14 @@ mod backup_tests {
         assert!(!parsed.backup);
     }
 
+    /// upstream: options.c has no `no-b` entry, only `no-backup`. The parser
+    /// leaves an unknown option among the operands for `extract_operands` to
+    /// refuse, so `-b` must survive.
     #[test]
-    fn no_b_alias() {
+    fn no_b_is_not_an_alias() {
         let parsed = parse_test_args(["-b", "--no-b", "src/", "dst/"]).expect("parse");
-        assert!(!parsed.backup);
+        assert!(parsed.backup);
+        assert!(parsed.remainder.contains(&OsString::from("--no-b")));
     }
 }
 
@@ -3140,10 +3161,18 @@ mod alias_tests {
         assert_eq!(parsed.delete_mode, DeleteMode::During);
     }
 
+    /// upstream: options.c spells the option `temp-dir` only. The parser
+    /// leaves the unknown spelling among the operands for `extract_operands`
+    /// to refuse.
     #[test]
-    fn tmp_dir_alias() {
+    fn tmp_dir_is_not_an_alias() {
         let parsed = parse_test_args(["--tmp-dir=/tmp/test", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.temp_dir, Some(std::path::PathBuf::from("/tmp/test")));
+        assert_eq!(parsed.temp_dir, None);
+        assert!(
+            parsed
+                .remainder
+                .contains(&OsString::from("--tmp-dir=/tmp/test"))
+        );
     }
 
     #[test]

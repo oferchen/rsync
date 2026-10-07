@@ -14,6 +14,16 @@ pub(crate) enum HostPattern {
     /// Matches when the client's resolved hostname is a member of a netgroup
     /// (`@name` token). Holds the netgroup name (the text after `@`).
     Netgroup(String),
+    /// Matches an address whose bits under `mask` equal `network`'s, from the
+    /// `addr/a.b.c.d` form. upstream: access.c match_address() takes a mask
+    /// that `inet_pton()` accepts as-is before trying a bit count.
+    Masked { network: IpAddr, mask: IpAddr },
+    /// A token no connection can match, such as a malformed mask.
+    ///
+    /// upstream: access.c stores the list verbatim and, per connection, logs a
+    /// token it cannot use ("malformed mask", "error matching address") and
+    /// treats it as a non-match, so the config still loads.
+    Unmatchable(String),
 }
 
 /// IP address family for filtering.
@@ -76,6 +86,13 @@ impl HostPattern {
         } else {
             (token, None)
         };
+
+        if let Some(mask) = prefix_text.and_then(|text| text.parse::<IpAddr>().ok())
+            && let Ok(network) = address_str.parse::<IpAddr>()
+            && network.is_ipv4() == mask.is_ipv4()
+        {
+            return Ok(Self::Masked { network, mask });
+        }
 
         if let Ok(ipv4) = address_str.parse::<Ipv4Addr>() {
             let prefix = prefix_text
@@ -185,6 +202,7 @@ impl HostPattern {
             // never matches. Resolution goes through the `module_state`
             // netgroup seam, a no-op returning false on musl/Windows.
             (Self::Netgroup(name), _) => module_state::netgroup_contains(name, hostname),
+            (Self::Masked { network, mask }, _) => masked_equal(addr, *network, *mask),
             _ => false,
         }
     }
@@ -231,6 +249,21 @@ impl HostPattern {
             Self::Hostname(pattern) => pattern.forward_resolve_matches(addr, deny),
             _ => false,
         }
+    }
+}
+
+/// Compares `addr` and `network` under `mask`, all of one address family.
+///
+/// upstream: access.c match_binary() - `(a & m) == (t & m)` byte by byte.
+fn masked_equal(addr: IpAddr, network: IpAddr, mask: IpAddr) -> bool {
+    match (addr, network, mask) {
+        (IpAddr::V4(a), IpAddr::V4(n), IpAddr::V4(m)) => {
+            u32::from(a) & u32::from(m) == u32::from(n) & u32::from(m)
+        }
+        (IpAddr::V6(a), IpAddr::V6(n), IpAddr::V6(m)) => {
+            u128::from(a) & u128::from(m) == u128::from(n) & u128::from(m)
+        }
+        _ => false,
     }
 }
 
@@ -286,6 +319,13 @@ impl HostnamePattern {
         if trimmed.is_empty() {
             return Err("host pattern must be non-empty".to_owned());
         }
+
+        // upstream: access.c:48-54 - a peer name arrives from DNS as ASCII,
+        // so an IDN token is folded to its A-label form before it is matched
+        // or forward-resolved. A token that cannot be folded stays as typed
+        // and so matches nothing rather than too much.
+        let trimmed = core::idn::host_to_ascii(trimmed);
+        let trimmed = trimmed.as_ref();
 
         // upstream: access.c:262 `strlower(list2)` lowercases the whole host
         // list before tokenizing; the token is used verbatim (dots retained)
@@ -534,7 +574,8 @@ fn allow_proxy_protocol_peer(list: &[HostPattern], addr: IpAddr) -> bool {
 /// Parses a host allow/deny list from a config directive value.
 ///
 /// Splits the value by commas and whitespace and parses each token as a
-/// [`HostPattern`]. An invalid token is an error; an *empty* value is not.
+/// [`HostPattern`]. A token that cannot be parsed becomes
+/// [`HostPattern::Unmatchable`], and an *empty* value is an empty list.
 ///
 /// upstream: access.c:286-289 - `allow_access()` normalises an empty list
 /// string to `NULL` (`if (allow_list && !*allow_list) allow_list = NULL;`)
@@ -555,29 +596,13 @@ fn allow_proxy_protocol_peer(list: &[HostPattern], addr: IpAddr) -> bool {
 /// empty string on both implementations; oc's parser trims identically
 /// (`config_parsing/parser.rs`), which is what makes this equivalence exact
 /// rather than approximate.
-fn parse_host_list(
-    value: &str,
-    config_path: &Path,
-    line: usize,
-    directive: &str,
-) -> Result<Vec<HostPattern>, DaemonError> {
-    let mut patterns = Vec::new();
-
-    for token in value.split(|ch: char| ch.is_ascii_whitespace() || ch == ',') {
-        let token = token.trim();
-        if token.is_empty() {
-            continue;
-        }
-
-        let pattern = HostPattern::parse(token).map_err(|message| {
-            config_parse_error(
-                config_path,
-                line,
-                format!("{directive} directive contains invalid pattern '{token}': {message}"),
-            )
-        })?;
-        patterns.push(pattern);
-    }
-
-    Ok(patterns)
+fn parse_host_list(value: &str) -> Vec<HostPattern> {
+    value
+        .split(|ch: char| ch.is_ascii_whitespace() || ch == ',')
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(|token| {
+            HostPattern::parse(token).unwrap_or_else(|_| HostPattern::Unmatchable(token.to_owned()))
+        })
+        .collect()
 }
