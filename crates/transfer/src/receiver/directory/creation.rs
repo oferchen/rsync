@@ -652,11 +652,14 @@ impl ReceiverContext {
             self.parallel_thresholds
                 .for_op(crate::parallel_io::ParallelOp::Metadata),
             move |(dir_path, entry, xattr_list, pre_transfer)| {
+                // upstream: generator.c:1895 - set_file_attrs() gets the
+                // existing dir's stat, so same_mtime() skips a time it already
+                // carries instead of a utimes a non-owner cannot perform.
                 if let Err(e) = apply_metadata_with_pre_transfer_stat(
                     &dir_path,
                     &entry,
                     &metadata_opts_clone,
-                    None,
+                    pre_transfer.clone(),
                     pre_transfer,
                 ) {
                     return Some(DirApplyFailure::Attrs(e));
@@ -1121,11 +1124,13 @@ impl ReceiverContext {
         // apply below raises the directory to owner-rwx.
         #[cfg(unix)]
         self.record_dir_perm_restore(dir_path, entry, metadata_opts, pre_transfer.as_ref());
+        // upstream: generator.c:1895 - set_file_attrs() gets the existing
+        // dir's stat, so same_mtime() skips a time it already carries.
         if let Err(e) = apply_metadata_with_pre_transfer_stat(
             dir_path,
             apply_entry,
             metadata_opts,
-            None,
+            pre_transfer.clone(),
             pre_transfer,
         ) {
             if self.config.flags.verbose && self.config.connection.client_mode {
@@ -2106,6 +2111,73 @@ mod touch_up_dirs_tests {
         let actual = FileTime::from_last_modification_time(&fs::metadata(dir.path()).unwrap());
         let expected = FileTime::from_unix_time(desired_secs, 0);
         assert_eq!(actual, expected, "dest_dir mtime should match '.' entry");
+    }
+
+    /// An existing `sub` dir whose mtime shares the entry's second but not its
+    /// nanoseconds.
+    fn subsecond_skewed_dir() -> (tempfile::TempDir, std::path::PathBuf, FileEntry) {
+        let dir = test_support::create_tempdir();
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        filetime::set_file_mtime(&sub, FileTime::from_unix_time(1_700_000_000, 400_000_000))
+            .unwrap();
+        let mut entry = FileEntry::new_directory("sub".into(), 0o755);
+        entry.set_mtime(1_700_000_000, 0);
+        (dir, sub, entry)
+    }
+
+    /// upstream: generator.c:1895 hands an existing dir's stat to
+    /// set_file_attrs(), whose same_mtime() (rsync.c:489 -> util1.c:1744
+    /// same_time()) treats a same-second mtime as equal under the default
+    /// --modify-window, so no utimes is issued. A root daemon dropped to
+    /// `nobody` over a root-owned module dir depends on that skip: the utimes
+    /// would fail with EPERM and turn a clean push into exit 23.
+    #[test]
+    fn existing_dir_within_modify_window_is_not_restamped() {
+        let (dir, sub, entry) = subsecond_skewed_dir();
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config_with_times(true));
+        ctx.file_list = vec![entry].into();
+        let opts = ctx.build_metadata_options();
+
+        ctx.create_directories(
+            dir.path(),
+            &opts,
+            None,
+            None,
+            &mut crate::writer::ServerWriter::new_plain(Vec::new()),
+            #[cfg(unix)]
+            None,
+        )
+        .expect("create_directories succeeds");
+
+        let actual = FileTime::from_last_modification_time(&fs::metadata(&sub).unwrap());
+        assert_eq!(actual, FileTime::from_unix_time(1_700_000_000, 400_000_000));
+    }
+
+    /// The incremental (INC_RECURSE) directory path applies the same
+    /// same_mtime() skip as the batch path above.
+    #[test]
+    fn incremental_existing_dir_within_modify_window_is_not_restamped() {
+        let (dir, sub, entry) = subsecond_skewed_dir();
+        let hs = handshake();
+        let ctx = ReceiverContext::new_for_test(&hs, config_with_times(true));
+        let opts = ctx.build_metadata_options();
+
+        ctx.create_directory_incremental(
+            dir.path(),
+            &entry,
+            &opts,
+            &mut crate::receiver::directory::FailedDirectories::new(),
+            None,
+            None,
+            #[cfg(unix)]
+            None,
+        )
+        .expect("create_directory_incremental succeeds");
+
+        let actual = FileTime::from_last_modification_time(&fs::metadata(&sub).unwrap());
+        assert_eq!(actual, FileTime::from_unix_time(1_700_000_000, 400_000_000));
     }
 
     /// Non-directory entries in the file list must be ignored.

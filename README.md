@@ -51,9 +51,9 @@ Outcomes, counted from each leg's committed manifest:
 | leg | pass | fail | skip |
 |---|---:|---:|---:|
 | Linux, non-root, pipe | 274 | 0 | 86 |
-| Linux, root, pipe | 302 | 1 | 57 |
+| Linux, root, pipe | 303 | 0 | 57 |
 | Linux, non-root, tcp | 123 | 4 | 34 |
-| Linux, root, tcp | 140 | 5 | 16 |
+| Linux, root, tcp | 141 | 4 | 16 |
 | macOS, non-root, pipe | 248 | 0 | 112 |
 | macOS, root, pipe | 276 | 0 | 84 |
 | macOS, non-root, tcp | 120 | 4 | 37 |
@@ -67,7 +67,7 @@ awk '!/^#/ && NF {c[$2]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' 
 awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.1-expect.*.txt | sort -u
 ```
 
-**Five distinct 3.5.1 tests** carry a `fail` row, and every one names its cause and owning task. Four are the `proto-*` cluster, which fails on every tcp leg because an oc-rsync pull does not negotiate incremental recursion yet. The fifth, `pseudo-paths-daemon`, fails on the two Linux root legs: a `/dev/fd/N` pipe given as the daemon's `--log-file` does not open. None fails only on macOS, and three of the four pipe legs have no failure. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
+**Four distinct 3.5.1 tests** carry a `fail` row, and every one names its cause and owning task. All four are the `proto-*` cluster, which fails on every tcp leg because an oc-rsync pull does not negotiate incremental recursion yet. None fails only on macOS, and no pipe leg has a failure. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
 
 ---
 
@@ -365,7 +365,7 @@ Upstream CVE status, in short:
 - **2024 batch** (CVE-2024-12084 to CVE-2024-12088, CVE-2024-12747): not vulnerable or mitigated.
 - **rsync 3.4.3 batch** (CVE-2026-29518, 43617, 43618, 43619, 43620, 45232): fixed or not vulnerable. Receiver filesystem calls go through `*at` syscalls anchored on a directory fd, with a Landlock layer for the daemon on Linux.
 - **rsync 3.5.0 batch** (33 CVEs): 25 fixed, 5 not applicable, 3 unverified, 0 open. Each has a row in [`SECURITY.md`](./SECURITY.md), with the evidence and the command that recounts them.
-- **rsync 3.5.1** names no CVE. Of its nine security-relevant fixes, six are mirrored, one is open (a `/dev/fd/N` pipe as the daemon `--log-file`) and two do not apply.
+- **rsync 3.5.1** names no CVE. Of its nine security-relevant fixes, seven are mirrored and two do not apply.
 
 See [`SECURITY.md`](./SECURITY.md) for the per-CVE detail and how to report a vulnerability.
 
