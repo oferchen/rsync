@@ -3143,25 +3143,52 @@ fn fake_super_is_a_known_server_long_flag() {
 /// upstream: options.c:670-672 has no `no-fake-super` entry, so popt refuses
 /// it anywhere in the server argv; a path after `--` is never an option.
 #[test]
-fn no_fake_super_is_refused_as_an_unknown_server_option() {
-    let args = [
-        OsString::from("--server"),
-        OsString::from("-logDtpre.iLsfxC"),
-        OsString::from("--no-fake-super"),
-        OsString::from("."),
-        OsString::from("dst/"),
-    ];
-    let refused = refused_server_option(&args);
-    assert_eq!(refused, Some(&OsString::from("--no-fake-super")));
-    assert!(!is_known_server_long_flag("--no-fake-super"));
+fn unknown_long_options_are_refused_and_nothing_else_is() {
+    let argv = |tokens: &[&str]| -> Vec<OsString> { tokens.iter().map(OsString::from).collect() };
 
-    let args = [
-        OsString::from("--server"),
-        OsString::from("-logDtpre.iLsfxC"),
-        OsString::from("--"),
-        OsString::from("--no-fake-super"),
+    for unknown in ["--no-fake-super", "--bogus-opt", "--bogus-opt=1"] {
+        let args = argv(&["--server", "-logDtpre.iLsfxC", unknown, ".", "dst/"]);
+        assert_eq!(
+            refused_server_option(&args),
+            Some(&OsString::from(unknown)),
+            "{unknown}"
+        );
+        assert!(!is_known_server_long_flag(unknown), "{unknown}");
+    }
+    // Ahead of `--server`, where an unknown token would otherwise be taken
+    // for the compact flag string.
+    let args = argv(&["--bogus-opt", "--server", "-logDtpre.iLsfxC", ".", "dst/"]);
+    assert_eq!(
+        refused_server_option(&args),
+        Some(&OsString::from("--bogus-opt"))
+    );
+
+    let accepted = [
+        argv(&[
+            "--server",
+            "-logDtpre.iLsfxC",
+            "--delete",
+            "--protocol=30",
+            ".",
+            "dst/",
+        ]),
+        // The value slot of a two-argument option is not an option.
+        argv(&[
+            "--server",
+            "-logDtpre.iLsfxC",
+            "--temp-dir",
+            "--odd",
+            ".",
+            "dst/",
+        ]),
+        // A path the client escaped with "./" (options.c:2709).
+        argv(&["--server", "-logDtpre.iLsfxC", ".", "./--weird/"]),
+        // Everything after the marker is an operand.
+        argv(&["--server", "-logDtpre.iLsfxC", "--", ".", "--bogus-opt"]),
     ];
-    assert_eq!(refused_server_option(&args), None);
+    for args in &accepted {
+        assert_eq!(refused_server_option(args), None, "{args:?}");
+    }
 }
 
 /// The client's forwarded `--timeout=N` becomes this server process's
