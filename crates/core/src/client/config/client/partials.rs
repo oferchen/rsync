@@ -24,7 +24,6 @@ impl ClientConfig {
 
     /// Returns the configured temporary directory used for staged updates.
     #[doc(alias = "--temp-dir")]
-    #[doc(alias = "--tmp-dir")]
     pub fn temp_directory(&self) -> Option<&Path> {
         self.temp_directory.as_deref()
     }

@@ -470,9 +470,6 @@ NEON) are used where available, with automatic scalar fallbacks.
 :   Store/restore privileged attributes using extended attributes instead of
     real permissions.
 
-**--no-fake-super**
-:   Disable fake-super mode.
-
 **-S**, **--sparse**
 :   Handle sparse files efficiently. Attempts to create sparse files on the
     destination when appropriate.
@@ -638,8 +635,7 @@ NEON) are used where available, with automatic scalar fallbacks.
     is useful when other processes read from the destination tree.
 
 **-T**, **--temp-dir**=*DIR*
-:   Store temporary files in *DIR* while transferring. Also available as
-    **--tmp-dir**.
+:   Store temporary files in *DIR* while transferring.
 
 **--delay-updates**
 :   Accumulate all updated files in a staging area and rename them to their
