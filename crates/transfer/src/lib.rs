@@ -704,7 +704,11 @@ pub fn run_server_stdio(
     // pre-release subprotocol (carried in its `-e` capability string) before it
     // writes its protocol version. For a stock release peer this is a no-op and
     // the version exchange is byte-identical to a plain `perform_handshake`.
-    let mut handshake = perform_server_handshake(stdin, stdout, &config.flag_string)?;
+    let protocol_version = config
+        .protocol_arg
+        .unwrap_or_else(|| i32::from(protocol::ProtocolVersion::NEWEST.as_u8()));
+    let mut handshake =
+        perform_server_handshake(stdin, stdout, &config.flag_string, protocol_version)?;
     // upstream: options.c:2520 - the server's own `parse_arguments()` run over
     // the argv the client forwarded ends in `set_io_timeout(io_timeout)`, so a
     // `--timeout=N` on the client arms this process too. The CLI's server-mode
