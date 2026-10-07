@@ -755,6 +755,7 @@ dependencies = [
  "fast_io",
  "filetime",
  "filters",
+ "idna",
  "libc",
  "logging",
  "metadata",

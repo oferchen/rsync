@@ -42,6 +42,7 @@ filetime = { workspace = true }
 branding = { path = "../branding" }
 tokio = { workspace = true, optional = true }
 zeroize = { workspace = true }
+idna = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 checksums = { path = "../checksums" }
@@ -62,7 +63,7 @@ default-features = false
 features = ["xattr"]
 
 [features]
-default = ["zstd", "lz4", "xattr", "iconv"]
+default = ["zstd", "lz4", "xattr", "iconv", "idn"]
 
 # ============================================================================
 # Compression Features
@@ -80,6 +81,9 @@ acl = ["metadata/acl", "engine/acl", "transfer/acl"]
 
 # Character encoding conversion for filenames (iconv)
 iconv = ["protocol/iconv", "transfer/iconv", "engine/iconv"]
+
+# IDNA A-label conversion of internationalized host names (upstream SUPPORT_IDN)
+idn = ["dep:idna"]
 
 # Parallel receive-side delta apply (oc extension, off by default). Forwards to
 # `transfer/parallel-receive-delta`; behavior-neutral until the receiver

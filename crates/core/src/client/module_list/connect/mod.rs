@@ -524,6 +524,8 @@ fn open_tcp_daemon_stream(
         return program::connect_via_program(addr, &program);
     }
 
+    let ascii_addr = addr.with_ascii_host();
+    let addr = ascii_addr.as_ref();
     let stream = match load_daemon_proxy()? {
         Some(proxy) => proxy::connect_via_proxy(
             addr,

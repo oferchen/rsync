@@ -1195,3 +1195,36 @@ fn run_module_list_via_proxy_includes_auth_header() {
     proxy_handle.join().expect("proxy thread");
     daemon_handle.join().expect("daemon thread");
 }
+
+/// upstream: socket.c:346-353 - `open_socket_out()` folds an IDN host to
+/// A-labels before choosing between a direct connect and `RSYNC_PROXY`, so the
+/// proxy's CONNECT request names a host its resolver can find (UTS `idn`
+/// observes exactly this request).
+#[cfg(feature = "idn")]
+#[test]
+fn proxy_connect_request_names_the_idn_host_as_its_a_label() {
+    let responses = vec!["@RSYNCD: OK\n", "kappa\n", "@RSYNCD: EXIT\n"];
+    let (daemon_addr, daemon_handle) = spawn_stub_daemon(responses);
+    let (proxy_addr, request_rx, proxy_handle) =
+        spawn_stub_proxy(daemon_addr, None, DEFAULT_PROXY_STATUS_LINE);
+
+    let _env_lock = env_lock().lock().expect("env mutex poisoned");
+    let _guard = EnvGuard::set(
+        "RSYNC_PROXY",
+        &format!("{}:{}", proxy_addr.ip(), proxy_addr.port()),
+    );
+
+    let request = ModuleListRequest::from_components(
+        DaemonAddress::new("\u{10c}i\u{10d}ku.example".to_owned(), daemon_addr.port()),
+        None,
+        ProtocolVersion::NEWEST,
+    );
+    run_module_list(request).expect("module list succeeds");
+
+    let captured = request_rx.recv().expect("captured CONNECT request");
+    let expected = format!("CONNECT xn--iku-eqab.example:{} ", daemon_addr.port());
+    assert!(captured.starts_with(&expected), "{captured:?}");
+
+    proxy_handle.join().expect("proxy thread");
+    daemon_handle.join().expect("daemon thread");
+}

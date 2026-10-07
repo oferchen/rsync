@@ -3,6 +3,7 @@
 //! Provides [`DaemonAddress`] for specifying the target host and port
 //! of an rsync daemon connection.
 
+use std::borrow::Cow;
 use std::fmt;
 
 /// Transport carrying the (unmodified) rsync daemon wire protocol.
@@ -86,6 +87,23 @@ impl DaemonAddress {
     #[must_use]
     pub const fn port(&self) -> u16 {
         self.port
+    }
+
+    /// Returns this address with its host folded to IDNA A-labels, borrowing
+    /// `self` when the host needs no conversion.
+    ///
+    /// upstream: socket.c:346-353 `open_socket_out()` - the resolver only
+    /// speaks ASCII, so an IDN host goes out as A-labels, both to
+    /// `getaddrinfo` and in an `RSYNC_PROXY` CONNECT request.
+    pub(crate) fn with_ascii_host(&self) -> Cow<'_, Self> {
+        match crate::idn::host_to_ascii(&self.host) {
+            Cow::Borrowed(_) => Cow::Borrowed(self),
+            Cow::Owned(host) => Cow::Owned(Self {
+                host,
+                port: self.port,
+                transport: self.transport,
+            }),
+        }
     }
 
     pub(crate) fn socket_addr_display(&self) -> SocketAddrDisplay<'_> {

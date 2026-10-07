@@ -28,6 +28,7 @@ default = [
     "acl",
     "xattr",
     "iconv",
+    "idn",
     "parallel",
     "copy_file_range",
     "io_uring",
@@ -55,6 +56,9 @@ acl = ["cli/acl", "core/acl"]
 xattr = ["cli/xattr", "core/xattr"]
 # Character encoding conversion for filenames
 iconv = ["cli/iconv", "core/iconv"]
+# Internationalized domain name hosts (upstream SUPPORT_IDN). When disabled,
+# hosts are used as typed and --version reports "no IDN", like --disable-idn.
+idn = ["core/idn"]
 
 # ============================================================================
 # Performance Optimization Features
@@ -318,6 +322,8 @@ hmac = "0.13"
 sha1 = "0.11"
 # URL parsing for ssh:// URIs
 url = "2"
+# IDNA (UTS #46) A-label conversion for internationalized host names
+idna = "1.1"
 # Secure password input from terminal
 rpassword = "7"
 # Terminal detection for interactive prompts
