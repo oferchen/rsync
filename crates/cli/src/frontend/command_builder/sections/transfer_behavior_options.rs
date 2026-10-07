@@ -18,7 +18,6 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                 Arg::new("temp-dir")
                     .long("temp-dir")
                     .short('T')
-                    .visible_alias("tmp-dir")
                     .value_name("DIR")
                     .help("Store temporary files in DIR while transferring.")
                     .value_parser(OsStringValueParser::new()),
@@ -538,7 +537,6 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
             .arg(
                 Arg::new("no-backup")
                     .long("no-backup")
-                    .visible_alias("no-b")
                     .help("Disable backup creation.")
                     .action(ArgAction::SetTrue)
                     .overrides_with("backup"),

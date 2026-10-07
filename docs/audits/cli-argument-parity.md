@@ -76,7 +76,7 @@ preserved.
 | `--omit-link-times` / `--no-omit-link-times` | `-J` | supported | `--no-J` alias. |
 | `--modify-window` | `-@` | supported | Integer seconds. |
 | `--super` / `--no-super` | - | supported | - |
-| `--fake-super` / `--no-fake-super` | - | supported | xattr-based privileged-attr storage. |
+| `--fake-super` | - | supported | xattr-based privileged-attr storage. |
 | `--owner` / `--no-owner` | `-o` | supported | `--no-o` alias. |
 | `--group` / `--no-group` | `-g` | supported | `--no-g` alias. |
 | `-D` (devices + specials) | `-D` | supported | Composite of `--devices --specials`. |
@@ -146,7 +146,7 @@ append, batch mode, and comparison logic.
 | `--partial` / `--no-partial` | - | supported | - |
 | `--partial-dir` | - | supported | Implies `--partial`. |
 | `--delay-updates` / `--no-delay-updates` | - | supported | - |
-| `--temp-dir` / `--tmp-dir` | `-T` | supported | `--tmp-dir` is visible alias. |
+| `--temp-dir` | `-T` | supported | -- |
 | `--mkpath` / `--no-mkpath` | - | supported | `--old-dirs` / `--old-d` visible aliases on `--no-mkpath`. |
 | `--prune-empty-dirs` / `--no-prune-empty-dirs` | `-m` | supported | `--no-m` alias. |
 | `--fsync` | - | supported | - |
@@ -204,7 +204,7 @@ append, batch mode, and comparison logic.
 
 | Upstream long flag | Short | Status | Notes |
 |--------------------|-------|--------|-------|
-| `--backup` / `--no-backup` | `-b` | supported | `--no-b` alias. |
+| `--backup` / `--no-backup` | `-b` | supported | -- |
 | `--backup-dir` | - | supported | - |
 | `--suffix` | - | supported | Default `~`. |
 

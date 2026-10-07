@@ -32,13 +32,6 @@ pub(super) fn add_privilege_args(command: ClapCommand) -> ClapCommand {
                 // with -M--fake-super legitimately presents it twice; upstream parses
                 // the same pair with POPT_ARG_VAL, which just re-sets the value.
                 // upstream: options.c:672 {"fake-super", 0, POPT_ARG_VAL, ...}
-                .overrides_with_all(["no-fake-super", "fake-super"]),
-        )
-        .arg(
-            Arg::new("no-fake-super")
-                .long("no-fake-super")
-                .help("Disable fake-super mode.")
-                .action(ArgAction::SetTrue)
                 .overrides_with("fake-super"),
         )
         .arg(

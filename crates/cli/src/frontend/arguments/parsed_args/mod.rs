@@ -327,7 +327,7 @@ pub struct ParsedArgs {
     /// `--super` / `--no-super` - attempt privileged operations.
     pub super_mode: Option<bool>,
 
-    /// `--fake-super` / `--no-fake-super` - store privileged attrs via xattrs.
+    /// `--fake-super` - store privileged attrs via xattrs.
     pub fake_super: Option<bool>,
 
     /// `--times`, `-t` / `--no-times` - preserve modification times.

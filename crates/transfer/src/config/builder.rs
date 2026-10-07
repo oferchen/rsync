@@ -635,6 +635,7 @@ impl ServerConfigBuilder {
         ServerConfig {
             role: self.role,
             protocol: self.protocol,
+            protocol_arg: None,
             flag_string: self.flag_string.clone(),
             flags: self.flags.clone(),
             args: self.args.clone(),

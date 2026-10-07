@@ -112,42 +112,93 @@ pub fn perform_handshake(
 /// only a pre-release peer triggers the one-step downgrade.
 ///
 /// `client_flags` is the compact server flag string the client sent (oc's
-/// equivalent of upstream `shell_cmd`). A release peer that advertised no
-/// pre-release `VER.SUB` yields no downgrade and the uncapped newest-version
-/// handshake stands.
+/// equivalent of upstream `shell_cmd`). `protocol_version` is the server's own
+/// starting version: [`ProtocolVersion::NEWEST`] unless the server argv carried
+/// `--protocol=N` (options.c:860 binds it straight into `protocol_version`, so
+/// any `int` is written verbatim and only the negotiated value is range-checked).
+///
+/// # Errors
+///
+/// A negotiated version below `MIN_PROTOCOL_VERSION` fails with upstream's
+/// `--protocol must be at least 20 on the Server.` (compat.c:631-634), and one in
+/// `20..28` fails because this build cannot speak it on the wire; both are
+/// protocol violations (`RERR_PROTOCOL`).
 pub fn perform_server_handshake(
     stdin: &mut dyn Read,
     stdout: &mut dyn Write,
     client_flags: &str,
+    protocol_version: i32,
 ) -> io::Result<HandshakeResult> {
-    let effective = reconcile_subprotocol(ProtocolVersion::NEWEST, client_flags);
-    perform_handshake_with_max(stdin, stdout, effective)
+    let advertised = reconcile_subprotocol(protocol_version, client_flags);
+    // upstream: compat.c:604 - write_int(f_out, protocol_version).
+    stdout.write_all(&advertised.to_le_bytes())?;
+    stdout.flush()?;
+
+    let remote_version = read_client_version(stdin)?;
+    // upstream: compat.c:606-607 - protocol_version = MIN(protocol_version,
+    // remote_protocol). compat.c:636's `> PROTOCOL_VERSION` refusal cannot fire
+    // here: read_client_version already clamps the peer to NEWEST.
+    let negotiated = advertised.min(i32::from(remote_version.as_u8()));
+    if negotiated < MIN_PROTOCOL_VERSION {
+        return Err(protocol::protocol_violation(format!(
+            "--protocol must be at least {MIN_PROTOCOL_VERSION} on the Server."
+        )));
+    }
+    let protocol = u8::try_from(negotiated)
+        .ok()
+        .and_then(|version| ProtocolVersion::try_from(version).ok())
+        .ok_or_else(|| {
+            protocol::protocol_violation(format!(
+                "protocol version {negotiated} is not supported over the wire by this build \
+                 (supported protocols are {})",
+                ProtocolVersion::supported_protocol_numbers_display()
+            ))
+        })?;
+
+    Ok(HandshakeResult {
+        protocol,
+        buffered: Vec::new(),
+        compat_exchanged: false,
+        client_args: None,
+        io_timeout: None,
+        negotiated_algorithms: None,
+        compat_flags: None,
+        checksum_seed: 0,
+    })
 }
+
+/// Lowest protocol version upstream accepts after negotiation.
+///
+/// upstream: rsync.h:147 `MIN_PROTOCOL_VERSION 20`.
+const MIN_PROTOCOL_VERSION: i32 = 20;
 
 /// Applies upstream `check_sub_protocol()` (compat.c:133-160) to derive the
 /// protocol version the server advertises after reconciling the peer's
 /// pre-release `VER.SUB`.
 ///
 /// upstream: compat.c:602 - the reconciliation runs against `protocol_version`
-/// (here `max_version`, the newest version the server would otherwise advertise)
 /// and lowers it by one step when the peer is a pre-release whose subprotocol is
 /// incompatible with ours. A stock release peer parses to `(0, 0)` and leaves the
 /// version unchanged, so the write remains wire-identical to [`perform_handshake`].
-fn reconcile_subprotocol(max_version: ProtocolVersion, client_flags: &str) -> ProtocolVersion {
+fn reconcile_subprotocol(protocol_version: i32, client_flags: &str) -> i32 {
+    // A `--protocol` value outside `u8` is never a real peer's version; only a
+    // pre-release peer could move it, and the range check rejects it anyway.
+    let Ok(ours) = u8::try_from(protocol_version) else {
+        return protocol_version;
+    };
     let (their_protocol, their_sub) = crate::setup::parse_peer_subprotocol(client_flags);
     // upstream: compat.c:137 `get_subprotocol_version()` - a release oc build
     // (SUBPROTOCOL_VERSION == 0) always advertises subprotocol 0.
-    let our_sub = get_subprotocol_version(max_version.as_u8());
-    let reconciled = check_sub_protocol(max_version.as_u8(), our_sub, their_protocol, their_sub);
-    if reconciled == max_version.as_u8() {
-        return max_version;
+    let our_sub = get_subprotocol_version(ours);
+    let reconciled = check_sub_protocol(ours, our_sub, their_protocol, their_sub);
+    if reconciled == ours {
+        return protocol_version;
     }
     // check_sub_protocol never raises the version. Clamp the (unreachable for a
     // release peer) sub-OLDEST result to the floor so the downgrade direction is
-    // preserved, mirroring upstream which advertises the lowered value and lets
-    // the later MIN_PROTOCOL_VERSION guard reject anything too old.
-    let floor = ProtocolVersion::OLDEST.as_u8();
-    ProtocolVersion::try_from(reconciled.max(floor)).unwrap_or(max_version)
+    // preserved, without ever lifting it above the version we started from.
+    let floor = ProtocolVersion::OLDEST.as_u8().min(ours);
+    i32::from(reconciled.max(floor))
 }
 
 /// Performs the version handshake while advertising at most `max_version`.
@@ -321,6 +372,8 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    const NEWEST: i32 = ProtocolVersion::NEWEST.as_u8() as i32;
+
     #[test]
     fn binary_handshake_negotiates_version() {
         // Client sends version 32
@@ -461,8 +514,9 @@ mod tests {
         let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
         let mut stdout = Vec::new();
 
-        let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre32.7LsfxCIvu")
-            .expect("handshake succeeds");
+        let result =
+            perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre32.7LsfxCIvu", NEWEST)
+                .expect("handshake succeeds");
 
         assert_eq!(result.protocol, ProtocolVersion::V31);
         assert_eq!(
@@ -479,8 +533,9 @@ mod tests {
         let mut stdin = Cursor::new(vec![30, 0, 0, 0]);
         let mut stdout = Vec::new();
 
-        let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre30.5LsfxCIvu")
-            .expect("handshake succeeds");
+        let result =
+            perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre30.5LsfxCIvu", NEWEST)
+                .expect("handshake succeeds");
 
         assert_eq!(result.protocol, ProtocolVersion::V29);
         assert_eq!(stdout[0], 29, "pins to their_protocol - 1");
@@ -495,8 +550,9 @@ mod tests {
         let mut stdin = Cursor::new(vec![33, 0, 0, 0]);
         let mut stdout = Vec::new();
 
-        let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre.LsfxCIvu")
-            .expect("handshake succeeds");
+        let result =
+            perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre.LsfxCIvu", NEWEST)
+                .expect("handshake succeeds");
 
         assert_eq!(result.protocol, ProtocolVersion::NEWEST);
         assert_eq!(stdout[0], ProtocolVersion::NEWEST.as_u8());
@@ -509,7 +565,7 @@ mod tests {
         let mut stdin = Cursor::new(vec![33, 0, 0, 0]);
         let mut stdout = Vec::new();
 
-        let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpr")
+        let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpr", NEWEST)
             .expect("handshake succeeds");
 
         assert_eq!(result.protocol, ProtocolVersion::NEWEST);
@@ -535,19 +591,92 @@ mod tests {
     // upstream: compat.c:133-160 check_sub_protocol() driven from a release side.
     #[test]
     fn reconcile_subprotocol_matches_check_sub_protocol() {
-        let newest = ProtocolVersion::NEWEST;
         // Release peer / no VER.SUB -> unchanged.
-        assert_eq!(reconcile_subprotocol(newest, "-e.LsfxCIvu"), newest);
-        assert_eq!(reconcile_subprotocol(newest, ""), newest);
+        assert_eq!(reconcile_subprotocol(NEWEST, "-e.LsfxCIvu"), NEWEST);
+        assert_eq!(reconcile_subprotocol(NEWEST, ""), NEWEST);
         // Equal-protocol pre-release peer -> newest - 1.
-        assert_eq!(
-            reconcile_subprotocol(newest, "-e32.4LsfxCIvu"),
-            ProtocolVersion::V31,
-        );
+        assert_eq!(reconcile_subprotocol(NEWEST, "-e32.4LsfxCIvu"), 31);
         // Older-protocol pre-release peer -> their_protocol - 1.
-        assert_eq!(
-            reconcile_subprotocol(newest, "-e31.2LsfxCIvu"),
-            ProtocolVersion::V30,
+        assert_eq!(reconcile_subprotocol(NEWEST, "-e31.2LsfxCIvu"), 30);
+    }
+
+    // upstream: options.c:860 + compat.c:604-607 - `--protocol=N` on the server
+    // argv lowers the version the server ADVERTISES, not just the one it
+    // settles on, so an upstream client logs `remote=N` and negotiates N.
+    #[test]
+    fn server_handshake_advertises_requested_protocol() {
+        let mut stdin = Cursor::new(vec![33, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre.LsfxCIvu", 29)
+            .expect("handshake succeeds");
+
+        assert_eq!(result.protocol, ProtocolVersion::V29);
+        assert_eq!(stdout, 29i32.to_le_bytes());
+    }
+
+    // upstream: compat.c:606-607 - a requested version above the peer's is
+    // clamped by the MIN with remote_protocol and is not an error; the raw
+    // request still goes on the wire verbatim (write_int).
+    #[test]
+    fn server_handshake_writes_oversized_request_verbatim() {
+        let mut stdin = Cursor::new(vec![32, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let result = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre.LsfxCIvu", 40)
+            .expect("handshake succeeds");
+
+        assert_eq!(result.protocol, ProtocolVersion::V32);
+        assert_eq!(stdout, 40i32.to_le_bytes());
+    }
+
+    // upstream: compat.c:631-634 - the floor is checked after the version was
+    // written, so the peer sees the request before the refusal.
+    #[test]
+    fn server_handshake_refuses_request_below_minimum() {
+        for requested in [19, 0, -5] {
+            let mut stdin = Cursor::new(vec![33, 0, 0, 0]);
+            let mut stdout = Vec::new();
+
+            let error =
+                perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre.LsfxCIvu", requested)
+                    .expect_err("below MIN_PROTOCOL_VERSION");
+
+            assert_eq!(stdout, requested.to_le_bytes());
+            assert_eq!(
+                error.to_string(),
+                "--protocol must be at least 20 on the Server."
+            );
+            assert!(
+                error
+                    .get_ref()
+                    .is_some_and(|e| e.is::<protocol::ProtocolViolation>()),
+                "{error:?}"
+            );
+        }
+    }
+
+    // A version upstream would speak (20..28) is below this build's wire floor,
+    // so it is refused as a protocol incompatibility rather than mis-spoken.
+    #[test]
+    fn server_handshake_refuses_legacy_request_below_wire_floor() {
+        let mut stdin = Cursor::new(vec![33, 0, 0, 0]);
+        let mut stdout = Vec::new();
+
+        let error = perform_server_handshake(&mut stdin, &mut stdout, "-logDtpre.LsfxCIvu", 25)
+            .expect_err("below the wire floor");
+
+        assert_eq!(stdout, 25i32.to_le_bytes());
+        assert!(
+            error
+                .to_string()
+                .starts_with("protocol version 25 is not supported")
+        );
+        assert!(
+            error
+                .get_ref()
+                .is_some_and(|e| e.is::<protocol::ProtocolViolation>()),
+            "{error:?}"
         );
     }
 

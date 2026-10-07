@@ -68,7 +68,7 @@ upstream alias is identical in spelling and semantics it is recorded under
 | `--omit-link-times` / `--no-omit-link-times` | `-J` | supported | `--no-J` alias. |
 | `--modify-window` | `-@` | supported | `modify-window`; integer seconds. |
 | `--super` / `--no-super` | -- | supported | `super`. |
-| `--fake-super` / `--no-fake-super` | -- | supported | xattr-based privileged-attr storage. |
+| `--fake-super` | -- | supported | xattr-based privileged-attr storage. |
 | `--owner` / `--no-owner` | `-o` | supported | `--no-o` alias. |
 | `--group` / `--no-group` | `-g` | supported | `--no-g` alias. |
 | `--no-D` | -- | supported | Composite of `--no-devices --no-specials`. |
@@ -172,7 +172,7 @@ upstream alias is identical in spelling and semantics it is recorded under
 | `--8-bit-output` / `--no-8-bit-output` | `-8` | supported | `--no-8` alias. |
 | `--list-only` | -- | supported | -- |
 | `--outbuf` | -- | supported | `none` / `line` / `block`. |
-| `--backup` / `--no-backup` | `-b` | supported | `--no-b` alias. |
+| `--backup` / `--no-backup` | `-b` | supported | -- |
 | `--backup-dir` | -- | supported | -- |
 | `--suffix` | -- | supported | Default `~`. |
 
@@ -233,7 +233,7 @@ upstream alias is identical in spelling and semantics it is recorded under
 | `--groupmap` | -- | supported | Repeatable. |
 | `--chown` | -- | supported | -- |
 | `--numeric-ids` / `--no-numeric-ids` | -- | supported | -- |
-| `--temp-dir` / `--tmp-dir` | `-T` | supported | -- |
+| `--temp-dir` | `-T` | supported | -- |
 | `--fsync` | -- | supported | -- |
 | `--early-input` | -- | supported | -- |
 

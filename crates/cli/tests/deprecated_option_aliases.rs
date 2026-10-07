@@ -22,16 +22,6 @@ fn test_old_d_forces_recursion() {
 }
 
 #[test]
-fn test_tmp_dir_alias_for_temp_dir() {
-    let args = parse_args(["oc-rsync", "--tmp-dir=/tmp", "src", "dest"]).unwrap();
-    assert_eq!(
-        args.temp_dir,
-        Some("/tmp".into()),
-        "--tmp-dir should behave like --temp-dir"
-    );
-}
-
-#[test]
 fn test_del_alias_for_delete() {
     let args = parse_args(["oc-rsync", "--del", "--dirs", "src", "dest"]).unwrap();
     assert!(
@@ -310,25 +300,5 @@ fn test_del_and_delete_before_are_mutually_exclusive() {
     assert!(
         result.is_err(),
         "--del (--delete-during) and --delete-before should be mutually exclusive"
-    );
-}
-
-#[test]
-fn test_tmp_dir_and_temp_dir_are_same_option() {
-    // --tmp-dir and --temp-dir are the same option (alias), so using both is
-    // a plain repeat; popt resolves repeats to the LAST occurrence
-    // (options.c:1508 re-runs the case per occurrence, no duplicate error).
-    let result = parse_args([
-        "oc-rsync",
-        "--temp-dir=/tmp1",
-        "--tmp-dir=/tmp2",
-        "src",
-        "dest",
-    ]);
-    let args = result.expect("--temp-dir repeated via its alias must parse like popt");
-    assert_eq!(
-        args.temp_dir.as_deref(),
-        Some(std::path::Path::new("/tmp2")),
-        "the last occurrence must win"
     );
 }

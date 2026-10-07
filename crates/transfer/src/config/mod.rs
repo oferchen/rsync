@@ -485,6 +485,14 @@ pub struct ServerConfig {
     pub role: ServerRole,
     /// Requested protocol version; capped during handshake.
     pub protocol: ProtocolVersion,
+    /// `--protocol=N` from the server argv, stored verbatim.
+    ///
+    /// upstream: options.c:860 binds `--protocol` straight into
+    /// `protocol_version` as a `POPT_ARG_INT`, so the server advertises any
+    /// value it is handed and only `setup_protocol()` range-checks the
+    /// negotiated result (compat.c:606-640). `None` advertises the newest
+    /// supported version.
+    pub protocol_arg: Option<i32>,
     /// Raw compact flag string provided by the client.
     pub flag_string: String,
     /// Parsed transfer options from the flag string.
@@ -822,6 +830,7 @@ impl Default for ServerConfig {
         Self {
             role: ServerRole::Receiver,
             protocol: ProtocolVersion::NEWEST,
+            protocol_arg: None,
             flag_string: String::new(),
             flags: ParsedServerFlags::default(),
             args: Vec::new(),

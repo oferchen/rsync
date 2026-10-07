@@ -57,22 +57,13 @@ daemon-directives:oc_only:quicport
 # (crates/cli/src/frontend/tests/help.rs OC_EXTENSION_FLAGS) does not carry,
 # because they are not primary long flags rendered in the help extensions
 # section - either aliases of an existing option or feature-hidden modifiers.
-#   no-b          - visible alias of --no-backup (upstream has --no-backup but
-#     no --no-b short-word alias).
-#   no-fake-super - explicit negation of --fake-super; upstream ships
-#     --fake-super only, with no --no-fake-super row.
 #   quic / quic-ca - QUIC transport selector and CA-bundle override
 #     (feature = "quic"); hidden from help when the feature is absent, so they
 #     stay out of the exact-match help registry that its sibling --quic-cc /
 #     --quic-window belong to.
 #   quic-cert / quic-key - client certificate + key for QUIC mutual TLS
 #     (feature = "quic"); same feature-hidden group as --quic / --quic-ca.
-#   tmp-dir       - visible alias of the upstream --temp-dir option (-T); an
-#     oc-added spelling, not present in upstream's popt table.
-cli-long-options:oc_only:no-b
-cli-long-options:oc_only:no-fake-super
 cli-long-options:oc_only:quic
 cli-long-options:oc_only:quic-ca
 cli-long-options:oc_only:quic-cert
 cli-long-options:oc_only:quic-key
-cli-long-options:oc_only:tmp-dir

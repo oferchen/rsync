@@ -161,6 +161,43 @@ pub(super) fn parse_server_checksum_seed(value: &str) -> Result<i32, String> {
     })
 }
 
+/// Parses a `--protocol=N` value the way popt parses a `POPT_ARG_INT`.
+///
+/// upstream: popt/popt.c:1081-1096 `poptParseInteger()` reads the value with
+/// `strtoll(val, &end, 0)` - optional leading whitespace and sign, then a hex
+/// (`0x`), octal (leading `0`) or decimal number - and rejects any unparsed
+/// tail; popt.c:1149-1152 then refuses a value outside `int`. The error strings
+/// are popt.c:1651-1654 `poptStrerror()`. An empty value converts nothing and
+/// leaves `end` at a NUL, so popt accepts it as 0.
+pub(super) fn parse_server_protocol(value: &str) -> Result<i32, &'static str> {
+    const BAD_NUMBER: &str = "invalid numeric value";
+    const OVERFLOW: &str = "number too large or too small";
+    if value.is_empty() {
+        return Ok(0);
+    }
+    let unsigned = value.trim_start_matches([' ', '\t', '\n', '\x0b', '\x0c', '\r']);
+    let (negative, unsigned) = match unsigned.as_bytes().first() {
+        Some(b'-') => (true, &unsigned[1..]),
+        Some(b'+') => (false, &unsigned[1..]),
+        _ => (false, unsigned),
+    };
+    let (radix, digits) = match unsigned
+        .strip_prefix("0x")
+        .or_else(|| unsigned.strip_prefix("0X"))
+    {
+        Some(hex) if hex.starts_with(|c: char| c.is_ascii_hexdigit()) => (16, hex),
+        _ if unsigned.len() > 1 && unsigned.starts_with('0') => (8, &unsigned[1..]),
+        _ => (10, unsigned),
+    };
+    if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+        return Err(BAD_NUMBER);
+    }
+    // A magnitude beyond i64 saturates in strtoll and is then out of int range.
+    let magnitude = i64::from_str_radix(digits, radix).map_err(|_| OVERFLOW)?;
+    let signed = if negative { -magnitude } else { magnitude };
+    i32::try_from(signed).map_err(|_| OVERFLOW)
+}
+
 /// Parses a `--min-size=SIZE` or `--max-size=SIZE` value from the server argument list.
 ///
 /// Delegates to the shared size parser used by the client-side CLI.
