@@ -144,7 +144,7 @@ where
 {
     // Route through the session-level driver facade
     // (`core::session::run_server_stdio`), which runs the threaded server body.
-    use core::server::{ServerConfig, ServerRole};
+    use core::server::{ServerConfig, ServerRole, ServerStats};
     use core::session::run_server_stdio;
 
     let program_brand =
@@ -596,7 +596,8 @@ where
     // stream as plain tokens and eventually misaligns onto a multiplex frame
     // boundary.
     if let Some(name) = &long_flags.compress_choice {
-        match protocol::CompressionAlgorithm::parse(name) {
+        // upstream: compat.c:187 get_nni_by_name() - the lookup is case-insensitive.
+        match protocol::CompressionAlgorithm::parse(&name.to_ascii_lowercase()) {
             Ok(algo) => config.connection.compress_choice = Some(algo),
             Err(e) => {
                 write_server_error(
@@ -609,19 +610,15 @@ where
         }
     }
 
-    // upstream: options.c:2764-2768 - `--compress-level=N` forwarded by the
-    // client sets `do_compression_level` on the server so its codec compresses
-    // at the same level. The value is the numeric 0-9 that the client already
-    // clamped before forwarding.
+    // upstream: options.c:2931-2934 - the client forwards its raw, unclamped
+    // `do_compression_level`; token.c:55 init_compression_level() clamps it
+    // only once the codec is known.
     if let Some(value) = &long_flags.compression_level {
-        match value
-            .trim()
-            .parse::<u32>()
-            .map_err(|e| e.to_string())
-            .and_then(|n| {
-                compress::zlib::CompressionLevel::from_numeric(n).map_err(|e| e.to_string())
-            }) {
-            Ok(level) => config.connection.compression_level = Some(level),
+        match value.trim().parse::<i32>() {
+            Ok(level) => {
+                config.connection.compression_level =
+                    Some(compress::zlib::CompressionLevel::from_signed(level));
+            }
             Err(e) => {
                 write_server_error(
                     stderr,
@@ -771,7 +768,15 @@ where
     // (transfer::announce_error_exit); this is the process status the remote
     // shell reports on top of it.
     match run_server_stdio(config, &mut stdin, stdout, None) {
-        Ok(_stats) => 0,
+        // upstream: cleanup.c:210-218 - a clean finish still exits with the
+        // code the accumulated io_error bits select (23/24/25).
+        Ok(stats) => {
+            let (io_error, got_xfer_error) = match stats {
+                ServerStats::Receiver(s) => (s.io_error, s.got_xfer_error),
+                ServerStats::Generator(s) => (s.io_error, s.got_xfer_error),
+            };
+            core::exit_code::io_error_exit_code(io_error, got_xfer_error).unwrap_or(0)
+        }
         Err(e) => {
             let exit_code = core::exit_code::ExitCode::from_io_error(&e);
             write_server_error_with_code(

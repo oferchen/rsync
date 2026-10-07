@@ -2350,16 +2350,33 @@ mod compression_options {
         assert!(!parsed.compress);
     }
 
+    /// upstream: options.c:1740-1752,2131 - `--old-compress`, `--new-compress`
+    /// and `--compress-choice` overwrite one `compress_choice` in command-line
+    /// order, `--no-compress` clears it, and a repeated `-z` alone means zlibx.
+    /// The peer runs whichever codec this resolves to, so the order matters.
     #[test]
-    fn old_compress_flag() {
-        let parsed = parse_test_args(["--old-compress", "src/", "dst/"]).expect("parse");
-        assert!(parsed.old_compress);
-    }
-
-    #[test]
-    fn new_compress_flag() {
-        let parsed = parse_test_args(["--new-compress", "src/", "dst/"]).expect("parse");
-        assert!(parsed.new_compress);
+    fn compress_choice_follows_command_line_order() {
+        let cases: &[(&[&str], Option<&str>)] = &[
+            (&["--old-compress"], Some("zlib")),
+            (&["--new-compress"], Some("zlibx")),
+            (&["-zz"], Some("zlibx")),
+            (&["-zz", "--old-compress"], Some("zlib")),
+            (&["--old-compress", "--new-compress"], Some("zlibx")),
+            (&["--new-compress", "--compress-choice=zstd"], Some("zstd")),
+            (&["--compress-choice=zstd", "--old-compress"], Some("zlib")),
+            (&["--compress-choice=zstd", "--no-compress"], None),
+            (&["--no-compress", "--compress-choice=zstd"], Some("zstd")),
+            (&["-z"], None),
+        ];
+        for (options, expected) in cases {
+            let args = options.iter().copied().chain(["src/", "dst/"]);
+            let parsed = parse_test_args(args).expect("parse");
+            assert_eq!(
+                parsed.compress_choice,
+                expected.map(OsString::from),
+                "{options:?}"
+            );
+        }
     }
 
     #[test]

@@ -128,6 +128,7 @@ pub mod delta_config;
 pub mod delta_transfer;
 pub mod error;
 pub mod flags;
+mod flist_banner;
 pub(crate) mod full_fname;
 pub mod generator;
 pub mod handshake;
@@ -279,20 +280,19 @@ fn compression_level_to_i32(level: compress::zlib::CompressionLevel) -> i32 {
 /// `off_level == CLVL_NOT_SPECIFIED` and map a literal `0` to their default
 /// level, so they never disable via `--compress-level`.
 ///
-/// - `compress_choice_fixed` - true when `--compress-choice` pinned the codec.
-///   Upstream resolves that level against the known codec at parse time, so the
-///   deferred resolution here must leave the explicit-codec path untouched.
+/// A pinned `compress_choice` takes the same path: `parse_compress_choice(0)`
+/// at option parse never calls `init_compression_level()`.
+///
 /// - `compression_level` - the raw `do_compression_level`, `CLVL_NOT_SPECIFIED`
 ///   when `--compress-level` was not supplied (nothing to resolve).
 ///
 /// Returns `true` only when the level lands on the negotiated codec's
 /// `off_level`, i.e. zlib/zlibx at level `0`.
 fn negotiated_level_disables_compression(
-    compress_choice_fixed: bool,
     compression_level: i32,
     negotiated: protocol::CompressionAlgorithm,
 ) -> bool {
-    if compress_choice_fixed || compression_level == protocol::nstr::CLVL_NOT_SPECIFIED {
+    if compression_level == protocol::nstr::CLVL_NOT_SPECIFIED {
         return false;
     }
     // Reuse the single per-codec clamp (`token.c:59-98`): `off_level` is the only
@@ -758,6 +758,7 @@ pub fn run_server_with_handshake<W: Write>(
             itemize,
             io_timeout_reapply: None,
             daemon_log: None,
+            bytes_read: None,
         },
     )
 }
@@ -798,6 +799,11 @@ pub struct ServerTransferHooks<'p, 'i, 'd> {
     /// Per-entry daemon transfer-log hook. `Some` only when a daemon module has
     /// `transfer logging = yes`; drives the per-file `log_item(FLOG)` writes.
     pub daemon_log: Option<DaemonLog<'d>>,
+    /// Caller-owned counter for the raw bytes read once `setup_protocol` is
+    /// done, so the caller can name them when the transfer fails.
+    /// upstream: io.c:938 counts `stats.total_read` only through perform_io,
+    /// which setup_protocol's reads bypass (io.c:2158-2161, main.c:1307-1308).
+    pub bytes_read: Option<Arc<std::sync::atomic::AtomicU64>>,
 }
 
 /// Runs a server transfer that may adopt a daemon-advertised `MSG_IO_TIMEOUT`.
@@ -824,6 +830,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         itemize,
         io_timeout_reapply,
         daemon_log,
+        bytes_read,
     } = hooks;
     // upstream: options.c:2419 - `--append` implies `--inplace`, applied by the
     // same parse_arguments() every peer runs. This is the one path shared by
@@ -906,12 +913,16 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         (config.flags.compress || choice.is_some(), choice)
     };
 
+    // upstream: options.c:2138-2140 - a `--compress-level` alone turns
+    // compression on (CPRES_AUTO), with the codec left to negotiation.
+    let do_compression = do_compression || config.connection.compression_level.is_some();
     // upstream: compat.c:543 - compression vstrings are only exchanged when
     // do_compression is active AND no explicit compress_choice was given.
     // When --compress-choice=ALGO is specified, both sides know the algorithm
     // and skip the vstring negotiation for compression.
+    // upstream: compat.c:187 get_nni_by_name() - the lookup is case-insensitive.
     let compress_choice_algo = compress_choice
-        .map(protocol::CompressionAlgorithm::parse)
+        .map(|name| protocol::CompressionAlgorithm::parse(&name.to_ascii_lowercase()))
         .transpose()
         .map_err(|e| {
             std::io::Error::new(
@@ -977,10 +988,9 @@ pub fn run_server_with_handshake_adopting<W: Write>(
 
     // upstream: compat.c:820 parse_compress_choice(1) -> token.c:55
     // init_compression_level(), which runs AFTER negotiate_the_strings()
-    // (compat.c:809) and "might turn compression off". When --compress-choice
-    // fixed the codec the level was already resolved against it at CLI parse;
-    // otherwise the meaning of `--compress-level=0` depends on the negotiated
-    // codec's off_level and can only be resolved here. zlib/zlibx have
+    // (compat.c:809) and "might turn compression off". The meaning of
+    // `--compress-level=0` depends on the codec's off_level, pinned or
+    // negotiated, so it can only be resolved here. zlib/zlibx have
     // off_level 0, so a literal 0 sets do_compression = CPRES_NONE and the
     // sender frames plain tokens; zstd/lz4 have off_level CLVL_NOT_SPECIFIED and
     // map a literal 0 to their default level, so compression stays on. Only the
@@ -991,11 +1001,7 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // symmetric.
     if do_compression
         && let Some(negotiated) = handshake.negotiated_algorithms.as_mut()
-        && negotiated_level_disables_compression(
-            compress_choice_algo.is_some(),
-            compression_level,
-            negotiated.compression,
-        )
+        && negotiated_level_disables_compression(compression_level, negotiated.compression)
     {
         negotiated.compression = protocol::CompressionAlgorithm::None;
         config.connection.compression_level = None;
@@ -1049,7 +1055,10 @@ pub fn run_server_with_handshake_adopting<W: Write>(
     // The CountingReader wraps the raw transport (below the multiplex demuxer and
     // token decompression) so the running total reflects compressed wire bytes,
     // matching upstream's `stats.total_read` (io.c:838).
-    let counting_stdin = reader::CountingReader::new(chained_stdin);
+    let counting_stdin = match bytes_read {
+        Some(counter) => reader::CountingReader::with_counter(chained_stdin, counter),
+        None => reader::CountingReader::new(chained_stdin),
+    };
     let bytes_received_counter = counting_stdin.counter();
     let mut reader =
         reader::ServerReader::new_plain(protocol::iobuf::IoBufReader::new(counting_stdin));

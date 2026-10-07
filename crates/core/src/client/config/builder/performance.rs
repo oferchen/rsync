@@ -63,6 +63,17 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Records the compression request exactly as the option parser resolved it.
+    ///
+    /// Overrides the request otherwise derived from the compression fields,
+    /// which cannot tell `-z` from a lone `--compress-level` nor keep the
+    /// verbatim `compress_choice` that is forwarded to the server.
+    #[must_use]
+    pub fn compress_request(mut self, request: CompressRequest) -> Self {
+        self.compress_request = Some(request);
+        self
+    }
+
     /// Sets the compression level that should apply when compression is enabled.
     #[must_use]
     #[doc(alias = "--compress-level")]

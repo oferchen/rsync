@@ -359,12 +359,12 @@ fn apply_long_form_args(
                         config.connection.compression_level =
                             Some(compress::zlib::CompressionLevel::Default);
                     }
-                // upstream: options.c:2765-2768
+                // upstream: options.c:2931-2934 - the raw, unclamped level;
+                // token.c:55 init_compression_level() clamps it per codec.
                 } else if let Some(level_str) = arg.strip_prefix("--compress-level=") {
-                    if let Ok(level) = level_str.parse::<u32>()
-                        && let Ok(cl) = compress::zlib::CompressionLevel::from_numeric(level)
-                    {
-                        config.connection.compression_level = Some(cl);
+                    if let Ok(level) = level_str.parse::<i32>() {
+                        config.connection.compression_level =
+                            Some(compress::zlib::CompressionLevel::from_signed(level));
                     }
                 // upstream: options.c:2835-2838
                 } else if let Some(val) = arg.strip_prefix("--max-delete=") {

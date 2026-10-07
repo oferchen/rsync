@@ -337,9 +337,11 @@ impl IdList {
             self.order.push(id);
         }
 
-        // With ID0_NAMES, read id=0's name
+        // With ID0_NAMES, read id=0's name. It is recorded but never resolved:
+        // upstream: uidlist.c:273 `else if (*name && id)` keeps id 0 as 0, so
+        // no name lookup (or `name converter` answer) can re-own root's files.
         if id0_names {
-            let (name, local_id) = self.read_name_and_resolve(reader, 0, &name_to_id)?;
+            let (name, local_id) = self.read_name_and_resolve(reader, 0, &|_: &[u8]| Ok(None))?;
             // upstream: uidlist.c:287-291 - the id=0 entry is processed by the
             // same `recv_add_id` path and therefore also fires the level-2 trace.
             if let Some(k) = kind {
@@ -414,8 +416,12 @@ impl IdList {
         // A resolver that cannot answer propagates rather than degrading into
         // "keep the sender's id" - the same rule `read_name_and_resolve`
         // applies, and the reason the guard in the name converter is reachable
-        // at all from this path.
-        let local_id = name_to_id(name)?.unwrap_or(id);
+        // at all from this path. Id 0 is never resolved (uidlist.c:273).
+        let local_id = if id == 0 {
+            0
+        } else {
+            name_to_id(name)?.unwrap_or(id)
+        };
         self.entries.insert(
             id,
             IdEntry {
@@ -574,6 +580,29 @@ mod tests {
             .unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list.match_id(0), 0);
+    }
+
+    /// upstream: uidlist.c:273 `else if (*name && id)` - id 0 keeps 0 whatever
+    /// its name resolves to, so a `name converter` answer for "root" (or an
+    /// NSS entry that maps it elsewhere) can never re-own root's files.
+    #[test]
+    fn id0_name_is_recorded_but_never_resolved() {
+        let lookups = std::cell::Cell::new(0);
+        let resolver = |_: &[u8]| {
+            lookups.set(lookups.get() + 1);
+            Ok(Some(4242))
+        };
+
+        let data = vec![0, 4, b'r', b'o', b'o', b't'];
+        let mut list = IdList::new();
+        list.read(&mut data.as_slice(), true, 30, resolver).unwrap();
+        assert_eq!(list.match_id(0), 0);
+
+        let mut inline = IdList::new();
+        inline.register_inline_name(0, b"root", resolver).unwrap();
+        assert_eq!(inline.match_id(0), 0);
+
+        assert_eq!(lookups.get(), 0, "id 0 must never reach the name resolver");
     }
 
     #[test]
