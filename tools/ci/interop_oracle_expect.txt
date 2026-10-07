@@ -5,7 +5,6 @@
 # that fails is XFAIL. A listed cell that passes is XPASS and fails the run:
 # the fix that makes a cell match upstream deletes its row in the same change.
 # An unlisted failure fails the run. Regenerate only from a measured run.
-acls-protocol-29/3.5.1/rsh/push/oc-client task-2521 no client-side -A below protocol 30 refusal (exit 12 vs 2)
 batch-local/3.1.3/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
 batch-local/3.4.4/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
 batch-local/3.5.0/local/push/oc-client task-2523 oc local batch replays with different itemize (header/flags)
@@ -48,8 +47,6 @@ inc-recurse-dirs/3.5.1/daemon/push/oc-client task-2520 INC_RECURSE push itemizes
 inc-recurse-dirs/3.5.1/rsh/push/oc-client task-2520 INC_RECURSE push itemizes reclaimed dirs as empty-named cf
 max-delete/3.5.1/rsh/push/oc-server task-2521 --max-delete limit exits 0, upstream 25
 non-utf8/3.5.1/rsh/pull/oc-client task-2522 non-UTF-8 names collapse in the flist dedup (sort.rs name())
-prune-empty-dirs-protocol-28/2.6.9/rsh/push/oc-client task-2521 no client-side -m at protocol 28 refusal (exit 12 vs 2)
-prune-empty-dirs/3.5.1/rsh/push/oc-client task-1321 -m push: upstream receiver 'buffer overflow: recv_rules'
 touched-protocol-32-remote/3.5.1/rsh/pull/oc-server task-2697 oc --server takes -M--protocol=32 for a path (exit 23)
 touched-protocol-32-remote/3.5.1/rsh/push/oc-server task-2697 oc --server takes -M--protocol=32 for a path (exit 3)
 touched-protocol-32-remote-no-inc/3.5.1/rsh/pull/oc-server task-2697 oc --server takes -M--protocol=32 for a path (exit 23)
