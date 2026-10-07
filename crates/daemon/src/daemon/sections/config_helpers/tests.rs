@@ -615,12 +615,20 @@ mod config_helpers_tests {
     /// locale (or Unicode case mapping) would rewrite the name the operator
     /// wrote. Non-ASCII letters must survive the parse unchanged and must not
     /// match their lower-case forms, on either the token or the peer side.
+    /// With IDN support the plain token is first folded to its A-label
+    /// (access.c:48-54), so only the wildcard token, which the fold keeps as
+    /// typed, still reaches the ASCII-only comparison.
     #[test]
     fn hostname_pattern_folds_ascii_only() {
         let pattern = HostnamePattern::parse("\u{10c}ESKO.Example").unwrap();
-        assert!(pattern.matches("\u{10c}esko.example"));
-        assert!(pattern.matches("\u{10c}ESKO.EXAMPLE"));
-        assert!(!pattern.matches("\u{10d}esko.example"));
+        if core::idn::SUPPORTED {
+            assert!(pattern.matches("xn--esko-fua.example"));
+            assert!(!pattern.matches("\u{10c}esko.example"));
+        } else {
+            assert!(pattern.matches("\u{10c}esko.example"));
+            assert!(pattern.matches("\u{10c}ESKO.EXAMPLE"));
+            assert!(!pattern.matches("\u{10d}esko.example"));
+        }
 
         let lower = HostnamePattern::parse("\u{e4}*.example").unwrap();
         assert!(lower.matches("\u{e4}x.example"));
