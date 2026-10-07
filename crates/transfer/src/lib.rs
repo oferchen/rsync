@@ -978,6 +978,21 @@ pub fn run_server_with_handshake_adopting<W: Write>(
         // remote server is never told about the batch at all.
         write_batch: batch.is_some(),
     };
+    // upstream: compat.c:663-713 - every peer refuses options the negotiated
+    // protocol cannot carry before any further exchange. `local_server` is
+    // only set for a local copy, which oc runs through the engine instead.
+    setup::refuse_unsupported_options(
+        handshake.protocol,
+        &setup::ProtocolRestrictionFlags {
+            preserve_acls: config.flags.acls,
+            preserve_xattrs: config.flags.xattrs,
+            fuzzy_basis: config.flags.fuzzy_level > 0,
+            basis_dir_count: config.reference_directories.len(),
+            inplace: config.write.inplace,
+            prune_empty_dirs: config.flags.prune_empty_dirs,
+            ..Default::default()
+        },
+    )?;
     let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
 
     // FSM: Handshake complete (setup_protocol exchanged compat flags, checksum
