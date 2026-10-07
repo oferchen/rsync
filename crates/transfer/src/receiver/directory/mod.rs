@@ -39,9 +39,10 @@ fn normalize_filename_for_compare(name: &std::ffi::OsStr) -> std::ffi::OsString 
     name.to_os_string()
 }
 
-/// Tracks directories that failed to create.
+/// Tracks directories that failed to create, or that `--existing` skipped.
 ///
-/// Children of failed directories are skipped during incremental processing.
+/// Children of both kinds are skipped during incremental processing; only a
+/// failure is an error.
 /// Mirrors upstream rsync's behavior where `mkdir` failures cause the entire
 /// subtree to be skipped rather than producing cascading permission errors.
 #[derive(Debug, Default)]
@@ -49,6 +50,9 @@ pub(in crate::receiver) struct FailedDirectories {
     /// Failed directory paths, keyed by their exact bytes so distinct
     /// non-UTF-8 names never alias each other.
     paths: std::collections::HashSet<std::path::PathBuf>,
+    /// Directories `--existing` skipped because the destination lacks them.
+    /// Their subtrees are skipped silently and are not failures.
+    missing: std::collections::HashSet<std::path::PathBuf>,
 }
 
 impl FailedDirectories {
@@ -60,6 +64,29 @@ impl FailedDirectories {
     /// Marks a directory as failed.
     pub(in crate::receiver) fn mark_failed(&mut self, path: impl AsRef<std::path::Path>) {
         self.paths.insert(path.as_ref().to_path_buf());
+    }
+
+    /// Marks a directory as skipped because `--existing` found it missing.
+    ///
+    /// upstream: generator.c:1755-1761 - sets `skip_dir` and
+    /// `FLAG_MISSING_DIR` without touching `io_error`.
+    pub(in crate::receiver) fn mark_missing(&mut self, path: impl AsRef<std::path::Path>) {
+        self.missing.insert(path.as_ref().to_path_buf());
+    }
+
+    /// Checks if an entry path, or any of its ancestors, is a directory
+    /// skipped as missing under `--existing`.
+    ///
+    /// upstream: generator.c:1646-1656 - `is_below(file, skip_dir)` returns
+    /// early, silently, for every entry below the skipped directory.
+    pub(in crate::receiver) fn is_missing_or_below(
+        &self,
+        entry_path: impl AsRef<std::path::Path>,
+    ) -> bool {
+        entry_path
+            .as_ref()
+            .ancestors()
+            .any(|p| self.missing.contains(p))
     }
 
     /// Checks if an entry path, or any of its ancestors, is a failed directory.
