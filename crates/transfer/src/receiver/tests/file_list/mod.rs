@@ -27,6 +27,9 @@
 //!   that removes duplicate received names, keeping the upstream survivor.
 //! - [`segment_parent`] - each INC_RECURSE segment's parent `dir_flist`
 //!   index and the parent's post-downgrade content flag.
+//! - [`segment_delete`] - per-directory `--delete` over INC_RECURSE segments:
+//!   the one-sub-list keep-set, upstream's gates, and the run-wide
+//!   `--max-delete` budget, delete tally and I/O-error guard.
 //! - [`delete_timing`] - early vs late (`--delete-after` / `--delete-delay`)
 //!   delete-pass scheduling and the dest-side `.rsync-filter` protection
 //!   invariant that makes deferral load-bearing.
@@ -57,6 +60,7 @@ mod missing_args_sentinel;
 mod ndx_convert;
 mod proto_io_error;
 mod receive_counters;
+mod segment_delete;
 mod segment_parent;
 mod wire_attrs;
 mod xfer_error;

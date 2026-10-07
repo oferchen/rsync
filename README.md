@@ -1,5 +1,5 @@
 [![RepoGrade](https://www.repo-grade.com/api/badge/oferchen/rsync)](https://www.repo-grade.com/report/oferchen/rsync)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/oferchen/rsync)
+[![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-blue)](https://deepwiki.com/oferchen/rsync)
 
 [![CI](https://github.com/oferchen/rsync/actions/workflows/ci.yml/badge.svg?branch=master&event=push)](https://github.com/oferchen/rsync/actions/workflows/ci.yml?query=branch%3Amaster)
 [![Interop Validation](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml/badge.svg)](https://github.com/oferchen/rsync/actions/workflows/interop-validation.yml)
@@ -51,9 +51,9 @@ Outcomes, counted from each leg's committed manifest:
 | leg | pass | fail | skip |
 |---|---:|---:|---:|
 | Linux, non-root, pipe | 274 | 0 | 86 |
-| Linux, root, pipe | 302 | 1 | 57 |
+| Linux, root, pipe | 303 | 0 | 57 |
 | Linux, non-root, tcp | 123 | 4 | 34 |
-| Linux, root, tcp | 140 | 5 | 16 |
+| Linux, root, tcp | 141 | 4 | 16 |
 | macOS, non-root, pipe | 248 | 0 | 112 |
 | macOS, root, pipe | 276 | 0 | 84 |
 | macOS, non-root, tcp | 120 | 4 | 37 |
@@ -67,7 +67,7 @@ awk '!/^#/ && NF {c[$2]++; t++} END {print t, c["pass"], c["fail"], c["skip"]}' 
 awk '!/^#/ && $2=="fail" {print $1}' tools/ci/upstream-3.5.1-expect.*.txt | sort -u
 ```
 
-**Five distinct 3.5.1 tests** carry a `fail` row, and every one names its cause and owning task. Four are the `proto-*` cluster, which fails on every tcp leg because an oc-rsync pull does not negotiate incremental recursion yet. The fifth, `pseudo-paths-daemon`, fails on the two Linux root legs: a `/dev/fd/N` pipe given as the daemon's `--log-file` does not open. None fails only on macOS, and three of the four pipe legs have no failure. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
+**Four distinct 3.5.1 tests** carry a `fail` row, and every one names its cause and owning task. All four are the `proto-*` cluster, which fails on every tcp leg because an oc-rsync pull does not negotiate incremental recursion yet. None fails only on macOS, and no pipe leg has a failure. Only a *change* in outcome turns a leg red, including an unexpected pass, so a divergence cannot be re-baselined silently: the PR that fixes a cell must also flip its row to `pass`.
 
 ---
 
