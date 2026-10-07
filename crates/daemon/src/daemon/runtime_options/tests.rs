@@ -746,6 +746,27 @@ mod runtime_options_tests {
         assert_eq!(options.motd_lines()[1], "World");
     }
 
+    /// An unreadable `--motd-file` is reported as a motd failure. Naming it
+    /// "config" sent operators to the wrong file.
+    #[test]
+    fn parse_motd_file_failure_names_the_motd() {
+        let dir = TempDir::new().expect("temp dir");
+        let missing = dir.path().join("missing.motd");
+
+        let error = RuntimeOptions::parse(&[
+            OsString::from("--motd-file"),
+            missing.as_os_str().to_os_string(),
+        ])
+        .expect_err("a missing motd file must fail");
+        let text = error.to_string();
+
+        assert!(
+            text.contains(&format!("failed to read motd file '{}'", missing.display())),
+            "{text}"
+        );
+        assert!(!text.contains("config"), "{text}");
+    }
+
     #[test]
     fn cli_secrets_file_sets_global_default_for_inline_modules() {
         let secrets = NamedTempFile::new().expect("secrets file");

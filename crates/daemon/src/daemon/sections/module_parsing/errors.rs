@@ -91,6 +91,15 @@ fn config_io_error(action: &str, path: &Path, error: io::Error) -> DaemonError {
     )
 }
 
+/// A `--motd-file` / `--motd` that cannot be read names the motd, not the
+/// config: the flag is oc-only and has no upstream message to mirror.
+fn motd_io_error(path: &Path, error: io::Error) -> DaemonError {
+    config_error(format!(
+        "failed to read motd file '{}': {error}",
+        path.display()
+    ))
+}
+
 fn ensure_valid_module_name(name: &str) -> Result<(), &'static str> {
     if name.is_empty() {
         return Err("module name must be non-empty and cannot contain whitespace");

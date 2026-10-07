@@ -200,7 +200,7 @@ impl RuntimeOptions {
     fn load_motd_file(&mut self, value: &OsString) -> Result<(), DaemonError> {
         let path = PathBuf::from(value.clone());
         let contents = crate::daemon::operator_file::read_to_string(&path)
-            .map_err(|error| config_io_error("read", &path, error))?;
+            .map_err(|error| motd_io_error(&path, error))?;
 
         for raw_line in contents.lines() {
             let mut line = String::new();
