@@ -1,4 +1,4 @@
-/// upstream: log.c:175-182 - a `log file` that cannot be opened is not fatal.
+/// upstream: log.c:175-182 - a log file that cannot be opened is not fatal.
 /// The daemon falls back to syslog and logs the failure followed by
 /// `Ignoring "log file" setting.`, in that order.
 #[test]
