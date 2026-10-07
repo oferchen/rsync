@@ -5,6 +5,7 @@
 //! during file transfers.
 
 use crate::chmod::ChmodModifiers;
+use crate::modify_window::ModifyWindow;
 use crate::{GroupMapping, UserMapping};
 
 use super::MetadataOptions;
@@ -187,6 +188,18 @@ impl MetadataOptions {
         root: Option<std::sync::Arc<crate::DestinationRoot>>,
     ) -> Self {
         self.destination_root = root;
+        self
+    }
+
+    /// Records the `--modify-window` tolerance used to decide whether an
+    /// existing destination mtime already matches the entry.
+    ///
+    /// upstream: rsync.c:733 - `set_file_attrs()` skips the utimes when
+    /// `same_mtime()` holds; without `ATTRS_ACCURATE_TIME` that is
+    /// `same_time()` under `modify_window` (util1.c:1744).
+    #[must_use]
+    pub const fn with_modify_window(mut self, window: ModifyWindow) -> Self {
+        self.modify_window = window;
         self
     }
 }

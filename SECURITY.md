@@ -153,7 +153,7 @@ grep -E '^\| CVE-2026-(5|7)[0-9]{4} \|' SECURITY.md | cut -d'|' -f5 | sort | uni
 | 3.5.1 fix | Status | Evidence |
 |---|---|---|
 | Explicit sender paths traverse symlinked ancestors without weakening scan confinement; `--files-from` entries are operator paths | Fixed | `--files-from` entries resolve through the ownership walk and are refused outside `--confine-root` (PR #8012). `relative-source-ancestor` passes on every leg that runs it. |
-| `/dev/stdin`, `/dev/stdout`, `/dev/stderr` and `/dev/fd/N` work for pipes; `--read-batch` accepts a FIFO | Open | `pseudo-paths` and `read-batch-pipe` pass on every leg that runs them (PR #8096 flipped their rows). `pseudo-paths-daemon` still fails on the two Linux root legs: a `/dev/fd/N` pipe given as the daemon `--log-file` does not open. |
+| `/dev/stdin`, `/dev/stdout`, `/dev/stderr` and `/dev/fd/N` work for pipes; `--read-batch` accepts a FIFO | Fixed | `pseudo-paths`, `read-batch-pipe` and `pseudo-paths-daemon` pass on every leg that runs them (PR #8096 flipped the first two). A root daemon already logs to a `/dev/fd/N` or `/dev/stdout` pipe. `pseudo-paths-daemon` failed on the Linux root legs for another reason: the daemon, dropped to `nobody`, re-stamped the mtime of a root-owned module directory and got `EPERM`. The receiver now skips an mtime already within `--modify-window`, as upstream `same_mtime()` does (rsync.c:489). |
 | `--max-alloc=0` means the maximum limit, not no limit | Fixed | PR #8011. `max-alloc-zero` passes on every leg that runs it. |
 | `rrsync` restricted-root paths | Not applicable | oc-rsync ships no `rrsync`. |
 | inetd mode only for a network stream on stdin | Fixed | PR #8011. `daemon-stdin-local-socket` passes on every leg. |

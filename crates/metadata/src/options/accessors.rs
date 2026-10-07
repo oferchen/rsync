@@ -5,6 +5,7 @@
 //! will be preserved during a transfer.
 
 use crate::chmod::ChmodModifiers;
+use crate::modify_window::ModifyWindow;
 use crate::{GroupMapping, UserMapping};
 
 use super::MetadataOptions;
@@ -181,5 +182,11 @@ impl MetadataOptions {
         } else {
             crate::apply::ParentWalk::Confined(self.destination_root.as_deref())
         }
+    }
+
+    /// Returns the `--modify-window` tolerance for the mtime skip check.
+    #[must_use]
+    pub const fn modify_window(&self) -> ModifyWindow {
+        self.modify_window
     }
 }

@@ -368,6 +368,9 @@ impl ReceiverContext {
             // the local copy executor honoured `-E` (local_copy metadata.rs:7).
             .preserve_executability(self.config.flags.preserve_executability)
             .preserve_times(self.config.flags.times)
+            // upstream: rsync.c:733 same_mtime() -> util1.c:1744 same_time()
+            // skips re-stamping an mtime already within --modify-window.
+            .with_modify_window(self.config.file_selection.modify_window)
             .preserve_atimes(self.config.flags.atimes)
             .preserve_crtimes(self.config.flags.crtimes)
             .preserve_owner(self.config.flags.owner)

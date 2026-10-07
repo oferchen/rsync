@@ -19,6 +19,7 @@ pub use destination_root::DestinationRoot;
 use std::sync::Arc;
 
 use crate::chmod::ChmodModifiers;
+use crate::modify_window::ModifyWindow;
 use crate::{GroupMapping, UserMapping};
 
 /// Options that control metadata preservation during copy operations.
@@ -69,6 +70,14 @@ pub struct MetadataOptions {
     /// trust the operator's prefix without widening the walk for anything
     /// below the root.
     pub(crate) destination_root: Option<Arc<DestinationRoot>>,
+    /// Tolerance for deciding whether an existing destination already carries
+    /// the entry's mtime, so the timestamp apply can be skipped.
+    ///
+    /// upstream: rsync.c:489 `same_mtime()` compares through util1.c:1744
+    /// `same_time()` under `modify_window` unless `ATTRS_ACCURATE_TIME` is set.
+    /// Defaults to nanosecond-exact so a caller that does not model the window
+    /// still stamps any sub-second difference.
+    pub(crate) modify_window: ModifyWindow,
 }
 
 impl MetadataOptions {
@@ -96,6 +105,7 @@ impl MetadataOptions {
             destination_is_new: false,
             keep_dirlinks: false,
             destination_root: None,
+            modify_window: ModifyWindow::from_secs(-1),
         }
     }
 }

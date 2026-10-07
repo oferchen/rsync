@@ -2708,6 +2708,68 @@ fn directory_atime_is_never_stamped() {
     }
 }
 
+/// A destination dir whose mtime matches the entry to the second but not the
+/// nanosecond.
+fn subsecond_skewed_dir() -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    protocol::flist::FileEntry,
+    fs::Metadata,
+) {
+    let temp = tempdir().expect("tempdir");
+    let dir = temp.path().join("d");
+    fs::create_dir(&dir).expect("mkdir");
+    filetime::set_file_mtime(&dir, FileTime::from_unix_time(1_700_000_000, 400_000_000))
+        .expect("set mtime");
+    let meta = fs::metadata(&dir).expect("metadata");
+    let mut entry = protocol::flist::FileEntry::new_directory("d".into(), 0o755);
+    entry.set_mtime(1_700_000_000, 0);
+    (temp, dir, entry, meta)
+}
+
+/// upstream: rsync.c:733 skips the utimes when same_mtime() holds, and without
+/// ATTRS_ACCURATE_TIME that is util1.c:1744 same_time() under --modify-window:
+/// a default (0) window compares whole seconds only. Re-stamping here would be
+/// a utimes upstream never issues, which fails with EPERM for a non-owner.
+#[test]
+fn mtime_within_modify_window_is_not_restamped() {
+    let (_t, dir, entry, stat) = subsecond_skewed_dir();
+    let opts = MetadataOptions::new().with_modify_window(ModifyWindow::ZERO);
+    apply_metadata_with_attrs_flags(&dir, &entry, &opts, Some(stat), AttrsFlags::empty())
+        .expect("apply");
+    let actual = FileTime::from_last_modification_time(&fs::metadata(&dir).expect("meta"));
+    assert_eq!(actual, FileTime::from_unix_time(1_700_000_000, 400_000_000));
+}
+
+/// upstream: rsync.c:498-499 - ATTRS_ACCURATE_TIME bypasses --modify-window and
+/// demands the exact seconds and nanoseconds, so the sub-second skew is fixed.
+#[test]
+fn accurate_time_restamps_a_subsecond_mtime_skew() {
+    let (_t, dir, entry, stat) = subsecond_skewed_dir();
+    let opts = MetadataOptions::new().with_modify_window(ModifyWindow::ZERO);
+    apply_metadata_with_attrs_flags(&dir, &entry, &opts, Some(stat), AttrsFlags::ACCURATE_TIME)
+        .expect("apply");
+    let actual = FileTime::from_last_modification_time(&fs::metadata(&dir).expect("meta"));
+    assert_eq!(actual, FileTime::from_unix_time(1_700_000_000, 0));
+}
+
+/// Callers that never set a window keep nanosecond-exact stamping, so a
+/// sub-second skew is still corrected.
+#[test]
+fn default_options_restamp_a_subsecond_mtime_skew() {
+    let (_t, dir, entry, stat) = subsecond_skewed_dir();
+    apply_metadata_with_attrs_flags(
+        &dir,
+        &entry,
+        &MetadataOptions::new(),
+        Some(stat),
+        AttrsFlags::empty(),
+    )
+    .expect("apply");
+    let actual = FileTime::from_last_modification_time(&fs::metadata(&dir).expect("meta"));
+    assert_eq!(actual, FileTime::from_unix_time(1_700_000_000, 0));
+}
+
 /// UTS-16.b: applying permissions through a destination path whose parent
 /// component is a symlink to an outside directory must NOT chmod the
 /// outside target. Upstream `syscall.c:do_chmod_at()` (rsync 3.4.3+)
