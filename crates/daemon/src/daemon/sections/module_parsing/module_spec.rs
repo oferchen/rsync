@@ -390,20 +390,23 @@ fn apply_inline_module_options(
             .split_once('=')
             .ok_or_else(|| config_error(format!("module option '{option}' is missing '='")))?;
 
-        let key = key_raw.trim().to_ascii_lowercase();
+        // upstream: loadparm.c:401 strwiEQ ignores case and whitespace, so
+        // `read only`, `readonly` and `Read Only` name one parameter and
+        // `read-only` names none.
+        let key = normalize_param_name(key_raw);
         if !seen.insert(key.clone()) {
             return Err(config_error(format!("duplicate module option '{key_raw}'")));
         }
 
         let value = value_raw.trim();
         match key.as_str() {
-            "read only" | "read-only" => {
+            "readonly" => {
                 let parsed = parse_boolean_directive(value).ok_or_else(|| {
                     config_error(format!("invalid boolean value '{value}' for 'read only'"))
                 })?;
                 module.read_only = parsed;
             }
-            "write only" | "write-only" => {
+            "writeonly" => {
                 let parsed = parse_boolean_directive(value).ok_or_else(|| {
                     config_error(format!("invalid boolean value '{value}' for 'write only'"))
                 })?;
@@ -415,28 +418,28 @@ fn apply_inline_module_options(
                 })?;
                 module.listable = parsed;
             }
-            "numeric ids" | "numeric-ids" => {
+            "numericids" => {
                 let parsed = parse_boolean_directive(value).ok_or_else(|| {
                     config_error(format!("invalid boolean value '{value}' for 'numeric ids'"))
                 })?;
                 module.numeric_ids = Some(parsed);
             }
-            "use chroot" | "use-chroot" => {
+            "usechroot" => {
                 let parsed = parse_boolean_directive(value).ok_or_else(|| {
                     config_error(format!("invalid boolean value '{value}' for 'use chroot'"))
                 })?;
                 module.use_chroot = parsed;
                 module.use_chroot_explicit = true;
             }
-            "hosts allow" | "hosts-allow" => {
+            "hostsallow" => {
                 let patterns = parse_host_list(value);
                 module.hosts_allow = patterns;
             }
-            "hosts deny" | "hosts-deny" => {
+            "hostsdeny" => {
                 let patterns = parse_host_list(value);
                 module.hosts_deny = patterns;
             }
-            "auth users" | "auth-users" => {
+            "authusers" => {
                 let users = parse_auth_user_list(value).map_err(|error| {
                     config_error(format!("invalid 'auth users' directive: {error}"))
                 })?;
@@ -447,10 +450,10 @@ fn apply_inline_module_options(
                 }
                 module.auth_users = users;
             }
-            "auth digest" | "auth-digest" => {
+            "authdigest" => {
                 module.auth_digest = normalize_auth_digest(value);
             }
-            "secrets file" | "secrets-file" => {
+            "secretsfile" => {
                 if value.is_empty() {
                     return Err(config_error(
                         "'secrets file' option must not be empty".to_owned(),
@@ -458,7 +461,7 @@ fn apply_inline_module_options(
                 }
                 module.secrets_file = Some(PathBuf::from(unescape_module_component(value)));
             }
-            "refuse options" | "refuse-options" => {
+            "refuseoptions" => {
                 let options = parse_refuse_option_list(value).map_err(|error| {
                     config_error(format!("invalid 'refuse options' directive: {error}"))
                 })?;
@@ -479,13 +482,13 @@ fn apply_inline_module_options(
                     .ok_or_else(|| config_error(format!("invalid timeout '{value}'")))?;
                 module.timeout = timeout;
             }
-            "max connections" | "max-connections" => {
+            "maxconnections" => {
                 let max = parse_max_connections_directive(value).ok_or_else(|| {
                     config_error(format!("invalid max connections value '{value}'"))
                 })?;
                 module.max_connections = max;
             }
-            "incoming chmod" | "incoming-chmod" => {
+            "incomingchmod" => {
                 if value.is_empty() {
                     return Err(config_error(
                         "'incoming chmod' option must not be empty".to_owned(),
@@ -495,7 +498,7 @@ fn apply_inline_module_options(
                 value.clone_into(&mut owned);
                 module.incoming_chmod = Some(owned);
             }
-            "outgoing chmod" | "outgoing-chmod" => {
+            "outgoingchmod" => {
                 if value.is_empty() {
                     return Err(config_error(
                         "'outgoing chmod' option must not be empty".to_owned(),
