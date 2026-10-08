@@ -37,7 +37,6 @@ pub(crate) enum DestPin {
 /// `None` keeps upstream's path-based arm for a receiver that is not hardened.
 #[cfg(unix)]
 pub(crate) fn pin_destination(path: &Path, confine_root: Option<&Path>) -> DestPin {
-    let confine_root: Option<&Path> = None; // MUTATION
     let Some(root) = confine_root else {
         return DestPin::Path;
     };
