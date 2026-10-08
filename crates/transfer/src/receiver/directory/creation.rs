@@ -647,6 +647,7 @@ impl ReceiverContext {
         let acl_cache_clone = acl_cache.cloned();
         let acl_id_map_clone = acl_id_map.cloned();
         let xattr_filter = self.xattr_name_filter_arc();
+        let dest_root = dest_dir.to_path_buf();
         let results = crate::parallel_io::map_blocking(
             entry_snapshots,
             self.parallel_thresholds
@@ -688,7 +689,7 @@ impl ReceiverContext {
                         true,
                         Some(&dir_path),
                         filter_ref,
-                        None,
+                        Some(dest_root.as_path()),
                     ) {
                         return Some(DirApplyFailure::Other(dir_path, e.to_string()));
                     }
@@ -1048,6 +1049,7 @@ impl ReceiverContext {
         // dry_run, so no metadata, xattrs, or ACLs reach the destination.
         if !skip_dest_writes {
             self.apply_incremental_dir_metadata(
+                dest_dir,
                 &dir_path,
                 entry,
                 metadata_opts,
@@ -1085,6 +1087,7 @@ impl ReceiverContext {
     /// - `xattrs.c:set_xattr()` - xattrs are applied after metadata
     fn apply_incremental_dir_metadata(
         &self,
+        dest_dir: &Path,
         dir_path: &Path,
         entry: &FileEntry,
         metadata_opts: &MetadataOptions,
@@ -1156,7 +1159,7 @@ impl ReceiverContext {
                 true,
                 Some(dir_path),
                 filter_ref,
-                None,
+                Some(dest_dir),
             ) && self.config.flags.verbose
                 && self.config.connection.client_mode
             {
