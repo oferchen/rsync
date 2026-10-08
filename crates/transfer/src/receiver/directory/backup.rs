@@ -839,7 +839,7 @@ mod tests {
     /// resolved leaf as outside the root, so every tier fails `ELOOP`.
     #[test]
     fn confined_backup_refuses_parent_symlink_escaping_the_root() {
-        use fast_io::confinement::{install_local_session, LocalInsecureLinks};
+        use fast_io::confinement::{LocalInsecureLinks, install_local_session};
 
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("module");
@@ -893,7 +893,7 @@ mod tests {
         make_victim: impl FnOnce(&Path),
         rel: &str,
     ) -> (std::io::Result<BackupPlacement>, bool) {
-        use fast_io::confinement::{install_local_session, LocalInsecureLinks};
+        use fast_io::confinement::{LocalInsecureLinks, install_local_session};
 
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("module");
@@ -937,7 +937,10 @@ mod tests {
             "f0",
         );
         assert!(result.is_err(), "the escaping backup must fail");
-        assert!(!leaked, "no backup node may land outside the confinement root");
+        assert!(
+            !leaked,
+            "no backup node may land outside the confinement root"
+        );
     }
 
     /// A backup whose missing parent sits beneath the escaping symlink must not
@@ -952,7 +955,10 @@ mod tests {
             "deep/f0",
         );
         assert!(result.is_err(), "the escaping parent creation must fail");
-        assert!(!leaked, "no directory may be created outside the confinement root");
+        assert!(
+            !leaked,
+            "no directory may be created outside the confinement root"
+        );
     }
 
     /// Control for the escape test: with NO confinement root (a plain local or
@@ -962,7 +968,7 @@ mod tests {
     /// not, and with no root there is no location to be outside of.
     #[test]
     fn unconfined_backup_follows_a_trusted_parent_symlink() {
-        use fast_io::confinement::{install_local_session, LocalInsecureLinks};
+        use fast_io::confinement::{LocalInsecureLinks, install_local_session};
 
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("dest");
