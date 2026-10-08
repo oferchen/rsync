@@ -4374,4 +4374,41 @@ mod config_parsing_tests {
         assert_eq!(module_named(&result, "early").path, PathBuf::from(&data));
         assert_eq!(module_named(&result, "late").path, PathBuf::from(&data));
     }
+
+    // upstream: loadparm.c:347 FN_LOCAL_STRING returns the module's own value
+    // whenever it is non-NULL, and `lock file =` / `syslog tag =` store "" -
+    // so an empty module value must NOT fall back to the global one. With a
+    // `max connections` limit, upstream then fails claim_connection("") and
+    // answers "@ERROR: failed to open lock file" (verified against a live
+    // 3.5.1 daemon).
+    #[test]
+    fn empty_module_lock_file_and_syslog_tag_store_empty_not_global() {
+        let dir = TempDir::new().expect("create temp dir");
+        let data = dir.path().join("data");
+        fs::create_dir(&data).expect("create data dir");
+        let global_lock = dir.path().join("global.lock");
+        let config = format!(
+            "lock file = {}\n\
+             syslog tag = globaltag\n\
+             [m]\n\
+             path = {}\n\
+             max connections = 1\n\
+             lock file =\n\
+             syslog tag =\n",
+            global_lock.display(),
+            data.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+        let module = module_named(&result, "m").clone();
+        assert_eq!(module.lock_file.as_deref(), Some(Path::new("")));
+        assert_eq!(module.syslog_tag.as_deref(), Some(""));
+
+        let global = Some(std::sync::Arc::new(ConnectionLimiter::open(global_lock)));
+        let runtimes = build_module_runtimes(vec![module], &global).expect("build runtimes");
+        match runtimes[0].try_acquire_connection() {
+            Err(ModuleConnectionError::Io(_)) => {}
+            _ => panic!("an empty module lock file must fail to open, not use the global one"),
+        }
+    }
 }
