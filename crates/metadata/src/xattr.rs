@@ -21,6 +21,7 @@
 //! - `xattrs.c:64-68, 254-257` - permitted-namespace policy on Linux.
 
 use crate::error::MetadataError;
+use crate::dest_pin::{DestPin, pin_destination};
 use crate::xattr_send::XattrSendOptions;
 use crate::xattr_send::XattrSyncFilters;
 use protocol::xattr::XattrList;
@@ -583,40 +584,10 @@ pub fn apply_xattrs_from_list(
 struct DestinationXattrs<'a> {
     path: &'a Path,
     follow_symlinks: bool,
-    sink: XattrSink,
+    sink: DestPin,
     /// Held for the batch's lifetime; restores the original mode on drop.
     #[cfg(unix)]
     _write_permission: Option<TempWritePermission>,
-}
-
-/// Where a destination batch actually writes.
-///
-/// `lsetxattr` declines to follow the *leaf* symlink but the kernel still
-/// follows symlinks in PARENT components, and it re-walks them on every
-/// call. A parent flipped to a symlink mid-batch therefore redirects an
-/// attacker-chosen attribute outside the destination tree. Upstream closes
-/// that by driving the writes off a held `O_NOFOLLOW` fd, and by refusing
-/// outright when it cannot get one - never by falling back to the path.
-///
-/// # Upstream Reference
-///
-/// - `rsync-3.5.1/xattrs.c:386-390` - `fd >= 0 ? sys_fsetxattr : sys_lsetxattr`
-/// - `rsync-3.5.1/rsync.c:519` - `xattr_refuse`, "no confined fd for a
-///   slashed path: skip path-based xattr/ACL"
-enum XattrSink {
-    /// The path-based l-variant. Upstream's `fd < 0` arm: what a
-    /// non-hardened receiver uses, and what oc uses when no confinement
-    /// root is supplied.
-    Path,
-    /// A confined `O_NOFOLLOW` fd pinning the leaf. A parent flipped after
-    /// the pin cannot redirect the write.
-    #[cfg(unix)]
-    Pinned(std::fs::File),
-    /// The pin was required and failed on a slashed path. Every mutation is
-    /// skipped: falling back to `Path` here would reinstate exactly the
-    /// redirect the pin exists to refuse.
-    #[cfg(unix)]
-    Refused,
 }
 
 impl<'a> DestinationXattrs<'a> {
@@ -631,59 +602,22 @@ impl<'a> DestinationXattrs<'a> {
         Self {
             path,
             follow_symlinks,
-            sink: Self::pin(path, confine_root),
+            sink: pin_destination(path, confine_root),
             #[cfg(unix)]
             _write_permission: TempWritePermission::grant(path),
         }
-    }
-
-    #[cfg(unix)]
-    fn pin(path: &Path, confine_root: Option<&Path>) -> XattrSink {
-        let Some(root) = confine_root else {
-            return XattrSink::Path;
-        };
-        let Ok(relative) = path.strip_prefix(root) else {
-            // Not beneath the root the caller named: the caller, not this
-            // batch, is the layer that knows what that means. Keep the
-            // pre-existing behaviour rather than inventing a refusal here.
-            return XattrSink::Path;
-        };
-        // upstream: rsync.c:589-594 - the flag comes from the INTENDED type,
-        // and a directory leaf needs O_DIRECTORY.
-        let kind = if path.is_dir() {
-            fast_io::DestLeafKind::Directory
-        } else {
-            fast_io::DestLeafKind::NonDirectory
-        };
-        match fast_io::pin_dest_leaf_confined(root, relative, kind) {
-            Ok(file) => XattrSink::Pinned(file),
-            // upstream: rsync.c:597 - `if (held_fd < 0 && strchr(fname, '/'))
-            // xattr_refuse = 1;`. A single-component name has no parent to
-            // flip, so the path-based call is still safe there.
-            Err(_) if relative.parent().is_some_and(|p| !p.as_os_str().is_empty()) => {
-                XattrSink::Refused
-            }
-            Err(_) => XattrSink::Path,
-        }
-    }
-
-    #[cfg(not(unix))]
-    fn pin(_path: &Path, _confine_root: Option<&Path>) -> XattrSink {
-        // The confined pin is Unix-only; Windows destination attributes go
-        // through the ADS/DACL layer, which does not have this shape.
-        XattrSink::Path
     }
 
     /// Sets one attribute. upstream: `sys_fsetxattr` / `sys_lsetxattr` in
     /// `rsync_xal_set()`, chosen by whether a confined fd is held.
     fn write(&self, name: &[u8], value: &[u8]) -> Result<(), MetadataError> {
         match &self.sink {
-            XattrSink::Path => write_attribute(self.path, name, value, self.follow_symlinks),
+            DestPin::Path => write_attribute(self.path, name, value, self.follow_symlinks),
             #[cfg(unix)]
-            XattrSink::Pinned(file) => crate::xattr_unix::write_attribute_at(file, name, value)
+            DestPin::Pinned(file) => crate::xattr_unix::write_attribute_at(file, name, value)
                 .map_err(|error| map_xattr_error("write extended attribute", self.path, error)),
             #[cfg(unix)]
-            XattrSink::Refused => Ok(()),
+            DestPin::Refused => Ok(()),
         }
     }
 
@@ -691,12 +625,12 @@ impl<'a> DestinationXattrs<'a> {
     /// `rsync_xal_set()` (`xattrs.c:1043`), with the same fd choice.
     fn remove(&self, name: &[u8]) -> Result<(), MetadataError> {
         match &self.sink {
-            XattrSink::Path => remove_attribute(self.path, name, self.follow_symlinks),
+            DestPin::Path => remove_attribute(self.path, name, self.follow_symlinks),
             #[cfg(unix)]
-            XattrSink::Pinned(file) => crate::xattr_unix::remove_attribute_at(file, name)
+            DestPin::Pinned(file) => crate::xattr_unix::remove_attribute_at(file, name)
                 .map_err(|error| map_xattr_error("remove extended attribute", self.path, error)),
             #[cfg(unix)]
-            XattrSink::Refused => Ok(()),
+            DestPin::Refused => Ok(()),
         }
     }
 }
