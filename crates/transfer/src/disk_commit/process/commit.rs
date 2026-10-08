@@ -152,9 +152,10 @@ pub(super) fn commit_file(
         }
         let result =
             stage_into_partial_dir(config, cleanup_guard.path(), &staging_path).map_err(|e| {
-                crate::temp_guard::attach_commit_op(
+                crate::temp_guard::attach_commit_op_between(
                     crate::temp_guard::CommitOp::Rename,
-                    &staging_path,
+                    cleanup_guard.path(),
+                    Some(&staging_path),
                     e,
                 )
             })?;
@@ -175,9 +176,10 @@ pub(super) fn commit_file(
             configured_partial_dir(config),
         )
         .map_err(|e| {
-            crate::temp_guard::attach_commit_op(
+            crate::temp_guard::attach_commit_op_between(
                 crate::temp_guard::CommitOp::Rename,
-                &begin.file_path,
+                cleanup_guard.path(),
+                Some(&begin.file_path),
                 e,
             )
         })?;
