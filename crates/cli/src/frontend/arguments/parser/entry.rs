@@ -453,7 +453,8 @@ where
     check_daemon_option_argv(&args, program_name.as_str())?;
 
     let command = popt_last_wins(clap_command(program_name.as_str()));
-    let args = hoist_options_before_operands(&command, args);
+    let raw = args;
+    let args = hoist_options_before_operands(&command, raw.clone());
     let args = expand_short_options(&command, args);
     let mut matches = command.try_get_matches_from(args.clone())?;
 
@@ -461,7 +462,9 @@ where
     // forked server child does. Re-parsed here, before any check below, so every
     // later validation sees the final option set.
     let mut refused_remote_option = None;
-    if let Some(folded) = local_remote_option_argv(&matches, &args) {
+    // Fold into the argv as typed: re-hoisting an already hoisted argv would
+    // double a leading `--` a second time.
+    if let Some(folded) = local_remote_option_argv(&matches, &raw) {
         let direct = leftover_tokens(&matches);
         let command = popt_last_wins(clap_command(program_name.as_str()));
         let folded = hoist_options_before_operands(&command, folded);
