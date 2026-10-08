@@ -1244,7 +1244,7 @@ fn list_from_unacknowledged_daemon(responses: Vec<&'static str>) -> ModuleList {
 }
 
 /// A daemon sends its MOTD, then one `%-15s\t%s` row per module, then
-/// `@RSYNCD: EXIT` (clientserver.c:1374-1384). Upstream prints every line once,
+/// `@RSYNCD: EXIT` (clientserver.c:1385, send_listing). Upstream prints every line once,
 /// in arrival order (clientserver.c:432-435), so each line must land in exactly
 /// one of the MOTD or the module rows, and a MOTD line that holds a tab must
 /// not move below the lines that follow it.
