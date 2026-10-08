@@ -2107,13 +2107,33 @@ mod path_operands {
         );
     }
 
+    /// popt stops option processing at `--` wherever it sits, so the dash-led
+    /// tokens after it are operands. The remainder must keep the terminator
+    /// for `extract_operands`, which otherwise refuses `-source` as an unknown
+    /// option.
     #[test]
     fn paths_starting_with_dash_after_double_dash() {
-        let parsed = parse_test_args(["--", "-source", "-dest"]).expect("parse");
-        assert_eq!(
-            parsed.remainder,
-            vec![OsString::from("-source"), OsString::from("-dest")]
-        );
+        let cases: [(&[&str], &[&str]); 3] = [
+            (&["--", "-source", "-dest"], &["-source", "-dest"]),
+            (&["-a", "--", "-source", "-dest"], &["-source", "-dest"]),
+            (&["src", "--", "-dest"], &["src", "-dest"]),
+        ];
+        for (argv, expected) in cases {
+            let parsed = parse_test_args(argv.iter().copied()).expect("parse");
+            let operands = crate::frontend::execution::extract_operands(parsed.remainder)
+                .unwrap_or_else(|unknown| panic!("{argv:?}: refused {:?}", unknown.into_option()));
+            let expected: Vec<OsString> = expected.iter().map(OsString::from).collect();
+            assert_eq!(operands, expected, "{argv:?}");
+        }
+    }
+
+    /// A second `--` after the terminator is an operand, as in popt.
+    #[test]
+    fn double_dash_after_terminator_is_an_operand() {
+        let parsed = parse_test_args(["--", "--"]).expect("parse");
+        let operands = crate::frontend::execution::extract_operands(parsed.remainder)
+            .expect("no option after the terminator");
+        assert_eq!(operands, vec![OsString::from("--")]);
     }
 
     #[test]
