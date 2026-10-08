@@ -123,6 +123,59 @@ pub(in crate::receiver) struct DeletedEntry {
     /// executor can classify the removal into `DeleteStats.symlinks`, matching
     /// the inline per-type counting the immediate pass performs from `read_dir`.
     is_symlink: bool,
+    /// The entry's `st_mode` as the daemon log renders it (see [`victim_mode`]).
+    mode: u32,
+}
+
+impl DeletedEntry {
+    /// Deletion-root-relative path of the entry.
+    pub(in crate::receiver) fn rel(&self) -> &Path {
+        &self.rel
+    }
+
+    /// The `st_mode` handed to upstream's `log_delete()`.
+    pub(in crate::receiver) const fn mode(&self) -> u32 {
+        self.mode
+    }
+}
+
+/// Returns the `st_mode` upstream passes to `log_delete()` for a doomed entry.
+///
+/// upstream: generator.c:delete_in_dir() and delete.c:delete_dir_contents()
+/// hand `delete_item()` the dirlist entry's `F_MODE`, the full `lstat` mode,
+/// which the daemon log renders as `%B`. The stat is only paid for when a
+/// daemon log will render it (`capture`); otherwise, and when the entry can no
+/// longer be stat'ed, the type bits the directory listing already carries
+/// stand in.
+fn victim_mode(
+    capture: bool,
+    #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
+    dest_dir: &Path,
+    rel: &Path,
+    path: &Path,
+    is_dir: bool,
+    is_symlink: bool,
+) -> u32 {
+    let type_bits = if is_dir {
+        0o040_000
+    } else if is_symlink {
+        0o120_000
+    } else {
+        0o100_000
+    };
+    if !capture {
+        return type_bits;
+    }
+    #[cfg(unix)]
+    {
+        fast_io::lstat_via_sandbox_or_fallback(sandbox, dest_dir, rel, path)
+            .map_or(type_bits, |meta| meta.mode())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (dest_dir, rel, path);
+        type_bits
+    }
 }
 
 /// Orders deleted entries to match upstream's observable delete stream.
@@ -254,6 +307,7 @@ fn record_doomed_dir_descendants(
     dest_dir: &Path,
     rel: &Path,
     path: &Path,
+    capture_mode: bool,
     out: &mut Vec<DeletedEntry>,
 ) {
     let children = match read_dir_children(
@@ -279,13 +333,25 @@ fn record_doomed_dir_descendants(
                 dest_dir,
                 &child_rel,
                 &child_path,
+                capture_mode,
                 out,
             );
         }
+        let mode = victim_mode(
+            capture_mode,
+            #[cfg(unix)]
+            sandbox,
+            dest_dir,
+            &child_rel,
+            &child_path,
+            is_dir,
+            is_symlink,
+        );
         out.push(DeletedEntry {
             rel: child_rel,
             is_dir,
             is_symlink,
+            mode,
         });
     }
 }
@@ -431,8 +497,8 @@ impl ReceiverContext {
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
         writer: &mut W,
-    ) -> io::Result<(DeleteStats, bool, i32)> {
-        let (stats, skipped, io_bits, _victims) = self.run_delete_scan(
+    ) -> io::Result<(DeleteStats, bool, i32, Vec<DeletedEntry>)> {
+        let (stats, skipped, io_bits, victims) = self.run_delete_scan(
             dest_dir,
             #[cfg(unix)]
             sandbox,
@@ -445,6 +511,7 @@ impl ReceiverContext {
             stats,
             skipped > 0,
             io_bits | self.finish_delete_limit(skipped),
+            victims,
         ))
     }
 
@@ -508,17 +575,19 @@ impl ReceiverContext {
     /// each remembered victim. Counting happens here, at unlink time, matching
     /// upstream's `stats.deleted_*` increments inside `delete_item`.
     pub(in crate::receiver) fn execute_delayed_deletions<
+        'v,
         W: crate::writer::MsgInfoSender + ?Sized,
     >(
         &self,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
-        victims: &[DeletedEntry],
+        victims: &'v [DeletedEntry],
         writer: &mut W,
-    ) -> io::Result<(DeleteStats, i32)> {
+    ) -> io::Result<(DeleteStats, i32, Vec<&'v DeletedEntry>)> {
         #[cfg(unix)]
         let sandbox_ref = sandbox.map(|arc| arc.as_ref());
         let mut stats = DeleteStats::new();
+        let mut removed = Vec::new();
         let mut io_bits: i32 = 0;
         let emit_itemize = self.should_emit_itemize();
         let server_mode = !self.config.connection.client_mode;
@@ -595,6 +664,7 @@ impl ReceiverContext {
                         protocol,
                         emit_itemize,
                     );
+                    removed.push(entry);
                 }
                 Err(e) => {
                     debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
@@ -604,7 +674,7 @@ impl ReceiverContext {
                 }
             }
         }
-        Ok((stats, io_bits))
+        Ok((stats, io_bits, removed))
     }
 
     /// Reports whether the delete pass routes through the serial, leaf-granular
@@ -781,7 +851,7 @@ impl ReceiverContext {
                 !collect_only,
                 "delayed collection never uses the serial executor"
             );
-            let (stats, skipped, io_bits) = self.delete_extraneous_files_capped(
+            return self.delete_extraneous_files_capped(
                 dest_dir,
                 &dir_children,
                 &dirs_to_scan,
@@ -794,8 +864,7 @@ impl ReceiverContext {
                 budget_used,
                 #[cfg(unix)]
                 boundary_dev,
-            )?;
-            return Ok((stats, skipped, io_bits, Vec::new()));
+            );
         }
 
         // Atomic counter for max_delete enforcement across parallel workers.
@@ -850,6 +919,8 @@ impl ReceiverContext {
         // inherits attrs from the source dir. Workers hold no `self`, so carry
         // the metadata policy as an owned, shareable value.
         let metadata_opts_owned = self.build_metadata_options();
+        // Only a daemon log renders a victim's full mode (`%B`).
+        let capture_mode = self.captures_victim_modes();
 
         // Collect deleted relative paths for post-parallel itemize emission.
         // The writer is not Send, so MSG_INFO frames are emitted sequentially
@@ -1039,28 +1110,24 @@ impl ReceiverContext {
                                 &dest_dir_owned,
                                 &entry_rel,
                                 &path,
+                                capture_mode,
                                 &mut subtree,
                             );
                         }
 
-                        // upstream: delete.c:delete_item() emits this at
-                        // `DEBUG_GTE(DEL, 2)` just before removing the entry. The
-                        // mode here carries only the file-type bits available from
-                        // `read_dir` (perms are not needed to identify the item).
-                        let type_bits = if is_dir {
-                            0o040000
-                        } else if is_symlink {
-                            0o120000
-                        } else {
-                            0o100000
-                        };
-                        debug_log!(
-                            Del,
-                            2,
-                            "delete_item({}) mode={:o}",
-                            path.display(),
-                            type_bits
+                        let mode = victim_mode(
+                            capture_mode,
+                            #[cfg(unix)]
+                            sandbox_ref,
+                            &dest_dir_owned,
+                            &entry_rel,
+                            &path,
+                            is_dir,
+                            is_symlink,
                         );
+                        // upstream: delete.c:delete_item() emits this at
+                        // `DEBUG_GTE(DEL, 2)` just before removing the entry.
+                        debug_log!(Del, 2, "delete_item({}) mode={:o}", path.display(), mode);
 
                         // upstream: generator.c:351 `delete_during == 2` records
                         // the victim via remember_delete() and defers the unlink;
@@ -1147,6 +1214,7 @@ impl ReceiverContext {
                                     rel: entry_rel,
                                     is_dir,
                                     is_symlink,
+                                    mode,
                                 });
                             }
                             Err(e) => {
@@ -1393,7 +1461,7 @@ impl ReceiverContext {
         limit: u64,
         budget_used: u64,
         #[cfg(unix)] boundary_dev: Option<u64>,
-    ) -> io::Result<(DeleteStats, u64, i32)> {
+    ) -> io::Result<(DeleteStats, u64, i32, Vec<DeletedEntry>)> {
         let mut state = CappedDeleteState {
             dest_dir,
             #[cfg(unix)]
@@ -1413,6 +1481,7 @@ impl ReceiverContext {
             backup_suffix: self.config.effective_backup_suffix().to_owned(),
             metadata_opts: self.build_metadata_options(),
             dry_run: self.config.flags.dry_run,
+            logged: self.captures_victim_modes().then(Vec::new),
             writer,
         };
 
@@ -1517,9 +1586,10 @@ impl ReceiverContext {
             combined,
             skipped,
             io_err_bits,
+            logged,
             ..
         } = state;
-        Ok((combined, skipped, io_err_bits))
+        Ok((combined, skipped, io_err_bits, logged.unwrap_or_default()))
     }
 
     /// The receiver's complete deletion tally: the `--delete` sweep plus the
@@ -1611,6 +1681,7 @@ impl ReceiverContext {
             backup_suffix: self.config.effective_backup_suffix().to_owned(),
             metadata_opts: self.build_metadata_options(),
             dry_run: self.config.flags.dry_run,
+            logged: None,
             writer,
         };
         let emptied = state.remove_dir_contents(relative, path)?;
@@ -1672,6 +1743,9 @@ struct CappedDeleteState<'w, W: ?Sized> {
     metadata_opts: MetadataOptions,
     /// `--dry-run`: report and count each victim without removing it.
     dry_run: bool,
+    /// Entries removed so far, recorded only when a daemon log will render
+    /// them (see [`ReceiverContext::captures_victim_modes`]).
+    logged: Option<Vec<DeletedEntry>>,
     writer: &'w mut W,
 }
 
@@ -1832,9 +1906,29 @@ impl<W: crate::writer::MsgInfoSender + ?Sized> CappedDeleteState<'_, W> {
         is_dir: bool,
         is_symlink: bool,
     ) -> io::Result<bool> {
+        let mode = self.logged.is_some().then(|| {
+            victim_mode(
+                true,
+                #[cfg(unix)]
+                self.sandbox,
+                self.dest_dir,
+                rel,
+                path,
+                is_dir,
+                is_symlink,
+            )
+        });
         let result = self.raw_unlink(rel, path, is_dir);
         match result {
             Ok(()) => {
+                if let (Some(logged), Some(mode)) = (self.logged.as_mut(), mode) {
+                    logged.push(DeletedEntry {
+                        rel: rel.to_path_buf(),
+                        is_dir,
+                        is_symlink,
+                        mode,
+                    });
+                }
                 self.deleted = self.deleted.saturating_add(1);
                 if is_dir {
                     self.combined.dirs = self.combined.dirs.saturating_add(1);
@@ -2268,6 +2362,7 @@ mod tests {
             rel: PathBuf::from(rel),
             is_dir,
             is_symlink: false,
+            mode: if is_dir { 0o040_000 } else { 0o100_000 },
         }
     }
 
@@ -2397,7 +2492,7 @@ mod tests {
         std::fs::write(sub.join("deep.txt"), b"y").unwrap();
 
         let mut out = Vec::new();
-        record_doomed_dir_descendants(None, base, Path::new("stale_dir"), &stale, &mut out);
+        record_doomed_dir_descendants(None, base, Path::new("stale_dir"), &stale, false, &mut out);
 
         let mut got: Vec<String> = out
             .iter()

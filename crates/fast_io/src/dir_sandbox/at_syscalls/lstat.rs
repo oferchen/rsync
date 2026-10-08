@@ -65,6 +65,15 @@ impl LstatOutcome {
             Self::Std(meta) => std::os::unix::fs::MetadataExt::ino(meta),
         }
     }
+
+    /// Raw `st_mode` of the entry, type and permission bits included.
+    #[must_use]
+    pub fn mode(&self) -> u32 {
+        match self {
+            Self::At(meta) => meta.mode(),
+            Self::Std(meta) => std::os::unix::fs::MetadataExt::mode(meta),
+        }
+    }
 }
 
 /// Issue `fstatat(AT_SYMLINK_NOFOLLOW)` against `link_path` when the

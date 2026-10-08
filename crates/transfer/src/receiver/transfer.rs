@@ -499,6 +499,7 @@ impl ReceiverContext {
                     self.delayed_delete_victims = victims;
                 } else {
                     self.run_immediate_delete_pass(
+                        phase,
                         dest_dir,
                         #[cfg(unix)]
                         sandbox,
@@ -515,6 +516,7 @@ impl ReceiverContext {
                 self.flush_itemize_rows(writer)?;
                 if self.config.deletion.delete_after {
                     self.run_immediate_delete_pass(
+                        phase,
                         dest_dir,
                         #[cfg(unix)]
                         sandbox,
@@ -525,13 +527,14 @@ impl ReceiverContext {
                     // upstream: generator.c:2419 do_delayed_deletions() unlinks the
                     // remembered victims after the whole transfer has completed.
                     let victims = std::mem::take(&mut self.delayed_delete_victims);
-                    let (delete_stats, io_bits) = self.execute_delayed_deletions(
+                    let (delete_stats, io_bits, removed) = self.execute_delayed_deletions(
                         dest_dir,
                         #[cfg(unix)]
                         sandbox,
                         &victims,
                         writer,
                     )?;
+                    self.record_daemon_log_deletions(phase, removed);
                     stats.io_error |= io_bits;
                     stats.delete_stats = delete_stats;
                     // Carry the per-type counters into the receiver context so the
@@ -743,6 +746,7 @@ impl ReceiverContext {
     /// and a capped/`--one-file-system` `--delete-delay`.
     fn run_immediate_delete_pass<W>(
         &mut self,
+        phase: DeletePassPhase,
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
         writer: &mut W,
@@ -751,12 +755,13 @@ impl ReceiverContext {
     where
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     {
-        let (delete_stats, limit_exceeded, io_bits) = self.delete_extraneous_files(
+        let (delete_stats, limit_exceeded, io_bits, deleted) = self.delete_extraneous_files(
             dest_dir,
             #[cfg(unix)]
             sandbox,
             writer,
         )?;
+        self.record_daemon_log_deletions(phase, &deleted);
         stats.io_error |= io_bits;
         stats.delete_stats = delete_stats;
         stats.delete_limit_exceeded = limit_exceeded;
