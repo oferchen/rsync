@@ -34,6 +34,7 @@
 use std::io::{self, Cursor};
 
 use super::FileListReader;
+use super::expand::FlistGrowth;
 use crate::acl::AclCache;
 use crate::flist::entry::FileEntry;
 use crate::flist::state::{FileListCompressionState, FileListStats};
@@ -75,6 +76,9 @@ struct EntrySnapshot {
     peer_io_error: i32,
     local_io_error: i32,
     stats: FileListStats,
+    flist_growth: FlistGrowth,
+    dir_flist_growth: FlistGrowth,
+    initial_list_done: bool,
 }
 
 impl FileListReader {
@@ -87,6 +91,9 @@ impl FileListReader {
             peer_io_error: self.peer_io_error,
             local_io_error: self.local_io_error,
             stats: self.stats.clone(),
+            flist_growth: self.flist_growth,
+            dir_flist_growth: self.dir_flist_growth,
+            initial_list_done: self.initial_list_done,
         }
     }
 
@@ -98,6 +105,9 @@ impl FileListReader {
         self.peer_io_error = snap.peer_io_error;
         self.local_io_error = snap.local_io_error;
         self.stats = snap.stats;
+        self.flist_growth = snap.flist_growth;
+        self.dir_flist_growth = snap.dir_flist_growth;
+        self.initial_list_done = snap.initial_list_done;
     }
 
     /// Attempts to decode one file-list entry from an in-memory buffer.

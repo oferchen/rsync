@@ -10,6 +10,7 @@
 
 #[cfg(feature = "tokio-transfer")]
 mod async_read;
+mod expand;
 mod extras;
 mod flags;
 mod metadata;
@@ -36,6 +37,8 @@ use super::entry::FileEntry;
 use super::flags::FileFlags;
 use super::intern::PathInterner;
 use super::state::{FileListCompressionState, FileListStats};
+use super::trace::ProcessRole;
+use expand::{FLIST_START_LARGE, FlistGrowth};
 
 pub use flags::FlagsResult;
 pub(crate) use metadata::MetadataResult;
@@ -163,6 +166,18 @@ pub struct FileListReader {
     /// Each file entry stores an index into this cache rather than duplicating
     /// the full xattr list. Mirrors upstream rsync's `rsync_xal_l`.
     xattr_cache: XattrCache,
+    /// Growth of the list being received, upstream's per-`recv_file_list()`
+    /// `flist`. Reset at each end marker, since every sub-list is a new list.
+    /// upstream: flist.c:3171-3172
+    flist_growth: FlistGrowth,
+    /// Growth of the receiver's `dir_flist` under INC_RECURSE. Never reset:
+    /// it holds every directory received across all sub-lists.
+    /// upstream: flist.c:3174-3178,3239-3241
+    dir_flist_growth: FlistGrowth,
+    /// Whether the initial list has ended. Upstream reads the initial list in
+    /// the pre-fork receiver and every sub-list in the forked receiver, which
+    /// is the role `my_alloc()` names in its refusal.
+    initial_list_done: bool,
 }
 
 impl FileListReader {
@@ -201,6 +216,9 @@ impl FileListReader {
             local_io_error: 0,
             acl_cache: AclCache::new(),
             xattr_cache: XattrCache::new(),
+            flist_growth: FlistGrowth::default(),
+            dir_flist_growth: FlistGrowth::default(),
+            initial_list_done: false,
         }
     }
 
@@ -239,6 +257,9 @@ impl FileListReader {
             local_io_error: 0,
             acl_cache: AclCache::new(),
             xattr_cache: XattrCache::new(),
+            flist_growth: FlistGrowth::default(),
+            dir_flist_growth: FlistGrowth::default(),
+            initial_list_done: false,
         }
     }
 
@@ -476,6 +497,45 @@ impl FileListReader {
         &mut self.xattr_cache
     }
 
+    /// Whether INC_RECURSE was negotiated for this session.
+    fn inc_recurse(&self) -> bool {
+        self.compat_flags
+            .is_some_and(|flags| flags.contains(CompatibilityFlags::INC_RECURSE))
+    }
+
+    /// The role upstream's `who_am_i()` reports while this list is received.
+    ///
+    /// upstream: rsync.c:987-995
+    const fn list_role(&self) -> ProcessRole {
+        if self.initial_list_done {
+            ProcessRole::Receiver
+        } else {
+            ProcessRole::PreForkReceiver
+        }
+    }
+
+    /// Creates the list's pointer arrays the first time a list is read from.
+    ///
+    /// upstream: flist.c:3171-3179 - `flist_expand(flist, FLIST_START_LARGE)`
+    /// for every list, and the same for `dir_flist` on the first list under
+    /// INC_RECURSE.
+    fn start_list_growth(&mut self) -> io::Result<()> {
+        let role = self.list_role();
+        if !self.flist_growth.is_started() {
+            self.flist_growth.expand(FLIST_START_LARGE, role)?;
+        }
+        if self.inc_recurse() && !self.dir_flist_growth.is_started() {
+            self.dir_flist_growth.expand(FLIST_START_LARGE, role)?;
+        }
+        Ok(())
+    }
+
+    /// Ends the current list: the next one is a fresh upstream `flist`.
+    fn end_list_growth(&mut self) {
+        self.flist_growth = FlistGrowth::default();
+        self.initial_list_done = true;
+    }
+
     /// Sets the wire NDX start of the current flist segment.
     ///
     /// Must be called before reading entries in each flist segment so that
@@ -568,8 +628,12 @@ impl FileListReader {
         reader: &mut R,
         segment_entries: &[FileEntry],
     ) -> io::Result<Option<FileEntry>> {
+        self.start_list_growth()?;
         let flags = match self.read_flags(reader)? {
-            FlagsResult::EndOfList => return Ok(None),
+            FlagsResult::EndOfList => {
+                self.end_list_growth();
+                return Ok(None);
+            }
             FlagsResult::IoError(code) => {
                 // upstream: flist.c:3193,3211 recv_file_list() does
                 // `if (!ignore_errors) io_error |= err & IOERR_VALID_MASK` and
@@ -578,10 +642,14 @@ impl FileListReader {
                 // `ignore_errors` half of the rule is applied by the consumer,
                 // which is the only layer that knows the option.
                 self.peer_io_error |= crate::io_error::sanitize_peer_io_error(code);
+                self.end_list_growth();
                 return Ok(None);
             }
             FlagsResult::Flags(f) => f,
         };
+        // upstream: flist.c:3216 - room for the entry is reserved before it
+        // is decoded, so a list past --max-alloc is refused at that entry.
+        self.flist_growth.push(self.list_role())?;
 
         let name = self.read_name(reader, flags)?;
 
@@ -858,6 +926,11 @@ impl FileListReader {
             entry.set_xattr_ndx(xattr_ndx);
         }
 
+        // upstream: flist.c:3239-3241 - under INC_RECURSE each received
+        // directory is also appended to dir_flist.
+        if entry.is_dir() && self.inc_recurse() {
+            self.dir_flist_growth.push(self.list_role())?;
+        }
         self.update_stats(&entry);
 
         // upstream: flist.c:3255 - recv_file_list() prints `recv_file_name(%s)`

@@ -297,6 +297,16 @@ pub fn rerr_for_io_error(error: &io::Error) -> i32 {
         return 1;
     }
 
+    // upstream: errcode.h RERR_MALLOC=22 - my_alloc() refusing a request at
+    // --max-alloc (util2.c:75-80) is tagged at its call site; without the tag
+    // the OutOfMemory kind would fall through to RERR_FILEIO.
+    if error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<protocol::MallocFailure>())
+    {
+        return 22;
+    }
+
     // upstream: rsync.c:900 - a denied backup must not be graded by `ErrorKind`
     // like the per-file open failures below. Without this arm the usual `EACCES`
     // reaches the `PermissionDenied => RERR_FILESELECT` arm and reports 3.
