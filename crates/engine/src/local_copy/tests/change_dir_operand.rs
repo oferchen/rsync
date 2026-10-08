@@ -28,6 +28,9 @@ fn change_dir_failure_names_the_dir_half_as_upstream_spells_it() {
         Some(base.join("nope")),
         "`nope/.` splits the same way"
     );
+    // Windows resolves `nope\..` lexically, so the chdir succeeds there even
+    // though `nope` is missing; only POSIX walks the missing component.
+    #[cfg(unix)]
     assert_eq!(
         dir_of(base.join("nope/..")).map(PathBuf::into_os_string),
         Some(base.join("nope/..").into_os_string()),
