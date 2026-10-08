@@ -3,7 +3,6 @@ use super::{
 };
 use std::fs::{self, File};
 use std::io::{self, Write};
-use tempfile::tempdir;
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 use windows_sys::Win32::Storage::FileSystem::{
     CREATE_ALWAYS, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
@@ -91,7 +90,7 @@ fn bytes_written_accessors_default_to_zero() {
 
 #[test]
 fn single_file_write_and_commit() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("single.bin");
     let file = open_writable(&path);
 
@@ -109,7 +108,7 @@ fn single_file_write_and_commit() {
 
 #[test]
 fn multi_file_sequential_writes() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let mut batch = IocpDiskBatch::new(&IocpConfig::default()).unwrap();
 
     let test_data: Vec<(&str, Vec<u8>)> = vec![
@@ -135,7 +134,7 @@ fn multi_file_sequential_writes() {
 
 #[test]
 fn large_write_exceeds_buffer_drains_via_completion_port() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("large.bin");
     let file = open_writable(&path);
 
@@ -158,7 +157,7 @@ fn large_write_exceeds_buffer_drains_via_completion_port() {
 
 #[test]
 fn commit_with_fsync_calls_flush_file_buffers() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("fsync.bin");
     let file = open_writable(&path);
 
@@ -174,7 +173,7 @@ fn commit_with_fsync_calls_flush_file_buffers() {
 
 #[test]
 fn begin_file_flushes_previous() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let mut batch = IocpDiskBatch::new(&IocpConfig::default()).unwrap();
 
     let path1 = dir.path().join("first.bin");
@@ -197,7 +196,7 @@ fn begin_file_flushes_previous() {
 
 #[test]
 fn drop_flushes_pending_data() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("drop_flush.bin");
 
     {
@@ -214,7 +213,7 @@ fn drop_flushes_pending_data() {
 
 #[test]
 fn write_trait_implementation_round_trips() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("write_trait.bin");
     let file = open_writable(&path);
 
@@ -237,7 +236,7 @@ fn write_trait_implementation_round_trips() {
 fn batched_submission_submits_n_chunks() {
     // Pick buffer_size and concurrent_ops so the data triggers multiple
     // overlapped submissions per flush.
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("batched.bin");
     let file = open_writable(&path);
 
@@ -270,7 +269,7 @@ fn error_propagates_when_reopen_overlapped_fails() {
     let config = IocpConfig::default();
     let mut batch = IocpDiskBatch::new(&config).unwrap();
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("readonly_target.bin");
     std::fs::write(&path, b"existing").unwrap();
 
@@ -309,7 +308,7 @@ fn no_leaked_overlapped_handles_after_many_rotations() {
     // leaked per file the process would eventually exhaust its handle
     // table; here we exercise the path 32 times and verify each file
     // lands intact.
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let mut batch = IocpDiskBatch::new(&IocpConfig::default()).unwrap();
 
     for i in 0..32 {
@@ -335,7 +334,7 @@ fn overlapped_handle_guard_closes_handle_on_drop() {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Foundation::GetHandleInformation;
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("guard_drop.bin");
     let file = open_writable(&path);
     let raw = file.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
@@ -370,7 +369,7 @@ fn completion_ordering_independent_of_submission_order() {
     // Multiple in-flight writes may complete out of order. The drain
     // loop must reconcile each completion with its OVERLAPPED pointer
     // and produce the correct file contents regardless of order.
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("ordering.bin");
     let file = open_writable(&path);
 
@@ -438,7 +437,7 @@ fn aligned_write_path_increments_bounce_counter() {
         ..IocpConfig::default()
     };
     let mut batch = IocpDiskBatch::new(&config).unwrap();
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("aligned_counter.bin");
     let file = open_writable(&path);
     batch.begin_file(file).unwrap();

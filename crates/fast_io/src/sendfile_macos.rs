@@ -258,7 +258,7 @@ mod tests {
     /// Build a temp file containing `content`, leaving its position at 0.
     #[cfg(unix)]
     fn fixture(content: &[u8]) -> NamedTempFile {
-        let mut f = NamedTempFile::new().expect("tempfile");
+        let mut f = test_support::create_named_tempfile();
         f.write_all(content).expect("write");
         f.flush().expect("flush");
         f.seek(SeekFrom::Start(0)).expect("seek");

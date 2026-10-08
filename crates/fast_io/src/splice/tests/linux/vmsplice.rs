@@ -2,7 +2,6 @@
 
 use super::super::super::*;
 use std::io::{Read, Seek, SeekFrom};
-use tempfile::NamedTempFile;
 
 #[test]
 fn test_vmsplice_small_buffer() {
@@ -11,7 +10,7 @@ fn test_vmsplice_small_buffer() {
     }
 
     let content = b"Testing vmsplice: buffer to file via pipe intermediary";
-    let mut dest = NamedTempFile::new().unwrap();
+    let mut dest = test_support::create_named_tempfile();
 
     use std::os::fd::AsRawFd;
     let transferred = try_vmsplice_to_file(content, dest.as_file().as_raw_fd()).unwrap();
@@ -30,7 +29,7 @@ fn test_vmsplice_empty_buffer() {
         return;
     }
 
-    let mut dest = NamedTempFile::new().unwrap();
+    let mut dest = test_support::create_named_tempfile();
 
     use std::os::fd::AsRawFd;
     let transferred = try_vmsplice_to_file(&[], dest.as_file().as_raw_fd()).unwrap();
@@ -52,7 +51,7 @@ fn test_vmsplice_large_buffer() {
     // 512KB - multiple splice chunks worth of data.
     let size = 512 * 1024;
     let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-    let mut dest = NamedTempFile::new().unwrap();
+    let mut dest = test_support::create_named_tempfile();
 
     use std::os::fd::AsRawFd;
     let transferred = try_vmsplice_to_file(&content, dest.as_file().as_raw_fd()).unwrap();
@@ -75,7 +74,7 @@ fn test_vmsplice_exact_chunk_boundary() {
     // Exactly SPLICE_CHUNK_SIZE bytes.
     let size = super::super::super::SPLICE_CHUNK_SIZE;
     let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-    let mut dest = NamedTempFile::new().unwrap();
+    let mut dest = test_support::create_named_tempfile();
 
     use std::os::fd::AsRawFd;
     let transferred = try_vmsplice_to_file(&content, dest.as_file().as_raw_fd()).unwrap();
@@ -96,7 +95,7 @@ fn test_vmsplice_via_splice_pipe() {
 
     let content = b"Testing vmsplice through SplicePipe method";
     let pipe = SplicePipe::with_capacity(DEFAULT_PIPE_CAPACITY).unwrap();
-    let mut dest = NamedTempFile::new().unwrap();
+    let mut dest = test_support::create_named_tempfile();
 
     use std::os::fd::AsRawFd;
     let transferred = pipe

@@ -468,11 +468,10 @@ pub fn reader_from_path<P: AsRef<Path>>(
 mod tests {
     use super::*;
     use crate::IocpPolicy;
-    use tempfile::tempdir;
 
     #[test]
     fn factory_reader_opens_std_for_small_files() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("small.txt");
         std::fs::write(&path, b"tiny").unwrap();
 
@@ -483,7 +482,7 @@ mod tests {
 
     #[test]
     fn factory_reader_forced_fallback() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("forced.bin");
         let data = vec![0u8; 128 * 1024]; // > IOCP_MIN_FILE_SIZE
         std::fs::write(&path, &data).unwrap();
@@ -496,7 +495,7 @@ mod tests {
 
     #[test]
     fn factory_writer_creates_file() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("factory_write.txt");
 
         let factory = IocpWriterFactory::default();
@@ -511,7 +510,7 @@ mod tests {
 
     #[test]
     fn factory_writer_forced_fallback() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("forced_write.txt");
 
         let factory = IocpWriterFactory::default().force_fallback(true);
@@ -522,7 +521,7 @@ mod tests {
 
     #[test]
     fn reader_from_path_disabled_uses_std() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("disabled.txt");
         std::fs::write(&path, b"disabled test").unwrap();
 
@@ -532,7 +531,7 @@ mod tests {
 
     #[test]
     fn writer_from_file_disabled_uses_std() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("writer_disabled.txt");
         let file = std::fs::File::create(&path).unwrap();
 
@@ -542,7 +541,7 @@ mod tests {
 
     #[test]
     fn reader_writer_roundtrip() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("roundtrip.bin");
         let test_data: Vec<u8> = (0..65536).map(|i| ((i * 17 + 5) % 256) as u8).collect();
 
@@ -569,7 +568,7 @@ mod tests {
         if !is_iocp_available() {
             return;
         }
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("overlapped_reopen.bin");
         // Pre-create the file using std::fs (no FILE_FLAG_OVERLAPPED).
         let file = std::fs::OpenOptions::new()
@@ -645,7 +644,7 @@ mod tests {
     /// back to standard buffered I/O without surfacing an error.
     #[test]
     fn writer_from_file_auto_falls_back_for_anonymous_handle() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("auto_named.bin");
         // Use a regular file - on Auto we expect either Iocp (if reopen
         // succeeds) or Std (if it fails). Both are acceptable; the contract

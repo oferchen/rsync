@@ -34,7 +34,7 @@ fn slurp_wrapper_round_trips_four_mib_of_random_bytes() {
         return;
     }
 
-    let dir = tempfile::tempdir().expect("create tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("payload.bin");
 
     let mut payload = vec![0u8; PAYLOAD_BYTES];
@@ -66,7 +66,7 @@ fn file_reader_read_to_end_matches_stdlib_bytes() {
         return;
     }
 
-    let dir = tempfile::tempdir().expect("create tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("payload.bin");
 
     let mut payload = vec![0u8; PAYLOAD_BYTES];

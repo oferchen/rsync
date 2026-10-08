@@ -10,7 +10,6 @@ use fast_io::win_tmpfile::{
     WinDeleteOnCloseSupport, WinTempFileResult, WindowsTempFile, open_win_temp_file,
     win_tmpfile_probe,
 };
-use tempfile::tempdir;
 
 // ---------------------------------------------------------------------------
 // Cross-platform probe tests
@@ -18,7 +17,7 @@ use tempfile::tempdir;
 
 #[test]
 fn probe_returns_valid_result_for_tempdir() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let result = win_tmpfile_probe(dir.path());
     assert!(
         result == WinDeleteOnCloseSupport::Available
@@ -34,7 +33,7 @@ fn probe_returns_unavailable_for_missing_directory() {
 
 #[test]
 fn open_win_temp_file_returns_result_for_tempdir() {
-    let dir = tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let result = open_win_temp_file(dir.path());
     match result {
         WinTempFileResult::DeleteOnClose(wtf) => {
@@ -61,7 +60,7 @@ mod windows {
 
     #[test]
     fn temp_file_deleted_on_drop() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let wtf = WindowsTempFile::open(dir.path()).expect("open");
         let path = wtf.temp_path().to_path_buf();
         assert!(path.exists());
@@ -74,7 +73,7 @@ mod windows {
 
     #[test]
     fn temp_file_write_and_commit() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let mut wtf = WindowsTempFile::open(dir.path()).expect("open");
 
         let content = b"hello from FILE_FLAG_DELETE_ON_CLOSE";
@@ -89,7 +88,7 @@ mod windows {
 
     #[test]
     fn large_write_integrity() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
 
         // 2 MB of patterned data.
         let size = 2 * 1024 * 1024;
@@ -108,7 +107,7 @@ mod windows {
 
     #[test]
     fn drop_without_commit_leaves_no_orphan() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
 
         let path;
         {
@@ -127,7 +126,7 @@ mod windows {
 
     #[test]
     fn commit_replaces_existing_file() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("existing.txt");
         fs::write(&dest, b"old content").expect("create existing");
 
@@ -140,7 +139,7 @@ mod windows {
 
     #[test]
     fn multiple_temp_files_in_same_directory() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
 
         let mut files = Vec::new();
         for i in 0..5 {
@@ -169,7 +168,7 @@ mod windows {
             TempFileKind, TempFileStrategy, WindowsTempFileStrategy,
         };
 
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("strategy.txt");
         let strategy = WindowsTempFileStrategy;
 
@@ -188,7 +187,7 @@ mod windows {
             TempFileKind, TempFileStrategy, WindowsTempFileStrategy,
         };
 
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("strategy_discard.txt");
         let strategy = WindowsTempFileStrategy;
 
@@ -210,7 +209,7 @@ mod windows {
             DefaultTempFileStrategy, TempFileKind, TempFileStrategy,
         };
 
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("default.txt");
         let strategy = DefaultTempFileStrategy::default();
 
@@ -233,7 +232,7 @@ mod non_windows {
 
     #[test]
     fn probe_always_unavailable() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         assert_eq!(
             win_tmpfile_probe(dir.path()),
             WinDeleteOnCloseSupport::Unavailable
@@ -242,7 +241,7 @@ mod non_windows {
 
     #[test]
     fn open_returns_unsupported() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         match WindowsTempFile::open(dir.path()) {
             Err(err) => assert_eq!(err.kind(), std::io::ErrorKind::Unsupported),
             Ok(_) => panic!("should fail on non-Windows"),
@@ -251,7 +250,7 @@ mod non_windows {
 
     #[test]
     fn open_win_temp_file_returns_unavailable() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         assert!(matches!(
             open_win_temp_file(dir.path()),
             WinTempFileResult::Unavailable

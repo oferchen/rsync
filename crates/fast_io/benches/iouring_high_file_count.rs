@@ -147,7 +147,7 @@ fn active_tiers() -> Vec<Tier> {
 /// with millions of entries. File sizes cycle deterministically between
 /// `min_bytes` and `max_bytes`.
 fn create_fixture(count: usize, min_bytes: usize, max_bytes: usize) -> (TempDir, Vec<PathBuf>) {
-    let dir = TempDir::new().expect("fixture tempdir");
+    let dir = test_support::create_tempdir();
     let subdirs = 1000usize;
     let files_per_subdir = count / subdirs;
     let remainder = count % subdirs;

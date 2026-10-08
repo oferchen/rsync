@@ -31,8 +31,6 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use tempfile::tempdir;
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -93,7 +91,7 @@ fn can_create_junctions(dir: &Path) -> bool {
 /// and reads back a file whose total path length exceeds MAX_PATH.
 #[test]
 fn long_path_write_and_read_roundtrip() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     if !long_paths_supported(dir.path()) {
         eprintln!("skipping: filesystem does not support long paths");
         return;
@@ -126,7 +124,7 @@ fn long_path_write_and_read_roundtrip() {
 /// directory names.
 #[test]
 fn very_long_path_via_extended_prefix() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     if !long_paths_supported(dir.path()) {
         eprintln!("skipping: filesystem does not support long paths");
         return;
@@ -171,7 +169,7 @@ fn very_long_path_via_extended_prefix() {
 /// reading from "file.txt" must return the same content.
 #[test]
 fn case_insensitive_read_write() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     if !is_case_insensitive(dir.path()) {
         eprintln!("skipping: filesystem is case-sensitive");
         return;
@@ -191,7 +189,7 @@ fn case_insensitive_read_write() {
 /// "MyFile.Txt", the directory listing should show exactly that casing.
 #[test]
 fn case_preserving_directory_listing() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     if !is_case_insensitive(dir.path()) {
         eprintln!("skipping: filesystem is case-sensitive");
         return;
@@ -216,7 +214,7 @@ fn case_preserving_directory_listing() {
 /// overwrite or refer to the same file, not create a separate entry.
 #[test]
 fn case_insensitive_overwrite() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     if !is_case_insensitive(dir.path()) {
         eprintln!("skipping: filesystem is case-sensitive");
         return;
@@ -254,7 +252,7 @@ fn case_insensitive_overwrite() {
 /// must be readable and writable.
 #[test]
 fn junction_target_file_roundtrip() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     if !can_create_junctions(dir.path()) {
         eprintln!("skipping: cannot create directory junctions (permissions or FS type)");
         return;
@@ -286,7 +284,7 @@ fn junction_target_file_roundtrip() {
 /// (reparse point), while metadata through the junction follows through.
 #[test]
 fn junction_metadata_reports_symlink() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     if !can_create_junctions(dir.path()) {
         eprintln!("skipping: cannot create directory junctions");
         return;
@@ -324,7 +322,7 @@ fn junction_metadata_reports_symlink() {
 /// must restore write access.
 #[test]
 fn readonly_attribute_blocks_writes() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("readonly.txt");
     fs::write(&path, b"original").unwrap();
 
@@ -353,7 +351,7 @@ fn readonly_attribute_blocks_writes() {
 fn archive_attribute_set_on_modification() {
     use std::os::windows::fs::MetadataExt;
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("archive.txt");
     fs::write(&path, b"initial-data").unwrap();
 
@@ -375,7 +373,7 @@ fn archive_attribute_set_on_modification() {
 fn hidden_file_is_still_readable() {
     use std::os::windows::ffi::OsStrExt;
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("hidden.txt");
     fs::write(&path, b"hidden-content").unwrap();
 
@@ -417,7 +415,7 @@ fn hidden_file_is_still_readable() {
 /// characters and verifies round-trip data integrity.
 #[test]
 fn unicode_filename_roundtrip() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
 
     let names = [
         "\u{00e9}l\u{00e8}ve.txt",      // French accents: eleve
@@ -443,7 +441,7 @@ fn unicode_filename_roundtrip() {
 /// This test documents the behavior for rsync's filename handling.
 #[test]
 fn trailing_dots_and_spaces_normalized() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
 
     // On NTFS, trailing dots and spaces are stripped by Win32 APIs.
     // CreateFileW("test. ") actually creates "test".
@@ -477,7 +475,7 @@ fn trailing_dots_and_spaces_normalized() {
 /// creates a file at the limit and verifies it round-trips.
 #[test]
 fn max_filename_length_255_chars() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
 
     // 251 chars + ".txt" = 255 total.
     let name = format!("{}.txt", "x".repeat(251));
@@ -492,7 +490,7 @@ fn max_filename_length_255_chars() {
 /// Filenames longer than 255 characters must fail on NTFS.
 #[test]
 fn filename_over_255_chars_fails() {
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
 
     let name = "x".repeat(256);
     let path = dir.path().join(&name);
@@ -520,7 +518,7 @@ fn concurrent_read_during_iocp_write() {
         return;
     }
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("concurrent_rw.bin");
     let config = IocpConfig::default();
 

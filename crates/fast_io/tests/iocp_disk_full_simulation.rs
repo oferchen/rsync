@@ -20,7 +20,6 @@ use std::io;
 use std::os::windows::io::FromRawHandle;
 use std::path::Path;
 
-use tempfile::tempdir;
 use windows_sys::Win32::Foundation::{
     ERROR_DISK_FULL, ERROR_HANDLE_DISK_FULL, INVALID_HANDLE_VALUE,
 };
@@ -121,7 +120,7 @@ fn first_submission_disk_full_surfaces_storage_full() {
     }
     let _guard = InjectionGuard;
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("first_submission.bin");
     let file = open_writable(&path);
 
@@ -168,7 +167,7 @@ fn writer_drop_after_disk_full_is_clean() {
     }
     let _guard = InjectionGuard;
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
 
     // File A: writes succeed and the file is committed before the fault.
     let path_a = dir.path().join("durable.bin");
@@ -220,7 +219,7 @@ fn batch_recovers_after_injected_fault_consumed() {
     }
     let _guard = InjectionGuard;
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path1 = dir.path().join("fault.bin");
     let file1 = open_writable(&path1);
 
@@ -264,7 +263,7 @@ fn nth_submission_disk_full_skips_earlier_writes() {
     }
     let _guard = InjectionGuard;
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("nth.bin");
     let file = open_writable(&path);
 
@@ -332,7 +331,7 @@ fn multi_in_flight_disk_full_drains_before_drop() {
     }
     let _guard = InjectionGuard;
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("multi_in_flight.bin");
     let file = open_writable(&path);
 
@@ -410,7 +409,7 @@ fn faulted_completion_drains_residual_before_drop() {
     }
     let _guard = InjectionGuard;
 
-    let dir = tempdir().unwrap();
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("faulted_completion.bin");
     let file = open_writable(&path);
 

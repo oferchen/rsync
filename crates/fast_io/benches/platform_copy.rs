@@ -56,7 +56,7 @@ fn bench_platform_copy_dispatch(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
-            let dir = TempDir::new().unwrap();
+            let dir = test_support::create_tempdir();
             let src = create_source_file(&dir, size);
             let dst = dir.path().join("dest.bin");
 
@@ -81,7 +81,7 @@ fn bench_std_fs_copy(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
-            let dir = TempDir::new().unwrap();
+            let dir = test_support::create_tempdir();
             let src = create_source_file(&dir, size);
             let dst = dir.path().join("dest.bin");
 
@@ -108,7 +108,7 @@ fn bench_macos_paths(c: &mut Criterion) {
             group.throughput(Throughput::Bytes(size as u64));
 
             group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
-                let dir = TempDir::new().unwrap();
+                let dir = test_support::create_tempdir();
                 let src = create_source_file(&dir, size);
                 let dst = dir.path().join("dest_clone.bin");
 
@@ -137,7 +137,7 @@ fn bench_macos_paths(c: &mut Criterion) {
             group.throughput(Throughput::Bytes(size as u64));
 
             group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
-                let dir = TempDir::new().unwrap();
+                let dir = test_support::create_tempdir();
                 let src = create_source_file(&dir, size);
                 let dst = dir.path().join("dest_fcopy.bin");
 
@@ -168,7 +168,7 @@ fn bench_linux_paths(c: &mut Criterion) {
             group.throughput(Throughput::Bytes(size as u64));
 
             group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
-                let dir = TempDir::new().unwrap();
+                let dir = test_support::create_tempdir();
                 let src = create_source_file(&dir, size);
                 let dst_path = dir.path().join("dest_cfr.bin");
 
@@ -203,7 +203,7 @@ fn bench_linux_paths(c: &mut Criterion) {
                 group.throughput(Throughput::Bytes(size as u64));
 
                 group.bench_with_input(BenchmarkId::from_parameter(label), &size, |b, &size| {
-                    let dir = TempDir::new().unwrap();
+                    let dir = test_support::create_tempdir();
                     let src = create_source_file(&dir, size);
                     let dst_path = dir.path().join("dest_uring.bin");
 

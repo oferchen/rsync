@@ -2,7 +2,6 @@
 
 use super::super::super::*;
 use std::io::{Read, Seek, SeekFrom};
-use tempfile::NamedTempFile;
 
 #[test]
 fn test_splice_pipe_creation() {
@@ -42,7 +41,7 @@ fn test_splice_socketpair_to_file() {
     }
 
     let content = b"Testing splice: socket to file transfer via pipe intermediary";
-    let mut dest = NamedTempFile::new().unwrap();
+    let mut dest = test_support::create_named_tempfile();
 
     // Create a socket pair - one end writes, the other is the "socket" for splice.
     let mut socket_fds = [0i32; 2];
@@ -97,7 +96,7 @@ fn test_splice_large_transfer() {
 
     let size = 512 * 1024; // 512KB - multiple splice chunks
     let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-    let mut dest = NamedTempFile::new().unwrap();
+    let mut dest = test_support::create_named_tempfile();
 
     let mut socket_fds = [0i32; 2];
     // SAFETY: `socket_fds`/`fds` provides the two-int output slot the
@@ -154,7 +153,7 @@ fn test_splice_empty_transfer() {
         return;
     }
 
-    let mut dest = NamedTempFile::new().unwrap();
+    let mut dest = test_support::create_named_tempfile();
 
     let mut socket_fds = [0i32; 2];
     // SAFETY: `socket_fds`/`fds` provides the two-int output slot the
@@ -206,7 +205,7 @@ fn test_splice_exact_chunk_boundary() {
     // Transfer exactly SPLICE_CHUNK_SIZE bytes to test boundary handling.
     let size = super::super::super::SPLICE_CHUNK_SIZE;
     let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-    let mut dest = NamedTempFile::new().unwrap();
+    let mut dest = test_support::create_named_tempfile();
 
     let mut socket_fds = [0i32; 2];
     // SAFETY: `socket_fds`/`fds` provides the two-int output slot the
@@ -284,7 +283,7 @@ fn test_splice_pipe_reuse() {
     // Perform two sequential transfers through the same pipe.
     for i in 0u8..2 {
         let content: Vec<u8> = (0..128u8).map(|j| j.wrapping_add(i * 64)).collect();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
 
         let (recv_fd, writer) = super::socketpair_with_writer(content.clone());
 

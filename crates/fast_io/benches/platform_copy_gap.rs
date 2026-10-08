@@ -89,7 +89,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use tempfile::TempDir;
 
 use fast_io::{CopyMethod, DefaultPlatformCopy, PlatformCopy};
 
@@ -149,7 +148,7 @@ fn prepare_cell(dir: &Path, payload_size: usize, file_count: usize) -> Vec<(Path
 /// the given cell. Printed once per cell on stderr so the Criterion report
 /// can be cross-referenced against the actual kernel path that ran.
 fn annotate_cell_method(label: &str, payload_size: usize) {
-    let dir = TempDir::new().expect("annotate tempdir");
+    let dir = test_support::create_tempdir();
     let src = dir.path().join("annotate_src.bin");
     let dst = dir.path().join("annotate_dst.bin");
     let payload = make_payload(payload_size);
@@ -238,7 +237,7 @@ fn bench_platform_copy_gap(c: &mut Criterion) {
             |b, &(payload_size, file_count)| {
                 b.iter_with_setup(
                     || {
-                        let dir = TempDir::new().expect("tempdir");
+                        let dir = test_support::create_tempdir();
                         let pairs = prepare_cell(dir.path(), payload_size, file_count);
                         (dir, pairs)
                     },
@@ -256,7 +255,7 @@ fn bench_platform_copy_gap(c: &mut Criterion) {
             |b, &(payload_size, file_count)| {
                 b.iter_with_setup(
                     || {
-                        let dir = TempDir::new().expect("tempdir");
+                        let dir = test_support::create_tempdir();
                         let pairs = prepare_cell(dir.path(), payload_size, file_count);
                         (dir, pairs)
                     },

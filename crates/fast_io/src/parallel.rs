@@ -345,7 +345,6 @@ impl<I: ParallelIterator> ParallelFileOps for I {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn executor_process_basic() {
@@ -381,7 +380,7 @@ mod tests {
 
     #[test]
     fn executor_copy_files() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let src1 = dir.path().join("src1.txt");
         let src2 = dir.path().join("src2.txt");
         let dst1 = dir.path().join("dst1.txt");

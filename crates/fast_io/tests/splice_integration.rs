@@ -83,12 +83,11 @@ fn assert_file_contents(dest: &mut tempfile::NamedTempFile, expected: &[u8]) {
 mod fallback {
     use super::*;
     use std::os::fd::AsRawFd;
-    use tempfile::NamedTempFile;
 
     #[test]
     fn recv_fd_small_payload() {
         let content = b"hello splice fallback";
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(content.to_vec());
 
         let received =
@@ -107,7 +106,7 @@ mod fallback {
     fn recv_fd_eof_before_length_exhausted() {
         // Source has fewer bytes than requested - should stop at EOF.
         let content = b"short";
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(content.to_vec());
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), 1_000_000).unwrap();
@@ -124,7 +123,7 @@ mod fallback {
     #[test]
     fn recv_fd_zero_length_source() {
         // Sender closes immediately - zero bytes transferred.
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(Vec::new());
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), 4096).unwrap();
@@ -142,7 +141,7 @@ mod fallback {
     fn recv_fd_binary_payload_roundtrip() {
         // All 256 byte values to verify binary-safe transfer.
         let content: Vec<u8> = (0..=255).collect();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(content.clone());
 
         let received =
@@ -162,7 +161,7 @@ mod fallback {
         // 64KB - 1: always uses the buffered path on Linux.
         let size = 64 * 1024 - 1;
         let content: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(content.clone());
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();
@@ -181,7 +180,7 @@ mod fallback {
         // 384KB - spans multiple internal buffer fills (buffer is 256KB).
         let size = 384 * 1024;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(content.clone());
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();
@@ -201,7 +200,6 @@ mod fallback {
 mod linux_splice {
     use super::*;
     use std::os::fd::AsRawFd;
-    use tempfile::NamedTempFile;
 
     #[test]
     fn splice_available_on_modern_kernels() {
@@ -217,7 +215,7 @@ mod linux_splice {
         }
 
         let content = b"Integration test: basic splice socket-to-file transfer";
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(content.to_vec());
 
         let spliced =
@@ -241,7 +239,7 @@ mod linux_splice {
         // Exactly 64KB - the splice threshold boundary.
         let size = 64 * 1024;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(content.clone());
 
         let spliced = try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), size).unwrap();
@@ -264,7 +262,7 @@ mod linux_splice {
         // 512KB requires 8 splice-chunk iterations (64KB each).
         let size = 512 * 1024;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(content.clone());
 
         let spliced = try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), size).unwrap();
@@ -286,7 +284,7 @@ mod linux_splice {
 
         // Ask for more bytes than available - splice returns what it got.
         let content = b"partial data";
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(content.to_vec());
 
         let spliced = try_splice_to_file(recv_fd, dest.as_file().as_raw_fd(), 1_000_000).unwrap();
@@ -306,7 +304,7 @@ mod linux_splice {
             return;
         }
 
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
 
         let mut fds = [0i32; 2];
         // SAFETY: `fds` is the two-int output slot `socketpair(2)` fills.
@@ -332,7 +330,7 @@ mod linux_splice {
             return;
         }
 
-        let dest = NamedTempFile::new().unwrap();
+        let dest = test_support::create_named_tempfile();
         let result = try_splice_to_file(-1, dest.as_file().as_raw_fd(), 1024);
         assert!(result.is_err());
     }
@@ -372,7 +370,7 @@ mod linux_splice {
         // 128KB - above the 64KB threshold, should use splice path.
         let size = 128 * 1024;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(content.clone());
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();
@@ -391,7 +389,7 @@ mod linux_splice {
         // 32KB - below threshold, uses read/write even on Linux.
         let size = 32 * 1024;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(content.clone());
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();
@@ -410,7 +408,7 @@ mod linux_splice {
         // Stress test with 1MB payload spanning many splice chunks.
         let size = 1024 * 1024;
         let content: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-        let mut dest = NamedTempFile::new().unwrap();
+        let mut dest = test_support::create_named_tempfile();
         let (recv_fd, writer) = socketpair_with_writer(content.clone());
 
         let received = recv_fd_to_file(recv_fd, dest.as_file().as_raw_fd(), size as u64).unwrap();

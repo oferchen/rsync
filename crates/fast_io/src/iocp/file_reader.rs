@@ -331,11 +331,10 @@ pub(crate) fn to_wide_path(path: &Path) -> io::Result<Vec<u16>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn open_and_read_small_file() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("small.txt");
         std::fs::write(&path, b"hello iocp").unwrap();
 
@@ -350,7 +349,7 @@ mod tests {
 
     #[test]
     fn read_empty_file() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("empty.bin");
         std::fs::write(&path, b"").unwrap();
 
@@ -364,7 +363,7 @@ mod tests {
 
     #[test]
     fn sequential_reads_track_position() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("position.txt");
         std::fs::write(&path, b"0123456789ABCDEF").unwrap();
 
@@ -383,7 +382,7 @@ mod tests {
 
     #[test]
     fn seek_and_read() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("seek.txt");
         std::fs::write(&path, b"hello world").unwrap();
 
@@ -400,7 +399,7 @@ mod tests {
 
     #[test]
     fn read_large_file_batched() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("large.bin");
         let data: Vec<u8> = (0..256 * 1024).map(|i| (i % 256) as u8).collect();
         std::fs::write(&path, &data).unwrap();
@@ -438,7 +437,7 @@ mod tests {
     /// segments; the short and empty cases pin the boundary conditions.
     #[test]
     fn iocp_read_parity_multiblock() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("parity_multiblock.bin");
         // > IocpConfig::default().buffer_size and > concurrent_ops * buffer_size
         // so multiple overlapped batches are submitted and drained.
@@ -466,7 +465,7 @@ mod tests {
 
     #[test]
     fn iocp_read_parity_short_file() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("parity_short.bin");
         let data = b"short-file bytes for iocp parity".to_vec();
         std::fs::write(&path, &data).unwrap();
@@ -480,7 +479,7 @@ mod tests {
 
     #[test]
     fn iocp_read_parity_empty_file() {
-        let dir = tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("parity_empty.bin");
         std::fs::write(&path, b"").unwrap();
 

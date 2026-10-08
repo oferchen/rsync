@@ -77,8 +77,6 @@ mod active {
     use std::io::{Read, Write};
     use std::path::Path;
 
-    use tempfile::TempDir;
-
     /// Below-threshold sentinel: dispatch should fall back to stdlib.
     const TINY: usize = 1024;
     /// On-threshold sentinel: dispatch behaviour must be deterministic.
@@ -170,7 +168,7 @@ mod active {
             return;
         }
 
-        let dir = TempDir::new().expect("create tempdir");
+        let dir = test_support::create_tempdir();
         let stdlib_path = dir.path().join(format!("{label}.stdlib"));
         let iouring_path = dir.path().join(format!("{label}.iouring"));
 

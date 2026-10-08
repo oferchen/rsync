@@ -19,8 +19,6 @@ use std::os::unix::fs::symlink;
 use std::sync::Arc;
 use std::thread;
 
-use tempfile::tempdir;
-
 use super::DirSandbox;
 
 #[test]
@@ -1561,7 +1559,7 @@ fn dir_beneath_nofollow_confines_only_the_tail() {
     use std::os::unix::fs::MetadataExt;
     use std::path::Path;
 
-    let tmp = tempdir().expect("tempdir");
+    let tmp = test_support::create_tempdir();
     let base = tmp.path().join("base");
     std::fs::create_dir_all(base.join("real/inner/sub/deeper")).expect("mkdir tree");
     symlink("real", base.join("link")).expect("operator symlink");

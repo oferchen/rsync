@@ -90,7 +90,7 @@ fn sqpoll_gate_keeps_ring_construction_compatible_with_sqpoll_off_policy() {
     // `Unsupported`. `build_ring` itself is `pub(crate)`; the factory
     // call is the public surface that proves the gate-driven path
     // stays compatible.
-    let tmpdir = tempfile::tempdir().expect("tempdir");
+    let tmpdir = test_support::create_tempdir();
     let path = tmpdir.path().join("sqpoll-gate.bin");
     let file = std::fs::File::create(&path).expect("create");
     let writer = fast_io::writer_from_file(file, 4096, fast_io::IoUringPolicy::SqpollOff)

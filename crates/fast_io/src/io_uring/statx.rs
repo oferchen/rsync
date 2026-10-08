@@ -597,7 +597,7 @@ mod tests {
 
     #[test]
     fn submit_statx_batch_single_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("test.txt");
         std::fs::write(&file_path, b"hello").unwrap();
 
@@ -616,7 +616,7 @@ mod tests {
 
     #[test]
     fn submit_statx_batch_multiple_files() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let paths_owned: Vec<_> = (0..16)
             .map(|i| {
                 let p = dir.path().join(format!("file_{i}.txt"));
@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn submit_statx_batch_with_errors() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let existing = dir.path().join("exists.txt");
         std::fs::write(&existing, b"data").unwrap();
         let missing = dir.path().join("does_not_exist.txt");
@@ -660,7 +660,7 @@ mod tests {
 
     #[test]
     fn submit_statx_batch_preserves_order() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let sizes = [10u64, 20, 30, 40, 50];
         let paths_owned: Vec<_> = sizes
             .iter()
@@ -689,7 +689,7 @@ mod tests {
 
     #[test]
     fn submit_statx_batch_symlink_follow_vs_nofollow() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let target = dir.path().join("target.txt");
         std::fs::write(&target, b"symlink target").unwrap();
 
@@ -738,7 +738,7 @@ mod tests {
 
     #[test]
     fn fallback_statx_batch_produces_results() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let file_path = dir.path().join("fallback_test.txt");
         std::fs::write(&file_path, b"fallback").unwrap();
 

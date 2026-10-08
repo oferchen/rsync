@@ -20,7 +20,6 @@
 use std::fs;
 
 use fast_io::CloneAttempt;
-use tempfile::TempDir;
 
 /// `confined_clone_file` takes an already-OPEN source descriptor, so the caller
 /// owns the source-side confinement decision and cannot have it re-resolved by
@@ -35,7 +34,7 @@ fn open_source(path: &std::path::Path) -> fs::File {
 /// tests below would also pass if `confined_clone_file` errored for every input.
 #[test]
 fn confined_clone_file_reaches_the_platform_for_a_plain_destination() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("sub")).expect("mkdir sub");
     let src = root.path().join("src.bin");
     fs::write(&src, b"payload").expect("write source");
@@ -62,7 +61,7 @@ fn confined_clone_file_reaches_the_platform_for_a_plain_destination() {
 /// "refuse every symlink" simplification from breaking `-K`.
 #[test]
 fn confined_clone_file_follows_a_relative_in_tree_parent_symlink() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     fs::create_dir(root.path().join("real")).expect("mkdir real");
     std::os::unix::fs::symlink("real", root.path().join("sub")).expect("plant symlink");
     let src = root.path().join("src.bin");
@@ -87,7 +86,7 @@ fn confined_clone_file_follows_a_relative_in_tree_parent_symlink() {
 /// data copy.
 #[test]
 fn confined_clone_file_refuses_a_parent_symlinked_outside() {
-    let base = TempDir::new().expect("tempdir");
+    let base = test_support::create_tempdir();
     let root = base.path().join("dest");
     let outside = base.path().join("outside");
     fs::create_dir(&root).expect("mkdir dest");
@@ -120,7 +119,7 @@ fn confined_clone_file_refuses_a_parent_symlinked_outside() {
 /// resolves the same name again with the libc resolver.
 #[test]
 fn confined_clone_file_clones_the_handed_descriptor_not_the_path() {
-    let base = TempDir::new().expect("tempdir");
+    let base = test_support::create_tempdir();
     let root = base.path().join("dest");
     let outside = base.path().join("outside");
     fs::create_dir(&root).expect("mkdir dest");
@@ -165,7 +164,7 @@ fn confined_clone_file_clones_the_handed_descriptor_not_the_path() {
 /// the `O_EXCL` semantics of the plain create this tier bypasses.
 #[test]
 fn confined_clone_file_refuses_an_existing_destination() {
-    let root = TempDir::new().expect("tempdir");
+    let root = test_support::create_tempdir();
     let src = root.path().join("src.bin");
     fs::write(&src, b"payload").expect("write source");
     let dest = root.path().join("f0");

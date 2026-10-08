@@ -356,7 +356,6 @@ impl Drop for IoUringWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     /// Builds a writer for testing via the per-thread ring. Returns `None`
     /// when the kernel rejects `io_uring_setup(2)` (e.g., container,
@@ -365,7 +364,7 @@ mod tests {
         register_buffers: bool,
         registered_buffer_count: usize,
     ) -> Option<IoUringWriter> {
-        let dir = tempdir().ok()?;
+        let dir = test_support::create_tempdir();
         let file = File::create(dir.path().join("out.bin")).ok()?;
         // Probe the per-thread ring; on hosts without io_uring we skip the
         // test rather than constructing a writer that would later fail.
@@ -454,7 +453,7 @@ mod tests {
         if with_ring(|_| Ok(())).is_err() {
             return;
         }
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("hole.bin");
         let file = File::create(&path).expect("create");
         let mut writer = IoUringWriter::with_ring(file, 4096, 4, -1, false, 0);

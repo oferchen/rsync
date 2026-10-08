@@ -49,7 +49,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let base = TempDir::new().expect("tempdir");
+        let base = test_support::create_tempdir();
         let root = base.path().join("root");
         let outside = base.path().join("outside");
         fs::create_dir(&root).expect("mkdir root");

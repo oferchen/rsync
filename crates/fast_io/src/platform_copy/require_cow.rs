@@ -132,8 +132,6 @@ const fn preferred_reflink_method() -> CopyMethod {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(not(target_os = "windows"))]
-    use tempfile::TempDir;
 
     #[test]
     fn debug_impl_is_concise() {
@@ -156,7 +154,7 @@ mod tests {
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     #[test]
     fn copy_surfaces_unsupported_on_unsupported_platform() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("src.bin");
         let dst = dir.path().join("dst.bin");
         std::fs::write(&src, b"payload").unwrap();
@@ -176,7 +174,7 @@ mod tests {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn copy_either_clones_or_surfaces_error() {
-        let dir = TempDir::new().unwrap();
+        let dir = test_support::create_tempdir();
         let src = dir.path().join("src.bin");
         let dst = dir.path().join("dst.bin");
         std::fs::write(&src, b"payload").unwrap();

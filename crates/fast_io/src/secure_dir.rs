@@ -292,7 +292,6 @@ mod tests {
     #[cfg(target_os = "linux")]
     use std::os::fd::AsFd;
     use std::os::fd::AsRawFd;
-    use tempfile::tempdir;
 
     /// A directory whose mode is `mode`, restored to 0755 on drop so the
     /// tempdir can be cleaned up.
@@ -332,7 +331,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn anchors_resolve_beneath_a_search_only_parent() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let base = std::fs::canonicalize(dir.path()).expect("canonicalize");
         let dest = base.join("search-only").join("dest");
         std::fs::create_dir_all(&dest).expect("mkdir");
@@ -368,7 +367,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_write_search_only_directory_is_a_valid_anchor() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let base = std::fs::canonicalize(dir.path()).expect("canonicalize");
         let dest = base.join("write-only");
         std::fs::create_dir(&dest).expect("mkdir");
@@ -393,7 +392,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_search_only_directory_still_refuses_enumeration() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let base = std::fs::canonicalize(dir.path()).expect("canonicalize");
         let xonly = base.join("xonly");
         std::fs::create_dir(&xonly).expect("mkdir");
@@ -410,7 +409,7 @@ mod tests {
 
     #[test]
     fn opens_real_directory() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         // `tempdir()` may return a path that contains symlink components
         // (macOS `/tmp` -> `/private/tmp`, some CI runners stage `/tmp`
         // through a symlink). `RESOLVE_NO_SYMLINKS` refuses such paths,
@@ -427,7 +426,7 @@ mod tests {
     fn rejects_symlink_leaf() {
         use std::os::unix::fs::symlink;
 
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let target = dir.path().join("target");
         std::fs::create_dir(&target).expect("create target dir");
         let link = dir.path().join("link");

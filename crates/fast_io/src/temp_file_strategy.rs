@@ -456,11 +456,10 @@ fn remove_if_exists(path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::io::Write;
-    use tempfile::tempdir;
 
     #[test]
     fn named_strategy_create_and_commit() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("output.txt");
         let strategy = NamedTempFileStrategy::default();
 
@@ -476,7 +475,7 @@ mod tests {
 
     #[test]
     fn named_strategy_discard_removes_temp() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("output.txt");
         let strategy = NamedTempFileStrategy::default();
 
@@ -497,7 +496,7 @@ mod tests {
 
     #[test]
     fn named_strategy_commit_replaces_existing() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("output.txt");
         fs::write(&dest, b"old content").expect("write existing");
 
@@ -517,8 +516,8 @@ mod tests {
 
     #[test]
     fn named_strategy_with_temp_dir() {
-        let dir = tempdir().expect("tempdir");
-        let temp_dir = tempdir().expect("temp_dir");
+        let dir = test_support::create_tempdir();
+        let temp_dir = test_support::create_tempdir();
         let dest = dir.path().join("output.txt");
 
         let strategy = NamedTempFileStrategy::new(Some(temp_dir.path().to_path_buf()));
@@ -539,7 +538,7 @@ mod tests {
 
     #[test]
     fn named_strategy_unique_names() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("output.txt");
         let strategy = NamedTempFileStrategy::default();
 
@@ -569,7 +568,7 @@ mod tests {
 
     #[test]
     fn default_strategy_create_and_commit() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("output.txt");
         let strategy = DefaultTempFileStrategy::default();
 
@@ -583,7 +582,7 @@ mod tests {
 
     #[test]
     fn default_strategy_discard_leaves_no_file() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let dest = dir.path().join("output.txt");
         let strategy = DefaultTempFileStrategy::default();
 
@@ -603,7 +602,7 @@ mod tests {
 
         #[test]
         fn anonymous_strategy_create_and_commit() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             if !o_tmpfile_supported(dir.path()) {
                 return;
             }
@@ -621,7 +620,7 @@ mod tests {
 
         #[test]
         fn anonymous_strategy_discard_no_orphan() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             if !o_tmpfile_supported(dir.path()) {
                 return;
             }
@@ -638,7 +637,7 @@ mod tests {
 
         #[test]
         fn anonymous_strategy_commit_replaces_existing() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             if !o_tmpfile_supported(dir.path()) {
                 return;
             }
@@ -655,7 +654,7 @@ mod tests {
 
         #[test]
         fn default_strategy_prefers_anonymous_when_available() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             if !o_tmpfile_supported(dir.path()) {
                 return;
             }
@@ -674,7 +673,7 @@ mod tests {
 
         #[test]
         fn delete_on_close_strategy_create_and_commit() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let dest = dir.path().join("doc.txt");
             let strategy = WindowsTempFileStrategy;
 
@@ -695,7 +694,7 @@ mod tests {
 
         #[test]
         fn delete_on_close_strategy_discard_no_orphan() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let dest = dir.path().join("doc_discard.txt");
             let strategy = WindowsTempFileStrategy;
 
@@ -714,7 +713,7 @@ mod tests {
 
         #[test]
         fn delete_on_close_strategy_commit_replaces_existing() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let dest = dir.path().join("doc_replace.txt");
             fs::write(&dest, b"old").expect("write existing");
 
@@ -728,7 +727,7 @@ mod tests {
 
         #[test]
         fn default_strategy_prefers_delete_on_close_on_windows() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let dest = dir.path().join("default_doc.txt");
             let strategy = DefaultTempFileStrategy::default();
 
@@ -746,7 +745,7 @@ mod tests {
 
     #[test]
     fn remove_if_exists_removes_existing_file() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("to_remove.txt");
         fs::write(&path, b"data").expect("write");
 

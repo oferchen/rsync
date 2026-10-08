@@ -138,11 +138,10 @@ pub fn open_win_temp_file(dir: &Path) -> WinTempFileResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn probe_returns_valid_enum() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let result = win_tmpfile_probe(dir.path());
         assert!(
             result == WinDeleteOnCloseSupport::Available
@@ -160,7 +159,7 @@ mod tests {
 
     #[test]
     fn open_win_temp_file_returns_result() {
-        let dir = tempdir().expect("tempdir");
+        let dir = test_support::create_tempdir();
         let result = open_win_temp_file(dir.path());
         match result {
             WinTempFileResult::DeleteOnClose(_) => {}
@@ -175,7 +174,7 @@ mod tests {
 
         #[test]
         fn temp_file_write_and_commit() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let mut wtf = WindowsTempFile::open(dir.path()).expect("open");
 
             wtf.file_mut().write_all(b"test data").expect("write");
@@ -188,7 +187,7 @@ mod tests {
 
         #[test]
         fn temp_file_drop_deletes_file() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let wtf = WindowsTempFile::open(dir.path()).expect("open");
             let path = wtf.temp_path().to_path_buf();
             assert!(path.exists());
@@ -198,7 +197,7 @@ mod tests {
 
         #[test]
         fn temp_file_into_parts() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let wtf = WindowsTempFile::open(dir.path()).expect("open");
             let (file, path) = wtf.into_parts();
             assert!(path.exists());
@@ -211,7 +210,7 @@ mod tests {
 
         #[test]
         fn temp_file_visible_in_directory() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let wtf = WindowsTempFile::open(dir.path()).expect("open");
             // Unlike O_TMPFILE, delete-on-close files have a directory entry.
             let count = std::fs::read_dir(dir.path()).expect("read_dir").count();
@@ -221,7 +220,7 @@ mod tests {
 
         #[test]
         fn commit_replaces_existing_file() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let dest = dir.path().join("existing.txt");
             std::fs::write(&dest, b"old content").expect("create existing");
 
@@ -234,7 +233,7 @@ mod tests {
 
         #[test]
         fn large_write_integrity() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             let size = 2 * 1024 * 1024;
             let pattern: Vec<u8> = (0..=255u8).cycle().take(size).collect();
 
@@ -256,7 +255,7 @@ mod tests {
 
         #[test]
         fn open_returns_unsupported() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             match WindowsTempFile::open(dir.path()) {
                 Err(err) => assert_eq!(err.kind(), std::io::ErrorKind::Unsupported),
                 Ok(_) => panic!("should fail on non-Windows"),
@@ -265,7 +264,7 @@ mod tests {
 
         #[test]
         fn open_win_temp_file_returns_unavailable() {
-            let dir = tempdir().expect("tempdir");
+            let dir = test_support::create_tempdir();
             assert!(matches!(
                 open_win_temp_file(dir.path()),
                 WinTempFileResult::Unavailable

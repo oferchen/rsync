@@ -63,7 +63,7 @@ fn mid_batch_short_read_does_not_zero_fill_tail() {
         return;
     };
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("nfs_like_short.bin");
 
     // 4096 + 333 forces SQE 0 to fully complete and SQE 1 to short-read.
@@ -102,7 +102,7 @@ fn multi_round_short_reads_drain_completely() {
         return;
     };
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("nfs_like_multiround.bin");
 
     // 5 full chunks + 777-byte tail: at least three outer-loop rounds with
@@ -138,7 +138,7 @@ fn eof_mid_read_returns_actual_bytes_only() {
         return;
     };
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("nfs_like_eof.bin");
 
     // Smaller than one chunk: SQE 0 short-reads to file size, SQEs 1-3 hit EOF.
@@ -186,7 +186,7 @@ fn reported_length_never_exceeds_output_capacity() {
         return;
     };
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = test_support::create_tempdir();
     let path = dir.path().join("nfs_like_exact.bin");
 
     // Exact two-chunk file: no short reads, but exercises the success path

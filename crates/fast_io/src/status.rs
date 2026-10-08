@@ -877,7 +877,7 @@ mod tests {
         use crate::io_uring::{IoUringOrStdReader, IoUringReaderFactory};
         use crate::traits::FileReaderFactory;
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("factory_fallback_reader.txt");
         std::fs::write(&path, b"fallback test content").unwrap();
 
@@ -900,7 +900,7 @@ mod tests {
         use crate::io_uring::{IoUringOrStdWriter, IoUringWriterFactory};
         use crate::traits::FileWriterFactory;
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("factory_fallback_writer.txt");
 
         let factory = IoUringWriterFactory::default();
@@ -922,7 +922,7 @@ mod tests {
         use crate::io_uring::{IoUringOrStdWriter, IoUringWriterFactory};
         use crate::traits::FileWriterFactory;
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = test_support::create_tempdir();
         let path = dir.path().join("factory_fallback_sized.txt");
 
         let factory = IoUringWriterFactory::default();

@@ -386,7 +386,7 @@ mod tests {
     /// syscalls and it fails loudly on the platform where it stops holding.
     #[test]
     fn at_metadata_agrees_with_std_metadata_on_the_same_file() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = test_support::create_tempdir();
         let path = temp.path().join("probe.bin");
         std::fs::write(&path, b"probe payload").expect("write probe file");
 
