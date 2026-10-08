@@ -90,22 +90,40 @@ pub(crate) fn reject_malformed_client_greeting(line: &str) -> Option<AtError> {
     )))
 }
 
-/// Reads one line from `reader`, stripping trailing `\r` and `\n`.
-///
-/// Returns `Ok(None)` on EOF, or `Ok(Some(line))` with the stripped content.
-pub(crate) fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option<String>> {
-    let mut line = String::new();
-    let bytes = reader.read_line(&mut line)?;
+/// upstream: `clientserver.c:1416` - `start_daemon()` reads the greeting and
+/// every request line before module selection into `char line[1024]`.
+pub(crate) const HANDSHAKE_LINE_BUFSIZ: usize = 1024;
 
-    if bytes == 0 {
+/// Reads one handshake line of at most `bufsiz - 1` bytes, stripping trailing
+/// `\r` and `\n`.
+///
+/// upstream: `io.c:2635-2656` `read_line_old()` examines at most `bufsiz - 1`
+/// bytes and fails when they run out before a newline. Every daemon caller
+/// treats that failure as the end of the session (`clientserver.c:203-206,1536-
+/// 1538`; `authenticate.c:339-344`), so a peer that never sends a newline costs
+/// the daemon one buffer, not the length it chose to send.
+///
+/// Returns `Ok(None)` on EOF and on a line that does not fit; otherwise the
+/// the line with its trailing `\r` and `\n` stripped.
+pub(crate) fn read_bounded_line<R: BufRead>(
+    reader: &mut R,
+    bufsiz: usize,
+) -> io::Result<Option<String>> {
+    let limit = bufsiz - 1;
+    let mut line = Vec::new();
+    reader.take(limit as u64).read_until(b'\n', &mut line)?;
+    if line.is_empty() || (line.len() == limit && line.last() != Some(&b'\n')) {
         return Ok(None);
     }
-
-    while line.ends_with('\n') || line.ends_with('\r') {
+    while matches!(line.last(), Some(b'\n' | b'\r')) {
         line.pop();
     }
-
-    Ok(Some(line))
+    String::from_utf8(line).map(Some).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stream did not contain valid UTF-8",
+        )
+    })
 }
 
 /// Returns the `@RSYNCD: capabilities` lines to advertise to the client.

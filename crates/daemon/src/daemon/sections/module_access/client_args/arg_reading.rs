@@ -127,39 +127,56 @@ fn read_client_arguments<R: BufRead>(
             return Err(protocol::secluded_args::too_many_daemon_arguments());
         }
 
-        if use_nulls {
-            let mut buf = Vec::new();
-            let bytes_read = reader.read_until(b'\0', &mut buf)?;
-
-            if bytes_read == 0 {
-                break;
-            }
-
-            if buf.last() == Some(&b'\0') {
+        let terminator = if use_nulls { b'\0' } else { b'\n' };
+        let Some(mut buf) = read_capped_arg(reader, terminator)? else {
+            break;
+        };
+        if !use_nulls {
+            while buf.last() == Some(&b'\r') {
                 buf.pop();
             }
-
-            if buf.is_empty() {
-                break;
-            }
-
-            let arg = String::from_utf8_lossy(&buf).into_owned();
-            arguments.push(arg);
-        } else {
-            let line = match read_trimmed_line(reader)? {
-                Some(line) => line,
-                None => break,
-            };
-
-            if line.is_empty() {
-                break;
-            }
-
-            arguments.push(line);
         }
+        if buf.is_empty() {
+            break;
+        }
+        arguments.push(String::from_utf8_lossy(&buf).into_owned());
     }
 
     Ok(arguments)
+}
+
+/// Reads one client argument up to `terminator`, keeping at most
+/// `BIGPATHBUFLEN - 1` bytes of it.
+///
+/// upstream: `io.c:1430-1441` `read_line()` - every byte up to the terminator
+/// is consumed, but only `bufsiz - 1` are stored (`if (s < eob) *s++ = ch`), and
+/// the daemon's buffer is `BIGPATHBUFLEN` (`clientserver.c:743`). An oversized
+/// argument is truncated rather than refused, and the reader stays aligned on
+/// the next one. Returns `None` at EOF before any byte, like `read_until`.
+fn read_capped_arg<R: BufRead>(reader: &mut R, terminator: u8) -> io::Result<Option<Vec<u8>>> {
+    let cap = protocol::secluded_args::BIGPATHBUFLEN - 1;
+    let mut arg = Vec::new();
+    let mut read_any = false;
+    loop {
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if available.is_empty() {
+            return Ok(read_any.then_some(arg));
+        }
+        read_any = true;
+        let end = available.iter().position(|&byte| byte == terminator);
+        let body = &available[..end.unwrap_or(available.len())];
+        let room = cap - arg.len();
+        arg.extend_from_slice(&body[..body.len().min(room)]);
+        let consumed = end.map_or(available.len(), |at| at + 1);
+        reader.consume(consumed);
+        if end.is_some() {
+            return Ok(Some(arg));
+        }
+    }
 }
 
 /// Checks whether phase-1 args contain the secluded-args (`-s`) flag.
@@ -312,6 +329,7 @@ fn read_and_log_client_args(
             &mut DeadlineBufRead::new(ctx.reader, deadline_socket.as_ref(), &deadline),
             None,
             Some(protocol::secluded_args::MAX_DAEMON_ARGS),
+            Some(protocol::secluded_args::BIGPATHBUFLEN),
         ) {
             Ok(full_args) => merge_secluded_args(phase1_args, full_args),
             Err(err) => return Ok(abandon_client_args(ctx, &err, &deadline)),

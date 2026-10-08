@@ -837,7 +837,7 @@ mod module_access_tests {
         assert!(has_secluded_args_flag(&phase1));
 
         // Read phase 2
-        let full_args = protocol::secluded_args::recv_secluded_args(&mut reader, None, None)
+        let full_args = protocol::secluded_args::recv_secluded_args(&mut reader, None, None, None)
             .expect("should read secluded args");
         assert_eq!(full_args[0], "rsync");
         let effective: Vec<&str> = full_args.iter().skip(1).map(String::as_str).collect();
@@ -6840,6 +6840,70 @@ mod daemon_argv_limit_tests {
             .expect("an ordinary argument vector must still be read");
 
         assert_eq!(args.len(), 64);
+    }
+
+    /// Bytes of one argument the daemon keeps: upstream `read_line()` stores at
+    /// most `bufsiz - 1` of them (`io.c:1440-1441`).
+    const ARG_CAP: usize = protocol::secluded_args::BIGPATHBUFLEN - 1;
+
+    /// An oversized argument is cut to the daemon line buffer, and the bytes
+    /// past the cut are still consumed so the next argument stays aligned.
+    ///
+    /// upstream: `io.c:1430-1441` - `read_line()` reads on to the terminator
+    /// whatever the length and drops what does not fit; it never refuses.
+    #[test]
+    fn read_client_arguments_truncates_an_oversized_arg_and_stays_aligned() {
+        let mut input = vec![b'x'; 1 << 20];
+        input.extend_from_slice(b"\0-v\0\0");
+        let mut reader = BufReader::new(Cursor::new(input));
+
+        let args = read_client_arguments(&mut reader, Some(ProtocolVersion::V30))
+            .expect("an oversized argument is truncated, not refused");
+
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0].len(), ARG_CAP);
+        assert_eq!(args[1], "-v");
+    }
+
+    /// The pre-30 newline-terminated form takes the same cap.
+    #[test]
+    fn read_client_arguments_truncates_an_oversized_line_before_protocol_30() {
+        let mut input = vec![b'x'; 1 << 20];
+        input.extend_from_slice(b"\n-v\n\n");
+        let mut reader = BufReader::new(Cursor::new(input));
+
+        let args = read_client_arguments(&mut reader, Some(ProtocolVersion::V29))
+            .expect("an oversized line is truncated, not refused");
+
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0].len(), ARG_CAP);
+        assert_eq!(args[1], "-v");
+    }
+
+    /// An argument the peer never terminates is held to the same cap up to EOF.
+    #[test]
+    fn read_client_arguments_caps_an_unterminated_arg() {
+        let input = vec![b'x'; 64 << 20];
+        let mut reader = BufReader::new(Cursor::new(input));
+
+        let args = read_client_arguments(&mut reader, Some(ProtocolVersion::V30))
+            .expect("EOF ends the argument list");
+
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].len(), ARG_CAP);
+    }
+
+    /// Boundary: an argument of exactly `bufsiz - 1` bytes survives whole.
+    #[test]
+    fn read_client_arguments_keeps_an_arg_that_fits_the_buffer() {
+        let mut input = vec![b'x'; ARG_CAP];
+        input.extend_from_slice(b"\0\0");
+        let mut reader = BufReader::new(Cursor::new(input));
+
+        let args = read_client_arguments(&mut reader, Some(ProtocolVersion::V30))
+            .expect("an argument that fits is read");
+
+        assert_eq!(args, vec!["x".repeat(ARG_CAP)]);
     }
 }
 

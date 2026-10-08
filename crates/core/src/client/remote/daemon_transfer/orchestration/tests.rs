@@ -982,7 +982,7 @@ mod protect_args_daemon_tests {
         // Wire-byte regression: the secluded-args (protect-args) protocol must
         // ship `--groupmap=*:1234` byte-for-byte from sender to receiver. This
         // mirrors the wire path used when `protect_args` is active and the
-        // daemon reads phase-2 args via `recv_secluded_args()` -- the upstream
+        // daemon reads phase-2 args via `recv_secluded_args(, None)` -- the upstream
         // `read_args()` equivalent in oc-rsync.
         use protocol::secluded_args::{recv_secluded_args, send_secluded_args};
         use std::io::Cursor;
@@ -1006,7 +1006,7 @@ mod protect_args_daemon_tests {
         );
 
         let mut cursor = Cursor::new(wire);
-        let received = recv_secluded_args(&mut cursor, None, None).expect("recv");
+        let received = recv_secluded_args(&mut cursor, None, None, None).expect("recv");
         assert_eq!(received, sent);
     }
 

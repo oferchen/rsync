@@ -23,6 +23,7 @@ use crate::daemon::{
     BRANDED_CONFIG_ENV,
     ConnectionLimiter,
     FEATURE_UNAVAILABLE_EXIT_CODE,
+    HANDSHAKE_LINE_BUFSIZ,
     HostPattern,
     LEGACY_CONFIG_ENV,
     MaxConnections,
@@ -71,7 +72,7 @@ use crate::daemon::{
     parse_numeric_identifier,
     parse_refuse_option_list,
     parse_timeout_seconds,
-    read_trimmed_line,
+    read_bounded_line,
     render_help,
     sanitize_module_identifier,
     set_test_forward_override,
@@ -192,12 +193,13 @@ include!("tests/chunks/parse_max_connections_directive_handles_zero_positive_and
 include!("tests/chunks/parse_numeric_identifier_rejects_blank_or_invalid_input.rs");
 include!("tests/chunks/parse_refuse_option_list_normalises_and_deduplicates.rs");
 include!("tests/chunks/parse_timeout_seconds_supports_zero_and_non_zero_values.rs");
-include!("tests/chunks/read_trimmed_line_handles_consecutive_lines.rs");
-include!("tests/chunks/read_trimmed_line_handles_line_without_terminator.rs");
-include!("tests/chunks/read_trimmed_line_returns_none_on_empty_input.rs");
-include!("tests/chunks/read_trimmed_line_strips_crlf_terminators.rs");
-include!("tests/chunks/read_trimmed_line_strips_lf_only.rs");
-include!("tests/chunks/read_trimmed_line_strips_multiple_cr_lf.rs");
+include!("tests/chunks/read_bounded_line_handles_consecutive_lines.rs");
+include!("tests/chunks/read_bounded_line_handles_line_without_terminator.rs");
+include!("tests/chunks/read_bounded_line_returns_none_on_empty_input.rs");
+include!("tests/chunks/read_bounded_line_strips_crlf_terminators.rs");
+include!("tests/chunks/read_bounded_line_strips_lf_only.rs");
+include!("tests/chunks/read_bounded_line_strips_multiple_cr_lf.rs");
+include!("tests/chunks/read_bounded_line_refuses_a_line_that_fills_the_buffer.rs");
 include!("tests/chunks/run_daemon_accepts_valid_credentials.rs");
 include!("tests/chunks/daemon_error_payloads_match_upstream_wording.rs");
 include!("tests/chunks/daemon_max_connections_wire_bytes_match_upstream.rs");
@@ -219,6 +221,7 @@ include!("tests/chunks/run_daemon_lists_modules_with_motd_lines.rs");
 include!("tests/chunks/run_daemon_lists_modules_with_module_timeout.rs");
 include!("tests/chunks/run_daemon_logs_a_refused_option_in_upstream_words.rs");
 include!("tests/chunks/run_daemon_logs_an_oversized_client_argv.rs");
+include!("tests/chunks/run_daemon_closes_on_an_oversized_handshake_line.rs");
 include!("tests/chunks/run_daemon_omits_unlisted_modules_from_listing.rs");
 include!("tests/chunks/run_daemon_panic_isolation_keeps_daemon_alive.rs");
 include!("tests/chunks/run_daemon_post_ok_refused_option_uses_multiplexed_error.rs");
