@@ -135,8 +135,10 @@ pub(crate) fn module_peer_hostname<'a>(
 
 /// Performs a reverse DNS lookup for the given IP address.
 ///
-/// The result is normalized by removing trailing dots and lowercasing, matching
-/// upstream rsync's hostname normalization for `hosts allow`/`hosts deny` matching.
+/// The name keeps the case the resolver returned, so `%h` and
+/// `RSYNC_HOST_NAME` show it as upstream does (clientname.c `client_name`
+/// never folds it). `hosts allow`/`hosts deny` stay case-insensitive because
+/// the matcher folds the host, as upstream's `iwildmatch` does (access.c:57).
 ///
 /// When `forward_lookup` is true (the upstream default), the PTR-derived name is
 /// forward-confirmed before being returned: the name's A/AAAA records must
@@ -160,14 +162,14 @@ pub(in crate::daemon) fn resolve_peer_hostname(
     Some(name)
 }
 
-/// Performs the PTR (reverse) lookup and normalizes the result.
+/// Performs the PTR (reverse) lookup and strips a trailing root dot.
 fn reverse_lookup_name(peer_ip: IpAddr) -> Option<String> {
     #[cfg(test)]
     if let Some(mapped) = TEST_HOSTNAME_OVERRIDES.with(|map| map.borrow().get(&peer_ip).cloned()) {
-        return mapped.map(normalize_hostname_owned);
+        return mapped.map(trim_root_dot);
     }
 
-    lookup_addr(&peer_ip).ok().map(normalize_hostname_owned)
+    lookup_addr(&peer_ip).ok().map(trim_root_dot)
 }
 
 /// Forward-resolves `name` and returns whether `peer_ip` is among its A/AAAA
@@ -246,11 +248,17 @@ pub(in crate::daemon) fn netgroup_contains(netgroup: &str, host: &str) -> bool {
     })
 }
 
-/// Normalizes a hostname by removing trailing dots and lowercasing.
-pub(super) fn normalize_hostname_owned(mut name: String) -> String {
+/// Removes the trailing root dot a resolver may append to a name.
+fn trim_root_dot(mut name: String) -> String {
     if name.ends_with('.') {
         name.pop();
     }
+    name
+}
+
+/// Normalizes a hostname key by removing trailing dots and lowercasing.
+pub(super) fn normalize_hostname_owned(name: String) -> String {
+    let mut name = trim_root_dot(name);
     name.make_ascii_lowercase();
     name
 }
